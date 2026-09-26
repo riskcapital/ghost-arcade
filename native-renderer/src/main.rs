@@ -117,8 +117,19 @@ const MAX_LAYER_MESH_VEC4S: usize = MAX_LAYER_MESH_POINTS / 2;
 /// (left.xy, up.xy), as offsets from the point in quad-local coordinates.
 const MAX_LAYER_MESH_TANGENT_VEC4S: usize = MAX_LAYER_MESH_POINTS * 2;
 const MAX_LAYER_MASK_POINTS: usize = 64;
-const MAX_LAYER_EDGE_EFFECTS: usize = 4;
-const LAYER_EDGE_EFFECT_VEC4S: usize = 7;
+/// Edge Effects per layer. Matches EDGE_EFFECT_LIMIT in
+/// src/lib/drawing/edgeEffects.ts; the UI warns past it.
+const MAX_LAYER_EDGE_EFFECTS: usize = 16;
+/// Resolved values per edge effect (heartbeat.wgsl documents the layout).
+const LAYER_EDGE_EFFECT_VEC4S: usize = 22;
+/// Stroke centerline points in output px: (x, y, arc length, surface scale).
+/// Matches EDGE_MAX_SEGMENTS in src/lib/drawing/edgeEffectGeometry.ts.
+const MAX_LAYER_EDGE_POINTS: usize = 512;
+/// Segments per culling chunk; the compositor skips whole chunks.
+const LAYER_EDGE_CHUNK: usize = 16;
+const MAX_LAYER_EDGE_CHUNKS: usize = MAX_LAYER_EDGE_POINTS / LAYER_EDGE_CHUNK;
+const MAX_LAYER_EDGE_CORNERS: usize = 64;
+const MAX_LAYER_EDGE_DIAGONALS: usize = 64;
 const MAX_SOURCE_PREVIEWS: usize = 16;
 const SOURCE_PREVIEW_SIZE: usize = 256;
 const SOURCE_PREVIEW_PIXELS: usize = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
@@ -1277,6 +1288,20 @@ struct LayerGpu {
     effect2: [f32; 4],
     effect3: [f32; 4],
     edge_effects: [[[f32; 4]; LAYER_EDGE_EFFECT_VEC4S]; MAX_LAYER_EDGE_EFFECTS],
+    /// (centerline points, effects, corners, diagonals)
+    edge_info: [f32; 4],
+    /// (centroid x px, centroid y px, perimeter px, inradius px)
+    edge_geom: [f32; 4],
+    /// (seed, _, _, _)
+    edge_extra: [f32; 4],
+    /// Centerline bounding box, px.
+    edge_extra2: [f32; 4],
+    /// Output-UV rectangle (min x, min y, max x, max y) the stack can touch.
+    edge_bounds: [f32; 4],
+    edge_chunks: [[f32; 4]; MAX_LAYER_EDGE_CHUNKS],
+    edge_corners: [[f32; 4]; MAX_LAYER_EDGE_CORNERS],
+    edge_diags: [[f32; 4]; MAX_LAYER_EDGE_DIAGONALS / 2],
+    edge_pts: [[f32; 4]; MAX_LAYER_EDGE_POINTS],
     mask_info: [f32; 4],
     mask: [[f32; 4]; MAX_LAYER_MASK_POINTS],
     mesh: [[f32; 4]; MAX_LAYER_MESH_VEC4S],
@@ -1919,7 +1944,7 @@ struct SceneLayer {
     shape_pts: Vec<[f32; 4]>,
     effects: [[f32; 4]; 4],
     effect_count: f32,
-    edge_effects: [[[f32; 4]; LAYER_EDGE_EFFECT_VEC4S]; MAX_LAYER_EDGE_EFFECTS],
+    edge: Box<LayerEdgeEffects>,
     mask_info: [f32; 4],
     mask_points: Vec<[f32; 4]>,
     mesh_rows: u32,
@@ -2762,7 +2787,7 @@ impl SceneLayer {
             shape_pts: Vec::new(),
             effects: [[0.0; 4]; 4],
             effect_count: 0.0,
-            edge_effects: [[[0.0; 4]; LAYER_EDGE_EFFECT_VEC4S]; MAX_LAYER_EDGE_EFFECTS],
+            edge: Box::default(),
             mask_info: [0.0; 4],
             mask_points: Vec::new(),
             mesh_rows: 0,
@@ -2787,7 +2812,7 @@ impl SceneLayer {
             && self.shape == [0.0, 0.0, 0.0, 1.0] && self.shape2 == [1.0, 0.7, 6.0, 0.4]
             && self.shape_meta == [0.0; 4] && self.mask_info[0] < 0.5
             && !(25.5..26.5).contains(&self.blend_code)
-            && self.edge_effects.iter().all(|edge| edge[0][0] < 0.5 || edge[0][1] <= 0.001)
+            && !self.has_edge_effects()
             && tl[1] == tr[1] && bl[1] == br[1] && tl[0] == bl[0] && tr[0] == br[0]
             && (br[0] - tl[0]).abs() > 0.000001 && (br[1] - tl[1]).abs() > 0.000001;
         LayerGpu {
@@ -2852,7 +2877,16 @@ impl SceneLayer {
             effect1: self.effects[1],
             effect2: self.effects[2],
             effect3: self.effects[3],
-            edge_effects: self.edge_effects,
+            edge_effects: self.edge.effects_gpu(),
+            edge_info: self.edge.info_gpu(),
+            edge_geom: self.edge.geometry,
+            edge_extra: [self.edge.seed, 0.0, 0.0, 0.0],
+            edge_extra2: self.edge.bbox_gpu(),
+            edge_bounds: self.edge.bounds,
+            edge_chunks: self.edge.chunks_gpu(),
+            edge_corners: self.edge.corners_gpu(),
+            edge_diags: self.edge.diagonals_gpu(),
+            edge_pts: self.edge.points_gpu(),
             mask_info: self.mask_info,
             mask: self.mask_gpu(),
             mesh: self.mesh_gpu(),
@@ -2888,6 +2922,10 @@ impl SceneLayer {
             packed[index * 2 + 1] = [left[0], -left[1], up[0], -up[1]];
         }
         packed
+    }
+
+    fn has_edge_effects(&self) -> bool {
+        self.edge.active()
     }
 
     fn shape_pts_gpu(&self) -> [[f32; 4]; 32] {
@@ -13406,29 +13444,7 @@ impl App {
             .scene_layers
             .entry(layer_id.clone())
             .or_insert_with(|| SceneLayer::new(layer_id, 0));
-        entry.edge_effects = [[[0.0; 4]; LAYER_EDGE_EFFECT_VEC4S]; MAX_LAYER_EDGE_EFFECTS];
-        let Some(effects) = command.get("edge_effects").and_then(Value::as_array) else {
-            return;
-        };
-        for (effect_index, effect) in effects.iter().take(MAX_LAYER_EDGE_EFFECTS).enumerate() {
-            let Some(vectors) = effect.as_array() else {
-                continue;
-            };
-            for (vector_index, vector) in vectors.iter().take(LAYER_EDGE_EFFECT_VEC4S).enumerate() {
-                let Some(values) = vector.as_array() else {
-                    continue;
-                };
-                for component in 0..4 {
-                    entry.edge_effects[effect_index][vector_index][component] = values
-                        .get(component)
-                        .and_then(Value::as_f64)
-                        .filter(|value| value.is_finite())
-                        .unwrap_or(0.0)
-                        .clamp(-4096.0, 4096.0)
-                        as f32;
-                }
-            }
-        }
+        entry.edge = Box::new(parse_layer_edge_effects(command));
     }
 
     fn apply_native_graph_layer(&mut self, command: &Value) {
@@ -23516,6 +23532,199 @@ fn number_at_any(value: &Value, canonical_key: &str, legacy_key: &str) -> Option
     }
 }
 
+/// A layer's Edge Effects as the compositor reads them: resolved effect
+/// values, the stroke centerline in output px and the per-shape data the
+/// structural types use.
+#[derive(Clone, Debug, Default)]
+struct LayerEdgeEffects {
+    effects: Vec<[[f32; 4]; LAYER_EDGE_EFFECT_VEC4S]>,
+    /// (x px, y px, arc length px, surface scale)
+    points: Vec<[f32; 4]>,
+    /// (x px, y px, arc length px, point index)
+    corners: Vec<[f32; 4]>,
+    diagonals: Vec<[f32; 2]>,
+    /// (centroid x, centroid y, perimeter, inradius), px
+    geometry: [f32; 4],
+    seed: f32,
+    /// Output UV rectangle the stack can touch.
+    bounds: [f32; 4],
+}
+
+impl LayerEdgeEffects {
+    fn active(&self) -> bool {
+        !self.effects.is_empty() && self.points.len() >= 3
+    }
+
+    fn effects_gpu(&self) -> [[[f32; 4]; LAYER_EDGE_EFFECT_VEC4S]; MAX_LAYER_EDGE_EFFECTS] {
+        let mut packed = [[[0.0; 4]; LAYER_EDGE_EFFECT_VEC4S]; MAX_LAYER_EDGE_EFFECTS];
+        if self.active() {
+            for (slot, effect) in packed.iter_mut().zip(self.effects.iter()) {
+                *slot = *effect;
+            }
+        }
+        packed
+    }
+
+    fn info_gpu(&self) -> [f32; 4] {
+        if !self.active() {
+            return [0.0; 4];
+        }
+        [
+            self.points.len() as f32,
+            self.effects.len() as f32,
+            self.corners.len() as f32,
+            self.diagonals.len() as f32,
+        ]
+    }
+
+    fn bbox_gpu(&self) -> [f32; 4] {
+        let mut bbox = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+        for point in &self.points {
+            bbox[0] = bbox[0].min(point[0]);
+            bbox[1] = bbox[1].min(point[1]);
+            bbox[2] = bbox[2].max(point[0]);
+            bbox[3] = bbox[3].max(point[1]);
+        }
+        if self.points.is_empty() { [0.0; 4] } else { bbox }
+    }
+
+    /// Bounds of each run of 16 segments (segment i joins point i to i + 1,
+    /// the last one closes the outline).
+    fn chunks_gpu(&self) -> [[f32; 4]; MAX_LAYER_EDGE_CHUNKS] {
+        let mut chunks = [[0.0; 4]; MAX_LAYER_EDGE_CHUNKS];
+        let count = self.points.len();
+        if count < 3 {
+            return chunks;
+        }
+        for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
+            let start = chunk_index * LAYER_EDGE_CHUNK;
+            if start >= count {
+                break;
+            }
+            let mut bbox = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+            for index in start..(start + LAYER_EDGE_CHUNK).min(count) {
+                for point in [self.points[index], self.points[(index + 1) % count]] {
+                    bbox[0] = bbox[0].min(point[0]);
+                    bbox[1] = bbox[1].min(point[1]);
+                    bbox[2] = bbox[2].max(point[0]);
+                    bbox[3] = bbox[3].max(point[1]);
+                }
+            }
+            *chunk = bbox;
+        }
+        chunks
+    }
+
+    fn corners_gpu(&self) -> [[f32; 4]; MAX_LAYER_EDGE_CORNERS] {
+        let mut packed = [[0.0; 4]; MAX_LAYER_EDGE_CORNERS];
+        for (slot, corner) in packed.iter_mut().zip(self.corners.iter()) {
+            *slot = *corner;
+        }
+        packed
+    }
+
+    fn diagonals_gpu(&self) -> [[f32; 4]; MAX_LAYER_EDGE_DIAGONALS / 2] {
+        let mut packed = [[0.0; 4]; MAX_LAYER_EDGE_DIAGONALS / 2];
+        for (index, pair) in self.diagonals.iter().enumerate() {
+            packed[index / 2][(index % 2) * 2] = pair[0];
+            packed[index / 2][(index % 2) * 2 + 1] = pair[1];
+        }
+        packed
+    }
+
+    fn points_gpu(&self) -> [[f32; 4]; MAX_LAYER_EDGE_POINTS] {
+        let mut packed = [[0.0; 4]; MAX_LAYER_EDGE_POINTS];
+        for (slot, point) in packed.iter_mut().zip(self.points.iter()) {
+            *slot = *point;
+        }
+        packed
+    }
+}
+
+/// `set_layer_edge_effects`: up to 16 effects of 22 resolved vec4s each and
+/// the stroke centerline they are drawn on (output px, y up, up to 512
+/// points with arc length and surface scale), its corners and inner
+/// diagonals, (centroid, perimeter, inradius), a seed, and the output UV
+/// rectangle the stack can touch. Without a centerline nothing renders:
+/// there is no edge to draw on.
+fn parse_layer_edge_effects(command: &Value) -> LayerEdgeEffects {
+    let mut parsed = LayerEdgeEffects::default();
+    let finite = |value: Option<&Value>, limit: f64| {
+        value
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0)
+            .clamp(-limit, limit) as f32
+    };
+    let vec4_at = |value: &Value, limit: f64| -> [f32; 4] {
+        let mut out = [0.0f32; 4];
+        if let Some(values) = value.as_array() {
+            for (component, slot) in out.iter_mut().enumerate() {
+                *slot = finite(values.get(component), limit);
+            }
+        }
+        out
+    };
+    if let Some(effects) = command.get("edge_effects").and_then(Value::as_array) {
+        for effect in effects.iter() {
+            if parsed.effects.len() >= MAX_LAYER_EDGE_EFFECTS {
+                break;
+            }
+            let Some(vectors) = effect.as_array() else {
+                continue;
+            };
+            let mut packed = [[0.0f32; 4]; LAYER_EDGE_EFFECT_VEC4S];
+            for (vector_index, vector) in vectors.iter().take(LAYER_EDGE_EFFECT_VEC4S).enumerate() {
+                packed[vector_index] = vec4_at(vector, 1.0e6);
+            }
+            if packed[0][0] < 0.5 {
+                continue;
+            }
+            parsed.effects.push(packed);
+        }
+    }
+    if let Some(points) = command.get("edge_outline").and_then(Value::as_array) {
+        for point in points.iter().take(MAX_LAYER_EDGE_POINTS) {
+            let mut value = vec4_at(point, 1.0e6);
+            if point.as_array().map(|values| values.len() < 4).unwrap_or(true) {
+                value[3] = 1.0;
+            }
+            parsed.points.push(value);
+        }
+    }
+    let count = parsed.points.len();
+    if let Some(corners) = command.get("edge_corners").and_then(Value::as_array) {
+        for corner in corners.iter().take(MAX_LAYER_EDGE_CORNERS) {
+            parsed.corners.push(vec4_at(corner, 1.0e6));
+        }
+    }
+    if let Some(diagonals) = command.get("edge_diagonals").and_then(Value::as_array) {
+        let corners = parsed.corners.len() as f32;
+        for pair in diagonals.iter().take(MAX_LAYER_EDGE_DIAGONALS) {
+            let value = vec4_at(pair, 1.0e6);
+            let (a, b) = (value[0].round(), value[1].round());
+            if a >= 0.0 && b >= 0.0 && a < corners && b < corners {
+                parsed.diagonals.push([a, b]);
+            }
+        }
+    }
+    if let Some(geometry) = command.get("edge_geometry") {
+        parsed.geometry = vec4_at(geometry, 1.0e6);
+    }
+    parsed.seed = finite(command.get("edge_seed"), 1.0e6);
+    if let Some(bounds) = command.get("edge_bounds") {
+        let bounds = vec4_at(bounds, 5.0);
+        parsed.bounds = [bounds[0].max(-4.0), bounds[1].max(-4.0), bounds[2], bounds[3]];
+    }
+    if count < 3 {
+        parsed.effects.clear();
+        parsed.points.clear();
+        parsed.corners.clear();
+        parsed.diagonals.clear();
+    }
+    parsed
+}
+
 fn unit_from_hash(hash: u64) -> f32 {
     ((hash & 0x00ff_ffff) as f32 / 0x00ff_ffff as f32).clamp(0.0, 1.0)
 }
@@ -29734,6 +29943,84 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn heartbeat_compositor_wgsl_validates_with_the_edge_effect_layout() {
+        let module = naga::front::wgsl::parse_str(include_str!("heartbeat.wgsl"))
+            .unwrap_or_else(|error| panic!("heartbeat.wgsl parse: {error}"));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("heartbeat.wgsl validation: {error:?}"));
+        // The storage struct must stay byte-compatible with LayerGpu.
+        let layer_data = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("LayerData"))
+            .expect("LayerData struct");
+        let naga::TypeInner::Struct { span, .. } = layer_data.1.inner else {
+            panic!("LayerData is a struct");
+        };
+        assert_eq!(span as usize, std::mem::size_of::<LayerGpu>());
+    }
+
+    #[test]
+    fn edge_effect_payload_keeps_sixteen_active_effects_and_their_outline() {
+        let effect = |active: f32, tag: f32| {
+            let mut vectors = vec![vec![active, 1.0, 0.0, 2.0]];
+            for index in 1..LAYER_EDGE_EFFECT_VEC4S {
+                vectors.push(vec![tag, index as f32, 0.0, 0.0]);
+            }
+            vectors
+        };
+        let mut effects = Vec::new();
+        for index in 0..20 {
+            // Every fifth one is inactive and must not take a slot.
+            effects.push(effect(if index % 5 == 4 { 0.0 } else { 1.0 }, index as f32));
+        }
+        // A 40-point outline: three chunks of up to 16 segments.
+        let outline: Vec<Vec<f64>> = (0..40)
+            .map(|i| {
+                let a = i as f64 / 40.0 * std::f64::consts::TAU;
+                vec![100.0 + 50.0 * a.cos(), 80.0 + 50.0 * a.sin(), i as f64 * 7.8, 1.0]
+            })
+            .collect();
+        let command = json!({
+            "layer_id": "edge",
+            "edge_effects": effects,
+            "edge_outline": outline,
+            "edge_corners": [[150.0, 80.0, 0.0, 0.0], [100.0, 130.0, 78.0, 10.0], [50.0, 80.0, 156.0, 20.0]],
+            "edge_diagonals": [[0, 2], [1, 9]],
+            "edge_geometry": [100.0, 80.0, 312.0, 45.0],
+            "edge_seed": 7.0,
+            "edge_bounds": [0.0, 0.0, 1.0, 1.0],
+        });
+        let parsed = parse_layer_edge_effects(&command);
+        assert_eq!(parsed.effects.len(), 16);
+        // Effects 4, 9 and 14 are skipped, so slot 15 holds effect 18.
+        assert_eq!(parsed.effects[15][1][0], 18.0);
+        assert_eq!(parsed.effects[4][1][0], 5.0);
+        assert_eq!(parsed.effects[3][21][1], 21.0);
+        assert_eq!(parsed.points.len(), 40);
+        assert_eq!(parsed.diagonals, vec![[0.0, 2.0]], "a pair naming a missing corner is dropped");
+
+        let mut layer = SceneLayer::new("edge".to_string(), 0);
+        layer.edge = Box::new(parsed);
+        let gpu = layer.gpu();
+        assert_eq!(gpu.edge_info, [40.0, 16.0, 3.0, 1.0]);
+        assert_eq!(gpu.edge_geom, [100.0, 80.0, 312.0, 45.0]);
+        assert_eq!(gpu.edge_extra[0], 7.0);
+        // The third chunk holds segments 32..39, the last closing back to point 0.
+        let chunk = gpu.edge_chunks[2];
+        assert!(chunk[2] >= 150.0 - 1e-3, "closing segment reaches point 0 at x = 150");
+        assert_eq!(gpu.edge_chunks[3], [0.0; 4]);
+        assert_eq!(gpu.fast_flags[0], 0, "a layer with edge effects never takes the plain-fill path");
+
+        let no_outline = parse_layer_edge_effects(&json!({ "layer_id": "edge", "edge_effects": [effect(1.0, 0.0)] }));
+        assert!(!no_outline.active(), "effects without an outline have nothing to draw on");
+    }
+
     #[test]
     fn screen_output_admission_is_bounded_by_count_and_memory() {
         use serde_json::json;

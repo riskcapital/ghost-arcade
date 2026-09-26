@@ -147,7 +147,22 @@ struct LayerData {
   effect1: vec4<f32>,
   effect2: vec4<f32>,
   effect3: vec4<f32>,
-  edge_effects: array<array<vec4<f32>, 7>, 4>,
+  // Edge Effects (see the Edge Effects section): 16 stacks of 22 resolved
+  // vec4s; (points, effects, corners, diagonals); (centroid px, perimeter
+  // px, inradius px); (seed); the centerline bbox px; the output-UV rectangle
+  // the stack can touch; 16-segment chunk bounds; corners (x, y, arc length,
+  // point index); diagonal corner pairs, two per vec4; and the centerline
+  // itself (x px, y px, arc length px, surface scale).
+  edge_effects: array<array<vec4<f32>, 22>, 16>,
+  edge_info: vec4<f32>,
+  edge_geom: vec4<f32>,
+  edge_extra: vec4<f32>,
+  edge_extra2: vec4<f32>,
+  edge_bounds: vec4<f32>,
+  edge_chunks: array<vec4<f32>, 32>,
+  edge_corners: array<vec4<f32>, 64>,
+  edge_diags: array<vec4<f32>, 32>,
+  edge_pts: array<vec4<f32>, 512>,
   mask_info: vec4<f32>,
   mask: array<vec4<f32>, 64>,
   mesh: array<vec4<f32>, 128>,
@@ -1785,167 +1800,1255 @@ fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
   return vec2<f32>(clamp(mask, 0.0, 1.0), clamp(edge, 0.0, 1.0));
 }
 
-fn native_edge_path_phase(uv: vec2<f32>, layer_index: u32) -> f32 {
-  let shape_type = i32(floor(layers[layer_index].shape.x + 0.5));
-  if (shape_type == 0) {
-    let d = vec4<f32>(uv.y, 1.0 - uv.x, 1.0 - uv.y, uv.x);
-    let side = min(min(d.x, d.y), min(d.z, d.w));
-    if (side == d.x) { return uv.x * 0.25; }
-    if (side == d.y) { return 0.25 + uv.y * 0.25; }
-    if (side == d.z) { return 0.75 - uv.x * 0.25; }
-    return 1.0 - uv.y * 0.25;
-  }
-  let p = uv - vec2<f32>(0.5);
-  return fract(atan2(p.y, p.x) / 6.28318530718 + 1.0);
+// ── Edge Effects ──────────────────────────────────────────────────────────
+// conventional stroke, fill and animation stacks on a layer's outline,
+// evaluated analytically per OUTPUT pixel after the layer's warp. The
+// outline arrives already warped and flattened (edgeEffectGeometry.ts):
+// the stroke centerline in output pixels (y up) with the arc length and
+// surface scale at each point. Distances, widths, dashes and glows are all
+// output pixels, and every edge is an analytic coverage ramp one screen
+// pixel wide, so nothing is resampled and nothing goes soft under a warp.
+//
+// The classic types (solid through fire, plasma through gradient, and the
+// eight classic animations) keep the colour and motion math of the editor's
+// drawing shape shader (src/lib/drawing/renderer.ts); only their anti-alias
+// ramps became analytic. Values arrive resolved by the shared resolvers.
+//
+// Per-effect vec4 layout (packNativeEdgeEffect in nativeRendererSync.ts):
+//   0 (active, opacity, blend, stroke type)     1 stroke colour
+//   2 (width px, glow size px, glow intensity, pulse/flicker speed)
+//   3 (snake length, stroke speed, snake count, dash length)
+//   4 (gap length, electric arc, scanner beam, scanner trail)
+//   5 (strobe rate, fill type, fill speed, gradient type)
+//   6 fill colour   7 second fill colour
+//   8 fill params A   9 (animation type, count, spacing, speed)
+//  10 animation params A   11 stroke params B   12 fill params B
+//  13 (cap, join, miter limit, width mode)
+//  14 (trim start, trim end, trim offset, trim mode)
+//  15 (trim speed, chase delay s, seed, custom centre)
+//  16 (centre x px, centre y px, fill progress mode, fill progress)
+//  17 dash pattern (dash, gap, dash, gap) px
+//  18 group bounds (min x, min y, max x, max y) px
+//  19 stroke params C   20 fill params C   21 animation params B
+
+const EDGE_PI: f32 = 3.14159265359;
+const EDGE_TAU: f32 = 6.28318530718;
+
+fn edge_mod(x: f32, y: f32) -> f32 {
+  return x - y * floor(x / y);
 }
 
-fn native_edge_palette(t: f32) -> vec3<f32> {
-  return 0.55 + 0.45 * cos(6.28318530718 * (t + vec3<f32>(0.0, 0.33, 0.67)));
+/// GLSL smoothstep, spelled out: the snake stroke relies on reversed edges.
+fn edge_smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+  let t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
 }
 
-fn native_edge_fill_color(
-  fill_code: i32,
-  uv: vec2<f32>,
-  color0: vec4<f32>,
-  color1: vec4<f32>,
-  params: vec4<f32>,
-  t: f32,
-) -> vec4<f32> {
-  if (fill_code == 1) {
-    return vec4<f32>(color0.rgb, color0.a * clamp(params.y, 0.0, 1.0));
-  }
-  let scale = max(0.1, abs(params.y));
-  let speed = params.w;
-  let n = fbm(uv * scale + vec2<f32>(t * speed * 0.16, -t * speed * 0.12));
-  if (fill_code == 2) {
-    let wave = sin((uv.x + uv.y + n * 0.8) * scale * 3.0 + t * speed * 1.8);
-    return vec4<f32>(native_edge_palette(wave * 0.12 + t * 0.04), 0.72);
-  }
-  if (fill_code == 3) {
-    let liquid = smoothstep(0.18, 0.88, n + 0.18 * sin(uv.y * 9.0 + t * speed));
-    return vec4<f32>(mix(color0.rgb * 0.32, color0.rgb * 1.35, liquid), color0.a * 0.78);
-  }
-  if (fill_code == 4) {
-    let flame = smoothstep(0.24, 0.9, n + (1.0 - uv.y) * 0.42);
-    return vec4<f32>(mix(vec3<f32>(0.45, 0.015, 0.0), vec3<f32>(1.0, 0.72, 0.08), flame), flame * 0.9);
-  }
-  if (fill_code == 5) {
-    let arcs = pow(abs(sin((uv.x - uv.y + n * 0.22) * max(2.0, params.z) * 6.283 + t * speed * 2.0)), 18.0);
-    return vec4<f32>(color0.rgb * (0.22 + arcs * 2.2), color0.a * (0.25 + arcs * 0.75));
-  }
-  if (fill_code == 6) {
-    let holo = native_edge_palette(uv.x * 0.7 + uv.y * 0.3 + t * max(0.1, params.y) * 0.1);
-    let scan = 0.72 + 0.28 * sin(uv.y * u.resolution.y * 0.35);
-    return vec4<f32>(holo * scan, 0.7);
-  }
-  if (fill_code == 7) {
-    return vec4<f32>(mix(color0.rgb, color1.rgb, n), mix(color0.a, color1.a, n) * 0.8);
-  }
-  if (fill_code == 8) {
-    let angle = params.y * 0.01745329252;
-    let axis = vec2<f32>(cos(angle), sin(angle));
-    return vec4<f32>(mix(color0.rgb, color1.rgb, clamp(dot(uv - vec2<f32>(0.5), axis) + 0.5, 0.0, 1.0)), mix(color0.a, color1.a, 0.5));
-  }
-  return vec4<f32>(0.0);
+/// The drawing shader's hash, kept for the classic types' flicker timing.
+fn edge_random(st: vec2<f32>) -> f32 {
+  return fract(sin(dot(st, vec2<f32>(12.9898, 78.233))) * 43758.5453123);
 }
 
-fn apply_native_edge_effects(base: vec3<f32>, uv: vec2<f32>, shape_mask: f32, layer_index: u32, t: f32) -> vec4<f32> {
-  var has_edge_effect = false;
+/// Integer hash for the new types: identical on every GPU.
+fn edge_hash_u(v: u32) -> u32 {
+  var x = v * 747796405u + 2891336453u;
+  x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
+  return (x >> 22u) ^ x;
+}
+
+fn edge_hash2(a: f32, b: f32) -> f32 {
+  let h = edge_hash_u(bitcast<u32>(i32(floor(a))) ^ edge_hash_u(bitcast<u32>(i32(floor(b))) + 0x9e3779b9u));
+  return f32(h & 0x00ffffffu) / 16777215.0;
+}
+
+fn edge_value_noise(x: f32, seed: f32) -> f32 {
+  let i = floor(x);
+  let f = x - i;
+  let u = f * f * (3.0 - 2.0 * f);
+  return mix(edge_hash2(i, seed), edge_hash2(i + 1.0, seed), u) * 2.0 - 1.0;
+}
+
+/// GLSL rotate2d(a) * v with rotate2d = mat2(c, -s, s, c).
+fn edge_rotate(v: vec2<f32>, a: f32) -> vec2<f32> {
+  let c = cos(a);
+  let s = sin(a);
+  return vec2<f32>(c * v.x + s * v.y, -s * v.x + c * v.y);
+}
+
+fn edge_hsv(h: f32, s: f32, v: f32) -> vec3<f32> {
+  let k = vec3<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0);
+  let p = abs(fract(vec3<f32>(h) + k) * 6.0 - vec3<f32>(3.0));
+  return v * mix(vec3<f32>(1.0), clamp(p - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), s);
+}
+
+/// Analytic coverage of a signed distance (negative inside), `aa` screen px wide.
+fn edge_cov(sd: f32, aa: f32) -> f32 {
+  return clamp(0.5 - sd / aa, 0.0, 1.0);
+}
+
+fn edge_pt(li: u32, i: i32) -> vec4<f32> {
+  return layers[li].edge_pts[i];
+}
+
+struct EdgeHit {
+  d: f32,      // signed distance to the centerline polygon, px, negative inside
+  s: f32,      // arc length of the closest centerline point, px
+  seg: i32,    // closest segment
+  h: f32,      // position along it (0-1)
+  scale: f32,  // surface scale there
+}
+
+/// Closest point and winding against the centerline, visiting only the
+/// 16-segment chunks that can matter (closer than the best so far, or
+/// crossed by the pixel's winding ray).
+fn edge_hit(li: u32, p: vec2<f32>, count: i32) -> EdgeHit {
+  var best = 1.0e20;
+  var winding = 0;
+  var seg = 0;
+  var hh = 0.0;
+  let chunk_count = (count + 15) / 16;
+  for (var c: i32 = 0; c < 32; c = c + 1) {
+    if (c >= chunk_count) { break; }
+    let bb = layers[li].edge_chunks[c];
+    let q = max(max(bb.xy - p, p - bb.zw), vec2<f32>(0.0));
+    let box_d2 = dot(q, q);
+    let ray_hits = p.y >= bb.y && p.y < bb.w && p.x <= bb.z;
+    if (box_d2 >= best && !ray_hits) { continue; }
+    let start = c * 16;
+    let end = min(start + 16, count);
+    for (var i: i32 = start; i < end; i = i + 1) {
+      let a = edge_pt(li, i).xy;
+      let b = edge_pt(li, select(i + 1, 0, i + 1 >= count)).xy;
+      let pa = p - a;
+      let ba = b - a;
+      let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0);
+      let e = pa - ba * h;
+      let d2 = dot(e, e);
+      if (d2 < best) {
+        best = d2;
+        seg = i;
+        hh = h;
+      }
+      let cross_z = ba.x * pa.y - pa.x * ba.y;
+      if (a.y <= p.y) {
+        if (b.y > p.y && cross_z > 0.0) { winding = winding + 1; }
+      } else if (b.y <= p.y && cross_z < 0.0) {
+        winding = winding - 1;
+      }
+    }
+  }
+  let a = edge_pt(li, seg);
+  let b = edge_pt(li, select(seg + 1, 0, seg + 1 >= count));
+  let seg_len = length(b.xy - a.xy);
+  var out: EdgeHit;
+  out.d = select(1.0, -1.0, winding != 0) * sqrt(best);
+  out.s = a.z + seg_len * hh;
+  out.seg = seg;
+  out.h = hh;
+  out.scale = mix(a.w, b.w, hh);
+  return out;
+}
+
+/// Output position of arc length `s` along the centerline.
+fn edge_point_at(li: u32, s_in: f32, count: i32, total: f32) -> vec2<f32> {
+  let s = edge_mod(s_in, total);
+  var lo = 0;
+  var hi = count - 1;
+  for (var k: i32 = 0; k < 10; k = k + 1) {
+    if (lo >= hi) { break; }
+    let mid = (lo + hi + 1) / 2;
+    if (edge_pt(li, mid).z <= s) { lo = mid; } else { hi = mid - 1; }
+  }
+  let a = edge_pt(li, lo);
+  let b = edge_pt(li, select(lo + 1, 0, lo + 1 >= count));
+  let seg_end = select(b.z, total, lo + 1 >= count);
+  let t = clamp((s - a.z) / max(seg_end - a.z, 1e-6), 0.0, 1.0);
+  return mix(a.xy, b.xy, t);
+}
+
+/// Signed distance to a stroke of half-width `hw` on the centerline, with
+/// the chosen join where the closest feature is a vertex (0 miter, 1 round,
+/// 2 bevel). Round joins are the plain distance field.
+fn edge_band_sd(li: u32, p: vec2<f32>, hit: EdgeHit, hw: f32, join: i32, miter_limit: f32, count: i32) -> f32 {
+  var sd = abs(hit.d) - hw;
+  if (join == 1 || (hit.h > 0.0 && hit.h < 1.0)) { return sd; }
+  let vi = select(hit.seg, select(hit.seg + 1, 0, hit.seg + 1 >= count), hit.h >= 1.0);
+  let v = edge_pt(li, vi).xy;
+  let prev = edge_pt(li, select(vi - 1, count - 1, vi == 0)).xy;
+  let next = edge_pt(li, select(vi + 1, 0, vi + 1 >= count)).xy;
+  let tin = normalize(v - prev);
+  let tout = normalize(next - v);
+  let rel = p - v;
+  var nin = vec2<f32>(-tin.y, tin.x);
+  if (dot(nin, rel) < 0.0) { nin = -nin; }
+  var nout = vec2<f32>(-tout.y, tout.x);
+  if (dot(nout, rel) < 0.0) { nout = -nout; }
+  let a = v + nin * hw;
+  let b = v + nout * hw;
+  let denom = max(1.0 + dot(nin, nout), 1e-4);
+  let ratio = sqrt(2.0 / denom);
+  if (join == 0 && ratio <= miter_limit) {
+    let m = v + (nin + nout) / denom * hw;
+    let e0 = normalize(m - a);
+    let e1 = normalize(b - m);
+    let n0 = vec2<f32>(e0.y, -e0.x) * sign(dot(vec2<f32>(e0.y, -e0.x), a - v));
+    let n1 = vec2<f32>(e1.y, -e1.x) * sign(dot(vec2<f32>(e1.y, -e1.x), b - v));
+    sd = max(dot(p - a, n0), dot(p - b, n1));
+  } else {
+    let e = normalize(b - a);
+    var n = vec2<f32>(e.y, -e.x);
+    if (dot(n, a - v) < 0.0) { n = -n; }
+    sd = dot(p - a, n);
+  }
+  return sd;
+}
+
+/// Signed distance, along the path, outside the circular interval
+/// [s0, s0 + len) of a closed path of length `total` (negative inside).
+fn edge_interval_out(s: f32, s0: f32, len: f32, total: f32) -> f32 {
+  if (len >= total) { return -1.0e6; }
+  if (len <= 0.0) { return 1.0e6; }
+  let u = edge_mod(s - s0, total);
+  if (u < len) { return -min(u, len - u); }
+  return min(u - len, total - u);
+}
+
+/// Same for a periodic on-interval [0, on) repeating every `cycle`.
+fn edge_periodic_out(u_in: f32, on: f32, cycle: f32) -> f32 {
+  let u = edge_mod(u_in, cycle);
+  if (u < on) { return -min(u, on - u); }
+  return min(u - on, cycle - u);
+}
+
+/// A band cut to an open run of the path: `along` is the distance outside
+/// the run along the path. Caps: 0 butt, 1 round, 2 square.
+fn edge_open_sd(band_sd: f32, along: f32, hw: f32, cap: i32) -> f32 {
+  if (cap == 1) {
+    if (along > 0.0) { return length(vec2<f32>(along, max(band_sd + hw, 0.0))) - hw; }
+    return max(band_sd, along);
+  }
+  if (cap == 2) { return max(band_sd, along - hw); }
+  return max(band_sd, along);
+}
+
+/// Coverage of a stroke whose signed distance was built for half-width
+/// max(width, aa) / 2: lines thinner than a pixel keep a one pixel footprint
+/// and fade by their width instead of breaking up.
+fn edge_line_cov(sd: f32, width: f32, aa: f32) -> f32 {
+  return edge_cov(sd, aa) * clamp(width / aa, 0.0, 1.0);
+}
+
+/// 1 - smoothstep(0, radius, dist) as the classic types use it, filtered
+/// when the radius is below a pixel so it fades instead of aliasing.
+fn edge_falloff(dist: f32, radius: f32, aa: f32) -> f32 {
+  let r = max(radius, aa);
+  return (1.0 - edge_smoothstep(0.0, r, dist)) * clamp(radius / aa, 0.0, 1.0);
+}
+
+/// Animated 0-1 progress for wipes and growth fills: 0 loop, 1 ping-pong,
+/// 2 beat phase, 3 manual (the progress value itself).
+fn edge_progress(t: f32, speed: f32, mode: i32, manual: f32) -> f32 {
+  if (mode == 1) { return 1.0 - abs(fract(t * speed * 0.5) * 2.0 - 1.0); }
+  if (mode == 2) { return clamp(u.audio1.z, 0.0, 1.0); }
+  if (mode == 3) { return clamp(manual, 0.0, 1.0); }
+  return fract(t * speed);
+}
+
+/// Coverage of the "on" half-period of a periodic coordinate (crisp stripes).
+fn edge_stripe(x: f32, period: f32, duty: f32, aa: f32) -> f32 {
+  return edge_cov(edge_periodic_out(x, period * duty, period), aa);
+}
+
+struct EdgeCtx {
+  count: i32,
+  total: f32,
+  centroid: vec2<f32>,
+  inradius: f32,
+  corner_count: i32,
+  diag_count: i32,
+  aa: f32,
+  res: vec2<f32>,
+  seed: f32,
+  bbox: vec4<f32>,
+}
+
+// ---------- classic strokes (px) ----------
+
+fn edge_solid_stroke(sd: f32, color: vec4<f32>, width: f32, aa: f32) -> vec4<f32> {
+  return vec4<f32>(color.rgb, color.a * edge_line_cov(sd, width, aa));
+}
+
+fn edge_glow_stroke(d: f32, core: f32, color: vec4<f32>, glow_size: f32, intensity: f32, pulse: f32, t: f32, aa: f32) -> vec4<f32> {
+  let pulse_mod = select(1.0, 0.7 + 0.3 * sin(t * pulse * 3.0), pulse > 0.0);
+  var glow = edge_falloff(abs(d), glow_size, aa);
+  glow = pow(glow, 2.0) * intensity * pulse_mod;
+  return vec4<f32>(color.rgb * (core + glow), max(core, glow * 0.8) * color.a);
+}
+
+fn edge_neon_stroke(d: f32, core: f32, color: vec4<f32>, width: f32, glow_size: f32, flicker: f32, t: f32, aa: f32) -> vec4<f32> {
+  var flicker_mod = 1.0;
+  if (flicker > 0.0) {
+    flicker_mod = 0.85 + 0.15 * sin(t * flicker * 15.0);
+    flicker_mod = flicker_mod * (0.9 + 0.1 * edge_random(vec2<f32>(floor(t * 8.0), 0.0)));
+  }
+  let inner = 1.0 - edge_smoothstep(0.0, 3.0, abs(d) - width * 0.5);
+  var outer = edge_falloff(abs(d), glow_size, aa);
+  outer = pow(outer, 1.5);
+  var final_color = vec3<f32>(1.0) * core * 0.8 + color.rgb * inner + color.rgb * outer * 0.5;
+  final_color = final_color * flicker_mod;
+  return vec4<f32>(final_color, max(core, max(inner * 0.9, outer * 0.6)) * color.a);
+}
+
+fn edge_snake_stroke(d: f32, core: f32, color: vec4<f32>, width: f32, snake_len: f32, speed: f32, path_pos: f32, snake_count: i32, t: f32, rx: f32, aa: f32) -> vec4<f32> {
+  var total_in_snake = 0.0;
+  var total_fade = 0.0;
+  var total_head_glow = 0.0;
+  for (var s: i32 = 0; s < 8; s = s + 1) {
+    if (s >= snake_count) { break; }
+    let snake_offset = f32(s) / f32(snake_count);
+    let head_pos = edge_mod(t * speed + snake_offset, 1.0);
+    let dist_behind = edge_mod(head_pos - path_pos + 1.0, 1.0);
+    let in_snake = edge_smoothstep(snake_len + 0.02, snake_len - 0.02, dist_behind);
+    let fade = 1.0 - clamp(dist_behind / max(snake_len, 0.001), 0.0, 1.0);
+    total_in_snake = max(total_in_snake, in_snake);
+    total_fade = max(total_fade, fade * in_snake);
+    let head_dist = abs(path_pos - head_pos);
+    let head_dist_wrapped = min(head_dist, 1.0 - head_dist);
+    total_head_glow = max(total_head_glow, exp(-head_dist_wrapped * 30.0));
+  }
+  let glow = edge_falloff(abs(d), width * 2.0 / rx, aa) * total_head_glow;
+  let body = core * total_in_snake * max(total_fade, 0.1);
+  return vec4<f32>(color.rgb * (body + glow), (body + glow * 0.5) * color.a);
+}
+
+fn edge_rainbow_stroke(d: f32, core: f32, width: f32, speed: f32, path_pos: f32, t: f32, rx: f32, aa: f32) -> vec4<f32> {
+  let hue = edge_mod(path_pos * 2.0 + t * speed, 1.0);
+  let rainbow = 0.5 + 0.5 * cos(EDGE_TAU * (hue + vec3<f32>(0.0, 0.33, 0.67)));
+  var glow = edge_falloff(abs(d), width * 1.5 / rx, aa);
+  glow = pow(glow, 2.0) * 0.5;
+  return vec4<f32>(rainbow * (core + glow), max(core, glow * 0.7));
+}
+
+fn edge_dashed_stroke(core: f32, color: vec4<f32>, dash_len: f32, gap_len: f32, path_pos: f32, speed: f32, t: f32) -> vec4<f32> {
+  let cycle = dash_len + gap_len;
+  let pos = edge_mod(path_pos + t * speed * 0.1, 1.0);
+  let dash_phase = edge_mod(pos * 10.0, cycle);
+  let dash = edge_smoothstep(0.0, 0.02, dash_phase) * (1.0 - edge_smoothstep(dash_len - 0.02, dash_len, dash_phase));
+  return vec4<f32>(color.rgb * core * dash, color.a * core * dash);
+}
+
+/// The electric stroke's jittering white core, as analytic coverage.
+fn edge_electric_core(d: f32, width: f32, arc_intensity: f32, speed: f32, path_pos: f32, time: f32, rx: f32, aa: f32) -> f32 {
+  let t = time * speed;
+  // Arc offsets were UV distances in the editor; px here.
+  var jitter = sin(path_pos * 50.0 + t * 20.0) * arc_intensity * 0.003 * rx;
+  jitter = jitter + sin(path_pos * 120.0 + t * 35.0) * arc_intensity * 0.002 * rx;
+  return edge_line_cov(abs(d + jitter) - max(width * 0.6, aa) * 0.5, width * 0.6, aa);
+}
+
+fn edge_electric_stroke(d: f32, core: f32, color: vec4<f32>, width: f32, arc_intensity: f32, speed: f32, path_pos: f32, time: f32, rx: f32, aa: f32) -> vec4<f32> {
+  let t = time * speed;
+  let arc1_offset = sin(path_pos * 30.0 + t * 15.0) * arc_intensity * 0.008 * rx;
+  let arc1 = 1.0 - edge_smoothstep(0.0, 3.0, abs(d + arc1_offset) - width * 0.15);
+  let arc2_offset = cos(path_pos * 45.0 + t * 22.0) * arc_intensity * 0.006 * rx;
+  let arc2 = 1.0 - edge_smoothstep(0.0, 3.0, abs(d + arc2_offset) - width * 0.1);
+  let core_color = vec3<f32>(1.0) * core;
+  let arc_color = color.rgb * (arc1 * 0.6 + arc2 * 0.4);
+  var glow = edge_falloff(abs(d), width * 3.0 / rx, aa);
+  glow = pow(glow, 2.5) * 0.4;
+  let flicker = 0.85 + 0.15 * edge_random(vec2<f32>(floor(t * 12.0), path_pos * 5.0));
+  let alpha = max(core, max(arc1 * 0.6, max(arc2 * 0.4, glow * 0.5)));
+  return vec4<f32>((core_color + arc_color + color.rgb * glow) * flicker, alpha * color.a);
+}
+
+fn edge_strobe_stroke(d: f32, core: f32, color: vec4<f32>, width: f32, rate: f32, t: f32, rx: f32, aa: f32) -> vec4<f32> {
+  let on = step(0.0, sin(t * rate * EDGE_TAU));
+  var glow = edge_falloff(abs(d), width * 2.0 / rx, aa);
+  glow = pow(glow, 1.5) * 0.8;
+  return vec4<f32>(color.rgb * (core + glow) * on, max(core, glow * 0.7) * on * color.a);
+}
+
+fn edge_scanner_stroke(d: f32, core: f32, color: vec4<f32>, width: f32, beam_width: f32, speed: f32, path_pos: f32, trail: f32, t: f32, rx: f32, aa: f32) -> vec4<f32> {
+  let scan_pos = edge_mod(t * speed * 0.2, 1.0);
+  var dist = abs(path_pos - scan_pos);
+  dist = min(dist, 1.0 - dist);
+  var beam = 1.0 - edge_smoothstep(0.0, beam_width, dist);
+  beam = pow(beam, 2.0);
+  let trail_dist = edge_mod(scan_pos - path_pos + 1.0, 1.0);
+  let trail_fade = (1.0 - edge_smoothstep(0.0, trail, trail_dist)) * 0.4;
+  let intensity = max(beam, trail_fade);
+  var glow = edge_falloff(abs(d), width * 2.0 / rx, aa);
+  glow = pow(glow, 2.0) * beam * 0.6;
+  return vec4<f32>(color.rgb * (core * intensity + glow), (core * intensity + glow * 0.5) * color.a);
+}
+
+fn edge_fire_stroke(d: f32, core: f32, color: vec4<f32>, width: f32, speed: f32, path_pos: f32, time: f32, rx: f32, aa: f32) -> vec4<f32> {
+  let t = time * speed;
+  var noise = sin(path_pos * 20.0 + t * 5.0) * 0.5 + 0.5;
+  noise = noise * (sin(path_pos * 35.0 - t * 3.0) * 0.5 + 0.5);
+  noise = noise + sin(path_pos * 8.0 + t * 7.0) * 0.3;
+  var fire_color = mix(vec3<f32>(1.0, 0.2, 0.0), vec3<f32>(1.0, 0.9, 0.2), noise);
+  fire_color = mix(fire_color, vec3<f32>(1.0), core * 0.5);
+  let w_uv = width / rx;
+  let flame_dist = abs(d) - width * (0.5 + noise * 0.8);
+  var flame = edge_falloff(max(flame_dist, 0.0), w_uv * 2.0, aa);
+  flame = flame * noise;
+  let final_color = fire_color * core + vec3<f32>(1.0, 0.3, 0.0) * flame * 0.6;
+  return vec4<f32>(final_color, max(core, flame * 0.5) * color.a);
+}
+
+// ---------- classic fills (uv = output UV, as the editor shader) ----------
+
+fn edge_plasma_fill(inside: f32, p: vec2<f32>, speed: f32, scale: f32, complexity: f32, palette: i32, time: f32) -> vec4<f32> {
+  if (inside < 0.01) { return vec4<f32>(0.0); }
+  let t = time * speed;
+  let s = scale;
+  var plasma = 0.0;
+  plasma = plasma + sin(p.x * s + t);
+  plasma = plasma + sin(p.y * s + t * 1.2);
+  plasma = plasma + sin((p.x + p.y) * s * 0.75 + t * 0.7);
+  plasma = plasma + sin(length(p - vec2<f32>(0.5)) * s * 1.5 + t * 0.9);
+  if (complexity > 2.0) {
+    plasma = plasma + sin(p.x * s * 2.0 - p.y * s * 1.5 + t * 1.5) * 0.5;
+    plasma = plasma + sin(length(p - vec2<f32>(0.3, 0.7)) * s * 2.0 + t * 1.1) * 0.4;
+  }
+  if (complexity > 4.0) {
+    plasma = plasma + sin((p.x * p.y) * s * 3.0 + t * 2.0) * 0.3;
+    plasma = plasma + cos(p.x * s * 3.0 + sin(p.y * s * 2.0 + t)) * 0.25;
+  }
+  let total_weight = 4.0 + select(0.0, 0.9, complexity > 2.0) + select(0.0, 0.55, complexity > 4.0);
+  plasma = plasma / total_weight + 0.5;
+  var color: vec3<f32>;
+  if (palette == 1) {
+    color = mix(vec3<f32>(0.1, 0.0, 0.0), vec3<f32>(1.0, 0.9, 0.2), plasma);
+    color = mix(color, vec3<f32>(1.0, 0.3, 0.0), sin(plasma * EDGE_PI) * 0.5 + 0.5);
+  } else if (palette == 2) {
+    color = mix(vec3<f32>(0.0, 0.05, 0.2), vec3<f32>(0.0, 0.8, 1.0), plasma);
+    color = mix(color, vec3<f32>(0.2, 0.4, 0.8), sin(plasma * EDGE_PI * 2.0) * 0.3 + 0.5);
+  } else if (palette == 3) {
+    color = 0.5 + 0.5 * cos(EDGE_TAU * (plasma * 2.0 + vec3<f32>(0.0, 0.15, 0.4)));
+    color = pow(color, vec3<f32>(0.8));
+  } else {
+    color = 0.5 + 0.5 * cos(EDGE_TAU * (plasma + vec3<f32>(0.0, 0.33, 0.67)));
+  }
+  return vec4<f32>(color, inside);
+}
+
+fn edge_liquid_fill(inside: f32, p: vec2<f32>, base_color: vec4<f32>, speed: f32, viscosity: f32, turbulence: f32, metallic: f32, time: f32) -> vec4<f32> {
+  if (inside < 0.01) { return vec4<f32>(0.0); }
+  let t = time * speed;
+  let dist_amt = 0.05 * (1.0 - viscosity * 0.8);
+  let distort1 = sin(p.x * 15.0 + t) * cos(p.y * 12.0 + t * 0.8) * dist_amt;
+  let distort2 = cos(p.x * 10.0 - t * 0.6) * sin(p.y * 18.0 + t * 1.2) * dist_amt * turbulence;
+  let dp = p + vec2<f32>(distort1, distort2);
+  var noise = sin(dp.x * 25.0 + t) * sin(dp.y * 25.0 - t) * 0.5 + 0.5;
+  if (turbulence > 0.3) {
+    noise = noise + sin(dp.x * 50.0 - t * 1.5) * sin(dp.y * 40.0 + t * 1.3) * 0.2 * turbulence;
+  }
+  if (turbulence > 0.6) {
+    noise = noise + sin(dp.x * 80.0 + t * 2.0) * cos(dp.y * 70.0 - t * 1.8) * 0.1 * turbulence;
+  }
+  noise = clamp(noise, 0.0, 1.0);
+  var color = base_color.rgb * (0.6 + noise * 0.6);
+  let deep_color = base_color.rgb * vec3<f32>(0.6, 0.8, 1.2);
+  color = mix(deep_color, color, noise);
+  let highlight = pow(noise, 3.0 + (1.0 - metallic) * 3.0) * metallic;
+  let sheen = pow(max(0.0, sin(dp.x * 40.0 + t * 2.0) * cos(dp.y * 35.0 - t * 1.5)), 8.0) * metallic * 0.4;
+  color = color + vec3<f32>(highlight + sheen);
+  return vec4<f32>(color, base_color.a * inside);
+}
+
+fn edge_fire_fill(inside: f32, p: vec2<f32>, speed: f32, intensity: f32, turbulence: f32, palette: i32, time: f32) -> vec4<f32> {
+  if (inside < 0.01) { return vec4<f32>(0.0); }
+  let t = time * speed;
+  var fire = 0.0;
+  fire = fire + sin(p.x * 8.0 + t * 3.0) * 0.5;
+  fire = fire + sin(p.y * 6.0 - t * 2.5) * 0.5;
+  fire = fire + sin((p.x + p.y) * 5.0 + t * 4.0) * 0.3;
+  if (turbulence > 0.3) {
+    fire = fire + sin(p.x * 16.0 - t * 5.0) * sin(p.y * 14.0 + t * 3.5) * turbulence * 0.4;
+  }
+  if (turbulence > 0.6) {
+    fire = fire + sin(p.x * 30.0 + t * 8.0) * cos(p.y * 25.0 - t * 6.0) * turbulence * 0.2;
+  }
+  fire = fire * 0.5 + 0.5;
+  var dark_color = vec3<f32>(1.0, 0.2, 0.0);
+  var bright_color = vec3<f32>(1.0, 0.9, 0.2);
+  var mid_color = vec3<f32>(1.0, 0.5, 0.1);
+  if (palette == 1) {
+    dark_color = vec3<f32>(0.0, 0.0, 0.4);
+    bright_color = vec3<f32>(0.4, 0.7, 1.0);
+    mid_color = vec3<f32>(0.1, 0.3, 0.9);
+  } else if (palette == 2) {
+    dark_color = vec3<f32>(0.0, 0.2, 0.0);
+    bright_color = vec3<f32>(0.5, 1.0, 0.3);
+    mid_color = vec3<f32>(0.1, 0.7, 0.2);
+  } else if (palette == 3) {
+    dark_color = vec3<f32>(0.2, 0.0, 0.3);
+    bright_color = vec3<f32>(1.0, 0.5, 1.0);
+    mid_color = vec3<f32>(0.5, 0.1, 0.8);
+  }
+  var color = mix(dark_color, bright_color, pow(fire, 1.5));
+  color = mix(color, mid_color, fire * 0.4);
+  color = color * intensity;
+  return vec4<f32>(color, inside);
+}
+
+fn edge_electric_fill(inside: f32, p: vec2<f32>, color: vec4<f32>, speed: f32, intensity: f32, arc_count: f32, time: f32) -> vec4<f32> {
+  if (inside < 0.01) { return vec4<f32>(0.0); }
+  let t = time * speed;
+  let freq_mult = arc_count * 6.0;
+  var arc = 0.0;
+  arc = arc + sin(p.x * freq_mult + t * 8.0) * sin(p.y * freq_mult * 0.83 - t * 6.0);
+  arc = arc + sin((p.x - p.y) * freq_mult * 1.33 + t * 12.0) * 0.5;
+  arc = arc + sin(length(p - vec2<f32>(0.5)) * freq_mult * 0.67 + t * 10.0) * 0.3;
+  arc = pow(abs(arc), 0.3);
+  let bolt = step(1.0 - intensity * 0.25, arc);
+  let glow = pow(arc, 3.0 - intensity * 0.5);
+  var final_color = color.rgb * (glow * 0.4 * intensity + bolt * 1.5);
+  final_color = final_color + vec3<f32>(0.8, 0.9, 1.0) * bolt * 0.5 * intensity;
+  let flash = step(0.97 - intensity * 0.05, edge_random(vec2<f32>(floor(t * (4.0 + intensity * 4.0)), 0.0)));
+  final_color = final_color + color.rgb * flash * 0.3 * intensity;
+  final_color = final_color + color.rgb * (glow * 0.15 * intensity);
+  return vec4<f32>(final_color, inside * max(glow * 0.5, bolt));
+}
+
+fn edge_holographic_fill(inside: f32, d: f32, p: vec2<f32>, speed: f32, shift: f32, scanlines: f32, flicker_amt: f32, time: f32, rx: f32) -> vec4<f32> {
+  if (inside < 0.01) { return vec4<f32>(0.0); }
+  let t = time * speed;
+  let angle = atan2(p.y - 0.5, p.x - 0.5);
+  let hue = edge_mod(angle / EDGE_TAU + t * 0.1 + shift, 1.0);
+  let rainbow = 0.5 + 0.5 * cos(EDGE_TAU * (hue + vec3<f32>(0.0, 0.33, 0.67)));
+  let fresnel = exp(-abs(d) / (0.05 * rx) * 2.0);
+  var scan = 1.0;
+  if (scanlines > 0.1) {
+    scan = sin(p.y * scanlines * 100.0 + t * 2.0) * 0.5 + 0.5;
+    scan = mix(0.7, 1.0, scan);
+  }
+  var flicker = 1.0;
+  if (flicker_amt > 0.01) {
+    flicker = 1.0 - flicker_amt * 0.15;
+    flicker = flicker + flicker_amt * 0.15 * sin(t * 15.0);
+    flicker = flicker * (1.0 - flicker_amt * 0.1 * step(0.95, edge_random(vec2<f32>(floor(t * 8.0), 0.0))));
+  }
+  return vec4<f32>(rainbow * scan * flicker * (0.5 + fresnel * 0.5), inside * 0.8);
+}
+
+fn edge_noise_fill(inside: f32, p: vec2<f32>, color: vec4<f32>, speed: f32, scale: f32, turbulence: f32, color2: vec4<f32>, time: f32) -> vec4<f32> {
+  if (inside < 0.01) { return vec4<f32>(0.0); }
+  let t = time * speed;
+  var n = 0.0;
+  var amp = 1.0;
+  var freq = scale;
   for (var i: i32 = 0; i < 4; i = i + 1) {
-    let info = layers[layer_index].edge_effects[i][0];
-    has_edge_effect = has_edge_effect || (info.x >= 0.5 && info.y > 0.001);
+    n = n + amp * (sin(p.x * freq + t + f32(i)) * cos(p.y * freq * 1.3 - t * 0.7 + f32(i) * 2.0));
+    amp = amp * 0.5;
+    freq = freq * (2.0 + turbulence);
   }
-  if (!has_edge_effect) { return vec4<f32>(base, 0.0); }
-  var result = base;
-  var coverage = 0.0;
-  let signed_dist = native_shape_signed_distance(uv, layer_index);
-  let pixel_uv = max(fwidth(signed_dist), 1.0 / max(1.0, min(u.resolution.x, u.resolution.y)));
-  let path_phase = native_edge_path_phase(uv, layer_index);
-  for (var effect_index: i32 = 0; effect_index < 4; effect_index = effect_index + 1) {
-    let edge_info = layers[layer_index].edge_effects[effect_index][0];
-    if (edge_info.x < 0.5 || edge_info.y <= 0.001) { continue; }
-    let stroke_color_raw = layers[layer_index].edge_effects[effect_index][1];
-    let stroke_params = layers[layer_index].edge_effects[effect_index][2];
-    let fill_params = layers[layer_index].edge_effects[effect_index][3];
-    let fill_color0 = layers[layer_index].edge_effects[effect_index][4];
-    let fill_color1 = layers[layer_index].edge_effects[effect_index][5];
-    let animation = layers[layer_index].edge_effects[effect_index][6];
-    let stroke_code = i32(floor(edge_info.w + 0.5));
-    let fill_code = i32(floor(fill_params.x + 0.5));
-    let animation_code = i32(floor(animation.x + 0.5));
-    let speed = animation.y;
-    var animated_dist = signed_dist;
-    var animated_phase = path_phase;
-    var animation_gain = 1.0;
-    if (animation_code == 2) {
-      animation_gain = mix(max(0.05, animation.z), max(animation.z, animation.w), 0.5 + 0.5 * sin(t * speed * 3.14159265));
-    } else if (animation_code == 3) {
-      animated_phase = fract(animated_phase + t * speed * 0.12);
-    } else if (animation_code == 5 || animation_code == 6) {
-      animated_dist += sin(animated_phase * 6.2831853 * max(1.0, animation.z) - t * speed * 3.0) * animation.w * 0.12;
-    } else if (animation_code == 7) {
-      animated_phase = fract(animated_phase + (hash21(vec2<f32>(floor(t * max(1.0, speed) * 8.0), f32(effect_index))) - 0.5) * animation.z * 0.2);
-      animation_gain = 0.68 + 0.32 * step(0.18, hash21(vec2<f32>(floor(t * max(1.0, speed) * 14.0), uv.y * 31.0)));
-    }
+  n = n * 0.5 + 0.5;
+  return vec4<f32>(mix(color2.rgb, color.rgb, n), inside * color.a);
+}
 
-    let fill_sample = native_edge_fill_color(fill_code, uv, fill_color0, fill_color1, fill_params, t);
-    let fill_alpha = fill_sample.a * shape_mask * edge_info.y * animation_gain;
-    if (fill_code > 0 && fill_alpha > 0.001) {
-      result = native_blend(result, fill_sample.rgb, fill_alpha, edge_info.z);
-      coverage = max(coverage, fill_alpha);
-    }
+fn edge_gradient_fill(inside: f32, p: vec2<f32>, px: vec2<f32>, color: vec4<f32>, color2: vec4<f32>, angle: f32, speed: f32, grad_type: i32, time: f32) -> vec4<f32> {
+  if (inside < 0.01) { return vec4<f32>(0.0); }
+  var t: f32;
+  if (grad_type == 1) {
+    t = fract(clamp(length(p - vec2<f32>(0.5)) * 2.0 + time * speed * 0.1, 0.0, 1.0));
+  } else if (grad_type == 2) {
+    let a = atan2(p.y - 0.5, p.x - 0.5);
+    t = edge_mod(a / EDGE_TAU + 0.5 + time * speed * 0.1, 1.0);
+  } else if (grad_type == 3) {
+    // Diamond: the L1 distance from the centre.
+    t = fract(clamp((abs(p.x - 0.5) + abs(p.y - 0.5)) * 2.0 + time * speed * 0.1, 0.0, 1.0));
+  } else {
+    let a = angle + time * speed * 0.5;
+    t = clamp(dot(p - vec2<f32>(0.5), vec2<f32>(cos(a), sin(a))) + 0.5, 0.0, 1.0);
+  }
+  // Half an 8-bit step of dither keeps long ramps from banding.
+  let dither = (edge_hash2(px.x, px.y + 17.0) - 0.5) / 255.0;
+  return vec4<f32>(mix(color.rgb, color2.rgb, t) + vec3<f32>(dither), inside * mix(color.a, color2.a, t));
+}
 
-    if (stroke_code > 0) {
-      let width_px = max(0.5, stroke_params.x) * animation_gain;
-      var stroke_alpha = 1.0 - smoothstep(width_px * pixel_uv, (width_px + 1.5) * pixel_uv, abs(animated_dist));
-      var stroke_color = stroke_color_raw.rgb;
-      if (stroke_code == 2 || stroke_code == 3) {
-        let glow_px = max(width_px + 2.0, stroke_params.y);
-        let glow = 1.0 - smoothstep(width_px * pixel_uv, glow_px * pixel_uv, abs(animated_dist));
-        let pulse = 1.0 + 0.28 * sin(t * stroke_params.w * 6.2831853);
-        stroke_alpha = max(stroke_alpha, glow * clamp(stroke_params.z, 0.0, 3.0) * 0.55) * pulse;
-        if (stroke_code == 3) { stroke_color = mix(vec3<f32>(1.0), stroke_color, 0.7); }
-      } else if (stroke_code == 4) {
-        let snake_count = max(1.0, stroke_params.w);
-        let snake_phase = fract(animated_phase * snake_count - t * stroke_params.z * 0.18);
-        let snake_length = clamp(stroke_params.y, 0.02, 0.98);
-        stroke_alpha *= 1.0 - smoothstep(snake_length, min(1.0, snake_length + 0.08), snake_phase);
-      } else if (stroke_code == 5) {
-        stroke_color = native_edge_palette(animated_phase + t * stroke_params.z * 0.08);
-      } else if (stroke_code == 6) {
-        let dash = max(0.01, stroke_params.y);
-        let gap = max(0.005, stroke_params.z);
-        stroke_alpha *= step(gap / (dash + gap), fract(animated_phase * 4.0 / (dash + gap) - t * stroke_params.w * 0.25));
-      } else if (stroke_code == 7) {
-        let arc = hash21(vec2<f32>(floor(animated_phase * 96.0), floor(t * max(0.1, stroke_params.z) * 20.0)));
-        stroke_alpha *= 0.35 + step(0.42, arc) * clamp(stroke_params.y, 0.1, 2.0);
-      } else if (stroke_code == 8) {
-        let pulses = max(1.0, stroke_params.y);
-        let pulse = abs(fract(animated_phase * pulses - t * stroke_params.z * 0.25) - 0.5) * 2.0;
-        stroke_alpha *= 1.0 - smoothstep(0.08, max(0.1, stroke_params.w), pulse);
-      } else if (stroke_code == 9) {
-        let beam = abs(fract(animated_phase - t * stroke_params.z * 0.15) - 0.5) * 2.0;
-        stroke_alpha *= 1.0 - smoothstep(max(0.01, stroke_params.y), max(0.02, stroke_params.y) + 0.12, beam);
-      } else if (stroke_code == 10) {
-        let flame = fbm(vec2<f32>(animated_phase * 18.0, t * max(0.1, stroke_params.z) * 1.4));
-        stroke_color = mix(vec3<f32>(1.0, 0.08, 0.0), stroke_color, flame);
-        stroke_alpha *= 0.45 + flame * clamp(stroke_params.y, 0.1, 2.0);
+// ---------- new fills ----------
+
+/// Extent of `bbox` (px) projected on `dir`: (min, max).
+fn edge_extent(bbox: vec4<f32>, dir: vec2<f32>) -> vec2<f32> {
+  let a = dot(bbox.xy, dir);
+  let b = dot(vec2<f32>(bbox.z, bbox.y), dir);
+  let c = dot(bbox.zw, dir);
+  let d = dot(vec2<f32>(bbox.x, bbox.w), dir);
+  return vec2<f32>(min(min(a, b), min(c, d)), max(max(a, b), max(c, d)));
+}
+
+fn edge_far_corner(bbox: vec4<f32>, origin: vec2<f32>) -> f32 {
+  return max(max(length(bbox.xy - origin), length(bbox.zw - origin)),
+    max(length(vec2<f32>(bbox.z, bbox.y) - origin), length(vec2<f32>(bbox.x, bbox.w) - origin)));
+}
+
+/// Crisp pattern lines: 0 dots, 1 lines (hatch), 2 grid, 3 crosshatch,
+/// 4 chevron, 5 hexagon. Returns the pattern's coverage.
+fn edge_pattern(q: vec2<f32>, kind: i32, scale: f32, line_w: f32, aa: f32) -> f32 {
+  let s = max(scale, 1.0);
+  let hw = max(line_w, aa) * 0.5;
+  let fade = clamp(line_w / aa, 0.0, 1.0);
+  if (kind == 0) {
+    let cell = q - s * (floor(q / s) + vec2<f32>(0.5));
+    return edge_cov(length(cell) - max(line_w, aa) * 0.5 * 2.0, aa) * fade;
+  }
+  let fx = abs(q.x - s * round(q.x / s));
+  let fy = abs(q.y - s * round(q.y / s));
+  if (kind == 1) { return edge_cov(fx - hw, aa) * fade; }
+  if (kind == 2) { return edge_cov(min(fx, fy) - hw, aa) * fade; }
+  if (kind == 3) {
+    let r = vec2<f32>(q.x + q.y, q.x - q.y) * 0.70710678;
+    let gx = abs(r.x - s * round(r.x / s));
+    let gy = abs(r.y - s * round(r.y / s));
+    return edge_cov(min(gx, gy) - hw, aa) * fade;
+  }
+  if (kind == 4) {
+    let y = q.y + abs(edge_mod(q.x, s) - s * 0.5);
+    let g = abs(y - s * round(y / s));
+    return edge_cov(g * 0.70710678 - hw, aa) * fade;
+  }
+  // Hexagon edges: distance to the nearest hexagon cell border.
+  let r = vec2<f32>(1.0, 1.7320508) * s;
+  let h = r * 0.5;
+  let a = q - r * floor(q / r) - h;
+  let b = q - r * floor((q - h) / r) - h;
+  let g = select(b, a, dot(a, a) < dot(b, b));
+  let ag = abs(g);
+  let hex = max(dot(ag, normalize(vec2<f32>(1.0, 1.7320508))), ag.x);
+  return edge_cov(abs(hex - s * 0.5) - hw, aa) * fade;
+}
+
+// ---------- one edge effect ----------
+
+fn edge_fx(li: u32, e: i32, k: i32) -> vec4<f32> {
+  return layers[li].edge_effects[e][k];
+}
+
+/// One edge effect at output pixel `p`, as premultiplied colour.
+fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeCtx) -> vec4<f32> {
+  let v0 = edge_fx(li, e, 0);
+  let stroke_color_u = edge_fx(li, e, 1);
+  let sw = edge_fx(li, e, 2);
+  let s3 = edge_fx(li, e, 3);
+  let s4 = edge_fx(li, e, 4);
+  let f5 = edge_fx(li, e, 5);
+  let fill_color_u = edge_fx(li, e, 6);
+  let fill_color2_u = edge_fx(li, e, 7);
+  let fa = edge_fx(li, e, 8);
+  let an = edge_fx(li, e, 9);
+  let ap = edge_fx(li, e, 10);
+  let sb = edge_fx(li, e, 11);
+  let fb = edge_fx(li, e, 12);
+  let geo = edge_fx(li, e, 13);
+  let trim = edge_fx(li, e, 14);
+  let misc = edge_fx(li, e, 15);
+  let cen = edge_fx(li, e, 16);
+  let dash = edge_fx(li, e, 17);
+  let gbox = edge_fx(li, e, 18);
+  let stroke_type = i32(floor(v0.w + 0.5));
+  let fill_type = i32(floor(f5.y + 0.5));
+  let anim_type = i32(floor(an.x + 0.5));
+  let res = ctx.res;
+  let rx = res.x;
+  let total = ctx.total;
+  let t = u.time - misc.y;
+  let center = select(ctx.centroid, cen.xy, misc.w > 0.5);
+  let anim_count = an.y;
+  let anim_spacing = an.z;
+  let anim_speed = an.w;
+
+  // Transform animations move the query point: q is where p lands on the
+  // shape, k how much the transform magnifies it (distances scale by k).
+  var q = p;
+  var k = 1.0;
+  var visible = 1.0;
+  if (anim_type == 4) {
+    let angle = t * ap.x;
+    if (angle != 0.0) { q = center + edge_rotate(p - center, angle); }
+  } else if (anim_type == 8 || anim_type == 9) {
+    // Card flip about the shape's X (8) or Y (9) axis, with perspective.
+    let theta = t * anim_speed * EDGE_TAU;
+    let focal = mix(1.0e6, max(ctx.inradius, 8.0) * 3.0, clamp(ap.x, 0.0, 1.0));
+    let rel = p - center;
+    let along = select(rel.x, rel.y, anim_type == 8);
+    let across = select(rel.y, rel.x, anim_type == 8);
+    let c = cos(theta);
+    let s = sin(theta);
+    let denom = focal * c - along * s;
+    if (abs(denom) < 1e-3 || abs(c) < 1e-3) {
+      visible = 0.0;
+    } else {
+      let a_plane = along * focal / denom;
+      let depth = focal + a_plane * s;
+      if (depth <= 0.0) { visible = 0.0; }
+      let x_plane = across * depth / focal;
+      q = center + select(vec2<f32>(a_plane, x_plane), vec2<f32>(x_plane, a_plane), anim_type == 8);
+      k = sqrt(abs(focal * focal * c / (depth * depth) * focal / depth));
+    }
+  } else if (anim_type == 10) {
+    let tau = fract(t * anim_speed);
+    let bounciness = max(ap.y, 1.0);
+    let sc = max(1.0 - ap.x * exp(-5.0 * tau) * cos(tau * bounciness * EDGE_TAU), 0.05);
+    q = center + (p - center) / sc;
+    k = sc;
+  } else if (anim_type == 11) {
+    let a = t * anim_speed * EDGE_TAU;
+    q = p - ap.x * vec2<f32>(cos(a), sin(a));
+  } else if (anim_type == 12) {
+    q = p - vec2<f32>(0.0, ap.x * abs(sin(t * anim_speed * EDGE_PI)));
+  } else if (anim_type == 13) {
+    let n = t * anim_speed * 8.0;
+    q = p - ap.x * vec2<f32>(edge_value_noise(n, 11.0 + ctx.seed), edge_value_noise(n, 37.0 + ctx.seed));
+  }
+  if (visible < 0.5) { return vec4<f32>(0.0); }
+  var hit = base;
+  if (any(q != p)) { hit = edge_hit(li, q, ctx.count); }
+  let aa = ctx.aa / max(k, 0.05);
+  let fill_px = select(p, q, anim_type >= 8);
+  let uv = fill_px / res;
+  let d = hit.d;
+  let s_arc = hit.s;
+  let path_pos = s_arc / total;
+  let inside = edge_cov(d, aa);
+
+  // Stroke geometry shared by the core band of every stroke type.
+  let width = sw.x * select(1.0, hit.scale, geo.w > 0.5);
+  let hw = max(width, aa) * 0.5;
+  let cap = i32(floor(geo.x + 0.5));
+  let join = i32(floor(geo.y + 0.5));
+  let band = edge_band_sd(li, q, hit, hw, join, max(geo.z, 1.0), ctx.count);
+
+  // Trim path: the stroke only shows between start and end (fractions of the
+  // perimeter), shifted by offset and optionally animated.
+  var trim_on = false;
+  var trim_along = -1.0e6;
+  let trim_mode = i32(floor(trim.w + 0.5));
+  if (trim_mode > 0 || trim.x > 0.0 || trim.y < 1.0) {
+    trim_on = true;
+    var t0 = trim.x;
+    var t1 = trim.y;
+    let prog = fract(t * misc.x);
+    if (trim_mode == 1) { t1 = t0 + (t1 - t0) * prog; }
+    else if (trim_mode == 2) { t0 = t0 + (t1 - t0) * prog; }
+    else if (trim_mode == 3) { t1 = t0 + (t1 - t0) * (1.0 - abs(prog * 2.0 - 1.0)); }
+    trim_along = edge_interval_out(s_arc, (t0 + trim.z) * total, (t1 - t0) * total, total);
+  }
+  // Classic types take the plain band and are trimmed by a mask afterwards;
+  // solid and the new types cut the band itself, so the trim gets real caps.
+  let core = edge_line_cov(band, width, aa);
+  let core_sd = select(band, edge_open_sd(band, trim_along, hw, cap), trim_on);
+  let stroke_speed = s3.y;
+
+  // Fill and stroke are evaluated at full coverage (fill_color, and the
+  // stroke with its core off and on: stroke0, stroke1); their analytic
+  // coverages (fill_w, stroke_w) are applied at the end, linearly.
+  var fill_color = vec4<f32>(0.0);
+  var fill_w = inside;
+  var stroke0 = vec4<f32>(0.0);
+  var stroke1 = vec4<f32>(0.0);
+  var stroke_w = 0.0;
+  var stroke_has_trim = false;
+
+  // ----- fill -----
+  let fill_speed = f5.z;
+  let prog_mode = i32(floor(cen.z + 0.5));
+  if (inside <= 0.0) {
+    // Nothing of the fill reaches this pixel.
+  } else if (fill_type == 1) {
+    fill_color = fill_color_u;
+  } else if (fill_type == 2) {
+    fill_color = edge_plasma_fill(1.0, uv, fill_speed, fa.x, fa.y, i32(floor(fa.z + 0.5)), t);
+  } else if (fill_type == 3) {
+    fill_color = edge_liquid_fill(1.0, uv, fill_color_u, fill_speed, fa.x, fa.y, fa.z, t);
+  } else if (fill_type == 4) {
+    fill_color = edge_fire_fill(1.0, uv, fill_speed, fa.x, fa.y, i32(floor(fa.z + 0.5)), t);
+  } else if (fill_type == 5) {
+    fill_color = edge_electric_fill(1.0, uv, fill_color_u, fill_speed, fa.x, fa.y, t);
+  } else if (fill_type == 6) {
+    fill_color = edge_holographic_fill(1.0, d, uv, fill_speed, fa.x, fa.y, fa.z, t, rx);
+  } else if (fill_type == 7) {
+    fill_color = edge_noise_fill(1.0, uv, fill_color_u, fill_speed, fa.x, fa.y, fill_color2_u, t);
+  } else if (fill_type == 8) {
+    fill_color = edge_gradient_fill(1.0, uv, fill_px, fill_color_u, fill_color2_u, fa.x, fill_speed, i32(floor(f5.w + 0.5)), t);
+  } else if (fill_type >= 9) {
+    let prog = edge_progress(t, fill_speed, prog_mode, cen.w);
+    var region = d;           // signed distance of the lit region
+    var c1 = fill_color_u;
+    var mixv = 0.0;           // 0 = colour 1, 1 = colour 2 (patterns)
+    if (fill_type == 9) {
+      var index = 0.0;
+      if (fa.z > 0.5) { index = floor(t * max(u.audio1.w, 1.0) / 60.0); }
+      let hue = edge_hash2(ctx.seed * 7.0 + index, 3.0 + f32(e));
+      c1 = vec4<f32>(edge_hsv(hue, clamp(fa.x, 0.0, 1.0), clamp(fa.y, 0.0, 1.0)), fill_color_u.a);
+    } else if (fill_type == 10) {
+      region = max(d, -d - prog * ctx.inradius);
+    } else if (fill_type == 11) {
+      region = (1.0 - prog) * ctx.inradius + d;
+    } else if (fill_type == 12) {
+      let ci = clamp(i32(floor(fa.x + 0.5)), 0, max(ctx.corner_count - 1, 0));
+      let corner = select(center, layers[li].edge_corners[ci].xy, ctx.corner_count > 0);
+      region = max(d, length(fill_px - corner) - prog * edge_far_corner(ctx.bbox, corner));
+    } else if (fill_type == 13 || fill_type == 14) {
+      let dir = vec2<f32>(cos(fa.x), sin(fa.x));
+      let ext = edge_extent(select(ctx.bbox, gbox, fill_type == 14), dir);
+      let soft = max(fa.y, 0.0);
+      let along = dot(fill_px, dir) - (ext.x + prog * (ext.y - ext.x + soft));
+      if (soft > 0.5) {
+        c1 = vec4<f32>(fill_color_u.rgb, fill_color_u.a * (1.0 - edge_smoothstep(-soft, 0.0, along)));
+      } else {
+        region = max(d, along);
       }
-      if (animation_code == 1) {
-        let spacing = max(0.004, animation.w);
-        let ring = abs(fract((-signed_dist / spacing) - t * speed * 0.3) - 0.5) * 2.0;
-        stroke_alpha = max(stroke_alpha, (1.0 - smoothstep(0.04, 0.22, ring)) * shape_mask);
-      } else if (animation_code == 4) {
-        let rays = max(2.0, animation.z);
-        let ray = pow(abs(sin((atan2(uv.y - 0.5, uv.x - 0.5) + t * speed) * rays * 0.5)), 18.0);
-        stroke_alpha = max(stroke_alpha, ray * shape_mask * 0.75);
+    } else if (fill_type == 15) {
+      let steps = max(floor(fa.x + 0.5), 1.0);
+      let dir = vec2<f32>(cos(fa.y), sin(fa.y));
+      let ext = edge_extent(ctx.bbox, dir);
+      let span = max(ext.y - ext.x, 1.0);
+      let x = dot(fill_px, dir) - ext.x;
+      let lit = floor(prog * (steps + 1.0));
+      region = max(d, x - lit * span / steps);
+      let band_i = floor(x / (span / steps));
+      c1 = vec4<f32>(fill_color_u.rgb * (0.55 + 0.45 * (band_i + 1.0) / steps), fill_color_u.a);
+    } else if (fill_type == 16) {
+      let period = max(fa.x, 1.0);
+      mixv = 1.0 - edge_stripe(-d - t * fill_speed * period, period, 0.5, aa);
+    } else if (fill_type == 17 || fill_type == 18) {
+      let dir = vec2<f32>(-sin(fa.x), cos(fa.x));
+      let period = max(fa.y, 0.5) * 2.0;
+      mixv = 1.0 - edge_stripe(dot(fill_px, dir) + t * fill_speed * period, period, 0.5, aa);
+      if (fill_type == 18) {
+        let dir2 = vec2<f32>(sin(fa.x), cos(fa.x));
+        let second = edge_stripe(dot(fill_px, dir2) - t * fill_speed * period, period, 0.5, aa);
+        mixv = 1.0 - max(1.0 - mixv, second);
       }
-      stroke_alpha = clamp(stroke_alpha * stroke_color_raw.a * edge_info.y, 0.0, 1.0) * shape_mask;
-      result = native_blend(result, stroke_color, stroke_alpha, edge_info.z);
-      coverage = max(coverage, stroke_alpha);
+    } else if (fill_type == 19) {
+      let cell = max(fa.x, 2.0);
+      let id = floor(fill_px / cell);
+      let on = step(edge_hash2(id.x + ctx.seed * 13.0, id.y), prog);
+      mixv = 1.0 - on;
+    } else if (fill_type == 20) {
+      let radius = max(fa.x, 0.01) * max(ctx.inradius, 1.0);
+      let pulse = select(1.0, 0.8 + 0.2 * sin(t * fa.z * EDGE_TAU), fa.z > 0.0);
+      let glow = clamp(fa.y * pulse * exp(-length(fill_px - center) / radius * 2.0), 0.0, 1.5);
+      c1 = vec4<f32>(fill_color_u.rgb * glow, fill_color_u.a * clamp(glow, 0.0, 1.0));
+    } else if (fill_type == 21) {
+      // Origami: fan facets from the centre to each corner, each folding.
+      let rel = fill_px - center;
+      let ang = atan2(rel.y, rel.x);
+      var facet = 0.0;
+      let n = max(ctx.corner_count, 0);
+      if (n >= 3) {
+        var best = 1.0e9;
+        for (var i: i32 = 0; i < 64; i = i + 1) {
+          if (i >= n) { break; }
+          let ca = layers[li].edge_corners[i].xy - center;
+          let da = edge_mod(ang - atan2(ca.y, ca.x), EDGE_TAU);
+          if (da < best) { best = da; facet = f32(i); }
+        }
+      } else {
+        facet = floor(edge_mod(ang, EDGE_TAU) / (EDGE_TAU / 8.0));
+      }
+      let fold = 0.5 + 0.5 * sin(t * fill_speed * EDGE_TAU + facet * 1.7);
+      let depth = clamp(-d / max(ctx.inradius, 1.0), 0.0, 1.0);
+      let shade = mix(1.0, 0.35 + 0.65 * fold, clamp(fa.x, 0.0, 1.0)) * mix(0.8, 1.05, depth);
+      c1 = vec4<f32>(fill_color_u.rgb * shade, fill_color_u.a);
+    } else if (fill_type == 22) {
+      let cell = max(fa.x, 2.0);
+      let r = edge_rotate(fill_px - center, fa.y);
+      let id = floor(r / cell);
+      let cc = (id + vec2<f32>(0.5)) * cell;
+      var value = 0.0;
+      if (fa.z > 0.5) {
+        value = clamp(u.audio0.x * 2.0, 0.0, 1.0);
+      } else {
+        let span = max(ctx.bbox.z - ctx.bbox.x, ctx.bbox.w - ctx.bbox.y);
+        value = 1.0 - abs(fract(cc.x / max(span, 1.0) + t * fill_speed * 0.25) * 2.0 - 1.0);
+      }
+      let radius = cell * 0.5 * sqrt(value) * 1.414;
+      mixv = 1.0 - edge_cov(length(r - cc) - radius, aa);
+    } else if (fill_type == 23) {
+      let r = edge_rotate(fill_px - center, fa.z + t * fill_speed);
+      mixv = 1.0 - edge_pattern(r, i32(floor(fa.x + 0.5)), fa.y, fa.w, aa);
+    } else if (fill_type == 24) {
+      region = max(d, length(fill_px - center) - prog * edge_far_corner(ctx.bbox, center));
+    } else if (fill_type == 25) {
+      let rel = fill_px - center;
+      // Clockwise from twelve o'clock.
+      let ang = edge_mod(EDGE_PI * 0.5 - atan2(rel.y, rel.x), EDGE_TAU);
+      let sweep = prog * EDGE_TAU;
+      let r = length(rel);
+      // Arc distance to the nearer boundary ray of the swept wedge.
+      var wedge = select(min(ang - sweep, EDGE_TAU - ang), -min(ang, sweep - ang), ang < sweep) * r;
+      if (sweep >= EDGE_TAU - 1e-4) { wedge = -1.0e6; }
+      region = max(d, wedge);
+    } else if (fill_type == 26) {
+      let dir = vec2<f32>(cos(fa.y), sin(fa.y));
+      let ext = edge_extent(ctx.bbox, dir);
+      let pos = ext.x + prog * (ext.y - ext.x);
+      region = max(d, abs(dot(fill_px, dir) - pos) - max(fa.x, aa) * 0.5);
+      c1 = vec4<f32>(fill_color_u.rgb, fill_color_u.a * clamp(fa.x / aa, 0.0, 1.0));
+    }
+    // `region` starts as the shape itself; wipes and growth fills cut it.
+    let col = mix(c1, fill_color2_u, mixv);
+    fill_color = col;
+    fill_w = edge_cov(region, aa);
+  }
+
+  // ----- stroke -----
+  if (stroke_type == 1) {
+    stroke1 = stroke_color_u;
+    stroke_w = edge_line_cov(core_sd, width, aa);
+    stroke_has_trim = true;
+  } else if (stroke_type == 2) {
+    stroke1 = edge_glow_stroke(d, 1.0, stroke_color_u, sw.y, sw.z, sw.w, t, aa);
+    stroke0 = edge_glow_stroke(d, 0.0, stroke_color_u, sw.y, sw.z, sw.w, t, aa);
+    stroke_w = core;
+  } else if (stroke_type == 3) {
+    let nhw = max(width * 0.6, aa) * 0.5;
+    stroke_w = edge_line_cov(edge_band_sd(li, q, hit, nhw, join, max(geo.z, 1.0), ctx.count), width * 0.6, aa);
+    stroke1 = edge_neon_stroke(d, 1.0, stroke_color_u, width, sw.y, sw.w, t, aa);
+    stroke0 = edge_neon_stroke(d, 0.0, stroke_color_u, width, sw.y, sw.w, t, aa);
+  } else if (stroke_type == 4) {
+    stroke1 = edge_snake_stroke(d, 1.0, stroke_color_u, width, s3.x, stroke_speed, path_pos, i32(s3.z), t, rx, aa);
+    stroke0 = edge_snake_stroke(d, 0.0, stroke_color_u, width, s3.x, stroke_speed, path_pos, i32(s3.z), t, rx, aa);
+    stroke_w = core;
+  } else if (stroke_type == 5) {
+    stroke1 = edge_rainbow_stroke(d, 1.0, width, stroke_speed, path_pos, t, rx, aa);
+    stroke0 = edge_rainbow_stroke(d, 0.0, width, stroke_speed, path_pos, t, rx, aa);
+    stroke_w = core;
+  } else if (stroke_type == 6) {
+    stroke1 = edge_dashed_stroke(1.0, stroke_color_u, s3.w, s4.x, path_pos, stroke_speed, t);
+    stroke_w = core;
+  } else if (stroke_type == 7) {
+    stroke_w = edge_electric_core(d, width, s4.y, stroke_speed, path_pos, t, rx, aa);
+    stroke1 = edge_electric_stroke(d, 1.0, stroke_color_u, width, s4.y, stroke_speed, path_pos, t, rx, aa);
+    stroke0 = edge_electric_stroke(d, 0.0, stroke_color_u, width, s4.y, stroke_speed, path_pos, t, rx, aa);
+  } else if (stroke_type == 8) {
+    stroke1 = edge_strobe_stroke(d, 1.0, stroke_color_u, width, f5.x, t, rx, aa);
+    stroke0 = edge_strobe_stroke(d, 0.0, stroke_color_u, width, f5.x, t, rx, aa);
+    stroke_w = core;
+  } else if (stroke_type == 9) {
+    stroke1 = edge_scanner_stroke(d, 1.0, stroke_color_u, width, s4.z, stroke_speed, path_pos, s4.w, t, rx, aa);
+    stroke0 = edge_scanner_stroke(d, 0.0, stroke_color_u, width, s4.z, stroke_speed, path_pos, s4.w, t, rx, aa);
+    stroke_w = core;
+  } else if (stroke_type == 10) {
+    stroke1 = edge_fire_stroke(d, 1.0, stroke_color_u, width, stroke_speed, path_pos, t, rx, aa);
+    stroke0 = edge_fire_stroke(d, 0.0, stroke_color_u, width, stroke_speed, path_pos, t, rx, aa);
+    stroke_w = core;
+  } else if (stroke_type >= 11) {
+    var sd = core_sd;
+    var alpha_scale = 1.0;
+    var add_rgb = vec3<f32>(0.0);
+    var add_a = 0.0;
+    if (stroke_type == 11 || stroke_type == 12) {
+      // Half / Quarter: lit runs of the border that travel round it.
+      let o = fract(t * stroke_speed) * total;
+      var along = edge_interval_out(s_arc, o, total * 0.5, total);
+      if (stroke_type == 12) {
+        along = min(edge_interval_out(s_arc, o, total * 0.25, total), edge_interval_out(s_arc, o + total * 0.5, total * 0.25, total));
+      }
+      sd = edge_open_sd(core_sd, along, hw, cap);
+    } else if (stroke_type == 13) {
+      // Line: a run of `length` travelling the border (normal, boomerang
+      // back and forth, or yoyo growing and shrinking).
+      let len = clamp(sb.x, 0.0, 1.0) * total;
+      let mode = i32(floor(sb.y + 0.5));
+      var head = fract(t * stroke_speed) * total;
+      var run = len;
+      if (mode == 1) {
+        head = (1.0 - abs(fract(t * stroke_speed * 0.5) * 2.0 - 1.0)) * total;
+      } else if (mode == 2) {
+        run = len * (1.0 - abs(fract(t * stroke_speed) * 2.0 - 1.0));
+        head = fract(t * stroke_speed * 0.25) * total + run;
+      }
+      sd = edge_open_sd(core_sd, edge_interval_out(s_arc, head - run, run, total), hw, cap);
+    } else if (stroke_type == 14) {
+      // Comet: a crisp head dot and a tail fading analytically behind it.
+      let head = fract(t * stroke_speed) * total;
+      let tail = max(clamp(sb.x, 0.0, 1.0) * total, 1.0);
+      let behind = edge_mod(head - s_arc, total);
+      sd = edge_open_sd(core_sd, edge_interval_out(s_arc, head - tail, tail, total), hw, 1);
+      alpha_scale = select(0.0, exp(-3.0 * behind / tail), behind <= tail);
+      let head_p = edge_point_at(li, head, ctx.count, total);
+      let head_r = max(width * max(sb.y, 1.0), aa) * 0.5;
+      add_a = edge_cov(length(q - head_p) - head_r, aa);
+    } else if (stroke_type == 15 || stroke_type == 16) {
+      // Dash pattern / marching ants: dashes measured in path pixels, the
+      // pattern fitted to a whole number of repeats round the closed path.
+      var d1 = max(dash.x, 0.0);
+      var g1 = max(dash.y, 0.0);
+      var d2 = max(dash.z, 0.0);
+      var g2 = max(dash.w, 0.0);
+      if (stroke_type == 16) { d2 = 0.0; g2 = 0.0; }
+      let cycle = max(d1 + g1 + d2 + g2, 1.0);
+      let repeats = max(round(total / cycle), 1.0);
+      let fit = total / (repeats * cycle);
+      var offset = t * stroke_speed;
+      if (stroke_type == 16 && sb.x > 0.5 && u.audio1.w > 1.0) {
+        // One full dash cycle per beat, locked to the beat phase.
+        offset = clamp(u.audio1.z, 0.0, 1.0) * cycle * fit;
+      }
+      let uu = s_arc - offset;
+      var along = edge_periodic_out(uu, d1 * fit, cycle * fit);
+      if (d2 > 0.0) {
+        along = min(along, edge_periodic_out(uu - (d1 + g1) * fit, d2 * fit, cycle * fit));
+      }
+      sd = edge_open_sd(core_sd, along, hw, cap);
+    } else if (stroke_type == 17) {
+      // Offset outlines: parallel copies at a fixed pixel spacing, inset,
+      // outset or both, drifting outward at `speed` px/s.
+      let count = max(floor(sb.x + 0.5), 1.0);
+      let spacing = max(sb.y, 1.0);
+      let direction = i32(floor(sb.z + 0.5));
+      let phase = edge_mod(t * stroke_speed, spacing);
+      var best = 1.0e6;
+      if (direction != 1) {
+        let x = -d - phase;
+        let kk = clamp(round(x / spacing), 0.0, count);
+        best = min(best, abs(x - kk * spacing));
+      }
+      if (direction != 0) {
+        let x = d + phase;
+        let kk = clamp(round(x / spacing), 0.0, count);
+        best = min(best, abs(x - kk * spacing));
+      }
+      sd = best - hw;
+      if (trim_on) { sd = max(sd, trim_along); }
+    } else if (stroke_type == 18) {
+      // Corner accents: brackets running `length` px from each corner.
+      var along = 1.0e6;
+      for (var i: i32 = 0; i < 64; i = i + 1) {
+        if (i >= ctx.corner_count) { break; }
+        let sc = layers[li].edge_corners[i].z;
+        let du = abs(edge_mod(s_arc - sc + total * 0.5, total) - total * 0.5);
+        along = min(along, du - max(sb.x, 0.0));
+      }
+      sd = edge_open_sd(core_sd, along, hw, cap);
+    } else if (stroke_type == 19) {
+      // Vertex dots, swelling on the beat, with a ring burst.
+      let beat = ghost_audio_beat(ghost_audio_scene());
+      let r0 = max(sb.x, 0.5);
+      let r = r0 * (1.0 + max(sb.y, 0.0) * beat);
+      var dot_sd = 1.0e6;
+      var ring = 1.0e6;
+      for (var i: i32 = 0; i < 64; i = i + 1) {
+        if (i >= ctx.corner_count) { break; }
+        let dist = length(q - layers[li].edge_corners[i].xy);
+        dot_sd = min(dot_sd, dist - r);
+        ring = min(ring, abs(dist - r0 * (1.0 + 3.0 * max(sb.y, 0.0) * beat)));
+      }
+      sd = dot_sd;
+      if (trim_on) { sd = max(sd, trim_along); }
+      add_a = edge_line_cov(ring - max(width, aa) * 0.5, width, aa) * beat * select(0.0, 1.0, sb.y > 0.0);
+    } else if (stroke_type == 20) {
+      // Wireframe: spokes from the centre to each corner, the inner
+      // triangulation, and optionally the outline itself.
+      var best = select(1.0e6, abs(d), sb.z > 0.5);
+      let n = ctx.corner_count;
+      if (sb.x > 0.5) {
+        for (var i: i32 = 0; i < 64; i = i + 1) {
+          if (i >= n) { break; }
+          let a = layers[li].edge_corners[i].xy;
+          let pa = q - center;
+          let ba = a - center;
+          let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-9), 0.0, 1.0);
+          best = min(best, length(pa - ba * h));
+        }
+      }
+      if (sb.y > 0.5) {
+        for (var i: i32 = 0; i < 64; i = i + 1) {
+          if (i >= ctx.diag_count) { break; }
+          let pair = layers[li].edge_diags[i / 2];
+          let ij = select(pair.zw, pair.xy, (i % 2) == 0);
+          let a = layers[li].edge_corners[i32(ij.x)].xy;
+          let b = layers[li].edge_corners[i32(ij.y)].xy;
+          let pa = q - a;
+          let ba = b - a;
+          let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-9), 0.0, 1.0);
+          best = min(best, length(pa - ba * h));
+        }
+      }
+      sd = best - hw;
+      if (trim_on) { sd = max(sd, trim_along); }
+    } else if (stroke_type == 21 || stroke_type == 22) {
+      // Zig-zag / wiggle: the centerline displaced across itself as a
+      // function of arc length; dividing by the slope keeps it crisp.
+      let amp = max(sb.x, 0.0);
+      let wl = max(sb.y, 2.0);
+      let x = s_arc / wl + t * stroke_speed;
+      var offset = 0.0;
+      var slope = 0.0;
+      if (stroke_type == 21) {
+        offset = amp * (abs(fract(x) * 4.0 - 2.0) - 1.0);
+        slope = 4.0 * amp / wl;
+      } else {
+        offset = amp * edge_value_noise(x * 2.0, sb.z + ctx.seed);
+        slope = 3.0 * amp / wl;
+      }
+      sd = abs(d - offset) / sqrt(1.0 + slope * slope) - hw;
+      if (trim_on) { sd = max(sd, trim_along); }
+    }
+    let cov_line = edge_line_cov(sd, width, aa) * alpha_scale;
+    stroke1 = stroke_color_u;
+    stroke_w = max(cov_line, add_a);
+    stroke_has_trim = true;
+  }
+
+  // ----- classic animations (the editor's, at output resolution) -----
+  if (anim_type == 1 && anim_count >= 1.0) {
+    let cnt = i32(anim_count);
+    let direction = i32(floor(ap.x + 0.5));
+    let loop_count = select(cnt, cnt * 2, direction == 2);
+    let ta = t * anim_speed;
+    var result = vec4<f32>(0.0);
+    for (var i: i32 = 0; i < 40; i = i + 1) {
+      if (i >= loop_count) { break; }
+      let fi = f32(i % cnt);
+      let is_inward = (direction == 1) || (direction == 2 && i >= cnt);
+      let phase = edge_mod(fi * anim_spacing + ta * 0.15, f32(cnt) * anim_spacing);
+      var scale: f32;
+      if (is_inward) {
+        scale = max(1.0 - phase / (f32(cnt) * anim_spacing) * 0.95, 0.02);
+      } else {
+        scale = 1.0 + phase;
+      }
+      let ring = edge_hit(li, center + (p - center) / scale, ctx.count);
+      let stroke_alpha = edge_falloff(abs(ring.d), sw.x * 2.0, aa / scale);
+      result = max(result, stroke_color_u * stroke_alpha);
+    }
+    stroke0 = stroke0 + result;
+    stroke1 = stroke1 + result;
+  }
+  if (anim_type == 3) {
+    let breathe_t = sin(t * anim_speed * EDGE_PI) * 0.5 + 0.5;
+    let bs = mix(ap.x, ap.y, breathe_t);
+    let bh = edge_hit(li, center + (p - center) / bs, ctx.count);
+    stroke_w = edge_line_cov(abs(bh.d) - hw, width, aa / max(bs, 0.05));
+    stroke1 = stroke_color_u;
+    stroke0 = vec4<f32>(0.0);
+  }
+  if (anim_type == 2 && anim_count > 0.0) {
+    let rel = p - center;
+    let ray_angle = edge_mod(atan2(rel.y, rel.x) + t * anim_speed * 0.5, EDGE_TAU);
+    let ray = pow(abs(cos(ray_angle * anim_count * 0.5)), 20.0);
+    let radiate = ray * (1.0 - edge_smoothstep(0.0, 0.4 * rx, length(rel)));
+    stroke0 = stroke0 + stroke_color_u * radiate * 0.5;
+    stroke1 = stroke1 + stroke_color_u * radiate * 0.5;
+  }
+  if (anim_type == 5) {
+    let dist = length(p - center);
+    let ripple_count = max(anim_count, 3.0);
+    for (var i: i32 = 0; i < 10; i = i + 1) {
+      if (f32(i) >= ripple_count) { break; }
+      let r = edge_mod(t * anim_speed * 0.15 + f32(i) * anim_spacing, ripple_count * anim_spacing);
+      let ring = edge_falloff(abs(dist - r * rx), sw.x * 2.0, aa);
+      let add = stroke_color_u * ring * exp(-r * ap.x * 5.0) * 0.3;
+      stroke0 = stroke0 + add;
+      stroke1 = stroke1 + add;
     }
   }
-  return vec4<f32>(result, coverage);
+  if (anim_type == 6) {
+    let wt = t * anim_speed;
+    let wave_offset = vec2<f32>(
+      sin(uv.y * ap.y * 20.0 + wt * 3.0),
+      cos(uv.x * ap.y * 20.0 + wt * 2.5),
+    ) * ap.x * 0.02 * rx;
+    let wh = edge_hit(li, p + wave_offset, ctx.count);
+    stroke_w = edge_line_cov(abs(wh.d) - hw, width, aa);
+    stroke1 = stroke_color_u;
+    stroke0 = vec4<f32>(0.0);
+    if (fill_type > 0) {
+      fill_w = fill_w * edge_cov(wh.d, aa);
+    }
+  }
+  if (anim_type == 7 && ap.x > 0.0) {
+    let gt = t * anim_speed;
+    let block_y = floor(uv.y * (10.0 / ap.y)) * ap.y * 0.1;
+    let trigger = step(0.92, edge_random(vec2<f32>(block_y, floor(gt * 4.0))));
+    let offset = (edge_random(vec2<f32>(block_y + 1.0, floor(gt * 4.0))) - 0.5) * ap.x * 0.05 * rx;
+    if (trigger > 0.5) {
+      let hr = edge_hit(li, p + vec2<f32>(offset, 0.0), ctx.count);
+      let hb = edge_hit(li, p - vec2<f32>(offset, 0.0), ctx.count);
+      let ar = edge_line_cov(abs(hr.d) - hw, width, aa);
+      let ab = edge_line_cov(abs(hb.d) - hw, width, aa);
+      let ag = mix(stroke0, stroke1, stroke_w).a;
+      stroke1 = vec4<f32>(stroke_color_u.r * ar, stroke_color_u.g * ag, stroke_color_u.b * ab, max(ar, max(ag, ab)) * stroke_color_u.a);
+      stroke0 = stroke1;
+      stroke_w = 1.0;
+    }
+  }
+
+  // The four corners of (fill coverage, stroke coverage), each composited
+  // the editor's way, then interpolated: analytic edges stay linear.
+  let classic = stroke_type <= 10 && fill_type <= 8;
+  let fill0 = vec4<f32>(fill_color.rgb, 0.0);
+  let bare = mix(edge_compose(fill0, stroke0, classic), edge_compose(fill_color, stroke0, classic), fill_w);
+  let lit = mix(edge_compose(fill0, stroke1, classic), edge_compose(fill_color, stroke1, classic), fill_w);
+  var out = mix(bare, lit, stroke_w);
+  if (trim_on && !stroke_has_trim) {
+    // Classic strokes: the trim masks the whole stroke, halo included.
+    let no_stroke = mix(edge_compose(fill0, vec4<f32>(0.0), classic), edge_compose(fill_color, vec4<f32>(0.0), classic), fill_w);
+    out = mix(no_stroke, out, edge_cov(trim_along, aa));
+  }
+  return out;
+}
+
+/// Fill and stroke composited to premultiplied colour. The classic types
+/// keep the editor's shape shader composite (mix by stroke alpha, then the
+/// additive (SRC_ALPHA, ONE) write into an 8-bit target), which shapes
+/// their glow halos; the new types use plain premultiplied source-over.
+fn edge_compose(fill: vec4<f32>, stroke: vec4<f32>, classic: bool) -> vec4<f32> {
+  if (classic) {
+    let r = mix(fill, stroke, stroke.a);
+    let a = clamp(r.a, 0.0, 1.0);
+    return vec4<f32>(clamp(r.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * a, a);
+  }
+  let sa = clamp(stroke.a, 0.0, 1.0);
+  let fa = clamp(fill.a, 0.0, 1.0);
+  let rgb = clamp(stroke.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * sa + clamp(fill.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * fa * (1.0 - sa);
+  return vec4<f32>(rgb, sa + fa * (1.0 - sa));
+}
+
+/// The layer's edge stack at output UV `p_uv`: each effect is composited
+/// onto the layer with premultiplied source-over and its blend mode
+/// (W3C compositing), then the layer goes on with its own blend and opacity.
+/// `layer` is straight colour and coverage; so is the result.
+fn apply_native_edge_effects(layer: vec4<f32>, p_uv: vec2<f32>, li: u32, aa: f32) -> vec4<f32> {
+  let info = layers[li].edge_info;
+  var ctx: EdgeCtx;
+  ctx.count = min(i32(floor(info.x + 0.5)), 512);
+  let effect_count = min(i32(floor(info.y + 0.5)), 16);
+  if (ctx.count < 3 || effect_count < 1) { return layer; }
+  ctx.corner_count = min(i32(floor(info.z + 0.5)), 64);
+  ctx.diag_count = min(i32(floor(info.w + 0.5)), 64);
+  let geom = layers[li].edge_geom;
+  ctx.centroid = geom.xy;
+  ctx.total = max(geom.z, 1.0);
+  ctx.inradius = geom.w;
+  ctx.aa = aa;
+  ctx.res = u.resolution;
+  ctx.seed = layers[li].edge_extra.x;
+  ctx.bbox = layers[li].edge_extra2;
+  let p = p_uv * u.resolution;
+  let base = edge_hit(li, p, ctx.count);
+  var cr = layer.rgb * layer.a;
+  var ca = layer.a;
+  for (var e: i32 = 0; e < 16; e = e + 1) {
+    if (e >= effect_count) { break; }
+    let head = layers[li].edge_effects[e][0];
+    // Premultiplied effect colour.
+    let frag = edge_effect_fragment(li, e, p, base, ctx);
+    let src_a = clamp(frag.a, 0.0, 1.0) * clamp(head.y, 0.0, 1.0);
+    if (src_a <= 0.0) { continue; }
+    let src_c = clamp(frag.rgb / max(frag.a, 1e-6), vec3<f32>(0.0), vec3<f32>(1.0));
+    let cb = select(vec3<f32>(0.0), cr / max(ca, 1e-6), ca > 1e-6);
+    let blended = native_blend(cb, src_c, 1.0, head.z);
+    cr = src_a * (1.0 - ca) * src_c + src_a * ca * blended + (1.0 - src_a) * cr;
+    ca = src_a + ca * (1.0 - src_a);
+  }
+  return vec4<f32>(select(vec3<f32>(0.0), cr / max(ca, 1e-6), ca > 1e-6), ca);
 }
 
 fn native_polygon_mask(local_uv: vec2<f32>, layer_index: u32) -> f32 {
@@ -2002,6 +3105,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     dome_mask = dome_mask * domed.z;
   }
   var p = (canvas_uv * 2.0 - vec2<f32>(1.0)) * vec2<f32>(aspect, 1.0);
+  // One screen pixel measured in composition pixels: the anti-alias width
+  // of analytic edges (1 unless the output stage scales the composition).
+  let canvas_px = canvas_uv * u.resolution;
+  let edge_aa = clamp(max(length(dpdx(canvas_px)), length(dpdy(canvas_px))), 0.25, 8.0);
   let t = u.time;
   let audio = ghost_audio_scene();
   let audio_level = ghost_audio_level(audio);
@@ -2070,6 +3177,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (layers[layer_index].color.a <= 0.001) {
       continue;
     }
+    // Edge effects can glow past the layer's quad, so a layer that carries
+    // them is also evaluated inside the rectangle its stack can reach.
+    let edge_bounds = layers[layer_index].edge_bounds;
+    let in_edges = layers[layer_index].edge_info.y > 0.5 && layers[layer_index].edge_info.x > 2.5
+      && all(canvas_uv >= edge_bounds.xy) && all(canvas_uv <= edge_bounds.zw);
     // Reject outside the conservative quad bounds before inverse mapping,
     // mesh search, masks and effects.
     let quad_min = min(min(tl, tr), min(br, bl));
@@ -2077,7 +3189,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let bounds_pad = vec2<f32>(max(1.0, max(quad_max.x - quad_min.x, quad_max.y - quad_min.y)) * 0.001);
     let bounds_min = quad_min - bounds_pad;
     let bounds_max = quad_max + bounds_pad;
-    if (any(canvas_uv < bounds_min) || any(canvas_uv > bounds_max)) {
+    let in_quad_bounds = !(any(canvas_uv < bounds_min) || any(canvas_uv > bounds_max));
+    if (!in_quad_bounds && !in_edges) {
       continue;
     }
     if (layers[layer_index].fast_flags.x != 0u) {
@@ -2092,36 +3205,45 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       }
       continue;
     }
-    let local = quad_local_uv(canvas_uv, tl, tr, br, bl);
-    let inside = local.x > 0.5;
-    let mesh_sample = layer_mesh_uv(local.yz, layer_index);
-    let inside_mesh = inside && mesh_sample.x > 0.5;
-    if (!inside_mesh) { continue; }
-    let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
-    let sample_uv = uv_sample.xy;
-    let content_mask = uv_sample.z;
-    let shape_sample = native_layer_shape(local.yz, layer_index);
-    let polygon_mask = native_polygon_mask(local.yz, layer_index);
-    let shape_mask = select(0.0, shape_sample.x * polygon_mask, inside_mesh);
     var layer_rgb = layers[layer_index].color.rgb;
-    var fill_alpha = layers[layer_index].color.a * 0.56 * shape_mask;
-    if (inside_mesh && layers[layer_index].info.w > 0.5) {
-      let preview = source_content_for_layer(sample_source_content(layers[layer_index].info.w, sample_uv, layer_index), layers[layer_index].info.z);
-      let source_alpha = preview.a * content_mask * shape_mask;
-      layer_rgb = preview.rgb;
-      fill_alpha = layers[layer_index].color.a * source_alpha;
-    } else if (inside_mesh && layers[layer_index].info.z >= 9.0) {
-      let proxy = gpu_proxy(layers[layer_index].info.z, sample_uv, t, layers[layer_index].info.y, layers[layer_index].params0, layers[layer_index].params1);
-      let proxy_alpha = proxy.a * content_mask * shape_mask;
-      layer_rgb = proxy.rgb;
-      fill_alpha = layers[layer_index].color.a * (0.62 + 0.28 * proxy_alpha) * content_mask * shape_mask;
+    // Content coverage before the layer's opacity (the editor's layer texture alpha).
+    var content_alpha = 0.0;
+    if (in_quad_bounds) {
+      let local = quad_local_uv(canvas_uv, tl, tr, br, bl);
+      let inside = local.x > 0.5;
+      let mesh_sample = layer_mesh_uv(local.yz, layer_index);
+      let inside_mesh = inside && mesh_sample.x > 0.5;
+      if (inside_mesh) {
+        let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
+        let sample_uv = uv_sample.xy;
+        let content_mask = uv_sample.z;
+        let shape_sample = native_layer_shape(local.yz, layer_index);
+        let polygon_mask = native_polygon_mask(local.yz, layer_index);
+        let shape_mask = shape_sample.x * polygon_mask;
+        content_alpha = 0.56 * shape_mask;
+        if (layers[layer_index].info.w > 0.5) {
+          let preview = source_content_for_layer(sample_source_content(layers[layer_index].info.w, sample_uv, layer_index), layers[layer_index].info.z);
+          layer_rgb = preview.rgb;
+          content_alpha = preview.a * content_mask * shape_mask;
+        } else if (layers[layer_index].info.z >= 9.0) {
+          let proxy = gpu_proxy(layers[layer_index].info.z, sample_uv, t, layers[layer_index].info.y, layers[layer_index].params0, layers[layer_index].params1);
+          let proxy_alpha = proxy.a * content_mask * shape_mask;
+          layer_rgb = proxy.rgb;
+          content_alpha = (0.62 + 0.28 * proxy_alpha) * content_mask * shape_mask;
+        }
+        layer_rgb = apply_native_effects(layer_rgb, layer_index, sample_uv, t);
+        if (shape_mask <= 0.001) {
+          content_alpha = 0.0;
+        }
+      }
     }
-    layer_rgb = apply_native_effects(layer_rgb, layer_index, sample_uv, t);
-    let edge_composite = apply_native_edge_effects(layer_rgb, local.yz, shape_mask, layer_index, t);
-    layer_rgb = edge_composite.rgb;
-    fill_alpha = max(fill_alpha, layers[layer_index].color.a * edge_composite.a);
-    if (inside_mesh && shape_mask > 0.001) {
-      color = native_blend(color, layer_rgb, fill_alpha, layers[layer_index].style.x);
+    if (in_edges) {
+      let edged = apply_native_edge_effects(vec4<f32>(layer_rgb, content_alpha), canvas_uv, layer_index, edge_aa);
+      layer_rgb = edged.rgb;
+      content_alpha = edged.a;
+    }
+    if (content_alpha > 0.0) {
+      color = native_blend(color, layer_rgb, layers[layer_index].color.a * content_alpha, layers[layer_index].style.x);
     }
   }
 
