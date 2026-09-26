@@ -107,6 +107,9 @@ function createPixelMapOutput({
 
   let socket = null;
   let socketReady = null;
+  // Kept after stop(): the black frame and sACN termination packets are
+  // still in flight when the socket is released.
+  let boundPort = null;
   let lastFrameAt = -Infinity;
   let rateCredit = 1;
   const sequences = new Map();
@@ -161,6 +164,7 @@ function createPixelMapOutput({
         sock.off('error', onError);
         // Art-Net broadcast targets need SO_BROADCAST.
         try { sock.setBroadcast(true); } catch {}
+        try { boundPort = sock.address().port; } catch {}
         sock._gaReady = true;
         resolve(sock);
       });
@@ -332,11 +336,10 @@ function createPixelMapOutput({
     return { ok: true, terminated, stats: snapshot() };
   }
 
-  /** UDP port the output socket sends from, or null. DMX input uses it to
-   *  ignore this app's own Art-Net and sACN traffic. */
+  /** UDP port the output socket sends (or last sent) from, or null. DMX
+   *  input uses it to ignore this app's own Art-Net and sACN traffic. */
   function localPort() {
-    if (!socket || !socket._gaReady) return null;
-    try { return socket.address().port; } catch { return null; }
+    return boundPort;
   }
 
   return {

@@ -27,6 +27,7 @@ function fakeDgram(autoComplete = true) {
         },
         bind(_port: number, callback: () => void) { queueMicrotask(callback); },
         setBroadcast() {},
+        address() { return { address: '0.0.0.0', family: 'IPv4', port: 50123 }; },
         send(packet: Buffer, _offset: number, _length: number, port: number, host: string, done: (error?: Error | null) => void) {
           const entry = { packet: Buffer.from(packet), port, host, done };
           sent.push(entry);
@@ -279,5 +280,17 @@ describe('pixel map output over UDP on 127.0.0.1', () => {
     expect(sacnReceiver.messages[0].length).toBe(126 + 510);
     expect(Array.from(sacnReceiver.messages[0].subarray(126))).toEqual(Array.from(red));
     output.stop();
+  });
+});
+
+describe('own-traffic port', () => {
+  it('reports the sending port, and keeps it after stop for the in-flight termination packets', async () => {
+    const fake = fakeDgram();
+    const output = createPixelMapOutput({ dgram: fake.api, log: { warn() {} } });
+    expect(output.localPort()).toBeNull();
+    await output.sendFrame({ fps: 40, universes: [{ protocol: 'artnet', host: '127.0.0.1', universe: 0, data: new Uint8Array(3) }] });
+    expect(output.localPort()).toBe(50123);
+    output.stop();
+    expect(output.localPort()).toBe(50123);
   });
 });
