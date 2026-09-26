@@ -1098,10 +1098,23 @@ function startMp4FrameEncoderJob(args = {}) {
     args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format,
   );
   const quality = String(args.quality || 'high').trim().toLowerCase();
+  const { recordingCodec, recordingEncoderArgs } = require('./recording-formats.cjs');
+  const codec = recordingCodec(args.codec);
+  // Live fallback capture reads the program output unless the recorder
+  // asked for the record target or one Screen ("slice:<id>").
+  const captureSource = typeof args.captureSource === 'string'
+    && (args.captureSource === 'record_target' || /^slice:[^\s]+$/.test(args.captureSource))
+    ? args.captureSource : null;
   const tempDir = createMp4FrameEncoderTempDir();
-  const outputPath = safeGeneratedVideoPath(args.outputName || args.filename || 'Offline Render.mp4');
+  const requestedName = String(args.outputName || args.filename || 'Offline Render.mp4');
+  const outputPath = safeGeneratedVideoPath(codec.id === 'h264'
+    ? requestedName
+    : `${requestedName.replace(/\.[a-z0-9]{2,4}$/i, '')}.${codec.extension}`);
   const ffmpegPath = resolveFfmpegPath();
-  const ffmpegArgs = [
+  const ffmpegArgs = codec.id !== 'h264' ? recordingEncoderArgs({
+    codec: codec.id, width, height, fps, quality, outputPath, pixelFormat,
+    hardwareProRes: args.hardwareProRes === true, totalFrames,
+  }) : [
     '-hide_banner',
     '-loglevel', 'warning',
     '-y',
@@ -1133,6 +1146,8 @@ function startMp4FrameEncoderJob(args = {}) {
     frameBytes: width * height * 4,
     pixelFormat,
     quality,
+    codec: codec.id,
+    captureSource,
     writtenFrames: 0,
     stderr: '',
     settled: false,
@@ -1166,6 +1181,9 @@ function startMp4FrameEncoderJob(args = {}) {
     tempDir,
     ffmpegPath,
     pixelFormat,
+    codec: codec.id,
+    extension: codec.extension,
+    mime: codec.mime,
   };
 }
 
@@ -1252,6 +1270,7 @@ async function captureLiveMp4Frame(args = {}, clockOwned = false) {
       const snapshot = await job.frameSink.capture(job.frameBytes * (to - from + 1),
         sink => nativeRendererBroker.invoke('native_renderer_stream_output_frame', {
           ...sink, width: job.width, height: job.height, copies: to - from + 1,
+          ...(job.captureSource ? { capture_source: job.captureSource } : {}),
         }));
       job.writtenFrames = to + 1;
       return { success: true, snapshot };
@@ -2693,23 +2712,52 @@ function startNativeEditorPreviewPump() {
 // readback stall — so live output framerate is untouched while recording.
 let nativeOutputRecording = null;
 
-function nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath) {
-  const base = [
-    '-hide_banner', '-loglevel', 'warning', '-y',
-    '-f', 'rawvideo', '-pix_fmt', 'bgra',
-    '-s:v', `${width}x${height}`,
-    '-framerate', String(fps),
-    '-i', 'pipe:0',
-    '-an',
-  ];
-  if (process.platform === 'darwin') {
-    const bitrate = quality === 'maximum' ? '40M' : quality === 'high' ? '20M' : quality === 'medium' ? '10M' : '6M';
-    // No -realtime: it caps VideoToolbox near real time (about 100 fps for
-    // 1080p here, against 375 without it), and the pump needs headroom to
-    // write the frames it queued while the encoder was starting.
-    return [...base, '-c:v', 'h264_videotoolbox', '-b:v', bitrate, '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
+// Codec arguments live in recording-formats.cjs. H.264 on macOS has no
+// -realtime: it caps VideoToolbox near real time (about 100 fps for 1080p
+// here, against 375 without it), and the pump needs headroom to write the
+// frames it queued while the encoder was starting.
+function nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath, codec = 'h264', hardwareProRes = false) {
+  const { recordingEncoderArgs } = require('./recording-formats.cjs');
+  return recordingEncoderArgs({ codec, width, height, fps, quality, outputPath, hardwareProRes });
+}
+
+/** What the bundled ffmpeg can record, for the recording UI. */
+async function nativeRecordingCodecs() {
+  const { probeRecordingCodecs } = require('./recording-formats.cjs');
+  return probeRecordingCodecs(resolveFfmpegPath());
+}
+
+/** Poll the core until a shared texture it is about to create exists and has
+ *  drawn a frame: the record target appears on the frame after it is set, a
+ *  Screen's slice output once the editor's sync has sent the Screen. */
+async function waitForNativeSurface(query, label, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    try { last = await query(); } catch (err) { last = { error: err?.message || String(err) }; }
+    const handle = Number(last?.handle ?? 0);
+    if (last?.available && Number.isFinite(handle) && handle > 0 && Number(last.width) > 0 && Number(last.height) > 0
+      && Number(last.frame ?? 1) > 0) {
+      return last;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
-  return [...base, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', crfForVideoQuality(quality), '-preset', presetForVideoQuality(quality), '-movflags', '+faststart', outputPath];
+  throw new Error(`${label} is not rendering${last?.error ? `: ${last.error}` : ''}.`);
+}
+
+async function nativeSliceSurface(sliceId) {
+  const state = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
+  const slice = Array.isArray(state?.slices) ? state.slices.find(entry => entry?.id === sliceId) : null;
+  return slice ? { available: true, ...slice } : { available: false };
+}
+
+function nativeRecordTargetSurface() {
+  return nativeRendererBroker.invoke('native_renderer_get_record_target_state', {});
+}
+
+function clearNativeRecordTarget() {
+  return nativeRendererBroker.invoke('native_renderer_set_record_target', { kind: 'none' })
+    .catch(err => console.warn('[NativeRec] could not clear the record target:', err?.message || err));
 }
 
 function nativeRecorderWriteStdin(rec, buffer) {
@@ -2804,19 +2852,48 @@ async function startNativeOutputRecording(args = {}) {
   if (!addon || typeof addon.readIOSurfacePixels !== 'function') {
     throw new Error('Presenter addon lacks IOSurface capture support.');
   }
-  const texture = await getNativeOutputSharedTextureMetadata();
+  const { recordingCodec, resolveRecordingSource, liveRecordingFps } = require('./recording-formats.cjs');
+  const codec = recordingCodec(args.codec);
+  const codecs = await nativeRecordingCodecs();
+  if (!codecs.codecs.find(entry => entry.id === codec.id)?.available) {
+    throw new Error(`${codec.label} is not available in this FFmpeg build.`);
+  }
+  // Composition (the program output, as always), one layer or VJ row (the
+  // core's record target), or one Screen (its slice output).
+  const source = resolveRecordingSource(args.source, codec.id);
+  let recordTargetSet = false;
+  let texture;
+  let querySurface;
+  try {
+    if (source.kind === 'record_target') {
+      await nativeRendererBroker.invoke('native_renderer_set_record_target', source.target);
+      recordTargetSet = true;
+      querySurface = nativeRecordTargetSurface;
+      texture = await waitForNativeSurface(querySurface, `The ${source.label} recording target`);
+    } else if (source.kind === 'screen') {
+      querySurface = () => nativeSliceSurface(source.sliceId);
+      texture = await waitForNativeSurface(querySurface, `${source.label}'s output`);
+    } else {
+      querySurface = getNativeOutputSharedTextureMetadata;
+      texture = await getNativeOutputSharedTextureMetadata();
+    }
+  } catch (err) {
+    if (recordTargetSet) await clearNativeRecordTarget();
+    throw err;
+  }
   const surfaceId = Number(texture?.handle ?? 0);
   const width = Number(texture?.width ?? 0);
   const height = Number(texture?.height ?? 0);
   if (!texture?.available || !Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) {
+    if (recordTargetSet) await clearNativeRecordTarget();
     throw new Error('Native output shared texture is not available for capture.');
   }
-  const fps = Math.round(clampNumber(args.fps, 1, 60, 30));
+  const fps = liveRecordingFps(codec.id, clampNumber(args.fps, 1, 60, 30), codecs.hardwareProRes);
   const quality = String(args.quality || 'high').trim().toLowerCase();
-  const outputPath = safeGeneratedVideoPath(`${String(args.namePrefix || 'Recording')}.mp4`);
+  const outputPath = safeGeneratedVideoPath(`${String(args.namePrefix || 'Recording')}.${codec.extension}`);
   const child = spawn(
     resolveFfmpegPath(),
-    nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath),
+    nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath, codec.id, codecs.hardwareProRes),
     { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] },
   );
   // Frame 0 is the REC press, not the moment the encoder became ready: the
@@ -2835,6 +2912,10 @@ async function startNativeOutputRecording(args = {}) {
     exitPromise: null,
     pump: null,
     audioTap: null,
+    codec,
+    source,
+    recordTargetSet,
+    surfaceWatch: null,
   };
   rec.exitPromise = new Promise((resolve) => {
     child.stderr?.setEncoding?.('utf8');
@@ -2846,6 +2927,20 @@ async function startNativeOutputRecording(args = {}) {
     child.on('close', (code) => resolve(code));
   });
   nativeOutputRecording = rec;
+  // A layer / Screen target is recreated when its size or the display
+  // changes; follow its new surface as long as the frame size holds (the
+  // pump repeats the last frame through any gap).
+  if (source.kind !== 'output') {
+    rec.surfaceWatch = setInterval(() => {
+      void querySurface().then((state) => {
+        const handle = Number(state?.handle ?? 0);
+        if (nativeOutputRecording === rec && handle > 0 && Number(state.width) === rec.width && Number(state.height) === rec.height) {
+          rec.surfaceId = handle;
+        }
+      }).catch(() => {});
+    }, 1000);
+    rec.surfaceWatch.unref?.();
+  }
 
   const { createPacedFramePump } = require('./recording-frame-pump.cjs');
   rec.pump = createPacedFramePump({
@@ -2865,8 +2960,9 @@ async function startNativeOutputRecording(args = {}) {
     catch (err) { console.warn('[NativeRec] clip audio tap unavailable:', err?.message || err); }
   }
 
-  console.log(`[NativeRec] recording ${width}x${height}@${fps} iosurface:${surfaceId} -> ${outputPath}`);
-  return { success: true, width, height, fps, outputPath, nativeAudio: !!rec.audioTap };
+  console.log(`[NativeRec] recording ${source.label} ${width}x${height}@${fps} ${codec.id} iosurface:${surfaceId} -> ${outputPath}`);
+  return { success: true, width, height, fps, outputPath, nativeAudio: !!rec.audioTap,
+    codec: codec.id, extension: codec.extension, mime: codec.mime, alpha: source.alpha };
 }
 
 /** Mux a renderer-captured audio track into a finished native recording.
@@ -2896,7 +2992,8 @@ ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
     return { success: false, error: 'No audio data supplied.' };
   }
   const audioPath = audio ? `${videoPath}.audio.webm` : null;
-  const muxedPath = `${videoPath}.muxed.mp4`;
+  // Same container as the recording: ProRes / HAP stay .mov (PCM audio).
+  const muxedPath = `${videoPath}.muxed${path.extname(videoPath) || '.mp4'}`;
   try {
     if (audio) fs.writeFileSync(audioPath, Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength));
     const { buildRecordingMuxArgs } = require('./native-audio-tap.cjs');
@@ -2933,6 +3030,9 @@ async function stopNativeOutputRecording() {
   if (!rec) return { success: false, error: 'No native output recording is running.' };
   const pumped = await rec.pump.stop();
   const written = pumped.written;
+  if (rec.surfaceWatch) clearInterval(rec.surfaceWatch);
+  // Stop paying for the extra composite pass the moment capture ends.
+  if (rec.recordTargetSet) await clearNativeRecordTarget();
   try { rec.child.stdin.end(); } catch { /* already closed */ }
   const code = await rec.exitPromise;
   if (written <= 0 || code !== 0) {
@@ -2959,6 +3059,12 @@ async function stopNativeOutputRecording() {
     nativeAudio,
     durationSeconds,
     thumbnailDataUrl,
+    codec: rec.codec.id,
+    extension: rec.codec.extension,
+    mime: rec.codec.mime,
+    alpha: rec.source.alpha,
+    width: rec.width,
+    height: rec.height,
   };
 }
 
@@ -7097,7 +7203,17 @@ function registerIpcHandlers() {
 
   ipcMain.handle('mp4_frame_encoder_start', async (_, args = {}) => {
     try {
-      const job = startMp4FrameEncoderJob(args);
+      const { recordingCodec } = require('./recording-formats.cjs');
+      const codec = recordingCodec(args.codec);
+      let hardwareProRes = false;
+      if (codec.id !== 'h264') {
+        const probed = await nativeRecordingCodecs();
+        if (!probed.codecs.find(entry => entry.id === codec.id)?.available) {
+          throw new Error(`${codec.label} is not available in this FFmpeg build.`);
+        }
+        hardwareProRes = probed.hardwareProRes;
+      }
+      const job = startMp4FrameEncoderJob({ ...args, hardwareProRes });
       return { success: true, ...job };
     } catch (err) {
       console.error('[Main] mp4_frame_encoder_start error:', err?.message || err);
@@ -7733,6 +7849,13 @@ function registerIpcHandlers() {
       return await startNativeOutputRecording(args);
     } catch (err) {
       return { success: false, error: err?.message || String(err) };
+    }
+  });
+  ipcMain.handle('native_recording_codecs', async () => {
+    try {
+      return { success: true, ...(await nativeRecordingCodecs()) };
+    } catch (err) {
+      return { success: false, error: err?.message || String(err), codecs: [] };
     }
   });
   ipcMain.handle('native_output_recording_stop', async () => {

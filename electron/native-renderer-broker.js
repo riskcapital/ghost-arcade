@@ -310,6 +310,10 @@ const RENDERER_COMMANDS = [
   'native_renderer_get_output_shared_texture',
   'native_renderer_get_output_shared_texture_snapshot',
   'native_renderer_get_deck_monitor_state',
+  // Recording one layer / VJ row / transparent composition (main process sets it).
+  'native_renderer_set_record_target',
+  'native_renderer_get_slice_output_state',
+  'native_renderer_get_record_target_state',
   'native_renderer_set_stage3d_scene',
   'native_renderer_get_stage3d_scene_summary',
   'native_renderer_set_projection_sim_scene',

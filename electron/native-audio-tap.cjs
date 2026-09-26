@@ -171,7 +171,8 @@ function tapOffsetSeconds(tap, videoStartUnixMs) {
   return (videoStartUnixMs - tap.startedUnixMs - (tap.latencyMs || 0)) / 1000;
 }
 
-/** ffmpeg arguments that copy the video and write one AAC track: the
+/** ffmpeg arguments that copy the video and write one audio track (AAC in
+ *  MP4, PCM in a ProRes / HAP MOV): the
  *  renderer's sidecar (mic, browser audio), the native tap, or both mixed
  *  at unity gain. */
 function buildRecordingMuxArgs({ videoPath, outputPath, sidecarPath = null, tap = null, videoStartUnixMs = 0, audioBitrate = 192000 }) {
@@ -192,8 +193,10 @@ function buildRecordingMuxArgs({ videoPath, outputPath, sidecarPath = null, tap 
     args.push('-filter_complex', filter);
     audioMap = '[aout]';
   }
-  const bitrate = Math.round(Math.max(32000, Math.min(512000, Number(audioBitrate) || 192000)));
-  args.push('-map', '0:v:0', '-map', audioMap, '-c:v', 'copy', '-c:a', 'aac', '-b:a', `${Math.round(bitrate / 1000)}k`,
+  // MP4 gets AAC as always; a ProRes / HAP .mov gets PCM like other
+  // editing masters.
+  const { recordingAudioCodecArgs } = require('./recording-formats.cjs');
+  args.push('-map', '0:v:0', '-map', audioMap, '-c:v', 'copy', ...recordingAudioCodecArgs(outputPath, audioBitrate),
     '-movflags', '+faststart', '-shortest', outputPath);
   return args;
 }

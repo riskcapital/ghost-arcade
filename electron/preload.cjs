@@ -156,6 +156,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'deck_monitor_attach', 'deck_monitor_detach',
   // Native output live recording — main-process IOSurface capture
   'native_output_recording_start', 'native_recording_mux_audio', 'native_output_recording_stop',
+  'native_recording_codecs', 'native_renderer_set_record_target', 'native_renderer_get_record_target_state',
+  'native_renderer_get_slice_output_state',
   'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',
