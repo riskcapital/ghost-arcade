@@ -46,7 +46,13 @@ struct GhostOverlayHandle {
                 flipped:(BOOL)flipped;
 - (BOOL)presentActiveIOSurface;
 - (void)schedulePresentActiveIOSurface;
+- (void)schedulePresentActiveIOSurfaceForced:(BOOL)forced;
+- (BOOL)queuePresentIOSurfaceID:(IOSurfaceID)surfaceID
+                          width:(NSUInteger)width
+                         height:(NSUInteger)height
+                        flipped:(BOOL)flipped;
 - (void)stopPump;
+- (void)releaseAfterPendingPresents;
 - (void)setOverlayLines:(const std::vector<simd_float2>&)lines
                   points:(const std::vector<simd_float2>&)points
                  handles:(const std::vector<GhostOverlayHandle>&)handles;
@@ -71,6 +77,14 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   id<MTLRenderPipelineState> overlayLinePipeline_;
   id<MTLRenderPipelineState> overlayPointPipeline_;
   CAMetalLayer* metalLayer_;
+  // Every drawable acquisition and present runs on this serial queue, never on
+  // the main thread. -[CAMetalLayer nextDrawable] blocks until the compositor
+  // hands a drawable back, for up to a second, and the compositor holds them
+  // whenever the window is occluded, minimised, on another Space, or simply
+  // when the GPU is saturated. The main thread is also the Electron/Node event
+  // loop, so blocking it there stalled every main-process IPC call (DMX, OSC,
+  // MIDI routing, pixel-map/WLED output, recording) for up to 1.4 s.
+  dispatch_queue_t presentQueue_;
   CVDisplayLinkRef displayLink_;
   dispatch_source_t fallbackTimer_;
   IOSurfaceID activeSurfaceID_;
@@ -95,6 +109,20 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   NSRect contentRect_;
   uint64_t geometryGeneration_;
   __weak NSView* geometryCoordinateView_;
+  // Main-thread geometry snapshots for the present queue, which must not call
+  // AppKit view methods. Guarded by @synchronized(self).
+  NSSize boundsSize_;
+  NSRect frameSnapshot_;
+  NSRect onScreenSnapshot_;
+  // Whether any part of the host window can be seen. Presenting into a window
+  // that is occluded, minimised or ordered out only queues work the compositor
+  // will never consume, so the pump skips those frames and re-presents the
+  // latest one as soon as the window becomes visible again.
+  BOOL windowVisible_;
+  __weak NSWindow* observedWindow_;
+  uint64_t occludedSkippedFrames_;
+  uint64_t drawableTimeouts_;
+  char lastGeomSig_[512];
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -106,6 +134,14 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   self.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
   self.layer.masksToBounds = YES;
   contentRect_ = NSMakeRect(0.0, 0.0, frame.size.width, frame.size.height);
+  boundsSize_ = frame.size;
+  frameSnapshot_ = frame;
+  onScreenSnapshot_ = NSZeroRect;
+  windowVisible_ = NO;
+  presentQueue_ = dispatch_queue_create(
+    "art.ghostarcade.native-preview.present",
+    dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0)
+  );
 
   device_ = MTLCreateSystemDefaultDevice();
   if (!device_) {
@@ -127,6 +163,12 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   metalLayer_.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
   metalLayer_.contentsScale = self.window.screen.backingScaleFactor ?: NSScreen.mainScreen.backingScaleFactor ?: 1.0;
   metalLayer_.frame = self.bounds;
+  // Triple buffering, and a bounded acquire: if the compositor does not return
+  // a drawable in time the present queue drops that frame instead of waiting
+  // indefinitely. Both are the platform defaults, set explicitly because the
+  // present path depends on them.
+  metalLayer_.maximumDrawableCount = 3;
+  metalLayer_.allowsNextDrawableTimeout = YES;
   [self.layer addSublayer:metalLayer_];
 
   NSError* error = nil;
@@ -211,6 +253,66 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
 
 - (void)dealloc {
   [self stopPump];
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+// ── Window visibility ──
+// Main thread only (AppKit notifications and view-hierarchy callbacks).
+- (void)updateWindowVisibility {
+  NSWindow* window = self.window;
+  const BOOL visible = window != nil
+    && window.isVisible
+    && !window.isMiniaturized
+    && (window.occlusionState & NSWindowOcclusionStateVisible) != 0;
+  BOOL becameVisible = NO;
+  @synchronized (self) {
+    becameVisible = visible && !windowVisible_;
+    windowVisible_ = visible;
+  }
+  // Show the latest frame straight away rather than waiting for the next
+  // display-link tick (or for the core to produce a new frame).
+  if (becameVisible) [self schedulePresentActiveIOSurfaceForced:YES];
+}
+
+- (void)windowVisibilityChanged:(NSNotification*)notification {
+  [self updateWindowVisibility];
+}
+
+- (void)observeWindow:(NSWindow*)window {
+  if (observedWindow_ == window) return;
+  NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+  if (observedWindow_) [center removeObserver:self name:nil object:observedWindow_];
+  observedWindow_ = window;
+  if (!window) return;
+  for (NSNotificationName name in @[
+    NSWindowDidChangeOcclusionStateNotification,
+    NSWindowDidMiniaturizeNotification,
+    NSWindowDidDeminiaturizeNotification,
+  ]) {
+    [center addObserver:self selector:@selector(windowVisibilityChanged:) name:name object:window];
+  }
+}
+
+- (void)viewDidMoveToWindow {
+  [super viewDidMoveToWindow];
+  [self observeWindow:self.window];
+  [self updateWindowVisibility];
+  [self snapshotGeometry];
+}
+
+- (void)snapshotGeometry {
+  const NSRect onScreen = self.superview ? [self convertRect:self.bounds toView:nil] : NSZeroRect;
+  @synchronized (self) {
+    boundsSize_ = self.bounds.size;
+    frameSnapshot_ = self.frame;
+    onScreenSnapshot_ = onScreen;
+  }
+}
+
+- (void)setLastError:(NSString*)error {
+  @synchronized (self) {
+    lastError_ = error;
+  }
 }
 
 - (BOOL)isFlipped {
@@ -246,6 +348,7 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   @synchronized (self) {
     contentRect_ = self.bounds;
   }
+  [self snapshotGeometry];
 }
 
 - (void)setContentRect:(NSRect)rect generation:(uint64_t)generation {
@@ -268,9 +371,27 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
 - (NSDictionary*)statusDictionary {
   NSRect contentRect;
   uint64_t geometryGeneration = 0;
+  uint64_t skippedFrames = 0;
+  uint64_t occludedSkippedFrames = 0;
+  uint64_t drawableTimeouts = 0;
+  uint64_t framesPresented = 0;
+  IOSurfaceID lastSurfaceID = 0;
+  NSUInteger lastWidth = 0;
+  NSUInteger lastHeight = 0;
+  BOOL windowVisible = NO;
+  NSString* lastError = nil;
   @synchronized (self) {
     contentRect = contentRect_;
     geometryGeneration = geometryGeneration_;
+    skippedFrames = displayLinkSkippedFrames_;
+    occludedSkippedFrames = occludedSkippedFrames_;
+    drawableTimeouts = drawableTimeouts_;
+    framesPresented = frameCount_;
+    lastSurfaceID = lastSurfaceID_;
+    lastWidth = lastWidth_;
+    lastHeight = lastHeight_;
+    windowVisible = windowVisible_;
+    lastError = lastError_;
   }
   NSView* hostView = self.superview;
   const NSRect hostBounds = hostView ? hostView.bounds : NSZeroRect;
@@ -294,11 +415,15 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
     @"transport": @"iosurface",
     @"pumpActive": @(pumpActive_),
     @"maxFps": @60,
-    @"displayLinkSkippedFrames": @(displayLinkSkippedFrames_),
-    @"lastSurfaceID": @(lastSurfaceID_),
-    @"width": @(lastWidth_),
-    @"height": @(lastHeight_),
-    @"framesPresented": @(frameCount_),
+    @"displayLinkSkippedFrames": @(skippedFrames),
+    @"occludedSkippedFrames": @(occludedSkippedFrames),
+    @"drawableTimeouts": @(drawableTimeouts),
+    @"windowVisible": @(windowVisible),
+    @"presentThread": @"background-queue",
+    @"lastSurfaceID": @(lastSurfaceID),
+    @"width": @(lastWidth),
+    @"height": @(lastHeight),
+    @"framesPresented": @(framesPresented),
     @"geometryGeneration": @(geometryGeneration),
     @"viewX": @(viewX),
     @"viewY": @(viewY),
@@ -316,27 +441,38 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
       : NSMaxY(hostBounds) - NSMaxY(hostFrame)),
     @"hostWidth": @(hostBounds.size.width),
     @"hostHeight": @(hostBounds.size.height),
-    @"error": lastError_ ?: (id)[NSNull null],
+    @"error": lastError ?: (id)[NSNull null],
   };
 }
 
+// Runs on presentQueue_ only. It must not touch AppKit view state: geometry
+// comes from the snapshots taken on the main thread.
 - (BOOL)presentIOSurfaceID:(IOSurfaceID)surfaceID
                     width:(NSUInteger)width
                    height:(NSUInteger)height
                    flipped:(BOOL)flipped {
   if (!device_ || !commandQueue_ || !pipeline_ || !metalLayer_) {
-    lastError_ = @"Metal presenter is not initialized";
+    [self setLastError:@"Metal presenter is not initialized"];
     return NO;
   }
   if (surfaceID == 0 || width == 0 || height == 0) {
-    lastError_ = @"Invalid IOSurface metadata";
+    [self setLastError:@"Invalid IOSurface metadata"];
     return NO;
   }
 
-  IOSurfaceRef surface = (cachedSurface_ && IOSurfaceGetID(cachedSurface_) == surfaceID)
-    ? (IOSurfaceRef)CFRetain(cachedSurface_) : IOSurfaceLookup(surfaceID);
+  // The surface cache is shared with stopPump on the main thread, so it is
+  // read and replaced under the lock, never held across nextDrawable.
+  IOSurfaceRef surface = nullptr;
+  id<MTLTexture> texture = nil;
+  @synchronized (self) {
+    if (cachedSurface_ && IOSurfaceGetID(cachedSurface_) == surfaceID) {
+      surface = (IOSurfaceRef)CFRetain(cachedSurface_);
+      texture = cachedSurfaceTexture_;
+    }
+  }
+  if (!surface) surface = IOSurfaceLookup(surfaceID);
   if (!surface) {
-    lastError_ = [NSString stringWithFormat:@"IOSurfaceLookup(%u) returned nil", surfaceID];
+    [self setLastError:[NSString stringWithFormat:@"IOSurfaceLookup(%u) returned nil", surfaceID]];
     return NO;
   }
 
@@ -348,11 +484,10 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   const NSUInteger surfaceHeight = (NSUInteger)IOSurfaceGetHeight(surface);
   if (surfaceWidth == 0 || surfaceHeight == 0) {
     CFRelease(surface);
-    lastError_ = [NSString stringWithFormat:@"IOSurfaceLookup(%u) has invalid dimensions", surfaceID];
+    [self setLastError:[NSString stringWithFormat:@"IOSurfaceLookup(%u) has invalid dimensions", surfaceID]];
     return NO;
   }
 
-  id<MTLTexture> texture = cachedSurface_ == surface ? cachedSurfaceTexture_ : nil;
   if (!texture) {
   MTLTextureDescriptor* textureDescriptor =
     [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
@@ -364,21 +499,28 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
                                                    iosurface:surface
                                                        plane:0];
   if (texture) {
-    if (cachedSurface_) CFRelease(cachedSurface_);
-    cachedSurface_ = (IOSurfaceRef)CFRetain(surface);
-    cachedSurfaceTexture_ = texture;
+    @synchronized (self) {
+      if (cachedSurface_) CFRelease(cachedSurface_);
+      cachedSurface_ = (IOSurfaceRef)CFRetain(surface);
+      cachedSurfaceTexture_ = texture;
+    }
   }
   }
   CFRelease(surface);
 
   if (!texture) {
-    lastError_ = @"Failed to create Metal texture from IOSurface";
+    [self setLastError:@"Failed to create Metal texture from IOSurface"];
     return NO;
   }
 
+  // May block (bounded by allowsNextDrawableTimeout) while the compositor
+  // holds every drawable. That wait is confined to presentQueue_.
   id<CAMetalDrawable> drawable = [metalLayer_ nextDrawable];
   if (!drawable) {
-    lastError_ = @"CAMetalLayer returned no drawable";
+    @synchronized (self) {
+      drawableTimeouts_++;
+      lastError_ = @"CAMetalLayer returned no drawable";
+    }
     return NO;
   }
 
@@ -391,28 +533,34 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   id<MTLCommandBuffer> commandBuffer = [commandQueue_ commandBuffer];
   id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:pass];
   NSRect contentRect;
+  NSSize boundsSize;
+  NSRect frameSnapshot;
+  NSRect onScreen;
   id<MTLBuffer> lineBuffer = nil;
   id<MTLBuffer> pointBuffer = nil;
   NSUInteger lineVertexCount = 0;
   NSUInteger pointVertexCount = 0;
   @synchronized (self) {
     contentRect = contentRect_;
+    boundsSize = boundsSize_;
+    frameSnapshot = frameSnapshot_;
+    onScreen = onScreenSnapshot_;
     lineBuffer = overlayLineBuffer_;
     pointBuffer = overlayPointBuffer_;
     lineVertexCount = overlayLineVertexCount_;
     pointVertexCount = overlayPointVertexCount_;
   }
 
-  const double boundsWidth = MAX(1.0, self.bounds.size.width);
-  const double boundsHeight = MAX(1.0, self.bounds.size.height);
+  const double boundsWidth = MAX(1.0, boundsSize.width);
+  const double boundsHeight = MAX(1.0, boundsSize.height);
   const double pixelScaleX = (double)drawable.texture.width / boundsWidth;
   const double pixelScaleY = (double)drawable.texture.height / boundsHeight;
   {
-    static char lastGeomSig[512] = {0};
+    // Per view, not static: several views present on the same queue.
     char geomSig[512];
     // onScreen: where AppKit actually shows this view (window coords, bottom
-    // -left) — the ground truth the JS rect math has to agree with.
-    NSRect onScreen = self.superview ? [self convertRect:self.bounds toView:nil] : NSZeroRect;
+    // -left) — the ground truth the JS rect math has to agree with. It is
+    // snapshotted on the main thread with the rest of the geometry.
     CGRect layerBounds = metalLayer_.bounds;
     CGAffineTransform t = metalLayer_.affineTransform;
     snprintf(geomSig, sizeof(geomSig),
@@ -422,12 +570,12 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
       contentRect.origin.x, contentRect.origin.y, contentRect.size.width, contentRect.size.height,
       (double)metalLayer_.contentsScale,
       (unsigned long)width, (unsigned long)height,
-      self.frame.origin.x, self.frame.origin.y, self.frame.size.width, self.frame.size.height,
+      frameSnapshot.origin.x, frameSnapshot.origin.y, frameSnapshot.size.width, frameSnapshot.size.height,
       onScreen.origin.x, onScreen.origin.y, onScreen.size.width, onScreen.size.height,
       layerBounds.size.width, layerBounds.size.height,
       (double)t.a, (double)t.d);
-    if (strncmp(lastGeomSig, geomSig, sizeof(geomSig)) != 0) {
-      strncpy(lastGeomSig, geomSig, sizeof(lastGeomSig) - 1);
+    if (strncmp(lastGeomSig_, geomSig, sizeof(geomSig)) != 0) {
+      strncpy(lastGeomSig_, geomSig, sizeof(lastGeomSig_) - 1);
       fprintf(stderr, "[preview-geom] %s\n", geomSig);
     }
   }
@@ -478,11 +626,13 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   [commandBuffer presentDrawable:drawable];
   [commandBuffer commit];
 
-  lastSurfaceID_ = surfaceID;
-  lastWidth_ = surfaceWidth;
-  lastHeight_ = surfaceHeight;
-  frameCount_++;
-  lastError_ = nil;
+  @synchronized (self) {
+    lastSurfaceID_ = surfaceID;
+    lastWidth_ = surfaceWidth;
+    lastHeight_ = surfaceHeight;
+    frameCount_++;
+    lastError_ = nil;
+  }
   return YES;
 }
 
@@ -546,12 +696,17 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   }
 }
 
+// Runs on presentQueue_.
 - (BOOL)presentActiveIOSurface {
   IOSurfaceID surfaceID = 0;
   NSUInteger width = 0;
   NSUInteger height = 0;
   BOOL flipped = NO;
   @synchronized (self) {
+    if (!windowVisible_) {
+      occludedSkippedFrames_++;
+      return NO;
+    }
     surfaceID = activeSurfaceID_;
     width = activeWidth_;
     height = activeHeight_;
@@ -562,10 +717,21 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
 }
 
 - (void)schedulePresentActiveIOSurface {
+  [self schedulePresentActiveIOSurfaceForced:NO];
+}
+
+// Safe from any thread (display-link thread, timer, main). Coalesces: at most
+// one present is ever queued, so a present stuck in nextDrawable makes later
+// ticks drop rather than pile up behind it.
+- (void)schedulePresentActiveIOSurfaceForced:(BOOL)forced {
   const CFTimeInterval now = CACurrentMediaTime();
   const CFTimeInterval minInterval = 1.0 / 60.0;
   @synchronized (self) {
-    if (now - lastPresentScheduledAt_ < minInterval) {
+    if (!windowVisible_) {
+      occludedSkippedFrames_++;
+      return;
+    }
+    if (!forced && now - lastPresentScheduledAt_ < minInterval) {
       displayLinkSkippedFrames_++;
       return;
     }
@@ -573,11 +739,14 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
     lastPresentScheduledAt_ = now;
     presentScheduled_ = YES;
   }
-  dispatch_async(dispatch_get_main_queue(), ^{
-    @synchronized (self) {
-      presentScheduled_ = NO;
+  __weak GhostNativePreviewView* weakSelf = self;
+  dispatch_async(presentQueue_, ^{
+    GhostNativePreviewView* strongSelf = weakSelf;
+    if (!strongSelf) return;
+    @synchronized (strongSelf) {
+      strongSelf->presentScheduled_ = NO;
     }
-    [self presentActiveIOSurface];
+    [strongSelf presentActiveIOSurface];
   });
 }
 
@@ -588,15 +757,15 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   if (err != kCVReturnSuccess || !link) {
     // CoreVideo can refuse a display link during app/display transitions.
     // Keep the exact same IOSurface -> Metal presentation path and substitute
-    // only its clock with a native main-queue timer.
+    // only its clock with a timer. It ticks on the present queue, never main.
     fallbackTimer_ = dispatch_source_create(
       DISPATCH_SOURCE_TYPE_TIMER,
       0,
       0,
-      dispatch_get_main_queue()
+      presentQueue_
     );
     if (!fallbackTimer_) {
-      lastError_ = [NSString stringWithFormat:@"CVDisplayLinkCreateWithActiveCGDisplays failed: %d", err];
+      [self setLastError:[NSString stringWithFormat:@"CVDisplayLinkCreateWithActiveCGDisplays failed: %d", err]];
       return NO;
     }
     const uint64_t interval = NSEC_PER_SEC / 60;
@@ -613,14 +782,14 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
     });
     dispatch_resume(fallbackTimer_);
     pumpActive_ = YES;
-    lastError_ = nil;
+    [self setLastError:nil];
     return YES;
   }
   CVDisplayLinkSetOutputCallback(link, GhostNativePreviewDisplayLinkCallback, (__bridge void*)self);
   err = CVDisplayLinkStart(link);
   if (err != kCVReturnSuccess) {
     CVDisplayLinkRelease(link);
-    lastError_ = [NSString stringWithFormat:@"CVDisplayLinkStart failed: %d", err];
+    [self setLastError:[NSString stringWithFormat:@"CVDisplayLinkStart failed: %d", err]];
     return NO;
   }
   displayLink_ = link;
@@ -628,24 +797,26 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   return YES;
 }
 
-- (BOOL)setIOSurfaceID:(IOSurfaceID)surfaceID
-                 width:(NSUInteger)width
-                height:(NSUInteger)height
-                flipped:(BOOL)flipped {
+// Main thread. Publishes the surface the pump should show; never presents
+// here, so it cannot block on the compositor.
+- (BOOL)publishIOSurfaceID:(IOSurfaceID)surfaceID
+                     width:(NSUInteger)width
+                    height:(NSUInteger)height
+                    flipped:(BOOL)flipped {
   if (surfaceID == 0 || width == 0 || height == 0) {
-    lastError_ = @"Invalid IOSurface metadata";
+    [self setLastError:@"Invalid IOSurface metadata"];
     return NO;
   }
   IOSurfaceRef surface = IOSurfaceLookup(surfaceID);
   if (!surface) {
-    lastError_ = [NSString stringWithFormat:@"IOSurfaceLookup(%u) returned nil", surfaceID];
+    [self setLastError:[NSString stringWithFormat:@"IOSurfaceLookup(%u) returned nil", surfaceID]];
     return NO;
   }
   const NSUInteger surfaceWidth = (NSUInteger)IOSurfaceGetWidth(surface);
   const NSUInteger surfaceHeight = (NSUInteger)IOSurfaceGetHeight(surface);
   CFRelease(surface);
   if (surfaceWidth == 0 || surfaceHeight == 0) {
-    lastError_ = [NSString stringWithFormat:@"IOSurfaceLookup(%u) has invalid dimensions", surfaceID];
+    [self setLastError:[NSString stringWithFormat:@"IOSurfaceLookup(%u) has invalid dimensions", surfaceID]];
     return NO;
   }
   @synchronized (self) {
@@ -654,12 +825,37 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
     activeHeight_ = surfaceHeight;
     activeFlipped_ = flipped;
   }
+  return YES;
+}
+
+- (BOOL)setIOSurfaceID:(IOSurfaceID)surfaceID
+                 width:(NSUInteger)width
+                height:(NSUInteger)height
+                flipped:(BOOL)flipped {
+  if (![self publishIOSurfaceID:surfaceID width:width height:height flipped:flipped]) return NO;
   return [self ensurePump];
 }
 
+// Main thread. One-shot present without a pump: queued, not performed here.
+- (BOOL)queuePresentIOSurfaceID:(IOSurfaceID)surfaceID
+                          width:(NSUInteger)width
+                         height:(NSUInteger)height
+                        flipped:(BOOL)flipped {
+  if (![self publishIOSurfaceID:surfaceID width:width height:height flipped:flipped]) return NO;
+  [self schedulePresentActiveIOSurfaceForced:YES];
+  return YES;
+}
+
+// Main thread. Never waits for the present queue: a present in flight keeps
+// its own references to the texture and drawable.
+//
+// The last published surface is kept. JS parks the pump when the core's frame
+// counter stops moving, and frames are skipped while the window is hidden, so
+// a scene that changed and then went idle behind another window would
+// otherwise reappear showing the frame from before it was covered. The core
+// keeps rendering into the same IOSurface, so the visibility-restore present
+// shows its current contents.
 - (void)stopPump {
-  cachedSurfaceTexture_ = nil;
-  if (cachedSurface_) { CFRelease(cachedSurface_); cachedSurface_ = nullptr; }
   if (displayLink_) {
     CVDisplayLinkStop(displayLink_);
     CVDisplayLinkRelease(displayLink_);
@@ -670,14 +866,32 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
     fallbackTimer_ = nil;
   }
   pumpActive_ = NO;
-  presentScheduled_ = NO;
-  lastPresentScheduledAt_ = 0;
+  IOSurfaceRef cachedSurface = nullptr;
   @synchronized (self) {
-    activeSurfaceID_ = 0;
-    activeWidth_ = 0;
-    activeHeight_ = 0;
-    activeFlipped_ = NO;
+    cachedSurfaceTexture_ = nil;
+    cachedSurface = cachedSurface_;
+    cachedSurface_ = nullptr;
+    presentScheduled_ = NO;
+    lastPresentScheduledAt_ = 0;
   }
+  if (cachedSurface) CFRelease(cachedSurface);
+}
+
+// Main thread, when the owner drops its last reference. A present already
+// queued holds a strong reference for its duration; if that were the final
+// one, the NSView would be deallocated on the present queue. Park one
+// reference behind every queued present and hand it back to the main thread,
+// so AppKit teardown stays on main without the caller waiting.
+- (void)releaseAfterPendingPresents {
+  // A manual +1 rather than a block capture: block disposal order between the
+  // two queues is not defined, so an ARC capture could still drop the final
+  // reference on the present queue. CFRelease on main is deterministic.
+  void* keepAlive = (__bridge_retained void*)self;
+  dispatch_async(presentQueue_, ^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+      CFRelease(keepAlive);
+    });
+  });
 }
 @end
 
@@ -960,7 +1174,9 @@ static Napi::Value PresentIOSurface(const Napi::CallbackInfo& info) {
   __block BOOL ok = NO;
   std::lock_guard<std::mutex> lock(gMutex);
   RunOnMainSync(^{
-    ok = gPreviewView ? [gPreviewView presentIOSurfaceID:surfaceID width:width height:height flipped:flipped] : NO;
+    // Queued onto the view's present queue: acquiring a drawable here would
+    // block the Electron main thread whenever the compositor is behind.
+    ok = gPreviewView ? [gPreviewView queuePresentIOSurfaceID:surfaceID width:width height:height flipped:flipped] : NO;
   });
   return Napi::Boolean::New(env, ok);
 }
@@ -1053,6 +1269,7 @@ static Napi::Value Detach(const Napi::CallbackInfo& info) {
   RunOnMainSync(^{
     [gPreviewView stopPump];
     [gPreviewView removeFromSuperview];
+    [gPreviewView releaseAfterPendingPresents];
     gPreviewView = nil;
     gParentWebView = nil;
     gPreviewHostView = nil;
@@ -1146,6 +1363,7 @@ static Napi::Value MonitorDetach(const Napi::CallbackInfo& info) {
       if (!view) continue;
       [view stopPump];
       [view removeFromSuperview];
+      [view releaseAfterPendingPresents];
       [gMonitorViews removeObjectForKey:key];
     }
   });
