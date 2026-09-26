@@ -1018,6 +1018,11 @@ describe('native renderer sync graph effect routing', () => {
 
   it('packs active edge styling into the native compositor contract', () => {
     const state = nativeLayerEdgeEffectsState({
+      id: 'edge-layer',
+      layerShape: null,
+      warpMode: 'corners',
+      meshGrid: null,
+      corners: { topLeft: { x: 0.1, y: 0.9 }, topRight: { x: 0.9, y: 0.9 }, bottomLeft: { x: 0.1, y: 0.1 }, bottomRight: { x: 0.9, y: 0.1 } },
       edgeEffects: {
         enabled: true,
         effects: [{
@@ -1040,14 +1045,27 @@ describe('native renderer sync graph effect routing', () => {
           animation: { type: 'breathe', speed: 2, minScale: 0.8, maxScale: 1.2, easing: 'sine' },
         }],
       },
-    } as any);
+    } as any, 1000, 500);
 
     expect(state.packed).toHaveLength(1);
+    expect(state.packed[0]).toHaveLength(22);
     expect(state.packed[0][0]).toEqual([1, 0.75, 1, 4]);
     expect(state.packed[0][1]).toEqual([0.1, 0.8, 1, 1]);
-    expect(state.packed[0][2]).toEqual([6, 0.35, 1.5, 3]);
-    expect(state.packed[0][3][0]).toBe(1);
-    expect(state.packed[0][6]).toEqual([2, 2, 0.8, 1.2]);
+    expect(state.packed[0][2][0]).toBe(6);
+    expect(state.packed[0][3].slice(0, 3)).toEqual([0.35, 1.5, 3]);
+    expect(state.packed[0][5][1]).toBe(1);
+    expect(state.packed[0][6]).toEqual([1, 0.2, 0.4, 0.5]);
+    expect(state.packed[0][9][0]).toBe(3);
+    expect(state.packed[0][9][3]).toBe(2);
+    expect(state.packed[0][10].slice(0, 2)).toEqual([0.8, 1.2]);
+    // The centerline: the pinned rectangle in output px, 5 px inside.
+    expect(state.outline).toHaveLength(4);
+    const xs = state.outline.map((p) => p[0]).sort((a, b) => a - b);
+    expect(xs[0]).toBeCloseTo(105, 3);
+    expect(xs[3]).toBeCloseTo(895, 3);
+    expect(state.geometry[2]).toBeCloseTo(2 * (790 + 390), 2);
+    expect(state.corners).toHaveLength(4);
+    expect(state.bounds[0]).toBeLessThan(0.1);
     expect(state.signature).not.toBe('none');
   });
 });

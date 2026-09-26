@@ -26,6 +26,7 @@ import {
   type VJMixRow,
 } from '$lib/renderer/vjMixNative';
 import type { Layer, Model3DContent, SplatContent } from '$lib/types';
+import { buildEdgeEffectContext, nativeEdgeEffectPayload, type EdgeEffectContext } from '$lib/drawing/edgeEffects';
 import { layerRenderMeshGrid, meshGridHasTangents, resolveMeshTangents } from '$lib/utils/meshWarp';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
@@ -3929,7 +3930,6 @@ export function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
   };
 }
 
-const NATIVE_EDGE_EFFECT_LIMIT = 4;
 const NATIVE_EDGE_BLEND_CODES: Record<string, number> = {
   normal: 0, add: 1, multiply: 2, screen: 3, overlay: 4, subtract: 5,
   difference: 6, lighten: 7, darken: 8, average: 9, hardlight: 10,
@@ -3938,85 +3938,55 @@ const NATIVE_EDGE_BLEND_CODES: Record<string, number> = {
   negation: 20, phoenix: 21, 'linear-light': 22, 'hard-mix': 23,
   'vivid-light': 24, 'pin-light': 25,
 };
-const NATIVE_EDGE_STROKE_CODES: Record<string, number> = {
-  none: 0, solid: 1, glow: 2, neon: 3, snake: 4, rainbow: 5,
-  dashed: 6, dotted: 6, electric: 7, pulse: 8, scanner: 9, fire: 10,
-};
-const NATIVE_EDGE_FILL_CODES: Record<string, number> = {
-  none: 0, solid: 1, plasma: 2, liquid: 3, fire: 4, electric: 5,
-  holographic: 6, noise: 7, gradient: 8, radialGradient: 8,
-};
-const NATIVE_EDGE_ANIMATION_CODES: Record<string, number> = {
-  none: 0, concentric: 1, breathe: 2, rotate: 3, radiate: 4,
-  ripple: 5, wave: 6, glitch: 7,
-};
 
-function nativeEdgeRgba(value: unknown, fallback: NativeVec4): NativeVec4 {
-  if (!Array.isArray(value)) return fallback;
-  return [0, 1, 2, 3].map((index) =>
-    quantizeNative(clampNumber(Number(value[index] ?? fallback[index]), 0, 1)),
-  ) as NativeVec4;
-}
-
-function nativeEdgePaletteCode(value: unknown): number {
-  const codes: Record<string, number> = {
-    rainbow: 0, neon: 1, fire: 2, orange: 2, ocean: 3, blue: 3, green: 4, purple: 5,
-  };
-  return codes[String(value ?? '')] ?? 0;
-}
-
-/** Seven vec4s per effect form the stable UI-to-native compositor boundary. */
-export function nativeLayerEdgeEffectsState(layer: Pick<Layer, 'edgeEffects'>): {
+export interface NativeLayerEdgeEffectsState {
   packed: NativeVec4[][];
+  /** Stroke centerline (x px, y px, arc length px, surface scale), y up. */
+  outline: NativeVec4[];
+  corners: NativeVec4[];
+  diagonals: Array<[number, number]>;
+  geometry: NativeVec4;
+  seed: number;
+  bounds: NativeVec4;
   signature: string;
-} {
-  if (!layer.edgeEffects?.enabled) return { packed: [], signature: 'none' };
-  const packed = layer.edgeEffects.effects
-    .filter((effect) => effect?.enabled !== false)
-    .slice(0, NATIVE_EDGE_EFFECT_LIMIT)
-    .map((effect): NativeVec4[] => {
-      const stroke: any = effect.stroke ?? { type: 'none' };
-      const fill: any = effect.fill ?? { type: 'none' };
-      const animation: any = effect.animation ?? { type: 'none' };
-      const strokeType = String(stroke.type ?? 'none');
-      const fillType = String(fill.type ?? 'none');
-      const animationType = String(animation.type ?? 'none');
-      const strokeColor = nativeEdgeRgba(stroke.color, [1, 1, 1, 1]);
-      let fillColor = nativeEdgeRgba(fill.color ?? fill.color1 ?? fill.baseColor, [1, 1, 1, 1]);
-      let fillColor2 = nativeEdgeRgba(fill.color2, [0.1, 0.35, 1, 1]);
-      if (Array.isArray(fill.stops) && fill.stops.length) {
-        fillColor = nativeEdgeRgba(fill.stops[0]?.color, fillColor);
-        fillColor2 = nativeEdgeRgba(fill.stops[fill.stops.length - 1]?.color, fillColor2);
-      }
-      const strokeParams: NativeVec4 = [
-        quantizeNative(clampNumber(Number(stroke.width ?? 3), 0, 80)),
-        quantizeNative(Number(stroke.glowSize ?? stroke.length ?? stroke.dashLength ?? stroke.arcIntensity ?? stroke.pulseCount ?? stroke.beamWidth ?? stroke.intensity ?? 0)),
-        quantizeNative(Number(stroke.glowIntensity ?? stroke.speed ?? stroke.animationSpeed ?? stroke.gapLength ?? 1)),
-        quantizeNative(Number(stroke.pulseSpeed ?? stroke.snakeCount ?? stroke.branches ?? stroke.fadeLength ?? stroke.trailLength ?? stroke.trail ?? 0)),
-      ];
-      const fillParams: NativeVec4 = [
-        NATIVE_EDGE_FILL_CODES[fillType] ?? 0,
-        quantizeNative(Number(fill.opacity ?? fill.scale ?? fill.viscosity ?? fill.intensity ?? fill.shiftAmount ?? fill.hueShift ?? fill.angle ?? 1)),
-        quantizeNative(Number(fill.complexity ?? fill.turbulence ?? fill.arcCount ?? fill.scanlines ?? fill.octaves ?? fill.speed ?? fill.animationSpeed ?? 1)),
-        quantizeNative(Number(fill.speed ?? fill.metallic ?? fill.flicker ?? nativeEdgePaletteCode(fill.palette))),
-      ];
-      const animationParams: NativeVec4 = [
-        NATIVE_EDGE_ANIMATION_CODES[animationType] ?? 0,
-        quantizeNative(Number(animation.speed ?? 0)),
-        quantizeNative(Number(animation.count ?? animation.minScale ?? animation.rays ?? animation.wavelength ?? animation.frequency ?? animation.intensity ?? 0)),
-        quantizeNative(Number(animation.spacing ?? animation.maxScale ?? animation.length ?? animation.amplitude ?? animation.rgbSplit ?? 0)),
-      ];
-      return [
-        [1, quantizeNative(clampNumber(Number(effect.opacity ?? 1), 0, 1)), NATIVE_EDGE_BLEND_CODES[canonicalBlendMode(effect.blendMode)] ?? 0, NATIVE_EDGE_STROKE_CODES[strokeType] ?? 0],
-        strokeColor,
-        strokeParams,
-        fillParams,
-        fillColor,
-        fillColor2,
-        animationParams,
-      ];
-    });
-  return { packed, signature: packed.length ? packed.flat(2).join(':') : 'none' };
+}
+
+/** A layer's rendered edge effects (enabled, capped at EDGE_EFFECT_LIMIT)
+ *  with the output-space centerline they are drawn on at this output size. */
+export function nativeLayerEdgeEffectsState(
+  layer: Pick<Layer, 'id' | 'edgeEffects' | 'layerShape' | 'corners' | 'warpMode' | 'meshGrid'>,
+  width: number,
+  height: number,
+  context?: EdgeEffectContext,
+): NativeLayerEdgeEffectsState {
+  const payload = nativeEdgeEffectPayload(layer, width, height, context);
+  if (!payload) {
+    return { packed: [], outline: [], corners: [], diagonals: [], geometry: [0, 0, 0, 0], seed: 0, bounds: [0, 0, 0, 0], signature: 'none' };
+  }
+  const q = (v: NativeVec4): NativeVec4 => v.map((x) => quantizeNative(x, 4)) as NativeVec4;
+  const packed = payload.effects.map((effect) => effect.map(q));
+  const outline = payload.outline.map(q);
+  const corners = payload.corners.map(q);
+  const geometry = q(payload.geometry);
+  const bounds = payload.bounds.map((v) => quantizeNative(v)) as NativeVec4;
+  return {
+    packed,
+    outline,
+    corners,
+    diagonals: payload.diagonals,
+    geometry,
+    seed: payload.seed,
+    bounds,
+    signature: [
+      packed.flat(2).join(':'),
+      outline.flat().join(':'),
+      corners.flat().join(':'),
+      payload.diagonals.flat().join(':'),
+      geometry.join(':'),
+      payload.seed,
+      bounds.join(':'),
+    ].join('|'),
+  };
 }
 
 function tessellateNativeMaskShape(points: NonNullable<Layer['mask']>['shapes'][number]['points']): Array<{ x: number; y: number }> {
@@ -6456,6 +6426,11 @@ export class NativeRendererSync {
       if (config?.overrideStyles && (group.effects?.length ?? 0) > 0) {
         (child as { effects: Layer['effects'] }).effects = group.effects;
       }
+      // Group edge effects always apply to the child shapes (the editor's
+      // group pass does the same), each child tracing its own outline.
+      if (group.edgeEffects?.enabled && (group.edgeEffects.effects?.length ?? 0) > 0) {
+        (child as { edgeEffects: Layer['edgeEffects'] }).edgeEffects = group.edgeEffects;
+      }
       // A mask child has no content to replace; given the group's source it
       // would be routed as a media layer and stop masking.
       if (child.type === 'mask') {
@@ -8581,6 +8556,19 @@ export class NativeRendererSync {
               if (prop === 'enabled') effect.enabled = !!value;
               else effect.params[prop] = value;
             }
+          } else if (key.startsWith('edge:') && next.edgeEffects?.effects?.length) {
+            // edge:<effectId>:<path>, path either top level (enabled,
+            // opacity) or one level deep (stroke.width, fill.speed).
+            const [, edgeId, path] = key.split(':');
+            const edgeIndex = next.edgeEffects.effects.findIndex((e: any) => e.id === edgeId);
+            if (edgeIndex >= 0 && path) {
+              const effects = [...next.edgeEffects.effects];
+              const edited = path === 'enabled'
+                ? { ...effects[edgeIndex], enabled: !!value }
+                : this.setDotPathClone(effects[edgeIndex], path, value);
+              effects[edgeIndex] = edited as any;
+              next.edgeEffects = { ...next.edgeEffects, effects };
+            }
           } else if (key.startsWith('splat:') && next.splatContent) {
             next.splatContent = this.setDotPathClone(next.splatContent, key.slice('splat:'.length), value);
           } else if (key.startsWith('model3d:') && next.model3dContent) {
@@ -8727,6 +8715,7 @@ export class NativeRendererSync {
     // binding transactionally once the first native frame is resident.
     const videoPrerolls = new Set<string>();
     layers = this.resolveNativeGroupLayers(layers);
+    const edgeContext = buildEdgeEffectContext(layers, width, height);
     for (const layer of layers) {
       const candidate = nativeLayerSource(layer);
       const src = candidate.source;
@@ -8794,7 +8783,7 @@ export class NativeRendererSync {
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
       const nativeShape = nativeLayerShapeState(layer);
       const nativeMask = nativeLayerMaskState(layer);
-      const nativeEdgeEffects = nativeLayerEdgeEffectsState(layer);
+      const nativeEdgeEffects = nativeLayerEdgeEffectsState(layer, width, height, edgeContext);
       const nativeGraphQuality = this.nativeGraphQuality();
       const nativeGraphScaledParams = nativeGraphRoute
         ? nativeGraphParamsForLayer(layer, nativeGraphRoute.kind, nativeGraphQuality)
@@ -9380,6 +9369,12 @@ export class NativeRendererSync {
           type: 'set_layer_edge_effects',
           layer_id: layer.id,
           edge_effects: nativeEdgeEffects.packed,
+          edge_outline: nativeEdgeEffects.outline,
+          edge_corners: nativeEdgeEffects.corners,
+          edge_diagonals: nativeEdgeEffects.diagonals,
+          edge_geometry: nativeEdgeEffects.geometry,
+          edge_seed: nativeEdgeEffects.seed,
+          edge_bounds: nativeEdgeEffects.bounds,
         });
       }
 

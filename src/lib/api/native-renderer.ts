@@ -351,7 +351,17 @@ export type RendererCommand =
   | { type: 'set_layer_color'; layer_id: string; rgba: [number, number, number, number] }
   | { type: 'set_layer_source_color'; layer_id: string; rgb: [number, number, number] }
   | { type: 'set_layer_native_params'; layer_id: string; params: [number, number, number, number, number, number, number, number] }
-  | { type: 'set_layer_edge_effects'; layer_id: string; edge_effects: number[][][] }
+  | {
+    type: 'set_layer_edge_effects';
+    layer_id: string;
+    edge_effects: number[][][];
+    edge_outline?: number[][];
+    edge_corners?: number[][];
+    edge_diagonals?: number[][];
+    edge_geometry?: number[];
+    edge_seed?: number;
+    edge_bounds?: number[];
+  }
   | {
       type: 'set_native_graph_layer';
       layer_id: string;
