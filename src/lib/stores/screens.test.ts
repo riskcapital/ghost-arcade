@@ -114,3 +114,31 @@ describe('screen mask actions', () => {
     expect(masksOf()[0].points[0]).toEqual({ x: 0.1, y: 0.1 });
   });
 });
+
+describe('screen mask presses', () => {
+  const left = { button: 0, altKey: false };
+  const right = { button: 2, altKey: false };
+  const alt = { button: 0, altKey: true };
+
+  it('closes the shape from the first vertex once there are 3 points while placing', () => {
+    const { screenMaskPointPress } = screensModule;
+    expect(screenMaskPointPress(left, true, 0, 3)).toBe('close');
+    expect(screenMaskPointPress(left, true, 0, 2)).toBe('drag');
+    expect(screenMaskPointPress(left, true, 1, 3)).toBe('drag');
+  });
+
+  it('closes on a right-click while placing and removes on a right-click otherwise', () => {
+    const { screenMaskPointPress } = screensModule;
+    expect(screenMaskPointPress(right, true, 2, 4)).toBe('close');
+    expect(screenMaskPointPress(right, false, 2, 4)).toBe('remove');
+    expect(screenMaskPointPress(alt, false, 0, 4)).toBe('remove');
+    expect(screenMaskPointPress(left, false, 0, 4)).toBe('drag');
+  });
+
+  it('adds on a left press on the canvas, closes on a right press, ignores the rest', () => {
+    const { screenMaskCanvasPress } = screensModule;
+    expect(screenMaskCanvasPress(0)).toBe('add');
+    expect(screenMaskCanvasPress(2)).toBe('close');
+    expect(screenMaskCanvasPress(1)).toBe('ignore');
+  });
+});

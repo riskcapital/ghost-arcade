@@ -44,7 +44,7 @@
   import { settings, screenMaskIsActive } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { normalizedWarpNudge } from '../utils/warpNudge';
-  import { screens, selectedScreenId, screenActions, selectedScreenMaskId, screenMaskPlacing } from '../stores/screens';
+  import { screens, selectedScreenId, screenActions, selectedScreenMaskId, screenMaskPlacing, screenMaskPointPress, screenMaskCanvasPress } from '../stores/screens';
   import {
     canvasToScreenContent,
     screenContentToCanvas,
@@ -369,14 +369,16 @@
   }
 
   function startMaskPointDrag(e: MouseEvent, s: OutputSlice, maskId: string, index: number) {
-    // Right-click or Alt-click removes the vertex instead of dragging it.
-    if (e.button === 2 || e.altKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      screenActions.removeMaskPoint(s.id, maskId, index);
+    const pointCount = (s.masks ?? []).find(m => m.id === maskId)?.points.length ?? 0;
+    const action = screenMaskPointPress(e, get(screenMaskPlacing), index, pointCount);
+    if (action === 'drag') {
+      startDrag(e, s.id, { kind: 'mask-point', maskId, index });
       return;
     }
-    startDrag(e, s.id, { kind: 'mask-point', maskId, index });
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === 'close') screenMaskPlacing.set(false);
+    else screenActions.removeMaskPoint(s.id, maskId, index);
   }
 
   /** Click on an edge's "+" handle: insert a vertex at the edge midpoint
@@ -398,6 +400,9 @@
     if (!s || !mask || !containerEl) return;
     e.preventDefault();
     e.stopPropagation();
+    const action = screenMaskCanvasPress(e.button);
+    if (action === 'close') screenMaskPlacing.set(false);
+    if (action !== 'add') return;
     const r = containerEl.getBoundingClientRect();
     const canvasPoint = {
       x: (e.clientX - r.left) / Math.max(1, r.width),
@@ -564,7 +569,8 @@
     <!-- Click-to-place layer: sits over the screen handles (so a click
          never grabs the move handle by accident) and under the vertex
          handles (so placed vertices can still be dragged). -->
-    <div class="mask-place-layer" role="presentation" onmousedown={placeMaskPoint}></div>
+    <div class="mask-place-layer" role="presentation" onmousedown={placeMaskPoint}
+      oncontextmenu={(e) => e.preventDefault()}></div>
   {/if}
 
   {#each $screens as s (s.id)}
@@ -585,10 +591,12 @@
           {/each}
         {/if}
         {#each canvasPts as cp, i}
-          <div class="handle mask-point-handle" class:first={i === 0}
+          {@const closable = $screenMaskPlacing && i === 0 && canvasPts.length >= 3}
+          <div class="handle mask-point-handle" class:first={i === 0} class:closable
             class:dragging={drag?.kind.kind === 'mask-point' && drag?.kind.maskId === mask.id && drag?.kind.index === i}
             style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
-            role="button" tabindex="-1" title="Drag to move. Right-click or Alt-click to remove."
+            role="button" tabindex="-1"
+            title={closable ? 'Click to close the mask' : $screenMaskPlacing ? 'Drag to move. Right-click to close the mask.' : 'Drag to move. Right-click or Alt-click to remove.'}
             oncontextmenu={(e) => e.preventDefault()}
             onmousedown={(e) => startMaskPointDrag(e, s, mask.id, i)}></div>
         {/each}
@@ -735,6 +743,10 @@
     z-index: 70;
   }
   .mask-point-handle.first { background: #ffffff; border-color: #4dd8ff; }
+  /* While placing, the first vertex closes the shape: ring it so it reads
+     as a target, like a pen tool's start point. */
+  .mask-point-handle.first.closable { cursor: pointer; box-shadow: 0 0 0 4px rgba(77, 216, 255, 0.45); }
+  .mask-point-handle.first.closable:hover { transform: scale(1.5); }
   .mask-point-handle:hover { transform: scale(1.25); }
   .mask-point-handle.dragging { cursor: grabbing; transform: scale(1.35); background: #ffff00; }
   .handle.mask-insert-handle {

@@ -60,8 +60,31 @@ export const selectedScreen = derived(
 export const selectedScreenMaskId = writable<string | null>(null);
 // True while the operator is placing vertices: each click on the editor
 // canvas appends a point to the selected mask. Cleared by Done, Escape,
-// or selecting a different screen.
+// Enter, closing the shape, or selecting a different screen.
 export const screenMaskPlacing = writable(false);
+
+/** What a press on a mask vertex does. While placing it works like a pen
+ *  tool: the first vertex closes the shape once there are 3 points, and a
+ *  right-click on any vertex closes it. Otherwise a right-click or
+ *  Alt-click removes the vertex and a plain press drags it. */
+export function screenMaskPointPress(
+  press: { button: number; altKey: boolean },
+  placing: boolean,
+  index: number,
+  pointCount: number,
+): 'close' | 'remove' | 'drag' {
+  if (placing && (press.button === 2 || (index === 0 && !press.altKey && pointCount >= 3))) return 'close';
+  if (press.button === 2 || press.altKey) return 'remove';
+  return 'drag';
+}
+
+/** A press on the canvas while placing: left adds a vertex, right closes
+ *  the shape, and any other button does nothing. */
+export function screenMaskCanvasPress(button: number): 'add' | 'close' | 'ignore' {
+  if (button === 0) return 'add';
+  if (button === 2) return 'close';
+  return 'ignore';
+}
 selectedScreenId.subscribe(() => {
   selectedScreenMaskId.set(null);
   screenMaskPlacing.set(false);
