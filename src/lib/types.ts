@@ -5235,6 +5235,10 @@ export interface Project {
   /** Project-scoped LED performance effects shown in VJ mode. */
   wledEffects?: WLEDEffect[];
   wledEffectAutomation?: WLEDEffectAutomation;
+  /** Art-Net / sACN pixel mapping: LED fixtures sampled from the final
+   *  composite and sent as DMX universes. Optional so older projects load
+   *  unchanged. */
+  pixelMap?: PixelMapConfig;
   /** Multi-output slices — saved with the project so a recalled
    *  show restores the operator's full projector / display layout
    *  (master canvas resolution, every slice's crop, blend, color
@@ -5500,6 +5504,60 @@ export interface WLEDController {
   testPattern?: WLEDTestPattern;
   /** Hex color used by the solid setup pattern. */
   testColor?: string;
+}
+
+// ═══════════════════════════════════════════════════
+// Art-Net / sACN pixel mapping
+// ═══════════════════════════════════════════════════
+
+export type PixelMapProtocol = 'artnet' | 'sacn';
+export type PixelMapFixtureType = 'strip' | 'matrix' | 'custom';
+/** Channel order on the wire. W is derived as min(R, G, B). */
+export type PixelMapColorOrder =
+  | 'RGB' | 'RBG' | 'GRB' | 'GBR' | 'BRG' | 'BGR'
+  | 'RGBW' | 'GRBW' | 'BRGW' | 'RBGW' | 'WRGB';
+/** Art-Net: unicast to a node or broadcast. sACN: multicast group or unicast. */
+export type PixelMapDelivery = 'unicast' | 'broadcast' | 'multicast';
+
+export interface PixelMapFixture {
+  id: string;
+  name: string;
+  enabled: boolean;
+  type: PixelMapFixtureType;
+  pixelCount: number;
+  colorOrder: PixelMapColorOrder;
+  protocol: PixelMapProtocol;
+  delivery: PixelMapDelivery;
+  /** Node IPv4 address, or the broadcast address for Art-Net broadcast.
+   *  Unused for sACN multicast. */
+  address: string;
+  /** First universe. Art-Net 0-32767, sACN 1-63999. */
+  universe: number;
+  /** First DMX channel, 1-512. Pixels never straddle a universe. */
+  channel: number;
+  /** Region and layout of the composition this fixture samples. The layout
+   *  mode follows `type`. */
+  mapping: WLEDMappingConfig;
+  brightness?: number;
+  gamma?: number;
+  calibration?: WLEDColorCalibration;
+  samplingMode?: WLEDColorSamplingMode;
+  testPattern?: WLEDTestPattern;
+  testColor?: string;
+}
+
+export interface PixelMapConfig {
+  /** Master output switch for every fixture. */
+  enabled: boolean;
+  /** Frames per second, 1-60. */
+  fps: number;
+  /** Send ArtSync after each Art-Net frame so nodes latch together. */
+  artSync: boolean;
+  sacnPriority: number;
+  sacnSourceName: string;
+  /** Stable sACN component identifier (UUID) for this project. */
+  sacnCid: string;
+  fixtures: PixelMapFixture[];
 }
 
 // ═══════════════════════════════════════════════════
