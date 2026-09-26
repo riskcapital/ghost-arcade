@@ -105,6 +105,13 @@ export function projectorBasis(p: ProjectorLensLike): ProjectorBasis {
   return { x, y, z };
 }
 
+/** Roll (degrees) that turns the look-at basis for position/target into a
+ *  basis whose x axis is `xAxis`. */
+export function projectorRollFromAxes(position: ProjectionSimVec3, target: ProjectionSimVec3, xAxis: Vec3): number {
+  const unrolled = projectorBasis({ position, target, fov: 30, aspect: 1, roll: 0 });
+  return (Math.atan2(dot3(xAxis, unrolled.y), dot3(xAxis, unrolled.x)) * 180) / Math.PI;
+}
+
 /** Column-major world -> camera matrix (GL convention). */
 export function projectorViewMatrix(p: ProjectorLensLike): number[] {
   const { x, y, z } = projectorBasis(p);
@@ -240,16 +247,14 @@ function round(value: number, digits = 6): number {
 export function projectorPatchFromCameraModel(
   model: ProjectorCameraModel,
   focusDistance = 5,
-): Pick<ProjectionSimProjector, 'position' | 'target' | 'roll' | 'fov' | 'aspect' | 'lensShift'> {
+): Pick<ProjectionSimProjector, 'position' | 'target' | 'fov' | 'aspect'> & { roll: number; lensShift: [number, number] } {
   const { R, f, cx, cy, width, height } = model;
   const position = cameraCenter(model);
   const forward: Vec3 = [R[2][0], R[2][1], R[2][2]];
   const distance = Math.max(0.05, Number.isFinite(focusDistance) ? focusDistance : 5);
   const target = add3(position, scale3(forward, distance));
   const aspect = width / height;
-  const unrolled = projectorBasis({ position, target, fov: 30, aspect, roll: 0 });
-  const actualX: Vec3 = [R[0][0], R[0][1], R[0][2]];
-  const roll = (Math.atan2(dot3(actualX, unrolled.y), dot3(actualX, unrolled.x)) * 180) / Math.PI;
+  const roll = projectorRollFromAxes(position, target, [R[0][0], R[0][1], R[0][2]]);
   const fov = (2 * Math.atan(height / (2 * f)) * 180) / Math.PI;
   return {
     position: position.map((v) => round(v)) as ProjectionSimVec3,

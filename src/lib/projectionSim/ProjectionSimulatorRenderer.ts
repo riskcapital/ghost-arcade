@@ -1,11 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-import { loadPLY } from '../splat';
 import type { OutputSlice } from '../stores/settings';
 import type {
   ProjectionSimGizmoMode,
@@ -13,16 +9,44 @@ import type {
   ProjectionSimProjector,
   ProjectionSimScene,
   ProjectionSimSelection,
+  ProjectionSimVec3,
 } from './types';
+import {
+  loadProjectionSimModel,
+  loadProjectionSimPly,
+  normalizeImportedObject,
+  primitiveParts,
+  type LoadedModelData,
+} from './geometry';
+import {
+  projectorBasis,
+  projectorFrustumCorners,
+  projectorProjectionMatrix,
+  projectorRollFromAxes,
+  projectorWorldMatrix,
+} from './projectorLens';
+import { projectorContentCrop, projectorOutputBlend } from './projectorViewPayload';
 
 const MAX_PROJECTORS = 4;
+/** Depth maps live in one atlas so the projection shader needs a single
+ *  sampler for all of them: four projector slots plus four slots for the
+ *  lenses other projectors take their content from. */
+const DEPTH_TILE = 1024;
+const DEPTH_ATLAS_COLUMNS = 4;
+const DEPTH_ATLAS_ROWS = 2;
+const MAX_DEPTH_SLOTS = DEPTH_ATLAS_COLUMNS * DEPTH_ATLAS_ROWS;
+const CALIBRATION_SNAP_PX = 16;
 const IDENTITY = new THREE.Matrix4();
 const DEFAULT_CROP = new THREE.Vector4(0, 0, 1, 1);
 const ZERO_BLEND = new THREE.Vector4(0, 0, 0, 0);
 const WHITE = new THREE.Vector3(1, 1, 1);
 const DEPTH_BIAS = 0.0018;
 const SCRATCH_COLOR = new THREE.Color();
-const LOOK_AT_MATRIX = new THREE.Matrix4();
+const SRGB_ENCODE_LUT = Uint8Array.from({ length: 256 }, (_, i) => {
+  const c = i / 255;
+  const encoded = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  return Math.round(Math.min(1, Math.max(0, encoded)) * 255);
+});
 
 type ProjectionMaterial = THREE.MeshStandardMaterial & {
   userData: THREE.MeshStandardMaterial['userData'] & {
@@ -35,23 +59,47 @@ export interface ProjectionSimTransformPatch {
   rotation?: [number, number, number];
   scale?: [number, number, number];
   target?: [number, number, number];
+  /** Projector roll about the lens axis, degrees. */
+  roll?: number;
 }
 
 interface ProjectorRenderData {
+  id: string;
   camera: THREE.PerspectiveCamera;
   matrix: THREE.Matrix4;
   position: THREE.Vector3;
-  crop: THREE.Vector4;
   blend: THREE.Vector4;
   tint: THREE.Vector3;
   opacity: number;
   intensity: number;
-  depthTexture: THREE.Texture | null;
+  depthSlot: number;
+  /** The lens that lays the content on the surfaces for this projector. */
+  mapId: string;
+  mapMatrix: THREE.Matrix4;
+  mapPosition: THREE.Vector3;
+  mapCrop: THREE.Vector4;
+  mapDepthSlot: number;
 }
 
-interface LoadedModelData {
-  scene: THREE.Object3D;
-  animations: THREE.AnimationClip[];
+interface DepthCamera {
+  id: string;
+  camera: THREE.PerspectiveCamera;
+}
+
+/** A calibration point shown on the model. */
+export interface ProjectionSimCalibrationMarker {
+  id: string;
+  label: string;
+  world: ProjectionSimVec3;
+  matched: boolean;
+  selected: boolean;
+}
+
+/** A pick on the model while calibrating. */
+export interface ProjectionSimModelPick {
+  world: ProjectionSimVec3;
+  objectId: string | null;
+  snapped: boolean;
 }
 
 interface MultiTransformItem {
@@ -125,6 +173,7 @@ function objectStructureHash(scene: ProjectionSimScene): string {
       color: p.color,
       fov: p.fov,
       aspect: p.aspect,
+      lensShift: p.lensShift,
       showFrustum: p.showFrustum,
     })),
   });
@@ -145,14 +194,19 @@ function projectorDepthHash(scene: ProjectionSimScene): string {
       pointSize: obj.pointSize,
     })),
     projectors: scene.projectors
-      .filter((projector) => projector.enabled)
-      .slice(0, MAX_PROJECTORS)
+      .filter((projector) => projector.enabled || scene.projectors.some((p) => p.enabled && p.contentFrom === projector.id))
       .map((projector) => ({
         id: projector.id,
+        enabled: projector.enabled,
         position: projector.position,
         target: projector.target,
+        roll: projector.roll,
         fov: projector.fov,
         aspect: projector.aspect,
+        lensShift: projector.lensShift,
+        near: projector.near,
+        far: projector.far,
+        contentFrom: projector.contentFrom,
       })),
   });
 }
@@ -202,15 +256,17 @@ function makeProjectionMaterial(
     shader.uniforms.uProjectorCount = { value: 0 };
     shader.uniforms.uProjectorMatrices = { value: Array.from({ length: MAX_PROJECTORS }, () => IDENTITY.clone()) };
     shader.uniforms.uProjectorPositions = { value: Array.from({ length: MAX_PROJECTORS }, () => new THREE.Vector3()) };
-    shader.uniforms.uProjectorCrops = { value: Array.from({ length: MAX_PROJECTORS }, () => DEFAULT_CROP.clone()) };
     shader.uniforms.uProjectorBlends = { value: Array.from({ length: MAX_PROJECTORS }, () => ZERO_BLEND.clone()) };
     shader.uniforms.uProjectorTints = { value: Array.from({ length: MAX_PROJECTORS }, () => WHITE.clone()) };
     shader.uniforms.uProjectorOpacities = { value: new Array(MAX_PROJECTORS).fill(0) };
     shader.uniforms.uProjectorIntensities = { value: new Array(MAX_PROJECTORS).fill(1) };
-    shader.uniforms.uProjectorDepth0 = { value: null };
-    shader.uniforms.uProjectorDepth1 = { value: null };
-    shader.uniforms.uProjectorDepth2 = { value: null };
-    shader.uniforms.uProjectorDepth3 = { value: null };
+    shader.uniforms.uProjectorDepthSlots = { value: new Array(MAX_PROJECTORS).fill(0) };
+    shader.uniforms.uProjectorMapMatrices = { value: Array.from({ length: MAX_PROJECTORS }, () => IDENTITY.clone()) };
+    shader.uniforms.uProjectorMapPositions = { value: Array.from({ length: MAX_PROJECTORS }, () => new THREE.Vector3()) };
+    shader.uniforms.uProjectorMapCrops = { value: Array.from({ length: MAX_PROJECTORS }, () => DEFAULT_CROP.clone()) };
+    shader.uniforms.uProjectorMapDepthSlots = { value: new Array(MAX_PROJECTORS).fill(0) };
+    shader.uniforms.uProjectorMapSelf = { value: new Array(MAX_PROJECTORS).fill(1) };
+    shader.uniforms.uProjectorDepthAtlas = { value: null };
     shader.uniforms.uProjectorDepthBias = { value: DEPTH_BIAS };
     shader.uniforms.uProjectorShadowStrength = { value: 1 };
 
@@ -235,61 +291,82 @@ uniform sampler2D uProjectionTexture;
 uniform int uProjectorCount;
 uniform mat4 uProjectorMatrices[${MAX_PROJECTORS}];
 uniform vec3 uProjectorPositions[${MAX_PROJECTORS}];
-uniform vec4 uProjectorCrops[${MAX_PROJECTORS}];
 uniform vec4 uProjectorBlends[${MAX_PROJECTORS}];
 uniform vec3 uProjectorTints[${MAX_PROJECTORS}];
 uniform float uProjectorOpacities[${MAX_PROJECTORS}];
 uniform float uProjectorIntensities[${MAX_PROJECTORS}];
-uniform sampler2D uProjectorDepth0;
-uniform sampler2D uProjectorDepth1;
-uniform sampler2D uProjectorDepth2;
-uniform sampler2D uProjectorDepth3;
+uniform float uProjectorDepthSlots[${MAX_PROJECTORS}];
+uniform mat4 uProjectorMapMatrices[${MAX_PROJECTORS}];
+uniform vec3 uProjectorMapPositions[${MAX_PROJECTORS}];
+uniform vec4 uProjectorMapCrops[${MAX_PROJECTORS}];
+uniform float uProjectorMapDepthSlots[${MAX_PROJECTORS}];
+uniform float uProjectorMapSelf[${MAX_PROJECTORS}];
+uniform sampler2D uProjectorDepthAtlas;
 uniform float uProjectorDepthBias;
 uniform float uProjectorShadowStrength;
 varying vec3 vProjectionWorldPosition;
 varying vec3 vProjectionWorldNormal;
 
+// uv is y-up here, so the top band is measured from 1.
 float psimEdgeFade(vec2 uv, vec4 blend) {
   float l = blend.x <= 0.0001 ? 1.0 : smoothstep(0.0, blend.x, uv.x);
   float r = blend.y <= 0.0001 ? 1.0 : smoothstep(0.0, blend.y, 1.0 - uv.x);
-  float t = blend.z <= 0.0001 ? 1.0 : smoothstep(0.0, blend.z, uv.y);
-  float b = blend.w <= 0.0001 ? 1.0 : smoothstep(0.0, blend.w, 1.0 - uv.y);
+  float t = blend.z <= 0.0001 ? 1.0 : smoothstep(0.0, blend.z, 1.0 - uv.y);
+  float b = blend.w <= 0.0001 ? 1.0 : smoothstep(0.0, blend.w, uv.y);
   return clamp(min(min(l, r), min(t, b)), 0.0, 1.0);
 }
 
-float psimDepthAt(int index, vec2 uv) {
-  if (index == 0) return unpackRGBAToDepth(texture2D(uProjectorDepth0, uv));
-  if (index == 1) return unpackRGBAToDepth(texture2D(uProjectorDepth1, uv));
-  if (index == 2) return unpackRGBAToDepth(texture2D(uProjectorDepth2, uv));
-  return unpackRGBAToDepth(texture2D(uProjectorDepth3, uv));
+float psimDepthAt(float slot, vec2 uv) {
+  vec2 tile = vec2(mod(slot, ${DEPTH_ATLAS_COLUMNS}.0), floor(slot / ${DEPTH_ATLAS_COLUMNS}.0));
+  vec2 inset = clamp(uv, vec2(0.5 / ${DEPTH_TILE}.0), vec2(1.0 - 0.5 / ${DEPTH_TILE}.0));
+  vec2 atlasUv = (tile + inset) / vec2(${DEPTH_ATLAS_COLUMNS}.0, ${DEPTH_ATLAS_ROWS}.0);
+  return unpackRGBAToDepth(texture2D(uProjectorDepthAtlas, atlasUv));
+}
+
+// Where a lens sees a world point: xy = uv (y up), z = depth (0..1),
+// w = 1 inside its frustum.
+vec4 psimLensUv(mat4 lens, vec3 worldPosition) {
+  vec4 p = lens * vec4(worldPosition, 1.0);
+  vec3 ndc = p.xyz / max(0.0001, p.w);
+  float inside = step(0.0, p.w)
+    * step(-1.0, ndc.x) * step(ndc.x, 1.0)
+    * step(-1.0, ndc.y) * step(ndc.y, 1.0)
+    * step(-1.0, ndc.z) * step(ndc.z, 1.0);
+  return vec4(ndc.xy * 0.5 + 0.5, ndc.z * 0.5 + 0.5, inside);
+}
+
+float psimFacing(vec3 lensPosition) {
+  return smoothstep(
+    0.01,
+    0.08,
+    dot(normalize(vProjectionWorldNormal), normalize(lensPosition - vProjectionWorldPosition))
+  );
 }
 `)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 vec3 psimSurfaceColor = diffuseColor.rgb;
 vec3 psimProjectedLight = vec3(0.0);
+float psimShadow = clamp(uProjectorShadowStrength, 0.0, 1.0);
 for (int i = 0; i < ${MAX_PROJECTORS}; i++) {
   if (i >= uProjectorCount) break;
-  vec4 p = uProjectorMatrices[i] * vec4(vProjectionWorldPosition, 1.0);
-  vec3 ndc = p.xyz / max(0.0001, p.w);
-  vec2 uv = ndc.xy * 0.5 + 0.5;
-  float projectedDepth = ndc.z * 0.5 + 0.5;
-  float sceneDepth = psimDepthAt(i, uv);
-  float occlusionVisibility = step(projectedDepth - uProjectorDepthBias, sceneDepth);
-  float visibleFromProjector = mix(1.0, occlusionVisibility, clamp(uProjectorShadowStrength, 0.0, 1.0));
-  float inside = step(0.0, p.w)
-    * step(-1.0, ndc.x) * step(ndc.x, 1.0)
-    * step(-1.0, ndc.y) * step(ndc.y, 1.0)
-    * step(-1.0, ndc.z) * step(ndc.z, 1.0);
-  vec4 crop = uProjectorCrops[i];
-  vec2 croppedUv = crop.xy + uv * crop.zw;
+  // Light leaving projector i...
+  vec4 lens = psimLensUv(uProjectorMatrices[i], vProjectionWorldPosition);
+  float occlusionVisibility = step(lens.z - uProjectorDepthBias, psimDepthAt(uProjectorDepthSlots[i], lens.xy));
+  float visibleFromProjector = mix(1.0, occlusionVisibility, psimShadow);
+  float edge = psimEdgeFade(lens.xy, uProjectorBlends[i]);
+  float w = lens.w * visibleFromProjector * psimFacing(uProjectorPositions[i]) * edge * uProjectorOpacities[i];
+  // ...carries the content its mapping lens lays on this point: its own
+  // image, or the image another projector throws here.
+  vec4 mapped = lens;
+  if (uProjectorMapSelf[i] < 0.5) {
+    mapped = psimLensUv(uProjectorMapMatrices[i], vProjectionWorldPosition);
+    float mapVisibility = step(mapped.z - uProjectorDepthBias, psimDepthAt(uProjectorMapDepthSlots[i], mapped.xy));
+    w *= mapped.w * mix(1.0, mapVisibility, psimShadow) * psimFacing(uProjectorMapPositions[i]);
+  }
+  // Crops are top-down on the master; the canvas texture is y-up.
+  vec4 crop = uProjectorMapCrops[i];
+  vec2 croppedUv = vec2(crop.x + mapped.x * crop.z, 1.0 - (crop.y + (1.0 - mapped.y) * crop.w));
   vec3 projected = texture2D(uProjectionTexture, croppedUv).rgb;
-  float edge = psimEdgeFade(uv, uProjectorBlends[i]);
-  float facingProjector = smoothstep(
-    0.01,
-    0.08,
-    dot(normalize(vProjectionWorldNormal), normalize(uProjectorPositions[i] - vProjectionWorldPosition))
-  );
-  float w = inside * visibleFromProjector * facingProjector * edge * uProjectorOpacities[i];
   psimProjectedLight += projected * uProjectorTints[i] * uProjectorIntensities[i] * w;
 }
 float psimReflectance = clamp(max(max(psimSurfaceColor.r, psimSurfaceColor.g), psimSurfaceColor.b), 0.45, 1.0);
@@ -319,8 +396,14 @@ export class ProjectionSimulatorRenderer {
   private multiSelectionBox = new THREE.Box3Helper(new THREE.Box3(), '#ff725f');
   private transformHelper: THREE.Object3D;
   private depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
-  private depthTargets: THREE.WebGLRenderTarget[] = [];
-  private whiteDepthTexture: THREE.DataTexture;
+  private depthAtlas: THREE.WebGLRenderTarget | null = null;
+  private depthCameras: DepthCamera[] = [];
+  private calibrationRoot = new THREE.Group();
+  private calibrationMarkersHash = '';
+  private pickMode: 'select' | 'calibrate' = 'select';
+  private snapToVertices = true;
+  private onModelPick: ((pick: ProjectionSimModelPick) => void) | null = null;
+  private previewTarget: THREE.WebGLRenderTarget | null = null;
   private sourceTexture: THREE.CanvasTexture | null = null;
   private sourceCanvas: HTMLCanvasElement | null = null;
   private lastHash = '';
@@ -333,12 +416,16 @@ export class ProjectionSimulatorRenderer {
   private projectorLights = new Map<string, { light: THREE.SpotLight; target: THREE.Object3D }>();
   private uniformMatrices = Array.from({ length: MAX_PROJECTORS }, () => IDENTITY.clone());
   private uniformPositions = Array.from({ length: MAX_PROJECTORS }, () => new THREE.Vector3());
-  private uniformCrops = Array.from({ length: MAX_PROJECTORS }, () => DEFAULT_CROP.clone());
   private uniformBlends = Array.from({ length: MAX_PROJECTORS }, () => ZERO_BLEND.clone());
   private uniformTints = Array.from({ length: MAX_PROJECTORS }, () => WHITE.clone());
   private uniformOpacities = new Array(MAX_PROJECTORS).fill(0);
   private uniformIntensities = new Array(MAX_PROJECTORS).fill(1);
-  private uniformDepths: Array<THREE.Texture | null> = new Array(MAX_PROJECTORS).fill(null);
+  private uniformDepthSlots = new Array(MAX_PROJECTORS).fill(0);
+  private uniformMapMatrices = Array.from({ length: MAX_PROJECTORS }, () => IDENTITY.clone());
+  private uniformMapPositions = Array.from({ length: MAX_PROJECTORS }, () => new THREE.Vector3());
+  private uniformMapCrops = Array.from({ length: MAX_PROJECTORS }, () => DEFAULT_CROP.clone());
+  private uniformMapDepthSlots = new Array(MAX_PROJECTORS).fill(0);
+  private uniformMapSelf = new Array(MAX_PROJECTORS).fill(1);
   private projectorShadowStrength = 1;
   private selected: ProjectionSimSelection = null;
   private selectedTargets: NonNullable<ProjectionSimSelection>[] = [];
@@ -411,9 +498,9 @@ export class ProjectionSimulatorRenderer {
     this.multiSelectionBox.visible = false;
     this.multiSelectionBox.userData.projectionSimPickable = false;
     this.scene.add(this.multiSelectionBox);
-
-    this.whiteDepthTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
-    this.whiteDepthTexture.needsUpdate = true;
+    this.calibrationRoot.name = 'Calibration points';
+    this.calibrationRoot.userData.projectionSimPickable = false;
+    this.scene.add(this.calibrationRoot);
 
     canvas.addEventListener('pointerdown', this.handlePointerDown, { passive: true });
     canvas.addEventListener('pointerup', this.handlePointerUp, { passive: true });
@@ -435,8 +522,9 @@ export class ProjectionSimulatorRenderer {
     (this.selectionOutline.material as THREE.Material).dispose();
     this.multiSelectionBox.geometry.dispose();
     (this.multiSelectionBox.material as THREE.Material).dispose();
-    for (const target of this.depthTargets) target.dispose();
-    this.whiteDepthTexture.dispose();
+    this.depthAtlas?.dispose();
+    this.previewTarget?.dispose();
+    this.clearGroup(this.calibrationRoot);
     this.renderer.dispose();
   }
 
@@ -447,6 +535,140 @@ export class ProjectionSimulatorRenderer {
 
   setPickProjectors(enabled: boolean): void {
     this.pickProjectors = enabled;
+  }
+
+  /** In 'calibrate' mode a click on the model reports the exact surface
+   *  point (optionally snapped to the nearest vertex) instead of selecting. */
+  setPickMode(mode: 'select' | 'calibrate', onModelPick: ((pick: ProjectionSimModelPick) => void) | null = null): void {
+    this.pickMode = mode;
+    this.onModelPick = mode === 'calibrate' ? onModelPick : null;
+    if (mode === 'calibrate') {
+      this.transformControls.detach();
+      this.attachedSelection = null;
+    }
+  }
+
+  setSnapToVertices(enabled: boolean): void {
+    this.snapToVertices = enabled;
+  }
+
+  /** Numbered spheres on the picked calibration points. */
+  setCalibrationMarkers(markers: ProjectionSimCalibrationMarker[]): void {
+    const hash = JSON.stringify(markers);
+    if (hash === this.calibrationMarkersHash) return;
+    this.calibrationMarkersHash = hash;
+    this.clearGroup(this.calibrationRoot);
+    const box = new THREE.Box3();
+    for (const child of this.root.children) {
+      if (child.userData.projectionSimTarget) box.expandByObject(child);
+    }
+    const sceneSize = box.isEmpty() ? 4 : box.getSize(new THREE.Vector3()).length();
+    const radius = THREE.MathUtils.clamp(sceneSize * 0.006, 0.012, 0.08);
+    for (const marker of markers) {
+      const color = marker.selected ? '#4fe3ff' : marker.matched ? '#ffcf3a' : '#ff5a7a';
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 16, 10),
+        new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 }),
+      );
+      sphere.renderOrder = 10;
+      sphere.position.set(...marker.world);
+      this.calibrationRoot.add(sphere);
+      const label = this.makeLabelSprite(marker.label, color);
+      label.position.set(marker.world[0], marker.world[1] + radius * 3.2, marker.world[2]);
+      label.scale.setScalar(radius * 5);
+      this.calibrationRoot.add(label);
+    }
+    this.calibrationRoot.traverse((child) => {
+      child.userData.projectionSimPickable = false;
+    });
+  }
+
+  private makeLabelSprite(text: string, color: string): THREE.Sprite {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = 'rgba(5, 7, 11, 0.8)';
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 30px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, size / 2, size / 2 + 1);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+    sprite.renderOrder = 11;
+    return sprite;
+  }
+
+  /** The scene as one projector sees it (its lens, no editor helpers), for
+   *  the calibration pad. Returns top-down sRGB pixels. */
+  renderProjectorPreview(projectorId: string, width: number, height: number): ImageData | null {
+    const projector = this.currentScene?.projectors.find((p) => p.id === projectorId);
+    if (!projector) return null;
+    const w = Math.max(2, Math.round(width));
+    const h = Math.max(2, Math.round(height));
+    if (!this.previewTarget || this.previewTarget.width !== w || this.previewTarget.height !== h) {
+      this.previewTarget?.dispose();
+      this.previewTarget = new THREE.WebGLRenderTarget(w, h, { depthBuffer: true, stencilBuffer: false });
+    }
+    const camera = new THREE.PerspectiveCamera();
+    this.applyLensToCamera(camera, projector);
+    const previousTarget = this.renderer.getRenderTarget();
+    const hidden = this.hideHelpers({ projectors: true, grid: false, calibration: true });
+    this.projectorRoot.traverse((child) => {
+      if (child.userData.projectionSimBeam && child.visible) {
+        child.visible = false;
+        hidden.push(child);
+      }
+    });
+    const pixels = new Uint8Array(w * h * 4);
+    try {
+      this.renderer.setRenderTarget(this.previewTarget);
+      this.renderer.clear();
+      this.renderer.render(this.scene, camera);
+      this.renderer.readRenderTargetPixels(this.previewTarget, 0, 0, w, h, pixels);
+    } finally {
+      this.renderer.setRenderTarget(previousTarget);
+      this.restoreHelpers(hidden);
+    }
+    // Render targets hold linear light; encode to sRGB for the 2D canvas.
+    const out = new ImageData(w, h);
+    const lut = SRGB_ENCODE_LUT;
+    for (let y = 0; y < h; y++) {
+      const src = (h - 1 - y) * w * 4;
+      const dst = y * w * 4;
+      for (let x = 0; x < w * 4; x += 4) {
+        out.data[dst + x] = lut[pixels[src + x]];
+        out.data[dst + x + 1] = lut[pixels[src + x + 1]];
+        out.data[dst + x + 2] = lut[pixels[src + x + 2]];
+        out.data[dst + x + 3] = 255;
+      }
+    }
+    return out;
+  }
+
+  /** Client (CSS pixel) position of a world point in the orbit view, or
+   *  null when it is behind the camera. */
+  worldToClient(world: ProjectionSimVec3): { x: number; y: number } | null {
+    const p = new THREE.Vector3(...world);
+    this.camera.updateMatrixWorld();
+    const ndc = p.clone().project(this.camera);
+    if (ndc.z < -1 || ndc.z > 1) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: rect.left + (ndc.x * 0.5 + 0.5) * rect.width,
+      y: rect.top + (1 - (ndc.y * 0.5 + 0.5)) * rect.height,
+    };
   }
 
   setSelection(target: ProjectionSimSelection): void {
@@ -465,6 +687,12 @@ export class ProjectionSimulatorRenderer {
   }
 
   private refreshSelectionAttachment(): void {
+    if (this.pickMode === 'calibrate') {
+      this.transformControls.detach();
+      this.attachedSelection = null;
+      this.multiTransformGroup.visible = false;
+      return;
+    }
     const transformableTargets = this.getTransformableSelectedTargets();
     if (transformableTargets.length > 1) {
       this.updateMultiTransformGroup(transformableTargets);
@@ -668,6 +896,7 @@ export class ProjectionSimulatorRenderer {
     hide(this.transformHelper);
     hide(this.selectionOutline);
     hide(this.multiSelectionBox);
+    hide(this.calibrationRoot);
     this.projectorRoot.traverse((child) => {
       if (child.userData.projectionSimBeam) hide(child);
     });
@@ -815,47 +1044,19 @@ export class ProjectionSimulatorRenderer {
   }
 
   private buildPrimitiveMesh(object: ProjectionSimObject): THREE.Object3D {
-    const kind = object.primitive ?? 'box';
     const surfaceStyle = this.currentScene?.environment.surfaceStyle;
-    if (kind === 'column') {
-      const column = new THREE.Group();
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 1, 32), makeProjectionMaterial(object, surfaceStyle));
-      const capTop = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.16, 1.05), makeProjectionMaterial({ ...object, color: '#ded8c8' }, surfaceStyle));
-      const capBottom = capTop.clone();
-      shaft.position.y = 0;
-      capTop.position.y = 0.58;
-      capBottom.position.y = -0.58;
-      column.add(shaft, capTop, capBottom);
-      this.prepareProjectedObject(column, object);
-      return column;
-    }
-
-    let geometry: THREE.BufferGeometry;
-    switch (kind) {
-      case 'sphere':
-        geometry = new THREE.SphereGeometry(0.5, 48, 24);
-        break;
-      case 'cylinder':
-        geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 40);
-        break;
-      case 'cone':
-        geometry = new THREE.ConeGeometry(0.55, 1, 40);
-        break;
-      case 'pyramid':
-        geometry = new THREE.ConeGeometry(0.75, 1, 4);
-        geometry.rotateY(Math.PI / 4);
-        break;
-      case 'plane':
-        geometry = new THREE.BoxGeometry(1, 1, 0.06);
-        break;
-      case 'box':
-      default:
-        geometry = new THREE.BoxGeometry(1, 1, 1);
-    }
-
-    const mesh = new THREE.Mesh(geometry, makeProjectionMaterial(object, surfaceStyle));
-    this.prepareProjectedObject(mesh, object);
-    return mesh;
+    const parts = primitiveParts(object.primitive);
+    const meshes = parts.map((part) => {
+      const mesh = new THREE.Mesh(
+        part.geometry,
+        makeProjectionMaterial(part.tint ? { ...object, color: part.tint } : object, surfaceStyle),
+      );
+      mesh.position.y = part.offsetY;
+      return mesh;
+    });
+    const built: THREE.Object3D = meshes.length === 1 ? meshes[0] : new THREE.Group().add(...meshes);
+    this.prepareProjectedObject(built, object);
+    return built;
   }
 
   private prepareProjectedObject(object3d: THREE.Object3D, object: ProjectionSimObject): void {
@@ -916,7 +1117,7 @@ export class ProjectionSimulatorRenderer {
     const key = `${object.assetFormat ?? 'gltf'}:${object.assetUrl}`;
     let promise = this.modelCache.get(key);
     if (!promise) {
-      promise = this.loadModelObject(object);
+      promise = loadProjectionSimModel(object);
       this.modelCache.set(key, promise);
     }
     try {
@@ -924,7 +1125,7 @@ export class ProjectionSimulatorRenderer {
       if (!holder.parent) return;
       const loaded = SkeletonUtils.clone(loadedModel.scene);
       this.clearGroup(holder);
-      this.normalizeImportedObject(loaded);
+      normalizeImportedObject(loaded);
       loaded.traverse((child) => {
         const mesh = child as THREE.Mesh;
         if (!mesh.isMesh) return;
@@ -953,65 +1154,11 @@ export class ProjectionSimulatorRenderer {
     }
   }
 
-  private async loadModelObject(object: ProjectionSimObject): Promise<LoadedModelData> {
-    const url = object.assetUrl!;
-    const format = object.assetFormat;
-    if (format === 'obj') {
-      return { scene: await new OBJLoader().loadAsync(url), animations: [] };
-    }
-    if (format === 'fbx') {
-      const scene = await new FBXLoader().loadAsync(url);
-      return { scene, animations: scene.animations ?? [] };
-    }
-    const gltf = await new GLTFLoader().loadAsync(url);
-    return { scene: gltf.scene, animations: gltf.animations ?? [] };
-  }
-
   private async loadPointCloud(object: ProjectionSimObject, holder: THREE.Group): Promise<void> {
     if (!object.assetUrl) return;
     try {
-      const ply = await loadPLY(object.assetUrl);
-      const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(ply.vertices.length * 3);
-      const colors = new Float32Array(ply.vertices.length * 3);
-      const normals = ply.vertices.every((v) => v.nx !== undefined && v.ny !== undefined && v.nz !== undefined)
-        ? new Float32Array(ply.vertices.length * 3)
-        : null;
-      const sx = ply.boundingBox.max.x - ply.boundingBox.min.x || 1;
-      const sy = ply.boundingBox.max.y - ply.boundingBox.min.y || 1;
-      const sz = ply.boundingBox.max.z - ply.boundingBox.min.z || 1;
-      const maxDim = Math.max(sx, sy, sz);
-      for (let i = 0; i < ply.vertices.length; i++) {
-        const v = ply.vertices[i];
-        positions[i * 3] = (v.x - ply.center.x) / maxDim;
-        positions[i * 3 + 1] = (v.y - ply.center.y) / maxDim;
-        positions[i * 3 + 2] = (v.z - ply.center.z) / maxDim;
-        colors[i * 3] = (v.r ?? 255) / 255;
-        colors[i * 3 + 1] = (v.g ?? 255) / 255;
-        colors[i * 3 + 2] = (v.b ?? 255) / 255;
-        if (normals) {
-          normals[i * 3] = v.nx ?? 0;
-          normals[i * 3 + 1] = v.ny ?? 1;
-          normals[i * 3 + 2] = v.nz ?? 0;
-        }
-      }
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      if (normals) geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-
-      const indices: number[] = [];
-      for (const face of ply.faces ?? []) {
-        const valid = face.filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < ply.vertices.length);
-        if (valid.length < 3) continue;
-        for (let j = 1; j < valid.length - 1; j++) {
-          indices.push(valid[0], valid[j], valid[j + 1]);
-        }
-      }
-
-      if (indices.length) {
-        geometry.setIndex(indices);
-        if (!normals) geometry.computeVertexNormals();
-        geometry.computeBoundingSphere();
+      const { geometry, hasFaces, dataType } = await loadProjectionSimPly(object.assetUrl);
+      if (hasFaces) {
         const receiver = { ...object, receiveProjection: true, castShadow: object.castShadow };
         const material = this.makeImportedProjectionMaterial(receiver, null);
         if ((this.currentScene?.environment.surfaceStyle ?? 'light-gray') === 'original') {
@@ -1030,8 +1177,7 @@ export class ProjectionSimulatorRenderer {
         return;
       }
 
-      geometry.computeBoundingSphere();
-      const pointSize = object.pointSize ?? (ply.dataType === 'gaussian' ? 0.08 : 0.035);
+      const pointSize = object.pointSize ?? (dataType === 'gaussian' ? 0.08 : 0.035);
       const points = new THREE.Points(
         geometry,
         new THREE.PointsMaterial({
@@ -1049,15 +1195,6 @@ export class ProjectionSimulatorRenderer {
     } catch (err) {
       console.warn('[ProjectionSim] point cloud import failed:', err);
     }
-  }
-
-  private normalizeImportedObject(obj: THREE.Object3D): void {
-    const box = new THREE.Box3().setFromObject(obj);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    obj.position.sub(center);
-    obj.scale.multiplyScalar(1 / maxDim);
   }
 
   private buildProjector(projector: ProjectionSimProjector): THREE.Object3D {
@@ -1097,15 +1234,9 @@ export class ProjectionSimulatorRenderer {
 
     const distance = vec3(projector.position).distanceTo(vec3(projector.target));
     const far = Math.max(2.5, distance * 1.18);
-    const halfH = Math.tan(THREE.MathUtils.degToRad(projector.fov) * 0.5) * far;
-    const halfW = halfH * projector.aspect;
-    const origin = new THREE.Vector3(0, 0, -0.42);
-    const corners = [
-      new THREE.Vector3(-halfW, -halfH, -far),
-      new THREE.Vector3( halfW, -halfH, -far),
-      new THREE.Vector3( halfW,  halfH, -far),
-      new THREE.Vector3(-halfW,  halfH, -far),
-    ];
+    // The lens sits at the group origin; the beam starts at the lens face.
+    const origin = new THREE.Vector3(0, 0, 0);
+    const corners = projectorFrustumCorners(projector, far).map((c) => new THREE.Vector3(c[0], c[1], c[2]));
 
     const linePositions: number[] = [];
     for (const corner of corners) linePositions.push(origin.x, origin.y, origin.z, corner.x, corner.y, corner.z);
@@ -1181,13 +1312,15 @@ export class ProjectionSimulatorRenderer {
 
   private applyProjectorTransform(group: THREE.Object3D, projector: ProjectionSimProjector): void {
     group.visible = projector.enabled;
-    this.applyProjectorObjectTransform(group, vec3(projector.position), vec3(projector.target));
+    group.position.set(...projector.position);
+    group.quaternion.setFromRotationMatrix(new THREE.Matrix4().fromArray(projectorWorldMatrix(projector)));
   }
 
-  private applyProjectorObjectTransform(group: THREE.Object3D, position: THREE.Vector3, target: THREE.Vector3): void {
-    group.position.copy(position);
-    LOOK_AT_MATRIX.lookAt(group.position, target, group.up);
-    group.quaternion.setFromRotationMatrix(LOOK_AT_MATRIX);
+  /** Roll that reproduces a projector body's orientation from a look-at
+   *  pose, so rotating it with the gizmo keeps its twist. */
+  private rollOf(quaternion: THREE.Quaternion, position: ProjectionSimVec3, target: ProjectionSimVec3): number {
+    const x = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
+    return Math.round(projectorRollFromAxes(position, target, [x.x, x.y, x.z]) * 1000) / 1000;
   }
 
   private updateSelectionOutline(): void {
@@ -1230,52 +1363,75 @@ export class ProjectionSimulatorRenderer {
     this.selectionOutline.visible = true;
   }
 
+  /** Point a camera along a projector's lens: pose with roll, and the
+   *  lens-shifted projection the native projector view uses too. */
+  private applyLensToCamera(camera: THREE.PerspectiveCamera, projector: ProjectionSimProjector): void {
+    const world = new THREE.Matrix4().fromArray(projectorWorldMatrix(projector));
+    camera.position.set(...projector.position);
+    camera.quaternion.setFromRotationMatrix(world);
+    camera.fov = projector.fov;
+    camera.aspect = projector.aspect;
+    camera.updateMatrixWorld(true);
+    camera.projectionMatrix.fromArray(projectorProjectionMatrix(projector));
+    camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+  }
+
   private updateProjectorData(sceneState: ProjectionSimScene, outputSlices: OutputSlice[]): void {
     const enabled = sceneState.projectors.filter((p) => p.enabled).slice(0, MAX_PROJECTORS);
+    const byId = new Map(sceneState.projectors.map((p) => [p.id, p]));
     const liveIds = new Set<string>();
     this.projectors.length = 0;
+
+    // Depth slots: every lit projector, then any other lens a projector
+    // takes its content from.
+    const depthIds: string[] = enabled.map((p) => p.id);
+    for (const projector of enabled) {
+      const mapId = projector.contentFrom && byId.has(projector.contentFrom) ? projector.contentFrom : projector.id;
+      if (!depthIds.includes(mapId) && depthIds.length < MAX_DEPTH_SLOTS) depthIds.push(mapId);
+    }
+    this.depthCameras = depthIds.map((id) => {
+      const existing = this.depthCameras.find((entry) => entry.id === id);
+      const camera = existing?.camera ?? new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 120);
+      this.applyLensToCamera(camera, byId.get(id)!);
+      return { id, camera };
+    });
 
     for (const projector of enabled) {
       liveIds.add(projector.id);
       let data = this.projectorDataById.get(projector.id);
       if (!data) {
         data = {
+          id: projector.id,
           camera: new THREE.PerspectiveCamera(projector.fov, projector.aspect, 0.1, 120),
           matrix: new THREE.Matrix4(),
           position: new THREE.Vector3(),
-          crop: DEFAULT_CROP.clone(),
           blend: ZERO_BLEND.clone(),
           tint: WHITE.clone(),
           opacity: projector.opacity,
           intensity: projector.intensity,
-          depthTexture: null,
+          depthSlot: 0,
+          mapId: projector.id,
+          mapMatrix: new THREE.Matrix4(),
+          mapPosition: new THREE.Vector3(),
+          mapCrop: DEFAULT_CROP.clone(),
+          mapDepthSlot: 0,
         };
         this.projectorDataById.set(projector.id, data);
       }
 
-      data.camera.fov = projector.fov;
-      data.camera.aspect = projector.aspect;
-      data.camera.position.set(...projector.position);
-      data.camera.lookAt(...projector.target);
-      data.camera.updateMatrixWorld(true);
-      data.camera.updateProjectionMatrix();
+      this.applyLensToCamera(data.camera, projector);
       data.matrix.multiplyMatrices(data.camera.projectionMatrix, data.camera.matrixWorldInverse);
       data.position.set(...projector.position);
+      data.depthSlot = Math.max(0, depthIds.indexOf(projector.id));
 
-      data.crop.set(...projector.crop);
-      data.blend.set(...projector.edgeBlend);
-      if (projector.source === 'slice' && projector.sliceId) {
-        const slice = outputSlices.find((s) => s.id === projector.sliceId);
-        if (slice) {
-          data.crop.set(slice.cropX, slice.cropY, slice.cropW, slice.cropH);
-          data.blend.set(
-            slice.edgeBlendLeft ?? 0,
-            slice.edgeBlendRight ?? 0,
-            slice.edgeBlendTop ?? 0,
-            slice.edgeBlendBottom ?? 0,
-          );
-        }
-      }
+      const mapping = (projector.contentFrom && byId.get(projector.contentFrom)) || projector;
+      data.mapId = mapping.id;
+      const mapCamera = this.depthCameras.find((entry) => entry.id === mapping.id)?.camera ?? data.camera;
+      data.mapMatrix.multiplyMatrices(mapCamera.projectionMatrix, mapCamera.matrixWorldInverse);
+      data.mapPosition.set(...mapping.position);
+      data.mapCrop.set(...projectorContentCrop(mapping, outputSlices));
+      data.mapDepthSlot = Math.max(0, depthIds.indexOf(mapping.id));
+      data.blend.set(...projectorOutputBlend(projector, outputSlices));
 
       setColorVec3(data.tint, projector.color);
       data.opacity = projector.opacity;
@@ -1291,64 +1447,54 @@ export class ProjectionSimulatorRenderer {
   }
 
   private renderProjectorDepthMaps(depthHash: string): void {
-    if (!this.projectors.length) {
+    if (!this.depthCameras.length) {
       this.lastDepthHash = depthHash;
       return;
     }
+    if (depthHash === this.lastDepthHash && this.depthAtlas) return;
 
-    const canReuseDepth = depthHash === this.lastDepthHash
-      && this.projectors.every((projector, index) => Boolean(projector.depthTexture ?? this.depthTargets[index]?.texture));
-    if (canReuseDepth) {
-      for (let i = 0; i < this.projectors.length; i++) {
-        this.projectors[i].depthTexture = this.depthTargets[i]?.texture ?? this.whiteDepthTexture;
-      }
-      return;
-    }
-
+    const atlas = this.getDepthAtlas();
     const previousTarget = this.renderer.getRenderTarget();
     const previousOverride = this.scene.overrideMaterial;
     const previousBackground = this.scene.background;
     const previousAutoClear = this.renderer.autoClear;
-    const previousProjectorVisible = this.projectorRoot.visible;
-    const previousGridVisible = this.grid?.visible ?? true;
-    const previousTransformVisible = this.transformHelper.visible;
-    const previousSelectionOutlineVisible = this.selectionOutline.visible;
-    const previousMultiSelectionBoxVisible = this.multiSelectionBox.visible;
+    const previousClearColor = this.renderer.getClearColor(new THREE.Color());
+    const previousClearAlpha = this.renderer.getClearAlpha();
+    const hidden = this.hideHelpers({ projectors: true, grid: true, calibration: true });
 
     this.scene.background = null;
     this.scene.overrideMaterial = this.depthMaterial;
-    this.renderer.autoClear = true;
-    this.projectorRoot.visible = false;
-    if (this.grid) this.grid.visible = false;
-    this.transformHelper.visible = false;
-    this.selectionOutline.visible = false;
-    this.multiSelectionBox.visible = false;
-
-    for (let i = 0; i < this.projectors.length; i++) {
-      const target = this.getDepthTarget(i);
-      this.renderer.setRenderTarget(target);
-      this.renderer.clear();
-      this.renderer.render(this.scene, this.projectors[i].camera);
-      this.projectors[i].depthTexture = target.texture;
-    }
+    this.renderer.autoClear = false;
+    // Packed depth 1.0 (nothing there) is white.
+    this.renderer.setClearColor(0xffffff, 1);
+    this.renderer.setRenderTarget(atlas);
+    this.depthCameras.forEach((entry, slot) => {
+      const x = (slot % DEPTH_ATLAS_COLUMNS) * DEPTH_TILE;
+      const y = Math.floor(slot / DEPTH_ATLAS_COLUMNS) * DEPTH_TILE;
+      atlas.viewport.set(x, y, DEPTH_TILE, DEPTH_TILE);
+      atlas.scissor.set(x, y, DEPTH_TILE, DEPTH_TILE);
+      atlas.scissorTest = true;
+      this.renderer.setRenderTarget(atlas);
+      this.renderer.clear(true, true, false);
+      this.renderer.render(this.scene, entry.camera);
+    });
+    atlas.scissorTest = false;
+    atlas.viewport.set(0, 0, atlas.width, atlas.height);
+    atlas.scissor.set(0, 0, atlas.width, atlas.height);
 
     this.lastDepthHash = depthHash;
 
     this.renderer.setRenderTarget(previousTarget);
+    this.renderer.setClearColor(previousClearColor, previousClearAlpha);
     this.scene.overrideMaterial = previousOverride;
     this.scene.background = previousBackground;
     this.renderer.autoClear = previousAutoClear;
-    this.projectorRoot.visible = previousProjectorVisible;
-    if (this.grid) this.grid.visible = previousGridVisible;
-    this.transformHelper.visible = previousTransformVisible;
-    this.selectionOutline.visible = previousSelectionOutlineVisible;
-    this.multiSelectionBox.visible = previousMultiSelectionBoxVisible;
+    this.restoreHelpers(hidden);
   }
 
-  private getDepthTarget(index: number): THREE.WebGLRenderTarget {
-    let target = this.depthTargets[index];
-    if (!target) {
-      target = new THREE.WebGLRenderTarget(1024, 1024, {
+  private getDepthAtlas(): THREE.WebGLRenderTarget {
+    if (!this.depthAtlas) {
+      this.depthAtlas = new THREE.WebGLRenderTarget(DEPTH_TILE * DEPTH_ATLAS_COLUMNS, DEPTH_TILE * DEPTH_ATLAS_ROWS, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
         format: THREE.RGBAFormat,
@@ -1356,11 +1502,31 @@ export class ProjectionSimulatorRenderer {
         depthBuffer: true,
         stencilBuffer: false,
       });
-      target.texture.name = `ProjectionSimDepth${index}`;
-      target.texture.generateMipmaps = false;
-      this.depthTargets[index] = target;
+      this.depthAtlas.texture.name = 'ProjectionSimDepthAtlas';
+      this.depthAtlas.texture.generateMipmaps = false;
     }
-    return target;
+    return this.depthAtlas;
+  }
+
+  /** Hide editor helpers for an off-screen pass; returns what to restore. */
+  private hideHelpers(opts: { projectors?: boolean; grid?: boolean; calibration?: boolean } = {}): THREE.Object3D[] {
+    const hidden: THREE.Object3D[] = [];
+    const hide = (object: THREE.Object3D | null | undefined) => {
+      if (!object?.visible) return;
+      object.visible = false;
+      hidden.push(object);
+    };
+    hide(this.transformHelper);
+    hide(this.selectionOutline);
+    hide(this.multiSelectionBox);
+    if (opts.projectors) hide(this.projectorRoot);
+    if (opts.grid) hide(this.grid);
+    if (opts.calibration) hide(this.calibrationRoot);
+    return hidden;
+  }
+
+  private restoreHelpers(hidden: THREE.Object3D[]): void {
+    for (const object of hidden) object.visible = true;
   }
 
   private syncProjectorLights(sceneState: ProjectionSimScene): void {
@@ -1435,40 +1601,51 @@ export class ProjectionSimulatorRenderer {
       if (projector) {
         this.uniformMatrices[i].copy(projector.matrix);
         this.uniformPositions[i].copy(projector.position);
-        this.uniformCrops[i].copy(projector.crop);
         this.uniformBlends[i].copy(projector.blend);
         this.uniformTints[i].copy(projector.tint);
         this.uniformOpacities[i] = projector.opacity;
         this.uniformIntensities[i] = Math.max(0, projector.intensity);
-        this.uniformDepths[i] = projector.depthTexture ?? this.whiteDepthTexture;
+        this.uniformDepthSlots[i] = projector.depthSlot;
+        this.uniformMapMatrices[i].copy(projector.mapMatrix);
+        this.uniformMapPositions[i].copy(projector.mapPosition);
+        this.uniformMapCrops[i].copy(projector.mapCrop);
+        this.uniformMapDepthSlots[i] = projector.mapDepthSlot;
+        this.uniformMapSelf[i] = projector.mapId === projector.id ? 1 : 0;
       } else {
         this.uniformMatrices[i].copy(IDENTITY);
         this.uniformPositions[i].set(0, 0, 0);
-        this.uniformCrops[i].copy(DEFAULT_CROP);
         this.uniformBlends[i].copy(ZERO_BLEND);
         this.uniformTints[i].copy(WHITE);
         this.uniformOpacities[i] = 0;
         this.uniformIntensities[i] = 1;
-        this.uniformDepths[i] = this.whiteDepthTexture;
+        this.uniformDepthSlots[i] = 0;
+        this.uniformMapMatrices[i].copy(IDENTITY);
+        this.uniformMapPositions[i].set(0, 0, 0);
+        this.uniformMapCrops[i].copy(DEFAULT_CROP);
+        this.uniformMapDepthSlots[i] = 0;
+        this.uniformMapSelf[i] = 1;
       }
     }
 
+    const atlas = this.depthAtlas?.texture ?? null;
     for (const material of this.projectionMaterials) {
       const shader = material.userData.projectionShader;
       if (!shader) continue;
       shader.uniforms.uProjectionTexture.value = this.sourceTexture;
-      shader.uniforms.uProjectorCount.value = this.sourceTexture ? this.projectors.length : 0;
+      shader.uniforms.uProjectorCount.value = this.sourceTexture && atlas ? this.projectors.length : 0;
       shader.uniforms.uProjectorMatrices.value = this.uniformMatrices;
       shader.uniforms.uProjectorPositions.value = this.uniformPositions;
-      shader.uniforms.uProjectorCrops.value = this.uniformCrops;
       shader.uniforms.uProjectorBlends.value = this.uniformBlends;
       shader.uniforms.uProjectorTints.value = this.uniformTints;
       shader.uniforms.uProjectorOpacities.value = this.uniformOpacities;
       shader.uniforms.uProjectorIntensities.value = this.uniformIntensities;
-      shader.uniforms.uProjectorDepth0.value = this.uniformDepths[0];
-      shader.uniforms.uProjectorDepth1.value = this.uniformDepths[1];
-      shader.uniforms.uProjectorDepth2.value = this.uniformDepths[2];
-      shader.uniforms.uProjectorDepth3.value = this.uniformDepths[3];
+      shader.uniforms.uProjectorDepthSlots.value = this.uniformDepthSlots;
+      shader.uniforms.uProjectorMapMatrices.value = this.uniformMapMatrices;
+      shader.uniforms.uProjectorMapPositions.value = this.uniformMapPositions;
+      shader.uniforms.uProjectorMapCrops.value = this.uniformMapCrops;
+      shader.uniforms.uProjectorMapDepthSlots.value = this.uniformMapDepthSlots;
+      shader.uniforms.uProjectorMapSelf.value = this.uniformMapSelf;
+      shader.uniforms.uProjectorDepthAtlas.value = atlas;
       shader.uniforms.uProjectorDepthBias.value = DEPTH_BIAS;
       shader.uniforms.uProjectorShadowStrength.value = this.projectorShadowStrength;
     }
@@ -1508,6 +1685,7 @@ export class ProjectionSimulatorRenderer {
         );
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(obj.quaternion).normalize();
         patch.target = arr3(obj.position.clone().addScaledVector(forward, distance));
+        patch.roll = this.rollOf(obj.quaternion, patch.position!, patch.target);
       }
       this.onTransform(this.selected, patch);
     } else {
@@ -1541,10 +1719,13 @@ export class ProjectionSimulatorRenderer {
         const baseTarget = item.projectorTarget?.clone()
           ?? item.position.clone().add(new THREE.Vector3(0, 0, -5).applyQuaternion(item.quaternion));
         const nextTarget = baseTarget.applyMatrix4(deltaMatrix);
-        this.applyProjectorObjectTransform(obj, nextPosition, nextTarget);
+        const nextQuaternion = deltaQuat.clone().multiply(item.quaternion);
+        obj.position.copy(nextPosition);
+        obj.quaternion.copy(nextQuaternion);
         this.onTransform(item.target, {
           position: arr3(nextPosition),
           target: arr3(nextTarget),
+          roll: this.rollOf(nextQuaternion, arr3(nextPosition), arr3(nextTarget)),
         });
         continue;
       }
@@ -1579,6 +1760,12 @@ export class ProjectionSimulatorRenderer {
     this.pointer.y = -(((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
+    if (this.pickMode === 'calibrate') {
+      const pick = this.pickModelPoint();
+      if (pick) this.onModelPick?.(pick);
+      return;
+    }
+
     const helperHit = this.transformHelper.visible
       && this.raycaster.intersectObject(this.transformHelper, true)
         .some((hit) => this.isVisibleTransformHelperPart(hit.object));
@@ -1605,6 +1792,51 @@ export class ProjectionSimulatorRenderer {
       this.onSelect(null, event);
     }
   };
+
+  /** Exact surface point under the pointer on a visible object or the
+   *  floor, snapped to the nearest corner of the hit triangle when that
+   *  corner is within a few pixels. */
+  private pickModelPoint(): ProjectionSimModelPick | null {
+    const candidates: THREE.Object3D[] = [...this.selectable.entries()]
+      .filter(([target, object]) => target.startsWith('object:') && object.visible)
+      .map(([, object]) => object);
+    const floor = this.root.children.find((child) => child.name === 'Projection floor');
+    if (floor) candidates.push(floor);
+    const hits = this.raycaster.intersectObjects(candidates, true).filter((hit) => {
+      if (!(hit.object as THREE.Mesh).isMesh) return false;
+      let current: THREE.Object3D | null = hit.object;
+      while (current) {
+        if (!current.visible) return false;
+        current = current.parent;
+      }
+      return true;
+    });
+    const hit = hits[0];
+    if (!hit) return null;
+    const target = this.pickTargetFromObject(hit.object, 'object:');
+    const objectId = target ? target.slice('object:'.length) : null;
+    let point = hit.point.clone();
+    let snapped = false;
+    const mesh = hit.object as THREE.Mesh;
+    const positions = mesh.geometry?.getAttribute('position');
+    if (this.snapToVertices && hit.face && positions) {
+      const from = this.worldToClient([hit.point.x, hit.point.y, hit.point.z]);
+      let best = Infinity;
+      for (const index of [hit.face.a, hit.face.b, hit.face.c]) {
+        const vertex = new THREE.Vector3().fromBufferAttribute(positions as THREE.BufferAttribute, index).applyMatrix4(mesh.matrixWorld);
+        const at = this.worldToClient([vertex.x, vertex.y, vertex.z]);
+        if (!from || !at) continue;
+        const distance = Math.hypot(at.x - from.x, at.y - from.y);
+        if (distance < best && distance <= CALIBRATION_SNAP_PX) {
+          best = distance;
+          point = vertex;
+          snapped = true;
+        }
+      }
+    }
+    const precise = (v: number) => Math.round(v * 1e5) / 1e5;
+    return { world: [precise(point.x), precise(point.y), precise(point.z)], objectId, snapped };
+  }
 
   private pickTarget(kind: 'object' | 'projector'): ProjectionSimSelection {
     const prefix = `${kind}:`;
