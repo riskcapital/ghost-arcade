@@ -34,7 +34,7 @@ import {
   type OutputSlice,
   type ScreenMask,
 } from './settings';
-import type { Point2D } from '../types';
+import type { BezierPoint, Point2D } from '../types';
 import { maxOutputSlices } from './license';
 import type { Effect, EffectType } from '../types';
 import { getDefaultEffectParams } from '../renderer/effects';
@@ -98,12 +98,37 @@ function generateId(prefix = 'screen'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function clonePoint(p: BezierPoint): BezierPoint {
+  const out: BezierPoint = { x: p.x, y: p.y };
+  if (p.cpIn) out.cpIn = { x: p.cpIn.x, y: p.cpIn.y };
+  if (p.cpOut) out.cpOut = { x: p.cpOut.x, y: p.cpOut.y };
+  return out;
+}
+
 function cloneMasks(masks: ScreenMask[] | undefined, freshIds = false): ScreenMask[] {
   return (masks ?? []).map(m => ({
     ...m,
     id: freshIds ? generateId('mask') : m.id,
-    points: m.points.map(p => ({ x: p.x, y: p.y })),
+    points: m.points.map(clonePoint),
   }));
+}
+
+function lerpPoint(a: Point2D, b: Point2D, t: number): Point2D {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+/** The point halfway along a mask edge (the cubic's t = 0.5 when curved),
+ *  where the edge "+" handle sits and a new vertex lands. */
+export function screenMaskEdgeMidpoint(points: readonly BezierPoint[], index: number): Point2D {
+  const a = points[index];
+  const b = points[(index + 1) % points.length];
+  if (!a.cpOut && !b.cpIn) return lerpPoint(a, b, 0.5);
+  const c1 = a.cpOut ?? a;
+  const c2 = b.cpIn ?? b;
+  return {
+    x: 0.125 * a.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * b.x,
+    y: 0.125 * a.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * b.y,
+  };
 }
 
 function clamp01(value: number): number {
@@ -351,6 +376,81 @@ export const screenActions = {
     });
   },
 
+  /** Insert a vertex halfway along the edge that leaves point `index`.
+   *  A curved edge is split in two at its middle (de Casteljau), so the
+   *  new point sits on the curve with handles that keep the shape exactly;
+   *  a straight edge gets a plain midpoint. */
+  insertMaskPointOnEdge(screenId: string, maskId: string, index: number) {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s) return;
+    this.update(screenId, {
+      masks: cloneMasks(s.masks).map(m => {
+        if (m.id !== maskId || index < 0 || index >= m.points.length) return m;
+        const points = m.points.slice();
+        const next = (index + 1) % points.length;
+        const a = points[index];
+        const b = points[next];
+        if (!a.cpOut && !b.cpIn) {
+          points.splice(index + 1, 0, lerpPoint(a, b, 0.5));
+          return { ...m, points };
+        }
+        const c1 = a.cpOut ?? { x: a.x, y: a.y };
+        const c2 = b.cpIn ?? { x: b.x, y: b.y };
+        const ab = lerpPoint(a, c1, 0.5), bc = lerpPoint(c1, c2, 0.5), cd = lerpPoint(c2, b, 0.5);
+        const abc = lerpPoint(ab, bc, 0.5), bcd = lerpPoint(bc, cd, 0.5);
+        const mid = lerpPoint(abc, bcd, 0.5);
+        points[index] = { ...a, cpOut: ab };
+        points[next] = { ...points[next], cpIn: cd };
+        points.splice(index + 1, 0, { x: mid.x, y: mid.y, cpIn: abc, cpOut: bcd });
+        return { ...m, points };
+      }),
+    });
+  },
+
+  /** Set or clear the curve handles of one vertex. A side passed as null
+   *  goes straight; a side left out is kept. Handles are absolute
+   *  positions in the screen's content space, like the vertex. */
+  setMaskPointHandles(screenId: string, maskId: string, index: number, handles: { cpIn?: Point2D | null; cpOut?: Point2D | null }) {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s) return;
+    this.update(screenId, {
+      masks: cloneMasks(s.masks).map(m => (m.id === maskId
+        ? { ...m, points: m.points.map((p, i) => {
+          if (i !== index) return p;
+          const out: BezierPoint = { ...p };
+          for (const side of ['cpIn', 'cpOut'] as const) {
+            const value = handles[side];
+            if (value === null) delete out[side];
+            else if (value && Number.isFinite(value.x) && Number.isFinite(value.y)) out[side] = { x: value.x, y: value.y };
+          }
+          return out;
+        }) }
+        : m)),
+    });
+  },
+
+  /** Double-click on a vertex: a curved point becomes a corner, and a
+   *  corner gets handles along the line between its neighbours (the same
+   *  auto-handles as layer custom shapes). */
+  toggleMaskPointCurve(screenId: string, maskId: string, index: number) {
+    const mask = get(screens).find(sc => sc.id === screenId)?.masks?.find(m => m.id === maskId);
+    const p = mask?.points[index];
+    if (!mask || !p) return;
+    if (p.cpIn || p.cpOut) {
+      this.setMaskPointHandles(screenId, maskId, index, { cpIn: null, cpOut: null });
+      return;
+    }
+    const count = mask.points.length;
+    const prev = mask.points[(index - 1 + count) % count];
+    const next = mask.points[(index + 1) % count];
+    const dx = (next.x - prev.x) * 0.25;
+    const dy = (next.y - prev.y) * 0.25;
+    this.setMaskPointHandles(screenId, maskId, index, {
+      cpIn: { x: p.x - dx, y: p.y - dy },
+      cpOut: { x: p.x + dx, y: p.y + dy },
+    });
+  },
+
   /** Append a vertex, or insert it before `index` (edge midpoint
    *  handles use this so a point lands between its two neighbours). */
   addMaskPoint(screenId: string, maskId: string, point: Point2D, index?: number) {
@@ -367,12 +467,21 @@ export const screenActions = {
     });
   },
 
+  /** Move a vertex. Its curve handles travel with it, so the curve keeps
+   *  its shape around the moved point. */
   updateMaskPoint(screenId: string, maskId: string, index: number, point: Point2D) {
     const s = get(screens).find(sc => sc.id === screenId);
     if (!s) return;
     this.update(screenId, {
       masks: cloneMasks(s.masks).map(m => (m.id === maskId
-        ? { ...m, points: m.points.map((p, i) => (i === index ? { x: clamp01(point.x), y: clamp01(point.y) } : p)) }
+        ? { ...m, points: m.points.map((p, i) => {
+          if (i !== index) return p;
+          const next: BezierPoint = { x: clamp01(point.x), y: clamp01(point.y) };
+          const dx = next.x - p.x, dy = next.y - p.y;
+          if (p.cpIn) next.cpIn = { x: p.cpIn.x + dx, y: p.cpIn.y + dy };
+          if (p.cpOut) next.cpOut = { x: p.cpOut.x + dx, y: p.cpOut.y + dy };
+          return next;
+        }) }
         : m)),
     });
   },

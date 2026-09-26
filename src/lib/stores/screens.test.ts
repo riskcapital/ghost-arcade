@@ -161,3 +161,81 @@ describe('screen mesh Bezier', () => {
     expect(meshOf().bezier).toBe(false);
   });
 });
+
+describe('curved screen mask editing', () => {
+  function withArch() {
+    const id = screensModule.screenActions.addMask('screen-a')!;
+    for (const p of [{ x: 0.1, y: 0.6 }, { x: 0.9, y: 0.6 }, { x: 0.5, y: 0.95 }]) {
+      screensModule.screenActions.addMaskPoint('screen-a', id, p);
+    }
+    return id;
+  }
+
+  it('toggles a vertex between corner and curve with handles along its neighbours', () => {
+    const id = withArch();
+    screensModule.screenActions.toggleMaskPointCurve('screen-a', id, 2);
+    const p = masksOf()[0].points[2];
+    // Neighbours are (0.9, 0.6) before and (0.1, 0.6) after: handles run
+    // a quarter of that span either side of the vertex.
+    expect(p.cpIn!.x).toBeCloseTo(0.7, 12);
+    expect(p.cpOut!.x).toBeCloseTo(0.3, 12);
+    expect(p.cpIn!.y).toBeCloseTo(0.95, 12);
+    screensModule.screenActions.toggleMaskPointCurve('screen-a', id, 2);
+    expect(masksOf()[0].points[2]).toEqual({ x: 0.5, y: 0.95 });
+  });
+
+  it('moves handles with their vertex and sets or clears one side at a time', () => {
+    const id = withArch();
+    screensModule.screenActions.setMaskPointHandles('screen-a', id, 0, { cpOut: { x: 0.3, y: 0.1 } });
+    screensModule.screenActions.updateMaskPoint('screen-a', id, 0, { x: 0.2, y: 0.5 });
+    const p = masksOf()[0].points[0];
+    expect(p.x).toBeCloseTo(0.2, 12);
+    expect(p.cpOut!.x).toBeCloseTo(0.4, 12);
+    expect(p.cpOut!.y).toBeCloseTo(0.0, 12);
+    expect(p.cpIn).toBeUndefined();
+    screensModule.screenActions.setMaskPointHandles('screen-a', id, 0, { cpOut: null });
+    expect(masksOf()[0].points[0]).toEqual({ x: 0.2, y: 0.5 });
+  });
+
+  it('splits a curved edge in the middle without changing its shape', async () => {
+    const { flattenScreenMask } = await import('./screenMaskGeometry');
+    const id = withArch();
+    screensModule.screenActions.setMaskPointHandles('screen-a', id, 0, { cpOut: { x: 0.3, y: 0.05 } });
+    screensModule.screenActions.setMaskPointHandles('screen-a', id, 1, { cpIn: { x: 0.7, y: 0.05 } });
+    const before = masksOf()[0].points;
+    const mid = screensModule.screenMaskEdgeMidpoint(before, 0);
+    screensModule.screenActions.insertMaskPointOnEdge('screen-a', id, 0);
+    const after = masksOf()[0].points;
+    expect(after).toHaveLength(4);
+    expect(after[1].x).toBeCloseTo(mid.x, 12);
+    expect(after[1].y).toBeCloseTo(mid.y, 12);
+    // Each half is exactly half of the old cubic: sample both outlines.
+    const cubicAt = (a: any, c1: any, c2: any, b: any, t: number) => {
+      const mt = 1 - t;
+      return { x: mt ** 3 * a.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t ** 3 * b.x,
+        y: mt ** 3 * a.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t ** 3 * b.y };
+    };
+    for (const t of [0.1, 0.3, 0.45]) {
+      const old = cubicAt(before[0], before[0].cpOut, before[1].cpIn, before[1], t);
+      const half = cubicAt(after[0], after[0].cpOut, after[1].cpIn, after[1], t * 2);
+      expect(half.x).toBeCloseTo(old.x, 12);
+      expect(half.y).toBeCloseTo(old.y, 12);
+    }
+    expect(flattenScreenMask(after).length).toBeGreaterThan(4);
+    // A straight edge still gets a plain midpoint.
+    screensModule.screenActions.insertMaskPointOnEdge('screen-a', id, 3);
+    const plain = masksOf()[0].points[4];
+    expect(plain.cpIn ?? plain.cpOut).toBeUndefined();
+    expect(plain.x).toBeCloseTo(0.3, 12);
+    expect(plain.y).toBeCloseTo(0.775, 12);
+  });
+
+  it('duplicates a curved mask with its own handles', () => {
+    const id = withArch();
+    screensModule.screenActions.setMaskPointHandles('screen-a', id, 0, { cpOut: { x: 0.3, y: 0.1 } });
+    const copyId = screensModule.screenActions.duplicate('screen-a')!;
+    const copy = masksOf(copyId)[0].points[0];
+    expect(copy.cpOut).toEqual({ x: 0.3, y: 0.1 });
+    expect(copy.cpOut).not.toBe(masksOf()[0].points[0].cpOut);
+  });
+});

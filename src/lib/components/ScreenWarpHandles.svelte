@@ -35,7 +35,9 @@
    * (screenMaskGeometry), so the shaded region on the canvas is what the
    * projector loses. The selected mask gets vertex handles, edge "+"
    * handles to insert a vertex, and a click-to-place mode that appends
-   * vertices while `screenMaskPlacing` is on.
+   * vertices while `screenMaskPlacing` is on. Curved edges work like layer
+   * custom shapes: double-click a vertex to toggle corner / curve, drag a
+   * round curve handle to bend (its partner mirrors unless Alt is held).
    *
    * Bezier mesh: a mesh screen with Bezier on shows tangent handles on its
    * selected point, with the same rules as layer meshes and the Master
@@ -63,11 +65,12 @@
     withMeshPoints,
     type MeshTangentSide,
   } from '../utils/meshWarp';
-  import { screens, selectedScreenId, screenActions, selectedScreenMaskId, screenMaskPlacing, screenMaskPointPress, screenMaskCanvasPress } from '../stores/screens';
+  import { screens, selectedScreenId, screenActions, selectedScreenMaskId, screenMaskPlacing, screenMaskPointPress, screenMaskCanvasPress, screenMaskEdgeMidpoint } from '../stores/screens';
   import {
     canvasToScreenContent,
     screenContentToCanvas,
     screenMaskAlpha,
+    screenMaskCanvasOutline,
     screenMaskCanvasPoints,
     screenOutlineCanvasPoints,
   } from '../stores/screenMaskGeometry';
@@ -92,7 +95,8 @@
     | { kind: 'mesh'; row: number; col: number }
     | { kind: 'mesh-move' }
     | { kind: 'tangent'; row: number; col: number; side: MeshTangentSide }
-    | { kind: 'mask-point'; maskId: string; index: number };
+    | { kind: 'mask-point'; maskId: string; index: number }
+    | { kind: 'mask-cp'; maskId: string; index: number; which: 'cpIn' | 'cpOut' };
 
   let drag: {
     sliceId: string;
@@ -153,7 +157,7 @@
       if (kind.kind === 'tangent') selectedTangent = kind.side;
       else if (!same) selectedTangent = null;
       selectedMeshPoint = { sliceId, row: kind.row, col: kind.col };
-    } else if (kind.kind !== 'mask-point') {
+    } else if (kind.kind !== 'mask-point' && kind.kind !== 'mask-cp') {
       selectedMeshPoint = null;
       selectedTangent = null;
     }
@@ -431,6 +435,19 @@
       const start = screenContentToCanvas(init, p0);
       const content = canvasToScreenContent(init, { x: start.x + dxN, y: start.y + dyN });
       if (content) screenActions.updateMaskPoint(id, k.maskId, k.index, content);
+    } else if (k.kind === 'mask-cp') {
+      // Same canvas-to-content trip for a curve handle. Its partner
+      // mirrors through the vertex unless Alt is held, as on layer shapes.
+      const p0 = init.masks?.find(m => m.id === k.maskId)?.points[k.index];
+      const h0 = p0?.[k.which];
+      if (!p0 || !h0) return;
+      const start = screenContentToCanvas(init, h0);
+      const content = canvasToScreenContent(init, { x: start.x + dxN, y: start.y + dyN });
+      if (!content) return;
+      const mirror = e.altKey ? undefined : { x: 2 * p0.x - content.x, y: 2 * p0.y - content.y };
+      screenActions.setMaskPointHandles(id, k.maskId, k.index, k.which === 'cpIn'
+        ? { cpIn: content, cpOut: mirror }
+        : { cpOut: content, cpIn: mirror });
     }
   }
 
@@ -452,14 +469,21 @@
     else screenActions.removeMaskPoint(s.id, maskId, index);
   }
 
-  /** Click on an edge's "+" handle: insert a vertex at the edge midpoint
-   *  (in content space, so it lands on the edge the operator sees). */
+  /** Click on an edge's "+" handle: insert a vertex halfway along the
+   *  edge (in content space, so it lands on the edge the operator sees; a
+   *  curved edge is split without changing its shape). */
   function insertMaskPoint(e: MouseEvent, s: OutputSlice, mask: ScreenMask, index: number) {
     e.preventDefault();
     e.stopPropagation();
-    const a = mask.points[index];
-    const b = mask.points[(index + 1) % mask.points.length];
-    screenActions.addMaskPoint(s.id, mask.id, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, index + 1);
+    screenActions.insertMaskPointOnEdge(s.id, mask.id, index);
+  }
+
+  /** Double-click a vertex: toggle it between a corner and a curve. */
+  function toggleMaskPointCurve(e: MouseEvent, s: OutputSlice, mask: ScreenMask, index: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (get(screenMaskPlacing)) return;
+    screenActions.toggleMaskPointCurve(s.id, mask.id, index);
   }
 
   /** Placing mode: every click on the canvas appends a vertex. Clicks
@@ -664,10 +688,11 @@
       {#each s.masks ?? [] as m (m.id)}
         {#if m.points.length >= 2}
           {@const editing = isSel && $selectedScreenMaskId === m.id}
-          {@const pts = polyPath(screenMaskCanvasPoints(s, m))}
+          {@const open = m.points.length < 3 || (editing && $screenMaskPlacing)}
+          {@const pts = polyPath(open ? screenMaskCanvasPoints(s, m) : screenMaskCanvasOutline(s, m))}
           {@const mstroke = editing ? '#4dd8ff' : isSel ? 'rgba(77, 216, 255, 0.7)' : 'rgba(77, 216, 255, 0.3)'}
           {@const mdash = m.enabled ? (editing ? 'none' : '6 4') : '2 4'}
-          {#if m.points.length >= 3 && !(editing && $screenMaskPlacing)}
+          {#if !open}
             <polygon points={pts} fill="none" stroke={mstroke} stroke-width={editing ? 2 : 1} stroke-dasharray={mdash} />
           {:else}
             <polyline points={pts} fill="none" stroke={mstroke} stroke-width={editing ? 2 : 1} stroke-dasharray={mdash} />
@@ -692,14 +717,42 @@
         {@const canvasPts = screenMaskCanvasPoints(s, mask)}
         {#if !$screenMaskPlacing && mask.points.length >= 2}
           <!-- Edge "+" handles insert a vertex midway along that edge. -->
-          {#each mask.points as p, i}
+          {#each mask.points as _p, i}
             {#if i < mask.points.length - 1 || mask.points.length >= 3}
-              {@const next = mask.points[(i + 1) % mask.points.length]}
-              {@const mid = screenContentToCanvas(s, { x: (p.x + next.x) / 2, y: (p.y + next.y) / 2 })}
+              {@const mid = screenContentToCanvas(s, screenMaskEdgeMidpoint(mask.points, i))}
               <div class="handle mask-insert-handle" style="left:{px(mid.x)}px; top:{py(mid.y)}px;"
                 role="button" tabindex="-1" title="Add a point here"
                 onmousedown={(e) => insertMaskPoint(e, s, mask, i)}>+</div>
             {/if}
+          {/each}
+          <!-- Curve handles: an arm from each curved vertex to its round
+               handle. Drag to bend; the partner mirrors unless Alt is held. -->
+          <svg class="lines-overlay mask-cp-arms" width={containerWidth} height={containerHeight}>
+            {#each mask.points as p, i}
+              {@const v = screenContentToCanvas(s, p)}
+              {#each (['cpIn', 'cpOut'] as const) as which}
+                {@const h = p[which]}
+                {#if h}
+                  {@const hc = screenContentToCanvas(s, h)}
+                  <line x1={px(v.x)} y1={py(v.y)} x2={px(hc.x)} y2={py(hc.y)} stroke="#4dd8ff" stroke-width="1" stroke-opacity="0.8" />
+                {/if}
+              {/each}
+            {/each}
+          </svg>
+          {#each mask.points as p, i}
+            {#each (['cpIn', 'cpOut'] as const) as which}
+              {@const h = p[which]}
+              {#if h}
+                {@const hc = screenContentToCanvas(s, h)}
+                <div class="handle mask-cp-handle"
+                  class:dragging={drag?.kind.kind === 'mask-cp' && drag.kind.maskId === mask.id && drag.kind.index === i && drag.kind.which === which}
+                  style="left:{px(hc.x)}px; top:{py(hc.y)}px;"
+                  role="button" tabindex="-1"
+                  title="Drag to bend. Alt-drag to move this handle on its own."
+                  aria-label="{which === 'cpIn' ? 'Curve handle into' : 'Curve handle out of'} mask point {i + 1}"
+                  onmousedown={(e) => startDrag(e, s.id, { kind: 'mask-cp', maskId: mask.id, index: i, which })}></div>
+              {/if}
+            {/each}
           {/each}
         {/if}
         {#each canvasPts as cp, i}
@@ -708,8 +761,10 @@
             class:dragging={drag?.kind.kind === 'mask-point' && drag?.kind.maskId === mask.id && drag?.kind.index === i}
             style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
             role="button" tabindex="-1"
-            title={closable ? 'Click to close the mask' : $screenMaskPlacing ? 'Drag to move. Right-click to close the mask.' : 'Drag to move. Right-click or Alt-click to remove.'}
+            class:curved={!!(mask.points[i]?.cpIn || mask.points[i]?.cpOut)}
+            title={closable ? 'Click to close the mask' : $screenMaskPlacing ? 'Drag to move. Right-click to close the mask.' : 'Drag to move. Double-click for a curve or a corner. Right-click or Alt-click to remove.'}
             oncontextmenu={(e) => e.preventDefault()}
+            ondblclick={(e) => toggleMaskPointCurve(e, s, mask, i)}
             onmousedown={(e) => startMaskPointDrag(e, s, mask.id, i)}></div>
         {/each}
       {/if}
@@ -894,6 +949,19 @@
     z-index: 70;
   }
   .mask-insert-handle:hover { opacity: 1; transform: scale(1.2); }
+  /* A curved vertex reads as round, like a pen tool's smooth point. */
+  .mask-point-handle.curved { border-radius: 50%; }
+  .handle.mask-cp-handle {
+    width: 9px; height: 9px;
+    margin-left: -5px; margin-top: -5px;
+    border-radius: 50%;
+    background: #0b1720;
+    border: 2px solid #4dd8ff;
+    cursor: grab;
+    z-index: 70;
+  }
+  .mask-cp-handle:hover { transform: scale(1.3); }
+  .mask-cp-handle.dragging { cursor: grabbing; background: #ffff00; transform: scale(1.4); }
 
   .handle {
     position: absolute;

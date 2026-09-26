@@ -317,7 +317,7 @@
               <p class="hint">
                 {$screenMaskPlacing
                   ? 'Click on the canvas to add points. Click the first point, right-click, or press Enter to close the mask.'
-                  : 'Drag points on the canvas. Click a + to add a point on that edge. Right-click or Alt-click a point to remove it.'}
+                  : 'Drag points on the canvas. Click a + to add a point on that edge. Double-click a point to curve it, then drag its round handles (Alt moves one alone). Right-click or Alt-click a point to remove it.'}
               </p>
             {/if}
           </div>
