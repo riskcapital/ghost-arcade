@@ -1,16 +1,59 @@
 <script lang="ts">
   // Per-surface controls for the mapping layer panel:
+  //   Source   - own content, a VJ row, the deck mix or a VJ group. A live
+  //              source plays on this surface in VJ MAP and STAGE.
   //   Geometry - shared with every preset that uses this surface, or kept
   //              for this layer (and presets saved from it) only.
   import { project } from '../stores/layers';
-  import type { Layer } from '../types';
+  import { vjClipLauncher } from '../stores/vjClipLauncher';
+  import { VJ_MIX_SOURCE_INDEX, type Layer } from '../types';
 
   export let layer: Layer;
+  /** Screens always show a VJ feed, so they have no "own content" choice. */
+  export let showSource = true;
 
+  $: sourceValue = layer.vjGroupId
+    ? `group:${layer.vjGroupId}`
+    : layer.vjLayerIndex == null ? 'own' : String(layer.vjLayerIndex);
+  $: groups = $vjClipLauncher.groups ?? [];
+  $: missingGroup = !!layer.vjGroupId && !groups.some((group) => group.id === layer.vjGroupId);
   $: isSurface = ($project.mapSurfaces ?? []).some((surface) => surface.id === layer.id);
   $: presetCount = ($project.vjMode?.compositions ?? [])
     .filter((composition) => composition.layers.some((l) => (l.surfaceId || l.id) === layer.id)).length;
+
+  function setSource(value: string) {
+    if (value.startsWith('group:')) project.setLayerVJGroup(layer.id, value.slice(6));
+    else project.setLayerVJIndex(layer.id, value === 'own' ? undefined : Number(value));
+  }
 </script>
+
+{#if showSource}
+  <div class="surface-row">
+    <label for={`surface-source-${layer.id}`}>Source</label>
+    <select
+      id={`surface-source-${layer.id}`}
+      data-testid="surface-source"
+      value={sourceValue}
+      onchange={(e) => setSource(e.currentTarget.value)}
+    >
+      <option value="own">Own content</option>
+      <option value={String(VJ_MIX_SOURCE_INDEX)}>Deck mix</option>
+      {#each Array($vjClipLauncher.numLayers) as _, i}
+        {@const playing = $vjClipLauncher.layerStates[i]?.activeClip}
+        <option value={String(i)}>VJ row {i + 1}{playing && playing.type !== 'preset' ? ` · ${playing.name}` : ''}</option>
+      {/each}
+      {#each groups as group}
+        <option value={`group:${group.id}`}>Group · {group.name}</option>
+      {/each}
+      {#if missingGroup}
+        <option value={`group:${layer.vjGroupId}`}>Group (removed)</option>
+      {/if}
+    </select>
+  </div>
+  {#if sourceValue !== 'own'}
+    <p class="surface-hint">Plays the live VJ picture here while VJ is live, in MAP and STAGE.</p>
+  {/if}
+{/if}
 
 {#if isSurface}
   <div class="surface-row">
@@ -42,10 +85,21 @@
     gap: 8px;
     margin-bottom: 7px;
   }
+  .surface-row label,
   .surface-label {
     color: var(--ga-ink-1, #9aa0ac);
     font-size: 13.5px;
     font-weight: 500;
+  }
+  .surface-row select {
+    min-width: 0;
+    height: 32px;
+    background: transparent;
+    color: var(--ga-ink-0, #eef0f4);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 2px);
+    font-size: 14px;
   }
   .surface-state {
     font-size: 13px;
@@ -53,6 +107,12 @@
   }
   .surface-state.detached {
     color: #f0b35a;
+  }
+  .surface-hint {
+    font-size: 12px;
+    color: #777;
+    margin: -2px 0 8px;
+    line-height: 1.4;
   }
   .surface-actions {
     display: flex;

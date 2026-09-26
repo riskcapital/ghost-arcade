@@ -1830,6 +1830,8 @@
           <!-- ── Group Properties ── -->
           <div class="layer-properties">
             <h4>Properties (Group)</h4>
+            <!-- Source: own content, a VJ row, the deck mix or a VJ group.
+                 A live source is the master feed for every child. -->
             <MapSurfaceControls {layer} />
 
             <div class="property-row">
@@ -1872,26 +1874,6 @@
             <div class="property-row">
               <label>Children</label>
               <span class="property-value">{$layers.filter(l => l.parentGroupId === layer.id).length} layers</span>
-            </div>
-
-            <!-- VJ Source for group (available always, not just when VJ live) -->
-            <div class="property-row vj-source-row">
-              <label>VJ Source</label>
-              <select
-                class="vj-source-select"
-                value={layer.vjLayerIndex !== undefined ? String(layer.vjLayerIndex) : ''}
-                onchange={(e) => {
-                  const val = (e.target as HTMLSelectElement).value;
-                  project.setLayerVJIndex(layer.id, val === '' ? undefined : parseInt(val));
-                }}
-              >
-                <option value="">None (use shader/media)</option>
-                <option value={String(VJ_MIX_SOURCE_INDEX)}>VJ Mix</option>
-                {#each Array($vjClipLauncher.numLayers) as _, i}
-                  {@const activeClip = $vjClipLauncher.layerStates[i]?.activeClip}
-                  <option value={String(i)}>VJ Layer {i + 1}{activeClip ? ` — ${activeClip.name}` : ''}</option>
-                {/each}
-              </select>
             </div>
 
             <!-- Group source (shader/media drop) -->
@@ -2005,7 +1987,7 @@
 
           <div class="layer-properties media-properties">
         <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : 'Media'})</h4>
-        <MapSurfaceControls {layer} />
+        <MapSurfaceControls {layer} showSource={layer.type !== 'screen' && layer.type !== 'mask'} />
 
         <!-- VJ Source dropdown — only on screen/VJ-slice layers, NOT standard media layers -->
         <!-- Group layers and screen layers have their own VJ source selectors -->
@@ -4688,18 +4670,6 @@
     color: var(--ga-ink-1, #9aa0ac);
     font-size: 13px;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-  }
-
-  .vj-source-row {
-    padding: 6px 8px;
-    background: rgba(249, 153, 0, 0.08);
-    border: 1px solid rgba(249, 153, 0, 0.2);
-    border-radius: 4px;
-    margin-bottom: 8px;
-  }
-
-  .vj-source-row label {
-    color: #f90;
   }
 
   .vj-source-select {

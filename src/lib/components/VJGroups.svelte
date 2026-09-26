@@ -56,10 +56,10 @@
     <div class="create">
       <label>From <select aria-label="First group layer" data-help="Choose the first row in this adjacent-layer group. Groups cannot overlap." bind:value={first}>{#each Array($vjClipLauncher.numLayers) as _, i}<option value={i}>L{i + 1}</option>{/each}</select></label>
       <label>To <select aria-label="Last group layer" data-help="Choose the last row in this adjacent-layer group. All rows between the two endpoints are included." bind:value={last}>{#each Array($vjClipLauncher.numLayers) as _, i}<option value={i}>L{i + 1}</option>{/each}</select></label>
-      <button disabled={!valid || $vjClipLauncher.mapMode} onclick={() => vjClipLauncher.addGroup(first, last)}>+ Group</button>
+      <button disabled={!valid} onclick={() => vjClipLauncher.addGroup(first, last)}>+ Group</button>
     </div>
     {#if !valid}<p>Choose a free, contiguous layer range.</p>{/if}
-    {#if $vjClipLauncher.mapMode}<p>Groups apply in Mix and Stage modes.</p>{/if}
+    {#if $vjClipLauncher.mapMode}<p>In Map, a surface whose Source is a group shows that group's rows.</p>{/if}
   </div>
 </div>
 <style>

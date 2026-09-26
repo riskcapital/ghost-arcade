@@ -1244,13 +1244,15 @@
   // Media tab (matching mapping mode tabs)
   let vjMediaTab: 'shaders' | 'js' | 'library' | 'videos' | 'images' | 'sources' | 'plugins' | 'maps' = 'shaders';
 
-  // When MAP sub-mode engages, force the media tray to the Maps tab.
-  // (Other source tabs are hidden in MAP — landing on a hidden tab
-  // would leave the tray blank.) When LEAVING MAP, if the user was
-  // still pointed at Maps, fall back to Shaders since Maps is hidden
-  // outside MAP mode.
-  $: if ($vjClipLauncher.mapMode && vjMediaTab !== 'maps') {
-    vjMediaTab = 'maps';
+  // When MAP sub-mode engages, open the media tray on the Maps tab. MAP
+  // rows also take ordinary clips, so every other tab stays available.
+  // When LEAVING MAP, if the user was still pointed at Maps, fall back to
+  // Shaders since Maps is hidden outside MAP mode.
+  let vjMediaTabMapMode = false;
+  $: {
+    const mapMode = $vjClipLauncher.mapMode;
+    if (mapMode && !vjMediaTabMapMode) vjMediaTab = 'maps';
+    vjMediaTabMapMode = mapMode;
   }
   $: if (!$vjClipLauncher.mapMode && vjMediaTab === 'maps') {
     vjMediaTab = 'shaders';
@@ -4111,7 +4113,7 @@
         <div class="header-stage">
           <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
           <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">STAGE</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">MAP</button>
+          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Mapping presets and live clips on the shared map. Rows hold presets that stack with opacity and blend modes, or clips that play on any surface whose Source is that row">MAP</button>
         </div>
       {/if}
       </div>
@@ -4517,7 +4519,7 @@
                   <p class="effects-info-hint">Applied to all output</p>
                 {/if}
               </div>
-              {#if !$vjClipLauncher.mapMode && selectedLayerIndex !== null && (effectsTab === 'layer' || effectsTab === 'clip')}
+              {#if selectedLayerIndex !== null && (effectsTab === 'layer' || effectsTab === 'clip')}
                 {@const transitionLayer = paramLayerStates[selectedLayerIndex]}
                 {#if effectsTab === 'clip' && transitionLayer.activeClip && transitionLayer.activeColumn !== null}
                   <details class="clip-overrides" data-help-page="clip-launcher">
@@ -5816,7 +5818,7 @@
                 {@const isActive = activeClip !== null && clip != null && activeClip.id === clip.id}
                 {@const isPresetActive = clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
                 {@const isQueued = $vjClipLauncher.pendingTriggers.some(p => (p.kind === 'column' ? (!states[layerIdx].locked && !states[layerIdx].ignoreColumnTrigger && (!p.layerIndices || p.layerIndices.includes(layerIdx))) : p.layerIndex === layerIdx) && p.columnIndex === colIdx && p.bank === bank)}
-                {@const isClipFirable = clip == null || (clip.type === 'preset' ? $vjClipLauncher.mapMode : !$vjClipLauncher.mapMode)}
+                {@const isClipFirable = clip == null || clip.type !== 'preset' || $vjClipLauncher.mapMode}
                 <div
                   class="clip-cell"
                   class:has-clip={clip != null}
@@ -6102,51 +6104,47 @@
           </svg>
         </button>
         {#if !mediaTrayCollapsed}
-        <!-- Tab Icons Row (matching mapping mode).  In MAP sub-mode only
-             the Maps tab is shown — the panel becomes a preset-only mixer
-             so hiding the other source tabs prevents accidentally dragging
-             non-preset content into the cells. Reactive auto-select below
-             ensures the tab pointer lands on 'maps' when entering MAP. -->
+        <!-- Tab Icons Row (matching mapping mode). MAP sub-mode adds the
+             Maps tab: its rows take presets and ordinary clips alike, and
+             mapped surfaces bound to a row show that row's clip. -->
         <div class="vj-tabs">
           <div class="vj-tab-row">
-            {#if !$vjClipLauncher.mapMode}
-              <button class="vj-tab" class:active={vjMediaTab === 'shaders'} onclick={() => vjMediaTab = 'shaders'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                <span>FX</span>
-                {#if shaders.length}<span class="vj-tab-count">{shaders.length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'js'} onclick={() => vjMediaTab = 'js'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-                <span>JS</span>
-                {#if threejsItems.length}<span class="vj-tab-count">{threejsItems.length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'library'} onclick={() => vjMediaTab = 'library'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-                <span>Saved</span>
-                {#if savedShaders.length}<span class="vj-tab-count">{savedShaders.length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'videos'} onclick={() => vjMediaTab = 'videos'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                <span>Vid</span>
-                {#if $mediaLibrary.filter(m => m.type === 'video').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'video').length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'images'} onclick={() => vjMediaTab = 'images'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <span>Img</span>
-                {#if $mediaLibrary.filter(m => m.type === 'image').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'image').length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'sources'} onclick={() => vjMediaTab = 'sources'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-                <span>Src</span>
-                {#if vjLiveSources.filter(s => s.status === 'live').length > 0}
-                  <span class="vj-tab-count live">{vjLiveSources.filter(s => s.status === 'live').length}</span>
-                {/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'plugins'} onclick={() => vjMediaTab = 'plugins'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/></svg>
-                <span>Plug</span>
-              </button>
-            {/if}
+            <button class="vj-tab" class:active={vjMediaTab === 'shaders'} onclick={() => vjMediaTab = 'shaders'}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+              <span>FX</span>
+              {#if shaders.length}<span class="vj-tab-count">{shaders.length}</span>{/if}
+            </button>
+            <button class="vj-tab" class:active={vjMediaTab === 'js'} onclick={() => vjMediaTab = 'js'}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+              <span>JS</span>
+              {#if threejsItems.length}<span class="vj-tab-count">{threejsItems.length}</span>{/if}
+            </button>
+            <button class="vj-tab" class:active={vjMediaTab === 'library'} onclick={() => vjMediaTab = 'library'}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+              <span>Saved</span>
+              {#if savedShaders.length}<span class="vj-tab-count">{savedShaders.length}</span>{/if}
+            </button>
+            <button class="vj-tab" class:active={vjMediaTab === 'videos'} onclick={() => vjMediaTab = 'videos'}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span>Vid</span>
+              {#if $mediaLibrary.filter(m => m.type === 'video').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'video').length}</span>{/if}
+            </button>
+            <button class="vj-tab" class:active={vjMediaTab === 'images'} onclick={() => vjMediaTab = 'images'}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              <span>Img</span>
+              {#if $mediaLibrary.filter(m => m.type === 'image').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'image').length}</span>{/if}
+            </button>
+            <button class="vj-tab" class:active={vjMediaTab === 'sources'} onclick={() => vjMediaTab = 'sources'}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+              <span>Src</span>
+              {#if vjLiveSources.filter(s => s.status === 'live').length > 0}
+                <span class="vj-tab-count live">{vjLiveSources.filter(s => s.status === 'live').length}</span>
+              {/if}
+            </button>
+            <button class="vj-tab" class:active={vjMediaTab === 'plugins'} onclick={() => vjMediaTab = 'plugins'}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/></svg>
+              <span>Plug</span>
+            </button>
             {#if $vjClipLauncher.mapMode}
               <button class="vj-tab" class:active={vjMediaTab === 'maps'} onclick={() => vjMediaTab = 'maps'} title="Saved mapping presets — drag onto a clip cell. Stack with VJ layer opacity + blend.">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 7 3 17 6 23 3 23 18 17 21 7 18 1 21 1 6"/><line x1="7" y1="3" x2="7" y2="18"/><line x1="17" y1="6" x2="17" y2="21"/></svg>
