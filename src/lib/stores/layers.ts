@@ -40,6 +40,7 @@ import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
 import { maxLayers } from './license';
 import { NATIVE_ENGINE_ONLY, settings, migrateOutputSlice } from './settings';
+import { withMeshPointTangents } from '../utils/meshWarp';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
@@ -2641,22 +2642,8 @@ void main() {
         ...project,
         layers: project.layers.map((l) => {
           if (l.id !== id || !l.meshGrid) return l;
-          const grid = l.meshGrid;
-          const next: (MeshPointTangents | null)[][] = [];
-          for (let r = 0; r < grid.rows; r++) {
-            const source = grid.tangents?.[r];
-            next.push(Array.from({ length: grid.cols }, (_, c) => (source?.[c] ?? null)));
-          }
-          if (!next[row] || col < 0 || col >= grid.cols) return l;
-          const kept: MeshPointTangents = {};
-          for (const side of ['right', 'down', 'left', 'up'] as const) {
-            const value = tangents?.[side];
-            if (value && Number.isFinite(value.x) && Number.isFinite(value.y)) kept[side] = { x: value.x, y: value.y };
-          }
-          next[row][col] = Object.keys(kept).length ? kept : null;
-          const any = next.some((r) => r.some((entry) => entry !== null));
-          const { tangents: _dropped, ...rest } = grid;
-          return { ...l, meshGrid: any ? { ...rest, tangents: next } : rest };
+          const meshGrid = withMeshPointTangents(l.meshGrid, row, col, tangents);
+          return meshGrid === l.meshGrid ? l : { ...l, meshGrid };
         }),
       }));
     },

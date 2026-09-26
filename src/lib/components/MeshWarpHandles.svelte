@@ -10,12 +10,13 @@
   import {
     MESH_CURVE_SEGMENTS,
     meshEdgePoint,
-    meshPointTangents,
     meshTangentLinked,
+    meshTangentSides as tangentSides,
+    meshTangentsAfterDrag,
+    meshTangentsAfterStraighten,
     resolveMeshTangents,
     type MeshTangentSide,
   } from '../utils/meshWarp';
-  import type { MeshPointTangents } from '../types';
 
   export let containerWidth: number = 800;
   export let containerHeight: number = 600;
@@ -41,40 +42,13 @@
   let tangentDrag: { row: number; col: number; side: MeshTangentSide } | null = null;
   let selectedTangent: MeshTangentSide | null = null;
 
-  const OPPOSITE_SIDE: Record<MeshTangentSide, MeshTangentSide> = {
-    right: 'left', left: 'right', down: 'up', up: 'down',
-  };
-
-  /** Sides of a point that have a neighbour, so a handle there bends an edge. */
-  function tangentSides(grid: MeshWarpGrid, row: number, col: number): MeshTangentSide[] {
-    const sides: MeshTangentSide[] = [];
-    if (col < grid.cols - 1) sides.push('right');
-    if (col > 0) sides.push('left');
-    if (row < grid.rows - 1) sides.push('down');
-    if (row > 0) sides.push('up');
-    return sides;
-  }
-
-  /**
-   * Store a new tangent for one handle. Linked handles (the default) store
-   * only the dragged side, so the opposite one mirrors it. Alt unlinks: the
-   * opposite handle is frozen where it is and the two move independently
-   * from then on. A pair that is already unlinked stays unlinked.
-   */
+  /** Store a new tangent for one handle (linked by default, Alt unlinks;
+   *  see meshTangentsAfterDrag). */
   function writeTangent(row: number, col: number, side: MeshTangentSide, tangent: Point2D, unlink: boolean) {
     const layer = $selectedLayer;
     const grid = layer?.meshGrid;
     if (!layer || !grid) return;
-    const stored: MeshPointTangents = { ...(meshPointTangents(grid, row, col) ?? {}) };
-    const opposite = OPPOSITE_SIDE[side];
-    const linked = meshTangentLinked(grid, row, col, side);
-    if (unlink && linked) {
-      stored[opposite] = resolveMeshTangents(grid, row, col)[opposite];
-    } else if (linked) {
-      delete stored[opposite];
-    }
-    stored[side] = tangent;
-    project.setMeshPointTangents(layer.id, row, col, stored);
+    project.setMeshPointTangents(layer.id, row, col, meshTangentsAfterDrag(grid, row, col, side, tangent, unlink));
   }
 
   /** Double-click: put one handle back on the straight edge. */
@@ -82,31 +56,7 @@
     const layer = $selectedLayer;
     const grid = layer?.meshGrid;
     if (!layer || !grid || layer.locked) return;
-    const stored: MeshPointTangents = { ...(meshPointTangents(grid, row, col) ?? {}) };
-    const opposite = OPPOSITE_SIDE[side];
-    const point = grid.points[row][col];
-    const straight = (s: MeshTangentSide): Point2D | null => {
-      const dr = s === 'down' ? 1 : s === 'up' ? -1 : 0;
-      const dc = s === 'right' ? 1 : s === 'left' ? -1 : 0;
-      const next = grid.points[row + dr]?.[col + dc];
-      return next ? { x: (next.x - point.x) / 3, y: (next.y - point.y) / 3 } : null;
-    };
-    const isStraight = (s: MeshTangentSide) => {
-      const want = straight(s);
-      const have = stored[s];
-      return !want || (!!have && Math.abs(have.x - want.x) < 1e-6 && Math.abs(have.y - want.y) < 1e-6);
-    };
-    delete stored[side];
-    if (stored[opposite] && !meshTangentLinked(grid, row, col, side) && !isStraight(opposite)) {
-      // The other handle was unlinked and still bends; keep it and pin
-      // this one straight.
-      const pinned = straight(side);
-      if (pinned) stored[side] = pinned;
-    } else {
-      // Linked pair: straighten the whole axis.
-      delete stored[opposite];
-    }
-    project.setMeshPointTangents(layer.id, row, col, stored);
+    project.setMeshPointTangents(layer.id, row, col, meshTangentsAfterStraighten(grid, row, col, side));
     recordDiscreteAction();
   }
 

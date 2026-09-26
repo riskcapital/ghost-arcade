@@ -125,14 +125,26 @@ export function meshEdgePoint(grid: MeshWarpGrid, r0: number, c0: number, r1: nu
  * inverts per pixel.
  */
 export function evaluateMeshGrid(grid: MeshWarpGrid, x: number, y: number): Point2D {
+  return evaluateMeshByRows(grid, x, 1 - y);
+}
+
+/**
+ * The same surface addressed by grid position: `x` runs along the columns
+ * and `y` down the rows (0 at row 0). Output-stage meshes (screens and the
+ * Master Warp) store row 0 at the top, so they read the mesh this way.
+ */
+export function evaluateMeshByRows(grid: MeshWarpGrid, x: number, y: number): Point2D {
   const rows = grid.rows;
   const cols = grid.cols;
   const gx = Math.max(0, Math.min(cols - 1, x * (cols - 1)));
-  const gy = Math.max(0, Math.min(rows - 1, (1 - y) * (rows - 1)));
+  const gy = Math.max(0, Math.min(rows - 1, y * (rows - 1)));
   const col = Math.min(cols - 2, Math.floor(gx));
   const row = Math.min(rows - 2, Math.floor(gy));
-  const u = gx - col;
-  const v = gy - row;
+  return evaluateMeshCell(grid, row, col, gx - col, gy - row);
+}
+
+/** One cell at (u, v), u toward the next column and v toward the next row. */
+export function evaluateMeshCell(grid: MeshWarpGrid, row: number, col: number, u: number, v: number): Point2D {
   const a = grid.points[row][col];
   const b = grid.points[row][col + 1];
   const c = grid.points[row + 1][col + 1];
@@ -195,4 +207,274 @@ export function layerRenderMeshGrid(
   if (meshGridHasTangents(grid)) return grid;
   if (grid.bezier === undefined && grid.tangents === undefined) return grid;
   return { rows: grid.rows, cols: grid.cols, points: grid.points };
+}
+
+// ─── Inverse ────────────────────────────────────────────────────────────
+
+function cross(a: Point2D, b: Point2D): number {
+  return a.x * b.y - a.y * b.x;
+}
+
+/** (u, v) of `p` inside the straight quad a, b, c, d (row, col / next col /
+ *  next row next col / next row). Values outside 0..1 mean outside. */
+function inverseBilinearCell(p: Point2D, a: Point2D, b: Point2D, c: Point2D, d: Point2D): Point2D | null {
+  const e = { x: b.x - a.x, y: b.y - a.y };
+  const f = { x: d.x - a.x, y: d.y - a.y };
+  const g = { x: a.x - b.x + c.x - d.x, y: a.y - b.y + c.y - d.y };
+  const h = { x: p.x - a.x, y: p.y - a.y };
+  const k2 = cross(g, f);
+  const k1 = cross(e, f) + cross(h, g);
+  const k0 = cross(h, e);
+  let v: number;
+  if (Math.abs(k2) < 1e-9) {
+    if (Math.abs(k1) < 1e-12) return null;
+    v = -k0 / k1;
+  } else {
+    const discriminant = k1 * k1 - 4 * k0 * k2;
+    if (discriminant < 0) return null;
+    const root = Math.sqrt(discriminant);
+    const v0 = (-k1 - root) / (2 * k2);
+    const v1 = (-k1 + root) / (2 * k2);
+    v = v0 >= 0 && v0 <= 1 ? v0 : v1;
+  }
+  const denomX = e.x + g.x * v;
+  const denomY = e.y + g.y * v;
+  let u: number;
+  if (Math.abs(denomX) > Math.abs(denomY)) u = (h.x - f.x * v) / denomX;
+  else if (Math.abs(denomY) > 1e-12) u = (h.y - f.y * v) / denomY;
+  else return null;
+  return Number.isFinite(u) && Number.isFinite(v) ? { x: u, y: v } : null;
+}
+
+const CELL_EPSILON = 1e-6;
+
+/** Newton on one Bezier cell from `start`, as the core's mesh_patch_newton. */
+function newtonMeshCell(grid: MeshWarpGrid, row: number, col: number, q: Point2D, start: Point2D): Point2D | null {
+  let u = start.x;
+  let v = start.y;
+  const h = 1e-6;
+  for (let i = 0; i < 16; i++) {
+    const p = evaluateMeshCell(grid, row, col, u, v);
+    const rx = p.x - q.x;
+    const ry = p.y - q.y;
+    if (rx * rx + ry * ry < 1e-18) break;
+    const pu = evaluateMeshCell(grid, row, col, u + h, v);
+    const pv = evaluateMeshCell(grid, row, col, u, v + h);
+    const dux = (pu.x - p.x) / h, duy = (pu.y - p.y) / h;
+    const dvx = (pv.x - p.x) / h, dvy = (pv.y - p.y) / h;
+    const det = dux * dvy - dvx * duy;
+    if (Math.abs(det) < 1e-14) return null;
+    u = Math.max(-0.5, Math.min(1.5, u - (rx * dvy - ry * dvx) / det));
+    v = Math.max(-0.5, Math.min(1.5, v - (dux * ry - duy * rx) / det));
+  }
+  const p = evaluateMeshCell(grid, row, col, u, v);
+  const inside = u >= -CELL_EPSILON && u <= 1 + CELL_EPSILON && v >= -CELL_EPSILON && v <= 1 + CELL_EPSILON;
+  const converged = (p.x - q.x) ** 2 + (p.y - q.y) ** 2 < 1e-14;
+  return inside && converged ? { x: Math.max(0, Math.min(1, u)), y: Math.max(0, Math.min(1, v)) } : null;
+}
+
+/** Bounds of a cell's surface. A Bezier cell is a bicubic patch, so it
+ *  stays inside the hull of its 16 control points: the corners, the edge
+ *  controls and four inner points (mesh_patch_inner in the core). */
+function meshCellBounds(grid: MeshWarpGrid, row: number, col: number): [number, number, number, number] {
+  const a = grid.points[row][col];
+  const b = grid.points[row][col + 1];
+  const c = grid.points[row + 1][col + 1];
+  const d = grid.points[row + 1][col];
+  const pts: Point2D[] = [a, b, c, d];
+  if (grid.bezier) {
+    const top = meshEdgeControls(grid, row, col, row, col + 1);
+    const bottom = meshEdgeControls(grid, row + 1, col, row + 1, col + 1);
+    const left = meshEdgeControls(grid, row, col, row + 1, col);
+    const right = meshEdgeControls(grid, row, col + 1, row + 1, col + 1);
+    pts.push(top[1], top[2], bottom[1], bottom[2], left[1], left[2], right[1], right[2]);
+    for (const i of [1, 2]) {
+      for (const j of [1, 2]) {
+        const fu = i / 3;
+        const fv = j / 3;
+        const sheetX = (1 - fv) * ((1 - fu) * a.x + fu * b.x) + fv * ((1 - fu) * d.x + fu * c.x);
+        const sheetY = (1 - fv) * ((1 - fu) * a.y + fu * b.y) + fv * ((1 - fu) * d.y + fu * c.y);
+        pts.push({
+          x: (1 - fv) * top[i].x + fv * bottom[i].x + (1 - fu) * left[j].x + fu * right[j].x - sheetX,
+          y: (1 - fv) * top[i].y + fv * bottom[i].y + (1 - fu) * left[j].y + fu * right[j].y - sheetY,
+        });
+      }
+    }
+  }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of pts) {
+    x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+  }
+  const pad = 1e-6;
+  return [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
+}
+
+/**
+ * Where `q` sits on the mesh, as a grid position with `x` along the columns
+ * and `y` down the rows (0..1, the inverse of evaluateMeshByRows), or null
+ * when no cell covers it. Straight cells use the closed-form bilinear
+ * inverse; Bezier cells run Newton on the Coons patch from the bilinear
+ * guess, then the centre and quadrants, the same seeds the core uses.
+ */
+export function invertMeshByRows(grid: MeshWarpGrid, q: Point2D): Point2D | null {
+  for (let row = 0; row < grid.rows - 1; row++) {
+    for (let col = 0; col < grid.cols - 1; col++) {
+      const [x0, y0, x1, y1] = meshCellBounds(grid, row, col);
+      if (q.x < x0 || q.x > x1 || q.y < y0 || q.y > y1) continue;
+      const a = grid.points[row][col];
+      const b = grid.points[row][col + 1];
+      const c = grid.points[row + 1][col + 1];
+      const d = grid.points[row + 1][col];
+      const guess = inverseBilinearCell(q, a, b, c, d);
+      let hit: Point2D | null = null;
+      if (!grid.bezier) {
+        if (guess && guess.x >= -CELL_EPSILON && guess.x <= 1 + CELL_EPSILON && guess.y >= -CELL_EPSILON && guess.y <= 1 + CELL_EPSILON) {
+          hit = { x: Math.max(0, Math.min(1, guess.x)), y: Math.max(0, Math.min(1, guess.y)) };
+        }
+      } else {
+        const seeds: Point2D[] = [];
+        if (guess && guess.x >= -0.25 && guess.x <= 1.25 && guess.y >= -0.25 && guess.y <= 1.25) {
+          seeds.push({ x: Math.max(0, Math.min(1, guess.x)), y: Math.max(0, Math.min(1, guess.y)) });
+        }
+        seeds.push({ x: 0.5, y: 0.5 }, { x: 0.25, y: 0.25 }, { x: 0.75, y: 0.25 }, { x: 0.25, y: 0.75 }, { x: 0.75, y: 0.75 });
+        for (const seed of seeds) {
+          hit = newtonMeshCell(grid, row, col, q, seed);
+          if (hit) break;
+        }
+      }
+      if (hit) return { x: (col + hit.x) / (grid.cols - 1), y: (row + hit.y) / (grid.rows - 1) };
+    }
+  }
+  return null;
+}
+
+// ─── Editing ────────────────────────────────────────────────────────────
+// Shared by every mesh with tangent handles: layer meshes, screen meshes
+// and the Master Warp. Each store keeps its own grid; these only decide
+// what the next grid is.
+
+export const MESH_OPPOSITE_SIDE: Record<MeshTangentSide, MeshTangentSide> = {
+  right: 'left', left: 'right', down: 'up', up: 'down',
+};
+
+/** Sides of a point that have a neighbour, so a handle there bends an edge. */
+export function meshTangentSides(grid: MeshWarpGrid, row: number, col: number): MeshTangentSide[] {
+  const sides: MeshTangentSide[] = [];
+  if (col < grid.cols - 1) sides.push('right');
+  if (col > 0) sides.push('left');
+  if (row < grid.rows - 1) sides.push('down');
+  if (row > 0) sides.push('up');
+  return sides;
+}
+
+/** A deep copy that keeps the Bezier flag and tangents. */
+export function cloneMeshGrid(grid: MeshWarpGrid): MeshWarpGrid {
+  const copy: MeshWarpGrid = {
+    rows: grid.rows,
+    cols: grid.cols,
+    points: grid.points.map((row) => row.map((p) => ({ x: p.x, y: p.y }))),
+  };
+  if (grid.bezier !== undefined) copy.bezier = grid.bezier;
+  if (grid.tangents) {
+    copy.tangents = grid.tangents.map((row) => row.map((entry) => {
+      if (!entry) return null;
+      const out: MeshPointTangents = {};
+      for (const side of ['right', 'down', 'left', 'up'] as const) {
+        const t = entry[side];
+        if (t) out[side] = { x: t.x, y: t.y };
+      }
+      return out;
+    }));
+  }
+  return copy;
+}
+
+/** The grid with new point positions. Tangents are offsets from their
+ *  points, so they travel with them. */
+export function withMeshPoints(grid: MeshWarpGrid, points: Point2D[][]): MeshWarpGrid {
+  return { ...grid, points };
+}
+
+/** The grid with one point's tangents replaced. `null` (or no usable side)
+ *  clears the point, which straightens every edge there; the tangents list
+ *  is dropped entirely once no point carries one. */
+export function withMeshPointTangents(grid: MeshWarpGrid, row: number, col: number, tangents: MeshPointTangents | null): MeshWarpGrid {
+  const next: (MeshPointTangents | null)[][] = [];
+  for (let r = 0; r < grid.rows; r++) {
+    const source = grid.tangents?.[r];
+    next.push(Array.from({ length: grid.cols }, (_, c) => (source?.[c] ?? null)));
+  }
+  if (!next[row] || col < 0 || col >= grid.cols) return grid;
+  const kept: MeshPointTangents = {};
+  for (const side of ['right', 'down', 'left', 'up'] as const) {
+    const value = tangents?.[side];
+    if (value && Number.isFinite(value.x) && Number.isFinite(value.y)) kept[side] = { x: value.x, y: value.y };
+  }
+  next[row][col] = Object.keys(kept).length ? kept : null;
+  const any = next.some((r) => r.some((entry) => entry !== null));
+  const { tangents: _dropped, ...rest } = grid;
+  return any ? { ...rest, tangents: next } : rest;
+}
+
+/**
+ * The tangents a point stores after one handle is dragged to `tangent`.
+ * Linked handles (the default) store only the dragged side, so the opposite
+ * one mirrors it. Alt unlinks: the opposite handle is frozen where it is and
+ * the two move independently from then on. A pair that is already unlinked
+ * stays unlinked.
+ */
+export function meshTangentsAfterDrag(
+  grid: MeshWarpGrid,
+  row: number,
+  col: number,
+  side: MeshTangentSide,
+  tangent: Point2D,
+  unlink: boolean,
+): MeshPointTangents {
+  const stored: MeshPointTangents = { ...(meshPointTangents(grid, row, col) ?? {}) };
+  const opposite = MESH_OPPOSITE_SIDE[side];
+  const linked = meshTangentLinked(grid, row, col, side);
+  if (unlink && linked) {
+    stored[opposite] = resolveMeshTangents(grid, row, col)[opposite];
+  } else if (linked) {
+    delete stored[opposite];
+  }
+  stored[side] = tangent;
+  return stored;
+}
+
+/** The tangents a point stores after one handle is double-clicked back onto
+ *  the straight edge. A linked pair straightens the whole axis; if the other
+ *  handle was unlinked and still bends, it keeps its bend and only this one
+ *  is pinned straight. */
+export function meshTangentsAfterStraighten(
+  grid: MeshWarpGrid,
+  row: number,
+  col: number,
+  side: MeshTangentSide,
+): MeshPointTangents {
+  const stored: MeshPointTangents = { ...(meshPointTangents(grid, row, col) ?? {}) };
+  const opposite = MESH_OPPOSITE_SIDE[side];
+  const point = grid.points[row][col];
+  const straight = (s: MeshTangentSide): Point2D | null => {
+    const dr = s === 'down' ? 1 : s === 'up' ? -1 : 0;
+    const dc = s === 'right' ? 1 : s === 'left' ? -1 : 0;
+    const next = grid.points[row + dr]?.[col + dc];
+    return next ? { x: (next.x - point.x) / 3, y: (next.y - point.y) / 3 } : null;
+  };
+  const isStraight = (s: MeshTangentSide) => {
+    const want = straight(s);
+    const have = stored[s];
+    return !want || (!!have && Math.abs(have.x - want.x) < 1e-6 && Math.abs(have.y - want.y) < 1e-6);
+  };
+  const linked = meshTangentLinked(grid, row, col, side);
+  delete stored[side];
+  if (stored[opposite] && !linked && !isStraight(opposite)) {
+    const pinned = straight(side);
+    if (pinned) stored[side] = pinned;
+  } else {
+    delete stored[opposite];
+  }
+  return stored;
 }
