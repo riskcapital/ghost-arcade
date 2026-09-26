@@ -701,6 +701,12 @@ const store = writable<ShowTimelineState>(createInitialState());
 
 let rafId: number | null = null;
 let lastFrameTime = 0;
+/** True while an external clock (timecode chase) owns the playhead. The
+ *  RAF transport stays off and play() defers to it. */
+let externalClock = false;
+/** A chased position further than this from the playhead is a jump: the
+ *  audio bus hard-seeks instead of rate-nudging toward it. */
+export const SHOW_CHASE_RESEEK_SECONDS = 0.25;
 
 function isManualClock(): boolean {
   try {
@@ -922,7 +928,7 @@ export const showTimeline = {
 
   play() {
     const s = get(store);
-    if (s.isPlaying) return;
+    if (s.isPlaying || externalClock) return;
     // An empty show has nothing to play — stay completely inert.
     if (s.duration <= 0) return;
     syncAudioWiring(s.audioTracks);
@@ -962,6 +968,49 @@ export const showTimeline = {
   togglePlay() {
     if (get(store).isPlaying) this.pause();
     else this.play();
+  },
+
+  /**
+   * Follow an external clock (timecode chase). Called at ~60 Hz with the
+   * chased show time and whether the source is rolling. Starts and stops the
+   * show with the source, never runs the internal RAF transport while
+   * chasing, and hard-seeks only on a real jump so audio follows smoothly.
+   */
+  chase(seconds: number, running: boolean) {
+    externalClock = true;
+    cancelRaf();
+    const s = get(store);
+    const target = Number.isFinite(seconds) ? seconds : 0;
+    const jump = Math.abs(target - s.currentTime) > SHOW_CHASE_RESEEK_SECONDS;
+    if (running && !s.isPlaying) {
+      if (s.duration <= 0) return;
+      syncAudioWiring(s.audioTracks);
+      clipAudioBus.resume();
+      store.update((x) => ({ ...x, isPlaying: true }));
+      applyTime(target, true);
+      return;
+    }
+    if (!running && s.isPlaying) {
+      store.update((x) => ({ ...x, isPlaying: false }));
+      applyTime(target, true);
+      return;
+    }
+    if (!running && Math.abs(target - s.currentTime) < 1e-6) return;
+    applyTime(target, jump || !running);
+  },
+
+  /** Hand the playhead back to the internal transport. */
+  releaseChase() {
+    if (!externalClock) return;
+    externalClock = false;
+    if (get(store).isPlaying) {
+      store.update((x) => ({ ...x, isPlaying: false }));
+      seekGeneration++;
+    }
+  },
+
+  isChasing(): boolean {
+    return externalClock;
   },
 
   /**
@@ -1485,6 +1534,7 @@ export const showTimeline = {
 
   /** Test seam — tears the transport and audio elements down completely. */
   _resetForTest() {
+    externalClock = false;
     cancelRaf();
     releaseAllTrackElements();
     publishTransition(null);
