@@ -5,6 +5,7 @@ import { writable, derived, get } from 'svelte/store';
 import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MeshPointTangents, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
+import { instantiateEdgeEffects } from './edgeEffectPresets';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
 import { normalizedTransitionDuration, normalizedTransitionStyle } from './vjClipTransitions';
@@ -1926,6 +1927,65 @@ void main() {
           };
         }),
       }));
+    },
+
+    /** Give every layer in `layerIds` an edge effect stack in one undo
+     *  step: `replace` swaps the stack, `append` adds after it. Each layer
+     *  gets its own copy with fresh effect ids. */
+    applyEdgeEffects(
+      layerIds: readonly string[],
+      effects: readonly EdgeEffect[],
+      mode: 'replace' | 'append' = 'replace',
+      cornerRadius?: number,
+    ) {
+      const targets = new Set(layerIds);
+      if (!targets.size || !effects.length) return;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (!targets.has(layer.id)) return layer;
+          const copies = instantiateEdgeEffects(effects);
+          const existing = mode === 'append' ? (layer.edgeEffects?.effects ?? []) : [];
+          const radius = cornerRadius !== undefined ? cornerRadius : mode === 'append' ? layer.edgeEffects?.cornerRadius : undefined;
+          const config: EdgeEffectsConfig = { enabled: true, effects: [...existing, ...copies] };
+          if (radius && radius > 0) config.cornerRadius = radius;
+          return { ...layer, edgeEffects: config };
+        }),
+      }));
+      recordDiscreteAction();
+    },
+
+    /** Move an edge effect up (-1) or down (+1) its layer's stack. */
+    moveEdgeEffect(layerId: string, effectId: string, delta: number) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.edgeEffects) return layer;
+          const effects = [...layer.edgeEffects.effects];
+          const from = effects.findIndex((e) => e.id === effectId);
+          const to = from + delta;
+          if (from < 0 || to < 0 || to >= effects.length) return layer;
+          const [moved] = effects.splice(from, 1);
+          effects.splice(to, 0, moved);
+          return { ...layer, edgeEffects: { ...layer.edgeEffects, effects } };
+        }),
+      }));
+      recordDiscreteAction();
+    },
+
+    /** Round every corner of the outline the layer's edge effects trace. */
+    setEdgeEffectsCornerRadius(layerId: string, radius: number) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.edgeEffects) return layer;
+          const next: EdgeEffectsConfig = { ...layer.edgeEffects };
+          if (radius > 0) next.cornerRadius = radius;
+          else delete next.cornerRadius;
+          return { ...layer, edgeEffects: next };
+        }),
+      }));
+      scheduleHistorySnapshot();
     },
 
     toggleEdgeEffectsEnabled(layerId: string) {
