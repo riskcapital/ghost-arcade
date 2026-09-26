@@ -20403,7 +20403,33 @@ impl RenderState {
             }
             return json!({ "available": true, "platform": "iosurface", "slices": [] });
         }
-        #[cfg(not(target_os = "macos"))]
+        // Windows renders slices too (a recording of a Screen reads them via
+        // stream_output_frame) but has no native slice presenter, so
+        // `available` stays false for the slice windows; `slices` still
+        // lists what is rendering.
+        #[cfg(target_os = "windows")]
+        {
+            let slices: Vec<Value> = self
+                .slice_targets
+                .iter()
+                .map(|(id, target)| {
+                    json!({
+                        "id": id,
+                        "shared_name": target.export.shared_name,
+                        "width": target.export.width,
+                        "height": target.export.height,
+                        "frame": target.export.frame,
+                    })
+                })
+                .collect();
+            json!({
+                "available": false,
+                "platform": "dxgi",
+                "reason": "native slice presentation is implemented on macOS IOSurface only",
+                "slices": slices,
+            })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             json!({
                 "available": false,
