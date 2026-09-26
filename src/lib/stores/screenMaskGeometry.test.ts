@@ -80,6 +80,33 @@ describe('screen mask geometry', () => {
     close(screenContentToCanvas({ ...mesh, meshGrid: { rows: 1, cols: 3, points: [mesh.meshGrid.points[0]] } }, { x: 0.5, y: 0 }), { x: 0.5, y: 0 });
   });
 
+  it('follows a Bezier mesh screen along its curved cells', () => {
+    const points = [
+      [{ x: 0, y: 0 }, { x: 0.5, y: 0 }, { x: 1, y: 0 }],
+      [{ x: 0, y: 1 }, { x: 0.5, y: 1 }, { x: 1, y: 1 }],
+    ];
+    const straight = { cropX: 0, cropY: 0, cropW: 1, cropH: 1, warpMode: 'mesh' as const, meshGrid: { rows: 2, cols: 3, points } };
+    // The top-middle handle tilts the top edge into an S: up in the right
+    // cell, down in the left one (its linked mirror). A mask vertex on that
+    // edge rides with it, exactly where the core samples it.
+    const curved = { ...straight, meshGrid: { rows: 2, cols: 3, points, bezier: true,
+      tangents: [[null, { right: { x: 0.15, y: -0.2 } }, null], [null, null, null]] } };
+    expect(screenContentToCanvas(curved, { x: 0.75, y: 0 }).y).toBeLessThan(-0.05);
+    expect(screenContentToCanvas(curved, { x: 0.25, y: 0 }).y).toBeGreaterThan(0.05);
+    close(screenContentToCanvas(curved, { x: 0.5, y: 0 }), { x: 0.5, y: 0 });
+    close(screenContentToCanvas(curved, { x: 0.3, y: 1 }), screenContentToCanvas(straight, { x: 0.3, y: 1 }));
+    for (const p of [{ x: 0.75, y: 0 }, { x: 0.25, y: 0 }, { x: 0.1, y: 0.4 }, { x: 0.8, y: 0.7 }]) {
+      close(canvasToScreenContent(curved, screenContentToCanvas(curved, p))!, p);
+    }
+    // The outline walks the curve, so the bulge is inside it.
+    const outline = screenOutlineCanvasPoints(curved);
+    expect(Math.min(...outline.map(q => q.y))).toBeLessThan(-0.05);
+    expect(outline[0]).toEqual({ x: 0, y: 0 });
+    // Bezier switched off: the stored tangents are ignored.
+    const off = { ...curved, meshGrid: { ...curved.meshGrid, bezier: false } };
+    close(screenContentToCanvas(off, { x: 0.25, y: 0 }), { x: 0.25, y: 0 });
+  });
+
   it('maps every mask vertex and the screen outline', () => {
     const mask = { points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.5, y: 1 }] };
     expect(screenMaskCanvasPoints(rect, mask)).toEqual([

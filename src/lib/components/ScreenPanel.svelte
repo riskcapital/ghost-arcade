@@ -202,9 +202,17 @@
   function resetMasterWarp() {
     // Back to identity. Corners: clear so nothing is stored (handles
     // derive identity); Mesh: reset to a flat lattice so its handles
-    // remain visible.
-    if (masterMode === 'mesh') settings.setMasterWarp({ meshGrid: identityOutputMesh() });
-    else settings.setMasterWarp({ corners: undefined });
+    // remain visible, still in Bezier mode if it was.
+    if (masterMode === 'mesh') {
+      const bezier = masterWarp.meshGrid?.bezier ? { bezier: true } : {};
+      settings.setMasterWarp({ meshGrid: { ...identityOutputMesh(), ...bezier } });
+    } else settings.setMasterWarp({ corners: undefined });
+  }
+  /** Bezier mesh: curved cell edges shaped by tangent handles on the
+   *  selected point. Off keeps the tangents but renders straight. */
+  function setMasterBezier(bezier: boolean) {
+    if (!masterWarp.meshGrid) return;
+    settings.setMasterWarp({ meshGrid: { ...masterWarp.meshGrid, bezier } });
   }
 
   // ─── Dome projection ────────────────────────────────────────────────
@@ -451,8 +459,20 @@
             Mesh
           </button>
         </div>
+        {#if masterMode === 'mesh' && masterWarp.meshGrid}
+          <label class="mw-enable">
+            <input
+              type="checkbox"
+              checked={masterWarp.meshGrid.bezier ?? false}
+              onchange={(e) => setMasterBezier((e.target as HTMLInputElement).checked)}
+            />
+            <span>Bezier curves</span>
+          </label>
+        {/if}
         <div class="mw-hint">
-          Drag the orange handles on the canvas to warp the whole output.
+          {masterMode === 'mesh' && masterWarp.meshGrid?.bezier
+            ? 'Drag the orange handles on the canvas. Click a point to show its curve handles: drag one to bend, Alt-drag to move it on its own, double-click to straighten.'
+            : 'Drag the orange handles on the canvas to warp the whole output.'}
         </div>
         <div class="master-row">
           <button class="mini-btn" onclick={resetMasterWarp}>Reset to identity</button>

@@ -11,6 +11,7 @@
 
 import type { OutputSlice, ScreenMask } from './settings';
 import type { Point2D } from '../types';
+import { MESH_CURVE_SEGMENTS, evaluateMeshCell, invertMeshByRows, meshEdgePoint } from '../utils/meshWarp';
 
 export type ScreenGeometry = Pick<
   OutputSlice,
@@ -89,6 +90,8 @@ export function screenContentToCanvas(s: ScreenGeometry, p: Point2D): Point2D {
     const row = Math.max(0, Math.min(g.rows - 2, Math.floor(fy)));
     const cell = meshCell(s, row, col);
     if (cell) {
+      // A Bezier mesh samples its cells as Coons patches (slice_warp_uv).
+      if (g.bezier) return evaluateMeshCell(g, row, col, fx - col, fy - row);
       return bilinear(cell[0], cell[1], cell[2], cell[3], fx - col, fy - row);
     }
   }
@@ -107,6 +110,7 @@ export function canvasToScreenContent(s: ScreenGeometry, p: Point2D): Point2D | 
   }
   if (mode === 'mesh' && meshUsable(s)) {
     const g = s.meshGrid!;
+    if (g.bezier) return invertMeshByRows(g, p);
     for (let row = 0; row < g.rows - 1; row++) {
       for (let col = 0; col < g.cols - 1; col++) {
         const cell = meshCell(s, row, col);
@@ -197,6 +201,22 @@ export function screenOutlineCanvasPoints(s: ScreenGeometry): Point2D[] {
   if (mode === 'mesh' && meshUsable(s)) {
     const g = s.meshGrid!;
     const out: Point2D[] = [];
+    if (g.bezier) {
+      // Walk the curved border edges, each sampled along its cubic. Edges
+      // are defined toward the next column / row, so the bottom and left
+      // sides are sampled backwards.
+      const edge = (r0: number, c0: number, r1: number, c1: number, backwards: boolean) => {
+        for (let i = 0; i < MESH_CURVE_SEGMENTS; i++) {
+          const t = i / MESH_CURVE_SEGMENTS;
+          out.push(meshEdgePoint(g, r0, c0, r1, c1, backwards ? 1 - t : t));
+        }
+      };
+      for (let col = 0; col < g.cols - 1; col++) edge(0, col, 0, col + 1, false);
+      for (let row = 0; row < g.rows - 1; row++) edge(row, g.cols - 1, row + 1, g.cols - 1, false);
+      for (let col = g.cols - 1; col > 0; col--) edge(g.rows - 1, col - 1, g.rows - 1, col, true);
+      for (let row = g.rows - 1; row > 0; row--) edge(row - 1, 0, row, 0, true);
+      return out;
+    }
     for (let col = 0; col < g.cols; col++) out.push(g.points[0][col]);
     for (let row = 1; row < g.rows; row++) out.push(g.points[row][g.cols - 1]);
     for (let col = g.cols - 2; col >= 0; col--) out.push(g.points[g.rows - 1][col]);
