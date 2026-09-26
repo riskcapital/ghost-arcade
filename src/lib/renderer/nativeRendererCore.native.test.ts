@@ -1033,19 +1033,37 @@ void main() { gl_FragColor = vec4(${rgb}, 1.0); }`,
       }, 8000);
       const baselinePixels = assertSnapshotPixels('native edge baseline', baseline);
 
+      const { nativeEdgeEffectPayload } = await import('../drawing/edgeEffects');
+      const payload = nativeEdgeEffectPayload({
+        id: layerId,
+        layerShape: null,
+        warpMode: 'corners',
+        meshGrid: null,
+        corners: {
+          topLeft: { x: 0.12, y: 0.88 }, topRight: { x: 0.88, y: 0.88 },
+          bottomRight: { x: 0.88, y: 0.12 }, bottomLeft: { x: 0.12, y: 0.12 },
+        },
+        edgeEffects: {
+          enabled: true,
+          effects: [{
+            id: 'edge', enabled: true, opacity: 1, blendMode: 'add',
+            stroke: { type: 'glow', color: [0.05, 1, 0.65, 1], width: 5, glowSize: 24, glowIntensity: 1.4, pulseSpeed: 1.2 },
+            fill: { type: 'solid', color: [0.05, 0.15, 0.8, 0.6], opacity: 1 },
+            animation: { type: 'breathe', speed: 1.5, minScale: 0.82, maxScale: 1.18 },
+          }],
+        },
+      } as any, 128, 72)!;
       await rpc.send('submit_commands', {
         commands: [{
           type: 'set_layer_edge_effects',
           layer_id: layerId,
-          edge_effects: [[
-            [1, 1, 1, 2],
-            [0.05, 1, 0.65, 1],
-            [5, 24, 1.4, 1.2],
-            [1, 0.32, 0, 0],
-            [0.8, 0.04, 0.25, 0.7],
-            [0.05, 0.15, 0.8, 0.6],
-            [2, 1.5, 0.82, 1.18],
-          ]],
+          edge_effects: payload.effects,
+          edge_outline: payload.outline,
+          edge_corners: payload.corners,
+          edge_diagonals: payload.diagonals,
+          edge_geometry: payload.geometry,
+          edge_seed: payload.seed,
+          edge_bounds: payload.bounds,
         }],
       }, 5000);
       await new Promise((resolve) => setTimeout(resolve, 100));
