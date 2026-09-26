@@ -196,6 +196,12 @@ var source_frames: texture_2d_array<f32>;
 @group(0) @binding(4)
 var source_frame_sampler: sampler;
 
+// Painted masks (paint_mask.rs): one R8 layer per painted layer, 1 =
+// visible. Addressed in the layer's content UV so a painted hole rides
+// along with corner pins and mesh warps.
+@group(0) @binding(5)
+var paint_masks: texture_2d_array<f32>;
+
 const SOURCE_PREVIEW_SIZE: i32 = 256;
 const SOURCE_PREVIEW_PIXELS: i32 = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
 const MAX_SOURCE_PREVIEW_SLOTS: i32 = 16;
@@ -3263,6 +3269,22 @@ fn apply_native_edge_effects(layer: vec4<f32>, p_uv: vec2<f32>, li: u32, aa: f32
   return vec4<f32>(select(vec3<f32>(0.0), cr / max(ca, 1e-6), ca > 1e-6), ca);
 }
 
+// fast_flags.z = paint-mask array slot + 1 (0 = none); fast_flags.w bit 0
+// = inverted. `content_uv` is the mesh-inverse UV (y down), the space the
+// editor paints in.
+fn native_paint_mask(content_uv: vec2<f32>, layer_index: u32) -> f32 {
+  let slot = layers[layer_index].fast_flags.z;
+  if (slot == 0u) {
+    return 1.0;
+  }
+  let uv = clamp(content_uv, vec2<f32>(0.0), vec2<f32>(1.0));
+  var m = textureSampleLevel(paint_masks, source_frame_sampler, uv, i32(slot - 1u), 0.0).r;
+  if ((layers[layer_index].fast_flags.w & 1u) != 0u) {
+    m = 1.0 - m;
+  }
+  return clamp(m, 0.0, 1.0);
+}
+
 fn native_polygon_mask(local_uv: vec2<f32>, layer_index: u32) -> f32 {
   let point_count = min(64, i32(floor(layers[layer_index].mask_info.w + 0.5)));
   if (layers[layer_index].mask_info.x < 0.5 || point_count < 3) {
@@ -3447,7 +3469,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // Effect outline are, so they follow the surface into a bulge.
         let shape_uv = select(local.yz, mesh_sample.yz, bezier_mesh);
         let shape_sample = native_layer_shape(shape_uv, layer_index);
-        let polygon_mask = native_polygon_mask(shape_uv, layer_index);
+        let polygon_mask = native_polygon_mask(shape_uv, layer_index)
+          * native_paint_mask(mesh_sample.yz, layer_index);
         let shape_mask = shape_sample.x * polygon_mask;
         content_alpha = 0.56 * shape_mask;
         if (layers[layer_index].info.w > 0.5) {

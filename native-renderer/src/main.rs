@@ -25,6 +25,7 @@ mod video_texture;
 mod native_graph_manifest;
 mod native_quality;
 mod output_present;
+mod paint_mask;
 mod particle_director;
 mod projector_view;
 mod shared_texture;
@@ -3710,6 +3711,12 @@ struct RenderState {
     source_crop_preview: Option<(wgpu::Texture, wgpu::Texture, TextureBlitter, u32, u32, u32, u32)>,
     last_frame_metrics: Option<SnapshotMetrics>,
     bind_group: wgpu::BindGroup,
+    /// Layout of `bind_group`, kept so the group can be rebuilt when the
+    /// paint-mask texture grows.
+    scene_bind_group_layout: wgpu::BindGroupLayout,
+    paint_mask_texture: wgpu::Texture,
+    paint_mask_size: u32,
+    paint_mask_layers: u32,
     start_time: Instant,
     gpu_timing: Option<GpuTimingState>,
     gpu_frames_submitted: u64,
@@ -3894,6 +3901,8 @@ struct App {
     command_phase: f32,
     start_time: Instant,
     scene_layers: HashMap<String, SceneLayer>,
+    /// Painted masks (strokes + their rasters), keyed by layer id.
+    paint_masks: paint_mask::PaintMaskStore,
     pending_media_bindings: HashMap<String, PendingMediaBinding>,
     native_graph_layers: HashMap<String, NativeGraphLayer>,
     /// Resolved per-instrument workload numbers for the most recent frame,
@@ -4241,6 +4250,7 @@ impl App {
             command_phase: 0.0,
             start_time: Instant::now(),
             scene_layers: HashMap::new(),
+            paint_masks: paint_mask::PaintMaskStore::new(2048),
             pending_media_bindings: HashMap::new(),
             native_graph_layers: HashMap::new(),
             native_graph_workload: BTreeMap::new(),
@@ -5255,6 +5265,7 @@ impl App {
                     "mesh_cols": layer.mesh_cols,
                     "mask_info": layer.mask_info,
                     "mask_points_count": layer.mask_points.len(),
+                    "paint_mask": self.paint_masks.layer_summary(&layer.id),
                 })
             })
             .collect::<Vec<_>>();
@@ -6439,6 +6450,18 @@ impl App {
                 }
                 "set_layer_native_params" => self.apply_layer_native_params(command),
                 "set_layer_edge_effects" => self.apply_layer_edge_effects(command),
+                "set_layer_paint_mask" => {
+                    if let Some(layer_id) = string_at(command, &["layer_id"]) {
+                        self.paint_masks.apply_command(&layer_id, command);
+                        self.pending_render_retry = true;
+                    }
+                }
+                "set_layer_paint_preview" => {
+                    if let Some(layer_id) = string_at(command, &["layer_id"]) {
+                        self.paint_masks.apply_preview_command(&layer_id, command);
+                        self.pending_render_retry = true;
+                    }
+                }
                 "set_native_graph_layer" => self.apply_native_graph_layer(command),
                 "update_native_graph_buffer" => {
                     if let Err(err) = self.apply_update_native_graph_buffer(command) {
@@ -11673,6 +11696,7 @@ impl App {
             None
         };
         let frame_index = self.native_frame_index();
+        self.sync_paint_masks_to_gpu();
         let gpu_layers = self.gpu_layer_data();
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         let deck_monitor_a = self.deck_monitor_layer_data(0);
@@ -12079,6 +12103,7 @@ impl App {
         params: &Value,
     ) -> Result<(Option<f32>, u64), String> {
         let (snapshot_time, snapshot_frame_index) = self.snapshot_clock_from_params(params);
+        self.sync_paint_masks_to_gpu();
         let gpu_layers = self.gpu_layer_data();
         let source_preview_pixels = if self.source_preview_dirty {
             Some(self.source_preview_pixel_data())
@@ -17954,6 +17979,7 @@ impl App {
         if let Some(layer_id) = string_at(command, &["layer_id"]) {
             self.scheduled_binding_guards.remove(&layer_id);
             self.captured_graph_holds.remove(&layer_id);
+            self.paint_masks.remove_layer(&layer_id);
             let (removed_source, removed_shader_output, removed_effect_input) = self
                 .scene_layers
                 .remove(&layer_id)
@@ -18026,8 +18052,39 @@ impl App {
         layers
             .into_iter()
             .take(MAX_SCENE_LAYERS)
-            .map(SceneLayer::gpu)
+            .map(|layer| self.with_paint_mask(layer, layer.gpu()))
             .collect()
+    }
+
+    /// Point a layer at its painted mask: fast_flags.z = texture array
+    /// slot + 1 (0 = none), fast_flags.w bit 0 = inverted. A painted layer
+    /// is never a plain rectangle fill.
+    fn with_paint_mask(&self, layer: &SceneLayer, mut gpu: LayerGpu) -> LayerGpu {
+        let (slot, flags) = self.paint_masks.gpu_flags(&layer.id);
+        if slot != 0 {
+            gpu.fast_flags[0] = 0;
+            gpu.fast_flags[2] = slot;
+            gpu.fast_flags[3] = flags;
+        }
+        gpu
+    }
+
+    /// Bring the GPU paint-mask texture up to date: resolution for the
+    /// current output, enough array layers, and the texels that changed.
+    fn sync_paint_masks_to_gpu(&mut self) {
+        let Some(renderer) = self.renderer.as_mut() else { return };
+        let want = paint_mask::paint_mask_size_for_output(renderer.config.width, renderer.config.height);
+        self.paint_masks.set_size(want);
+        let needed = self.paint_masks.slots_needed();
+        if needed == 0 {
+            return;
+        }
+        if renderer.ensure_paint_mask_capacity(self.paint_masks.size(), needed) {
+            self.paint_masks.mark_all_dirty();
+        }
+        for upload in self.paint_masks.drain_uploads() {
+            renderer.write_paint_mask(&upload);
+        }
     }
 
     /// Layer list for one deck confidence monitor: only the layers tagged for
@@ -18047,7 +18104,7 @@ impl App {
             .map(|layer| {
                 let mut monitor_layer = layer.clone();
                 monitor_layer.opacity = layer.deck_monitor_opacity;
-                monitor_layer.gpu()
+                self.with_paint_mask(layer, monitor_layer.gpu())
             })
             .collect()
     }
@@ -18617,8 +18674,37 @@ impl RenderState {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // Painted masks (paint_mask.rs): one R8 array layer per
+                // painted layer. A 1x1 placeholder until something is painted.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
+        let paint_mask_texture = Self::create_paint_mask_texture(&device, 1, 1);
+        let paint_mask_view = paint_mask_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Paint Mask View"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &paint_mask_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255u8],
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(1), rows_per_image: Some(1) },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Ghost Render Core Bind Group"),
             layout: &bind_group_layout,
@@ -18642,6 +18728,10 @@ impl RenderState {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(&source_frame_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&paint_mask_view),
                 },
             ],
         });
@@ -19175,6 +19265,10 @@ impl RenderState {
             source_crop_preview: None,
             last_frame_metrics: None,
             bind_group,
+            scene_bind_group_layout: bind_group_layout,
+            paint_mask_texture,
+            paint_mask_size: 1,
+            paint_mask_layers: 1,
             start_time: Instant::now(),
             gpu_timing,
             gpu_frames_submitted: 0,
@@ -23201,6 +23295,81 @@ impl RenderState {
                 bytemuck::cast_slice(&source_previews[..preview_len]),
             );
         }
+    }
+
+    fn create_paint_mask_texture(device: &wgpu::Device, size: u32, layers: u32) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Ghost Render Core Paint Masks"),
+            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: layers },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    }
+
+    /// Make the paint-mask array `size`² with room for `slots` layers
+    /// (grown in powers of two). True when the texture was recreated and
+    /// every mask has to be uploaded again.
+    fn ensure_paint_mask_capacity(&mut self, size: u32, slots: usize) -> bool {
+        let slots = (slots.max(1) as u32).next_power_of_two().min(paint_mask::PAINT_MASK_MAX_SLOTS as u32);
+        if self.paint_mask_size == size && self.paint_mask_layers >= slots {
+            return false;
+        }
+        let layers = if self.paint_mask_size == size { slots.max(self.paint_mask_layers) } else { slots };
+        self.paint_mask_texture = Self::create_paint_mask_texture(&self.device, size, layers);
+        self.paint_mask_size = size;
+        self.paint_mask_layers = layers;
+        let paint_mask_view = self.paint_mask_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Paint Mask View"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let source_frame_view = self.source_frame_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Source Frame View"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        self.bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Render Core Bind Group"),
+            layout: &self.scene_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.uniform_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.layer_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.source_preview_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&source_frame_view) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&self.source_frame_sampler) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&paint_mask_view) },
+            ],
+        });
+        true
+    }
+
+    fn write_paint_mask(&self, upload: &paint_mask::PaintMaskUpload) {
+        if upload.slot as u32 >= self.paint_mask_layers
+            || upload.rect.x1 > self.paint_mask_size
+            || upload.rect.y1 > self.paint_mask_size
+            || upload.bytes.len() != (upload.rect.width() * upload.rect.height()) as usize
+        {
+            return;
+        }
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.paint_mask_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: upload.rect.x0, y: upload.rect.y0, z: upload.slot as u32 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &upload.bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(upload.rect.width()),
+                rows_per_image: Some(upload.rect.height()),
+            },
+            wgpu::Extent3d { width: upload.rect.width(), height: upload.rect.height(), depth_or_array_layers: 1 },
+        );
     }
 
     fn draw_fullscreen_to_view(
