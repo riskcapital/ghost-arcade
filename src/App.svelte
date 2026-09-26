@@ -80,6 +80,16 @@
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { beginHistoryRestore, endHistoryRestore } from './lib/stores/historyHooks';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
+  import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
+  import { hydrateShowControl } from './lib/show/showControlPersistence';
+  import { cueList } from './lib/show/cueList';
+  import {
+    installPromptSuppression,
+    isShowModeLaunch,
+    launchConfig,
+    promptsSuppressed,
+    runShowModeLaunch,
+  } from './lib/show/showStartup';
   import { compositionTransition } from './lib/stores/compositionTransition';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
@@ -1282,6 +1292,16 @@
       };
     } catch { /* sealed */ }
 
+    // Show control: cue list executor, show:* control paths, timeline
+    // markers, timecode chase, the scheduler and projector polling.
+    const stopShowControl = installShowControl();
+    showRuntimeHooks.ensureOutputs = ensureOutputsFullscreen;
+    // Show mode (start at boot): nothing modal may stand between a machine
+    // booting in an empty room and the show starting.
+    const restorePrompts = promptsSuppressed()
+      ? installPromptSuppression((message) => showToast(message, 'warning'))
+      : () => {};
+
     // Show timeline → renderer transitions.
     //
     // This used to call `engine.startTransition()`, which is WebGL-only: this
@@ -1426,7 +1446,7 @@
     // while we show the modal; the modal's button handlers call
     // window.close() programmatically when the user makes a choice.
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (!hasUnsavedChanges) return;
+      if (!hasUnsavedChanges || promptsSuppressed()) return;
       // Only intercept once — if the modal is already open, let the
       // user finish their decision (and the modal handler will close).
       if (showCloseModal) return;
@@ -1441,18 +1461,19 @@
     // Background update check — first run shows cached result if any,
     // then re-fetches if it's been > 24 h since last check. Manual
     // "Check now" from Settings calls runVersionCheck(true).
-    runVersionCheck(false);
+    // (Show mode skips both update checks: no banners or modals over a show.)
+    if (!promptsSuppressed()) runVersionCheck(false);
 
     // No license check in the OSS build — go straight to first-run UX.
     initLicense().then(() => {
       const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
-      if (!welcomeSeen) {
+      if (!welcomeSeen && !promptsSuppressed()) {
         showWelcome = true;
       }
     });
 
     // Check for app updates (compares against latest GitHub release)
-    startUpdateChecker();
+    if (!promptsSuppressed()) startUpdateChecker();
 
     // Start the per-param Auto playhead engine. Walks every layer's
     // paramAuto / shaderValueAuto each frame and writes resolved
@@ -1581,10 +1602,30 @@
 
     // --- Crash recovery: check for auto-saved project ---
     const savedAutosave = localStorage.getItem('ghostarcade-autosave');
-    if (savedAutosave) {
+    // Show mode opens its own project; the recovery offer would sit on top
+    // of the show forever. The autosave is left in place for the next
+    // normal launch.
+    if (savedAutosave && !promptsSuppressed()) {
       const ts = localStorage.getItem('ghostarcade-autosave-timestamp');
       recoveryTimestamp = ts ? new Date(parseInt(ts, 10)).toLocaleString() : 'unknown time';
       showRecoveryModal = true;
+    }
+
+    // --- Show mode: open the show project, the outputs, and start ---
+    if (isShowModeLaunch()) {
+      const config = launchConfig();
+      if (config) {
+        // Give the render core a moment to come up before driving outputs.
+        scheduleBridgeTimeout(() => {
+          void runShowModeLaunch(config, {
+            openProject: (path) => openProjectAtPath(path),
+            openOutputs: ensureOutputsFullscreen,
+            go: () => cueList.go(),
+            playTimeline: () => showTimeline.play(),
+            log: (message) => console.log('[ShowMode]', message),
+          });
+        }, 1500);
+      }
     }
 
     // --- Auto-save interval: every 30 seconds ---
@@ -1933,6 +1974,9 @@
 
     return () => {
       appMounted = false;
+      stopShowControl();
+      showRuntimeHooks.ensureOutputs = null;
+      restorePrompts();
       stopInterfaceScale();
       setShowTransitionSink(null);
       compositionTransition.clear();
@@ -5124,6 +5168,10 @@
     snapshots.reset();
     // DMX input bindings belong to the project; the listener stays as set.
     dmxStore.reset();
+    // And show control: a new project must not inherit the last one's cue
+    // list, timecode chase, schedule or projectors (a schedule left armed
+    // would start firing cues into an empty project).
+    hydrateShowControl(null);
     // Output settings are global rather than per-project, so without this a
     // new project inherits the last one's screens (the project saves
     // outputSlices and restores them, but a new project has none to overwrite
@@ -5148,26 +5196,43 @@
   // =========================================================================
   // OPEN RECENT FILE
   // =========================================================================
+  /** Open a .gha from disk by path (Electron). Throws when it cannot be
+   *  read; resolves false when it is not a valid project. Shared by Open
+   *  Recent and the show-mode startup. */
+  async function openProjectAtPath(path: string, name = path.split(/[\\/]/).pop() || path): Promise<boolean> {
+    const { invoke } = await import('$lib/bridge');
+    const result = await invoke<{ content: string; dir: string }>('read_project_file', { path });
+    try { synthVisionStore.reset(); } catch {}
+    try { sessionClipCache.clear(); } catch {}
+    try { isfShaderCache.clear(); } catch {}
+    try { modulationStore.clearAll(); } catch {}
+    const success = project.importProjectJSON(result.content, result.dir);
+    if (success) {
+      console.log('Project loaded:', path);
+      currentFileHandle = null;
+      // Track the loaded path so Save updates this file in place.
+      currentProjectPath = path;
+      recentFiles.add(name, path); // Bump to top
+      markAsSaved();
+    }
+    return success;
+  }
+
+  /** Open the outputs fullscreen unless they already are (show mode and
+   *  scheduled starts). */
+  async function ensureOutputsFullscreen(): Promise<void> {
+    if (outputIsOpen && outputMode === 'fullscreen') return;
+    await toggleFullscreen();
+  }
+
   async function openRecentFile(entry: { name: string; path: string | null; timestamp: number }) {
     fileMenuOpen = false;
 
     // Electron: read the file directly from disk via IPC
     if (isDesktopApp && entry.path) {
       try {
-        const { invoke } = await import('$lib/bridge');
-        const result = await invoke<{ content: string; dir: string }>('read_project_file', { path: entry.path });
-        try { synthVisionStore.reset(); } catch {}
-        try { sessionClipCache.clear(); } catch {}
-        try { isfShaderCache.clear(); } catch {}
-        try { modulationStore.clearAll(); } catch {}
-        const success = project.importProjectJSON(result.content, result.dir);
+        const success = await openProjectAtPath(entry.path, entry.name);
         if (success) {
-          console.log('Project loaded from recent:', entry.path);
-          currentFileHandle = null;
-          // Track the loaded path so Save updates this file in place.
-          currentProjectPath = entry.path;
-          recentFiles.add(entry.name, entry.path); // Bump to top
-          markAsSaved();
           return;
         }
         alert('Failed to load project. The file may be corrupted or invalid.');

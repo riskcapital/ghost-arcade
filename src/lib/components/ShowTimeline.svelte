@@ -45,9 +45,76 @@
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
+  import CueListPanel from './show/CueListPanel.svelte';
+  import { cueList, cueLabel } from '../show/cueList';
+  import { timecodeChase } from '../show/timecode/timecodeChase';
 
   $: state = $showTimeline;
   $: isOpen = state.isOpen;
+
+  // ── Cue list + markers ───────────────────────────────────────────────────
+  // The cue list sits beside the lanes; whether it is showing is a per-user
+  // view preference, not part of the show.
+  const CUES_OPEN_KEY = 'ghostarcade-show-cues-open';
+  let cuesOpen = (() => {
+    try { return localStorage.getItem(CUES_OPEN_KEY) === '1'; } catch { return false; }
+  })();
+  function toggleCues() {
+    cuesOpen = !cuesOpen;
+    try { localStorage.setItem(CUES_OPEN_KEY, cuesOpen ? '1' : '0'); } catch { /* private mode */ }
+  }
+  $: cues = $cueList;
+  const chaseStatus = timecodeChase.status;
+  $: tc = $chaseStatus;
+  let selectedMarkerId: string | null = null;
+  $: selectedMarker = cues.markers.find((m) => m.id === selectedMarkerId) ?? null;
+  // Selecting a clip or transition hands the inspector back to it.
+  function clearMarkerSelection() { selectedMarkerId = null; }
+  $: if (state.selection) clearMarkerSelection();
+
+  function markerCueLabel(cueId: string | null): string {
+    const cue = cues.cues.find((c) => c.id === cueId);
+    return cue ? cue.number : '?';
+  }
+
+  /** Drop a marker under the playhead, pointing at the cue the list has
+   *  selected (or standing by), so "mark here, fire that" is one click. */
+  function addMarkerAtPlayhead() {
+    const cueId = cues.selectedCueId ?? cues.standbyCueId ?? cues.cues[0]?.id ?? null;
+    const id = cueList.addMarker(state.currentTime, cueId);
+    showTimeline.select(null);
+    selectedMarkerId = id;
+  }
+
+  function startMarkerDrag(e: MouseEvent, id: string, time: number) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    showTimeline.select(null);
+    selectedMarkerId = id;
+    const grab = timeAt(e) - time;
+    let moved = false;
+    const onMove = (ev: MouseEvent) => {
+      moved = true;
+      let t = Math.max(0, timeAt(ev) - grab);
+      if (state.snapEnabled) t = Math.round(t / 0.25) * 0.25;
+      cueList.updateMarker(id, { time: t });
+    };
+    const onUp = () => {
+      if (moved) suppressNextClick = true;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  const LOCK_TEXT: Record<string, string> = {
+    searching: 'TC searching',
+    locked: 'TC locked',
+    freewheel: 'TC freewheel',
+    lost: 'TC lost',
+  };
 
   // ── Audio output state ───────────────────────────────────────────────────
   // The clip-audio master is a persisted, APP-WIDE control whose only other UI
@@ -104,6 +171,11 @@
   function autoCeiling(vh: number): number {
     return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(260, vh * 0.38)));
   }
+  const CUE_PANEL_MIN_HEIGHT = 300;
+  /** With the cue list open the tray may auto-grow a little further. */
+  function cueCeiling(vh: number): number {
+    return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(360, vh * 0.45)));
+  }
   /** A hand-dragged tray may be taller than the auto ceiling — the user
    *  asked for it — but never so tall the app underneath disappears. */
   function dragCeiling(vh: number): number {
@@ -140,10 +212,13 @@
   $: laneStackH = RULER_HEIGHT + audioLaneCount * AUDIO_LANE_HEIGHT + PRESET_LANE_HEIGHT;
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
-  $: inspectorVisible = !!(selectedPreset || selectedAudio || selectedTransitionClip);
-  $: contentH =
-    transportH + laneStackH + (inspectorVisible ? inspectorH : 0) + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */;
-  $: autoH = Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, autoCeiling(viewportH)));
+  $: inspectorVisible = !!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker);
+  $: contentH = Math.max(
+    transportH + laneStackH + (inspectorVisible ? inspectorH : 0) + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */,
+    // The cue list needs room for its status, a few rows and the editor.
+    cuesOpen ? transportH + CUE_PANEL_MIN_HEIGHT : 0,
+  );
+  $: autoH = Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH)));
   $: trayHeight = userHeight === null
     ? autoH
     : Math.max(TRAY_MIN_HEIGHT, Math.min(userHeight, dragCeiling(viewportH)));
@@ -255,7 +330,8 @@
       target.closest('.show-block') ||
       target.closest('.show-playhead') ||
       target.closest('.show-transition') ||
-      target.closest('.junction-add')
+      target.closest('.junction-add') ||
+      target.closest('.show-marker')
     ) {
       return;
     }
@@ -410,6 +486,11 @@
     : null;
 
   function deleteSelected() {
+    if (selectedMarker) {
+      cueList.removeMarker(selectedMarker.id);
+      selectedMarkerId = null;
+      return;
+    }
     if (selectedTransitionClip) showTimeline.removeTransitionAt(selectedTransitionClip.id);
     else if (selectedPreset) showTimeline.removePresetClip(selectedPreset.id);
     else if (selectedAudio) showTimeline.removeAudioTrack(selectedAudio.id);
@@ -602,7 +683,7 @@
     const target = e.target as HTMLElement | null;
     const tag = target?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
-    if ((e.key === 'Delete' || e.key === 'Backspace') && state.selection) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && (state.selection || selectedMarker)) {
       e.preventDefault();
       deleteSelected();
     }
@@ -789,6 +870,20 @@
       <button class="t-chip" onclick={() => showTimeline.compactPresetClips()} disabled={state.presetClips.length < 2} title="Close every gap on the preset lane">
         Compact
       </button>
+
+      <span class="t-divider"></span>
+
+      <button class="t-chip" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" data-show-cues-toggle>
+        Cues
+      </button>
+      <button class="t-chip" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
+        + Marker
+      </button>
+      {#if tc.lock !== 'off'}
+        <span class="t-tc" class:locked={tc.lock === 'locked'} class:freewheel={tc.lock === 'freewheel'} class:lost={tc.lock === 'lost'} title={tc.error ?? `Timecode ${tc.lock}${tc.rate ? `, ${tc.rate} fps` : ''}`} data-show-tc-badge>
+          <span class="t-tc-dot"></span>{LOCK_TEXT[tc.lock] ?? tc.lock}{tc.label ? ` ${tc.label}` : ''}
+        </span>
+      {/if}
       <input
         class="hidden-file"
         type="file"
@@ -799,6 +894,8 @@
       />
     </div>
 
+    <div class="show-main">
+    <div class="show-main-col">
     <!-- Body: lane labels + scrolling grid -->
     <div class="show-body">
       <div class="lane-labels">
@@ -835,6 +932,20 @@
           {#each rulerTicks as tick}
             <div class="ruler-tick" class:major={tick.major} style="left: {tick.x}px">
               <span class="ruler-label">{tick.label}</span>
+            </div>
+          {/each}
+          {#each cues.markers as marker (marker.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="show-marker"
+              class:selected={marker.id === selectedMarkerId}
+              class:unlinked={!marker.cueId}
+              style="left: {marker.time * zoom}px"
+              onmousedown={(e) => startMarkerDrag(e, marker.id, marker.time)}
+              title={`Marker at ${formatPrecise(marker.time)}${marker.cueId ? `: fires ${cueLabel(cues.cues.find((c) => c.id === marker.cueId))}` : ' (no cue)'}. Drag to move.`}
+              data-marker-id={marker.id}
+            >
+              <span class="show-marker-flag">{marker.label || markerCueLabel(marker.cueId)}</span>
             </div>
           {/each}
         </div>
@@ -948,6 +1059,10 @@
           </div>
         </div>
 
+        {#each cues.markers as marker (marker.id)}
+          <div class="show-marker-line" class:selected={marker.id === selectedMarkerId} style="left: {marker.time * zoom}px; height: {laneStackH}px"></div>
+        {/each}
+
         <div class="show-playhead" style="left: {playheadX}px" onmousedown={startScrub}>
           <div class="playhead-handle"></div>
           <div class="playhead-line"></div>
@@ -956,7 +1071,44 @@
     </div>
 
     <!-- Inspector -->
-    {#if selectedPreset}
+    {#if selectedMarker}
+      <div class="show-inspector" bind:clientHeight={inspectorH} data-marker-inspector>
+        <span class="insp-title">Marker</span>
+        <label class="insp-field">
+          <span>At</span>
+          <input
+            type="number" min="0" step="0.25"
+            value={selectedMarker.time.toFixed(2)}
+            onchange={(e) => cueList.updateMarker(selectedMarker.id, { time: parseFloat((e.target as HTMLInputElement).value) || 0 })}
+          />
+          <span class="insp-unit">s</span>
+        </label>
+        <label class="insp-field insp-wide">
+          <span>Fires</span>
+          <select
+            value={selectedMarker.cueId ?? ''}
+            onchange={(e) => cueList.updateMarker(selectedMarker.id, { cueId: (e.target as HTMLSelectElement).value || null })}
+            data-marker-cue
+          >
+            <option value="">No cue</option>
+            {#each cues.cues as cue (cue.id)}
+              <option value={cue.id}>{cueLabel(cue)}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="insp-field">
+          <span>Label</span>
+          <input
+            type="text"
+            value={selectedMarker.label}
+            placeholder={markerCueLabel(selectedMarker.cueId)}
+            onchange={(e) => cueList.updateMarker(selectedMarker.id, { label: (e.target as HTMLInputElement).value })}
+          />
+        </label>
+        <button class="insp-delete" onclick={deleteSelected}>Delete</button>
+        <button aria-label="Close marker inspector" class="insp-close" onclick={() => (selectedMarkerId = null)}>×</button>
+      </div>
+    {:else if selectedPreset}
       <div class="show-inspector" bind:clientHeight={inspectorH}>
         <span class="insp-title">Preset clip</span>
         <label class="insp-field insp-wide">
@@ -1108,6 +1260,12 @@
         <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
       </div>
     {/if}
+
+    </div>
+    {#if cuesOpen}
+      <CueListPanel />
+    {/if}
+    </div>
 
     {#if showClearConfirm}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1370,6 +1528,73 @@
     min-height: 0;
     overflow: hidden;
   }
+  /* Lanes + inspector on the left, the cue list (when open) on the right. */
+  .show-main {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .show-main-col {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* Markers: a flag on the ruler, a hairline through the lanes. */
+  .show-marker {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    z-index: 5;
+    transform: translateX(-1px);
+    cursor: grab;
+  }
+  .show-marker-flag {
+    position: absolute;
+    top: 2px;
+    left: 0;
+    padding: 0 4px;
+    height: 15px;
+    line-height: 15px;
+    font-size: 9px;
+    font-weight: 700;
+    color: #1a1204;
+    background: #f0c674;
+    border-radius: 0 3px 3px 0;
+    white-space: nowrap;
+    font-family: var(--font-jetbrains), monospace;
+  }
+  .show-marker.unlinked .show-marker-flag { background: #7a7a86; color: #111; }
+  .show-marker.selected .show-marker-flag { box-shadow: 0 0 0 1px #fff; }
+  .show-marker-line {
+    position: absolute;
+    top: 0;
+    width: 1px;
+    background: rgba(240, 198, 116, 0.45);
+    pointer-events: none;
+    z-index: 3;
+  }
+  .show-marker-line.selected { background: #f0c674; }
+
+  /* Timecode lock badge in the transport. */
+  .t-tc {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-family: var(--font-jetbrains), monospace;
+    color: var(--text-secondary, #aaa);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    padding: 3px 7px;
+  }
+  .t-tc-dot { width: 7px; height: 7px; border-radius: 50%; background: #777; }
+  .t-tc.locked .t-tc-dot { background: #5fdc76; box-shadow: 0 0 6px #5fdc76; }
+  .t-tc.freewheel .t-tc-dot { background: #f0c674; }
+  .t-tc.lost .t-tc-dot { background: #f87171; }
   .lane-labels {
     width: 108px;
     flex: 0 0 108px;

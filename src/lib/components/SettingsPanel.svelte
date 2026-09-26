@@ -75,6 +75,7 @@
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
   import PixelMapPanel from './PixelMapPanel.svelte';
   import DmxInputPanel from './DmxInputPanel.svelte';
+  import ShowControlSettings from './show/ShowControlSettings.svelte';
 
   // ── MIDI mappings table ──
   // Grouped by the control rather than by the parameter, because a parameter
@@ -338,6 +339,7 @@
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
     | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:pixelmap' | 'integrations:dmxinput' | 'integrations:mediapipe'
+    | 'show:timecode' | 'show:schedule' | 'show:startup' | 'show:projectors'
     | 'ai';
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
   interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
@@ -370,6 +372,14 @@
       { id: 'integrations:dmxinput', label: 'DMX Input' },
       { id: 'integrations:mediapipe', label: 'MediaPipe' },
     ]},
+    // Unattended shows: timecode chase, the schedule, start at boot and
+    // PJLink projectors. The cue list itself lives beside the Show timeline.
+    { id: 'show', label: 'Show Control', sections: [
+      { id: 'show:timecode', label: 'Timecode' },
+      { id: 'show:schedule', label: 'Schedule' },
+      { id: 'show:startup', label: 'Start at Boot' },
+      { id: 'show:projectors', label: 'Projectors' },
+    ]},
     { id: 'ai', label: 'AI', sections: [
       { id: 'ai', label: 'AI' },
     ]},
@@ -390,6 +400,10 @@
     pixelmap: 'integrations:pixelmap',
     dmxinput: 'integrations:dmxinput',
     mediapipe: 'integrations:mediapipe',
+    timecode: 'show:timecode',
+    schedule: 'show:schedule',
+    startup: 'show:startup',
+    projectors: 'show:projectors',
     ai: 'ai',
   };
 
@@ -2803,6 +2817,44 @@
             Use the webcam as a control input. Hand landmarks, pinch distance, palm position, and the canned MediaPipe gestures (open palm, fist, victory, thumb up/down, etc.) become signals that bind to any MIDI-mappable parameter through the same router OSC uses.
           </p>
           <MediaPipePanel />
+        </section>
+        {/if}
+        <!-- Show control: timecode, schedule, start at boot, projectors.
+             See src/lib/show/ and src/lib/components/show/. -->
+        {#if selectedSection === 'show:timecode'}
+        <section class="settings-section">
+          <h3>Timecode</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Chase SMPTE timecode from LTC on an audio input or MTC over MIDI. The show timeline follows it and its markers fire their cues; cues with a timecode fire as it passes. Saved with the project.
+          </p>
+          <ShowControlSettings section="timecode" />
+        </section>
+        {/if}
+        {#if selectedSection === 'show:schedule'}
+        <section class="settings-section">
+          <h3>Schedule</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Daily or weekly show times with date exceptions. The scheduler fires a cue at each start, stops the cue list at each stop, and can power the projectors. Saved with the project.
+          </p>
+          <ShowControlSettings section="schedule" />
+        </section>
+        {/if}
+        {#if selectedSection === 'show:startup'}
+        <section class="settings-section">
+          <h3>Start at Boot</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            For installs: start with the computer, open a show and run it without anyone at the machine. These settings belong to this computer, not the project.
+          </p>
+          <ShowControlSettings section="startup" />
+        </section>
+        {/if}
+        {#if selectedSection === 'show:projectors'}
+        <section class="settings-section">
+          <h3>Projectors</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            PJLink (class 1, TCP 4352) power, shutter and input control with password authentication, and status polling. Cues and the scheduler can command these. Saved with the project.
+          </p>
+          <ShowControlSettings section="projectors" />
         </section>
         {/if}
         <!-- AI Settings Section -->
