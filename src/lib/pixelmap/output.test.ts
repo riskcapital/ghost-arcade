@@ -143,6 +143,27 @@ describe('pixel map output', () => {
     expect((await output.sendFrame({ ...frame, fps: 240 })).reason).toBe('rate');
   });
 
+  it('accepts timer jitter but holds the long-run rate to the setting', async () => {
+    let clock = 0;
+    const fake = fakeDgram();
+    const output = createPixelMapOutput({ dgram: fake.api, now: () => clock });
+    const frame = { fps: 40, universes: [{ protocol: 'artnet', host: '127.0.0.1', universe: 0, data: new Uint8Array(2) }] };
+    // Late, early, late, early around the 25ms period: nothing is dropped.
+    for (const gap of [0, 31, 19, 33, 17, 25, 25]) {
+      clock += gap;
+      expect((await output.sendFrame(frame)).dropped).toBeUndefined();
+    }
+    // A caller pushing 100fps for a second gets about 40 frames through.
+    const before = output.stats().framesSent;
+    for (let index = 0; index < 100; index += 1) {
+      clock += 10;
+      await output.sendFrame(frame);
+    }
+    const accepted = output.stats().framesSent - before;
+    expect(accepted).toBeGreaterThanOrEqual(39);
+    expect(accepted).toBeLessThanOrEqual(42);
+  });
+
   it('drops a frame while the previous one is still draining', async () => {
     let clock = 0;
     const fake = fakeDgram(false);

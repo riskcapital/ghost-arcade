@@ -17,8 +17,10 @@ const packets = require('./pixelmap-packets.cjs');
 const DEFAULT_FPS = 40;
 const MAX_FPS = 60;
 const MAX_UNIVERSES_PER_FRAME = 1024;
-// The renderer's timer jitters; accept frames that arrive up to 25% early.
-const RATE_TOLERANCE = 0.75;
+// Token bucket: the long-run rate never exceeds the frame rate, but a
+// frame that arrives early after a late one (renderer timer jitter) is
+// still accepted. At most two frames of credit are banked.
+const RATE_BURST = 2;
 const SACN_TERMINATION_PACKETS = 3;
 
 function isValidHost(host) {
@@ -106,6 +108,7 @@ function createPixelMapOutput({
   let socket = null;
   let socketReady = null;
   let lastFrameAt = -Infinity;
+  let rateCredit = 1;
   const sequences = new Map();
   // key -> { protocol, host, universe, length, sacn }
   let active = new Map();
@@ -240,7 +243,10 @@ function createPixelMapOutput({
     }
 
     const time = now();
-    if (time - lastFrameAt < (1000 / frame.fps) * RATE_TOLERANCE) {
+    const credit = Number.isFinite(lastFrameAt)
+      ? Math.min(RATE_BURST, rateCredit + ((time - lastFrameAt) * frame.fps) / 1000)
+      : 1;
+    if (credit < 1 - 1e-9) {
       stats.framesDropped += 1;
       stats.droppedRate += 1;
       return { ok: true, dropped: true, reason: 'rate', stats: snapshot() };
@@ -251,6 +257,7 @@ function createPixelMapOutput({
       return { ok: true, dropped: true, reason: 'busy', stats: snapshot() };
     }
     lastFrameAt = time;
+    rateCredit = Math.max(0, credit - 1);
 
     let sock;
     try {
@@ -314,6 +321,7 @@ function createPixelMapOutput({
     active = new Map();
     sequences.clear();
     lastFrameAt = -Infinity;
+    rateCredit = 1;
     artSyncActive = false;
     recentFrames.length = 0;
     if (sock) {
