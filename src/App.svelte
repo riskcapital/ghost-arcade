@@ -159,6 +159,7 @@
   // main App chunk — it's only needed when the mobile-connect panel opens.
   import { midiManager } from './lib/midi/midiManager';
   import { oscStore } from './lib/osc/oscStore';
+  import { dmxStore } from './lib/dmx/dmxStore';
   import { midiStore } from './lib/midi/midiStore';
   import { keyboardStore } from './lib/keyboard/keyboardStore';
   import { synthVisionStore, sessionClipCache, isfShaderCache } from './lib/stores/synthVision';
@@ -919,6 +920,7 @@
     viewportEl?.removeEventListener('wheel', handleViewportWheel);
     destroyPhoneVisionSession(true);
     oscStore.destroy();
+    dmxStore.destroy();
   });
 
   // Recovery modal actions
@@ -1516,6 +1518,8 @@
     // Attach OSC bridge listeners + restore the saved enable/port state
     // so the listener comes back on boot without a Settings visit.
     void oscStore.initialize();
+    // DMX input comes back only if it was switched on on this machine.
+    void dmxStore.initialize();
     // Restores the server if it was enabled last session, and attaches the
     // tool bridge either way so a later enable does not need a restart.
     void mcpStore.initialize();
@@ -5114,6 +5118,8 @@
     macros.reset();
     // Same for snapshots — fresh project, empty 16-slot bank.
     snapshots.reset();
+    // DMX input bindings belong to the project; the listener stays as set.
+    dmxStore.reset();
     // Output settings are global rather than per-project, so without this a
     // new project inherits the last one's screens (the project saves
     // outputSlices and restores them, but a new project has none to overwrite

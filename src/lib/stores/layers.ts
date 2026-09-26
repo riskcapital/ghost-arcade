@@ -43,6 +43,7 @@ import { showTimeline, setShowCompositionLoader } from './showTimeline';
 import { getDefaultEffectParams } from '../renderer/effects';
 import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { oscStore } from '../osc/oscStore';
+import { dmxStore } from '../dmx/dmxStore';
 import { keyboardStore } from '../keyboard/keyboardStore';
 import { mediaPipeBus } from '../mediapipe/mediaPipeBus';
 import { geoDeckStore } from './geoDeck';
@@ -5258,6 +5259,9 @@ void main() {
         // Include OSC config (port + bindings). The listener is
         // restarted on project load if the saved state was enabled.
         osc: oscStore.serialize(),
+        // Include DMX input bindings, universe filter and merge rule. The
+        // on/off switch and bind address are machine settings and stay out.
+        dmxInput: dmxStore.serialize(),
         // Include keyboard control bindings (key combo → param path).
         // Same router as MIDI/OSC, so the binding paths are identical.
         keyboard: keyboardStore.serialize(),
@@ -6107,6 +6111,13 @@ void main() {
           oscStore.hydrate((parsed as any).osc);
         } else {
           oscStore.reset();
+        }
+
+        // Import DMX input bindings. Older saves don't carry them.
+        if ((parsed as any).dmxInput) {
+          dmxStore.hydrate((parsed as any).dmxInput);
+        } else {
+          dmxStore.reset();
         }
 
         // Import keyboard control bindings. Older saves don't carry them
