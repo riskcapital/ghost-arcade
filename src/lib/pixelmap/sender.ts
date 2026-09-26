@@ -17,14 +17,27 @@
  *   global output blackout) and teardown call pixelmap_stop, which sends one
  *   black frame to every universe and terminates sACN streams.
  * - Test patterns (solid, chase, LED order) run without a composite frame.
+ * - LED FX (project.wledEffects) run on fixtures exactly as on WLED
+ *   controllers: a fixture is a valid effect target and LED group member,
+ *   and beat-synced effects follow the manual or detected BPM. Effects run
+ *   over black until the first composite frame arrives.
  */
 import { writable } from 'svelte/store';
 import { project } from '../stores/layers';
 import { settings } from '../stores/settings';
+import { audioStore } from '../stores/audio';
 import { invoke } from '../bridge';
-import type { PixelMapConfig, PixelMapFixture, WLEDNormalizedPoint } from '../types';
+import type {
+  PixelMapConfig,
+  PixelMapFixture,
+  WLEDEffect,
+  WLEDEffectAutomation,
+  WLEDGroup,
+  WLEDNormalizedPoint,
+} from '../types';
 import { acquireNativeCompositeMirror, type CompositeMirrorHandle } from '../sync/nativeCompositeMirror';
 import { calibrateWLEDPixels, fillWLEDTestPattern, sampleWLEDSourcePixels } from '../wled/mapping';
+import { applyWLEDEffects, fixtureLEDTarget, ledEffectBpm } from '../wled/effects';
 import {
   buildPixelMapFrame,
   fixtureIssues,
@@ -57,6 +70,7 @@ interface FixtureState {
   points: WLEDNormalizedPoint[];
   sampleRadius: number;
   source: Uint8Array;
+  effect: Uint8Array;
   rgb: Uint8Array;
   previous: Uint8Array;
 }
@@ -68,6 +82,10 @@ let running = false;
 let rawConfig: PixelMapConfig | undefined;
 let config: PixelMapConfig | null = null;
 let lightingBlackout = false;
+let ledGroups: WLEDGroup[] = [];
+let ledEffects: WLEDEffect[] = [];
+let ledAutomation: WLEDEffectAutomation | undefined;
+let ledBpm = 120;
 let outputBlackout = false;
 let timer: ReturnType<typeof setInterval> | null = null;
 let timerFps = 0;
@@ -194,6 +212,7 @@ function ensureFixtureState(fixture: PixelMapFixture, aspect: number): FixtureSt
     points: mapping.points,
     sampleRadius: mapping.sampleRadius,
     source: sameLength ? state!.source : new Uint8Array(length),
+    effect: sameLength ? state!.effect : new Uint8Array(length),
     rgb: sameLength ? state!.rgb : new Uint8Array(length),
     previous: sameLength ? state!.previous : new Uint8Array(length),
   };
@@ -222,11 +241,23 @@ function tick() {
     const pattern = fixture.testPattern ?? 'off';
     if (pattern !== 'off') {
       fillWLEDTestPattern(pattern, fixture.testColor, now, state.rgb, options, state.previous);
-    } else if (frame) {
-      sampleWLEDSourcePixels(frame.data, frame.width, frame.height, state.points, state.sampleRadius, state.source, fixture.samplingMode ?? 'average');
-      calibrateWLEDPixels(state.source, state.rgb, options, state.previous);
     } else {
-      state.rgb.fill(0);
+      if (frame) {
+        sampleWLEDSourcePixels(frame.data, frame.width, frame.height, state.points, state.sampleRadius, state.source, fixture.samplingMode ?? 'average');
+      } else {
+        state.source.fill(0);
+      }
+      applyWLEDEffects(
+        state.source,
+        state.effect,
+        fixtureLEDTarget(fixture, state.points.length),
+        ledGroups,
+        ledEffects,
+        ledAutomation,
+        now,
+        ledBpm,
+      );
+      calibrateWLEDPixels(state.effect, state.rgb, options, state.previous);
     }
     state.previous.set(state.rgb);
     pixels.set(fixture.id, state.rgb);
@@ -264,6 +295,9 @@ export function startPixelMapOutput(): () => void {
   running = true;
   unsubscribers = [
     project.subscribe(current => {
+      ledGroups = current.wledGroups ?? [];
+      ledEffects = current.wledEffects ?? [];
+      ledAutomation = current.wledEffectAutomation;
       if (current.pixelMap === rawConfig) return;
       rawConfig = current.pixelMap;
       config = rawConfig ? normalizePixelMapConfig(rawConfig) : null;
@@ -275,6 +309,7 @@ export function startPixelMapOutput(): () => void {
       outputBlackout = next;
       reconcile();
     }),
+    audioStore.subscribe(state => { ledBpm = ledEffectBpm(state); }),
     pixelMapBlackout.subscribe(value => {
       if (value === lightingBlackout) return;
       lightingBlackout = value;
@@ -294,6 +329,9 @@ function shutdown() {
   fixtureStates.clear();
   rawConfig = undefined;
   config = null;
+  ledGroups = [];
+  ledEffects = [];
+  ledAutomation = undefined;
   inFlight = false;
   tapCanvas = null;
   tapContext = null;

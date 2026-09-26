@@ -4,7 +4,10 @@ import { writable } from 'svelte/store';
 vi.mock('../stores/layers', () => ({ project: writable({ wledControllers: [] }) }));
 vi.mock('../stores/audio', () => ({ audioStore: writable({ bpm: 120, manualBPM: 92 }) }));
 vi.mock('../bridge', () => ({ invoke: vi.fn() }));
-vi.mock('./effects', () => ({ applyWLEDEffects: vi.fn((source, target) => target.set(source)) }));
+vi.mock('./effects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./effects')>()),
+  applyWLEDEffects: vi.fn((source, target) => target.set(source)),
+}));
 
 import { project } from '../stores/layers';
 import { invoke } from '../bridge';

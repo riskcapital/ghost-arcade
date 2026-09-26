@@ -46,7 +46,7 @@ import {
   sampleWLEDSourcePixels,
   sanitizeWLEDCount,
 } from './mapping';
-import { applyWLEDEffects } from './effects';
+import { applyWLEDEffects, ledEffectBpm } from './effects';
 
 /** Per-controller runtime state. */
 interface SenderState {
@@ -342,7 +342,7 @@ export function startWLEDSenders(canvas: HTMLCanvasElement, role: WLEDSourceRole
     }
   });
   unsubAudio = audioStore.subscribe(state => {
-    currentBpm = (state.manualBPM ?? 0) > 0 ? state.manualBPM! : state.bpm > 0 ? state.bpm : 120;
+    currentBpm = ledEffectBpm(state);
   });
 }
 

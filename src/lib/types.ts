@@ -5403,6 +5403,7 @@ export interface WLEDRange {
 }
 
 export interface WLEDGroupMember {
+  /** A WLED controller id, or an Art-Net / sACN pixel-map fixture id. */
   controllerId: string;
   /** Omit to target the controller's entire LED span. */
   rangeId?: string;
@@ -5415,7 +5416,9 @@ export interface WLEDGroup {
 }
 
 export interface WLEDEffectTarget {
+  /** 'all' covers every WLED controller and every pixel-map fixture. */
   mode: 'all' | 'controller' | 'range' | 'group';
+  /** A WLED controller id, or a pixel-map fixture id for mode 'controller'. */
   controllerId?: string;
   rangeId?: string;
   groupId?: string;

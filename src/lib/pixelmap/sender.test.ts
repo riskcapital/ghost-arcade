@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writable, type Writable } from 'svelte/store';
 
 vi.mock('../stores/layers', () => ({ project: writable({}) }));
@@ -11,6 +11,8 @@ import { invoke } from '../bridge';
 import type { PixelMapConfig, PixelMapFixture } from '../types';
 import { createDefaultPixelMapConfig, createPixelMapFixture } from './fixtures';
 import { pixelMapBlackout, startPixelMapOutput } from './sender';
+import { createWLEDEffect } from '../wled/effects';
+import { audioStore } from '../stores/audio';
 
 const settings = settingsStore as unknown as Writable<unknown>;
 
@@ -172,4 +174,89 @@ it('skips fixtures that are disabled or have no node address', async () => {
   stop = startPixelMapOutput();
   await vi.advanceTimersByTimeAsync(100);
   expect(frames().at(-1)!.universes.map(universe => universe.universe)).toEqual([0]);
+});
+
+describe('LED FX on pixel-map fixtures', () => {
+  function brightestPixel(data: Uint8Array, pixels: number): number {
+    let best = -1;
+    let bestValue = -1;
+    for (let pixel = 0; pixel < pixels; pixel += 1) {
+      if (data[pixel * 3] > bestValue) { bestValue = data[pixel * 3]; best = pixel; }
+    }
+    return best;
+  }
+
+  it('runs a grouped chase on a fixture and leaves fixtures outside the group alone', async () => {
+    const config = configure([
+      { id: 'fx-strip', pixelCount: 20, universe: 0, mapping: { mode: 'strip', sampleRadius: 0 } },
+      { id: 'other', pixelCount: 2, universe: 1, mapping: { mode: 'strip', sampleRadius: 0 } },
+    ]);
+    const chase = {
+      ...createWLEDEffect('chase'),
+      id: 'chase-1',
+      active: true,
+      speed: 1,
+      speedMode: 'manual' as const,
+      colorSource: 'custom' as const,
+      color: '#ff0000',
+      secondaryColor: '#ff0000',
+      blendMode: 'replace' as const,
+      params: { width: 0.05, tail: 0, density: 0.5 },
+      target: { mode: 'group' as const, groupId: 'group-1' },
+    };
+    project.set({
+      pixelMap: config,
+      wledGroups: [{ id: 'group-1', name: 'Truss', members: [{ controllerId: 'fx-strip' }] }],
+      wledEffects: [chase],
+    } as never);
+    stop = startPixelMapOutput();
+    await vi.advanceTimersByTimeAsync(250);
+    const early = frames().at(-1)!;
+    await vi.advanceTimersByTimeAsync(250);
+    const later = frames().at(-1)!;
+    const strip = (frame: typeof early) => frame.universes.find(universe => universe.universe === 0)!.data;
+    const first = brightestPixel(strip(early), 20);
+    const second = brightestPixel(strip(later), 20);
+    // One cycle per second across 20 pixels: a quarter second moves ~5 pixels.
+    expect(strip(early)[first * 3]).toBeGreaterThan(200);
+    expect(second).not.toBe(first);
+    expect(((second - first + 20) % 20)).toBeGreaterThanOrEqual(3);
+    expect(((second - first + 20) % 20)).toBeLessThanOrEqual(7);
+    // Most of the strip is dark: a chase, not a wash.
+    const lit = Array.from({ length: 20 }, (_, pixel) => strip(later)[pixel * 3]).filter(value => value > 40).length;
+    expect(lit).toBeLessThanOrEqual(4);
+    // The fixture outside the group still shows the composite (red, blue).
+    const other = later.universes.find(universe => universe.universe === 1)!.data;
+    expect(Array.from(other.subarray(0, 6))).toEqual([255, 0, 0, 0, 0, 255]);
+  });
+
+  it('targets a single fixture and follows the manual BPM', async () => {
+    const config = configure([{ id: 'solo', pixelCount: 4, universe: 0, mapping: { mode: 'strip', sampleRadius: 0 } }]);
+    const strobe = {
+      ...createWLEDEffect('strobe'),
+      id: 'strobe-1',
+      active: true,
+      speedMode: 'bpm' as const,
+      beatDivision: 1,
+      colorSource: 'custom' as const,
+      color: '#00ff00',
+      secondaryColor: '#00ff00',
+      blendMode: 'replace' as const,
+      target: { mode: 'controller' as const, controllerId: 'solo' },
+    };
+    project.set({ pixelMap: config, wledEffects: [strobe], wledGroups: [] } as never);
+    audioStore.setManualBPM(60);
+    stop = startPixelMapOutput();
+    // At 60 BPM one strobe cycle is a second: on for the first 35%, then off.
+    const greens: number[] = [];
+    for (let step = 0; step < 20; step += 1) {
+      await vi.advanceTimersByTimeAsync(50);
+      greens.push(frames().at(-1)!.universes[0].data[1]);
+    }
+    const on = greens.filter(value => value > 200).length;
+    const off = greens.filter(value => value === 0).length;
+    expect(on).toBeGreaterThanOrEqual(5);
+    expect(off).toBeGreaterThanOrEqual(10);
+    audioStore.clearManualBPM();
+  });
 });
