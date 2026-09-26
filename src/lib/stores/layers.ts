@@ -6745,7 +6745,7 @@ export function getGroupLayers(layers: Layer[]): Layer[] {
 
 // Register mapping mode callbacks for the modulation engine
 // This lets audio modulation work on mapping mode layers (not just VJ clips)
-import { registerCompositionModulationHandlers, registerMappingLayerCallbacks } from '../audio/modulation';
+import { registerCompositionModulationHandlers, registerMappingLayerCallbacks } from '../audio/modulationHandlers';
 
 registerCompositionModulationHandlers(
   (effectId, paramName) => {

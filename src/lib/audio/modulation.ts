@@ -10,76 +10,8 @@ import { getVisualAudioSnapshot } from './visualAudio';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import type { ISFInput } from '../isf/parser';
 
-let compositionReader: ((effectId: string, paramName: string) => number | undefined) | null = null;
-let compositionWriter: ((effectId: string, values: Record<string, number>) => void) | null = null;
-export function registerCompositionModulationHandlers(reader: NonNullable<typeof compositionReader>, writer: NonNullable<typeof compositionWriter>) {
-  compositionReader = reader;
-  compositionWriter = writer;
-}
-
-// Callback for applying modulated values to mapping mode layers
-// Registered by the layers store to avoid circular imports
-// (layerIndex, values) => void
-let _mappingLayerUpdater: ((layerIndex: number, values: Record<string, number>) => void) | null = null;
-
-// Callback to read mapping layer shader values (for initial base value capture)
-// (layerIndex, paramName) => number | undefined
-let _mappingLayerReader: ((layerIndex: number, paramName: string) => number | undefined) | null = null;
-
-// Returns true if layerIndex refers to a mapping layer (not VJ)
-let _isMappingLayer: ((layerIndex: number) => boolean) | null = null;
-
-// Effect-param read/write callbacks for mapping mode. Without these the
-// engine can write modulated values to VJ effect params but mapping-mode
-// effects sit at the user's manual slider value. The store registers
-// them alongside the shader callbacks below.
-let _mappingEffectUpdater: ((layerIndex: number, effectId: string, values: Record<string, number>) => void) | null = null;
-let _mappingEffectReader: ((layerIndex: number, effectId: string, paramName: string) => number | undefined) | null = null;
-
-// Edge-effect read/write callbacks. paramPath is the dotted nested
-// path (e.g. 'stroke.width'); updater is responsible for the deep-merge
-// into the right top-level object (stroke/fill/animation).
-let _mappingEdgeEffectUpdater: ((layerIndex: number, effectId: string, paramPath: string, value: number) => void) | null = null;
-let _mappingEdgeEffectReader: ((layerIndex: number, effectId: string, paramPath: string) => number | undefined) | null = null;
-
-// GPU-layer param read/write callbacks. Writes go through
-// project.updateGPULayerParams so changes participate in the keyframe
-// auto-record path and the engine's per-frame batched updates feel
-// the same as a user slider drag.
-let _mappingGPUUpdater: ((layerIndex: number, values: Record<string, number>) => void) | null = null;
-let _mappingGPUReader: ((layerIndex: number, paramKey: string) => number | undefined) | null = null;
-
-// Splat / point-cloud param read/write callbacks. These mirror the GPU
-// callbacks but write directly into layer.splatContent.
-let _mappingSplatUpdater: ((layerIndex: number, values: Record<string, number>) => void) | null = null;
-let _mappingSplatReader: ((layerIndex: number, paramKey: string) => number | undefined) | null = null;
-
-/** Register mapping mode callbacks — called once from layers store init */
-export function registerMappingLayerCallbacks(
-  updater: (layerIndex: number, values: Record<string, number>) => void,
-  reader: (layerIndex: number, paramName: string) => number | undefined,
-  isMapping: (layerIndex: number) => boolean,
-  effectUpdater?: (layerIndex: number, effectId: string, values: Record<string, number>) => void,
-  effectReader?: (layerIndex: number, effectId: string, paramName: string) => number | undefined,
-  edgeEffectUpdater?: (layerIndex: number, effectId: string, paramPath: string, value: number) => void,
-  edgeEffectReader?: (layerIndex: number, effectId: string, paramPath: string) => number | undefined,
-  gpuUpdater?: (layerIndex: number, values: Record<string, number>) => void,
-  gpuReader?: (layerIndex: number, paramKey: string) => number | undefined,
-  splatUpdater?: (layerIndex: number, values: Record<string, number>) => void,
-  splatReader?: (layerIndex: number, paramKey: string) => number | undefined,
-) {
-  _mappingLayerUpdater = updater;
-  _mappingLayerReader = reader;
-  _isMappingLayer = isMapping;
-  if (effectUpdater) _mappingEffectUpdater = effectUpdater;
-  if (effectReader) _mappingEffectReader = effectReader;
-  if (edgeEffectUpdater) _mappingEdgeEffectUpdater = edgeEffectUpdater;
-  if (edgeEffectReader) _mappingEdgeEffectReader = edgeEffectReader;
-  if (gpuUpdater) _mappingGPUUpdater = gpuUpdater;
-  if (gpuReader) _mappingGPUReader = gpuReader;
-  if (splatUpdater) _mappingSplatUpdater = splatUpdater;
-  if (splatReader) _mappingSplatReader = splatReader;
-}
+import { modulationHandlers } from './modulationHandlers';
+export { registerCompositionModulationHandlers, registerMappingLayerCallbacks } from './modulationHandlers';
 
 // Modulation source types
 export type ModSource =
@@ -211,7 +143,7 @@ interface ParsedModEntry {
   bank: 'A' | 'B';
   /** Which render-graph side this entry writes to. 'vj' or 'mapping'.
    *  Derived from the key prefix at parse time; preferred over the
-   *  legacy `_isMappingLayer(layerIndex)` flag during routing — so
+   *  legacy `modulationHandlers.isMappingLayer(layerIndex)` flag during routing — so
    *  VJ + mapping mods coexist independently regardless of which
    *  workspace the user is currently in. */
   target: ModTarget;
@@ -789,7 +721,7 @@ function createModulationStore() {
      *  Bank A only — edge effects don't participate in VJ A/B banking.
      *  Target defaults to 'mapping' since edge effects only live on
      *  mapping layers; engine routing needs the map: prefix so it
-     *  goes through _mappingEdgeEffectUpdater. */
+     *  goes through modulationHandlers.mappingEdgeEffectUpdater. */
     setEdgeEffectModulation(layerIndex: number, effectId: string, paramPath: string, mod: ParamModulation, target: ModTarget = 'mapping') {
       const stored: ParamModulation = { ...mod, target };
       update(map => {
@@ -1192,11 +1124,11 @@ class ModulationEngine {
         const range = mod.compositionEffect;
         if (!range || ![range.base, range.min, range.max].every(Number.isFinite) || range.min > range.max) continue;
         const current = entry.target === 'mapping'
-          ? compositionReader?.(effectId, paramName)
+          ? modulationHandlers.compositionReader?.(effectId, paramName)
           : (vjState.compositionEffects.find(effect => effect.id === effectId)?.params as Record<string, unknown> | undefined)?.[paramName];
         if (typeof current !== 'number') continue;
         const value = Math.max(range.min, Math.min(range.max, range.base + (signal - .5) * mod.amount * (range.max - range.min)));
-        if (entry.target === 'mapping') compositionWriter?.(effectId, { [paramName]: value });
+        if (entry.target === 'mapping') modulationHandlers.compositionWriter?.(effectId, { [paramName]: value });
         else vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: value });
         continue;
       }
@@ -1216,7 +1148,7 @@ class ModulationEngine {
 
       // Route by the modulation's own target (set at creation time
       // by the UI panel that owns this binding) — NOT the legacy
-      // global `_isMappingLayer(layerIndex)` flag which assumed
+      // global `modulationHandlers.isMappingLayer(layerIndex)` flag which assumed
       // one mode active at a time. With target-aware routing, a VJ
       // auto-modulation keeps driving its clip even while the user
       // is browsing mapping mode in another panel, and vice versa.
@@ -1243,12 +1175,12 @@ class ModulationEngine {
         //
         // Mapping mode only — VJ mode doesn't have its own edge-effects
         // state, so edge modulation is intentionally scoped to mapping.
-        if (!isMapping || !_mappingEdgeEffectUpdater || !_mappingEdgeEffectReader) continue;
+        if (!isMapping || !modulationHandlers.mappingEdgeEffectUpdater || !modulationHandlers.mappingEdgeEffectReader) continue;
 
         const edgeKey = `${bank}:${layerIndex}:edge:${effectId}:${paramName}`;
         let edgeBase = baseValues.get(edgeKey);
         if (edgeBase === undefined) {
-          const sv = _mappingEdgeEffectReader(layerIndex, effectId, paramName);
+          const sv = modulationHandlers.mappingEdgeEffectReader(layerIndex, effectId, paramName);
           if (typeof sv !== 'number') continue;
           edgeBase = sv;
           baseValues.set(edgeKey, edgeBase);
@@ -1261,7 +1193,7 @@ class ModulationEngine {
         const rawE = edgeBase + (signal - 0.5) * mod.amount * eSpan;
         const modulatedE = Math.max(eMin, Math.min(eMax, rawE));
 
-        _mappingEdgeEffectUpdater(layerIndex, effectId, paramName, modulatedE);
+        modulationHandlers.mappingEdgeEffectUpdater(layerIndex, effectId, paramName, modulatedE);
         lastModulatedValues.set(edgeKey, modulatedE);
       } else if (isGPU) {
         // GPU shader-layer param modulation. Mapping-only target — the
@@ -1275,7 +1207,7 @@ class ModulationEngine {
         const gSpan = gMax - gMin;
         let gBase = baseValues.get(gpuKey);
         if (gBase === undefined) {
-          const sv = _mappingGPUReader ? _mappingGPUReader(layerIndex, paramName) : undefined;
+          const sv = modulationHandlers.mappingGPUReader ? modulationHandlers.mappingGPUReader(layerIndex, paramName) : undefined;
           if (typeof sv !== 'number') {
             // Param hasn't been written yet (e.g. shader just loaded and
             // schema defaults not flushed). Retry next frame once the
@@ -1299,8 +1231,8 @@ class ModulationEngine {
         const sSpan = sMax - sMin;
         let sBase = baseValues.get(splatKey);
         if (sBase === undefined) {
-          const sourceValue = _mappingSplatReader
-            ? _mappingSplatReader(layerIndex, paramName)
+          const sourceValue = modulationHandlers.mappingSplatReader
+            ? modulationHandlers.mappingSplatReader(layerIndex, paramName)
             : undefined;
           if (typeof sourceValue !== 'number') continue;
           sBase = sourceValue;
@@ -1334,8 +1266,8 @@ class ModulationEngine {
         let fxBase = savedClipRange?.base ?? baseValues.get(fxKey);
         if (fxBase === undefined) {
           let sv: number | undefined;
-          if (isMapping && _mappingEffectReader) {
-            sv = _mappingEffectReader(layerIndex, effectId, paramName);
+          if (isMapping && modulationHandlers.mappingEffectReader) {
+            sv = modulationHandlers.mappingEffectReader(layerIndex, effectId, paramName);
           } else if (!isMapping) {
             const layerState = layerStates[layerIndex];
             const effect = clipEffect ?? layerState?.effects.find(e => e.id === effectId);
@@ -1376,8 +1308,8 @@ class ModulationEngine {
         const modulated = Math.max(fxMin, Math.min(fxMax, raw));
 
         if (isMapping) {
-          if (_mappingEffectUpdater) {
-            _mappingEffectUpdater(layerIndex, effectId, { [paramName]: modulated });
+          if (modulationHandlers.mappingEffectUpdater) {
+            modulationHandlers.mappingEffectUpdater(layerIndex, effectId, { [paramName]: modulated });
             // Tick-counted diagnostic so we can see whether EACH mod
             // is still being ticked after layer switches. Logs every
             // 120 frames (~2s) per (layer, effect, param). If after a
@@ -1424,8 +1356,8 @@ class ModulationEngine {
         if (base === undefined) {
           // First frame: capture current value as the base
           let sv: number | undefined;
-          if (isMapping && _mappingLayerReader) {
-            sv = _mappingLayerReader(layerIndex, paramName);
+          if (isMapping && modulationHandlers.mappingLayerReader) {
+            sv = modulationHandlers.mappingLayerReader(layerIndex, paramName);
           } else {
             const layerState = layerStates[layerIndex];
             if (!layerState?.activeClip) continue;
@@ -1470,22 +1402,22 @@ class ModulationEngine {
     }
 
     // Apply batched mapping mode shader updates
-    if (_mappingLayerUpdater) {
+    if (modulationHandlers.mappingLayerUpdater) {
       for (const [layerIndex, values] of mappingBatch) {
-        _mappingLayerUpdater(layerIndex, values);
+        modulationHandlers.mappingLayerUpdater(layerIndex, values);
       }
     }
 
     // Apply batched GPU-layer param updates (mapping-only).
-    if (_mappingGPUUpdater) {
+    if (modulationHandlers.mappingGPUUpdater) {
       for (const [layerIndex, values] of mappingGPUBatch) {
-        _mappingGPUUpdater(layerIndex, values);
+        modulationHandlers.mappingGPUUpdater(layerIndex, values);
       }
     }
 
-    if (_mappingSplatUpdater) {
+    if (modulationHandlers.mappingSplatUpdater) {
       for (const [layerIndex, values] of mappingSplatBatch) {
-        _mappingSplatUpdater(layerIndex, values);
+        modulationHandlers.mappingSplatUpdater(layerIndex, values);
       }
     }
   }
