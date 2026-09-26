@@ -25,6 +25,7 @@ mod native_graph_manifest;
 mod native_quality;
 mod output_present;
 mod particle_director;
+mod projector_view;
 mod shared_texture;
 
 use std::{
@@ -1600,6 +1601,10 @@ struct SliceOutputTarget {
     _render_texture: wgpu::Texture,
     render_view: wgpu::TextureView,
     export: NativeOutputExport,
+    /// Map Sim projector view feeding this slice's output stage, when the
+    /// Screen's source is a Map Sim projector: (texture, view, presenter
+    /// input bind group).
+    projector_view_source: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
 /// Largest output-warp control grid the compositor stores, matching the
@@ -1941,6 +1946,35 @@ struct SliceOutputSpec {
     width: u32,
     height: u32,
     stage: OutputStage,
+    /// Map Sim projector whose view this slice shows instead of a crop of
+    /// the master.
+    projector_view: Option<String>,
+}
+
+/// Output stage for a slice fed by a Map Sim projector view. The view is
+/// already the projector's whole image, so the master crop, screen warp,
+/// master warp and dome (all sampling positions on the master) are
+/// identity; rotation, colour grade, edge blend, black level and masks
+/// still apply as for any Screen.
+fn projector_view_output_stage(stage: OutputStage) -> OutputStage {
+    OutputStage {
+        out0: [0.0, 0.0, 1.0, 1.0],
+        dome0: [0.0; 4],
+        swarp: [0.0; 4],
+        swarp_c0: [0.0, 0.0, 1.0, 0.0],
+        swarp_c1: [1.0, 1.0, 0.0, 1.0],
+        mwarp: [0.0; 4],
+        mwarp_c0: [0.0, 0.0, 1.0, 0.0],
+        mwarp_c1: [1.0, 1.0, 0.0, 1.0],
+        ..stage
+    }
+}
+
+/// What the slice pass needs to draw Map Sim projector views.
+struct ProjectorViewInputs<'a> {
+    scene: Option<&'a projector_view::ProjectorViewScene>,
+    meshes: &'a HashMap<String, Arc<projector_view::ProjectorViewMeshData>>,
+    overlays: &'a HashMap<String, projector_view::ProjectorViewOverlay>,
 }
 
 #[repr(C)]
@@ -3500,6 +3534,8 @@ struct RenderState {
     /// Per-slice display targets, keyed by the editor's slice id.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     slice_targets: HashMap<String, SliceOutputTarget>,
+    /// Map Sim projector-view renderer, created on first use.
+    projector_view: Option<projector_view::ProjectorViewRenderer>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
     /// Cached downscale target for preview-sized snapshot readbacks
@@ -3756,6 +3792,11 @@ struct App {
     stage3d_scene_summary: NativeSceneBridgeSummary,
     projection_sim_scene: Option<Value>,
     projection_sim_scene_summary: NativeSceneBridgeSummary,
+    /// Map Sim projector views: the scene each physical projector renders
+    /// (see projector_view.rs), its geometry, and calibration overlays.
+    projection_sim_view: Option<projector_view::ProjectorViewScene>,
+    projection_sim_meshes: HashMap<String, Arc<projector_view::ProjectorViewMeshData>>,
+    projection_sim_overlays: HashMap<String, projector_view::ProjectorViewOverlay>,
     /// Live output kill switch — blanks the composite the projector sees.
     output_blackout: bool,
     /// Holds the last presented frame instead of compositing new ones.
@@ -4079,6 +4120,9 @@ impl App {
             stage3d_scene_summary: NativeSceneBridgeSummary::empty("stage3d"),
             projection_sim_scene: None,
             projection_sim_scene_summary: NativeSceneBridgeSummary::empty("projection-sim"),
+            projection_sim_view: None,
+            projection_sim_meshes: HashMap::new(),
+            projection_sim_overlays: HashMap::new(),
             output_blackout: false,
             output_frozen: false,
             composite_effects: Vec::new(),
@@ -4332,6 +4376,7 @@ impl App {
             "native_projection_sim_textured_mesh_preview": true,
             "native_projection_sim_xyz_mesh_transforms": true,
             "native_projection_sim_output_renderer": true,
+            "native_projection_sim_projector_view": true,
             "native_projection_sim_recording_parity": true,
             "native_launch_resource_fences": true,
             "native_scheduled_transition_start": true,
@@ -5211,6 +5256,10 @@ impl App {
             "set_stage3d_scene" => self.set_stage3d_scene(&req.params),
             "get_stage3d_scene_summary" => Ok(json!(self.stage3d_scene_summary.clone())),
             "set_projection_sim_scene" => self.set_projection_sim_scene(&req.params),
+            "set_projection_sim_meshes" => self.set_projection_sim_meshes(&req.params),
+            "set_projection_sim_view" => self.set_projection_sim_view(&req.params),
+            "set_projection_sim_overlay" => self.set_projection_sim_overlay(&req.params),
+            "projection_sim_view_snapshot" => self.projection_sim_view_snapshot(&req.params),
             "get_projection_sim_scene_summary" => {
                 Ok(json!(self.projection_sim_scene_summary.clone()))
             }
@@ -5861,7 +5910,10 @@ impl App {
                     smask_bounds: mask_bounds,
                     smask_pts: mask_points,
                 };
-                specs.push(SliceOutputSpec { id, width, height, stage });
+                let projector_view = string_at(entry, &["mapSimProjectorId"])
+                    .filter(|projector| !projector.trim().is_empty());
+                let stage = if projector_view.is_some() { projector_view_output_stage(stage) } else { stage };
+                specs.push(SliceOutputSpec { id, width, height, stage, projector_view });
             }
         }
         let ids: Vec<String> = specs.iter().map(|spec| spec.id.clone()).collect();
@@ -6270,6 +6322,18 @@ impl App {
                 }
                 "set_projection_sim_scene" => {
                     if self.set_projection_sim_scene(command).is_err() {
+                        dropped = dropped.saturating_add(1);
+                        continue;
+                    }
+                }
+                "set_projection_sim_meshes" | "set_projection_sim_view" | "set_projection_sim_overlay" => {
+                    let result = match command_type {
+                        "set_projection_sim_meshes" => self.set_projection_sim_meshes(command),
+                        "set_projection_sim_view" => self.set_projection_sim_view(command),
+                        _ => self.set_projection_sim_overlay(command),
+                    };
+                    if let Err(error) = result {
+                        if errors.len() < 16 { errors.push(json!({ "type": command_type, "message": error })); }
                         dropped = dropped.saturating_add(1);
                         continue;
                     }
@@ -11561,6 +11625,11 @@ impl App {
                 &post_effects,
                 &slice_specs,
                 composite_graph_jobs.is_empty() && stage3d_mesh_frame.is_none() && scene_overlay_items.is_empty() && !self.output_frozen && output_gate > 0.0,
+                &ProjectorViewInputs {
+                    scene: self.projection_sim_view.as_ref(),
+                    meshes: &self.projection_sim_meshes,
+                    overlays: &self.projection_sim_overlays,
+                },
             );
         }
         if render_result.is_ok() && !pipeline_warming {
@@ -15278,6 +15347,78 @@ impl App {
         Ok(json!(summary))
     }
 
+    /// Map Sim geometry for projector views: upserts meshes by key, then
+    /// drops any key not in `retain` (when given).
+    fn set_projection_sim_meshes(&mut self, params: &Value) -> Result<Value, String> {
+        let batch = projector_view::parse_projector_view_meshes(params)?;
+        if let Some(retain) = batch.retain {
+            let keep: HashSet<String> = retain.into_iter().collect();
+            self.projection_sim_meshes.retain(|key, _| keep.contains(key));
+        }
+        let uploaded = batch.upserts.len();
+        for (key, mesh) in batch.upserts {
+            self.projection_sim_meshes.insert(key, mesh);
+        }
+        Ok(json!({ "meshes": self.projection_sim_meshes.len(), "uploaded": uploaded }))
+    }
+
+    fn set_projection_sim_view(&mut self, params: &Value) -> Result<Value, String> {
+        self.projection_sim_view = projector_view::parse_projector_view_scene(params)?;
+        let (objects, projectors) = self
+            .projection_sim_view
+            .as_ref()
+            .map(|view| (view.objects.len(), view.cameras.len()))
+            .unwrap_or((0, 0));
+        let missing: Vec<&str> = self
+            .projection_sim_view
+            .as_ref()
+            .map(|view| {
+                view.objects
+                    .iter()
+                    .filter(|object| !self.projection_sim_meshes.contains_key(&object.mesh))
+                    .map(|object| object.mesh.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(json!({ "objects": objects, "projectors": projectors, "missing_meshes": missing }))
+    }
+
+    fn set_projection_sim_overlay(&mut self, params: &Value) -> Result<Value, String> {
+        let (projector_id, overlay) = projector_view::parse_projector_view_overlay(params)?;
+        match overlay {
+            Some(overlay) => {
+                self.projection_sim_overlays.insert(projector_id, overlay);
+            }
+            None => {
+                self.projection_sim_overlays.remove(&projector_id);
+            }
+        }
+        Ok(json!({ "overlays": self.projection_sim_overlays.len() }))
+    }
+
+    /// Render and read back one Map Sim projector view:
+    /// `{ projector_id, width?, height?, include_pixels? }`.
+    fn projection_sim_view_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        let projector_id = string_at(params, &["projector_id"])
+            .ok_or_else(|| "projection_sim_view_snapshot requires projector_id".to_string())?;
+        let width = number_at(params, &["width"]).unwrap_or(640.0).round().clamp(16.0, 4096.0) as u32;
+        let height = number_at(params, &["height"]).unwrap_or(360.0).round().clamp(16.0, 4096.0) as u32;
+        let include_pixels = bool_at(params, &["include_pixels"]).unwrap_or(false);
+        let inputs = ProjectorViewInputs {
+            scene: self.projection_sim_view.as_ref(),
+            meshes: &self.projection_sim_meshes,
+            overlays: &self.projection_sim_overlays,
+        };
+        let renderer = self.renderer.as_mut().ok_or_else(|| "native renderer has not created a wgpu device".to_string())?;
+        let readback = renderer.projector_view_snapshot(&inputs, &projector_id, width, height)?;
+        let mut value = readback.to_json(include_pixels);
+        if let Some(object) = value.as_object_mut() {
+            object.insert("source".to_string(), json!("map-sim-projector-view"));
+            object.insert("projector_id".to_string(), json!(projector_id));
+        }
+        Ok(value)
+    }
+
     fn start_timed_video_prefetch(&mut self, req: &RpcRequest) -> Result<(), String> {
         let params = &req.params;
         let source_id = string_at(params, &["source_id"]).or_else(|| string_at(params, &["sourceId"]))
@@ -18673,6 +18814,7 @@ impl RenderState {
             deck_monitor_targets: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             slice_targets: HashMap::new(),
+            projector_view: None,
             snapshot_texture,
             snapshot_view,
             snapshot_preview: None,
@@ -19250,6 +19392,7 @@ impl RenderState {
                 _render_texture: render_texture,
                 render_view,
                 export,
+                projector_view_source: None,
             },
         );
         true
@@ -19275,6 +19418,7 @@ impl RenderState {
         post_effects: &[[f32; 4]],
         specs: &[SliceOutputSpec],
         allow_direct: bool,
+        projector_views: &ProjectorViewInputs<'_>,
     ) {
         // Drop targets for slices the editor has closed so their shared
         // textures (and the VRAM behind them) don't leak across a session.
@@ -19284,6 +19428,10 @@ impl RenderState {
 
         for spec in specs {
             if !self.ensure_slice_target(&spec.id, spec.width, spec.height) {
+                continue;
+            }
+            if let Some(projector_id) = spec.projector_view.as_deref() {
+                self.render_projector_view_slice(spec, projector_id, projector_views, output_gate, time_seconds);
                 continue;
             }
             let needs_detail = spec.width as f32 > self.config.width as f32 * spec.stage.out0[2]
@@ -19322,6 +19470,147 @@ impl RenderState {
                 target.export.frame = target.export.frame.saturating_add(1);
             }
         }
+    }
+
+    fn ensure_projector_view_renderer(&mut self) -> &mut projector_view::ProjectorViewRenderer {
+        if self.projector_view.as_ref().is_none_or(|renderer| renderer.format() != self.config.format) {
+            self.projector_view = Some(projector_view::ProjectorViewRenderer::new(&self.device, &self.queue, self.config.format));
+        }
+        self.projector_view.as_mut().expect("projector view renderer created above")
+    }
+
+    /// One slice fed by a Map Sim projector view: render the projector's
+    /// image, then run it through the Screen's output stage (rotation,
+    /// grade, blend, masks) into the slice's shared texture.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn render_projector_view_slice(
+        &mut self,
+        spec: &SliceOutputSpec,
+        projector_id: &str,
+        inputs: &ProjectorViewInputs<'_>,
+        output_gate: f32,
+        time_seconds: Option<f32>,
+    ) {
+        let format = self.config.format;
+        let stale = self.slice_targets.get(&spec.id).is_some_and(|target| {
+            target
+                .projector_view_source
+                .as_ref()
+                .is_none_or(|(texture, ..)| texture.width() != spec.width || texture.height() != spec.height)
+        });
+        if stale {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Map Sim projector view slice source"),
+                size: wgpu::Extent3d { width: spec.width, height: spec.height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let bind_group = self.output_presenter.input_bind_group(&self.device, &view);
+            if let Some(target) = self.slice_targets.get_mut(&spec.id) {
+                target.projector_view_source = Some((texture, view, bind_group));
+            }
+        }
+        self.ensure_projector_view_renderer();
+        let content_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Map Sim projector view slice encoder"),
+        });
+        {
+            let Some(target) = self.slice_targets.get(&spec.id) else {
+                return;
+            };
+            let Some((_, source_view, source_input)) = target.projector_view_source.as_ref() else {
+                return;
+            };
+            let renderer = self.projector_view.as_mut().expect("projector view renderer ensured");
+            renderer.sync_meshes(&self.device, inputs.meshes);
+            let empty = projector_view::ProjectorViewScene::default();
+            renderer.render(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                source_view,
+                &projector_view::ProjectorViewRequest {
+                    scene: inputs.scene.unwrap_or(&empty),
+                    projector_id,
+                    content: Some(&content_view),
+                    overlay: inputs.overlays.get(projector_id),
+                    width: spec.width,
+                    height: spec.height,
+                },
+            );
+            self.output_presenter.draw_input(
+                &self.queue,
+                &mut encoder,
+                &target.render_view,
+                source_input,
+                spec.width,
+                spec.height,
+                output_gate,
+                spec.stage,
+                time_seconds.unwrap_or(0.0),
+            );
+            target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        if let Some(target) = self.slice_targets.get_mut(&spec.id) {
+            target.export.frame = target.export.frame.saturating_add(1);
+        }
+    }
+
+    /// Read back one Map Sim projector view, rendered from the last
+    /// composited master. Diagnostics and the calibration preview use it.
+    fn projector_view_snapshot(
+        &mut self,
+        inputs: &ProjectorViewInputs<'_>,
+        projector_id: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<FrameSnapshotReadback, String> {
+        let scene = inputs.scene.ok_or_else(|| "Map Sim projector views have not been sent to the core".to_string())?;
+        if scene.camera(projector_id).is_none() {
+            return Err(format!("Map Sim projector {projector_id} is not in the projector view scene"));
+        }
+        let format = self.config.format;
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Map Sim projector view snapshot"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let content_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Map Sim projector view snapshot encoder"),
+        });
+        self.ensure_projector_view_renderer();
+        let renderer = self.projector_view.as_mut().expect("projector view renderer ensured");
+        renderer.sync_meshes(&self.device, inputs.meshes);
+        renderer.render(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &view,
+            &projector_view::ProjectorViewRequest {
+                scene,
+                projector_id,
+                content: Some(&content_view),
+                overlay: inputs.overlays.get(projector_id),
+                width,
+                height,
+            },
+        );
+        self.queue.submit(Some(encoder.finish()));
+        read_texture_to_frame(&self.device, &self.queue, &texture, format, width, height, "Map Sim projector view")
     }
 
     /// Shared-texture metadata for every live slice display — same shape as

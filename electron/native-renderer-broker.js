@@ -314,6 +314,10 @@ const RENDERER_COMMANDS = [
   'native_renderer_get_stage3d_scene_summary',
   'native_renderer_set_projection_sim_scene',
   'native_renderer_get_projection_sim_scene_summary',
+  'native_renderer_set_projection_sim_meshes',
+  'native_renderer_set_projection_sim_view',
+  'native_renderer_set_projection_sim_overlay',
+  'native_renderer_projection_sim_view_snapshot',
   'native_renderer_get_capabilities',
   'native_renderer_get_readiness_report',
   'native_renderer_export_snapshot_json',
@@ -539,6 +543,15 @@ class NativeRendererBroker {
         return this.sendIfRunning('set_projection_sim_scene', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_get_projection_sim_scene_summary':
         return this.sendIfRunning('get_projection_sim_scene_summary', args, { fallback: null, timeoutMs: 2500 });
+      case 'native_renderer_set_projection_sim_meshes':
+        // Imported models can be large; give the upload room.
+        return this.sendIfRunning('set_projection_sim_meshes', args, { fallback: null, timeoutMs: 20000 });
+      case 'native_renderer_set_projection_sim_view':
+        return this.sendIfRunning('set_projection_sim_view', args, { fallback: null, timeoutMs: 2500 });
+      case 'native_renderer_set_projection_sim_overlay':
+        return this.sendIfRunning('set_projection_sim_overlay', args, { fallback: null, timeoutMs: 2500 });
+      case 'native_renderer_projection_sim_view_snapshot':
+        return this.sendIfRunning('projection_sim_view_snapshot', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_get_capabilities':
         return this.getCapabilities();
       case 'native_renderer_get_decode_capabilities':
@@ -3412,6 +3425,7 @@ function makeDefaultCapabilities(overrides = {}) {
       native_projection_sim_textured_mesh_preview: false,
       native_projection_sim_xyz_mesh_transforms: false,
       native_projection_sim_output_renderer: false,
+      native_projection_sim_projector_view: false,
       native_projection_sim_recording_parity: false,
       native_recording: false,
       native_stage3d: false,

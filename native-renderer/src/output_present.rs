@@ -116,25 +116,27 @@ impl OutputPresenter {
     pub(super) fn set_inputs(&mut self, device: &wgpu::Device, textures: &[wgpu::Texture; 2]) {
         self.inputs = textures
             .iter()
-            .map(|texture| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Creative master"),
-                    layout: &self.input_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(
-                                &texture.create_view(&Default::default()),
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                    ],
-                })
-            })
+            .map(|texture| self.input_bind_group(device, &texture.create_view(&Default::default())))
             .collect();
+    }
+
+    /// Presenter input for any texture the size of an output, such as a
+    /// Map Sim projector view feeding a Screen.
+    pub(super) fn input_bind_group(&self, device: &wgpu::Device, view: &wgpu::TextureView) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Creative master"),
+            layout: &self.input_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        })
     }
 
     // Callers submit before another output rewrites this uniform buffer.
@@ -144,6 +146,23 @@ impl OutputPresenter {
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         index: usize,
+        width: u32,
+        height: u32,
+        gate: f32,
+        stage: OutputStage,
+        time: f32,
+    ) {
+        self.draw_input(queue, encoder, target, &self.inputs[index], width, height, gate, stage, time);
+    }
+
+    /// Same as `draw`, from an explicit input bind group.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_input(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        input: &wgpu::BindGroup,
         width: u32,
         height: u32,
         gate: f32,
@@ -194,7 +213,7 @@ impl OutputPresenter {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.uniforms, &[]);
-        pass.set_bind_group(1, &self.inputs[index], &[]);
+        pass.set_bind_group(1, input, &[]);
         pass.draw(0..3, 0..1);
     }
 }

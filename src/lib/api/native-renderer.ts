@@ -458,6 +458,13 @@ export type RendererCommand =
     }
   | { type: 'set_stage3d_scene'; scene: unknown }
   | { type: 'set_projection_sim_scene'; scene: unknown }
+  | {
+      type: 'set_projection_sim_meshes';
+      meshes: Array<{ key: string; positions_b64: string; normals_b64: string; indices_b64: string }>;
+      retain?: string[];
+    }
+  | { type: 'set_projection_sim_view'; view: NativeProjectorViewScene | null }
+  | { type: 'set_projection_sim_overlay'; projector_id: string; overlay: NativeProjectorViewOverlay | null }
   | { type: 'set_native_quality_policy'; native_quality_policy: NativeQualityPolicy }
   | { type: 'precompile_shader'; shader_id: string; stage: string; source: string; entry: string }
   | { type: 'set_effect_chain'; layer_id: string; effect_ids: string[] }
@@ -1761,6 +1768,44 @@ export async function setNativeRendererProjectionSimScene(scene: unknown) {
 
 export async function getNativeRendererProjectionSimSceneSummary() {
   return invoke<NativeSceneBridgeSummary>('native_renderer_get_projection_sim_scene_summary');
+}
+
+/** Map Sim projector-view scene for the core: object matrices plus every
+ *  projector's GL view/projection matrices (column-major). */
+export interface NativeProjectorViewScene {
+  objects: Array<{ mesh: string; matrix: number[]; receive: boolean }>;
+  projectors: Array<{
+    id: string;
+    view: number[];
+    projection: number[];
+    position: [number, number, number];
+    near: number;
+    far: number;
+    /** Content crop on the master, (x, y, w, h), y down. */
+    crop: [number, number, number, number];
+    blend: [number, number, number, number];
+    content_from: string | null;
+  }>;
+}
+
+/** Calibration marks on one projector's output. Positions are uv, y down. */
+export interface NativeProjectorViewOverlay {
+  mode: 'content' | 'black' | 'model';
+  cursor: [number, number] | null;
+  markers: Array<[number, number, number]>;
+}
+
+/** Render and read back one Map Sim projector view from the core. */
+export async function getNativeRendererProjectionSimViewSnapshot(params: {
+  projector_id: string;
+  width?: number;
+  height?: number;
+  include_pixels?: boolean;
+}) {
+  return invoke<RendererFrameSnapshot & { projector_id: string; source: string }>(
+    'native_renderer_projection_sim_view_snapshot',
+    params,
+  );
 }
 
 export async function getNativeRendererCapabilities() {
