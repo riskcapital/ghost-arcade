@@ -68,7 +68,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function action(a: Omit<CueAction, 'id'>): CueAction {
+/** Omit that distributes over the action union. */
+type ActionInit = CueAction extends unknown ? DistOmit<CueAction> : never;
+type DistOmit<T> = T extends unknown ? Omit<T, 'id'> : never;
+
+function action(a: ActionInit): CueAction {
   return { id: Math.random().toString(36).slice(2), ...a } as CueAction;
 }
 
@@ -359,7 +363,7 @@ describe('a 20-minute show runs unattended from one GO', () => {
   it('fires every cue at its programmed time and stops at the end', () => {
     const { executor, calls, values } = recorder({ 'macro:1': 0 }, 120);
     engine.setExecutor(executor);
-    const A = (a: Omit<CueAction, 'id'>) => action(a);
+    const A = (a: ActionInit) => action(a);
     const ids: string[] = [];
     const add = (name: string, actions: CueAction[], f: Partial<CueFollow>) => {
       const id = engine.addCue({ name, actions, follow: follow({ mode: 'auto', ...f }) });

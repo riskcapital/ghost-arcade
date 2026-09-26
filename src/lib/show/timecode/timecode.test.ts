@@ -13,7 +13,7 @@ describe('timecode arithmetic', () => {
   it('round-trips every frame number of a day at every rate', () => {
     for (const rate of [24, 25, 29.97, 30] as TimecodeRate[]) {
       const df = rate === 29.97;
-      const perDay = df ? 2589408 : (rate === 29.97 ? 30 : rate) * 86400;
+      const perDay = df ? 2589408 : (rate as number) * 86400;
       for (let n = 0; n < perDay; n += 773) {
         expect(timecodeToFrameNumber(frameNumberToTimecode(n, rate, df))).toBe(n);
       }
