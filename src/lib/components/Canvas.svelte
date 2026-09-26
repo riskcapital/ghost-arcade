@@ -92,6 +92,7 @@
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
+  import { startPixelMapOutput } from '$lib/pixelmap/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
   import { tickMasterWarpOutput, getMasterWarpCanvas, reconcileMasterWarpOutput, disposeMasterWarpOutput } from '$lib/sync/outputComposite';
@@ -2314,6 +2315,9 @@
           wledMirror = null;
         }
       });
+      // Art-Net / sACN pixel mapping samples the same composite mirror.
+      // It idles (no timer, no snapshots) until a fixture is enabled.
+      nativeTeardownCallbacks.push(startPixelMapOutput());
       nativeTeardownCallbacks.push(() => {
         wledDisposed = true;
         wledUnsub();

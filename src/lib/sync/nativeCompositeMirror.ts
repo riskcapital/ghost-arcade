@@ -32,6 +32,10 @@ let mirrorCanvas: HTMLCanvasElement | null = null;
 let mirrorCtx: CanvasRenderingContext2D | null = null;
 let consumers = 0;
 let timer: ReturnType<typeof setInterval> | null = null;
+let pumpMaxDim = DEFAULT_MAX_DIM;
+let pumpFps = 0;
+// Each consumer's requested rate; the pump runs at the fastest one.
+const fpsRequests = new Map<object, number>();
 let inFlight = false;
 let failureStreak = 0;
 let scratch: ImageData | null = null;
@@ -113,13 +117,25 @@ async function pumpOnce(maxDim: number): Promise<void> {
   }
 }
 
+/** Re-time the pump to the fastest consumer. Small snapshots (LED and
+ *  pixel-map sampling) may run up to 60fps; large ones stay at 30. */
+function rearmPump(): void {
+  if (fpsRequests.size === 0) return;
+  const cap = pumpMaxDim > 512 ? 30 : 60;
+  const fps = Math.min(cap, Math.max(...fpsRequests.values()));
+  if (timer && fps === pumpFps) return;
+  if (timer) clearInterval(timer);
+  pumpFps = fps;
+  timer = setInterval(() => void pumpOnce(pumpMaxDim), Math.round(1000 / fps));
+}
+
 /** Hold a live mirror of the native composite. Call `release()` when done —
  *  the snapshot pump stops as soon as the last consumer lets go. */
 export function acquireNativeCompositeMirror(
   options: { maxDim?: number; fps?: number; onFrame?: () => void } = {},
 ): CompositeMirrorHandle {
   const maxDim = Math.max(64, Math.min(2048, Math.round(options.maxDim ?? DEFAULT_MAX_DIM)));
-  const fps = Math.max(1, Math.min(30, Math.round(options.fps ?? DEFAULT_FPS)));
+  const fps = Math.max(1, Math.min(60, Math.round(options.fps ?? DEFAULT_FPS)));
   if (!mirrorCanvas) {
     mirrorCanvas = document.createElement('canvas');
     mirrorCanvas.width = maxDim;
@@ -128,10 +144,13 @@ export function acquireNativeCompositeMirror(
   }
   consumers += 1;
   if (options.onFrame) frameListeners.add(options.onFrame);
+  const request = {};
   if (!timer) {
+    pumpMaxDim = maxDim;
     void pumpOnce(maxDim);
-    timer = setInterval(() => void pumpOnce(maxDim), Math.round(1000 / fps));
   }
+  fpsRequests.set(request, fps);
+  rearmPump();
   let released = false;
   return {
     canvas: mirrorCanvas,
@@ -139,10 +158,14 @@ export function acquireNativeCompositeMirror(
       if (released) return;
       released = true;
       if (options.onFrame) frameListeners.delete(options.onFrame);
+      fpsRequests.delete(request);
       consumers = Math.max(0, consumers - 1);
       if (consumers === 0 && timer) {
         clearInterval(timer);
         timer = null;
+        pumpFps = 0;
+      } else {
+        rearmPump();
       }
     },
   };
