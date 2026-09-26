@@ -342,6 +342,9 @@
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    // Seek on press, not only on the first move: a plain click on the ruler
+    // places the playhead (the grid's own click handler is suppressed below).
+    showTimeline.seek(timeAt(e));
     const onMove = (ev: MouseEvent) => showTimeline.seek(timeAt(ev));
     const onUp = () => {
       suppressNextClick = true;
