@@ -344,6 +344,9 @@ const dmxInput = createDmxInput({
   },
   // Pixel-map output to a node on this machine, or broadcast, would
   // otherwise come straight back in as desk input.
+  listInterfaces: () => Object.entries(os.networkInterfaces()).flatMap(([name, list]) => (list || [])
+    .filter(item => item.family === 'IPv4' || item.family === 4)
+    .map(item => ({ name, address: item.address }))),
   isOwnPacket: (rinfo) => {
     const port = pixelMapOutput.localPort();
     if (!port || rinfo?.port !== port) return false;

@@ -74,6 +74,7 @@
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
   import PixelMapPanel from './PixelMapPanel.svelte';
+  import DmxInputPanel from './DmxInputPanel.svelte';
 
   // ── MIDI mappings table ──
   // Grouped by the control rather than by the parameter, because a parameter
@@ -336,7 +337,7 @@
     | 'output:display' | 'output:ndi'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
-    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:pixelmap' | 'integrations:mediapipe'
+    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:pixelmap' | 'integrations:dmxinput' | 'integrations:mediapipe'
     | 'ai';
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
   interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
@@ -366,6 +367,7 @@
       { id: 'integrations:keyboard', label: 'Keyboard' },
       { id: 'integrations:wled', label: 'WLED' },
       { id: 'integrations:pixelmap', label: 'Pixel Mapping' },
+      { id: 'integrations:dmxinput', label: 'DMX Input' },
       { id: 'integrations:mediapipe', label: 'MediaPipe' },
     ]},
     { id: 'ai', label: 'AI', sections: [
@@ -386,6 +388,7 @@
     keyboard: 'integrations:keyboard',
     wled: 'integrations:wled',
     pixelmap: 'integrations:pixelmap',
+    dmxinput: 'integrations:dmxinput',
     mediapipe: 'integrations:mediapipe',
     ai: 'ai',
   };
@@ -2775,6 +2778,15 @@
             Drive LED fixtures on Art-Net or sACN (E1.31) nodes from the final composite. Each fixture samples a region of the image, like a WLED controller, and is patched across universes automatically: 170 RGB or 128 RGBW pixels per universe, never splitting a pixel. Output runs at the frame rate you set, up to 60 fps. Turning output off, blackout, or disabling a fixture sends one black frame and then stops; sACN streams are terminated cleanly.
           </p>
           <PixelMapPanel />
+        </section>
+        {/if}
+        {#if selectedSection === 'integrations:dmxinput'}
+        <section class="settings-section">
+          <h3>Art-Net and sACN DMX Input</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Let a lighting desk drive the show. Ghost Arcade listens for Art-Net (UDP 6454) and sACN (UDP 5568) and binds desk channels to layer opacity, effect parameters, macros, the crossfader, and clip or column triggers. Faders can be 8-bit or 16-bit (coarse and fine), buttons fire on a threshold with hysteresis, and every binding has its own range and invert. Bindings save with the project; the on switch and network settings stay with this machine. Off by default.
+          </p>
+          <DmxInputPanel />
         </section>
         {/if}
         <!-- MediaPipe gesture input — runs Hand Landmarker + Gesture

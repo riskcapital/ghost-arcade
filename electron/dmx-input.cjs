@@ -208,6 +208,7 @@ function createDmxInput({
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
   platform = process.platform,
+  listInterfaces = () => [],
 } = {}) {
   if (!dgram) throw new Error('createDmxInput needs dgram');
 
@@ -240,6 +241,7 @@ function createDmxInput({
       sacn: { enabled: !!config?.sacn, listening: listening.sacn, error: errors.sacn, port: config?.sacnPort ?? SACN_PORT },
       mergeMode: config?.mergeMode ?? 'htp',
       universeFilter: config?.universes ?? [],
+      interfaces: safeInterfaces(),
       stats: { ...stats },
       universes: [...universes.values()].map(entry => ({
         protocol: entry.protocol,
@@ -254,6 +256,15 @@ function createDmxInput({
         })),
       })),
     };
+  }
+
+  function safeInterfaces() {
+    try {
+      const list = listInterfaces();
+      return Array.isArray(list) ? list.filter(item => item && isIPv4(item.address)).slice(0, 32) : [];
+    } catch {
+      return [];
+    }
   }
 
   function emitStatus() {
