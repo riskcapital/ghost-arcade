@@ -25,7 +25,7 @@ import {
   buildVJPipelineWarmupCommands,
   type VJMixRow,
 } from '$lib/renderer/vjMixNative';
-import type { Layer, Model3DContent, SplatContent } from '$lib/types';
+import type { Layer, MeshWarpGrid, Model3DContent, SplatContent } from '$lib/types';
 import { buildEdgeEffectContext, nativeEdgeEffectPayload, type EdgeEffectContext } from '$lib/drawing/edgeEffects';
 import { layerRenderMeshGrid, meshGridHasTangents, resolveMeshTangents } from '$lib/utils/meshWarp';
 import { project } from '$lib/stores/layers';
@@ -4984,7 +4984,14 @@ type NativeWarpCornerSet = {
   bottomLeft: NativeWarpPoint;
   bottomRight: NativeWarpPoint;
 };
-type NativeWarpMesh = { rows: number; cols: number; points: NativeWarpPoint[][] };
+type NativeWarpTangents = Partial<Record<'right' | 'down' | 'left' | 'up', NativeWarpPoint>>;
+type NativeWarpMesh = {
+  rows: number;
+  cols: number;
+  points: NativeWarpPoint[][];
+  bezier?: boolean;
+  tangents?: (NativeWarpTangents | null | undefined)[][];
+};
 
 export function nativeOutputCropY(y: number, height: number): number {
   return clampNumber(1 - y - height, 0, 1);
@@ -5023,18 +5030,42 @@ export function nativeScreenMasks(
 }
 
 /** Same conversion for a warp mesh: the row the operator sees first is the
- *  top one, which is the LAST row in the core's y-up grid. */
+ *  top one, which is the LAST row in the core's y-up grid. A Bezier mesh's
+ *  tangents follow their points: rows reverse, y offsets negate, and the
+ *  handle toward the next row (down) becomes the one toward the previous
+ *  row in the core's order (up), and the other way round. A mesh with
+ *  Bezier off, or no tangents, is sent bare, exactly as before. */
 export function nativeWarpMeshGrid(
   grid: NativeWarpMesh | null | undefined,
 ): NativeWarpMesh | null {
   if (!grid || !Array.isArray(grid.points)) return null;
-  return {
+  const out: NativeWarpMesh = {
     rows: grid.rows,
     cols: grid.cols,
     points: [...grid.points]
       .reverse()
       .map((row) => (Array.isArray(row) ? row.map((point) => ({ x: point.x, y: 1 - point.y })) : row)),
   };
+  if (meshGridHasTangents(grid as MeshWarpGrid)) {
+    const flip = (t: NativeWarpPoint | undefined) =>
+      t && Number.isFinite(t.x) && Number.isFinite(t.y) ? { x: t.x, y: -t.y } : undefined;
+    out.bezier = true;
+    out.tangents = Array.from({ length: grid.rows }, (_, row) => {
+      const source = grid.tangents?.[grid.rows - 1 - row];
+      return Array.from({ length: grid.cols }, (_, col) => {
+        const entry = source?.[col];
+        if (!entry) return null;
+        const next: NativeWarpTangents = {};
+        const right = flip(entry.right), left = flip(entry.left), down = flip(entry.up), up = flip(entry.down);
+        if (right) next.right = right;
+        if (left) next.left = left;
+        if (down) next.down = down;
+        if (up) next.up = up;
+        return Object.keys(next).length ? next : null;
+      });
+    });
+  }
+  return out;
 }
 
 export class NativeRendererSync {

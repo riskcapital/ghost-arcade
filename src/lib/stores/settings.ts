@@ -5,6 +5,7 @@ import { createCoalescedWriter } from '../utils/coalescedWriter';
 import { writable, get } from 'svelte/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
 import type { WarpCorners, MeshWarpGrid, Effect, Point2D } from '../types';
+import { meshGridHasTangents } from '../utils/meshWarp';
 
 // ============================================================================
 // COLOR SCHEME DEFINITIONS
@@ -576,6 +577,8 @@ export function masterWarpIsActive(warp?: OutputWarp | null): boolean {
   );
   if (cornersWarped) return true;
   const g = warp.meshGrid;
+  // A Bezier handle bends the output without moving a point.
+  if (meshGridHasTangents(g)) return true;
   if (g && g.rows >= 2 && g.cols >= 2) {
     for (let r = 0; r < g.rows; r++) {
       for (let cc = 0; cc < g.cols; cc++) {

@@ -401,6 +401,29 @@ describe('native output stage coordinates', () => {
     expect(nativeWarpMeshGrid(topBent)?.points[1]).toEqual([{ x: 0.2, y: 0.9 }, { x: 0.8, y: 0.9 }]);
     expect(nativeWarpMeshGrid(null)).toBeNull();
   });
+
+  it('flips Bezier tangents with their points and sends straight meshes bare', () => {
+    const points = [
+      [{ x: 0, y: 0 }, { x: 0.5, y: 0 }, { x: 1, y: 0 }],
+      [{ x: 0, y: 1 }, { x: 0.5, y: 1 }, { x: 1, y: 1 }],
+    ];
+    const tangents = [
+      [null, { right: { x: 0.1, y: -0.2 }, down: { x: 0.05, y: 0.3 } }, null],
+      [{ up: { x: 0, y: -0.25 } }, null, null],
+    ];
+    const sent = nativeWarpMeshGrid({ rows: 2, cols: 3, points, bezier: true, tangents });
+    expect(sent?.bezier).toBe(true);
+    // Editor row 0 (top) is core row 1; its "down" handle points at the
+    // core's row 0, which is "up" in core order, with y negated.
+    expect(sent?.tangents?.[1][1]).toEqual({ right: { x: 0.1, y: 0.2 }, up: { x: 0.05, y: -0.3 } });
+    expect(sent?.tangents?.[0][0]).toEqual({ down: { x: 0, y: 0.25 } });
+    expect(sent?.tangents?.[0][1]).toBeNull();
+    // Bezier off, or on with nothing stored: the payload is the bare grid.
+    expect(nativeWarpMeshGrid({ rows: 2, cols: 3, points, bezier: false, tangents })).toEqual({
+      rows: 2, cols: 3, points: [...points].reverse().map((row) => row.map((p) => ({ x: p.x, y: 1 - p.y }))),
+    });
+    expect(Object.keys(nativeWarpMeshGrid({ rows: 2, cols: 3, points, bezier: true })!)).toEqual(['rows', 'cols', 'points']);
+  });
 });
 
 describe('native renderer sync lifecycle ownership', () => {
