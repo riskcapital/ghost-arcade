@@ -329,6 +329,8 @@ let embeddedServerModule = null;
 const { buildWLEDRealtimePacket } = require('./wled-packet.cjs');
 const wledSockets = new Map();  // controllerId -> dgram.Socket
 const { createPixelMapOutput } = require('./pixelmap-output.cjs');
+const { createPjlinkClient } = require('./pjlink.cjs');
+const pjlinkClient = createPjlinkClient();
 // Art-Net / sACN pixel mapping. One socket for every fixture and node.
 const pixelMapOutput = createPixelMapOutput({ dgram });
 const { createDmxInput } = require('./dmx-input.cjs');
@@ -5163,6 +5165,22 @@ function registerIpcHandlers() {
   ipcMain.handle('dmx_input_status', async () => dmxInput.status());
   ipcMain.handle('dmx_input_resync', async () => dmxInput.resync());
   ipcMain.handle('dmx_input_snapshot', async (_, target) => dmxInput.snapshot(target));
+
+  // --- PJLink projector control (class 1, TCP 4352) ---
+  // One short session per request, serialised per projector. Actions are a
+  // fixed vocabulary (power, shutter, input, status); the client builds and
+  // validates the wire commands, so the renderer cannot send arbitrary ones.
+  ipcMain.handle('pjlink_command', async (_, { host, port, password, action, input, timeoutMs } = {}) => {
+    if (typeof host !== 'string' || !host.trim()) return { ok: false, error: 'no host', responses: [] };
+    return pjlinkClient.run({
+      host: host.trim(),
+      port: Number(port) || 4352,
+      password: typeof password === 'string' ? password : '',
+      action,
+      input,
+      timeoutMs: Math.max(500, Math.min(15000, Number(timeoutMs) || 5000)),
+    });
+  });
 
   // --- OSC ---
   ipcMain.handle('osc_start', async (_, { port }) => {
