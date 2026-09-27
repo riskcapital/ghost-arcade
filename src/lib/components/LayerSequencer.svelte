@@ -215,7 +215,7 @@
                   ? 'Continuous mode ON \u2014 cells gate alpha; shader keeps running. Click to disable.'
                   : 'Continuous mode OFF \u2014 cells fully gate the layer. Click to keep shader running while cells gate alpha.'}
                 aria-pressed={isContinuous}
-              >\u221e</button>
+              >∞</button>
               <span class="seq-layer-name">{truncName(layer.name)}</span>
             </div>
             <!-- Step cells for this layer -->
