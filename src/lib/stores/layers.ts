@@ -4328,6 +4328,11 @@ void main() {
           },
         };
       });
+      // Presets are part of the undo history's project snapshots. Without
+      // their own step, undoing the next edit (a VJ MAP Look, a layer
+      // change) restored the snapshot from before the save and took the
+      // preset with it.
+      recordDiscreteAction();
 
       return compositionId;
     },
@@ -4404,6 +4409,7 @@ void main() {
         };
       });
       console.log('[Store] updateComposition: overwrote', compositionId, updated.name);
+      recordDiscreteAction();
       return true;
     },
 
@@ -4432,6 +4438,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     /**
@@ -4450,6 +4457,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     reorderComposition(fromIndex: number, toIndex: number) {
@@ -4470,6 +4478,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     /**
