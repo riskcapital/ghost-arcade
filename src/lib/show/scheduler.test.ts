@@ -192,6 +192,43 @@ describe('runner with a fake clock', () => {
     expect(h.calls.slice(2)).toEqual(['start d@2026-09-28 2026-09-28T15:00:00Z']);
   });
 
+  it('a start moved later the same day still fires at the new time', () => {
+    // Seen in a test pass: the time field commits each segment as it is
+    // typed, so 10:00 -> 03:29 passed through 03:03 while it was 03:27. The
+    // 03:03 window started, the next edit ended it, and 03:29 never fired
+    // because the entry was already "handled" for the day.
+    const entry = newScheduleEntry({ id: 'd', days: ALL_DAYS, start: '10:00', stop: '18:00' });
+    const s = schedule({ entries: [entry] });
+    const h = harness(s, utc('2026-09-26T13:00:00Z')); // 09:00 local
+    h.runner.tick();
+    entry.start = '08:00'; // now inside the window: starts at once
+    h.runner.tick();
+    entry.start = '09:30'; // edited on: the window closes
+    h.runner.tick();
+    h.runUntil(utc('2026-09-26T13:31:00Z'));
+    expect(h.calls).toEqual([
+      'start d@2026-09-26 2026-09-26T13:00:00Z',
+      'stop d@2026-09-26 2026-09-26T13:00:00Z',
+      'start d@2026-09-26 2026-09-26T13:30:00Z',
+    ]);
+  });
+
+  it('changing the times of a running show does not restart it', () => {
+    const entry = newScheduleEntry({ id: 'd', days: ALL_DAYS, start: '10:00', stop: '18:00' });
+    const s = schedule({ entries: [entry] });
+    const h = harness(s, utc('2026-09-26T15:00:00Z')); // 11:00 local
+    h.runner.tick();
+    entry.start = '09:00';
+    entry.stop = '20:00';
+    h.runUntil(utc('2026-09-26T23:59:00Z')); // 19:59 local: still running
+    expect(h.calls).toEqual(['start d@2026-09-26 2026-09-26T15:00:00Z']);
+    h.runUntil(utc('2026-09-27T00:01:00Z')); // the new 20:00 stop
+    expect(h.calls).toEqual([
+      'start d@2026-09-26 2026-09-26T15:00:00Z',
+      'stop d@2026-09-26 2026-09-27T00:00:00Z',
+    ]);
+  });
+
   it('launching mid-show starts it, and a manual stop is not overruled', () => {
     const s = schedule({ entries: [newScheduleEntry({ id: 'd', days: ALL_DAYS, start: '10:00', stop: '18:00' })] });
     const h = harness(s, utc('2026-09-26T15:00:00Z'));

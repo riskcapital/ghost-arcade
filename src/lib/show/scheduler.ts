@@ -277,6 +277,10 @@ export interface ScheduleHooks {
   projectorsOn(window: ShowWindow): void;
 }
 
+function handledKey(w: ShowWindow): string {
+  return `${w.key}|${w.start}`;
+}
+
 export class ScheduleRunner {
   private started: ShowWindow | null = null;
   private readonly handled = new Set<string>();
@@ -327,8 +331,16 @@ export class ScheduleRunner {
       this.started = null;
       emit('stop', w, () => this.hooks.stop(w));
     }
-    if (active && !this.handled.has(active.key)) {
-      this.handled.add(active.key);
+    // Handled is remembered per window START, not just per entry and day:
+    // moving today's start later (or typing through a time, which commits
+    // each intermediate value) must still fire at the new time. A show that
+    // is running keeps running when only its times change.
+    if (this.started && active && active.key === this.started.key) {
+      this.started = active;
+      this.handled.add(handledKey(active));
+    }
+    if (active && !this.handled.has(handledKey(active))) {
+      this.handled.add(handledKey(active));
       this.started = active;
       this.warmedKey = active.key;
       emit('start', active, () => this.hooks.start(active));
@@ -345,7 +357,7 @@ export class ScheduleRunner {
     if (this.handled.size > 64) {
       const cutoff = now - 2 * 86400_000;
       for (const key of [...this.handled]) {
-        const date = key.split('@')[1];
+        const date = key.split('@')[1]?.split('|')[0];
         const m = DATE_RE.exec(date ?? '');
         if (m && new Date(+m[1], +m[2] - 1, +m[3]).getTime() < cutoff) this.handled.delete(key);
       }
