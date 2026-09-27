@@ -12,7 +12,9 @@ export function getLastRawAnalysis(): AudioAnalysis | null {
 }
 
 // Audio input source configuration
-export type AudioInputType = 'none' | 'microphone' | 'file' | 'system';
+/** 'clips' = no live input; the analyser follows the app's own clip audio
+ *  (MIX layers, show timeline tracks, the native VJ clip mix). */
+export type AudioInputType = 'none' | 'microphone' | 'file' | 'system' | 'clips';
 
 /** Minimal shape we need from MediaDeviceInfo, kept separate so the store
  *  doesn't leak the full DOM type to consumers that don't want it. */
@@ -291,6 +293,20 @@ function createAudioStore() {
       } catch (err: any) {
         update(s => ({ ...s, error: err.message || 'System audio capture failed', isActive: false, inputType: 'none' }));
       }
+    },
+
+    /** Follow clip audio while no live input runs (see clipAudioFollow.ts). */
+    startClipFollow() {
+      if (get({ subscribe }).inputType !== 'none') return;
+      audioAnalyzer.startClipFollow();
+      if (!audioAnalyzer.isFollowingClips()) return;
+      update(s => ({ ...s, error: null, inputType: 'clips', isActive: true }));
+    },
+
+    /** Stop following clip audio; a live input, if one took over, is left alone. */
+    async stopClipFollow() {
+      if (get({ subscribe }).inputType !== 'clips') return;
+      await this.stop();
     },
 
     /** Stop audio analysis */

@@ -377,8 +377,8 @@ export class ClipAudioBus {
   }
 
   /**
-   * Connect masterGain to the speakers and (when possible) into the
-   * analyzer so clip audio drives audio-reactive visuals.
+   * Connect masterGain to the speakers and, while the analyser is following
+   * clip audio (no live input), into it so clips drive audio-reactive visuals.
    *
    * The analyser is a pass-through node. In the analyzer's media-element
    * branch it is connected straight to `ctx.destination`, so tapping into it
@@ -390,7 +390,9 @@ export class ClipAudioBus {
     const master = this.masterGain;
     if (!ctx || !master) return;
 
-    const analyser = audioAnalyzer.getAnalyserNode();
+    // Only the clip-follow analyser takes the bus: a live input is
+    // authoritative and already hears the clips through the room / system mix.
+    const analyser = audioAnalyzer.clipAudioAnalyserNode();
     const analyserReachesSpeakers = audioAnalyzer.analyserFeedsDestination();
 
     if (this.tappedAnalyser && this.tappedAnalyser !== analyser) {

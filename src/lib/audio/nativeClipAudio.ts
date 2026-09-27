@@ -2,6 +2,9 @@ import { writable } from 'svelte/store';
 import type { VJClip, VJClipLauncherState } from '../stores/vjClipLauncher';
 import { vjClipTransitionKey, type VJClipTransition } from '../stores/vjClipTransitions';
 export const nativeAudioMaster = writable({ volume: 1, muted: false });
+/** True while the core's clip mix has at least one voice above zero gain —
+ *  the audio analyser follows that mix when no live input is running. */
+export const nativeClipAudioAudible = writable(false);
 /** Recordings carry the core's clip mix whenever the VJ workspace owns the
  *  output, MAP included. It is silence, not absent, while muted, stopped or
  *  not live. */

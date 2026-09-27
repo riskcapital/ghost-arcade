@@ -105,6 +105,8 @@
   import RecordingSourcePicker from './lib/components/RecordingSourcePicker.svelte';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
   import { audioStore } from './lib/stores/audio';
+  // Side effect: the analyser follows clip audio when no live input runs.
+  import './lib/audio/clipAudioFollow';
   // macros.ts registers a callback with midiRouter on import so
   // `vj:macro:N:value` MIDI messages route into the macro store. Pulled in
   // here to guarantee it runs at app boot, even if the VJ panel hasn't

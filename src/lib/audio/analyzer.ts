@@ -92,7 +92,7 @@ export class AudioAnalyzer {
   // to the dead device, the analyser flatlines, and BPM silently drifts to 0 —
   // a VJ's beat sync goes dead mid-set. We capture the source type so we can
   // re-run startMicrophone() / startSystemAudio() with the same intent.
-  private lastSourceType: 'microphone' | 'system' | 'mediaElement' | null = null;
+  private lastSourceType: 'microphone' | 'system' | 'mediaElement' | 'clips' | null = null;
   private lastMediaElement: HTMLAudioElement | HTMLVideoElement | null = null;
   private lastMicDeviceId: string | null = null;
   private deviceChangeHandler: (() => void) | null = null;
@@ -197,6 +197,46 @@ export class AudioAnalyzer {
       console.error('Failed to start microphone:', err);
       throw err;
     }
+  }
+
+  /**
+   * Follow the app's own clip audio: build an analyser with no input of its
+   * own for the clip bus (MIX layers, show timeline tracks) and the native
+   * clip mix feed to connect into. Only when no live input is running — a
+   * live input always wins (see acceptsClipAudio). Nothing is connected to
+   * the speakers here; the clip paths keep their own output.
+   */
+  startClipFollow(): void {
+    if (this.isRunning) return;
+    this.audioContext = this.getOrCreateAudioContext();
+    this.analyserNode = this.audioContext.createAnalyser();
+    this.analyserNode.fftSize = this.fftSize;
+    this.analyserNode.smoothingTimeConstant = 0.8;
+    this.analyserNode.minDecibels = -90;
+    this.analyserNode.maxDecibels = -10;
+    const bufferLength = this.analyserNode.frequencyBinCount;
+    this.fftData = new Float32Array(bufferLength);
+    this.waveformData = new Float32Array(bufferLength);
+    this.resetState();
+    this.isRunning = true;
+    this.lastSourceType = 'clips';
+    this._notifyGraphChange();
+    this.tick();
+  }
+
+  /** True while the analyser is following clip audio (no live input). */
+  isFollowingClips(): boolean {
+    return this.isRunning && this.lastSourceType === 'clips';
+  }
+
+  /**
+   * The analyser clip audio should connect into, or null. A live input
+   * (mic, system capture, audio-file player) is authoritative: a mic or a
+   * system loopback already hears the clips through the room or the system
+   * mix, so summing the clip signal in as well would count it twice.
+   */
+  clipAudioAnalyserNode(): AnalyserNode | null {
+    return this.isFollowingClips() ? this.analyserNode : null;
   }
 
   /** Start analyzing audio from a media element (e.g., <audio> tag) */

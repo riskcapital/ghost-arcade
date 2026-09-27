@@ -295,6 +295,7 @@ const RENDERER_COMMANDS = [
   'native_renderer_audio_devices',
   'native_renderer_audio_status',
   'native_renderer_audio_output',
+  'native_renderer_audio_scope',
   'native_renderer_audio_tap_start',
   'native_renderer_audio_tap_stop',
   'native_renderer_get_status',
@@ -502,6 +503,7 @@ class NativeRendererBroker {
       case 'native_renderer_audio_devices':
       case 'native_renderer_audio_status':
       case 'native_renderer_audio_output':
+      case 'native_renderer_audio_scope':
         if (!this.child || this.child.killed) throw new Error('Start the native renderer first');
         return this.send(command.replace('native_renderer_', ''), args, { timeoutMs: 5000 });
       // Recording tap: stop joins the core's sender after its final flush.

@@ -1854,6 +1854,11 @@ export interface NativeClipAudioStatus { running: boolean; device?: string; erro
 export const getNativeAudioDevices = () => invoke<string[]>('native_renderer_audio_devices');
 export const getNativeAudioStatus = () => invoke<NativeClipAudioStatus>('native_renderer_audio_status');
 export const setNativeAudioOutput = (device: string) => invoke<boolean>('native_renderer_audio_output', { device });
+/** Mono post-mix clip audio the core handed its output device since frame
+ *  `since` (f32le, base64). `next` is the index to ask for next time. */
+export interface NativeAudioScope { first: number; next: number; rate: number; frames: number; active: boolean; samples_b64: string }
+export const readNativeAudioScope = (since: number, maxFrames = 4096) =>
+  invoke<NativeAudioScope>('native_renderer_audio_scope', { since, max_frames: maxFrames });
 
 /** Prepared native transactions; launcher integration must reconcile receipts before publishing UI state. */
 export async function scheduleNativeLaunch(launch: {

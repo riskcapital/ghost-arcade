@@ -21,7 +21,7 @@ pub struct NativeReadinessCheck {
 }
 
 pub const CORE_RPC_METHODS: &[&str] = &[
-    "audio_devices", "audio_status", "audio_output", "audio_tap_start", "audio_tap_stop",
+    "audio_devices", "audio_status", "audio_output", "audio_tap_start", "audio_tap_stop", "audio_scope",
     "start",
     "stop",
     "status",

@@ -5,7 +5,7 @@ import { showToast } from './errorToast';
 import { createNativeQueuedLaunches, type LaunchReceipt } from '../renderer/nativeQueuedLaunch';
 import { vjClipTransitionInputId, vjClipTransitionSourceId } from '../renderer/vjClipTransitionNative';
 import { nativeRendererRuntime } from './nativeRenderer';
-import { nativeClipAudioMix, nativeAudioMaster } from '../audio/nativeClipAudio';
+import { nativeClipAudioMix, nativeAudioMaster, nativeClipAudioAudible } from '../audio/nativeClipAudio';
 import { VideoBeatPhase } from '../media/videoBeatPhase';
 import { scheduleNativeLaunch, cancelNativeLaunch, getNativeLaunchStatus, getNativeRendererCapabilities, getNativeRendererLayersSnapshot, getNativeSourceFrameReadiness, getNativeLayerSourceReadiness, submitNativeRendererCommands, type RendererCommand } from '../api/native-renderer';
 import { videoBeatFit } from '../media/videoBeatFit';
@@ -3745,6 +3745,8 @@ if (typeof window !== 'undefined' && isDesktopApp) {
     queueMicrotask(() => {
       scheduled = false;
       const command = nativeClipAudioMix(get(vjClipLauncher), get(nativeAudioMaster), get(vjClipTransitions));
+      const audible = command.voices.some(voice => voice.gain > 0);
+      if (get(nativeClipAudioAudible) !== audible) nativeClipAudioAudible.set(audible);
       const next = JSON.stringify(command);
       if (signature === next) return;
       signature = next;

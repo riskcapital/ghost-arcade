@@ -5982,6 +5982,14 @@ impl App {
                     (_, None) => Err("invalid audio tap token".to_string()),
                 }
             }
+            // Analysis scope: the app's audio analyser follows the clip mix
+            // through this when no live input is running.
+            "audio_scope" => {
+                let since = req.params.get("since").and_then(Value::as_u64).unwrap_or(0);
+                let max_frames = req.params.get("max_frames").and_then(Value::as_u64).unwrap_or(4096).clamp(1, 8192) as usize;
+                Ok(self.clip_audio.as_ref().map(|audio| audio.scope(since, max_frames))
+                    .unwrap_or_else(|| json!({ "first": since, "next": since, "rate": 48000, "frames": 0, "active": false, "samples_b64": "" })))
+            }
             "audio_tap_stop" => Ok(self.clip_audio.as_mut().map(|audio| audio.stop_tap()).unwrap_or_else(|| json!({ "active": false, "frames": 0, "dropped": 0 }))),
             "shutdown" => {
                 self.running = false;

@@ -11,6 +11,9 @@ const RING: usize = 32768;
 /// Recording tap capacity in f32 slots: 262144 stereo frames, about 5.4 s at 48 kHz.
 const TAP_RING: usize = 1 << 19;
 const TAP_MAGIC: &[u8; 4] = b"GATP";
+/// Analysis scope: the last 16384 mono frames the device received (~340 ms
+/// at 48 kHz). Always on while output runs; readers poll it by frame index.
+const SCOPE_RING: usize = 1 << 14;
 
 pub struct Ring { data: Vec<AtomicU32>, read: AtomicUsize, write: AtomicUsize }
 impl Ring {
@@ -32,14 +35,35 @@ impl Ring {
 /// Post-mix, pre-device stereo tap for recordings. The output callback
 /// mirrors every frame it hands the device; a full ring counts the frame as
 /// dropped instead of blocking. One producer (the callback), one consumer.
+/// It also feeds the always-on mono analysis scope the app's audio analyser
+/// follows when no live input is running.
 pub struct Tap {
     data: Vec<AtomicU32>, read: AtomicUsize, write: AtomicUsize,
     enabled: AtomicBool, dropped: AtomicU64, pushed: AtomicU64, rate: AtomicU32,
+    scope: Vec<AtomicU32>, scope_write: AtomicU64, scope_rate: AtomicU32,
 }
 impl Tap {
     pub fn new() -> Self {
         Self { data: (0..TAP_RING).map(|_| AtomicU32::new(0)).collect(), read: AtomicUsize::new(0), write: AtomicUsize::new(0),
-            enabled: AtomicBool::new(false), dropped: AtomicU64::new(0), pushed: AtomicU64::new(0), rate: AtomicU32::new(48000) }
+            enabled: AtomicBool::new(false), dropped: AtomicU64::new(0), pushed: AtomicU64::new(0), rate: AtomicU32::new(48000),
+            scope: (0..SCOPE_RING).map(|_| AtomicU32::new(0)).collect(), scope_write: AtomicU64::new(0), scope_rate: AtomicU32::new(48000) }
+    }
+    /// One producer (the device callback). Never blocks; old frames are overwritten.
+    pub fn scope_push(&self, mono: f32, device_rate: u32) {
+        let w = self.scope_write.load(Ordering::Relaxed);
+        self.scope[(w % SCOPE_RING as u64) as usize].store(mono.to_bits(), Ordering::Relaxed);
+        if self.scope_rate.load(Ordering::Relaxed) != device_rate { self.scope_rate.store(device_rate, Ordering::Relaxed); }
+        self.scope_write.store(w.wrapping_add(1), Ordering::Release);
+    }
+    /// Frames written since `since` (at most `max_frames`, newest kept): the
+    /// index of the first returned frame, the next index to ask for, and the
+    /// samples. A reader that fell more than the ring behind skips ahead.
+    pub fn scope_read(&self, since: u64, max_frames: usize) -> (u64, u64, u32, Vec<f32>) {
+        let end = self.scope_write.load(Ordering::Acquire);
+        let keep = max_frames.min(SCOPE_RING - 1024) as u64;
+        let start = since.min(end).max(end.saturating_sub(keep));
+        let samples = (start..end).map(|i| f32::from_bits(self.scope[(i % SCOPE_RING as u64) as usize].load(Ordering::Relaxed))).collect();
+        (start, end, self.scope_rate.load(Ordering::Relaxed), samples)
     }
     pub fn rate(&self) -> u32 { self.rate.load(Ordering::Acquire) }
     pub fn pushed(&self) -> u64 { self.pushed.load(Ordering::Relaxed) }
@@ -99,6 +123,7 @@ pub fn render_output<S: cpal::Sample + cpal::FromSample<f32>>(output: &mut [S], 
             *value = S::from_sample_(sample);
         }
         resampler.push(tap, device_rate, left, right);
+        tap.scope_push((left + right) * 0.5, device_rate);
     }
     peaks
 }
@@ -469,6 +494,16 @@ impl ClipAudio {
         }
         if let Ok(mut mix) = self.mix.try_lock() { mix.voices = voices; mix.at = Instant::now(); }
     }
+    /// Mono post-mix frames for the app's audio analyser, base64 f32le.
+    pub fn scope(&self, since: u64, max_frames: usize) -> Value {
+        use base64::Engine as _;
+        let (first, next, rate, samples) = self.tap.scope_read(since, max_frames);
+        let mut bytes = Vec::with_capacity(samples.len() * 4);
+        for sample in &samples { bytes.extend_from_slice(&sample.to_le_bytes()); }
+        json!({ "first": first, "next": next, "rate": rate, "frames": samples.len(),
+            "active": self.stream_active.load(Ordering::Acquire),
+            "samples_b64": base64::engine::general_purpose::STANDARD.encode(bytes) })
+    }
     pub fn status(&self) -> Value {
         json!({ "running": self.stream.is_some() || self.null_output.is_some(), "device": self.device, "sample_rate": self.output_rate,
             "peak_left": f32::from_bits(self.peak_left.load(Ordering::Relaxed)), "peak_right": f32::from_bits(self.peak_right.load(Ordering::Relaxed)),
@@ -569,6 +604,24 @@ impl Drop for ClipAudio {
         // Reverse playback advances backwards.
         let back = follow_cursor(Some(3.0), 3.0 - block, -block, None);
         assert!((back - (3.0 - block)).abs() < 1e-12);
+    }
+    #[test] fn analysis_scope_mirrors_the_device_mix_and_skips_ahead_when_behind() {
+        let (ring, tap, underflows) = (Ring::new(), Tap::new(), AtomicU64::new(0));
+        let mut resampler = TapResampler::default();
+        for i in 0..64 { ring.push(i as f32 / 128.0, 0.0); }
+        let mut device = vec![0.0_f32; 128];
+        render_output(&mut device, 2, &ring, &tap, &mut resampler, 44100, &underflows);
+        // Unarmed recording tap: the scope still runs, mono = (L + R) / 2.
+        assert_eq!(tap.pushed(), 0);
+        let (first, next, rate, samples) = tap.scope_read(0, 4096);
+        assert_eq!((first, next, rate, samples.len()), (0, 64, 44100, 64));
+        assert_eq!(samples[10], 10.0 / 256.0);
+        assert!(tap.scope_read(next, 4096).3.is_empty());
+        // A reader that fell behind by more than it asked for gets the newest frames.
+        let mut long = vec![0.0_f32; 2 * 40000];
+        render_output(&mut long, 2, &ring, &tap, &mut resampler, 44100, &underflows);
+        let (first, next, _, samples) = tap.scope_read(0, 4096);
+        assert_eq!((first, next, samples.len()), (40064 - 4096, 40064, 4096));
     }
     #[test] fn recording_tap_counts_overflow_drops_without_blocking() {
         let tap = Tap::new(); tap.arm(48000);
