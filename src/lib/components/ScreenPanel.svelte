@@ -173,6 +173,15 @@
   // not merely enabled — so "on but untouched" reads as inert.
   $: masterWarpActive = masterWarpIsActive(masterWarp);
 
+  // A selected screen's handles sit above the Master Warp handles and
+  // coincide with them (a full-canvas screen's corners and mesh points
+  // are the master's), and nothing else clears the selection. Working the
+  // Master Warp controls hands the canvas to the master handles; clicking
+  // a screen row brings its handles back.
+  function focusMasterWarp() {
+    selectedScreenId.set(null);
+  }
+
   function toggleMasterWarp(enabled: boolean) {
     // No geometry seeded on enable — an enabled-but-identity warp is a
     // passthrough no-op. Corner points are created only when the operator
@@ -186,6 +195,7 @@
     // quad from a misclick), output would render all-black on enable.
     if (enabled) {
       settings.setMasterWarp({ enabled: true, corners: undefined, meshGrid: undefined });
+      focusMasterWarp();
     } else {
       settings.setMasterWarp({ enabled: false });
     }
@@ -200,6 +210,7 @@
     } else {
       settings.setMasterWarp({ mode });
     }
+    focusMasterWarp();
     recordDiscreteAction();
   }
   function resetMasterWarp() {
@@ -210,6 +221,7 @@
       const bezier = masterWarp.meshGrid?.bezier ? { bezier: true } : {};
       settings.setMasterWarp({ meshGrid: { ...identityOutputMesh(), ...bezier } });
     } else settings.setMasterWarp({ corners: undefined });
+    focusMasterWarp();
     recordDiscreteAction();
   }
   /** Bezier mesh: curved cell edges shaped by tangent handles on the
@@ -217,6 +229,7 @@
   function setMasterBezier(bezier: boolean) {
     if (!masterWarp.meshGrid) return;
     settings.setMasterWarp({ meshGrid: { ...masterWarp.meshGrid, bezier } });
+    focusMasterWarp();
     recordDiscreteAction();
   }
 
