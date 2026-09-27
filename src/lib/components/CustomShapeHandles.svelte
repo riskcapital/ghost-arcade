@@ -45,8 +45,13 @@
     bottomLeft: { x: 0, y: 0 }, bottomRight: { x: 1, y: 0 },
   };
 
-  // Forward bilinear: UV (0-1) → warped normalized position → pixel
-  function toPixel(point: Point2D): { x: number; y: number } {
+  // Forward bilinear: UV (0-1) → warped normalized position → pixel.
+  // Reactive (not a plain function) so vertexPixels, svgPath and the handle
+  // markup re-run when the editor canvas resizes or the corners move;
+  // otherwise the handles stay at the old pixel size after e.g. opening the
+  // Stage Designer, and a drag makes the shape jump.
+  let toPixel: (point: Point2D) => { x: number; y: number };
+  $: toPixel = (point: Point2D): { x: number; y: number } => {
     const { topLeft: tl, topRight: tr, bottomLeft: bl, bottomRight: br } = corners;
     const u = point.x, v = point.y;
     const topX = tl.x + (tr.x - tl.x) * u;
@@ -56,7 +61,7 @@
     const wx = botX + (topX - botX) * v;
     const wy = botY + (topY - botY) * v;
     return { x: wx * containerWidth, y: (1 - wy) * containerHeight };
-  }
+  };
 
   // Inverse bilinear: pixel → UV (0-1) via Newton-Raphson iteration
   function toNormalized(px: number, py: number): Point2D {
