@@ -4070,7 +4070,13 @@
       nativeRendererSync = null;
     }
 
-    destroyStateBroadcast();
+    // Only the editor's Canvas starts the state channel (as its sender).
+    // In an output, slice or OSR window the channel is the window's own
+    // receiver, and a Canvas unmounting there must not close it: a screen
+    // window drops its Canvas once the core presents it natively, which
+    // left the window without the editor's settings, stuck on "Waiting
+    // for slice" over the picture.
+    if (!isOsrMode && !isOutputMode) destroyStateBroadcast();
     stopAudioBroadcast();
     stopModulationBroadcast();
 

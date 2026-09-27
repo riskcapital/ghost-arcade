@@ -849,8 +849,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       }
       if (nativeSlicePresentation) {
         console.log('[SliceOutput] native presentation active — skipping local render');
-        document.documentElement.style.background = 'transparent';
-        document.body.style.background = 'transparent';
+        // Important: the arcade theme paints body with !important, which
+        // beats a plain inline style and hides the layer under the page.
+        document.documentElement.style.setProperty('background', 'transparent', 'important');
+        document.body.style.setProperty('background', 'transparent', 'important');
         return;
       }
       // Wait one tick so Canvas (mounted below) has appended its
@@ -924,7 +926,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   });
 </script>
 
-<div class="slice-output">
+<div class="slice-output" class:native-presentation={nativeSlicePresentation}>
   {#if waitingForSlice}
     <!-- The slice config takes one BroadcastChannel round-trip to
          arrive from the editor. Show a discrete placeholder so the
@@ -978,6 +980,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     inset: 0;
     background: #000;
     overflow: hidden;
+  }
+  /* The core's layer sits under the page: an opaque fill here hides it. */
+  .slice-output.native-presentation {
+    background: transparent;
   }
   /* The actual rendering canvas is hidden — its pixels are read by
      the presentation canvas every frame via drawImage AND, when the
