@@ -28,6 +28,7 @@ import {
 import type { Layer, MeshWarpGrid, Model3DContent, SplatContent } from '$lib/types';
 import { buildEdgeEffectContext, nativeEdgeEffectPayload, type EdgeEffectContext } from '$lib/drawing/edgeEffects';
 import { layerRenderMeshGrid, meshGridHasTangents, resolveMeshTangents } from '$lib/utils/meshWarp';
+import { nativePaintStroke } from '$lib/utils/paintMask';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
 import { keyframeTimeline } from '$lib/stores/keyframeTimeline';
@@ -245,6 +246,7 @@ type LayerSnapshot = {
   uvSig: string;
   shapeSig: string;
   maskSig: string;
+  paintMaskSig: string;
   sourceSig: string;
   nativeParamsSig: string;
   effectsSig: string;
@@ -4012,6 +4014,29 @@ function tessellateNativeMaskShape(points: NonNullable<Layer['mask']>['shapes'][
     }
   }
   return output;
+}
+
+/** The painted mask as the core takes it (set_layer_paint_mask). Strokes
+ *  are immutable once committed and carry unique ids, so the signature is
+ *  the flags plus the id list, cached per strokes array. */
+const paintStrokeIdsCache = new WeakMap<object, string>();
+export function nativeLayerPaintMaskState(layer: Layer): {
+  signature: string;
+  command: { enabled: boolean; inverted: boolean; strokes: Array<Record<string, unknown>> };
+} {
+  const mask = layer.paintMask;
+  const strokes = mask?.strokes ?? [];
+  let ids = paintStrokeIdsCache.get(strokes);
+  if (ids === undefined) {
+    ids = strokes.map((stroke) => stroke.id).join(',');
+    paintStrokeIdsCache.set(strokes, ids);
+  }
+  const enabled = mask?.enabled !== false;
+  const inverted = mask?.inverted === true;
+  return {
+    signature: `${enabled ? 1 : 0}:${inverted ? 1 : 0}:${strokes.length}:${ids}`,
+    command: { enabled, inverted, strokes: strokes.map(nativePaintStroke) },
+  };
 }
 
 export function nativeLayerMaskState(layer: Layer): NativeLayerMaskState {
@@ -8884,6 +8909,7 @@ export class NativeRendererSync {
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
       const nativeShape = nativeLayerShapeState(layer);
       const nativeMask = nativeLayerMaskState(layer);
+      const nativePaintMask = nativeLayerPaintMaskState(layer);
       const nativeEdgeEffects = nativeLayerEdgeEffectsState(layer, width, height, edgeContext);
       const nativeGraphQuality = this.nativeGraphQuality();
       const nativeGraphScaledParams = nativeGraphRoute
@@ -8930,6 +8956,7 @@ export class NativeRendererSync {
         uvSig: nativeUv.signature,
         shapeSig: nativeShape.signature,
         maskSig: nativeMask.signature,
+        paintMaskSig: nativePaintMask.signature,
         sourceSig: nativeLayerBlocked
           ? nativeBlockSig
           : `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}:graph=${nativeGraphRoute?.kind ?? 'none'}:${nativeGraphSourceParamsSig}:effects=${nativeGraphEffectSig}`,
@@ -9462,6 +9489,14 @@ export class NativeRendererSync {
           type: 'set_effect_chain',
           layer_id: layer.id,
           effect_ids: effectIds,
+        });
+      }
+
+      if (!prev || prev.paintMaskSig !== snap.paintMaskSig) {
+        commands.push({
+          type: 'set_layer_paint_mask',
+          layer_id: layer.id,
+          ...nativePaintMask.command,
         });
       }
 

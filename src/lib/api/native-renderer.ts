@@ -352,6 +352,20 @@ export type RendererCommand =
   | { type: 'set_layer_source_color'; layer_id: string; rgb: [number, number, number] }
   | { type: 'set_layer_native_params'; layer_id: string; params: [number, number, number, number, number, number, number, number] }
   | {
+    // Painted mask: the committed strokes (paint_mask.rs, utils/paintMask.ts).
+    type: 'set_layer_paint_mask';
+    layer_id: string;
+    enabled: boolean;
+    inverted: boolean;
+    strokes: Array<Record<string, unknown>>;
+  }
+  | {
+    // The stroke being dragged, or null to drop it without committing.
+    type: 'set_layer_paint_preview';
+    layer_id: string;
+    stroke: Record<string, unknown> | null;
+  }
+  | {
     type: 'set_layer_edge_effects';
     layer_id: string;
     edge_effects: number[][][];
