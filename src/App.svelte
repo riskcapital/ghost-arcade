@@ -8037,9 +8037,12 @@
   </div>
 {/if}
 
-<!-- Crash Recovery Modal -->
+<!-- Crash Recovery Modal. The backdrop deliberately does nothing: a stray
+     click outside the dialog (easy while the app is still coming up) used to
+     call discardAutosave and delete the only copy of the unsaved project.
+     Only the Discard button throws it away. -->
 {#if showRecoveryModal}
-  <div data-help-page="interface" class="close-modal-backdrop" onclick={discardAutosave}>
+  <div data-help-page="interface" class="close-modal-backdrop recovery-backdrop">
     <div class="close-modal" onclick={(e) => e.stopPropagation()}>
       <div class="close-modal-icon">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#4ecdc4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
