@@ -219,6 +219,8 @@ const rgbaOf = (value: unknown, fallback: Vec4): Vec4 =>
 export interface EdgeEffectLayerContext {
   /** 0-1 position of the layer in its group for each chase ordering. */
   chase: { order: number; leftToRight: number; radial: number };
+  /** Members in the layer's group (beat step chases count through them). */
+  count: number;
   /** Union of the group's outlines, output px. */
   groupBounds: Vec4;
 }
@@ -271,6 +273,7 @@ export function buildEdgeEffectContext(layers: readonly ContextLayer[], width: n
     const byRadius = rank(members.map((m) => Math.hypot(m.outline.centroid.x - centre.x, m.outline.centroid.y - centre.y)));
     members.forEach((m, i) => context.layers.set(m.layer.id, {
       chase: { order: byOrder[i], leftToRight: byX[i], radial: byRadius[i] },
+      count: members.length,
       groupBounds: bounds,
     }));
   }
@@ -396,6 +399,7 @@ export function packNativeEdgeEffect(
     : chaseMode === 'leftToRight' ? frame.context?.chase.leftToRight
       : chaseMode === 'radial' ? frame.context?.chase.radial : 0;
   const chaseDelay = (chaseRank ?? 0) * Math.max(0, finite((effect as any).chaseSpread, 0.5));
+  const reactSlots = packEdgeReact(effect, frame.context);
   const trimStart = Math.max(0, Math.min(1, finite(stroke.trimStart, 0)));
   const trimEnd = Math.max(trimStart, Math.min(1, finite(stroke.trimEnd, 1)));
 
@@ -412,7 +416,7 @@ export function packNativeEdgeEffect(
     [animationType, s.animCount, s.animSpacing, animSpeed],
     animA,
     strokeB,
-    [0, 0, 0, 0],
+    reactSlots.chase,
     [cap, join, finite(stroke.miterLimit, 4), stroke.widthMode === 'surface' ? 1 : 0],
     [trimStart, trimEnd, finite(stroke.trimOffset, 0), TRIM_CODE[String(stroke.trimMode ?? 'none')] ?? 0],
     [finite(stroke.trimSpeed, 0.5), chaseDelay, 0, customCenter ? 1 : 0],
@@ -421,8 +425,30 @@ export function packNativeEdgeEffect(
     frame.context?.groupBounds ?? [frame.outline.bbox[0], frame.outline.bbox[1], frame.outline.bbox[2], frame.outline.bbox[3]],
     [0, 0, 0, 0],
     [0, 0, 0, 0],
-    [0, 0, 0, 0],
+    reactSlots.react,
   ];
+}
+
+const REACT_MODE_CODE: Record<string, number> = { none: 0, pulse: 1, boost: 2, step: 3, strobe: 4 };
+const REACT_SOURCE_CODE: Record<string, number> = { beat: 0, kick: 1, snare: 2, bass: 3, level: 4, treble: 5 };
+
+/** Slots 12 (chase index, chase count, chase beats, hue per beat) and 21
+ *  (mode, source, amount, decay) of a packed effect: its beat reaction. */
+export function packEdgeReact(effect: EdgeEffect, context?: EdgeEffectLayerContext): { chase: Vec4; react: Vec4 } {
+  const react = effect.react;
+  const mode = REACT_MODE_CODE[String(react?.mode ?? 'none')] ?? 0;
+  if (!react || mode === 0) return { chase: [0, 0, 0, 0], react: [0, 0, 0, 0] };
+  const count = Math.max(1, context?.count ?? 1);
+  const chaseMode = String(effect.chaseMode ?? 'none');
+  // Beat chases follow the effect's group chase order; without one they
+  // still count through the group in layer order.
+  const rank = chaseMode === 'leftToRight' ? context?.chase.leftToRight
+    : chaseMode === 'radial' ? context?.chase.radial : context?.chase.order;
+  const index = Math.round((rank ?? 0) * (count - 1));
+  return {
+    chase: [index, count, Math.max(0, finite(react.chaseBeats, 0)), finite(react.hueStep, 0)],
+    react: [mode, REACT_SOURCE_CODE[String(react.source)] ?? 0, Math.max(0, Math.min(1, finite(react.amount, 1))), Math.max(0.05, finite(react.decay, 1))],
+  };
 }
 
 /**

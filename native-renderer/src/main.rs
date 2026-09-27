@@ -1301,6 +1301,8 @@ struct Uniforms {
     smask_pts: [[f32; 4]; MAX_SCREEN_MASK_VEC4S],
     swarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
     mwarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
+    /// Beat clock: (beat position, bpm, _, _). See `BeatClock`.
+    clock: [f32; 4],
 }
 
 #[repr(C)]
@@ -1348,6 +1350,9 @@ struct LayerGpu {
     mesh_bounds: [f32; 4],
     source_rect: [f32; 4],
     fast_flags: [u32; 4],
+    /// Colour multiplier (r, g, b, _) applied to the layer's finished
+    /// colour, edge effects included. Screen FX colour chases drive it.
+    tint: [f32; 4],
 }
 
 #[repr(C)]
@@ -2356,6 +2361,8 @@ struct SceneLayer {
     /// `deck_monitor_opacity` (their true pre-crossfader level).
     deck_monitor_bank: Option<u8>,
     deck_monitor_opacity: f32,
+    /// Colour multiplier from `set_layer_tint`; white leaves the layer as is.
+    tint: [f32; 4],
 }
 
 #[derive(Clone, Debug)]
@@ -3193,6 +3200,7 @@ impl SceneLayer {
             source_rect: [0.0, 0.0, 1.0, 1.0],
             deck_monitor_bank: None,
             deck_monitor_opacity: 1.0,
+            tint: [1.0; 4],
         }
     }
 
@@ -3290,6 +3298,7 @@ impl SceneLayer {
             mesh_bounds: self.mesh_bounds_gpu(),
             source_rect: self.source_rect,
             fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), 0, 0],
+            tint: self.tint,
         }
     }
 
@@ -3529,6 +3538,65 @@ fn parse_layer_mesh_tangents(
 
 fn set_scene_layer_color(layer: &mut SceneLayer, rgba: [f32; 4]) {
     layer.color = rgba;
+}
+
+/// Beats wrap here so the f32 the shader reads keeps sub-beat precision for
+/// days. 65520 divides evenly by every group size 1-10 and 12-16, so a beat
+/// step chase does not skip a member when the count wraps.
+const BEAT_CLOCK_WRAP: f64 = 65520.0;
+
+/// The editor's launch clock at one moment: `beat` is the continuous beat
+/// position at render time `time` (None: the next frame drawn).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BeatClockAnchor {
+    beat: f64,
+    bpm: f32,
+    time: Option<f32>,
+}
+
+impl BeatClockAnchor {
+    fn from_command(command: &Value) -> Option<Self> {
+        let beat = number_at(command, &["beat"]).filter(|value| value.is_finite())?;
+        let bpm = number_at(command, &["bpm"]).filter(|value| value.is_finite() && *value > 0.0)?;
+        let time = number_at(command, &["time"]).filter(|value| value.is_finite()).map(|value| value as f32);
+        Some(Self { beat, bpm: (bpm as f32).clamp(20.0, 400.0), time })
+    }
+}
+
+/// Beat position for beat-synced Edge Effects (Looks). The editor anchors it
+/// with `set_beat_clock` whenever its launch clock (tapped/typed tempo, audio
+/// beats or Link) moves; between anchors it runs on the render clock at the
+/// anchored tempo, so it keeps time between editor updates.
+#[derive(Clone, Copy, Debug)]
+struct BeatClock {
+    anchor_time: Option<f32>,
+    anchor_beat: f64,
+    bpm: f32,
+    pending: Option<BeatClockAnchor>,
+}
+
+impl Default for BeatClock {
+    fn default() -> Self {
+        Self { anchor_time: None, anchor_beat: 0.0, bpm: 120.0, pending: None }
+    }
+}
+
+impl BeatClock {
+    fn rebase(&mut self, anchor: BeatClockAnchor) {
+        self.pending = Some(anchor);
+    }
+
+    /// (beat position, bpm, _, _) at render time `time`.
+    fn uniform(&mut self, time: f32) -> [f32; 4] {
+        if let Some(anchor) = self.pending.take() {
+            self.anchor_time = Some(anchor.time.unwrap_or(time));
+            self.anchor_beat = anchor.beat;
+            self.bpm = anchor.bpm;
+        }
+        let anchor_time = *self.anchor_time.get_or_insert(time);
+        let beat = self.anchor_beat + f64::from(time - anchor_time) * f64::from(self.bpm) / 60.0;
+        [beat.rem_euclid(BEAT_CLOCK_WRAP) as f32, self.bpm, 0.0, 0.0]
+    }
 }
 
 struct GpuTimingState {
@@ -3822,6 +3890,7 @@ struct RenderState {
     paint_mask_size: u32,
     paint_mask_layers: u32,
     start_time: Instant,
+    beat_clock: BeatClock,
     gpu_timing: Option<GpuTimingState>,
     gpu_frames_submitted: u64,
     gpu_frames_completed: Arc<AtomicU64>,
@@ -4004,6 +4073,8 @@ struct App {
     output_last_presented_layer_count: u32,
     command_phase: f32,
     start_time: Instant,
+    /// `set_beat_clock` waiting for the renderer's next frame.
+    beat_clock_request: Option<BeatClockAnchor>,
     scene_layers: HashMap<String, SceneLayer>,
     /// Painted masks (strokes + their rasters), keyed by layer id.
     paint_masks: paint_mask::PaintMaskStore,
@@ -4355,6 +4426,7 @@ impl App {
             output_last_presented_layer_count: 0,
             command_phase: 0.0,
             start_time: Instant::now(),
+            beat_clock_request: None,
             scene_layers: HashMap::new(),
             paint_masks: paint_mask::PaintMaskStore::new(2048),
             pending_media_bindings: HashMap::new(),
@@ -6551,6 +6623,14 @@ impl App {
                 "upsert_layer" => self.apply_upsert_layer(command),
                 "set_layer_visibility" => self.apply_layer_visibility(command),
                 "set_layer_color" => self.apply_layer_color(command),
+                "set_layer_tint" => self.apply_layer_tint(command),
+                "set_beat_clock" => {
+                    let Some(anchor) = BeatClockAnchor::from_command(command) else {
+                        dropped = dropped.saturating_add(1);
+                        continue;
+                    };
+                    self.beat_clock_request = Some(anchor);
+                }
                 "start_prepared_transition" => {
                     if !self.prepared_transition_ready(command) {
                         dropped = dropped.saturating_add(1); continue;
@@ -11874,6 +11954,9 @@ impl App {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
+        if let Some(anchor) = self.beat_clock_request.take() {
+            renderer.beat_clock.rebase(anchor);
+        }
         let present_surface = self.output_window_attached;
         if present_surface {
             self.stats.swapchain_present_attempts =
@@ -14065,6 +14148,20 @@ impl App {
             .entry(layer_id.clone())
             .or_insert_with(|| SceneLayer::new(layer_id, 0));
         set_scene_layer_color(entry, rgba);
+    }
+
+    fn apply_layer_tint(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let Some(rgba) = rgba_at(command, &["rgba"]) else {
+            return;
+        };
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, 0));
+        entry.tint = [rgba[0].clamp(0.0, 1.0), rgba[1].clamp(0.0, 1.0), rgba[2].clamp(0.0, 1.0), 1.0];
     }
 
     fn apply_layer_native_params(&mut self, command: &Value) {
@@ -18730,6 +18827,7 @@ impl RenderState {
                 audio0: [0.0; 4],
                 audio1: [0.0; 4],
                 audio2: [0.0; 4],
+                clock: [0.0, 120.0, 0.0, 0.0],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -19493,6 +19591,7 @@ impl RenderState {
             paint_mask_size: 1,
             paint_mask_layers: 1,
             start_time: Instant::now(),
+            beat_clock: BeatClock::default(),
             gpu_timing,
             gpu_frames_submitted: 0,
             gpu_frames_completed,
@@ -23590,9 +23689,12 @@ impl RenderState {
         post_effects: &[[f32; 4]],
         stage: OutputStage,
     ) {
+        let time = time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32());
+        let clock = self.beat_clock.uniform(time);
         let uniforms = Uniforms {
             resolution: [self.config.width as f32, self.config.height as f32],
-            time: time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32()),
+            time,
+            clock,
             command_phase,
             layer_count: layers_seen as f32,
             frame_count: frame_count as f32,

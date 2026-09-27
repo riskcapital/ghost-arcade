@@ -73,6 +73,9 @@ struct Uniforms {
   // is 1, so a tangent-free mesh keeps its straight bilinear cells.
   swarp_tangents: array<vec4<f32>, 512>,
   mwarp_tangents: array<vec4<f32>, 512>,
+  // Beat clock (beat position, bpm, _, _): the editor's launch clock, run on
+  // the render clock between anchors. Drives beat-synced Edge Effects.
+  clock: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -185,6 +188,8 @@ struct LayerData {
   mesh_bounds: vec4<f32>,
   source_rect: vec4<f32>,
   fast_flags: vec4<u32>,
+  // Colour multiplier (Screen FX colour chases); white leaves the layer be.
+  tint: vec4<f32>,
 }
 
 @group(0) @binding(1)
@@ -2009,7 +2014,8 @@ fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
 //   5 (strobe rate, fill type, fill speed, gradient type)
 //   6 fill colour   7 second fill colour
 //   8 fill params A   9 (animation type, count, spacing, speed)
-//  10 animation params A   11 stroke params B   12 fill params B
+//  10 animation params A   11 stroke params B
+//  12 beat chase (group index, group count, chase beats, hue per beat)
 //  13 (cap, join, miter limit, width mode)
 //  14 (trim start, trim end, trim offset, trim mode)
 //  15 (trim speed, chase delay s, seed, custom centre)
@@ -2018,7 +2024,7 @@ fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
 //  18 group bounds (min x, min y, max x, max y) px
 //  19 the effect's own output-UV cull rectangle
 //  20 (cull reach px from the centerline, draws inside, reach px, _)
-//  21 unused
+//  21 beat reaction (mode, source, amount, decay), see edge_react
 
 const EDGE_PI: f32 = 3.14159265359;
 const EDGE_TAU: f32 = 6.28318530718;
@@ -3221,6 +3227,56 @@ fn edge_compose(fill: vec4<f32>, stroke: vec4<f32>, classic: bool) -> vec4<f32> 
   return vec4<f32>(rgb, sa + fa * (1.0 - sa));
 }
 
+/// Hue rotation about the grey axis (Rodrigues), `turns` of a full circle.
+fn edge_hue_rotate(c: vec3<f32>, turns: f32) -> vec3<f32> {
+  let a = turns * EDGE_TAU;
+  let k = vec3<f32>(0.57735027);
+  let ca = cos(a);
+  return clamp(c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+/// Beat reaction of one effect (Looks): slot 21 = (mode, source, amount,
+/// decay), slot 12 = (chase index, chase count, chase beats, hue per beat).
+/// Modes: 1 pulse, 2 boost, 3 step (one group member per beat), 4 strobe.
+/// Sources: 0 beat clock, 1 kick, 2 snare, 3 bass, 4 level, 5 treble; audio
+/// sources follow the beat clock while no audio is live, so a Look moves on
+/// a tapped or typed tempo too. Returns (alpha gain, whiten, hue turns, _).
+fn edge_react(rx: vec4<f32>, rc: vec4<f32>) -> vec4<f32> {
+  let mode = i32(floor(rx.x + 0.5));
+  let source = i32(floor(rx.y + 0.5));
+  let amount = clamp(rx.z, 0.0, 1.0);
+  let decay = max(rx.w, 0.05);
+  let n = max(floor(rc.y + 0.5), 1.0);
+  let k = floor(rc.x + 0.5);
+  let beat = u.clock.x - k * rc.z;
+  let beat_i = floor(beat);
+  let clock_env = exp(-(beat - beat_i) * 4.0 * decay);
+  let audio = ghost_audio_scene();
+  var env = clock_env;
+  if (source > 0 && ghost_audio_active(audio) > 0.5) {
+    if (source == 1) { env = ghost_audio_kick(audio); }
+    else if (source == 2) { env = ghost_audio_snare(audio); }
+    else if (source == 3) { env = ghost_audio_bass(audio); }
+    else if (source == 4) { env = ghost_audio_level(audio); }
+    else { env = ghost_audio_treble(audio); }
+  }
+  env = clamp(env, 0.0, 1.0);
+  var gain = 1.0;
+  var whiten = 0.0;
+  if (mode == 1) {
+    gain = 1.0 - amount + amount * env;
+  } else if (mode == 2) {
+    gain = 1.0 + amount * env * 1.5;
+    whiten = amount * env * 0.45;
+  } else if (mode == 3) {
+    let lit = select(0.0, 1.0, abs(edge_mod(floor(u.clock.x), n) - k) < 0.5);
+    gain = 1.0 - amount + amount * lit * mix(1.0, clock_env, 0.35);
+  } else if (mode == 4) {
+    gain = select(1.0 - amount, 1.0, env > 0.5);
+  }
+  return vec4<f32>(gain, whiten, rc.w * beat_i, 0.0);
+}
+
 /// The layer's edge stack at output UV `p_uv`: each effect is composited
 /// onto the layer with premultiplied source-over and its blend mode
 /// (W3C compositing), then the layer goes on with its own blend and opacity.
@@ -3261,9 +3317,16 @@ fn apply_native_edge_effects(layer: vec4<f32>, p_uv: vec2<f32>, li: u32, aa: f32
     let head = layers[li].edge_effects[e][0];
     // Premultiplied effect colour.
     let frag = edge_effect_fragment(li, e, p, base, ctx);
-    let src_a = clamp(frag.a, 0.0, 1.0) * clamp(head.y, 0.0, 1.0);
+    var src_a = clamp(frag.a, 0.0, 1.0) * clamp(head.y, 0.0, 1.0);
+    var src_c = clamp(frag.rgb / max(frag.a, 1e-6), vec3<f32>(0.0), vec3<f32>(1.0));
+    let react_mode = layers[li].edge_effects[e][21];
+    if (react_mode.x > 0.5) {
+      let r = edge_react(react_mode, layers[li].edge_effects[e][12]);
+      src_a = clamp(src_a * r.x, 0.0, 1.0);
+      if (r.z != 0.0) { src_c = edge_hue_rotate(src_c, r.z); }
+      src_c = mix(src_c, vec3<f32>(1.0), clamp(r.y, 0.0, 1.0));
+    }
     if (src_a <= 0.0) { continue; }
-    let src_c = clamp(frag.rgb / max(frag.a, 1e-6), vec3<f32>(0.0), vec3<f32>(1.0));
     let cb = select(vec3<f32>(0.0), cr / max(ca, 1e-6), ca > 1e-6);
     let blended = native_blend(cb, src_c, 1.0, head.z);
     cr = src_a * (1.0 - ca) * src_c + src_a * ca * blended + (1.0 - src_a) * cr;
@@ -3450,7 +3513,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let coverage = native_layer_shape(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), layer_index).x;
         if (coverage > 0.001) {
           let fill_alpha = clamp(layers[layer_index].color.a * 0.56 * coverage, 0.0, 1.0);
-          color = native_blend(color, layers[layer_index].color.rgb, fill_alpha, layers[layer_index].style.x);
+          color = native_blend(color, layers[layer_index].color.rgb * layers[layer_index].tint.rgb,
+            fill_alpha, layers[layer_index].style.x);
           out_alpha = fill_alpha + out_alpha * (1.0 - fill_alpha);
         }
       }
@@ -3504,6 +3568,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       content_alpha = edged.a;
     }
     if (content_alpha > 0.0) {
+      layer_rgb = layer_rgb * layers[layer_index].tint.rgb;
       let layer_alpha = clamp(layers[layer_index].color.a * content_alpha, 0.0, 1.0);
       color = native_blend(color, layer_rgb, layer_alpha, layers[layer_index].style.x);
       out_alpha = layer_alpha + out_alpha * (1.0 - layer_alpha);

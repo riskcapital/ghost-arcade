@@ -2922,6 +2922,34 @@ export interface EdgeEffect {
    *  between the first and the last layer. */
   chaseMode?: 'none' | 'order' | 'leftToRight' | 'radial';
   chaseSpread?: number;
+  /** Beat reaction, evaluated by the native core every frame (no per-frame
+   *  store writes). Looks use it to sync a stack to the beat. */
+  react?: EdgeEffectReact;
+}
+
+/** How an edge effect answers the beat. `pulse` dims between hits, `boost`
+ *  flares brighter on them, `step` lights one member of the group per beat
+ *  (in the effect's chase order), `strobe` flashes hard on the hit. The
+ *  beat source runs on the launch clock (tapped, typed, detected or Link
+ *  tempo); audio sources fall back to that clock while no audio is live. */
+export interface EdgeEffectReact {
+  mode: 'none' | 'pulse' | 'boost' | 'step' | 'strobe';
+  source: 'beat' | 'kick' | 'snare' | 'bass' | 'level' | 'treble';
+  /** 0..1 depth of the reaction. */
+  amount: number;
+  /** Flash decay speed, 1 = a quarter-beat tail. */
+  decay?: number;
+  /** Beats between neighbours in the group chase (beat source only). */
+  chaseBeats?: number;
+  /** Hue turns added each beat (colour cycling), e.g. 0.25 = four colours. */
+  hueStep?: number;
+}
+
+/** The one-click Look a stack came from, so the gallery can show it as
+ *  active and swap its palette in place. */
+export interface EdgeLookRef {
+  id: string;
+  paletteId: string;
 }
 
 export interface EdgeEffectsConfig {
@@ -2929,6 +2957,8 @@ export interface EdgeEffectsConfig {
   effects: EdgeEffect[];
   /** Rounds every corner of the outline the stack is drawn on (output px). */
   cornerRadius?: number;
+  /** Set when the stack was applied from the Looks gallery. */
+  look?: EdgeLookRef;
 }
 
 export const VJ_MIX_SOURCE_INDEX = -1;
@@ -5744,6 +5774,17 @@ export interface StageEffect {
    *  tinting slice content with this color is a follow-up. UI exposes
    *  the picker so the data round-trips with project save. */
   color?: string;
+  /** What the effect drives on each screen. Absent means brightness, the
+   *  only behaviour before colour chases, so saved projects are unchanged. */
+  output?: 'brightness' | 'color' | 'both';
+  /** Colour chases: screens blend from `color2` (rest) to `color` (lit).
+   *  `rainbow` instead walks the hue wheel along the chase order. */
+  colorStyle?: 'two-tone' | 'rainbow';
+  color2?: string;
+  /** Custom chase order: layer ids (Mapping) or slice/layer ids (Stage), in
+   *  the order the user clicked them. Screens not listed follow, in their
+   *  usual order. Absent = the usual order. */
+  order?: string[];
 }
 
 export interface SurfaceSlice {
