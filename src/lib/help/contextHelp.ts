@@ -32,6 +32,20 @@ export function installContextHelp() {
   let originalTitle: string | null = null;
   let priorDescription: string | null = null;
   let dragging = false;
+  // After a click the control under a still pointer can be swapped for
+  // another (Open on display becomes Close on display). The browser reports
+  // the pointer as entering the new control, and its help card then sat over
+  // the controls below until the pointer moved. Help waits for a real move.
+  let stillAfterClick = false;
+  function moved(event: PointerEvent) {
+    if (!event.movementX && !event.movementY) return;
+    stillAfterClick = false;
+    document.removeEventListener('pointermove', moved, true);
+    // The move that ends the wait may be the one that entered a control.
+    if (event.pointerType === 'touch' || event.buttons || dragging) return;
+    const target = find(event);
+    if (target && target !== owner) { clearTimeout(hideTimer); begin(target); }
+  }
 
   let enabled = true;
   const unsubscribePreference = tooltipsEnabled.subscribe(value => { enabled = value; hide(); });
@@ -103,7 +117,7 @@ export function installContextHelp() {
     return el.closest<HTMLElement>(controls);
   }
   function over(event: PointerEvent) {
-    if (event.pointerType === 'touch' || event.buttons || dragging) return;
+    if (event.pointerType === 'touch' || event.buttons || dragging || stillAfterClick) return;
     if (card.contains(event.target as Node)) { clearTimeout(hideTimer); return; }
     const target = find(event);
     if (target) { clearTimeout(hideTimer); begin(target); }
@@ -126,6 +140,7 @@ export function installContextHelp() {
   function down(event: PointerEvent) {
     if (card.contains(event.target as Node)) return;
     dragging = true; hide();
+    if (!stillAfterClick) { stillAfterClick = true; document.addEventListener('pointermove', moved, true); }
   }
   function up() { dragging = false; }
   function blur() { dragging = false; hide(); }
@@ -158,6 +173,7 @@ export function installContextHelp() {
   document.addEventListener('visibilitychange', hide);
   return () => {
     unsubscribePreference(); hide(); card.remove();
+    document.removeEventListener('pointermove', moved, true);
     document.removeEventListener('pointerover', over); document.removeEventListener('pointerout', leave);
     document.removeEventListener('focusin', focus); document.removeEventListener('focusout', focusOut);
     document.removeEventListener('pointerdown', down, true); document.removeEventListener('pointerup', up, true);
