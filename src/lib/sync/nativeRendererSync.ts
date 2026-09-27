@@ -5162,6 +5162,9 @@ export class NativeRendererSync {
   /** Last beat-clock anchor sent to the core (beat, bpm, performance.now()). */
   private lastBeatClock: { beat: number; bpm: number; at: number } | null = null;
   private beatClockTimer: ReturnType<typeof setInterval> | null = null;
+  /** One-way command latency estimate (half the submit round trip), so the
+   *  anchor names the beat at the moment the core applies it. */
+  private beatClockLatencyMs = 0;
   private liveClockOriginMs = performance.now();
   private latestRenderClockSeconds: number | null = null;
   private lastRenderClockSentSeconds: number | null = null;
@@ -5877,7 +5880,7 @@ export class NativeRendererSync {
    *  from where the core's own extrapolation puts it (tempo change, audio
    *  beat, nudge, resync, Link), and every few seconds regardless. */
   private beatClockCommand(nowMs = performance.now()): RendererCommand | null {
-    const { beat, beatMs } = launchClockPosition(nowMs);
+    const { beat, beatMs } = launchClockPosition(nowMs + this.beatClockLatencyMs);
     const bpm = beatMs > 0 ? 60000 / beatMs : 120;
     if (!Number.isFinite(beat) || !Number.isFinite(bpm)) return null;
     const last = this.lastBeatClock;
@@ -5891,8 +5894,15 @@ export class NativeRendererSync {
 
   private pushBeatClock() {
     if (!this.running || this.manualClockExportDepth > 0) return;
-    const command = this.beatClockCommand();
-    if (command) void submitNativeRendererCommands([command]).catch(() => { this.lastBeatClock = null; });
+    const sentAt = performance.now();
+    const command = this.beatClockCommand(sentAt);
+    if (!command) return;
+    void submitNativeRendererCommands([command])
+      .then(() => {
+        const oneWay = Math.min(250, (performance.now() - sentAt) / 2);
+        this.beatClockLatencyMs = this.beatClockLatencyMs * 0.7 + oneWay * 0.3;
+      })
+      .catch(() => { this.lastBeatClock = null; });
   }
 
   private audioCommand(audio: VisualAudioState): RendererCommand | null {
@@ -8819,8 +8829,9 @@ export class NativeRendererSync {
     if (audioCommand) commands.push(audioCommand);
     const audioSpectrumCommand = this.audioSpectrumCommand(layers, visual);
     if (audioSpectrumCommand) commands.push(audioSpectrumCommand);
-    const beatClockCommand = this.beatClockCommand();
-    if (beatClockCommand) commands.push(beatClockCommand);
+    // The beat clock is anchored by its own timer (pushBeatClock), not in
+    // this batch: a scene batch can take long enough to land that the
+    // anchor would name a beat the core has already passed.
 
     const now = Date.now();
     this.scheduleNativeStatusPoll(now);

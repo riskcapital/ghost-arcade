@@ -1350,8 +1350,10 @@ struct LayerGpu {
     mesh_bounds: [f32; 4],
     source_rect: [f32; 4],
     fast_flags: [u32; 4],
-    /// Colour multiplier (r, g, b, _) applied to the layer's finished
-    /// colour, edge effects included. Screen FX colour chases drive it.
+    /// Colour multiplier (r, g, b) applied to the layer's finished colour,
+    /// edge effects included (Screen FX colour chases drive it), and in w
+    /// the content alpha folded into `color`, so edge effects on a
+    /// source-less layer are not dimmed with its placeholder.
     tint: [f32; 4],
 }
 
@@ -3298,7 +3300,7 @@ impl SceneLayer {
             mesh_bounds: self.mesh_bounds_gpu(),
             source_rect: self.source_rect,
             fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), 0, 0],
-            tint: self.tint,
+            tint: [self.tint[0], self.tint[1], self.tint[2], self.color[3].clamp(0.0, 1.0)],
         }
     }
 

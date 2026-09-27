@@ -188,7 +188,8 @@ struct LayerData {
   mesh_bounds: vec4<f32>,
   source_rect: vec4<f32>,
   fast_flags: vec4<u32>,
-  // Colour multiplier (Screen FX colour chases); white leaves the layer be.
+  // (r, g, b) colour multiplier (Screen FX colour chases; white leaves the
+  // layer be), w the content alpha folded into color.a (see fs_main).
   tint: vec4<f32>,
 }
 
@@ -3563,16 +3564,22 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
       }
     }
+    // color.a is the layer opacity times its content alpha (tint.w). The
+    // content alpha dims a layer's own placeholder content (a source-less
+    // shape draws at 35%) but must not dim the Edge Effects drawn on it.
+    var layer_alpha = layers[layer_index].color.a;
     if (in_edges) {
-      let edged = apply_native_edge_effects(vec4<f32>(layer_rgb, content_alpha), canvas_uv, layer_index, edge_aa);
+      let own = clamp(layers[layer_index].tint.w, 0.0, 1.0);
+      let edged = apply_native_edge_effects(vec4<f32>(layer_rgb, content_alpha * own), canvas_uv, layer_index, edge_aa);
       layer_rgb = edged.rgb;
       content_alpha = edged.a;
+      layer_alpha = layer_alpha / max(own, 1e-4);
     }
     if (content_alpha > 0.0) {
       layer_rgb = layer_rgb * layers[layer_index].tint.rgb;
-      let layer_alpha = clamp(layers[layer_index].color.a * content_alpha, 0.0, 1.0);
-      color = native_blend(color, layer_rgb, layer_alpha, layers[layer_index].style.x);
-      out_alpha = layer_alpha + out_alpha * (1.0 - layer_alpha);
+      let blend_alpha = clamp(min(layer_alpha, 1.0) * content_alpha, 0.0, 1.0);
+      color = native_blend(color, layer_rgb, blend_alpha, layers[layer_index].style.x);
+      out_alpha = blend_alpha + out_alpha * (1.0 - blend_alpha);
     }
   }
 

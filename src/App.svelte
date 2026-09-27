@@ -2314,6 +2314,7 @@
     '.warp-handles-offset .tangent-handle',
     '.warp-handles-offset .mask-place-layer',
     '.custom-shape-handles',
+    '.chase-badges-done',
     '.layer-shape-warp-overlay',
     '.shape-interaction-overlay',
     '.mask-overlay',

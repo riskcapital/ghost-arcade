@@ -29,21 +29,23 @@
 <div class="chase-controls">
   <div class="param-row">
     <span class="param-label">Drives</span>
-    <select class="chase-select" value={output} aria-label="What the effect drives"
-      onchange={(e) => set({ output: (e.currentTarget as HTMLSelectElement).value as StageEffect['output'] })}>
-      <option value="brightness">Brightness</option>
-      <option value="color">Colour</option>
-      <option value="both">Colour and brightness</option>
-    </select>
+    <div class="chase-seg" role="radiogroup" aria-label="What the effect drives">
+      {#each [['brightness', 'Brightness'], ['color', 'Colour'], ['both', 'Both']] as [value, label] (value)}
+        <button type="button" role="radio" aria-checked={output === value} class:active={output === value}
+          onclick={() => set({ output: value as StageEffect['output'] })}>{label}</button>
+      {/each}
+    </div>
   </div>
   {#if output !== 'brightness'}
     <div class="param-row">
       <span class="param-label">Colours</span>
-      <select class="chase-select" value={effect.colorStyle ?? 'two-tone'} aria-label="Colour style"
-        onchange={(e) => set({ colorStyle: (e.currentTarget as HTMLSelectElement).value as StageEffect['colorStyle'] })}>
-        <option value="two-tone">Two colours</option>
-        <option value="rainbow">Rainbow</option>
-      </select>
+      <div class="chase-seg" role="radiogroup" aria-label="Colour style">
+        {#each [['two-tone', 'Two colours'], ['rainbow', 'Rainbow']] as [value, label] (value)}
+          <button type="button" role="radio" aria-checked={(effect.colorStyle ?? 'two-tone') === value}
+            class:active={(effect.colorStyle ?? 'two-tone') === value}
+            onclick={() => set({ colorStyle: value as StageEffect['colorStyle'] })}>{label}</button>
+        {/each}
+      </div>
       {#if (effect.colorStyle ?? 'two-tone') === 'two-tone'}
         <input type="color" class="chase-color" aria-label="Lit colour" title="Lit colour" value={effect.color ?? DEFAULT_CHASE_COLOR}
           onchange={(e) => set({ color: (e.currentTarget as HTMLInputElement).value })} />
@@ -71,7 +73,10 @@
   .chase-controls { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
   .param-row { display: flex; align-items: center; gap: 6px; }
   .param-label { flex: 0 0 64px; font-size: 11px; color: #9da3b0; }
-  .chase-select { flex: 1; min-width: 0; background: #111; color: #ddd; border: 1px solid #333; border-radius: 4px; font-size: 11px; padding: 2px 4px; }
+  .chase-seg { flex: 1; display: flex; min-width: 0; border: 1px solid #3a3a48; border-radius: 4px; overflow: hidden; }
+  .chase-seg button { flex: 1; background: #15151b; color: #aeb2bd; border: 0; font-size: 11px; padding: 3px 4px; cursor: pointer; white-space: nowrap; }
+  .chase-seg button + button { border-left: 1px solid #3a3a48; }
+  .chase-seg button.active { background: rgba(255, 79, 216, 0.22); color: #fff; }
   .chase-color { width: 26px; height: 20px; padding: 0; border: 1px solid #333; border-radius: 4px; background: none; cursor: pointer; }
   .chase-order-btn, .chase-order-reset { background: #1a1a22; color: #d5d8e0; border: 1px solid #3a3a48; border-radius: 4px; font-size: 11px; padding: 3px 8px; cursor: pointer; }
   .chase-order-btn { flex: 1; }

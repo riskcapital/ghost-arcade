@@ -123,9 +123,9 @@ async function uploadScene(rpc: NativeRpc, layers: Layer[], width: number, heigh
   layers.forEach((layer, index) => {
     const payload = nativeEdgeEffectPayload(layer as any, width, height, context);
     commands.push(
-      { type: 'upload_source_frame', source_id: layer.id, width: 64, height: 64, seq: 1, rgba_b64: TRANSPARENT },
+      ...(process.env.LOOK_NO_SOURCE ? [] : [{ type: 'upload_source_frame', source_id: layer.id, width: 64, height: 64, seq: 1, rgba_b64: TRANSPARENT }]),
       { type: 'upsert_layer', layer_id: layer.id, opacity: 1, z_index: index, corners: layer.corners, mesh_grid: null },
-      { type: 'bind_media_source', layer_id: layer.id, source_id: layer.id, source_type: 'image', uri: `memory://${layer.id}` },
+      ...(process.env.LOOK_NO_SOURCE ? [] : [{ type: 'bind_media_source', layer_id: layer.id, source_id: layer.id, source_type: 'image', uri: `memory://${layer.id}` }]),
       {
         type: 'set_layer_edge_effects', layer_id: layer.id,
         edge_effects: payload?.effects ?? [], edge_outline: payload?.outline ?? [], edge_corners: payload?.corners ?? [],
