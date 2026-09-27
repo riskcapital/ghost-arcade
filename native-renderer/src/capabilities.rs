@@ -145,6 +145,7 @@ pub const CORE_COMMAND_TYPES: &[&str] = &[
     "present",
     "set_native_quality_policy",
     "set_audio_state",
+    "set_audio_spectrum",
     "set_render_clock",
     "bind_media_source",
     "decode_media_source",

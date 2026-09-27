@@ -11,6 +11,7 @@ mod compute_graph;
 mod media_decode;
 mod hap_video;
 mod hap_texture;
+mod isf_passes;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod hardware_video;
 #[cfg(target_os = "windows")]
@@ -46,6 +47,11 @@ use std::{
 };
 
 use audio::{GhostAudioUniforms, ghost_audio_uniform_layout};
+use isf_passes::{
+    IsfAudioKind, IsfAudioSpectrum, IsfPassPlan, ISF_AUDIO_DEFAULT_WIDTH, MAX_ISF_PASS_TARGETS,
+    fill_isf_audio_row, fill_isf_audio_row_from_bands, isf_audio_width, isf_pass_target_image_code,
+    isf_physical_target_size, parse_isf_pass_plan, resolve_isf_target_size,
+};
 use base64::Engine;
 use bytemuck::{Pod, Zeroable};
 use capabilities::{
@@ -174,6 +180,12 @@ const NATIVE_ISF_EXTRA_PARAM_VEC4S: usize = NATIVE_ISF_PARAM_VEC4S - 2;
 
 const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
 const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
+/// First binding after (uniforms, source array, sampler): ISF pass targets
+/// then the audioFFT and audio waveform rows.
+const NATIVE_ISF_FIRST_EXTRA_BINDING: u32 = 3;
+const NATIVE_ISF_AUDIO_FFT_BINDING: u32 = NATIVE_ISF_FIRST_EXTRA_BINDING + MAX_ISF_PASS_TARGETS as u32;
+const NATIVE_ISF_AUDIO_WAVEFORM_BINDING: u32 = NATIVE_ISF_AUDIO_FFT_BINDING + 1;
+const NATIVE_ISF_EXTRA_TEXTURE_BINDINGS: u32 = MAX_ISF_PASS_TARGETS as u32 + 2;
 const GPU_TIMESTAMP_READ_BYTES: u64 = 16;
 const COMPUTE_READBACK_PREVIEW_WORDS: usize = 128;
 const COMPUTE_READBACK_BYTES_MAX: u64 = 4 * 1024 * 1024;
@@ -908,6 +920,17 @@ struct CoreStatus {
     source_frame_slots: u32,
     isf_shader_bindings: u32,
     isf_uniform_sets: u32,
+    /// Shaders routed through the pass-aware ISF host (PASSES or audio rows).
+    isf_pass_host_shaders: u32,
+    isf_multipass_renders: u64,
+    /// Layers holding multi-pass buffers, the buffers, and their VRAM.
+    isf_pass_states: u32,
+    isf_pass_targets: u32,
+    isf_pass_target_bytes: u64,
+    isf_audio_spectrum_live: bool,
+    isf_audio_spectrum_seq: u64,
+    isf_audio_fft_bins: u32,
+    isf_audio_waveform_samples: u32,
     native_shader_layers: u32,
     native_procedural_layers: u32,
     native_instrument_layers: u32,
@@ -1345,6 +1368,12 @@ struct NativeShaderUniforms {
     // Append-only extension so older hosted shaders keep the params0/params1 offsets.
     audio2: [f32; 4],
     params_extra: [[f32; 4]; NATIVE_ISF_EXTRA_PARAM_VEC4S],
+    // Pass-aware ISF host tail (see NATIVE_ISF_HOST_BLOCK_TAIL). Single-pass
+    // shaders never declare it; it is still written so WGSL/legacy layouts
+    // keep reading the same prefix.
+    isf_pass: [f32; 4],
+    isf_pass_sizes: [[f32; 4]; MAX_ISF_PASS_TARGETS / 2],
+    isf_audio: [f32; 4],
 }
 
 #[derive(Clone, Debug)]
@@ -1464,6 +1493,57 @@ struct NativeShaderPipeline {
     pipeline: wgpu::RenderPipeline,
 }
 
+struct NativeIsfAudioRow {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    /// Identity of the uploaded content (spectrum seq, or a hash of the band
+    /// fallback inputs) so an unchanged frame is not re-uploaded.
+    stamp: Option<u64>,
+}
+
+struct NativeIsfPassTarget {
+    /// Owned alongside the views so the pair lives exactly as long as the
+    /// target does.
+    _textures: [wgpu::Texture; 2],
+    views: [wgpu::TextureView; 2],
+    /// Index of the view holding the latest contents; passes read it and
+    /// render into the other one, then swap.
+    front: usize,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+}
+
+struct NativeIsfPassState {
+    /// Shader identity + reload generation + output geometry. A change drops
+    /// every target, which is how persistent buffers reset on reload/resize.
+    signature: u64,
+    targets: Vec<Option<NativeIsfPassTarget>>,
+    uniform_buffers: Vec<wgpu::Buffer>,
+}
+
+/// Per-render description of a pass-aware ISF shader, resolved by the core.
+struct NativeIsfPassJob<'a> {
+    state_key: &'a str,
+    generation: u64,
+    passes: &'a [isf_passes::IsfPassSpec],
+    /// Per target: virtual size (shader pixels) and FLOAT flag.
+    targets: Vec<((f32, f32), bool)>,
+    fft_width: Option<u32>,
+    waveform_width: Option<u32>,
+}
+
+/// Audio data for this render: the live analyser spectrum when one is
+/// flowing, otherwise the band levels the fallback rows are built from.
+struct NativeIsfAudioFrame<'a> {
+    live: Option<(&'a [f32], &'a [f32], u64)>,
+    bass: f32,
+    mid: f32,
+    high: f32,
+    level: f32,
+    time: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeIsfInputKind {
     Float,
@@ -1473,6 +1553,10 @@ enum NativeIsfInputKind {
     Color,
     Event,
     Image,
+    /// ISF `audioFFT`: a 1-row texture of spectrum magnitudes 0..1.
+    AudioFft,
+    /// ISF `audio`: a 1-row texture of waveform samples mapped to 0..1.
+    AudioWaveform,
     Unsupported,
 }
 
@@ -1483,6 +1567,8 @@ struct NativeIsfInputBinding {
     offset: Option<usize>,
     components: usize,
     default_values: [f32; 4],
+    /// Audio row width (the input's MAX); 0 for non-audio inputs.
+    audio_width: u32,
 }
 
 struct NativeComputePipeline {
@@ -2095,6 +2181,9 @@ impl NativeShaderUniforms {
             params1: [params[4], params[5], params[6], params[7]],
             audio2,
             params_extra,
+            isf_pass: [0.0, 1.0, render_width, render_height],
+            isf_pass_sizes: [[0.0; 4]; MAX_ISF_PASS_TARGETS / 2],
+            isf_audio: [0.0, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -3560,6 +3649,16 @@ struct RenderState {
     native_shader_vertex_module: wgpu::ShaderModule,
     native_shader_bind_group_layout: wgpu::BindGroupLayout,
     native_shader_bind_group: wgpu::BindGroup,
+    /// D2Array view of the shadow input frames, for per-pass ISF bind groups.
+    native_shader_input_view: wgpu::TextureView,
+    /// 1x1 placeholder bound in unused ISF pass/audio slots.
+    isf_dummy_texture_view: wgpu::TextureView,
+    /// ISF audio rows keyed by (kind, width): one texture per distinct MAX.
+    isf_audio_rows: HashMap<(IsfAudioKind, u32), NativeIsfAudioRow>,
+    /// Reused RGBA staging for audio row uploads (no per-frame allocation).
+    isf_audio_scratch: Vec<u8>,
+    /// Multi-pass ISF buffers per layer: targets (ping-pong) + pass uniforms.
+    isf_pass_states: HashMap<String, NativeIsfPassState>,
     stage3d_overlay_pipeline: wgpu::RenderPipeline,
     stage3d_overlay_uniform_buffer: wgpu::Buffer,
     stage3d_overlay_item_buffer: wgpu::Buffer,
@@ -3901,6 +4000,14 @@ struct App {
     shader_registry: HashMap<String, ShaderRecord>,
     shader_sources: HashMap<String, Arc<str>>,
     shader_isf_inputs: HashMap<String, Vec<NativeIsfInputBinding>>,
+    /// Pass plan + audio rows for ISF shaders that need the pass-aware host,
+    /// with the precompile generation (a reload resets persistent buffers).
+    shader_isf_hosts: HashMap<String, (Arc<NativeIsfHostInfo>, u64)>,
+    isf_shader_generation: u64,
+    /// Latest analyser spectrum for ISF audio / audioFFT inputs.
+    isf_audio_spectrum: IsfAudioSpectrum,
+    isf_multipass_renders: u64,
+    isf_audio_decode_scratch: Vec<u8>,
     shader_precompile_queue_cap: u32,
     shader_precompile_per_frame: u32,
     shader_metadata_cache_cap: u32,
@@ -4205,6 +4312,11 @@ impl App {
             shader_registry: HashMap::new(),
             shader_sources: HashMap::new(),
             shader_isf_inputs: HashMap::new(),
+            shader_isf_hosts: HashMap::new(),
+            isf_shader_generation: 0,
+            isf_audio_spectrum: IsfAudioSpectrum::default(),
+            isf_multipass_renders: 0,
+            isf_audio_decode_scratch: Vec::new(),
             shader_precompile_queue_cap: 4096,
             shader_precompile_per_frame: 4,
             shader_metadata_cache_cap: 16384,
@@ -4844,6 +4956,27 @@ impl App {
             source_frame_slots: MAX_SOURCE_FRAME_SLOTS as u32,
             isf_shader_bindings: self.isf_layer_bindings.len().min(1024) as u32,
             isf_uniform_sets: self.isf_uniforms.len().min(1024) as u32,
+            isf_pass_host_shaders: self.shader_isf_hosts.len().min(u32::MAX as usize) as u32,
+            isf_multipass_renders: self.isf_multipass_renders,
+            isf_pass_states: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.isf_pass_state_summary().0 as u32)
+                .unwrap_or(0),
+            isf_pass_targets: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.isf_pass_state_summary().1 as u32)
+                .unwrap_or(0),
+            isf_pass_target_bytes: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.isf_pass_state_summary().2)
+                .unwrap_or(0),
+            isf_audio_spectrum_live: self.isf_audio_spectrum.is_live(Instant::now()),
+            isf_audio_spectrum_seq: self.isf_audio_spectrum.seq,
+            isf_audio_fft_bins: self.isf_audio_spectrum.fft.len() as u32,
+            isf_audio_waveform_samples: self.isf_audio_spectrum.waveform.len() as u32,
             native_shader_layers: self
                 .scene_layers
                 .values()
@@ -6361,6 +6494,7 @@ impl App {
                     self.request_present();
                 }
                 "set_audio_state" => self.apply_audio_state(command),
+                "set_audio_spectrum" => self.apply_audio_spectrum(command),
                 "set_render_clock" => self.apply_render_clock(command),
                 "set_clip_audio_mix" => {
                     self.clip_audio_mix = command.get("voices").cloned().unwrap_or_else(|| json!([]));
@@ -12337,6 +12471,7 @@ impl App {
             self.shader_registry.clear();
             self.shader_sources.clear();
             self.shader_isf_inputs.clear();
+            self.shader_isf_hosts.clear();
             // Same key space as the three above: uniform state for a shader
             // whose record is gone can never be read again. It was the one
             // shader-keyed map with no removal path anywhere, so clearing the
@@ -13443,6 +13578,21 @@ impl App {
                         self.shader_registry.insert(shader_id.clone(), record);
                         self.shader_sources
                             .insert(shader_id.clone(), Arc::<str>::from(native_source));
+                        let host = matches!(probe.kind, NativeShaderSourceKind::IsfGlsl)
+                            .then(|| native_isf_host_info(&source))
+                            .filter(NativeIsfHostInfo::needs_pass_host);
+                        match host {
+                            Some(host) => {
+                                // Every precompile is a (re)load: a new
+                                // generation drops persistent buffers.
+                                self.isf_shader_generation = self.isf_shader_generation.wrapping_add(1);
+                                self.shader_isf_hosts
+                                    .insert(shader_id.clone(), (Arc::new(host), self.isf_shader_generation));
+                            }
+                            None => {
+                                self.shader_isf_hosts.remove(&shader_id);
+                            }
+                        }
                         self.shader_isf_inputs.insert(shader_id, isf_inputs);
                         self.stats.shader_precompile_compiled =
                             self.stats.shader_precompile_compiled.saturating_add(1);
@@ -13457,6 +13607,7 @@ impl App {
                         self.stats.shader_precompile_failed =
                             self.stats.shader_precompile_failed.saturating_add(1);
                         self.shader_isf_inputs.remove(&shader_id);
+                        self.shader_isf_hosts.remove(&shader_id);
                         self.last_shader_error = Some(format!(
                             "{shader_id}: native GLSL/ISF parse probe failed: {err}; no browser fallback is allowed"
                         ));
@@ -13487,6 +13638,7 @@ impl App {
                 self.shader_sources
                     .insert(shader_id.clone(), Arc::<str>::from(source));
                 self.shader_isf_inputs.remove(&shader_id);
+                self.shader_isf_hosts.remove(&shader_id);
                 self.stats.shader_precompile_compiled =
                     self.stats.shader_precompile_compiled.saturating_add(1);
                 self.stats.shader_cache_entries = self.shader_registry.len() as u64;
@@ -13500,6 +13652,7 @@ impl App {
                 self.stats.shader_precompile_failed =
                     self.stats.shader_precompile_failed.saturating_add(1);
                 self.shader_isf_inputs.remove(&shader_id);
+                self.shader_isf_hosts.remove(&shader_id);
                 self.last_shader_error = Some(format!("{shader_id}: {err}"));
             }
         }
@@ -14332,6 +14485,15 @@ impl App {
     }
 
     fn render_bound_isf_layers(&mut self) {
+        // Free multi-pass buffers of layers that stopped rendering ISF.
+        if let Some(renderer) = self.renderer.as_mut() {
+            let bindings = &self.isf_layer_bindings;
+            let layers = &self.scene_layers;
+            renderer.retain_isf_pass_states(|layer_id| {
+                bindings.contains_key(layer_id)
+                    || layers.get(layer_id).is_some_and(|layer| layer.shader_id.is_some())
+            });
+        }
         if self.isf_layer_bindings.is_empty() {
             return;
         }
@@ -14466,18 +14628,80 @@ impl App {
                 .get(&layer_id)
                 .and_then(|layer| layer.render_quality)
                 .unwrap_or(self.native_quality.quality_scale);
+            let pass_host = self.shader_isf_hosts.get(&shader_id).cloned();
+            let target_sizes = pass_host
+                .as_ref()
+                .map(|(host, _)| {
+                    let bindings = self.shader_isf_inputs.get(&shader_id);
+                    let input_value = |name: &str| -> Option<f64> {
+                        let binding = bindings?.iter().find(|binding| binding.name == name)?;
+                        let offset = binding.offset?;
+                        params.get(offset).map(|value| *value as f64)
+                    };
+                    let render_w = shader_uniforms.resolution_time[0];
+                    let render_h = shader_uniforms.resolution_time[1];
+                    host.plan
+                        .targets
+                        .iter()
+                        .map(|target| {
+                            (
+                                resolve_isf_target_size(target, render_w, render_h, &input_value),
+                                target.float,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let spectrum_live = self.isf_audio_spectrum.is_live(Instant::now());
+            let spectrum = &self.isf_audio_spectrum;
             match self.renderer.as_mut() {
                 Some(renderer) => {
-                    match renderer.render_native_wgsl_shader_frame(
-                        slot,
-                        &pipeline_key,
-                        source_kind,
-                        &source,
-                        &fragment_entry,
-                        &shader_uniforms,
-                        &image_input_slots,
-                        quality_scale,
-                    ) {
+                    let result = if let Some((host, generation)) = pass_host.as_ref() {
+                        let passes = host.plan.effective_passes();
+                        let job = NativeIsfPassJob {
+                            state_key: &layer_id,
+                            generation: *generation,
+                            passes: &passes,
+                            targets: target_sizes,
+                            fft_width: host.fft_width,
+                            waveform_width: host.waveform_width,
+                        };
+                        let audio = NativeIsfAudioFrame {
+                            live: spectrum_live.then(|| {
+                                (spectrum.fft.as_slice(), spectrum.waveform.as_slice(), spectrum.seq)
+                            }),
+                            bass: shader_uniforms.audio0[1],
+                            mid: shader_uniforms.audio0[2],
+                            high: shader_uniforms.audio1[0],
+                            level: shader_uniforms.audio0[0],
+                            time: shader_uniforms.resolution_time[2],
+                        };
+                        self.isf_multipass_renders = self.isf_multipass_renders.saturating_add(1);
+                        renderer.render_native_isf_pass_host_frame(
+                            slot,
+                            &pipeline_key,
+                            source_kind,
+                            &source,
+                            &fragment_entry,
+                            &shader_uniforms,
+                            &job,
+                            &image_input_slots,
+                            quality_scale,
+                            &audio,
+                        )
+                    } else {
+                        renderer.render_native_wgsl_shader_frame(
+                            slot,
+                            &pipeline_key,
+                            source_kind,
+                            &source,
+                            &fragment_entry,
+                            &shader_uniforms,
+                            &image_input_slots,
+                            quality_scale,
+                        )
+                    };
+                    match result {
                         Ok(()) => {
                             self.source_frames.insert(source_id, SourceFrame::full(seq));
                             self.stats.pipeline_cache_entries =
@@ -14553,6 +14777,30 @@ impl App {
                 entry.effect_count += 1.0;
             }
         }
+    }
+
+    /// Live analyser rows for ISF `audioFFT` / `audio` inputs:
+    /// `{ active, fft_b64?, waveform_b64? }` as bytes (0..255 = 0..1), or
+    /// `{ fft: [..], waveform: [..] }` as numbers in 0..1. Decoded into
+    /// reused buffers; the GPU rows upload lazily at the next ISF render.
+    fn apply_audio_spectrum(&mut self, command: &Value) {
+        let active = bool_at(command, &["active"]).unwrap_or(true);
+        let spectrum = &mut self.isf_audio_spectrum;
+        for (key_b64, key_numbers, is_fft) in [("fft_b64", "fft", true), ("waveform_b64", "waveform", false)] {
+            let target = if is_fft { &mut spectrum.fft } else { &mut spectrum.waveform };
+            if let Some(encoded) = command.get(key_b64).and_then(Value::as_str) {
+                let scratch = &mut self.isf_audio_decode_scratch;
+                scratch.clear();
+                if base64::engine::general_purpose::STANDARD.decode_vec(encoded, scratch).is_ok() {
+                    IsfAudioSpectrum::set_from_bytes(target, scratch);
+                }
+            } else if let Some(values) = command.get(key_numbers).and_then(Value::as_array) {
+                IsfAudioSpectrum::set_from_numbers(target, values);
+            }
+        }
+        spectrum.active = active;
+        spectrum.seq = spectrum.seq.wrapping_add(1);
+        spectrum.received_at = Some(Instant::now());
     }
 
     fn apply_audio_state(&mut self, command: &Value) {
@@ -18680,10 +18928,22 @@ impl RenderState {
                 dimension: Some(wgpu::TextureViewDimension::D2Array),
                 ..Default::default()
             });
-        let native_shader_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Ghost Render Core Native Shader Bind Group Layout"),
-                entries: &[
+        // ISF pass targets (3..=10) and audio rows (11, 12) share the one
+        // native shader layout, so single-pass pipelines stay compatible and
+        // bind a 1x1 placeholder in those slots.
+        let isf_dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Ghost Render Core ISF Placeholder Texture"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let isf_dummy_texture_view = isf_dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut native_shader_layout_entries = Vec::with_capacity(3 + NATIVE_ISF_EXTRA_TEXTURE_BINDINGS as usize);
+        native_shader_layout_entries.extend([
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -18710,12 +18970,25 @@ impl RenderState {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
-                ],
+        ]);
+        for binding in NATIVE_ISF_FIRST_EXTRA_BINDING..NATIVE_ISF_FIRST_EXTRA_BINDING + NATIVE_ISF_EXTRA_TEXTURE_BINDINGS {
+            native_shader_layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
             });
-        let native_shader_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Ghost Render Core Native Shader Bind Group"),
-            layout: &native_shader_bind_group_layout,
-            entries: &[
+        }
+        let native_shader_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Ghost Render Core Native Shader Bind Group Layout"),
+                entries: &native_shader_layout_entries,
+            });
+        let mut native_shader_bind_entries = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: native_shader_uniform_buffer.as_entire_binding(),
@@ -18728,7 +19001,17 @@ impl RenderState {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&source_frame_sampler),
                 },
-            ],
+        ];
+        for binding in NATIVE_ISF_FIRST_EXTRA_BINDING..NATIVE_ISF_FIRST_EXTRA_BINDING + NATIVE_ISF_EXTRA_TEXTURE_BINDINGS {
+            native_shader_bind_entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::TextureView(&isf_dummy_texture_view),
+            });
+        }
+        let native_shader_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Render Core Native Shader Bind Group"),
+            layout: &native_shader_bind_group_layout,
+            entries: &native_shader_bind_entries,
         });
 
         window.set_title(&format!("Ghost Render Core - {}", adapter_info.name));
@@ -18852,6 +19135,11 @@ impl RenderState {
             native_shader_vertex_module,
             native_shader_bind_group_layout,
             native_shader_bind_group,
+            native_shader_input_view,
+            isf_dummy_texture_view,
+            isf_audio_rows: HashMap::new(),
+            isf_audio_scratch: Vec::with_capacity(isf_passes::ISF_AUDIO_MAX_WIDTH as usize * 4),
+            isf_pass_states: HashMap::new(),
             stage3d_overlay_pipeline,
             stage3d_overlay_uniform_buffer,
             stage3d_overlay_item_buffer,
@@ -20111,6 +20399,29 @@ impl RenderState {
         source: &str,
         fragment_entry: &str,
     ) -> Result<(), String> {
+        let format = self.source_frame_format;
+        self.ensure_native_shader_pipeline_for_format(cache_key, source_kind, source, fragment_entry, format)
+    }
+
+    /// Pipeline key for an ISF pass that renders into a target of `format`.
+    /// Output passes (source-frame format) keep the plain key so single-pass
+    /// and multi-pass renders of one shader share a pipeline.
+    fn native_shader_pipeline_key_for_format(&self, cache_key: &str, format: wgpu::TextureFormat) -> String {
+        if format == self.source_frame_format {
+            cache_key.to_string()
+        } else {
+            format!("{cache_key}@{format:?}")
+        }
+    }
+
+    fn ensure_native_shader_pipeline_for_format(
+        &mut self,
+        cache_key: &str,
+        source_kind: NativeShaderSourceKind,
+        source: &str,
+        fragment_entry: &str,
+        format: wgpu::TextureFormat,
+    ) -> Result<(), String> {
         self.reserve_pipeline(cache_key)?;
         if self.native_shader_pipelines.contains_key(cache_key) {
             return Ok(());
@@ -20158,7 +20469,7 @@ impl RenderState {
                     entry_point: Some(fragment_entry),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: self.source_frame_format,
+                        format,
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -21585,6 +21896,448 @@ impl RenderState {
         }
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         self.queue.submit(Some(encoder.finish()));
+        self.mark_source_frame_slots_submitted([safe_slot]);
+        self.last_frame_error = None;
+        Ok(())
+    }
+
+    /// Make sure the (kind, width) audio row exists and holds this frame's
+    /// data. Uploads only when the content identity changed; the RGBA
+    /// staging is a reused buffer, so steady-state audio allocates nothing.
+    fn prepare_isf_audio_row(&mut self, kind: IsfAudioKind, width: u32, audio: &NativeIsfAudioFrame) {
+        let width = width.clamp(1, isf_passes::ISF_AUDIO_MAX_WIDTH);
+        let stamp = match audio.live {
+            Some((_, _, seq)) => seq & !(1u64 << 63),
+            None => {
+                let mut hash = 0xcbf29ce484222325_u64 | (1u64 << 63);
+                for value in [audio.bass, audio.mid, audio.high, audio.level, audio.time] {
+                    hash = (hash ^ value.to_bits() as u64).wrapping_mul(0x100000001b3);
+                }
+                hash | (1u64 << 63)
+            }
+        };
+        let device = &self.device;
+        let row = self.isf_audio_rows.entry((kind, width)).or_insert_with(|| {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(match kind {
+                    IsfAudioKind::Fft => "Ghost Render Core ISF audioFFT Row",
+                    IsfAudioKind::Waveform => "Ghost Render Core ISF audio Waveform Row",
+                }),
+                size: wgpu::Extent3d { width, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            NativeIsfAudioRow { texture, view, stamp: None }
+        });
+        if row.stamp == Some(stamp) {
+            return;
+        }
+        let scratch = &mut self.isf_audio_scratch;
+        scratch.clear();
+        scratch.resize(width as usize * 4, 0);
+        match audio.live {
+            Some((fft, waveform, _)) => {
+                let source = match kind {
+                    IsfAudioKind::Fft => fft,
+                    IsfAudioKind::Waveform => waveform,
+                };
+                fill_isf_audio_row(kind, source, scratch);
+            }
+            None => fill_isf_audio_row_from_bands(
+                kind, audio.bass, audio.mid, audio.high, audio.level, audio.time, scratch,
+            ),
+        }
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &row.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            scratch,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d { width, height: 1, depth_or_array_layers: 1 },
+        );
+        row.stamp = Some(stamp);
+    }
+
+    fn native_shader_output_edge(&self, quality_scale: f32) -> u32 {
+        let scale = quality_scale.clamp(0.2, 1.0);
+        let full_size = self.source_frame_size as u32;
+        if scale >= 0.995 {
+            full_size
+        } else {
+            (((full_size as f32 * scale) as u32) / 8 * 8).clamp(128, full_size)
+        }
+    }
+
+    fn encode_native_shader_input_copies(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        input_slot: u32,
+        image_input_slots: &[usize],
+    ) {
+        let mut copy_slots = vec![input_slot];
+        for slot in image_input_slots {
+            let slot = (*slot).min(MAX_SOURCE_FRAME_SLOTS - 1) as u32;
+            if !copy_slots.contains(&slot) {
+                copy_slots.push(slot);
+            }
+        }
+        for copy_slot in copy_slots {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.source_frame_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: copy_slot },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.native_shader_input_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: copy_slot },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: self.source_frame_size as u32,
+                    height: self.source_frame_size as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+
+    /// Drop multi-pass ISF buffers of layers that no longer render ISF.
+    fn retain_isf_pass_states(&mut self, keep: impl Fn(&str) -> bool) {
+        self.isf_pass_states.retain(|key, _| keep(key));
+    }
+
+    fn isf_pass_state_summary(&self) -> (usize, usize, u64) {
+        let mut targets = 0usize;
+        let mut bytes = 0u64;
+        for state in self.isf_pass_states.values() {
+            for target in state.targets.iter().flatten() {
+                targets += 1;
+                let texel = match target.format {
+                    wgpu::TextureFormat::Rgba16Float => 8u64,
+                    _ => 4u64,
+                };
+                bytes = bytes.saturating_add(2 * texel * target.width as u64 * target.height as u64);
+            }
+        }
+        (self.isf_pass_states.len(), targets, bytes)
+    }
+
+    /// Render a pass-aware ISF shader: each PASSES entry in order, named
+    /// targets ping-ponged so a pass can read the buffer it writes (feedback),
+    /// persistent contents kept across frames until the shader or output
+    /// geometry changes, and audio rows bound next to the pass targets. The
+    /// output pass lands in `slot` exactly like the single-pass path.
+    #[allow(clippy::too_many_arguments)]
+    fn render_native_isf_pass_host_frame(
+        &mut self,
+        slot: usize,
+        cache_key: &str,
+        source_kind: NativeShaderSourceKind,
+        source: &str,
+        fragment_entry: &str,
+        base_uniforms: &NativeShaderUniforms,
+        job: &NativeIsfPassJob,
+        image_input_slots: &[usize],
+        quality_scale: f32,
+        audio: &NativeIsfAudioFrame,
+    ) -> Result<(), String> {
+        const INTERMEDIATE_8BIT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+        const INTERMEDIATE_FLOAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+        let target_format = |float: bool| if float { INTERMEDIATE_FLOAT } else { INTERMEDIATE_8BIT };
+
+        // Pipelines: the output format always, target formats as used.
+        self.ensure_native_shader_pipeline(cache_key, source_kind, source, fragment_entry)?;
+        let mut formats_needed = Vec::new();
+        for pass in job.passes {
+            if let Some(index) = pass.target
+                && let Some((_, float)) = job.targets.get(index)
+            {
+                let format = target_format(*float);
+                if !formats_needed.contains(&format) {
+                    formats_needed.push(format);
+                }
+            }
+        }
+        for format in &formats_needed {
+            let key = self.native_shader_pipeline_key_for_format(cache_key, *format);
+            self.ensure_native_shader_pipeline_for_format(&key, source_kind, source, fragment_entry, *format)?;
+        }
+        // Re-mark the output pipeline: a variant reservation must not have
+        // evicted it (they share this frame's epoch, but be explicit).
+        if !self.native_shader_pipelines.contains_key(cache_key) {
+            self.ensure_native_shader_pipeline(cache_key, source_kind, source, fragment_entry)?;
+        }
+
+        // Audio rows.
+        if let Some(width) = job.fft_width {
+            self.prepare_isf_audio_row(IsfAudioKind::Fft, width, audio);
+        }
+        if let Some(width) = job.waveform_width {
+            self.prepare_isf_audio_row(IsfAudioKind::Waveform, width, audio);
+        }
+
+        let output_edge = self.native_shader_output_edge(quality_scale);
+        let full_size = self.source_frame_size as u32;
+        let use_scaled = output_edge < full_size;
+        let base_w = base_uniforms.resolution_time[0].max(1.0);
+        let base_h = base_uniforms.resolution_time[1].max(1.0);
+
+        // Pass state: a signature change (shader/source, reload generation,
+        // render size, output density) drops every buffer.
+        let mut signature = 0xcbf29ce484222325_u64;
+        for value in [
+            stable_hash64(cache_key),
+            job.generation,
+            base_w.to_bits() as u64,
+            base_h.to_bits() as u64,
+            output_edge as u64,
+            job.passes.len() as u64,
+            job.targets.len() as u64,
+        ] {
+            signature = (signature ^ value).wrapping_mul(0x100000001b3);
+        }
+        let (state_key, mut state) = match self.isf_pass_states.remove_entry(job.state_key) {
+            Some((key, state)) if state.signature == signature => (key, state),
+            _ => (
+                job.state_key.to_string(),
+                NativeIsfPassState {
+                    signature,
+                    targets: Vec::new(),
+                    uniform_buffers: Vec::new(),
+                },
+            ),
+        };
+        state.targets.resize_with(job.targets.len(), || None);
+        for (index, ((virtual_w, virtual_h), float)) in job.targets.iter().enumerate() {
+            let (width, height) =
+                isf_physical_target_size((*virtual_w, *virtual_h), (base_w, base_h), output_edge);
+            let format = target_format(*float);
+            let fits = state.targets[index]
+                .as_ref()
+                .is_some_and(|target| target.width == width && target.height == height && target.format == format);
+            if fits {
+                continue;
+            }
+            // New textures are zero-initialised: a (re)created buffer starts
+            // transparent black, which is the ISF reset state.
+            let make = |label: &'static str| {
+                self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+            };
+            let textures = [make("Ghost Render Core ISF Pass Target A"), make("Ghost Render Core ISF Pass Target B")];
+            let views = [
+                textures[0].create_view(&wgpu::TextureViewDescriptor::default()),
+                textures[1].create_view(&wgpu::TextureViewDescriptor::default()),
+            ];
+            state.targets[index] = Some(NativeIsfPassTarget { _textures: textures, views, front: 0, width, height, format });
+        }
+        let uniform_size = std::mem::size_of::<NativeShaderUniforms>() as u64;
+        while state.uniform_buffers.len() < job.passes.len() {
+            state.uniform_buffers.push(self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Ghost Render Core ISF Pass Uniforms"),
+                size: uniform_size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+
+        let mut pass_sizes = [[0.0f32; 4]; MAX_ISF_PASS_TARGETS / 2];
+        for (index, ((w, h), _)) in job.targets.iter().enumerate().take(MAX_ISF_PASS_TARGETS) {
+            pass_sizes[index / 2][(index % 2) * 2] = *w;
+            pass_sizes[index / 2][(index % 2) * 2 + 1] = *h;
+        }
+        let audio_info = [
+            if audio.live.is_some() { 1.0 } else { 0.0 },
+            job.fft_width.unwrap_or(0) as f32,
+            job.waveform_width.unwrap_or(0) as f32,
+            0.0,
+        ];
+
+        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let slot_view = self.source_frame_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core ISF Pass Host Output View"),
+            format: Some(self.source_frame_format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: Some(1),
+            base_array_layer: safe_slot as u32,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let scale_view = if use_scaled { Some(self.ensure_native_shader_scale_target(output_edge)) } else { None };
+        let output_view = scale_view.as_ref().unwrap_or(&slot_view);
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Ghost Render Core ISF Pass Host Encoder"),
+        });
+        let input_slot = base_uniforms.frame_seed_inputs[3]
+            .round()
+            .clamp(0.0, (MAX_SOURCE_FRAME_SLOTS - 1) as f32) as u32;
+        self.encode_native_shader_input_copies(&mut encoder, input_slot, image_input_slots);
+
+        let pass_count = job.passes.len();
+        let mut output_written = false;
+        for (pass_index, pass) in job.passes.iter().enumerate() {
+            let is_last = pass_index + 1 == pass_count;
+            let target_index = pass.target.filter(|index| *index < state.targets.len());
+            if target_index.is_none() && !is_last {
+                // Non-final output passes are overwritten by the last pass.
+                continue;
+            }
+            let (pass_w, pass_h) = target_index
+                .map(|index| job.targets[index].0)
+                .unwrap_or((base_w, base_h));
+            let mut uniforms = *base_uniforms;
+            uniforms.resolution_time[0] = pass_w;
+            uniforms.resolution_time[1] = pass_h;
+            uniforms.isf_pass = [pass_index as f32, pass_count as f32, base_w, base_h];
+            uniforms.isf_pass_sizes = pass_sizes;
+            uniforms.isf_audio = audio_info;
+            self.queue.write_buffer(&state.uniform_buffers[pass_index], 0, bytemuck::bytes_of(&uniforms));
+
+            let mut entries = Vec::with_capacity(3 + NATIVE_ISF_EXTRA_TEXTURE_BINDINGS as usize);
+            entries.push(wgpu::BindGroupEntry {
+                binding: 0,
+                resource: state.uniform_buffers[pass_index].as_entire_binding(),
+            });
+            entries.push(wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&self.native_shader_input_view),
+            });
+            entries.push(wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&self.source_frame_sampler),
+            });
+            for index in 0..MAX_ISF_PASS_TARGETS {
+                let view = state
+                    .targets
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .map(|target| &target.views[target.front])
+                    .unwrap_or(&self.isf_dummy_texture_view);
+                entries.push(wgpu::BindGroupEntry {
+                    binding: NATIVE_ISF_FIRST_EXTRA_BINDING + index as u32,
+                    resource: wgpu::BindingResource::TextureView(view),
+                });
+            }
+            for (binding, kind, width) in [
+                (NATIVE_ISF_AUDIO_FFT_BINDING, IsfAudioKind::Fft, job.fft_width),
+                (NATIVE_ISF_AUDIO_WAVEFORM_BINDING, IsfAudioKind::Waveform, job.waveform_width),
+            ] {
+                let view = width
+                    .and_then(|width| self.isf_audio_rows.get(&(kind, width.clamp(1, isf_passes::ISF_AUDIO_MAX_WIDTH))))
+                    .map(|row| &row.view)
+                    .unwrap_or(&self.isf_dummy_texture_view);
+                entries.push(wgpu::BindGroupEntry {
+                    binding,
+                    resource: wgpu::BindingResource::TextureView(view),
+                });
+            }
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Ghost Render Core ISF Pass Bind Group"),
+                layout: &self.native_shader_bind_group_layout,
+                entries: &entries,
+            });
+
+            let (dest_view, pipeline_key) = match target_index {
+                Some(index) => {
+                    let target = state.targets[index].as_ref().expect("target allocated above");
+                    (
+                        &target.views[1 - target.front],
+                        self.native_shader_pipeline_key_for_format(cache_key, target.format),
+                    )
+                }
+                None => (output_view, cache_key.to_string()),
+            };
+            let Some(pipeline) = self.native_shader_pipelines.get(&pipeline_key) else {
+                self.isf_pass_states.insert(state_key, state);
+                return Err(format!("ISF pass {pass_index} pipeline was not cached"));
+            };
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Ghost Render Core ISF Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: dest_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                render_pass.set_pipeline(&pipeline.pipeline);
+                render_pass.set_bind_group(0, &bind_group, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
+            match target_index {
+                Some(index) => {
+                    let target = state.targets[index].as_mut().expect("target allocated above");
+                    target.front = 1 - target.front;
+                    if is_last {
+                        // The final pass wrote a named buffer: that buffer is
+                        // the shader's output.
+                        let front = &target.views[target.front];
+                        self.source_frame_blitter.copy(&self.device, &mut encoder, front, output_view);
+                        output_written = true;
+                    }
+                }
+                None => output_written = true,
+            }
+        }
+        if !output_written {
+            // No pass rendered the output (every pass skipped): clear it
+            // rather than show the previous owner's pixels.
+            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Ghost Render Core ISF Pass Host Clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: output_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        if let Some(scale_view) = scale_view.as_ref() {
+            self.source_frame_blitter.copy(&self.device, &mut encoder, scale_view, &slot_view);
+        }
+        self.generate_source_frame_mips(&mut encoder, safe_slot);
+        self.queue.submit(Some(encoder.finish()));
+        self.isf_pass_states.insert(state_key, state);
         self.mark_source_frame_slots_submitted([safe_slot]);
         self.last_frame_error = None;
         Ok(())
@@ -29366,7 +30119,9 @@ fn native_isf_input_kind(input_type: &str) -> NativeIsfInputKind {
         "point2d" | "point" => NativeIsfInputKind::Point2D,
         "color" => NativeIsfInputKind::Color,
         "event" => NativeIsfInputKind::Event,
-        "image" | "audio" | "audiofft" => NativeIsfInputKind::Image,
+        "image" => NativeIsfInputKind::Image,
+        "audio" | "audiowaveform" => NativeIsfInputKind::AudioWaveform,
+        "audiofft" => NativeIsfInputKind::AudioFft,
         _ => NativeIsfInputKind::Unsupported,
     }
 }
@@ -29379,6 +30134,8 @@ fn native_isf_input_components(kind: NativeIsfInputKind) -> usize {
         // sample. -1 means unbound -> the shader falls back to its own
         // input frame, which is also the pre-image-input behavior.
         NativeIsfInputKind::Image => 1,
+        // Audio rows are fixed texture bindings, not params.
+        NativeIsfInputKind::AudioFft | NativeIsfInputKind::AudioWaveform => 0,
         NativeIsfInputKind::Unsupported => 0,
         NativeIsfInputKind::Float
         | NativeIsfInputKind::Bool
@@ -29437,7 +30194,9 @@ fn default_values_for_isf_input(input: &Value, kind: NativeIsfInputKind) -> [f32
                 as f32;
             [value, 0.0, 0.0, 0.0]
         }
-        NativeIsfInputKind::Unsupported => [0.0; 4],
+        NativeIsfInputKind::AudioFft
+        | NativeIsfInputKind::AudioWaveform
+        | NativeIsfInputKind::Unsupported => [0.0; 4],
     }
 }
 
@@ -29468,12 +30227,77 @@ fn sanitize_isf_json_header(header: &str) -> String {
     output
 }
 
-fn parse_native_isf_inputs(source: &str) -> Vec<NativeIsfInputBinding> {
-    let Some(header) = isf_json_header(source) else {
-        return Vec::new();
-    };
+fn native_isf_metadata(source: &str) -> Option<Value> {
+    let header = isf_json_header(source)?;
     let sanitized_header = sanitize_isf_json_header(header);
-    let Ok(metadata) = serde_json::from_str::<Value>(sanitized_header.trim()) else {
+    serde_json::from_str::<Value>(sanitized_header.trim()).ok()
+}
+
+/// Everything the pass-aware ISF host needs beyond the scalar inputs: the
+/// pass plan and which audio rows the shader samples (and at what width).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct NativeIsfHostInfo {
+    plan: IsfPassPlan,
+    /// Width of the audioFFT row the shader samples, if it samples one.
+    fft_width: Option<u32>,
+    /// Width of the audio (waveform) row the shader samples, if any.
+    waveform_width: Option<u32>,
+}
+
+impl NativeIsfHostInfo {
+    /// Pass targets or audio rows route the shader through the pass-aware
+    /// host (image dispatch + extra bindings). Everything else keeps the
+    /// original single-pass prelude untouched.
+    fn needs_pass_host(&self) -> bool {
+        self.plan.is_multipass() || self.fft_width.is_some() || self.waveform_width.is_some()
+    }
+}
+
+fn glsl_references_identifier(body: &str, name: &str) -> bool {
+    let bytes = body.as_bytes();
+    let mut search = 0usize;
+    while let Some(found) = body[search..].find(name) {
+        let start = search + found;
+        let end = start + name.len();
+        let before_ok = start == 0 || !(bytes[start - 1] == b'_' || bytes[start - 1].is_ascii_alphanumeric());
+        let after_ok = end >= bytes.len() || !(bytes[end] == b'_' || bytes[end].is_ascii_alphanumeric());
+        if before_ok && after_ok {
+            return true;
+        }
+        search = end;
+    }
+    false
+}
+
+fn native_isf_host_info(source: &str) -> NativeIsfHostInfo {
+    let (body, _) = strip_isf_json_header(source);
+    let plan = native_isf_metadata(source)
+        .map(|metadata| parse_isf_pass_plan(&metadata))
+        .unwrap_or_default();
+    let bindings = parse_native_isf_inputs(source);
+    let declared_width = |kind: NativeIsfInputKind| {
+        bindings
+            .iter()
+            .find(|binding| binding.kind == kind)
+            .map(|binding| binding.audio_width)
+    };
+    let declared = |name: &str| bindings.iter().any(|binding| binding.name == name);
+    // Built-in rows every ISF shader may reference without declaring them,
+    // matching the browser host: audioFFT/audioWaveform samplers and the
+    // sampleFFT()/sampleWaveform() helpers.
+    let builtin_fft = (!declared("audioFFT") && glsl_references_identifier(body, "audioFFT"))
+        || glsl_references_identifier(body, "sampleFFT");
+    let builtin_wave = (!declared("audioWaveform") && glsl_references_identifier(body, "audioWaveform"))
+        || glsl_references_identifier(body, "sampleWaveform");
+    let fft_width = declared_width(NativeIsfInputKind::AudioFft)
+        .or_else(|| builtin_fft.then_some(ISF_AUDIO_DEFAULT_WIDTH));
+    let waveform_width = declared_width(NativeIsfInputKind::AudioWaveform)
+        .or_else(|| builtin_wave.then_some(ISF_AUDIO_DEFAULT_WIDTH));
+    NativeIsfHostInfo { plan, fft_width, waveform_width }
+}
+
+fn parse_native_isf_inputs(source: &str) -> Vec<NativeIsfInputBinding> {
+    let Some(metadata) = native_isf_metadata(source) else {
         return Vec::new();
     };
     let Some(inputs) = metadata.get("INPUTS").and_then(Value::as_array) else {
@@ -29501,12 +30325,18 @@ fn parse_native_isf_inputs(source: &str) -> Vec<NativeIsfInputBinding> {
         } else {
             None
         };
+        let audio_width = if matches!(kind, NativeIsfInputKind::AudioFft | NativeIsfInputKind::AudioWaveform) {
+            isf_audio_width(input.get("MAX").and_then(Value::as_f64))
+        } else {
+            0
+        };
         bindings.push(NativeIsfInputBinding {
             name: name.to_string(),
             kind,
             offset,
             components,
             default_values: default_values_for_isf_input(input, kind),
+            audio_width,
         });
     }
     bindings
@@ -29551,6 +30381,10 @@ fn native_isf_input_expr(binding: &NativeIsfInputBinding) -> Option<String> {
             "(({0}) >= 0.5 ? ({0}) - 1.0 : frame_seed_inputs.w)",
             scalar_at(0)
         )),
+        NativeIsfInputKind::AudioFft => Some(glsl_float_literal(IsfAudioKind::Fft.image_code())),
+        NativeIsfInputKind::AudioWaveform => {
+            Some(glsl_float_literal(IsfAudioKind::Waveform.image_code()))
+        }
         NativeIsfInputKind::Unsupported => None,
     }
 }
@@ -29709,7 +30543,9 @@ fn native_isf_input_glsl_type(kind: NativeIsfInputKind) -> Option<&'static str> 
         NativeIsfInputKind::Long => Some("int"),
         NativeIsfInputKind::Point2D => Some("vec2"),
         NativeIsfInputKind::Color => Some("vec4"),
-        NativeIsfInputKind::Image => Some("float"),
+        NativeIsfInputKind::Image
+        | NativeIsfInputKind::AudioFft
+        | NativeIsfInputKind::AudioWaveform => Some("float"),
         NativeIsfInputKind::Unsupported => None,
     }
 }
@@ -29770,11 +30606,28 @@ fn collect_isf_image_arg_names(body: &str) -> Vec<String> {
     names
 }
 
-fn preprocess_native_isf_glsl_body(body: &str, input_bindings: &[NativeIsfInputBinding]) -> String {
-    let input_names = input_bindings
+fn preprocess_native_isf_glsl_body(
+    body: &str,
+    input_bindings: &[NativeIsfInputBinding],
+    host: Option<&NativeIsfHostInfo>,
+) -> String {
+    let mut input_names = input_bindings
         .iter()
         .map(|binding| binding.name.clone())
         .collect::<Vec<_>>();
+    // Pass targets are images the host binds itself: strip any
+    // `uniform sampler2D <target>;` the shader declares for them.
+    let target_names = host
+        .map(|host| {
+            host.plan
+                .targets
+                .iter()
+                .map(|target| target.name.clone())
+                .chain(host.plan.dropped_targets.iter().cloned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    input_names.extend(target_names.iter().cloned());
     let mut reserved_names = vec![
         "RENDERSIZE".to_string(),
         "renderSize".to_string(),
@@ -29839,9 +30692,42 @@ fn preprocess_native_isf_glsl_body(body: &str, input_bindings: &[NativeIsfInputB
     let output = replace_glsl_identifier(&output, "centroid", "ghost_centroid");
     let output = replace_glsl_identifier(&output, "gl_FragCoord", "ghost_FragCoord");
     let mut all_bindings = input_bindings.to_vec();
+    let mut target_consts = String::new();
+    if let Some(host) = host {
+        // Built-in audio rows referenced without an INPUTS entry.
+        for (name, kind, width) in [
+            ("audioFFT", NativeIsfInputKind::AudioFft, host.fft_width),
+            ("audioWaveform", NativeIsfInputKind::AudioWaveform, host.waveform_width),
+        ] {
+            if width.is_some()
+                && !all_bindings.iter().any(|binding| binding.name == name)
+                && glsl_references_identifier(&output, name)
+            {
+                all_bindings.push(NativeIsfInputBinding {
+                    name: name.to_string(),
+                    kind,
+                    offset: None,
+                    components: 0,
+                    default_values: [0.0; 4],
+                    audio_width: width.unwrap_or(ISF_AUDIO_DEFAULT_WIDTH),
+                });
+            }
+        }
+        for (index, target) in host.plan.targets.iter().enumerate() {
+            target_consts.push_str(&format!(
+                "const float {} = {};\n",
+                target.name,
+                glsl_float_literal(isf_pass_target_image_code(index))
+            ));
+        }
+        for name in &host.plan.dropped_targets {
+            // Unknown image code: the dispatcher returns transparent black.
+            target_consts.push_str(&format!("const float {name} = -99.0;\n"));
+        }
+    }
     for name in collect_isf_image_arg_names(body) {
         let already_bound = all_bindings.iter().any(|binding| binding.name == name);
-        if already_bound || has_glsl_define(body, &name) {
+        if already_bound || has_glsl_define(body, &name) || target_names.contains(&name) {
             continue;
         }
         // Unbound synthetic image binding: offset None packs nothing, and the
@@ -29853,9 +30739,14 @@ fn preprocess_native_isf_glsl_body(body: &str, input_bindings: &[NativeIsfInputB
             offset: None,
             components: 0,
             default_values: [0.0, 0.0, 0.0, 0.0],
+            audio_width: 0,
         });
     }
-    inject_native_isf_input_state(&output, &all_bindings)
+    if target_consts.is_empty() {
+        inject_native_isf_input_state(&output, &all_bindings)
+    } else {
+        inject_native_isf_input_state(&format!("{target_consts}{output}"), &all_bindings)
+    }
 }
 
 fn value_as_native_f32(value: Option<&Value>, fallback: f32) -> f32 {
@@ -29936,7 +30827,10 @@ fn native_isf_binding_values(command: &Value, binding: &NativeIsfInputBinding) -
                 array_value_as_native_f32(value, 3, binding.default_values[3]),
             ]
         }
-        NativeIsfInputKind::Image | NativeIsfInputKind::Unsupported => binding.default_values,
+        NativeIsfInputKind::Image
+        | NativeIsfInputKind::AudioFft
+        | NativeIsfInputKind::AudioWaveform
+        | NativeIsfInputKind::Unsupported => binding.default_values,
     }
 }
 
@@ -29970,9 +30864,12 @@ fn native_glsl_stage_for_label(stage: &str) -> naga::ShaderStage {
 fn native_glsl_probe_source(source: &str, kind: NativeShaderSourceKind) -> Cow<'_, str> {
     let (body, _) = strip_isf_json_header(source);
     let input_bindings = parse_native_isf_inputs(source);
+    let host_info = matches!(kind, NativeShaderSourceKind::IsfGlsl)
+        .then(|| native_isf_host_info(source))
+        .filter(NativeIsfHostInfo::needs_pass_host);
     let owned_body;
     let body = if matches!(kind, NativeShaderSourceKind::IsfGlsl) {
-        owned_body = preprocess_native_isf_glsl_body(body, &input_bindings);
+        owned_body = preprocess_native_isf_glsl_body(body, &input_bindings, host_info.as_ref());
         owned_body.trim_start()
     } else {
         body.trim_start()
@@ -30009,7 +30906,7 @@ layout(set = 0, binding = 0) uniform GhostNativeShaderUniforms {
   vec4 PARAMS12;
   vec4 PARAMS13;
   vec4 PARAMS14;
-  vec4 PARAMS15;
+  vec4 PARAMS15;{host_block_tail}
 };
 layout(set = 0, binding = 1) uniform texture2DArray ghost_source_frames;
 layout(set = 0, binding = 2) uniform sampler ghost_source_sampler;
@@ -30018,22 +30915,24 @@ layout(set = 0, binding = 2) uniform sampler ghost_source_sampler;
 #define TIME resolution_time.z
 #define TIMEDELTA resolution_time.w
 #define FRAMEINDEX int(round(frame_seed_inputs.x))
-#define PASSINDEX 0
 #define vUv isf_FragNormCoord
 #define texCoord isf_FragNormCoord
 #define ghost_FragCoord vec4(isf_FragNormCoord * RENDERSIZE, 0.0, 1.0)
-#define texture2D(img, coord) texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3((coord), (img)))
-#define IMG_NORM_PIXEL(img, coord) texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3((coord), (img)))
-#define IMG_PIXEL(img, coord) IMG_NORM_PIXEL(img, (coord) / RENDERSIZE)
-#define IMG_SIZE(img) RENDERSIZE
-float sampleFFT(float u) {
-  return mix(AUDIO0.y, AUDIO1.x, clamp(u, 0.0, 1.0));
-}
-float sampleWaveform(float u) {
-  return sin((clamp(u, 0.0, 1.0) + TIME * 0.1) * 6.28318530718) * max(AUDIO0.x, 0.001);
-}
 "#
-            .to_string();
+            .replace("{host_block_tail}", if host_info.is_some() { NATIVE_ISF_HOST_BLOCK_TAIL } else { "" });
+            prelude.push_str(if host_info.is_some() {
+                NATIVE_ISF_HOST_PRELUDE
+            } else {
+                NATIVE_ISF_SINGLE_PASS_PRELUDE
+            });
+            for (name, expr) in [
+                ("IMG_THIS_PIXEL", "#define IMG_THIS_PIXEL(img) IMG_NORM_PIXEL(img, isf_FragNormCoord)\n"),
+                ("IMG_THIS_NORM_PIXEL", "#define IMG_THIS_NORM_PIXEL(img) IMG_NORM_PIXEL(img, isf_FragNormCoord)\n"),
+            ] {
+                if !has_glsl_define(body, name) {
+                    prelude.push_str(expr);
+                }
+            }
             prelude.push_str(&shadertoy_alias_macros);
             prelude.push_str(&audio_alias_macros);
             prelude
@@ -30046,6 +30945,91 @@ layout(location = 0) out vec4 gl_FragColor;
     };
     Cow::Owned(format!("{prelude}\n{body}"))
 }
+
+/// Original single-pass image macros: every image is a source-frame layer.
+const NATIVE_ISF_SINGLE_PASS_PRELUDE: &str = r#"#define PASSINDEX 0
+#define texture2D(img, coord) texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3((coord), (img)))
+#define IMG_NORM_PIXEL(img, coord) texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3((coord), (img)))
+#define IMG_PIXEL(img, coord) IMG_NORM_PIXEL(img, (coord) / RENDERSIZE)
+#define IMG_SIZE(img) RENDERSIZE
+float sampleFFT(float u) {
+  return mix(AUDIO0.y, AUDIO1.x, clamp(u, 0.0, 1.0));
+}
+float sampleWaveform(float u) {
+  return sin((clamp(u, 0.0, 1.0) + TIME * 0.1) * 6.28318530718) * max(AUDIO0.x, 0.001);
+}
+"#;
+
+/// Uniform-block tail the pass-aware host appends (mirrors the append-only
+/// tail of `NativeShaderUniforms`). ISF_PASS = (PASSINDEX, pass count,
+/// output width, output height) in virtual pixels; ISF_PASS_SIZE packs two
+/// target sizes per vec4; ISF_AUDIO = (live spectrum, FFT width, waveform
+/// width, 0).
+const NATIVE_ISF_HOST_BLOCK_TAIL: &str = "
+  vec4 ISF_PASS;
+  vec4 ISF_PASS_SIZE[4];
+  vec4 ISF_AUDIO;";
+
+/// Pass-aware image macros. An image is a float code: >= 0 is a source-frame
+/// array layer (inputs), -1..-8 the pass targets, -9 the audioFFT row, -10
+/// the audio waveform row. Pass targets are written y-up like the output
+/// slot, so they are read with a flipped v.
+const NATIVE_ISF_HOST_PRELUDE: &str = r#"layout(set = 0, binding = 3) uniform texture2D ghost_isf_pass0;
+layout(set = 0, binding = 4) uniform texture2D ghost_isf_pass1;
+layout(set = 0, binding = 5) uniform texture2D ghost_isf_pass2;
+layout(set = 0, binding = 6) uniform texture2D ghost_isf_pass3;
+layout(set = 0, binding = 7) uniform texture2D ghost_isf_pass4;
+layout(set = 0, binding = 8) uniform texture2D ghost_isf_pass5;
+layout(set = 0, binding = 9) uniform texture2D ghost_isf_pass6;
+layout(set = 0, binding = 10) uniform texture2D ghost_isf_pass7;
+layout(set = 0, binding = 11) uniform texture2D ghost_isf_audio_fft;
+layout(set = 0, binding = 12) uniform texture2D ghost_isf_audio_wave;
+vec4 ghost_isf_image(float img, vec2 coord) {
+  if (img > -0.5) {
+    return texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3(coord, img));
+  }
+  vec2 flipped = vec2(coord.x, 1.0 - coord.y);
+  if (img > -1.5) { return textureLod(sampler2D(ghost_isf_pass0, ghost_source_sampler), flipped, 0.0); }
+  if (img > -2.5) { return textureLod(sampler2D(ghost_isf_pass1, ghost_source_sampler), flipped, 0.0); }
+  if (img > -3.5) { return textureLod(sampler2D(ghost_isf_pass2, ghost_source_sampler), flipped, 0.0); }
+  if (img > -4.5) { return textureLod(sampler2D(ghost_isf_pass3, ghost_source_sampler), flipped, 0.0); }
+  if (img > -5.5) { return textureLod(sampler2D(ghost_isf_pass4, ghost_source_sampler), flipped, 0.0); }
+  if (img > -6.5) { return textureLod(sampler2D(ghost_isf_pass5, ghost_source_sampler), flipped, 0.0); }
+  if (img > -7.5) { return textureLod(sampler2D(ghost_isf_pass6, ghost_source_sampler), flipped, 0.0); }
+  if (img > -8.5) { return textureLod(sampler2D(ghost_isf_pass7, ghost_source_sampler), flipped, 0.0); }
+  if (img > -9.5) { return textureLod(sampler2D(ghost_isf_audio_fft, ghost_source_sampler), coord, 0.0); }
+  if (img > -10.5) { return textureLod(sampler2D(ghost_isf_audio_wave, ghost_source_sampler), coord, 0.0); }
+  return vec4(0.0);
+}
+vec2 ghost_isf_image_size(float img) {
+  if (img > -0.5) { return ISF_PASS.zw; }
+  if (img > -8.5) {
+    int index = int(round(-img)) - 1;
+    vec4 pair = ISF_PASS_SIZE[index / 2];
+    return (index % 2 == 0) ? pair.xy : pair.zw;
+  }
+  if (img > -9.5) { return vec2(ISF_AUDIO.y, 1.0); }
+  if (img > -10.5) { return vec2(ISF_AUDIO.z, 1.0); }
+  return vec2(1.0);
+}
+#define PASSINDEX int(round(ISF_PASS.x))
+#define texture2D(img, coord) ghost_isf_image((img), (coord))
+#define IMG_NORM_PIXEL(img, coord) ghost_isf_image((img), (coord))
+#define IMG_PIXEL(img, coord) ghost_isf_image((img), (coord) / ghost_isf_image_size(img))
+#define IMG_SIZE(img) ghost_isf_image_size(img)
+float sampleFFT(float u) {
+  float x = clamp(u, 0.0, 1.0);
+  return ISF_AUDIO.x > 0.5
+    ? textureLod(sampler2D(ghost_isf_audio_fft, ghost_source_sampler), vec2(x, 0.5), 0.0).r
+    : mix(AUDIO0.y, AUDIO1.x, x);
+}
+float sampleWaveform(float u) {
+  float x = clamp(u, 0.0, 1.0);
+  return ISF_AUDIO.x > 0.5
+    ? textureLod(sampler2D(ghost_isf_audio_wave, ghost_source_sampler), vec2(x, 0.5), 0.0).r * 2.0 - 1.0
+    : sin((x + TIME * 0.1) * 6.28318530718) * max(AUDIO0.x, 0.001);
+}
+"#;
 
 fn probe_native_glsl_source_with_stage(
     source: &str,
@@ -31232,6 +32216,102 @@ void main() { gl_FragColor = vec4(fractalDepth); }"#,
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].name, "fractalDepth");
         assert_eq!(bindings[0].default_values[0], 4.0);
+    }
+
+    #[test]
+    fn native_isf_multipass_source_binds_targets_and_parses() {
+        let source = r#"/*{
+  "ISFVSN": "2",
+  "INPUTS": [ { "NAME": "inputImage", "TYPE": "image" }, { "NAME": "decay", "TYPE": "float", "DEFAULT": 0.9 } ],
+  "PERSISTENT_BUFFERS": ["trail"],
+  "PASSES": [ { "TARGET": "trail", "PERSISTENT": true }, { "TARGET": "half", "WIDTH": "$WIDTH/2" }, {} ]
+}*/
+uniform sampler2D trail;
+void main() {
+  vec2 uv = isf_FragNormCoord;
+  if (PASSINDEX == 0) {
+    gl_FragColor = max(IMG_NORM_PIXEL(trail, uv) * decay, IMG_THIS_PIXEL(inputImage));
+  } else if (PASSINDEX == 1) {
+    gl_FragColor = IMG_PIXEL(trail, gl_FragCoord.xy) * vec4(IMG_SIZE(trail) / RENDERSIZE, 1.0, 1.0);
+  } else {
+    gl_FragColor = texture2D(half, uv);
+  }
+}"#;
+        let host = native_isf_host_info(source);
+        assert!(host.needs_pass_host());
+        assert_eq!(host.plan.targets.len(), 2);
+        assert!(host.plan.targets[0].persistent);
+        assert_eq!(host.fft_width, None);
+        let native = native_glsl_probe_source(source, NativeShaderSourceKind::IsfGlsl).into_owned();
+        assert!(native.contains("const float trail = -1.00000000;"));
+        assert!(native.contains("const float half = -2.00000000;"));
+        assert!(native.contains("#define PASSINDEX int(round(ISF_PASS.x))"));
+        assert!(!native.contains("uniform sampler2D trail"));
+        // The target must not be rebound as a synthetic input-frame image.
+        assert!(!native.contains("float trail;"));
+        probe_native_glsl_source(source, naga::ShaderStage::Fragment)
+            .expect("multi-pass ISF should parse through the native probe");
+    }
+
+    #[test]
+    fn native_isf_audio_inputs_become_fixed_rows_not_params() {
+        let source = r#"/*{
+  "ISFVSN": "2",
+  "INPUTS": [
+    { "NAME": "fft", "TYPE": "audioFFT", "MAX": 16 },
+    { "NAME": "gain", "TYPE": "float", "DEFAULT": 1.0 },
+    { "NAME": "wave", "TYPE": "audio" }
+  ]
+}*/
+void main() {
+  float a = IMG_PIXEL(fft, vec2(3.5, 0.5)).r * gain;
+  float b = IMG_NORM_PIXEL(wave, isf_FragNormCoord).r + sampleFFT(0.2);
+  gl_FragColor = vec4(a, b, IMG_SIZE(fft).x / 16.0, 1.0);
+}"#;
+        let bindings = parse_native_isf_inputs(source);
+        assert_eq!(bindings[0].kind, NativeIsfInputKind::AudioFft);
+        assert_eq!(bindings[0].audio_width, 16);
+        assert_eq!(bindings[0].offset, None);
+        // The float after an audio input keeps param slot 0.
+        assert_eq!(bindings[1].offset, Some(0));
+        assert_eq!(bindings[2].kind, NativeIsfInputKind::AudioWaveform);
+        assert_eq!(bindings[2].audio_width, isf_passes::ISF_AUDIO_DEFAULT_WIDTH);
+        let host = native_isf_host_info(source);
+        assert_eq!(host.fft_width, Some(16));
+        assert!(!host.plan.is_multipass());
+        let native = native_glsl_probe_source(source, NativeShaderSourceKind::IsfGlsl).into_owned();
+        assert!(native.contains("fft = -9.00000000;"));
+        assert!(native.contains("wave = -10.00000000;"));
+        probe_native_glsl_source(source, naga::ShaderStage::Fragment)
+            .expect("audio ISF should parse through the native probe");
+
+        // Builtin rows referenced without an INPUTS entry route the same way.
+        let builtin = "/*{\"ISFVSN\":\"2\",\"INPUTS\":[]}*/\nvoid main() { gl_FragColor = texture2D(audioFFT, vec2(isf_FragNormCoord.x, 0.5)); }";
+        assert_eq!(native_isf_host_info(builtin).fft_width, Some(isf_passes::ISF_AUDIO_DEFAULT_WIDTH));
+        assert!(native_glsl_probe_source(builtin, NativeShaderSourceKind::IsfGlsl).contains("audioFFT = -9.00000000;"));
+        probe_native_glsl_source(builtin, naga::ShaderStage::Fragment).expect("builtin audioFFT parses");
+    }
+
+    #[test]
+    fn native_single_pass_isf_keeps_the_original_prelude() {
+        let source = "/*{\"ISFVSN\":\"2\",\"INPUTS\":[]}*/\nvoid main() { gl_FragColor = vec4(float(PASSINDEX)); }";
+        assert!(!native_isf_host_info(source).needs_pass_host());
+        let native = native_glsl_probe_source(source, NativeShaderSourceKind::IsfGlsl).into_owned();
+        assert!(native.contains("#define PASSINDEX 0"));
+        assert!(!native.contains("ISF_PASS"));
+        assert!(!native.contains("ghost_isf_pass0"));
+    }
+
+    #[test]
+    fn native_shader_uniforms_keep_legacy_prefix_and_append_pass_tail() {
+        assert_eq!(std::mem::offset_of!(NativeShaderUniforms, params_extra), 8 * 16);
+        assert_eq!(
+            std::mem::offset_of!(NativeShaderUniforms, isf_pass),
+            8 * 16 + NATIVE_ISF_EXTRA_PARAM_VEC4S * 16
+        );
+        assert_eq!(std::mem::size_of::<NativeShaderUniforms>() % 16, 0);
+        let uniforms = NativeShaderUniforms::from_isf("s", None, 640, 360, [0.0; MAX_NATIVE_ISF_PARAM_FLOATS], 0);
+        assert_eq!(uniforms.isf_pass, [0.0, 1.0, 640.0, 360.0]);
     }
 
     #[test]
