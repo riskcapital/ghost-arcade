@@ -190,6 +190,8 @@
     left: 0;
     top: 0;
     cursor: none;
+    /* The .warp-handles-offset parent is pointer-events: none. */
+    pointer-events: auto;
     touch-action: none;
     z-index: 30;
   }
