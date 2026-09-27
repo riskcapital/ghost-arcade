@@ -3539,10 +3539,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
         let sample_uv = uv_sample.xy;
         let content_mask = uv_sample.z;
-        // A Bezier layer's shape and mask are cut in the layer's own UV
-        // before the mesh bends it, as the editor texture and the Edge
-        // Effect outline are, so they follow the surface into a bulge.
-        let shape_uv = select(local.yz, mesh_sample.yz, bezier_mesh);
+        // The layer's shape and mask are cut in its own UV before the mesh
+        // bends it, as the editor texture and the Edge Effect outline are,
+        // so they follow the surface (into a Bezier bulge too). Cutting a
+        // straight mesh in quad UV left the content at the unwarped shape
+        // while its Edge Effects followed the warp.
+        let shape_uv = mesh_sample.yz;
         let shape_sample = native_layer_shape(shape_uv, layer_index);
         let polygon_mask = native_polygon_mask(shape_uv, layer_index)
           * native_paint_mask(mesh_sample.yz, layer_index);

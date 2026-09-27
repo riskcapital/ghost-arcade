@@ -484,3 +484,44 @@ describe('Bezier mesh bulging past its corner quad', () => {
     } finally { await rpc.close(); }
   }, 60000);
 });
+
+describe('Layer shape on a straight mesh', () => {
+  itIfNativeCore('cuts the shape in the layer UV the mesh bends, as its Edge Effect outline is', async () => {
+    // A custom triangle (compositor local UV, y down) on a 3x3 mesh whose
+    // centre is pulled down. The shape has to travel with the mesh, like the
+    // outline the Edge Effects draw on: its base drops below the unwarped
+    // base (y up 0.15 -> 0.06 at u 0.5) and its apex drops from 0.85 to 0.76.
+    // It used to be cut in the unwarped quad UV, so the content stayed at the
+    // unwarped triangle while the Edge Effects followed the warp.
+    const rpc = createNativeRpc();
+    try {
+      await startCore(rpc);
+      const points = [0, 0.5, 1].map((y) => [0, 0.5, 1].map((x) => ({ x, y: 1 - y })));
+      points[1][1] = { x: 0.5, y: 0.2 };
+      const mesh: MeshWarpGrid = { rows: 3, cols: 3, points };
+      expect(evaluateMeshGrid(mesh, 0.5, 0.15).y).toBeCloseTo(0.06, 3);
+      expect(evaluateMeshGrid(mesh, 0.5, 0.85).y).toBeCloseTo(0.76, 3);
+
+      const pad = Array.from({ length: 14 }, () => [0, 0, 0, 0]);
+      await uploadLayer(rpc, 'shaped', solidFrame([255, 0, 0, 255]), IDENTITY_CORNERS, null);
+      await rpc.send('submit_commands', { commands: [
+        {
+          type: 'upsert_layer', layer_id: 'shaped', opacity: 1, z_index: 0, corners: IDENTITY_CORNERS,
+          shape: [6, 0, 0, 1], shape2: [0.1, 0.15, 0.8, 0.7], shape_meta: [3, 0, 0, 0],
+          shape_points: [[0.5, 0.15, 0.9, 0.85], [0.1, 0.85, 0.1, 0.85], ...pad],
+          mesh_grid: mesh,
+        },
+        { type: 'present' },
+      ] });
+      const red = (shot: Snapshot, yUp: number) => channel(shot, SIZE / 2, Math.floor((1 - yUp) * SIZE), shot.red);
+      // Inside both triangles: the warp and shape have landed.
+      await expect.poll(async () => red(await snapshot(rpc), 0.3), { timeout: 5000, interval: 30 }).toBeGreaterThan(200);
+      await rpc.send('frame_snapshot', {});
+      const shot = await snapshot(rpc);
+      // Below the unwarped base, inside the warped one: content.
+      expect(red(shot, 0.1)).toBeGreaterThan(200);
+      // Under the unwarped apex, above the warped one: nothing.
+      expect(red(shot, 0.8)).toBeLessThan(32);
+    } finally { await rpc.close(); }
+  }, 60000);
+});
