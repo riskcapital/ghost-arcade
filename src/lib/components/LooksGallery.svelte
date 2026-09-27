@@ -64,6 +64,14 @@
     }
   }
 
+  // In VJ the gallery lives inside the VJ overlay, under the Presets tray
+  // that VJ MAP opens for dragging presets in, which hid Remove Look. Lift
+  // it to the page root there so it draws above the tray.
+  function liftAboveTray(node: HTMLElement, lift: boolean) {
+    if (lift) document.body.appendChild(node);
+    return { destroy() { if (lift) node.remove(); } };
+  }
+
   function removeLook() {
     const count = mapSurfaces ? project.clearSurfaceLooks() : project.clearLook(targets);
     message = count
@@ -72,7 +80,7 @@
   }
 </script>
 
-<div class="looks-gallery" role="dialog" aria-label="Looks" data-help-page="edge-effects">
+<div class="looks-gallery" class:lifted={mapSurfaces} role="dialog" aria-label="Looks" data-help-page="edge-effects" use:liftAboveTray={mapSurfaces}>
   <header class="looks-head">
     <div>
       <h3>Looks</h3>
@@ -129,6 +137,8 @@
     background: rgba(14, 15, 20, 0.97); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px;
     box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55); color: #e8e8ee; font-size: 12px;
   }
+  /* Above the Presets tray (z-index 1204) and the VJ overlay. */
+  .looks-gallery.lifted { z-index: 1300; }
   .looks-head { display: flex; justify-content: space-between; gap: 12px; padding: 14px 16px 8px; }
   .looks-head h3 { margin: 0 0 4px; font-size: 15px; letter-spacing: 0.02em; }
   .looks-head p { margin: 0; color: #9da3b0; line-height: 1.4; }
