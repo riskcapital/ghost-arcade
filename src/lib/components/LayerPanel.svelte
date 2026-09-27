@@ -2773,7 +2773,7 @@
           <div class="inspector-section-title">Paint Mask</div>
           <div class="property-row">
             <button
-              class={armed ? 'btn-primary' : 'btn-secondary'}
+              class={armed ? 'mask-done-btn paint-arm' : 'btn-reset paint-arm'}
               data-testid="paint-mask-arm"
               disabled={layer.locked}
               onclick={() => {
@@ -2786,7 +2786,7 @@
             <span class="mask-point-count">{paint?.strokes.length ?? 0} {(paint?.strokes.length ?? 0) === 1 ? 'stroke' : 'strokes'}</span>
           </div>
           {#if armed}
-            <div class="property-row shape-icon-row" role="group" aria-label="Brush mode">
+            <div class="property-row paint-mode-row" role="group" aria-label="Brush mode">
               <button class="shape-icon-btn" class:active={$paintBrush.mode === 'erase'} onclick={() => paintBrush.update({ mode: 'erase' })} title="Erase: hide the layer where you paint">Erase</button>
               <button class="shape-icon-btn" class:active={$paintBrush.mode === 'restore'} onclick={() => paintBrush.update({ mode: 'restore' })} title="Restore: bring erased areas back">Restore</button>
             </div>
@@ -2811,7 +2811,7 @@
             <span class="mask-hint">Drag on the layer to paint · X or Alt swaps Erase/Restore · [ ] resize · Esc to stop</span>
           {/if}
           {#if paint}
-            <div class="property-row">
+            <div class="property-row mask-actions">
               <label>
                 <input type="checkbox" checked={paint.enabled !== false}
                   onchange={() => project.setPaintMaskVisible(layer.id, paint.enabled === false)} />
@@ -4976,6 +4976,17 @@
 
   .mask-done-btn:hover {
     background: #CF6EFF;
+  }
+
+  .paint-arm {
+    flex: 1;
+    width: auto;
+  }
+
+  .paint-mode-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
   }
 
   /* Shape Mask Section Styles */
