@@ -4912,6 +4912,21 @@
   // "saved and then immediately asked to save again, then dialog stopped
   // coming up". The mutex is the fix — second invocation no-ops while the
   // first is still in flight.
+  // The project is named after its file: nothing else names it, and the
+  // status bar showed "Untitled Project" for every saved show. Save As
+  // takes the chosen file's name; opening a file saved before that (still
+  // "Untitled Project") takes the file's name too.
+  const DEFAULT_PROJECT_NAME = 'Untitled Project';
+  function projectNameFromFile(fileName: string): string {
+    return fileName.replace(/^.*[\\/]/, '').replace(/\.gha$/i, '').trim();
+  }
+  function nameProjectAfterFile(fileName: string, onlyIfUntitled = false): void {
+    const name = projectNameFromFile(fileName);
+    const current = get(project).name;
+    if (!name || name === current || (onlyIfUntitled && current && current !== DEFAULT_PROJECT_NAME)) return;
+    project.setProjectName(name);
+  }
+
   async function saveComposition() {
     await (await import('./lib/stores/settings')).flushSettings();
     if (saveInFlight) {
@@ -5008,7 +5023,7 @@
   // mutex — split out so saveComposition can re-use it without lock thrash.
   async function saveCompositionAsInner() {
     await (await import('./lib/stores/settings')).flushSettings();
-    const jsonStr = await project.exportProjectJSONForSave();
+    let jsonStr = await project.exportProjectJSONForSave();
     const suggestedName = `${$project.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.gha`;
 
     // In Electron: use the native save dialog so we get a real filesystem
@@ -5026,6 +5041,8 @@
           });
           if (dialogResult?.canceled || !dialogResult?.filePath) return;
           const filePath: string = dialogResult.filePath;
+          nameProjectAfterFile(filePath);
+          jsonStr = await project.exportProjectJSONForSave();
           // Derive project dir from the chosen file path
           const sep = filePath.includes('\\') ? '\\' : '/';
           const projectDir = filePath.substring(0, filePath.lastIndexOf(sep) + 1);
@@ -5067,6 +5084,8 @@
             },
           ],
         });
+        nameProjectAfterFile(handle.name);
+        jsonStr = await project.exportProjectJSONForSave();
         const writable = await handle.createWritable();
         await writable.write(jsonStr);
         await writable.close();
@@ -5147,6 +5166,7 @@
           // Track the loaded path so Save (Ctrl+S) overwrites the same .gha
           // file instead of triggering a Save As dialog.
           currentProjectPath = electronPath;
+          nameProjectAfterFile(file.name, true);
           recentFiles.add(file.name, electronPath);
           markAsSaved();
         } else {
@@ -5230,6 +5250,7 @@
       currentFileHandle = null;
       // Track the loaded path so Save updates this file in place.
       currentProjectPath = path;
+      nameProjectAfterFile(path, true);
       recentFiles.add(name, path); // Bump to top
       markAsSaved();
     }
