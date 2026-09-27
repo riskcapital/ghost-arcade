@@ -21,7 +21,6 @@
     recordingSource,
     recordingSourceKey,
     resolveRecordingSourceChoice,
-    type RecordingCodecId,
     type RecordingCodecOption,
   } from '../recording/recordingSources';
 
@@ -53,17 +52,6 @@
     .filter(entry => entry.options.length > 0);
   $: summary = `${request.label} · ${request.codec.label}`;
   $: screenAlphaNote = chosen.kind === 'screen' && request.codec.alpha;
-
-  function pickSource(event: Event) {
-    const key = (event.currentTarget as HTMLSelectElement).value;
-    const option = sources.find(entry => entry.key === key);
-    if (option) recordingSource.set(option.source);
-  }
-
-  function pickCodec(event: Event) {
-    const id = (event.currentTarget as HTMLSelectElement).value as RecordingCodecId;
-    settings.setNativeRecordingCodec(id);
-  }
 
   async function loadCodecs() {
     if (!isElectron) return;
@@ -115,35 +103,39 @@
   </button>
   {#if open}
     <div class="rec-source-pop" role="dialog" aria-label="Recording source and format">
-      <label class="rec-source-row">
-        <span>Record</span>
-        <select value={chosenKey} onchange={pickSource} data-testid="rec-source-select">
-          {#each groups as entry}
-            <optgroup label={entry.group}>
-              {#each entry.options as option}
-                <option value={option.key}>{option.label}</option>
-              {/each}
-            </optgroup>
+      <div class="rec-source-section" role="group" aria-label="Record">
+        {#each groups as entry}
+          <div class="rec-source-group">{entry.group}</div>
+          {#each entry.options as option}
+            <button
+              class="rec-source-item"
+              class:selected={option.key === chosenKey}
+              onclick={() => recordingSource.set(option.source)}
+              data-rec-source={option.key}
+            >{option.label}</button>
           {/each}
-        </select>
-      </label>
-      <label class="rec-source-row">
-        <span>Format</span>
-        <select value={codecId} onchange={pickCodec} data-testid="rec-codec-select">
-          {#each codecs as codec}
-            <option value={codec.id} disabled={!codec.available} title={codec.reason ?? ''}>
-              {codec.label}{codec.available ? '' : ' (unavailable)'}
-            </option>
-          {/each}
-        </select>
-      </label>
+        {/each}
+      </div>
+      <div class="rec-source-section" role="group" aria-label="Format">
+        <div class="rec-source-group">Format</div>
+        {#each codecs as codec}
+          <button
+            class="rec-source-item"
+            class:selected={codec.id === codecId}
+            disabled={!codec.available}
+            title={codec.reason ?? ''}
+            onclick={() => settings.setNativeRecordingCodec(codec.id)}
+            data-rec-codec={codec.id}
+          >{codec.label}{codec.available ? '' : ' (unavailable)'}</button>
+        {/each}
+      </div>
       <p class="rec-source-hint">
         {#if screenAlphaNote}
           A Screen records what its projector shows, so it has no transparency.
         {:else if request.alpha}
           Empty areas record transparent.
         {:else if chosen.kind === 'layer'}
-          The layer on its own, over black, with its effects.
+          The layer on its own at full opacity, over black, with its effects.
         {:else if chosen.kind === 'screen'}
           Exactly what this Screen shows, after crop, warp, masks and blend.
         {:else}
@@ -204,19 +196,43 @@
     color: var(--ga-ink-0, #eee);
     font-size: 12px;
   }
-  .rec-source-row {
-    display: grid;
-    grid-template-columns: 52px 1fr;
-    align-items: center;
-    gap: 8px;
+  .rec-source-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    max-height: 260px;
+    overflow-y: auto;
   }
-  .rec-source-row span {
-    color: var(--ga-ink-2, rgba(255, 255, 255, 0.6));
+  .rec-source-group {
+    padding: 4px 6px 2px;
+    color: var(--ga-ink-2, rgba(255, 255, 255, 0.5));
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
-  .rec-source-row select {
-    width: 100%;
-    min-width: 0;
+  .rec-source-item {
+    text-align: left;
+    padding: 5px 8px;
+    background: transparent;
+    border: none;
+    border-radius: var(--ga-r-hard, 2px);
+    color: inherit;
     font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rec-source-item:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .rec-source-item.selected {
+    background: rgba(255, 68, 56, 0.16);
+    color: var(--ga-rec, #ff4438);
+  }
+  .rec-source-item:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
   .rec-source-hint {
     margin: 0;

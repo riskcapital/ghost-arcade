@@ -18266,9 +18266,12 @@ impl App {
     }
 
     /// Layer list for the recording target. A layer or VJ row renders on its
-    /// own, pre-composite: its blend mode says how it meets the layers below,
-    /// and there are none here, so it records as Normal (hierarchy masks keep
-    /// their code — they clip the recorded layers under them).
+    /// own, pre-composite and pre-fader: its blend mode and opacity say how it
+    /// meets the layers below, and there are none here, so it records as
+    /// Normal at full opacity (hierarchy masks keep their code — they clip
+    /// the recorded layers under them). Pre-fader matters for VJ rows: in MIX
+    /// the row's carrier layer sits at opacity 0 and the VJ Mix graph applies
+    /// the row fader, so a post-fader take of a row would always be empty.
     fn record_target_layer_data(&self, spec: &RecordTargetSpec) -> Vec<LayerGpu> {
         if spec.source == RecordTargetSource::Composition {
             return self.gpu_layer_data();
@@ -18283,7 +18286,9 @@ impl App {
             .into_iter()
             .take(MAX_SCENE_LAYERS)
             .map(|layer| {
-                let mut gpu = layer.gpu();
+                let mut solo = layer.clone();
+                solo.opacity = 1.0;
+                let mut gpu = solo.gpu();
                 if gpu.style[0] != blend_mode_code("hierarchy-mask") {
                     gpu.style[0] = blend_mode_code("normal");
                 }
