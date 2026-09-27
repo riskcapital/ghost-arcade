@@ -32,6 +32,7 @@
   import EffectChainPresets from './EffectChainPresets.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import LooksGallery from './LooksGallery.svelte';
+  import StageFxChaseControls from './StageFxChaseControls.svelte';
   import { isLookTarget } from '../looks/edgeLooks';
   import EffectParamRow from './EffectParamRow.svelte';
   import CubeLutControls from './CubeLutControls.svelte';
@@ -1534,6 +1535,7 @@
                           <span class="param-value">{(eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0).toFixed(2)}</span>
                         </div>
                       {/each}
+                      <StageFxChaseControls effect={eff} target="mapping" onUpdate={(patch) => project.updateMappingStageEffect(eff.id, patch)} />
                     </div>
                   {/if}
                 </div>

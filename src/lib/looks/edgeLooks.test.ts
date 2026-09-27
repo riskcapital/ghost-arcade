@@ -207,3 +207,23 @@ describe('applying a Look', () => {
     expect(after.effects[0].react).toMatchObject({ mode: 'pulse', hueStep: 1 / 6 });
   });
 });
+
+describe('Screen FX colour chase settings', () => {
+  it('records a chase order from selection clicks and saves it with the project', async () => {
+    const recorder = await import('../stores/chaseOrderRecorder');
+    const ids = sixShapes();
+    layers.project.selectLayer(ids[2]);
+    layers.project.addMappingStageEffect({ id: 'ring', type: 'chase', enabled: true, opacity: 1, params: { speed: 1, width: 0.2 } });
+    recorder.startChaseOrderRecording('mapping', 'ring', (_t, id, order) => layers.project.updateMappingStageEffect(id, { order }));
+    // The first click lands on the layer that was already selected.
+    for (const id of [ids[2], ids[5], ids[0], ids[5], ids[3]]) layers.project.selectLayer(id);
+    recorder.stopChaseOrderRecording(true);
+    layers.project.updateMappingStageEffect('ring', { output: 'color', colorStyle: 'two-tone', color: '#ff00aa', color2: '#00ccff' });
+    const effect = () => get(layers.project).mappingComposition!.stageEffects.find((e) => e.id === 'ring')!;
+    expect(effect().order).toEqual([ids[2], ids[5], ids[0], ids[3]]);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    layers.project.updateMappingStageEffect('ring', { output: undefined, order: undefined });
+    expect(layers.project.importProject(saved)).toBe(true);
+    expect(effect()).toMatchObject({ output: 'color', colorStyle: 'two-tone', color: '#ff00aa', color2: '#00ccff', order: [ids[2], ids[5], ids[0], ids[3]] });
+  });
+});

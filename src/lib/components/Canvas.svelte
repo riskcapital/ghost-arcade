@@ -27,7 +27,7 @@
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
-  import { evaluateStageEffectForScreen, stageEffectsRuntime, resolveStageEffectForLayer } from '../stores/stageEffects';
+  import { evaluateStageEffectOutputForScreen, chaseOrderIndices, stageEffectsRuntime, resolveStageEffectForLayer } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type Effect, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
@@ -576,24 +576,21 @@
     if (sliceCount === 0) return;
 
     const tSec = nowMs / 1000;
+    // The user's clicked chase order, if any; the rest follow layer order.
+    const chaseIndex = chaseOrderIndices(stageLayers.map((layer) => [layer.id]), live.order);
     for (let i = 0; i < sliceCount; i++) {
       const layer = stageLayers[i];
       const { x, y } = getLayerCentroid01(layer);
-      const brightness = evaluateStageEffectForScreen(
+      const out = evaluateStageEffectOutputForScreen(
         `mapping-composition:${layer.id}`,
-        live.type,
-        live.params,
+        live,
         x,
         1 - y,
         tSec,
-        {
-          effectId: live.id,
-          opacity: live.opacity ?? 1,
-          sliceIndex: i,
-          sliceCount,
-        },
+        { sliceIndex: chaseIndex[i], sliceCount },
       );
-      applyLayerOpacityModulation(layer, brightness);
+      applyLayerOpacityModulation(layer, out.brightness);
+      if (out.tint) layer._stageTint = out.tint;
     }
   }
 
@@ -1840,13 +1837,17 @@
       // times a second, so a one-shot modulated push was replaced before it
       // was drawn and Screen FX showed up on the odd frame at best.
       let stageFxNativeOpacity = new Map<string, number>();
+      // Screen FX colour chases: layerId → tint, refreshed with the opacity.
+      let stageFxNativeTint = new Map<string, [number, number, number]>();
       const withStageFxOpacity = (list: Layer[]): Layer[] => {
-        if (stageFxNativeOpacity.size === 0) return list;
+        if (stageFxNativeOpacity.size === 0 && stageFxNativeTint.size === 0) return list;
         return list.map((layer) => {
           const multiplier = stageFxNativeOpacity.get(layer.id);
-          return multiplier === undefined
-            ? layer
-            : { ...layer, opacity: layer.opacity * multiplier };
+          const tint = stageFxNativeTint.get(layer.id);
+          if (multiplier === undefined && !tint) return layer;
+          const next = multiplier === undefined ? { ...layer } : { ...layer, opacity: layer.opacity * multiplier };
+          if (tint) next._stageTint = tint;
+          return next;
         });
       };
       let __vjFeedDebugAt = 0;
@@ -2033,8 +2034,9 @@
         const mappingFx = !!(mc?.enabled && (mc.stageEffects?.length ?? 0) > 0);
         if (!surfaceFx && !mappingFx) {
           // Put the layers back at their own opacity once, when FX stop.
-          if (stageFxNativeOpacity.size > 0) {
+          if (stageFxNativeOpacity.size > 0 || stageFxNativeTint.size > 0) {
             stageFxNativeOpacity = new Map();
+            stageFxNativeTint = new Map();
             scheduleNativeLayersSync();
           }
           return;
@@ -2044,6 +2046,7 @@
         // full-canvas slice can match them through the geometry fallback.
         const working = (get(layers) as Layer[]).filter((layer) => !String(layer.id).startsWith('vj-'));
         const next = new Map<string, number>();
+        const nextTint = new Map<string, [number, number, number]>();
         let fxMatched = 0;
         if (surfaceFx) {
           for (const layer of working) {
@@ -2053,6 +2056,7 @@
             const out = resolveStageEffectForLayer(layer, stageRt);
             if (!out.sliceId) continue;
             fxMatched += 1;
+            if (out.tint) nextTint.set(layer.id, out.tint);
             if (out.brightness >= 1) continue;
             next.set(layer.id, Math.max(0, out.brightness));
           }
@@ -2063,6 +2067,7 @@
           const copies = working.map((layer) => ({ ...layer }));
           applyMappingCompositionStageEffects(mc, copies, performance.now());
           for (const copy of copies) {
+            if (copy._stageTint) nextTint.set(copy.id, copy._stageTint);
             const base = (copy as { _stageOrigOpacity?: number })._stageOrigOpacity;
             if (base === undefined) continue;
             const multiplier = base > 0 ? copy.opacity / base : 0;
@@ -2070,6 +2075,7 @@
           }
         }
         stageFxNativeOpacity = next;
+        stageFxNativeTint = nextTint;
         scheduleNativeLayersSync();
         const nowDbg = performance.now();
         if (nowDbg - ((window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt ?? 0) > 2000) {

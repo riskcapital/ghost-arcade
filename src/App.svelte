@@ -81,6 +81,7 @@
   import PaintMaskOverlay from './lib/components/PaintMaskOverlay.svelte';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
+  import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
   import { beginHistoryRestore, endHistoryRestore } from './lib/stores/historyHooks';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
@@ -6924,6 +6925,9 @@
             <MasterWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
           </div>
         {/if}
+        <div class="chase-badges-offset" style="position: absolute; pointer-events: none; left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
+          <ChaseOrderBadges containerWidth={canvasWidth} containerHeight={canvasHeight} />
+        </div>
         {#if $selectedLayer && $selectedLayer.type !== 'mask' && $leftSidebarTab !== 'screens'}
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">

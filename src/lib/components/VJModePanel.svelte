@@ -1,5 +1,6 @@
 <script lang="ts">
   import VJGroups from './VJGroups.svelte';
+  import StageFxChaseControls from './StageFxChaseControls.svelte';
   import { videoBeatFit } from '../media/videoBeatFit';
   import { launchClock, TEMPO_NUDGE_AMOUNT } from '../stores/launchClock';
   import { abletonLink } from '../sync/abletonLink';
@@ -4481,6 +4482,7 @@
                                 <span class="param-val">{(eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0).toFixed(2)}</span>
                               </div>
                             {/each}
+                            <StageFxChaseControls effect={eff} target="surface" onUpdate={(patch) => surfaceStore.updateStageEffect(eff.id, patch)} />
                           </div>
                         {/if}
                       </div>
