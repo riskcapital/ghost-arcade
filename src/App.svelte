@@ -77,6 +77,8 @@
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
   import { maskEditingLayerId } from './lib/stores/maskEditing';
+  import { paintMaskLayerId } from './lib/stores/paintMaskTool';
+  import PaintMaskOverlay from './lib/components/PaintMaskOverlay.svelte';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { beginHistoryRestore, endHistoryRestore } from './lib/stores/historyHooks';
@@ -709,6 +711,9 @@
   // every click on a new one into a silent no-op, so each mask editing session
   // starts in Edit, and without a closed shape the pen always draws.
   let maskPenModeTarget: string | null = null;
+  // The paint brush is armed on one layer; selecting another disarms it.
+  $: if ($paintMaskLayerId && $selectedLayer?.id !== $paintMaskLayerId) paintMaskLayerId.set(null);
+
   $: if (($maskEditingLayerId ?? null) !== maskPenModeTarget) {
     maskPenModeTarget = $maskEditingLayerId ?? null;
     maskPenMode = 'edit';
@@ -2313,6 +2318,7 @@
     '.mask-anchor',
     '.mask-handle',
     '.mask-pen-toolbar',
+    '.paint-mask-overlay',
     '.light-painting-overlay',
     '.lp-draw-overlay',
     '[data-editor-pointer-owner="light-painting"]',
@@ -2399,6 +2405,7 @@
     // overlays; because the marquee begins on pointerdown (which those overlays
     // don't stop), without this guard it hijacks those clicks.
     if ($selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id) return false;
+    if ($selectedLayer && $paintMaskLayerId === $selectedLayer.id) return false;
     if ($selectedLightPaintingLayer && (lpDrawingEnabled || lpIsPathEditMode)) return false;
     const target = e.target instanceof Element ? e.target : null;
     if (
@@ -6922,6 +6929,11 @@
             {/if}
             {#if $selectedLayer.warpMode === 'mesh'}
               <MeshWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} interactionOnly={nativePrimaryRenderer} />
+            {/if}
+
+            <!-- Painted-mask brush: owns the pointer while armed on this layer. -->
+            {#if $paintMaskLayerId === $selectedLayer.id}
+              <PaintMaskOverlay containerWidth={canvasWidth} containerHeight={canvasHeight} />
             {/if}
 
             {#if $selectedLayer.layerShape?.type === 'custom'}

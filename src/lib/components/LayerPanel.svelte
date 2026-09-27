@@ -43,6 +43,7 @@
   import { createNativeVideoScrubber } from '../renderer/nativeVideoScrubber';
   import { showToast } from '../stores/errorToast';
   import { maskEditingLayerId } from '../stores/maskEditing';
+  import { paintBrush, paintMaskLayerId, PAINT_BRUSH_SIZE_MAX, PAINT_BRUSH_SIZE_MIN } from '../stores/paintMaskTool';
   import { nativeUnsupportedEffectTypes, nativeUnsupportedSourceReason } from '../sync/nativeRendererSync';
   import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
   import MapSurfaceControls from './MapSurfaceControls.svelte';
@@ -2762,6 +2763,69 @@
           {/if}
           </div>
           <!-- End mask-section -->
+
+        <!-- Painted mask: erase/restore brush in the layer's content space.
+             Combines (multiplies) with the vector mask above. -->
+        {#if layer}
+        {@const paint = layer.paintMask}
+        {@const armed = $paintMaskLayerId === layer.id}
+        <div class="mask-section paint-mask-section" data-help-page="masks-slices">
+          <div class="inspector-section-title">Paint Mask</div>
+          <div class="property-row">
+            <button
+              class={armed ? 'btn-primary' : 'btn-secondary'}
+              data-testid="paint-mask-arm"
+              disabled={layer.locked}
+              onclick={() => {
+                if (armed) { paintMaskLayerId.set(null); return; }
+                maskEditingLayerId.set(null);
+                if (paint && paint.enabled === false) project.setPaintMaskVisible(layer.id, true);
+                paintMaskLayerId.set(layer.id);
+              }}
+            >{armed ? 'Done Painting' : 'Paint'}</button>
+            <span class="mask-point-count">{paint?.strokes.length ?? 0} {(paint?.strokes.length ?? 0) === 1 ? 'stroke' : 'strokes'}</span>
+          </div>
+          {#if armed}
+            <div class="property-row shape-icon-row" role="group" aria-label="Brush mode">
+              <button class="shape-icon-btn" class:active={$paintBrush.mode === 'erase'} onclick={() => paintBrush.update({ mode: 'erase' })} title="Erase: hide the layer where you paint">Erase</button>
+              <button class="shape-icon-btn" class:active={$paintBrush.mode === 'restore'} onclick={() => paintBrush.update({ mode: 'restore' })} title="Restore: bring erased areas back">Restore</button>
+            </div>
+            <div class="property-row">
+              <label for="paint-size-{layer.id}">Size</label>
+              <input id="paint-size-{layer.id}" type="range" min={PAINT_BRUSH_SIZE_MIN} max={PAINT_BRUSH_SIZE_MAX} step="1" value={$paintBrush.size}
+                oninput={(e) => paintBrush.update({ size: parseFloat((e.target as HTMLInputElement).value) })} />
+              <span class="value">{Math.round($paintBrush.size)} px</span>
+            </div>
+            <div class="property-row">
+              <label for="paint-soft-{layer.id}">Softness</label>
+              <input id="paint-soft-{layer.id}" type="range" min="0" max="1" step="0.01" value={$paintBrush.softness}
+                oninput={(e) => paintBrush.update({ softness: parseFloat((e.target as HTMLInputElement).value) })} />
+              <span class="value">{Math.round($paintBrush.softness * 100)}%</span>
+            </div>
+            <div class="property-row">
+              <label for="paint-opacity-{layer.id}">Opacity</label>
+              <input id="paint-opacity-{layer.id}" type="range" min="0.01" max="1" step="0.01" value={$paintBrush.opacity}
+                oninput={(e) => paintBrush.update({ opacity: parseFloat((e.target as HTMLInputElement).value) })} />
+              <span class="value">{Math.round($paintBrush.opacity * 100)}%</span>
+            </div>
+            <span class="mask-hint">Drag on the layer to paint · X or Alt swaps Erase/Restore · [ ] resize · Esc to stop</span>
+          {/if}
+          {#if paint}
+            <div class="property-row">
+              <label>
+                <input type="checkbox" checked={paint.enabled !== false}
+                  onchange={() => project.setPaintMaskVisible(layer.id, paint.enabled === false)} />
+                Show
+              </label>
+              <label>
+                <input type="checkbox" checked={paint.inverted} onchange={() => project.togglePaintMaskInvert(layer.id)} />
+                Invert
+              </label>
+              <button class="btn-secondary" disabled={paint.strokes.length === 0} onclick={() => project.clearPaintMask(layer.id)}>Clear</button>
+            </div>
+          {/if}
+        </div>
+        {/if}
 
         <!-- Layer Shape Section -->
         <div class="shape-mask-section">
