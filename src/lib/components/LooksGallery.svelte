@@ -31,7 +31,8 @@
   function pickLook(id: string) {
     if (!targets.length) { message = 'Draw a shape first: Add Layer, then Custom Shape.'; return; }
     const look = EDGE_LOOKS.find((item) => item.id === id)!;
-    const count = project.applyLook(targets, id, palette ?? look.palette);
+    // Each Look opens in its own colours until the user picks a palette.
+    const count = project.applyLook(targets, id, paletteChoice ?? look.palette);
     message = `${look.name} on ${count} shape${count === 1 ? '' : 's'}. Undo reverts it in one step.`;
   }
 
