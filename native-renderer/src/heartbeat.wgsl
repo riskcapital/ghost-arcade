@@ -3539,14 +3539,19 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
         let sample_uv = uv_sample.xy;
         let content_mask = uv_sample.z;
-        // The layer's shape and mask are cut in its own UV before the mesh
-        // bends it, as the editor texture and the Edge Effect outline are,
-        // so they follow the surface (into a Bezier bulge too). Cutting a
-        // straight mesh in quad UV left the content at the unwarped shape
-        // while its Edge Effects followed the warp.
-        let shape_uv = mesh_sample.yz;
+        // A Bezier layer's shape and mask are cut in the layer's own UV
+        // before the mesh bends it, as the editor texture and the Edge
+        // Effect outline are, so they follow the surface into a bulge.
+        // A non-rectangular shape does the same on a straight mesh: cut in
+        // quad UV, the content stayed at the unwarped shape while its Edge
+        // Effects followed the warp. A plain rectangle keeps quad UV there,
+        // so its anti-aliased edge stays one output pixel wide in cells the
+        // mesh squeezes or stretches.
+        let mask_uv = select(local.yz, mesh_sample.yz, bezier_mesh);
+        let shaped = layers[layer_index].shape.x > 0.5;
+        let shape_uv = select(mask_uv, mesh_sample.yz, shaped);
         let shape_sample = native_layer_shape(shape_uv, layer_index);
-        let polygon_mask = native_polygon_mask(shape_uv, layer_index)
+        let polygon_mask = native_polygon_mask(mask_uv, layer_index)
           * native_paint_mask(mesh_sample.yz, layer_index);
         let shape_mask = shape_sample.x * polygon_mask;
         content_alpha = 0.56 * shape_mask;
