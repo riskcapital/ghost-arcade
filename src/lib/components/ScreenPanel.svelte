@@ -44,7 +44,13 @@
       openWindowIds = Array.isArray(ids) ? ids : [];
     } catch { openWindowIds = []; }
   }
-  onMount(() => { refreshOpenWindows(); });
+  onMount(() => {
+    refreshOpenWindows();
+    // A screen window can also close on its own (Esc in the window, or the
+    // display going away), so keep the Open / Close button honest.
+    const poll = setInterval(() => { void refreshOpenWindows(); }, 2000);
+    return () => clearInterval(poll);
+  });
 
   // Auto-close any windows whose backing screen got removed/disabled/retargeted.
   $: if (isDesktopApp && openWindowIds.length > 0) {
