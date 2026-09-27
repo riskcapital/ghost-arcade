@@ -5826,11 +5826,14 @@
                 </div>
               </div>
 
-              <!-- Clip cells -->
+              <!-- Clip cells. In MIX/STAGE firing a preset loads it into the editor,
+                   so the editor's active preset marks its cell. In MAP a preset plays
+                   from the row (the editor is left alone), so only the row's playing
+                   clip does; the editor's preset would stay lit after Stop All. -->
               {#each columnIndices as colIdx (colIdx)}
                 {@const clip = grid[layerIdx]?.[colIdx]}
                 {@const isActive = activeClip !== null && clip != null && activeClip.id === clip.id}
-                {@const isPresetActive = clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
+                {@const isPresetActive = !$vjClipLauncher.mapMode && clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
                 {@const isQueued = $vjClipLauncher.pendingTriggers.some(p => (p.kind === 'column' ? (!states[layerIdx].locked && !states[layerIdx].ignoreColumnTrigger && (!p.layerIndices || p.layerIndices.includes(layerIdx))) : p.layerIndex === layerIdx) && p.columnIndex === colIdx && p.bank === bank)}
                 {@const isClipFirable = clip == null || clip.type !== 'preset' || $vjClipLauncher.mapMode}
                 <div
