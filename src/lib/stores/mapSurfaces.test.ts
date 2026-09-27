@@ -179,4 +179,32 @@ describe('shared map surfaces', () => {
     layers.project.setLayerSurfaceSharing('left', 'share');
     expect(stored('left')).toEqual(own);
   });
+
+  it('keeps a VJ MAP Look on the surfaces, saves it, and clears it in one call', () => {
+    expect(layers.project.importProject(oldProject())).toBe(true);
+    const editorBefore = JSON.stringify(get(layers.project).layers);
+    const presetsBefore = JSON.stringify(get(layers.project).vjMode!.compositions);
+    expect(layers.project.applySurfaceLook('neon-pulse')).toBe(2);
+    const worn = get(layers.project).mapSurfaces!;
+    expect(worn.map((s) => s.lookEffects?.look)).toEqual([
+      { id: 'neon-pulse', paletteId: 'neon' }, { id: 'neon-pulse', paletteId: 'neon' },
+    ]);
+    // Each surface has its own effect ids; editor layers and presets are untouched.
+    expect(worn[0].lookEffects!.effects[0].id).not.toBe(worn[1].lookEffects!.effects[0].id);
+    expect(JSON.stringify(get(layers.project).layers)).toBe(editorBefore);
+    expect(JSON.stringify(get(layers.project).vjMode!.compositions)).toBe(presetsBefore);
+
+    // A palette pick re-colours; only the listed surfaces change.
+    expect(layers.project.applySurfaceLook('neon-pulse', 'ice', ['right'])).toBe(1);
+    expect(get(layers.project).mapSurfaces!.map((s) => s.lookEffects?.look?.paletteId)).toEqual(['neon', 'ice']);
+
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    expect(saved.project.mapSurfaces[1].lookEffects.look).toEqual({ id: 'neon-pulse', paletteId: 'ice' });
+    expect(layers.project.importProject(saved)).toBe(true);
+    expect(get(layers.project).mapSurfaces!.map((s) => s.lookEffects?.look?.id)).toEqual(['neon-pulse', 'neon-pulse']);
+
+    expect(layers.project.clearSurfaceLooks()).toBe(2);
+    expect(get(layers.project).mapSurfaces!.every((s) => !('lookEffects' in s))).toBe(true);
+    expect(layers.project.clearSurfaceLooks()).toBe(0);
+  });
 });

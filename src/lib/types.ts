@@ -5277,6 +5277,11 @@ export interface MapSurface {
   id: string;
   name: string;
   geometry: MapSurfaceGeometry;
+  /** VJ MAP Look worn by this surface (its `look` ref names the Look and
+   *  palette). While set, it replaces the Edge Effects of every preset layer
+   *  on this surface, detached ones included, so the Look survives firing
+   *  another preset. Absent when the surface wears no Look. */
+  lookEffects?: EdgeEffectsConfig;
 }
 
 export interface VJModeState {

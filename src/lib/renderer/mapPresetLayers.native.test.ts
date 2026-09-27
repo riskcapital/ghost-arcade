@@ -174,6 +174,58 @@ describe('VJ MAP presets on the shared map', () => {
     expect(out.find((l) => l.id === 'mapvj-0::s')!.corners).toEqual(corners(0.5, 0.5, 0.9, 0.9));
   });
 
+  it('dresses every preset on a surface with the surface Look, and gives each its own back when it is removed', async () => {
+    const left = surfaceLayer('left', [0.1, 0.1, 0.4, 0.6]);
+    const right = surfaceLayer('right', [0.6, 0.1, 0.9, 0.6]);
+    const ownStack = { enabled: true, effects: [{ id: 'own', enabled: true, stroke: { type: 'solid' }, fill: { type: 'none' }, animation: { type: 'none' }, blendMode: 'normal', opacity: 1 }] } as any;
+    const a = preset('A', [{ ...left, edgeEffects: ownStack }, right]);
+    // B keeps its own geometry for `left` but still sits on that surface.
+    const b = preset('B', [{ ...left, corners: corners(0.2, 0.2, 0.3, 0.3), surfaceDetached: true }]);
+    const project = migrateMapSurfaces({ layers: [left, right], vjMode: { compositions: [a, b] } } as unknown as Project);
+    const comps = project.vjMode!.compositions.map((c) => c.id === 'B'
+      ? { ...c, layers: c.layers.map((l) => ({ ...l, surfaceDetached: true })) } : c);
+    const { buildLookEffects } = await import('../looks/edgeLooks');
+    const { edgeLook } = await import('../looks/edgeLookCatalog');
+    const look = { enabled: true, effects: buildLookEffects(edgeLook('neon-pulse')!, 'neon'), look: { id: 'neon-pulse', paletteId: 'neon' } } as any;
+    const surfaces = project.mapSurfaces!.map((surface) => surface.id === 'left' ? { ...surface, lookEffects: look } : surface);
+    const cache = new Map();
+
+    const dressed = mapOutput(launcher(['A', 'B']), comps, [], surfaces, cache);
+    expect(dressed.find((l) => l.id === 'mapvj-0::left')!.edgeEffects).toBe(look);
+    // Detached geometry, shared Look.
+    const detached = dressed.find((l) => l.id === 'mapvj-1::left')!;
+    expect(detached.edgeEffects).toBe(look);
+    expect(detached.corners).toEqual(corners(0.2, 0.2, 0.3, 0.3));
+    // Other surfaces and the row groups are untouched.
+    expect(dressed.find((l) => l.id === 'mapvj-0::right')!.edgeEffects ?? null).toBeNull();
+    expect(dressed.find((l) => l.id === 'mapvj-0')!.edgeEffects).toBeNull();
+
+    // Firing another preset on the row keeps the Look on the surface.
+    const refired = mapOutput(launcher(['B']), comps, [], surfaces, cache);
+    expect(refired.find((l) => l.id === 'mapvj-0::left')!.edgeEffects).toBe(look);
+
+    // An editor surface bound to a VJ row wears its surface's Look too.
+    const live = composeMapOutputLayers([], [{ ...left, vjLayerIndex: 2 }], [], surfaces);
+    expect(live.find((l) => l.id === 'left')!.edgeEffects).toBe(look);
+
+    // Removed: each preset shows its own stack again, and the native core
+    // is told to change it.
+    const sync = readySync();
+    try {
+      const withLook = await flushPayload(sync, mapOutput(launcher(['A']), comps, [], surfaces, cache));
+      expect(withLook.commands.some((c) => c.type === 'set_layer_edge_effects' && c.layer_id === 'mapvj-0::left')).toBe(true);
+      const bare = mapOutput(launcher(['A']), comps, [], project.mapSurfaces, cache);
+      expect(bare.find((l) => l.id === 'mapvj-0::left')!.edgeEffects).toEqual(ownStack);
+      const without = await flushPayload(sync, bare);
+      const edge = without.commands.filter((c) => c.type === 'set_layer_edge_effects' && c.layer_id === 'mapvj-0::left');
+      expect(edge.length).toBe(1);
+      expect(JSON.stringify(edge[0].edge_effects)).not.toEqual(JSON.stringify(withLook.commands
+        .find((c) => c.type === 'set_layer_edge_effects' && c.layer_id === 'mapvj-0::left').edge_effects));
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it('keeps native layer ids and the video binding when a row switches between presets that share a video surface', async () => {
     const video = surfaceLayer('screen', [0, 0, 1, 1], { id: 'shared-video', type: 'video', src: '/media/loop.mov', isPlaying: false });
     const text = surfaceLayer('banner', [0.1, 0.8, 0.9, 0.95]);

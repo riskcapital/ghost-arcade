@@ -2,11 +2,17 @@
   // One-click Looks gallery: pick a Look and every shape (or the selected
   // shapes / group) gets a beat-synced Edge Effects stack at once. Picking a
   // palette re-colours whatever Look the targets wear. One undo step each.
+  //
+  // In VJ MAP (`mapSurfaces`) a Look belongs to the map's surfaces instead:
+  // it is stored on project.mapSurfaces and worn by every preset fired on
+  // them, until Remove Look clears it. The editor's selection is hidden
+  // behind the VJ panel there, so MAP always targets every outlined surface.
   import { project, selectedLayerIds } from '../stores/layers';
   import { EDGE_LOOKS } from '../looks/edgeLookCatalog';
   import { LOOK_PALETTES, lookTargetLayerIds, isLookTarget, type LookScope, type Rgba } from '../looks/edgeLooks';
+  import { mapLookSurfaceIds } from '../stores/mapSurfaces';
 
-  let { onClose = () => {} }: { onClose?: () => void } = $props();
+  let { onClose = () => {}, mapSurfaces = false }: { onClose?: () => void; mapSurfaces?: boolean } = $props();
 
   const base = import.meta.env.BASE_URL ?? './';
   const thumb = (id: string) => `${base}looks/${id}.png`;
@@ -19,34 +25,50 @@
   const shapes = $derived($project.layers.filter(isLookTarget));
   const selectedTargets = $derived(lookTargetLayerIds($project.layers, $selectedLayerIds, 'selected'));
   // Default to every shape; a multi-selection (or a group) narrows it.
-  const scope = $derived<LookScope>(scopeChoice ?? (selectedTargets.length > 1 ? 'selected' : 'all'));
-  const targets = $derived(scope === 'all' ? shapes.map((layer) => layer.id) : selectedTargets);
+  const scope = $derived<LookScope>(mapSurfaces ? 'all' : scopeChoice ?? (selectedTargets.length > 1 ? 'selected' : 'all'));
+  const surfaceIds = $derived(mapSurfaces ? mapLookSurfaceIds($project) : []);
+  const targets = $derived(mapSurfaces ? surfaceIds : scope === 'all' ? shapes.map((layer) => layer.id) : selectedTargets);
+  const noun = $derived(mapSurfaces ? 'surface' : 'shape');
+  const plural = (count: number) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+  const emptyHint = $derived(mapSurfaces
+    ? 'Save a mapping preset first: Looks in MAP dress its surfaces.'
+    : 'Draw a shape first: Add Layer, then Custom Shape.');
   const wearing = $derived.by(() => {
-    const refs = $project.layers.filter((layer) => targets.includes(layer.id)).map((layer) => layer.edgeEffects?.look ?? null);
+    const refs = mapSurfaces
+      ? ($project.mapSurfaces ?? []).filter((surface) => targets.includes(surface.id)).map((surface) => surface.lookEffects?.look ?? null)
+      : $project.layers.filter((layer) => targets.includes(layer.id)).map((layer) => layer.edgeEffects?.look ?? null);
     const first = refs[0];
     return first && refs.every((ref) => ref?.id === first.id && ref.paletteId === first.paletteId) ? first : null;
   });
   const palette = $derived(paletteChoice ?? wearing?.paletteId ?? null);
 
   function pickLook(id: string) {
-    if (!targets.length) { message = 'Draw a shape first: Add Layer, then Custom Shape.'; return; }
+    if (!targets.length) { message = emptyHint; return; }
     const look = EDGE_LOOKS.find((item) => item.id === id)!;
     // Each Look opens in its own colours until the user picks a palette.
-    const count = project.applyLook(targets, id, paletteChoice ?? look.palette);
-    message = `${look.name} on ${count} shape${count === 1 ? '' : 's'}. Undo reverts it in one step.`;
+    const count = apply(id, paletteChoice ?? look.palette);
+    message = mapSurfaces
+      ? `${look.name} on ${plural(count)}. Every preset on them wears it until Remove Look.`
+      : `${look.name} on ${plural(count)}. Undo reverts it in one step.`;
+  }
+
+  function apply(id: string, paletteId: string) {
+    return mapSurfaces ? project.applySurfaceLook(id, paletteId, targets) : project.applyLook(targets, id, paletteId);
   }
 
   function pickPalette(id: string) {
     paletteChoice = id;
     if (wearing) {
-      project.applyLook(targets, wearing.id, id);
+      apply(wearing.id, id);
       message = `Colours changed to ${LOOK_PALETTES.find((p) => p.id === id)?.name}.`;
     }
   }
 
   function removeLook() {
-    const count = project.clearLook(targets);
-    message = count ? `Look removed from ${count} shape${count === 1 ? '' : 's'}.` : 'These shapes have no Look.';
+    const count = mapSurfaces ? project.clearSurfaceLooks() : project.clearLook(targets);
+    message = count
+      ? `Look removed from ${plural(count)}.${mapSurfaces ? ' Presets show their own Edge Effects again.' : ''}`
+      : `These ${noun}s have no Look.`;
   }
 </script>
 
@@ -54,18 +76,24 @@
   <header class="looks-head">
     <div>
       <h3>Looks</h3>
-      <p>One click dresses your shapes. They move to the beat: tap a tempo or turn on the mic.</p>
+      <p>{mapSurfaces ? 'One click dresses the map\'s surfaces, whichever preset is playing.' : 'One click dresses your shapes.'} They move to the beat: tap a tempo or turn on the mic.</p>
     </div>
     <button class="looks-close" type="button" aria-label="Close Looks" onclick={onClose}>×</button>
   </header>
 
   <div class="looks-controls">
+    {#if mapSurfaces}
+    <div class="looks-scope" role="radiogroup" aria-label="Apply to">
+      <button type="button" role="radio" aria-checked="true" class="active">All surfaces ({surfaceIds.length})</button>
+    </div>
+    {:else}
     <div class="looks-scope" role="radiogroup" aria-label="Apply to">
       <button type="button" role="radio" aria-checked={scope === 'all'} class:active={scope === 'all'}
         onclick={() => (scopeChoice = 'all')}>All shapes ({shapes.length})</button>
       <button type="button" role="radio" aria-checked={scope === 'selected'} class:active={scope === 'selected'}
         disabled={!selectedTargets.length} onclick={() => (scopeChoice = 'selected')}>Selected ({selectedTargets.length})</button>
     </div>
+    {/if}
     <div class="looks-palettes" role="radiogroup" aria-label="Colours">
       {#each LOOK_PALETTES as p (p.id)}
         <button type="button" role="radio" class="palette" class:active={palette === p.id} aria-checked={palette === p.id}
@@ -87,8 +115,10 @@
   </div>
 
   <footer class="looks-foot">
-    <span class="looks-message" role="status">{message || (shapes.length ? 'Replaces the Edge Effects on the target shapes.' : 'Draw a shape first: Add Layer, then Custom Shape.')}</span>
-    <button type="button" class="looks-remove" disabled={!targets.length} onclick={removeLook}>Remove Look</button>
+    <span class="looks-message" role="status">{message || (mapSurfaces
+      ? (surfaceIds.length ? 'Replaces each preset\'s Edge Effects on these surfaces.' : emptyHint)
+      : (shapes.length ? 'Replaces the Edge Effects on the target shapes.' : emptyHint))}</span>
+    <button type="button" class="looks-remove" disabled={mapSurfaces ? !($project.mapSurfaces ?? []).some((surface) => surface.lookEffects) : !targets.length} onclick={removeLook}>Remove Look</button>
   </footer>
 </div>
 

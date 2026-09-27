@@ -11,9 +11,11 @@
  *
  * Geometry comes from the shared map (see stores/mapSurfaces.ts), resolved on
  * every build, so a warp edited in the editor moves the preset that is live.
+ * So does a surface's VJ MAP Look: while a surface wears one, its Edge
+ * Effects replace the preset layer's own.
  */
 import type { BlendMode, Composition, Layer, MapSurface } from '../types';
-import { createSurfaceLookup, resolvePresetLayer, surfaceIdOf } from '../stores/mapSurfaces';
+import { createSurfaceLookup, resolvePresetLayer, surfaceIdOf, withSurfaceLook } from '../stores/mapSurfaces';
 import type { VJClipLauncherState } from '../stores/vjClipLauncher';
 import type { VJLayerSequencerState } from '../stores/vjLayerSequencer';
 
@@ -38,6 +40,8 @@ export interface MapPresetCacheEntry {
 
 export const mapPresetGroupId = (rowKey: string) => `mapvj-${rowKey}`;
 export const mapPresetLayerId = (rowKey: string, surfaceId: string) => `mapvj-${rowKey}::${surfaceId}`;
+/** The surface id inside a `mapvj-<row>::<surfaceId>` layer id. */
+const surfaceOfPresetLayerId = (id: string) => id.slice(id.indexOf('::') + 2);
 
 /** JSON clone that drops runtime refs (textures, DOM elements, `_` private
  *  state) so a preset clone can never drag a live handle into a save. */
@@ -140,7 +144,9 @@ export function buildMapPresetLayers(
     entry.group.name = `MAP ${row.label}: ${row.composition.name}`;
     (entry.group as Layer & { _postCompositeEffects?: Layer['effects'] })._postCompositeEffects = row.effects ?? [];
     out.push(entry.group);
-    for (const child of entry.layers) out.push(resolvePresetLayer(child, lookup));
+    for (const child of entry.layers) {
+      out.push(withSurfaceLook(resolvePresetLayer(child, lookup), surfaceOfPresetLayerId(child.id), lookup.stored));
+    }
   }
   for (const key of [...context.cache.keys()]) {
     if (!active.has(key)) context.cache.delete(key);
@@ -234,15 +240,23 @@ export function mapLiveSurfaceLayers(projectLayers: readonly Layer[], presetLaye
 }
 
 /**
- * The whole MAP scene, top first: live-bound editor surfaces, then the preset
+ * The whole MAP scene, top first: live-bound editor surfaces (wearing their
+ * surface's MAP Look, when `surfaces` has one), then the preset
  * rows. The VJ row feeds (clips, transition and crossfade carriers, the deck
  * mix) come along at opacity 0, as in STAGE: the core keeps rendering their
  * frames and a bound surface samples them, but they never show on their own.
  */
-export function composeMapOutputLayers(feeds: readonly Layer[], editorLayers: readonly Layer[], presetLayers: readonly Layer[]): Layer[] {
+export function composeMapOutputLayers(
+  feeds: readonly Layer[],
+  editorLayers: readonly Layer[],
+  presetLayers: readonly Layer[],
+  surfaces?: readonly MapSurface[],
+): Layer[] {
+  const stored = new Map((surfaces ?? []).map((surface) => [surface.id, surface]));
   return [
     ...feeds.map((layer) => ({ ...layer, opacity: 0 })),
-    ...mapLiveSurfaceLayers(editorLayers, presetLayers),
+    // An editor layer is its own surface, so it wears that surface's Look.
+    ...mapLiveSurfaceLayers(editorLayers, presetLayers).map((layer) => withSurfaceLook(layer, layer.id, stored)),
     ...presetLayers,
   ];
 }

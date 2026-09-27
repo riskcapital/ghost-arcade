@@ -4124,7 +4124,7 @@
               title="One-click beat-synced looks for the shapes on the map"><LooksIcon size={14} /> Looks</button>
           {/if}
         </div>
-        {#if showVjLooks && $vjClipLauncher.mapMode}<LooksGallery onClose={() => (showVjLooks = false)} />{/if}
+        {#if showVjLooks && $vjClipLauncher.mapMode}<LooksGallery mapSurfaces onClose={() => (showVjLooks = false)} />{/if}
       {/if}
       </div>
       </div>

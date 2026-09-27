@@ -17,7 +17,8 @@
  *
  * Everything here is pure: no stores, no side effects.
  */
-import type { Composition, Layer, MapSurface, MapSurfaceGeometry, Project } from '../types';
+import type { Composition, EdgeEffectsConfig, Layer, MapSurface, MapSurfaceGeometry, Project } from '../types';
+import { isLookTarget } from '../looks/edgeLooks';
 
 export const MAP_SURFACE_GEOMETRY_KEYS = [
   'position',
@@ -139,6 +140,51 @@ export function resolvePresetLayer<T extends Layer>(layer: T, lookup: SurfaceLoo
   if (!layer.surfaceId || layer.surfaceDetached) return layer;
   const geometry = resolveSharedGeometry(layer.surfaceId, lookup);
   return geometry ? withSurfaceGeometry(layer, geometry) : layer;
+}
+
+/**
+ * VJ MAP Looks live on surfaces, not on preset layers: a surface wearing a
+ * Look (`lookEffects`) gives its Edge Effects to every layer drawn on it, so
+ * the Look stays put while different presets fire. Detached layers still
+ * share the surface id and take it too. Groups, masks and the VJ feed never
+ * wear a Look (see isLookTarget). Returns the layer itself when nothing
+ * applies.
+ */
+export function withSurfaceLook<T extends Layer>(layer: T, surfaceId: string, stored: ReadonlyMap<string, MapSurface>): T {
+  const look = stored.get(surfaceId)?.lookEffects;
+  if (!look || !isLookTarget(layer)) return layer;
+  return { ...layer, edgeEffects: look };
+}
+
+/** Stored surfaces a VJ MAP Look can dress, in map order: those some preset
+ *  (or the editor) draws with an outline. */
+export function mapLookSurfaceIds(project: Pick<Project, 'layers' | 'mapSurfaces' | 'vjMode'>): string[] {
+  const outlined = new Set<string>();
+  const visit = (layer: Layer) => { if (isLookTarget(layer)) outlined.add(surfaceIdOf(layer)); };
+  project.layers.forEach(visit);
+  for (const composition of project.vjMode?.compositions ?? []) (composition.layers ?? []).forEach(visit);
+  return (project.mapSurfaces ?? []).filter((surface) => outlined.has(surface.id)).map((surface) => surface.id);
+}
+
+/** Set (or with `build` returning null, clear) the Look on the surfaces in
+ *  `ids`. Returns the same array when nothing changed. */
+export function setSurfaceLooks(
+  surfaces: MapSurface[] | undefined,
+  ids: readonly string[],
+  build: (surface: MapSurface) => EdgeEffectsConfig | null,
+): MapSurface[] | undefined {
+  if (!surfaces?.length) return surfaces;
+  const targets = new Set(ids);
+  let changed = false;
+  const next = surfaces.map((surface) => {
+    if (!targets.has(surface.id)) return surface;
+    const lookEffects = build(surface);
+    if (!lookEffects && !surface.lookEffects) return surface;
+    changed = true;
+    const { lookEffects: _old, ...rest } = surface;
+    return lookEffects ? { ...rest, lookEffects } : rest;
+  });
+  return changed ? next : surfaces;
 }
 
 /**

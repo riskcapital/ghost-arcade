@@ -1802,7 +1802,7 @@
               mapPresetRows(vjState, get(compositions), get(vjLayerSequencer), nativeCrossfadeWeights(vjState)),
               { liveLayers: mappingLive, surfaces: get(project).mapSurfaces, cache: mapPresetLayerCache },
             );
-            return composeMapOutputLayers(feeds, mappingLive, presetLayers);
+            return composeMapOutputLayers(feeds, mappingLive, presetLayers, get(project).mapSurfaces);
           }
           if (vjState.stoppedAll) return stageWrap([]);
           const feeds = buildNativeVjFeedLayers(vjState, true);

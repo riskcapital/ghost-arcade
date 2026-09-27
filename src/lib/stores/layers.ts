@@ -32,7 +32,7 @@ import { surfaceStore } from './surface';
 import { migrateStageLayerCorners } from '../utils/stageTextureOrientation';
 import { createPaintMask, migratePaintMask, PAINT_MASK_MAX_STROKES } from '../utils/paintMask';
 import type { PaintMaskConfig, PaintMaskStroke } from '../types';
-import { captureMapSurfaces, migrateMapSurfaces, presetLayersForEditing, registerMapSurfaces, tagPresetSurfaces } from './mapSurfaces';
+import { captureMapSurfaces, mapLookSurfaceIds, migrateMapSurfaces, presetLayersForEditing, registerMapSurfaces, setSurfaceLooks, tagPresetSurfaces } from './mapSurfaces';
 import {
   captureStagePresetSurfaceState,
   cloneStagePresetSurface,
@@ -2069,6 +2069,46 @@ void main() {
           return { ...layer, edgeEffects: null };
         }),
       }));
+      if (changed) recordDiscreteAction();
+      return changed;
+    },
+
+    /** VJ MAP: dress the map's surfaces (all of them, or `surfaceIds`) with
+     *  a Look, as one undo step. The Look lives on the surface, so every
+     *  preset fired on it wears it (see MapSurface.lookEffects). Returns how
+     *  many surfaces changed. */
+    applySurfaceLook(lookId: string, paletteId?: string, surfaceIds?: readonly string[]): number {
+      const look = edgeLook(lookId);
+      if (!look) return 0;
+      const palette = lookPalette(paletteId ?? look.palette).id;
+      let changed = 0;
+      update((project) => {
+        const ids = surfaceIds ?? mapLookSurfaceIds(project);
+        const mapSurfaces = setSurfaceLooks(project.mapSurfaces, ids, () => {
+          changed += 1;
+          const config: EdgeEffectsConfig = { enabled: true, effects: buildLookEffects(look, palette), look: { id: look.id, paletteId: palette } };
+          if (look.cornerRadius) config.cornerRadius = look.cornerRadius;
+          return config;
+        });
+        return mapSurfaces === project.mapSurfaces ? project : { ...project, mapSurfaces };
+      });
+      if (changed) recordDiscreteAction();
+      return changed;
+    },
+
+    /** VJ MAP: take the Look off the map's surfaces (all, or `surfaceIds`),
+     *  so every preset shows its own Edge Effects again. One undo step.
+     *  Returns how many surfaces lost a Look. */
+    clearSurfaceLooks(surfaceIds?: readonly string[]): number {
+      let changed = 0;
+      update((project) => {
+        const ids = surfaceIds ?? (project.mapSurfaces ?? []).map((surface) => surface.id);
+        const mapSurfaces = setSurfaceLooks(project.mapSurfaces, ids, (surface) => {
+          if (surface.lookEffects) changed += 1;
+          return null;
+        });
+        return mapSurfaces === project.mapSurfaces ? project : { ...project, mapSurfaces };
+      });
       if (changed) recordDiscreteAction();
       return changed;
     },
