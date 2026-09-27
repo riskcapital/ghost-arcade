@@ -20,7 +20,11 @@ function bytesToBase64(bytes: Uint8Array, length: number): string {
   let binary = '';
   const chunk = 0x2000;
   for (let offset = 0; offset < length; offset += chunk) {
-    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(offset, Math.min(length, offset + chunk))));
+    // Typed arrays are valid apply() argument lists: no intermediate copy.
+    binary += String.fromCharCode.apply(
+      null,
+      bytes.subarray(offset, Math.min(length, offset + chunk)) as unknown as number[],
+    );
   }
   return btoa(binary);
 }
