@@ -405,6 +405,14 @@ export type RendererCommand =
       kick: number;
       snare: number;
     }
+  | {
+      /** Analyser rows for ISF audio / audioFFT inputs: bytes 0..255 = 0..1.
+       *  `active: false` returns the core to its band-level fallback. */
+      type: 'set_audio_spectrum';
+      active: boolean;
+      fft_b64?: string;
+      waveform_b64?: string;
+    }
   | { type: 'upload_source_preview'; source_id: string; width: number; height: number; rgba: number[]; seq: number }
   | {
       type: 'upload_source_frame';

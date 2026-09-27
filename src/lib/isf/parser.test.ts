@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseISF, detectAudioReady } from './parser';
+import { parseISF, detectAudioReady, getISFPassPlan, getISFAudioUsage, shaderUsesISFAudioRows } from './parser';
 
 describe('detectAudioReady', () => {
   it('returns true when audio uniforms are present', () => {
@@ -83,5 +83,77 @@ void main() {}`;
     expect(result.fragmentShader).toContain('uniform float speed;');
     expect(result.fragmentShader).toContain('uniform bool enabled;');
     expect(result.fragmentShader).toContain('uniform int mode;');
+  });
+});
+
+describe('getISFPassPlan', () => {
+  it('normalizes ISF 2 PASSES with persistent, float and size expressions', () => {
+    const plan = getISFPassPlan({
+      PASSES: [
+        { TARGET: 'trail', PERSISTENT: true, FLOAT: true },
+        { TARGET: 'half', WIDTH: '$WIDTH/2', HEIGHT: 64 },
+        { TARGET: 'half' },
+        {},
+      ],
+    });
+    expect(plan.multipass).toBe(true);
+    expect(plan.passes.map((pass) => pass.target)).toEqual(['trail', 'half', 'half', null]);
+    expect(plan.targets).toEqual([
+      { name: 'trail', persistent: true, float: true, width: undefined, height: undefined },
+      { name: 'half', persistent: false, float: false, width: '$WIDTH/2', height: '64' },
+    ]);
+  });
+
+  it('accepts ISF 1 PERSISTENT_BUFFERS as a list or an object', () => {
+    expect(getISFPassPlan({ PERSISTENT_BUFFERS: ['fb'], PASSES: [{ TARGET: 'fb' }, {}] }).targets[0].persistent).toBe(true);
+    const plan = getISFPassPlan({ PERSISTENT_BUFFERS: { acc: { WIDTH: '$WIDTH', FLOAT: true } } });
+    expect(plan.targets).toEqual([{ name: 'acc', persistent: true, float: true, width: '$WIDTH', height: undefined }]);
+    expect(plan.multipass).toBe(true);
+  });
+
+  it('treats a shader without PASSES as single pass and caps targets at 8', () => {
+    expect(getISFPassPlan({}).multipass).toBe(false);
+    const passes = Array.from({ length: 10 }, (_, i) => ({ TARGET: `b${i}` }));
+    const plan = getISFPassPlan({ PASSES: [...passes, {}] });
+    expect(plan.targets).toHaveLength(8);
+    expect(plan.passes).toHaveLength(9);
+  });
+});
+
+describe('ISF audio rows', () => {
+  it('reports declared audio inputs with MAX and built-in helpers', () => {
+    const usage = getISFAudioUsage('void main(){ float v = sampleWaveform(0.5); }', {
+      INPUTS: [
+        { NAME: 'spectrum', TYPE: 'audioFFT', MAX: 16 },
+        { NAME: 'speed', TYPE: 'float' },
+      ],
+    });
+    expect(usage.fft).toBe(true);
+    expect(usage.waveform).toBe(true);
+    expect(usage.inputs).toEqual([{ name: 'spectrum', kind: 'fft', max: 16 }]);
+    expect(getISFAudioUsage('void main(){}', { INPUTS: [] })).toEqual({ fft: false, waveform: false, inputs: [] });
+  });
+
+  it('detects audio-row shaders from source alone', () => {
+    expect(shaderUsesISFAudioRows('{"NAME":"w","TYPE":"audio"}')).toBe(true);
+    expect(shaderUsesISFAudioRows('texture2D(audioFFT, uv)')).toBe(true);
+    expect(shaderUsesISFAudioRows('float v = audioLevel;')).toBe(false);
+  });
+});
+
+describe('parseISF multi-pass and audio inputs (browser preview)', () => {
+  it('declares pass targets and pins PASSINDEX to the output pass', () => {
+    const result = parseISF(`/*{ "INPUTS": [], "PASSES": [{ "TARGET": "buf", "PERSISTENT": true }, {}] }*/
+void main() { gl_FragColor = PASSINDEX == 0 ? vec4(1.0) : IMG_NORM_PIXEL(buf, vec2(0.5)); }`);
+    expect(result.fragmentShader).toContain('uniform sampler2D buf;');
+    expect(result.fragmentShader).toContain('#define PASSINDEX 1');
+  });
+
+  it('aliases audio inputs onto the shared audio textures', () => {
+    const result = parseISF(`/*{ "INPUTS": [{ "NAME": "fft", "TYPE": "audioFFT", "MAX": 8 }, { "NAME": "wave", "TYPE": "audio" }] }*/
+void main() { gl_FragColor = texture2D(fft, vec2(0.5)) + texture2D(wave, vec2(0.5)); }`);
+    expect(result.fragmentShader).toContain('#define fft audioFFT');
+    expect(result.fragmentShader).toContain('#define wave audioWaveform');
+    expect(result.fragmentShader.indexOf('uniform sampler2D audioFFT;')).toBeLessThan(result.fragmentShader.indexOf('void main'));
   });
 });

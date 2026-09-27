@@ -6,6 +6,7 @@ export interface ISFInput {
   TYPE: 'float' | 'bool' | 'long' | 'point2D' | 'color' | 'image' | 'event' | 'audio' | 'audioFFT';
   DEFAULT?: number | boolean | number[] | string;
   MIN?: number;
+  /** For `audio` / `audioFFT`: the sample / bin count the shader wants. */
   MAX?: number;
   LABEL?: string;
   LABELS?: string[];
@@ -18,8 +19,43 @@ export interface ISFMetadata {
   CATEGORIES?: string[];
   INPUTS: ISFInput[];
   IMPORTED?: Record<string, { PATH: string }>;
-  PASSES?: Array<{ TARGET?: string; WIDTH?: string; HEIGHT?: string }>;
+  PASSES?: ISFPass[];
+  /** ISF 1.x: names, or name -> { WIDTH, HEIGHT, FLOAT }. */
+  PERSISTENT_BUFFERS?: string[] | Record<string, { WIDTH?: string | number; HEIGHT?: string | number; FLOAT?: boolean }>;
   ISFVSN?: string;
+}
+
+export interface ISFPass {
+  TARGET?: string;
+  PERSISTENT?: boolean;
+  FLOAT?: boolean;
+  /** Size expressions in pixels, e.g. "$WIDTH/2". */
+  WIDTH?: string | number;
+  HEIGHT?: string | number;
+}
+
+/** A named buffer PASSES render into (and later passes sample). */
+export interface ISFPassTarget {
+  name: string;
+  persistent: boolean;
+  float: boolean;
+  width?: string;
+  height?: string;
+}
+
+/** Normalized pass plan: pass order plus the named targets they use. */
+export interface ISFPassPlan {
+  passes: Array<{ target: string | null }>;
+  targets: ISFPassTarget[];
+  multipass: boolean;
+}
+
+/** Audio rows a shader samples: declared audio inputs plus the built-ins. */
+export interface ISFAudioUsage {
+  fft: boolean;
+  waveform: boolean;
+  /** Declared audio inputs with their row widths (MAX), when given. */
+  inputs: Array<{ name: string; kind: 'fft' | 'waveform'; max?: number }>;
 }
 
 export interface ParsedISF {
@@ -40,6 +76,91 @@ const AUDIO_UNIFORM_NAMES = [
 /** Check if shader source code references any audio uniforms */
 export function detectAudioReady(shaderSource: string): boolean {
   return AUDIO_UNIFORM_NAMES.some(name => new RegExp(`\\b${name}\\b`).test(shaderSource));
+}
+
+const MAX_PASS_TARGETS = 8;
+
+function sizeExpr(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  return undefined;
+}
+
+/**
+ * Normalize PASSES (ISF 2) and PERSISTENT_BUFFERS (ISF 1) into a pass plan.
+ * Mirrors the native core's planner (native-renderer/src/isf_passes.rs):
+ * targets in order of first appearance, capped at 8.
+ */
+export function getISFPassPlan(metadata: Pick<ISFMetadata, 'PASSES' | 'PERSISTENT_BUFFERS'>): ISFPassPlan {
+  const targets: ISFPassTarget[] = [];
+  const upsert = (rawName: unknown): ISFPassTarget | null => {
+    const name = typeof rawName === 'string' ? rawName.trim() : '';
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
+    const existing = targets.find((target) => target.name === name);
+    if (existing) return existing;
+    if (targets.length >= MAX_PASS_TARGETS) return null;
+    const target: ISFPassTarget = { name, persistent: false, float: false };
+    targets.push(target);
+    return target;
+  };
+  const passes: Array<{ target: string | null }> = [];
+  for (const pass of Array.isArray(metadata.PASSES) ? metadata.PASSES : []) {
+    if (pass?.TARGET && String(pass.TARGET).trim()) {
+      const target = upsert(pass.TARGET);
+      if (!target) continue;
+      target.persistent ||= pass.PERSISTENT === true;
+      target.float ||= pass.FLOAT === true;
+      target.width ??= sizeExpr(pass.WIDTH);
+      target.height ??= sizeExpr(pass.HEIGHT);
+      passes.push({ target: target.name });
+    } else {
+      passes.push({ target: null });
+    }
+  }
+  const persistent = metadata.PERSISTENT_BUFFERS;
+  if (Array.isArray(persistent)) {
+    for (const name of persistent) {
+      const target = upsert(name);
+      if (target) target.persistent = true;
+    }
+  } else if (persistent && typeof persistent === 'object') {
+    for (const [name, spec] of Object.entries(persistent)) {
+      const target = upsert(name);
+      if (!target) continue;
+      target.persistent = true;
+      target.float ||= spec?.FLOAT === true;
+      target.width ??= sizeExpr(spec?.WIDTH);
+      target.height ??= sizeExpr(spec?.HEIGHT);
+    }
+  }
+  return { passes, targets, multipass: passes.length > 1 || targets.length > 0 };
+}
+
+/**
+ * Which audio rows a shader samples: declared `audioFFT` / `audio` inputs
+ * (with their MAX) and the built-in audioFFT/audioWaveform samplers and
+ * sampleFFT()/sampleWaveform() helpers. The native sync only streams the
+ * spectrum while a visible shader needs it.
+ */
+export function getISFAudioUsage(shaderSource: string, metadata?: Pick<ISFMetadata, 'INPUTS'>): ISFAudioUsage {
+  const inputs: ISFAudioUsage['inputs'] = [];
+  for (const input of metadata?.INPUTS ?? []) {
+    const type = String(input.TYPE ?? '').toLowerCase();
+    if (type !== 'audio' && type !== 'audiofft' && type !== 'audiowaveform') continue;
+    const max = typeof input.MAX === 'number' && Number.isFinite(input.MAX) && input.MAX >= 1 ? Math.round(input.MAX) : undefined;
+    inputs.push({ name: input.NAME, kind: type === 'audiofft' ? 'fft' : 'waveform', max });
+  }
+  const uses = (name: string) => new RegExp(`\\b${name}\\b`).test(shaderSource);
+  return {
+    fft: inputs.some((input) => input.kind === 'fft') || uses('audioFFT') || uses('sampleFFT'),
+    waveform: inputs.some((input) => input.kind === 'waveform') || uses('audioWaveform') || uses('sampleWaveform'),
+    inputs,
+  };
+}
+
+/** Quick source-level check (no JSON parse) used on the per-frame path. */
+export function shaderUsesISFAudioRows(shaderSource: string): boolean {
+  return /\b(audioFFT|audioWaveform|sampleFFT|sampleWaveform)\b|"TYPE"\s*:\s*"audio(FFT|Waveform)?"/i.test(shaderSource);
 }
 
 /**
@@ -257,6 +378,7 @@ function convertISFtoGLSL(source: string, metadata: ISFMetadata): string {
   uniformDeclarations += 'varying vec2 vUv;\n';
 
   // Add uniforms for each input (only if not already declared)
+  let audioInputAliases = '';
   for (const input of metadata.INPUTS) {
     // Check if uniform is already declared with any type
     const uniformCheck = new RegExp(`uniform\\s+\\w+\\s+${input.NAME}\\s*;`);
@@ -283,7 +405,28 @@ function convertISFtoGLSL(source: string, metadata: ISFMetadata): string {
         uniformDeclarations += `uniform sampler2D ${input.NAME};\n`;
         uniformDeclarations += `uniform vec2 _${input.NAME}_imgSize;\n`;
         break;
+      case 'audio':
+      case 'audioFFT':
+        // Alias to the shared audio textures declared below (the browser
+        // preview has one FFT row and one waveform row).
+        if (input.NAME !== 'audioFFT' && input.NAME !== 'audioWaveform') {
+          audioInputAliases += `#define ${input.NAME} ${input.TYPE === 'audioFFT' ? 'audioFFT' : 'audioWaveform'}\n`;
+        }
+        break;
     }
+  }
+
+  // Multi-pass: the browser preview renders a single pass, so declare the
+  // pass targets (they sample black) and pin PASSINDEX to the final pass —
+  // the one that writes the output. The native output runs every pass.
+  const passPlan = getISFPassPlan(metadata);
+  for (const target of passPlan.targets) {
+    if (!new RegExp(`uniform\\s+\\w+\\s+${target.name}\\s*;`).test(glsl)) {
+      uniformDeclarations += `uniform sampler2D ${target.name};\n`;
+    }
+  }
+  if (/\bPASSINDEX\b/.test(glsl) && !/uniform\s+int\s+PASSINDEX\b|#define\s+PASSINDEX\b/.test(glsl)) {
+    uniformDeclarations += `#define PASSINDEX ${Math.max(0, passPlan.passes.length - 1)}\n`;
   }
 
   // Add image sampling helper functions (only if not already DEFINED)
@@ -321,6 +464,8 @@ vec4 IMG_PIXEL(sampler2D img, vec2 coord) {
       uniformDeclarations += `uniform float ${name};\n`;
     }
   }
+
+  uniformDeclarations += audioInputAliases;
 
   // Audio sampling helpers (available in all shaders)
   // Check for function DEFINITION (not just calls) to avoid skipping injection

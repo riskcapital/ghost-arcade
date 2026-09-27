@@ -45,6 +45,9 @@ import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { mediaPipeSource } from '$lib/mediapipe/mediaPipeSource';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
+import { createIsfAudioRowEncoder } from '$lib/audio/isfAudioRows';
+import { getLastRawAnalysis } from '$lib/stores/audio';
+import { shaderUsesISFAudioRows } from '$lib/isf/parser';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
 import { isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
 import {
@@ -5111,6 +5114,11 @@ export class NativeRendererSync {
   private audioSyncRaf: number | null = null;
   private audioUnsub: (() => void) | null = null;
   private lastAudioSig = '';
+  /** ISF audio / audioFFT rows: reused encoder, per-source usage cache, and
+   *  whether the core currently holds a live spectrum from us. */
+  private isfAudioRowEncoder = createIsfAudioRowEncoder();
+  private isfAudioRowUsage = new Map<string, boolean>();
+  private isfAudioRowsLive = false;
   private liveClockOriginMs = performance.now();
   private latestRenderClockSeconds: number | null = null;
   private lastRenderClockSentSeconds: number | null = null;
@@ -5830,6 +5838,36 @@ export class NativeRendererSync {
       type: 'set_audio_state',
       ...ghostAudioCommandFieldsFromVisualAudio(audio),
     };
+  }
+
+  private layerNeedsIsfAudioRows(layer: Layer): boolean {
+    const code = layer.visible ? layer.source?.shaderCode : undefined;
+    if (!code) return false;
+    let uses = this.isfAudioRowUsage.get(code);
+    if (uses === undefined) {
+      if (this.isfAudioRowUsage.size > 64) this.isfAudioRowUsage.clear();
+      uses = shaderUsesISFAudioRows(code);
+      this.isfAudioRowUsage.set(code, uses);
+    }
+    return uses;
+  }
+
+  /**
+   * Live FFT / waveform rows for ISF `audioFFT` / `audio` inputs. Only sent
+   * while a visible shader samples them and audio is active (a few KB per
+   * analyser frame); one `active: false` hands the core back to its
+   * band-level fallback when either stops.
+   */
+  private audioSpectrumCommand(layers: Layer[], audio: VisualAudioState): RendererCommand | null {
+    const needed = audio.isActive && layers.some((layer) => this.layerNeedsIsfAudioRows(layer));
+    const rows = needed ? this.isfAudioRowEncoder.encode(getLastRawAnalysis()) : null;
+    if (!rows) {
+      if (!this.isfAudioRowsLive) return null;
+      this.isfAudioRowsLive = false;
+      return { type: 'set_audio_spectrum', active: false };
+    }
+    this.isfAudioRowsLive = true;
+    return { type: 'set_audio_spectrum', active: true, ...rows };
   }
 
   private nativeGraphRouteKey(kind: NativeGraphRouteKind, sourceId: string): string {
@@ -7901,6 +7939,7 @@ export class NativeRendererSync {
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
     this.lastAudioSig = '';
+    this.isfAudioRowsLive = false;
     this.nativeCommandDropWarnings = 0;
     this.lastStatusLogAt = performance.now();
     this.lastStatusFrameCount = Number(startupStatus?.frames_presented ?? 0);
@@ -8051,6 +8090,7 @@ export class NativeRendererSync {
     this.audioUnsub?.();
     this.audioUnsub = null;
     this.lastAudioSig = '';
+    this.isfAudioRowsLive = false;
     this.lastLayers.clear();
     this.nativeSceneAdopted = false;
     this.latestLayers = [];
@@ -8704,6 +8744,8 @@ export class NativeRendererSync {
 
     const audioCommand = this.audioCommand(visual);
     if (audioCommand) commands.push(audioCommand);
+    const audioSpectrumCommand = this.audioSpectrumCommand(layers, visual);
+    if (audioSpectrumCommand) commands.push(audioSpectrumCommand);
 
     const now = Date.now();
     this.scheduleNativeStatusPoll(now);
