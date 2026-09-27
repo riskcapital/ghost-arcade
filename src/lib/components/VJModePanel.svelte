@@ -1,6 +1,7 @@
 <script lang="ts">
   import VJGroups from './VJGroups.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
+  import LooksGallery from './LooksGallery.svelte';
   import { videoBeatFit } from '../media/videoBeatFit';
   import { launchClock, TEMPO_NUDGE_AMOUNT } from '../stores/launchClock';
   import { abletonLink } from '../sync/abletonLink';
@@ -217,6 +218,7 @@
   };
 
   let heldStageEffects: Record<string, boolean> = {};
+  let showVjLooks = false;
   let stageEffectHoldStack: string[] = [];
   let stageEffectHoldRestoreId: string | null = null;
   let stageEffectHoldRestoreAutomationPlaying: boolean | null = null;
@@ -4116,7 +4118,12 @@
           <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
           <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">STAGE</button>
           <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Mapping presets and live clips on the shared map. Rows hold presets that stack with opacity and blend modes, or clips that play on any surface whose Source is that row">MAP</button>
+          {#if $vjClipLauncher.mapMode}
+            <button class="stage-mix-btn vj-looks-btn" class:active={showVjLooks} onclick={() => (showVjLooks = !showVjLooks)}
+              title="One-click beat-synced looks for the shapes on the map">✦ Looks</button>
+          {/if}
         </div>
+        {#if showVjLooks && $vjClipLauncher.mapMode}<LooksGallery onClose={() => (showVjLooks = false)} />{/if}
       {/if}
       </div>
       </div>

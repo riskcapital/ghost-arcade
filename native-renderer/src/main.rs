@@ -32136,6 +32136,35 @@ mod tests {
     }
 
     #[test]
+    fn beat_clock_runs_on_the_render_clock_between_anchors() {
+        let mut clock = BeatClock::default();
+        // Unanchored: 120 BPM from the first frame.
+        assert_eq!(clock.uniform(10.0), [0.0, 120.0, 0.0, 0.0]);
+        assert!((clock.uniform(10.5)[0] - 1.0).abs() < 1e-4);
+        // An anchor without a time lands on the next frame drawn.
+        clock.rebase(BeatClockAnchor { beat: 64.25, bpm: 90.0, time: None });
+        assert!((clock.uniform(20.0)[0] - 64.25).abs() < 1e-3);
+        assert!((clock.uniform(22.0)[0] - 67.25).abs() < 1e-3);
+        // A timed anchor is exact, and positions wrap without going negative.
+        clock.rebase(BeatClockAnchor { beat: BEAT_CLOCK_WRAP - 0.5, bpm: 60.0, time: Some(5.0) });
+        assert!((clock.uniform(6.0)[0] - 0.5).abs() < 1e-3);
+        assert!(clock.uniform(4.0)[0] >= 0.0);
+        let parsed = BeatClockAnchor::from_command(&json!({ "beat": 3.5, "bpm": 1000.0 })).unwrap();
+        assert_eq!((parsed.beat, parsed.bpm, parsed.time), (3.5, 400.0, None));
+        assert!(BeatClockAnchor::from_command(&json!({ "beat": 1.0 })).is_none());
+    }
+
+    #[test]
+    fn layer_tint_carries_the_content_alpha_for_edge_effects() {
+        let mut layer = SceneLayer::new("tinted".to_string(), 0);
+        set_scene_layer_color(&mut layer, [0.3, 0.34, 0.42, 0.35]);
+        layer.tint = [0.0, 1.0, 0.5, 1.0];
+        let gpu = layer.gpu();
+        assert_eq!(gpu.tint, [0.0, 1.0, 0.5, 0.35]);
+        assert!((gpu.color[3] - 0.35).abs() < 1e-6);
+    }
+
+    #[test]
     fn edge_effect_payload_keeps_sixteen_active_effects_and_their_outline() {
         let effect = |active: f32, tag: f32| {
             let mut vectors = vec![vec![active, 1.0, 0.0, 2.0]];

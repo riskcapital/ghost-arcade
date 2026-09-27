@@ -117,15 +117,19 @@ function sixLayers(effectsFor: (i: number) => EdgeEffect[]) {
 const TRANSPARENT = Buffer.alloc(64 * 64 * 4).toString('base64');
 
 /** Upload the six layers with their edge payloads (content transparent). */
-async function uploadScene(rpc: NativeRpc, layers: Layer[], width: number, height: number) {
+async function uploadScene(rpc: NativeRpc, layers: Layer[], width: number, height: number, sourceType: 'image' | 'none' = 'image') {
+  const bound = sourceType === 'image' && !process.env.LOOK_NO_SOURCE;
   const context = buildEdgeEffectContext(layers as any, width, height);
   const commands: unknown[] = [];
   layers.forEach((layer, index) => {
     const payload = nativeEdgeEffectPayload(layer as any, width, height, context);
     commands.push(
-      ...(process.env.LOOK_NO_SOURCE ? [] : [{ type: 'upload_source_frame', source_id: layer.id, width: 64, height: 64, seq: 1, rgba_b64: TRANSPARENT }]),
+      ...(bound ? [{ type: 'upload_source_frame', source_id: layer.id, width: 64, height: 64, seq: 1, rgba_b64: TRANSPARENT }] : []),
       { type: 'upsert_layer', layer_id: layer.id, opacity: 1, z_index: index, corners: layer.corners, mesh_grid: null },
-      ...(process.env.LOOK_NO_SOURCE ? [] : [{ type: 'bind_media_source', layer_id: layer.id, source_id: layer.id, source_type: 'image', uri: `memory://${layer.id}` }]),
+      bound
+        ? { type: 'bind_media_source', layer_id: layer.id, source_id: layer.id, source_type: 'image', uri: `memory://${layer.id}` }
+        // What the editor sends for a drawn shape with no content.
+        : { type: 'bind_media_source', layer_id: layer.id, source_id: `none:${layer.id}`, source_type: 'none', uri: '' },
       {
         type: 'set_layer_edge_effects', layer_id: layer.id,
         edge_effects: payload?.effects ?? [], edge_outline: payload?.outline ?? [], edge_corners: payload?.corners ?? [],
@@ -251,6 +255,18 @@ describe('Looks on the native core', () => {
     const onBeat = totalLuma(await frameAt(rpc, atBeat(3.03)));
     const offBeat = totalLuma(await frameAt(rpc, atBeat(3.6)));
     expect(onBeat).toBeGreaterThan(offBeat * 2.5);
+    await clearScene(rpc);
+  }, 60000);
+
+  itIfNativeCore('draws a Look at full strength on shapes with no source', async () => {
+    const look = () => buildLookEffects(edgeLook('beat-step')!);
+    await uploadScene(rpc, sixLayers(look), W, H);
+    const withSource = cellLuma(await frameAt(rpc, atBeat(6.02)), 0);
+    await clearScene(rpc);
+    await uploadScene(rpc, sixLayers(look), W, H, 'none');
+    const bare = cellLuma(await frameAt(rpc, atBeat(6.02)), 0);
+    // The bare shape adds its dim placeholder body; the Look must not be dimmed by it.
+    expect(bare).toBeGreaterThan(withSource * 0.9);
     await clearScene(rpc);
   }, 60000);
 
