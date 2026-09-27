@@ -60,6 +60,7 @@ import { withMeshPointTangents } from '../utils/meshWarp';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
+import { selectionForPrimary } from './layerSelection';
 import { restoreVideoSourceElement } from '../media/videoSourceRestore';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 
@@ -6660,6 +6661,14 @@ export const layers = derived(project, ($project) => $project.layers);
 
 export const selectedLayerId = derived(project, ($project) => $project.selectedLayerId);
 export const selectedLayerIds = derived(selectedLayerIdsState, ($ids) => $ids);
+
+// Keep the multi-selection in step with the primary one (see
+// selectionForPrimary): add*Layer, undo, paste and import only move
+// `selectedLayerId`.
+project.subscribe(($project) => {
+  const next = selectionForPrimary($project.selectedLayerId, get(selectedLayerIdsState));
+  if (next) selectedLayerIdsState.set(next);
+});
 
 export const selectedLayer = derived(project, ($project) =>
   $project.layers.find((l) => l.id === $project.selectedLayerId) || null
