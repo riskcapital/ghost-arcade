@@ -6473,8 +6473,9 @@ function registerIpcHandlers() {
       y: bounds.y,
       title: `Ghost Arcade Output — slice ${sliceId}`,
       frame: false,
-      fullscreen: true,
-      simpleFullscreen: process.platform === 'darwin',
+      // macOS enters simple fullscreen just below instead (see
+      // enterSliceFullscreen): built fullscreen, the window never closes.
+      fullscreen: process.platform !== 'darwin',
       autoHideMenuBar: true,
       skipTaskbar: false,
       // Transparent only when the core will present this slice natively —
@@ -6492,6 +6493,7 @@ function registerIpcHandlers() {
       },
     });
     win.setMenuBarVisibility(false);
+    enterSliceFullscreen(win);
     // Claim the window for native presentation before the page loads, so
     // the slice renderer's first state query already has the answer.
     if (useNative && !attachSliceNativeLayer(sliceId, win)) {
@@ -6521,7 +6523,12 @@ function registerIpcHandlers() {
       if (useNative && !sliceNativeAttached.has(sliceId)) attachSliceNativeLayer(sliceId, win);
     });
     win.on('closed', () => {
-      detachSliceNativeLayer(sliceId);
+      // The layer is registered by slice id. A reopen closes the old window
+      // after the new one has attached, so only the window that still owns
+      // the slice (or a slice nobody reopened) may take the layer down.
+      if (!sliceWindows.has(sliceId) || sliceWindows.get(sliceId) === win) {
+        detachSliceNativeLayer(sliceId);
+      }
       if (sliceWindows.get(sliceId) === win) sliceWindows.delete(sliceId);
     });
 
@@ -8370,8 +8377,10 @@ function createMainWindow() {
         title: isSliceWin ? 'Ghost Arcade Output — slice' : 'Ghost Arcade Output',
         resizable: !isSliceWin,
         frame: !isSliceWin,
-        fullscreen: isSliceWin ? true : fullscreen,
-        simpleFullscreen: process.platform === 'darwin',
+        // A slice window enters simple fullscreen once created (see
+        // enterSliceFullscreen); built fullscreen on macOS it never closes.
+        fullscreen: isSliceWin ? process.platform !== 'darwin' : fullscreen,
+        simpleFullscreen: process.platform === 'darwin' && !isSliceWin,
         autoHideMenuBar: true,
         skipTaskbar: false,
         backgroundColor: '#000000',
@@ -8428,6 +8437,7 @@ function createMainWindow() {
         console.warn('[Output] slice display capture failed:', err);
       }
       try { newWindow.setMenuBarVisibility(false); } catch { /* */ }
+      enterSliceFullscreen(newWindow);
       if (process.env.GHOSTARCADE_SLICE_DEVTOOLS === '1') {
         try { newWindow.webContents.openDevTools({ mode: 'detach' }); } catch { /* */ }
       }
@@ -8707,6 +8717,20 @@ function createProjectionSimWindow(targetDisplayId = null) {
   });
   projectionSimWindow.on('enter-full-screen', () => publishProjectionSimFullscreenState(true));
   projectionSimWindow.on('leave-full-screen', () => publishProjectionSimFullscreenState(false));
+}
+
+/**
+ * Borderless full-display screen (slice) window. On macOS a window built
+ * with `fullscreen: true` while `simpleFullscreen` is set never finishes
+ * Electron's fullscreen transition, and Electron defers close() until it
+ * does: "Close on display" and Esc left the window up, and every reopen
+ * stacked another one over the display. Entering simple fullscreen after
+ * construction gives the same window and closes normally. Other platforms
+ * are built with `fullscreen: true` and need nothing here.
+ */
+function enterSliceFullscreen(win) {
+  if (process.platform !== 'darwin' || !win || win.isDestroyed()) return;
+  try { win.setSimpleFullScreen(true); } catch { /* */ }
 }
 
 function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false, experimentalZeroCopy = false) {
