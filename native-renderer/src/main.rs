@@ -6207,7 +6207,32 @@ impl App {
             smask_bounds: [[0.0; 4]; MAX_SCREEN_MASKS],
             smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
         };
+        self.refresh_slice_master_stage();
         Ok(json!({ "domeEnabled": dome_enabled, "masterWarp": master_warp[0] > 0.5 }))
+    }
+
+    /// Slices sample the master-warped composite, and copy the master's
+    /// dome and warp out of the output stage when their list is applied.
+    /// The editor resends that list only when a screen changes, so carry a
+    /// later Master Warp or dome edit into the open slices here; otherwise a
+    /// screen window keeps the old master warp while the preview moves.
+    fn refresh_slice_master_stage(&mut self) {
+        let master = self.output_stage;
+        for spec in &mut self.slice_outputs {
+            // Map Sim projector views draw without the master warp or dome.
+            if spec.projector_view.is_some() {
+                continue;
+            }
+            let stage = &mut spec.stage;
+            stage.dome0 = master.dome0;
+            stage.dome1 = master.dome1;
+            stage.dome2[0] = master.dome2[0];
+            stage.mwarp = master.mwarp;
+            stage.mwarp_c0 = master.mwarp_c0;
+            stage.mwarp_c1 = master.mwarp_c1;
+            stage.mwarp_mesh = master.mwarp_mesh;
+            stage.mwarp_tangents = master.mwarp_tangents;
+        }
     }
 
     /// Multi-output slice displays. Each entry carries the slice's crop on

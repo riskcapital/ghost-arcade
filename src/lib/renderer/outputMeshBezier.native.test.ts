@@ -331,4 +331,32 @@ suite('Bezier meshes on the output stage', () => {
       await rpc.close();
     }
   }, 90000);
+
+  it('carries a Master Warp edited after a screen opened into that screen', async () => {
+    const rpc = core();
+    try {
+      await startWithRedLayer(rpc, FULL);
+      // The screen window opens first; the operator then drags the Master
+      // Warp. The editor resends the slice list only when a screen changes.
+      await rpc.send('set_slice_outputs', { slices: [slice('open')] });
+      const mesh = parabolaRows([0, null]);
+      await rpc.commands([{ type: 'set_output_stage', masterWarp: {
+        enabled: true, mode: 'mesh', corners: null, meshGrid: nativeWarpMeshGrid(mesh),
+      } }]);
+      const main = frameOf(await rpc.send('frame_snapshot', { include_pixels: true }));
+      const screen = frameOf(await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'open' }));
+      for (const px of SAMPLE_COLUMNS) {
+        const expected = evaluateMeshByRows(mesh, (px + 0.5) / SIZE, 0).y * SIZE;
+        expect(Math.abs(firstLitRow(main, px) - expected), `main column ${px}`).toBeLessThanOrEqual(1);
+        expect(Math.abs(firstLitRow(screen, px) - expected), `screen column ${px}`).toBeLessThanOrEqual(1);
+      }
+
+      // Turning the Master Warp off again straightens the open screen too.
+      await rpc.commands([{ type: 'set_output_stage', masterWarp: { enabled: false } }]);
+      const flat = frameOf(await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'open' }));
+      expect(firstLitRow(flat, SIZE / 2)).toBe(0);
+    } finally {
+      await rpc.close();
+    }
+  }, 90000);
 });
