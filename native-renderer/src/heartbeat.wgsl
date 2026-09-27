@@ -2249,7 +2249,7 @@ fn edge_falloff(dist: f32, radius: f32, aa: f32) -> f32 {
 /// 2 beat phase, 3 manual (the progress value itself).
 fn edge_progress(t: f32, speed: f32, mode: i32, manual: f32) -> f32 {
   if (mode == 1) { return 1.0 - abs(fract(t * speed * 0.5) * 2.0 - 1.0); }
-  if (mode == 2) { return clamp(u.audio1.z, 0.0, 1.0); }
+  if (mode == 2) { return fract(u.clock.x); }
   if (mode == 3) { return clamp(manual, 0.0, 1.0); }
   return fract(t * speed);
 }
@@ -2792,7 +2792,8 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
     var mixv = 0.0;           // 0 = colour 1, 1 = colour 2 (patterns)
     if (fill_type == 9) {
       var index = 0.0;
-      if (fa.z > 0.5) { index = floor(t * max(u.audio1.w, 1.0) / 60.0); }
+      // New colour each beat of the beat clock, delayed by the group chase.
+      if (fa.z > 0.5) { index = floor(u.clock.x - misc.y * u.clock.y / 60.0); }
       let hue = edge_hash2(ctx.seed * 7.0 + index, 3.0 + f32(e));
       c1 = vec4<f32>(edge_hsv(hue, clamp(fa.x, 0.0, 1.0), clamp(fa.y, 0.0, 1.0)), fill_color_u.a);
     } else if (fill_type == 10) {
@@ -2998,9 +2999,9 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       let repeats = max(round(total / cycle), 1.0);
       let fit = total / (repeats * cycle);
       var offset = t * stroke_speed;
-      if (stroke_type == 16 && sb.x > 0.5 && u.audio1.w > 1.0) {
+      if (stroke_type == 16 && sb.x > 0.5) {
         // One full dash cycle per beat, locked to the beat phase.
-        offset = clamp(u.audio1.z, 0.0, 1.0) * cycle * fit;
+        offset = fract(u.clock.x) * cycle * fit;
       }
       let uu = s_arc - offset;
       var along = edge_periodic_out(uu, d1 * fit, cycle * fit);

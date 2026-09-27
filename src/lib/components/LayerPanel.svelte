@@ -31,6 +31,8 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EffectChainPresets from './EffectChainPresets.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
+  import LooksGallery from './LooksGallery.svelte';
+  import { isLookTarget } from '../looks/edgeLooks';
   import EffectParamRow from './EffectParamRow.svelte';
   import CubeLutControls from './CubeLutControls.svelte';
   import PluginIcon from './PluginIcon.svelte';
@@ -141,6 +143,9 @@
 
   // Layer type dropdown state
   let showAddLayerMenu = false;
+  let showLooks = false;
+  // Invite a first pick: shapes drawn but none dressed yet.
+  $: looksInvite = !showLooks && $project.layers.some(isLookTarget) && !$project.layers.some((layer) => layer.edgeEffects?.effects?.length);
   let addMenuPos = { top: 0, left: 0 };
   let addLayerBtnEl: HTMLElement | null = null;
   let showSourceCropModal = false;
@@ -1000,6 +1005,12 @@
   <div class="layers-section" class:composition-open={mappingComposition.enabled && compositionPanelOpen}>
     <div class="panel-header">
       <h3>Layers</h3>
+      <button class="btn-looks" class:invite={looksInvite} class:active={showLooks} type="button"
+        title="One-click beat-synced looks for your shapes" aria-expanded={showLooks}
+        onclick={() => { showLooks = !showLooks; showAddLayerMenu = false; }}>
+        <span class="btn-looks__spark" aria-hidden="true">✦</span> Looks
+      </button>
+      {#if showLooks}<LooksGallery onClose={() => (showLooks = false)} />{/if}
       <div class="add-layer-wrapper">
         <button class="btn-add" bind:this={addLayerBtnEl} onclick={(e) => {
           showAddLayerMenu = !showAddLayerMenu;
@@ -4014,6 +4025,30 @@
 
   .btn-add:hover {
     background: rgba(155, 135, 245, 0.18);
+  }
+
+  .btn-looks {
+    height: 30px;
+    margin-left: auto;
+    margin-right: 6px;
+    padding: 0 11px;
+    border-radius: var(--ga-r-soft, 7px);
+    border: 1px solid rgba(255, 90, 200, 0.45);
+    background: linear-gradient(135deg, rgba(255, 43, 214, 0.16), rgba(0, 229, 255, 0.14));
+    color: #f3e9ff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .btn-looks:hover, .btn-looks.active { background: linear-gradient(135deg, rgba(255, 43, 214, 0.3), rgba(0, 229, 255, 0.26)); }
+  .btn-looks__spark { color: #ff7ae6; }
+  .btn-looks.invite { animation: looks-invite 1.6s ease-in-out infinite; }
+  @keyframes looks-invite {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 60, 210, 0); }
+    50% { box-shadow: 0 0 0 4px rgba(255, 60, 210, 0.28); }
   }
 
   .layer-list {

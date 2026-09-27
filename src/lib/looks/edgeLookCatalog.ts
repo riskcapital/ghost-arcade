@@ -29,8 +29,8 @@ export const EDGE_LOOKS: LookDef[] = [
     id: 'comet-chase', name: 'Comet Chase', palette: 'ice',
     blurb: 'Comets race around each shape, one shape after another.',
     build: ({ a, b }) => [
-      { stroke: { type: 'solid', color: b, width: 1.5 }, opacity: 0.35 },
-      { stroke: { type: 'comet', color: a, width: 4, tailLength: 0.5, headSize: 2.5, speed: 0.35 }, chaseMode: 'order', chaseSpread: 1.2, react: beat('boost', 0.7) },
+      { stroke: { type: 'solid', color: b, width: 2 }, opacity: 0.6 },
+      { stroke: { type: 'comet', color: a, width: 6, tailLength: 0.6, headSize: 3, speed: 0.35 }, blendMode: 'add', chaseMode: 'order', chaseSpread: 1.2, react: beat('boost', 0.7) },
     ],
   },
   {
@@ -164,8 +164,8 @@ export const EDGE_LOOKS: LookDef[] = [
     id: 'twin-snakes', name: 'Twin Snakes', palette: 'acid',
     blurb: 'Two snakes chase round every edge over a dotted track.',
     build: ({ a, b }) => [
-      { stroke: { type: 'dashed', color: b, width: 1.5, dashLength: 0.04, gapLength: 0.05, speed: 0.4 }, opacity: 0.6 },
-      { stroke: { type: 'snake', color: a, width: 4, length: 0.22, snakeCount: 2, speed: 0.8 }, chaseMode: 'order', chaseSpread: 0.8, react: beat('boost', 0.7) },
+      { stroke: { type: 'dashed', color: b, width: 2, dashLength: 0.04, gapLength: 0.05, speed: 0.4 }, opacity: 0.85 },
+      { stroke: { type: 'snake', color: a, width: 6, length: 0.3, snakeCount: 2, speed: 0.8 }, blendMode: 'add', chaseMode: 'order', chaseSpread: 0.8, react: beat('boost', 0.7) },
     ],
   },
   {
