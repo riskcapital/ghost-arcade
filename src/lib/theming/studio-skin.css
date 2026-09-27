@@ -360,7 +360,8 @@ html[data-theme="arcade"] body {
   align-items: center !important;
   gap: 5px !important;
 }
-.layer-panel .btn-add:hover {
+.layer-panel .btn-add:hover,
+.layer-panel .btn-add.active {
   background: rgba(155, 135, 245, 0.18) !important;
 }
 

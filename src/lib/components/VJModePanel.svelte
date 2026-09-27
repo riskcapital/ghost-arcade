@@ -2,6 +2,7 @@
   import VJGroups from './VJGroups.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
   import LooksGallery from './LooksGallery.svelte';
+  import LooksIcon from './LooksIcon.svelte';
   import { videoBeatFit } from '../media/videoBeatFit';
   import { launchClock, TEMPO_NUDGE_AMOUNT } from '../stores/launchClock';
   import { abletonLink } from '../sync/abletonLink';
@@ -4120,7 +4121,7 @@
           <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Mapping presets and live clips on the shared map. Rows hold presets that stack with opacity and blend modes, or clips that play on any surface whose Source is that row">MAP</button>
           {#if $vjClipLauncher.mapMode}
             <button class="stage-mix-btn vj-looks-btn" class:active={showVjLooks} onclick={() => (showVjLooks = !showVjLooks)}
-              title="One-click beat-synced looks for the shapes on the map">✦ Looks</button>
+              title="One-click beat-synced looks for the shapes on the map"><LooksIcon size={14} /> Looks</button>
           {/if}
         </div>
         {#if showVjLooks && $vjClipLauncher.mapMode}<LooksGallery onClose={() => (showVjLooks = false)} />{/if}
@@ -7586,6 +7587,12 @@
   .vj-header :is(.master-value, .header-quant-select, .header-quant-pending) {
     font-size: calc(var(--vj-header-font) - 1px);
   }
+  .vj-looks-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .vj-header .stage-mix-btn {
     font-size: var(--vj-header-font);
     padding: 0 var(--vj-stage-pad-x);

@@ -32,6 +32,7 @@
   import EffectChainPresets from './EffectChainPresets.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import LooksGallery from './LooksGallery.svelte';
+  import LooksIcon from './LooksIcon.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
   import { isLookTarget } from '../looks/edgeLooks';
   import EffectParamRow from './EffectParamRow.svelte';
@@ -1006,10 +1007,10 @@
   <div class="layers-section" class:composition-open={mappingComposition.enabled && compositionPanelOpen}>
     <div class="panel-header">
       <h3>Layers</h3>
-      <button class="btn-looks" class:invite={looksInvite} class:active={showLooks} type="button"
+      <button class="btn-add btn-looks" class:invite={looksInvite} class:active={showLooks} type="button"
         title="One-click beat-synced looks for your shapes" aria-expanded={showLooks}
         onclick={() => { showLooks = !showLooks; showAddLayerMenu = false; }}>
-        <span class="btn-looks__spark" aria-hidden="true">✦</span> Looks
+        <LooksIcon /> Looks
       </button>
       {#if showLooks}<LooksGallery onClose={() => (showLooks = false)} />{/if}
       <div class="add-layer-wrapper">
@@ -4029,28 +4030,17 @@
     background: rgba(155, 135, 245, 0.18);
   }
 
+  /* Looks shares the Add Layer button's look (class btn-add, so every
+     skin rule applies to both); only its mark takes the action accent. */
   .btn-looks {
-    height: 30px;
     margin-left: auto;
     margin-right: 6px;
-    padding: 0 11px;
-    border-radius: var(--ga-r-soft, 7px);
-    border: 1px solid rgba(255, 90, 200, 0.45);
-    background: linear-gradient(135deg, rgba(255, 43, 214, 0.16), rgba(0, 229, 255, 0.14));
-    color: #f3e9ff;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
   }
-  .btn-looks:hover, .btn-looks.active { background: linear-gradient(135deg, rgba(255, 43, 214, 0.3), rgba(0, 229, 255, 0.26)); }
-  .btn-looks__spark { color: #ff7ae6; }
+  .btn-looks :global(.looks-icon) { color: var(--ga-icon, #5278ff); }
   .btn-looks.invite { animation: looks-invite 1.6s ease-in-out infinite; }
   @keyframes looks-invite {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 60, 210, 0); }
-    50% { box-shadow: 0 0 0 4px rgba(255, 60, 210, 0.28); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(82, 120, 255, 0); }
+    50% { box-shadow: 0 0 0 3px rgba(82, 120, 255, 0.28); }
   }
 
   .layer-list {
