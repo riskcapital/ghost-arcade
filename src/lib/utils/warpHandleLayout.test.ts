@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { insetHandle, meshMoveGrip } from './warpHandleLayout';
+import { insetEdgeHandle, insetHandle, meshMoveGrip } from './warpHandleLayout';
 
 describe('warp handle layout', () => {
+  it('pulls in a layer handle only where it straddles the canvas edge', () => {
+    // A full-canvas layer: corners exactly on the edges.
+    expect(insetEdgeHandle(0, 800, 10)).toBe(10);
+    expect(insetEdgeHandle(800, 800, 10)).toBe(790);
+    expect(insetEdgeHandle(-6, 800, 10)).toBe(10);
+    expect(insetEdgeHandle(806, 800, 10)).toBe(790);
+    expect(insetEdgeHandle(400, 800, 10)).toBe(400);
+    // Well off the canvas (a layer bigger than it): the true position.
+    expect(insetEdgeHandle(-40, 800, 10)).toBe(-40);
+    expect(insetEdgeHandle(900, 800, 10)).toBe(900);
+  });
+
   it('pulls an edge handle inside the canvas and leaves the rest alone', () => {
     expect(insetHandle(1000, 1000, 8)).toBe(992);
     expect(insetHandle(0, 1000, 8)).toBe(8);

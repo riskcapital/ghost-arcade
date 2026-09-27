@@ -14,6 +14,18 @@ export function insetHandle(value: number, size: number, half: number): number {
 }
 
 /**
+ * insetHandle for layer handles, which may sit off the canvas: a layer can
+ * be bigger than the canvas, and the workspace around the canvas shows its
+ * handles where they really are. Only a handle that straddles a canvas edge
+ * (and so would be half under a side panel) is pulled in; one further out
+ * keeps its true position.
+ */
+export function insetEdgeHandle(value: number, size: number, half: number): number {
+  if (!Number.isFinite(value) || value < -half || value > size + half) return value;
+  return insetHandle(value, size, half);
+}
+
+/**
  * The grip that moves a whole mesh: the middle of its central cell. The
  * average of all points is exactly the centre point of an odd grid (5x5),
  * which put the move grip on top of that point so it could not be picked.

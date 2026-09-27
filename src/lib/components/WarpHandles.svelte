@@ -7,6 +7,7 @@
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
   import { normalizedWarpNudge, warpNudgeStepPixels } from '../utils/warpNudge';
   import { releaseFormControlFocus } from '../utils/formFocus';
+  import { insetEdgeHandle } from '../utils/warpHandleLayout';
   import {
     scaleWarpCornersFromSelectionEdge,
     type SelectionBounds,
@@ -976,6 +977,9 @@
       {/if}
     </svg>
 
+    <!-- Handles on the canvas edge are drawn whole inside it (half would
+         be under a side panel); their points and outlines keep their true
+         positions. See utils/warpHandleLayout.ts. -->
     <!-- Corner handles — hidden in mesh mode (overlap with mesh-grid
          corner handles) AND when the layer carries a non-rectangle
          shape (the polygon's own vertex handles in CustomShapeHandles
@@ -987,7 +991,7 @@
           class:dragging={dragging === 'corner' && dragTarget === corner}
           class:selected={selectedCorner === corner && dragging !== 'corner'}
           class:locked={$selectedLayer.locked}
-          style="left: {pos.x}px; top: {pos.y}px;"
+          style="left: {insetEdgeHandle(pos.x, containerWidth, 10)}px; top: {insetEdgeHandle(pos.y, containerHeight, 10)}px;"
           onmousedown={(e) => handleCornerMouseDown(corner as keyof WarpCorners, e)}
           ontouchstart={(e) => handleCornerTouchStart(corner as keyof WarpCorners, e)}
           role="button"
@@ -1006,7 +1010,7 @@
         class="handle edge-handle edge-{edge}"
         class:dragging={dragging === 'edge' && dragTarget === edge}
         class:locked={$selectedLayer.locked}
-        style="left: {pos.x}px; top: {pos.y}px;"
+        style="left: {insetEdgeHandle(pos.x, containerWidth, edge === 'left' || edge === 'right' ? 6 : 20)}px; top: {insetEdgeHandle(pos.y, containerHeight, edge === 'left' || edge === 'right' ? 20 : 6)}px;"
         onmousedown={(e) => handleEdgeMouseDown(edge as 'top' | 'bottom' | 'left' | 'right', e)}
         role="button"
         tabindex="0"

@@ -7,6 +7,7 @@
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
   import { normalizedWarpNudge } from '../utils/warpNudge';
   import { releaseFormControlFocus } from '../utils/formFocus';
+  import { insetEdgeHandle } from '../utils/warpHandleLayout';
   import {
     MESH_CURVE_SEGMENTS,
     meshEdgePoint,
@@ -546,7 +547,9 @@
       {/if}
     </svg>
 
-    <!-- Grid point handles - positions are transformed through corner warp -->
+    <!-- Grid point handles - positions are transformed through corner warp.
+         On the canvas edge they are drawn whole inside it (half would be
+         under a side panel); the points keep their true positions. -->
     {#each handlePositions as row, rowIndex}
       {#each row as pos, colIndex}
         {@const isCorner = (rowIndex === 0 || rowIndex === meshGrid.rows - 1) && (colIndex === 0 || colIndex === meshGrid.cols - 1)}
@@ -559,7 +562,7 @@
           class:dragging={dragging?.row === rowIndex && dragging?.col === colIndex}
           class:selected={selectedPoint?.row === rowIndex && selectedPoint?.col === colIndex && !dragging}
           class:locked={$selectedLayer.locked}
-          style="left: {pos.x}px; top: {pos.y}px;"
+          style="left: {insetEdgeHandle(pos.x, containerWidth, isCorner ? 8 : isEdge ? 6 : 5)}px; top: {insetEdgeHandle(pos.y, containerHeight, isCorner ? 8 : isEdge ? 6 : 5)}px;"
           onmousedown={(e) => handleMouseDown(rowIndex, colIndex, e)}
           ontouchstart={(e) => handleTouchStart(rowIndex, colIndex, e)}
           role="button"
@@ -580,7 +583,7 @@
           class:dragging={tangentDrag?.side === handle.side}
           class:selected={selectedTangent === handle.side && !tangentDrag}
           class:locked={$selectedLayer.locked}
-          style="left: {handle.x}px; top: {handle.y}px;"
+          style="left: {insetEdgeHandle(handle.x, containerWidth, 5)}px; top: {insetEdgeHandle(handle.y, containerHeight, 5)}px;"
           onmousedown={(e) => handleTangentMouseDown(tangentPoint.row, tangentPoint.col, handle.side, e)}
           ontouchstart={(e) => handleTangentTouchStart(tangentPoint.row, tangentPoint.col, handle.side, e)}
           ondblclick={(e) => { e.preventDefault(); e.stopPropagation(); resetTangent(tangentPoint.row, tangentPoint.col, handle.side); }}
