@@ -3047,6 +3047,9 @@ export interface Layer {
   _deckMonitorBank?: 'a' | 'b';
   /** True pre-crossfader opacity for the monitor pass. */
   _deckMonitorOpacity?: number;
+  /** Screen FX colour chase multiplier (r, g, b 0..1), set per frame on the
+   *  native scene copies; never saved. */
+  _stageTint?: [number, number, number];
 
   // ── Group nesting ──────────────────────────────────────────────────────
   /** ID of parent group layer (undefined/null = top-level layer) */

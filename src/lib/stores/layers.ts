@@ -15,6 +15,8 @@ function identifiedEntries(raw: unknown): any[] {
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { instantiateEdgeEffects } from './edgeEffectPresets';
+import { buildLookEffects, lookPalette } from '../looks/edgeLooks';
+import { edgeLook } from '../looks/edgeLookCatalog';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
 import { normalizedTransitionDuration, normalizedTransitionStyle } from './vjClipTransitions';
@@ -2028,6 +2030,47 @@ void main() {
           };
         }),
       }));
+    },
+
+    /** Dress every layer in `layerIds` with a one-click Look, as one undo
+     *  step. The Look replaces the whole stack, so re-picking (or picking
+     *  another palette) swaps rather than piles on. Each layer gets its own
+     *  effects with fresh ids. Returns how many layers changed. */
+    applyLook(layerIds: readonly string[], lookId: string, paletteId?: string): number {
+      const look = edgeLook(lookId);
+      const targets = new Set(layerIds);
+      if (!look || !targets.size) return 0;
+      const palette = lookPalette(paletteId ?? look.palette).id;
+      let changed = 0;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (!targets.has(layer.id)) return layer;
+          changed += 1;
+          const config: EdgeEffectsConfig = { enabled: true, effects: buildLookEffects(look, palette), look: { id: look.id, paletteId: palette } };
+          if (look.cornerRadius) config.cornerRadius = look.cornerRadius;
+          return { ...layer, edgeEffects: config };
+        }),
+      }));
+      if (changed) recordDiscreteAction();
+      return changed;
+    },
+
+    /** Take a Look off: layers in `layerIds` whose stack came from a Look
+     *  lose it (hand-built stacks are left alone). One undo step. */
+    clearLook(layerIds: readonly string[]): number {
+      const targets = new Set(layerIds);
+      let changed = 0;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (!targets.has(layer.id) || !layer.edgeEffects?.look) return layer;
+          changed += 1;
+          return { ...layer, edgeEffects: null };
+        }),
+      }));
+      if (changed) recordDiscreteAction();
+      return changed;
     },
 
     /** Give every layer in `layerIds` an edge effect stack in one undo

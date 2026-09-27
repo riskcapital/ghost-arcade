@@ -252,6 +252,7 @@ type LayerSnapshot = {
   effectsSig: string;
   edgeEffectsSig: string;
   colorSig: string;
+  tintSig: string;
 };
 
 type NativeLayerSource = {
@@ -886,6 +887,7 @@ function nativeEffectDescriptors(layer: Layer): string[] {
 import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCoverage';
 import { statusFrameRate } from './statusFrameRate';
 import { recordingScreenIds } from '$lib/recording/recordingSources';
+import { launchClockPosition } from '$lib/stores/launchClock';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -3569,6 +3571,18 @@ function layerRgba(layer: Layer): [number, number, number, number] | null {
   return [r, g, b, a];
 }
 
+/** Screen FX colour chase tint as the core takes it; white = no tint. */
+export function stageTintRgba(layer: Pick<Layer, '_stageTint'>): [number, number, number, number] {
+  const t = layer._stageTint;
+  if (!t) return [1, 1, 1, 1];
+  const c = (v: number) => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1);
+  return [c(t[0]), c(t[1]), c(t[2]), 1];
+}
+
+function stageTintSignature(layer: Layer): string {
+  return layer._stageTint ? stageTintRgba(layer).slice(0, 3).map((v) => v.toFixed(3)).join(':') : 'none';
+}
+
 function colorSignature(layer: Layer): string {
   const rgba = layerRgba(layer);
   if (!rgba) return 'none';
@@ -5145,6 +5159,9 @@ export class NativeRendererSync {
   private isfAudioRowEncoder = createIsfAudioRowEncoder();
   private isfAudioRowUsage = new Map<string, boolean>();
   private isfAudioRowsLive = false;
+  /** Last beat-clock anchor sent to the core (beat, bpm, performance.now()). */
+  private lastBeatClock: { beat: number; bpm: number; at: number } | null = null;
+  private beatClockTimer: ReturnType<typeof setInterval> | null = null;
   private liveClockOriginMs = performance.now();
   private latestRenderClockSeconds: number | null = null;
   private lastRenderClockSentSeconds: number | null = null;
@@ -5854,6 +5871,28 @@ export class NativeRendererSync {
       q(audio.kick),
       q(audio.snare),
     ].join(':');
+  }
+
+  /** Re-anchor the core's beat clock when the launch clock has moved away
+   *  from where the core's own extrapolation puts it (tempo change, audio
+   *  beat, nudge, resync, Link), and every few seconds regardless. */
+  private beatClockCommand(nowMs = performance.now()): RendererCommand | null {
+    const { beat, beatMs } = launchClockPosition(nowMs);
+    const bpm = beatMs > 0 ? 60000 / beatMs : 120;
+    if (!Number.isFinite(beat) || !Number.isFinite(bpm)) return null;
+    const last = this.lastBeatClock;
+    if (last) {
+      const predicted = last.beat + ((nowMs - last.at) * last.bpm) / 60000;
+      if (Math.abs(bpm - last.bpm) < 0.05 && Math.abs(predicted - beat) < 0.03 && nowMs - last.at < 4000) return null;
+    }
+    this.lastBeatClock = { beat, bpm, at: nowMs };
+    return { type: 'set_beat_clock', beat, bpm };
+  }
+
+  private pushBeatClock() {
+    if (!this.running || this.manualClockExportDepth > 0) return;
+    const command = this.beatClockCommand();
+    if (command) void submitNativeRendererCommands([command]).catch(() => { this.lastBeatClock = null; });
   }
 
   private audioCommand(audio: VisualAudioState): RendererCommand | null {
@@ -7975,6 +8014,9 @@ export class NativeRendererSync {
     this.lastStatusPreviewFps = 0;
     this.audioUnsub?.();
     this.audioUnsub = visualAudio.subscribe(() => this.scheduleAudioSync());
+    this.lastBeatClock = null;
+    if (this.beatClockTimer) clearInterval(this.beatClockTimer);
+    this.beatClockTimer = setInterval(() => this.pushBeatClock(), 250);
     this.desiredWidth = width;
     this.desiredHeight = height;
     this.sentWidth = 0;
@@ -8119,6 +8161,9 @@ export class NativeRendererSync {
     this.audioUnsub = null;
     this.lastAudioSig = '';
     this.isfAudioRowsLive = false;
+    if (this.beatClockTimer) clearInterval(this.beatClockTimer);
+    this.beatClockTimer = null;
+    this.lastBeatClock = null;
     this.lastLayers.clear();
     this.nativeSceneAdopted = false;
     this.latestLayers = [];
@@ -8774,6 +8819,8 @@ export class NativeRendererSync {
     if (audioCommand) commands.push(audioCommand);
     const audioSpectrumCommand = this.audioSpectrumCommand(layers, visual);
     if (audioSpectrumCommand) commands.push(audioSpectrumCommand);
+    const beatClockCommand = this.beatClockCommand();
+    if (beatClockCommand) commands.push(beatClockCommand);
 
     const now = Date.now();
     this.scheduleNativeStatusPoll(now);
@@ -8969,6 +9016,7 @@ export class NativeRendererSync {
           : effectsSig,
         edgeEffectsSig: nativeLayerBlocked ? nativeBlockSig : nativeEdgeEffects.signature,
         colorSig: colorSignature(layer),
+        tintSig: stageTintSignature(layer),
       };
       current.set(layer.id, snap);
       const prev = this.lastLayers.get(layer.id);
@@ -9474,6 +9522,10 @@ export class NativeRendererSync {
           nativeSource.previewElement ?? null,
           previewBudget,
         );
+      }
+
+      if (prev ? prev.tintSig !== snap.tintSig : snap.tintSig !== 'none') {
+        commands.push({ type: 'set_layer_tint', layer_id: layer.id, rgba: stageTintRgba(layer) });
       }
 
       if (!prev || prev.colorSig !== snap.colorSig) {

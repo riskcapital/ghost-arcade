@@ -349,6 +349,10 @@ export type RendererCommand =
   | { type: 'start_prepared_transition'; layer_id: string; token: number; sources: Array<{source_id: string; seek_generation?: number}> }
   | { type: 'set_layer_visibility'; layer_id: string; visible: boolean }
   | { type: 'set_layer_color'; layer_id: string; rgba: [number, number, number, number] }
+  /** Colour multiplier on the layer's finished colour (Screen FX colour chases). */
+  | { type: 'set_layer_tint'; layer_id: string; rgba: [number, number, number, number] }
+  /** Anchor the core's beat clock: `beat` is the launch-clock position now. */
+  | { type: 'set_beat_clock'; beat: number; bpm: number; time?: number }
   | { type: 'set_layer_source_color'; layer_id: string; rgb: [number, number, number] }
   | { type: 'set_layer_native_params'; layer_id: string; params: [number, number, number, number, number, number, number, number] }
   | {

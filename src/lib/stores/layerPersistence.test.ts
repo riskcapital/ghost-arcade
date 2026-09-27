@@ -296,6 +296,7 @@ describe('VJ clip transition persistence', () => {
 const RUNTIME_ONLY_LAYER_FIELDS = new Set([
   '_deckMonitorBank',    // set per frame by the deck monitor passes
   '_deckMonitorOpacity',
+  '_stageTint',          // Screen FX colour chase, set per frame
   'bank',                // assigned by vjOutputLayers when the crossfader is on
   'texture',             // live GPU/DOM object
   'videoElement',        // live DOM element
