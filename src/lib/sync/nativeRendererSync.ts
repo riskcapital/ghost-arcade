@@ -8903,10 +8903,16 @@ export class NativeRendererSync {
     const videoPrerolls = new Set<string>();
     layers = this.resolveNativeGroupLayers(layers);
     const edgeContext = buildEdgeEffectContext(layers, width, height);
+    // An offline render owns the clock: the core decodes each video's exact
+    // frame when the export snapshot is taken, so a timestamped pre-roll
+    // here would only race it (and fail against the core's prefetch budget
+    // on every flush).
+    const allowVideoPreroll = this.manualClockExportDepth === 0;
     for (const layer of layers) {
       const candidate = nativeLayerSource(layer);
       const src = candidate.source;
       if (
+        !allowVideoPreroll ||
         !layer.visible ||
         !src ||
         candidate.sourceType !== 'video' ||

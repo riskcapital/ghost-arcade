@@ -1473,6 +1473,14 @@ impl NativeMediaSourceState {
     }
 }
 
+/// Cache key for a manual-clock (offline export) video frame: the file,
+/// decode size and the exact timestamp in microseconds, so frames closer
+/// together than the live prefetch's 1/30 s buckets never alias.
+fn manual_video_frame_signature(path: &Path, width: usize, height: usize, time_seconds: f64) -> Result<String, String> {
+    let micros = (time_seconds.max(0.0) * 1_000_000.0).round() as u64;
+    native_video_frame_file_signature(path, width, height, micros).map(|base| format!("manual-us:{base}"))
+}
+
 fn effective_native_frame_index(
     render_clock_mode: &str,
     render_clock_frame_index: Option<u64>,
@@ -4124,6 +4132,9 @@ struct App {
     native_video_frame_cache_order: VecDeque<String>,
     native_video_frame_cache_bytes: usize,
     media_sources: HashMap<String, NativeMediaSourceState>,
+    /// Live transport state of every media source at the moment an offline
+    /// (manual clock) export took over; restored when the live clock returns.
+    manual_clock_media_stash: Option<HashMap<String, NativeMediaSourceState>>,
     clip_audio: Option<clip_audio::ClipAudio>,
     clip_audio_mix: Value,
     clip_audio_fades: HashMap<String, ClipAudioFade>,
@@ -4464,6 +4475,7 @@ impl App {
             native_video_frame_cache_order: VecDeque::new(),
             native_video_frame_cache_bytes: 0,
             media_sources: HashMap::new(),
+            manual_clock_media_stash: None,
             clip_audio: None,
             clip_audio_mix: json!([]),
             clip_audio_fades: HashMap::new(),
@@ -6544,6 +6556,7 @@ impl App {
             .to_ascii_lowercase();
         if mode == "reset" {
             self.launch_scheduler.clear(); self.scheduled_binding_guards.clear();
+            if self.render_clock_mode == "manual" { self.leave_manual_clock_media(); }
             self.render_clock_mode = "live".to_string();
             self.render_clock_time = None;
             self.render_clock_frame_index = None;
@@ -6558,6 +6571,7 @@ impl App {
             // Leaving or entering manual export: forget the last stepped
             // virtual frame so the next manual run always steps.
             self.last_native_graph_step_clock = None;
+            if next_mode == "manual" { self.enter_manual_clock_media(); } else { self.leave_manual_clock_media(); }
         }
         self.render_clock_mode = next_mode.to_string();
         self.render_clock_time = number_at(params, &["time"])
@@ -12619,6 +12633,8 @@ impl App {
         let (snapshot_time, snapshot_frame_index) = if use_output_export {
             (self.render_clock_time, self.native_frame_index())
         } else {
+            let (clock, _) = self.snapshot_clock_from_params(params);
+            self.settle_manual_video_frames(clock)?;
             self.render_frame_snapshot_texture(params)?
         };
         let (mut snapshot, pixels) = {
@@ -17264,16 +17280,9 @@ impl App {
         }
     }
 
-    fn pump_native_video_decodes(&mut self) {
-        if self.renderer.is_none() {
-            return;
-        }
-        self.reclaim_hardware_video_memory();
-        // An armed session is not ready until its first real frame is resident
-        // in the GPU source texture. Keep at least the minimum pre-roll behind
-        // it so triggering can immediately drain motion frames.
-        self.prime_armed_native_video_sources();
-        let (width, height) = self.native_video_decode_dimensions();
+    /// Every media source a visible layer (or a visible graph's input, or a
+    /// pending binding) is waiting on — the set the video decode pump admits.
+    fn active_video_source_ids(&self) -> Vec<String> {
         let mut active_sources = Vec::new();
         for layer in self.scene_layers.values() {
             if !layer.visible {
@@ -17313,6 +17322,101 @@ impl App {
         for binding in self.pending_media_bindings.values() {
             if !active_sources.contains(&binding.source_id) { active_sources.push(binding.source_id.clone()); }
         }
+        active_sources
+    }
+
+    /// Offline export takes the world clock: every playing video restarts
+    /// from its launch point at virtual time 0, so frame N of an export
+    /// always shows the clip at N/fps and two renders of the same project
+    /// match. The live transport is stashed and handed back on exit.
+    fn enter_manual_clock_media(&mut self) {
+        self.manual_clock_media_stash = Some(self.media_sources.clone());
+        for state in self.media_sources.values_mut() {
+            if state.source_type != "video" || state.paused { continue; }
+            let duration = state.duration_seconds.filter(|duration| *duration > 0.0);
+            state.playback_time_seconds = match duration {
+                Some(duration) if state.playback_rate < 0.0 => duration * state.trim_end.clamp(0.0, 1.0),
+                Some(duration) => duration * state.trim_start.clamp(0.0, 1.0),
+                None => 0.0,
+            };
+            state.clock_time_seconds = 0.0;
+        }
+    }
+
+    fn leave_manual_clock_media(&mut self) {
+        let Some(stash) = self.manual_clock_media_stash.take() else { return; };
+        for (source_id, state) in stash {
+            if let Some(current) = self.media_sources.get_mut(&source_id)
+                && current.uri == state.uri
+            {
+                *current = state;
+            }
+        }
+    }
+
+    /// Manual clock only: make every active video source hold the exact
+    /// frame for this virtual time before a snapshot reads the composite.
+    /// Decodes synchronously (each decode is bounded by the ffmpeg job's
+    /// 10 s limit) and caches by exact timestamp, so the export waits for
+    /// the right picture instead of capturing whatever the async pump last
+    /// uploaded. A frame that cannot be decoded fails the export loudly.
+    fn settle_manual_video_frames(&mut self, clock_seconds: Option<f32>) -> Result<u32, String> {
+        if self.render_clock_mode != "manual" || self.renderer.is_none() { return Ok(0); }
+        let clock = clock_seconds.unwrap_or_else(|| self.native_graph_time_seconds());
+        let (width, height) = self.native_video_decode_dimensions();
+        let mut settled = 0u32;
+        for source_id in self.active_video_source_ids() {
+            let Some(state) = self.media_sources.get(&source_id).cloned() else { continue; };
+            if state.source_type != "video" || state.seq == 0 { continue; }
+            let Some(path) = local_media_path_from_uri(&state.uri) else { continue; };
+            let (decode_width, decode_height) =
+                (state.decode_width.unwrap_or(width), state.decode_height.unwrap_or(height));
+            let time_seconds = state.current_time_seconds(Some(clock));
+            let signature = manual_video_frame_signature(&path, decode_width, decode_height, time_seconds)?;
+            if self.native_video_frame_signatures.get(&source_id) == Some(&signature)
+                && self.source_frames.contains_key(&source_id)
+            {
+                continue;
+            }
+            let (frame_width, frame_height, rgba) = match self.cached_native_video_frame(&signature) {
+                Some(frame) => frame,
+                None => {
+                    // ffmpeg's input seek returns the first frame at or after
+                    // the requested time; back off a hair so float rounding
+                    // of an exact frame boundary cannot skip to the next one.
+                    let seek = (time_seconds - 1.0e-4).max(0.0);
+                    let frame = decode_native_video_frame_rgba(&path, decode_width, decode_height, seek)
+                        .map_err(|err| format!("video frame at {time_seconds:.3}s could not be decoded for export: {err}"))?;
+                    self.stats.native_video_frame_decodes = self.stats.native_video_frame_decodes.saturating_add(1);
+                    self.store_native_video_frame_cache(signature.clone(), frame.0, frame.1, &frame.2);
+                    frame
+                }
+            };
+            let seq = self.native_frame_index().max(
+                self.source_frames.get(&source_id).map_or(1, |frame| frame.seq.saturating_add(1)),
+            );
+            let uploaded = self.upload_source_frame_pixels(
+                source_id.clone(), seq, frame_width, frame_height, &rgba, "native-video-manual-clock", false,
+            );
+            self.stats.native_video_frame_decode_bytes_uploaded =
+                self.stats.native_video_frame_decode_bytes_uploaded.saturating_add(uploaded as u64);
+            self.native_video_frame_signatures.insert(source_id, signature);
+            settled += 1;
+        }
+        Ok(settled)
+    }
+
+    fn pump_native_video_decodes(&mut self) {
+        if self.renderer.is_none() {
+            return;
+        }
+        self.reclaim_hardware_video_memory();
+        // An armed session is not ready until its first real frame is resident
+        // in the GPU source texture. Keep at least the minimum pre-roll behind
+        // it so triggering can immediately drain motion frames.
+        self.prime_armed_native_video_sources();
+        let (width, height) = self.native_video_decode_dimensions();
+        let active_sources = self.active_video_source_ids();
         if self.render_clock_mode == "live" {
             let visible_sources = active_sources.iter().cloned().collect::<HashSet<_>>();
             let source_ids = self.media_sources.keys().cloned().collect::<Vec<_>>();
