@@ -4511,8 +4511,15 @@ void main() {
      * out from under the render loop. The show timeline passes false while
      * a render owns the clock. See stores/showTimeline.ts.
      */
-    loadComposition(compositionId: string, options?: { restoreTransports?: boolean }) {
+    /**
+     * Swap the editor to a saved preset. A user firing a preset is one undo
+     * step (like saving or editing one, see saveComposition); automated
+     * recalls (show timeline, scheduler cues, VJ clip triggers) pass
+     * `recordHistory: false` so playback does not flood the undo stack.
+     */
+    loadComposition(compositionId: string, options?: { restoreTransports?: boolean; recordHistory?: boolean }) {
       const restoreTransports = options?.restoreTransports !== false;
+      const recordHistory = options?.recordHistory !== false;
       // First get the composition to access Performer data
       const currentProject = get({ subscribe });
       if (!currentProject.vjMode) return;
@@ -4581,7 +4588,12 @@ void main() {
               keyframeTimeline.play();
             }
           }
+          // The history snapshot carries the keyframe timelines too, so the
+          // step is recorded once they are in.
+          if (recordHistory) recordDiscreteAction();
         });
+      } else if (recordHistory) {
+        recordDiscreteAction();
       }
     },
 
@@ -6558,7 +6570,7 @@ export const project = createProjectStore();
 // here — layers.ts is loaded by everything, so this always lands before any
 // timeline can run.
 setShowCompositionLoader((compositionId, options) => {
-  project.loadComposition(compositionId, { restoreTransports: options.restoreTransports });
+  project.loadComposition(compositionId, { restoreTransports: options.restoreTransports, recordHistory: false });
 });
 
 // ─── Mapping-mode clip audio reconciliation ──────────────────────────────

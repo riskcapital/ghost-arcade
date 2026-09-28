@@ -1218,7 +1218,7 @@ function createVJClipLauncherStore() {
         vjClipTransitions.cancel(deck, layerIndex);
         if (clip.presetId && !state.mapMode) {
           void import('./layers').then(({ project }) => {
-            project.loadComposition(clip.presetId!);
+            project.loadComposition(clip.presetId!, { recordHistory: false });
           }).catch((err) => {
             console.error('[VJ] preset load failed:', err);
           });

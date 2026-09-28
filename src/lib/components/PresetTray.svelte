@@ -107,7 +107,7 @@
       const detail = (e as CustomEvent<{ compositionId: string; handled: boolean }>).detail;
       if (!detail?.compositionId || !$compositions.some((c) => c.id === detail.compositionId)) return;
       detail.handled = true;
-      loadPreset(detail.compositionId);
+      loadPreset(detail.compositionId, false);
     };
     window.addEventListener('show-recall-preset', cueHandler);
     return () => {
@@ -239,14 +239,15 @@
   // Load a preset with optional transition.
   // When a transition is active, suppress the "Loading Composition..." overlay —
   // the transition itself provides visual feedback and the white text just covers it.
-  function loadPreset(compId: string) {
+  // Cue-list recalls are automated playback, not an undoable edit.
+  function loadPreset(compId: string, recordHistory = true) {
     // A composition crossfading into itself is a no-op that would only cost
     // a doubled scene layer count, so re-clicking the live preset cuts.
     const useTransition =
       transitionEnabled && transitionDuration > 0 && !!onBeforeLoad && compId !== $activeCompositionId;
     if (!useTransition) showLoading('Loading Composition...');
     if (useTransition) onBeforeLoad!(transitionDuration, transitionType, compId);
-    project.loadComposition(compId);
+    project.loadComposition(compId, { recordHistory });
     if (!useTransition) requestAnimationFrame(() => hideLoading());
   }
 

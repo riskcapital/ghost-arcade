@@ -46,7 +46,7 @@ function recallPreset(compositionId: string): void {
   if (!get(compositions).some((c) => c.id === compositionId)) return;
   const detail = { compositionId, handled: false };
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('show-recall-preset', { detail }));
-  if (!detail.handled) project.loadComposition(compositionId);
+  if (!detail.handled) project.loadComposition(compositionId, { recordHistory: false });
 }
 
 function timeline(op: CueTimelineOp, seconds: number): void {
