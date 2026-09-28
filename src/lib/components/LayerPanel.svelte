@@ -18,7 +18,7 @@
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
-  import type { BlendMode, MediaSource, Effect, EffectType, ContentFitMode, VideoPlaybackMode, StageEffectType } from '../types';
+  import type { BlendMode, MediaSource, Effect, EffectType, ContentFitMode, VideoPlaybackMode, StageEffectType, Layer } from '../types';
   import { createDefaultMappingCompositionState, generateUUID, VJ_MIX_SOURCE_INDEX } from '../types';
   import { onDestroy, onMount } from 'svelte';
   // ShapeType import removed — Lines layer uses pen tools instead of shape library
@@ -51,6 +51,16 @@
   import { nativeUnsupportedEffectTypes, nativeUnsupportedSourceReason } from '../sync/nativeRendererSync';
   import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
   import MapSurfaceControls from './MapSurfaceControls.svelte';
+
+  /** Which non-group layers offer the VJ Source select. See the call site. */
+  function layerShowsVJSource(layer: Layer): boolean {
+    // Screens have their own "Slice source" select further down, writing the
+    // same vjLayerIndex/vjGroupId. Showing this one too gave a Screen two
+    // selects for one setting.
+    if (layer.type === 'screen' || layer.type === 'mask') return false;
+    // Legacy assignment: keep the control so it can be undone.
+    return layer.vjLayerIndex != null || !!layer.vjGroupId;
+  }
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -2002,10 +2012,19 @@
 
           <div class="layer-properties media-properties">
         <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : 'Media'})</h4>
-        <MapSurfaceControls {layer} showSource={layer.type !== 'screen' && layer.type !== 'mask'} />
+        <!-- Source picks where a surface's picture comes from, so it only
+             belongs on the layers that route someone else's feed. A media or
+             custom-shape layer draws its own content -- video, shader,
+             plugin -- and offering to replace that with a VJ row here was
+             confusing, because the layer already has a source. Groups get
+             theirs in the group branch above; Screens get "Slice source"
+             below, which sets the same fields.
 
-        <!-- VJ Source dropdown — only on screen/VJ-slice layers, NOT standard media layers -->
-        <!-- Group layers and screen layers have their own VJ source selectors -->
+             The exception is a layer that already carries a VJ assignment
+             from before this rule: hiding the control would leave it stuck on
+             a VJ feed with no way back, so it stays visible until set back to
+             Own content. -->
+        <MapSurfaceControls {layer} showSource={layerShowsVJSource(layer)} />
 
 
         {#if layer.type === 'color' && layer.colorContent}
