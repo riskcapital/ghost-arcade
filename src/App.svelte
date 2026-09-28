@@ -894,6 +894,30 @@
     _prevVjMapPresetDrag = vjMapPresetDragActive;
   }
 
+  // The four bottom trays (Presets, Sequencer, Keyframes, Show) share one
+  // fixed slot above the dock, and the viewport only reserves room for one
+  // of them, so they are exclusive: opening one closes the others. Before,
+  // the Show tray could sit on top of Presets and hide its "+ Save".
+  type BottomTray = 'presets' | 'sequencer' | 'keyframes' | 'show';
+  let _prevBottomTrays: Record<BottomTray, boolean> = { presets: false, sequencer: false, keyframes: false, show: false };
+  $: {
+    const open: Record<BottomTray, boolean> = {
+      presets: presetTrayOpen,
+      sequencer: $layerSequencer.isOpen,
+      keyframes: $keyframeTimeline.isOpen,
+      show: $showTimeline.isOpen,
+    };
+    const opened = (Object.keys(open) as BottomTray[]).filter((tray) => open[tray] && !_prevBottomTrays[tray]);
+    const keep = opened[opened.length - 1];
+    if (keep) {
+      if (keep !== 'presets' && presetTrayOpen) { presetTrayOpen = false; open.presets = false; }
+      if (keep !== 'sequencer' && open.sequencer) { layerSequencer.setOpen(false); open.sequencer = false; }
+      if (keep !== 'keyframes' && open.keyframes) { keyframeTimeline.setOpen(false); open.keyframes = false; }
+      if (keep !== 'show' && open.show) { showTimeline.setOpen(false); open.show = false; }
+    }
+    _prevBottomTrays = open;
+  }
+
   // Unsaved changes tracking - increments on every project change, resets on save
   let lastSavedState: string | null = null;
   let hasUnsavedChanges = false;
