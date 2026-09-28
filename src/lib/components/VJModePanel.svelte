@@ -7714,12 +7714,41 @@
   }
 
   /* With audio live the header carries an extra ~200px cluster (scope,
-     beat dots, TAP/BPM, mic, system audio, QUANT). Below this width that
-     no longer fits on one line, and because the right cluster is last in
-     the row it was Exit VJ that got pushed off the edge. Drop the macro
-     bank onto its own line early instead — same reflow the narrow
-     breakpoint already uses, just triggered while audio is on. */
-  @media (max-width: 1560px) {
+     beat dots, TAP/BPM, mic, system audio, QUANT), and at full size it needs
+     about 1596px: lead 642 + macros 389 + right 525 + 16 gap + 24 padding.
+     A 1920x1200 panel at Windows 125% scaling is 1536 CSS px, so at 100% UI
+     zoom the header missed by ~60px and the macro bank dropped onto a second
+     row — on a 1920 screen, which is not a narrow window by any reading.
+     Tighten the bank first: 8 slots at 38px instead of 46 gives back 70px and
+     brings the row to ~1519px, which fits. Wrapping is still there below
+     that, where nothing can save it. */
+  @media (max-width: 1600px) {
+    /* The columns are `1fr auto 1fr`, which centres the macro bank optically
+       by forcing BOTH side columns to the width of the wider one. The lead
+       needs 642px and the right cluster only 525, so 117px is spent on
+       symmetry alone -- and the row's true minimum becomes 642*2 + bank,
+       not lead + bank + right. Measured on a 1920x1200 panel at Windows 125%
+       (1536 CSS px): 1706px needed against 1536 available.
+
+       Below this width, give the columns their content widths and centre the
+       bank within what is left. The bank is no longer pixel-centred when the
+       two sides differ, which is a fair trade against dropping it onto a
+       second row on a 1920 screen. With the tighter bank the row comes to
+       ~1501px and fits. */
+    .vj-header.audio-on {
+      grid-template-columns: auto auto auto;
+      --vj-macro-slot: 36px;
+      --vj-macro-knob: 27px;
+      --vj-macro-bank-w: 294px;
+      --vj-macro-name-font: 8px;
+    }
+
+    .vj-header.audio-on .header-macros {
+      margin-inline: auto;
+    }
+  }
+
+  @media (max-width: 1500px) {
     .vj-header.audio-on {
       grid-template-columns: 1fr auto;
       row-gap: 3px;

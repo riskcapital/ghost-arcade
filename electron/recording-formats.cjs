@@ -9,7 +9,7 @@ const { execFile } = require('child_process');
 
 /** Everything the recorder can write. `alpha` codecs keep transparency. */
 const RECORDING_CODECS = [
-  { id: 'h264', label: 'H.264 (MP4)', extension: 'mp4', mime: 'video/mp4', alpha: false, encoders: ['libx264', 'h264_videotoolbox'] },
+  { id: 'h264', label: 'H.264 (MP4)', extension: 'mp4', mime: 'video/mp4', alpha: false, encoders: ['libx264', 'h264_videotoolbox', 'h264_nvenc', 'h264_qsv'] },
   { id: 'prores_hq', label: 'ProRes 422 HQ (MOV)', extension: 'mov', mime: 'video/quicktime', alpha: false, encoders: ['prores_ks', 'prores_videotoolbox'] },
   { id: 'prores_4444', label: 'ProRes 4444 with alpha (MOV)', extension: 'mov', mime: 'video/quicktime', alpha: true, encoders: ['prores_ks', 'prores_videotoolbox'] },
   { id: 'hap', label: 'HAP (MOV)', extension: 'mov', mime: 'video/quicktime', alpha: false, encoders: ['hap'] },
@@ -54,6 +54,7 @@ function recordingEncoderArgs({
   outputPath,
   platform = process.platform,
   hardwareProRes = false,
+  hardwareH264 = null,
   pixelFormat = 'bgra',
   totalFrames = 0,
 }) {
@@ -92,6 +93,16 @@ function recordingEncoderArgs({
   if (platform === 'darwin') {
     const bitrate = quality === 'maximum' ? '40M' : quality === 'high' ? '20M' : quality === 'medium' ? '10M' : '6M';
     return [...base, '-c:v', 'h264_videotoolbox', '-b:v', bitrate, '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
+  }
+  if (hardwareH264) {
+    // Quality is expressed as a bitrate here, matching the VideoToolbox tiers
+    // above; NVENC/QSV CQ modes vary too much between drivers to tune blind.
+    const bitrate = quality === 'archive' ? '40M' : quality === 'web' ? '8M' : '20M';
+    const tuning = hardwareH264 === 'h264_nvenc'
+      ? ['-preset', 'p4', '-tune', 'll', '-rc', 'cbr']
+      : [];
+    return [...base, '-c:v', hardwareH264, ...tuning, '-b:v', bitrate, '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart', outputPath];
   }
   return [...base, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', crfForQuality(quality), '-preset', presetForQuality(quality),
     '-movflags', '+faststart', outputPath];
@@ -163,7 +174,25 @@ function probeRecordingCodecs(ffmpegPath, platform = process.platform) {
         ], 15000);
         hardwareProRes = probe.ok;
       }
-      return { hardwareProRes, codecs: recordingCodecAvailability(encoders, { hardwareProRes }) };
+      // Windows recorded through libx264 while macOS used VideoToolbox, so a
+      // machine with a perfectly good NVENC block encoded 1080p on the CPU.
+      // At `-crf 18 -preset fast` that is several cores, and when it
+      // backpressures the recorder's stdin the capture pump stalls -- which
+      // is why enabling REC dropped the live preview too, not just the file.
+      // Listed is not the same as usable (no GPU, headless VM, driver too
+      // old), so prove it with a real encode before choosing it.
+      let hardwareH264 = null;
+      if (platform === 'win32') {
+        for (const candidate of ['h264_nvenc', 'h264_qsv']) {
+          if (!encoders.has(candidate)) continue;
+          const probe = await run(ffmpegPath, [
+            '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=256x256:d=0.1',
+            '-frames:v', '1', '-c:v', candidate, '-f', 'null', '-',
+          ], 20000);
+          if (probe.ok) { hardwareH264 = candidate; break; }
+        }
+      }
+      return { hardwareProRes, hardwareH264, codecs: recordingCodecAvailability(encoders, { hardwareProRes }) };
     })().catch((error) => {
       probes.delete(key);
       throw error;

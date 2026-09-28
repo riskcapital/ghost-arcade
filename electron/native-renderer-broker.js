@@ -315,6 +315,11 @@ const RENDERER_COMMANDS = [
   'native_renderer_set_record_target',
   'native_renderer_get_slice_output_state',
   'native_renderer_get_record_target_state',
+  // In-core GPU recording (no per-frame readback); falls back to the
+  // Electron readback recorder where the core cannot encode.
+  'native_renderer_start_native_recording',
+  'native_renderer_stop_native_recording',
+  'native_renderer_native_recording_state',
   'native_renderer_set_stage3d_scene',
   'native_renderer_get_stage3d_scene_summary',
   'native_renderer_set_projection_sim_scene',
@@ -605,6 +610,13 @@ class NativeRendererBroker {
         return this.sendIfRunning('detach_output_window', args, { fallback: null });
       case 'native_renderer_set_output_window':
         return this.sendIfRunning('set_output_window', args, { fallback: null });
+      case 'native_renderer_start_native_recording':
+        return this.sendIfRunning('start_native_recording', args, { fallback: null, timeoutMs: 15000 });
+      case 'native_renderer_stop_native_recording':
+        // Finalizing the MP4 writes the moov atom; give it room on a long take.
+        return this.sendIfRunning('stop_native_recording', args, { fallback: null, timeoutMs: 60000 });
+      case 'native_renderer_native_recording_state':
+        return this.sendIfRunning('native_recording_state', args, { fallback: null });
       default:
         if (BROKER_UNSUPPORTED_COMMANDS.has(command)) {
           return Promise.reject(this.unsupportedError(command));

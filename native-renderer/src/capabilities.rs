@@ -74,6 +74,11 @@ pub const CORE_RPC_METHODS: &[&str] = &[
     "set_record_target",
     "record_target_state",
     "get_record_target_state",
+    // In-core GPU recording: the core encodes its own composite off the
+    // output shared texture, with no readback to the host process.
+    "start_native_recording",
+    "stop_native_recording",
+    "native_recording_state",
     "set_output_window",
     "set_present_policy",
     "set_command_drain_policy",

@@ -2716,9 +2716,9 @@ let nativeOutputRecording = null;
 // -realtime: it caps VideoToolbox near real time (about 100 fps for 1080p
 // here, against 375 without it), and the pump needs headroom to write the
 // frames it queued while the encoder was starting.
-function nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath, codec = 'h264', hardwareProRes = false) {
+function nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath, codec = 'h264', hardwareProRes = false, hardwareH264 = null) {
   const { recordingEncoderArgs } = require('./recording-formats.cjs');
-  return recordingEncoderArgs({ codec, width, height, fps, quality, outputPath, hardwareProRes });
+  return recordingEncoderArgs({ codec, width, height, fps, quality, outputPath, hardwareProRes, hardwareH264 });
 }
 
 /** What the bundled ffmpeg can record, for the recording UI. */
@@ -2846,11 +2846,80 @@ function recordingStartUnixMs(requestedAtUnixMs) {
   return Number.isFinite(requested) && requested <= now && now - requested < 5000 ? requested : now;
 }
 
+/**
+ * Record inside the core, straight off the GPU.
+ *
+ * The Electron recorder reads the composite back every frame (8.3MB at 1080p,
+ * ~250MB/s at 30fps), pipes it to ffmpeg, and ffmpeg uploads it to the GPU
+ * again for NVENC. The core already owns that surface and the encoder is on
+ * the same GPU, so the whole round trip exists only because the encoder used
+ * to live in another process. When the core can encode, let it.
+ *
+ * Returns null when this take is not eligible, and the caller falls back to
+ * the readback recorder, which still handles ProRes, HAP, layer/Screen
+ * targets and any platform whose core has no encoder yet.
+ */
+async function tryStartCoreNativeRecording({ source, codec, fps, quality, outputPath, args }) {
+  // H.264 program output only for now: the core encoder reads the output
+  // shared texture, and ProRes/HAP have no hardware encoder to hand.
+  if (codec.id !== 'h264' || source.kind !== 'output') return null;
+  let state = null;
+  try {
+    state = await nativeRendererBroker.invoke('native_renderer_native_recording_state', {});
+  } catch {
+    return null; // Core predates in-core recording; use the readback path.
+  }
+  if (!state?.available) return null;
+  try {
+    const started = await nativeRendererBroker.invoke('native_renderer_start_native_recording', {
+      path: outputPath, fps, quality,
+    });
+    if (!started?.started) return null;
+    const startedAt = recordingStartUnixMs(args.requestedAtUnixMs);
+    let audioTap = null;
+    if (args.nativeAudio === true) {
+      try { audioTap = await startRecordingAudioTap(); }
+      catch (err) { console.warn('[NativeRec] clip audio tap unavailable:', err?.message || err); }
+    }
+    nativeOutputRecording = {
+      coreEncoded: true,
+      width: Number(started.width) || 0,
+      height: Number(started.height) || 0,
+      fps,
+      outputPath,
+      startedAt,
+      audioTap,
+      codec,
+      source,
+      recordTargetSet: false,
+      surfaceWatch: null,
+    };
+    console.log(`[NativeRec] recording ${source.label} ${started.width}x${started.height}@${fps} `
+      + `${codec.id} in-core (no readback) -> ${outputPath}`);
+    return {
+      success: true, width: started.width, height: started.height, fps, outputPath,
+      nativeAudio: !!audioTap, codec: codec.id, extension: codec.extension,
+      mime: codec.mime, alpha: source.alpha,
+    };
+  } catch (err) {
+    console.warn('[NativeRec] in-core recording unavailable, using readback recorder:', err?.message || err);
+    nativeOutputRecording = null;
+    return null;
+  }
+}
+
 async function startNativeOutputRecording(args = {}) {
   if (nativeOutputRecording) throw new Error('A native output recording is already running.');
   const addon = nativePreviewAddon || loadNativePreviewAddon();
-  if (!addon || typeof addon.readIOSurfacePixels !== 'function') {
-    throw new Error('Presenter addon lacks IOSurface capture support.');
+  // macOS captures by IOSurface id, Windows by shared-texture name. Checking
+  // only for readIOSurfacePixels made this throw on every Windows machine, so
+  // REC silently fell back to the renderer's snapshot recorder: the live
+  // output stayed smooth while the FILE came out at a fraction of the frame
+  // rate and unusable. The DXGI presenter has exported readSharedTexturePixels
+  // all along -- the NDI output pump below already uses exactly this pair.
+  const captureFn = isMac ? 'readIOSurfacePixels' : 'readSharedTexturePixels';
+  if (!addon || typeof addon[captureFn] !== 'function') {
+    throw new Error(`Presenter addon lacks ${isMac ? 'IOSurface' : 'shared texture'} capture support.`);
   }
   const { recordingCodec, resolveRecordingSource, liveRecordingFps } = require('./recording-formats.cjs');
   const codec = recordingCodec(args.codec);
@@ -2882,18 +2951,27 @@ async function startNativeOutputRecording(args = {}) {
     throw err;
   }
   const surfaceId = Number(texture?.handle ?? 0);
+  // Windows addresses the texture by name; its `handle` is process-local and
+  // meaningless here, so it must not be part of the validity test.
+  const textureKey = isMac ? String(surfaceId) : String(texture?.shared_name ?? texture?.name ?? '');
   const width = Number(texture?.width ?? 0);
   const height = Number(texture?.height ?? 0);
-  if (!texture?.available || !Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) {
+  const surfaceUsable = isMac ? Number.isFinite(surfaceId) && surfaceId > 0 : !!textureKey;
+  if (!texture?.available || !surfaceUsable || width <= 0 || height <= 0) {
     if (recordTargetSet) await clearNativeRecordTarget();
     throw new Error('Native output shared texture is not available for capture.');
   }
   const fps = liveRecordingFps(codec.id, clampNumber(args.fps, 1, 60, 30), codecs.hardwareProRes);
   const quality = String(args.quality || 'high').trim().toLowerCase();
   const outputPath = safeGeneratedVideoPath(`${String(args.namePrefix || 'Recording')}.${codec.extension}`);
+  const inCore = await tryStartCoreNativeRecording({ source, codec, fps, quality, outputPath, args });
+  if (inCore) {
+    if (recordTargetSet) await clearNativeRecordTarget();
+    return inCore;
+  }
   const child = spawn(
     resolveFfmpegPath(),
-    nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath, codec.id, codecs.hardwareProRes),
+    nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath, codec.id, codecs.hardwareProRes, codecs.hardwareH264),
     { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] },
   );
   // Frame 0 is the REC press, not the moment the encoder became ready: the
@@ -2903,6 +2981,8 @@ async function startNativeOutputRecording(args = {}) {
   const rec = {
     child,
     surfaceId,
+    textureKey,
+    lastCapturedFrame: 0,
     width,
     height,
     fps,
@@ -2934,8 +3014,14 @@ async function startNativeOutputRecording(args = {}) {
     rec.surfaceWatch = setInterval(() => {
       void querySurface().then((state) => {
         const handle = Number(state?.handle ?? 0);
-        if (nativeOutputRecording === rec && handle > 0 && Number(state.width) === rec.width && Number(state.height) === rec.height) {
+        const key = isMac ? String(handle) : String(state?.shared_name ?? state?.name ?? '');
+        const usable = isMac ? handle > 0 : !!key;
+        if (nativeOutputRecording === rec && usable && Number(state.width) === rec.width && Number(state.height) === rec.height) {
           rec.surfaceId = handle;
+          if (key !== rec.textureKey) {
+            rec.textureKey = key;
+            rec.lastCapturedFrame = 0;
+          }
         }
       }).catch(() => {});
     }, 1000);
@@ -2947,8 +3033,15 @@ async function startNativeOutputRecording(args = {}) {
     fps,
     startedAt,
     capture: () => {
-      const frame = addon.readIOSurfacePixels(rec.surfaceId);
-      return frame?.data && frame.width === rec.width && frame.height === rec.height ? frame.data : null;
+      // Windows readback is asynchronous: it returns null while the GPU copy
+      // is still in flight, and the pump repeats the previous frame rather
+      // than blocking. Never block here -- this runs on the main thread.
+      const frame = isMac
+        ? addon.readIOSurfacePixels(rec.surfaceId)
+        : addon.readSharedTexturePixels(rec.textureKey, rec.lastCapturedFrame + 1);
+      if (!frame?.data || frame.width !== rec.width || frame.height !== rec.height) return null;
+      if (!isMac) rec.lastCapturedFrame = Number(frame.frame ?? rec.lastCapturedFrame);
+      return frame.data;
     },
     write: (data) => nativeRecorderWriteStdin(rec, data).catch((err) => {
       rec.stderr += `\n${err?.message || err}`;
@@ -2960,7 +3053,8 @@ async function startNativeOutputRecording(args = {}) {
     catch (err) { console.warn('[NativeRec] clip audio tap unavailable:', err?.message || err); }
   }
 
-  console.log(`[NativeRec] recording ${source.label} ${width}x${height}@${fps} ${codec.id} iosurface:${surfaceId} -> ${outputPath}`);
+  console.log(`[NativeRec] recording ${source.label} ${width}x${height}@${fps} ${codec.id} `
+    + `${isMac ? `iosurface:${surfaceId}` : `sharedtexture:${textureKey}`} -> ${outputPath}`);
   return { success: true, width, height, fps, outputPath, nativeAudio: !!rec.audioTap,
     codec: codec.id, extension: codec.extension, mime: codec.mime, alpha: source.alpha };
 }
@@ -3024,10 +3118,66 @@ ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
   }
 });
 
+/** Finish an in-core recording. The core wrote and finalized the MP4, so the
+ *  only work left here is the audio remux and a thumbnail. */
+async function stopCoreNativeRecording(rec) {
+  let frames = 0;
+  let coreDuration = 0;
+  try {
+    const stopped = await nativeRendererBroker.invoke('native_renderer_stop_native_recording', {});
+    frames = Number(stopped?.frames ?? 0);
+    coreDuration = Number(stopped?.duration_seconds ?? 0);
+  } catch (err) {
+    await rec.audioTap?.cancel().catch(() => null);
+    return { success: false, error: `Native recording failed to finalize: ${err?.message || err}` };
+  }
+  if (frames <= 0) {
+    await rec.audioTap?.cancel().catch(() => null);
+    return { success: false, error: 'Recording captured no frames.' };
+  }
+  const nativeAudio = await settleRecordingAudioTap(rec.audioTap, rec.outputPath, rec.startedAt);
+  // No CPU frame was ever produced, so take one snapshot now rather than
+  // paying for a readback on every frame just to have a thumbnail.
+  let thumbnailDataUrl = null;
+  try {
+    // include_pixels defaults to false; without it the snapshot carries no
+    // pixels and the take lands in the library with no thumbnail.
+    const snap = await nativeRendererBroker.invoke('native_renderer_get_frame_snapshot',
+      { max_dim: 320, include_pixels: true });
+    const w = Number(snap?.width ?? 0);
+    const h = Number(snap?.height ?? 0);
+    if (snap?.rgba_b64 && w > 0 && h > 0) {
+      // The core names it rgba_b64 but hands back BGRA, which is exactly what
+      // nativeRecorderThumbnail feeds ffmpeg.
+      thumbnailDataUrl = await nativeRecorderThumbnail(Buffer.from(snap.rgba_b64, 'base64'), w, h);
+    }
+  } catch { /* a missing thumbnail must not fail the take */ }
+  // The core's own timestamps, not frames/fps: a static scene renders rarely,
+  // so the frame count understates how long the take actually runs.
+  const durationSeconds = coreDuration > 0 ? coreDuration : frames / Math.max(1, rec.fps);
+  console.log(`[NativeRec] finished ${frames} frames (${durationSeconds.toFixed(1)}s) in-core -> ${rec.outputPath}`);
+  return {
+    success: true,
+    outputPath: rec.outputPath,
+    frames,
+    durationSeconds,
+    width: rec.width,
+    height: rec.height,
+    fps: rec.fps,
+    codec: rec.codec.id,
+    extension: rec.codec.extension,
+    mime: rec.codec.mime,
+    alpha: rec.source.alpha,
+    nativeAudio,
+    thumbnailDataUrl,
+  };
+}
+
 async function stopNativeOutputRecording() {
   const rec = nativeOutputRecording;
   nativeOutputRecording = null;
   if (!rec) return { success: false, error: 'No native output recording is running.' };
+  if (rec.coreEncoded) return stopCoreNativeRecording(rec);
   const pumped = await rec.pump.stop();
   const written = pumped.written;
   if (rec.surfaceWatch) clearInterval(rec.surfaceWatch);
@@ -3093,7 +3243,15 @@ function sliceMonitorName(sliceId) {
  *  render). Attaching against a stopped core would leave the projector
  *  permanently black instead of falling back. */
 async function probeSliceNativeAvailable() {
-  if (process.platform !== 'darwin') return false;
+  // Screens were macOS-only: probe, attach and pump were all gated on darwin
+  // or on monitorSetIOSurface, so on Windows every Screen window fell back to
+  // rendering the scene itself in the page with webgpu-disable=1 -- the
+  // pre-native browser path, in a build that is otherwise native-only. The
+  // DXGI presenter has exported monitorAttach/monitorSetSharedTexture/
+  // monitorDetach all along, the core's slice metadata already carries
+  // shared_name and frame, and the deck-monitor pump next door has been
+  // driving exactly this pair on both platforms.
+  if (!isMac && !isWin) return false;
   const addon = nativePreviewAddon || loadNativePreviewAddon();
   if (!addon || typeof addon.monitorAttach !== 'function') return false;
   try {
@@ -3108,7 +3266,7 @@ async function probeSliceNativeAvailable() {
  *  Returns false when the platform or addon can't do it, in which case the
  *  slice window falls back to its own WebGL render. */
 function attachSliceNativeLayer(sliceId, win) {
-  if (process.platform !== 'darwin') return false;
+  if (!isMac && !isWin) return false;
   const addon = nativePreviewAddon || loadNativePreviewAddon();
   if (!addon || typeof addon.monitorAttach !== 'function') return false;
   if (!win || win.isDestroyed()) return false;
@@ -3159,23 +3317,39 @@ function startSliceNativePump() {
     sliceNativePumpInFlight = true;
     try {
       const addon = nativePreviewAddon;
-      if (!addon || typeof addon.monitorSetIOSurface !== 'function') return;
+      const setter = isWin ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
+      if (!addon || typeof addon[setter] !== 'function') return;
       const state = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
       if (!state?.available || !Array.isArray(state.slices)) return;
       for (const entry of state.slices) {
         const sliceId = typeof entry?.id === 'string' ? entry.id : '';
         if (!sliceId || !sliceNativeAttached.has(sliceId)) continue;
         const surfaceId = Number(entry?.handle ?? 0);
+        // Windows addresses the texture by name; its handle is process-local.
+        const sharedName = String(entry?.shared_name ?? '');
         const width = Number(entry?.width ?? 0);
         const height = Number(entry?.height ?? 0);
-        if (!Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) continue;
-        // Rebinding is only needed when the surface itself changes; the
-        // core keeps writing into the same IOSurface every frame.
-        const binding = `${surfaceId}:${width}x${height}`;
+        const frame = Number(entry?.frame ?? 0);
+        if ((isWin ? !sharedName : !Number.isFinite(surfaceId) || surfaceId <= 0)
+          || width <= 0 || height <= 0) continue;
+        // macOS installs a display-link source, so binding once is enough and
+        // the core keeps writing into the same IOSurface. The Windows API
+        // presents once per call, so the frame counter has to be part of the
+        // key or the Screen would freeze on its first frame.
+        const binding = isWin
+          ? `${sharedName}:${width}x${height}:${frame}`
+          : `${surfaceId}:${width}x${height}`;
         if (sliceNativeLastBinding.get(sliceId) === binding) continue;
-        if (addon.monitorSetIOSurface(sliceMonitorName(sliceId), surfaceId, width, height, false)) {
+        const presented = isWin
+          ? addon.monitorSetSharedTexture(sliceMonitorName(sliceId), sharedName, width, height)
+          : addon.monitorSetIOSurface(sliceMonitorName(sliceId), surfaceId, width, height, false);
+        if (presented) {
+          const first = !sliceNativeLastBinding.has(sliceId);
           sliceNativeLastBinding.set(sliceId, binding);
-          console.log(`[SliceNative] ${sliceId} bound iosurface:${surfaceId} ${width}x${height}`);
+          if (first) {
+            console.log(`[SliceNative] ${sliceId} bound `
+              + `${isWin ? sharedName : `iosurface:${surfaceId}`} ${width}x${height}`);
+          }
         }
       }
     } catch {
@@ -3183,9 +3357,9 @@ function startSliceNativePump() {
     } finally {
       sliceNativePumpInFlight = false;
     }
-  }, 250);
+  }, isWin ? 1000 / 30 : 250);
   sliceNativePump.unref?.();
-  console.log('[SliceNative] pump started');
+  console.log(`[SliceNative] pump started (${isWin ? 'dxgi per-frame' : 'iosurface bind'})`);
 }
 
 function stopSliceNativePump() {
@@ -7394,7 +7568,9 @@ function registerIpcHandlers() {
             args: makeXfadeArgs(true),
           });
         } catch (hardwareErr) {
-          if (process.platform !== 'darwin') throw hardwareErr;
+          // macOS retried in software here while Windows threw, so a failed
+          // NVENC/QSV encode lost the whole job instead of falling back to
+          // x264. The software path is platform-neutral; both get the retry.
           console.warn('[VideoLoop] hardware encode failed, retrying software x264:', hardwareErr?.message || hardwareErr);
           try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
           await spawnFfmpegVideoLoop({
@@ -7493,7 +7669,9 @@ function registerIpcHandlers() {
           args: appendArgs(true),
         });
       } catch (hardwareErr) {
-        if (process.platform !== 'darwin') throw hardwareErr;
+        // macOS retried in software here while Windows threw, so a failed
+        // NVENC/QSV encode lost the whole job instead of falling back to
+        // x264. The software path is platform-neutral; both get the retry.
         console.warn('[VideoAppend] hardware encode failed, retrying software x264:', hardwareErr?.message || hardwareErr);
         try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
         await spawnFfmpegVideoLoop({
