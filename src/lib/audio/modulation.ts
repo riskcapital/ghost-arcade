@@ -112,6 +112,80 @@ export interface ParamModulation {
   /** Play/pause. When false, the param sits at whatever value the
    *  last frame published — the playhead doesn't advance. */
   autoPlaying?: boolean;
+
+  // ─── Min / Max output range (audio, LFO and beat sources) ─────
+  /** Ableton-style output range, as 0..1 fractions of the param's
+   *  natural range (0 = the param's min, 1 = its max). When BOTH are
+   *  set the param follows `lerp(rangeMin, rangeMax, s)` where s is the
+   *  source's own 0..1 value (audio level, LFO wave, kick envelope):
+   *  silence / trough → rangeMin, loud / peak → rangeMax. `invert`
+   *  swaps the direction. `amount` (Depth) is not used in range mode.
+   *  Absent on modulations saved before ranges existed — those keep the
+   *  legacy slider-relative formula exactly. */
+  rangeMin?: number;
+  rangeMax?: number;
+}
+
+/** True when this modulation uses the Min / Max output range. */
+export function hasModRange(mod: Pick<ParamModulation, 'rangeMin' | 'rangeMax'> | undefined | null): boolean {
+  return !!mod && typeof mod.rangeMin === 'number' && Number.isFinite(mod.rangeMin)
+    && typeof mod.rangeMax === 'number' && Number.isFinite(mod.rangeMax);
+}
+
+/** Sources whose legacy (no-range) signal was lifted to 0.5..1 so audio
+ *  only pushes up from the slider. Beat phase and LFOs were centred. */
+const LEGACY_ADDITIVE_SOURCES: ReadonlySet<string> = new Set<ModSource>([
+  'sub', 'bass', 'lowMid', 'mid', 'highMid', 'treble', 'air', 'presence', 'high',
+  'amplitude', 'kick', 'snare',
+]);
+
+const clamp01 = (v: number) => (v <= 0 ? 0 : v >= 1 ? 1 : v);
+
+/** The pre-range signal shape: audio lifted to 0.5..1, then inverted. */
+function legacySignal(mod: Pick<ParamModulation, 'source' | 'invert'>, unit: number): number {
+  const signal = LEGACY_ADDITIVE_SOURCES.has(mod.source) ? 0.5 + unit * 0.5 : unit;
+  return mod.invert ? 1 - signal : signal;
+}
+
+/**
+ * Map a source's raw 0..1 value onto a param.
+ *
+ *  - Range mode (`rangeMin`/`rangeMax` set): `min + lerp(rangeMin,
+ *    rangeMax, s) × (max − min)`, s = unit (or 1 − unit when inverted).
+ *    The slider base and Depth play no part.
+ *  - Legacy mode (saved before ranges): `base + (signal − 0.5) × amount ×
+ *    (max − min)` where audio sources lift the signal to 0.5..1, clamped
+ *    to min..max unless `clampOutput` is false. Unchanged from 2.0.12.
+ */
+export function computeModulatedValue(
+  mod: Pick<ParamModulation, 'source' | 'amount' | 'invert' | 'rangeMin' | 'rangeMax'>,
+  unit: number,
+  base: number,
+  min: number,
+  max: number,
+  clampOutput = true,
+): number {
+  const u = clamp01(Number.isFinite(unit) ? unit : 0);
+  if (hasModRange(mod)) {
+    const s = mod.invert ? 1 - u : u;
+    const frac = clamp01(mod.rangeMin! + s * (mod.rangeMax! - mod.rangeMin!));
+    return min + frac * (max - min);
+  }
+  const raw = base + (legacySignal(mod, u) - 0.5) * mod.amount * (max - min);
+  return clampOutput ? Math.max(min, Math.min(max, raw)) : raw;
+}
+
+/**
+ * Default Min / Max for a brand-new modulation: Min at the slider's
+ * current value, Max at the top of the param — the same "slider is the
+ * floor, audio pushes up" feel as before, but visible and editable. A
+ * slider already at the top would leave no room to move, so then the
+ * range runs from the bottom up to the slider instead.
+ */
+export function defaultModRange(value: number, min: number, max: number): { rangeMin: number; rangeMax: number } {
+  const span = max - min;
+  const frac = span > 0 && Number.isFinite(value) ? clamp01((value - min) / span) : 0;
+  return frac >= 0.95 ? { rangeMin: 0, rangeMax: frac } : { rangeMin: frac, rangeMax: 1 };
 }
 
 // Default modulation values for new assignments
@@ -135,7 +209,13 @@ export const DEFAULT_MOD: Omit<ParamModulation, 'source'> = {
 
 // Pre-parsed key for hot-path use (avoids split(':') per frame)
 interface ParsedModEntry {
+  /** The modulation-store key this entry was parsed from. Effect, edge,
+   *  GPU and splat params cache their slider base under this key. */
+  key: string;
   mod: ParamModulation;
+  /** One-shot "put the slider value back" write queued when the user
+   *  switches this param to Manual. See queueModRelease. */
+  release?: boolean;
   // Special target sentinel — when set, takes precedence over layer/effect
   // routing. 'xfade-value' modulates the global VJ crossfader fader.
   special?: 'xfade-value' | 'composition-effect';
@@ -442,154 +522,250 @@ export function clearBaseValues(layerIndex: number) {
   }
 }
 
+/** One-shot writes that put a param back on its slider value after the
+ *  user switches it to Manual. Drained by the engine's next frame. */
+let releaseQueue: ParsedModEntry[] = [];
+
+/** Forget the cached slider base and ghost value for one cache key, so
+ *  the next modulation on that param starts from the slider as it is then. */
+function forgetModCache(cacheKey: string) {
+  baseValues.delete(cacheKey);
+  lastModulatedValues.delete(cacheKey);
+}
+
+/** Called by the store when a param goes back to Manual: queue a write
+ *  of its slider base (the engine forgets the cache after writing it).
+ *  Without this the param froze at whatever the last modulated frame
+ *  wrote, and the stale base survived into the next assignment — the
+ *  "slider at 0 but audio still starts from 25" report. */
+function queueModRelease(key: string, previous: ParamModulation | undefined) {
+  releaseQueue = releaseQueue.filter(entry => entry.key !== key);
+  if (!previous || previous.source === 'manual' || previous.source === 'auto') {
+    forgetModCache(key);
+    return;
+  }
+  const entry = parseModKey(key, previous);
+  if (!entry || entry.special === 'xfade-value') {
+    forgetModCache(key);
+    return;
+  }
+  releaseQueue.push({ ...entry, release: true });
+  // The engine may be idle (or about to stop because the map is now
+  // empty); it needs one more frame to write the release. Deferred: this
+  // runs inside the store update, and start() ticks synchronously.
+  queueMicrotask(() => {
+    if (releaseQueue.length > 0 && !modulationEngine.running) modulationEngine.start();
+  });
+}
+
+/** Drop every cached base / ghost value and pending release. */
+function resetModCaches() {
+  baseValues.clear();
+  lastModulatedValues.clear();
+  releaseQueue = [];
+}
+
+/** A param was (re)assigned a source before a pending release ran: keep
+ *  its base, drop the release. */
+function cancelModRelease(key: string) {
+  if (releaseQueue.length) releaseQueue = releaseQueue.filter(entry => entry.key !== key);
+}
+
+/**
+ * The user moved a modulated param's slider: make that the new base, so
+ * the modulation (and a later switch back to Manual) follows it. `key` is
+ * the modulation-store key of an effect, edge, GPU, splat, clip-effect or
+ * composition-effect param. Shader params keep using `setBaseValue`.
+ */
+export function setModulationBase(key: string, value: number) {
+  if (!Number.isFinite(value)) return;
+  const mod = get(modulationStore).get(key);
+  if (mod?.clipEffect || mod?.compositionEffect) {
+    modulationStore.update(map => {
+      const current = map.get(key);
+      if (!current) return map;
+      const next = new Map(map);
+      next.set(key, current.clipEffect
+        ? { ...current, clipEffect: { ...current.clipEffect, base: value } }
+        : { ...current, compositionEffect: { ...current.compositionEffect!, base: value } });
+      return next;
+    });
+  }
+  baseValues.set(key, value);
+}
+
+/** Read the cached base for a modulation-store key (tests / UI). */
+export function getModulationBase(key: string): number | undefined {
+  const mod = get(modulationStore).get(key);
+  return mod?.clipEffect?.base ?? mod?.compositionEffect?.base ?? baseValues.get(key);
+}
+
+/**
+ * Range-mode slider drag: the slider sets where the param rests when the
+ * source is silent — Min normally, Max when inverted — pushing the other
+ * end along if the slider crosses it. `frac` is the slider as a 0..1
+ * fraction of the param's range.
+ */
+export function rangeWithRestAt(mod: Pick<ParamModulation, 'invert' | 'rangeMin' | 'rangeMax'>, frac: number): { rangeMin: number; rangeMax: number } {
+  const f = clamp01(frac);
+  const lo = mod.rangeMin ?? 0;
+  const hi = mod.rangeMax ?? 1;
+  return mod.invert
+    ? { rangeMin: Math.min(lo, f), rangeMax: f }
+    : { rangeMin: f, rangeMax: Math.max(hi, f) };
+}
+
+/** Parse one store key into the engine's routing entry (null = unroutable). */
+function parseModKey(key: string, mod: ParamModulation): ParsedModEntry | null {
+  const withKey = (entry: Omit<ParsedModEntry, 'key'>): ParsedModEntry => ({ ...entry, key });
+  const parts = key.split(':');
+
+  if (parts[0] === 'comp') {
+    if (!['vj', 'mapping'].includes(parts[1]) || parts.length < 4) return null;
+    return withKey({ mod, bank: 'A', target: parts[1] as ModTarget, special: 'composition-effect',
+      layerIndex: -1, isEffect: true, isEdgeEffect: false, isGPU: false, isSplat: false,
+      effectId: parts[2], paramName: parts.slice(3).join(':') });
+  }
+
+  // Special: crossfader value target
+  if (parts[0] === 'xfade' && parts[1] === 'value') {
+    return withKey({
+      mod,
+      special: 'xfade-value',
+      bank: 'A',
+      target: 'vj',
+      layerIndex: -1,
+      isEffect: false,
+      isEdgeEffect: false,
+      isGPU: false,
+      isSplat: false,
+      effectId: '',
+      paramName: '',
+    });
+  }
+
+  // Target prefix detection:
+  //   "vjc:CLIPID:..." → vj target, clip-keyed (preferred)
+  //   "map:..."        → mapping target (no banks)
+  //   "B:..."          → vj target, Bank B
+  //   otherwise        → vj target, Bank A (legacy layer-keyed)
+  let target: ModTarget = 'vj';
+  let bank: 'A' | 'B' = 'A';
+  let cursor = 0;
+  if (parts[0] === 'vjcf') {
+    if (!['A', 'B'].includes(parts[1]) || parts.length < 5) return null;
+    return withKey({ mod, bank: parts[1] as 'A' | 'B', target: 'vj', clipId: parts[2],
+      layerIndex: -1, isEffect: true, isEdgeEffect: false, isGPU: false, isSplat: false,
+      effectId: parts[3], paramName: parts.slice(4).join(':') });
+  }
+  if (parts[0] === 'vjc') {
+    // vjc:CLIPID:paramName  — layerIndex is resolved per-frame by
+    // searching deck layerStates for the clip ID. paramName can
+    // include colons (rare but possible) so rejoin everything
+    // after the clipId.
+    return withKey({
+      mod,
+      bank: 'A',
+      target: 'vj',
+      clipId: parts[1],
+      layerIndex: -1,
+      isEffect: false,
+      isEdgeEffect: false,
+      isGPU: false,
+      isSplat: false,
+      effectId: '',
+      paramName: parts.slice(2).join(':'),
+    });
+  }
+  if (parts[0] === 'map') {
+    target = 'mapping';
+    cursor = 1;
+  } else if (parts[0] === 'B') {
+    bank = 'B';
+    cursor = 1;
+  }
+
+  const layerIndex = parseInt(parts[cursor], 10);
+  if (isNaN(layerIndex)) return null;
+
+  if (parts[cursor + 1] === 'fx') {
+    return withKey({
+      mod,
+      bank,
+      target,
+      layerIndex,
+      isEffect: true,
+      isEdgeEffect: false,
+      isGPU: false,
+      isSplat: false,
+      effectId: parts[cursor + 2],
+      paramName: parts[cursor + 3],
+    });
+  } else if (parts[cursor + 1] === 'edge') {
+    // Edge effect path may contain dots (`stroke.width`) — rejoin
+    // anything after the effect id so the nested path is preserved
+    // intact. Splitting was on `:` only, so dots in paramName are safe.
+    return withKey({
+      mod,
+      bank,
+      target,
+      layerIndex,
+      isEffect: false,
+      isEdgeEffect: true,
+      isGPU: false,
+      isSplat: false,
+      effectId: parts[cursor + 2],
+      paramName: parts.slice(cursor + 3).join(':'),
+    });
+  } else if (parts[cursor + 1] === 'gpu') {
+    // GPU shader-layer param: map:N:gpu:paramKey (mapping-only).
+    // paramKey may contain colons in theory, rejoin to preserve.
+    return withKey({
+      mod,
+      bank,
+      target,
+      layerIndex,
+      isEffect: false,
+      isEdgeEffect: false,
+      isGPU: true,
+      isSplat: false,
+      effectId: '',
+      paramName: parts.slice(cursor + 2).join(':'),
+    });
+  } else if (parts[cursor + 1] === 'splat') {
+    return withKey({
+      mod,
+      bank,
+      target,
+      layerIndex,
+      isEffect: false,
+      isEdgeEffect: false,
+      isGPU: false,
+      isSplat: true,
+      effectId: '',
+      paramName: parts.slice(cursor + 2).join(':'),
+    });
+  } else {
+    return withKey({
+      mod,
+      bank,
+      target,
+      layerIndex,
+      isEffect: false,
+      isEdgeEffect: false,
+      isGPU: false,
+      isSplat: false,
+      effectId: '',
+      paramName: parts[cursor + 1],
+    });
+  }
+}
+
 function rebuildParsedCache(map: ModulationMap) {
   parsedCache = [];
   for (const [key, mod] of map) {
-    const parts = key.split(':');
-
-    if (parts[0] === 'comp') {
-      if (!['vj', 'mapping'].includes(parts[1]) || parts.length < 4) continue;
-      parsedCache.push({ mod, bank: 'A', target: parts[1] as ModTarget, special: 'composition-effect',
-        layerIndex: -1, isEffect: true, isEdgeEffect: false, isGPU: false, isSplat: false,
-        effectId: parts[2], paramName: parts.slice(3).join(':') });
-      continue;
-    }
-
-    // Special: crossfader value target
-    if (parts[0] === 'xfade' && parts[1] === 'value') {
-      parsedCache.push({
-        mod,
-        special: 'xfade-value',
-        bank: 'A',
-        target: 'vj',
-        layerIndex: -1,
-        isEffect: false,
-        isEdgeEffect: false,
-        isGPU: false,
-        isSplat: false,
-        effectId: '',
-        paramName: '',
-      });
-      continue;
-    }
-
-    // Target prefix detection:
-    //   "vjc:CLIPID:..." → vj target, clip-keyed (preferred)
-    //   "map:..."        → mapping target (no banks)
-    //   "B:..."          → vj target, Bank B
-    //   otherwise        → vj target, Bank A (legacy layer-keyed)
-    let target: ModTarget = 'vj';
-    let bank: 'A' | 'B' = 'A';
-    let cursor = 0;
-    if (parts[0] === 'vjcf') {
-      if (!['A', 'B'].includes(parts[1]) || parts.length < 5) continue;
-      parsedCache.push({ mod, bank: parts[1] as 'A' | 'B', target: 'vj', clipId: parts[2],
-        layerIndex: -1, isEffect: true, isEdgeEffect: false, isGPU: false, isSplat: false,
-        effectId: parts[3], paramName: parts.slice(4).join(':') });
-      continue;
-    }
-    if (parts[0] === 'vjc') {
-      // vjc:CLIPID:paramName  — layerIndex is resolved per-frame by
-      // searching deck layerStates for the clip ID. paramName can
-      // include colons (rare but possible) so rejoin everything
-      // after the clipId.
-      parsedCache.push({
-        mod,
-        bank: 'A',
-        target: 'vj',
-        clipId: parts[1],
-        layerIndex: -1,
-        isEffect: false,
-        isEdgeEffect: false,
-        isGPU: false,
-        isSplat: false,
-        effectId: '',
-        paramName: parts.slice(2).join(':'),
-      });
-      continue;
-    }
-    if (parts[0] === 'map') {
-      target = 'mapping';
-      cursor = 1;
-    } else if (parts[0] === 'B') {
-      bank = 'B';
-      cursor = 1;
-    }
-
-    const layerIndex = parseInt(parts[cursor], 10);
-    if (isNaN(layerIndex)) continue;
-
-    if (parts[cursor + 1] === 'fx') {
-      parsedCache.push({
-        mod,
-        bank,
-        target,
-        layerIndex,
-        isEffect: true,
-        isEdgeEffect: false,
-        isGPU: false,
-        isSplat: false,
-        effectId: parts[cursor + 2],
-        paramName: parts[cursor + 3],
-      });
-    } else if (parts[cursor + 1] === 'edge') {
-      // Edge effect path may contain dots (`stroke.width`) — rejoin
-      // anything after the effect id so the nested path is preserved
-      // intact. Splitting was on `:` only, so dots in paramName are safe.
-      parsedCache.push({
-        mod,
-        bank,
-        target,
-        layerIndex,
-        isEffect: false,
-        isEdgeEffect: true,
-        isGPU: false,
-        isSplat: false,
-        effectId: parts[cursor + 2],
-        paramName: parts.slice(cursor + 3).join(':'),
-      });
-    } else if (parts[cursor + 1] === 'gpu') {
-      // GPU shader-layer param: map:N:gpu:paramKey (mapping-only).
-      // paramKey may contain colons in theory, rejoin to preserve.
-      parsedCache.push({
-        mod,
-        bank,
-        target,
-        layerIndex,
-        isEffect: false,
-        isEdgeEffect: false,
-        isGPU: true,
-        isSplat: false,
-        effectId: '',
-        paramName: parts.slice(cursor + 2).join(':'),
-      });
-    } else if (parts[cursor + 1] === 'splat') {
-      parsedCache.push({
-        mod,
-        bank,
-        target,
-        layerIndex,
-        isEffect: false,
-        isEdgeEffect: false,
-        isGPU: false,
-        isSplat: true,
-        effectId: '',
-        paramName: parts.slice(cursor + 2).join(':'),
-      });
-    } else {
-      parsedCache.push({
-        mod,
-        bank,
-        target,
-        layerIndex,
-        isEffect: false,
-        isEdgeEffect: false,
-        isGPU: false,
-        isSplat: false,
-        effectId: '',
-        paramName: parts[cursor + 1],
-      });
-    }
+    const entry = parseModKey(key, mod);
+    if (entry) parsedCache.push(entry);
   }
 }
 
@@ -625,8 +801,19 @@ function createModulationStore() {
     }
   });
 
+  /** Bookkeeping shared by every set* path: going to Manual queues the
+   *  "back to the slider" write and drops the cached base; assigning a
+   *  source keeps the base (it tracks the slider) and cancels a pending
+   *  release. */
+  function noteAssignment(key: string, next: ParamModulation) {
+    if (next.source === 'manual') queueModRelease(key, get({ subscribe }).get(key));
+    else cancelModRelease(key);
+  }
+
   return {
     subscribe,
+    /** Raw map update — used by setModulationBase for descriptor bases. */
+    update,
 
     /** Set modulation for a specific layer+param (shader). When
      *  clipId is provided for a VJ target, the mod is stored under
@@ -638,6 +825,7 @@ function createModulationStore() {
       update(map => {
         const newMap = new Map(map);
         const key = modKeyShader(layerIndex, paramName, bank, t, clipId);
+        noteAssignment(key, stored);
         if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
@@ -662,6 +850,7 @@ function createModulationStore() {
      *  sync. */
     setCompositionEffectModulation(target: ModTarget, effectId: string, paramName: string, mod: ParamModulation, range: { base: number; min: number; max: number }) {
       const key = modKeyCompositionEffect(target, effectId, paramName);
+      noteAssignment(key, mod);
       update(map => {
         const next = new Map(map);
         if (mod.source === 'manual') next.delete(key);
@@ -673,10 +862,8 @@ function createModulationStore() {
     setClipEffectModulation(clipId: string, effectId: string, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A') {
       const key = modKeyClipEffect(clipId, effectId, paramName, bank);
       const existing = get({ subscribe }).get(key);
-      if (!existing || mod.source === 'manual' || existing.source !== mod.source) {
-        baseValues.delete(key);
-        lastModulatedValues.delete(key);
-      }
+      noteAssignment(key, mod);
+      if (!existing && mod.source !== 'manual') forgetModCache(key);
       let descriptor = existing?.clipEffect;
       if (!descriptor && mod.source !== 'manual') {
         const state = get(vjClipLauncher);
@@ -701,6 +888,7 @@ function createModulationStore() {
       update(map => {
         const newMap = new Map(map);
         const key = modKeyEffect(layerIndex, effectId, paramName, bank, t);
+        noteAssignment(key, stored);
         if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
@@ -727,6 +915,7 @@ function createModulationStore() {
       update(map => {
         const newMap = new Map(map);
         const key = modKeyEdgeEffect(layerIndex, effectId, paramPath, 'A', target);
+        noteAssignment(key, stored);
         if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
@@ -750,6 +939,7 @@ function createModulationStore() {
       update(map => {
         const newMap = new Map(map);
         const key = modKeyGPU(layerIndex, paramKey, 'mapping');
+        noteAssignment(key, stored);
         if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
@@ -770,6 +960,7 @@ function createModulationStore() {
       update(map => {
         const newMap = new Map(map);
         const key = modKeySplat(layerIndex, paramKey, 'mapping');
+        noteAssignment(key, stored);
         if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
@@ -834,8 +1025,10 @@ function createModulationStore() {
       clearModulatedValues(layerIndex);
     },
 
-    /** Clear everything — including the crossfader entry. */
+    /** Clear everything — including the crossfader entry and the
+     *  per-param slider bases, so a new project starts clean. */
     clearAll() {
+      resetModCaches();
       set(new Map());
     },
 
@@ -845,7 +1038,11 @@ function createModulationStore() {
      *  raw keys back in (NOT re-parse them through setModulation, which
      *  would re-encode and mangle multi-prefix keys like
      *  `B:N:fx:eff:param` or `xfade:value`). */
-    bulkLoad(entries: Array<{ key: string; mod: ParamModulation }>) {
+    bulkLoad(entries: Array<{ key: string; mod: ParamModulation }>, options: { resetCaches?: boolean } = {}) {
+      // Project import resets the cached slider bases (the new project's
+      // sliders are the truth). Output-window sync must NOT: it bulk-loads
+      // on every edit and would re-capture already-modulated values.
+      if (options.resetCaches) resetModCaches();
       const m = new Map<string, ParamModulation>();
       for (const { key, mod } of entries) {
         if (typeof key === 'string' && key.length > 0 && mod) m.set(key, mod);
@@ -999,7 +1196,7 @@ class ModulationEngine {
     if (!this.isRunning) return;
 
     // Auto-stop when nothing to modulate
-    if (parsedCache.length === 0) {
+    if (parsedCache.length === 0 && releaseQueue.length === 0) {
       this.stop();
       return;
     }
@@ -1053,7 +1250,9 @@ class ModulationEngine {
     const mappingGPUBatch = new Map<number, Record<string, number>>();
     const mappingSplatBatch = new Map<number, Record<string, number>>();
 
-    for (const entry of parsedCache) {
+    const entries = releaseQueue.length > 0 ? releaseQueue.concat(parsedCache) : parsedCache;
+    releaseQueue = [];
+    for (const entry of entries) {
       // Per-iteration shadowing of bank/layerIndex — clip-keyed
       // entries override these from the runtime deck search below.
       let { bank, layerIndex } = entry;
@@ -1117,8 +1316,11 @@ class ModulationEngine {
       // any legacy 'auto' mods loaded from old projects don't
       // double-write on top of the autoEngine's output.
 
-      let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true, mod, frameBeat);
-      if (mod.invert) signal = 1 - signal;
+      // Release entries are the one-shot "back to the slider" write that
+      // follows a switch to Manual: they write the cached base, forget
+      // it, and never read the source.
+      const release = entry.release === true;
+      const unit = release ? 0 : this.getUnitSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true, mod, frameBeat);
 
       if (special === 'composition-effect') {
         const range = mod.compositionEffect;
@@ -1127,7 +1329,7 @@ class ModulationEngine {
           ? modulationHandlers.compositionReader?.(effectId, paramName)
           : (vjState.compositionEffects.find(effect => effect.id === effectId)?.params as Record<string, unknown> | undefined)?.[paramName];
         if (typeof current !== 'number') continue;
-        const value = Math.max(range.min, Math.min(range.max, range.base + (signal - .5) * mod.amount * (range.max - range.min)));
+        const value = release ? range.base : computeModulatedValue(mod, unit, range.base, range.min, range.max);
         if (entry.target === 'mapping') modulationHandlers.compositionWriter?.(effectId, { [paramName]: value });
         else vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: value });
         continue;
@@ -1137,10 +1339,13 @@ class ModulationEngine {
       // Modulates the global A/B fader 0..1 directly. No base-value tracking
       // because the fader itself IS the live value — we just write the signal
       // (scaled by amount) on top of a 0.5 midpoint so amount=0 leaves the
-      // fader at center.
+      // fader at center. A Min / Max range maps straight onto 0..1.
       if (special === 'xfade-value') {
+        if (release) continue;
         // amount=1 → full 0..1 sweep, amount=0 → no movement.
-        const modulated = Math.max(0, Math.min(1, 0.5 + (signal - 0.5) * mod.amount * 2));
+        const modulated = hasModRange(mod)
+          ? computeModulatedValue(mod, unit, 0.5, 0, 1)
+          : Math.max(0, Math.min(1, 0.5 + (legacySignal(mod, unit) - 0.5) * mod.amount * 2));
         lastModulatedValues.set(MOD_KEY_XFADE_VALUE, modulated);
         vjClipLauncher.setCrossfaderValue(modulated);
         continue;
@@ -1177,9 +1382,10 @@ class ModulationEngine {
         // state, so edge modulation is intentionally scoped to mapping.
         if (!isMapping || !modulationHandlers.mappingEdgeEffectUpdater || !modulationHandlers.mappingEdgeEffectReader) continue;
 
-        const edgeKey = `${bank}:${layerIndex}:edge:${effectId}:${paramName}`;
+        const edgeKey = entry.key;
         let edgeBase = baseValues.get(edgeKey);
         if (edgeBase === undefined) {
+          if (release) continue;
           const sv = modulationHandlers.mappingEdgeEffectReader(layerIndex, effectId, paramName);
           if (typeof sv !== 'number') continue;
           edgeBase = sv;
@@ -1189,24 +1395,23 @@ class ModulationEngine {
         const edgeRange = edgeEffectParamRanges.get(`${layerIndex}:edge:${effectId}:${paramName}`);
         const eMin = edgeRange?.min ?? 0;
         const eMax = edgeRange?.max ?? 1;
-        const eSpan = eMax - eMin;
-        const rawE = edgeBase + (signal - 0.5) * mod.amount * eSpan;
-        const modulatedE = Math.max(eMin, Math.min(eMax, rawE));
+        const modulatedE = release ? edgeBase : computeModulatedValue(mod, unit, edgeBase, eMin, eMax);
 
         modulationHandlers.mappingEdgeEffectUpdater(layerIndex, effectId, paramName, modulatedE);
-        lastModulatedValues.set(edgeKey, modulatedE);
+        if (release) forgetModCache(edgeKey);
+        else lastModulatedValues.set(edgeKey, modulatedE);
       } else if (isGPU) {
         // GPU shader-layer param modulation. Mapping-only target — the
         // GPU layer panel doesn't have a VJ surface yet. Same formula
         // as shader params (base + (signal − 0.5) × amount × span) so
         // audio sources modulate around the user's manual slider value.
-        const gpuKey = `M:${layerIndex}:gpu:${paramName}`;  // 'M' to disambiguate from VJ banks
+        const gpuKey = entry.key;
         const gpuRange = paramRanges.get(`map:${layerIndex}:gpu:${paramName}`);
         const gMin = gpuRange?.min ?? 0;
         const gMax = gpuRange?.max ?? 1;
-        const gSpan = gMax - gMin;
         let gBase = baseValues.get(gpuKey);
         if (gBase === undefined) {
+          if (release) continue;
           const sv = modulationHandlers.mappingGPUReader ? modulationHandlers.mappingGPUReader(layerIndex, paramName) : undefined;
           if (typeof sv !== 'number') {
             // Param hasn't been written yet (e.g. shader just loaded and
@@ -1217,20 +1422,20 @@ class ModulationEngine {
           gBase = sv;
           baseValues.set(gpuKey, gBase);
         }
-        const rawG = gBase + (signal - 0.5) * mod.amount * gSpan;
-        const modulatedG = Math.max(gMin, Math.min(gMax, rawG));
+        const modulatedG = release ? gBase : computeModulatedValue(mod, unit, gBase, gMin, gMax);
         let gBatch = mappingGPUBatch.get(layerIndex);
         if (!gBatch) { gBatch = {}; mappingGPUBatch.set(layerIndex, gBatch); }
         gBatch[paramName] = modulatedG;
-        lastModulatedValues.set(gpuKey, modulatedG);
+        if (release) forgetModCache(gpuKey);
+        else lastModulatedValues.set(gpuKey, modulatedG);
       } else if (isSplat) {
-        const splatKey = `M:${layerIndex}:splat:${paramName}`;
+        const splatKey = entry.key;
         const splatRange = paramRanges.get(`map:${layerIndex}:splat:${paramName}`);
         const sMin = splatRange?.min ?? 0;
         const sMax = splatRange?.max ?? 1;
-        const sSpan = sMax - sMin;
         let sBase = baseValues.get(splatKey);
         if (sBase === undefined) {
+          if (release) continue;
           const sourceValue = modulationHandlers.mappingSplatReader
             ? modulationHandlers.mappingSplatReader(layerIndex, paramName)
             : undefined;
@@ -1238,15 +1443,15 @@ class ModulationEngine {
           sBase = sourceValue;
           baseValues.set(splatKey, sBase);
         }
-        const rawSplat = sBase + (signal - 0.5) * mod.amount * sSpan;
-        const modulatedSplat = Math.max(sMin, Math.min(sMax, rawSplat));
+        const modulatedSplat = release ? sBase : computeModulatedValue(mod, unit, sBase, sMin, sMax);
         let splatBatch = mappingSplatBatch.get(layerIndex);
         if (!splatBatch) {
           splatBatch = {};
           mappingSplatBatch.set(layerIndex, splatBatch);
         }
         splatBatch[paramName] = modulatedSplat;
-        lastModulatedValues.set(splatKey, modulatedSplat);
+        if (release) forgetModCache(splatKey);
+        else lastModulatedValues.set(splatKey, modulatedSplat);
       } else if (isEffect) {
         // Effect param modulation. Mapping mode + VJ mode share the same
         // math (capture base on first hit, signal-driven offset, clamp to
@@ -1259,12 +1464,13 @@ class ModulationEngine {
         // on the same row don't share a base.
         const clipEffect = !isMapping && entry.clipId ? layerStates[layerIndex]?.activeClip?.effects?.find(e => e.id === effectId) : undefined;
         if (entry.clipId && !clipEffect) continue;
-        const fxKey = entry.clipId ? modKeyClipEffect(entry.clipId, effectId, paramName, bank) : `${bank}:${layerIndex}:fx:${effectId}:${paramName}`;
+        const fxKey = entry.key;
         const savedClipRange = entry.clipId && mod.clipEffect
           && [mod.clipEffect.base, mod.clipEffect.min, mod.clipEffect.max].every(Number.isFinite)
           && mod.clipEffect.min <= mod.clipEffect.max ? mod.clipEffect : undefined;
         let fxBase = savedClipRange?.base ?? baseValues.get(fxKey);
         if (fxBase === undefined) {
+          if (release) continue;
           let sv: number | undefined;
           if (isMapping && modulationHandlers.mappingEffectReader) {
             sv = modulationHandlers.mappingEffectReader(layerIndex, effectId, paramName);
@@ -1303,9 +1509,7 @@ class ModulationEngine {
         const fxRange = effectParamRanges.get(entry.clipId ? `clip:${entry.clipId}:fx:${effectId}:${paramName}` : `${layerIndex}:fx:${effectId}:${paramName}`);
         const fxMin = savedClipRange?.min ?? fxRange?.min ?? 0;
         const fxMax = savedClipRange?.max ?? fxRange?.max ?? 1;
-        const fxSpan = fxMax - fxMin;
-        const raw = fxBase + (signal - 0.5) * mod.amount * fxSpan;
-        const modulated = Math.max(fxMin, Math.min(fxMax, raw));
+        const modulated = release ? fxBase : computeModulatedValue(mod, unit, fxBase, fxMin, fxMax);
 
         if (isMapping) {
           if (modulationHandlers.mappingEffectUpdater) {
@@ -1331,7 +1535,8 @@ class ModulationEngine {
             if (column !== null && column !== undefined) vjClipLauncher.updateClipEffectParams(layerIndex, column, effectId, { [paramName]: modulated }, bank);
           } else vjClipLauncher.updateLayerEffectParams(layerIndex, effectId, { [paramName]: modulated }, bank);
         }
-        lastModulatedValues.set(fxKey, modulated);
+        if (release) forgetModCache(fxKey);
+        else lastModulatedValues.set(fxKey, modulated);
       } else if (!isEffect) {
         // Shader params — works for VJ (both banks) and mapping mode.
         const bvKey = `${bank}:${layerIndex}:${paramName}`;
@@ -1354,6 +1559,7 @@ class ModulationEngine {
         let base = baseValues.get(bvKey);
 
         if (base === undefined) {
+          if (release) continue;
           // First frame: capture current value as the base
           let sv: number | undefined;
           if (isMapping && modulationHandlers.mappingLayerReader) {
@@ -1374,11 +1580,18 @@ class ModulationEngine {
         // Scale modulation relative to param range, clamp to ISF min/max.
         // Audio sources modulate AROUND the slider's base value
         // (`(signal - 0.5) * amount` recentered formula).
-        const span = range ? (range.max - range.min) : 2;
-        const raw = base + (signal - 0.5) * mod.amount * span;
-        const modulated = range ? Math.max(range.min, Math.min(range.max, raw)) : raw;
+        // Unregistered params keep the legacy unclamped span of 2; a
+        // Min / Max range on one maps onto 0..1.
+        const modulated = release
+          ? base
+          : range
+            ? computeModulatedValue(mod, unit, base, range.min, range.max)
+            : hasModRange(mod)
+              ? computeModulatedValue(mod, unit, base, 0, 1)
+              : computeModulatedValue(mod, unit, base, 0, 2, false);
         // Ghost-indicator cache also keyed by bank
-        lastModulatedValues.set(bvKey, modulated);
+        if (release) forgetModCache(bvKey);
+        else lastModulatedValues.set(bvKey, modulated);
 
         // Batch by destination
         const batch = isMapping
@@ -1422,31 +1635,37 @@ class ModulationEngine {
     }
   }
 
-  private getSignal(source: ModSource, audio: AudioState, time: number, speed: number, bpmSync: boolean, mod?: ParamModulation, frameBeat?: number): number {
+  /** The source's own 0..1 value this frame (before invert / range /
+   *  legacy shaping — see computeModulatedValue). */
+  private getUnitSignal(source: ModSource, audio: AudioState, time: number, speed: number, bpmSync: boolean, mod?: ParamModulation, frameBeat?: number): number {
     const visual = getVisualAudioSnapshot();
-    // Audio bands/envelopes are unipolar control signals: silence should
-    // mean "stay at the user's base value", not "pull below base". Map
-    // smooth 0..1 visual energy to 0.5..1 so the existing centered formula
-    // (`base + (signal - 0.5) * amount * span`) becomes additive. Invert
-    // still works as an intentional subtractive response.
-    const audioUp = (v: number) => 0.5 + Math.max(0, Math.min(1, v)) * 0.5;
+    // The visual-audio bus is Milkdrop-normalised (each band divided by its
+    // own long-term average), so the audio panel's Sensitivity and per-band
+    // Gain — applied BEFORE that normalisation — cancelled out and did
+    // nothing to modulation. Apply them here, after it. Both default to 1.
+    const sens = Number.isFinite(audio.sensitivity) ? audio.sensitivity : 1;
+    const gain = (audio.bandGain ?? {}) as Partial<Record<string, number>>;
+    const band = (v: number, key?: string) => {
+      const g = key && Number.isFinite(gain[key]) ? gain[key]! : 1;
+      return clamp01(v * sens * g);
+    };
     switch (source) {
-      case 'sub':       return audioUp(visual.sub);
-      case 'bass':      return audioUp(visual.bass);
-      case 'lowMid':    return audioUp(visual.lowMid);
-      case 'mid':       return audioUp(visual.mid);
-      case 'highMid':   return audioUp(visual.highMid);
-      case 'treble':    return audioUp(visual.treble);
-      case 'air':       return audioUp(visual.air);
-      case 'presence':  return audioUp(visual.presence);
-      case 'high':      return audioUp(visual.high);
-      case 'amplitude': return audioUp(visual.level);
+      case 'sub':       return band(visual.sub, 'sub');
+      case 'bass':      return band(visual.bass, 'bass');
+      case 'lowMid':    return band(visual.lowMid, 'lowMid');
+      case 'mid':       return band(visual.mid, 'mid');
+      case 'highMid':   return band(visual.highMid, 'highMid');
+      case 'treble':    return band(visual.treble, 'treble');
+      case 'air':       return band(visual.air, 'air');
+      case 'presence':  return band(visual.presence, 'presence');
+      case 'high':      return band(visual.high);
+      case 'amplitude': return band(visual.level);
       case 'beatPhase': return visual.beatPhase;
       // Kick / snare are onset-based one-shots: shape an exponential decay
       // from the onset so the modulation reads as a hit, not a level.
       // ~150ms decay window matches the eye's perception of a flash.
-      case 'kick':      return audioUp(visual.kick);
-      case 'snare':     return audioUp(visual.snare);
+      case 'kick':      return band(visual.kick);
+      case 'snare':     return band(visual.snare);
       // Synced LFOs use shared continuous beat phase, so tempo changes
       // preserve phase and Resync aligns every beat division to the downbeat.
       case 'lfo-sine': {

@@ -6244,7 +6244,7 @@ void main() {
         //   "B:N:fx:effectId:paramName" → Bank B effect
         //   "xfade:value"             → crossfader value
         if (Array.isArray(parsed.modulation)) {
-          modulationStore.bulkLoad(parsed.modulation);
+          modulationStore.bulkLoad(parsed.modulation, { resetCaches: true });
         } else {
           modulationStore.clearAll();
         }

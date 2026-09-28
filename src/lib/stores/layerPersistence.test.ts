@@ -1237,7 +1237,7 @@ describe('quantized VJ columns', () => {
     const { modulationEngine } = await import('../audio/modulation');
     const { audioStore } = await import('./audio');
     const { resyncLaunchClock } = await import('./launchClock');
-    const sample = (sync: boolean) => (modulationEngine as any).getSignal('lfo-saw', get(audioStore), 0.7, 1, sync);
+    const sample = (sync: boolean) => (modulationEngine as any).getUnitSignal('lfo-saw', get(audioStore), 0.7, 1, sync);
     resyncLaunchClock(); now += 125;
     expect(sample(true)).toBeCloseTo(0.25);
     expect(sample(false)).toBeCloseTo(0.7);
