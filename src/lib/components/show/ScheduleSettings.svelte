@@ -35,6 +35,27 @@
     patch({ exceptions: sch.exceptions.map((e) => (e.id === id ? { ...e, ...p } : e)) });
   }
 
+  // A native time input fires `change` as each segment is typed (editing
+  // 10:00 to 03:29 passes through 03:03), and every committed schedule edit
+  // can start or stop a live show. Commit only when the field is left or
+  // Enter is pressed; Escape puts the saved time back.
+  function commitTime(input: HTMLInputElement, current: string, apply: (value: string) => void) {
+    const value = input.value;
+    if (!value) { input.value = current; return; }
+    if (value !== current) apply(value);
+  }
+  function timeKeydown(e: KeyboardEvent, current: string) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (e.key === 'Enter') {
+      // Leaving the field commits it (onblur), exactly once.
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === 'Escape') {
+      input.value = current;
+      input.blur();
+    }
+  }
+
   // "Now" readout refreshes every few seconds.
   let now = Date.now();
   const timer = setInterval(() => (now = Date.now()), 5000);
@@ -87,8 +108,8 @@
         {/each}
         <button class="sch-day sch-all" onclick={() => patchEntry(entry.id, { days: [0, 1, 2, 3, 4, 5, 6] })} title="Every day">Daily</button>
       </div>
-      <label class="sch-time">Start <input type="time" value={entry.start} onchange={(e) => patchEntry(entry.id, { start: e.currentTarget.value || entry.start })} data-schedule-start /></label>
-      <label class="sch-time">Stop <input type="time" value={entry.stop} onchange={(e) => patchEntry(entry.id, { stop: e.currentTarget.value || entry.stop })} data-schedule-stop /></label>
+      <label class="sch-time">Start <input type="time" value={entry.start} onblur={(e) => commitTime(e.currentTarget, entry.start, (v) => patchEntry(entry.id, { start: v }))} onkeydown={(e) => timeKeydown(e, entry.start)} data-schedule-start /></label>
+      <label class="sch-time">Stop <input type="time" value={entry.stop} onblur={(e) => commitTime(e.currentTarget, entry.stop, (v) => patchEntry(entry.id, { stop: v }))} onkeydown={(e) => timeKeydown(e, entry.stop)} data-schedule-stop /></label>
       <button class="sch-remove" onclick={() => patch({ entries: sch.entries.filter((e) => e.id !== entry.id) })} aria-label="Remove show time">×</button>
     </div>
   {/each}
@@ -104,8 +125,8 @@
         <option value="hours">Special hours</option>
       </select>
       {#if ex.kind === 'hours'}
-        <label class="sch-time">Start <input type="time" value={ex.start} onchange={(e) => patchException(ex.id, { start: e.currentTarget.value || ex.start })} /></label>
-        <label class="sch-time">Stop <input type="time" value={ex.stop} onchange={(e) => patchException(ex.id, { stop: e.currentTarget.value || ex.stop })} /></label>
+        <label class="sch-time">Start <input type="time" value={ex.start} onblur={(e) => commitTime(e.currentTarget, ex.start, (v) => patchException(ex.id, { start: v }))} onkeydown={(e) => timeKeydown(e, ex.start)} /></label>
+        <label class="sch-time">Stop <input type="time" value={ex.stop} onblur={(e) => commitTime(e.currentTarget, ex.stop, (v) => patchException(ex.id, { stop: v }))} onkeydown={(e) => timeKeydown(e, ex.stop)} /></label>
       {/if}
       <input class="sch-note" type="text" placeholder="Note" value={ex.note} onchange={(e) => patchException(ex.id, { note: e.currentTarget.value })} />
       <button class="sch-remove" onclick={() => patch({ exceptions: sch.exceptions.filter((e) => e.id !== ex.id) })} aria-label="Remove exception">×</button>
