@@ -199,6 +199,20 @@ describe('effect-param modulation in the engine', () => {
     expect(amount()).toBeCloseTo(50);
   });
 
+  it('seeds shader-param ranges on new assignments and keeps them when the band changes', () => {
+    const read = () => m.modulationStore.getModulation(0, 'speed', 'A', 'mapping');
+    m.setParamModSource(0, 'speed', 'bass', 'A', 'mapping', undefined, { value: 2, min: 0, max: 8 });
+    expect(read()).toMatchObject({ source: 'bass', rangeMin: 0.25, rangeMax: 1 });
+    m.updateParamMod(0, 'speed', { rangeMin: 0.1, rangeMax: 0.6 }, 'A', 'mapping');
+    m.setParamModSource(0, 'speed', 'lfo-sine', 'A', 'mapping', undefined, { value: 5, min: 0, max: 8 });
+    expect(read()).toMatchObject({ source: 'lfo-sine', rangeMin: 0.1, rangeMax: 0.6 });
+    // A modulation saved before ranges existed stays range-less.
+    m.modulationStore.bulkLoad([{ key: 'map:0:speed', mod: mod({ amount: 0.4, target: 'mapping' }) }]);
+    m.setParamModSource(0, 'speed', 'kick', 'A', 'mapping', undefined, { value: 5, min: 0, max: 8 });
+    expect(hasModRange(read())).toBe(false);
+    expect(read()?.amount).toBe(0.4);
+  });
+
   it('saves and reloads the range, and loads range-less saves unchanged', async () => {
     m.modulationStore.bulkLoad([
       { key, mod: mod({ rangeMin: 0.1, rangeMax: 0.6, invert: true }) },

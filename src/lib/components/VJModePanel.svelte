@@ -47,7 +47,7 @@
   import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
-  import { modulationStore, modulationEngine, setParamModSource, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, modulationEngine, setParamModSource, hasModRange, rangeWithRestAt, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { defaultAutoFor } from '../audio/autoEngine';
   import type { AutoConfig } from '../types';
@@ -2252,7 +2252,16 @@
 
   function setShaderParamValue(layerIndex: number, paramName: string, value: number) {
     vjClipLauncher.updateActiveClipShaderValue(layerIndex, paramName, value, paramDeck);
-    setBaseValue(layerIndex, paramName, value); // Keep modulation base in sync with slider
+    setBaseValue(layerIndex, paramName, value, paramDeck); // Keep modulation base in sync with slider
+    // Range-mode modulation: the slider sets the resting end (Min, or
+    // Max when inverted), like effect params.
+    const keyClip = activeClipId ? modKeyShader(layerIndex, paramName, paramDeck, 'vj', activeClipId) : null;
+    const mod = (keyClip ? modulationMap.get(keyClip) : undefined) ?? modulationMap.get(modKeyShader(layerIndex, paramName, paramDeck, 'vj'));
+    const input = selectedClipShaderInputs.find(i => i.NAME === paramName);
+    if (mod && hasModRange(mod) && input && layerIndex === selectedLayerIndex) {
+      const lo = input.MIN ?? 0, hi = input.MAX ?? 1;
+      patchShaderMod(paramName, rangeWithRestAt(mod, hi > lo ? (value - lo) / (hi - lo) : 0));
+    }
   }
 
   function setJSAnimationParamValue(
@@ -2407,7 +2416,8 @@
       vjClipLauncher.setClipShaderValueAuto(activeClipId, paramName, null);
     }
     // Delegate to the audio modulation path.
-    setParamModSource(layerIndex, paramName, source, paramDeck, 'vj', activeClipId ?? undefined);
+    setParamModSource(layerIndex, paramName, source, paramDeck, 'vj', activeClipId ?? undefined,
+      { value: getShaderParamValue(layerIndex, paramName, paramMin), min: paramMin, max: paramMax });
   }
 
   // ── Mod tray (anchored popover owning all modulation tuning) ──────
@@ -5027,6 +5037,9 @@
                     onSetSource={(s) => setShaderParamSource(selectedLayerIndex!, modTrayParam!, s, _tInput?.MIN ?? 0, _tInput?.MAX ?? 1)}
                     onPatchMod={(p) => patchShaderMod(modTrayParam!, p)}
                     onPatchAuto={(p) => patchShaderAuto(modTrayParam!, p)}
+                    paramMin={_tInput?.MIN ?? 0}
+                    paramMax={_tInput?.MAX ?? 1}
+                    paramValue={getShaderParamValue(selectedLayerIndex, modTrayParam, _tInput?.MIN ?? 0)}
                   />
                 {/if}
               </div>

@@ -33,7 +33,7 @@
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import ShaderLibrary from './ShaderLibrary.svelte';
   import * as THREE from 'three';
-  import { modulationStore, setParamModSource, setParamModAmount, updateParamMod, setBaseValue, registerParamRanges, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, setParamModSource, setParamModAmount, updateParamMod, setBaseValue, registerParamRanges, modKeyShader, hasModRange, rangeWithRestAt, type ModSource, type ParamModulation } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { mediaTrayShaders } from '../stores/mediaTrayShaders';
   import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
@@ -2281,7 +2281,9 @@
       project.setShaderValueAuto($selectedLayerId, paramName, null);
     }
     if (selectedLayerIdx >= 0) {
-      setParamModSource(selectedLayerIdx, paramName, source, 'A', 'mapping');
+      const current = selectedShader?.values?.[paramName];
+      setParamModSource(selectedLayerIdx, paramName, source, 'A', 'mapping', undefined,
+        { value: typeof current === 'number' ? current : paramMin, min: paramMin, max: paramMax });
     }
   }
 
@@ -2358,6 +2360,13 @@
     // Keep modulation base value in sync with slider (mapping mode)
     if (typeof value === 'number' && selectedLayerIdx >= 0) {
       setBaseValue(selectedLayerIdx, inputName, value);
+      // Range-mode modulation: the slider sets the resting end.
+      const mod = mappingModMap.get(modKeyShader(selectedLayerIdx, inputName, 'A', 'mapping'));
+      const input = selectedShader.inputs.find(i => i.NAME === inputName);
+      if (mod && hasModRange(mod) && input) {
+        const lo = input.MIN ?? 0, hi = input.MAX ?? 1;
+        patchMappingShaderMod(inputName, rangeWithRestAt(mod, hi > lo ? (value - lo) / (hi - lo) : 0));
+      }
     }
 
     // Auto-keyframe: if this track is armed, record a keyframe at the current playhead
@@ -3958,6 +3967,9 @@
           onSetSource={(s) => setMappingShaderSource(mapModTrayParam!, s, _tInput?.MIN ?? 0, _tInput?.MAX ?? 1)}
           onPatchMod={(p) => patchMappingShaderMod(mapModTrayParam!, p)}
           onPatchAuto={(p) => patchMappingShaderAuto(mapModTrayParam!, p)}
+          paramMin={_tInput?.MIN ?? 0}
+          paramMax={_tInput?.MAX ?? 1}
+          paramValue={typeof selectedShader.values[mapModTrayParam] === 'number' ? selectedShader.values[mapModTrayParam] as number : undefined}
         />
       {/if}
     </div>

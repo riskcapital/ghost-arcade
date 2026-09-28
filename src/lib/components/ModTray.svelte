@@ -51,7 +51,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { scale } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
-  import type { ModSource, ParamModulation } from '../audio/modulation';
+  import { defaultModRange, hasModRange, type ModSource, type ParamModulation } from '../audio/modulation';
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { audioStore } from '../stores/audio';
   import type { AutoConfig, KeyframeEasing } from '../types';
@@ -75,6 +75,13 @@
   export let onSetSource: (s: ModSource) => void;
   export let onPatchMod: (patch: Partial<ParamModulation>) => void;
   export let onPatchAuto: (patch: Partial<AutoConfig>) => void;
+  /** The param's natural range and current slider value. When given,
+   *  audio / LFO / beat modulations get the Min / Max range control
+   *  (shown in the param's own units via `formatValue`). */
+  export let paramMin: number | undefined = undefined;
+  export let paramMax: number | undefined = undefined;
+  export let paramValue: number | undefined = undefined;
+  export let formatValue: ((v: number) => string) | undefined = undefined;
 
   // ─── Source catalog ────────────────────────────────────────────────
   type Category = 'manual' | 'audio' | 'lfo' | 'sync' | 'auto';
@@ -128,6 +135,28 @@
   $: invert = mod?.invert ?? false;
   $: speed = mod?.speed ?? 1;
   $: bpm = $audioStore.manualBPM || $audioStore.bpm || 0;
+
+  // ─── Min / Max range ───────────────────────────────────────────────
+  $: rangeSupported = typeof paramMin === 'number' && typeof paramMax === 'number' && paramMax > paramMin;
+  $: ranged = rangeSupported && hasModRange(mod);
+  $: rMin = mod?.rangeMin ?? 0;
+  $: rMax = mod?.rangeMax ?? 1;
+  /** Fraction (0..1) → the param's own units, formatted. */
+  function unitLabel(frac: number): string {
+    const v = (paramMin ?? 0) + frac * ((paramMax ?? 1) - (paramMin ?? 0));
+    if (formatValue) return formatValue(v);
+    const span = Math.abs((paramMax ?? 1) - (paramMin ?? 0));
+    return v.toFixed(span >= 20 ? 0 : span >= 2 ? 1 : 2);
+  }
+  /** Minimum gap between the handles so they stay grabbable. */
+  const RANGE_GAP = 0.01;
+  function setRangeMin(v: number) { onPatchMod({ rangeMin: Math.max(0, Math.min(v, rMax - RANGE_GAP)), rangeMax: rMax }); }
+  function setRangeMax(v: number) { onPatchMod({ rangeMin: rMin, rangeMax: Math.min(1, Math.max(v, rMin + RANGE_GAP)) }); }
+  function enableRange() {
+    onPatchMod(defaultModRange(paramValue ?? paramMin ?? 0, paramMin ?? 0, paramMax ?? 1));
+  }
+  /** Where the param sits this frame, as a fraction — drawn on the range. */
+  $: outFrac = rMin + (invert ? 1 - signal : signal) * (rMax - rMin);
 
   function pickCategory(c: Category) {
     if (c === category) return;
@@ -333,16 +362,46 @@
   {/if}
 
   {#if (category === 'audio' || category === 'lfo' || category === 'sync')}
-    <div class="mt-row">
-      <span class="mt-row-label">Depth</span>
-      <input type="range" min="0" max="1" step="0.01" value={depth}
-        oninput={(e) => onPatchMod({ amount: parseFloat((e.target as HTMLInputElement).value) })} />
-      <span class="mt-row-val">{(depth * 100).toFixed(0)}%</span>
-    </div>
+    {#if ranged}
+      <!-- Min / Max: where the param goes at the source's low and high.
+           Same cyan handles as the Auto range on the param slider. -->
+      <div class="mt-range" role="group" aria-label="Modulation range">
+        <div class="mt-range-track">
+          <div class="mt-range-fill" style="left:{rMin * 100}%; right:{(1 - rMax) * 100}%"></div>
+          <div class="mt-range-now" style="left:{outFrac * 100}%" title="Live position"></div>
+          <input type="range" min="0" max="1" step="0.005" value={rMin}
+            class="mt-range-handle" aria-label={`${label} modulation minimum`}
+            oninput={(e) => setRangeMin(parseFloat((e.target as HTMLInputElement).value))} />
+          <input type="range" min="0" max="1" step="0.005" value={rMax}
+            class="mt-range-handle" aria-label={`${label} modulation maximum`}
+            oninput={(e) => setRangeMax(parseFloat((e.target as HTMLInputElement).value))} />
+        </div>
+        <div class="mt-range-vals">
+          <span>Min <b>{unitLabel(rMin)}</b></span>
+          <span>Max <b>{unitLabel(rMax)}</b></span>
+        </div>
+      </div>
+    {:else}
+      <div class="mt-row">
+        <span class="mt-row-label">Depth</span>
+        <input type="range" min="0" max="1" step="0.01" value={depth}
+          oninput={(e) => onPatchMod({ amount: parseFloat((e.target as HTMLInputElement).value) })} />
+        <span class="mt-row-val">{(depth * 100).toFixed(0)}%</span>
+      </div>
+      {#if rangeSupported}
+        <button class="mt-range-enable" onclick={enableRange}
+          title="Replace Depth with a Min / Max range (starts at the slider value)">Use Min / Max range</button>
+      {/if}
+    {/if}
     <label class="mt-check">
       <input type="checkbox" checked={invert} onchange={(e) => onPatchMod({ invert: (e.target as HTMLInputElement).checked })} />
       <span>Invert response</span>
     </label>
+    {#if ranged}
+      <div class="mt-hint">{category === 'audio'
+        ? (invert ? 'Silence sits on Max; louder moves toward Min.' : 'Silence sits on Min; louder moves toward Max.')
+        : (invert ? 'The wave runs from Max down to Min.' : 'The wave runs from Min up to Max.')} Moving the param slider moves the {invert ? 'Max' : 'Min'} end.</div>
+    {/if}
 
     <!-- Live signal preview -->
     <div class="mt-meter" title="Live source signal">
@@ -582,6 +641,48 @@
     background: linear-gradient(to right, #ff00ff, #ff7af5);
     border-radius: 2px;
   }
+
+  /* Min / Max range — cyan handles matching the Auto range slippers */
+  .mt-range { display: flex; flex-direction: column; gap: 4px; }
+  .mt-range-track { position: relative; height: 18px; }
+  .mt-range-track::before {
+    content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px;
+    transform: translateY(-50%); background: rgba(255, 255, 255, 0.12); border-radius: 1px;
+  }
+  .mt-range-fill {
+    position: absolute; top: 50%; transform: translateY(-50%); height: 6px;
+    background: rgba(92, 225, 230, 0.18);
+    border-top: 1px solid rgba(92, 225, 230, 0.4);
+    border-bottom: 1px solid rgba(92, 225, 230, 0.4);
+    pointer-events: none;
+  }
+  .mt-range-now {
+    position: absolute; top: 3px; bottom: 3px; width: 2px; margin-left: -1px;
+    background: #ff00ff; box-shadow: 0 0 4px rgba(255, 0, 255, 0.6); pointer-events: none;
+  }
+  .mt-range-handle {
+    position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+    background: transparent; pointer-events: none; -webkit-appearance: none; appearance: none;
+  }
+  .mt-range-handle::-webkit-slider-runnable-track { background: transparent; height: 100%; }
+  .mt-range-handle::-moz-range-track { background: transparent; height: 100%; }
+  .mt-range-handle::-webkit-slider-thumb {
+    -webkit-appearance: none; pointer-events: auto; cursor: ew-resize;
+    width: 6px; height: 18px; border-radius: 2px; border: none;
+    background: #5ce1e6; box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
+  }
+  .mt-range-handle::-moz-range-thumb {
+    pointer-events: auto; cursor: ew-resize; width: 6px; height: 18px; border-radius: 2px; border: none;
+    background: #5ce1e6; box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
+  }
+  .mt-range-handle:focus-visible::-webkit-slider-thumb { outline: 2px solid #7397ed; outline-offset: 1px; }
+  .mt-range-vals { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted, #888); font-variant-numeric: tabular-nums; }
+  .mt-range-vals b { color: #5ce1e6; font-weight: 600; }
+  .mt-range-enable {
+    align-self: flex-start; padding: 3px 8px; font: inherit; font-size: 11px;
+    color: #5ce1e6; background: transparent; border: 1px solid rgba(92, 225, 230, 0.4); border-radius: 4px; cursor: pointer;
+  }
+  .mt-range-enable:hover { background: rgba(92, 225, 230, 0.1); }
 
   /* Auto transport */
   .mt-auto { display: flex; flex-direction: column; gap: 8px; }

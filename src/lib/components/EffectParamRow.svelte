@@ -22,7 +22,7 @@
    * in both editor and projector output windows (the engine ticks in
    * both via modulationBroadcast).
    */
-  import { modKeyCompositionEffect, modKeyClipEffect, modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, registerGPUParamRange, registerSplatParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modKeyCompositionEffect, modKeyClipEffect, modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, registerGPUParamRange, registerSplatParamRange, defaultModRange, hasModRange, rangeWithRestAt, setModulationBase, getModulationBase, type ModSource, type ParamModulation } from '../audio/modulation';
   import { project, layers } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { defaultAutoFor } from '../audio/autoEngine';
@@ -152,7 +152,7 @@
     const clamped = Math.max(min, Math.min(max, parsed));
     editing = false;
     editError = '';
-    onChange(clamped);
+    userSet(clamped);
   }
 
   function cancel() { editing = false; editError = ''; }
@@ -290,8 +290,30 @@
       const spd = existingMod?.speed ?? 1.0;
       const inv = existingMod?.invert ?? false;
       const sync = existingMod?.bpmSync ?? false;
-      writeMod({ source, amount: amt, speed: spd, invert: inv, bpmSync: sync });
+      // A brand-new modulation gets a visible Min / Max range (Min at the
+      // slider, Max at the top). Changing band / shape keeps whatever the
+      // param already had — including no range on older saved projects.
+      const fresh = !existingMod || existingMod.source === 'manual';
+      const range = fresh
+        ? defaultModRange(value, min, max)
+        : hasModRange(existingMod) ? { rangeMin: existingMod!.rangeMin, rangeMax: existingMod!.rangeMax } : {};
+      writeMod({ source, amount: amt, speed: spd, invert: inv, bpmSync: sync, ...range });
     }
+  }
+
+  /** The user moved the slider (or typed a value). While an audio / LFO
+   *  modulation drives the param the slider sets where it rests: the
+   *  base it modulates from, and in range mode the Min end (Max when
+   *  inverted). Then the value is written as usual. */
+  function userSet(v: number) {
+    if (!isAuto && existingMod && existingMod.source !== 'manual' && Number.isFinite(v)) {
+      setModulationBase(modKey, v);
+      if (hasModRange(existingMod)) {
+        const span = max - min;
+        patchMod(rangeWithRestAt(existingMod, span > 0 ? (v - min) / span : 0));
+      }
+    }
+    onChange(v);
   }
   function setAutoField<K extends keyof AutoConfig>(field: K, value: AutoConfig[K]) {
     if (!existingAuto) return;
@@ -328,7 +350,7 @@
           data-midi-min={min}
           data-midi-max={max}
           data-midi-step={step}
-          oninput={(e) => onChange(parseFloat((e.target as HTMLInputElement).value))}
+          oninput={(e) => userSet(parseFloat((e.target as HTMLInputElement).value))}
         />
         {#if isAuto && existingAuto}
           {@const _rSpan = (max - min) || 1}
@@ -429,7 +451,7 @@
         data-midi-min={min}
         data-midi-max={max}
         data-midi-step={step}
-        oninput={(e) => onChange(parseFloat((e.target as HTMLInputElement).value))}
+        oninput={(e) => userSet(parseFloat((e.target as HTMLInputElement).value))}
       />
       <!-- Slippers — two range inputs overlaid on the main slider so
            their 0..1 axis lines up 1:1 with min..max above. Same
@@ -475,6 +497,10 @@
       onSetSource={setSource}
       onPatchMod={patchMod}
       onPatchAuto={patchAuto}
+      paramMin={min}
+      paramMax={max}
+      paramValue={getModulationBase(modKey) ?? value}
+      formatValue={displayValue}
     />
   {/if}
 </div>

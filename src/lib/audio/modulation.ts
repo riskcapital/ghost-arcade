@@ -1061,7 +1061,17 @@ export const modulationStore = createModulationStore();
  *  modulation drives — 'vj' for clip-bound shaders, 'mapping' for
  *  mapping-layer shaders. Each UI panel passes its own target so
  *  VJ and mapping mods coexist in the store under separate keys. */
-export function setParamModSource(layerIndex: number, paramName: string, source: ModSource, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj', clipId?: string) {
+export function setParamModSource(
+  layerIndex: number,
+  paramName: string,
+  source: ModSource,
+  bank: 'A' | 'B' = 'A',
+  target: ModTarget = 'vj',
+  clipId?: string,
+  /** The param's slider value and natural range. When given, a brand-new
+   *  modulation starts with a Min / Max range (see defaultModRange). */
+  seed?: { value: number; min: number; max: number },
+) {
   if (source === 'manual') {
     modulationStore.setModulation(layerIndex, paramName, { source: 'manual', target, ...DEFAULT_MOD }, bank, target, clipId);
   } else {
@@ -1071,7 +1081,13 @@ export function setParamModSource(layerIndex: number, paramName: string, source:
     // straight to 'auto'). Without these defaults the engine would
     // tick with autoSpeedHz=undefined and the param would freeze.
     const isAuto = source === 'auto';
+    // Keep an existing range when only the band / shape changes; seed one
+    // for a fresh assignment when the panel told us the param's range.
+    const range = existing && hasModRange(existing)
+      ? { rangeMin: existing.rangeMin, rangeMax: existing.rangeMax }
+      : !existing && seed && !isAuto ? defaultModRange(seed.value, seed.min, seed.max) : {};
     modulationStore.setModulation(layerIndex, paramName, {
+      ...range,
       source,
       target,
       amount: existing?.amount ?? DEFAULT_MOD.amount,
