@@ -23,6 +23,8 @@ mod windows_video_texture;
 #[cfg(target_os = "macos")]
 mod mac_video_decoder;
 #[cfg(target_os = "macos")]
+mod mac_video_recorder;
+#[cfg(target_os = "macos")]
 mod video_texture;
 mod native_graph_manifest;
 mod native_quality;
@@ -3876,7 +3878,9 @@ struct RenderState {
     /// preview and Spout consume, so a take is exactly what went to screen.
     #[cfg(target_os = "windows")]
     native_recorder: Option<windows_video_encoder::WindowsVideoEncoder>,
-    #[cfg(target_os = "windows")]
+    #[cfg(target_os = "macos")]
+    native_recorder: Option<mac_video_recorder::MacVideoRecorder>,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     native_recorder_error: Option<String>,
     /// Deck confidence monitors: two small shared-texture targets (bank A,
     /// bank B) the VJ panel presents beside Program. Created lazily on the
@@ -5882,11 +5886,11 @@ impl App {
             "record_target_state" | "get_record_target_state" => Ok(self.record_target_state()),
             // In-core GPU recording. The Electron recorder still exists and
             // still works; this is the path that skips the readback entirely.
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             "start_native_recording" => self.start_native_recording_rpc(&req.params),
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             "stop_native_recording" => self.stop_native_recording_rpc(),
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             "native_recording_state" => Ok(self
                 .renderer
                 .as_ref()
@@ -12705,7 +12709,7 @@ impl App {
         Ok(snapshot)
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn start_native_recording_rpc(&mut self, params: &Value) -> Result<Value, String> {
         let path = params
             .get("path")
@@ -12725,7 +12729,7 @@ impl App {
         Ok(json!({ "started": true, "width": width, "height": height, "fps": fps }))
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn stop_native_recording_rpc(&mut self) -> Result<Value, String> {
         let renderer = self
             .renderer
@@ -19762,9 +19766,9 @@ impl RenderState {
             surface_copy_dst_supported,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             output_export,
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_recorder: None,
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_recorder_error: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             deck_monitor_targets: None,
@@ -20266,6 +20270,71 @@ impl RenderState {
         let duration = recorder.duration_seconds();
         recorder.finish()?;
         Ok((frames, duration))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_native_recording(
+        &mut self,
+        path: &std::path::Path,
+        fps: u32,
+        quality: &str,
+    ) -> Result<(u32, u32), String> {
+        if self.native_recorder.is_some() {
+            return Err("a native recording is already running".into());
+        }
+        let export = self
+            .output_export
+            .as_ref()
+            .ok_or_else(|| "native recording needs the output shared texture".to_string())?;
+        let (width, height) = (export.width, export.height);
+        let recorder =
+            mac_video_recorder::MacVideoRecorder::new(path, width, height, fps, quality)?;
+        self.native_recorder = Some(recorder);
+        self.native_recorder_error = None;
+        Ok((width, height))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn encode_native_recording_frame(&mut self) {
+        let Some(surface_id) = self
+            .output_export
+            .as_ref()
+            .map(|export| export.surface.id())
+        else {
+            return;
+        };
+        let Some(recorder) = self.native_recorder.as_mut() else {
+            return;
+        };
+        if let Err(err) = recorder.append_iosurface(surface_id) {
+            // Keep rendering: a failed recording must not take the show down.
+            self.native_recorder_error = Some(err);
+            self.native_recorder = None;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn stop_native_recording(&mut self) -> Result<(u64, f64), String> {
+        let mut recorder = self
+            .native_recorder
+            .take()
+            .ok_or_else(|| "no native recording is running".to_string())?;
+        let frames = recorder.frames_encoded();
+        let duration = recorder.duration_seconds();
+        recorder.finish()?;
+        Ok((frames, duration))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn native_recording_state(&self) -> Value {
+        json!({
+            "available": true,
+            "active": self.native_recorder.is_some(),
+            "frames": self.native_recorder.as_ref().map(|r| r.frames_encoded()).unwrap_or(0),
+            "transport": "iosurface",
+            "encoder": "videotoolbox-h264",
+            "last_error": self.native_recorder_error.clone(),
+        })
     }
 
     #[cfg(target_os = "windows")]
@@ -24553,7 +24622,7 @@ impl RenderState {
             }
         }
         self.submit_frame(mirror_encoder);
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         self.encode_native_recording_frame();
         if !frozen && output_gate > 0.0 {
             self.mark_graph_frames_submitted(native_graph_jobs.iter().flat_map(|job| job.render_plans.iter()).filter_map(|plan| match plan.target {
