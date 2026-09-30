@@ -80,6 +80,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test packaged mobile pairing URLs
+        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts
+
       - name: Provision and verify Windows HAP encoder
         run: npm run windows:ffmpeg
 
@@ -177,6 +180,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test packaged mobile pairing URLs
+        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts
 
       # Syphon is Apple's OpenGL texture-sharing framework — required for
       # inter-app video send/receive on macOS (Spout equivalent on Windows).
@@ -330,6 +336,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test packaged mobile pairing URLs
+        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts
 
       - name: Install native addon dependencies
         run: npm ci --ignore-scripts

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { mobileConnectionUrl } from './lib/remote/mobileConnectionUrl';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
@@ -4756,18 +4757,14 @@
     // In dev: use the Vite dev server this window was loaded from
     const isDev = window.location.protocol !== 'file:' && !!window.location.port;
     const port = isDev ? window.location.port : httpPort;
-    const url = new URL(`http://${host}:${port}/`);
-    // The token rides in the link, so pairing is still one scan.
-    if (pairingToken) url.searchParams.set(PAIRING_QUERY_PARAM, pairingToken);
-    // The phone assumes the default WebSocket port unless told otherwise.
-    if (wsPort !== DEFAULT_REMOTE_WS_PORT) url.searchParams.set('ws', String(wsPort));
-    url.hash = '/mobile';
-    return url.toString();
+    return mobileConnectionUrl(host, port, pairingToken, wsPort);
   }
 
   function getWebSocketUrl(ip?: string) {
     const host = ip || selectedIP || localIPs[0] || window.location.hostname;
-    return `ws://${host}:${wsPort}`;
+    if (!host) return '';
+    const authority = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    return `ws://${authority}:${wsPort}`;
   }
 
   // Reset asks first: it disconnects every phone, mid-set if that is when
@@ -4801,6 +4798,8 @@
       selectedIP = localIPs[0];
     }
     const url = getMobileUrl(selectedIP);
+    qrCodeDataUrl = '';
+    if (!url) return;
     try {
       const QRCode = (await import('qrcode')).default;
       qrCodeDataUrl = await QRCode.toDataURL(url, {
@@ -6803,11 +6802,11 @@
               <div class="connection-details">
                 <div class="detail-row">
                   <span class="detail-label">URL:</span>
-                  <code class="detail-value">{getMobileUrl()}</code>
+                  <code class="detail-value">{getMobileUrl() || 'No network address available. Connect to Wi-Fi or Ethernet and reopen Connect Mobile.'}</code>
                 </div>
                 <div class="detail-row">
                   <span class="detail-label">WebSocket:</span>
-                  <code class="detail-value">{getWebSocketUrl()}</code>
+                  <code class="detail-value">{getWebSocketUrl() || 'Waiting for network address'}</code>
                 </div>
               </div>
 

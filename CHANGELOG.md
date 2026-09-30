@@ -1,3 +1,7 @@
+# Ghost Arcade 2.0.14 — September 30, 2026
+
+Fix Connect Mobile QR rendering before network discovery in packaged desktop builds. See [release notes](docs/releases/v2.0.14.md).
+
 # Ghost Arcade 2.0.13 — September 29, 2026
 
 See [the full 2.0.13 release notes](docs/releases/v2.0.13.md) for Looks, mapping,
