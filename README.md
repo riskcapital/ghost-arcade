@@ -4,25 +4,30 @@
 [![Build](https://img.shields.io/badge/build-Vite%20%2B%20Electron-orange)](package.json)
 [![Made with Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 
-**Ghost Arcade** is an open-source projection-mapping & VJ tool. Real-time GLSL effects, WebGPU acceleration, MIDI control, mobile companion, and a conventional mixer pipeline — all in one app.
+**Ghost Arcade** is free, open-source projection mapping and VJ software for live visuals, stage design and creative installations. Mix videos and generative shaders, map them onto surfaces, perform to music, and preview the result in a 3D venue.
 
-It's a single product, free, and fully open source under AGPL-3.0. There are no Pro tiers, no paywalls, no watermarks.
+![Ghost Arcade VJ deck with live generative output, four clip rows, macros and effect controls](docs/images/ghost-arcade-vj-deck.png)
 
-![Ghost Arcade](public/logo.png)
+[Download the latest release](https://ghostarcade.live/download) · [Documentation](https://ghostarcade.live/docs) · [What's new in 2.0.13](https://github.com/riskcapital/ghost-arcade/blob/codex/windows-v2-testing/docs/releases/v2.0.13.md)
 
----
+The desktop application is free and open source under AGPL-3.0, with no Pro tier or watermark.
 
-## Features
+## Current release highlights — 2.0.13
 
-- **Mapping Mode** — corner pin + mesh warp on every layer, snap-to-grid, edge feather, multi-output.
-- **VJ Mode** — 16-channel clip launcher, dual-deck crossfader, macros, snapshots, audio-reactive parameters, BPM-synced quantize.
-- **Effect Engine** — 200+ effects across Color, Stylize, Blur, Light, Distort, Glitch, Feedback, Trails, Atmosphere, Text & Pattern, Advanced 3D, and a Geometric 3D pack with true SDF raymarching.
-- **Content Layers** — videos, images, ISF shaders (drag-drop your own), point clouds (.ply/.splat), GLTF/FBX 3D models, lines, light painting, group layers, screen capture, Spout in/out (Windows).
-- **WebGPU Output** — zero-copy GPU presenter via WebGPU `importExternalTexture` for true 4K60 with no encode/decode round-trip. Falls back to WebGL transparently.
-- **Mobile Companion** — pair any phone over LAN via QR code; control mapping warps, layer opacity/blend, VJ clips, macros, snapshots, output freeze. Uses the same shader catalog the desktop sees.
-- **MIDI** — full MIDI Learn, clock sync, controller mapping, dual-bank routing.
-- **AI Shader Generation** — bring your own Claude / Gemini / Replicate / Luma keys; edit / iterate generated GLSL inline.
-- **Multi-Output** — output windows with crop / rotate / flip per display, Spout sender for hardware projectors / NDI bridges, MP4 recording.
+- **Projection mapping** — corner, mesh and Bezier warps; source cropping; curved and painted masks; screen slices; groups; edge blending; and independently configured display outputs.
+- **Live VJ decks** — clip launching, dual decks and crossfade transitions, layer mixing, macros, snapshots, autopilot and beat-quantized triggers. Route live rows, groups or the deck mix onto mapped surfaces.
+- **Looks and Edge Effects** — 22 coordinated beat-synced Looks, eight palettes, crisp borders, animated fills, path effects and group chases. Stack up to 16 Edge Effects per layer.
+- **Native rendering** — the 2.x Rust/wgpu core targets Metal, DirectX 12 and Vulkan. Hardware video paths and GPU texture handling support responsive playback; performance depends on the device, media and effect workload.
+- **Generative content and effects** — ISF/GLSL shaders with exposed parameters, multipass and audio inputs, GPU instruments, video and images, 3D models, point clouds and Gaussian splats. Apply effects at clip, layer and composition scopes.
+- **Stage and projection simulators** — build a venue with screens, truss, PA and lighting, or place projectors around 3D objects to explore how content lands. Includes refreshed festival, club, arena and immersive venue templates.
+- **Music and show control** — audio modulation, tap or typed BPM, MIDI Learn and clock, OSC, Ableton Link, cues, timecode, scheduling and projector control.
+- **LED integration** — WLED plus Art-Net and sACN pixel mapping and DMX input. See release notes for hardware validation status and protocol limits.
+- **Mobile companion** — pair a phone or tablet over the local network for touch VJ and mapping controls, with layouts adapted to each screen size.
+- **Output and capture** — multiple display outputs, platform-dependent Syphon/Spout and NDI integration, live recording, layer/screen capture with supported alpha formats, and frame-locked offline export.
+
+See the [release notes](https://github.com/riskcapital/ghost-arcade/blob/codex/windows-v2-testing/docs/releases/v2.0.13.md) for platform notes, performance limits and known issues.
+
+> **Source branch note:** this default branch currently contains the legacy 1.9 source. The 2.x development source is on [`codex/windows-v2-testing`](https://github.com/riskcapital/ghost-arcade/tree/codex/windows-v2-testing). The setup instructions below describe this branch; use the download page for current packaged releases.
 
 ---
 
