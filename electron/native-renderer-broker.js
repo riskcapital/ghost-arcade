@@ -219,6 +219,7 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'echo-repeat', code: 181 },
   { id: 'light-paint', code: 182 },
   { id: 'recursive-echo', code: 183 },
+  { id: 'cube-lut', code: 184 },
 ];
 
 function nativeGraphReadinessId(id) {

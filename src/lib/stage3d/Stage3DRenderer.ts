@@ -964,6 +964,10 @@ export class Stage3DRenderer {
     if (this.venueBuild) {
       const base = this.venueBuild.baselineIntensities;
       const roomDark = Math.max(0, Math.min(1, lighting.roomDarkness));
+      // Three uses scene.environmentIntensity for materials inheriting the
+      // scene map. Material envMapIntensity alone does not dim this studio
+      // fill. Let Room controls lift it, with a dark show-ready baseline.
+      this.scene.environmentIntensity = 0.035 * lighting.roomIntensity * (1 - roomDark);
       for (let i = 0; i < this.venueLights.length; i++) {
         // Lights scale by roomIntensity only — exposure is applied
         // downstream via toneMappingExposure so the metals + IBL
@@ -1579,6 +1583,7 @@ export class Stage3DRenderer {
       const roomEnv = new RoomEnvironment();
       const env = pmrem.fromScene(roomEnv, 0.04).texture;
       this.scene.environment = env;
+      this.scene.environmentIntensity = 0.035;
       this.envTexture = env;
       this.pmrem = pmrem;
       disposeObject(roomEnv);

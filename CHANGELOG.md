@@ -1,3 +1,8 @@
+# Ghost Arcade 2.0.13 — September 29, 2026
+
+See [the full 2.0.13 release notes](docs/releases/v2.0.13.md) for Looks, mapping,
+show control, recording, modulation and refreshed 3D stage venues.
+
 # Ghost Arcade - Development Changelog
 
 ---

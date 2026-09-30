@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import type { Stage3DVenue } from './types';
+import { arenaArchitecture, bowlSeats, roomDetails, stageDetails } from './venueDetails';
 
 export interface VenueBuild {
   /** Root group — added to scene; removed on venue swap. */
@@ -266,14 +267,15 @@ export function buildSpeakerStack(): THREE.Group {
   const coneMat = new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.5 });
   for (let i = 0; i < 6; i++) {
     const cab = mesh(new THREE.BoxGeometry(3.4, 1.2, 2.2), m);
-    cab.position.y = -i * 1.28;
-    cab.rotation.x = i * 0.05;
-    g.add(cab);
+    const cabinet = new THREE.Group();
+    cabinet.position.set(0, -i * 1.28, i * 0.09);
+    cabinet.rotation.x = i * 0.05;
+    cabinet.add(cab);
+    g.add(cabinet);
     for (const dx of [-0.8, 0.8]) {
       const cone = mesh(new THREE.CircleGeometry(0.45, 18), coneMat);
-      cone.position.set(dx, -i * 1.28, 1.11);
-      cone.rotation.x = i * 0.05;
-      g.add(cone);
+      cone.position.set(dx, 0, 1.11);
+      cabinet.add(cone);
     }
   }
   return g;
@@ -446,13 +448,28 @@ function buildFestival(): VenueBuild {
 
 	  // ── Line-array stacks L/R ──
 	  const stackL = buildSpeakerStack();
-	  stackL.position.set(-17.5, 15.8, 1);
+	  stackL.position.set(-16.4, 15.8, FRONT_Z);
 	  stackL.userData.sceneryId = 'pa-L';
 	  group.add(stackL);
 	  const stackR = buildSpeakerStack();
-	  stackR.position.set(17.5, 15.8, 1);
+	  stackR.position.set(16.4, 15.8, FRONT_Z);
   stackR.userData.sceneryId = 'pa-R';
   group.add(stackR);
+
+  // PA hangs stay inside the towers with clearance for the curved cabinets.
+  for (const side of [-1, 1]) {
+    const outrigger = festivalTruss(3);
+    outrigger.position.set(side * (TOWER_X - 1.5), OVERHEAD_Y, FRONT_Z);
+    group.add(tagged(outrigger, `pa-outrigger-${side < 0 ? 'L' : 'R'}`));
+    const suspension = new THREE.Group();
+    for (const dx of [-1.2, 1.2]) {
+      const cable = mesh(new THREE.CylinderGeometry(0.035, 0.035, OVERHEAD_Y - 16.4, 6), deckMat);
+      cable.position.set(side * 16.4 + dx, (OVERHEAD_Y + 16.4) / 2, FRONT_Z);
+      suspension.add(cable);
+    }
+    group.add(tagged(suspension, `pa-suspension-${side < 0 ? 'L' : 'R'}`));
+  }
+  group.add(stageDetails(36, 3, 1.4));
 
   // ── Lighting (neutral studio fill from the reference) ──
   // Festival baseline is intentionally dim so the LEDs read as bright
@@ -589,10 +606,17 @@ function buildArena(): VenueBuild {
   // ── Seating — lower + upper bowls with a concourse gap, arcing
   //    around the stage so the whole room faces the show. ──
   const lower = buildBowlTier(BOWL_ARC_Z, 30, 0.4, 11, 1.7, 0.78, 78);
-  group.add(wrapped(lower, 'bowl-lower'));
+  const lowerBowl = new THREE.Group();
+  lowerBowl.add(buildBowlTierShell(BOWL_ARC_Z, 30, 0.4, 11, 1.7, 0.78, 79), lower,
+    bowlSeats(BOWL_ARC_Z, 30, 0.4, 11, 1.7, 0.78, 78));
+  group.add(tagged(lowerBowl, 'bowl-lower'));
   const upperStart = 30 + 11 * 1.7 + 3.2; // concourse walkway between bowls
   const upper = buildBowlTier(BOWL_ARC_Z, upperStart, 0.4 + 11 * 0.78 + 1.6, 12, 1.7, 0.88, 86);
-  group.add(wrapped(upper, 'bowl-upper'));
+  const upperBowl = new THREE.Group();
+  upperBowl.add(buildBowlTierShell(BOWL_ARC_Z, upperStart, 10.58, 12, 1.7, 0.88, 87), upper,
+    bowlSeats(BOWL_ARC_Z, upperStart, 10.58, 12, 1.7, 0.88, 86));
+  group.add(tagged(upperBowl, 'bowl-upper'));
+  group.add(stageDetails(32, 0, 1.4), arenaArchitecture());
 
   // ── Stage — festival-grade deck + riser + backdrop ──
   group.add(tagged(makeDeck(32, 16, 1.4, STAGE_Z), 'deck'));
@@ -673,12 +697,11 @@ function buildArena(): VenueBuild {
     fogDensity: 0.005,
     fogColor: '#06080c',
     showGrid: false,
-    // FOH-riser view from the arena floor — over the crowd, full rig
-    // and both PA hangs in frame, seating bowls rising at the edges.
-    // (Stay inside radius ~28 from the bowl arc center or the camera
-    // ends up embedded in the seating tiers.)
-	    cameraPosition: [9, 9, 28],
-	    cameraTarget: [0, 8, STAGE_Z],
+    // Mid-bowl concourse: above the lower seats, below the bridges.
+    // Radius 49 is inside the clear gap between the two seating tiers.
+	    cameraPosition: [0, 13, 35],
+	    cameraTarget: [0, 11, STAGE_Z],
+      cameraFov: 70,
 	    ledWall: { centerX: 0, centerY: 9.9, centerZ: STAGE_Z - 9.3, width: 26, height: 14.625 },
     stageW: 32,
     frontZ: STAGE_Z + 8,
@@ -698,6 +721,7 @@ function buildClub(): VenueBuild {
   const STAGE_Z = -16;
 
   const r = room(W, D, H, 0x14101a, 0x0c0a10);
+  group.add(roomDetails(W, D, H, false), stageDetails(22, STAGE_Z + 4.5, 1.2));
   group.add(r.group);
   group.add(wrapped(backWall(W, H, -(D / 2) + 0.2), 'back-wall'));
 
@@ -843,8 +867,9 @@ function buildClub(): VenueBuild {
     showGrid: false,
     // Three-quarter house view — stage + LED framed center, bar wall
     // on the left, mezzanine rail catching the edge of frame.
-	    cameraPosition: [14, 8.5, 17],
-	    cameraTarget: [-2, 4.3, STAGE_Z],
+	    cameraPosition: [0, 4.8, 11],
+	    cameraTarget: [0, 5.5, STAGE_Z],
+      cameraFov: 68,
 	    ledWall: { centerX: 0, centerY: 6.9, centerZ: -(D / 2) + 0.45, width: 16, height: 9 },
     stageW: 22,
     frontZ: STAGE_Z + 5.5,
@@ -864,6 +889,7 @@ function buildNightclub(): VenueBuild {
   const BOOTH_Z = -13;
 
   const r = room(W, D, H, 0x110a16, 0x0a070e);
+  group.add(roomDetails(W, D, H, true));
   group.add(r.group);
   group.add(wrapped(backWall(W, H, -(D / 2) + 0.2), 'back-wall'));
 
@@ -1039,8 +1065,9 @@ function buildNightclub(): VenueBuild {
     fogColor: '#070509',
     showGrid: false,
     // Eye-level from the dance floor, booth + wall framed center.
-	    cameraPosition: [6, 4, 10],
-	    cameraTarget: [0, 3, BOOTH_Z],
+	    cameraPosition: [0, 3.2, 10],
+	    cameraTarget: [0, 4, BOOTH_Z],
+      cameraFov: 70,
 	    ledWall: { centerX: 0, centerY: 5.2, centerZ: -(D / 2) + 0.45, width: 13, height: 7.3125 },
     stageW: 14,
     frontZ: BOOTH_Z + 3,
@@ -1227,12 +1254,6 @@ function buildArcBand(
 
 function buildSphere(): VenueBuild {
   const group = new THREE.Group();
-  const wrap = (obj: THREE.Object3D, id: string): THREE.Group => {
-    const g = new THREE.Group();
-    g.userData.sceneryId = id;
-    g.add(obj);
-    return g;
-  };
 
   // Proportions scaled from Sphere's broad, low spherical shell and
   // 240-foot interior media plane: wide immersive dome, compact stage,
@@ -1245,7 +1266,7 @@ function buildSphere(): VenueBuild {
   };
   const STAGE_Z = -48;       // low stage island tight to the dome's -Z rim
   const STAGE_OFFSET_Z = -14.800079437966918;
-  const BOWL_ARC_Z = -34;    // bowl rows curve around the stage
+  const BOWL_ARC_Z = -58;    // seating radiates from the stage, inside the media shell
 
   // ── Floor — dark disk under the whole bowl ──
   const floor = mesh(
@@ -1285,12 +1306,13 @@ function buildSphere(): VenueBuild {
   ];
   const rowDepth = 1.45;
   const rowRise = 0.9;
-  let tierRadius = 12.4;
+  let tierRadius = 26;
   let tierY = 0.3;
   tiers.forEach((t, i) => {
     const tierGroup = new THREE.Group();
     tierGroup.add(buildBowlTierShell(BOWL_ARC_Z, tierRadius, tierY, t.rows, rowDepth, rowRise, t.arcHalf + 1.2));
     tierGroup.add(buildBowlTier(BOWL_ARC_Z, tierRadius, tierY, t.rows, rowDepth, rowRise, t.arcHalf));
+    tierGroup.add(bowlSeats(BOWL_ARC_Z, tierRadius, tierY, t.rows, rowDepth, rowRise, t.arcHalf));
     group.add(tierGroup);
 
     const endRadius = tierRadius + t.rows * rowDepth;
@@ -1345,9 +1367,9 @@ function buildSphere(): VenueBuild {
     showGrid: false,
     // Audience default view: upper bowl looking down at the stage and
     // up into the dome face — the "whoa" reveal.
-    cameraPosition: [0, 18, 40],
-    cameraTarget: [0, 20, -45],
-    cameraFov: 99,
+    cameraPosition: [0, 26, 4],
+    cameraTarget: [0, 16, -45],
+    cameraFov: 88,
     resetCameraOnLoad: true,
     lockScreenTransforms: true,
     lockedSceneryIds: ['stage'],

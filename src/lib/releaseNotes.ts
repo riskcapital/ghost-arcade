@@ -8,6 +8,23 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '2.0.13': {
+    title: 'Looks, live mapping, show control and refreshed venues',
+    summary: [
+      'Beat-synced Looks and crisp Edge Effects dress mapped surfaces.',
+      'Live mapping, Art-Net and sACN, cues and timecode expand show control.',
+      'Stage Sim gains detailed venues, dark lighting and clear camera views.',
+    ],
+    highlights: [
+      'Apply beat-synced Looks and palettes across mapped surfaces, with vector Edge Effects drawn at output resolution.',
+      'Perform mapping presets and live VJ sources on a shared map, with transitions, dual decks and the crossfader.',
+      'Art-Net and sACN input and output join cues, timecode, scheduling and PJLink projector control.',
+      'Painted masks, curved screen masks and Bezier warps expand surface editing with undo support.',
+      'Recording gains layer and screen targeting, alpha formats and native recording paths.',
+      'Modulation adds explicit Min/Max ranges and fixes stale base values.',
+      'Refreshed Stage Sim venues include a detailed arena, curved auditorium seating, interior speaker hangs, subdued room reflections and checked starting camera sightlines.',
+    ],
+  },
   '2.0.1': {
     title: 'Keyframing, undo, and point-cloud materials',
     summary: [
