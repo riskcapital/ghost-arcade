@@ -1028,6 +1028,7 @@
     vjStopNdiScan();
     stopAllVjLiveSources();
     window.removeEventListener('midi-stage-preset', stagePresetHandler);
+    window.removeEventListener('midi-vj-rec', midiRecHandler);
     window.removeEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
     releaseAllStageEffectHolds();
     if (vjRecorderHandle && vjIsRecording) {
@@ -1105,6 +1106,12 @@
       vjRecorderHandle = null;
     }
   }
+
+  // vj:rec from midiRouter — toggles the same recorder as the header button.
+  const midiRecHandler = () => {
+    if (vjIsRecording) vjStopRecording();
+    else vjStartRecording();
+  };
 
   function formatVJRecordingDuration(seconds: number): string {
     return formatRecordingDuration(seconds);
@@ -2033,6 +2040,7 @@
     void vjStartNdiScan();
 
     window.addEventListener('midi-stage-preset', stagePresetHandler);
+    window.addEventListener('midi-vj-rec', midiRecHandler);
     window.addEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
 
     const init = async () => {
@@ -4159,11 +4167,24 @@
             <span class="vj-rec-dot"></span>
             <span class="vj-rec-time">{formatVJRecordingDuration(vjRecordingDuration)}</span>
           </div>
-          <button class="vj-stop-rec-btn" onclick={vjStopRecording}>
+          <button
+            class="vj-stop-rec-btn"
+            onclick={vjStopRecording}
+            data-midi-path="vj:rec"
+            data-midi-label="Record Output"
+            data-midi-mode="toggle"
+          >
             Stop Rec
           </button>
         {:else}
-          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
+          <button
+            class="vj-rec-btn"
+            onclick={vjStartRecording}
+            title="Record Output"
+            data-midi-path="vj:rec"
+            data-midi-label="Record Output"
+            data-midi-mode="toggle"
+          >
             ● REC
           </button>
         {/if}
