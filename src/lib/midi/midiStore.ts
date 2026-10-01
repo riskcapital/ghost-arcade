@@ -1,6 +1,7 @@
 // MIDI Store - Svelte writable store with localStorage persistence
 import { writable, get } from 'svelte/store';
 import type { MidiStoreState, MidiMapping, MidiDevice, MidiMappingMode, MidiMessageType } from './midiTypes';
+import { mergeMappings } from './mappingFile';
 
 const STORAGE_KEY = 'ghost-arcade_midi_mappings';
 const DEVICE_KEY = 'ghost-arcade_midi_device';
@@ -250,6 +251,16 @@ function createMidiStore() {
       saveMappings([]);
       return { ...s, mappings: [] };
     }),
+
+    // Load from a mapping file (see mappingFile.ts). Merge keeps everything
+    // the user mapped on other paths; replace wipes first.
+    importMappings: (incoming: MidiMapping[], replace = false) => update(s => {
+      const newMappings = replace ? [...incoming] : mergeMappings(s.mappings, incoming);
+      saveMappings(newMappings);
+      return { ...s, mappings: newMappings };
+    }),
+
+    newMappingId: generateId,
 
     setLastMessage: (msg: MidiStoreState['lastMessage']) => update(s => ({ ...s, lastMessage: msg })),
 

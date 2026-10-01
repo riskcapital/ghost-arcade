@@ -2,6 +2,8 @@
   import { onDestroy, tick } from 'svelte';
   import { midiStore } from '../midi/midiStore';
   import { macros } from '../stores/macros';
+  import { showToast } from '../stores/errorToast';
+  import { parseMappingFile, serializeMappingFile } from '../midi/mappingFile';
   import type { MidiMappingMode } from '../midi/midiTypes';
 
   interface OverlayItem {
@@ -212,6 +214,37 @@
     if (scanTimer) clearInterval(scanTimer);
     document.removeEventListener('toggle', handleDetailsToggle, true);
   });
+
+  // ---- Mapping file Load / Save ------------------------------------------
+  let mappingFileInput: HTMLInputElement | null = null;
+
+  async function handleMappingFileChosen(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ''; // allow re-picking the same file
+    if (!file) return;
+    try {
+      const parsed = parseMappingFile(await file.text(), midiStore.newMappingId);
+      midiStore.importMappings(parsed.mappings);
+      const who = parsed.controller ? ` (${parsed.controller})` : '';
+      const dropped = parsed.skipped.length ? `, ${parsed.skipped.length} skipped` : '';
+      showToast(`Loaded ${parsed.mappings.length} MIDI mappings${who}${dropped}`, 'info');
+      if (parsed.skipped.length) console.warn('[MIDI] skipped mapping rows:', parsed.skipped);
+    } catch (err) {
+      showToast(`Couldn't load mappings: ${(err as Error).message}`, 'error');
+    }
+  }
+
+  function saveMappingsToFile() {
+    const device = $midiStore.devices.find(d => d.id === $midiStore.selectedDeviceId);
+    const blob = new Blob([serializeMappingFile($midiStore.mappings, device?.name)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ghost-arcade-midi-mappings.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 </script>
 
 {#if $midiStore.editMode}
@@ -259,6 +292,15 @@
         </span>
       {/if}
       <span class="midi-map-count">{$midiStore.mappings.length} mapped</span>
+      <input
+        bind:this={mappingFileInput}
+        type="file"
+        accept=".json,application/json"
+        class="midi-file-input"
+        onchange={handleMappingFileChosen}
+      />
+      <button class="midi-bar-btn" title="Load mappings from a JSON file (merges by path)" onclick={() => mappingFileInput?.click()}>LOAD</button>
+      <button class="midi-bar-btn" title="Save all mappings to a JSON file" disabled={!$midiStore.mappings.length} onclick={saveMappingsToFile}>SAVE</button>
       <button class="midi-exit-btn" onclick={() => midiStore.setEditMode(false)}>EXIT</button>
     </div>
   </div>
@@ -390,7 +432,8 @@
     font-weight: 600;
   }
 
-  .midi-exit-btn {
+  .midi-exit-btn,
+  .midi-bar-btn {
     background: transparent;
     border: 1px solid #bb86fc;
     color: #bb86fc;
@@ -401,8 +444,16 @@
     cursor: pointer;
     letter-spacing: 1px;
   }
-  .midi-exit-btn:hover {
+  .midi-exit-btn:hover,
+  .midi-bar-btn:hover:not(:disabled) {
     background: #bb86fc;
     color: #000;
+  }
+  .midi-bar-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .midi-file-input {
+    display: none;
   }
 </style>
