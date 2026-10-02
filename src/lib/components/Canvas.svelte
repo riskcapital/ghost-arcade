@@ -6388,6 +6388,10 @@
           fx.init(renderer);
           fx.setParams({
             scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
+            voyageMotion: effectSource.ghostfxVoyageMotion ?? 0.6,
+            voyageDetail: effectSource.ghostfxVoyageDetail ?? 6,
+            voyageDepth: effectSource.ghostfxVoyageDepth ?? 1,
+            voyagePalette: effectSource.ghostfxVoyagePalette ?? 0,
             sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
             hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
             bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
@@ -6451,7 +6455,7 @@
           hx.init(renderer);
           hx.setParams({
             mode:                effectSource.handfxMode                ?? 'trails',
-            cameraOn:            effectSource.handfxCameraOn            ?? false,
+            cameraOn:            effectSource.handfxCameraOn            ?? true,
             smoothing:           effectSource.handfxSmoothing           ?? 0.15,
             predictMs:           effectSource.handfxPredictMs           ?? 18,
             showHelp:            effectSource.handfxShowHelp            ?? true,
@@ -6476,7 +6480,7 @@
             sprayIntensity:      effectSource.handfxSprayIntensity      ?? 1.5,
             sprayThreshold:      effectSource.handfxSprayThreshold      ?? 0.25,
             showCamera:          effectSource.handfxShowCamera          ?? false,
-            cameraOpacity:       effectSource.handfxCameraOpacity       ?? 0.5,
+            cameraOpacity:       effectSource.handfxCameraOpacity       ?? 1,
           });
           effectCtx.handfx = hx;
         }
@@ -7001,7 +7005,7 @@
         }
         hx.setParams({
           mode:                effectSource.handfxMode                ?? 'trails',
-          cameraOn:            effectSource.handfxCameraOn            ?? false,
+          cameraOn:            effectSource.handfxCameraOn            ?? true,
           smoothing:           effectSource.handfxSmoothing           ?? 0.15,
           predictMs:           effectSource.handfxPredictMs           ?? 18,
           showHelp:            effectSource.handfxShowHelp            ?? true,
@@ -7026,7 +7030,7 @@
           sprayIntensity:      effectSource.handfxSprayIntensity      ?? 1.5,
           sprayThreshold:      effectSource.handfxSprayThreshold      ?? 0.25,
           showCamera:          effectSource.handfxShowCamera          ?? false,
-          cameraOpacity:       effectSource.handfxCameraOpacity       ?? 0.5,
+          cameraOpacity:       effectSource.handfxCameraOpacity       ?? 1,
         });
         hx.render(renderer, effectCtx.renderTarget);
       }
@@ -7143,6 +7147,10 @@
         }
         fx.setParams({
           scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
+            voyageMotion: effectSource.ghostfxVoyageMotion ?? 0.6,
+            voyageDetail: effectSource.ghostfxVoyageDetail ?? 6,
+            voyageDepth: effectSource.ghostfxVoyageDepth ?? 1,
+            voyagePalette: effectSource.ghostfxVoyagePalette ?? 0,
           sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
           hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
           exposure:           effectSource.ghostfxExposure           ?? 0,

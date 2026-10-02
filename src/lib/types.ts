@@ -279,7 +279,7 @@ export interface IntegratedEffectSource {
   analyzerLabBgAlpha?: number;           // 0..1
   analyzerLabShowLabels?: boolean;
   // HandFX params (MediaPipe-driven hand visualizer)
-  handfxMode?: 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts' | 'bridge' | 'orbit' | 'lasers';
+  handfxMode?: 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts' | 'bridge' | 'orbit' | 'lasers' | 'portal' | 'web' | 'silk';
   handfxInput?: 'live' | 'demo';
   handfxPalette?: string;
   handfxBrightness?: number;
@@ -324,7 +324,11 @@ export interface IntegratedEffectSource {
   ghostpilotAutopilot?: boolean;        // allow idle autopilot takeover
   ghostpilotSteerAssist?: number;       // 0..1 — banking/yaw coupling to steer
   // GhostFX params (original WebGPU visualizer by Ghost Arcade)
-  ghostfxScenePreset?: string;          // 'drift' (v5); more in later sessions
+  ghostfxScenePreset?: string;
+  ghostfxVoyageMotion?: number;
+  ghostfxVoyageDetail?: number;
+  ghostfxVoyageDepth?: number;
+  ghostfxVoyagePalette?: number;
   ghostfxSensitivity?: number;          // 0.25..4 — audio drive multiplier
   ghostfxHueDriftSpeed?: number;        // 0..2 — palette rotation rate
   ghostfxBloomIntensity?: number;       // 0..3 — bloom add-back at composite
@@ -5375,6 +5379,8 @@ export interface Project {
  *  graph (settings depends on lots of UI stuff). The migrate function
  *  in settings.ts is the single source of truth for defaults. */
 export interface OutputSliceShape {
+  projectorCalibration?: import('./output/projectorCalibration').ProjectorCalibration;
+  overlapBand?: import('./output/projectorCalibration').OverlapBand;
   id: string;
   name: string;
   enabled: boolean;

@@ -82,7 +82,7 @@ async function resolveModelUrl(name: string, cdnFallback: string): Promise<strin
 
 export type GestureListener = (signal: SignalFrame) => void;
 
-class MediaPipeSource {
+export class MediaPipeSource {
   private worker: Worker | null = null;
   private workerReady = false;
   private video: HTMLVideoElement | null = null;
@@ -107,13 +107,19 @@ class MediaPipeSource {
   private frameCounter = 0;
   private startToken = 0;
 
+  /** The preview and inference must use the same selfie convention. */
+  isMirrored(): boolean { return this.opts.mirror; }
+  setMirror(mirror: boolean): void { this.opts.mirror = mirror; }
+
   /** Start the pipeline. Idempotent — calling while running with the
    *  same opts is a no-op; with different opts, stops and restarts. */
   async start(opts: MediaPipeStartOptions = {}): Promise<void> {
     const next: Required<MediaPipeStartOptions> = { ...DEFAULT_OPTS, ...opts };
+    // Render sync can request startup every frame while camera/model loading
+    // is pending. Join that attempt instead of launching another camera/worker.
+    if (this.pendingStart) return this.pendingStart;
     if (this.running && optsEqual(this.opts, next)) return;
     if (this.running) await this.stop();
-    if (this.pendingStart) await this.pendingStart.catch(() => {});
     const token = ++this.startToken;
     this.pendingStart = this._startInternal(next, token).finally(() => { this.pendingStart = null; });
     return this.pendingStart;
@@ -153,6 +159,7 @@ class MediaPipeSource {
   }
 
   isRunning(): boolean { return this.running; }
+  isStarting(): boolean { return this.pendingStart !== null; }
   getError(): string | null { return this.error; }
   getLastFrame(): SignalFrame { return this.lastFrame; }
   getVideoElement(): HTMLVideoElement | null { return this.video; }

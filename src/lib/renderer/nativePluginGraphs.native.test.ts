@@ -36,6 +36,7 @@ describe('native plugin graphs', () => {
       'ghostfx/liquid-render',
       'ghostfx/liquid-bubbles-sim',
       'ghostfx/liquid-bubbles-render',
+      'ghostfx/voyage',
       'ghostfx/post',
       'handfx/compute',
       'handfx/render',
@@ -84,6 +85,29 @@ describe('native plugin graphs', () => {
     expect(pass.shader_id).toBe('performer-world/render');
     expect(pass.source_id).toBe('plugin:performer-world:A:0');
     expect(pass.blend).toBe('alpha');
+  });
+
+  it.each(['hyperdrive', 'tidal', 'mandala', 'corona'])('keeps %s uniforms bounded and frame slots shared', scene => {
+    const result = buildNativePluginGraph({
+      kind: 'ghostfx', sourceId: 'voyage-test', width: 1280, height: 720,
+      time: 2, frameDelta: 1 / 60, frameIndex: 120, audio,
+      params: { ghostfxScenePreset: scene, ghostfxVoyageMotion: 0,
+        ghostfxVoyageDepth: 99, ghostfxVoyageDetail: -10, ghostfxVoyagePalette: 4 },
+    });
+    const config = result.config as any;
+    const uniform = config.buffers.find((b: any) => b.id.endsWith(':uniform'));
+    const f = new Float32Array(Uint8Array.from(atob(uniform.initial_b64), c => c.charCodeAt(0)).buffer);
+    expect(f[16]).toBe(3);
+    expect(f[17]).toBe(0); // zero must freeze geometry, not fall back to default
+    expect(f[18]).toBe(2);
+    expect(f[19]).toBe(4);
+    expect(f[27]).toBe(['hyperdrive', 'tidal', 'mandala', 'corona'].indexOf(scene));
+    expect(config.passes).toEqual([]);
+    expect(config.readbacks).toEqual([]);
+    expect(config.render_passes.map((p: any) => p.source_id)).toEqual([
+      'ghostfx:voyage-test:frame:scene', 'ghostfx:voyage-test:frame:bloom-a',
+      'ghostfx:voyage-test:frame:bloom-b', 'voyage-test',
+    ]);
   });
 
   it.each(['drift', 'ribbons'] as const)('builds original GhostFX %s passes in the native graph', (scene) => {
@@ -274,7 +298,7 @@ describe('native plugin graphs', () => {
     ]);
     expect(update.buffers.some((buffer) => buffer.id.endsWith(':particles'))).toBe(false);
   });
-  it('keeps hand identity when the left hand leaves, and honors camera off', () => {
+  it('keeps hand identity when the left hand leaves, and keeps tracking when the camera image is hidden', () => {
     const options = { kind: 'handfx' as const, sourceId: 'hand-test', params: { handfxSmoothing: 1, handfxPredictMs: 0 },
       width: 320, height: 180, time: 1, frameDelta: 1 / 60, frameIndex: 60, audio };
     const hand = (handedness: string, x: number) => ({ handedness, landmarks: Array.from({ length: 21 }, () => ({ x, y: 0.5, z: 0 })) });
@@ -283,7 +307,7 @@ describe('native plugin graphs', () => {
     const next = buildNativePluginGraph({ ...options, state: first.state, handFrame: { ...frame, hands: [hand('Right', 0.51)] } });
     expect(next.state.handPoints![0]).toBeCloseTo(0.51, 6);
     const off = buildNativePluginGraph({ ...options, params: { handfxCameraOn: false }, handFrame: frame });
-    expect(off.state.handSides).toEqual([]);
+    expect(off.state.handSides).toEqual(['Left', 'Right']);
   });
 
   it('rehearses with moving hands and updates audio without resetting particles', () => {

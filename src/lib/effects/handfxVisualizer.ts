@@ -37,9 +37,7 @@ export type HandFXColorMode = 'rainbow' | 'coral' | 'white' | 'cyan';
 
 export interface HandFXParams {
   mode: HandFXMode;
-  /** Treated as a Start/Stop button. false→true calls
-   *  mediaPipeSource.start() (camera-permission prompt on first
-   *  activation), true→false releases the camera. Default false. */
+  /** Show the live camera behind the graphics. Tracking runs independently. */
   cameraOn: boolean;
   /** 0..1 — adaptive smoothing strength. 0 = raw landmarks (jittery
    *  but maximally responsive), 1 = max smoothing (lazy). Default 0.15
@@ -107,7 +105,7 @@ export interface HandFXParams {
 
 const DEFAULT_PARAMS: HandFXParams = {
   mode: 'trails',
-  cameraOn: false,
+  cameraOn: true,
   smoothing: 0.15,
   predictMs: 18,
   panelColor: '#FFFFFF',
@@ -132,7 +130,7 @@ const DEFAULT_PARAMS: HandFXParams = {
   bgAlpha: 0.0,
   showHelp: true,
   showCamera: false,
-  cameraOpacity: 0.5,
+  cameraOpacity: 1,
 };
 
 // MediaPipe hand topology — same 20 edges the debug overlay uses.
@@ -275,32 +273,14 @@ export class HandFXVisualizer {
   init(_renderer: THREE.WebGLRenderer): void { /* nothing extra */ }
 
   setParams(p: Partial<HandFXParams>): void {
-    const prevCamera = this.params.cameraOn;
     Object.assign(this.params, p);
-    // Camera On toggle acts as Start/Stop. We compare against the prior
-    // value so re-applying the same param block per frame is a no-op.
-    if (this.params.cameraOn && !prevCamera) {
-      // Off → On: user activated the camera. Triggers permission prompt
-      // on first activation. cameraAttempted suppresses the implicit
-      // per-frame retry after a failure — the user must toggle off then
-      // on again to retry, which avoids strobing the camera indicator.
-      if (!mediaPipeSource.isRunning() && !this.cameraStarting && !this.cameraAttempted) {
-        this.cameraStarting = true;
-        this.cameraAttempted = true;
-        this.cameraError = null;
-        mediaPipeSource.start()
-          .then(() => { this.cameraStarting = false; })
-          .catch((e) => {
-            this.cameraStarting = false;
-            this.cameraError = e?.message ?? String(e);
-            console.warn('[HandFX] camera start failed:', e);
-          });
-      }
-    } else if (!this.params.cameraOn && prevCamera) {
-      // On → Off: release the camera. Clear cameraAttempted so the
-      // next Off → On transition is allowed to start a fresh attempt.
-      this.cameraAttempted = false;
-      mediaPipeSource.stop().catch(() => {});
+    // Visibility only affects compositing; live hand input always runs.
+    if (!mediaPipeSource.isRunning() && !this.cameraStarting && !this.cameraAttempted) {
+      this.cameraStarting = true;
+      this.cameraAttempted = true;
+      mediaPipeSource.start().catch((error) => {
+        this.cameraError = error?.message ?? String(error);
+      }).finally(() => { this.cameraStarting = false; });
     }
   }
 
@@ -356,7 +336,7 @@ export class HandFXVisualizer {
     if (this.params.mode === 'trails') {
       this._fadeTrailBuffer();
     }
-    if (this.params.showCamera) {
+    if (this.params.cameraOn) {
       this._drawCameraBackground();
     } else if (this.params.mode !== 'trails') {
       // _fadeTrailBuffer already painted the main canvas — only the
@@ -522,7 +502,7 @@ export class HandFXVisualizer {
     if (!video || video.readyState < 2 || video.videoWidth === 0) return;
 
     const op = Math.max(0, Math.min(1, this.params.cameraOpacity));
-    if (op <= 0.001) return;
+    if (!this.params.cameraOn || op <= 0.001) return;
 
     ctx.save();
     ctx.globalAlpha = op;

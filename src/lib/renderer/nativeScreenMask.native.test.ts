@@ -1,3 +1,4 @@
+import { projectorCalibrationUniforms, inverseProjectorHomography } from '../output/projectorCalibration';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -126,6 +127,50 @@ function slice(id: string, extra: Command = {}): Command {
 
 const suite = platform.runnable ? describe : describe.skip;
 suite('Native screen masks', () => {
+  it('calibrates two trapezoidal projectors with complementary angled overlap and retains it across content changes', async () => {
+    const rpc=core();
+    try {
+      await rpc.send('start',{config:{backend:platform.rendererBackend,width:SIZE,height:SIZE,source_frame_size:128,target_fps:30}});
+      const upload=(value:number,seq:number)=>({type:'upload_source_frame',source_id:'calibration-image',width:32,height:32,seq,rgba_b64:Buffer.from(Array.from({length:1024},()=>[value,value,value,255]).flat()).toString('base64')});
+      await rpc.commands([upload(180,1),{type:'upsert_layer',layer_id:'calibration-image',opacity:1,corners:{topLeft:{x:0,y:1},topRight:{x:1,y:1},bottomRight:{x:1,y:0},bottomLeft:{x:0,y:0}}},{type:'bind_media_source',layer_id:'calibration-image',source_id:'calibration-image',uri:'test://image',source_type:'image'}]);
+      const corners=[{x:.2,y:.1},{x:.8,y:.1},{x:.95,y:.9},{x:.05,y:.9}];
+      const band={enabled:true,startTop:.46,startBottom:.36,endTop:.54,endBottom:.64};
+      const output=(side:'left'|'right')=>slice(side,{cropX:side==='left'?0:.36,cropW:.64,projectorCalibration:projectorCalibrationUniforms({projectorCalibration:{enabled:true,corners},overlapBand:{...band,side}})});
+      await rpc.send('set_slice_outputs',{slices:[output('left'),output('right')]});
+      // Invert the inverse homography to locate the SAME composition point on each projector.
+      const [a,b,c,d,e,f,g,h,i]=inverseProjectorHomography(corners)!;
+      const forward=[e*i-f*h,c*h-b*i,b*f-c*e,f*g-d*i,a*i-c*g,c*d-a*f,d*h-e*g,b*g-a*h,a*e-b*d];
+      const locate=(x:number,y:number,side:string)=>{const u=(x-(side==='left'?0:.36))/.64,v=1-y;const z=forward[6]*u+forward[7]*v+forward[8];return [Math.round((forward[0]*u+forward[1]*v+forward[2])/z*SIZE-.5),Math.round((forward[3]*u+forward[4]*v+forward[5])/z*SIZE-.5)];};
+      const linear=(v:number)=>{const x=v/255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4;};
+      for(const [value,seq] of [[180,1],[100,2]]) {
+        if(seq>1) await rpc.commands([upload(value,seq)]);
+        await new Promise(r=>setTimeout(r,100));
+        const left=await rpc.send('frame_snapshot',{include_pixels:true,slice_id:'left'}),right=await rpc.send('frame_snapshot',{include_pixels:true,slice_id:'right'});
+        expect(pixel(left,0,0)).toEqual([0,0,0]);
+        for(const y of [.25,.5,.75]) {
+          const start=band.startTop*y+band.startBottom*(1-y),end=band.endTop*y+band.endBottom*(1-y);
+          for(const t of [.25,.5,.75]) {
+            const x=start+(end-start)*t;
+            const [lx,ly]=locate(x,y,'left'),[rx,ry]=locate(x,y,'right');
+            const total=linear(pixel(left,lx,ly)[0])+linear(pixel(right,rx,ry)[0]);
+            expect(Math.abs(total-linear(value)),`brightness at ${x},${y}, content ${value}`).toBeLessThan(.05);
+          }
+        }
+      }
+      // A coordinate image catches crop/geometry errors that a uniform gray cannot.
+      await rpc.commands([{type:'upload_source_frame',source_id:'calibration-image',width:128,height:128,seq:3,
+        rgba_b64:Buffer.from(Array.from({length:128*128},(_,i)=>[Math.round((i%128)/127*255),Math.round(Math.floor(i/128)/127*255),0,255]).flat()).toString('base64')}]);
+      await new Promise(r=>setTimeout(r,100));
+      const images=await Promise.all(['left','right'].map(slice_id=>rpc.send('frame_snapshot',{include_pixels:true,slice_id})));
+      for(const y of [.25,.5,.75]) {
+        const samples=['left','right'].map((side,index)=>{const [px,py]=locate(.5,y,side);return pixel(images[index],px,py);});
+        // Complementary weights restore the original coordinate image's light.
+        expect(Math.abs(linear(samples[0][0])+linear(samples[1][0])-linear(128))).toBeLessThan(.035);
+        expect(Math.abs(linear(samples[0][1])+linear(samples[1][1])-linear((1-y)*255))).toBeLessThan(.04);
+      }
+    } finally { await rpc.close(); }
+  },30000);
+
   it('keeps inside, cuts inverted holes, feathers monotonically and follows a corner-pinned screen', async () => {
     const rpc = core();
     try {

@@ -1,3 +1,4 @@
+import { projectorCalibrationUniforms } from '../output/projectorCalibration';
 import { composeNativeGraphs } from '../renderer/nativeGraphComposition';
 import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } from '../renderer/vjGroupNative';
 import { cubeLutHandle } from '../color/cubeLutAssets';
@@ -6228,7 +6229,10 @@ export class NativeRendererSync {
       const source = nativeGraphOutputSource(layer, pluginKind);
       const key = this.nativeGraphRouteKey(pluginKind, source.id);
       if (this.nativeGraphRouteSuppressed(key, layer, null, null, includeWarningDisabled)) return null;
-      return { kind: pluginKind, key, source, inputSource: null };
+      const params = nativeGraphParamsForLayer(layer, pluginKind);
+      const inputSource = pluginKind === 'handfx' && params.handfxInput !== 'demo'
+        ? cameraNativeLayerSource('') : null;
+      return { kind: pluginKind, key, source, inputSource };
     }
     const effectPassRoute = this.nativeEffectPassRouteForLayer(layer, includeWarningDisabled);
     if (effectPassRoute) return effectPassRoute;
@@ -6696,7 +6700,7 @@ export class NativeRendererSync {
           };
           this.nativeGraphRoutes.set(possibleRoute.key, routeState);
           const params = nativeGraphParamsForLayer(layer, possibleRoute.kind);
-          if (params.handfxInput !== 'demo' && params.handfxCameraOn === true && !mediaPipeSource.isRunning()) {
+          if (params.handfxInput !== 'demo' && !mediaPipeSource.isRunning()) {
             void mediaPipeSource.start({ useGesture: false, targetFps: 60, numHands: 2 }).catch((error) => {
               console.warn('[NativeRendererSync] HandFX MediaPipe input failed to start', error);
             });
@@ -6731,6 +6735,7 @@ export class NativeRendererSync {
                 amplitude: visual.isActive ? visual.level : 0,
               },
               handFrame,
+              cameraMirror: mediaPipeSource.isMirrored(),
               state: routeState.state as NativePluginGraphState | null,
               reset: false,
             });
@@ -7857,6 +7862,7 @@ export class NativeRendererSync {
         blackLevelG: s.blackLevelG ?? 0,
         blackLevelB: s.blackLevelB ?? 0,
         blackLevelFeather: s.blackLevelFeather ?? 0.5,
+        projectorCalibration: projectorCalibrationUniforms(s),
         warpMode: s.warpMode ?? 'rect',
         corners: nativeWarpCorners(s.corners),
         meshGrid: nativeWarpMeshGrid(s.meshGrid),
@@ -9058,6 +9064,7 @@ export class NativeRendererSync {
       const cameraParam = layer.type === 'gpu'
         ? (layer.gpuLayerContent?.params?.source as any)
         : null;
+      if (nativeGraphRoute?.kind === 'handfx' && nativeGraphScaledParams?.handfxInput !== 'demo') activeCameraDeviceIds.add('');
       if (cameraParam?.type === 'camera') {
         activeCameraDeviceIds.add(String(cameraParam.deviceId ?? ''));
       }
@@ -9416,7 +9423,6 @@ export class NativeRendererSync {
         if (
           nativeGraphRoute.kind === 'handfx' &&
           nativeGraphScaledParams?.handfxInput !== 'demo' &&
-          nativeGraphScaledParams?.handfxCameraOn === true &&
           !mediaPipeSource.isRunning()
         ) {
           void mediaPipeSource.start({ useGesture: false, targetFps: 60, numHands: 2 }).catch((error) => {
@@ -9454,6 +9460,8 @@ export class NativeRendererSync {
                 amplitude: visual.isActive ? visual.level : 0,
               },
               handFrame: nativeGraphRoute.kind === 'handfx' ? mediaPipeSource.getLastFrame() : null,
+              cameraSourceId: nativeGraphRoute.kind === 'handfx' ? nativeGraphRoute.inputSource?.id : null,
+              cameraMirror: mediaPipeSource.isMirrored(),
               state: routeState.state as NativePluginGraphState | null,
               reset: !routeState.state,
             })

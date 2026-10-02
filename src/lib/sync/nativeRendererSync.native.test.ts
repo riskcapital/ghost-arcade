@@ -3145,6 +3145,8 @@ describe('screen mask payload', () => {
     try {
       settings.update(s => ({ ...s, output: { ...s.output, slices: [{
         ...createDefaultSlice('masked', 'Masked', 'Masked'),
+        projectorCalibration: { enabled: true, corners: [{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}] },
+        overlapBand: {enabled:true,side:'right',startTop:.45,startBottom:.4,endTop:.55,endBottom:.6},
         masks: [{ id: 'm', name: 'Hole', enabled: true, invert: true, feather: 0.25,
           points: [{ x: 0.2, y: 0.25 }, { x: 0.8, y: 0.25 }, { x: 0.5, y: 0.75 }] }],
       }] } }));
@@ -3152,6 +3154,9 @@ describe('screen mask payload', () => {
       sync.pushSliceOutputs();
       const command = submit.mock.calls.at(-1)?.[0]?.[0] as any;
       expect(command.type).toBe('set_slice_outputs');
+      expect(command.slices[0].projectorCalibration[2][3]).toBe(1);
+      expect(command.slices[0].projectorCalibration[3]).toEqual([.45,.4,.55,.6]);
+      expect(command.slices[0].projectorCalibration[4]).toEqual([1,1,0,0]);
       expect(command.slices[0].masks).toEqual([
         { invert: true, feather: 0.25, points: [{ x: 0.2, y: 0.75 }, { x: 0.8, y: 0.75 }, { x: 0.5, y: 0.25 }] },
       ]);

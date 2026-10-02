@@ -154,7 +154,7 @@ export const screenActions = {
       // proportionally — matches the convention from the old settings
       // panel so users coming from v1.6 don't see a jarring layout flip.
       const count = slices.length + 1;
-      const resized = slices.map((sc, i) => ({ ...sc, cropX: i / count, cropW: 1 / count }));
+      const resized = slices.map((sc, i) => sc.projectorCalibration?.enabled || sc.overlapBand?.enabled ? sc : ({ ...sc, cropX: i / count, cropW: 1 / count }));
       resized.push(createDefaultSlice(id, name, name, (count - 1) / count, 1 / count));
       return resized;
     });
@@ -169,7 +169,7 @@ export const screenActions = {
       // stays visually balanced.
       const count = filtered.length;
       return count > 0
-        ? filtered.map((sc, i) => ({ ...sc, cropX: i / count, cropW: 1 / count }))
+        ? filtered.map((sc, i) => sc.projectorCalibration?.enabled || sc.overlapBand?.enabled ? sc : ({ ...sc, cropX: i / count, cropW: 1 / count }))
         : [];
     });
     recordDiscreteAction();
@@ -191,8 +191,8 @@ export const screenActions = {
         name: `${src.name} copy`,
         spoutName: `${src.spoutName}-copy`,
         // Offset crop slightly so the dupe is visible.
-        cropX: Math.min(0.9, src.cropX + 0.05),
-        cropY: Math.min(0.9, src.cropY + 0.05),
+        cropX: src.projectorCalibration?.enabled || src.overlapBand?.enabled ? src.cropX : Math.min(0.9, src.cropX + 0.05),
+        cropY: src.projectorCalibration?.enabled || src.overlapBand?.enabled ? src.cropY : Math.min(0.9, src.cropY + 0.05),
         // Masks are edited in place, so the copy needs its own vertices.
         masks: cloneMasks(src.masks, true),
       };

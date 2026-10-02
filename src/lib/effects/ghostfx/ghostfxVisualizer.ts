@@ -1,3 +1,4 @@
+import { VOYAGE_SCENES, VOYAGE_WGSL } from './scenes/voyage.wgsl';
 // GhostFX — original audio-reactive visualizer plugin.
 //
 // Phase 1 (this file) ships a single hero scene ("Liminal") — a
@@ -66,6 +67,10 @@ export type RibbonBlend = 'additive' | 'lighten' | 'glass';
 
 export interface GhostFXParams {
   scenePreset: string;
+  voyageMotion: number;
+  voyageDetail: number;
+  voyageDepth: number;
+  voyagePalette: number;
   sensitivity: number;        // 0.25..4 — audio drive multiplier
   hueDriftSpeed: number;      // 0..2 — palette rotation
   // Composite-pass post-stack
@@ -99,6 +104,7 @@ export interface GhostFXParams {
 
 const DEFAULT_PARAMS: GhostFXParams = {
   scenePreset: 'drift',
+  voyageMotion: 0.6, voyageDetail: 6, voyageDepth: 1, voyagePalette: 0,
   sensitivity: 1.4,
   hueDriftSpeed: 0.15,
   exposure: 0.1,
@@ -420,7 +426,13 @@ export class GhostFXVisualizer {
     }
     u[24] = this.params.ambient;
     u[25] = this.params.ribbonSpawn;
-    // u[26..27] padding
+    u[26] = this.params.bgAlpha;
+    const voyage = VOYAGE_SCENES.indexOf(this.currentScene as typeof VOYAGE_SCENES[number]);
+    if (voyage >= 0) {
+      u[16] = this.params.voyageDetail; u[17] = this.params.voyageMotion;
+      u[18] = this.params.voyageDepth; u[19] = this.params.voyagePalette;
+      u[27] = voyage;
+    }
     this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, u.buffer, u.byteOffset, u.byteLength);
 
     // Post uniforms — feedback fields wired so the composite can
@@ -1571,21 +1583,6 @@ export class GhostFXVisualizer {
       n++;
     };
 
-    // Beat onset → 1-2 big splats with palette colors
-    if (s.beatPulse > 0.5 && this._liquidPrevBeatPulse < 0.3) {
-      const burstCount = 1 + (s.energy > 0.4 ? 1 : 0);
-      for (let i = 0; i < burstCount; i++) {
-        const hue = (this.accHue + Math.random() * 0.4) % 1;
-        const [r, g, b] = hsv2rgb(hue, 0.9, 1.0);
-        const pos = [Math.random(), Math.random()];
-        const angle = Math.random() * Math.PI * 2;
-        const speed = 0.4 + s.energy * 0.8;
-        addSplat(pos[0], pos[1], Math.cos(angle) * speed, Math.sin(angle) * speed,
-                 r, g, b, this.params.liquidSplatRadius * 1.4);
-      }
-    }
-    this._liquidPrevBeatPulse = s.beatPulse;
-
     // Bass-driven ambient trickle
     this._liquidAmbientAcc += dt * (0.8 + s.bassSlow * 10) * Math.max(this.params.liquidBassRate, 0);
     while (this._liquidAmbientAcc > 1 && n < LIQUID_MAX_SPLATS) {
@@ -1713,6 +1710,7 @@ export class GhostFXVisualizer {
    *  a missing scene.
    */
   private _wgslForScene(_id: string): string {
+    if (VOYAGE_SCENES.includes(_id as typeof VOYAGE_SCENES[number])) return VOYAGE_WGSL;
     // No fragment-only scenes registered. Ribbons / SDF Tunnel /
     // Nebula / Liquid all use specialised pipelines built directly
     // in _buildScenePipeline.

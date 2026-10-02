@@ -181,6 +181,7 @@ impl OutputPresenter {
             dome2: stage.dome2,
             edge_gamma: stage.edge_gamma,
             black_level: stage.black_level,
+            projector_calibration: stage.projector_calibration,
             swarp: stage.swarp,
             swarp_c0: stage.swarp_c0,
             swarp_c1: stage.swarp_c1,

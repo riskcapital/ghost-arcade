@@ -4,9 +4,9 @@ HandFX turns tracked hands into a transparent visual instrument. Add the HandFX 
 
 ## Start here
 
-Choose **Input → Rehearsal · no camera** to audition looks with two animated virtual hands. For a performance, choose **Live hands**, enable **Camera On**, allow camera access, and bring your hands into view. Energy Bridge needs two hands; Orbital Field and Laser Fan work with one or two.
+Choose **Input → Rehearsal · no camera** to audition looks with two animated virtual hands. For a performance, choose **Live hands**, allow camera access, and bring your hands into view. Energy Bridge needs two hands; Orbital Field and Laser Fan work with one or two.
 
-Camera On enables HandFX tracking input. Turning it off clears HandFX's live hand input; another feature using the shared MediaPipe camera may keep the camera running. Rehearsal does not require or start a camera.
+Live hands starts tracking automatically. **Show Camera** displays the selfie feed beneath the graphics and defaults on for new HandFX clips. **Camera Opacity** dims the feed without dimming the graphics. Hiding the feed or setting opacity to zero keeps tracking active. Rehearsal does not require or start a camera.
 
 ## Looks and gestures
 
@@ -32,4 +32,14 @@ Camera On enables HandFX tracking input. Turning it off clears HandFX's live han
 
 The controls participate in the plugin panel's MIDI Learn system. Saved projects retain their settings; existing projects without a new palette selection retain their original colors.
 
-Hand tracking uses MediaPipe. Visuals and particle simulation run in the native GPU renderer; the camera image is not drawn into the effect. Use even lighting and keep your hands clear of each other for reliable tracking. Rehearsal verifies the visuals but does not verify your camera or real tracking latency.
+Hand tracking uses MediaPipe. Visuals and particle simulation run in the native GPU renderer; the camera image is composited beneath the effects through native shared textures. Use even lighting and keep your hands clear of each other for reliable tracking. Rehearsal verifies the visuals but does not verify your camera or real tracking latency.
+
+## New performance looks
+
+- **Star Portal**: each palm carries a tunnel of luminous gates. Pinch thumb and index to narrow the tunnel; open to expand it. Field size changes its reach; Strands / rings changes its symmetry.
+- **Electric Web**: filaments connect all five fingertips. Spread, curl, and rotate your fingers to stretch the network. Field size controls the flutter; Stroke width controls the filaments.
+- **Silk Flow**: ribbons stream from your palm in the direction of your fingers. Open your hand to fan them out; pinch to gather them. Strands / rings adjusts density.
+
+Previous, Shuffle, and Next step through all eleven modes. Shuffle always chooses a different mode and preserves your palette, camera input, and tuning. Rehearsal works with all three new looks. These looks run in the desktop native GPU renderer; camera tracking still requires a supported camera and MediaPipe input.
+
+Audio response now follows a gradual bass/energy envelope rather than raw beat peaks. Your gestures remain immediate while music changes the light and field continuously. The MediaPipe selfie preview mirrors the camera image to match tracking; toggling Mirror updates both.

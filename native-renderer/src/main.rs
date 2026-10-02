@@ -1214,6 +1214,7 @@ struct OutputStage {
     /// Projector black-level lift (r, g, b, feather); slice mode only.
     black_level: [f32; 4],
     /// Per-slice screen warp: (mode, rows, cols, _) + corner quad.
+    projector_calibration: [[f32; 4]; 5],
     swarp: [f32; 4],
     swarp_c0: [f32; 4],
     swarp_c1: [f32; 4],
@@ -1247,6 +1248,7 @@ impl Default for OutputStage {
             dome2: [1.0, 2.2, 0.0, 0.0],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
+            projector_calibration: [[0.0; 4]; 5],
             swarp: [0.0; 4],
             swarp_c0: [0.0, 0.0, 1.0, 0.0],
             swarp_c1: [1.0, 1.0, 0.0, 1.0],
@@ -1291,6 +1293,7 @@ struct Uniforms {
     dome2: [f32; 4],
     edge_gamma: [f32; 4],
     black_level: [f32; 4],
+    projector_calibration: [[f32; 4]; 5],
     swarp: [f32; 4],
     swarp_c0: [f32; 4],
     swarp_c1: [f32; 4],
@@ -2170,6 +2173,7 @@ fn projector_view_output_stage(stage: OutputStage) -> OutputStage {
     OutputStage {
         out0: [0.0, 0.0, 1.0, 1.0],
         dome0: [0.0; 4],
+        projector_calibration: [[0.0; 4]; 5],
         swarp: [0.0; 4],
         swarp_c0: [0.0, 0.0, 1.0, 0.0],
         swarp_c1: [1.0, 1.0, 0.0, 1.0],
@@ -3006,14 +3010,11 @@ impl SourceFrameGpuReadiness {
 /// frames so bursts fire on rising edges only and droplet rates stay smooth.
 #[derive(Clone, Copy, Debug, Default)]
 struct NativePluginLiquidState {
-    prev_beat_pulse: f32,
     ambient_accumulator: f32,
 }
 
-/// Milkdrop-style smoothed audio for plugin uniforms: fast attack so hits
-/// land, slow release so nothing strobes. Raw analyzer values are only used
-/// for edge detection (beat bursts); everything the eye tracks continuously
-/// (splat force, palette, emitter speed) reads these envelopes instead.
+/// Per-layer musical envelopes with gradual attack and release. No impulse
+/// assignments: bass steers flow, mids shape structure, energy sustains light.
 #[derive(Clone, Copy, Debug, Default)]
 struct NativePluginAudioSmooth {
     bass: f32,
@@ -3047,21 +3048,18 @@ impl NativePluginAudioSmooth {
         }
         self.last_frame = frame_index;
         let dt = dt.clamp(0.0, 0.1);
-        // Reactivity (0 = glacial, 1 = snappy) stretches the release taus and
-        // caps the beat envelope peak, so the default sits well away from the
-        // strobe zone while still letting VJs dial the punch back in.
-        let smoothness = (1.0 - reactivity).clamp(0.0, 1.0);
-        let rel = 1.0 + smoothness * 2.4;
-        let atk = 1.0 + smoothness * 1.2;
-        self.bass = Self::follow(self.bass, audio0[1], dt, 0.045 * atk, 0.30 * rel);
-        self.mid = Self::follow(self.mid, audio0[2], dt, 0.045 * atk, 0.24 * rel);
-        self.treble = Self::follow(self.treble, audio0[3], dt, 0.040 * atk, 0.18 * rel);
-        self.energy = Self::follow(self.energy, audio0[0], dt, 0.050 * atk, 0.35 * rel);
-        // Beat becomes an envelope: snaps up on the pulse, glides down.
-        if audio1[1] > 0.5 {
-            self.beat_env = self.beat_env.max(0.35 + 0.65 * reactivity.clamp(0.0, 1.0));
-        }
-        self.beat_env = Self::follow(self.beat_env, 0.0, dt, 0.02, 0.32 * rel);
+        // Both attack AND release glide. No beat-edge assignment or raw
+        // waveform reaches a visual uniform, even at maximum responsiveness.
+        let responsiveness = reactivity.clamp(0.0, 1.0);
+        let attack = 0.65 - responsiveness * 0.40;
+        let release = 1.45 - responsiveness * 0.65;
+        let clean = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        self.bass = Self::follow(self.bass, clean(audio0[1]), dt, attack, release);
+        self.mid = Self::follow(self.mid, clean(audio0[2]), dt, attack * 0.85, release * 0.9);
+        self.treble = Self::follow(self.treble, clean(audio0[3]), dt, attack * 0.75, release * 0.8);
+        self.energy = Self::follow(self.energy, clean(audio0[0]), dt, attack * 1.8, release * 1.5);
+        self.beat_env = Self::follow(self.beat_env, clean(audio1[1]), dt, 0.28, 0.75);
+
     }
 }
 
@@ -4110,7 +4108,7 @@ struct App {
     native_graph_workload: BTreeMap<String, Value>,
     native_plugin_liquid_states: HashMap<String, NativePluginLiquidState>,
     native_plugin_templates_initialized: HashSet<String>,
-    native_plugin_audio_smooth: NativePluginAudioSmooth,
+    native_plugin_audio_smooth: HashMap<String, NativePluginAudioSmooth>,
     native_point_cloud_assets: HashMap<String, NativePointCloudAsset>,
     pending_native_graph_jobs: Vec<NativeGraphFrameJob>,
     /// Graph jobs that must run AFTER the compositor has drawn every layer:
@@ -4459,7 +4457,7 @@ impl App {
             native_graph_workload: BTreeMap::new(),
             native_plugin_liquid_states: HashMap::new(),
             native_plugin_templates_initialized: HashSet::new(),
-            native_plugin_audio_smooth: NativePluginAudioSmooth::default(),
+            native_plugin_audio_smooth: HashMap::new(),
             native_point_cloud_assets: HashMap::new(),
             pending_native_graph_jobs: Vec::new(),
             pending_composite_graph_jobs: Arc::new(Vec::new()),
@@ -6235,6 +6233,7 @@ impl App {
             black_level: [0.0; 4],
             // The main output never carries a per-slice screen warp; that is
             // a projector-alignment transform and belongs to the slice.
+            projector_calibration: [[0.0; 4]; 5],
             swarp: [0.0; 4],
             swarp_c0: [0.0, 0.0, 1.0, 0.0],
             swarp_c1: [1.0, 1.0, 0.0, 1.0],
@@ -6354,6 +6353,7 @@ impl App {
                         read(&["blackLevelB"], 0.0).clamp(0.0, 1.0) as f32,
                         read(&["blackLevelFeather"], 0.5).clamp(0.0, 1.0) as f32,
                     ],
+                    projector_calibration: std::array::from_fn(|r| std::array::from_fn(|c| entry.get("projectorCalibration").and_then(|v| v.get(r)).and_then(|v| v.get(c)).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0) as f32)),
                     swarp: [warp_code, slice_mesh.rows, slice_mesh.cols, slice_bezier],
                     swarp_c0: slice_c0,
                     swarp_c1: slice_c1,
@@ -7169,9 +7169,10 @@ impl App {
         let frame_index = self.native_frame_index();
         let reactivity =
             native_graph_param_f32(&graph_layer.params, "ghostfxReactivity", 0.0, 1.0, 0.4);
-        self.native_plugin_audio_smooth
-            .update(frame_index, delta, self.audio0, self.audio1, reactivity);
-        let smooth = self.native_plugin_audio_smooth;
+        self.native_plugin_audio_smooth.retain(|id, _| self.native_graph_layers.contains_key(id));
+        let envelope = self.native_plugin_audio_smooth.entry(graph_layer.layer_id.clone()).or_default();
+        envelope.update(frame_index, delta, self.audio0, self.audio1, reactivity);
+        let smooth = *envelope;
         // The template is replayed every frame, but its `clear` flags describe
         // INSTALL-time intent only. Replaying clear=true wipes persistent
         // state (fluid fields, particle trails) every frame — the sim can
@@ -7204,7 +7205,6 @@ impl App {
                     .native_plugin_liquid_states
                     .entry(graph_layer.layer_id.clone())
                     .or_insert(NativePluginLiquidState {
-                        prev_beat_pulse: 0.0,
                         ambient_accumulator: 0.0,
                     });
                 let params = &graph_layer.params;
@@ -7218,11 +7218,7 @@ impl App {
                 let bass_rate =
                     native_graph_param_f32(params, "ghostfxLiquidBassRate", 0.0, 2.0, 1.0);
                 let bass = (smooth.bass * sensitivity).clamp(0.0, 2.0);
-                let mid = (smooth.mid * sensitivity).clamp(0.0, 2.0);
                 let energy = (smooth.energy * sensitivity).clamp(0.0, 2.0);
-                let beat_pulse = self.audio1[1];
-                let beat_edge = beat_pulse > 0.5 && state.prev_beat_pulse < 0.3;
-                state.prev_beat_pulse = beat_pulse;
                 state.ambient_accumulator += delta.max(0.0) * (2.0 + bass * 14.0) * bass_rate;
                 let mut splats: Vec<[f32; 8]> = Vec::with_capacity(16);
                 // Deterministic per-frame randomness (layer + frame seeded).
@@ -7239,7 +7235,7 @@ impl App {
                     let phase = index as f32 / 3.0 * std::f32::consts::TAU;
                     let ax = 0.83 + index as f32 * 0.11;
                     let ay = 0.67 + index as f32 * 0.13;
-                    let t = time * (0.35 + mid * 0.5);
+                    let t = time * 0.35; // audio shapes force, never repositions elapsed-time phase
                     let x = 0.5 + 0.36 * (t * ax + phase).cos();
                     let y = 0.5 + 0.33 * (t * ay + phase * 1.7).sin();
                     let dxdt = -0.36 * ax * (t * ax + phase).sin();
@@ -7261,36 +7257,7 @@ impl App {
                         splat_radius * (0.55 + energy * 0.35),
                     ]);
                 }
-                // 2) Beat: vortex-ring burst — a ring of outward splats with
-                //    a shared tangential twist reads as a liquid impact.
-                if beat_edge {
-                    let cx = 0.28 + rand01() * 0.44;
-                    let cy = 0.28 + rand01() * 0.44;
-                    let ring = if energy > 0.5 { 8 } else { 6 };
-                    let ring_speed = 1.0 + energy * 1.6;
-                    let twist = if rand01() < 0.5 { 0.8 } else { -0.8 };
-                    let ring_hue = (hue + rand01() * 0.25).rem_euclid(1.0);
-                    for index in 0..ring {
-                        let angle = index as f32 / ring as f32 * std::f32::consts::TAU;
-                        let dx = angle.cos();
-                        let dy = angle.sin();
-                        let color = hsv_to_rgb(
-                            (ring_hue + index as f32 * 0.015).rem_euclid(1.0),
-                            0.92,
-                            1.0,
-                        );
-                        splats.push([
-                            cx + dx * splat_radius * 1.6,
-                            cy + dy * splat_radius * 1.6,
-                            (dx - dy * twist) * ring_speed,
-                            (dy + dx * twist) * ring_speed,
-                            color[0],
-                            color[1],
-                            color[2],
-                            splat_radius * 1.25,
-                        ]);
-                    }
-                }
+                // Continuous bass-fed dye replaces discrete beat-ring impacts.
                 // 3) Bass trickle: extra droplets while low end is present.
                 while state.ambient_accumulator > 1.0 && splats.len() < 32 {
                     state.ambient_accumulator -= 1.0;
@@ -7372,6 +7339,13 @@ impl App {
                         write_f32_le(&mut buffer.initial_bytes, 28 + branch * 24 + index, *value);
                     }
                 }
+                continue;
+            }
+            if graph_layer.kind == NativeGraphLayerKind::HandFx && buffer.initial_bytes.len() == 144 {
+                write_f32_le(&mut buffer.initial_bytes, 2, time);
+                write_f32_le(&mut buffer.initial_bytes, 3, delta);
+                let amount = native_graph_param_f32(&graph_layer.params, "handfxAudioResponse", 0.0, 2.0, 0.65);
+                write_f32_le(&mut buffer.initial_bytes, 35, (smooth.bass * 0.6 + smooth.energy * 0.4) * amount);
                 continue;
             }
             if graph_layer.kind == NativeGraphLayerKind::GhostFx {
@@ -7542,7 +7516,7 @@ impl App {
                     continue;
                 }
                 let energy = smooth.energy.clamp(0.0, 1.0);
-                let phase = time * (0.7 + smooth.bass * 1.5);
+                let phase = time * 0.7;
                 write_f32_le(&mut buffer.initial_bytes, 0, 0.5 + phase.sin() * 0.28);
                 write_f32_le(&mut buffer.initial_bytes, 1, 0.5 + phase.cos() * 0.24);
                 write_f32_le(
@@ -19003,6 +18977,7 @@ impl RenderState {
                 dome2: [1.0, 2.2, 0.0, 0.0],
                 edge_gamma: [2.2; 4],
                 black_level: [0.0; 4],
+                projector_calibration: [[0.0; 4]; 5],
                 swarp: [0.0; 4],
                 swarp_c0: [0.0, 0.0, 1.0, 0.0],
                 swarp_c1: [1.0, 1.0, 0.0, 1.0],
@@ -24055,6 +24030,7 @@ impl RenderState {
             dome2: stage.dome2,
             edge_gamma: stage.edge_gamma,
             black_level: stage.black_level,
+            projector_calibration: stage.projector_calibration,
             swarp: stage.swarp,
             swarp_c0: stage.swarp_c0,
             swarp_c1: stage.swarp_c1,
@@ -32457,6 +32433,30 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn plugin_audio_envelopes_glide_on_transients_and_settle_in_silence() {
+        for fps in [30.0_f32, 60.0, 120.0] {
+            for reactivity in [0.0, 0.4, 1.0] {
+                let mut envelope = super::NativePluginAudioSmooth::default();
+                envelope.update(1, 1.0 / fps, [1.0; 4], [0.0, 1.0, 0.0, 0.0], reactivity);
+                assert!(envelope.bass < 0.13, "one kick cannot jump the scene scale");
+                assert!(envelope.beat_env < 0.12, "beat attack must be continuous");
+                let first = envelope.bass;
+                envelope.update(1, 1.0 / fps, [1.0; 4], [1.0; 4], reactivity);
+                assert_eq!(first, envelope.bass, "one update per rendered frame");
+                for frame in 2..(fps as u64 * 4) {
+                    envelope.update(frame, 1.0 / fps, [1.0; 4], [0.0; 4], reactivity);
+                }
+                assert!(envelope.bass > 0.99, "sustained music must remain expressive");
+                for frame in (fps as u64 * 4)..(fps as u64 * 16) {
+                    envelope.update(frame, 1.0 / fps, [0.0; 4], [0.0; 4], reactivity);
+                }
+                assert!(envelope.energy < 0.01);
+                assert!(envelope.bass < 0.01);
+            }
+        }
+    }
+
     #[test]
     fn heartbeat_compositor_wgsl_validates_with_the_edge_effect_layout() {
         let module = naga::front::wgsl::parse_str(include_str!("heartbeat.wgsl"))

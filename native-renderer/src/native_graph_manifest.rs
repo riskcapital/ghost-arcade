@@ -342,6 +342,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
             "ghostfx/liquid-render",
             "ghostfx/liquid-bubbles-sim",
             "ghostfx/liquid-bubbles-render",
+            "ghostfx/voyage",
             "ghostfx/post",
         ],
         features: &[

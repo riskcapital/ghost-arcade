@@ -835,6 +835,7 @@
               <button
                 class="theme-template-card"
                 class:active={$activeThemeId === theme.id}
+                aria-pressed={$activeThemeId === theme.id}
                 onclick={() => activeThemeId.set(theme.id)}
               >
                 <div class="theme-preview" style="

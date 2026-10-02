@@ -1,3 +1,4 @@
+import type { ProjectorCalibration, OverlapBand } from '../output/projectorCalibration';
 import { createCoalescedWriter } from '../utils/coalescedWriter';
 // Settings Store
 // Manages app-wide settings including recording preferences
@@ -291,6 +292,8 @@ export interface RecordingSettings {
  * Electron window on a physical display.
  */
 export interface OutputSlice {
+  projectorCalibration?: ProjectorCalibration;
+  overlapBand?: OverlapBand;
   id: string;
   name: string;                // User-friendly label (e.g. "Left", "Center", "Right")
   enabled: boolean;
@@ -623,6 +626,8 @@ export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): Ou
     id: s.id,
     name: s.name ?? 'Slice',
     enabled: s.enabled ?? true,
+    projectorCalibration: s.projectorCalibration,
+    overlapBand: s.overlapBand,
     cropX: s.cropX ?? 0,
     cropY: s.cropY ?? 0,
     cropW: s.cropW ?? 1,

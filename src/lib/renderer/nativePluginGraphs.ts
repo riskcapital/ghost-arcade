@@ -1,3 +1,4 @@
+import { VOYAGE_SCENES, VOYAGE_WGSL } from '$lib/effects/ghostfx/scenes/voyage.wgsl';
 import { worldPaletteIndex } from '../performer/worldPalettes';
 import type { RendererCommand } from '$lib/api/native-renderer';
 import { buildDriftWgsl } from '$lib/effects/ghostfx/scenes/drift.wgsl';
@@ -69,6 +70,8 @@ export type NativePluginGraphOptions = {
   fftData?: Float32Array | null;
   waveformData?: Float32Array | null;
   handFrame?: SignalFrame | null;
+  cameraSourceId?: string | null;
+  cameraMirror?: boolean;
   state?: NativePluginGraphState | null;
   reset?: boolean;
 };
@@ -361,6 +364,16 @@ struct ParticleBuffer { values: array<Particle> };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var<storage, read> landmarks: LandmarkBuffer;
 @group(0) @binding(2) var<storage, read> particles: ParticleBuffer;
+@group(0) @binding(3) var cameraSampler: sampler;
+@group(0) @binding(4) var cameraTexture: texture_2d<f32>;
+@fragment fn fs_camera(v: V) -> @location(0) vec4<f32> {
+  // The same normalized coordinates as the landmarks: selfie X, top-down Y.
+  let uv = vec2(select(v.uv.x, 1.0-v.uv.x, u.pad1 > 0.5), 1.0-v.uv.y);
+  let color = textureSample(cameraTexture, cameraSampler, uv);
+  // Native graph alpha passes expect premultiplied RGB, including at zero opacity.
+  let alpha = color.a * u.cameraOpacity;
+  return vec4(color.rgb * alpha, alpha);
+}
 fn hsv(c: vec3<f32>) -> vec3<f32> { let p=abs(fract(c.xxx+vec3(1.0,0.6667,0.3333))*6.0-3.0); return c.z*mix(vec3(1.0),clamp(p-1.0,vec3(0.0),vec3(1.0)),c.y); }
 fn palette(seed: f32) -> vec3<f32> {
   if (u.colorMode == 1u) { return vec3(1.0,0.42,0.42); }
@@ -430,6 +443,53 @@ fn hand_field(uv:vec2<f32>)->vec3<f32> {
         let reach=tip+direction*(0.12+pinch*0.32)*u.performance.y;
         light+=palette(fract(f32(finger)*0.19+f32(hand)*0.35))*beam(p,palm,reach,width)*drive;
         light+=vec3(0.65,0.85,1.0)*exp(-length(p-tip)/(width*3.0))*0.55;
+      }
+    }
+    if(u.mode==8u) {
+      // Pinch opens a tunnel carried by the palm; wrist direction rotates it.
+      let q=(p-palm)/max(handSize*u.performance.y,0.01);
+      let angle=atan2(q.y,q.x); let radius=length(q);
+      for(var ring=0u;ring<16u;ring++) {
+        let z=fract(f32(ring)/16.0+u.time*0.12);
+        let r=(0.2+z*z*2.8)*(0.45+pinch);
+        let contour=r*(1.0+0.08*sin(angle*floor(u.performance.z+2.0)+z*5.0-u.time));
+        light+=palette(z)*exp(-abs(radius-contour)/0.035)*(1.0-z)*drive;
+      }
+    }
+    if(u.mode==9u) {
+      // An electric web anchored at all five fingertips, not a canned overlay.
+      let tips=array<u32,5>(4u,8u,12u,16u,20u);
+      for(var i=0u;i<5u;i++) {
+        let a=landmarks.values[base+tips[i]].xy*aspect;
+        for(var j=0u;j<5u;j++) {
+          if(j<=i) { continue; }
+          let b=landmarks.values[base+tips[j]].xy*aspect;
+          let delta=b-a; let normal=vec2(-delta.y,delta.x)/max(length(delta),0.001);
+          var prev=a;
+          for(var k=1u;k<=8u;k++) {
+            let f=f32(k)/8.0;
+            let flutter=sin(f*18.0+u.time*3.0+f32(i+j))*sin(f*3.14159)*0.012*u.performance.y*drive;
+            let next=mix(a,b,f)+normal*flutter;
+            light+=palette(f32(i+j)/8.0)*beam(p,prev,next,width*0.5)*0.22;
+            prev=next;
+          }
+        }
+        light+=palette(f32(i)/4.0)*exp(-distance(p,a)/(width*3.0))*drive;
+      }
+    }
+    if(u.mode==10u) {
+      // Silk curtains radiate from the palm in the direction of the fingers.
+      let axis=(palm-wrist)/max(distance(palm,wrist),0.001);
+      let normal=vec2(-axis.y,axis.x); let q=p-palm;
+      let along=dot(q,axis); let across=dot(q,normal);
+      let reach=handSize*(2.0+pinch*3.0)*u.performance.y;
+      let f=along/max(reach,0.001);
+      let envelope=smoothstep(0.0,0.12,f)*(1.0-smoothstep(0.65,1.0,f));
+      for(var strand=0u;strand<16u;strand++) {
+        if(f32(strand)>=u.performance.z*2.0) { break; }
+        let n=f32(strand)/max(u.performance.z*2.0-1.0,1.0)-0.5;
+        let wave=n*handSize*(1.0+f*2.0)*pinch+sin(f*8.0-u.time*1.5+n*3.0)*handSize*f*0.3;
+        light+=palette(n+0.5)*exp(-abs(across-wave)/(width*1.4))*envelope*drive*0.6;
       }
     }
     if(u.mode==5u) { light+=palette(f32(hand)*0.6)*exp(-length(p-palm)/(width*8.0))*drive; }
@@ -516,6 +576,7 @@ export function buildNativePluginPrecompileCommands(): NativePluginPrecompileCom
     { type: 'precompile_shader', shader_id: 'ghostfx/liquid-render', stage: 'render', source: LIQUID_RENDER_WGSL, entry: 'fsRender' },
     { type: 'precompile_shader', shader_id: 'ghostfx/liquid-bubbles-sim', stage: 'compute', source: LIQUID_BUBBLE_SIM_WGSL, entry: 'csBubbles' },
     { type: 'precompile_shader', shader_id: 'ghostfx/liquid-bubbles-render', stage: 'render', source: LIQUID_BUBBLE_RENDER_WGSL, entry: 'fsBubble' },
+    { type: 'precompile_shader', shader_id: 'ghostfx/voyage', stage: 'render', source: VOYAGE_WGSL, entry: 'fsMain' },
     { type: 'precompile_shader', shader_id: 'ghostfx/post', stage: 'render', source: POST_WGSL, entry: 'fsComposite' },
     { type: 'precompile_shader', shader_id: 'handfx/compute', stage: 'compute', source: HAND_COMPUTE_WGSL, entry: 'cs_update' },
     { type: 'precompile_shader', shader_id: 'handfx/render', stage: 'render', source: HAND_RENDER_WGSL, entry: 'fs_particle' },
@@ -617,6 +678,14 @@ function ghostFxUniform(options: NativePluginGraphOptions, state: NativePluginGr
   f[25] = clamp(params.ghostfxRibbonSpawn, 0.2, 3, 1);
   f[26] = clamp(params.ghostfxBgAlpha, 0, 1, 0);
   f[27] = clamp(params.ghostfxTrailIntensity, 0, 2, 1);
+  const voyage = VOYAGE_SCENES.indexOf(scenePreset as typeof VOYAGE_SCENES[number]);
+  if (voyage >= 0) {
+    f[16] = clamp(params.ghostfxVoyageDetail, 3, 16, 6);
+    f[17] = clamp(params.ghostfxVoyageMotion, 0, 2, 0.6);
+    f[18] = clamp(params.ghostfxVoyageDepth, 0.4, 2, 1);
+    f[19] = clamp(params.ghostfxVoyagePalette, 0, 5, 0);
+    f[27] = voyage;
+  }
   return bufferToBase64(buffer);
 }
 
@@ -1086,8 +1155,70 @@ function buildGhostFxSpheresGraph(options: NativePluginGraphOptions): NativePlug
   };
 }
 
+function buildGhostFxVoyageGraph(options: NativePluginGraphOptions): NativePluginGraphBuildResult {
+  const state = pluginState(options, String(options.params.ghostfxScenePreset));
+  const prefix = `ghostfx:${safeId(options.sourceId)}:voyage`;
+  const id = (name: string) => `${prefix}:${name}`;
+  // Scene-independent frame ids — see the slot-exhaustion note in the
+  // liquid builder.
+  const framePrefix = `ghostfx:${safeId(options.sourceId)}:frame`;
+  const sceneSourceId = `${framePrefix}:scene`;
+  const bloomASourceId = `${framePrefix}:bloom-a`;
+  const bloomBSourceId = `${framePrefix}:bloom-b`;
+  const bindings = [
+    { binding: 0, resource: id('uniform'), kind: 'uniform' },
+  ];
+  const postBindings = (sceneId: string, bloomId: string) => [
+    { binding: 0, resource: id('post-uniform'), kind: 'uniform' },
+    { binding: 1, kind: 'source-frame-sampler' },
+    { binding: 2, kind: 'source-frame-texture', source_id: sceneId },
+    { binding: 3, kind: 'source-frame-texture', source_id: bloomId },
+  ];
+  return {
+    state,
+    config: {
+      buffers: [
+        { id: id('uniform'), kind: 'uniform', byte_length: 112, initial_b64: ghostFxUniform(options, state) },
+        { id: id('post-uniform'), kind: 'uniform', byte_length: 32, initial_b64: ghostFxPostUniform(options) },
+      ],
+      passes: [],
+      render_passes: [
+        {
+          name: 'ghostfx-voyage', shader_id: 'ghostfx/voyage',
+          vertex_entry: 'vsMain', fragment_entry: 'fsMain', target: 'source_frame',
+          source_id: sceneSourceId, seq: options.frameIndex, clear: true,
+          blend: 'replace', vertex_count: 3, instance_count: 1, bindings,
+        },
+        {
+          name: 'ghostfx-bloom-horizontal', shader_id: 'ghostfx/post',
+          vertex_entry: 'vsMain', fragment_entry: 'fsExtractHBlur', target: 'source_frame',
+          source_id: bloomASourceId, seq: options.frameIndex, clear: true, generate_mips: false,
+          blend: 'replace', vertex_count: 3, instance_count: 1,
+          bindings: postBindings(sceneSourceId, sceneSourceId),
+        },
+        {
+          name: 'ghostfx-bloom-vertical', shader_id: 'ghostfx/post',
+          vertex_entry: 'vsMain', fragment_entry: 'fsVBlur', target: 'source_frame',
+          source_id: bloomBSourceId, seq: options.frameIndex, clear: true, generate_mips: false,
+          blend: 'replace', vertex_count: 3, instance_count: 1,
+          bindings: postBindings(bloomASourceId, bloomASourceId),
+        },
+        {
+          name: 'ghostfx-composite', shader_id: 'ghostfx/post',
+          vertex_entry: 'vsMain', fragment_entry: 'fsComposite', target: 'source_frame',
+          source_id: options.sourceId, seq: options.frameIndex, clear: true, generate_mips: false,
+          blend: 'replace', vertex_count: 3, instance_count: 1,
+          bindings: postBindings(sceneSourceId, bloomBSourceId),
+        },
+      ],
+      readbacks: [],
+    },
+  };
+}
+
 function buildGhostFxGraph(options: NativePluginGraphOptions): NativePluginGraphBuildResult {
   const scene = String(options.params.ghostfxScenePreset ?? 'drift').trim().toLowerCase();
+  if (VOYAGE_SCENES.includes(scene as typeof VOYAGE_SCENES[number])) return buildGhostFxVoyageGraph(options);
   if (scene === 'liquid') {
     return buildGhostFxLiquidGraph(options);
   }
@@ -1300,7 +1431,7 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
   const state = pluginState(options, 'handfx');
   const prefix = `handfx:${safeId(options.sourceId)}`;
   const id = (name: string) => `${prefix}:${name}`;
-  const hands = [...(params.handfxInput === 'demo' ? handFxDemoHands(options.time) : params.handfxCameraOn === false ? [] : options.handFrame?.hands?.slice(0, 2) ?? [])]
+  const hands = [...(params.handfxInput === 'demo' ? handFxDemoHands(options.time) : options.handFrame?.hands?.slice(0, 2) ?? [])]
     .sort((left, right) => (left.handedness === 'Left' ? 0 : 1) - (right.handedness === 'Left' ? 0 : 1));
   const landmarks = new Float32Array(42 * 4);
   const nextHandPoints = new Array<number>(42 * 4).fill(0);
@@ -1341,7 +1472,7 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
   state.handPoints = nextHandPoints;
   state.handSides = hands.map(hand => hand.handedness);
   const modeLabel = String(params.handfxMode ?? 'trails');
-  const mode = Math.max(0, ['trails', 'aurora', 'bursts', 'skeleton', 'panel', 'bridge', 'orbit', 'lasers'].indexOf(modeLabel));
+  const mode = Math.max(0, ['trails', 'aurora', 'bursts', 'skeleton', 'panel', 'bridge', 'orbit', 'lasers', 'portal', 'web', 'silk'].indexOf(modeLabel));
   const panelColor = hexRgb(params.handfxPanelColor, [1, 1, 1]);
   const skeletonColor = hexRgb(params.handfxSkeletonColor, [1, 0.42, 0.42]);
   const colorModeLabel = String(params.handfxPalette && params.handfxPalette !== 'legacy' ? params.handfxPalette : mode === 1
@@ -1371,7 +1502,8 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
   f[27] = clamp(params.handfxPanelPadding, 0, 0.2, 0.04);
   f[28] = clamp(params.handfxPanelCornerRadius, 0, 0.1, 0.02);
   f[29] = predictSeconds;
-  f[30] = clamp(params.handfxCameraOpacity, 0, 1, 0.5);
+  f[30] = params.handfxCameraOn === false ? 0 : clamp(params.handfxCameraOpacity, 0, 1, 1);
+  f[31] = options.cameraMirror === false ? 0 : 1;
   f[32] = clamp(params.handfxBrightness, 0, 2, 1);
   f[33] = clamp(params.handfxScale, 0.3, 3, 1);
   f[34] = clamp(params.handfxDetail, 1, 8, 5);
@@ -1398,9 +1530,19 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
         ],
       }],
       render_passes: [
+        ...(options.cameraSourceId ? [{
+          name: 'handfx-camera', shader_id: 'handfx/render', vertex_entry: 'vs_bg', fragment_entry: 'fs_camera',
+          target: 'source_frame', source_id: options.sourceId, seq: options.frameIndex, clear: true, blend: 'alpha',
+          vertex_count: 3, instance_count: 1,
+          bindings: [
+            { binding: 0, resource: id('uniform'), kind: 'uniform' },
+            { binding: 3, kind: 'source-frame-sampler' },
+            { binding: 4, kind: 'source-frame-texture', source_id: options.cameraSourceId },
+          ],
+        }] : []),
         {
           name: 'handfx-background', shader_id: 'handfx/render', vertex_entry: 'vs_bg', fragment_entry: 'fs_bg',
-          target: 'source_frame', source_id: options.sourceId, seq: options.frameIndex, clear: true, blend: 'alpha',
+          target: 'source_frame', source_id: options.sourceId, seq: options.frameIndex, clear: !options.cameraSourceId, blend: 'alpha',
           vertex_count: 3, instance_count: 1, bindings,
         },
         ...(mode >= 3 ? [] : [{

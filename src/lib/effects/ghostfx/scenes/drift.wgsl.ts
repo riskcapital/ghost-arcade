@@ -313,7 +313,7 @@ fn vsParticle(@builtin(instance_index) iid: u32, @builtin(vertex_index) vid: u32
   let hueAtZ = fract(p.pos.z * 0.025 + p.seed * 0.15);
   out.color = paletteColor(hueAtZ, 0.85 + u.energy * 0.3);
   let depth01 = clamp(1.0 - proj.depth / TUBE_LENGTH, 0.0, 1.0);
-  out.brightness = depth01 * (0.9 + u.energy * 0.5) + u.beatPulse * p.seed * 0.5;
+  out.brightness = depth01 * (0.9 + u.energy * 0.5) + u.trebSlow * p.seed * 0.22;
   return out;
 }
 @fragment

@@ -46,6 +46,7 @@ struct Uniforms {
   // Each block is (mode, rows, cols, bezier) with its corner quad in c0/c1 as
   // (TL.xy, TR.xy) and (BR.xy, BL.xy), and its control points packed two
   // per vec4 in the matching mesh array (row-major, up to 16x16).
+  projector_calibration: array<vec4<f32>, 5>,
   swarp: vec4<f32>,
   swarp_c0: vec4<f32>,
   swarp_c1: vec4<f32>,
@@ -1596,13 +1597,36 @@ fn output_rotate_uv(uv: vec2<f32>) -> vec2<f32> {
 /// intermediate texture to resample, so the output transform runs as an
 /// inverse map on the sampling coordinate instead of a blit — which also
 /// means cropping costs no resolution.
+fn projector_local_uv(uv: vec2<f32>) -> vec3<f32> {
+  let enabled = u.projector_calibration[2].w;
+  if (enabled < -0.5) { return vec3(uv, 0.0); }
+  if (enabled < 0.5) { return vec3(uv, 1.0); }
+  let p = vec3(uv.x, 1.0-uv.y, 1.0);
+  let z = dot(u.projector_calibration[2].xyz, p);
+  if (abs(z)<0.000001) { return vec3(uv,0.0); }
+  let q = vec2(dot(u.projector_calibration[0].xyz,p), dot(u.projector_calibration[1].xyz,p))/z;
+  let valid = all(q>=vec2(0.0)) && all(q<=vec2(1.0));
+  return vec3(q.x,1.0-q.y,select(0.0,1.0,valid));
+}
+fn calibrated_overlap(uv: vec2<f32>) -> f32 {
+  if (u.projector_calibration[4].x < 0.5) { return 1.0; }
+  let local = projector_local_uv(uv);
+  let composition_uv = slice_warp_uv(output_rotate_uv(local.xy));
+  let band = u.projector_calibration[3];
+  let start = mix(band.x,band.y,1.0-composition_uv.y);
+  let end = mix(band.z,band.w,1.0-composition_uv.y);
+  let weight = clamp((composition_uv.x-start)/max(end-start,0.000001),0.0,1.0);
+  return select(1.0-weight,weight,u.projector_calibration[4].y>0.5);
+}
 fn output_source_uv(uv: vec2<f32>) -> vec3<f32> {
   // Rotation first, so "left"/"top" always mean the projector's physical
   // edges regardless of how the screen is mounted, then the screen warp
   // (or plain crop), then the master warp underneath it.
-  let rotated = output_rotate_uv(uv);
+  let local = projector_local_uv(uv);
+  let rotated = output_rotate_uv(local.xy);
   let warped = slice_warp_uv(rotated);
-  return master_warp_uv(warped);
+  let result = master_warp_uv(warped);
+  return vec3(result.xy,result.z*local.z);
 }
 
 fn output_color_grade(color_in: vec3<f32>) -> vec3<f32> {
@@ -1685,7 +1709,7 @@ fn slice_output_grade(color_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
   col = (col - vec3<f32>(0.5)) * max(u.out1.z, 0.0) + vec3<f32>(0.5);
   col = pow(max(col, vec3<f32>(0.0)), vec3<f32>(1.0 / max(u.out1.w, 0.001)));
 
-  let alpha = slice_blend_alpha(uv);
+  let alpha = slice_blend_alpha(uv) * calibrated_overlap(uv);
   let lift_mix = mix(alpha, smoothstep(0.0, 1.0, alpha), clamp(u.black_level.w, 0.0, 1.0));
   col = col + u.black_level.rgb * lift_mix;
   col = col * alpha;

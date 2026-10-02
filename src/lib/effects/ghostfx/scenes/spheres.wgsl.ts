@@ -186,7 +186,7 @@ fn csFlow(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Central updraft column + gentle swirl — the reference's rising plume.
   let radial = vec3<f32>(p.pos.x, 0.0, p.pos.z);
   let swirl = normalize(vec3<f32>(-p.pos.z, 0.0, p.pos.x) + vec3<f32>(1e-4)) * 0.35 * flow;
-  force = force + swirl + vec3<f32>(0.0, 0.22 * flow + u.beatPulse * 0.55, 0.0);
+  force = force + swirl + vec3<f32>(0.0, 0.22 * flow + u.midSlow * 0.3, 0.0);
   // Soft containment: pull back toward the plume axis + vertical wrap.
   force = force - radial * 0.55 * max(length(radial) - 0.55, 0.0) * 4.0;
 
