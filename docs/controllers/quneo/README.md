@@ -53,6 +53,11 @@ Macros start empty in Ghost Arcade — right-click a macro knob to add effects, 
 pick the macro beside an effect parameter — so this layout only earns its keep
 once you have built some.
 
+## Overlay sheet
+
+`GhostArcade-QuNeo-overlay.pdf` — page 1 Perform, page 2 Macros. Print it at
+100 % on US letter / A4 landscape and keep it beside the controller.
+
 ## Regenerating
 
 Everything is generated; don't edit the outputs by hand.
@@ -61,6 +66,7 @@ Everything is generated; don't edit the outputs by hand.
 cd docs/controllers/quneo
 python3 build_quneo_preset.py perform
 python3 build_quneo_preset.py macros
+python3 build_overlay.py          # the PDF; standard library only
 ```
 
 `quneo-base.quneopreset` is a stock QuNeo preset used only for the hardware
