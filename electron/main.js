@@ -3253,7 +3253,8 @@ async function probeSliceNativeAvailable() {
   // driving exactly this pair on both platforms.
   if (!isMac && !isWin) return false;
   const addon = nativePreviewAddon || loadNativePreviewAddon();
-  if (!addon || typeof addon.monitorAttach !== 'function') return false;
+  const setter = isWin ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
+  if (!addon || typeof addon.monitorAttach !== 'function' || typeof addon[setter] !== 'function') return false;
   try {
     const probe = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
     return !!probe?.available;
@@ -6620,6 +6621,9 @@ function registerIpcHandlers() {
     // while the WebGL fallback needs opaque black so the desktop never
     // shows through before its first painted frame.
     const useNative = await probeSliceNativeAvailable();
+    if ((isMac || isWin) && !useNative) {
+      return { ok: false, error: 'Native Screen output is unavailable. Wait for the renderer to start, then open the screen again. No uncalibrated fallback output was opened.' };
+    }
     if (useNative) sliceNativePending.add(sliceId);
 
     // Resolve the target display. Falls back to the primary display if
@@ -6672,6 +6676,8 @@ function registerIpcHandlers() {
     // the slice renderer's first state query already has the answer.
     if (useNative && !attachSliceNativeLayer(sliceId, win)) {
       sliceNativePending.delete(sliceId);
+      win.destroy();
+      return { ok: false, error: 'Could not attach the native Screen presenter. Close and reopen the screen; if this persists, export diagnostics. Calibration was not bypassed.' };
     }
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';

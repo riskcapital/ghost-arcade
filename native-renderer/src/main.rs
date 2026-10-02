@@ -29,6 +29,7 @@ mod video_texture;
 mod native_graph_manifest;
 mod native_quality;
 mod output_present;
+mod slice_presentation;
 mod paint_mask;
 mod particle_director;
 mod projector_view;
@@ -20818,18 +20819,13 @@ impl RenderState {
                         })
                     })
                     .collect();
-                return json!({
-                    "available": true,
-                    "platform": "iosurface",
-                    "slices": slices,
-                });
+                return slice_presentation::metadata("iosurface", slices);
             }
-            return json!({ "available": true, "platform": "iosurface", "slices": [] });
+            return slice_presentation::metadata("iosurface", vec![]);
         }
-        // Windows renders slices too (a recording of a Screen reads them via
-        // stream_output_frame) but has no native slice presenter, so
-        // `available` stays false for the slice windows; `slices` still
-        // lists what is rendering.
+        // Electron's DXGI monitor presenter consumes these named textures.
+        // Availability must be true even before the first slice is opened:
+        // Electron probes it before choosing the output-window transport.
         #[cfg(target_os = "windows")]
         {
             let slices: Vec<Value> = self
@@ -20845,12 +20841,7 @@ impl RenderState {
                     })
                 })
                 .collect();
-            json!({
-                "available": false,
-                "platform": "dxgi",
-                "reason": "native slice presentation is implemented on macOS IOSurface only",
-                "slices": slices,
-            })
+            slice_presentation::metadata("dxgi", slices)
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {

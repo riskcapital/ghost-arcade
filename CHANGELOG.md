@@ -1,3 +1,7 @@
+# Ghost Arcade 2.0.16 — October 2, 2026
+
+Fix Windows Screen output routing so projector calibration, source warp and overlap blending reach the projector. See [release notes](docs/releases/v2.0.16.md).
+
 # Ghost Arcade 2.0.15 — October 1, 2026
 
 Independent projector calibration, paired angled overlap blending, the optional Neo Industrial skin, and expanded GhostFX/HandFX. See [release notes](docs/releases/v2.0.15.md). Physical projector acceptance remains pending.

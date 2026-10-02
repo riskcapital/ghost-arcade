@@ -131,6 +131,9 @@ suite('Native screen masks', () => {
     const rpc=core();
     try {
       await rpc.send('start',{config:{backend:platform.rendererBackend,width:SIZE,height:SIZE,source_frame_size:128,target_fps:30}});
+      // Electron asks this BEFORE opening any screen. A false DXGI capability
+      // used to silently route Windows to the uncalibrated browser fallback.
+      expect(await rpc.send('get_slice_output_state')).toMatchObject({available:true, slices:[]});
       const upload=(value:number,seq:number)=>({type:'upload_source_frame',source_id:'calibration-image',width:32,height:32,seq,rgba_b64:Buffer.from(Array.from({length:1024},()=>[value,value,value,255]).flat()).toString('base64')});
       await rpc.commands([upload(180,1),{type:'upsert_layer',layer_id:'calibration-image',opacity:1,corners:{topLeft:{x:0,y:1},topRight:{x:1,y:1},bottomRight:{x:1,y:0},bottomLeft:{x:0,y:0}}},{type:'bind_media_source',layer_id:'calibration-image',source_id:'calibration-image',uri:'test://image',source_type:'image'}]);
       const corners=[{x:.2,y:.1},{x:.8,y:.1},{x:.95,y:.9},{x:.05,y:.9}];
@@ -145,8 +148,15 @@ suite('Native screen masks', () => {
       for(const [value,seq] of [[180,1],[100,2]]) {
         if(seq>1) await rpc.commands([upload(value,seq)]);
         await new Promise(r=>setTimeout(r,100));
-        const left=await rpc.send('frame_snapshot',{include_pixels:true,slice_id:'left'}),right=await rpc.send('frame_snapshot',{include_pixels:true,slice_id:'right'});
+        const state = await rpc.send('get_slice_output_state');
+        expect(state.available).toBe(true);
+        expect(state.slices.map((s:any)=>s.id).sort()).toEqual(['left','right']);
+        const handles = state.slices.map((s:any)=>s.shared_name ?? s.handle);
+        expect(new Set(handles).size).toBe(2);
+        expect(state.slices.every((s:any)=>s.frame>0)).toBe(true);
+        const left=await rpc.send('output_shared_texture_snapshot',{include_pixels:true,capture_source:'slice:left'}),right=await rpc.send('output_shared_texture_snapshot',{include_pixels:true,capture_source:'slice:right'});
         expect(pixel(left,0,0)).toEqual([0,0,0]);
+        expect(pixel(left,5,5)).toEqual([0,0,0]);
         for(const y of [.25,.5,.75]) {
           const start=band.startTop*y+band.startBottom*(1-y),end=band.endTop*y+band.endBottom*(1-y);
           for(const t of [.25,.5,.75]) {
@@ -161,13 +171,28 @@ suite('Native screen masks', () => {
       await rpc.commands([{type:'upload_source_frame',source_id:'calibration-image',width:128,height:128,seq:3,
         rgba_b64:Buffer.from(Array.from({length:128*128},(_,i)=>[Math.round((i%128)/127*255),Math.round(Math.floor(i/128)/127*255),0,255]).flat()).toString('base64')}]);
       await new Promise(r=>setTimeout(r,100));
-      const images=await Promise.all(['left','right'].map(slice_id=>rpc.send('frame_snapshot',{include_pixels:true,slice_id})));
+      const images: any[]=[];
+      for (const id of ['left','right']) images.push(await rpc.send('output_shared_texture_snapshot',{include_pixels:true,capture_source:`slice:${id}`}));
       for(const y of [.25,.5,.75]) {
         const samples=['left','right'].map((side,index)=>{const [px,py]=locate(.5,y,side);return pixel(images[index],px,py);});
         // Complementary weights restore the original coordinate image's light.
         expect(Math.abs(linear(samples[0][0])+linear(samples[1][0])-linear(128))).toBeLessThan(.035);
         expect(Math.abs(linear(samples[0][1])+linear(samples[1][1])-linear((1-y)*255))).toBeLessThan(.04);
       }
+      // Edit already-open outputs: keep the export handles and verify the
+      // live pixels change without reopening or using frame_snapshot.
+      const before = await rpc.send('get_slice_output_state');
+      await rpc.commands([upload(180,4)]);
+      await rpc.send('set_slice_outputs',{slices:[slice('left'),slice('right')]});
+      await new Promise(r=>setTimeout(r,100));
+      const after = await rpc.send('get_slice_output_state');
+      for (const original of before.slices) {
+        const updated = after.slices.find((s:any)=>s.id===original.id);
+        expect(updated.shared_name ?? updated.handle).toBe(original.shared_name ?? original.handle);
+        expect(updated.frame).toBeGreaterThan(original.frame);
+      }
+      const reset = await rpc.send('output_shared_texture_snapshot',{include_pixels:true,capture_source:'slice:left'});
+      expect(pixel(reset,5,5)[0]).toBeGreaterThan(150);
     } finally { await rpc.close(); }
   },30000);
 

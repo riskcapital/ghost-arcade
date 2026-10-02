@@ -81,7 +81,7 @@ jobs:
         run: npm ci
 
       - name: Test pairing URLs and projector calibration
-        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts src/lib/output/projectorCalibration.test.ts
+        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts src/lib/output/projectorCalibration.test.ts src/lib/output/slicePresentation.test.ts
 
       - name: Provision and verify Windows HAP encoder
         run: npm run windows:ffmpeg
@@ -126,6 +126,9 @@ jobs:
             native-renderer/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test Screen presentation capability
+        run: cargo test --manifest-path native-renderer/Cargo.toml --locked slice_presentation
 
       - name: Build native render core
         run: npm run native:build
@@ -182,7 +185,7 @@ jobs:
         run: npm ci
 
       - name: Test pairing URLs and projector calibration
-        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts src/lib/output/projectorCalibration.test.ts
+        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts src/lib/output/projectorCalibration.test.ts src/lib/output/slicePresentation.test.ts
 
       # Syphon is Apple's OpenGL texture-sharing framework — required for
       # inter-app video send/receive on macOS (Spout equivalent on Windows).
@@ -224,6 +227,9 @@ jobs:
             native-renderer/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test Screen presentation capability
+        run: cargo test --manifest-path native-renderer/Cargo.toml --locked slice_presentation
 
       - name: Build native render core
         run: npm run native:build:universal
@@ -338,7 +344,7 @@ jobs:
         run: npm ci
 
       - name: Test pairing URLs and projector calibration
-        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts src/lib/output/projectorCalibration.test.ts
+        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts src/lib/output/projectorCalibration.test.ts src/lib/output/slicePresentation.test.ts
 
       - name: Install native addon dependencies
         run: npm ci --ignore-scripts
@@ -371,6 +377,9 @@ jobs:
             native-renderer/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test Screen presentation capability
+        run: cargo test --manifest-path native-renderer/Cargo.toml --locked slice_presentation
 
       - name: Build native render core
         run: npm run native:build

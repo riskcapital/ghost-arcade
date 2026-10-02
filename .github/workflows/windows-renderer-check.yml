@@ -30,7 +30,7 @@ jobs:
       - run: npm ci
       - run: npm run windows:ffmpeg
       - run: node scripts/ensure-windows-ffmpeg.mjs --verify
-      - run: npx vitest run src/lib/video/conversionFfmpeg.test.ts src/lib/video/videoConverter.native.test.ts
+      - run: npx vitest run src/lib/video/conversionFfmpeg.test.ts src/lib/video/videoConverter.native.test.ts src/lib/output/slicePresentation.test.ts
   compile-and-unit-tests:
     runs-on: windows-2022
     steps:
@@ -50,3 +50,5 @@ jobs:
         run: cargo test --manifest-path native-renderer/Cargo.toml --locked --no-run
       - name: Test Windows video policies
         run: cargo test --manifest-path native-renderer/Cargo.toml --locked windows_video
+      - name: Test native Screen presentation capability
+        run: cargo test --manifest-path native-renderer/Cargo.toml --locked slice_presentation

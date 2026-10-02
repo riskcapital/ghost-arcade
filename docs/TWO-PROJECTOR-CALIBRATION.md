@@ -33,3 +33,9 @@ Switch full-width images, videos or shaders in VJ mode. Keep the composition dim
 - Crossing or collapsing projector corners blacks out that screen rather than rendering an invalid transform. Use Reset projector corners to recover.
 - Disable legacy Edge Blend ramps on the shared seam; combining them with the paired blend darkens the overlap twice. The pairing button clears these ramps automatically.
 - No physical two-projector acceptance test has been performed yet. GPU tests verify corner mapping, complementary blend brightness on angled overlaps, output clipping and calibration retained across source-frame changes. Final brightness/colour matching must be checked on the actual venue rig.
+
+## Windows output routing correction (2.0.16)
+
+A Windows-specific capability report in 2.0.15 incorrectly marked native Screen presentation unavailable. The application could then show an older browser-rendered output that ignored projector calibration and source warping. The fix enables the existing DXGI Screen presenter, routes Screen windows through native presentation, and reports an error instead of silently opening an uncalibrated fallback on Windows/macOS.
+
+After installing the corrected build, close and reopen each Screen output. Test one projector at a time: move its top-right destination corner down to 30%. The projected picture must visibly change immediately. Reset the corner before calibrating both projectors. If it does not change, stop calibration and report the output error; do not compensate by changing source crops.
