@@ -5819,6 +5819,9 @@
                       disabled={states[layerIdx].locked === true}
                       onclick={(e) => { e.stopPropagation(); handleStopLayer(layerIdx, bank); }}
                       title="Stop layer (Deck {bank})"
+                      data-midi-path="{midiPrefix}:{layerIdx}:stop"
+                      data-midi-label="Deck {bank} L{layerIdx + 1} Stop"
+                      data-midi-mode="toggle"
                     >■</button>
                   </div>
                 </div>

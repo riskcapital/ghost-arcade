@@ -20,6 +20,7 @@ export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'vj:master:opacity', label: 'VJ master opacity' },
   { path: 'vj:crossfader:value', label: 'A/B crossfader' },
   { path: 'vj:stopall', label: 'Stop all VJ clips' },
+  { path: 'vj:0:stop', label: 'Deck A layer 1 stop (clear the row)' },
   { path: 'vj:rec', label: 'Start / stop output recording' },
   { path: 'vj:tap', label: 'Tap tempo' },
   { path: 'vj:0:blend:next', label: 'Deck A layer 1 next blend mode' },
@@ -126,7 +127,7 @@ export function validateControlPath(path: string): ControlPathValidation {
         ? { valid: true, normalized, reason: null }
         : { valid: false, normalized, reason: 'Video actions are play, restart, mirror, position, or scratch.' };
     }
-    if (['opacity', 'blend', 'solo', 'mute', 'audiovolume', 'audiopan', 'autopilot', 'shader', 'splat', 'model3d', 'plugin'].includes(property ?? '')) {
+    if (['opacity', 'blend', 'solo', 'mute', 'stop', 'audiovolume', 'audiopan', 'autopilot', 'shader', 'splat', 'model3d', 'plugin'].includes(property ?? '')) {
       return { valid: true, normalized, reason: null };
     }
     return { valid: false, normalized, reason: `Unknown VJ layer property "${property ?? ''}".` };

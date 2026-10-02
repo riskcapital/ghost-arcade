@@ -835,6 +835,10 @@ class MidiRouter {
       case 'mute':
         if (value > 0) vjClipLauncher.toggleLayerMute(layerIndex, bank);
         break;
+      case 'stop':
+        // Same as the layer strip's ■ button: clears the row on this deck only.
+        if (value > 0) vjClipLauncher.stopLayer(layerIndex, bank);
+        break;
       case 'shader': {
         // parts: ['vj', '0', 'shader', 'speed']
         const shaderParam = parts[3];
