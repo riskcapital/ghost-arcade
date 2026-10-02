@@ -225,10 +225,17 @@
     if (!file) return;
     try {
       const parsed = parseMappingFile(await file.text(), midiStore.newMappingId);
-      midiStore.importMappings(parsed.mappings);
+      // Switching controller layouts needs a clean slate — merge-by-path would
+      // leave the old layout's rows on any control the new file doesn't claim.
+      const existing = $midiStore.mappings.length;
+      const replace = existing > 0 && window.confirm(
+        `Replace the ${existing} existing MIDI mapping${existing === 1 ? '' : 's'} with this file?\n\n` +
+        'OK = replace all.  Cancel = keep them and merge by path.',
+      );
+      midiStore.importMappings(parsed.mappings, replace);
       const who = parsed.controller ? ` (${parsed.controller})` : '';
       const dropped = parsed.skipped.length ? `, ${parsed.skipped.length} skipped` : '';
-      showToast(`Loaded ${parsed.mappings.length} MIDI mappings${who}${dropped}`, 'info');
+      showToast(`${replace ? 'Replaced with' : 'Loaded'} ${parsed.mappings.length} MIDI mappings${who}${dropped}`, 'info');
       if (parsed.skipped.length) console.warn('[MIDI] skipped mapping rows:', parsed.skipped);
     } catch (err) {
       showToast(`Couldn't load mappings: ${(err as Error).message}`, 'error');
