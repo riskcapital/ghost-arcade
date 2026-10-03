@@ -31,7 +31,7 @@ It's a single product, free, and fully open source under AGPL-3.0. There are no 
 ### Prerequisites
 - **Node.js** ≥ 20
 - **npm** ≥ 10
-- **Windows / macOS** (Linux works for browser-only mode)
+- **Windows / macOS** for the native-renderer release. Linux users should use the legacy browser-renderer release; native Linux output is not supported.
 
 ### Install
 ```bash
