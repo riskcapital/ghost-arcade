@@ -1318,11 +1318,6 @@ Napi::Value SetOverlay(const Napi::CallbackInfo& info) {
   return StatusObject(env, g_primary);
 }
 
-Napi::Value StabilizeHost(const Napi::CallbackInfo& info) {
-  // AppKit-specific on macOS; nothing to stabilise for a child HWND.
-  return Napi::Boolean::New(info.Env(), true);
-}
-
 // monitorAttach(name, hwndBuffer, rect) — deck monitors and native slice output.
 Napi::Value MonitorAttach(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
