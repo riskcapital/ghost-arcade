@@ -1620,6 +1620,13 @@ fn calibrated_overlap(uv: vec2<f32>) -> f32 {
   let weight = clamp((composition_uv.x-start)/max(end-start,0.000001),0.0,1.0);
   return select(1.0-weight,weight,u.projector_calibration[4].y>0.5);
 }
+/// Projector pixel -> the screen's content UV, where its masks are drawn:
+/// through the projector calibration and rotation, before the warp. The
+/// picture is sampled through the same two steps (output_source_uv), so a
+/// mask stays on the surface when a keystoned projector is corrected.
+fn screen_content_uv(uv: vec2<f32>) -> vec2<f32> {
+  return output_rotate_uv(projector_local_uv(uv).xy);
+}
 fn output_source_uv(uv: vec2<f32>) -> vec3<f32> {
   // Rotation first, so "left"/"top" always mean the projector's physical
   // edges regardless of how the screen is mounted, then the screen warp
@@ -3628,7 +3635,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   }
   color = apply_test_pattern(color, in.uv, aspect);
   if (u.dome2.z > 0.5) {
-    color = slice_output_grade(color, in.uv) * dome_mask * screen_mask_alpha(output_rotate_uv(in.uv));
+    color = slice_output_grade(color, in.uv) * dome_mask * screen_mask_alpha(screen_content_uv(in.uv));
   } else {
     color = output_color_grade(color);
     color = color * dome_mask * edge_blend_alpha(in.uv);
@@ -3655,7 +3662,7 @@ fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
   var color = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(uv.x, 1.0 - uv.y), 0.0).rgb;
   color = apply_test_pattern(color, in.uv, aspect);
   if (u.dome2.z > 0.5) {
-    color = slice_output_grade(color, in.uv) * mask * screen_mask_alpha(output_rotate_uv(in.uv));
+    color = slice_output_grade(color, in.uv) * mask * screen_mask_alpha(screen_content_uv(in.uv));
   } else {
     color = output_color_grade(color) * mask * edge_blend_alpha(in.uv);
   }

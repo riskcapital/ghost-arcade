@@ -398,7 +398,7 @@ suite('Native screen masks', () => {
     }
   }, 90000);
 
-  it('matches the editor preview mask shading pixel for pixel, including through a corner pin', async () => {
+  it('matches the editor preview mask shading pixel for pixel, through a corner pin and projector calibration', async () => {
     // Authored the way the Screens inspector stores them: screen content
     // space, y=0 at the top. They reach the core through the real sync
     // conversion, and the snapshot is top row first, so snapshot pixel
@@ -410,6 +410,7 @@ suite('Native screen masks', () => {
       { id: 'b', name: 'Door', enabled: true, invert: true, feather: 0,
         points: [{ x: 0.42, y: 0.55 }, { x: 0.61, y: 0.55 }, { x: 0.61, y: 0.97 }, { x: 0.42, y: 0.97 }] },
     ];
+    const calibration = [{ x: 0.15, y: 0.08 }, { x: 0.88, y: 0.18 }, { x: 0.95, y: 0.92 }, { x: 0.04, y: 0.85 }];
     const rpc = core();
     try {
       await rpc.send('start', { config: { backend: platform.rendererBackend, width: SIZE, height: SIZE, source_frame_size: 32, target_fps: 30 } });
@@ -429,6 +430,10 @@ suite('Native screen masks', () => {
           topLeft: { x: 0.2, y: 0.05 }, topRight: { x: 0.9, y: 0.1 },
           bottomRight: { x: 0.8, y: 0.95 }, bottomLeft: { x: 0.05, y: 0.85 },
         } }),
+        // Masks live in the screen's content space, so a keystone-corrected
+        // projector carries them onto the surface with the picture.
+        slice('calibrated', { masks: nativeScreenMasks(editorMasks),
+          projectorCalibration: projectorCalibrationUniforms({ projectorCalibration: { enabled: true, corners: calibration } }) }),
       ] });
       for (const id of ['flat', 'pinned']) {
         const frame = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: id });
@@ -445,6 +450,27 @@ suite('Native screen masks', () => {
         // The core evaluates in f32, the preview in f64; allow rounding only.
         expect(off, `${id}: ${off} pixels differ by more than 2 levels, worst ${worst}`).toBe(0);
       }
+      // Calibrated: projector pixel -> inverse homography -> content point,
+      // black outside the corrected quad. Pixels the quad edge crosses are
+      // partial coverage either way, so they are left out.
+      const h = inverseProjectorHomography(calibration)!;
+      const calibrated = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'calibrated' });
+      let calibratedOff = 0;
+      let calibratedWorst = 0;
+      for (let row = 0; row < SIZE; row++) {
+        for (let c = 0; c < SIZE; c++) {
+          const px = (c + 0.5) / SIZE, py = (row + 0.5) / SIZE;
+          const z = h[6] * px + h[7] * py + h[8];
+          const q = { x: (h[0] * px + h[1] * py + h[2]) / z, y: (h[3] * px + h[4] * py + h[5]) / z };
+          const edge = Math.min(q.x, q.y, 1 - q.x, 1 - q.y);
+          if (Math.abs(edge) < 2 / SIZE) continue;
+          const expected = edge < 0 ? 0 : 255 * screenMaskAlpha(editorMasks, q);
+          const diff = Math.abs(pixel(calibrated, c, row)[0] - expected);
+          calibratedWorst = Math.max(calibratedWorst, diff);
+          if (diff > 3) calibratedOff++;
+        }
+      }
+      expect(calibratedOff, `calibrated: ${calibratedOff} pixels off, worst ${calibratedWorst}`).toBe(0);
       // The doorway is on the bottom edge of the projected image, as drawn.
       const flat = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'flat' });
       expect(pixel(flat, col(0.5), SIZE - 4)).toEqual([0, 0, 0]);
