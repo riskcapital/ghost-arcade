@@ -171,6 +171,8 @@ struct LayerData {
   edge_effects: array<array<vec4<f32>, 22>, 16>,
   edge_info: vec4<f32>,
   edge_geom: vec4<f32>,
+  // x = edge-effect seed; y = strength of the layer's own colour when it has
+  // no source (1.0 for a colour layer, 0.56 for an empty layer's placeholder).
   edge_extra: vec4<f32>,
   edge_extra2: vec4<f32>,
   edge_bounds: vec4<f32>,
@@ -3538,7 +3540,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
         let coverage = native_layer_shape(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), layer_index).x;
         if (coverage > 0.001) {
-          let fill_alpha = clamp(layers[layer_index].color.a * 0.56 * coverage, 0.0, 1.0);
+          let fill_alpha = clamp(layers[layer_index].color.a * layers[layer_index].edge_extra.y * coverage, 0.0, 1.0);
           color = native_blend(color, layers[layer_index].color.rgb * layers[layer_index].tint.rgb,
             fill_alpha, layers[layer_index].style.x);
           out_alpha = fill_alpha + out_alpha * (1.0 - fill_alpha);
@@ -3578,7 +3580,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let polygon_mask = native_polygon_mask(mask_uv, layer_index)
           * native_paint_mask(mesh_sample.yz, layer_index);
         let shape_mask = shape_sample.x * polygon_mask;
-        content_alpha = 0.56 * shape_mask;
+        content_alpha = layers[layer_index].edge_extra.y * shape_mask;
         if (layers[layer_index].info.w > 0.5) {
           let preview = source_content_for_layer(sample_source_content(layers[layer_index].info.w, sample_uv, layer_index), layers[layer_index].info.z);
           layer_rgb = preview.rgb;
@@ -3596,8 +3598,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       }
     }
     // color.a is the layer opacity times its content alpha (tint.w). The
-    // content alpha dims a layer's own placeholder content (a source-less
-    // shape draws at 35%) but must not dim the Edge Effects drawn on it.
+    // content alpha dims an empty layer's placeholder (edge_extra.y, 0.56)
+    // but must not dim the Edge Effects drawn on it. A colour layer's colour
+    // is its content and arrives at full strength (edge_extra.y = 1.0).
     var layer_alpha = layers[layer_index].color.a;
     if (in_edges) {
       let own = clamp(layers[layer_index].tint.w, 0.0, 1.0);

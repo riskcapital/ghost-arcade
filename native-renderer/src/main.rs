@@ -2353,6 +2353,10 @@ struct SceneLayer {
     /// slot looks unreferenced and the pool hands it to another layer.
     shader_source_id: Option<String>,
     color: [f32; 4],
+    /// The colour was set by the editor (a colour layer), so it IS the
+    /// content and draws at full strength. Otherwise `color` is the hashed
+    /// placeholder an empty layer shows, which the shader deliberately dims.
+    explicit_color: bool,
     corners: [[f32; 2]; 4],
     native_params: [f32; 8],
     blend_code: f32,
@@ -3177,6 +3181,7 @@ impl SceneLayer {
     fn new(id: String, z_index: i32) -> Self {
         Self {
             color: stable_layer_color(&id, 1.0),
+            explicit_color: false,
             id,
             z_index,
             vj_layer_index: None,
@@ -3297,7 +3302,7 @@ impl SceneLayer {
             edge_effects: self.edge.effects_gpu(),
             edge_info: self.edge.info_gpu(),
             edge_geom: self.edge.geometry,
-            edge_extra: [self.edge.seed, 0.0, 0.0, 0.0],
+            edge_extra: [self.edge.seed, self.sourceless_content_alpha(), 0.0, 0.0],
             edge_extra2: self.edge.bbox_gpu(),
             edge_bounds: self.edge.bounds,
             edge_chunks: self.edge.chunks_gpu(),
@@ -3313,6 +3318,18 @@ impl SceneLayer {
             fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), 0, 0],
             tint: [self.tint[0], self.tint[1], self.tint[2], self.color[3].clamp(0.0, 1.0)],
         }
+    }
+
+    /// How strongly a layer with no source draws its own colour.
+    ///
+    /// An empty layer shows a dimmed placeholder so it reads as "nothing
+    /// loaded yet" rather than as content. A colour layer has no source
+    /// either -- its colour is its content -- and the shader applied the same
+    /// 0.56 to both, so every solid colour went to output at 56%: pure white
+    /// arrived as 143/255, on the editor, the output window, Spout and in
+    /// recordings alike. Media is unaffected; it takes the sourced path.
+    fn sourceless_content_alpha(&self) -> f32 {
+        if self.explicit_color { 1.0 } else { SOURCELESS_PLACEHOLDER_ALPHA }
     }
 
     /// A mesh renders as Bezier patches only when it carries a tangent for
@@ -3551,12 +3568,19 @@ fn parse_layer_mesh_tangents(
 
 fn set_scene_layer_color(layer: &mut SceneLayer, rgba: [f32; 4]) {
     layer.color = rgba;
+    // The editor only sends this for colour layers (layerRgba returns null
+    // for every other type), so it is exactly the signal that the colour is
+    // the content rather than a placeholder.
+    layer.explicit_color = true;
 }
 
 /// Beats wrap here so the f32 the shader reads keeps sub-beat precision for
 /// days. 65520 divides evenly by every group size 1-10 and 12-16, so a beat
 /// step chase does not skip a member when the count wraps.
 const BEAT_CLOCK_WRAP: f64 = 65520.0;
+
+/// Strength of an empty layer's placeholder colour. Colour layers draw at 1.0.
+const SOURCELESS_PLACEHOLDER_ALPHA: f32 = 0.56;
 
 /// The editor's launch clock at one moment: `beat` is the continuous beat
 /// position at render time `time` (None: the next frame drawn).
