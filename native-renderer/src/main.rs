@@ -5604,7 +5604,6 @@ impl App {
                 return;
             }
         }
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         if matches!(req.method.as_str(), "stream_output_frame" | "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot")
             || (req.method == "export_frame_snapshot" && string_at(&req.params, &["source"]).is_some_and(|v| live_capture_export_source(&v))) {
             let result = self.start_live_capture(&req);
@@ -12515,7 +12514,11 @@ impl App {
         Ok(snapshot)
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    // Compiled everywhere. It used to be macOS/Windows only because it read
+    // the shared-texture export, so on Linux stream_output_frame did not
+    // exist, every recording's encoder job was cancelled on its first frame,
+    // and REC left a 261-byte MP4 with no frames in it. The readback itself is
+    // plain wgpu; only the texture it reads differs by platform.
     fn start_live_capture(&mut self, req: &RpcRequest) -> Result<(), String> {
         let path = if req.method == "export_frame_snapshot" {
             Some(string_at(&req.params, &["path"]).or_else(|| string_at(&req.params, &["file_path"]))
@@ -12549,35 +12552,57 @@ impl App {
         } else {
             string_at(&req.params, &["capture_source"])
         }.unwrap_or_else(|| "output".to_string());
-        let (export, alpha_mode, render_source) = match capture_source.as_str() {
-            "record_target" => {
-                let target = renderer.record_target.as_ref().ok_or_else(|| "record target is not rendering".to_string())?;
-                (&target.export, if target.alpha { "straight" } else { "opaque" }, "core-record-target")
-            }
-            source if source.starts_with("slice:") => {
-                let id = &source["slice:".len()..];
-                let target = renderer.slice_targets.get(id).ok_or_else(|| format!("screen output {id} is not rendering"))?;
-                (&target.export, "opaque", "core-slice-output")
-            }
-            _ => (renderer.output_export.as_ref().ok_or_else(|| "output export unavailable".to_string())?, "opaque", "core-output-composite"),
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let (texture, format, width, height, export_frame, alpha_mode, render_source) = {
+            let (export, alpha_mode, render_source) = match capture_source.as_str() {
+                "record_target" => {
+                    let target = renderer.record_target.as_ref().ok_or_else(|| "record target is not rendering".to_string())?;
+                    (&target.export, if target.alpha { "straight" } else { "opaque" }, "core-record-target")
+                }
+                source if source.starts_with("slice:") => {
+                    let id = &source["slice:".len()..];
+                    let target = renderer.slice_targets.get(id).ok_or_else(|| format!("screen output {id} is not rendering"))?;
+                    (&target.export, "opaque", "core-slice-output")
+                }
+                _ => (renderer.output_export.as_ref().ok_or_else(|| "output export unavailable".to_string())?, "opaque", "core-output-composite"),
+            };
+            (&export.texture, export.format, export.width, export.height, export.frame, alpha_mode, render_source)
         };
-        if sink.is_some() && (req.params.get("width").and_then(Value::as_u64) != Some(export.width as u64)
-            || req.params.get("height").and_then(Value::as_u64) != Some(export.height as u64)) {
+        // No shared-texture export here, but the export on the other platforms
+        // is only a blit of this very texture (refresh_output_export), so read
+        // the composite directly. Layer and Screen targets are built on the
+        // export, so only the program output is recordable on this platform.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let (texture, format, width, height, export_frame, alpha_mode, render_source) = {
+            if !capture_source.eq_ignore_ascii_case("output") {
+                return Err(format!("recording `{capture_source}` needs a shared-texture export; only the program output can be recorded on this platform"));
+            }
+            (&renderer.output_mirror_texture, renderer.config.format, renderer.config.width, renderer.config.height,
+                renderer.creative_frame_index as u64, "opaque", "core-output-mirror")
+        };
+        if sink.is_some() && (req.params.get("width").and_then(Value::as_u64) != Some(width as u64)
+            || req.params.get("height").and_then(Value::as_u64) != Some(height as u64)) {
             return Err("recording dimensions differ from native output".to_string());
         }
+        // The encoder is told the pipe carries BGRA. The export is always
+        // BGRA, but the composite is the swapchain format, which some drivers
+        // make RGBA; red and blue would trade places in the file.
+        let swizzle_to_bgra = matches!(format, wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb);
         // Copy is enqueued now, preserving the requested frame while mapping,
         // metrics and storage execute away from the presentation loop.
-        let pending = prepare_texture_readback(&renderer.device, &renderer.queue, &export.texture,
-            export.format, export.width, export.height, "Live capture")?;
+        let pending = prepare_texture_readback(&renderer.device, &renderer.queue, texture,
+            format, width, height, "Live capture")?;
         let response_tx = self.response_tx.clone();
         let id = req.id;
-        let export_frame = export.frame;
         let frame_index = self.native_frame_index();
         let time = self.render_clock_time;
         thread::spawn(move || {
             let _permit = permit;
             let result = (|| -> Result<Value, String> {
-                let frame = pending.finish()?;
+                let mut frame = pending.finish()?;
+                if swizzle_to_bgra {
+                    for px in frame.pixels.chunks_exact_mut(4) { px.swap(0, 2); }
+                }
                 let mut value = frame.to_json(include_pixels);
                 if let Some((port, token, copies)) = sink {
                     use std::io::{Read, Write};

@@ -1255,14 +1255,27 @@ async function writeMp4FrameEncoderFrameFile(args = {}) {
 
 async function captureLiveMp4Frame(args = {}, clockOwned = false) {
     const job = activeMp4FrameEncoderJobs.get(String(args.jobId || ''));
-    if (!job || job.settled || job.cancelled || job.closing) return { success: false, error: 'Recording encoder is not running' };
-    if (job.liveClock && !clockOwned) return { success: false, error: 'Recording capture is owned by the live clock' };
-    if (job.captureBusy) return { success: false, error: 'Recording capture already in progress' };
+    // These used to fail silently. A refused capture stops the live clock, so
+    // one quiet refusal left a take "recording" into an empty file with
+    // nothing in the log to say why. Report each reason once per take.
+    const refuse = (error) => {
+      if (job) {
+        job.refusalsLogged ??= new Set();
+        if (!job.refusalsLogged.has(error)) {
+          job.refusalsLogged.add(error);
+          console.warn(`[Recorder] live capture refused (frames ${args.fromIndex}-${args.toIndex}, written ${job.writtenFrames}): ${error}`);
+        }
+      }
+      return { success: false, error };
+    };
+    if (!job || job.settled || job.cancelled || job.closing) return refuse('Recording encoder is not running');
+    if (job.liveClock && !clockOwned) return refuse('Recording capture is owned by the live clock');
+    if (job.captureBusy) return refuse('Recording capture already in progress');
     const from = Number(args.fromIndex), to = Number(args.toIndex);
     if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from !== job.writtenFrames || to < from || to - from >= 120) {
-      return { success: false, error: 'Invalid recording frame range' };
+      return refuse('Invalid recording frame range');
     }
-    if (job.pixelFormat !== 'bgra') return { success: false, error: 'Native live capture requires BGRA' };
+    if (job.pixelFormat !== 'bgra') return refuse('Native live capture requires BGRA');
     job.captureBusy = true;
     try {
       const { createNativeFrameSink } = require('./native-frame-stream.cjs');
@@ -1276,6 +1289,9 @@ async function captureLiveMp4Frame(args = {}, clockOwned = false) {
       return { success: true, snapshot };
     } catch (error) {
       // A partial raw frame cannot safely be retried into the same encoder.
+      // Say why before cancelling: every later frame only reports "Recording
+      // encoder is not running", so this is the one place the cause survives.
+      console.warn(`[Recorder] live frame capture failed at frame ${job.writtenFrames}; cancelling the take:`, error?.message || error);
       await cancelMp4FrameEncoderJob(job.id);
       return { success: false, error: error?.message || String(error) };
     } finally { job.captureBusy = false; }

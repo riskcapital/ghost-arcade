@@ -9,7 +9,14 @@ function createLiveCaptureClock({ fps, capture, now = () => performance.now(), s
     try {
       await capture(frames, last);
       frames = last + 1;
-    } catch (err) { error = err instanceof Error ? err.message : String(err); running = false; }
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      running = false;
+      // Stopping is the right response to a failed capture, but it used to be
+      // silent: the encoder stayed open, the UI kept showing REC, and no frame
+      // ever arrived, so a take could "record" for minutes into an empty file.
+      console.warn(`[LiveCaptureClock] capture failed at frame ${frames}; no further frames will be captured:`, error);
+    }
     if (running) timer = setTimeout(() => { active = tick(); }, Math.max(0, started + frames * 1000 / fps - now()));
   }
   timer = setTimeout(() => { active = tick(); }, 0);
