@@ -31,6 +31,14 @@
  */
 
 import * as THREE from 'three';
+import { projectorCalibrationUniforms } from './projectorCalibration';
+import {
+  packScreenMasks,
+  SCREEN_MASK_MAX,
+  SCREEN_MASK_FLAT_POINTS,
+  SCREEN_MASK_POINT_TEXELS,
+  type PackedScreenMasks,
+} from '../stores/screenMaskGeometry';
 import type { OutputSlice, OutputWarp } from '../stores/settings';
 import { createDefaultSlice, identityOutputCorners } from '../stores/settings';
 
@@ -97,6 +105,20 @@ const FRAG_SHADER = /* glsl */ `
   precision highp float;
   varying vec2 vUv;
 
+  // Projector calibration (projectorCalibration.ts): rows 0-2 the inverse
+  // homography from the projector raster to the unit quad, [2].w its state
+  // (1 on, 0 off, -1 invalid quad = black); [3] the shared overlap band
+  // (startTop, startBottom, endTop, endBottom) in composition coordinates,
+  // [4] (band on, this projector covers the right side).
+  uniform vec4 uCalibration[5];
+  // Screen masks (screenMaskGeometry.ts packScreenMasks): per mask
+  // (first vertex, vertex count, feather, invert) and padded bounds; the
+  // flattened vertices live in uMaskTex, one row per mask, two per texel.
+  uniform float uMaskCount;
+  uniform float uMaskKeep;
+  uniform vec4 uMaskInfo[${SCREEN_MASK_MAX}];
+  uniform vec4 uMaskBounds[${SCREEN_MASK_MAX}];
+  uniform sampler2D uMaskTex;
   uniform sampler2D uSource;
   // Crop region for rect mode (normalized 0..1 on master canvas).
   uniform vec4 uCrop;          // (x, y, w, h)
@@ -191,8 +213,72 @@ const FRAG_SHADER = /* glsl */ `
     return vec2(u, v);
   }
 
+  vec2 maskPoint(int m, int i) {
+    int texel = i / 2;
+    vec4 t = texture2D(uMaskTex, vec2((float(texel) + 0.5) / ${SCREEN_MASK_POINT_TEXELS}.0, (float(m) + 0.5) / ${SCREEN_MASK_MAX}.0));
+    return (i - texel * 2) == 0 ? t.xy : t.zw;
+  }
+
+  float segmentDistance(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a;
+    vec2 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.000001), 0.0, 1.0);
+    return length(pa - ba * h);
+  }
+
+  // Coverage of one mask polygon: 1 inside, ramping to 0 over the feather
+  // measured inward from the edge, 0 outside. Even-odd crossing test on
+  // the flattened outline, so a curved edge feathers along its curve.
+  float maskCoverage(vec2 uv, int m) {
+    vec4 info = uMaskInfo[m];
+    int count = int(floor(info.y + 0.5));
+    if (count < 3) return 0.0;
+    vec4 bounds = uMaskBounds[m];
+    if (uv.x < bounds.x || uv.y < bounds.y || uv.x > bounds.z || uv.y > bounds.w) return 0.0;
+    bool inside = false;
+    float minEdge = 1000.0;
+    for (int i = 0; i < ${SCREEN_MASK_FLAT_POINTS}; i++) {
+      if (i >= count) break;
+      int j = i + 1 < count ? i + 1 : 0;
+      vec2 a = maskPoint(m, i);
+      vec2 b = maskPoint(m, j);
+      if ((a.y <= uv.y && b.y > uv.y) || (a.y > uv.y && b.y <= uv.y)) {
+        float x = (b.x - a.x) * (uv.y - a.y) / (b.y - a.y) + a.x;
+        if (uv.x < x) inside = !inside;
+      }
+      minEdge = min(minEdge, segmentDistance(uv, a, b));
+    }
+    if (!inside) return 0.0;
+    float feather = max(0.0, info.z);
+    return feather > 0.001 ? smoothstep(0.0, feather, minEdge) : 1.0;
+  }
+
+  // Normal masks keep the union of their insides (no normal mask keeps
+  // everything); each inverted mask then cuts a hole.
+  float maskAlpha(vec2 uv) {
+    if (uMaskCount < 0.5) return 1.0;
+    float keep = uMaskKeep > 0.5 ? 0.0 : 1.0;
+    float cut = 1.0;
+    for (int m = 0; m < ${SCREEN_MASK_MAX}; m++) {
+      if (float(m) >= uMaskCount) break;
+      float coverage = maskCoverage(uv, m);
+      if (uMaskInfo[m].w > 0.5) cut *= 1.0 - coverage;
+      else keep = max(keep, coverage);
+    }
+    return clamp(keep * cut, 0.0, 1.0);
+  }
+
   void main() {
     vec2 uv = vUv;
+    if (uCalibration[2].w < -0.5) { gl_FragColor=vec4(0.0,0.0,0.0,1.0); return; }
+    if (uCalibration[2].w > 0.5) {
+      vec3 p=vec3(uv.x,1.0-uv.y,1.0);
+      float z=dot(uCalibration[2].xyz,p);
+      if(abs(z)<0.000001) { gl_FragColor=vec4(0.0,0.0,0.0,1.0); return; }
+      vec2 q=vec2(dot(uCalibration[0].xyz,p),dot(uCalibration[1].xyz,p))/z;
+      if(any(lessThan(q,vec2(0.0))) || any(greaterThan(q,vec2(1.0)))) { gl_FragColor=vec4(0.0,0.0,0.0,1.0); return; }
+      uv=vec2(q.x,1.0-q.y);
+    }
     // Rotate the projector-side UV first so "left" / "top" in the
     // operator's mental model always match the projector's physical
     // edges, independent of which way the screen is mounted.
@@ -290,11 +376,20 @@ const FRAG_SHADER = /* glsl */ `
     float aT = uBlendW.z > 0.0 ? blendCurve(clamp((1.0 - vUv.y) / uBlendW.z, 0.0, 1.0), uBlendG.z) : 1.0;
     float aB = uBlendW.w > 0.0 ? blendCurve(clamp(vUv.y / uBlendW.w, 0.0, 1.0), uBlendG.w) : 1.0;
     float alpha = aL * aR * aT * aB;
+    if(uCalibration[4].x>0.5) {
+      vec4 b=uCalibration[3];
+      float start=mix(b.x,b.y,1.0-srcUv.y), end=mix(b.z,b.w,1.0-srcUv.y);
+      float weight=clamp((srcUv.x-start)/max(end-start,0.000001),0.0,1.0);
+      alpha *= uCalibration[4].y>0.5 ? weight : 1.0-weight;
+    }
 
     float liftMix = mix(alpha, smoothstep(0.0, 1.0, alpha), uBlackFeather);
     col += uBlackLevel * liftMix;
 
-    col *= alpha * uStageIntensity;
+    // Masks are cut in the screen's content space (calibrated, rotated,
+    // before the warp), so they stay on the surface through a re-pin, and
+    // they cut the black-level lift too.
+    col *= alpha * uStageIntensity * maskAlpha(uv);
 
     gl_FragColor = vec4(linearToSrgb(clamp(col, 0.0, 1.0)), 1.0);
   }
@@ -372,6 +467,47 @@ function meshTextureFor(slice: OutputSlice): THREE.DataTexture {
   return packMeshToTexture(meshTexCache, slice.id, slice.meshGrid, meshHash(slice));
 }
 
+// Screen masks, one 64 x 8 RGBA float texture per packed mask set (masks
+// are rebuilt on every edit, so the packed object identifies the shapes).
+const maskTextures = new WeakMap<PackedScreenMasks, THREE.DataTexture>();
+let maskTexPlaceholder: THREE.DataTexture | null = null;
+
+function makeMaskTexture(points: Float32Array): THREE.DataTexture {
+  const tex = new THREE.DataTexture(points, SCREEN_MASK_POINT_TEXELS, SCREEN_MASK_MAX, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function maskTextureFor(packed: PackedScreenMasks): THREE.DataTexture {
+  if (packed.count === 0) {
+    maskTexPlaceholder ??= makeMaskTexture(new Float32Array(SCREEN_MASK_MAX * SCREEN_MASK_FLAT_POINTS * 2));
+    return maskTexPlaceholder;
+  }
+  let tex = maskTextures.get(packed);
+  if (!tex) {
+    tex = makeMaskTexture(packed.points);
+    maskTextures.set(packed, tex);
+  }
+  return tex;
+}
+
+/** Projector calibration and screen mask uniforms, shared by the sender,
+ *  master and atlas materials so applyWarpUniforms drives all three. */
+function screenOutputUniforms(): Record<string, { value: any }> {
+  return {
+    uCalibration: { value: Array.from({ length: 5 }, () => new THREE.Vector4()) },
+    uMaskCount: { value: 0 },
+    uMaskKeep: { value: 0 },
+    uMaskInfo: { value: new Float32Array(SCREEN_MASK_MAX * 4) },
+    uMaskBounds: { value: new Float32Array(SCREEN_MASK_MAX * 4) },
+    uMaskTex: { value: maskTextureFor(packScreenMasks(null)) },
+  };
+}
+
 function ensureRenderer(maxW: number, maxH: number): boolean {
   if (renderer && backingCanvas) {
     const cw = (backingCanvas as HTMLCanvasElement).width;
@@ -428,6 +564,7 @@ function ensureRenderer(maxW: number, maxH: number): boolean {
         uBlackLevel: { value: new THREE.Vector3(0, 0, 0) },
         uBlackFeather: { value: 0.5 },
         uStageIntensity: { value: 1 },
+        ...screenOutputUniforms(),
       },
       depthTest: false,
       depthWrite: false,
@@ -524,6 +661,15 @@ function applyWarpUniforms(
 
   const rotEnum = slice.rotation === 90 ? 1 : slice.rotation === 180 ? 2 : slice.rotation === 270 ? 3 : 0;
   u.uRotation.value = rotEnum;
+  projectorCalibrationUniforms(slice).forEach((v, i) => u.uCalibration.value[i].fromArray(v));
+  // The master warp's synthetic slice has no masks, and a screen's masks
+  // do not belong on the whole composition either way.
+  const masks = packScreenMasks(masterForward ? null : slice.masks);
+  u.uMaskCount.value = masks.count;
+  u.uMaskKeep.value = masks.keepCount;
+  u.uMaskInfo.value = masks.info;
+  u.uMaskBounds.value = masks.bounds;
+  u.uMaskTex.value = maskTextureFor(masks);
   // Default missing color fields like the blackLevel ones below — an
   // undefined here uploads NaN and the whole tile renders black.
   u.uBrightness.value = slice.brightness ?? 1;
@@ -855,6 +1001,7 @@ function ensureMasterRenderer(w: number, h: number): boolean {
         uBlackLevel: { value: new THREE.Vector3(0, 0, 0) },
         uBlackFeather: { value: 0.5 },
         uStageIntensity: { value: 1 },
+        ...screenOutputUniforms(),
       },
       depthTest: false,
       depthWrite: false,
@@ -1029,6 +1176,7 @@ function ensureAtlasRenderer(canvas: HTMLCanvasElement, w: number, h: number): b
         uBlackLevel: { value: new THREE.Vector3(0, 0, 0) },
         uBlackFeather: { value: 0.5 },
         uStageIntensity: { value: 1 },
+        ...screenOutputUniforms(),
       },
       depthTest: false,
       depthWrite: false,

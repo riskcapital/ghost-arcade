@@ -14,8 +14,10 @@
    *      compositing chain just like the editor.
    *   2. Same-renderer slice windows receive the editor's WebGPU-presented
    *      master frame as a VideoFrame over MessagePort and import it as a
-   *      WebGPU external texture. Crop, rotation, color correction, edge
-   *      blending, and black-level lift run in one fullscreen shader pass.
+   *      WebGPU external texture. Projector calibration, rotation, the
+   *      screen's crop / corner / mesh warp, color correction, edge and
+   *      overlap blending, black-level lift and screen masks run in one
+   *      fullscreen shader pass (the same model as blendRenderer.ts).
    *
    *   Legacy separate-process windows still mount Canvas and use the
    *   Canvas2D fallback below. The display path users hit from Screens
@@ -30,6 +32,13 @@
   import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas, disposeMasterWarpOutput } from './lib/sync/outputComposite';
   import { ensureWebGPUDevice } from './lib/renderer/webgpuShared';
   import { invoke } from '$lib/bridge';
+  import {
+    SLICE_SHADER_WGSL,
+    SLICE_UNIFORM_FLOATS,
+    SLICE_GEOMETRY_FLOATS,
+    packSliceUniform,
+    packSliceGeometry,
+  } from './lib/output/sliceOutputShader';
 
   const urlParams = new URLSearchParams(window.location.search);
   const sliceId = urlParams.get('sliceId') || '';
@@ -66,110 +75,13 @@
   let sliceGpuUniformBuffer: any = null;
   let sliceGpuUniformStaging: ArrayBuffer | null = null;
   let sliceGpuUniformF32: Float32Array | null = null;
+  // Screen geometry (warp, calibration, masks): rewritten only when the
+  // slice object changes, which the settings store does on every edit.
+  let sliceGpuGeomBuffer: any = null;
+  let sliceGpuGeomF32: Float32Array | null = null;
+  let sliceGpuGeomFor: OutputSlice | null = null;
   let sliceGpuReady = false;
   let sliceGpuFailed = false;
-
-  const SLICE_SHADER_WGSL = /* wgsl */ `
-@group(0) @binding(0) var uSampler: sampler;
-@group(0) @binding(1) var uTexture: texture_external;
-
-struct SliceUniform {
-  crop: vec4<f32>,
-  color: vec4<f32>,
-  blendW: vec4<f32>,
-  blendG: vec4<f32>,
-  black: vec4<f32>,
-};
-@group(0) @binding(2) var<uniform> uSlice: SliceUniform;
-
-struct VSOut {
-  @builtin(position) clip: vec4<f32>,
-  @location(0) uv: vec2<f32>,
-};
-
-@vertex
-fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
-  var positions = array<vec2<f32>, 6>(
-    vec2<f32>(-1.0, -1.0),
-    vec2<f32>( 1.0, -1.0),
-    vec2<f32>(-1.0,  1.0),
-    vec2<f32>(-1.0,  1.0),
-    vec2<f32>( 1.0, -1.0),
-    vec2<f32>( 1.0,  1.0),
-  );
-  var uvs = array<vec2<f32>, 6>(
-    vec2<f32>(0.0, 1.0),
-    vec2<f32>(1.0, 1.0),
-    vec2<f32>(0.0, 0.0),
-    vec2<f32>(0.0, 0.0),
-    vec2<f32>(1.0, 1.0),
-    vec2<f32>(1.0, 0.0),
-  );
-  var out: VSOut;
-  out.clip = vec4<f32>(positions[vid], 0.0, 1.0);
-  out.uv = uvs[vid];
-  return out;
-}
-
-fn srgbToLinear(c: vec3<f32>) -> vec3<f32> {
-  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3<f32>(2.4)), step(vec3<f32>(0.04045), c));
-}
-
-fn linearToSrgb(c: vec3<f32>) -> vec3<f32> {
-  return mix(c * 12.92, 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055, step(vec3<f32>(0.0031308), c));
-}
-
-fn blendCurve(xIn: f32, pIn: f32) -> f32 {
-  let x = clamp(xIn, 0.0, 1.0);
-  let p = max(pIn, 0.01);
-  if (x < 0.5) {
-    return 0.5 * pow(2.0 * x, p);
-  }
-  return 1.0 - 0.5 * pow(2.0 * (1.0 - x), p);
-}
-
-fn edgeFactor(distance: f32, width: f32, gamma: f32) -> f32 {
-  if (width <= 0.0) {
-    return 1.0;
-  }
-  return blendCurve(distance / width, gamma);
-}
-
-@fragment
-fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-  var uv = in.uv;
-  let rotation = uSlice.color.w;
-  if (rotation > 0.5 && rotation < 1.5) {
-    uv = vec2<f32>(uv.y, 1.0 - uv.x);
-  } else if (rotation > 1.5 && rotation < 2.5) {
-    uv = vec2<f32>(1.0 - uv.x, 1.0 - uv.y);
-  } else if (rotation > 2.5) {
-    uv = vec2<f32>(1.0 - uv.y, uv.x);
-  }
-
-  let crop = uSlice.crop;
-  let srcUv = crop.xy + uv * crop.zw;
-  let src = textureSampleBaseClampToEdge(uTexture, uSampler, clamp(srcUv, vec2<f32>(0.0), vec2<f32>(1.0)));
-  var col = srgbToLinear(src.rgb);
-
-  col = col * max(uSlice.color.x, 0.0);
-  col = (col - 0.5) * max(uSlice.color.y, 0.0) + 0.5;
-  col = pow(max(col, vec3<f32>(0.0)), vec3<f32>(1.0 / max(uSlice.color.z, 0.01)));
-
-  let edgeUv = in.uv;
-  let aL = edgeFactor(edgeUv.x, uSlice.blendW.x, uSlice.blendG.x);
-  let aR = edgeFactor(1.0 - edgeUv.x, uSlice.blendW.y, uSlice.blendG.y);
-  let aT = edgeFactor(edgeUv.y, uSlice.blendW.z, uSlice.blendG.z);
-  let aB = edgeFactor(1.0 - edgeUv.y, uSlice.blendW.w, uSlice.blendG.w);
-  let alpha = aL * aR * aT * aB;
-
-  let liftMix = mix(alpha, smoothstep(0.0, 1.0, alpha), clamp(uSlice.black.w, 0.0, 1.0));
-  col = col + max(uSlice.black.rgb, vec3<f32>(0.0)) * liftMix;
-  col = col * alpha;
-
-  return vec4<f32>(linearToSrgb(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
-}
-`;
 
   function looksLikeVideoFrame(data: unknown): data is VideoFrame {
     return !!data
@@ -286,25 +198,6 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     return latestFrame as any;
   }
 
-  function clamp01(value: number, fallback = 0): number {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return fallback;
-    return Math.max(0, Math.min(1, n));
-  }
-
-  function clampPositive(value: number, fallback = 1, min = 0.001, max = 1): number {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return fallback;
-    return Math.max(min, Math.min(max, n));
-  }
-
-  function rotationIndex(rotation: number | undefined): number {
-    if (rotation === 90) return 1;
-    if (rotation === 180) return 2;
-    if (rotation === 270) return 3;
-    return 0;
-  }
-
   function fallbackSlice(): OutputSlice {
     return {
       id: sliceId || 'slice-display-full-frame',
@@ -365,6 +258,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
           { binding: 1, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} },
           { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+          { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         ],
       });
       const layout = sliceGpuDevice.createPipelineLayout({ bindGroupLayouts: [sliceGpuBindGroupLayout] });
@@ -380,12 +274,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         addressModeU: 'clamp-to-edge',
         addressModeV: 'clamp-to-edge',
       });
-      sliceGpuUniformStaging = new ArrayBuffer(5 * 16);
+      sliceGpuUniformStaging = new ArrayBuffer(SLICE_UNIFORM_FLOATS * 4);
       sliceGpuUniformF32 = new Float32Array(sliceGpuUniformStaging);
       sliceGpuUniformBuffer = sliceGpuDevice.createBuffer({
-        size: 5 * 16,
+        size: SLICE_UNIFORM_FLOATS * 4,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
+      sliceGpuGeomF32 = new Float32Array(SLICE_GEOMETRY_FLOATS);
+      sliceGpuGeomBuffer = sliceGpuDevice.createBuffer({
+        size: SLICE_GEOMETRY_FLOATS * 4,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      sliceGpuGeomFor = null;
       sliceGpuReady = true;
       zeroCopyDiagMsg = 'webgpu slice renderer ready';
       console.log('[SliceOutput] WebGPU zero-copy slice renderer ready');
@@ -401,32 +301,17 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   function updateSliceGpuUniform(s: OutputSlice): void {
     if (!sliceGpuDevice || !sliceGpuUniformBuffer || !sliceGpuUniformStaging || !sliceGpuUniformF32) return;
-    const cropX = clamp01(s.cropX, 0);
-    const cropY = clamp01(s.cropY, 0);
-    const cropW = Math.min(clampPositive(s.cropW, 1), 1 - cropX);
-    const cropH = Math.min(clampPositive(s.cropH, 1), 1 - cropY);
-    const defG = s.edgeBlendGamma ?? 2.2;
-    sliceGpuUniformF32[0] = cropX;
-    sliceGpuUniformF32[1] = cropY;
-    sliceGpuUniformF32[2] = Math.max(0.001, cropW);
-    sliceGpuUniformF32[3] = Math.max(0.001, cropH);
-    sliceGpuUniformF32[4] = Math.max(0, s.brightness ?? 1);
-    sliceGpuUniformF32[5] = Math.max(0, s.contrast ?? 1);
-    sliceGpuUniformF32[6] = Math.max(0.01, s.gamma ?? 1);
-    sliceGpuUniformF32[7] = rotationIndex(s.rotation);
-    sliceGpuUniformF32[8] = clamp01(s.edgeBlendLeft ?? 0);
-    sliceGpuUniformF32[9] = clamp01(s.edgeBlendRight ?? 0);
-    sliceGpuUniformF32[10] = clamp01(s.edgeBlendTop ?? 0);
-    sliceGpuUniformF32[11] = clamp01(s.edgeBlendBottom ?? 0);
-    sliceGpuUniformF32[12] = Math.max(0.01, s.edgeBlendLeftGamma ?? defG);
-    sliceGpuUniformF32[13] = Math.max(0.01, s.edgeBlendRightGamma ?? defG);
-    sliceGpuUniformF32[14] = Math.max(0.01, s.edgeBlendTopGamma ?? defG);
-    sliceGpuUniformF32[15] = Math.max(0.01, s.edgeBlendBottomGamma ?? defG);
-    sliceGpuUniformF32[16] = Math.max(0, s.blackLevelR ?? 0);
-    sliceGpuUniformF32[17] = Math.max(0, s.blackLevelG ?? 0);
-    sliceGpuUniformF32[18] = Math.max(0, s.blackLevelB ?? 0);
-    sliceGpuUniformF32[19] = clamp01(s.blackLevelFeather ?? 0.5, 0.5);
+    packSliceUniform(s, sliceGpuUniformF32);
     sliceGpuDevice.queue.writeBuffer(sliceGpuUniformBuffer, 0, sliceGpuUniformStaging);
+  }
+
+  function writeSliceGeometry(s: OutputSlice): void {
+    if (!sliceGpuDevice || !sliceGpuGeomBuffer || !sliceGpuGeomF32) return;
+    if (s === sliceGpuGeomFor) return;
+    sliceGpuGeomFor = s;
+    packSliceGeometry(s, sliceGpuGeomF32);
+    const g = sliceGpuGeomF32;
+    sliceGpuDevice.queue.writeBuffer(sliceGpuGeomBuffer, 0, g.buffer, g.byteOffset, g.byteLength);
   }
 
   function renderZeroCopyWebGPU(frame: VideoFrame, s: OutputSlice): boolean {
@@ -434,6 +319,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     if (!sliceGpuSampler || !sliceGpuUniformBuffer || !presentCanvas) return false;
     try {
       updateSliceGpuUniform(s);
+      writeSliceGeometry(s);
       const externalTexture = sliceGpuDevice.importExternalTexture({ source: frame as any });
       const bindGroup = sliceGpuDevice.createBindGroup({
         layout: sliceGpuBindGroupLayout,
@@ -441,6 +327,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           { binding: 0, resource: sliceGpuSampler },
           { binding: 1, resource: externalTexture },
           { binding: 2, resource: { buffer: sliceGpuUniformBuffer } },
+          { binding: 3, resource: { buffer: sliceGpuGeomBuffer } },
         ],
       });
       const encoder = sliceGpuDevice.createCommandEncoder();

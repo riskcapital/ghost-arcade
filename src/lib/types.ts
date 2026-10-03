@@ -4952,6 +4952,8 @@ export interface Project {
  *  graph (settings depends on lots of UI stuff). The migrate function
  *  in settings.ts is the single source of truth for defaults. */
 export interface OutputSliceShape {
+  projectorCalibration?: import('./output/projectorCalibration').ProjectorCalibration;
+  overlapBand?: import('./output/projectorCalibration').OverlapBand;
   id: string;
   name: string;
   enabled: boolean;
