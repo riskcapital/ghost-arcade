@@ -641,7 +641,11 @@ class NativeRendererBroker {
     // D3D12 compiles the shader warm-up set through FXC on first start, which
     // takes tens of seconds on a cold cache — far past the 8s that Metal needs.
     // Timing out here leaves the core alive but the app stuck on NATIVE OFFLINE.
-    const startTimeoutMs = this.platform === 'win32' ? 180000 : 8000;
+    // Vulkan has the same first-run cost: with no pipeline cache the driver
+    // compiles the warm-up set before start returns, which takes far longer
+    // than Metal on a slow GPU and minutes on a software driver. Only macOS
+    // reliably starts inside 8s.
+    const startTimeoutMs = this.platform === 'darwin' ? 8000 : 180000;
     const result = await this.send('start', args, { timeoutMs: startTimeoutMs });
     this.lastStatus = normalizeStatus(result, this.lastStatus);
     try {
@@ -946,7 +950,42 @@ class NativeRendererBroker {
     const result = await this.sendIfRunning('status', {}, { fallback: this.lastStatus, timeoutMs: 1000 });
     this.lastStatus = normalizeStatus(result, this.lastStatus);
     void this.recoverFromGpuFault();
+    void this.retryCapabilityHandshake();
     return this.lastStatus;
+  }
+
+  /**
+   * Complete the capability handshake if start() never got to it.
+   *
+   * start() runs the handshake only after the core's `start` RPC returns, so
+   * a start that outran its timeout left the broker on makeDefaultCapabilities
+   * for the rest of the session: every feature false, no RPC methods
+   * advertised. The core was running and rendering, but the output driver
+   * gate refused to open an Output Window ("native offscreen output mirror is
+   * unavailable") and advertised-method calls were rejected. Nothing logged
+   * it. Seen on Linux, where Vulkan's first-run pipeline compilation outran
+   * the 8s that start() then allowed off Windows.
+   *
+   * Throttled, and only while the core answers status, so a dead core is not
+   * hammered.
+   */
+  async retryCapabilityHandshake() {
+    if (this.coreCapabilitiesConfirmed || this.capabilityRetryInFlight) return;
+    if (!this.child || this.child.killed || !this.lastStatus?.running) return;
+    const now = Date.now();
+    if (now < (this.nextCapabilityRetryAt || 0)) return;
+    this.nextCapabilityRetryAt = now + 3000;
+    this.capabilityRetryInFlight = true;
+    try {
+      await this.refreshCapabilities({ requireCore: true });
+      if (this.coreCapabilitiesConfirmed) {
+        console.log('[NativeRenderer] capability handshake completed after start (it had been missed)');
+      }
+    } catch {
+      // Still busy; the next status poll tries again.
+    } finally {
+      this.capabilityRetryInFlight = false;
+    }
   }
 
   /**
@@ -1019,10 +1058,24 @@ class NativeRendererBroker {
     }
     let result;
     try {
-      result = await this.send('get_capabilities', {}, { timeoutMs: 1000 });
+      // The handshake carries the full feature and effect manifests; give it
+      // room. A routine refresh can stay short now that a slow one is harmless.
+      result = await this.send('get_capabilities', {}, { timeoutMs: requireCore ? 5000 : 1000 });
       this.coreCapabilitiesConfirmed = true;
       this.coreCapabilitiesError = null;
     } catch (err) {
+      // A slow reply from a core that has already answered is a busy core, not
+      // a broken one. This used to wipe the confirmed capabilities back to
+      // defaults AND set backend_ready=false, so one capability poll timing
+      // out under load -- the editor polls these -- made the backend read as
+      // not ready, the editor preview detached (native-preview-inactive), and
+      // every feature gate closed until the next status poll. Keep what the
+      // core told us; only a fresh process (requireCore) or one that never
+      // answered falls back to defaults.
+      if (this.coreCapabilitiesConfirmed && !requireCore) {
+        this.noteTransientRpcFailure('get_capabilities', err);
+        return this.capabilities;
+      }
       this.coreCapabilitiesConfirmed = false;
       this.coreCapabilitiesError = err?.message || String(err);
       this.capabilities = makeDefaultCapabilities({
