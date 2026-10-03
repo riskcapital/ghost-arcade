@@ -299,7 +299,7 @@ class PreviewSurface {
           WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
           kWindowClass,
           L"",
-          WS_POPUP | WS_VISIBLE,
+          WS_POPUP,
           rect.x, rect.y, rect.width, rect.height,
           nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
       if (!child_) {
@@ -312,31 +312,50 @@ class PreviewSurface {
     PositionBehind();
 
     if (!device_ && !CreateDevice(error)) return false;
-    // A deck can be attached before it has any clips. Give DWM an opaque
-    // surface before cutting its opening in the primary backdrop.
-    if (!fullHostBackdrop_ && !backingReady_) {
-      if (!EnsureSwapchain(error)) return false;
-      ID3D11Texture2D* buffer = nullptr;
-      ID3D11RenderTargetView* target = nullptr;
-      HRESULT hr = swapchain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&buffer);
-      if (SUCCEEDED(hr)) hr = device_->CreateRenderTargetView(buffer, nullptr, &target);
-      SafeRelease(buffer);
-      if (FAILED(hr) || !target) {
-        *error = "Could not initialize the deck preview backdrop";
-        return false;
-      }
-      const float black[4] = {5.0f / 255.0f, 7.0f / 255.0f, 11.0f / 255.0f, 1.0f};
-      context_->ClearRenderTargetView(target, black);
-      SafeRelease(target);
-      if (FAILED(swapchain_->Present(0, 0))) {
-        *error = "Could not present the deck preview backdrop";
-        return false;
-      }
-      backingReady_ = true;
-      PositionBehind();
-    }
+    // Prime every presenter before the first producer frame, including the
+    // full editor backdrop. Otherwise startup exposes the desktop.
+    if (!backingReady_ && !ClearBackdrop(error)) return false;
     attached_ = true;
     return true;
+  }
+
+  bool ClearBackdrop(std::string* error) {
+    if (!EnsureSwapchain(error)) return false;
+    ID3D11Texture2D* buffer = nullptr;
+    ID3D11RenderTargetView* target = nullptr;
+    HRESULT hr = swapchain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&buffer);
+    if (SUCCEEDED(hr)) hr = device_->CreateRenderTargetView(buffer, nullptr, &target);
+    SafeRelease(buffer);
+    if (FAILED(hr) || !target) {
+      *error = "Could not initialize the native preview backdrop";
+      return false;
+    }
+    const float black[4] = {5.0f / 255.0f, 7.0f / 255.0f, 11.0f / 255.0f, 1.0f};
+    context_->ClearRenderTargetView(target, black);
+    SafeRelease(target);
+    if (FAILED(swapchain_->Present(0, 0))) {
+      *error = "Could not present the native preview backdrop";
+      return false;
+    }
+    backingReady_ = true;
+    PositionBehind();
+    return true;
+  }
+
+  bool Stabilize(HWND host, std::string* error) {
+    if (child_ && host_ == host) { PositionBehind(); return true; }
+    if (!Attach(host, Rect{0, 0, 1, 1}, error)) return false;
+    attached_ = false;
+    return true;
+  }
+
+  void Suspend() {
+    // Preview lifetime is shorter than window lifetime (mode changes/restarts).
+    // Release the producer but keep an opaque native backing beneath Chromium.
+    ReleaseShared();
+    std::string error;
+    if (child_ && device_) ClearBackdrop(&error);
+    attached_ = false;
   }
 
   bool Update(const Rect& rect) {
@@ -355,6 +374,10 @@ class PreviewSurface {
   // then drawn only into the canvas rect via the viewport.
   void PositionBehind() {
     if (!child_ || !IsWindow(host_)) return;
+    if (!IsWindowVisible(host_) || IsIconic(host_)) {
+      ShowWindow(child_, SW_HIDE);
+      return;
+    }
     RECT client = {};
     if (!GetClientRect(host_, &client)) return;
     hostClientW_ = fullHostBackdrop_ ? (uint32_t)(std::max)(1L, client.right - client.left) : (uint32_t)(std::max)(1, rect_.width);
@@ -1031,6 +1054,15 @@ Napi::Object StatusObject(Napi::Env env, const PreviewSurface& surface) {
   return out;
 }
 
+Napi::Value StabilizeHost(const Napi::CallbackInfo& info) {
+  HWND host = info.Length() > 0 ? HwndFromBuffer(info[0]) : nullptr;
+  std::lock_guard<std::mutex> lock(g_surfaceMutex);
+  std::string error;
+  const bool ok = host && g_primary.Stabilize(host, &error);
+  if (!ok) g_lastError = error;
+  return Napi::Boolean::New(info.Env(), ok);
+}
+
 Napi::Value Attach(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   HWND host = nullptr;
@@ -1084,7 +1116,9 @@ Napi::Value Detach(const Napi::CallbackInfo& info) {
     g_frameHeight = 0;
   }
   std::lock_guard<std::mutex> lock(g_surfaceMutex);
-  g_primary.Detach();
+  const bool destroy = info.Length() > 0 && info[0].IsBoolean() && info[0].As<Napi::Boolean>().Value();
+  if (destroy) g_primary.Detach();
+  else g_primary.Suspend();
   return Napi::Boolean::New(info.Env(), true);
 }
 
@@ -1350,6 +1384,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("readSharedTexturePixels", Napi::Function::New(env, ghost_readback::Read));
   exports.Set("releaseReadback", Napi::Function::New(env, ghost_readback::Release));
   env.AddCleanupHook([]() { ghost_readback::capture.Reset(); });
+  exports.Set("stabilizeHost", Napi::Function::New(env, StabilizeHost));
   exports.Set("attach", Napi::Function::New(env, Attach));
   exports.Set("update", Napi::Function::New(env, Update));
   exports.Set("detach", Napi::Function::New(env, Detach));

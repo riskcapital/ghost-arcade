@@ -3499,7 +3499,7 @@ function attachNativeEditorPreview(rectArgs = {}) {
 }
 
 function stabilizeNativeEditorHost() {
-  if (process.platform !== 'darwin' || !mainWindow || mainWindow.isDestroyed()) return false;
+  if (!['darwin', 'win32'].includes(process.platform) || !mainWindow || mainWindow.isDestroyed()) return false;
   const addon = loadNativePreviewAddon();
   if (!addon || typeof addon.stabilizeHost !== 'function') return false;
   try {
@@ -3547,7 +3547,7 @@ function detachNativeEditorPreview(reason = 'detach') {
   stopNativeEditorPreviewPump(reason);
   const addon = nativePreviewAddon;
   if (addon && typeof addon.detach === 'function') {
-    try { addon.detach(); } catch (err) {
+    try { addon.detach(reason === 'app-quit'); } catch (err) {
       nativePreviewAddonLoadError = err?.message || String(err);
     }
   }
@@ -8337,6 +8337,7 @@ function setupPermissions() {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
+    show: false,
     width: 1600,
     height: 900,
     minWidth: 1200,
@@ -8390,7 +8391,16 @@ function createMainWindow() {
   // owning NSWindow itself opaque before the first renderer frame arrives.
   // The native addon reapplies this contract on every preview attach/update.
   stabilizeNativeEditorHost();
-  mainWindow.once('ready-to-show', stabilizeNativeEditorHost);
+  mainWindow.once('ready-to-show', () => {
+    stabilizeNativeEditorHost();
+    mainWindow?.show();
+  });
+  // Electron can recreate/reconfigure its native host on fullscreen and
+  // renderer navigation. Reassert the backing without painting over Chromium.
+  for (const event of ['show', 'hide', 'minimize', 'restore', 'enter-full-screen', 'leave-full-screen', 'resize', 'move']) {
+    mainWindow.on(event, stabilizeNativeEditorHost);
+  }
+  mainWindow.webContents.on('did-finish-load', stabilizeNativeEditorHost);
 
   if (process.platform === 'darwin') {
     mainWindow.setWindowButtonVisibility(true);
