@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 pub(crate) fn metadata(transport: &str, slices: Vec<Value>) -> Value {
     json!({
-        "available": matches!(transport, "iosurface" | "dxgi"),
+        "available": matches!(transport, "iosurface" | "dxgi" | "x11"),
         "platform": transport,
         "slices": slices,
     })

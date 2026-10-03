@@ -316,6 +316,10 @@ const RENDERER_COMMANDS = [
   'native_renderer_set_record_target',
   'native_renderer_get_slice_output_state',
   'native_renderer_get_record_target_state',
+  // Linux Screens: the core presents into an X11 child of the Screen window.
+  'native_renderer_attach_slice_window',
+  'native_renderer_resize_slice_window',
+  'native_renderer_detach_slice_window',
   // In-core GPU recording (no per-frame readback); falls back to the
   // Electron readback recorder where the core cannot encode.
   'native_renderer_start_native_recording',
@@ -616,6 +620,14 @@ class NativeRendererBroker {
       case 'native_renderer_stop_native_recording':
         // Finalizing the MP4 writes the moov atom; give it room on a long take.
         return this.sendIfRunning('stop_native_recording', args, { fallback: null, timeoutMs: 60000 });
+      case 'native_renderer_attach_slice_window':
+        // Creating a window and a Vulkan surface takes a moment on a cold
+        // driver; the Screen window waits on the answer before it loads.
+        return this.sendIfRunning('attach_slice_window', args, { fallback: null, timeoutMs: 15000 });
+      case 'native_renderer_resize_slice_window':
+        return this.sendIfRunning('resize_slice_window', args, { fallback: null });
+      case 'native_renderer_detach_slice_window':
+        return this.sendIfRunning('detach_slice_window', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_native_recording_state':
         return this.sendIfRunning('native_recording_state', args, { fallback: null });
       default:

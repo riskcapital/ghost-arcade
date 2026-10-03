@@ -120,6 +120,14 @@ const ALLOW_CPU_TEXTURE_SHARE_FALLBACK =
   process.env.GA_ALLOW_CPU_TEXTURE_SHARE_FALLBACK === '1';
 const OSR_PAINT_FPS = Math.max(1, Math.min(240, Number(process.env.GA_OSR_PAINT_FPS || 60) || 60));
 app.commandLine.appendSwitch('force_high_performance_gpu');
+// Linux: stay on X11 (XWayland under a Wayland session). The render core
+// presents each Screen as an X11 child of its Electron window, which needs an
+// X11 window id to parent into; Electron would otherwise go native Wayland
+// whenever the session offers it. GA_LINUX_WAYLAND=1 opts out, at the cost of
+// native Screens. The core reads the same variable.
+if (process.platform === 'linux' && process.env.GA_LINUX_WAYLAND !== '1') {
+  app.commandLine.appendSwitch('ozone-platform', 'x11');
+}
 // Keep rendering when a window is fully covered by another window.
 // Chromium's native-occlusion tracker pauses BeginFrames for occluded
 // windows EVEN WITH backgroundThrottling:false — which froze rAF in the
@@ -3259,6 +3267,16 @@ function sliceMonitorName(sliceId) {
  *  render). Attaching against a stopped core would leave the projector
  *  permanently black instead of falling back. */
 async function probeSliceNativeAvailable() {
+  if (process.platform === 'linux') {
+    // No addon on Linux: the core presents Screens itself, into an X11 child
+    // window, and says whether it can.
+    try {
+      const probe = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
+      return !!probe?.available && probe?.platform === 'x11';
+    } catch {
+      return false;
+    }
+  }
   // Screens were macOS-only: probe, attach and pump were all gated on darwin
   // or on monitorSetIOSurface, so on Windows every Screen window fell back to
   // rendering the scene itself in the page with webgpu-disable=1 -- the
@@ -3315,7 +3333,62 @@ function attachSliceNativeLayer(sliceId, win) {
   }
 }
 
+/** Linux: hand the Screen window's X11 id to the core, which creates a child
+ *  window inside it and presents that Screen's composite with Vulkan. No
+ *  readback and no pump: the core draws it on its own frame, as it does the
+ *  output window. Electron keeps owning display placement and fullscreen; the
+ *  core only fills the window, and follows it as it resizes. */
+const sliceLinuxResizeHandlers = new Map(); // sliceId -> () => void
+
+function linuxSlicePhysicalSize(win) {
+  const [width, height] = win.getContentSize();
+  const scale = screen.getDisplayMatching(win.getBounds())?.scaleFactor || 1;
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+}
+
+async function attachSliceNativeLayerLinux(sliceId, win) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    const handle = win.getNativeWindowHandle();
+    if (!Buffer.isBuffer(handle) || handle.length < 4) return false;
+    // An X11 Window is an unsigned long: 8 bytes on 64-bit, 4 on 32-bit.
+    const x11Window = handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
+    const { width, height } = linuxSlicePhysicalSize(win);
+    const result = await nativeRendererBroker.invoke('native_renderer_attach_slice_window', {
+      slice_id: sliceId, x11_window: x11Window, width, height,
+    });
+    if (!result?.attached) return false;
+    sliceNativeAttached.add(sliceId);
+    const onResize = () => {
+      if (win.isDestroyed() || !sliceNativeAttached.has(sliceId)) return;
+      const size = linuxSlicePhysicalSize(win);
+      void nativeRendererBroker.invoke('native_renderer_resize_slice_window', { slice_id: sliceId, ...size })
+        .catch(() => {});
+    };
+    win.on('resize', onResize);
+    sliceLinuxResizeHandlers.set(sliceId, { win, onResize });
+    console.log(`[SliceNative] ${sliceId} presented by the core in X11 window 0x${x11Window.toString(16)} (${width}x${height}, ${result.format})`);
+    return true;
+  } catch (err) {
+    console.warn(`[SliceNative] Linux attach failed for ${sliceId}:`, err?.message || err);
+    return false;
+  } finally {
+    sliceNativePending.delete(sliceId);
+  }
+}
+
 function detachSliceNativeLayer(sliceId) {
+  if (process.platform === 'linux') {
+    sliceNativePending.delete(sliceId);
+    if (!sliceNativeAttached.has(sliceId)) return;
+    sliceNativeAttached.delete(sliceId);
+    const handler = sliceLinuxResizeHandlers.get(sliceId);
+    if (handler && !handler.win.isDestroyed()) handler.win.removeListener('resize', handler.onResize);
+    sliceLinuxResizeHandlers.delete(sliceId);
+    // The child window must go before Electron destroys its parent.
+    void nativeRendererBroker.invoke('native_renderer_detach_slice_window', { slice_id: sliceId }).catch(() => {});
+    return;
+  }
   sliceNativePending.delete(sliceId);
   if (!sliceNativeAttached.has(sliceId)) return;
   sliceNativeAttached.delete(sliceId);
@@ -6690,7 +6763,10 @@ function registerIpcHandlers() {
     enterSliceFullscreen(win);
     // Claim the window for native presentation before the page loads, so
     // the slice renderer's first state query already has the answer.
-    if (useNative && !attachSliceNativeLayer(sliceId, win)) {
+    const attached = useNative && (process.platform === 'linux'
+      ? await attachSliceNativeLayerLinux(sliceId, win)
+      : attachSliceNativeLayer(sliceId, win));
+    if (useNative && !attached) {
       sliceNativePending.delete(sliceId);
       win.destroy();
       return { ok: false, error: 'Could not attach the native Screen presenter. Close and reopen the screen; if this persists, export diagnostics. Calibration was not bypassed.' };
@@ -6716,7 +6792,7 @@ function registerIpcHandlers() {
     // Re-attach after load as a safety net; monitorAttach reuses the view
     // already registered under this name, so a second call is a no-op.
     win.webContents.once('did-finish-load', () => {
-      if (useNative && !sliceNativeAttached.has(sliceId)) attachSliceNativeLayer(sliceId, win);
+      if (useNative && !sliceNativeAttached.has(sliceId) && process.platform !== 'linux') attachSliceNativeLayer(sliceId, win);
     });
     win.on('closed', () => {
       // The layer is registered by slice id. A reopen closes the old window

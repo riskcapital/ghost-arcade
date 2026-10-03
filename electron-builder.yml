@@ -164,6 +164,27 @@ dmg:
 # admin install. .deb is the Ubuntu/Debian native package. Most VJ users on
 # Linux are on Ubuntu, so shipping both gives them a choice. No signing on
 # Linux (no equivalent to Authenticode / notarization in mainstream distros).
+# electron-builder's own deb defaults (app-builder-lib FpmTarget
+# getDefaultDepends), restated because setting `depends` replaces them, plus
+# what the native render core needs at runtime on Linux:
+#   - libasound2: clip audio plays through cpal's ALSA backend.
+#   - libxkbcommon-x11-0: winit's X11 backend loads it, and native Screens are
+#     presented as X11 children of their Electron windows. Without it the core
+#     falls back to Wayland and Screens are unavailable (it no longer crashes).
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2t64 | libasound2
+    - libxkbcommon-x11-0
+
 linux:
   target:
     - target: AppImage
