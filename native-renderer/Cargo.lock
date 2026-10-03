@@ -612,6 +612,7 @@ dependencies = [
  "bytemuck",
  "cpal",
  "image",
+ "libloading",
  "naga",
  "objc2 0.5.2",
  "objc2-app-kit",
