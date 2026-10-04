@@ -18,6 +18,12 @@ import { audioStore } from '../stores/audio';
 import { buildNativeAnchor, needsNativeReanchor, predictNativePlayheadSeconds } from '../media/nativeTransport';
 import { createNativeVideoScratchController } from '../renderer/nativeVideoScratch';
 
+// Order used by vj:<layer>:blend:next|prev (button-friendly blend cycling).
+const BLEND_CYCLE: BlendMode[] = [
+  'normal', 'add', 'screen', 'multiply', 'overlay', 'difference', 'lighten', 'darken',
+  'subtract', 'exclusion', 'hardlight', 'softlight', 'color-dodge', 'color-burn',
+];
+
 const videoScratch = createNativeVideoScratchController(key => {
   const [scope, index] = key.split(':');
   if (scope === 'map') {
@@ -259,6 +265,17 @@ class MidiRouter {
           break;
         case 'show':
           this.dispatchShow(parts, value);
+          break;
+        case 'tray':
+          // Media Library navigation + live-source recording. The tray owns
+          // its own state (active tab, browse cursor, recorders), so the
+          // router just forwards — same pattern as midi-stage-preset.
+          //   tray:tab:next|prev|<tabName>   tray:tab (relative encoder)
+          //   tray:next | tray:prev           tray:browse (encoder or knob)
+          //   tray:load                       tray:rec  |  tray:rec:<sourceIdx>
+          window.dispatchEvent(new CustomEvent('midi-tray', {
+            detail: { action: parts[1], arg: parts[2], value, mode: mapping.mode },
+          }));
           break;
       }
     } catch (err) {
@@ -545,6 +562,19 @@ class MidiRouter {
       return;
     }
 
+    // Tap tempo: vj:tap. Same as the TAP button (rising edge only).
+    if (layerPart === 'tap' && bank === 'A') {
+      if (value > 0) audioStore.tapTempo();
+      return;
+    }
+
+    // Output recording toggle: vj:rec. Rising edge starts / stops the same
+    // recorder as the VJ header REC button.
+    if (layerPart === 'rec' && bank === 'A') {
+      if (value > 0) window.dispatchEvent(new CustomEvent('midi-vj-rec'));
+      return;
+    }
+
     if (layerPart === 'master') {
       if (property === 'audiovolume') nativeAudioMaster.update(v => ({ ...v, volume: Math.max(0, Math.min(1, value)) }));
       if (property === 'audiomute' && value > 0) nativeAudioMaster.update(v => ({ ...v, muted: !v.muted }));
@@ -774,6 +804,18 @@ class MidiRouter {
         vjClipLauncher.setLayerOpacity(layerIndex, value, bank);
         break;
       case 'blend':
+        // Button stepping: vj:<layer>:blend:next | prev
+        if (parts[3] === 'next' || parts[3] === 'prev') {
+          if (value <= 0) break;
+          const st = get(vjClipLauncher);
+          const ls = bank === 'B' ? st.bankBLayerStates : st.layerStates;
+          const cur = (ls[layerIndex]?.blendMode ?? 'normal') as BlendMode;
+          const i = BLEND_CYCLE.indexOf(cur);
+          const n = BLEND_CYCLE.length;
+          const next = BLEND_CYCLE[((i < 0 ? 0 : i) + (parts[3] === 'next' ? 1 : -1) + n) % n];
+          vjClipLauncher.setLayerBlendMode(layerIndex, next, bank);
+          break;
+        }
         if (mapping.discreteValues) {
           const idx = Math.round(value);
           const blendVal = mapping.discreteValues[Math.min(idx, mapping.discreteValues.length - 1)];
@@ -792,6 +834,10 @@ class MidiRouter {
         break;
       case 'mute':
         if (value > 0) vjClipLauncher.toggleLayerMute(layerIndex, bank);
+        break;
+      case 'stop':
+        // Same as the layer strip's ■ button: clears the row on this deck only.
+        if (value > 0) vjClipLauncher.stopLayer(layerIndex, bank);
         break;
       case 'shader': {
         // parts: ['vj', '0', 'shader', 'speed']

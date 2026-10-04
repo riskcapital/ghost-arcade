@@ -20,6 +20,13 @@ export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'vj:master:opacity', label: 'VJ master opacity' },
   { path: 'vj:crossfader:value', label: 'A/B crossfader' },
   { path: 'vj:stopall', label: 'Stop all VJ clips' },
+  { path: 'vj:0:stop', label: 'Deck A layer 1 stop (clear the row)' },
+  { path: 'vj:rec', label: 'Start / stop output recording' },
+  { path: 'vj:tap', label: 'Tap tempo' },
+  { path: 'vj:0:blend:next', label: 'Deck A layer 1 next blend mode' },
+  { path: 'tray:browse', label: 'Media Library browse (encoder)' },
+  { path: 'tray:load', label: 'Load highlighted Media Library item' },
+  { path: 'tray:rec', label: 'Record highlighted live source to a clip' },
   { path: 'map:preset:0', label: 'Mapping preset 1' },
   { path: 'map:layer:opacity', label: 'Selected mapping layer opacity' },
   { path: 'map:media:play', label: 'Selected media play / pause' },
@@ -57,12 +64,18 @@ export function validateControlPath(path: string): ControlPathValidation {
 
   const parts = normalized.split(':');
   const scope = parts[0];
-  if (!['map', 'vj', 'vj-b', 'sv', 'show'].includes(scope)) {
+  if (!['map', 'vj', 'vj-b', 'sv', 'show', 'tray'].includes(scope)) {
     return {
       valid: false,
       normalized,
-      reason: 'Path must begin with map:, vj:, vj-b:, sv:, or show:.',
+      reason: 'Path must begin with map:, vj:, vj-b:, sv:, show:, or tray:.',
     };
+  }
+
+  if (scope === 'tray') {
+    return ['tab', 'next', 'prev', 'browse', 'load', 'rec'].includes(parts[1] ?? '')
+      ? { valid: true, normalized, reason: null }
+      : { valid: false, normalized, reason: 'Tray actions are tab, next, prev, browse, load, or rec.' };
   }
 
   if (scope === 'show') {
@@ -114,7 +127,7 @@ export function validateControlPath(path: string): ControlPathValidation {
         ? { valid: true, normalized, reason: null }
         : { valid: false, normalized, reason: 'Video actions are play, restart, mirror, position, or scratch.' };
     }
-    if (['opacity', 'blend', 'solo', 'mute', 'audiovolume', 'audiopan', 'autopilot', 'shader', 'splat', 'model3d', 'plugin'].includes(property ?? '')) {
+    if (['opacity', 'blend', 'solo', 'mute', 'stop', 'audiovolume', 'audiopan', 'autopilot', 'shader', 'splat', 'model3d', 'plugin'].includes(property ?? '')) {
       return { valid: true, normalized, reason: null };
     }
     return { valid: false, normalized, reason: `Unknown VJ layer property "${property ?? ''}".` };
@@ -140,7 +153,7 @@ export function validateControlPath(path: string): ControlPathValidation {
       ? { valid: true, normalized, reason: null }
       : { valid: false, normalized, reason: `The ${target} path needs a property or action.` };
   }
-  if (['mode', 'stopall', 'quantize', 'quantize-clear'].includes(target ?? '')) {
+  if (['mode', 'stopall', 'quantize', 'quantize-clear', 'rec', 'tap'].includes(target ?? '')) {
     return { valid: true, normalized, reason: null };
   }
 
