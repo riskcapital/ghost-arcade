@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
+import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MeshPointTangents, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
@@ -31,6 +31,7 @@ import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
 import { maxLayers } from './license';
 import { settings, migrateOutputSlice } from './settings';
+import { withMeshPointTangents } from '../utils/meshWarp';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
@@ -2442,7 +2443,9 @@ void main() {
         ...project,
         layers: project.layers.map((l) => {
           if (l.id !== id) return l;
-          return { ...l, meshGrid: createMeshGrid(rows, cols) };
+          // A new grid starts straight, but stays in Bezier mode if it was.
+          const bezier = l.meshGrid?.bezier ? { bezier: true } : {};
+          return { ...l, meshGrid: { ...createMeshGrid(rows, cols), ...bezier } };
         }),
       }));
       recordDiscreteAction();
@@ -2453,10 +2456,38 @@ void main() {
         ...project,
         layers: project.layers.map((l) => {
           if (l.id !== id || !l.meshGrid) return l;
-          return { ...l, meshGrid: createMeshGrid(l.meshGrid.rows, l.meshGrid.cols) };
+          const bezier = l.meshGrid.bezier ? { bezier: true } : {};
+          return { ...l, meshGrid: { ...createMeshGrid(l.meshGrid.rows, l.meshGrid.cols), ...bezier } };
         }),
       }));
       recordDiscreteAction();
+    },
+
+    // Bezier mesh: curved cell edges shaped by per-point tangent handles.
+    // Turning it off keeps the tangents on the grid but renders straight.
+    setMeshBezier(id: string, bezier: boolean) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== id || !l.meshGrid) return l;
+          return { ...l, meshGrid: { ...l.meshGrid, bezier } };
+        }),
+      }));
+      recordDiscreteAction();
+    },
+
+    /** Store one point's tangent handles. `null` clears them all, which
+     *  straightens every edge at that point. Sides left out of `tangents`
+     *  are removed, so the caller decides what stays linked. */
+    setMeshPointTangents(id: string, row: number, col: number, tangents: MeshPointTangents | null) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== id || !l.meshGrid) return l;
+          const meshGrid = withMeshPointTangents(l.meshGrid, row, col, tangents);
+          return meshGrid === l.meshGrid ? l : { ...l, meshGrid };
+        }),
+      }));
     },
 
     // Shape control point manipulation

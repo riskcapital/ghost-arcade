@@ -182,14 +182,43 @@
   </section>
 
   <!-- Slice ────────────────────────────────────────────────────────
-       Per-Screen geometric warp (corners/mesh) was removed — all
-       geometric warping is now done ONCE, globally, by the Master Warp.
-       A Screen is simply a rectangular SLICE of that warped total
-       output. Set the slice rectangle by dragging on the editor canvas
-       or the top-down preview; only orientation lives here. -->
+       A Screen takes a slice of the total (master-warped) output. By
+       default that slice is a rectangle; Corner pin and Mesh let one
+       projector sample a skewed or curved region of the master instead
+       (both Screen passes run the same forward map), with Bezier tangents
+       on the mesh.
+       Geometry is dragged on the editor canvas; orientation and the warp
+       shape live here. -->
   <section class="sec">
     <h4>Slice</h4>
-    <p class="hint">This screen takes a rectangular slice of the total (master-warped) output. Drag its rectangle on the canvas or the preview above to set it.</p>
+    <label class="field">
+      <span class="lbl">Shape</span>
+      <select aria-label="Screen warp shape" value={screen.warpMode ?? 'rect'}
+        onchange={(e) => screenActions.setWarpMode(screen.id, (e.target as HTMLSelectElement).value as 'rect' | 'corners' | 'mesh')}>
+        <option value="rect">Rectangle</option>
+        <option value="corners">Corner pin</option>
+        <option value="mesh">Mesh</option>
+      </select>
+    </label>
+    {#if (screen.warpMode ?? 'rect') === 'rect'}
+      <p class="hint">This screen takes a rectangular slice of the total (master-warped) output. Drag its rectangle on the canvas or the preview above to set it.</p>
+    {:else}
+      {#if screen.warpMode === 'mesh' && screen.meshGrid}
+        <label class="field check-field">
+          <input type="checkbox" aria-label="Bezier curves" checked={screen.meshGrid.bezier ?? false}
+            onchange={(e) => screenActions.setMeshBezier(screen.id, (e.target as HTMLInputElement).checked)} />
+          <span>Bezier curves</span>
+        </label>
+      {/if}
+      <p class="hint">
+        {screen.warpMode === 'mesh' && screen.meshGrid?.bezier
+          ? 'Drag the points on the canvas. Click a point to show its curve handles: drag one to bend, Alt-drag to move it on its own, double-click to straighten.'
+          : 'Drag the points on the canvas to choose what this screen samples from the master.'}
+      </p>
+      <div class="preset-strip">
+        <button class="chip-btn" onclick={() => screenActions.resetWarp(screen.id)}>Reset warp</button>
+      </div>
+    {/if}
     <label class="field">
       <span class="lbl">Rotation</span>
       <select value={screen.rotation} onchange={(e) => update({ rotation: parseInt((e.target as HTMLSelectElement).value) as 0 | 90 | 180 | 270 })}>
@@ -503,6 +532,13 @@
     margin-bottom: 7px;
   }
   .field:last-child { margin-bottom: 0; }
+  .field.check-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
   .field .lbl {
     flex: 0 0 66px;
     color: #918b9b;

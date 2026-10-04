@@ -262,10 +262,20 @@ export const screenActions = {
   resetWarp(screenId: string) {
     const s = get(screens).find(sc => sc.id === screenId);
     if (!s) return;
+    // A fresh grid starts straight, but stays in Bezier mode if it was.
+    const bezier = s.meshGrid?.bezier ? { bezier: true } : {};
     this.update(screenId, {
       corners: cornersFromRect(s),
-      meshGrid: meshFromRect(s),
+      meshGrid: { ...meshFromRect(s), ...bezier },
     });
+  },
+
+  /** Bezier mesh: curved cell edges shaped by per-point tangent handles.
+   *  Turning it off keeps the tangents on the grid but renders straight. */
+  setMeshBezier(screenId: string, bezier: boolean) {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s?.meshGrid) return;
+    this.update(screenId, { meshGrid: { ...s.meshGrid, bezier } });
   },
 
   // ─── Effect chain ─────────────────────────────────────────────────────

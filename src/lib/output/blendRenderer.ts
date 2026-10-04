@@ -32,6 +32,7 @@
 
 import * as THREE from 'three';
 import { projectorCalibrationUniforms } from './projectorCalibration';
+import { MESH_PATCH_GLSL, MESH_TANGENT_FLOATS, packMeshTangents } from './meshPatchShaders';
 import {
   packScreenMasks,
   SCREEN_MASK_MAX,
@@ -39,6 +40,7 @@ import {
   SCREEN_MASK_POINT_TEXELS,
   type PackedScreenMasks,
 } from '../stores/screenMaskGeometry';
+import type { MeshWarpGrid } from '../types';
 import type { OutputSlice, OutputWarp } from '../stores/settings';
 import { createDefaultSlice, identityOutputCorners } from '../stores/settings';
 
@@ -138,6 +140,11 @@ const FRAG_SHADER = /* glsl */ `
   uniform sampler2D uMeshTex;
   uniform int uMeshRows;
   uniform int uMeshCols;
+  // Bezier mesh: resolved tangents, two texels per point at (2*col, row)
+  // = (right.xy, down.xy) and (2*col + 1, row) = (left.xy, up.xy). Read only
+  // while uMeshBezier is 1, so straight meshes keep the bilinear cells.
+  uniform sampler2D uMeshTanTex;
+  uniform float uMeshBezier;
 
   // Rotation: 0/1/2/3 = 0/90/180/270 degrees.
   uniform int uRotation;
@@ -268,6 +275,24 @@ const FRAG_SHADER = /* glsl */ `
     return clamp(keep * cut, 0.0, 1.0);
   }
 
+${MESH_PATCH_GLSL}
+
+  vec4 meshTan(int ri, int ci, int which) {
+    vec2 uv = vec2((float(ci * 2 + which) + 0.5) / ${MAX_MESH * 2}.0, (float(ri) + 0.5) / ${MAX_MESH}.0);
+    return texture2D(uMeshTanTex, uv);
+  }
+
+  // One cell of a Bezier mesh as a Coons patch.
+  MeshPatch meshPatch(int ri, int ci) {
+    return mpBuild(
+      meshAt(ri, ci), meshAt(ri, ci + 1), meshAt(ri + 1, ci + 1), meshAt(ri + 1, ci),
+      meshTan(ri, ci, 0).xy, meshTan(ri, ci, 0).zw,
+      meshTan(ri, ci + 1, 1).xy, meshTan(ri, ci + 1, 0).zw,
+      meshTan(ri + 1, ci + 1, 1).xy, meshTan(ri + 1, ci + 1, 1).zw,
+      meshTan(ri + 1, ci, 0).xy, meshTan(ri + 1, ci, 1).zw
+    );
+  }
+
   void main() {
     vec2 uv = vUv;
     if (uCalibration[2].w < -0.5) { gl_FragColor=vec4(0.0,0.0,0.0,1.0); return; }
@@ -305,11 +330,16 @@ const FRAG_SHADER = /* glsl */ `
       int ri = int(clamp(floor(fy), 0.0, float(uMeshRows - 2)));
       float u = clamp(fx - float(ci), 0.0, 1.0);
       float v = clamp(fy - float(ri), 0.0, 1.0);
-      vec2 p00 = meshAt(ri,     ci);
-      vec2 p10 = meshAt(ri,     ci + 1);
-      vec2 p01 = meshAt(ri + 1, ci);
-      vec2 p11 = meshAt(ri + 1, ci + 1);
-      srcUv = mix(mix(p00, p10, u), mix(p01, p11, u), v);
+      if (uMeshBezier > 0.5) {
+        // A Bezier screen mesh is still a forward map: evaluate the patch.
+        srcUv = mpEval(meshPatch(ri, ci), vec2(u, v));
+      } else {
+        vec2 p00 = meshAt(ri,     ci);
+        vec2 p10 = meshAt(ri,     ci + 1);
+        vec2 p01 = meshAt(ri + 1, ci);
+        vec2 p11 = meshAt(ri + 1, ci + 1);
+        srcUv = mix(mix(p00, p10, u), mix(p01, p11, u), v);
+      }
     } else if (uWarpMode == 3) {
       // ─ Master warp: FORWARD / destination semantics (matches the
       //   layer "map mode" feel). The four corners are where the
@@ -336,6 +366,18 @@ const FRAG_SHADER = /* glsl */ `
           for (int ci = 0; ci < ${MAX_MESH} - 1; ci++) {
             if (ci >= uMeshCols - 1) break;
             if (found) continue;
+            if (uMeshBezier > 0.5) {
+              // Bezier Master Warp: the points are destinations, so invert
+              // the Coons patch (bounds reject, then Newton).
+              MeshPatch cell = meshPatch(ri, ci);
+              if (!mpContainsBounds(cell, q)) continue;
+              vec3 hit = mpUv(q, cell);
+              if (hit.x > 0.5) {
+                cellUv = vec2((float(ci) + hit.y) / float(uMeshCols - 1), (float(ri) + hit.z) / float(uMeshRows - 1));
+                found = true;
+              }
+              continue;
+            }
             vec2 a = meshAt(ri,     ci);
             vec2 b = meshAt(ri,     ci + 1);
             vec2 c = meshAt(ri + 1, ci + 1);
@@ -461,6 +503,54 @@ function packMeshToTexture(
   return tex;
 }
 
+// Bezier tangents for a slice's mesh (screen mesh or the Master Warp), in a
+// (MAX_MESH * 2) x MAX_MESH RGBA float texture; see uMeshTanTex.
+const meshTanCache = new Map<string, { tex: THREE.DataTexture; hash: string }>();
+let meshTanPlaceholder: THREE.DataTexture | null = null;
+const tangentScratch = new Float32Array(MAX_MESH * MAX_MESH * MESH_TANGENT_FLOATS);
+
+function makeTangentTexture(data: Float32Array): THREE.DataTexture {
+  const tex = new THREE.DataTexture(data, MAX_MESH * 2, MAX_MESH, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** The tangent texture for a curved mesh, or null to keep the bilinear path. */
+function meshTangentTextureFor(key: string, mesh: MeshWarpGrid | null | undefined): THREE.DataTexture | null {
+  if (!mesh || mesh.rows > MAX_MESH || mesh.cols > MAX_MESH) return null;
+  if (!packMeshTangents(mesh, tangentScratch, 0)) return null;
+  const hash = `${mesh.rows}x${mesh.cols}:${JSON.stringify(mesh.points)}:${JSON.stringify(mesh.tangents)}`;
+  const cached = meshTanCache.get(key);
+  if (cached && cached.hash === hash) return cached.tex;
+  const data = cached ? (cached.tex.image.data as Float32Array) : new Float32Array(MAX_MESH * 2 * MAX_MESH * 4);
+  data.fill(0);
+  // Re-stride rows from the grid's width to the texture's.
+  for (let r = 0; r < mesh.rows; r++) {
+    data.set(
+      tangentScratch.subarray(r * mesh.cols * MESH_TANGENT_FLOATS, (r + 1) * mesh.cols * MESH_TANGENT_FLOATS),
+      r * MAX_MESH * MESH_TANGENT_FLOATS,
+    );
+  }
+  if (cached) {
+    cached.tex.needsUpdate = true;
+    cached.hash = hash;
+    return cached.tex;
+  }
+  const tex = makeTangentTexture(data);
+  meshTanCache.set(key, { tex, hash });
+  return tex;
+}
+
+function applyMeshTangents(u: Record<string, { value: any }>, key: string, mesh: MeshWarpGrid | null | undefined): void {
+  const tex = meshTangentTextureFor(key, mesh);
+  u.uMeshBezier.value = tex ? 1 : 0;
+  u.uMeshTanTex.value = tex ?? (meshTanPlaceholder ??= makeTangentTexture(new Float32Array(MAX_MESH * 2 * MAX_MESH * 4)));
+}
+
 // Source mesh texture for a slice. Cached + content-hashed so drag
 // edits update GPU-side incrementally rather than reallocating.
 function meshTextureFor(slice: OutputSlice): THREE.DataTexture {
@@ -505,6 +595,8 @@ function screenOutputUniforms(): Record<string, { value: any }> {
     uMaskInfo: { value: new Float32Array(SCREEN_MASK_MAX * 4) },
     uMaskBounds: { value: new Float32Array(SCREEN_MASK_MAX * 4) },
     uMaskTex: { value: maskTextureFor(packScreenMasks(null)) },
+    uMeshTanTex: { value: null },
+    uMeshBezier: { value: 0 },
   };
 }
 
@@ -661,6 +753,10 @@ function applyWarpUniforms(
 
   const rotEnum = slice.rotation === 90 ? 1 : slice.rotation === 180 ? 2 : slice.rotation === 270 ? 3 : 0;
   u.uRotation.value = rotEnum;
+  // Bezier tangents for whichever mesh the dispatch above took (none for
+  // corners or rect, so a slice never inherits the previous one's).
+  const meshGrid = slice.meshGrid && slice.meshGrid.rows >= 2 && slice.meshGrid.cols >= 2 ? slice.meshGrid : null;
+  applyMeshTangents(u, slice.id, masterForward || mode === 'mesh' ? meshGrid : null);
   projectorCalibrationUniforms(slice).forEach((v, i) => u.uCalibration.value[i].fromArray(v));
   // The master warp's synthetic slice has no masks, and a screen's masks
   // do not belong on the whole composition either way.

@@ -7,6 +7,16 @@
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
   import { normalizedWarpNudge } from '../utils/warpNudge';
+  import {
+    MESH_CURVE_SEGMENTS,
+    meshEdgePoint,
+    meshTangentLinked,
+    meshTangentSides as tangentSides,
+    meshTangentsAfterDrag,
+    meshTangentsAfterStraighten,
+    resolveMeshTangents,
+    type MeshTangentSide,
+  } from '../utils/meshWarp';
 
   export let containerWidth: number = 800;
   export let containerHeight: number = 600;
@@ -22,6 +32,58 @@
 
   // Active cross-layer snap target for visual feedback
   let activeSnapTarget: SnapTarget | null = null;
+
+  // Bezier mesh: the tangent handle being dragged, and the one the arrow
+  // keys nudge (the last handle clicked on the selected point).
+  let tangentDrag: { row: number; col: number; side: MeshTangentSide } | null = null;
+  let selectedTangent: MeshTangentSide | null = null;
+
+  /** Store a new tangent for one handle (linked by default, Alt unlinks;
+   *  see meshTangentsAfterDrag). */
+  function writeTangent(row: number, col: number, side: MeshTangentSide, tangent: Point2D, unlink: boolean) {
+    const layer = $selectedLayer;
+    const grid = layer?.meshGrid;
+    if (!layer || !grid) return;
+    project.setMeshPointTangents(layer.id, row, col, meshTangentsAfterDrag(grid, row, col, side, tangent, unlink));
+  }
+
+  /** Double-click: put one handle back on the straight edge. */
+  function resetTangent(row: number, col: number, side: MeshTangentSide) {
+    const layer = $selectedLayer;
+    const grid = layer?.meshGrid;
+    if (!layer || !grid || layer.locked) return;
+    project.setMeshPointTangents(layer.id, row, col, meshTangentsAfterStraighten(grid, row, col, side));
+    history.record(get(project));
+  }
+
+  function handleTangentMouseDown(row: number, col: number, side: MeshTangentSide, e: MouseEvent) {
+    if ($selectedLayer?.locked) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cancelDrag(false);
+    tangentDrag = { row, col, side };
+    selectedTangent = side;
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  function handleTangentTouchStart(row: number, col: number, side: MeshTangentSide, e: TouchEvent) {
+    if ($selectedLayer?.locked) return;
+    e.preventDefault();
+    cancelDrag(false);
+    tangentDrag = { row, col, side };
+    selectedTangent = side;
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd);
+  }
+
+  function dragTangentTo(x: number, y: number, unlink: boolean) {
+    if (!tangentDrag || !$selectedLayer?.meshGrid) return;
+    const { row, col, side } = tangentDrag;
+    const local = pixelToMeshPoint(x, y, $selectedLayer.corners);
+    const point = $selectedLayer.meshGrid.points[row][col];
+    writeTangent(row, col, side, { x: local.x - point.x, y: local.y - point.y }, unlink);
+  }
 
   // Check if a mesh grid point is on the boundary (edge or corner of grid)
   function isBoundaryPoint(row: number, col: number): boolean {
@@ -110,6 +172,7 @@
     e.stopPropagation();
     cancelDrag(false);
     dragging = { row, col };
+    if (selectedPoint?.row !== row || selectedPoint?.col !== col) selectedTangent = null;
     selectedPoint = { row, col };  // Set selected point for keyboard navigation
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
@@ -151,7 +214,9 @@
         dx = step.x;
         break;
       case 'Escape':
-        selectedPoint = null;
+        // A selected tangent handle lets go first, then the point.
+        if (selectedTangent) selectedTangent = null;
+        else selectedPoint = null;
         return;
       default:
         return;
@@ -159,6 +224,18 @@
 
     e.preventDefault();
     e.stopPropagation();
+
+    // With a tangent handle picked on a Bezier mesh, the arrows move the
+    // handle (Alt unlinks it from its mirror) instead of the point.
+    const grid = $selectedLayer.meshGrid;
+    if (selectedTangent && grid.bezier
+      && tangentSides(grid, selectedPoint.row, selectedPoint.col).includes(selectedTangent)) {
+      const current = resolveMeshTangents(grid, selectedPoint.row, selectedPoint.col)[selectedTangent];
+      writeTangent(selectedPoint.row, selectedPoint.col, selectedTangent,
+        { x: current.x + dx, y: current.y + dy }, e.altKey);
+      history.record(get(project));
+      return;
+    }
 
     const newPos: Point2D = {
       x: currentPos.x + dx,
@@ -194,8 +271,9 @@
   }
 
   function cancelDrag(record = true) {
-    if (record && dragging) history.record(get(project));
+    if (record && (dragging || tangentDrag)) history.record(get(project));
     dragging = null;
+    tangentDrag = null;
     activeSnapTarget = null;
     removeMouseDragListeners();
     removeTouchDragListeners();
@@ -210,7 +288,13 @@
   }
 
   function handleMouseMove(e: MouseEvent) {
-    if (!dragging || !$selectedLayer || !containerEl) return;
+    if (!$selectedLayer || !containerEl) return;
+    if (tangentDrag) {
+      const rect = containerEl.getBoundingClientRect();
+      dragTangentTo((e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom, e.altKey);
+      return;
+    }
+    if (!dragging) return;
 
     const rect = containerEl.getBoundingClientRect();
     // Account for zoom transform when converting mouse position
@@ -260,11 +344,16 @@
   }
 
   function handleTouchMove(e: TouchEvent) {
-    if (!dragging || !$selectedLayer || !containerEl) return;
+    if ((!dragging && !tangentDrag) || !$selectedLayer || !containerEl) return;
     e.preventDefault();
 
     const touch = e.touches[0];
     const rect = containerEl.getBoundingClientRect();
+    if (tangentDrag) {
+      dragTangentTo((touch.clientX - rect.left) / zoom, (touch.clientY - rect.top) / zoom, false);
+      return;
+    }
+    if (!dragging) return;
     // Account for zoom transform when converting touch position
     const x = (touch.clientX - rect.left) / zoom;
     const y = (touch.clientY - rect.top) / zoom;
@@ -304,41 +393,77 @@
   $: meshGrid = $selectedLayer?.meshGrid;
   $: corners = $selectedLayer?.corners;
 
-  // Generate grid lines - transform mesh points through corner warp
-  function getGridLines(grid: MeshWarpGrid, corners: WarpCorners): Array<{ from: { x: number; y: number }; to: { x: number; y: number } }> {
-    const lines: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }> = [];
+  // Generate grid lines - transform mesh points through corner warp. Each
+  // cell edge is a polyline: two points when straight, and sampled along
+  // its cubic in Bezier mode, the same curve the compositor renders.
+  function edgePolyline(grid: MeshWarpGrid, corners: WarpCorners, r0: number, c0: number, r1: number, c1: number): string {
+    const steps = grid.bezier ? MESH_CURVE_SEGMENTS : 1;
+    const points: string[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const pixel = meshPointToPixel(meshEdgePoint(grid, r0, c0, r1, c1, i / steps), corners);
+      points.push(`${pixel.x},${pixel.y}`);
+    }
+    return points.join(' ');
+  }
+
+  function getGridLines(grid: MeshWarpGrid, corners: WarpCorners): string[] {
+    const lines: string[] = [];
 
     // Horizontal lines
     for (let r = 0; r < grid.rows; r++) {
       for (let c = 0; c < grid.cols - 1; c++) {
-        lines.push({
-          from: meshPointToPixel(grid.points[r][c], corners),
-          to: meshPointToPixel(grid.points[r][c + 1], corners),
-        });
+        lines.push(edgePolyline(grid, corners, r, c, r, c + 1));
       }
     }
 
     // Vertical lines
     for (let c = 0; c < grid.cols; c++) {
       for (let r = 0; r < grid.rows - 1; r++) {
-        lines.push({
-          from: meshPointToPixel(grid.points[r][c], corners),
-          to: meshPointToPixel(grid.points[r + 1][c], corners),
-        });
+        lines.push(edgePolyline(grid, corners, r, c, r + 1, c));
       }
     }
 
     return lines;
   }
 
-  $: gridLines = meshGrid && corners ? getGridLines(meshGrid, corners) : [];
+  // Tangent handles of the selected point, in pixels, while in Bezier mode.
+  function getTangentHandles(
+    grid: MeshWarpGrid,
+    corners: WarpCorners,
+    point: { row: number; col: number } | null,
+  ): Array<{ side: MeshTangentSide; x: number; y: number; linked: boolean }> {
+    if (!grid.bezier || !point || !grid.points[point.row]?.[point.col]) return [];
+    const origin = grid.points[point.row][point.col];
+    const tangents = resolveMeshTangents(grid, point.row, point.col);
+    return tangentSides(grid, point.row, point.col).map((side) => {
+      const pixel = meshPointToPixel({ x: origin.x + tangents[side].x, y: origin.y + tangents[side].y }, corners);
+      return { side, x: pixel.x, y: pixel.y, linked: meshTangentLinked(grid, point.row, point.col, side) };
+    });
+  }
+
+  // containerWidth/Height are named here so Svelte tracks them: they are read
+  // inside meshPointToPixel's closure, invisible to dependency tracking, so
+  // the mesh stayed at stale pixel positions after any canvas resize.
+  $: gridLines = meshGrid && corners && containerWidth > 0 && containerHeight > 0
+    ? getGridLines(meshGrid, corners)
+    : [];
 
   // Get screen positions for all mesh handles (transformed through corner warp)
   function getHandlePositions(grid: MeshWarpGrid, corners: WarpCorners): Array<Array<{ x: number; y: number }>> {
     return grid.points.map(row => row.map(point => meshPointToPixel(point, corners)));
   }
 
-  $: handlePositions = meshGrid && corners ? getHandlePositions(meshGrid, corners) : null;
+  $: handlePositions = meshGrid && corners && containerWidth > 0 && containerHeight > 0
+    ? getHandlePositions(meshGrid, corners)
+    : null;
+
+  // Handles follow the point being dragged, or the selected one.
+  $: tangentPoint = tangentDrag ?? dragging ?? selectedPoint;
+  $: tangentHandles = meshGrid && corners && containerWidth > 0 && containerHeight > 0
+    ? getTangentHandles(meshGrid, corners, tangentPoint)
+    : [];
+  $: tangentOrigin = tangentPoint && handlePositions ? handlePositions[tangentPoint.row]?.[tangentPoint.col] ?? null : null;
+  $: if (!meshGrid?.bezier) selectedTangent = null;
 </script>
 
 <div
@@ -350,16 +475,30 @@
     <!-- Grid lines -->
     <svg class="lines-overlay" width={containerWidth} height={containerHeight}>
       {#each gridLines as line}
-        <line
-          x1={line.from.x}
-          y1={line.from.y}
-          x2={line.to.x}
-          y2={line.to.y}
+        <polyline
+          points={line}
+          fill="none"
           stroke="#ff00aa"
           stroke-width="1"
           stroke-opacity="0.6"
         />
       {/each}
+
+      <!-- Tangent arms of the selected point (Bezier mode) -->
+      {#if tangentOrigin}
+        {#each tangentHandles as handle (handle.side)}
+          <line
+            x1={tangentOrigin.x}
+            y1={tangentOrigin.y}
+            x2={handle.x}
+            y2={handle.y}
+            stroke="#00d4ff"
+            stroke-width="1"
+            stroke-opacity="0.8"
+            stroke-dasharray={handle.linked ? undefined : '3,3'}
+          />
+        {/each}
+      {/if}
 
       <!-- Other layers' outlines (shown while dragging boundary points) -->
       {#if dragging && isBoundaryPoint(dragging.row, dragging.col) && $selectedLayer}
@@ -420,6 +559,28 @@
         </div>
       {/each}
     {/each}
+
+    <!-- Tangent handles: drag to bend (Alt-drag unlinks the pair),
+         double-click to straighten -->
+    {#if tangentPoint}
+      {#each tangentHandles as handle (handle.side)}
+        <div
+          class="tangent-handle"
+          class:unlinked={!handle.linked}
+          class:dragging={tangentDrag?.side === handle.side}
+          class:selected={selectedTangent === handle.side && !tangentDrag}
+          class:locked={$selectedLayer.locked}
+          style="left: {handle.x}px; top: {handle.y}px;"
+          onmousedown={(e) => handleTangentMouseDown(tangentPoint.row, tangentPoint.col, handle.side, e)}
+          ontouchstart={(e) => handleTangentTouchStart(tangentPoint.row, tangentPoint.col, handle.side, e)}
+          ondblclick={(e) => { e.preventDefault(); e.stopPropagation(); resetTangent(tangentPoint.row, tangentPoint.col, handle.side); }}
+          role="button"
+          tabindex="-1"
+          title="Drag to bend. Alt-drag to move this handle on its own. Double-click to straighten."
+          aria-label="Tangent {handle.side} of mesh point {tangentPoint.row},{tangentPoint.col}{handle.linked ? '' : ' (unlinked)'}"
+        ></div>
+      {/each}
+    {/if}
   {/if}
 </div>
 
@@ -497,6 +658,49 @@
   }
 
   .handle.locked {
+    background: #666;
+    cursor: not-allowed;
+  }
+
+  /* Bezier tangent handles: small diamonds, hollow once unlinked */
+  .tangent-handle {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    margin-left: -5px;
+    margin-top: -5px;
+    background: #00d4ff;
+    border: 1px solid #fff;
+    transform: rotate(45deg);
+    pointer-events: auto;
+    cursor: grab;
+    z-index: 52;
+  }
+
+  .mesh-warp-handles:not(.interaction-only) .tangent-handle {
+    transition: transform 0.1s ease;
+  }
+
+  .tangent-handle.unlinked {
+    background: transparent;
+    border: 2px solid #00d4ff;
+  }
+
+  .tangent-handle:hover,
+  .tangent-handle.dragging {
+    transform: rotate(45deg) scale(1.4);
+  }
+
+  .tangent-handle.dragging {
+    cursor: grabbing;
+  }
+
+  .tangent-handle.selected {
+    box-shadow: 0 0 8px #00d4ff;
+    transform: rotate(45deg) scale(1.3);
+  }
+
+  .tangent-handle.locked {
     background: #666;
     cursor: not-allowed;
   }

@@ -143,6 +143,25 @@ describe('screen mask presses', () => {
   });
 });
 
+describe('screen mesh Bezier', () => {
+  const meshOf = () => get(screensModule.screens).find(s => s.id === 'screen-a')!.meshGrid!;
+
+  it('toggles Bezier on a mesh screen and keeps it through a reset', () => {
+    screensModule.screenActions.setWarpMode('screen-a', 'mesh');
+    expect(meshOf().bezier).toBeUndefined();
+    screensModule.screenActions.setMeshBezier('screen-a', true);
+    expect(meshOf().bezier).toBe(true);
+    screensModule.screenActions.update('screen-a', {
+      meshGrid: { ...meshOf(), tangents: meshOf().points.map(row => row.map(() => ({ right: { x: 0.1, y: 0 } }))) },
+    });
+    screensModule.screenActions.resetWarp('screen-a');
+    expect(meshOf().bezier).toBe(true);
+    expect(meshOf().tangents).toBeUndefined();
+    screensModule.screenActions.setMeshBezier('screen-a', false);
+    expect(meshOf().bezier).toBe(false);
+  });
+});
+
 describe('curved screen mask editing', () => {
   function withArch() {
     const id = screensModule.screenActions.addMask('screen-a')!;

@@ -12,6 +12,7 @@
 import type { OutputSlice } from '../stores/settings';
 import { projectorCalibrationUniforms } from './projectorCalibration';
 import { packScreenMasks, SCREEN_MASK_MAX } from '../stores/screenMaskGeometry';
+import { MESH_PATCH_WGSL, MESH_TANGENT_FLOATS, packMeshTangents } from './meshPatchShaders';
 
 export const SLICE_SHADER_WGSL = /* wgsl */ `
 @group(0) @binding(0) var uSampler: sampler;
@@ -27,13 +28,15 @@ struct SliceUniform {
 @group(0) @binding(2) var<uniform> uSlice: SliceUniform;
 
 // Everything about where the picture lands, packed by writeSliceGeometry:
-//   warp   = (mode 0 rect / 1 corners / 2 mesh, mesh rows, mesh cols, _)
+//   warp   = (mode 0 rect / 1 corners / 2 mesh, mesh rows, mesh cols, bezier)
 //   c0, c1 = corner quad (TL.xy, TR.xy) and (BR.xy, BL.xy), canvas 0..1
 //   cal    = projector calibration (projectorCalibration.ts), y-down here
 //   smask  = (mask count, keep-mask count, _, _); per mask info is
 //            (first vertex, vertex count, feather, invert) and bounds the
 //            padded vertex bounds (screenMaskGeometry.ts packScreenMasks)
 //   mesh / smask_pts = points two per vec4 (mesh row-major, up to 32x32)
+//   mesh_tan = resolved Bezier tangents, two vec4 per mesh point:
+//            (right.xy, down.xy), (left.xy, up.xy); read only while warp.w is 1
 struct SliceGeometry {
   warp: vec4<f32>,
   c0: vec4<f32>,
@@ -44,8 +47,29 @@ struct SliceGeometry {
   smask_bounds: array<vec4<f32>, 8>,
   mesh: array<vec4<f32>, 512>,
   smask_pts: array<vec4<f32>, 512>,
+  mesh_tan: array<vec4<f32>, 2048>,
 };
 @group(0) @binding(3) var<uniform> uGeom: SliceGeometry;
+${MESH_PATCH_WGSL}
+
+fn meshTan(index: i32, which: i32) -> vec4<f32> {
+  return uGeom.mesh_tan[clamp(index * 2 + which, 0, 2047)];
+}
+
+/// One cell of a Bezier screen mesh as a Coons patch.
+fn meshPatch(ri: i32, ci: i32, cols: i32) -> MeshPatch {
+  let ia = ri * cols + ci;
+  let ib = ia + 1;
+  let id = ia + cols;
+  let ic = id + 1;
+  return mp_build(
+    meshPoint(ia), meshPoint(ib), meshPoint(ic), meshPoint(id),
+    meshTan(ia, 0).xy, meshTan(ia, 0).zw,
+    meshTan(ib, 1).xy, meshTan(ib, 0).zw,
+    meshTan(ic, 1).xy, meshTan(ic, 1).zw,
+    meshTan(id, 0).xy, meshTan(id, 1).zw,
+  );
+}
 
 struct VSOut {
   @builtin(position) clip: vec4<f32>,
@@ -182,6 +206,10 @@ fn sliceSourceUv(uv: vec2<f32>) -> vec2<f32> {
     let ri = i32(clamp(floor(fy), 0.0, f32(rows - 2)));
     let u = clamp(fx - f32(ci), 0.0, 1.0);
     let v = clamp(fy - f32(ri), 0.0, 1.0);
+    if (uGeom.warp.w > 0.5) {
+      // A Bezier screen mesh is still a forward map: evaluate the patch.
+      return mp_eval(meshPatch(ri, ci, cols), vec2<f32>(u, v));
+    }
     let p00 = meshPoint(ri * cols + ci);
     let p10 = meshPoint(ri * cols + ci + 1);
     let p01 = meshPoint((ri + 1) * cols + ci);
@@ -310,7 +338,8 @@ const GEOM_SMASK_INFO = 36;
 const GEOM_SMASK_BOUNDS = GEOM_SMASK_INFO + SCREEN_MASK_MAX * 4;
 const GEOM_MESH = GEOM_SMASK_BOUNDS + SCREEN_MASK_MAX * 4;
 const GEOM_SMASK_PTS = GEOM_MESH + 512 * 4;
-export const SLICE_GEOMETRY_FLOATS = GEOM_SMASK_PTS + 512 * 4;
+const GEOM_MESH_TAN = GEOM_SMASK_PTS + 512 * 4;
+export const SLICE_GEOMETRY_FLOATS = GEOM_MESH_TAN + 1024 * MESH_TANGENT_FLOATS;
 const MAX_SLICE_MESH_POINTS = 1024; // 32 x 32, as blendRenderer
 
 /** SliceGeometry (binding 3): where the picture lands. Same self-healing as
@@ -342,6 +371,8 @@ export function packSliceGeometry(s: OutputSlice, g: Float32Array): void {
         g[i + 1] = p?.y ?? 0;
       }
     }
+    // Curved cells only when a point actually carries a tangent.
+    g[GEOM_WARP + 3] = packMeshTangents(mesh, g, GEOM_MESH_TAN, MAX_SLICE_MESH_POINTS) ? 1 : 0;
   }
   // projectorCalibrationUniforms is written for blendRenderer's y-up UV;
   // this shader is y-down, so the homography is solved on the corners as

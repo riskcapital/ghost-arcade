@@ -3,6 +3,7 @@
 
 import type { ProjectorCalibration, OverlapBand } from '../output/projectorCalibration';
 import { writable, get } from 'svelte/store';
+import { meshGridHasTangents } from '../utils/meshWarp';
 import { invoke, isDesktopApp } from '$lib/bridge';
 import type { WarpCorners, MeshWarpGrid, Effect, Point2D, BezierPoint } from '../types';
 
@@ -590,6 +591,8 @@ export function masterWarpIsActive(warp?: OutputWarp | null): boolean {
   );
   if (cornersWarped) return true;
   const g = warp.meshGrid;
+  // A Bezier handle bends the output without moving a point.
+  if (meshGridHasTangents(g)) return true;
   if (g && g.rows >= 2 && g.cols >= 2) {
     for (let r = 0; r < g.rows; r++) {
       for (let cc = 0; cc < g.cols; cc++) {
