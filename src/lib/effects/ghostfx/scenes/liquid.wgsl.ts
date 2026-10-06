@@ -451,13 +451,13 @@ fn csBubbles(@builtin(global_invocation_id) gid: vec3<u32>) {
     let speed = length(fluidVel);
     let dyeHere = dyeField[index];
     let density = dyeHere.a;
-    let chance = clamp((speed * 2.4 + u.beatPulse * 0.9 + u.energy * 0.4)
+    let chance = clamp((speed * 2.4 + u.energy * 0.45 + u.energy * 0.4)
       * step(0.12, density) * u.bubbleRate, 0.0, 0.9);
     if (hash11(s + 77.3) < chance * dt * 12.0) {
       b.pos = probe;
       // Inherit fluid motion, kick "up" (−y) with spread.
       let spread = (hash11(s + 5.1) - 0.5) * 0.5;
-      b.vel = fluidVel * 0.85 + vec2<f32>(spread, -(0.35 + speed * 0.55 + u.beatPulse * 0.4));
+      b.vel = fluidVel * 0.85 + vec2<f32>(spread, -(0.35 + speed * 0.55 + u.energy * 0.2));
       b.life = 0.7 + hash11(s + 13.7) * 1.1;
       b.size = u.splatRadius * (0.10 + hash11(s + 41.3) * 0.22);
       b.hue = fract(u.hueShift + hash11(s + 3.3) * 0.35);

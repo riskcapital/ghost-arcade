@@ -64,69 +64,25 @@
     }
   }
 
-  // Track slice windows opened via window.open (zero-copy path) so we
-  // can close them locally without the editor losing the reference.
-  const _zeroCopySliceWindows = new Map<string, Window>();
-
   async function openOnDisplay(s: OutputSlice) {
     if (!isDesktopApp || s.displayId == null) return;
-    // Zero-copy path: open the slice window via window.open so it lives
-    // in the SAME renderer process as the editor. SliceOutputApp can
-    // then read the editor's already-warped presentCanvas via
-    // window.opener.document and crop its region from that — no local
-    // re-render, no fragile hidden-canvas → texture upload. Master warp
-    // applies on the slice display automatically because the source is
-    // the editor's WGSL-warped canvas.
-    const zeroCopy = !!$settings.experimental?.outputZeroCopy;
-    if (zeroCopy) {
-      try {
-        await invoke('configure_next_output_window', {
-          displayId: s.displayId,
-          fullscreen: true,
-        });
-        const url = new URL(window.location.href);
-        url.search = `?mode=slice-display&sliceId=${encodeURIComponent(s.id)}&webgpu-disable=1`;
-        const newWin = window.open(url.toString(), `ga-slice-${s.id}`, 'popup=true');
-        if (!newWin) {
-          alert('Slice display window failed to open. Check popup-blocker behaviour.');
-          return;
-        }
-        _zeroCopySliceWindows.set(s.id, newWin);
-        // Attach this slice window as an additional output target. The
-        // editor's pump fan-outs each VideoFrame to all attached ports —
-        // Fullscreen and slices can coexist. The slice window receives the
-        // same warped frame and crops its own region from it.
-        const { attachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
-        attachOutputWindow(newWin, `slice:${s.id}`);
-        console.log(`[ScreenPanel] slice ${s.id} opened on display ${s.displayId} [zero-copy]`);
-        refreshOpenWindows();
-        return;
-      } catch (err) {
-        console.error('[ScreenPanel] zero-copy open failed, falling back to IPC path:', err);
-        // fall through to legacy IPC
-      }
+    // Always use the native Screen texture. The legacy VideoFrame window
+    // bypasses destination calibration, source warp and screen masks.
+    try {
+      const result = await invoke<{ ok: boolean; error?: string }>('output_open_slice_window', {
+        sliceId: s.id, displayId: s.displayId,
+      });
+      if (!result?.ok) throw new Error(result?.error || 'Screen output could not open.');
+      screenOutputError.set(null);
+    } catch (error) {
+      screenOutputError.set(error instanceof Error ? error.message : String(error));
     }
-    await invoke('output_open_slice_window', { sliceId: s.id, displayId: s.displayId }).catch(() => {});
-    refreshOpenWindows();
+    await refreshOpenWindows();
   }
   async function closeOnDisplay(s: OutputSlice) {
     if (!isDesktopApp) return;
-    // Close the zero-copy window proxy locally first if we opened it
-    // via window.open. Electron's did-create-window listener also tracks
-    // it in `sliceWindows`, so the editor's `output_close_slice_window`
-    // IPC also closes it as a belt-and-suspenders. Either path works.
-    const zc = _zeroCopySliceWindows.get(s.id);
-    if (zc && !zc.closed) {
-      try { zc.close(); } catch { /* */ }
-      _zeroCopySliceWindows.delete(s.id);
-    }
-    // Detach from the presenter so the pump stops fan-out to a dead port.
-    try {
-      const { detachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
-      detachOutputWindow(`slice:${s.id}`);
-    } catch { /* */ }
     await invoke('output_close_slice_window', { sliceId: s.id }).catch(() => {});
-    refreshOpenWindows();
+    await refreshOpenWindows();
   }
 
   // ─── Master-canvas helpers ──────────────────────────────────────────

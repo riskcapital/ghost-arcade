@@ -256,3 +256,16 @@ describe('Screen source', () => {
     expect(migrateOutputSlice({ id: 's3', mapSimProjectorId: '' }).mapSimProjectorId).toBeNull();
   });
 });
+
+ it('preserves calibrated crops through migration and removing another output', () => {
+   const calibrated = settingsModule.migrateOutputSlice({ ...settingsModule.createDefaultSlice('screen-a','A','A'),cropX:.12,cropW:.6,
+     projectorCalibration:{enabled:true,corners:[{x:.1,y:.1},{x:.9,y:.1},{x:1,y:1},{x:0,y:1}]},
+     overlapBand:{enabled:true,side:'left',startTop:.45,startBottom:.4,endTop:.55,endBottom:.6} });
+   const roundTrip=settingsModule.migrateOutputSlice(JSON.parse(JSON.stringify(calibrated)));
+   expect(roundTrip.projectorCalibration).toEqual(calibrated.projectorCalibration);
+   expect(roundTrip.overlapBand).toEqual(calibrated.overlapBand);
+   settingsModule.settings.update(s=>({...s,output:{...s.output,slices:[roundTrip,settingsModule.createDefaultSlice('b','B','B')]}}));
+   screensModule.screenActions.remove('b');
+   expect(get(settingsModule.settings).output.slices[0].cropX).toBe(.12);
+   expect(get(settingsModule.settings).output.slices[0].cropW).toBe(.6);
+ });

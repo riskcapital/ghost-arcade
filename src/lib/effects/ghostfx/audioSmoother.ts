@@ -154,15 +154,15 @@ export class AudioSmoother {
       // Re-sync: nudge phase toward 0 rather than snapping. A snap
       // would create exactly the kind of flinch we're avoiding.
       const overshoot = this.state.beatPhase;
-      this.state.beatPhase = overshoot * 0.25; // soft pull instead of slam
+      this.phaseRate += (overshoot > 0.5 ? 1 - overshoot : -overshoot) * 0.08; // soft pull instead of slam
       this.lastBeatCount = audio.beat.beatCount;
       this.lastBeatAt = performance.now();
       // Beat pulse — the only signal that fires on the edge. Used
       // sparingly in shader for sparkle / specular.
-      this.state.beatPulse = Math.max(this.state.beatPulse, audio.beat.beatIntensity ?? 1);
+      // Beat events steer the phase; light follows the continuous envelope below.
     }
     this.state.beatPhase = (this.state.beatPhase + dt * this.phaseRate) % 1;
-    this.state.beatPulse *= Math.pow(0.5, dt / 0.15);
+    this.state.beatPulse = smoothTowards(this.state.beatPulse, this.state.bassSlow * 0.5 + this.state.energy * 0.5, 400, dt);
 
     return this.state;
   }

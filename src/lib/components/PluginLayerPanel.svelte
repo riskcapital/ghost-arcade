@@ -1,4 +1,23 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { mediaPipeSource } from '../mediapipe/mediaPipeSource';
+  let handStatus = '';
+  onMount(() => {
+    const refresh = () => {
+      if (effectSource?.effectType !== 'handfx') return;
+      if (getVal('handfxInput', 'live') === 'demo') { handStatus = 'Rehearsal · virtual hands'; return; }
+      const error = mediaPipeSource.getError();
+      if (error) { handStatus = `Camera error: ${error}`; return; }
+      if (mediaPipeSource.isStarting()) { handStatus = 'Starting camera and loading hand tracker…'; return; }
+      const count = mediaPipeSource.getLastFrame().hands.length;
+      handStatus = mediaPipeSource.isRunning()
+        ? count ? `${count} hand${count === 1 ? '' : 's'} tracked${getVal('handfxMode', 'bridge') === 'bridge' && count < 2 ? ' · Energy Bridge needs two hands' : ''}` : 'Camera ready · bring your hands into view'
+        : 'Waiting for camera';
+    };
+    refresh();
+    const timer = setInterval(refresh, 300);
+    return () => clearInterval(timer);
+  });
   import { project, selectedLayerId, selectedLayer } from '../stores/layers';
   import { getPluginByEffectType } from '../plugins/registry';
   import type { MediaSource, IntegratedEffectSource } from '../types';
@@ -54,6 +73,26 @@
 
     commitEffectSource(updated);
   }
+
+  function changeMovement(direction: -1 | 1 | 'random') {
+    const key = effectSource?.effectType === 'ghostfx' ? 'ghostfxScenePreset' : 'handfxMode';
+    const def = pluginManifest?.paramDefs.find(def => def.param === key);
+    const options = def?.options ?? [];
+    if (options.length < 2) return;
+    const current = Math.max(0, options.findIndex(option => option.value === getVal(key, def?.default)));
+    const step = direction === 'random' ? 1 + Math.floor(Math.random() * (options.length - 1)) : direction;
+    setParam(key, options[(current + step + options.length) % options.length].value);
+  }
+
+  const gestureGuides: Record<string, string> = {
+    bridge: 'Two hands stretch the bridge. Move them together to compress its energy.',
+    orbit: 'Each palm carries an orbital field. Pinch to contract it; open your hand to expand.',
+    lasers: 'Spread your fingers to fan the beams. Rotate your hands to aim them.',
+    portal: 'Carry a star tunnel in each palm. Pinch to narrow it; open to expand the gates.',
+    web: 'Spread your fingers to stretch an electric web. Curl and rotate your hands to reshape it.',
+    silk: 'Open your hands to unfurl flowing silk. Aim with your wrist; pinch to gather the strands.',
+    bursts: 'Pinch thumb and index to spray. Release to let the particles drift away.',
+  };
 
   function colorToHex(value: any, fallback: any): string {
     const color = Array.isArray(value) ? value : fallback;
@@ -146,11 +185,25 @@
       />
     {/if}
 
+    {#if effectSource.effectType === 'ghostfx' || effectSource.effectType === 'handfx'}
+      <div class="movement-nav" aria-label="Visual movements">
+        <button title="Previous movement" onclick={() => changeMovement(-1)}>← Previous</button>
+        <button title="Choose a different random movement" onclick={() => changeMovement('random')}>Shuffle</button>
+        <button title="Next movement" onclick={() => changeMovement(1)}>Next →</button>
+      </div>
+    {/if}
+    {#if effectSource.effectType === 'ghostfx'}
+      <div class="handfx-guide">
+        <span class="handfx-eyebrow">AUDIO / MOTION / LIGHT</span>
+        <p>Choose a movement, then shape its motion and light. Audio follows the app’s connected input; visuals keep moving in silence.</p>
+      </div>
+    {/if}
     {#if effectSource.effectType === 'handfx'}
       <div class="handfx-guide">
         <span class="handfx-eyebrow">HAND PERFORMANCE</span>
-        <p>{getVal('handfxInput', 'live') === 'demo' ? 'Rehearsal animates two virtual hands. Switch to Live hands and enable Camera On to perform.' : 'Enable Camera On, then bring your hands into view. Audio response follows the app’s connected audio input.'}</p>
-        <p class="handfx-gesture">{getVal('handfxMode', 'trails') === 'bridge' ? 'Two hands stretch the bridge. Move them together to compress its energy.' : getVal('handfxMode', 'trails') === 'orbit' ? 'Each palm carries an orbital field. Pinch to contract it; open your hand to expand.' : getVal('handfxMode', 'trails') === 'lasers' ? 'Spread your fingers to fan the beams. Rotate your hands to aim them.' : getVal('handfxMode', 'trails') === 'bursts' ? 'Pinch thumb and index to spray. Release to let the particles drift away.' : 'Move your hands to shape the visual. Layer it over video using Add or Screen blend.'}</p>
+        <p role="status">{handStatus}</p>
+        <p>{getVal('handfxInput', 'live') === 'demo' ? 'Rehearsal animates two virtual hands. Switch to Live hands to perform.' : 'Bring your hands into view. Show Camera and Camera Opacity control the selfie background; tracking stays on.'}</p>
+        <p class="handfx-gesture">{gestureGuides[getVal('handfxMode', 'bridge')] ?? 'Move your hands to shape the visual. Layer it over video using Add or Screen blend.'}</p>
       </div>
     {/if}
 
@@ -170,8 +223,8 @@
             data-midi-discrete={optValues.join(',')}
           >
             <span class="label">{def.name}</span>
-            {#if effectSource.effectType === 'handfx'}
-              <select aria-label={def.name} value={getVal(def.param, def.default)} onchange={(e) => setParam(def.param, e.currentTarget.value)}>
+            {#if effectSource.effectType === 'handfx' || effectSource.effectType === 'ghostfx'}
+              <select aria-label={def.name} value={getVal(def.param, def.default)} onchange={(e) => setParam(def.param, def.options?.find(opt => String(opt.value) === e.currentTarget.value)?.value ?? e.currentTarget.value)}>
                 {#each (def.options || []) as opt}<option value={opt.value}>{opt.label}</option>{/each}
               </select>
             {:else}
@@ -242,11 +295,15 @@
 {/if}
 
 <style>
+  .movement-nav { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 12px 0; }
+  .movement-nav button { min-height: 40px; min-width: 0; padding: 6px; border: 1px solid #344057; border-radius: 6px; background: #172235; color: #dce9fa; font: inherit; font-size: 12px; cursor: pointer; }
+  .movement-nav button:hover { background: #233c65; border-color: #7299d5; }
+  .movement-nav button:focus-visible { outline: 2px solid #8dc8ff; outline-offset: 2px; }
   .handfx-guide { padding: 14px; margin: 10px 0 16px; border: 1px solid #304a78; border-radius: 10px; background: linear-gradient(135deg, #142542, #101820); }
   .handfx-eyebrow { color: #a9c6fa; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
   .handfx-guide p { color: #bac8dc; font-size: 12px; line-height: 1.5; margin: 8px 0 0; }
   .handfx-guide .handfx-gesture { color: #e1edff; }
-  .control-row select { width: 100%; min-height: 34px; padding: 6px 9px; color: #e1edff; background: #101722; border: 1px solid #34445d; border-radius: 7px; font: inherit; font-size: 12px; }
+  .control-row select { box-sizing: border-box; min-width: 0; max-width: 100%; text-overflow: ellipsis; width: 100%; min-height: 34px; padding: 6px 9px; color: #e1edff; background: #101722; border: 1px solid #34445d; border-radius: 7px; font: inherit; font-size: 12px; }
 
   .panel-empty {
     padding: 20px;
@@ -256,6 +313,10 @@
   }
 
   .plugin-panel {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -276,6 +337,7 @@
   }
 
   .header-text {
+    min-width: 0;
     display: flex;
     flex-direction: column;
   }
@@ -343,6 +405,8 @@
   }
 
   .control-row {
+    min-width: 0;
+    box-sizing: border-box;
     padding: 5px 8px;
     border-radius: 4px;
   }
@@ -369,7 +433,9 @@
 
   .sel-btn {
     flex: 1;
-    min-width: 40px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
     padding: 4px 6px;
     background: var(--bg-tertiary, #1a1a22);
     border: 1px solid #333;
@@ -436,7 +502,9 @@
 
   .slider-row input[type="range"] {
     flex: 1;
-    height: 3px;
+    min-width: 0;
+    width: 0;
+    height: 18px;
     -webkit-appearance: none;
     background: #2a2a38;
     border-radius: 2px;

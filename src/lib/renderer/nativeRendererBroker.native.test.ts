@@ -1044,6 +1044,47 @@ describe('native renderer broker capability overlay', () => {
     expect(status.last_rpc_error).toContain('timed out handling status');
     expect(status.last_rpc_error_method).toBe('status');
   });
+
+  it('keeps confirmed capabilities when a later capability refresh times out', async () => {
+    // A busy core answering get_capabilities slowly used to wipe the broker
+    // back to default capabilities AND mark the backend not ready, so the
+    // editor preview detached and every feature gate closed until the next
+    // status poll. Once the core has answered, a timeout is transient.
+    const broker = createBroker({ encoderAvailable: true });
+    const confirmed = {
+      ...broker.capabilities,
+      features: { ...broker.capabilities.features, native_output_mirror_texture: true, frame_snapshot: true },
+      implemented_methods: ['status', 'get_capabilities', 'frame_snapshot'],
+    };
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      return confirmed;
+    };
+    await broker.refreshCapabilities({ requireCore: true });
+    broker.lastStatus = { ...broker.lastStatus, backend_ready: true };
+    expect(broker.coreCapabilitiesConfirmed).toBe(true);
+    expect(broker.capabilities.features.native_output_mirror_texture).toBe(true);
+
+    broker.send = async () => {
+      throw new Error('Native render core timed out handling get_capabilities');
+    };
+    const after = await broker.invoke('native_renderer_get_capabilities');
+
+    expect(broker.coreCapabilitiesConfirmed).toBe(true);
+    expect(after.features.native_output_mirror_texture).toBe(true);
+    expect(after.implemented_methods).toContain('frame_snapshot');
+    expect(broker.lastStatus.backend_ready).toBe(true);
+  });
+
+  it('still falls back to defaults when the core never answered the handshake', async () => {
+    const broker = createBroker({ encoderAvailable: true });
+    broker.send = async () => {
+      throw new Error('Native render core timed out handling get_capabilities');
+    };
+    await expect(broker.refreshCapabilities({ requireCore: true })).rejects.toThrow('timed out');
+    expect(broker.coreCapabilitiesConfirmed).toBe(false);
+    expect(broker.capabilities.features.native_output_mirror_texture).toBe(false);
+  });
 });
 
 describe('clip transition RPC bridge', () => {

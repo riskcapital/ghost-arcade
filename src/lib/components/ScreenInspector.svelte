@@ -19,6 +19,7 @@
    * same store, so warp-handle drags and slider edits both reflect
    * live on the editor canvas.
    */
+  import ProjectorCalibrationPanel from './ProjectorCalibrationPanel.svelte';
   import { onMount } from 'svelte';
   import type { OutputSlice } from '../stores/settings';
   import { screenActions, selectedScreenMaskId, screenMaskPlacing } from '../stores/screens';
@@ -304,6 +305,8 @@
       </select>
     </label>
   </section>
+
+  <ProjectorCalibrationPanel {screen} />
 
   <!-- Masks ─────────────────────────────────────────────────────────
        Polygon masks cut from this screen's frame after its crop and

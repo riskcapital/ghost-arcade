@@ -115,7 +115,51 @@ describe('native plugin graphs (runtime, real core)', () => {
     expect(Number(status.shader_precompile_compiled ?? 0)).toBeGreaterThanOrEqual(expected);
   }, 30000);
 
-  itIfNativeCore.each(['bridge', 'orbit', 'lasers'])('renders HandFX %s without a camera', async (mode) => {
+  itIfNativeCore('composites a live camera beneath HandFX, mirrors it and dims it independently', async () => {
+    const cameraSourceId = 'hand-camera-test';
+    const sourceId = 'hand-camera-output';
+    const pixels = Buffer.from(Array.from({ length: 32 * 16 }, (_, i) => i % 32 < 16 ? [255, 0, 0, 255] : [0, 0, 255, 255]).flat());
+    await rpc!.send('submit_commands', { commands: [
+      { type: 'upload_source_frame', source_id: cameraSourceId, width: 32, height: 16, seq: 1, rgba_b64: pixels.toString('base64') },
+      { type: 'upsert_layer', layer_id: 'camera-test', opacity: 1, blend_mode: 'normal', corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } } },
+      { type: 'bind_media_source', layer_id: 'camera-test', source_id: sourceId, uri: 'camera-test://out', source_type: 'image' },
+    ] });
+    async function render(opacity: number, mirror = true, demo = false, showCamera = true) {
+      const built = buildNativePluginGraph({ kind: 'handfx', sourceId, cameraSourceId, cameraMirror: mirror,
+        params: { handfxMode: 'web', handfxInput: demo ? 'demo' : 'live', handfxCameraOpacity: opacity, handfxCameraOn: showCamera },
+        width: 320, height: 180, time: 1, frameDelta: 1 / 60, frameIndex: 1, reset: true,
+        audio: { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 } });
+      await rpc!.send('compute_graph', built.config);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const shot = await rpc!.send('frame_snapshot', { include_pixels: true });
+      const bytes = Buffer.from(shot.rgba_b64, 'base64');
+      const offset = (Math.floor(shot.height / 2) * shot.width + Math.floor(shot.width / 4)) * 4;
+      const rgb = Array.from(bytes.subarray(offset, offset + 3));
+      if (String(shot.format).toLowerCase().startsWith('bgra')) [rgb[0], rgb[2]] = [rgb[2], rgb[0]];
+      return { rgb, bytes, shot };
+    }
+    const full = await render(1);
+    expect(full.rgb, JSON.stringify(full.rgb)).toEqual([0, 0, 255]);
+    expect(full.rgb[0]).toBeLessThan(10);
+    const normal = await render(1, false);
+    expect(normal.rgb[0]).toBeGreaterThan(240);
+    const dim = await render(0.5);
+    expect(dim.rgb[2]).toBeGreaterThan(40);
+    expect(dim.rgb[2]).toBeLessThan(full.rgb[2] - 30);
+    const hidden = await render(0);
+    expect(Math.max(...hidden.rgb)).toBeLessThan(5);
+    const switchedOff = await render(1, true, false, false);
+    expect(Math.max(...switchedOff.rgb)).toBeLessThan(5);
+    const graphics = await render(1, true, true, false);
+    expect(Number(graphics.shot.nonzero_pixels)).toBeGreaterThan(100);
+    // A new input frame replaces the old camera image without reinstalling the shaders.
+    await rpc!.send('submit_commands', { commands: [{ type: 'upload_source_frame', source_id: cameraSourceId,
+      width: 32, height: 16, seq: 2, rgba_b64: Buffer.from(Array.from({ length: 512 }, () => [0, 255, 0, 255]).flat()).toString('base64') }] });
+    expect((await render(1)).rgb[1]).toBeGreaterThan(240);
+    await rpc!.send('submit_commands', { commands: [{ type: 'remove_layer', layer_id: 'camera-test' }] });
+  }, 15000);
+
+  itIfNativeCore.each(['bridge', 'orbit', 'lasers', 'portal', 'web', 'silk'])('renders HandFX %s without a camera', async (mode) => {
     const layerId = 'handfx-runtime';
     const sourceId = 'plugin:handfx:runtime';
     const params = { handfxMode: mode, handfxInput: 'demo', handfxCameraOn: false, handfxPalette: 'ocean' };
@@ -131,6 +175,48 @@ describe('native plugin graphs (runtime, real core)', () => {
       { type: 'set_native_graph_layer', layer_id: layerId, kind: 'handfx', instrument_source_id: sourceId,
         composite_source_id: sourceId, input_source_id: null, effect_graph: built.config, params },
       { type: 'bind_media_source', layer_id: layerId, source_id: sourceId, uri: 'plugin://handfx', source_type: 'video' },
+    ] });
+    let snapshot: any = {};
+    for (let attempt = 0; attempt < 80; attempt++) {
+      snapshot = await rpc!.send('frame_snapshot', { include_pixels: !!process.env.HANDFX_CAPTURE_DIR });
+      if (Number(snapshot.nonzero_pixels) > 576 && Number(snapshot.max_luma) > 0.05) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const status = await rpc!.send('status');
+    expect(Number(status.shader_precompile_failed), String(status.last_shader_error ?? '')).toBe(0);
+    expect(Number(snapshot.nonzero_pixels), mode).toBeGreaterThan(576);
+    expect(Number(snapshot.max_luma), mode).toBeGreaterThan(0.05);
+    if (process.env.HANDFX_CAPTURE_DIR) {
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      mkdirSync(process.env.HANDFX_CAPTURE_DIR, { recursive: true });
+      writeFileSync(join(process.env.HANDFX_CAPTURE_DIR, mode + '.json'), JSON.stringify(snapshot));
+    }
+    await rpc!.send('submit_commands', { commands: [{ type: 'remove_layer', layer_id: layerId }] });
+    // Verify the next case cannot pass by seeing a previous mode's stale frame.
+    for (let attempt = 0; attempt < 80; attempt++) {
+      snapshot = await rpc!.send('frame_snapshot', { include_pixels: false });
+      if (Number(snapshot.nonzero_pixels) === 0) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    expect(Number(snapshot.nonzero_pixels)).toBe(0);
+  }, 15000);
+
+  itIfNativeCore.each(['hyperdrive', 'tidal', 'mandala', 'corona'])('renders GhostFX %s in the native renderer', async (mode) => {
+    const layerId = 'ghostfx-voyage-runtime';
+    const sourceId = 'plugin:ghostfx:voyage-runtime';
+    const params = { ghostfxScenePreset: mode, ghostfxVignette: 0.15 };
+    const built = buildNativePluginGraph({
+      kind: 'ghostfx', sourceId, params, width: 320, height: 180,
+      time: 1, frameDelta: 1 / 60, frameIndex: 60, reset: true,
+      audio: { active: true, bass: 0.7, mid: 0.4, treble: 0.3, energy: 0.6, beatPhase: 0.25, beatPulse: 0.5, amplitude: 0.5 },
+    });
+    await rpc!.send('submit_commands', { commands: [
+      { type: 'upsert_layer', layer_id: layerId, z_index: 0, opacity: 1, blend_mode: 'normal',
+        corners: { topLeft: { x: 0, y: 0 }, topRight: { x: 1, y: 0 }, bottomRight: { x: 1, y: 1 }, bottomLeft: { x: 0, y: 1 } } },
+      { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+      { type: 'set_native_graph_layer', layer_id: layerId, kind: 'ghostfx', instrument_source_id: sourceId,
+        composite_source_id: sourceId, input_source_id: null, effect_graph: built.config, params },
+      { type: 'bind_media_source', layer_id: layerId, source_id: sourceId, uri: 'plugin://ghostfx', source_type: 'video' },
     ] });
     let snapshot: any = {};
     for (let attempt = 0; attempt < 80; attempt++) {

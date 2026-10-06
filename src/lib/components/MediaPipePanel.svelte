@@ -15,7 +15,7 @@
   let devices: { deviceId: string; label: string }[] = [];
   let pickedDeviceId = '';
   let useGesture = true;
-  let mirror = true;
+  let mirror = mediaPipeStore.source.isMirrored();
   let numHands = 2;
 
   $: state = $mediaPipeStore;
@@ -42,7 +42,8 @@
     // Reuse the source's hidden <video> for the preview by moving it
     // into the wrap and giving it visible styles. Avoids stealing the
     // camera with a second getUserMedia call.
-    video.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+    video.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+    video.style.transform = mediaPipeStore.source.isMirrored() ? 'scaleX(-1)' : 'none';
     if (video.parentElement !== previewWrap) previewWrap.appendChild(video);
   }
 
@@ -61,10 +62,14 @@
     if (!overlayCanvas || !overlayCtx) return;
     const video = mediaPipeStore.source.getVideoElement();
     if (!video) return;
+    video.style.transform = mediaPipeStore.source.isMirrored() ? 'scaleX(-1)' : 'none';
     const w = overlayCanvas.width = previewWrap?.clientWidth ?? 320;
     const h = overlayCanvas.height = previewWrap?.clientHeight ?? 240;
     overlayCtx.clearRect(0, 0, w, h);
     if (!frame.hands.length) return;
+    const scale = Math.min(w / (video.videoWidth || w), h / (video.videoHeight || h));
+    const vw = (video.videoWidth || w) * scale, vh = (video.videoHeight || h) * scale;
+    const ox = (w - vw) / 2, oy = (h - vh) / 2;
     overlayCtx.lineWidth = 1.5;
     for (const hand of frame.hands) {
       const color = hand.handedness === 'Left' ? '#FF6B6B' : '#FF8585';
@@ -74,13 +79,13 @@
       for (const [a, b] of HAND_CONNECTIONS) {
         const A = hand.landmarks[a], B = hand.landmarks[b];
         if (!A || !B) continue;
-        overlayCtx.moveTo(A.x * w, A.y * h);
-        overlayCtx.lineTo(B.x * w, B.y * h);
+        overlayCtx.moveTo(ox + A.x * vw, oy + A.y * vh);
+        overlayCtx.lineTo(ox + B.x * vw, oy + B.y * vh);
       }
       overlayCtx.stroke();
       for (const lm of hand.landmarks) {
         overlayCtx.beginPath();
-        overlayCtx.arc(lm.x * w, lm.y * h, 2, 0, Math.PI * 2);
+        overlayCtx.arc(ox + lm.x * vw, oy + lm.y * vh, 2, 0, Math.PI * 2);
         overlayCtx.fill();
       }
     }
@@ -158,7 +163,7 @@
       </select>
     </div>
     <div class="mp-row mp-row-inline">
-      <label><input type="checkbox" bind:checked={mirror} /> Mirror (selfie)</label>
+      <label><input type="checkbox" bind:checked={mirror} onchange={(e) => mediaPipeStore.source.setMirror(e.currentTarget.checked)} /> Mirror (selfie)</label>
       <label><input type="checkbox" bind:checked={useGesture} /> Canned gestures</label>
       <label>Hands
         <select bind:value={numHands}>

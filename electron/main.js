@@ -120,6 +120,14 @@ const ALLOW_CPU_TEXTURE_SHARE_FALLBACK =
   process.env.GA_ALLOW_CPU_TEXTURE_SHARE_FALLBACK === '1';
 const OSR_PAINT_FPS = Math.max(1, Math.min(240, Number(process.env.GA_OSR_PAINT_FPS || 60) || 60));
 app.commandLine.appendSwitch('force_high_performance_gpu');
+// Linux: stay on X11 (XWayland under a Wayland session). The render core
+// presents each Screen as an X11 child of its Electron window, which needs an
+// X11 window id to parent into; Electron would otherwise go native Wayland
+// whenever the session offers it. GA_LINUX_WAYLAND=1 opts out, at the cost of
+// native Screens. The core reads the same variable.
+if (process.platform === 'linux' && process.env.GA_LINUX_WAYLAND !== '1') {
+  app.commandLine.appendSwitch('ozone-platform', 'x11');
+}
 // Keep rendering when a window is fully covered by another window.
 // Chromium's native-occlusion tracker pauses BeginFrames for occluded
 // windows EVEN WITH backgroundThrottling:false — which froze rAF in the
@@ -1255,14 +1263,27 @@ async function writeMp4FrameEncoderFrameFile(args = {}) {
 
 async function captureLiveMp4Frame(args = {}, clockOwned = false) {
     const job = activeMp4FrameEncoderJobs.get(String(args.jobId || ''));
-    if (!job || job.settled || job.cancelled || job.closing) return { success: false, error: 'Recording encoder is not running' };
-    if (job.liveClock && !clockOwned) return { success: false, error: 'Recording capture is owned by the live clock' };
-    if (job.captureBusy) return { success: false, error: 'Recording capture already in progress' };
+    // These used to fail silently. A refused capture stops the live clock, so
+    // one quiet refusal left a take "recording" into an empty file with
+    // nothing in the log to say why. Report each reason once per take.
+    const refuse = (error) => {
+      if (job) {
+        job.refusalsLogged ??= new Set();
+        if (!job.refusalsLogged.has(error)) {
+          job.refusalsLogged.add(error);
+          console.warn(`[Recorder] live capture refused (frames ${args.fromIndex}-${args.toIndex}, written ${job.writtenFrames}): ${error}`);
+        }
+      }
+      return { success: false, error };
+    };
+    if (!job || job.settled || job.cancelled || job.closing) return refuse('Recording encoder is not running');
+    if (job.liveClock && !clockOwned) return refuse('Recording capture is owned by the live clock');
+    if (job.captureBusy) return refuse('Recording capture already in progress');
     const from = Number(args.fromIndex), to = Number(args.toIndex);
     if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from !== job.writtenFrames || to < from || to - from >= 120) {
-      return { success: false, error: 'Invalid recording frame range' };
+      return refuse('Invalid recording frame range');
     }
-    if (job.pixelFormat !== 'bgra') return { success: false, error: 'Native live capture requires BGRA' };
+    if (job.pixelFormat !== 'bgra') return refuse('Native live capture requires BGRA');
     job.captureBusy = true;
     try {
       const { createNativeFrameSink } = require('./native-frame-stream.cjs');
@@ -1276,6 +1297,9 @@ async function captureLiveMp4Frame(args = {}, clockOwned = false) {
       return { success: true, snapshot };
     } catch (error) {
       // A partial raw frame cannot safely be retried into the same encoder.
+      // Say why before cancelling: every later frame only reports "Recording
+      // encoder is not running", so this is the one place the cause survives.
+      console.warn(`[Recorder] live frame capture failed at frame ${job.writtenFrames}; cancelling the take:`, error?.message || error);
       await cancelMp4FrameEncoderJob(job.id);
       return { success: false, error: error?.message || String(error) };
     } finally { job.captureBusy = false; }
@@ -3243,6 +3267,16 @@ function sliceMonitorName(sliceId) {
  *  render). Attaching against a stopped core would leave the projector
  *  permanently black instead of falling back. */
 async function probeSliceNativeAvailable() {
+  if (process.platform === 'linux') {
+    // No addon on Linux: the core presents Screens itself, into an X11 child
+    // window, and says whether it can.
+    try {
+      const probe = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
+      return !!probe?.available && probe?.platform === 'x11';
+    } catch {
+      return false;
+    }
+  }
   // Screens were macOS-only: probe, attach and pump were all gated on darwin
   // or on monitorSetIOSurface, so on Windows every Screen window fell back to
   // rendering the scene itself in the page with webgpu-disable=1 -- the
@@ -3253,7 +3287,8 @@ async function probeSliceNativeAvailable() {
   // driving exactly this pair on both platforms.
   if (!isMac && !isWin) return false;
   const addon = nativePreviewAddon || loadNativePreviewAddon();
-  if (!addon || typeof addon.monitorAttach !== 'function') return false;
+  const setter = isWin ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
+  if (!addon || typeof addon.monitorAttach !== 'function' || typeof addon[setter] !== 'function') return false;
   try {
     const probe = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
     return !!probe?.available;
@@ -3298,7 +3333,62 @@ function attachSliceNativeLayer(sliceId, win) {
   }
 }
 
+/** Linux: hand the Screen window's X11 id to the core, which creates a child
+ *  window inside it and presents that Screen's composite with Vulkan. No
+ *  readback and no pump: the core draws it on its own frame, as it does the
+ *  output window. Electron keeps owning display placement and fullscreen; the
+ *  core only fills the window, and follows it as it resizes. */
+const sliceLinuxResizeHandlers = new Map(); // sliceId -> () => void
+
+function linuxSlicePhysicalSize(win) {
+  const [width, height] = win.getContentSize();
+  const scale = screen.getDisplayMatching(win.getBounds())?.scaleFactor || 1;
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+}
+
+async function attachSliceNativeLayerLinux(sliceId, win) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    const handle = win.getNativeWindowHandle();
+    if (!Buffer.isBuffer(handle) || handle.length < 4) return false;
+    // An X11 Window is an unsigned long: 8 bytes on 64-bit, 4 on 32-bit.
+    const x11Window = handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
+    const { width, height } = linuxSlicePhysicalSize(win);
+    const result = await nativeRendererBroker.invoke('native_renderer_attach_slice_window', {
+      slice_id: sliceId, x11_window: x11Window, width, height,
+    });
+    if (!result?.attached) return false;
+    sliceNativeAttached.add(sliceId);
+    const onResize = () => {
+      if (win.isDestroyed() || !sliceNativeAttached.has(sliceId)) return;
+      const size = linuxSlicePhysicalSize(win);
+      void nativeRendererBroker.invoke('native_renderer_resize_slice_window', { slice_id: sliceId, ...size })
+        .catch(() => {});
+    };
+    win.on('resize', onResize);
+    sliceLinuxResizeHandlers.set(sliceId, { win, onResize });
+    console.log(`[SliceNative] ${sliceId} presented by the core in X11 window 0x${x11Window.toString(16)} (${width}x${height}, ${result.format})`);
+    return true;
+  } catch (err) {
+    console.warn(`[SliceNative] Linux attach failed for ${sliceId}:`, err?.message || err);
+    return false;
+  } finally {
+    sliceNativePending.delete(sliceId);
+  }
+}
+
 function detachSliceNativeLayer(sliceId) {
+  if (process.platform === 'linux') {
+    sliceNativePending.delete(sliceId);
+    if (!sliceNativeAttached.has(sliceId)) return;
+    sliceNativeAttached.delete(sliceId);
+    const handler = sliceLinuxResizeHandlers.get(sliceId);
+    if (handler && !handler.win.isDestroyed()) handler.win.removeListener('resize', handler.onResize);
+    sliceLinuxResizeHandlers.delete(sliceId);
+    // The child window must go before Electron destroys its parent.
+    void nativeRendererBroker.invoke('native_renderer_detach_slice_window', { slice_id: sliceId }).catch(() => {});
+    return;
+  }
   sliceNativePending.delete(sliceId);
   if (!sliceNativeAttached.has(sliceId)) return;
   sliceNativeAttached.delete(sliceId);
@@ -3498,7 +3588,7 @@ function attachNativeEditorPreview(rectArgs = {}) {
 }
 
 function stabilizeNativeEditorHost() {
-  if (process.platform !== 'darwin' || !mainWindow || mainWindow.isDestroyed()) return false;
+  if (!['darwin', 'win32'].includes(process.platform) || !mainWindow || mainWindow.isDestroyed()) return false;
   const addon = loadNativePreviewAddon();
   if (!addon || typeof addon.stabilizeHost !== 'function') return false;
   try {
@@ -3546,7 +3636,7 @@ function detachNativeEditorPreview(reason = 'detach') {
   stopNativeEditorPreviewPump(reason);
   const addon = nativePreviewAddon;
   if (addon && typeof addon.detach === 'function') {
-    try { addon.detach(); } catch (err) {
+    try { addon.detach(reason === 'app-quit'); } catch (err) {
       nativePreviewAddonLoadError = err?.message || String(err);
     }
   }
@@ -6620,6 +6710,9 @@ function registerIpcHandlers() {
     // while the WebGL fallback needs opaque black so the desktop never
     // shows through before its first painted frame.
     const useNative = await probeSliceNativeAvailable();
+    if ((isMac || isWin) && !useNative) {
+      return { ok: false, error: 'Native Screen output is unavailable. Wait for the renderer to start, then open the screen again. No uncalibrated fallback output was opened.' };
+    }
     if (useNative) sliceNativePending.add(sliceId);
 
     // Resolve the target display. Falls back to the primary display if
@@ -6670,8 +6763,13 @@ function registerIpcHandlers() {
     enterSliceFullscreen(win);
     // Claim the window for native presentation before the page loads, so
     // the slice renderer's first state query already has the answer.
-    if (useNative && !attachSliceNativeLayer(sliceId, win)) {
+    const attached = useNative && (process.platform === 'linux'
+      ? await attachSliceNativeLayerLinux(sliceId, win)
+      : attachSliceNativeLayer(sliceId, win));
+    if (useNative && !attached) {
       sliceNativePending.delete(sliceId);
+      win.destroy();
+      return { ok: false, error: 'Could not attach the native Screen presenter. Close and reopen the screen; if this persists, export diagnostics. Calibration was not bypassed.' };
     }
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
@@ -6694,7 +6792,7 @@ function registerIpcHandlers() {
     // Re-attach after load as a safety net; monitorAttach reuses the view
     // already registered under this name, so a second call is a no-op.
     win.webContents.once('did-finish-load', () => {
-      if (useNative && !sliceNativeAttached.has(sliceId)) attachSliceNativeLayer(sliceId, win);
+      if (useNative && !sliceNativeAttached.has(sliceId) && process.platform !== 'linux') attachSliceNativeLayer(sliceId, win);
     });
     win.on('closed', () => {
       // The layer is registered by slice id. A reopen closes the old window
@@ -8331,6 +8429,7 @@ function setupPermissions() {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
+    show: false,
     width: 1600,
     height: 900,
     minWidth: 1200,
@@ -8384,7 +8483,16 @@ function createMainWindow() {
   // owning NSWindow itself opaque before the first renderer frame arrives.
   // The native addon reapplies this contract on every preview attach/update.
   stabilizeNativeEditorHost();
-  mainWindow.once('ready-to-show', stabilizeNativeEditorHost);
+  mainWindow.once('ready-to-show', () => {
+    stabilizeNativeEditorHost();
+    mainWindow?.show();
+  });
+  // Electron can recreate/reconfigure its native host on fullscreen and
+  // renderer navigation. Reassert the backing without painting over Chromium.
+  for (const event of ['show', 'hide', 'minimize', 'restore', 'enter-full-screen', 'leave-full-screen', 'resize', 'move']) {
+    mainWindow.on(event, stabilizeNativeEditorHost);
+  }
+  mainWindow.webContents.on('did-finish-load', stabilizeNativeEditorHost);
 
   if (process.platform === 'darwin') {
     mainWindow.setWindowButtonVisibility(true);

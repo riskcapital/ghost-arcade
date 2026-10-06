@@ -2275,6 +2275,7 @@
         previewMirror.release();
         previewMirror = null;
         previewMirrorCtx = null;
+        nativeMirrorPreviewActive = false;
         if (canvas.width && canvas.height) {
           const ctx = canvas.getContext('2d');
           ctx?.clearRect(0, 0, canvas.width, canvas.height);
@@ -2293,6 +2294,9 @@
           const { getNativeRendererCapabilities } = await import('$lib/api/native-renderer');
           const caps = await getNativeRendererCapabilities() as any;
           const preview = caps?.native_editor_preview;
+          // A platform that cannot export a shared texture will never grow a
+          // presenter, so there is nothing to wait for.
+          nativePresenterUnsupported = caps?.output_shared_texture_export?.platform === 'unsupported';
           // `parented` is the live report that a presenter owns the viewport.
           if (preview?.parented === true) {
             // Settled: a presenter exists. Stop checking, and undo the mirror
@@ -2307,7 +2311,7 @@
           // No presenter yet. Within the grace window this is probably just
           // startup, so wait rather than paying for a readback we will throw
           // away a second later.
-          if (now - previewFallbackFirstCheckAt < PREVIEW_FALLBACK_GRACE_MS) return;
+          if (!nativePresenterUnsupported && now - previewFallbackFirstCheckAt < PREVIEW_FALLBACK_GRACE_MS) return;
 
           const { acquireNativeCompositeMirror } = await import('$lib/sync/nativeCompositeMirror');
           previewMirror = acquireNativeCompositeMirror({ maxDim: 1024, fps: 30 });
@@ -2322,7 +2326,9 @@
             console.warn('[EditorPreview] no 2D context available for the composite fallback');
             return;
           }
-          console.log('[EditorPreview] no native presenter after grace period; mirroring composite into the editor canvas');
+          console.log(nativePresenterUnsupported
+            ? '[EditorPreview] this platform has no shared-texture export; showing the composite through the CPU mirror'
+            : '[EditorPreview] no native presenter after grace period; mirroring composite into the editor canvas');
         } catch (err) {
           console.warn('[EditorPreview] composite fallback unavailable:', err);
         }
@@ -2342,6 +2348,9 @@
         const h = Math.round(src.height * scale);
         previewMirrorCtx.clearRect(0, 0, dw, dh);
         previewMirrorCtx.drawImage(src, Math.round((dw - w) / 2), Math.round((dh - h) / 2), w, h);
+        // Only now is there a picture; readiness waits for this, not for the
+        // mirror merely being acquired, so the overlay never lifts onto black.
+        if (!nativeMirrorPreviewActive) nativeMirrorPreviewActive = true;
       }
 
       nativeTeardownCallbacks.push(() => {
@@ -6388,6 +6397,10 @@
           fx.init(renderer);
           fx.setParams({
             scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
+            voyageMotion: effectSource.ghostfxVoyageMotion ?? 0.6,
+            voyageDetail: effectSource.ghostfxVoyageDetail ?? 6,
+            voyageDepth: effectSource.ghostfxVoyageDepth ?? 1,
+            voyagePalette: effectSource.ghostfxVoyagePalette ?? 0,
             sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
             hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
             bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
@@ -6451,7 +6464,7 @@
           hx.init(renderer);
           hx.setParams({
             mode:                effectSource.handfxMode                ?? 'trails',
-            cameraOn:            effectSource.handfxCameraOn            ?? false,
+            cameraOn:            effectSource.handfxCameraOn            ?? true,
             smoothing:           effectSource.handfxSmoothing           ?? 0.15,
             predictMs:           effectSource.handfxPredictMs           ?? 18,
             showHelp:            effectSource.handfxShowHelp            ?? true,
@@ -6476,7 +6489,7 @@
             sprayIntensity:      effectSource.handfxSprayIntensity      ?? 1.5,
             sprayThreshold:      effectSource.handfxSprayThreshold      ?? 0.25,
             showCamera:          effectSource.handfxShowCamera          ?? false,
-            cameraOpacity:       effectSource.handfxCameraOpacity       ?? 0.5,
+            cameraOpacity:       effectSource.handfxCameraOpacity       ?? 1,
           });
           effectCtx.handfx = hx;
         }
@@ -7001,7 +7014,7 @@
         }
         hx.setParams({
           mode:                effectSource.handfxMode                ?? 'trails',
-          cameraOn:            effectSource.handfxCameraOn            ?? false,
+          cameraOn:            effectSource.handfxCameraOn            ?? true,
           smoothing:           effectSource.handfxSmoothing           ?? 0.15,
           predictMs:           effectSource.handfxPredictMs           ?? 18,
           showHelp:            effectSource.handfxShowHelp            ?? true,
@@ -7026,7 +7039,7 @@
           sprayIntensity:      effectSource.handfxSprayIntensity      ?? 1.5,
           sprayThreshold:      effectSource.handfxSprayThreshold      ?? 0.25,
           showCamera:          effectSource.handfxShowCamera          ?? false,
-          cameraOpacity:       effectSource.handfxCameraOpacity       ?? 0.5,
+          cameraOpacity:       effectSource.handfxCameraOpacity       ?? 1,
         });
         hx.render(renderer, effectCtx.renderTarget);
       }
@@ -7143,6 +7156,10 @@
         }
         fx.setParams({
           scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
+            voyageMotion: effectSource.ghostfxVoyageMotion ?? 0.6,
+            voyageDetail: effectSource.ghostfxVoyageDetail ?? 6,
+            voyageDepth: effectSource.ghostfxVoyageDepth ?? 1,
+            voyagePalette: effectSource.ghostfxVoyagePalette ?? 0,
           sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
           hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
           exposure:           effectSource.ghostfxExposure           ?? 0,
@@ -7249,6 +7266,16 @@
   export let nativePrimary: boolean = false;
   export let nativePresenterSuspended: boolean = false;
   let nativeCorePreviewIsReady = false;
+  /** The editor is showing the core's composite through the CPU mirror rather
+   *  than a native presenter. On a platform with no shared-texture export --
+   *  Linux today -- that is the only way a frame reaches the editor, so the
+   *  canvas IS the picture: it must stay visible, and the preview counts as
+   *  ready once the mirror has drawn. */
+  let nativeMirrorPreviewActive = false;
+  /** The core reported that this platform cannot export a shared texture at
+   *  all, so no native presenter will ever attach. Read from capability, not
+   *  the platform string, so a future Linux presenter switches over by itself. */
+  let nativePresenterUnsupported = false;
   let nativeEnginePendingVisible = false;
   let nativeEnginePendingTitle = '';
   let nativeEnginePendingDetail = '';
@@ -7256,14 +7283,19 @@
     const previewSourceReady = $nativeRendererRuntime.readinessChecks
       ?.find((check) => check.id === 'native-editor-preview-frame-source')
       ?.ok === true;
+    // Readiness used to require a shared-texture export outright. Linux has
+    // none, so the viewport sat on "Native engine starting -- waiting for core
+    // frame source" forever while the core rendered perfectly well behind it:
+    // that, not the renderer, is what "the native renderer doesn't work on
+    // Linux" was. A mirror that has drawn a frame is a frame source too.
+    const gpuTransportReady = $nativeRendererRuntime.sharedTextureOutputExportReady && previewSourceReady;
     nativeCorePreviewIsReady = !!(
       nativePrimary
       && !isOutputMode
       && !isOsrMode
       && $nativeRendererRuntime.running
       && $nativeRendererRuntime.backendReady
-      && $nativeRendererRuntime.sharedTextureOutputExportReady
-      && previewSourceReady
+      && (gpuTransportReady || nativeMirrorPreviewActive)
     );
   }
   $: {
@@ -7456,6 +7488,9 @@
 
   async function syncNativePreviewWindowNow(reason = 'tick'): Promise<void> {
     if (!isElectron || isOutputMode || isOsrMode) return;
+    // No presenter can attach on this platform; asking the main process to
+    // attach one every frame would only produce errors. The mirror handles it.
+    if (nativePresenterUnsupported) return;
     const outputWindowOpen = !!get(settings)?.output?.outputWindowOpen;
     if (nativeEmbeddedPreviewEnabled) {
       if (nativePresenterSuspended || !nativeCorePreviewActive()) {
@@ -7592,7 +7627,7 @@
     <canvas
       class="main-canvas"
       class:bridge-source={bridgeMode}
-      class:native-primary-source={nativeEmbeddedPreviewEnabled && nativeCorePreviewIsReady}
+      class:native-primary-source={nativeEmbeddedPreviewEnabled && nativeCorePreviewIsReady && !nativeMirrorPreviewActive}
       class:native-window-source={nativeEditorPreviewWindowActive()}
       bind:this={canvas}
     ></canvas>

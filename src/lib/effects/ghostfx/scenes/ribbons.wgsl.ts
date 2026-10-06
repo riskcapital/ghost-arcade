@@ -85,7 +85,7 @@ fn palette(t: f32, intensity: f32) -> vec3<f32> {
 
 // Camera — slow drift along +z, very gentle bob (no audio bouncing).
 fn cameraPos() -> vec3<f32> {
-  let z = u.time * (2.0 + u.energy * 2.5);  // energy → ribbons stream past faster
+  let z = u.time * 2.0;  // energy → ribbons stream past faster
   let x = sin(u.time * 0.17) * 0.45;
   let y = cos(u.time * 0.21) * 0.30;
   return vec3<f32>(x, y, z);
@@ -217,7 +217,7 @@ fn csAdvect(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Base trickle so the field never goes empty; bass + beats add
     // big bursts. Tuned so quiet ≈ a few ribbons/sec, beats ≈
     // hundreds/sec from the 4096-pool.
-    let spawnProb = (0.0008 + u.bassSlow * 0.022 + u.beatPulse * 0.10 + u.energy * 0.003) * u.ribbonSpawn;
+    let spawnProb = (0.0015 + u.bassSlow * 0.012 + u.energy * 0.012) * u.ribbonSpawn;
     if (r < spawnProb) {
       respawn(idx, &p);
       // Initialize trail to all spawn position

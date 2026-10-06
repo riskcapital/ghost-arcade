@@ -1,3 +1,4 @@
+import { projectorCalibrationUniforms } from './projectorCalibration';
 /**
  * GPU-based slice renderer — replaces the 2D-canvas crop + gradient-strip
  * post-process with a single WebGL fragment-shader pass that does:
@@ -97,6 +98,7 @@ const FRAG_SHADER = /* glsl */ `
   precision highp float;
   varying vec2 vUv;
 
+  uniform vec4 uCalibration[5];
   uniform sampler2D uSource;
   // Crop region for rect mode (normalized 0..1 on master canvas).
   uniform vec4 uCrop;          // (x, y, w, h)
@@ -193,6 +195,15 @@ const FRAG_SHADER = /* glsl */ `
 
   void main() {
     vec2 uv = vUv;
+    if (uCalibration[2].w < -0.5) { gl_FragColor=vec4(0.0,0.0,0.0,1.0); return; }
+    if (uCalibration[2].w > 0.5) {
+      vec3 p=vec3(uv.x,1.0-uv.y,1.0);
+      float z=dot(uCalibration[2].xyz,p);
+      if(abs(z)<0.000001) { gl_FragColor=vec4(0.0,0.0,0.0,1.0); return; }
+      vec2 q=vec2(dot(uCalibration[0].xyz,p),dot(uCalibration[1].xyz,p))/z;
+      if(any(lessThan(q,vec2(0.0))) || any(greaterThan(q,vec2(1.0)))) { gl_FragColor=vec4(0.0,0.0,0.0,1.0); return; }
+      uv=vec2(q.x,1.0-q.y);
+    }
     // Rotate the projector-side UV first so "left" / "top" in the
     // operator's mental model always match the projector's physical
     // edges, independent of which way the screen is mounted.
@@ -290,6 +301,12 @@ const FRAG_SHADER = /* glsl */ `
     float aT = uBlendW.z > 0.0 ? blendCurve(clamp((1.0 - vUv.y) / uBlendW.z, 0.0, 1.0), uBlendG.z) : 1.0;
     float aB = uBlendW.w > 0.0 ? blendCurve(clamp(vUv.y / uBlendW.w, 0.0, 1.0), uBlendG.w) : 1.0;
     float alpha = aL * aR * aT * aB;
+    if(uCalibration[4].x>0.5) {
+      vec4 b=uCalibration[3];
+      float start=mix(b.x,b.y,1.0-srcUv.y), end=mix(b.z,b.w,1.0-srcUv.y);
+      float weight=clamp((srcUv.x-start)/max(end-start,0.000001),0.0,1.0);
+      alpha *= uCalibration[4].y>0.5 ? weight : 1.0-weight;
+    }
 
     float liftMix = mix(alpha, smoothstep(0.0, 1.0, alpha), uBlackFeather);
     col += uBlackLevel * liftMix;
@@ -409,6 +426,7 @@ function ensureRenderer(maxW: number, maxH: number): boolean {
       vertexShader: VERT_SHADER,
       fragmentShader: FRAG_SHADER,
       uniforms: {
+        uCalibration: { value: Array.from({length:5},()=>new THREE.Vector4()) },
         uSource: { value: null },
         uCrop: { value: new THREE.Vector4(0, 0, 1, 1) },
         uWarpMode: { value: 0 },
@@ -524,6 +542,7 @@ function applyWarpUniforms(
 
   const rotEnum = slice.rotation === 90 ? 1 : slice.rotation === 180 ? 2 : slice.rotation === 270 ? 3 : 0;
   u.uRotation.value = rotEnum;
+  projectorCalibrationUniforms(slice).forEach((v,i)=>u.uCalibration.value[i].fromArray(v));
   // Default missing color fields like the blackLevel ones below — an
   // undefined here uploads NaN and the whole tile renders black.
   u.uBrightness.value = slice.brightness ?? 1;
@@ -836,6 +855,7 @@ function ensureMasterRenderer(w: number, h: number): boolean {
       vertexShader: MASTER_VERT_SHADER,
       fragmentShader: FRAG_SHADER,
       uniforms: {
+        uCalibration: { value: Array.from({length:5},()=>new THREE.Vector4()) },
         uSource: { value: null },
         uCrop: { value: new THREE.Vector4(0, 0, 1, 1) },
         uWarpMode: { value: 0 },
@@ -1010,6 +1030,7 @@ function ensureAtlasRenderer(canvas: HTMLCanvasElement, w: number, h: number): b
       vertexShader: ATLAS_VERT_SHADER,
       fragmentShader: FRAG_SHADER,
       uniforms: {
+        uCalibration: { value: Array.from({length:5},()=>new THREE.Vector4()) },
         uSource: { value: null },
         uCrop: { value: new THREE.Vector4(0, 0, 1, 1) },
         uWarpMode: { value: 0 },

@@ -29,6 +29,7 @@ mod video_texture;
 mod native_graph_manifest;
 mod native_quality;
 mod output_present;
+mod slice_presentation;
 mod paint_mask;
 mod particle_director;
 mod projector_view;
@@ -1214,6 +1215,7 @@ struct OutputStage {
     /// Projector black-level lift (r, g, b, feather); slice mode only.
     black_level: [f32; 4],
     /// Per-slice screen warp: (mode, rows, cols, _) + corner quad.
+    projector_calibration: [[f32; 4]; 5],
     swarp: [f32; 4],
     swarp_c0: [f32; 4],
     swarp_c1: [f32; 4],
@@ -1247,6 +1249,7 @@ impl Default for OutputStage {
             dome2: [1.0, 2.2, 0.0, 0.0],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
+            projector_calibration: [[0.0; 4]; 5],
             swarp: [0.0; 4],
             swarp_c0: [0.0, 0.0, 1.0, 0.0],
             swarp_c1: [1.0, 1.0, 0.0, 1.0],
@@ -1291,6 +1294,7 @@ struct Uniforms {
     dome2: [f32; 4],
     edge_gamma: [f32; 4],
     black_level: [f32; 4],
+    projector_calibration: [[f32; 4]; 5],
     swarp: [f32; 4],
     swarp_c0: [f32; 4],
     swarp_c1: [f32; 4],
@@ -1699,22 +1703,53 @@ struct DeckMonitorTarget {
 /// each projector gets a full-resolution native composite of its own region
 /// instead of a second WebGL renderer cropping a downscaled master.
 ///
-/// Gated like DeckMonitorTarget above it: the `export` field is a
-/// NativeOutputExport, which only exists on the platforms with a shared-
-/// texture path (IOSurface on macOS, DXGI on Windows). Both places that use
-/// this struct — the `slice_targets` field and `ensure_slice_target()` —
-/// already carry the gate; only the definition was missing it, so the core
-/// simply did not compile on Linux. Nothing caught it because CI never built
-/// the core at all until this release.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+/// One Screen's own composite. On macOS and Windows it is handed to Electron
+/// as a shared texture (`export`) that a native layer in the Screen window
+/// presents. Linux has no shared-texture path, so there the core presents it
+/// itself into a child window parented inside the Screen window
+/// (`LinuxSliceWindow`), and the target only tracks its size and frame.
 struct SliceOutputTarget {
     _render_texture: wgpu::Texture,
     render_view: wgpu::TextureView,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     export: NativeOutputExport,
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    width: u32,
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    height: u32,
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    frame: u64,
     /// Map Sim projector view feeding this slice's output stage, when the
     /// Screen's source is a Map Sim projector: (texture, view, presenter
     /// input bind group).
     projector_view_source: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
+}
+
+impl SliceOutputTarget {
+    fn size(&self) -> (u32, u32) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        { (self.export.width, self.export.height) }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        { (self.width, self.height) }
+    }
+
+    fn bump_frame(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        { self.export.frame = self.export.frame.saturating_add(1); }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        { self.frame = self.frame.saturating_add(1); }
+    }
+}
+
+/// Linux: a Screen presented by the core itself. The window is an X11 child
+/// of the Electron Screen window, so Electron still owns which display the
+/// Screen is on and whether it is fullscreen; this only fills it.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+struct LinuxSliceWindow {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    blitter: TextureBlitter,
 }
 
 /// The recording target: one extra composite pass over the layers being
@@ -2170,6 +2205,7 @@ fn projector_view_output_stage(stage: OutputStage) -> OutputStage {
     OutputStage {
         out0: [0.0, 0.0, 1.0, 1.0],
         dome0: [0.0; 4],
+        projector_calibration: [[0.0; 4]; 5],
         swarp: [0.0; 4],
         swarp_c0: [0.0, 0.0, 1.0, 0.0],
         swarp_c1: [1.0, 1.0, 0.0, 1.0],
@@ -2348,6 +2384,10 @@ struct SceneLayer {
     /// slot looks unreferenced and the pool hands it to another layer.
     shader_source_id: Option<String>,
     color: [f32; 4],
+    /// The colour was set by the editor (a colour layer), so it IS the
+    /// content and draws at full strength. Otherwise `color` is the hashed
+    /// placeholder an empty layer shows, which the shader deliberately dims.
+    explicit_color: bool,
     corners: [[f32; 2]; 4],
     native_params: [f32; 8],
     blend_code: f32,
@@ -3006,14 +3046,11 @@ impl SourceFrameGpuReadiness {
 /// frames so bursts fire on rising edges only and droplet rates stay smooth.
 #[derive(Clone, Copy, Debug, Default)]
 struct NativePluginLiquidState {
-    prev_beat_pulse: f32,
     ambient_accumulator: f32,
 }
 
-/// Milkdrop-style smoothed audio for plugin uniforms: fast attack so hits
-/// land, slow release so nothing strobes. Raw analyzer values are only used
-/// for edge detection (beat bursts); everything the eye tracks continuously
-/// (splat force, palette, emitter speed) reads these envelopes instead.
+/// Per-layer musical envelopes with gradual attack and release. No impulse
+/// assignments: bass steers flow, mids shape structure, energy sustains light.
 #[derive(Clone, Copy, Debug, Default)]
 struct NativePluginAudioSmooth {
     bass: f32,
@@ -3047,21 +3084,18 @@ impl NativePluginAudioSmooth {
         }
         self.last_frame = frame_index;
         let dt = dt.clamp(0.0, 0.1);
-        // Reactivity (0 = glacial, 1 = snappy) stretches the release taus and
-        // caps the beat envelope peak, so the default sits well away from the
-        // strobe zone while still letting VJs dial the punch back in.
-        let smoothness = (1.0 - reactivity).clamp(0.0, 1.0);
-        let rel = 1.0 + smoothness * 2.4;
-        let atk = 1.0 + smoothness * 1.2;
-        self.bass = Self::follow(self.bass, audio0[1], dt, 0.045 * atk, 0.30 * rel);
-        self.mid = Self::follow(self.mid, audio0[2], dt, 0.045 * atk, 0.24 * rel);
-        self.treble = Self::follow(self.treble, audio0[3], dt, 0.040 * atk, 0.18 * rel);
-        self.energy = Self::follow(self.energy, audio0[0], dt, 0.050 * atk, 0.35 * rel);
-        // Beat becomes an envelope: snaps up on the pulse, glides down.
-        if audio1[1] > 0.5 {
-            self.beat_env = self.beat_env.max(0.35 + 0.65 * reactivity.clamp(0.0, 1.0));
-        }
-        self.beat_env = Self::follow(self.beat_env, 0.0, dt, 0.02, 0.32 * rel);
+        // Both attack AND release glide. No beat-edge assignment or raw
+        // waveform reaches a visual uniform, even at maximum responsiveness.
+        let responsiveness = reactivity.clamp(0.0, 1.0);
+        let attack = 0.65 - responsiveness * 0.40;
+        let release = 1.45 - responsiveness * 0.65;
+        let clean = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        self.bass = Self::follow(self.bass, clean(audio0[1]), dt, attack, release);
+        self.mid = Self::follow(self.mid, clean(audio0[2]), dt, attack * 0.85, release * 0.9);
+        self.treble = Self::follow(self.treble, clean(audio0[3]), dt, attack * 0.75, release * 0.8);
+        self.energy = Self::follow(self.energy, clean(audio0[0]), dt, attack * 1.8, release * 1.5);
+        self.beat_env = Self::follow(self.beat_env, clean(audio1[1]), dt, 0.28, 0.75);
+
     }
 }
 
@@ -3178,6 +3212,7 @@ impl SceneLayer {
     fn new(id: String, z_index: i32) -> Self {
         Self {
             color: stable_layer_color(&id, 1.0),
+            explicit_color: false,
             id,
             z_index,
             vj_layer_index: None,
@@ -3298,7 +3333,7 @@ impl SceneLayer {
             edge_effects: self.edge.effects_gpu(),
             edge_info: self.edge.info_gpu(),
             edge_geom: self.edge.geometry,
-            edge_extra: [self.edge.seed, 0.0, 0.0, 0.0],
+            edge_extra: [self.edge.seed, self.sourceless_content_alpha(), 0.0, 0.0],
             edge_extra2: self.edge.bbox_gpu(),
             edge_bounds: self.edge.bounds,
             edge_chunks: self.edge.chunks_gpu(),
@@ -3314,6 +3349,18 @@ impl SceneLayer {
             fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), 0, 0],
             tint: [self.tint[0], self.tint[1], self.tint[2], self.color[3].clamp(0.0, 1.0)],
         }
+    }
+
+    /// How strongly a layer with no source draws its own colour.
+    ///
+    /// An empty layer shows a dimmed placeholder so it reads as "nothing
+    /// loaded yet" rather than as content. A colour layer has no source
+    /// either -- its colour is its content -- and the shader applied the same
+    /// 0.56 to both, so every solid colour went to output at 56%: pure white
+    /// arrived as 143/255, on the editor, the output window, Spout and in
+    /// recordings alike. Media is unaffected; it takes the sourced path.
+    fn sourceless_content_alpha(&self) -> f32 {
+        if self.explicit_color { 1.0 } else { SOURCELESS_PLACEHOLDER_ALPHA }
     }
 
     /// A mesh renders as Bezier patches only when it carries a tangent for
@@ -3552,12 +3599,19 @@ fn parse_layer_mesh_tangents(
 
 fn set_scene_layer_color(layer: &mut SceneLayer, rgba: [f32; 4]) {
     layer.color = rgba;
+    // The editor only sends this for colour layers (layerRgba returns null
+    // for every other type), so it is exactly the signal that the colour is
+    // the content rather than a placeholder.
+    layer.explicit_color = true;
 }
 
 /// Beats wrap here so the f32 the shader reads keeps sub-beat precision for
 /// days. 65520 divides evenly by every group size 1-10 and 12-16, so a beat
 /// step chase does not skip a member when the count wraps.
 const BEAT_CLOCK_WRAP: f64 = 65520.0;
+
+/// Strength of an empty layer's placeholder colour. Colour layers draw at 1.0.
+const SOURCELESS_PLACEHOLDER_ALPHA: f32 = 0.56;
 
 /// The editor's launch clock at one moment: `beat` is the continuous beat
 /// position at render time `time` (None: the next frame drawn).
@@ -3888,8 +3942,17 @@ struct RenderState {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     deck_monitor_targets: Option<[DeckMonitorTarget; 2]>,
     /// Per-slice display targets, keyed by the editor's slice id.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     slice_targets: HashMap<String, SliceOutputTarget>,
+    /// Linux Screen presenters, keyed by slice id. Kept apart from
+    /// `slice_targets` because Electron attaches a Screen window before the
+    /// editor has sent that Screen's first frame.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    linux_slice_windows: HashMap<String, LinuxSliceWindow>,
+    /// Needed to create those presenters' surfaces after start-up.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    wgpu_instance: wgpu::Instance,
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    wgpu_adapter: wgpu::Adapter,
     /// Recording target (single layer / VJ row / transparent composition),
     /// created while a recording of such a source runs.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -4110,7 +4173,7 @@ struct App {
     native_graph_workload: BTreeMap<String, Value>,
     native_plugin_liquid_states: HashMap<String, NativePluginLiquidState>,
     native_plugin_templates_initialized: HashSet<String>,
-    native_plugin_audio_smooth: NativePluginAudioSmooth,
+    native_plugin_audio_smooth: HashMap<String, NativePluginAudioSmooth>,
     native_point_cloud_assets: HashMap<String, NativePointCloudAsset>,
     pending_native_graph_jobs: Vec<NativeGraphFrameJob>,
     /// Graph jobs that must run AFTER the compositor has drawn every layer:
@@ -4459,7 +4522,7 @@ impl App {
             native_graph_workload: BTreeMap::new(),
             native_plugin_liquid_states: HashMap::new(),
             native_plugin_templates_initialized: HashSet::new(),
-            native_plugin_audio_smooth: NativePluginAudioSmooth::default(),
+            native_plugin_audio_smooth: HashMap::new(),
             native_point_cloud_assets: HashMap::new(),
             pending_native_graph_jobs: Vec::new(),
             pending_composite_graph_jobs: Arc::new(Vec::new()),
@@ -5581,7 +5644,6 @@ impl App {
                 return;
             }
         }
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         if matches!(req.method.as_str(), "stream_output_frame" | "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot")
             || (req.method == "export_frame_snapshot" && string_at(&req.params, &["source"]).is_some_and(|v| live_capture_export_source(&v))) {
             let result = self.start_live_capture(&req);
@@ -5884,6 +5946,39 @@ impl App {
                 .unwrap_or_else(|| json!({ "available": false }))),
             "set_record_target" => self.apply_record_target(&req.params),
             "record_target_state" | "get_record_target_state" => Ok(self.record_target_state()),
+            // Linux Screens: Electron hands over its Screen window's X11 id and
+            // the core presents into a child window inside it.
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            "attach_slice_window" => {
+                let id = string_at(&req.params, &["slice_id"]).unwrap_or_default();
+                let xid = req.params.get("x11_window").and_then(Value::as_u64).unwrap_or(0);
+                let width = req.params.get("width").and_then(Value::as_u64).unwrap_or(1) as u32;
+                let height = req.params.get("height").and_then(Value::as_u64).unwrap_or(1) as u32;
+                match self.renderer.as_mut() {
+                    Some(renderer) if !id.is_empty() => renderer.attach_linux_slice_window(event_loop, &id, xid, width, height),
+                    Some(_) => Err("attach_slice_window needs a slice_id".to_string()),
+                    None => Err("native renderer has not created a wgpu device".to_string()),
+                }
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            "resize_slice_window" => {
+                let id = string_at(&req.params, &["slice_id"]).unwrap_or_default();
+                let width = req.params.get("width").and_then(Value::as_u64).unwrap_or(1) as u32;
+                let height = req.params.get("height").and_then(Value::as_u64).unwrap_or(1) as u32;
+                match self.renderer.as_mut() {
+                    Some(renderer) => renderer.resize_linux_slice_window(&id, width, height),
+                    None => Err("native renderer has not created a wgpu device".to_string()),
+                }
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            "detach_slice_window" => {
+                let id = string_at(&req.params, &["slice_id"]).unwrap_or_default();
+                Ok(self
+                    .renderer
+                    .as_mut()
+                    .map(|renderer| renderer.detach_linux_slice_window(&id))
+                    .unwrap_or_else(|| json!({ "detached": false })))
+            }
             // In-core GPU recording. The Electron recorder still exists and
             // still works; this is the path that skips the readback entirely.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -6235,6 +6330,7 @@ impl App {
             black_level: [0.0; 4],
             // The main output never carries a per-slice screen warp; that is
             // a projector-alignment transform and belongs to the slice.
+            projector_calibration: [[0.0; 4]; 5],
             swarp: [0.0; 4],
             swarp_c0: [0.0, 0.0, 1.0, 0.0],
             swarp_c1: [1.0, 1.0, 0.0, 1.0],
@@ -6354,6 +6450,7 @@ impl App {
                         read(&["blackLevelB"], 0.0).clamp(0.0, 1.0) as f32,
                         read(&["blackLevelFeather"], 0.5).clamp(0.0, 1.0) as f32,
                     ],
+                    projector_calibration: std::array::from_fn(|r| std::array::from_fn(|c| entry.get("projectorCalibration").and_then(|v| v.get(r)).and_then(|v| v.get(c)).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0) as f32)),
                     swarp: [warp_code, slice_mesh.rows, slice_mesh.cols, slice_bezier],
                     swarp_c0: slice_c0,
                     swarp_c1: slice_c1,
@@ -7169,9 +7266,10 @@ impl App {
         let frame_index = self.native_frame_index();
         let reactivity =
             native_graph_param_f32(&graph_layer.params, "ghostfxReactivity", 0.0, 1.0, 0.4);
-        self.native_plugin_audio_smooth
-            .update(frame_index, delta, self.audio0, self.audio1, reactivity);
-        let smooth = self.native_plugin_audio_smooth;
+        self.native_plugin_audio_smooth.retain(|id, _| self.native_graph_layers.contains_key(id));
+        let envelope = self.native_plugin_audio_smooth.entry(graph_layer.layer_id.clone()).or_default();
+        envelope.update(frame_index, delta, self.audio0, self.audio1, reactivity);
+        let smooth = *envelope;
         // The template is replayed every frame, but its `clear` flags describe
         // INSTALL-time intent only. Replaying clear=true wipes persistent
         // state (fluid fields, particle trails) every frame — the sim can
@@ -7204,7 +7302,6 @@ impl App {
                     .native_plugin_liquid_states
                     .entry(graph_layer.layer_id.clone())
                     .or_insert(NativePluginLiquidState {
-                        prev_beat_pulse: 0.0,
                         ambient_accumulator: 0.0,
                     });
                 let params = &graph_layer.params;
@@ -7218,11 +7315,7 @@ impl App {
                 let bass_rate =
                     native_graph_param_f32(params, "ghostfxLiquidBassRate", 0.0, 2.0, 1.0);
                 let bass = (smooth.bass * sensitivity).clamp(0.0, 2.0);
-                let mid = (smooth.mid * sensitivity).clamp(0.0, 2.0);
                 let energy = (smooth.energy * sensitivity).clamp(0.0, 2.0);
-                let beat_pulse = self.audio1[1];
-                let beat_edge = beat_pulse > 0.5 && state.prev_beat_pulse < 0.3;
-                state.prev_beat_pulse = beat_pulse;
                 state.ambient_accumulator += delta.max(0.0) * (2.0 + bass * 14.0) * bass_rate;
                 let mut splats: Vec<[f32; 8]> = Vec::with_capacity(16);
                 // Deterministic per-frame randomness (layer + frame seeded).
@@ -7239,7 +7332,7 @@ impl App {
                     let phase = index as f32 / 3.0 * std::f32::consts::TAU;
                     let ax = 0.83 + index as f32 * 0.11;
                     let ay = 0.67 + index as f32 * 0.13;
-                    let t = time * (0.35 + mid * 0.5);
+                    let t = time * 0.35; // audio shapes force, never repositions elapsed-time phase
                     let x = 0.5 + 0.36 * (t * ax + phase).cos();
                     let y = 0.5 + 0.33 * (t * ay + phase * 1.7).sin();
                     let dxdt = -0.36 * ax * (t * ax + phase).sin();
@@ -7261,36 +7354,7 @@ impl App {
                         splat_radius * (0.55 + energy * 0.35),
                     ]);
                 }
-                // 2) Beat: vortex-ring burst — a ring of outward splats with
-                //    a shared tangential twist reads as a liquid impact.
-                if beat_edge {
-                    let cx = 0.28 + rand01() * 0.44;
-                    let cy = 0.28 + rand01() * 0.44;
-                    let ring = if energy > 0.5 { 8 } else { 6 };
-                    let ring_speed = 1.0 + energy * 1.6;
-                    let twist = if rand01() < 0.5 { 0.8 } else { -0.8 };
-                    let ring_hue = (hue + rand01() * 0.25).rem_euclid(1.0);
-                    for index in 0..ring {
-                        let angle = index as f32 / ring as f32 * std::f32::consts::TAU;
-                        let dx = angle.cos();
-                        let dy = angle.sin();
-                        let color = hsv_to_rgb(
-                            (ring_hue + index as f32 * 0.015).rem_euclid(1.0),
-                            0.92,
-                            1.0,
-                        );
-                        splats.push([
-                            cx + dx * splat_radius * 1.6,
-                            cy + dy * splat_radius * 1.6,
-                            (dx - dy * twist) * ring_speed,
-                            (dy + dx * twist) * ring_speed,
-                            color[0],
-                            color[1],
-                            color[2],
-                            splat_radius * 1.25,
-                        ]);
-                    }
-                }
+                // Continuous bass-fed dye replaces discrete beat-ring impacts.
                 // 3) Bass trickle: extra droplets while low end is present.
                 while state.ambient_accumulator > 1.0 && splats.len() < 32 {
                     state.ambient_accumulator -= 1.0;
@@ -7372,6 +7436,13 @@ impl App {
                         write_f32_le(&mut buffer.initial_bytes, 28 + branch * 24 + index, *value);
                     }
                 }
+                continue;
+            }
+            if graph_layer.kind == NativeGraphLayerKind::HandFx && buffer.initial_bytes.len() == 144 {
+                write_f32_le(&mut buffer.initial_bytes, 2, time);
+                write_f32_le(&mut buffer.initial_bytes, 3, delta);
+                let amount = native_graph_param_f32(&graph_layer.params, "handfxAudioResponse", 0.0, 2.0, 0.65);
+                write_f32_le(&mut buffer.initial_bytes, 35, (smooth.bass * 0.6 + smooth.energy * 0.4) * amount);
                 continue;
             }
             if graph_layer.kind == NativeGraphLayerKind::GhostFx {
@@ -7542,7 +7613,7 @@ impl App {
                     continue;
                 }
                 let energy = smooth.energy.clamp(0.0, 1.0);
-                let phase = time * (0.7 + smooth.bass * 1.5);
+                let phase = time * 0.7;
                 write_f32_le(&mut buffer.initial_bytes, 0, 0.5 + phase.sin() * 0.28);
                 write_f32_le(&mut buffer.initial_bytes, 1, 0.5 + phase.cos() * 0.24);
                 write_f32_le(
@@ -12109,7 +12180,6 @@ impl App {
         // Slice displays ride the same frame for the same reason: every
         // source frame they sample is already current after the program
         // render, so a slice costs one composite pass and no extra decode.
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         if render_result.is_ok() && !slice_specs.is_empty() {
             renderer.render_slice_outputs(
                 self.command_phase,
@@ -12516,7 +12586,11 @@ impl App {
         Ok(snapshot)
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    // Compiled everywhere. It used to be macOS/Windows only because it read
+    // the shared-texture export, so on Linux stream_output_frame did not
+    // exist, every recording's encoder job was cancelled on its first frame,
+    // and REC left a 261-byte MP4 with no frames in it. The readback itself is
+    // plain wgpu; only the texture it reads differs by platform.
     fn start_live_capture(&mut self, req: &RpcRequest) -> Result<(), String> {
         let path = if req.method == "export_frame_snapshot" {
             Some(string_at(&req.params, &["path"]).or_else(|| string_at(&req.params, &["file_path"]))
@@ -12550,35 +12624,62 @@ impl App {
         } else {
             string_at(&req.params, &["capture_source"])
         }.unwrap_or_else(|| "output".to_string());
-        let (export, alpha_mode, render_source) = match capture_source.as_str() {
-            "record_target" => {
-                let target = renderer.record_target.as_ref().ok_or_else(|| "record target is not rendering".to_string())?;
-                (&target.export, if target.alpha { "straight" } else { "opaque" }, "core-record-target")
-            }
-            source if source.starts_with("slice:") => {
-                let id = &source["slice:".len()..];
-                let target = renderer.slice_targets.get(id).ok_or_else(|| format!("screen output {id} is not rendering"))?;
-                (&target.export, "opaque", "core-slice-output")
-            }
-            _ => (renderer.output_export.as_ref().ok_or_else(|| "output export unavailable".to_string())?, "opaque", "core-output-composite"),
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let (texture, format, width, height, export_frame, alpha_mode, render_source) = {
+            let (export, alpha_mode, render_source) = match capture_source.as_str() {
+                "record_target" => {
+                    let target = renderer.record_target.as_ref().ok_or_else(|| "record target is not rendering".to_string())?;
+                    (&target.export, if target.alpha { "straight" } else { "opaque" }, "core-record-target")
+                }
+                source if source.starts_with("slice:") => {
+                    let id = &source["slice:".len()..];
+                    let target = renderer.slice_targets.get(id).ok_or_else(|| format!("screen output {id} is not rendering"))?;
+                    (&target.export, "opaque", "core-slice-output")
+                }
+                _ => (renderer.output_export.as_ref().ok_or_else(|| "output export unavailable".to_string())?, "opaque", "core-output-composite"),
+            };
+            (&export.texture, export.format, export.width, export.height, export.frame, alpha_mode, render_source)
         };
-        if sink.is_some() && (req.params.get("width").and_then(Value::as_u64) != Some(export.width as u64)
-            || req.params.get("height").and_then(Value::as_u64) != Some(export.height as u64)) {
+        // No shared-texture export here, but the export on the other platforms
+        // is only a blit of this very texture (refresh_output_export), so read
+        // the composite directly. Layer and Screen targets are built on the
+        // export, so only the program output is recordable on this platform.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let (texture, format, width, height, export_frame, alpha_mode, render_source) = {
+            if let Some(id) = capture_source.strip_prefix("slice:") {
+                let target = renderer.slice_targets.get(id).ok_or_else(|| format!("screen output {id} is not rendering"))?;
+                (&target._render_texture, renderer.config.format, target.width, target.height,
+                    target.frame, "opaque", "core-slice-output")
+            } else if capture_source.eq_ignore_ascii_case("output") {
+                (&renderer.output_mirror_texture, renderer.config.format, renderer.config.width, renderer.config.height,
+                    renderer.creative_frame_index as u64, "opaque", "core-output-mirror")
+            } else {
+                return Err(format!("recording `{capture_source}` needs a shared-texture export, which this platform does not have"));
+            }
+        };
+        if sink.is_some() && (req.params.get("width").and_then(Value::as_u64) != Some(width as u64)
+            || req.params.get("height").and_then(Value::as_u64) != Some(height as u64)) {
             return Err("recording dimensions differ from native output".to_string());
         }
+        // The encoder is told the pipe carries BGRA. The export is always
+        // BGRA, but the composite is the swapchain format, which some drivers
+        // make RGBA; red and blue would trade places in the file.
+        let swizzle_to_bgra = matches!(format, wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb);
         // Copy is enqueued now, preserving the requested frame while mapping,
         // metrics and storage execute away from the presentation loop.
-        let pending = prepare_texture_readback(&renderer.device, &renderer.queue, &export.texture,
-            export.format, export.width, export.height, "Live capture")?;
+        let pending = prepare_texture_readback(&renderer.device, &renderer.queue, texture,
+            format, width, height, "Live capture")?;
         let response_tx = self.response_tx.clone();
         let id = req.id;
-        let export_frame = export.frame;
         let frame_index = self.native_frame_index();
         let time = self.render_clock_time;
         thread::spawn(move || {
             let _permit = permit;
             let result = (|| -> Result<Value, String> {
-                let frame = pending.finish()?;
+                let mut frame = pending.finish()?;
+                if swizzle_to_bgra {
+                    for px in frame.pixels.chunks_exact_mut(4) { px.swap(0, 2); }
+                }
                 let mut value = frame.to_json(include_pixels);
                 if let Some((port, token, copies)) = sink {
                     use std::io::{Read, Write};
@@ -19003,6 +19104,7 @@ impl RenderState {
                 dome2: [1.0, 2.2, 0.0, 0.0],
                 edge_gamma: [2.2; 4],
                 black_level: [0.0; 4],
+                projector_calibration: [[0.0; 4]; 5],
                 swarp: [0.0; 4],
                 swarp_c0: [0.0, 0.0, 1.0, 0.0],
                 swarp_c1: [1.0, 1.0, 0.0, 1.0],
@@ -19772,8 +19874,13 @@ impl RenderState {
             native_recorder_error: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             deck_monitor_targets: None,
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
             slice_targets: HashMap::new(),
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            linux_slice_windows: HashMap::new(),
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            wgpu_instance: instance.clone(),
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            wgpu_adapter: adapter.clone(),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             record_target: None,
             projector_view: None,
@@ -20567,12 +20674,11 @@ impl RenderState {
         true
     }
 
-    /// Create (or resize) one slice display's offscreen target and its
-    /// shared-texture export.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    /// Create (or resize) one slice display's offscreen target and, where the
+    /// platform has one, its shared-texture export.
     fn ensure_slice_target(&mut self, id: &str, width: u32, height: u32) -> bool {
         if let Some(existing) = self.slice_targets.get(id) {
-            if existing.export.width == width && existing.export.height == height {
+            if existing.size() == (width, height) {
                 return true;
             }
         }
@@ -20583,6 +20689,7 @@ impl RenderState {
             self.config.format,
             "Ghost Slice Output Render Target",
         );
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let export = match Self::create_output_export_target(
             &self.device,
             width,
@@ -20601,7 +20708,14 @@ impl RenderState {
             SliceOutputTarget {
                 _render_texture: render_texture,
                 render_view,
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 export,
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                width,
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                height,
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                frame: 0,
                 projector_view_source: None,
             },
         );
@@ -20613,7 +20727,6 @@ impl RenderState {
     /// region rendered at the display's own resolution rather than a crop of
     /// a downscaled master — the reason this is a second composite rather
     /// than a blit.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[allow(clippy::too_many_arguments)]
     fn render_slice_outputs(
         &mut self,
@@ -20652,6 +20765,8 @@ impl RenderState {
                 self.write_frame_inputs(command_phase, layers.len() as u32, time_seconds, frame_count,
                     layers, None, audio0, audio1, audio2, output_gate, post_effects, spec.stage);
             }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let mut presented: Option<wgpu::SurfaceTexture> = None;
             let mut encoder = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -20668,18 +20783,157 @@ impl RenderState {
                     self.creative_frame_index, spec.width, spec.height,
                     output_gate, spec.stage, time_seconds.unwrap_or(0.0));
                 }
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 target.export.blitter.copy(
                     &self.device,
                     &mut encoder,
                     &target.render_view,
                     &target.export.view,
                 );
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                {
+                    presented = Self::blit_to_linux_slice_window(
+                        &self.device, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
+                }
             }
             self.queue.submit(Some(encoder.finish()));
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            if let Some(frame) = presented.take() {
+                self.queue.present(frame);
+            }
             if let Some(target) = self.slice_targets.get_mut(&spec.id) {
-                target.export.frame = target.export.frame.saturating_add(1);
+                target.bump_frame();
             }
         }
+    }
+
+    /// Linux: create the child window that presents one Screen, parented to
+    /// the Electron Screen window's X11 id, and a Vulkan surface on it.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    fn attach_linux_slice_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: &str,
+        x11_window: u64,
+        width: u32,
+        height: u32,
+    ) -> Result<Value, String> {
+        use winit::dpi::PhysicalPosition;
+        use winit::raw_window_handle::XlibWindowHandle;
+        if !linux_x11_presentation() {
+            return Err("native Screens need X11 or XWayland".to_string());
+        }
+        if x11_window == 0 {
+            return Err("Screen window has no X11 id".to_string());
+        }
+        // Re-attaching replaces the previous presenter (a reopened Screen).
+        self.linux_slice_windows.remove(id);
+        let (width, height) = (width.max(1), height.max(1));
+        let parent = RawWindowHandle::Xlib(XlibWindowHandle::new(x11_window as std::ffi::c_ulong));
+        let attrs = WindowAttributes::default()
+            .with_title("Ghost Arcade Screen")
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_inner_size(PhysicalSize::new(width, height))
+            .with_position(PhysicalPosition::new(0, 0))
+            .with_visible(true);
+        // SAFETY: Electron owns the parent window for as long as the Screen is
+        // open and detaches this presenter before it closes the window.
+        let attrs = unsafe { attrs.with_parent_window(Some(parent)) };
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .map_err(|err| format!("could not create the Screen child window: {err}"))?,
+        );
+        let surface = self
+            .wgpu_instance
+            .create_surface(Arc::clone(&window))
+            .map_err(|err| format!("could not create the Screen surface: {err}"))?;
+        let caps = surface.get_capabilities(&self.wgpu_adapter);
+        if caps.formats.is_empty() {
+            return Err("the Screen surface reports no formats".to_string());
+        }
+        // Same boundary contract as the output window: non-sRGB BGRA8.
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|format| *format == wgpu::TextureFormat::Bgra8Unorm)
+            .or_else(|| caps.formats.iter().copied().find(|format| !format.is_srgb()))
+            .unwrap_or(caps.formats[0]);
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            color_space: wgpu::SurfaceColorSpace::Srgb,
+            width,
+            height,
+            // A Screen is projector output: never tear, and FIFO is the one
+            // mode every surface is required to support.
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: caps.alpha_modes[0],
+            view_formats: vec![],
+        };
+        surface.configure(&self.device, &config);
+        let blitter = TextureBlitterBuilder::new(&self.device, format)
+            .sample_type(wgpu::FilterMode::Linear)
+            .build();
+        self.linux_slice_windows.insert(id.to_string(), LinuxSliceWindow { window, surface, config, blitter });
+        Ok(json!({ "attached": true, "slice_id": id, "width": width, "height": height, "format": format!("{format:?}") }))
+    }
+
+    /// Linux: follow the Electron Screen window when it resizes or goes
+    /// fullscreen.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    fn resize_linux_slice_window(&mut self, id: &str, width: u32, height: u32) -> Result<Value, String> {
+        let window = self
+            .linux_slice_windows
+            .get_mut(id)
+            .ok_or_else(|| format!("Screen {id} has no presenter"))?;
+        let (width, height) = (width.max(1), height.max(1));
+        if (window.config.width, window.config.height) != (width, height) {
+            window.config.width = width;
+            window.config.height = height;
+            window.surface.configure(&self.device, &window.config);
+            let _ = window.window.request_inner_size(PhysicalSize::new(width, height));
+        }
+        Ok(json!({ "resized": true, "slice_id": id, "width": width, "height": height }))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    fn detach_linux_slice_window(&mut self, id: &str) -> Value {
+        json!({ "detached": self.linux_slice_windows.remove(id).is_some(), "slice_id": id })
+    }
+
+    /// Linux: draw a Screen's composite into its child window, if Electron has
+    /// attached one. Returns the frame to present after the encoder submits.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    fn blit_to_linux_slice_window(
+        device: &wgpu::Device,
+        windows: &mut HashMap<String, LinuxSliceWindow>,
+        id: &str,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::TextureView,
+    ) -> Option<wgpu::SurfaceTexture> {
+        let window = windows.get_mut(id)?;
+        let frame = match window.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                window.surface.configure(device, &window.config);
+                frame
+            }
+            // Outdated or lost after a resize or a display change: put the
+            // surface back and draw this Screen on the next frame. A timeout
+            // or an occluded window just skips one.
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                window.surface.configure(device, &window.config);
+                return None;
+            }
+            _ => return None,
+        };
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        window.blitter.copy(device, encoder, source, &view);
+        Some(frame)
     }
 
     fn ensure_projector_view_renderer(&mut self) -> &mut projector_view::ProjectorViewRenderer {
@@ -20692,7 +20946,6 @@ impl RenderState {
     /// One slice fed by a Map Sim projector view: render the projector's
     /// image, then run it through the Screen's output stage (rotation,
     /// grade, blend, masks) into the slice's shared texture.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn render_projector_view_slice(
         &mut self,
         spec: &SliceOutputSpec,
@@ -20727,6 +20980,8 @@ impl RenderState {
         }
         self.ensure_projector_view_renderer();
         let content_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let mut presented: Option<wgpu::SurfaceTexture> = None;
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Map Sim projector view slice encoder"),
         });
@@ -20765,11 +21020,21 @@ impl RenderState {
                 spec.stage,
                 time_seconds.unwrap_or(0.0),
             );
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            {
+                presented = Self::blit_to_linux_slice_window(
+                    &self.device, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
+            }
         }
         self.queue.submit(Some(encoder.finish()));
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        if let Some(frame) = presented.take() {
+            self.queue.present(frame);
+        }
         if let Some(target) = self.slice_targets.get_mut(&spec.id) {
-            target.export.frame = target.export.frame.saturating_add(1);
+            target.bump_frame();
         }
     }
 
@@ -20843,18 +21108,13 @@ impl RenderState {
                         })
                     })
                     .collect();
-                return json!({
-                    "available": true,
-                    "platform": "iosurface",
-                    "slices": slices,
-                });
+                return slice_presentation::metadata("iosurface", slices);
             }
-            return json!({ "available": true, "platform": "iosurface", "slices": [] });
+            return slice_presentation::metadata("iosurface", vec![]);
         }
-        // Windows renders slices too (a recording of a Screen reads them via
-        // stream_output_frame) but has no native slice presenter, so
-        // `available` stays false for the slice windows; `slices` still
-        // lists what is rendering.
+        // Electron's DXGI monitor presenter consumes these named textures.
+        // Availability must be true even before the first slice is opened:
+        // Electron probes it before choosing the output-window transport.
         #[cfg(target_os = "windows")]
         {
             let slices: Vec<Value> = self
@@ -20870,19 +21130,34 @@ impl RenderState {
                     })
                 })
                 .collect();
-            json!({
-                "available": false,
-                "platform": "dxgi",
-                "reason": "native slice presentation is implemented on macOS IOSurface only",
-                "slices": slices,
-            })
+            slice_presentation::metadata("dxgi", slices)
         }
+        // Linux: the core presents each Screen into an X11 child window of the
+        // Electron Screen window. Available only while the event loop is on
+        // X11 (see main()); on native Wayland there is nothing to parent into.
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
-            json!({
-                "available": false,
-                "reason": "native slice presentation is implemented on macOS IOSurface only",
-            })
+            if let Some(reason) = linux_x11_unavailable_reason() {
+                return json!({
+                    "available": false,
+                    "platform": "wayland",
+                    "reason": reason,
+                });
+            }
+            let slices: Vec<Value> = self
+                .slice_targets
+                .iter()
+                .map(|(id, target)| {
+                    json!({
+                        "id": id,
+                        "width": target.width,
+                        "height": target.height,
+                        "frame": target.frame,
+                        "presented": self.linux_slice_windows.contains_key(id),
+                    })
+                })
+                .collect();
+            slice_presentation::metadata("x11", slices)
         }
     }
 
@@ -24055,6 +24330,7 @@ impl RenderState {
             dome2: stage.dome2,
             edge_gamma: stage.edge_gamma,
             black_level: stage.black_level,
+            projector_calibration: stage.projector_calibration,
             swarp: stage.swarp,
             swarp_c0: stage.swarp_c0,
             swarp_c1: stage.swarp_c1,
@@ -24643,6 +24919,52 @@ impl RenderState {
     }
 }
 
+/// Linux: whether the core runs on X11 and so can present Screens itself.
+/// See main().
+///
+/// Decided once, and only after checking the libraries winit's X11 backend
+/// loads at runtime. It does not fail gracefully without them: a missing
+/// libxkbcommon-x11 is a panic inside xkbcommon-dl, so committing to X11 on a
+/// machine that lacks it crashed the core at launch -- NATIVE OFFLINE, which
+/// is worse than having no native Screens. Electron runs on X11 without that
+/// library, so nothing else would flag it. If any is missing, stay on winit's
+/// default backend and report Screens unavailable instead.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn linux_x11_presentation() -> bool {
+    linux_x11_unavailable_reason().is_none()
+}
+
+/// Why the core is not on X11, or None when it is. Reported to the editor so
+/// the reason it shows is the real one.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn linux_x11_unavailable_reason() -> Option<&'static str> {
+    static REASON: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    REASON.get_or_init(|| {
+        if std::env::var("GA_LINUX_WAYLAND").is_ok_and(|value| value == "1") {
+            return Some("GA_LINUX_WAYLAND=1 is set, so the core runs on Wayland, where a Screen cannot be parented into its window".to_string());
+        }
+        if std::env::var_os("DISPLAY").is_none() {
+            let reason = "there is no X display (DISPLAY is unset), so the core cannot run on X11".to_string();
+            eprintln!("[ghost-core] {reason}; native Screens are unavailable");
+            return Some(reason);
+        }
+        const X11_LIBRARIES: [&str; 7] = [
+            "libX11.so.6", "libX11-xcb.so.1", "libxcb.so.1", "libXcursor.so.1",
+            "libXrandr.so.2", "libXi.so.6", "libxkbcommon-x11.so.0",
+        ];
+        for library in X11_LIBRARIES {
+            // SAFETY: loading only to prove the library resolves; it is
+            // dropped straight away and no symbol from it is called.
+            if unsafe { libloading::Library::new(library) }.is_err() {
+                let reason = format!("{library} is not installed, so the core cannot run on X11 (install it to enable native Screens)");
+                eprintln!("[ghost-core] {reason}; staying on the default window backend");
+                return Some(reason);
+            }
+        }
+        None
+    }).as_deref()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = EventLoop::<UserEvent>::with_user_event();
     #[cfg(target_os = "macos")]
@@ -24650,6 +24972,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
         builder.with_activation_policy(ActivationPolicy::Accessory)
             .with_default_menu(false).with_activate_ignoring_other_apps(false);
+    }
+    // Linux: run on X11 (XWayland under a Wayland session). Screens are
+    // presented as X11 children of Electron's Screen windows, which only works
+    // when both processes speak X11; winit would otherwise pick Wayland
+    // whenever WAYLAND_DISPLAY is set. GA_LINUX_WAYLAND=1 opts out, at the
+    // cost of native Screens.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    if linux_x11_presentation() {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        builder.with_x11();
     }
     let event_loop = builder.build()?;
     let proxy = event_loop.create_proxy();
@@ -32457,6 +32789,30 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn plugin_audio_envelopes_glide_on_transients_and_settle_in_silence() {
+        for fps in [30.0_f32, 60.0, 120.0] {
+            for reactivity in [0.0, 0.4, 1.0] {
+                let mut envelope = super::NativePluginAudioSmooth::default();
+                envelope.update(1, 1.0 / fps, [1.0; 4], [0.0, 1.0, 0.0, 0.0], reactivity);
+                assert!(envelope.bass < 0.13, "one kick cannot jump the scene scale");
+                assert!(envelope.beat_env < 0.12, "beat attack must be continuous");
+                let first = envelope.bass;
+                envelope.update(1, 1.0 / fps, [1.0; 4], [1.0; 4], reactivity);
+                assert_eq!(first, envelope.bass, "one update per rendered frame");
+                for frame in 2..(fps as u64 * 4) {
+                    envelope.update(frame, 1.0 / fps, [1.0; 4], [0.0; 4], reactivity);
+                }
+                assert!(envelope.bass > 0.99, "sustained music must remain expressive");
+                for frame in (fps as u64 * 4)..(fps as u64 * 16) {
+                    envelope.update(frame, 1.0 / fps, [0.0; 4], [0.0; 4], reactivity);
+                }
+                assert!(envelope.energy < 0.01);
+                assert!(envelope.bass < 0.01);
+            }
+        }
+    }
+
     #[test]
     fn heartbeat_compositor_wgsl_validates_with_the_edge_effect_layout() {
         let module = naga::front::wgsl::parse_str(include_str!("heartbeat.wgsl"))
