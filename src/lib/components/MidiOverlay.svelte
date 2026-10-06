@@ -225,6 +225,12 @@
     if (!file) return;
     try {
       const parsed = parseMappingFile(await file.text(), midiStore.newMappingId);
+      if (!parsed.mappings.length) {
+        // An empty `mappings` array parses fine; without this a Replace would wipe
+        // everything to import nothing. Nothing failed, so it's a no-op, not an error.
+        showToast('That file has no MIDI mappings — nothing loaded, existing mappings kept', 'info');
+        return;
+      }
       // Switching controller layouts needs a clean slate — merge-by-path would
       // leave the old layout's rows on any control the new file doesn't claim.
       const existing = $midiStore.mappings.length;
@@ -237,6 +243,9 @@
       const dropped = parsed.skipped.length ? `, ${parsed.skipped.length} skipped` : '';
       showToast(`${replace ? 'Replaced with' : 'Loaded'} ${parsed.mappings.length} MIDI mappings${who}${dropped}`, 'info');
       if (parsed.skipped.length) console.warn('[MIDI] skipped mapping rows:', parsed.skipped);
+      // Imported anyway — validateControlPath doesn't recognise every path the
+      // router handles, so this is a hint for the log, not a user-facing error.
+      if (parsed.unrecognizedPaths.length) console.warn('[MIDI] imported paths not recognised by validateControlPath:', parsed.unrecognizedPaths);
     } catch (err) {
       showToast(`Couldn't load mappings: ${(err as Error).message}`, 'error');
     }
@@ -306,7 +315,7 @@
         class="midi-file-input"
         onchange={handleMappingFileChosen}
       />
-      <button class="midi-bar-btn" title="Load mappings from a JSON file (merges by path)" onclick={() => mappingFileInput?.click()}>LOAD</button>
+      <button class="midi-bar-btn" title="Load mappings from a JSON file (asks to replace or merge if any exist)" onclick={() => mappingFileInput?.click()}>LOAD</button>
       <button class="midi-bar-btn" title="Save all mappings to a JSON file" disabled={!$midiStore.mappings.length} onclick={saveMappingsToFile}>SAVE</button>
       <button class="midi-exit-btn" onclick={() => midiStore.setEditMode(false)}>EXIT</button>
     </div>

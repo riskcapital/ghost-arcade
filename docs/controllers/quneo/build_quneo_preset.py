@@ -124,7 +124,10 @@ for i in range(4):
     else:
         # bottom row 0-3: grid mode on ch2, corner notes 0-15 (free on ch2), no pressure.
         # Left half = Deck A, right half = Deck B, like the clip pads above.
-        pd['enableGrid'] = 1; pd['padChannel'] = CH2
+        # enableGrid 2 = grid mode: the only non-zero value the vendor base preset
+        # uses, on all 12 pads that already ship in grid mode (rows 2-4). An earlier
+        # 1 appeared nowhere in the base preset; unverified on hardware.
+        pd['enableGrid'] = 2; pd['padChannel'] = CH2
         pd['outDmNote'] = -1; pd['outDmPress'] = -1; pd['outDmXCC'] = -1; pd['outDmYCC'] = -1
         base = i * 4
         for j, c in enumerate(('NW', 'NE', 'SW', 'SE')):

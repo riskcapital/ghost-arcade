@@ -1,3 +1,5 @@
+import { TRAY_TAB_ARGS, TRAY_TAB_ORDER } from './trayTabs';
+
 export interface ControlPathValidation {
   valid: boolean;
   normalized: string;
@@ -73,9 +75,25 @@ export function validateControlPath(path: string): ControlPathValidation {
   }
 
   if (scope === 'tray') {
-    return ['tab', 'next', 'prev', 'browse', 'load', 'rec'].includes(parts[1] ?? '')
-      ? { valid: true, normalized, reason: null }
-      : { valid: false, normalized, reason: 'Tray actions are tab, next, prev, browse, load, or rec.' };
+    const action = parts[1] ?? '';
+    if (action === 'tab') {
+      // Bare `tray:tab` is the relative-encoder form; an arg jumps or steps.
+      if (parts.length === 2) return { valid: true, normalized, reason: null };
+      if (parts.length === 3 && TRAY_TAB_ARGS.includes(parts[2] ?? '')) {
+        return { valid: true, normalized, reason: null };
+      }
+      return { valid: false, normalized, reason: `Tray tab paths are tray:tab (relative encoder) or tray:tab:<next|prev|${TRAY_TAB_ORDER.join('|')}>.` };
+    }
+    if (action === 'rec') {
+      if (parts.length === 2 || (parts.length === 3 && isIndex(parts[2]))) {
+        return { valid: true, normalized, reason: null };
+      }
+      return { valid: false, normalized, reason: 'Record paths are tray:rec or tray:rec:<zero-based source index>.' };
+    }
+    if (['next', 'prev', 'browse', 'load'].includes(action) && parts.length === 2) {
+      return { valid: true, normalized, reason: null };
+    }
+    return { valid: false, normalized, reason: 'Tray actions are tab, next, prev, browse, load, or rec.' };
   }
 
   if (scope === 'show') {

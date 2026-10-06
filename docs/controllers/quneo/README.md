@@ -73,6 +73,8 @@ python3 build_overlay.py          # the PDF; standard library only
 definitions. The script asserts that no MIDI message is shared by two unrelated
 controls. The QuNeo Editor's bank drop-down for up/down pairs is
 *Off / For Vertical Sliders / For Long Slider / For Rotaries* (codes 0–3).
+A pad's `enableGrid` is 0 for drum mode and 2 for grid mode — the only two
+values the base preset uses — so the Perform bottom row sets 2.
 
 ## Paths this layout relies on
 

@@ -11,18 +11,13 @@ import { synthVisionStore } from '../stores/synthVision';
 import type { SVParamKey } from '../stores/synthVision';
 import { setBaseValue as setModulationBase } from '../audio/modulation';
 import type { MidiMapping, MidiMessageType } from './midiTypes';
+import { BLEND_MODE_ORDER } from '../types';
 import type { BlendMode } from '../types';
 import { getPluginByEffectType } from '../plugins/registry';
 import { isVideoScratchPath, normalizeControlPath } from '../control/controlPaths';
 import { audioStore } from '../stores/audio';
 import { buildNativeAnchor, needsNativeReanchor, predictNativePlayheadSeconds } from '../media/nativeTransport';
 import { createNativeVideoScratchController } from '../renderer/nativeVideoScratch';
-
-// Order used by vj:<layer>:blend:next|prev (button-friendly blend cycling).
-const BLEND_CYCLE: BlendMode[] = [
-  'normal', 'add', 'screen', 'multiply', 'overlay', 'difference', 'lighten', 'darken',
-  'subtract', 'exclusion', 'hardlight', 'softlight', 'color-dodge', 'color-burn',
-];
 
 const videoScratch = createNativeVideoScratchController(key => {
   const [scope, index] = key.split(':');
@@ -810,9 +805,13 @@ class MidiRouter {
           const st = get(vjClipLauncher);
           const ls = bank === 'B' ? st.bankBLayerStates : st.layerStates;
           const cur = (ls[layerIndex]?.blendMode ?? 'normal') as BlendMode;
-          const i = BLEND_CYCLE.indexOf(cur);
-          const n = BLEND_CYCLE.length;
-          const next = BLEND_CYCLE[((i < 0 ? 0 : i) + (parts[3] === 'next' ? 1 : -1) + n) % n];
+          const i = BLEND_MODE_ORDER.indexOf(cur);
+          const n = BLEND_MODE_ORDER.length;
+          // A legacy/unknown blend string has no position to step from, so enter
+          // the list at an end instead of pretending it sits at index 0.
+          const next = i < 0
+            ? BLEND_MODE_ORDER[parts[3] === 'next' ? 0 : n - 1]
+            : BLEND_MODE_ORDER[(i + (parts[3] === 'next' ? 1 : -1) + n) % n];
           vjClipLauncher.setLayerBlendMode(layerIndex, next, bank);
           break;
         }

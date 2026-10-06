@@ -102,6 +102,37 @@ export type BlendMode =
   | 'vivid-light'
   | 'pin-light';
 
+/** Single source of truth for blend-mode ordering: the VJ panel dropdown and
+ *  the vj:<layer>:blend:next|prev button stepping both walk this list. */
+export const BLEND_MODE_ORDER: readonly BlendMode[] = [
+  'normal',
+  'add',
+  'multiply',
+  'screen',
+  'overlay',
+  'difference',
+  'subtract',
+  'darken',
+  'lighten',
+  'exclusion',
+  'hardlight',
+  'softlight',
+  'color-dodge',
+  'color-burn',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
+  'divide',
+  'average',
+  'negation',
+  'phoenix',
+  'linear-light',
+  'hard-mix',
+  'vivid-light',
+  'pin-light',
+];
+
 export type MediaType =
   | 'image'
   | 'video'

@@ -2,7 +2,8 @@
   import { prepareVideoImport } from '../video/videoImport';
   import { onMount, onDestroy, tick } from 'svelte';
   import { midiStore } from '../midi/midiStore';
-  import { get } from 'svelte/store';
+  import { vjClipLauncher } from '../stores/vjClipLauncher';
+  import { get, writable, type Writable } from 'svelte/store';
   import { project, selectedLayerId, selectedLayer, layers } from '../stores/layers';
   import { activeMediaTargetLayerIds } from '../media/mediaTargeting';
   import PluginIcon from './PluginIcon.svelte';
@@ -26,6 +27,7 @@
     type VeoModel,
   } from '../api/ai-client';
   import { settings } from '../stores/settings';
+  import { TRAY_TAB_ORDER, TRAY_TAB_ALIASES, type TrayTab } from '../control/trayTabs';
   import { updateJSAnimationParams } from '../renderer/js-animation';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
@@ -231,9 +233,12 @@
   }
 
   function disposeUnusedLiveSources() {
+    const recording = get(sourceRecActive);
     const retained: LiveSource[] = [];
     for (const source of liveSources) {
-      if (liveSourceIsUsedByLayer(source)) {
+      // A take in flight keeps its source: stopping the tracks here would end
+      // the recorder and write out a truncated clip.
+      if (recording[source.id] || liveSourceIsUsedByLayer(source)) {
         retained.push(source);
       } else {
         disposeLiveSource(source);
@@ -2135,15 +2140,35 @@
   // MIDI: Media Library browsing + live-source recording
   // Driven by `tray:*` paths forwarded from midiRouter as `midi-tray` events.
   // =========================================================================
-  const MIDI_TAB_ORDER = ['shaders', 'js', 'library', 'videos', 'images', 'sources', 'plugins'] as const;
-  type MidiTab = typeof MIDI_TAB_ORDER[number];
-  const MIDI_TAB_ALIASES: Record<string, MidiTab> = {
-    fx: 'shaders', shaders: 'shaders', js: 'js', saved: 'library', library: 'library',
-    vid: 'videos', videos: 'videos', img: 'images', images: 'images',
-    src: 'sources', sources: 'sources', plug: 'plugins', plugins: 'plugins',
-  };
+  // Tab order / aliases live in ../control/trayTabs so the tray and the
+  // `tray:tab:<arg>` control-path validator cannot drift apart.
+
+  // MediaTray is mounted more than once at a time: the editor's right sidebar
+  // keeps its instance alive while VJ mode is open (the main content is only
+  // `visibility: hidden`, so the native sync keeps running) and VJModePanel
+  // mounts its own. Exactly one of them may act on a `midi-tray` event — two
+  // would load a clip into the deck *and* overwrite the selected editor
+  // layer, start two MediaRecorders on one camera, or desync the cursors.
+  const midiTrayInstances: Array<{ readonly vjMode: boolean }> = (_win.__mediaTrayMidiInstances ??= []);
+  const midiTrayInstance = { get vjMode() { return vjMode; } };
+
+  // The tray matching the active mode owns the event. If that one is not
+  // mounted — VJ mode with its media browser collapsed, say — the surviving
+  // tray takes it rather than nobody, so one instance always responds.
+  function midiTrayOwnsEvent(): boolean {
+    const wantVJ = get(vjClipLauncher).isOpen;
+    const owner = midiTrayInstances.find(t => t.vjMode === wantVJ) ?? midiTrayInstances[0];
+    return owner === midiTrayInstance;
+  }
 
   let midiCursor = 0;
+  // Mirrors the tab the cursor belongs to, so the cursor resets on every tab
+  // change — including the tab buttons, which assign `activeTab` directly.
+  let midiCursorTab: TrayTab = activeTab;
+  $: if (activeTab !== midiCursorTab) {
+    midiCursorTab = activeTab;
+    midiCursor = 0;
+  }
 
   // What a controller can step through on the current tab. The Saved tab is
   // a mixed list with its own load flows, so it is skipped for now.
@@ -2156,9 +2181,12 @@
   ) as Array<{ id: string }>;
   $: if (midiCursor > Math.max(0, midiBrowseList.length - 1)) midiCursor = Math.max(0, midiBrowseList.length - 1);
   $: midiCursorId = midiBrowseList[midiCursor]?.id ?? null;
+  // Folder tabs list the same item in both the folder and All Clips sections;
+  // only the first one (the copy `midiBrowseList` dedups to) wears the cursor.
+  $: midiCursorSectionId = mediaSections.find(s => s.items.some(i => i.id === midiCursorId))?.id ?? null;
   $: midiEditMode = $midiStore.editMode;
 
-  function midiSetTab(tab: MidiTab) {
+  function midiSetTab(tab: TrayTab) {
     activeTab = tab;
     if (tab === 'sources') {
       sourcesInitialized = true;
@@ -2169,9 +2197,9 @@
   }
 
   function midiStepTab(delta: number) {
-    const idx = Math.max(0, MIDI_TAB_ORDER.indexOf(activeTab as MidiTab));
-    const n = MIDI_TAB_ORDER.length;
-    midiSetTab(MIDI_TAB_ORDER[(idx + Math.sign(delta) + n) % n]);
+    const idx = Math.max(0, TRAY_TAB_ORDER.indexOf(activeTab as TrayTab));
+    const n = TRAY_TAB_ORDER.length;
+    midiSetTab(TRAY_TAB_ORDER[(idx + Math.sign(delta) + n) % n]);
   }
 
   function midiStepCursor(delta: number) {
@@ -2184,7 +2212,11 @@
   async function midiRevealCursor() {
     await tick();
     if (!midiCursorId) return;
-    const el = document.querySelector<HTMLElement>(`[data-tray-id="${CSS.escape(midiCursorId)}"]`);
+    // Prefer the tile that actually wears the cursor: on a folder tab the id
+    // is rendered twice, and only the highlighted copy is worth scrolling to.
+    const sel = `[data-tray-id="${CSS.escape(midiCursorId)}"]`;
+    const el = document.querySelector<HTMLElement>(`${sel}.midi-cursor`)
+      ?? document.querySelector<HTMLElement>(sel);
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
@@ -2197,15 +2229,31 @@
   }
 
   // ---- Live-source recording ---------------------------------------------
-  interface SourceRecording { recorder: MediaRecorder; chunks: Blob[]; startedAt: number }
-  let sourceRecordings: Record<string, SourceRecording> = {};
-  let sourceRecTick = 0;
-  let sourceRecTimer: ReturnType<typeof setInterval> | null = null;
+  // The recorders live on the window (same trick as `__shaderCache` above) so
+  // an incidental remount cannot cut a take short: the editor sidebar swaps
+  // this tray out as soon as a non-media layer is selected, and VJModePanel's
+  // copy unmounts when VJ mode closes. `addRecordedSourceClip` writes to the
+  // mediaLibrary store, so a take needs no component instance to finish.
+  interface SourceRecording { recorder: MediaRecorder; startedAt: number; source: LiveSource }
+  const sourceRecShared = (_win.__mediaTraySourceRec ??= {
+    active: writable<Record<string, SourceRecording>>({}),
+    tick: writable(0),
+    timer: null as ReturnType<typeof setInterval> | null,
+  });
+  const sourceRecActive: Writable<Record<string, SourceRecording>> = sourceRecShared.active;
+  const sourceRecTick: Writable<number> = sourceRecShared.tick;
 
-  function sourceRecSeconds(id: string): number {
-    void sourceRecTick; // reactive dependency for the elapsed-time label
-    const r = sourceRecordings[id];
-    return r ? Math.floor((Date.now() - r.startedAt) / 1000) : 0;
+  // Elapsed seconds per in-flight take, keyed by source id. This has to be a
+  // reactive value the markup indexes into: a helper that reads the tick in
+  // its own body is not a dependency of the template that calls it, which
+  // froze the badge at 0s.
+  $: sourceRecElapsed = sourceRecElapsedMap($sourceRecActive, $sourceRecTick);
+
+  function sourceRecElapsedMap(active: Record<string, SourceRecording>, _tick: number): Record<string, number> {
+    const now = Date.now();
+    const out: Record<string, number> = {};
+    for (const [id, r] of Object.entries(active)) out[id] = Math.floor((now - r.startedAt) / 1000);
+    return out;
   }
 
   function streamForSource(source: LiveSource): MediaStream | null {
@@ -2230,7 +2278,7 @@
 
   function toggleSourceRecording(source: LiveSource | undefined) {
     if (!source) return;
-    const active = sourceRecordings[source.id];
+    const active = get(sourceRecActive)[source.id];
     if (active) {
       if (active.recorder.state !== 'inactive') active.recorder.stop();
       return;
@@ -2244,25 +2292,31 @@
     }
 
     const mimeType = pickRecorderMime();
+    // Same bitrate the main output recorder uses, read at record-start so a
+    // settings change lands on the next take. Video-only stream, so the
+    // audioBitrate setting does not apply here.
+    const videoBitsPerSecond = settings.get().recording?.videoBitrate || 5_000_000;
     const recorder = new MediaRecorder(
       new MediaStream(stream.getVideoTracks()),
-      mimeType ? { mimeType, videoBitsPerSecond: 16_000_000 } : undefined,
+      mimeType ? { mimeType, videoBitsPerSecond } : { videoBitsPerSecond },
     );
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     recorder.onstop = () => {
-      const { [source.id]: _done, ...rest } = sourceRecordings;
-      sourceRecordings = rest;
-      if (!Object.keys(sourceRecordings).length && sourceRecTimer) {
-        clearInterval(sourceRecTimer);
-        sourceRecTimer = null;
+      sourceRecActive.update(active => {
+        const { [source.id]: _done, ...rest } = active;
+        return rest;
+      });
+      if (!Object.keys(get(sourceRecActive)).length && sourceRecShared.timer) {
+        clearInterval(sourceRecShared.timer);
+        sourceRecShared.timer = null;
       }
       const type = recorder.mimeType || mimeType || 'video/webm';
       void addRecordedSourceClip(new Blob(chunks, { type }), source.name);
     };
     recorder.start(1000);
-    sourceRecordings = { ...sourceRecordings, [source.id]: { recorder, chunks, startedAt: Date.now() } };
-    if (!sourceRecTimer) sourceRecTimer = setInterval(() => { sourceRecTick++; }, 500);
+    sourceRecActive.update(active => ({ ...active, [source.id]: { recorder, startedAt: Date.now(), source } }));
+    if (!sourceRecShared.timer) sourceRecShared.timer = setInterval(() => sourceRecTick.update(t => t + 1), 500);
   }
 
   async function addRecordedSourceClip(blob: Blob, sourceName: string) {
@@ -2301,14 +2355,23 @@
   }
 
   function stopAllSourceRecordings() {
-    for (const r of Object.values(sourceRecordings)) {
+    for (const r of Object.values(get(sourceRecActive))) {
       if (r.recorder.state !== 'inactive') r.recorder.stop();
     }
-    if (sourceRecTimer) { clearInterval(sourceRecTimer); sourceRecTimer = null; }
+    if (sourceRecShared.timer) { clearInterval(sourceRecShared.timer); sourceRecShared.timer = null; }
+  }
+
+  // Genuine app teardown is the only thing that should cut a take short — an
+  // unmount must not. Registered once per window, and the closure only touches
+  // the shared registry, so it outlives whichever instance installed it.
+  if (!_win.__mediaTraySourceRecTeardown) {
+    _win.__mediaTraySourceRecTeardown = true;
+    window.addEventListener('pagehide', () => stopAllSourceRecordings());
   }
 
   // ---- Event bridge from midiRouter --------------------------------------
   function handleMidiTray(e: Event) {
+    if (!midiTrayOwnsEvent()) return;
     const { action, arg, value, mode } = (e as CustomEvent<{ action: string; arg?: string; value: number; mode: string }>).detail;
     const isRelative = mode === 'relative';
     const pressed = value > 0;
@@ -2319,7 +2382,7 @@
         if (!pressed) return;
         if (arg === 'next') midiStepTab(1);
         else if (arg === 'prev') midiStepTab(-1);
-        else if (arg && MIDI_TAB_ALIASES[arg]) midiSetTab(MIDI_TAB_ALIASES[arg]);
+        else if (arg && TRAY_TAB_ALIASES[arg]) midiSetTab(TRAY_TAB_ALIASES[arg]);
         return;
       case 'next':
         if (pressed) midiStepCursor(1);
@@ -2345,10 +2408,11 @@
         } else if (activeTab === 'sources') {
           toggleSourceRecording(liveSources[midiCursor]);
         } else {
-          // Off the Sources tab: toggle the first live source so one pad
-          // still works mid-set without changing tabs.
-          const recording = liveSources.find(s => sourceRecordings[s.id]);
-          toggleSourceRecording(recording ?? liveSources.find(s => s.status === 'live'));
+          // Off the Sources tab: stop whatever take is in flight — including
+          // one started by a tray instance that has since unmounted — else
+          // start the first live source, so one pad works mid-set.
+          const recording = Object.values(get(sourceRecActive))[0];
+          toggleSourceRecording(recording ? recording.source : liveSources.find(s => s.status === 'live'));
         }
         return;
       }
@@ -2356,10 +2420,20 @@
   }
 
   onMount(() => {
+    midiTrayInstances.push(midiTrayInstance);
+    // Give a take that outlived its tray its card back, so it stays visible
+    // and stoppable instead of recording invisibly.
+    const orphans = Object.values(get(sourceRecActive))
+      .map(r => r.source)
+      .filter(s => !liveSources.some(existing => existing.id === s.id));
+    if (orphans.length) liveSources = [...liveSources, ...orphans];
+
     window.addEventListener('midi-tray', handleMidiTray);
     return () => {
       window.removeEventListener('midi-tray', handleMidiTray);
-      stopAllSourceRecordings();
+      const i = midiTrayInstances.indexOf(midiTrayInstance);
+      if (i >= 0) midiTrayInstances.splice(i, 1);
+      // Recordings deliberately survive: see the registry comment above.
     };
   });
 
@@ -3891,7 +3965,7 @@
       <button data-midi-path="tray:tab:prev" data-midi-label="Library: prev tab" data-midi-mode="toggle" onclick={() => midiStepTab(-1)}>⇤ Tab</button>
       <button data-midi-path="tray:tab:next" data-midi-label="Library: next tab" data-midi-mode="toggle" onclick={() => midiStepTab(1)}>Tab ⇥</button>
       <button data-midi-path="tray:prev" data-midi-label="Library: prev item" data-midi-mode="toggle" onclick={() => midiStepCursor(-1)}>◀</button>
-      <button data-midi-path="tray:browse" data-midi-label="Library: browse (encoder/knob)" data-midi-mode="relative" data-midi-min="0" data-midi-max="1">⟳ Browse</button>
+      <button data-midi-path="tray:browse" data-midi-label="Library: browse (encoder/knob)" data-midi-mode="absolute" data-midi-min="0" data-midi-max="1">⟳ Browse</button>
       <button data-midi-path="tray:next" data-midi-label="Library: next item" data-midi-mode="toggle" onclick={() => midiStepCursor(1)}>▶</button>
       <button data-midi-path="tray:load" data-midi-label="Library: load highlighted" data-midi-mode="toggle" onclick={midiLoadCursor}>Load</button>
       <button data-midi-path="tray:rec" data-midi-label="Library: record source" data-midi-mode="toggle">● Src</button>
@@ -4396,7 +4470,7 @@
                 class="source-card"
                 data-tray-id={source.id}
                 class:midi-cursor={midiCursorId === source.id}
-                class:recording={!!sourceRecordings[source.id]}
+                class:recording={!!$sourceRecActive[source.id]}
                 class:live={source.status === 'live'}
                 class:connecting={source.status === 'connecting'}
                 draggable={vjMode && source.status === 'live' ? 'true' : 'false'}
@@ -4408,17 +4482,21 @@
               >
                 <div class="source-preview">
                   {#if source.status === 'live'}
+                    <!-- Learned by slot, not by source id: every LiveSource.id
+                         is a fresh UUID each session, so an id-keyed mapping
+                         would break on every restart. A pad learned here
+                         records whatever source occupies this slot later. -->
                     <button
                       class="source-rec-btn"
-                      class:active={!!sourceRecordings[source.id]}
-                      title={sourceRecordings[source.id] ? 'Stop recording (adds clip to VID)' : 'Record this source to a clip'}
+                      class:active={!!$sourceRecActive[source.id]}
+                      title={$sourceRecActive[source.id] ? 'Stop recording (adds clip to VID)' : 'Record this source to a clip'}
                       data-midi-path={`tray:rec:${sourceIdx}`}
                       data-midi-label={`Record source ${sourceIdx + 1}: ${source.name}`}
                       data-midi-mode="toggle"
                       onclick={(e) => { e.stopPropagation(); toggleSourceRecording(source); }}
                       ondblclick={(e) => e.stopPropagation()}
                     >
-                      ● {#if sourceRecordings[source.id]}{sourceRecSeconds(source.id)}s{/if}
+                      ● {#if $sourceRecActive[source.id]}{sourceRecElapsed[source.id] ?? 0}s{/if}
                     </button>
                   {/if}
                   {#if source.videoEl && source.status === 'live'}
@@ -4867,7 +4945,7 @@
             <div
               class="media-item"
               data-tray-id={item.id}
-              class:midi-cursor={midiCursorId === item.id}
+              class:midi-cursor={midiCursorId === item.id && section.id === midiCursorSectionId}
               class:selected={selectedShader?.id === item.id}
               class:item-selected={selectedTrayItemIds.includes(item.id)}
               class:processing={loopingVideoId === item.id}

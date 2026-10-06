@@ -42,7 +42,7 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
-  import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
+  import { BLEND_MODE_ORDER, generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
   import { audioStore } from '../stores/audio';
   import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
@@ -1036,35 +1036,8 @@
     }
   });
 
-  // Blend modes
-  const blendModes: BlendMode[] = [
-    'normal',
-    'add',
-    'multiply',
-    'screen',
-    'overlay',
-    'difference',
-    'subtract',
-    'darken',
-    'lighten',
-    'exclusion',
-    'hardlight',
-    'softlight',
-    'color-dodge',
-    'color-burn',
-    'hue',
-    'saturation',
-    'color',
-    'luminosity',
-    'divide',
-    'average',
-    'negation',
-    'phoenix',
-    'linear-light',
-    'hard-mix',
-    'vivid-light',
-    'pin-light',
-  ];
+  // Blend modes (shared order; see BLEND_MODE_ORDER in types)
+  const blendModes = BLEND_MODE_ORDER;
 
 
   // Shader library
