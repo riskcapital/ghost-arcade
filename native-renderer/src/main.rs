@@ -5687,6 +5687,11 @@ impl App {
             if let Err(error) = self.start_source_preview(&req) { if req.id != 0 { self.send_error(req.id, error); } }
             return;
         }
+        if matches!(req.method.as_str(), "frame_snapshot" | "get_frame_snapshot")
+            && bool_at(&req.params, &["live_output"]).unwrap_or(false) {
+            if let Err(error) = self.start_composite_preview(&req) { if req.id != 0 { self.send_error(req.id, error); } }
+            return;
+        }
         if req.method == "prefetch_media" && string_at(&req.params, &["source_type"]).as_deref() == Some("image") {
             if self.image_prefetch_waiters.values().map(Vec::len).sum::<usize>() >= 256 {
                 if req.id != 0 { self.send_error(req.id, "image prefetch request queue is full".to_string()); }
@@ -12628,6 +12633,38 @@ impl App {
             .stats
             .frame_snapshot_bytes_read
             .saturating_add(number_at(snapshot, &["byte_length"]).unwrap_or(0.0) as u64);
+    }
+
+    /// A UI mirror reads the last program frame, without advancing simulations
+    /// or blocking the event loop while the GPU maps the readback buffer.
+    fn start_composite_preview(&mut self, req: &RpcRequest) -> Result<(), String> {
+        if LIVE_PREVIEW_BUSY.swap(true, Ordering::AcqRel) {
+            return Err("composite preview busy; drop this preview frame".to_string());
+        }
+        let permit = LiveCapturePermit(&LIVE_PREVIEW_BUSY);
+        let max_dim = number_at(&req.params, &["max_dim"]).unwrap_or(512.0).round().clamp(16.0, 2048.0) as u32;
+        let include_pixels = bool_at(&req.params, &["include_pixels"]).unwrap_or(false);
+        let renderer = self.renderer.as_mut().ok_or("native renderer unavailable")?;
+        let pending = renderer.prepare_frame_snapshot_scaled(max_dim, true)?;
+        let frame_index = renderer.creative_frame_index as u64;
+        let response_tx = self.response_tx.clone();
+        let id = req.id;
+        thread::spawn(move || {
+            let _permit = permit;
+            let result = pending.finish().map(|frame| {
+                let mut value = frame.to_json(include_pixels);
+                value["frame_index"] = json!(frame_index);
+                value["render_source"] = json!("core-output-mirror");
+                value
+            });
+            drop(_permit);
+            if id != 0 {
+                let reply = match result { Ok(result) => json!({"id":id,"ok":true,"result":result}),
+                    Err(error) => json!({"id":id,"ok":false,"error":error}) };
+                let _ = response_tx.send(reply.to_string());
+            }
+        });
+        Ok(())
     }
 
     fn frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
@@ -24226,14 +24263,24 @@ impl RenderState {
     /// back ~590KB instead of ~8MB, which is what makes a continuous
     /// composite mirror affordable over the JSON transport.
     fn read_frame_snapshot_scaled(&mut self, max_dim: u32) -> Result<FrameSnapshotReadback, String> {
+        // At full size the plain read also records the frame metrics.
+        if max_dim == 0 || (self.config.width.max(1) <= max_dim && self.config.height.max(1) <= max_dim) {
+            return self.read_frame_snapshot();
+        }
+        self.prepare_frame_snapshot_scaled(max_dim, false)?.finish()
+    }
+
+    fn prepare_frame_snapshot_scaled(&mut self, max_dim: u32, live_output: bool) -> Result<PendingFrameReadback, String> {
         let out_w = self.config.width.max(1);
         let out_h = self.config.height.max(1);
         if max_dim == 0 || (out_w <= max_dim && out_h <= max_dim) {
-            return self.read_frame_snapshot();
+            let texture = if live_output { &self.output_mirror_texture } else { &self.snapshot_texture };
+            return prepare_texture_readback(&self.device, &self.queue, texture,
+                self.config.format, out_w, out_h, "Ghost Composite Preview");
         }
         let scale = max_dim as f32 / out_w.max(out_h) as f32;
-        let w = ((out_w as f32 * scale).round() as u32).clamp(16, out_w);
-        let h = ((out_h as f32 * scale).round() as u32).clamp(16, out_h);
+        let w = ((out_w as f32 * scale).round() as u32).clamp(1, out_w);
+        let h = ((out_h as f32 * scale).round() as u32).clamp(1, out_h);
         let needs_new = !matches!(&self.snapshot_preview, Some((_, _, pw, ph)) if *pw == w && *ph == h);
         if needs_new {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -24251,7 +24298,8 @@ impl RenderState {
         }
         {
             let (texture, blitter, _, _) = self.snapshot_preview.as_ref().expect("snapshot preview just ensured");
-            let src_view = self.snapshot_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let source = if live_output { &self.output_mirror_texture } else { &self.snapshot_texture };
+            let src_view = source.create_view(&wgpu::TextureViewDescriptor::default());
             let dst_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Ghost Snapshot Preview Blit"),
@@ -24260,7 +24308,7 @@ impl RenderState {
             self.queue.submit(Some(encoder.finish()));
         }
         let (texture, _, w, h) = self.snapshot_preview.as_ref().expect("snapshot preview present");
-        read_texture_to_frame(
+        prepare_texture_readback(
             &self.device,
             &self.queue,
             texture,
@@ -31361,6 +31409,7 @@ impl SourcePreviewRequest {
 static LIVE_FRAME_STREAM: Mutex<Option<(u16, String, std::net::TcpStream)>> = Mutex::new(None);
 static LIVE_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_DIAGNOSTIC_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LIVE_PREVIEW_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 struct LiveCapturePermit(&'static std::sync::atomic::AtomicBool);
 impl Drop for LiveCapturePermit {
     fn drop(&mut self) { self.0.store(false, Ordering::Release); }

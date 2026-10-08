@@ -99,6 +99,7 @@ async function pumpOnce(maxDim: number): Promise<void> {
     const snap = await invoke('native_renderer_get_frame_snapshot', {
       include_pixels: true,
       max_dim: maxDim,
+      live_output: true,
     }) as Parameters<typeof decodeSnapshotInto>[0] | null;
     if (snap && decodeSnapshotInto(snap)) {
       failureStreak = 0;
