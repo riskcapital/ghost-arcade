@@ -6,6 +6,45 @@
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>Ghost Arcade</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Ghost Arcade Set</string>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>live.ghostarcade.set</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Ghost Arcade Interactive Scene</string>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>live.ghostarcade.interactive-scene</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Ghost Arcade Calibration</string>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>live.ghostarcade.calibration</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -18,9 +57,22 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.ghostarcade.mobile.pair</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ghostarcade</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
@@ -33,29 +85,6 @@
 	<string>Ghost Arcade uses your local network to connect to the Ghost Arcade desktop app you pair it with.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ghost Arcade listens through the microphone so your visuals can react to sound.</string>
-	<key>UILaunchStoryboardName</key>
-	<string>LaunchScreen</string>
-	<key>UIMainStoryboardFile</key>
-	<string>Main</string>
-	<key>UIRequiredDeviceCapabilities</key>
-	<array>
-		<string>armv7</string>
-	</array>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UIViewControllerBasedStatusBarAppearance</key>
-	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -86,19 +115,38 @@
 	</dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>live.ghostarcade.set</string>
-			<key>UTTypeDescription</key>
-			<string>Ghost Arcade Set</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.json</string>
 			</array>
+			<key>UTTypeDescription</key>
+			<string>Ghost Arcade Set</string>
+			<key>UTTypeIdentifier</key>
+			<string>live.ghostarcade.set</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -108,14 +156,14 @@
 			</dict>
 		</dict>
 		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>live.ghostarcade.interactive-scene</string>
-			<key>UTTypeDescription</key>
-			<string>Ghost Arcade Interactive Scene</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.json</string>
 			</array>
+			<key>UTTypeDescription</key>
+			<string>Ghost Arcade Interactive Scene</string>
+			<key>UTTypeIdentifier</key>
+			<string>live.ghostarcade.interactive-scene</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -125,14 +173,14 @@
 			</dict>
 		</dict>
 		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>live.ghostarcade.calibration</string>
-			<key>UTTypeDescription</key>
-			<string>Ghost Arcade Calibration</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.json</string>
 			</array>
+			<key>UTTypeDescription</key>
+			<string>Ghost Arcade Calibration</string>
+			<key>UTTypeIdentifier</key>
+			<string>live.ghostarcade.calibration</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -140,56 +188,6 @@
 					<string>ghostcal</string>
 				</array>
 			</dict>
-		</dict>
-	</array>
-	<key>CFBundleDocumentTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Ghost Arcade Set</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>live.ghostarcade.set</string>
-			</array>
-			<key>CFBundleTypeRole</key>
-			<string>None</string>
-			<key>LSHandlerRank</key>
-			<string>None</string>
-		</dict>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Ghost Arcade Interactive Scene</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>live.ghostarcade.interactive-scene</string>
-			</array>
-			<key>CFBundleTypeRole</key>
-			<string>None</string>
-			<key>LSHandlerRank</key>
-			<string>None</string>
-		</dict>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Ghost Arcade Calibration</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>live.ghostarcade.calibration</string>
-			</array>
-			<key>CFBundleTypeRole</key>
-			<string>None</string>
-			<key>LSHandlerRank</key>
-			<string>None</string>
-		</dict>
-	</array>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.ghostarcade.mobile.pair</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>ghostarcade</string>
-			</array>
 		</dict>
 	</array>
 </dict>
