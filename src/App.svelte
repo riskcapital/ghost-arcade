@@ -315,6 +315,7 @@
       // A target the operator deleted is recreated like a fresh start.
       if(starting||!patchPhoneTargets(phone,()=>effectSource))startPhoneScene(phone,effectSource);
     },
+    hasTarget:phone=>!!phoneLayerId(phone)||!!phoneClipSlot(phone),
     releaseInputs(phone){patchPhoneTargets(phone,source=>({...source!,interactiveInputs:[]}));},
     stop(phone){
       // Hide the phone's own layer and stop its own clip. Touches go too, so a

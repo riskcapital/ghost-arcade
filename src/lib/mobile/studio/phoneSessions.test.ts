@@ -79,6 +79,19 @@ describe('paired phone sessions', () => {
     expect(log).toHaveLength(1);
   });
 
+  it('puts the scene back on the next heartbeat when its layer was deleted', () => {
+    const { log, sessions } = setup();
+    let present = true;
+    const host = (sessions as unknown as { host: PhoneSessionHost }).host;
+    host.hasTarget = () => present;
+    sessions.receive('a', state([]), true);
+    sessions.receive('a', state([]), true);
+    expect(log).toHaveLength(1);
+    present = false; // the operator deleted the phone's layer, or opened another project
+    sessions.receive('a', state([]), true);
+    expect(log).toEqual(['apply a inputs=0 start', 'apply a inputs=0']);
+  });
+
   it('keeps the scene alive on an unusable message and rate-limits the notice', () => {
     const { log, sessions } = setup();
     sessions.receive('a', state([]), true);

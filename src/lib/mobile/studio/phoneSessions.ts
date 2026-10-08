@@ -39,6 +39,9 @@ export interface PhoneSessionHost {
   releaseInputs(phone: string): void;
   /** Take the phone's scene off the output. */
   stop(phone: string, reason: 'stopped' | 'expired'): void;
+  /** False when the phone's layer or clip is gone (deleted, another project
+   *  opened). Its next message, even an unchanged heartbeat, puts it back. */
+  hasTarget?(phone: string): boolean;
 }
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -130,7 +133,7 @@ export class PhoneSessions {
     }
     this.arm(phone, session);
     const signature = JSON.stringify(state);
-    if (session.active && signature === session.signature) return;
+    if (session.active && signature === session.signature && this.host.hasTarget?.(phone) !== false) return;
     const starting = !session.active;
     session.active = true;
     session.signature = signature;
