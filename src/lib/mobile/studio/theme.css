@@ -43,3 +43,18 @@
 :root[data-theme] :is(:disabled, [aria-disabled='true']) svg:is([stroke='currentColor'], [fill='currentColor']):not(.starter *) {
   color: color-mix(in srgb, var(--ga-icon, #5278ff) 40%, var(--ga-ink-0, #f2ede4)) !important;
 }
+
+/* iPadOS WebKit draws a native select at a fixed height (20 px here, whatever min-height says),
+   so every menu was a 20 pt target on iPad. Without the native look the height rules apply;
+   the caret is drawn from the text colour. */
+:root[data-theme] select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 20px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%) !important;
+  background-size: 5px 5px, 5px 5px !important;
+  background-position: right 11px center, right 6px center !important;
+  background-repeat: no-repeat !important;
+}
