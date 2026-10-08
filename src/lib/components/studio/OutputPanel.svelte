@@ -36,7 +36,7 @@
  {/if}
  <label>Output frame rate<select aria-label="Output frame rate" value={preferences.frameRate} onchange={e=>onpreferences({...preferences,frameRate:Number(e.currentTarget.value) as 30|60})}><option value={30}>30 fps</option><option value={60}>60 fps</option></select></label>
  </div>
- {#if source==='mix'}<p class="hint">Mapping, Looks and Flux stay in the TV feed.</p>{/if}
+ {#if source==='mix'}<p class="hint">Render resolution is the output size. Several playing shaders share it, and detail lowers itself if the frame rate drops, then returns.</p><p class="hint">Mapping, Looks and Flux stay in the TV feed.</p>{/if}
  <p class="hint">Master, Hold and Blackout apply to this output. Editing outlines and controls stay on this device. Actual frame rate depends on your device and connection.</p>
  {#if status.message}<p class="error">{status.message}</p>{/if}
  {#if status.connected&&preferences.enabled}<button onclick={onretry}>Retry output</button>{/if}

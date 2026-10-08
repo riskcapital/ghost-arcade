@@ -12,6 +12,7 @@ import { parseISF, type ISFInput } from '../../isf/parser';
 import { StudioCompositor, type TextureInput } from './compositor';
 import { getAsset } from './assets';
 import { type Show, type Clip, layerGain, clipUnavailable } from './model';
+import { QualityGovernor, shaderRenderHeight } from './qualityGovernor';
 
 type Prepared = { native?:NativeLiveSource; releaseCapture?:()=>void; clip: Clip; source?: string; media?: HTMLImageElement | HTMLVideoElement; url?: string };
 type Slot = {
@@ -69,7 +70,10 @@ export class StudioEngine {
   private audio = new StandaloneAudio();
   private mic = false;
   private frames = 0;
-  private shaderScale=1;private slowWindows=0;
+  private governor=new QualityGovernor();
+  /** Shader detail changed to follow the frame rate (1 = full). The owner tells the performer. */
+  onDetail: (detail: number, change: 'lowered' | 'raised') => void = () => {};
+  get detail() { return this.governor.detail; }
   private lookTime = 0;
   private lookBeat = 0;
   beatClock?: () => number;
@@ -321,7 +325,7 @@ export class StudioEngine {
       try {
         this.compositor.beginFrame(show.quality);
         const activeShaderCount=this.slots.filter((slot,i)=>slot.clipId&&layerGain(show,i)>0&&show.clips.find(c=>c.id===slot.clipId)?.kind==='shader').length;
-        const shaderHeight=Math.max(180,Math.min(show.quality,720/Math.sqrt(Math.max(1,activeShaderCount)))*this.shaderScale);
+        const shaderHeight=shaderRenderHeight(show.quality,activeShaderCount,this.governor.detail);
         for (let i = 0; i < 8; i++) {
           const s = this.slots[i],
             l = show.layers[i];
@@ -395,9 +399,10 @@ export class StudioEngine {
       this.frames++;
       if (now - this.lastReport > 1000) {
         const fps=Math.round((this.frames*1000)/(now-this.lastReport));this.onStats(fps);
-        this.slowWindows=fps<27?this.slowWindows+1:0;
-        // Reduce only procedural source resolution after sustained pressure. Never resize the external output or oscillate up/down mid-performance.
-        if(this.slowWindows>=3&&this.shaderScale>.5){this.shaderScale=Math.max(.5,this.shaderScale-.15);this.slowWindows=0;}
+        // Only procedural source resolution adapts, never the external output size. The governor
+        // lowers it under sustained pressure and raises it again with a growing hold-off.
+        const change=this.governor.sample(fps);
+        if(change)this.onDetail(this.governor.detail,change);
         this.frames = 0;
         this.lastReport = now;
       }

@@ -913,6 +913,8 @@
   // then stops and is rebuilt here: on the same canvas when the browser restores the context, or
   // on a fresh canvas from the Restart visuals button when it does not.
   let visualsDown = false, visualsRestarting = false, canvasGeneration = 0;
+  /** Shader detail the engine is rendering at (1 = full). Below 1 the monitor says so. */
+  let detail = 1, detailNoticed = false;
   let restoreTimer: ReturnType<typeof setTimeout>;
   function startEngine() {
     const next = new StudioEngine(output, () => show);
@@ -928,6 +930,14 @@
       else restoreTimer = setTimeout(() => { if (visualsDown && engine === next) error = 'The visuals were interrupted and did not come back by themselves.'; }, 4000);
     };
     next.onRestored = () => { if (engine === next) void restartVisuals(false); };
+    detail = 1;
+    next.onDetail = (value, change) => {
+      if (engine !== next) return;
+      detail = value;
+      // Say it when it first drops and when full detail is back, not on every step.
+      if (change === 'lowered' && !detailNoticed) { detailNoticed = true; flash('Detail lowered to hold the frame rate. It comes back when there is room.', null, 5000); }
+      else if (change === 'raised' && value >= 1) { detailNoticed = false; flash('Full detail is back.'); }
+    };
     next.frozen = frozen; next.blackout = blackout; next.testGrid = testGrid; next.flux = flux;
     engine = next;
     next.start();
@@ -1187,7 +1197,7 @@
     <section class="monitor">
       <div class="monitor-heading">
         <span><i class:stopped={blackout}></i>{blackout ? 'BLACKOUT' : frozen ? 'HOLD' : 'PROGRAM'}</span><span
-          >{show.quality}p <b>·</b> {fps} FPS</span
+          >{show.quality}p <b>·</b> {#if detail < 1}<em class="detail-reduced" data-detail title="Detail lowered to hold the frame rate">DETAIL {Math.round(detail * 100)}%</em>{' '}<b>·</b>{' '}{/if}{fps} FPS</span
         >
       </div>
       <div class="preview-frame">
@@ -1780,6 +1790,7 @@
           ></select
         ></label
       >
+      <p class="hint" data-quality-hint>This is the output size. One playing shader renders at that size and several share it, each a little smaller. If the frame rate drops, shader detail lowers itself and the monitor shows it, then returns when there is room.{#if detail < 1} Detail is at {Math.round(detail * 100)}% now.{/if}</p>
       <div class="info-card">
         <Icon name="output" />
         <div>
@@ -2163,6 +2174,7 @@
     height: 100%;
     display: block;
   }
+  .detail-reduced { font-style: normal; color: #ffc570; }
   .visuals-down {
     position: absolute;
     inset: 0;
