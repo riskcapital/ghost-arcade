@@ -36,7 +36,7 @@
   const SOURCES: { id: Source; label: string; icon: string }[] = [
     { id: 'visuals', label: 'Visuals', icon: 'grid' },
     { id: 'media', label: 'Photos and videos', icon: 'library' },
-    { id: 'camera', label: 'Camera', icon: 'eye' },
+    { id: 'camera', label: 'Camera', icon: 'camera' },
   ];
   let search = '', category = 'all';
   let failed = new Set<string>();
@@ -171,8 +171,8 @@
   {:else}
     <div class="scroll" data-picker-scroll>
       <div class="choices">
-        <button data-camera="environment" onclick={() => oncamera('environment')}><Icon name="eye" size={22} /><span><strong>Rear camera</strong><small>Live picture from the back camera</small></span></button>
-        <button data-camera="user" onclick={() => oncamera('user')}><Icon name="eye" size={22} /><span><strong>Front camera</strong><small>Live picture from the selfie camera</small></span></button>
+        <button data-camera="environment" onclick={() => oncamera('environment')}><Icon name="camera" size={22} /><span><strong>Rear camera</strong><small>Live picture from the back camera</small></span></button>
+        <button data-camera="user" onclick={() => oncamera('user')}><Icon name="camera" size={22} /><span><strong>Front camera</strong><small>Live picture from the selfie camera</small></span></button>
         <button data-camera="depth" disabled={!depth} onclick={ondepth}><Icon name="depth" size={22} /><span><strong>Depth camera</strong><small>Live LiDAR depth as a clip</small></span></button>
       </div>
       {#if !depth}<p class="reason" data-depth-reason>{depthReason}</p>{/if}

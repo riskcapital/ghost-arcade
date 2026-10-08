@@ -132,3 +132,11 @@
 .studio[data-layout][data-layout] .mic-toggle {display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:44px;font-size:12px;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
 .studio[data-layout][data-layout] .mic-toggle.active {background:var(--ga-selection-bg);border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
 .studio[data-layout][data-layout] .mic-toggle.inline {margin:4px 0 8px;}
+
+/* Drag to reorder (effect chain, block tabs). The attributes are set by the dragReorder action. */
+[data-reorder-item] {will-change:auto;}
+[data-reorder-active] > [data-reorder-item] {transition:transform .16s ease;}
+[data-reorder-active] > [data-reorder-item][data-reorder-lifted] {transition:none;position:relative;z-index:6;box-shadow:0 10px 30px #000b, 0 0 0 1px var(--ga-blue-400);opacity:.96;}
+@media (prefers-reduced-motion: reduce) {
+  [data-reorder-active] > [data-reorder-item] {transition:none;}
+}

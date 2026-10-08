@@ -10,6 +10,9 @@
   import BlockTabs from './BlockTabs.svelte';
   import CoachStrip from './CoachStrip.svelte';
   import ClipPicker from './ClipPicker.svelte';
+  import EffectBrowser from './EffectBrowser.svelte';
+  import {effectLabel,moveEffect} from '../../mobile/studio/effectBrowser';
+  import {dragReorder} from '../../mobile/studio/reorder';
   import {loadPreferences,savePreferences,feel,type StudioPreferences} from '../../mobile/studio/preferences';
   import {startCoach,coachAfter,coachLaunch,type CoachState} from '../../mobile/studio/coach';
   // Choices of this device (haptics, launch on touch-down, hints already seen). Written at once,
@@ -585,8 +588,18 @@
     flash('Clip loaded. Tap its pad to launch.');
     persist();
   }
-  /** True while a hardware keyboard is stepping through the effect picker. */
-  let effectKeyNav = false;
+  /** The effect browser sheet is open. */
+  let effectBrowser = false;
+  function chooseEffect(type: string) { effectBrowser = false; addEffect(type); }
+  /** Drag handle or arrow keys: one effect moves, one undo step. */
+  function moveEffectTo(from: number, to: number, announce = false) {
+    if (to < 0 || to >= activeEffects.length || from === to) return;
+    checkpoint();
+    patchEffects(moveEffect(activeEffects, from, to));
+    feel(prefs, 'switch');
+    if (announce) void tick().then(() => document.querySelectorAll<HTMLElement>('[data-effect-handle]')[to]?.focus());
+  }
+  $: effectScopeName = fxScope==='comp' ? 'the whole output' : fxScope==='clip' ? (activeClip?.name ?? 'this clip') : `Layer ${show.dualDeck ? selectedLayer % 4 + 1 : selectedLayer + 1}`;
   let freshPad: { row: number; column: number } | null = null;
   let freshTimer: ReturnType<typeof setTimeout>;
   function stopRow(index: number) {
@@ -836,7 +849,7 @@
     clipControlsOpen=true;
     coachMove(coachAfter(coach,'controls'));
   }
-  function closeControls(){clipControlsOpen=false;}
+  function closeControls(){clipControlsOpen=false;effectBrowser=false;}
   function focusControlsTray(node:HTMLElement){
     node.querySelector<HTMLElement>('[data-close-controls]')?.focus({preventScroll:true});
     return {destroy(){const opener=controlsReturnFocus;controlsReturnFocus=null;void tick().then(()=>{if(!clipControlsOpen&&opener?.isConnected)opener.focus({preventScroll:true});});}};
@@ -1260,47 +1273,37 @@
           <div class="segmented wide" aria-label="Effect scope">{#each [{id:'comp',name:'Comp'},{id:'layer',name:'Layer'},{id:'clip',name:'Clip'}] as scope}<button class:active={fxScope===scope.id} disabled={scope.id==='clip'&&!activeClip} onclick={()=>fxScope=scope.id as typeof fxScope}>{scope.name}</button>{/each}</div>
           <p class="scope-context">{fxScope==='comp'?'Composition · final output':fxScope==='clip'?`Clip · ${activeClip?.name || 'Launch a clip first'}`:`Layer ${show.dualDeck ? selectedLayer % 4 + 1 : selectedLayer+1} · stays when clips change`}</p>
           <div class="section-heading">
-            <span>EFFECT CHAIN · {activeEffects.length}</span><select
+            <span>EFFECT CHAIN · {activeEffects.length} OF 8</span><button class="add-effect" data-add-effect aria-haspopup="dialog"
               disabled={activeEffects.length >= 8 || (fxScope==='clip'&&!activeClip)}
-              aria-label="Add effect"
-              title="Choose an effect to add. With a keyboard, use the arrow keys and press Enter."
-              value=""
-              onpointerdown={() => (effectKeyNav = false)}
-              onkeydown={(e) => {
-                // Arrow keys change a closed select one option at a time. Hold the choice until Enter
-                // instead of adding an effect per keypress.
-                if (e.key === 'Enter') {
-                  if (effectKeyNav && e.currentTarget.value) { e.preventDefault(); addEffect(e.currentTarget.value); e.currentTarget.value = ''; }
-                  effectKeyNav = false;
-                } else if (e.key === 'Escape') { effectKeyNav = false; e.currentTarget.value = ''; }
-                else if (e.key !== 'Tab' && e.key !== 'Shift') effectKeyNav = true;
-              }}
-              onblur={(e) => { if (effectKeyNav) { effectKeyNav = false; e.currentTarget.value = ''; } }}
-              onchange={(e) => {
-                if (effectKeyNav) return;
-                if (e.currentTarget.value) addEffect(e.currentTarget.value);
-                e.currentTarget.value = '';
-              }}
-              ><option value="">+ Add effect</option>{#each [...new Set(MOBILE_EFFECTS.filter(e=>!e.internal).map(e=>e.category))].sort() as category}<optgroup label={category}>{#each MOBILE_EFFECTS.filter(e=>!e.internal&&e.category===category) as effect}<option value={effect.type}>{effect.label}</option>{/each}</optgroup>{/each}</select
-            >
+              onclick={() => (effectBrowser = true)}><Icon name="plus" size={18} />Add effect</button>
           </div>
-          {#each activeEffects as effect, i}<div class="inspector-card">
-              <div class="section-heading">
-                <button
+          {#if activeEffects.length >= 8}<p class="scope-context" role="status">This chain is full. Remove an effect to add another.</p>{/if}
+          <div class="effect-chain" role="list" aria-label="Effect chain, first to last">
+          {#each activeEffects as effect, i (effect.id)}{@const label = effectLabel(MOBILE_EFFECTS.find((e) => e.type === effect.type)?.label ?? effect.type)}<div class="inspector-card effect-card" role="listitem" data-reorder-item data-effect-card={effect.type}>
+              <div class="section-heading effect-heading">
+                <button class="reorder-handle" data-effect-handle disabled={activeEffects.length < 2}
+                  aria-label={`Move ${label}. Position ${i + 1} of ${activeEffects.length}. Drag, or use the up and down arrow keys.`}
+                  use:dragReorder={{ axis: 'y', index: i, disabled: activeEffects.length < 2, onlift: () => feel(prefs, 'switch'), onmove: moveEffectTo }}
+                  onkeydown={(e) => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); moveEffectTo(i, i + (e.key === 'ArrowUp' ? -1 : 1), true); } }}
+                  ><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button
+                ><button
+                  class="effect-toggle"
                   class:active={effect.enabled}
+                  aria-pressed={effect.enabled}
+                  aria-label={`${label}, ${effect.enabled ? 'on' : 'off'}`}
                   onclick={() => {
                     checkpoint();
                     const effects = copy(activeEffects);
                     effects[i].enabled = !effect.enabled;
                     patchEffects(effects);
-                  }}>{effect.enabled ? '●' : '○'} {MOBILE_EFFECTS.find((e) => e.type === effect.type)?.label}</button
+                  }}><span aria-hidden="true">{effect.enabled ? '●' : '○'}</span> {label}</button
                 ><button
                   class="icon-button"
                   onclick={() => {
                     checkpoint();
                     patchEffects(activeEffects.filter((_, j) => j !== i));
                   }}
-                  aria-label="Remove effect"><Icon name="close" size={16} /></button
+                  aria-label={`Remove ${label}`}><Icon name="close" size={16} /></button
                 >
               </div>
               {#each MOBILE_EFFECTS.find(d => d.type === effect.type)?.controls || EFFECT_PARAM_DEFS[effect.type] || [] as p}<label class="range-row"
@@ -1319,6 +1322,7 @@
                   /><output>{Number(effect.params[p.param] ?? p.default).toFixed(2)}</output>{/if}</label
                 >{/each}
             </div>{/each}
+          </div>
           {#if !activeEffects.length}<div class="empty-state">
               <Icon name="fx" size={32} />
               <h2>No effects added</h2>
@@ -1771,6 +1775,7 @@
     depth={hasNativeLive()&&lidar===true} depthReason={hasNativeLive()?'Depth camera needs a LiDAR sensor (iPhone Pro or iPad Pro). This device does not have one.':'Depth camera works in the Ghost Arcade app on an iPhone or iPad with LiDAR.'}
     onvisual={addShader} onclip={clip=>assignClip(clip)} onimport={kind=>(kind==='video'?videoInput:kind==='photo'?photoInput:mediaInput).click()}
     oncamera={addCamera} ondepth={addDepth} onremove={removeClip} onclose={closePicker}/>{/if}
+  {#if effectBrowser}<EffectBrowser effects={MOBILE_EFFECTS} scope={effectScopeName} onadd={chooseEffect} onclose={() => (effectBrowser = false)} />{/if}
   {#if clean}<button class="exit-clean" onclick={() => (clean = false)}>Return to studio</button>{/if}
 </div>
 {#if toolkitOpen}<CaptureToolkit mappingSurfaces={show.surfaces} oninteractive={()=>{toolkitOpen=false;openInteractive();}} oninteractiveoutput={interactiveOutput} {oncompanion} onclose={()=>toolkitOpen=false} onprepare={prepareCaptureTool} onshots={importCameraShots}/>{/if}
@@ -3503,4 +3508,12 @@
   .clip-controls-body .look-actions button{width:100%;min-height:44px;}
   @media(max-width:760px) and (max-height:650px){.studio.clip-editing .monitor{padding-top:8px;}.studio.clip-editing .preview-frame{max-width:min(100%,34dvh);}.clip-controls-header{padding-top:6px;padding-bottom:6px;}}
   @media(prefers-reduced-motion:reduce){.clip-controls-tray{animation:none;}}
+  /* Effect chain: one card per effect, with a drag handle to reorder. */
+  .add-effect{display:flex;align-items:center;gap:6px;min-height:44px!important;padding:0 14px!important;font-size:13px!important;font-weight:650!important;background:var(--ga-selection-bg)!important;border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
+  .effect-chain{display:grid;gap:0;}
+  .effect-heading{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;gap:6px;}
+  .effect-heading .reorder-handle{display:grid;place-items:center;width:44px;height:44px;min-height:44px;padding:0;color:var(--ga-ink-1);touch-action:none;cursor:grab;border:1px solid var(--ga-line-2);border-radius:6px;}
+  .effect-heading .reorder-handle:disabled{opacity:.3;}
+  .effect-heading .effect-toggle{min-height:44px;justify-content:flex-start;text-align:left;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .effect-heading .icon-button{width:44px;height:44px;min-height:44px;}
 </style>

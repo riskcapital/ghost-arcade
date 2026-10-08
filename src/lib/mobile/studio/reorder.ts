@@ -65,6 +65,8 @@ export function dragReorder(node: HTMLElement, options: ReorderOptions) {
   let active: {
     id: number; x: number; y: number; item: HTMLElement; items: HTMLElement[]; spans: Span[]; gap: number;
     from: number; to: number; lifted: boolean; moved: boolean; timer?: ReturnType<typeof setTimeout>;
+    /** Latest finger position along the axis, and the scrolling parent with where it started. */
+    at: number; scroller: HTMLElement | null; scrollStart: number; frame: number;
   } | null = null;
   /** Swallows the click that follows a finished drag or long press. */
   let swallowClick = false;
@@ -72,9 +74,46 @@ export function dragReorder(node: HTMLElement, options: ReorderOptions) {
   const along = (e: { clientX: number; clientY: number }) => (opts.axis === 'x' ? e.clientX : e.clientY);
   const translate = (el: HTMLElement, by: number) => { el.style.transform = by ? (opts.axis === 'x' ? `translateX(${by}px)` : `translateY(${by}px)`) : ''; };
 
+  const scrollOf = (el: HTMLElement) => (opts.axis === 'x' ? el.scrollLeft : el.scrollTop);
+  /** The nearest parent that scrolls along the drag axis, so a long list can be dragged through. */
+  function scrollParent(from: HTMLElement): HTMLElement | null {
+    for (let el = from.parentElement; el; el = el.parentElement) {
+      const style = getComputedStyle(el);
+      const overflow = opts.axis === 'x' ? style.overflowX : style.overflowY;
+      const room = opts.axis === 'x' ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+      if (room > 1 && /auto|scroll/.test(overflow)) return el;
+    }
+    return null;
+  }
+  /** Places every item for the current finger position and scroll. */
+  function place() {
+    if (!active?.moved) return;
+    const offset = active.at - (opts.axis === 'x' ? active.x : active.y) + (active.scroller ? scrollOf(active.scroller) - active.scrollStart : 0);
+    active.to = reorderTarget(active.spans, active.from, offset);
+    const shifts = reorderShifts(active.spans, active.from, active.to, active.gap);
+    active.items.forEach((el, i) => translate(el, i === active!.from ? offset : shifts[i]));
+  }
+  /** Scrolls the list while the finger rests near either end of it. */
+  function edgeScroll() {
+    if (!active?.lifted) return;
+    active.frame = requestAnimationFrame(edgeScroll);
+    const el = active.scroller;
+    if (!el || !active.moved) return;
+    const box = el.getBoundingClientRect();
+    const start = opts.axis === 'x' ? box.left : box.top, end = opts.axis === 'x' ? box.right : box.bottom;
+    const zone = Math.min(56, (end - start) / 4);
+    const speed = active.at < start + zone ? -Math.ceil((start + zone - active.at) / 5) : active.at > end - zone ? Math.ceil((active.at - (end - zone)) / 5) : 0;
+    if (!speed) return;
+    const before = scrollOf(el);
+    if (opts.axis === 'x') el.scrollLeft += Math.max(-14, Math.min(14, speed)); else el.scrollTop += Math.max(-14, Math.min(14, speed));
+    if (scrollOf(el) !== before) place();
+  }
   function lift() {
     if (!active || active.lifted) return;
     active.lifted = true;
+    active.scroller = scrollParent(active.item);
+    active.scrollStart = active.scroller ? scrollOf(active.scroller) : 0;
+    active.frame = requestAnimationFrame(edgeScroll);
     active.item.setAttribute('data-reorder-lifted', '');
     active.item.parentElement?.setAttribute('data-reorder-active', '');
     opts.onlift?.();
@@ -91,7 +130,7 @@ export function dragReorder(node: HTMLElement, options: ReorderOptions) {
     const spans = rects.map((r) => (opts.axis === 'x' ? { start: r.left, size: r.width } : { start: r.top, size: r.height }));
     const gap = spans.length > 1 ? Math.max(0, spans[1].start - spans[0].start - spans[0].size) : 0;
     swallowClick = false;
-    active = { id: e.pointerId, x: e.clientX, y: e.clientY, item, items, spans, gap, from, to: from, lifted: false, moved: false };
+    active = { id: e.pointerId, x: e.clientX, y: e.clientY, item, items, spans, gap, from, to: from, lifted: false, moved: false, at: along(e), scroller: null, scrollStart: 0, frame: 0 };
     if (opts.hold) active.timer = setTimeout(lift, opts.hold);
     window.addEventListener('pointermove', move, { passive: true });
     window.addEventListener('pointerup', up);
@@ -107,16 +146,15 @@ export function dragReorder(node: HTMLElement, options: ReorderOptions) {
       lift();
     }
     if (Math.abs(offset) >= SLOP) active.moved = true;
-    if (!active.moved) return;
-    active.to = reorderTarget(active.spans, active.from, offset);
-    const shifts = reorderShifts(active.spans, active.from, active.to, active.gap);
-    active.items.forEach((el, i) => translate(el, i === active!.from ? offset : shifts[i]));
+    active.at = along(e);
+    place();
   }
   function finish(commit: boolean) {
     const a = active;
     if (!a) return;
     active = null;
     clearTimeout(a.timer);
+    cancelAnimationFrame(a.frame);
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
     window.removeEventListener('pointercancel', cancel);
