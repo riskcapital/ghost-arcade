@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from './StudioIcon.svelte';
-  import {onDestroy} from 'svelte';
+  import {onDestroy,tick} from 'svelte';
   import { clipUnavailable, type Show, type Clip, type Layer } from '../../mobile/studio/model';
   import ClipThumbnail from './ClipThumbnail.svelte';
   export let show: Show;
@@ -19,6 +19,15 @@
   type Slot={row:number;column:number};
   export let onMove:(from:Slot,to:Slot)=>void;
   export let onArrange:()=>void;
+  /** A slot that was just filled: scrolled into view and pulsed so the new clip is not off-screen. */
+  export let highlight:Slot|null=null;
+  let revealed:Slot|null=null;
+  $: if(highlight&&!same(highlight,revealed)){revealed=highlight;void reveal(highlight);}else if(!highlight)revealed=null;
+  async function reveal(slot:Slot){
+    await tick();
+    const el=document.querySelector<HTMLElement>(`[data-clip-slot][data-row="${slot.row}"][data-column="${slot.column}"]`);
+    el?.scrollIntoView({block:'nearest',inline:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  }
   let picked:Slot|null=null;
   let drop:Slot|null=null;
   let drag:{id:number;from:Slot;clip:Clip;x:number;y:number;startX:number;startY:number;moving:boolean;el:HTMLElement}|null=null;
@@ -124,7 +133,7 @@
             {#each columns as column}
               {@const clip = show.clips.find(c => c.id === show.launchGrid[row]?.[column])}
               <div class="clip-slot" data-clip-slot data-row={row} data-column={column}>
-              <button class="pad" class:picked={same(picked,{row,column})} class:drag-source={!!drag?.moving&&same(drag.from,{row,column})} class:drop-target={same(drop,{row,column})} class:live={!!clip && show.layers[row].clipId === clip.id} class:queued={!!clip && pending[row]?.clip.id === clip.id} class:empty={!clip} class:unavailable={clipUnavailable(clip)}
+              <button class="pad" class:picked={same(picked,{row,column})} class:drag-source={!!drag?.moving&&same(drag.from,{row,column})} class:drop-target={same(drop,{row,column})} class:live={!!clip && show.layers[row].clipId === clip.id} class:queued={!!clip && pending[row]?.clip.id === clip.id} class:empty={!clip} class:unavailable={clipUnavailable(clip)} class:fresh={same(highlight,{row,column})}
                 aria-label={clip && clipUnavailable(clip) && !arrange ? `${clip.name} is not available on this device` : clip ? `${arrange ? 'Move' : show.layers[row].clipId===clip.id ? 'Select' : pending[row]?.clip.id===clip.id ? 'Select queued' : 'Launch'} ${clip.name} on row ${row + 1}` : `Add clip to row ${row + 1} column ${column + 1}`}
                 onpointerdown={e=>dragDown(e,row,column,clip)} onpointermove={dragMove} onpointerup={dragEnd} onpointercancel={dragEnd} onlostpointercapture={()=>{if(drag)cancelDrag();}}
                 oncontextmenu={e=>{if(clip){e.preventDefault();openMenu(row,column,clip);}}}
@@ -155,6 +164,9 @@
 <svelte:window onkeydown={e=>{if(e.key==='Escape'){cancelDrag();picked=null;}}} onblur={()=>{cancelDrag();picked=null;}}/>
 <style>
  .clip-slot{position:relative;min-width:0;}
+ .pad.fresh{outline:2px solid var(--ga-selection-line);outline-offset:1px;animation:fresh-pad 1s ease-in-out 3;}
+ @keyframes fresh-pad{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 4px var(--ga-selection-line),0 0 16px var(--ga-selection-line)}}
+ @media(prefers-reduced-motion:reduce){.pad.fresh{animation:none}}
  .pad.unavailable :global(img){opacity:.28;filter:grayscale(1);}
  .unavailable-badge{position:absolute;left:0;right:0;bottom:0;padding:3px 2px;font-size:9px;line-height:1.2;letter-spacing:.03em;text-align:center;color:var(--ga-ink-1);background:#000b;pointer-events:none;}
  .clip-slot .pad{width:100%;display:block;}

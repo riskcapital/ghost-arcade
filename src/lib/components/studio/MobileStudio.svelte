@@ -511,9 +511,16 @@
     changeLayer(row);
     editSlot = null;
     tab = 'perform';
+    sceneMode = false;
+    // The deck opens at column 1; bring the new pad into view and pulse it so "tap its pad" is possible.
+    freshPad = { row, column };
+    clearTimeout(freshTimer);
+    freshTimer = setTimeout(() => (freshPad = null), 3400);
     flash('Clip loaded. Tap its pad to launch.');
     persist();
   }
+  let freshPad: { row: number; column: number } | null = null;
+  let freshTimer: ReturnType<typeof setTimeout>;
   function stopRow(index: number) {
     autoEvent('stop');
     delete launchingClips[index];loading[index]=false;loading=[...loading];
@@ -1013,6 +1020,7 @@
       cancelAnimationFrame(autoFrame);
       clearInterval(timer);
       clearTimeout(noticeTimer);
+      clearTimeout(freshTimer);
       document.removeEventListener('visibilitychange', saveWhenHidden);
       window.removeEventListener('pagehide', flushSaves);
       flushSaves();
@@ -1289,7 +1297,7 @@
               Blocks save the clips in your deck grid. Edits update the current block; switching blocks keeps your live mix and mapping playing.
             </p>
           {:else}
-            <StudioDecks {show} {selectedLayer} {pending} {loading}
+            <StudioDecks {show} {selectedLayer} {pending} {loading} highlight={freshPad}
               onSelect={changeLayer}
               onControls={openControls}
               onMixer={openMixer}
