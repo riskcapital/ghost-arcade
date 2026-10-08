@@ -33352,6 +33352,51 @@ mod tests {
     }
 
     #[test]
+    fn source_preview_request_follows_the_size_on_screen() {
+        // A 16:9 preview is not read back as the square source texture.
+        let sized = SourcePreviewRequest::from_params(&json!({"layer_id":"a","width":864,"height":486,"encoding":"jpeg"}));
+        assert_eq!(sized.target_size(2048, 2048), (864, 486));
+        assert_eq!(sized.jpeg_quality, Some(82));
+        assert!(sized.include_pixels);
+        // Never larger than the crop it reads, and never absurd.
+        assert_eq!(sized.target_size(320, 180), (320, 180));
+        let huge = SourcePreviewRequest::from_params(&json!({"width":90000,"height":2}));
+        assert_eq!(huge.target_size(4096, 4096), (1024, 16));
+        // Older callers send only max_dim and get the uniform scale and raw pixels.
+        let legacy = SourcePreviewRequest::from_params(&json!({"layer_id":"a","max_dim":960}));
+        assert_eq!(legacy.target_size(2048, 2048), (960, 960));
+        assert_eq!(legacy.target_size(2048, 1024), (960, 480));
+        assert_eq!(legacy.jpeg_quality, None);
+        assert_eq!(SourcePreviewRequest::from_params(&json!({})).max_dim, 640);
+        assert_eq!(SourcePreviewRequest::from_params(&json!({"encoding":"JPEG","quality":500})).jpeg_quality, Some(95));
+    }
+
+    #[test]
+    fn source_preview_encodes_a_jpeg_without_alpha() {
+        let width = 32u32;
+        let height = 18u32;
+        // Premultiplied frame: half-covered orange, so colour over black is (128, 64, 0).
+        let pixels: Vec<u8> = (0..width * height).flat_map(|_| [128u8, 64, 0, 128]).collect();
+        let frame = FrameSnapshotReadback {
+            timestamp_ms: 0, width, height, format: wgpu::TextureFormat::Rgba8Unorm,
+            bytes_per_row: width * 4, padded_bytes_per_row: 256,
+            metrics: snapshot_metrics(&pixels, wgpu::TextureFormat::Rgba8Unorm), pixels,
+        };
+        let jpeg = SourcePreviewRequest::from_params(&json!({"encoding":"jpeg"})).encode(&frame).unwrap();
+        assert!(jpeg.get("rgba_b64").is_none());
+        let bytes = base64::engine::general_purpose::STANDARD.decode(jpeg["jpeg_b64"].as_str().unwrap()).unwrap();
+        let decoded = image::load_from_memory(&bytes).unwrap().to_rgb8();
+        assert_eq!((decoded.width(), decoded.height()), (width, height));
+        let px = decoded.get_pixel(16, 9);
+        assert!((px[0] as i32 - 128).abs() <= 4 && (px[1] as i32 - 64).abs() <= 4 && px[2] <= 6, "{px:?}");
+        // The metrics still describe the real frame, alpha included.
+        assert!((jpeg["mean_rgba"][3].as_f64().unwrap() - 128.0 / 255.0).abs() < 0.01);
+        // Without the encoding the raw pixels are returned as before.
+        let raw = SourcePreviewRequest::from_params(&json!({})).encode(&frame).unwrap();
+        assert!(raw["rgba_b64"].as_str().is_some() && raw.get("jpeg_b64").is_none());
+    }
+
+    #[test]
     fn compositor_allows_fully_opaque_layers() {
         assert!(
             STAGE3D_MESH_WGSL.contains("clamp(in.color.a * opacity, 0.0, 1.0)"),
