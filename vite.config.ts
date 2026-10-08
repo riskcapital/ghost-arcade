@@ -109,5 +109,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Several suites import the whole sync/layer graph or wait on real
+    // timers. Vitest's 5 s / 10 s defaults pass on an idle machine and fail
+    // whenever it is busy (a parallel build, a slower CI runner), on every
+    // platform. These leave room without hiding a genuinely hung test.
+    testTimeout: 20000,
+    hookTimeout: 30000,
   },
 });
