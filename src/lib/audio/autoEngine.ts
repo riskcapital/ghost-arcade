@@ -38,6 +38,7 @@ import { resolveAutoValue as resolveValue, advanceAutoPhase, autoClipPosition } 
 import { launchClockPosition } from '../stores/launchClock';
 import { project } from '../stores/layers';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { showToast } from '../stores/errorToast';
 import type { AutoConfig, Layer, Effect } from '../types';
 
 // ─────────────────────────────────────────────────────────────────
@@ -54,6 +55,16 @@ let lastTime = 0;
 /** True while the tick loop is running. */
 export function isAutoEngineRunning(): boolean {
   return rafId !== null;
+}
+
+/** Targets whose Auto failed, so each is reported once rather than every frame. */
+const autoFailures = new Set<string>();
+function reportAutoFailure(id: string, name: string, error: unknown) {
+  if (autoFailures.has(id)) return;
+  if (autoFailures.size > 256) autoFailures.clear();
+  autoFailures.add(id);
+  console.error(`[AutoEngine] Auto skipped for "${name}":`, error);
+  showToast(`Auto is off for "${name}": its settings could not be read.`, 'warning');
 }
 
 function tick(now: number) {
@@ -78,9 +89,7 @@ function tick(now: number) {
   const shaderBatches = new Map<string, Record<string, number>>(); // layerId → values
   const gpuBatches = new Map<string, Record<string, number>>();    // layerId → gpu param values
 
-  for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
-    const layer = layers[layerIdx];
-    if (!layer) continue;
+  const advanceLayerAuto = (layer: Layer) => {
     const clipPosition = autoClipPosition(layer.source, now);
 
     const interactive=layer.source?.effectSource?.interactiveScene;
@@ -184,6 +193,17 @@ function tick(now: number) {
         batch[paramKey] = value;
       }
     }
+  };
+  for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
+    const layer = layers[layerIdx];
+    if (!layer) continue;
+    // A layer whose Auto data cannot be read is skipped and reported once.
+    // It must not stop Auto for every layer after it.
+    try {
+      advanceLayerAuto(layer);
+    } catch (error) {
+      reportAutoFailure(layer.id, layer.name, error);
+    }
   }
 
   if (p.mappingComposition?.enabled) {
@@ -243,10 +263,7 @@ function tick(now: number) {
   ];
   for (const { states, bank } of decks) {
     if (!states) continue;
-    for (let i = 0; i < states.length; i++) {
-      const layerState = states[i];
-      if (!layerState) continue;
-
+    const advanceClipAuto = (i: number, layerState: any) => {
       // (1) Shader params on the active clip
       const clip = layerState.activeClip;
       const clipPosition = autoClipPosition(clip, now);
@@ -303,6 +320,16 @@ function tick(now: number) {
             vjClipLauncher.updateLayerEffectParams(i, fx.id, writes, bank);
           }
         }
+      }
+    };
+    for (let i = 0; i < states.length; i++) {
+      const layerState = states[i];
+      if (!layerState) continue;
+      try {
+        advanceClipAuto(i, layerState);
+      } catch (error) {
+        const clip = layerState.activeClip;
+        reportAutoFailure(`vj-${bank}-${i}-${clip?.id ?? ''}`, clip?.name ?? `VJ layer ${i + 1}`, error);
       }
     }
   }

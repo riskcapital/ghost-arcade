@@ -1,4 +1,4 @@
-import {defaultInteractive} from '../mobile/studio/interactive';
+import {defaultInteractive,sanitizeStoredInteractive} from '../mobile/studio/interactive';
 import {editableEffects} from '../mobile/studio/interactiveEffects';
 import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
@@ -26,7 +26,8 @@ import { disposeJSAnimationContext } from '../renderer/js-animation';
 import { synthVisionStore } from './synthVision';
 import { modulationStore, type ParamModulation } from '../audio/modulation';
 import { audioStore } from './audio';
-import { keyframeTimeline } from './keyframeTimeline';
+import { keyframeTimeline, timelinesHaveKeyframes } from './keyframeTimeline';
+import { showToast } from './errorToast';
 import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
@@ -250,6 +251,39 @@ function placeNewLayer(layers: Layer[], newLayer: Layer, selectedLayerId: string
   }
 }
 
+/**
+ * Interactive scenes that failed validation while something was being loaded.
+ * They are replaced by an empty scene (see sanitizeStoredInteractive); this
+ * tells the user once per load instead of once per layer.
+ */
+let unreadableInteractiveScenes = 0;
+let unreadableInteractiveNotice: ReturnType<typeof setTimeout> | undefined;
+function noteUnreadableInteractive(error: Error): void {
+  console.warn('[Store] Interactive scene could not be read and was reset:', error.message);
+  unreadableInteractiveScenes += 1;
+  if (unreadableInteractiveNotice !== undefined) return;
+  unreadableInteractiveNotice = setTimeout(() => {
+    const count = unreadableInteractiveScenes;
+    unreadableInteractiveScenes = 0;
+    unreadableInteractiveNotice = undefined;
+    showToast(
+      count === 1
+        ? 'One Interactive scene could not be read and was reset to an empty scene.'
+        : `${count} Interactive scenes could not be read and were reset to empty scenes.`,
+      'warning',
+    );
+  }, 0);
+}
+/** Layers that reach the project without _importLayer (preset copies). */
+function sanitizeInteractiveLayers<T extends { source?: { effectSource?: unknown } | null }>(layers: T[], origin: string): T[] {
+  return layers.map((layer) => {
+    const effectSource = layer?.source?.effectSource as Parameters<typeof sanitizeStoredInteractive>[0];
+    if (!effectSource?.interactiveScene) return layer;
+    const safe = sanitizeStoredInteractive(effectSource, (error) => noteUnreadableInteractive(new Error(`${origin}: ${error.message}`)));
+    return { ...layer, source: { ...layer.source, effectSource: safe } };
+  });
+}
+
 const NATIVE_READY_LAYER_TYPES = new Set<LayerType>(['interactive', 'media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'group', 'screen', 'mask']);
 
 function nativeLayerTypePending(type: LayerType): boolean {
@@ -423,13 +457,16 @@ void main() {
 
     update(currentProject => ({
       ...currentProject,
-      layers: structuredClone(preset.layers).map(migrateStageLayerCorners),
+      layers: sanitizeInteractiveLayers(structuredClone(preset.layers).map(migrateStageLayerCorners), 'stage preset'),
     }));
     vjClipLauncher.setStagePreset(preset.id);
     if(preset.keyframeTimelines){
       const others=keyframeTimeline.exportAll().filter(t=>!preset.layers.some(l=>l.id===t.layerId));
       keyframeTimeline.importAll([...others,...structuredClone(preset.keyframeTimelines)]);
-      keyframeTimeline.restoreSettings(preset.keyframeSettings);keyframeTimeline.seek(0);
+      // Only a preset with keyframes of its own brings its duration and loop
+      // and rewinds. Any other preset leaves the shared timeline as it is,
+      // as every preset did before presets could carry keyframes.
+      if(timelinesHaveKeyframes(preset.keyframeTimelines)){keyframeTimeline.restoreSettings(preset.keyframeSettings);keyframeTimeline.seek(0);}
     }
 
     if (surfaceSnapshot) {
@@ -4593,7 +4630,10 @@ void main() {
           }
           if (kfSnap?.snapshot) {
             keyframeTimeline.importAll(kfSnap.snapshot);
-            keyframeTimeline.restoreSettings(kfSnap.settings);keyframeTimeline.seek(0);
+            // The shared duration and loop follow the composition only when it
+            // has keyframes of its own, and the playhead is rewound only to
+            // restart a timeline that was playing (below).
+            if (timelinesHaveKeyframes(kfSnap.snapshot)) keyframeTimeline.restoreSettings(kfSnap.settings);
             if (kfSnap.wasPlaying && restoreTransports) {
               // seek(0) rewinds the playhead and re-evaluates overrides
               // WITHOUT wiping the timelines we just imported. Earlier
@@ -5627,6 +5667,9 @@ void main() {
         blendMode: layer.blendMode || 'normal',
         source: layer.source ? {
           ...layer.source,
+          // An Interactive scene is validated on the way in: a damaged one
+          // would otherwise stop the native sync for every layer.
+          effectSource: sanitizeStoredInteractive(layer.source.effectSource, noteUnreadableInteractive),
           texture: undefined,
           videoElement: undefined,
           isPlaying: false,
@@ -6032,7 +6075,7 @@ void main() {
               opacity: clip.opacity ?? 1,
               spoutSource: clip.spoutSource,
               ndiSource: clip.ndiSource,
-              effectSource: clip.effectSource,
+              effectSource: sanitizeStoredInteractive(clip.effectSource, noteUnreadableInteractive),
               jsAnimation: clip.jsAnimation,
               effects: clip.effects || [],
               splatContent: clip.splatContent,
@@ -6431,7 +6474,7 @@ void main() {
           // they reach the project without passing through _importLayer.
           stagePresets: ((proj as any).stagePresets || []).map((preset: any) => (
             Array.isArray(preset?.layers)
-              ? { ...preset, layers: preset.layers.map(migrateStageLayerCorners) }
+              ? { ...preset, layers: sanitizeInteractiveLayers(preset.layers.map(migrateStageLayerCorners), 'stage preset') }
               : preset
           )),
           svKeyboardPresets: (proj as any).svKeyboardPresets || [],

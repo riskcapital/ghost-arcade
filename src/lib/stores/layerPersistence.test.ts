@@ -1979,7 +1979,7 @@ it('routes MIDI group levels and FX by identity without creating outputs', async
 describe('Interactive layer project and preset persistence',()=>{
  it('preserves effect hierarchy, materials, Auto, Mod and keyframes through actual save/import and presets',async()=>{
   const {makeEffect}=await import('../mobile/studio/interactiveEffects');
-  const {defaultInteractive}=await import('../mobile/studio/interactive');
+  const {defaultInteractive,validateScene}=await import('../mobile/studio/interactive');
   const {keyframeTimeline}=await import('./keyframeTimeline');
   const {discoverKeyframeableParams}=await import('../keyframes/paramDiscovery');
   const fire=makeEffect('fire','stage'),light=makeEffect('light');fire.emission='burst';fire.params.hue=305;
@@ -1992,10 +1992,99 @@ describe('Interactive layer project and preset persistence',()=>{
   keyframeTimeline.setDuration(64);keyframeTimeline.setLooping(false);
   const composition=layers.project.saveComposition('Flame and light'),stage=layers.project.createStagePresetSnapshot('Interactive stage');
   const saved=JSON.parse(JSON.stringify(layers.project.exportProject()));expect(layers.project.importProject(saved)).toBe(true);
-  let restored=get(layers.project).layers[0];expect(restored.type).toBe('interactive');expect(get(keyframeTimeline).config).toMatchObject({duration:64,isLooping:false});expect(restored.source?.effectSource?.interactiveScene).toEqual(scene);
+  let restored=get(layers.project).layers[0];expect(restored.type).toBe('interactive');expect(get(keyframeTimeline).config).toMatchObject({duration:64,isLooping:false});expect(restored.source?.effectSource?.interactiveScene).toEqual(validateScene(scene));
   expect(discoverKeyframeableParams(restored).some(p=>p.key===track)).toBe(true);expect(get(keyframeTimeline).timelines[layer.id].tracks[0].keyframes).toHaveLength(2);
   keyframeTimeline.clearAll();layers.project.loadComposition(composition,{restoreTransports:true,recordHistory:false});await new Promise<void>(r=>queueMicrotask(r));expect(get(keyframeTimeline).timelines[layer.id].tracks[0].keyframes).toHaveLength(2);
   keyframeTimeline.clearAll();layers.project.loadStagePresetSnapshot(stage);expect(get(keyframeTimeline).timelines[layer.id].tracks[0].keyframes).toHaveLength(2);
   expect(get(layers.project).layers[0].source?.effectSource?.interactiveScene?.effects?.map(e=>e.id)).toEqual([fire.id,light.id]);
+ });
+
+ const interactiveLayer=async(id:string,interactiveScene:unknown,extra:Record<string,unknown>={})=>({
+  ...types.createLayer(id,id,'interactive'),
+  source:{id:`${id}-source`,type:'effect',src:'plugin://performer-world',name:id,effectSource:{effectType:'performer-world',interactiveScene,...extra}},
+ });
+ const importLayers=(projectLayers:unknown[],extra:Record<string,unknown>={})=>layers.project.importProject({version:'2.0.16',project:{id:'interactive-load',name:'Load',width:1920,height:1080,layers:projectLayers,...extra}} as any);
+
+ it('validates scenes on project load: a bad one is reset, a good one is cleaned, the rest load',async()=>{
+  const {makeEffect}=await import('../mobile/studio/interactiveEffects');
+  const {defaultInteractive,validateScene}=await import('../mobile/studio/interactive');
+  const good={...defaultInteractive(),effects:[makeEffect('liquid')]};
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try{
+   expect(importLayers([
+    await interactiveLayer('future',{schema:'ghost-interactive',version:2,preset:'plasma'}),
+    await interactiveLayer('dirty',{...good,junk:'x'.repeat(100000)},{interactiveInputs:[null,{id:'t',point:{x:.5,y:.5},strength:1}],interactivePaused:true}),
+    types.createLayer('plain','Plain','media'),
+   ])).toBe(true);
+  }finally{warn.mockRestore();}
+  const loaded=get(layers.project).layers;
+  const byId=(id:string)=>loaded.find(l=>l.id===id)!;
+  expect(loaded.map(l=>l.id).sort()).toEqual(['dirty','future','plain']);
+  expect(byId('future').source?.effectSource?.interactiveScene).toMatchObject({name:'Unreadable scene',surfaces:[],effects:[]});
+  const dirty=byId('dirty').source!.effectSource!;
+  expect(dirty.interactiveScene).toEqual(validateScene(good));
+  expect(JSON.stringify(dirty).length).toBeLessThan(5000);
+  expect(dirty.interactiveInputs).toEqual([]);
+  expect(dirty.interactivePaused).toBe(true);
+ });
+
+ it('validates scenes in stage presets, which bypass the layer importer',async()=>{
+  const {defaultInteractive}=await import('../mobile/studio/interactive');
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try{
+   const bad=await interactiveLayer('preset-bad',{nope:true});
+   expect(importLayers([await interactiveLayer('live',defaultInteractive())],{stagePresets:[{id:'sp',name:'Stage',createdAt:1,layers:[bad]}]})).toBe(true);
+   expect((get(layers.project).stagePresets as any[])[0].layers[0].source.effectSource.interactiveScene.name).toBe('Unreadable scene');
+   // A preset handed in from outside the project (the global preset tray).
+   layers.project.loadStagePresetSnapshot({id:'ext',name:'External',createdAt:1,layers:[bad]} as any);
+   expect(get(layers.project).layers[0].source?.effectSource?.interactiveScene?.name).toBe('Unreadable scene');
+  }finally{warn.mockRestore();}
+ });
+
+ it('keeps the shared keyframe duration, loop and playhead when a preset has no keyframes of its own',async()=>{
+  const {defaultInteractive}=await import('../mobile/studio/interactive');
+  const {keyframeTimeline}=await import('./keyframeTimeline');
+  const layer=await interactiveLayer('kf-layer',defaultInteractive());
+  expect(importLayers([layer])).toBe(true);
+  keyframeTimeline.clearAll();keyframeTimeline.setDuration(64);keyframeTimeline.setLooping(false);
+  const emptyStage=layers.project.createStagePresetSnapshot('No keyframes'),emptyComposition=layers.project.saveComposition('No keyframes');
+  keyframeTimeline.addKeyframe(layer.id,'layer:opacity',0,1,'linear','Opacity','number');keyframeTimeline.addKeyframe(layer.id,'layer:opacity',4,0,'linear','Opacity','number');
+  const keyedStage=layers.project.createStagePresetSnapshot('Keyframes'),keyedComposition=layers.project.saveComposition('Keyframes');
+  const setShared=()=>{keyframeTimeline.pause();keyframeTimeline.setDuration(20);keyframeTimeline.setLooping(true);keyframeTimeline.seek(7);};
+  const shared=()=>{const c=get(keyframeTimeline).config;return {duration:c.duration,isLooping:c.isLooping,currentTime:c.currentTime};};
+  const settle=()=>new Promise<void>(r=>queueMicrotask(r));
+
+  setShared();layers.project.loadStagePresetSnapshot(emptyStage);
+  expect(shared()).toEqual({duration:20,isLooping:true,currentTime:7});
+  setShared();layers.project.loadComposition(emptyComposition,{restoreTransports:true,recordHistory:false});await settle();
+  expect(shared()).toEqual({duration:20,isLooping:true,currentTime:7});
+
+  // A preset that owns a timeline brings its duration and loop with it.
+  setShared();layers.project.loadStagePresetSnapshot(keyedStage);
+  expect(shared()).toEqual({duration:64,isLooping:false,currentTime:0});
+  // A composition does too, but a timeline that was not playing is not rewound.
+  setShared();layers.project.loadComposition(keyedComposition,{restoreTransports:true,recordHistory:false});await settle();
+  expect(shared()).toEqual({duration:64,isLooping:false,currentTime:7});
+  expect(get(keyframeTimeline).timelines[layer.id].tracks[0].keyframes).toHaveLength(2);
+ });
+
+ it('keeps Auto running for other layers when one layer has unreadable data',async()=>{
+  const {makeEffect}=await import('../mobile/studio/interactiveEffects');
+  const {defaultInteractive}=await import('../mobile/studio/interactive');
+  const {startAutoEngine,stopAutoEngine}=await import('../audio/autoEngine');
+  const sweep=makeEffect('light');sweep.paramAuto={lightPower:{phase:0,mode:'loop',speedHz:2,min:0,max:3,playing:true}};
+  expect(importLayers([await interactiveLayer('healthy',{...defaultInteractive(),effects:[sweep]})])).toBe(true);
+  // Damage that only exists in memory (nothing a loader would have let in),
+  // placed BEFORE the healthy layer so it is ticked first.
+  layers.project.update(p=>({...p,layers:[{...types.createLayer('damaged','Damaged','media'),effects:[null] as any},...p.layers]}));
+  const read=()=>get(layers.project).layers.find(l=>l.id==='healthy')!.source!.effectSource!.interactiveScene!.effects![0].params.lightPower;
+  const before=read(),error=vi.spyOn(console,'error').mockImplementation(()=>{});
+  try{
+   startAutoEngine();
+   await new Promise(r=>setTimeout(r,120));
+  }finally{stopAutoEngine();}
+  expect(read()).not.toBe(before);
+  expect(error.mock.calls.filter(call=>String(call[0]).includes('Auto skipped for "Damaged"'))).toHaveLength(1);
+  error.mockRestore();
  });
 });

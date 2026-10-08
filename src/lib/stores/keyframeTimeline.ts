@@ -630,3 +630,18 @@ function createKeyframeTimelineStore() {
 }
 
 export const keyframeTimeline = createKeyframeTimelineStore();
+
+/**
+ * True when a saved set of timelines holds at least one keyframe. A stage
+ * preset or composition that does owns a timeline, and loading it may bring
+ * its duration and loop with it. One that does not must leave the shared
+ * duration, loop and playhead alone.
+ */
+export function timelinesHaveKeyframes(timelines: unknown): boolean {
+  if (!Array.isArray(timelines)) return false;
+  return timelines.some((timeline) => Array.isArray(timeline?.tracks) && timeline.tracks.some(
+    (track: { keyframes?: unknown[]; boolKeyframes?: unknown[] }) =>
+      (Array.isArray(track?.keyframes) && track.keyframes.length > 0) ||
+      (Array.isArray(track?.boolKeyframes) && track.boolKeyframes.length > 0),
+  ));
+}
