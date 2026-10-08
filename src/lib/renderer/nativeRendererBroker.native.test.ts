@@ -1063,6 +1063,19 @@ describe('native renderer broker capability overlay', () => {
     expect(calls).toBe(2);
   });
 
+  it('waits longer for a software adapter, which answers between one-second frames', () => {
+    const broker = createBroker();
+    expect(broker.rpcTimeoutScale()).toBe(1);
+    for (const name of ['Apple M1 Max', 'NVIDIA GeForce RTX 4070', 'Intel(R) UHD Graphics 630']) {
+      broker.lastStatus = { ...broker.lastStatus, adapter_name: name };
+      expect(broker.rpcTimeoutScale()).toBe(1);
+    }
+    for (const name of ['llvmpipe (LLVM 20.1.2, 256 bits)', 'Microsoft Basic Render Driver', 'SwiftShader Device (Subzero)']) {
+      broker.lastStatus = { ...broker.lastStatus, adapter_name: name };
+      expect(broker.rpcTimeoutScale()).toBe(8);
+    }
+  });
+
   it('keeps confirmed capabilities when a later capability refresh times out', async () => {
     // A busy core answering get_capabilities slowly used to wipe the broker
     // back to default capabilities AND mark the backend not ready, so the

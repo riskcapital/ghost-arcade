@@ -11,6 +11,7 @@ const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
 // One core stall trips every in-flight RPC at once. Roll those up instead of
 // emitting a line per failure for a condition the operator cannot act on.
 const TRANSIENT_RPC_FAILURE_LOG_WINDOW_MS = 5000;
+const SOFTWARE_ADAPTER_NAME = /llvmpipe|lavapipe|swiftshader|software|microsoft basic render|\bwarp\b/i;
 const defaultDecodeBackend = (platform = process.platform) => (platform === 'win32' ? 'ffmpeg_d3d11va' : 'ffmpeg_software');
 const STATIC_IMAGE_EXTENSIONS = new Set([
   '.avif',
@@ -1997,10 +1998,21 @@ class NativeRendererBroker {
     }
   }
 
+  /**
+   * A software adapter (lavapipe, WARP, SwiftShader) takes about a second per
+   * frame and answers between frames. With the timeouts tuned for a GPU every
+   * panel's request would expire and the editor would look empty, so give the
+   * slow core proportionally longer.
+   */
+  rpcTimeoutScale() {
+    return SOFTWARE_ADAPTER_NAME.test(String(this.lastStatus?.adapter_name || '')) ? 8 : 1;
+  }
+
   send(method, params = {}, { timeoutMs = 2500 } = {}) {
     if (!this.child || !this.child.stdin?.writable) {
       return Promise.reject(new Error('Native render core process is not running'));
     }
+    timeoutMs *= this.rpcTimeoutScale();
     const id = this.nextId++;
     const payload = `${JSON.stringify({ id, method, params })}\n`;
     const bytes = Buffer.byteLength(payload);
