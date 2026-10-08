@@ -9,6 +9,8 @@
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
   import { showToast } from '../stores/errorToast';
+  import { phoneScanLibrary } from '../stores/phoneScans';
+  import MediaTrayScans from './MediaTrayScans.svelte';
   import type { MediaSource, ISFInputDef, ImageInputRef, JSAnimationSource, VideoPlaybackMode, MediaTrayFolder, IntegratedEffectSource, IntegratedEffectType } from '../types';
   import { generateUUID } from '../types';
   import { videoLibrary, type SavedVideo } from '../stores/videoLibrary';
@@ -70,7 +72,7 @@
   export let isVJLiveSourceInUse: ((sourceId: string) => boolean) | null = null;
 
   // Active tab
-  let activeTab: 'videos' | 'images' | 'shaders' | 'js' | 'library' | 'sources' | 'plugins' = 'shaders';
+  let activeTab: 'videos' | 'images' | 'shaders' | 'js' | 'library' | 'sources' | 'plugins' | 'scans' = 'shaders';
 
   // --- Plugin System (Integrated) ---
   import { getAllPlugins, getPlugin, type PluginManifest } from '../plugins/registry';
@@ -3681,6 +3683,14 @@
         <span>Img</span>
         {#if images.length}<span class="tab-count">{images.length}</span>{/if}
       </button>
+      {#if $phoneScanLibrary.length}
+        <!-- Scans sent from a paired phone. Only shown once there is one. -->
+        <button class="tab" class:active={activeTab === 'scans'} onclick={() => activeTab = 'scans'} data-tray-tab="scans">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="7" cy="13" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="10" cy="20" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>
+          <span>Scan</span>
+          <span class="tab-count">{$phoneScanLibrary.length}</span>
+        </button>
+      {/if}
       <button class="tab" class:active={activeTab === 'sources'} onclick={() => { activeTab = 'sources'; sourcesInitialized = true; enumerateWebcams(); }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
         <span>Src</span>
@@ -4314,6 +4324,8 @@
           </div>
         {/if}
       </div>
+    {:else if activeTab === 'scans'}
+      <MediaTrayScans />
     {:else if activeTab === 'library'}
       {#if savedShaders.length === 0 && savedVideos.length === 0}
         <div class="empty-state">

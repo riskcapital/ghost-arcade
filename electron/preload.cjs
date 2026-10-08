@@ -64,6 +64,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'mp4_frame_encoder_live_control', 'mp4_frame_encoder_capture_live', 'mp4_frame_encoder_start', 'mp4_frame_encoder_write_frame', 'mp4_frame_encoder_write_frame_file', 'mp4_frame_encoder_finish', 'mp4_frame_encoder_cancel',
   'jpeg_frame_encoder_start', 'jpeg_frame_encoder_encode_file', 'jpeg_frame_encoder_finish', 'jpeg_frame_encoder_cancel',
   'save_generated_asset',
+  // Scans sent from a paired phone (electron/phone-scan-store.cjs)
+  'phone_scan_begin', 'phone_scan_write', 'phone_scan_finish', 'phone_scan_abort', 'phone_scan_list',
   'video_loop_create', 'video_append_segment',
   // Native FFmpeg converter
   'video_converter_pick_webm', 'video_converter_pick_sequence_folder', 'video_converter_pick_output',

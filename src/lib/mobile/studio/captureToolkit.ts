@@ -19,6 +19,8 @@ export const openScanner=(mode:'scan'|'live')=>call<void>('openScanner',{mode});
 export const openDualCamera=()=>call<{shots:CameraShot[]}>('openDualCamera');
 export const shareScan=(id:string)=>call<void>('shareScan',{id});
 export const deleteScan=(id:string)=>call<void>('deleteScan',{id});
+/** The saved PLY of a scan, read from app storage, for sending it to a paired desktop. */
+export async function readScanBytes(scan:SavedScan):Promise<Uint8Array>{const response=await fetch(captureFileURL(scan.url));if(!response.ok)throw new Error('Could not read the scan file.');return new Uint8Array(await response.arrayBuffer());}
 
 export const captureCalibrationReference=()=>call<import('./calibration').Reference>('calibrationReference');
 

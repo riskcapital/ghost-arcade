@@ -31,7 +31,7 @@ const {
   pairingTokenMatches,
   presentedPairingToken,
 } = require('./pairing.cjs');
-const { HOST_MESSAGES, authorizedHost, permittedSource } = require('./remote-access.cjs');
+const { HOST_MESSAGES, authorizedHost, permittedSource, scanMessageAllowed, scanMessageEnds } = require('./remote-access.cjs');
 
 // Shader library directory - in packaged Electron, extraResources land in resources/
 // while __dirname is inside app.asar/server/, so we need to go up two levels to resources/
@@ -882,6 +882,16 @@ function handleMessage(sender, msg) {
     case 'studio_calibration_status':
       relayPrivate(sender, msg, 'calibration', msg.requestId, msg.type === 'studio_calibration_offer');
       break;
+    // A saved scan travelling from one phone to the desktop, in chunks. Only
+    // the phone that made the offer can add to it, and only the desktop can
+    // answer (studio_scan_status is a host message).
+    case 'studio_scan_offer':
+    case 'studio_scan_chunk':
+    case 'studio_scan_abort':
+    case 'studio_scan_status':
+      if (!scanMessageAllowed(msg)) break;
+      relayPrivate(sender, msg, 'scan', msg.requestId, msg.type === 'studio_scan_offer');
+      break;
     case 'studio_capabilities_request':
       sendDesktop(msg);
       break;
@@ -1002,6 +1012,9 @@ function relayPrivate(sender, msg, kind, id, mayStart) {
   if (sender === desktopClient) {
     if (owner?.readyState === WebSocket.OPEN) owner.send(JSON.stringify(msg));
   } else {
+    // A route whose phone has gone can be claimed again (a scan resumed after
+    // the phone reconnected).
+    if (owner && owner !== sender && owner.readyState !== WebSocket.OPEN && mayStart) owner = undefined;
     if (!owner && mayStart) {
       // A phone that restarts sessions without stopping them keeps its newest 8.
       const mine = [...privateRoutes].filter(([, peer]) => peer === sender);
@@ -1011,7 +1024,7 @@ function relayPrivate(sender, msg, kind, id, mayStart) {
     if (owner !== sender) return;
     sendDesktop(msg);
   }
-  if (msg.type === 'phone_camera_stop' || msg.type === 'studio_calibration_status') privateRoutes.delete(key);
+  if (msg.type === 'phone_camera_stop' || msg.type === 'studio_calibration_status' || (kind === 'scan' && scanMessageEnds(msg))) privateRoutes.delete(key);
 }
 
 /**

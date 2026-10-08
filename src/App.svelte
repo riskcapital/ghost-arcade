@@ -351,6 +351,8 @@
   import GridOverlay from './lib/components/GridOverlay.svelte';
   import ShortcutsOverlay from './lib/components/ShortcutsOverlay.svelte';
   import ConfirmPopover from './lib/components/ConfirmPopover.svelte';
+  import PhoneScanInbox from './lib/components/PhoneScanInbox.svelte';
+  import { handlePhoneScanMessage, loadPhoneScanLibrary, phoneScanCapability } from './lib/stores/phoneScans';
   import WelcomeModal from './lib/components/WelcomeModal.svelte';
   // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
@@ -1585,6 +1587,8 @@
   onMount(() => {
     let appMounted = true;
     const stopInterfaceScale = startInterfaceScale();
+    // Scans received from a phone in earlier sessions (Media Library, Scan tab).
+    void loadPhoneScanLibrary();
     // Sim windows report where they settle so the assignment follows a drag.
     void refreshDisplays();
     const offSimMoved = (window as any).electronAPI?.on?.('sim-window-moved', handleSimWindowMoved);
@@ -3867,8 +3871,14 @@
       case 'studio_scene':
         receivePhoneScene(msg as Record<string,any>);
         break;
+      // A saved scan sent from a paired phone, in chunks (stores/phoneScans.ts).
+      case 'studio_scan_offer':
+      case 'studio_scan_chunk':
+      case 'studio_scan_abort':
+        handlePhoneScanMessage(msg, sendPhoneVisionSignal);
+        break;
       case 'studio_capabilities_request':
-        sendPhoneVisionSignal({type:'studio_capabilities',version:1,visualFeeds:true,metricDepth:false,nativeInteractive:true});
+        sendPhoneVisionSignal({type:'studio_capabilities',version:1,visualFeeds:true,metricDepth:false,nativeInteractive:true,scanTransfer:phoneScanCapability()});
         break;
 
       case 'phone_camera_offer': {
@@ -8330,6 +8340,7 @@
 
 <!-- Safe Mode in-app confirm popover (replaces window.confirm) -->
 <ConfirmPopover />
+<PhoneScanInbox />
 
 <!-- Close Confirmation Modal -->
 {#if showNewProjectModal}

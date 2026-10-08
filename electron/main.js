@@ -59,6 +59,7 @@ ipcMain.handle('show_startup_set', (_, patch) => showStartup.set(patch));
 // PJLink passwords live here, encrypted with safeStorage, never in project
 // files and never sent back to the renderer (electron/pjlink-credentials.cjs).
 const { createPjlinkClient } = require('./pjlink.cjs');
+const { createPhoneScanStore } = require('./phone-scan-store.cjs');
 const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
 const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
 const pjlinkClient = createPjlinkClient({ credentials: pjlinkCredentials });
@@ -7108,6 +7109,32 @@ function registerIpcHandlers() {
       return { success: false, error: err?.message || String(err) };
     }
   });
+
+  // --- Scans sent from a paired phone ---
+  // The renderer relays the transfer; this side owns the folder (inside the
+  // app's managed media folder), the file name and the integrity check. See
+  // electron/phone-scan-store.cjs for why a phone cannot write anywhere else.
+  let phoneScanStore = null;
+  const phoneScans = () => {
+    if (!phoneScanStore) {
+      phoneScanStore = createPhoneScanStore(path.join(app.getPath('userData'), 'project-assets', 'Phone Scans'));
+      phoneScanStore.cleanup();
+    }
+    return phoneScanStore;
+  };
+  for (const [channel, method] of [
+    ['phone_scan_begin', 'begin'], ['phone_scan_write', 'write'], ['phone_scan_finish', 'finish'],
+    ['phone_scan_abort', 'abort'], ['phone_scan_list', 'list'],
+  ]) {
+    ipcMain.handle(channel, async (_, args) => {
+      try {
+        const result = phoneScans()[method](args && typeof args === 'object' ? args : {});
+        return method === 'list' ? { success: true, scans: result } : { success: true, ...result };
+      } catch (err) {
+        return { success: false, error: err?.message || String(err) };
+      }
+    });
+  }
 
   // --- Cloud shader persistence to disk ---
   // Synced shaders from the public catalog are written to {userData}/shaders/<id>.fs
