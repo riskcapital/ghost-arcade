@@ -57,6 +57,12 @@
 
   const tsLabel = getTextureShareLabel();
 
+  // A stored display id that no connected display has. The main process
+  // would fall back to the primary display and cover the editor.
+  const displayMissing = $derived(
+    screen.displayId != null && displays.length > 0 && !displays.some((d) => d.id === screen.displayId),
+  );
+
   // A Screen shows either a slice of the master or a Map Sim projector view.
   const mapSimProjector = $derived(
     screen.mapSimProjectorId
@@ -249,9 +255,14 @@
         {#if openWindowIds.includes(screen.id)}
           <button class="full-btn danger" onclick={() => onCloseOnDisplay(screen)}>Close on display</button>
         {:else}
-          <button class="full-btn" disabled={screen.displayId == null} onclick={() => onOpenOnDisplay(screen)}>Open on display</button>
+          <button class="full-btn" disabled={screen.displayId == null || displayMissing} onclick={() => onOpenOnDisplay(screen)}>Open on display</button>
         {/if}
       </div>
+      {#if displayMissing}
+        <p class="warn-banner">
+          ⚠ The display this Screen was routed to is not connected (a project from another computer, or a projector that was re-plugged). Pick its display above, or press ↻ after connecting it. Opening now would cover this editor on the main display.
+        </p>
+      {/if}
     {:else}
       <label class="field">
         <span class="lbl">Sender</span>
@@ -306,7 +317,7 @@
     </label>
   </section>
 
-  <ProjectorCalibrationPanel {screen} />
+  <ProjectorCalibrationPanel {screen} {displays} outputOpen={openWindowIds.includes(screen.id)} />
 
   <!-- Masks ─────────────────────────────────────────────────────────
        Polygon masks cut from this screen's frame after its crop and
