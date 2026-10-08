@@ -215,9 +215,10 @@ describe('phone scan through the pairing server', () => {
   it('leaves nothing behind when the phone aborts or drops part way', async () => {
     const bytes = samplePly().slice(0, 1_200_000);
     const phone = (await open()).ws!;
-    const transfer = sendScan({ socket: phone as unknown as ScanSocket, bytes, name: 'aborted', points: 1, onProgress: (p) => { if (p.phase === 'sending' && p.sent >= 512 * 1024) transfer.abort(); } });
+    const transfer = sendScan({ socket: phone as unknown as ScanSocket, bytes, name: 'aborted', points: 1, onProgress: (p) => { if (p.phase === 'sending' && p.sent >= 256 * 1024) transfer.abort(); } });
     expect((await transfer.done).state).toBe('aborted');
-    await pause(150);
+    // The abort crosses two sockets before the desktop drops the partial file.
+    for (let i = 0; i < 100 && (store.openCount() > 0 || leftovers().length > 0); i++) await pause(30);
     expect(existsSync(path.join(dir, 'aborted.ply'))).toBe(false);
     expect(leftovers()).toEqual([]);
     expect(store.openCount()).toBe(0);

@@ -242,6 +242,39 @@ try {
     console.log(`upload followed at once by newer graphs: centre rgb ${centre}  ${ok ? 'PASS' : 'FAIL (points were dropped)'}`);
     await rpc('submit_commands', { commands: [{ type: 'remove_layer', layer_id: layerId }, { type: 'present' }] });
   }
+  // Point Cloud FX, drawn by the core's own graph: the same two planes, Solid Points off and on.
+  {
+    const fx = await vite.ssrLoadModule('/src/lib/renderer/webgpuPointCloudFX.ts');
+    await rpc('submit_commands', { commands: fx.buildPointCloudFXNativePrecompileCommands() }, 60_000);
+    const cloud = twoPlaneCloud(200_000);
+    report.pointCloudFx = [];
+    for (const solid of [false, true]) {
+      const pointData = fx.buildPointCloudFXNativePointData(cloud.positions, cloud.colors, { maxPoints: 200_000, signature: `solid-check-fx-${solid}`, pointSize: 0.012 });
+      const layerId = `solid-check-fx-${solid}`;
+      const b64 = (buffer) => Buffer.from(buffer).toString('base64');
+      await rpc('submit_commands', {
+        commands: [
+          { type: 'upload_native_point_cloud', layer_id: layerId, signature: pointData.signature, point_count: pointData.pointCount, sort_count: pointData.sortCount,
+            depth_sort_enabled: pointData.depthSortEnabled, home_b64: b64(pointData.homeInitialBuffer), live_b64: b64(pointData.liveInitialBuffer), sort_b64: b64(pointData.sortInitialBuffer) },
+          { type: 'upsert_layer', layer_id: layerId, z_index: 0, blend_mode: 'normal', opacity: 1, corners: fullFrame },
+          { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+          { type: 'set_native_graph_layer', layer_id: layerId, kind: 'point-cloud-fx', instrument_source_id: `${layerId}-output`, composite_source_id: `${layerId}-output`,
+            input_source_id: null, effect_graph: null,
+            params: { solidPoints: solid, pointSize: 0.012, windStrength: 0, audioReactive: false, colorMode: 'original', burstGain: 0, filterMode: 'none' } },
+        ],
+      }, 60_000);
+      await delay(1500);
+      const centre = pixelReader(await rpc('frame_snapshot', { include_pixels: true }, 30_000))(0.5, 0.5);
+      const row = { solid, centre };
+      // The instrument tints colours; what matters is which plane is on top (red = the near one).
+      if (solid) { row.ok = centre[0] > 150 && centre[0] > centre[1] * 1.5; if (!row.ok) failed++; }
+      else row.far_plane_shows_through = centre[1] > centre[0];
+      report.pointCloudFx.push(row);
+      console.log(`Point Cloud FX ${solid ? 'solid' : 'soft '}  centre rgb ${centre}${solid ? (row.ok ? '  PASS' : '  FAIL') : ''}`);
+      await rpc('submit_commands', { commands: [{ type: 'remove_layer', layer_id: layerId }] });
+      await delay(300);
+    }
+  }
   const status = await rpc('status');
   report.adapter = status.adapter_name;
   report.resolution = `${width}x${height}`;
