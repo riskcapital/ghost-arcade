@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { MOBILE_SHADERS } from '../standaloneShaderList';
 import { standaloneShaderPaths } from './shaderAvailability';
-import { loadShow, STORAGE_KEY, defaultShow, normalizeShow, newSurface, gridPoints, fullFramePoints, movePoint, History, nextBeat, layerGain, mappingRows } from './model';
+import { loadShow, STORAGE_KEY, defaultShow, normalizeShow, newSurface, gridPoints, fullFramePoints, clipLaunchParams, rememberClipLook, resetClipLook, normalizeLookParams, movePoint, History, nextBeat, layerGain, mappingRows } from './model';
 import { quadPoint, surfaceVertices } from './compositor';
 describe('standalone mobile show', () => {
   it('starts with a single deck and crossfades only when dual decks are enabled', () => {
@@ -192,4 +192,42 @@ it('re-frames an untouched inset surface only while mapping is still off', () =>
   const edited = defaultShow();
   edited.surfaces[0].points = gridPoints(0.1, 0.08, 0.8, 0.84);
   expect(normalizeShow(JSON.parse(JSON.stringify(edited))).surfaces[0].points[0]).toEqual({ x: 0.1, y: 0.08 });
+});
+
+describe('a clip keeps its look', () => {
+  it('restores edited parameters when the clip is launched again, and saves them with the set', () => {
+    const show = defaultShow();
+    const first = show.layers[0].clipId!;
+    const other = show.launchGrid[0][1]!;
+    const defaults = clipLaunchParams(show, first);
+    // Edit the playing clip, as the Controls sliders do.
+    show.layers[0].params = { ...defaults, layerCount: 14.09, glow: true, tint: [0.2, 0.4, 0.6, 1] };
+    show.clips = rememberClipLook(show, 0);
+    // Launch another clip on the row, then come back.
+    show.layers[0] = { ...show.layers[0], clipId: other, params: clipLaunchParams(show, other) };
+    expect(show.layers[0].params.layerCount).toBeUndefined();
+    show.layers[0] = { ...show.layers[0], clipId: first, params: clipLaunchParams(show, first) };
+    expect(show.layers[0].params).toMatchObject({ layerCount: 14.09, glow: true, tint: [0.2, 0.4, 0.6, 1] });
+    const reopened = normalizeShow(JSON.parse(JSON.stringify(show)));
+    expect(clipLaunchParams(reopened, first)).toMatchObject({ layerCount: 14.09, glow: true });
+    // The launched copy is independent of the remembered one.
+    (show.layers[0].params.tint as number[])[0] = 9;
+    expect((show.clips.find(c => c.id === first)!.params!.tint as number[])[0]).toBe(0.2);
+  });
+  it('resets a look to the shader defaults', () => {
+    const show = defaultShow();
+    const first = show.layers[0].clipId!;
+    const defaults = clipLaunchParams(show, first);
+    show.layers[0].params = { layerCount: 3 };
+    show.clips = rememberClipLook(show, 0);
+    const reset = resetClipLook(show, first);
+    expect(reset.clips.find(c => c.id === first)!.params).toBeUndefined();
+    expect(reset.params).toEqual(defaults);
+  });
+  it('drops values a shader input cannot take', () => {
+    expect(normalizeLookParams({ a: 1, b: true, c: [1, 2], d: 'x', e: NaN, f: [1, 'no'], g: { h: 1 }, i: [1, 2, 3, 4, 5] })).toEqual({ a: 1, b: true, c: [1, 2] });
+    expect(normalizeLookParams(null)).toBeUndefined();
+    expect(normalizeLookParams([1, 2])).toBeUndefined();
+    expect(normalizeLookParams({})).toBeUndefined();
+  });
 });

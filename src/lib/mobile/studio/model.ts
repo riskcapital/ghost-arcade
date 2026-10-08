@@ -9,7 +9,10 @@ import { MOBILE_SHADERS } from '../standaloneShaderList';
 import { MOBILE_EFFECTS, type MobileEffectInstance } from '../standaloneEffects';
 export type Point = { x: number; y: number };
 export type EffectChain = (MobileEffectInstance & { id: string })[];
+export type LookParams = Record<string, number | boolean | number[]>;
 export type Clip = {
+  /** The look this clip was last given. Restored when it is launched; absent means shader defaults. */
+  params?: LookParams;
   effects?: EffectChain;
   id: string;
   name: string;
@@ -177,7 +180,7 @@ export function normalizeShow(raw: unknown): Show {
   const clips = r.clips
     .filter((c) => c && typeof c.id === 'string' && ['shader', 'image', 'video','camera','depth'].includes(c.kind))
     .slice(0, 2048)
-    .map((c) => ({ ...c, effects: normalizeEffects(c.effects), name: String(c.name || 'Untitled clip').slice(0, 100) }));
+    .map((c) => ({ ...c, params: normalizeLookParams(c.params), effects: normalizeEffects(c.effects), name: String(c.name || 'Untitled clip').slice(0, 100) }));
   const layers = (items: Layer[]) =>
     base.layers.map((b, i) => {
       const l = items?.[i];
@@ -260,6 +263,33 @@ export function normalizeShow(raw: unknown): Show {
   if (!next.mapping && next.surfaces.length === 1 && sameGrid(next.surfaces[0].points, gridPoints()))
     next.surfaces[0] = { ...next.surfaces[0], points: fullFramePoints() };
   return next;
+}
+/** Keep only values a shader input can take, so a damaged set cannot poison the renderer. */
+export function normalizeLookParams(raw: unknown): LookParams | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: LookParams = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>).slice(0, 128)) {
+    if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) out[key] = value;
+    else if (Array.isArray(value) && value.length <= 4 && value.every((n) => typeof n === 'number' && Number.isFinite(n))) out[key] = value as number[];
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+/** Parameters a clip starts with: its shader's defaults, then the look it was last given. */
+export function clipLaunchParams(show: Show, clipId: string): LookParams {
+  const clip = show.clips.find((c) => c.id === clipId);
+  const defaults = clip?.shaderId ? MOBILE_SHADERS.find((s) => s.id === clip.shaderId)?.defaults : undefined;
+  return copy({ ...defaults, ...clip?.params });
+}
+/** Clips with the playing clip of `row` updated to the look currently on that layer. */
+export function rememberClipLook(show: Show, row: number): Clip[] {
+  const layer = show.layers[row];
+  if (!layer?.clipId) return show.clips;
+  return show.clips.map((c) => (c.id === layer.clipId ? { ...c, params: copy(layer.params) } : c));
+}
+/** Forget a clip's look. Returns the clips and the parameters its layer should go back to. */
+export function resetClipLook(show: Show, clipId: string): { clips: Clip[]; params: LookParams } {
+  const clips = show.clips.map((c) => (c.id === clipId ? { ...c, params: undefined } : c));
+  return { clips, params: clipLaunchParams({ ...show, clips }, clipId) };
 }
 export const STORAGE_KEY = 'ga-mobile-studio-v1';
 export function loadShow(): Show {

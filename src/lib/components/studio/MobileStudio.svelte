@@ -147,6 +147,9 @@
     defaultShow,
     normalizeShow,
     clipUnavailable,
+    clipLaunchParams,
+    rememberClipLook,
+    resetClipLook,
     newSurface,
     gridPoints,
     fullFramePoints,
@@ -326,7 +329,8 @@
     try {
       const accepted = await engine?.launch(index, clip);
       if (!accepted) return;
-      show.layers[index] = { ...show.layers[index], clipId: clip.id, enabled: true, ...(clip.kind==='camera'?{fit:'fill' as const}:{}), params: clip.shaderId ? { ...findShader(clip.shaderId)?.defaults } : {} };
+      // A clip comes back with the look it was last given, not the shader's factory settings.
+      show.layers[index] = { ...show.layers[index], clipId: clip.id, enabled: true, ...(clip.kind==='camera'?{fit:'fill' as const}:{}), params: clipLaunchParams(show, clip.id) };
       persist();
       if (index === selectedLayer) refreshParams();
     } catch (e) {
@@ -337,7 +341,18 @@
   }
   function patchLayer(patch: Partial<typeof layer>) {
     show.layers[selectedLayer] = { ...show.layers[selectedLayer], ...patch };
+    // Edits to a playing clip's parameters are that clip's look: keep them with the clip.
+    if (patch.params) show.clips = rememberClipLook(show, selectedLayer);
     persist();
+  }
+  function resetLook() {
+    if (!activeClip) return;
+    checkpoint();
+    const reset = resetClipLook(show, activeClip.id);
+    show.clips = reset.clips;
+    show.layers[selectedLayer] = { ...show.layers[selectedLayer], params: reset.params };
+    persist();
+    flash('Look reset to the clip defaults.');
   }
   function patchSurface(patch: Partial<Surface>) {
     if (!surface) return;
@@ -822,7 +837,7 @@
           {#if activeClip?.shaderId==='ga-ghostfx'}<div class="ghost-movements"><strong>GhostFX · {ghostMovements[liveGhostMovement??(Number(layer.params.movement)||0)]}</strong><div><button aria-label="Previous GhostFX movement" onclick={()=>ghostMove(-1)}>← Prev</button><button aria-label="Random GhostFX movement" onclick={()=>ghostMove(0)}>↝ Random</button><button aria-label="Next GhostFX movement" onclick={()=>ghostMove(1)}>Next →</button></div></div>{/if}
           <div class="inspector-card">
             {#if !inTray}<div class="section-heading">
-              <span>SOURCE CONTROLS</span><button disabled={!params.length} onclick={variation}>New variation</button>
+              <span>SOURCE CONTROLS</span><div class="inline"><button disabled={!activeClip?.params} onclick={resetLook}>Reset look</button><button disabled={!params.length} onclick={variation}>New variation</button></div>
             </div>{/if}
             <label class="range-row"
               ><span>Audio response</span><input
@@ -881,7 +896,7 @@
                     oninput={(e) => setParam(p.NAME, Number(e.currentTarget.value))}
                   /><output>{Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0).toFixed(2)}</output></label
                 >{/if}{/each}
-            {#if inTray && params.length}<button class="new-variation" onclick={variation}>New variation</button>{/if}
+            {#if inTray && (params.length || activeClip?.params)}<div class="look-actions"><button data-reset-look disabled={!activeClip?.params} onclick={resetLook}>Reset look</button>{#if params.length}<button class="new-variation" onclick={variation}>New variation</button>{/if}</div>{/if}
           </div>
           {/if}
           {:else}
@@ -3365,7 +3380,8 @@
   .clip-controls-body .segmented{margin:0 0 12px;}.clip-controls-body .segmented button{min-height:44px;font-size:12px;}.clip-controls-body .inspector-card{margin-top:12px;}.clip-controls-body .range-row{display:grid;min-width:0;grid-template-columns:minmax(0,1fr) 52px;gap:0 10px;}.clip-controls-body .range-row>span{width:auto;min-width:0;font-size:12px;grid-column:1;grid-row:1;overflow:visible;overflow-wrap:anywhere;}.clip-controls-body .range-row>output{width:auto;font-size:12px;grid-column:2;grid-row:1;}.clip-controls-body .range-row>input,.clip-controls-body .range-row>select{grid-column:1/-1;grid-row:2;width:100%;min-width:0;min-height:44px;}.clip-controls-body .section-heading{flex-wrap:wrap;gap:8px;}.clip-controls-body .section-heading button{min-height:44px;}.clip-controls-body .toggle-row{min-height:44px;gap:12px;}.clip-controls-body .toggle-row>span{min-width:0;overflow-wrap:anywhere;}
   .controls-notice{display:flex;align-items:center;gap:8px;flex:none;margin:0;padding:8px 14px;background:var(--ga-coral-soft);color:var(--ga-coral);font-size:11px;line-height:1.4;}.controls-notice button{min-height:44px;margin-left:auto;}
   @keyframes controls-in{from{transform:translateY(32px);opacity:0;}to{transform:translateY(0);opacity:1;}}
-  .clip-controls-body .new-variation{width:100%;min-height:44px;margin-top:12px;}
+  .clip-controls-body .look-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;}
+  .clip-controls-body .look-actions button{width:100%;min-height:44px;}
   @media(max-width:760px) and (max-height:650px){.studio.clip-editing .monitor{padding-top:8px;}.studio.clip-editing .preview-frame{max-width:min(100%,34dvh);}.clip-controls-header{padding-top:6px;padding-bottom:6px;}}
   @media(prefers-reduced-motion:reduce){.clip-controls-tray{animation:none;}}
 </style>
