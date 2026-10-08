@@ -4953,7 +4953,7 @@
 
   .canvas-boundary {
     position: absolute;
-    border: 2px solid #0066ff;
+    border: 2px solid var(--ga-blue-400);
     box-sizing: border-box;
     pointer-events: none;
     opacity: 0.6;
@@ -5059,8 +5059,8 @@
     align-items: center;
     gap: 7px;
     padding: 8px 12px;
-    background: #171a20;
-    border: 1px solid #2b313a;
+    background: var(--ga-blue-900);
+    border: 1px solid var(--ga-blue-mute-800);
     border-radius: 7px;
     color: var(--text-primary, #eee);
     font-size: 14px;
@@ -5070,10 +5070,10 @@
   }
 
   .layer-btn.selected {
-    background: rgba(103, 232, 249, 0.12);
-    border-color: #67e8f9;
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-300);
     color: #e7fbff;
-    box-shadow: inset 0 0 0 1px rgba(103, 232, 249, 0.22);
+    box-shadow: inset 0 0 0 1px var(--ga-blue-a28);
   }
 
   .layer-btn.hidden {
@@ -5089,17 +5089,17 @@
   }
 
   .layer-btn.selected .layer-dot {
-    background: #67e8f9;
-    box-shadow: 0 0 8px rgba(103, 232, 249, 0.9);
+    background: var(--ga-blue-300);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--ga-blue-300) 90%, transparent);
   }
 
   .layer-effect-chip {
     flex: 0 0 auto;
     padding: 3px 8px;
     border-radius: 999px;
-    border: 1px solid rgba(103, 232, 249, 0.35);
-    color: #67e8f9;
-    background: rgba(103, 232, 249, 0.1);
+    border: 1px solid var(--ga-blue-a28);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
     font-size: 11px;
     font-weight: 700;
   }
@@ -5209,8 +5209,8 @@
     flex: 1;
     max-width: 140px;
     padding: 8px 16px;
-    background: #181c22;
-    border: 1px solid #2c333d;
+    background: var(--ga-blue-mute-800);
+    border: 1px solid var(--ga-blue-mute-800);
     border-radius: 7px;
     color: var(--text-muted, #888);
     font-size: 14px;
@@ -5231,14 +5231,14 @@
     align-items: center;
     justify-content: center;
     border-radius: 999px;
-    background: #67e8f9;
+    background: var(--ga-blue-300);
     color: #071014;
     font-size: 11px;
   }
 
   .mapping-layer-tools .layer-tool-fx {
-    color: #67e8f9;
-    border-color: rgba(103, 232, 249, 0.35);
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-a28);
   }
 
   .mapping-layer-tools .layer-tool-shape {
@@ -5247,9 +5247,9 @@
   }
 
   .mapping-layer-tools button.active {
-    background: rgba(103, 232, 249, 0.12);
-    color: #67e8f9;
-    border-color: #67e8f9;
+    background: var(--ga-blue-a16);
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-300);
   }
 
   /* Mesh Grid Preset Controls */
@@ -6226,8 +6226,8 @@
     gap: 10px;
     padding: 10px;
     border-radius: 8px;
-    border: 1px solid #2b313a;
-    background: #171a20;
+    border: 1px solid var(--ga-blue-mute-800);
+    background: var(--ga-blue-900);
     color: var(--text-primary, #eee);
     font-size: 13px;
     font-weight: 700;
@@ -6235,9 +6235,9 @@
   }
 
   .shape-pick-btn.active {
-    color: #67e8f9;
-    border-color: #67e8f9;
-    background: rgba(103, 232, 249, 0.1);
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
 
   .shape-glyph {
@@ -6260,7 +6260,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 12px;
-    border: 1px solid #2b313a;
+    border: 1px solid var(--ga-blue-mute-800);
     border-radius: 8px;
     background: var(--bg-secondary, #111114);
     margin-bottom: 16px;
@@ -6291,8 +6291,8 @@
     min-height: 34px;
     padding: 0 10px;
     border-radius: 7px;
-    border: 1px solid #333b45;
-    background: #171a20;
+    border: 1px solid var(--ga-blue-mute-600);
+    background: var(--ga-blue-900);
     color: var(--text-primary, #eee);
     font-size: 12px;
     font-weight: 800;
@@ -6300,8 +6300,8 @@
 
   .shape-current-actions button.active {
     color: #071014;
-    background: #67e8f9;
-    border-color: #67e8f9;
+    background: var(--ga-blue-300);
+    border-color: var(--ga-blue-300);
   }
 
   .shape-current-actions button:disabled {
@@ -6338,7 +6338,7 @@
   .shape-check-row input {
     width: 20px;
     height: 20px;
-    accent-color: #67e8f9;
+    accent-color: var(--ga-blue-300);
   }
 
   /* Effects List */
@@ -6530,7 +6530,7 @@
     min-width: 0;
     padding: 8px 10px;
     border-radius: 7px;
-    border: 1px solid #333b45;
+    border: 1px solid var(--ga-blue-mute-600);
     background: #0b0d11;
     color: var(--text-primary, #eee);
     font-size: 13px;
@@ -6567,8 +6567,8 @@
     gap: 6px;
     min-width: 0;
     padding: 8px;
-    background: #171a20;
-    border: 1px solid #2b313a;
+    background: var(--ga-blue-900);
+    border: 1px solid var(--ga-blue-mute-800);
     border-radius: 7px;
     color: var(--text-primary, #eee);
     font-size: 13px;
@@ -6604,8 +6604,8 @@
     flex: 0 0 auto;
     padding: 2px 4px;
     border-radius: 4px;
-    background: rgba(103, 232, 249, 0.14);
-    color: #67e8f9;
+    background: var(--ga-blue-a16);
+    color: var(--ga-blue-300);
     font-size: 9px;
     font-weight: 800;
   }
@@ -6676,12 +6676,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #67e8f9;
+    background: var(--ga-blue-300);
     border: 2px solid #031014;
     color: #031014;
     font-size: 13px;
     font-weight: 800;
-    box-shadow: 0 0 16px rgba(103,232,249,0.55);
+    box-shadow: 0 0 16px var(--ga-blue-a45);
     pointer-events: none;
   }
 
@@ -6714,12 +6714,12 @@
 
   .vision-action {
     margin-left: auto;
-    color: #67e8f9;
+    color: var(--ga-blue-300);
     font-weight: 700;
   }
 
   .vision-cal-order {
-    color: rgba(103,232,249,0.8);
+    color: color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
     font-weight: 800;
     letter-spacing: 0.08em;
   }
@@ -6751,7 +6751,7 @@
   }
 
   .vision-effect-card.point-cloud {
-    border-color: rgba(103,232,249,0.2);
+    border-color: var(--ga-blue-a16);
   }
 
   .vision-effect-card.aura {
@@ -6792,7 +6792,7 @@
     width: 100%;
     min-height: 44px;
     border-radius: 8px;
-    border: 1px solid rgba(103,232,249,0.24);
+    border: 1px solid var(--ga-blue-a28);
     background: #0e141b;
     color: rgba(255,255,255,0.9);
     font-size: 14px;
@@ -6829,14 +6829,14 @@
     min-height: 46px;
     border-radius: 8px;
     border: 1px solid rgba(255,255,255,0.14);
-    background: #15191f;
+    background: var(--ga-blue-900);
     color: rgba(255,255,255,0.86);
     font-size: 15px;
     font-weight: 700;
   }
 
   .vision-primary {
-    background: linear-gradient(135deg, #26d07c, #35d7f5) !important;
+    background: linear-gradient(135deg, #26d07c, var(--ga-blue-300)) !important;
     color: #041014 !important;
     border-color: transparent !important;
   }
@@ -6848,8 +6848,8 @@
   }
 
   .vision-effect-card button {
-    background: #111827;
-    border-color: rgba(103,232,249,0.28);
+    background: var(--ga-blue-900);
+    border-color: var(--ga-blue-a28);
   }
 
   .vision-effect-card.aura button {

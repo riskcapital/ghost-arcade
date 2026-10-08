@@ -2678,11 +2678,11 @@
     padding: 0 9px;
   }
   .row-source-btn.camera {
-    background: rgba(103, 232, 249, 0.12);
-    border-color: rgba(103, 232, 249, 0.28);
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-a28);
   }
   .row-source-btn:active { background: rgba(105, 240, 174, 0.22); }
-  .row-source-btn.camera:active { background: rgba(103, 232, 249, 0.22); }
+  .row-source-btn.camera:active { background: var(--ga-blue-a28); }
   .row-enable {
     width: 30px; height: 30px;
     border-radius: 15px;
@@ -3174,8 +3174,8 @@
   }
   .apc-pad.green { --lc: #69F0AE; }
   .apc-pad.amber { --lc: #FFC857; }
-  .apc-pad.blue  { --lc: #4FC3F7; }
-  .apc-pad.cyan  { --lc: #67E8F9; }
+  .apc-pad.blue  { --lc: var(--ga-blue-300); }
+  .apc-pad.cyan  { --lc: var(--ga-blue-300); }
   .apc-pad.red   { --lc: #FF6E6E; }
   .apc-pad.white { --lc: #F4F4F5; }
   .apc-pad.green,
@@ -3610,8 +3610,8 @@
 	    align-items: center;
 	    gap: 8px;
 	    padding: 7px 9px;
-	    background: rgba(18, 38, 48, 0.72);
-	    border: 1px solid rgba(72, 213, 255, 0.12);
+	    background: color-mix(in srgb, var(--ga-blue-mute-800) 72%, transparent);
+	    border: 1px solid var(--ga-blue-a16);
 	    border-radius: 8px;
 	    font-size: 12px;
 	  }
@@ -3620,7 +3620,7 @@
 	    overflow: hidden;
 	    text-overflow: ellipsis;
 	    white-space: nowrap;
-	    color: #66D9EF;
+	    color: var(--ga-blue-300);
 	    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 	  }
 	  .osc-target {

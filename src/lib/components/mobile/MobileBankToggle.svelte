@@ -55,9 +55,9 @@
   .bank-toggle.compact .bank-btn { width: 26px; height: 22px; font-size: 11px; }
 
   .bank-btn.a.active {
-    background: rgba(79, 195, 247, 0.2);
-    color: #4FC3F7;
-    box-shadow: 0 0 6px rgba(79, 195, 247, 0.4);
+    background: var(--ga-blue-a16);
+    color: var(--ga-blue-300);
+    box-shadow: 0 0 6px var(--ga-blue-a45);
   }
   .bank-btn.b.active {
     background: rgba(206, 147, 216, 0.2);

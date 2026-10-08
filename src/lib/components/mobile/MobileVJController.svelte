@@ -778,7 +778,7 @@
     height: 100%;
     overflow: hidden;
   }
-  .deck-clips.a { border-right: 1px solid rgba(79, 195, 247, 0.18); }
+  .deck-clips.a { border-right: 1px solid var(--ga-blue-a16); }
   .deck-clips.b { border-left: 1px solid rgba(206, 147, 216, 0.18); }
   .deck-tag {
     font-size: 11px;
@@ -789,9 +789,9 @@
     flex-shrink: 0;
   }
   .deck-tag.a {
-    background: rgba(79, 195, 247, 0.12);
-    color: #4FC3F7;
-    text-shadow: 0 0 6px rgba(79, 195, 247, 0.4);
+    background: var(--ga-blue-a16);
+    color: var(--ga-blue-300);
+    text-shadow: 0 0 6px var(--ga-blue-a45);
   }
   .deck-tag.b {
     background: rgba(206, 147, 216, 0.12);
@@ -854,7 +854,7 @@
     width: 100%;
     box-sizing: border-box;
   }
-  .deck-mixer-strip.a { border-right: 1px solid rgba(79, 195, 247, 0.15); }
+  .deck-mixer-strip.a { border-right: 1px solid var(--ga-blue-a16); }
   .deck-mixer-strip.b { border-left: 1px solid rgba(206, 147, 216, 0.15); }
 
   /* SINGLE-DECK (xfader off) */
