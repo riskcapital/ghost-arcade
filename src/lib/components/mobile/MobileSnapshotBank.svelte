@@ -15,6 +15,7 @@
    */
 
   import { onDestroy } from 'svelte';
+  import { haptic } from '../../mobile/studio/nativeShare';
 
   interface SnapshotInfo {
     id: string;
@@ -63,7 +64,7 @@
   function confirmOverwrite() {
     const idx = confirmIndex;
     closeConfirm();
-    if (idx !== null) onSave(idx);
+    if (idx !== null) { onSave(idx); haptic('success'); }
   }
   onDestroy(() => { clearPressTimer(); closeConfirm(); });
 
@@ -88,7 +89,8 @@
         if (snap.populated) askOverwrite(idx);
         else onSave(idx);
         saveFiredFor = snap.id;
-        // Haptic feedback on iOS Safari (no-op elsewhere)
+        // Taptic feedback in the app; vibration where a browser offers it.
+        haptic(snap.populated ? 'warning' : 'medium');
         try { (navigator as any).vibrate?.(40); } catch { /* ignore */ }
       }
     }, 600);

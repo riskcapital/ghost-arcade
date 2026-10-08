@@ -6,6 +6,8 @@
 // The native control ignores pointers (see touchSliders.css) so neither WebKit nor Chromium can
 // apply its own jump-to-touch; keyboard and assistive adjustments still go through the input.
 
+import { haptic } from './nativeShare';
+
 /** Pixels of travel before a touch is read as a drag or a scroll. */
 export const SLIDER_SLOP = 6;
 const DOUBLE_TAP_MS = 320;
@@ -129,6 +131,7 @@ export function touchSliders(root: HTMLElement, _state?: unknown) {
       announce(g.el, e);
       commit(g.el, value);
       g.el.dispatchEvent(new Event('change', { bubbles: true }));
+      haptic('light');
     } else lastTap = { el: g.el, time: now, x: e.clientX, y: e.clientY };
   };
   const input = (e: Event) => { if (e.target instanceof HTMLInputElement && e.target.type === 'range') fill(e.target); };

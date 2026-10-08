@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { blobToBase64, isNativePlatform, safeFileName, shareFile } from './nativeShare';
+import { blobToBase64, haptic, isNativePlatform, nativeMethodAvailable, resetHapticsProbe, safeFileName, shareAnchor, shareFile } from './nativeShare';
 
 afterEach(() => { vi.unstubAllGlobals(); });
 const json = '{"version":1,"name":"Friday — main room"}';
@@ -29,7 +29,89 @@ describe('shareFile in the installed app', () => {
     vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise: async () => { throw new Error('not implemented'); } });
     await expect(shareFile('a.ghostset', blob(), 'application/json')).rejects.toThrow();
     vi.stubGlobal('Capacitor', { getPlatform: () => 'ios' });
-    await expect(shareFile('a.ghostset', blob(), 'application/json')).rejects.toThrow(/not available/);
+    await expect(shareFile('a.ghostset', blob(), 'application/json')).rejects.toThrow(/latest version/);
+  });
+  it('passes the tapped button as the iPad popover anchor', async () => {
+    const nativePromise = vi.fn(async () => ({ completed: true }));
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise });
+    const button = { getBoundingClientRect: () => ({ x: 40.4, y: 300.6, width: 160, height: 44 }) };
+    await shareFile('a.ghostset', blob(), 'application/json', button);
+    expect((nativePromise.mock.calls[0] as unknown as [string, string, { anchor: object }])[2].anchor).toEqual({ x: 40, y: 301, width: 160, height: 44 });
+    await shareFile('a.ghostset', blob(), 'application/json');
+    expect((nativePromise.mock.calls[1] as unknown as [string, string, object])[2]).not.toHaveProperty('anchor');
+    expect(shareAnchor({ x: 0, y: 0, width: 0, height: 0 })).toBeUndefined();
+    expect(shareAnchor(null)).toBeUndefined();
+  });
+});
+
+describe('app builds without the new native methods', () => {
+  const headers = (methods: string[]) => [{ name: 'StudioCapture', methods: methods.map(name => ({ name })) }];
+  it('reads method support from the plugin headers', () => {
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise: vi.fn(), PluginHeaders: headers(['listScans', 'shareFile']) });
+    expect(nativeMethodAvailable('StudioCapture', 'shareFile')).toBe(true);
+    expect(nativeMethodAvailable('StudioCapture', 'haptic')).toBe(false);
+    expect(nativeMethodAvailable('Missing', 'shareFile')).toBe(false);
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise: vi.fn() });
+    expect(nativeMethodAvailable('StudioCapture', 'shareFile')).toBeNull();
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'web', nativePromise: vi.fn() });
+    expect(nativeMethodAvailable('StudioCapture', 'shareFile')).toBe(false);
+  });
+  it('never calls a missing shareFile and uses the system share sheet instead', async () => {
+    const nativePromise = vi.fn();
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'android', nativePromise, PluginHeaders: headers(['listScans']) });
+    const share = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { canShare: () => true, share });
+    await expect(shareFile('a.ghostset', blob(), 'application/json')).resolves.toBe(true);
+    expect(nativePromise).not.toHaveBeenCalled();
+    expect((share.mock.calls[0] as unknown as [{ files: File[] }])[0].files[0].name).toBe('a.ghostset');
+    share.mockRejectedValueOnce(Object.assign(new Error('cancelled'), { name: 'AbortError' }));
+    await expect(shareFile('a.ghostset', blob(), 'application/json')).resolves.toBe(false);
+  });
+  it('says so plainly when nothing on the device can share a file', async () => {
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise: vi.fn(), PluginHeaders: headers([]) });
+    vi.stubGlobal('navigator', {});
+    await expect(shareFile('a.ghostset', blob(), 'application/json')).rejects.toThrow(/latest version/);
+  });
+  it('falls back when an older build rejects the call as unimplemented', async () => {
+    const nativePromise = vi.fn(async () => { throw Object.assign(new Error('shareFile is not implemented on ios'), { code: 'UNIMPLEMENTED' }); });
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise });
+    const share = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { canShare: () => true, share });
+    await expect(shareFile('a.ghostset', blob(), 'application/json')).resolves.toBe(true);
+    expect(share).toHaveBeenCalledOnce();
+  });
+  it('does not hide a real failure, such as a share sheet that is already open', async () => {
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise: async () => { throw new Error('A share sheet is already open.'); }, PluginHeaders: headers(['shareFile']) });
+    vi.stubGlobal('navigator', { canShare: () => true, share: vi.fn() });
+    await expect(shareFile('a.ghostset', blob(), 'application/json')).rejects.toThrow(/already open/);
+  });
+});
+
+describe('haptics', () => {
+  it('fires on builds that have the method and stays silent elsewhere', async () => {
+    resetHapticsProbe();
+    const nativePromise = vi.fn(async () => ({}));
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise, PluginHeaders: [{ name: 'StudioCapture', methods: [{ name: 'haptic' }] }] });
+    haptic('selection');
+    expect(nativePromise).toHaveBeenCalledWith('StudioCapture', 'haptic', { type: 'selection' });
+    nativePromise.mockClear();
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise, PluginHeaders: [{ name: 'StudioCapture', methods: [] }] });
+    haptic('light');
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'web', nativePromise });
+    haptic('light');
+    vi.stubGlobal('Capacitor', undefined);
+    expect(() => haptic('light')).not.toThrow();
+    expect(nativePromise).not.toHaveBeenCalled();
+  });
+  it('stops asking once an older build has said the method does not exist', async () => {
+    resetHapticsProbe();
+    const nativePromise = vi.fn(async () => { throw Object.assign(new Error('not implemented'), { code: 'UNIMPLEMENTED' }); });
+    vi.stubGlobal('Capacitor', { getPlatform: () => 'ios', nativePromise });
+    haptic('light');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    haptic('light'); haptic('heavy');
+    expect(nativePromise).toHaveBeenCalledTimes(1);
+    resetHapticsProbe();
   });
 });
 

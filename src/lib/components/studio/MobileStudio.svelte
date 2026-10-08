@@ -862,17 +862,19 @@
     noteUnavailable();
   }
   let exporting = false;
-  async function exportSet() {
+  async function exportSet(event?: Event) {
     if (exporting) return;
     exporting = true;
+    // The iPad share popover points at the button that was tapped.
+    const anchor = event?.currentTarget instanceof Element ? event.currentTarget.getBoundingClientRect() : null;
     try {
       const blob = new Blob([JSON.stringify(show, null, 2)], { type: 'application/json' });
       // Only claim success when the file really left: a finished share sheet, or a started download.
-      const done = await shareFile(`${show.name}.ghostset`, blob, 'application/json');
+      const done = await shareFile(`${show.name}.ghostset`, blob, 'application/json', anchor);
       if (done) flash(isNativePlatform() ? 'Set shared. Imported media stays on this device.' : 'Set file downloaded. Imported media stays on this device.');
       else flash('Export cancelled. Nothing was shared.');
-    } catch {
-      error = 'This set could not be exported. Try again.';
+    } catch (e) {
+      error = e instanceof Error && /latest version/.test(e.message) ? e.message : 'This set could not be exported. Try again.';
     } finally {
       exporting = false;
     }

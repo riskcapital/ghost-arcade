@@ -62,7 +62,9 @@
   // say what to do instead.
   function handleUnpaired() {
     stopReconnect();
-    forgetPairingToken();
+    // Only a code this device had stored is forgotten. A refused code that came from a
+    // new link must not wipe the remembered desktop's code.
+    if (recallPairingToken() === cleanPairingCode(pairingCode)) forgetPairingToken();
     pairingCode = '';
     error = UNPAIRED_MESSAGE;
   }
@@ -1361,7 +1363,9 @@
     // A scanned QR link carries the pairing code. Keep it, then take it back
     // out of the address bar so it is not left on screen or in a bookmark.
     const linkedCode = cleanPairingCode(params.get(PAIRING_QUERY_PARAM) ?? '');
-    if (linkedCode && rememberPairingToken(linkedCode) && !nativeShell) {
+    // In the native app a link's code is kept only once its desktop has accepted it (see
+    // socket.onopen), so a scanned or tapped link can never replace the stored code by itself.
+    if (linkedCode && !nativeShell && rememberPairingToken(linkedCode)) {
       params.delete(PAIRING_QUERY_PARAM);
       const query = params.toString();
       history.replaceState(history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
