@@ -7910,15 +7910,22 @@ export class NativeRendererSync {
    *  changes only when the operator opens or closes a screen. */
   private async refreshOpenSliceWindows() {
     try {
-      if (this.displayBounds.size === 0) {
-        const displays = await invoke<Array<{ id: number; width: number; height: number; scaleFactor: number }>>('get_displays');
-        for (const display of displays ?? []) {
-          this.displayBounds.set(Number(display.id), {
+      // Re-read the displays on every poll. Read once, a projector plugged
+      // in (or turned to portrait, or given another resolution) after launch
+      // was unknown here, and its Screen rendered at the master canvas size
+      // instead of the projector's own raster: soft, and no longer one
+      // calibration pixel per projector pixel.
+      const displays = await invoke<Array<{ id: number; width: number; height: number; scaleFactor: number }>>('get_displays');
+      if (Array.isArray(displays) && displays.length > 0) {
+        const next = new Map<number, { width: number; height: number; scaleFactor: number }>();
+        for (const display of displays) {
+          next.set(Number(display.id), {
             width: Number(display.width) || 1920,
             height: Number(display.height) || 1080,
             scaleFactor: Number(display.scaleFactor) || 1,
           });
         }
+        this.displayBounds = next;
       }
       const ids = await invoke<string[]>('output_list_slice_windows');
       const next = Array.isArray(ids) ? ids.map(String) : [];

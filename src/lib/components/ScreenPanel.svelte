@@ -30,7 +30,9 @@
   async function refreshDisplays() {
     if (!isDesktopApp) return;
     try {
-      displays = ((await invoke('get_displays')) as DisplayInfo[]) || [];
+      const next = ((await invoke('get_displays')) as DisplayInfo[]) || [];
+      // Polled, so only touch the list (and the pickers bound to it) on a real change.
+      if (JSON.stringify(next) !== JSON.stringify(displays)) displays = next;
     } catch { displays = []; }
   }
   onMount(() => { refreshDisplays(); });
@@ -48,7 +50,9 @@
     refreshOpenWindows();
     // A screen window can also close on its own (Esc in the window, or the
     // display going away), so keep the Open / Close button honest.
-    const poll = setInterval(() => { void refreshOpenWindows(); }, 2000);
+    // Displays too: a projector plugged in after the panel opened should
+    // appear in the picker (and size the calibration editor) without ↻.
+    const poll = setInterval(() => { void refreshOpenWindows(); void refreshDisplays(); }, 2000);
     return () => clearInterval(poll);
   });
 
