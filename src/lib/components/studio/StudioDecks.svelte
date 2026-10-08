@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from './StudioIcon.svelte';
   import {onDestroy} from 'svelte';
-  import type { Show, Clip, Layer } from '../../mobile/studio/model';
+  import { clipUnavailable, type Show, type Clip, type Layer } from '../../mobile/studio/model';
   import ClipThumbnail from './ClipThumbnail.svelte';
   export let show: Show;
   export let selectedLayer: number;
@@ -99,7 +99,7 @@
   $: decks = show.dualDeck ? [[0, 1, 2, 3], [4, 5, 6, 7]] : [[0, 1, 2, 3]];
   function clipAt(row: number, column: number) { return show.clips.find(c => c.id === show.launchGrid[row]?.[column]); }
   function columnLaunch(rows: number[], column: number) {
-    for (const row of rows) { const clip = clipAt(row, column); if (clip) onLaunch(row, clip); }
+    for (const row of rows) { const clip = clipAt(row, column); if (clip && !clipUnavailable(clip)) onLaunch(row, clip); }
   }
 </script>
 <div class="deck-toolbar">
@@ -124,13 +124,13 @@
             {#each columns as column}
               {@const clip = show.clips.find(c => c.id === show.launchGrid[row]?.[column])}
               <div class="clip-slot" data-clip-slot data-row={row} data-column={column}>
-              <button class="pad" class:picked={same(picked,{row,column})} class:drag-source={!!drag?.moving&&same(drag.from,{row,column})} class:drop-target={same(drop,{row,column})} class:live={!!clip && show.layers[row].clipId === clip.id} class:queued={!!clip && pending[row]?.clip.id === clip.id} class:empty={!clip}
-                aria-label={clip ? `${arrange ? 'Move' : show.layers[row].clipId===clip.id ? 'Select' : pending[row]?.clip.id===clip.id ? 'Select queued' : 'Launch'} ${clip.name} on row ${row + 1}` : `Add clip to row ${row + 1} column ${column + 1}`}
+              <button class="pad" class:picked={same(picked,{row,column})} class:drag-source={!!drag?.moving&&same(drag.from,{row,column})} class:drop-target={same(drop,{row,column})} class:live={!!clip && show.layers[row].clipId === clip.id} class:queued={!!clip && pending[row]?.clip.id === clip.id} class:empty={!clip} class:unavailable={clipUnavailable(clip)}
+                aria-label={clip && clipUnavailable(clip) && !arrange ? `${clip.name} is not available on this device` : clip ? `${arrange ? 'Move' : show.layers[row].clipId===clip.id ? 'Select' : pending[row]?.clip.id===clip.id ? 'Select queued' : 'Launch'} ${clip.name} on row ${row + 1}` : `Add clip to row ${row + 1} column ${column + 1}`}
                 onpointerdown={e=>dragDown(e,row,column,clip)} onpointermove={dragMove} onpointerup={dragEnd} onpointercancel={dragEnd} onlostpointercapture={()=>{if(drag)cancelDrag();}}
                 oncontextmenu={e=>{if(clip){e.preventDefault();openMenu(row,column,clip);}}}
                 onkeydown={e=>{if(clip&&(e.key==='ContextMenu'||(e.shiftKey&&e.key==='F10'))){e.preventDefault();openMenu(row,column,clip);}}}
                 onclick={() => { if(suppressTap){suppressTap=false;return;} if(arrange)arrangeTap({row,column},clip);else if(!clip)onEdit(row,column);else onTap(row,clip); }}>
-                {#if clip}{#key clip.id}<ClipThumbnail {clip}/>{/key}{#if arrange}<span class="drag-grip" aria-hidden="true">⠿</span>{/if}<span class="status-dot" aria-hidden="true"></span>{:else}<span class="plus">+</span>{/if}
+                {#if clip}{#key clip.id}<ClipThumbnail {clip}/>{/key}{#if clipUnavailable(clip)}<span class="unavailable-badge">Unavailable</span>{/if}{#if arrange}<span class="drag-grip" aria-hidden="true">⠿</span>{/if}<span class="status-dot" aria-hidden="true"></span>{:else}<span class="plus">+</span>{/if}
               </button>
               {#if clip && show.layers[row].clipId === clip.id && !arrange}
                 <button class="clip-settings" disabled={loading[row]} aria-label={`Edit ${clip.name} on ${show.dualDeck ? `Deck ${row < 4 ? 'A' : 'B'} · Layer ${row % 4 + 1}` : `Layer ${row + 1}`}`} title={`Edit ${clip.name}`} onpointerdown={e=>{e.stopPropagation();cancelHold();}} onclick={e=>{e.stopPropagation();e.currentTarget.focus({preventScroll:true});suppressTap=false;onControls(row);}}><Icon name="settings" size={16}/></button>
@@ -155,6 +155,8 @@
 <svelte:window onkeydown={e=>{if(e.key==='Escape'){cancelDrag();picked=null;}}} onblur={()=>{cancelDrag();picked=null;}}/>
 <style>
  .clip-slot{position:relative;min-width:0;}
+ .pad.unavailable :global(img){opacity:.28;filter:grayscale(1);}
+ .unavailable-badge{position:absolute;left:0;right:0;bottom:0;padding:3px 2px;font-size:9px;line-height:1.2;letter-spacing:.03em;text-align:center;color:var(--ga-ink-1);background:#000b;pointer-events:none;}
  .clip-slot .pad{width:100%;display:block;}
  .clip-settings{position:absolute;right:0;top:0;z-index:2;width:44px;height:44px;min-height:44px;padding:0;display:grid;place-items:center;background:transparent;border:0;box-shadow:none;color:var(--ga-ink-0);}
  .clip-settings::before{content:'';position:absolute;inset:7px;border:1px solid var(--ga-line-3);border-radius:6px;background:var(--ga-faceplate-bg);box-shadow:0 2px 8px #0008;}

@@ -146,6 +146,7 @@
     savedSets,
     defaultShow,
     normalizeShow,
+    clipUnavailable,
     newSurface,
     gridPoints,
     movePoint,
@@ -271,7 +272,14 @@
   }
   const launchingClips: Record<number, {clipId:string}> = {};
   let lastPlayingTap:{row:number;clipId:string;at:number}|null=null;
+  const unavailableMessage=(clip:Clip)=>`${clip.name} is not available on this device. Hold its pad to replace it.`;
+  /** Sets from other devices can hold clips this build cannot run. Say so once; their pads stay. */
+  function noteUnavailable(){
+    const count=new Set(show.launchGrid.flat().filter(id=>clipUnavailable(show.clips.find(c=>c.id===id)))).size;
+    if(count)flash(`${count} clip${count===1?' is':'s are'} not available on this device. Hold a pad to replace it.`);
+  }
   function toggleClip(clip:Clip,index:number) {
+    if(clipUnavailable(clip)){flash(unavailableMessage(clip));return;}
     stopAuto();
     changeLayer(index);
     controlView='source';
@@ -287,6 +295,7 @@
     }
   }
   async function launch(clip: Clip, index = selectedLayer, queued = false) {
+    if (clipUnavailable(clip)) { flash(unavailableMessage(clip)); return; }
     if (show.quantize && !queued) {
       const request = { clip, at: Infinity };
       pending = { ...pending, [index]: request };
@@ -675,6 +684,7 @@
     refreshParams();
     persist();
     settings = false;
+    noteUnavailable();
   }
   function exportSet() {
     const blob = new Blob([JSON.stringify(show, null, 2)], { type: 'application/json' });
@@ -705,6 +715,7 @@
       refreshParams();
       persist();
       settings = false;
+      noteUnavailable();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not open this set.';
     }
@@ -739,7 +750,7 @@
       engine.onError = (message) => (error = message);
       engine.start();
       void engine.restore(show).then(() => {
-        if (!disposed) refreshParams();
+        if (!disposed) { refreshParams(); noteUnavailable(); }
       });
     } catch (e) {
       error = e instanceof Error ? e.message : 'Video engine unavailable.';

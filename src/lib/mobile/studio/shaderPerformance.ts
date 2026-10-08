@@ -5,7 +5,6 @@ export const mobileHeavyShaderPaths = new Set<string>([
   "ISF/AR-GeodesicBloom.fs",
   "ISF/AR-MobiusStrip.fs",
   "ISF/AR-WaveformHelix.fs",
-  "ISF/GA-GhostFX.fs",
   "ISF/InfiniteGrid.fs",
   "ISF/MirrorRealm.fs",
   "ISF/OssiferousRadiolaria.fs",
@@ -33,3 +32,10 @@ export const mobileHeavyShaderPaths = new Set<string>([
   "ISF/tron-organic-fusion.fs",
   "ISF/wireframe-mesh-3d.fs"
 ]);
+/** Heavy shaders kept on mobile: internal render scale and raymarch detail multipliers. */
+export const mobileShaderBudgets: Record<string, { scale: number; detail: number }> = {
+  "ISF/GA-GhostFX.fs": {
+    "scale": 0.6,
+    "detail": 0.7
+  }
+};

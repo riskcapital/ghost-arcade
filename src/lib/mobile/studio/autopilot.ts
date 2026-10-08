@@ -1,8 +1,8 @@
-import type {Clip,Show} from './model';
+import {clipUnavailable,type Clip,type Show} from './model';
 import type {ISFInput} from '../../isf/parser';
 export function nextAutoClip(show:Show,row:number,random:boolean,rng=Math.random):Clip|undefined{
  const ids=[...new Set(show.launchGrid[row]||[])];
- const candidates=ids.map(id=>show.clips.find(c=>c.id===id)).filter((c):c is Clip=>!!c&&!['camera','depth'].includes(c.kind));
+ const candidates=ids.map(id=>show.clips.find(c=>c.id===id)).filter((c):c is Clip=>!!c&&!['camera','depth'].includes(c.kind)&&!clipUnavailable(c));
  if(!candidates.length)return;
  const current=show.layers[row].clipId,other=candidates.filter(c=>c.id!==current);
  if(!other.length)return;

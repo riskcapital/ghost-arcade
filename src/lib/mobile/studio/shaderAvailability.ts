@@ -163,6 +163,7 @@ export const standaloneShaderPaths = new Set<string>([
   "ISF/FluidMorph.fs",
   "ISF/FractalVoronoiBloom.fs",
   "ISF/FractalZoom.fs",
+  "ISF/GA-GhostFX.fs",
   "ISF/Galaxy of Universes+.fs",
   "ISF/GeometricWall.fs",
   "ISF/GlitchBlocks.fs",

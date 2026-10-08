@@ -1,4 +1,4 @@
-import {mobileHeavyShaderPaths} from './shaderPerformance';
+import {mobileHeavyShaderPaths,mobileShaderBudgets} from './shaderPerformance';
 import {GhostFXMotion} from './ghostFXMotion';
 import {GhostFXFeedback} from './ghostFX';
 import {CameraFx,cameraFxEnabled} from './cameraFx';
@@ -11,10 +11,12 @@ import { StandaloneAudio, SILENT_AUDIO } from '../standaloneAudio';
 import { parseISF, type ISFInput } from '../../isf/parser';
 import { StudioCompositor, type TextureInput } from './compositor';
 import { getAsset } from './assets';
-import { type Show, type Clip, layerGain } from './model';
+import { type Show, type Clip, layerGain, clipUnavailable } from './model';
 
 type Prepared = { native?:NativeLiveSource; releaseCapture?:()=>void; clip: Clip; source?: string; media?: HTMLImageElement | HTMLVideoElement; url?: string };
 type Slot = {
+  /** Reduced internal scale and step count for a heavy shader kept on mobile. */
+  budget?:{scale:number;detail:number};
   drift?:GhostFXFeedback;
   ghostMotion?:GhostFXMotion;
   ghostBass?:number;
@@ -40,8 +42,8 @@ function shaderSource(id: string) {
   let p = shaderSources.get(id);
   if (!p) {
     const shader = findShader(id);
-    if (!shader) throw new Error('Shader not found.');
-    if(mobileHeavyShaderPaths.has(shader.path))throw new Error(`${shader.name} is desktop-only because of its GPU cost. Replace this clip with a mobile library shader.`);
+    if (!shader) throw new Error('This clip is not available on this device. Hold its pad to replace it.');
+    if(mobileHeavyShaderPaths.has(shader.path))throw new Error(`${shader.name} is not available on this device. Hold its pad to replace it.`);
     p = fetch(encodeURI(`${import.meta.env.BASE_URL}${shader.path}`))
       .then((r) => {
         if (!r.ok) throw new Error(`Could not load ${shader.name}.`);
@@ -204,6 +206,7 @@ export class StudioEngine {
         if (this.dead || s.generation !== generation) { this.disposePrepared(p); return false; }
         s.renderer.setShaderImage(p.media ?? null);
         s.params = parseISF(p.source).metadata.INPUTS;
+        s.budget = mobileShaderBudgets[shader.path];
       } else if (p.media) {
         if (p.media instanceof HTMLVideoElement) await p.media.play();
         if (this.dead || s.generation !== generation) {
@@ -214,6 +217,7 @@ export class StudioEngine {
         s.params = [];
       }
       this.releaseMedia(s);
+      if (!p.source) s.budget = undefined;
       s.native=p.native;
       s.video = p.media instanceof HTMLVideoElement ? p.media : undefined;
       s.image = p.media instanceof HTMLImageElement ? p.media : undefined;
@@ -256,9 +260,19 @@ export class StudioEngine {
     s.generation++;
     s.clipId = null;
     s.params = [];
+    s.budget = undefined;
     this.releaseMedia(s);
     s.renderer.clearSource();
   }
+  /** Heavy shaders expose a `detail` input that sets their step count; hold it inside the mobile budget. */
+  private budgetInputs(s:Slot,params:Show['layers'][number]['params']){
+    const budget=s.budget;if(!budget||budget.detail>=1)return params;
+    const input=s.params.find(p=>p.NAME==='detail'&&p.TYPE==='float');if(!input)return params;
+    const value=typeof params.detail==='number'?params.detail:Number(input.DEFAULT??1);
+    return {...params,detail:value*budget.detail};
+  }
+  /** Internal render height of a row's shader, for tests and diagnostics. */
+  renderBudget(index:number){return this.slots[index]?.budget;}
   ghostMovement(index:number){return this.slots[index]?.ghostMotion?.currentMovement;}
   parameters(index: number) {
     return this.slots[index].params.filter(p=>!p.NAME.startsWith('_ghost'));
@@ -317,12 +331,12 @@ export class StudioEngine {
               const dt=s.ghostTime?Math.min(.1,(now-s.ghostTime)/1000):0;s.ghostTime=now;
               const response=s.ghostMotion.update(audio,dt*Math.max(0,l.speed),Number(l.params.movement)||0,Number(l.params.drift??.6),Number(l.params.morph??2.5),Number(l.params.reactivity??1),l.params.journey===true,Number(l.params.journeySeconds??24));
               s.ghostBass=response.audio.audioBass;s.renderer.setAudio(response.audio);
-              s.renderer.setShaderInputs({...l.params,...response.inputs});
-            }else s.renderer.setShaderInputs(l.params);
+              s.renderer.setShaderInputs({...this.budgetInputs(s,l.params),...response.inputs});
+            }else s.renderer.setShaderInputs(this.budgetInputs(s,l.params));
 
             const sourceWidth = s.video?.videoWidth || s.image?.naturalWidth || 16,
               sourceHeight = s.video?.videoHeight || s.image?.naturalHeight || 9;
-            const height=show.clips.find(c=>c.id===s.clipId)?.kind==='shader'?shaderHeight:show.quality;
+            const height=show.clips.find(c=>c.id===s.clipId)?.kind==='shader'?Math.max(180,shaderHeight*(s.budget?.scale??1)):show.quality;
             const scale = Math.min(height / sourceHeight, (height * 16) / 9 / sourceWidth);
             s.renderer.drawFrame(
               Math.max(1, Math.round(sourceWidth * scale)),
@@ -379,7 +393,7 @@ export class StudioEngine {
     await Promise.all(
       show.layers.map(async (l, i) => {
         const clip = show.clips.find((c) => c.id === l.clipId);
-        if (clip?.kind === 'camera'||clip?.kind==='depth') {this.clear(i);l.clipId=null;return;}
+        if (clip?.kind === 'camera'||clip?.kind==='depth'||clipUnavailable(clip)) {this.clear(i);l.clipId=null;return;}
         if (clip) {
           try {
             await this.launch(i, clip);

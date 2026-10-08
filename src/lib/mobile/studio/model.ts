@@ -1,5 +1,6 @@
 import { normalizeCrossfade, type CrossfadeSettings } from './crossfade';
 import {standaloneShaderPaths} from './shaderAvailability';
+import {mobileHeavyShaderPaths} from './shaderPerformance';
 import {normalizePaint,type PaintConfig} from './paint';
 import type { LookConfig } from './looks/types';
 import { EDGE_LOOKS } from './looks/edgeLookCatalog';
@@ -79,6 +80,12 @@ export const shaderThumbnail = (id: string) => {
         .replaceAll('/', '_')}.jpg`
     : '';
 };
+/** True for a saved shader clip this build cannot run: it left the library or costs too much for a phone GPU. */
+export function clipUnavailable(clip: Clip | undefined): boolean {
+  if (!clip || clip.kind !== 'shader') return false;
+  const shader = MOBILE_SHADERS.find((s) => s.id === clip.shaderId);
+  return !shader || mobileHeavyShaderPaths.has(shader.path);
+}
 export function gridPoints(x = 0.08, y = 0.08, w = 0.84, h = 0.84): Point[] {
   return Array.from({ length: 9 }, (_, i) => ({ x: x + ((i % 3) * w) / 2, y: y + (Math.floor(i / 3) * h) / 2 }));
 }
@@ -171,7 +178,8 @@ export function normalizeShow(raw: unknown): Show {
       return {
         ...b,
         solo: !!l.solo,
-        clipId: clips.some((c) => c.id === l.clipId) ? l.clipId : null,
+        // An unavailable clip keeps its pad in the grid but can never be the playing source.
+        clipId: clips.some((c) => c.id === l.clipId && !clipUnavailable(c)) ? l.clipId : null,
         enabled: l.enabled !== false,
         opacity: clamp(l.opacity),
         fit: ['stretch', 'contain', 'fill'].includes(l.fit) ? l.fit : 'contain',
