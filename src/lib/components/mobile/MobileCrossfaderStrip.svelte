@@ -380,10 +380,10 @@
     min-height: 24px;
   }
   .xfade-cut.a.active, .xfade-cut.a.selected {
-    background: rgba(79, 195, 247, 0.18);
-    border-color: rgba(79, 195, 247, 0.6);
-    color: #4FC3F7;
-    box-shadow: 0 0 8px rgba(79, 195, 247, 0.4);
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-a70);
+    color: var(--ga-blue-200);
+    box-shadow: 0 0 8px var(--ga-blue-a45);
   }
   .xfade-cut.b.active, .xfade-cut.b.selected {
     background: rgba(206, 147, 216, 0.18);
@@ -450,14 +450,14 @@
     height: 2px;
     left: 0;
   }
-  .xfade.vertical .xfade-endpoint.a { top: 0; background: #4FC3F7; }
+  .xfade.vertical .xfade-endpoint.a { top: 0; background: var(--ga-blue-200); }
   .xfade.vertical .xfade-endpoint.b { bottom: 0; background: #CE93D8; }
   .xfade.horizontal .xfade-endpoint {
     height: 100%;
     width: 2px;
     top: 0;
   }
-  .xfade.horizontal .xfade-endpoint.a { left: 0; background: #4FC3F7; }
+  .xfade.horizontal .xfade-endpoint.a { left: 0; background: var(--ga-blue-200); }
   .xfade.horizontal .xfade-endpoint.b { right: 0; background: #CE93D8; }
 
   .xfade-center {
@@ -488,7 +488,7 @@
     top: 0;
     left: 0;
     right: 0;
-    background: linear-gradient(to bottom, rgba(79, 195, 247, 0.4), rgba(79, 195, 247, 0.05));
+    background: linear-gradient(to bottom, var(--ga-blue-a45), var(--ga-blue-a08));
     border-radius: 6px 6px 0 0;
   }
   .xfade.vertical .xfade-fill-b {
@@ -502,7 +502,7 @@
     left: 0;
     top: 0;
     bottom: 0;
-    background: linear-gradient(to right, rgba(79, 195, 247, 0.4), rgba(79, 195, 247, 0.05));
+    background: linear-gradient(to right, var(--ga-blue-a45), var(--ga-blue-a08));
     border-radius: 6px 0 0 6px;
   }
   .xfade.horizontal .xfade-fill-b {

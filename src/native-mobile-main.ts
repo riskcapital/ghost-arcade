@@ -1,5 +1,6 @@
 import { mount } from 'svelte';
 import { ARCADE_THEME } from './lib/theming/themes/arcade';
+import './lib/mobile/studio/blueScale.css';
 import './lib/mobile/studio/theme.css';
 import NativeStudioApp from './lib/components/studio/NativeStudioApp.svelte';
 

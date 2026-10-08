@@ -1340,7 +1340,7 @@
           {#if visualsDown}<div class="visuals-down" role="alert"><strong>{visualsRestarting ? 'Restarting visuals…' : 'Visuals interrupted'}</strong><span>Your set is safe.</span><button data-restart-visuals disabled={visualsRestarting} onclick={() => restartVisuals(true)}>Restart visuals</button></div>{/if}
           {#if tab === 'map' && !clean}
             <svg class="mapping-lines" viewBox="0 0 1000 562.5" aria-hidden="true">
-              {#if mappingGrid}<defs><pattern id="mapping-guide-grid" width="62.5" height="62.5" patternUnits="userSpaceOnUse"><path d="M62.5 0H0V62.5" fill="none" stroke="#91b4ed" stroke-opacity=".4" stroke-width="1"/></pattern></defs><rect width="1000" height="562.5" fill="url(#mapping-guide-grid)"/>{/if}
+              {#if mappingGrid}<defs><pattern id="mapping-guide-grid" width="62.5" height="62.5" patternUnits="userSpaceOnUse"><path d="M62.5 0H0V62.5" fill="none" style="stroke:var(--ga-blue-200)" stroke-opacity=".4" stroke-width="1"/></pattern></defs><rect width="1000" height="562.5" fill="url(#mapping-guide-grid)"/>{/if}
               {#each show.surfaces as s, i}<polyline
                   points={meshPath(s)}
                   class:chosen={i === selectedSurface}
@@ -2066,16 +2066,16 @@
     border-radius: var(--ga-r-hard);
   }
   input.blue-fill::-webkit-slider-runnable-track {
-    background: repeating-linear-gradient(90deg, transparent 0 calc(12.5% - 1px), var(--ga-line-2) calc(12.5% - 1px) 12.5%), linear-gradient(90deg, #2f4ad6 0 calc(10px + (100% - 20px) * var(--range-fill, 0)), var(--ga-slot) calc(10px + (100% - 20px) * var(--range-fill, 0)) 100%);
+    background: repeating-linear-gradient(90deg, transparent 0 calc(12.5% - 1px), var(--ga-line-2) calc(12.5% - 1px) 12.5%), linear-gradient(90deg, var(--ga-blue-600) 0 calc(10px + (100% - 20px) * var(--range-fill, 0)), var(--ga-slot) calc(10px + (100% - 20px) * var(--range-fill, 0)) 100%);
   }
   input.blue-fill::-webkit-slider-thumb {
-    background: linear-gradient(#7996ff, #7996ff) center / 10px 2px no-repeat, linear-gradient(180deg, var(--ga-raise), var(--ga-card));
+    background: linear-gradient(var(--ga-blue-300), var(--ga-blue-300)) center / 10px 2px no-repeat, linear-gradient(180deg, var(--ga-raise), var(--ga-card));
   }
   input.blue-fill::-moz-range-progress {
-    background: #2f4ad6;
+    background: var(--ga-blue-600);
   }
   input.blue-fill::-moz-range-thumb {
-    background: linear-gradient(#7996ff, #7996ff) center / 10px 2px no-repeat, linear-gradient(180deg, var(--ga-raise), var(--ga-card));
+    background: linear-gradient(var(--ga-blue-300), var(--ga-blue-300)) center / 10px 2px no-repeat, linear-gradient(180deg, var(--ga-raise), var(--ga-card));
   }
   input[type='checkbox'] {
     width: 22px;
@@ -2701,13 +2701,13 @@
   }
   .mapping-lines polyline {
     fill: none;
-    stroke: #83a4d5;
+    stroke: var(--ga-blue-300);
     stroke-width: 1;
     stroke-dasharray: 6 5;
     vector-effect: non-scaling-stroke;
   }
   .mapping-lines polyline.chosen {
-    stroke: #8ab7ff;
+    stroke: var(--ga-blue-200);
     stroke-width: 2;
     stroke-dasharray: none;
   }
@@ -2718,11 +2718,11 @@
     font-size: 17px;
     fill: #e3edff;
     paint-order: stroke;
-    stroke: #07101f;
+    stroke: var(--ga-blue-900);
     stroke-width: 3px;
   }
   .mapping-lines polyline.mesh-line {
-    stroke: #77adff;
+    stroke: var(--ga-blue-300);
     opacity: 0.6;
     stroke-width: 1;
     stroke-dasharray: none;
@@ -2744,7 +2744,7 @@
     height: 14px;
     border: 2px solid #e4f0ff;
     border-radius: 50%;
-    background: #4e8bed;
+    background: var(--ga-blue-400);
     box-shadow: 0 0 0 4px #07101b66;
   }
   .warp-handle.selected span {

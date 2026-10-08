@@ -8,12 +8,12 @@
 
   const layerColors = [
     'var(--accent-primary)',
-    '#4FC3F7',
+    'var(--ga-blue-300)',
     '#81C784',
     '#FFB74D',
     '#CE93D8',
     '#EF5350',
-    '#4DD0E1',
+    'var(--ga-blue-200)',
     '#AED581',
   ];
 

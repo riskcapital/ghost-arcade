@@ -8,16 +8,16 @@
 }
 :root {
   color-scheme: dark;
-  --ga-selection-bg: #172a5b;
-  --ga-selection-line: #3d59b8;
+  --ga-selection-bg: var(--ga-blue-700);
+  --ga-selection-line: var(--ga-blue-500);
   --ga-selection-ink: #e0e8ff;
-  --ga-focus: #7996ff;
+  --ga-focus: var(--ga-blue-300);
 }
 
 /* Desktop Arcade faceplate and hardware finishes, shared by all mobile panels. */
 :root {
-  --ga-slider-fill: #2f4ad6;
-  --ga-slider-glow: rgba(58, 88, 230, .55);
+  --ga-slider-fill: var(--ga-blue-500);
+  --ga-slider-glow: var(--ga-blue-a45);
   --ga-faceplate-bg:
     linear-gradient(180deg, rgba(255,255,255,.030), transparent 3px),
     repeating-linear-gradient(180deg, rgba(255,255,255,.014) 0 1px, transparent 1px 3px),

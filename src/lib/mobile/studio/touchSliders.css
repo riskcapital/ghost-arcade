@@ -4,10 +4,10 @@
     drag adjusts from the current value. The native control must not jump to the finger. */
  pointer-events:none!important;
 }
-.studio input.studio-range[type=range]::-webkit-slider-runnable-track{height:8px!important;border:1px solid var(--ga-line-2)!important;border-radius:4px!important;background:linear-gradient(90deg,#3856df calc(13px + (100% - 26px)*var(--touch-fill,0)),var(--ga-slot) 0)!important;}
-.studio input.studio-range[type=range]::-webkit-slider-thumb{-webkit-appearance:none!important;width:26px!important;height:30px!important;margin-top:-12px!important;border:1px solid var(--ga-line-3)!important;border-radius:5px!important;background:linear-gradient(#8ba6ff,#8ba6ff) center/12px 3px no-repeat,linear-gradient(var(--ga-raise),var(--ga-card))!important;box-shadow:0 2px 5px #0009!important;}
+.studio input.studio-range[type=range]::-webkit-slider-runnable-track{height:8px!important;border:1px solid var(--ga-line-2)!important;border-radius:4px!important;background:linear-gradient(90deg,var(--ga-blue-500) calc(13px + (100% - 26px)*var(--touch-fill,0)),var(--ga-slot) 0)!important;}
+.studio input.studio-range[type=range]::-webkit-slider-thumb{-webkit-appearance:none!important;width:26px!important;height:30px!important;margin-top:-12px!important;border:1px solid var(--ga-line-3)!important;border-radius:5px!important;background:linear-gradient(var(--ga-blue-300),var(--ga-blue-300)) center/12px 3px no-repeat,linear-gradient(var(--ga-raise),var(--ga-card))!important;box-shadow:0 2px 5px #0009!important;}
 .studio input.studio-range[type=range]::-moz-range-track{height:8px!important;border-radius:4px!important;background:var(--ga-slot)!important;}
-.studio input.studio-range[type=range]::-moz-range-progress{height:8px!important;background:#3856df!important;}
+.studio input.studio-range[type=range]::-moz-range-progress{height:8px!important;background:var(--ga-blue-500)!important;}
 .studio input.studio-range[type=range]::-moz-range-thumb{width:26px!important;height:30px!important;border-radius:5px!important;background:var(--ga-raise)!important;border:1px solid var(--ga-line-3)!important;}
-.studio input.studio-range[type=range]:focus-visible{outline:2px solid #8ba6ff;outline-offset:0;}
+.studio input.studio-range[type=range]:focus-visible{outline:2px solid var(--ga-blue-300);outline-offset:0;}
 .studio input.studio-range[type=range]:disabled{opacity:.35;}

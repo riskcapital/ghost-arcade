@@ -25,7 +25,7 @@
   gap: 10px;
   padding: 8px 12px;
   background: #0c111a;
-  border-bottom: 1px solid #303945;
+  border-bottom: 1px solid var(--ga-blue-700);
 }
 .interactive-workspace .workspace-status > span {
   font-size: 11px;
@@ -142,7 +142,7 @@
   font-size: 12px;
 }
 .interactive-workspace {
-  --accent: var(--ga-selection-line, #7592ee);
+  --accent: var(--ga-selection-line, var(--ga-blue-300));
   background: var(--ga-inspector-bg, var(--ga-card, #15171b));
   color: var(--ga-ink-0, #e4e8ee);
   font: 12px/1.5 system-ui;
@@ -185,9 +185,9 @@
 }
 .interactive-workspace .engine-badge {
   font-size: 9px;
-  color: #a0bce8;
+  color: var(--ga-blue-200);
   font-weight: 500;
-  border: 1px solid #45516b;
+  border: 1px solid var(--ga-blue-mute-600);
   padding: 3px 5px;
   border-radius: 3px;
   vertical-align: middle;
@@ -273,7 +273,7 @@
   touch-action: none;
   background: #03060c;
   overflow: hidden;
-  border: 1px solid #303945;
+  border: 1px solid var(--ga-blue-700);
 }
 .interactive-workspace .stage canvas,
 .interactive-workspace .stage svg {
@@ -294,8 +294,8 @@
   letter-spacing: 1px;
 }
 .interactive-workspace .stage polygon {
-  fill: #69b7ff05;
-  stroke: #7aa1bf;
+  fill: var(--ga-blue-a08);
+  stroke: var(--ga-blue-mute-300);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
@@ -352,11 +352,11 @@
   border: 1px solid var(--ga-line-2, #34383f);
   border-radius: 4px;
   padding: 3px 8px;
-  background: var(--ga-slot, #121720);
+  background: var(--ga-slot, var(--ga-blue-900));
 }
 .interactive-workspace .effect-card.active {
   border-color: var(--accent);
-  background: var(--ga-selection-bg, #25314b);
+  background: var(--ga-selection-bg, var(--ga-blue-700));
 }
 .interactive-workspace .effect-title {
   flex: 1;
@@ -399,7 +399,7 @@
   font-size: 9px;
   letter-spacing: 0.13em;
   text-transform: uppercase;
-  color: #8da4c6;
+  color: var(--ga-blue-300);
   margin: 18px 0 8px;
   border-bottom: 1px solid var(--ga-line-2, #34383f);
   padding-bottom: 6px;
@@ -439,7 +439,7 @@
   background: #193326 !important;
 }
 .interactive-workspace .active:not(:where(.param *, .mt *, .studio-timeline *)) {
-  background: var(--ga-selection-bg, #27354d);
+  background: var(--ga-selection-bg, var(--ga-blue-700));
   border-color: var(--accent);
 }
 .interactive-workspace button:not(:where(.param *, .mt *, .studio-timeline *)),
@@ -457,7 +457,7 @@
   min-height: 34px;
   padding: 6px 9px;
   border: 1px solid var(--ga-line-3, #404955);
-  background: var(--ga-hardware-bg, var(--ga-slot, #1b2029));
+  background: var(--ga-hardware-bg, var(--ga-slot, var(--ga-blue-mute-800)));
   border-radius: var(--ga-r-hard, 4px);
 }
 .interactive-workspace button:not(:where(.param *, .mt *, .studio-timeline *)) {
@@ -471,7 +471,7 @@
 .interactive-workspace button:focus-visible:not(:where(.param *, .mt *, .studio-timeline *)),
 .interactive-workspace input:focus-visible:not(:where(.param *, .mt *, .studio-timeline *)),
 .interactive-workspace select:focus-visible:not(:where(.param *, .mt *, .studio-timeline *)) {
-  outline: 2px solid #8abaff;
+  outline: 2px solid var(--ga-blue-200);
   outline-offset: 2px;
 }
 .interactive-workspace label:not(:where(.param *, .mt *, .studio-timeline *)) {
@@ -503,7 +503,7 @@
 }
 .interactive-workspace p[role='status']:not(:where(.param *, .mt *, .studio-timeline *)) {
   font-size: 11px;
-  color: #9bc7fa;
+  color: var(--ga-blue-200);
   margin: 0;
   overflow-wrap: anywhere;
 }
@@ -754,7 +754,7 @@
     flex: 1;
     overflow: hidden;
     border-left: 0;
-    border-top: 1px solid #303945;
+    border-top: 1px solid var(--ga-blue-700);
   }
   .interactive-workspace.handheld .inspector-body {
     flex: 1;
@@ -807,7 +807,7 @@
   }
   .interactive-workspace.handheld aside:not(:where(.param *, .mt *, .studio-timeline *)) {
     border-top: 0;
-    border-left: 1px solid #303945;
+    border-left: 1px solid var(--ga-blue-700);
   }
 }
 .interactive-workspace .program-preview {
@@ -863,8 +863,8 @@
 }
 .interactive-workspace.handheld p[role='status']:not(:empty):not(:where(.param *, .mt *, .studio-timeline *)) {
   padding: 8px;
-  border: 1px solid #3b5372;
-  background: #1b293d;
+  border: 1px solid var(--ga-blue-mute-600);
+  background: var(--ga-blue-mute-800);
   margin: 0 0 12px;
   max-height: none;
   font-size: 11px;
@@ -1081,7 +1081,7 @@
   margin: 0 0 8px;
   border: 1px solid var(--accent);
   border-radius: var(--ga-r-hard, 4px);
-  background: var(--ga-slot, #121720);
+  background: var(--ga-slot, var(--ga-blue-900));
   box-shadow: 0 8px 24px #0008;
 }
 .interactive-workspace .add-effect-menu button {

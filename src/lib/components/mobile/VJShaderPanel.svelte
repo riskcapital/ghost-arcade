@@ -5,8 +5,8 @@
   export let onUpdateShaderValue: (layerIndex: number, paramName: string, value: any) => void = () => {};
 
   const layerColors = [
-    'var(--accent-primary)', '#4FC3F7', '#81C784', '#FFB74D',
-    '#CE93D8', '#EF5350', '#4DD0E1', '#AED581',
+    'var(--accent-primary)', 'var(--ga-blue-300)', '#81C784', '#FFB74D',
+    '#CE93D8', '#EF5350', 'var(--ga-blue-200)', '#AED581',
   ];
 
   let selectedLayerIndex: number | null = 0;
