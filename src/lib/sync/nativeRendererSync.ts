@@ -4478,6 +4478,49 @@ function nativeEffectPassOutputSource(layer: Layer, inputSource: NativeLayerSour
   };
 }
 
+/**
+ * Opt-in measurement of what the frame sync sends to the render core.
+ * Set `globalThis.__gaNativeIpcProbe = {}` (dev tools or a test) and read it
+ * back: bytes are the JSON length of each command, grouped by command type.
+ * Costs nothing while the probe is unset.
+ */
+export type NativeIpcProbe = {
+  batches?: number;
+  bytes?: number;
+  types?: Record<string, { count: number; bytes: number }>;
+  graphBuilds?: number;
+  graphBuildMs?: number;
+};
+function nativeIpcProbe(): NativeIpcProbe | null {
+  const probe = (globalThis as { __gaNativeIpcProbe?: NativeIpcProbe }).__gaNativeIpcProbe;
+  return probe && typeof probe === 'object' ? probe : null;
+}
+function noteNativeIpcProbe(commands: RendererCommand[]) {
+  const probe = nativeIpcProbe();
+  if (!probe) return;
+  probe.batches = (probe.batches ?? 0) + 1;
+  probe.types ??= {};
+  for (const command of commands) {
+    const bytes = JSON.stringify(command).length;
+    probe.bytes = (probe.bytes ?? 0) + bytes;
+    const entry = (probe.types[command.type] ??= { count: 0, bytes: 0 });
+    entry.count += 1;
+    entry.bytes += bytes;
+  }
+}
+
+function timedNativePluginGraph(options: Parameters<typeof buildNativePluginGraph>[0]) {
+  const probe = nativeIpcProbe();
+  if (!probe) return buildNativePluginGraph(options);
+  const started = performance.now();
+  try {
+    return buildNativePluginGraph(options);
+  } finally {
+    probe.graphBuilds = (probe.graphBuilds ?? 0) + 1;
+    probe.graphBuildMs = (probe.graphBuildMs ?? 0) + (performance.now() - started);
+  }
+}
+
 function nativeGraphBufferSafeId(value: string): string {
   return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
 }
@@ -9457,7 +9500,7 @@ export class NativeRendererSync {
             ? groupedMixGraph ?? buildVJMixGraph(vjMixGraphOptions)
             : null
           : pluginRoute
-          ? buildNativePluginGraph({
+          ? timedNativePluginGraph({
               kind: nativeGraphRoute.kind as 'ghostfx' | 'handfx' | 'performer-world',
               sourceId: graphSource.id,
               params: nativeGraphScaledParams ?? {},
@@ -9799,6 +9842,7 @@ export class NativeRendererSync {
 
 
     if (graphInputCommands.length) {
+      noteNativeIpcProbe(graphInputCommands);
       const graphInputSummary = await submitNativeRendererCommands(graphInputCommands);
       this.warnNativeCommandDrops(graphInputSummary, 'graph-input-source-frames');
       // The demo source is uploaded exactly once, so a dropped batch would
@@ -9828,6 +9872,7 @@ export class NativeRendererSync {
       commands,
     };
 
+    noteNativeIpcProbe(commands);
     const batchSummary = await submitNativeRendererBatch(batch);
     this.warnNativeCommandDrops(batchSummary, 'frame-batch');
     if (!this.running || lifecycleGeneration !== this.lifecycleGeneration) return;
