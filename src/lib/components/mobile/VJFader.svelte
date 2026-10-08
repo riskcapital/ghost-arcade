@@ -3,6 +3,8 @@
 
   export let value: number = 0.75;
   export let label: string = '';
+  /** Name read by assistive tech when the visible label lives outside the fader. */
+  export let ariaLabel: string = '';
   export let color: string = 'var(--accent-primary)';
   export let height: number = 160;
   export let orientation: 'vertical' | 'horizontal' = 'vertical';
@@ -151,6 +153,7 @@
         bind:this={touchAreaEl}
         on:mousedown={handleMouseDown}
         role="slider"
+        aria-label={ariaLabel || label || undefined}
         aria-valuenow={displayPercent}
         aria-valuemin={0}
         aria-valuemax={100}
@@ -191,6 +194,7 @@
         bind:this={touchAreaEl}
         on:mousedown={handleMouseDown}
         role="slider"
+        aria-label={ariaLabel || label || undefined}
         aria-valuenow={displayPercent}
         aria-valuemin={0}
         aria-valuemax={100}

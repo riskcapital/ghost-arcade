@@ -122,11 +122,11 @@
     <section class="deck" aria-label={show.dualDeck ? `Deck ${deck === 0 ? 'A' : 'B'}` : 'Clip launcher'}>
       {#if show.dualDeck}<header><strong>{show.dualDeck ? `DECK ${deck === 0 ? 'A' : 'B'}` : 'CLIP LAUNCHER'}</strong><span>{show.dualDeck ? `${Math.round((deck === 0 ? 1 - show.crossfade : show.crossfade) * 100)}% OUTPUT` : 'LIVE MIX'}</span></header>{/if}
       <div class="matrix" style={`--columns:${columnCount}`} onpointerdown={startDrag} onpointermove={moveDrag} onpointerup={()=>dragStart=null} onpointercancel={()=>dragStart=null} onlostpointercapture={()=>dragStart=null} onclickcapture={e=>{if(dragged){e.preventDefault();e.stopPropagation();dragged=false;}}}>
-        <div class="column-row"><span class="row-label">LAYERS</span>{#each columns as col}<button aria-label={`Launch ${show.dualDeck ? (deck === 0 ? 'A' : 'B') : 'deck'} column ${col + 1}`} onclick={() => columnLaunch(rows, col)} disabled={arrange}>▶ {col + 1}</button>{/each}</div>
+        <div class="column-row"><span class="row-label" data-deck-label>{show.dualDeck ? `DECK ${deck === 0 ? 'A' : 'B'}` : 'LAYERS'}</span>{#each columns as col}<button aria-label={`Launch ${show.dualDeck ? (deck === 0 ? 'A' : 'B') : 'deck'} column ${col + 1}`} onclick={() => columnLaunch(rows, col)} disabled={arrange}>▶ {col + 1}</button>{/each}</div>
         {#each rows as row}
           <div class="clip-row" class:selected={row === selectedLayer}>
             <div class="row-control">
-              <button class="row-name" onclick={() => onSelect(row)} aria-label={`Select layer ${row+1}`} aria-pressed={selectedLayer === row}>L{show.dualDeck ? row % 4 + 1 : row + 1}</button>
+              <button class="row-name" onclick={() => onSelect(row)} aria-label={`Select layer ${row+1}`} aria-pressed={selectedLayer === row}>{show.dualDeck ? `${row < 4 ? 'A' : 'B'}${row % 4 + 1}` : `L${row + 1}`}</button>
               <button class="level-button" aria-label={`Mix row ${row+1}`} onclick={()=>onMixer(row)} style={`--level:${show.layers[row].opacity*100}%`}>{Math.round(show.layers[row].opacity*100)}%</button>
               <button class="stop" aria-label={`Stop row ${row + 1}`} onclick={() => onStop(row)}>■</button>
             </div>
@@ -157,7 +157,7 @@
   <div class="deck-mix"><button aria-label="Cut to deck A" onclick={() => onMix(0)}>A</button><div><label for="studio-deck-mix">DECK CROSSFADER <span>{Math.round((1-show.crossfade)*100)} / {Math.round(show.crossfade*100)}</span></label><input style={`--range-fill: ${show.crossfade}`} id="studio-deck-mix" aria-label="Deck mix" type="range" min="0" max="1" step=".001" value={show.crossfade} oninput={e => onMix(Number(e.currentTarget.value))} /></div><button aria-label="Cut to deck B" onclick={() => onMix(1)}>B</button></div>
 {/if}
 <dialog bind:this={dialog} class="clip-menu" aria-label="Clip actions" onclose={()=>menu=null} onclick={e=>{if(e.target===dialog)closeMenu();}}>
- {#if menu}<div class="menu-content"><strong>{menu.clip.name}</strong><span>L{menu.row+1} · Slot {menu.column+1}</span><button onclick={()=>menuAction()}>Replace clip</button><button class="remove" onclick={()=>menuAction(true)}>Remove clip</button><button onclick={closeMenu}>Cancel</button></div>{/if}
+ {#if menu}<div class="menu-content"><strong>{menu.clip.name}</strong><span>{show.dualDeck ? `${menu.row < 4 ? 'A' : 'B'}${menu.row % 4 + 1}` : `L${menu.row + 1}`} · Slot {menu.column+1}</span><button onclick={()=>menuAction()}>Replace clip</button><button class="remove" onclick={()=>menuAction(true)}>Remove clip</button><button onclick={closeMenu}>Cancel</button></div>{/if}
 </dialog>
 <p class="deck-hint">{arrange ? 'Drag or tap two slots to move / swap. Playing clips continue unchanged.' : 'Tap to play. Use the gear on a playing clip to edit its look. Double-tap a playing clip to stop. Hold to replace or remove.'}</p>
 {#if drag?.moving}<div class="drag-preview" style:left={`${drag.x}px`} style:top={`${drag.y}px`}><ClipThumbnail clip={drag.clip}/><span>{drag.clip.name}</span></div>{/if}

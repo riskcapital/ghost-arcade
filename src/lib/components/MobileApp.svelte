@@ -1174,12 +1174,21 @@
     if (activeDrags.size === 0) return;
     activeDrags.clear();
   }
+  // The native shell mounts this component once per companion session, so
+  // every global listener added here is removed again in onDestroy.
+  function flushDragsWhenHidden() {
+    if (document.visibilityState === 'hidden') flushAllDrags();
+  }
+  function rememberInstallPrompt(e: Event) {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    // Show install banner on the connect screen (not if already PWA)
+    if (!isPWA) showInstallBanner = true;
+  }
   if (typeof window !== 'undefined') {
     window.addEventListener('pointercancel', flushAllDrags);
     window.addEventListener('blur', flushAllDrags);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') flushAllDrags();
-    });
+    document.addEventListener('visibilitychange', flushDragsWhenHidden);
   }
 
   // ═══ Throttle utility: send at most once per interval, with trailing edge ═══
@@ -1319,12 +1328,7 @@
       || window.matchMedia('(display-mode: standalone)').matches;
 
     // Listen for the install prompt (Chrome/Edge on Android)
-    window.addEventListener('beforeinstallprompt', (e: Event) => {
-      e.preventDefault();
-      deferredInstallPrompt = e;
-      // Show install banner on the connect screen (not if already PWA)
-      if (!isPWA) showInstallBanner = true;
-    });
+    window.addEventListener('beforeinstallprompt', rememberInstallPrompt);
 
     // Determine server URL: prefer saved, then derive from page hostname
     const linkedURL=new URL(pairingLink || window.location.href);
@@ -1385,6 +1389,10 @@
     disconnect();
     void disposeNativeVisionListeners();
     window.removeEventListener('resize', updateViewportSize);
+    window.removeEventListener('pointercancel', flushAllDrags);
+    window.removeEventListener('blur', flushAllDrags);
+    document.removeEventListener('visibilitychange', flushDragsWhenHidden);
+    window.removeEventListener('beforeinstallprompt', rememberInstallPrompt);
   });
 
   function updateViewportSize() {

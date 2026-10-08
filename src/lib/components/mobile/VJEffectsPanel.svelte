@@ -258,6 +258,7 @@
                           <VJFader
                             value={normalize(currentVal, paramDef.min, paramDef.max)}
                             label=""
+                            ariaLabel={paramDef.name}
                             color={selectedLayerIndex !== null ? layerColors[selectedLayerIndex % layerColors.length] : 'var(--accent-primary)'}
                             orientation="horizontal"
                             onChange={(norm) => {

@@ -519,6 +519,8 @@
     flash('Clip loaded. Tap its pad to launch.');
     persist();
   }
+  /** True while a hardware keyboard is stepping through the effect picker. */
+  let effectKeyNav = false;
   let freshPad: { row: number; column: number } | null = null;
   let freshTimer: ReturnType<typeof setTimeout>;
   function stopRow(index: number) {
@@ -1122,8 +1124,21 @@
             <span>EFFECT CHAIN · {activeEffects.length}</span><select
               disabled={activeEffects.length >= 8 || (fxScope==='clip'&&!activeClip)}
               aria-label="Add effect"
+              title="Choose an effect to add. With a keyboard, use the arrow keys and press Enter."
               value=""
+              onpointerdown={() => (effectKeyNav = false)}
+              onkeydown={(e) => {
+                // Arrow keys change a closed select one option at a time. Hold the choice until Enter
+                // instead of adding an effect per keypress.
+                if (e.key === 'Enter') {
+                  if (effectKeyNav && e.currentTarget.value) { e.preventDefault(); addEffect(e.currentTarget.value); e.currentTarget.value = ''; }
+                  effectKeyNav = false;
+                } else if (e.key === 'Escape') { effectKeyNav = false; e.currentTarget.value = ''; }
+                else if (e.key !== 'Tab' && e.key !== 'Shift') effectKeyNav = true;
+              }}
+              onblur={(e) => { if (effectKeyNav) { effectKeyNav = false; e.currentTarget.value = ''; } }}
               onchange={(e) => {
+                if (effectKeyNav) return;
                 if (e.currentTarget.value) addEffect(e.currentTarget.value);
                 e.currentTarget.value = '';
               }}
@@ -1707,11 +1722,14 @@
         /><span>BPM</span></label
       ><button
         class:active={show.quantize}
+        aria-pressed={show.quantize}
+        aria-label="Quantize launches to the beat"
+        title="Quantize launches to the beat"
         onclick={() => {
           show.quantize = !show.quantize;
           if (!show.quantize) cancelQueued();
           persist();
-        }}>Q<span class="desktop-label">uantize</span></button
+        }}><span class="phone-label">Q</span><span class="desktop-label">Quantize</span></button
       >
     </div>
     <div class="master-actions">{#if flux.active}<button aria-label="Release Flux" onclick={()=>{flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}>FX off</button>{/if}<button class:active={mixerOpen} onclick={()=>tablet?selectTab("perform"):mixerOpen=!mixerOpen} aria-label="Open performance mixer">Mix</button>
@@ -2183,6 +2201,7 @@
     display: block;
   }
   .detail-reduced { font-style: normal; color: #ffc570; }
+  .phone-label { display: none; }
   .visuals-down {
     position: absolute;
     inset: 0;
@@ -3521,6 +3540,9 @@
     }
     .desktop-label {
       display: none;
+    }
+    .phone-label {
+      display: inline;
     }
     .transport-card,
     .inspector-card {
