@@ -6850,6 +6850,20 @@
           </svg>
           <span class="tb-label">Map Sim</span>
         </button>
+        <button
+          class="output-btn sim-launch-btn interactive-studio-btn"
+          class:active={showInteractiveStudio}
+          onclick={() => openInteractiveStudio()}
+          title="Interactive Studio and phone calibration"
+          aria-label="Interactive Studio"
+        >
+          <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="3" />
+            <circle cx="9" cy="9" r="2" />
+            <path d="m6 18 5-5 3 3 4-6" />
+          </svg>
+          <span class="tb-label">Interactive</span>
+        </button>
       </div>
 
       {#if displayMenu}
@@ -7025,10 +7039,6 @@
         </button>
 
         <!-- Settings Button -->
-        <button class="stage-btn interactive-studio-btn" onclick={()=>openInteractiveStudio()} title="Interactive Studio and phone calibration" aria-label="Interactive Studio">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m6 18 5-5 3 3 4-6"/></svg>
-          <span class="tb-label">Interactive</span>
-        </button>
         <button class="settings-btn" onclick={() => showSettings = true} title="Settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
