@@ -9598,7 +9598,10 @@ export class NativeRendererSync {
             graphSource.id, nativeGraphRoute.source.id, nativeGraphRoute.inputSource?.id ?? '',
           ].join('\u241f');
           const sent = routeState.interactiveValueKeys;
-          interactiveValuesOnly = !!prev && !!sent && routeState.interactiveTopology === topology;
+          // A core without this flag rewrites the plain values itself on every
+          // frame, so for it a value change still needs the full install.
+          interactiveValuesOnly = this.supportsNativeFeature('native_interactive_value_updates')
+            && !!prev && !!sent && routeState.interactiveTopology === topology;
           if (interactiveValuesOnly) {
             for (const value of interactive.values) {
               if (sent!.get(value.id) === value.key) continue;

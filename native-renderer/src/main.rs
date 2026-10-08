@@ -4768,6 +4768,9 @@ impl App {
             "vram_budget_enforcement": true,
             "runtime_cache_clear": true,
             "native_graph_buffer_prune": true,
+            // Interactive replay leaves unmodulated uniform values to the app,
+            // so they can be changed with update_native_graph_buffer alone.
+            "native_interactive_value_updates": true,
             "compute_shader_host": true,
             "compute_graph_host": true,
             "compute_graph_render": true,
