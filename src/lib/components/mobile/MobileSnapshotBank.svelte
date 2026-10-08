@@ -4,7 +4,8 @@
    * surface. Each pad represents one of the 16 snapshot slots from the
    * desktop store. Tap a populated pad to recall it. Long-press (or
    * shift-tap when on iPad with a keyboard) saves the current state into
-   * that slot.
+   * that slot. Holding a slot that already has a snapshot asks before it
+   * replaces it: the desktop keeps no undo for an overwritten snapshot.
    *
    * Pads are color-coded to match the desktop bank so muscle memory carries
    * over between hardware controllers, the desktop UI, and the mobile UI.
@@ -12,6 +13,8 @@
    * Mobile is recall-only by default — destructive actions like rename and
    * clear stay on the desktop where you can be careful with them.
    */
+
+  import { onDestroy } from 'svelte';
 
   interface SnapshotInfo {
     id: string;
@@ -43,6 +46,27 @@
   let pressStartY = 0;
   const MOVE_CANCEL_PX = 10;
 
+  // A populated slot is only overwritten after the performer confirms.
+  // The question closes by itself so a stray hold cannot sit armed on stage.
+  let confirmIndex: number | null = null;
+  let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+  const CONFIRM_MS = 6000;
+  function closeConfirm() {
+    if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+    confirmIndex = null;
+  }
+  function askOverwrite(idx: number) {
+    closeConfirm();
+    confirmIndex = idx;
+    confirmTimer = setTimeout(closeConfirm, CONFIRM_MS);
+  }
+  function confirmOverwrite() {
+    const idx = confirmIndex;
+    closeConfirm();
+    if (idx !== null) onSave(idx);
+  }
+  onDestroy(() => { clearPressTimer(); closeConfirm(); });
+
   function clearPressTimer() {
     if (pressTimeoutId) {
       clearTimeout(pressTimeoutId);
@@ -59,9 +83,10 @@
 
     clearPressTimer();
     pressTimeoutId = setTimeout(() => {
-      // Long-press → save snapshot
+      // Long-press → save into an empty slot, or ask before replacing one
       if (pressId === snap.id) {
-        onSave(idx);
+        if (snap.populated) askOverwrite(idx);
+        else onSave(idx);
         saveFiredFor = snap.id;
         // Haptic feedback on iOS Safari (no-op elsewhere)
         try { (navigator as any).vibrate?.(40); } catch { /* ignore */ }
@@ -135,9 +160,48 @@
       </button>
     {/each}
   </div>
+  {#if confirmIndex !== null && snapshots[confirmIndex]}
+    <div class="snap-confirm" role="alertdialog" aria-label="Replace snapshot">
+      <span>Replace snapshot {confirmIndex + 1}{snapshots[confirmIndex].name ? ` “${snapshots[confirmIndex].name}”` : ''}?</span>
+      <button class="replace" data-snap-replace onclick={confirmOverwrite}>Replace</button>
+      <button data-snap-cancel onclick={closeConfirm}>Cancel</button>
+    </div>
+  {/if}
 </div>
 
 <style>
+  .snap-confirm {
+    position: fixed;
+    left: 50%;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(520px, calc(100vw - 24px));
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.35;
+    color: #fff;
+    background: #1d1b18;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+  }
+  .snap-confirm span { flex: 1; min-width: 0; }
+  .snap-confirm button {
+    min-height: 44px;
+    padding: 0 14px;
+    font: inherit;
+    font-weight: 650;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 6px;
+    touch-action: manipulation;
+  }
+  .snap-confirm button.replace { background: #572737; border-color: #b55268; color: #ffb2bb; }
   .snap-bank {
     display: flex;
     flex-direction: column;
