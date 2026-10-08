@@ -181,7 +181,9 @@
     drag = null;
   }
 
-  const outline = (points: Point[]) => points.map((p) => `${p.x * width},${p.y * height}`).join(' ');
+  // Reactive, so outlines follow the measured stage size like the handles do. As a plain
+  // function the first outlines stayed at the 960 px default until a shape changed.
+  $: outline = (points: Point[]) => points.map((p) => `${p.x * width},${p.y * height}`).join(' ');
 </script>
 
 <div class="viewport">
