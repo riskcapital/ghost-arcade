@@ -39,3 +39,8 @@ export const mobileShaderBudgets: Record<string, { scale: number; detail: number
     "detail": 0.7
   }
 };
+/** Shaders stripped from the mobile release (native-mobile/release-exclusions.json). A saved set may still name them. */
+export const mobileRemovedShaderPaths = new Set<string>([
+  "ISF/AnotherGridThingy.fs",
+  "ISF/InnerDimensionalMatrix.fs"
+]);

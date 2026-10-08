@@ -1,6 +1,6 @@
 import { normalizeCrossfade, type CrossfadeSettings } from './crossfade';
 import {standaloneShaderPaths} from './shaderAvailability';
-import {mobileHeavyShaderPaths} from './shaderPerformance';
+import {mobileHeavyShaderPaths,mobileRemovedShaderPaths} from './shaderPerformance';
 import {normalizePaint,type PaintConfig} from './paint';
 import type { LookConfig } from './looks/types';
 import { EDGE_LOOKS } from './looks/edgeLookCatalog';
@@ -83,11 +83,11 @@ export const shaderThumbnail = (id: string) => {
         .replaceAll('/', '_')}.jpg`
     : '';
 };
-/** True for a saved shader clip this build cannot run: it left the library or costs too much for a phone GPU. */
+/** True for a saved shader clip this build cannot run: it left the library, was stripped from the mobile release, or costs too much for a phone GPU. */
 export function clipUnavailable(clip: Clip | undefined): boolean {
   if (!clip || clip.kind !== 'shader') return false;
   const shader = MOBILE_SHADERS.find((s) => s.id === clip.shaderId);
-  return !shader || mobileHeavyShaderPaths.has(shader.path);
+  return !shader || mobileHeavyShaderPaths.has(shader.path) || mobileRemovedShaderPaths.has(shader.path);
 }
 export function gridPoints(x = 0.08, y = 0.08, w = 0.84, h = 0.84): Point[] {
   return Array.from({ length: 9 }, (_, i) => ({ x: x + ((i % 3) * w) / 2, y: y + (Math.floor(i / 3) * h) / 2 }));

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StudioEngine } from './engine';
 import { defaultShow, normalizeShow, clipUnavailable, type Clip } from './model';
 import { MOBILE_SHADERS } from '../standaloneShaderList';
-import { mobileHeavyShaderPaths, mobileShaderBudgets } from './shaderPerformance';
+import { mobileHeavyShaderPaths, mobileRemovedShaderPaths, mobileShaderBudgets } from './shaderPerformance';
 import { standaloneShaderPaths } from './shaderAvailability';
 
 const renderers = vi.hoisted(() => [] as Array<{
@@ -133,6 +133,21 @@ describe('sets that hold a shader this device cannot run', () => {
     expect(clipUnavailable(restored.clips.find(c => c.id === 'gone-clip'))).toBe(true);
     expect(clipUnavailable(restored.clips.find(c => c.kind === 'shader' && c.shaderId === 'featured-tide'))).toBe(false);
     expect(clipUnavailable({ id: 'v', kind: 'video', name: 'Clip.mp4', assetId: 'v' })).toBe(false);
+  });
+  it('treats a shader stripped from the mobile release as unavailable instead of failing to download it', async () => {
+    const removed = MOBILE_SHADERS.find(s => mobileRemovedShaderPaths.has(s.path));
+    expect(mobileRemovedShaderPaths.size).toBeGreaterThan(0);
+    if (!removed) return; // not every stripped file is listed in the catalogue
+    const clip: Clip = { id: 'stripped', shaderId: removed.id, name: removed.name, kind: 'shader' };
+    expect(clipUnavailable(clip)).toBe(true);
+    const { engine, show } = setup();
+    show.clips.push(clip); show.layers[0].clipId = clip.id;
+    const errors: string[] = [];
+    engine.onError = message => errors.push(message);
+    await engine.restore(show);
+    expect(errors).toEqual([]);
+    expect(show.layers[0].clipId).toBeNull();
+    expect(fetched.some(url => url.includes(encodeURI(removed.path)))).toBe(false);
   });
   it('refuses a direct launch with a plain message', async () => {
     const { engine } = setup();

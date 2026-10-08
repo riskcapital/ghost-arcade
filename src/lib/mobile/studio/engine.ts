@@ -1,4 +1,4 @@
-import {mobileHeavyShaderPaths,mobileShaderBudgets} from './shaderPerformance';
+import {mobileHeavyShaderPaths,mobileRemovedShaderPaths,mobileShaderBudgets} from './shaderPerformance';
 import {GhostFXMotion} from './ghostFXMotion';
 import {GhostFXFeedback} from './ghostFX';
 import {CameraFx,cameraFxEnabled} from './cameraFx';
@@ -44,7 +44,7 @@ function shaderSource(id: string) {
   if (!p) {
     const shader = findShader(id);
     if (!shader) throw new Error('This clip is not available on this device. Hold its pad to replace it.');
-    if(mobileHeavyShaderPaths.has(shader.path))throw new Error(`${shader.name} is not available on this device. Hold its pad to replace it.`);
+    if(mobileHeavyShaderPaths.has(shader.path)||mobileRemovedShaderPaths.has(shader.path))throw new Error(`${shader.name} is not available on this device. Hold its pad to replace it.`);
     p = fetch(encodeURI(`${import.meta.env.BASE_URL}${shader.path}`))
       .then((r) => {
         if (!r.ok) throw new Error(`Could not load ${shader.name}.`);
