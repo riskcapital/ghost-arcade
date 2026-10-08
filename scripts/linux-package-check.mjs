@@ -72,26 +72,15 @@ if (deb) {
     check('every library the core links is installed here', missing.length === 0, missing.join('; '));
   }
 
-  // Which packages own the runtime libraries, and does installing the .deb's
-  // dependencies (and theirs) install them?
-  const closure = new Set();
-  // Alternatives ("libasound2t64 | libasound2") name packages that exist on
-  // some releases only; keep the ones this release can install.
-  const installable = names(depends).filter((name) => {
-    const policy = tryRun('apt-cache', ['policy', name]);
-    return policy.includes('Candidate:') && !/Candidate: \(none\)/.test(policy);
-  });
-  const recursive = tryRun('apt-cache', ['depends', '--recurse', '--no-recommends', '--no-suggests', '--no-conflicts', '--no-breaks', '--no-replaces', '--no-enhances', ...installable]);
-  for (const line of recursive.split('\n')) {
-    const name = line.replace(/^\s*\|?(Pre)?Depends:\s*/, '').replace(/[<>]/g, '').trim();
-    if (name && !name.includes(' ')) closure.add(name.replace(/:any$/, ''));
-  }
+  // A builder may have unrelated software with its own copies of these
+  // libraries. Inspect the system loader, not the first dpkg substring hit.
+  // Dependency completeness is tested by linux-clean-install.sh in a fresh
+  // Ubuntu container; availability on this build host alone cannot prove it.
+  const loader = tryRun('ldconfig', ['-p']);
   for (const library of RUNTIME_LIBRARIES) {
-    const owner = tryRun('dpkg', ['-S', library]).split('\n').find((line) => line.includes(library)) || '';
-    const ownerPackage = owner.split(':')[0].trim();
-    const covered = !!ownerPackage && closure.has(ownerPackage);
-    report.libraries.push({ library, package: ownerPackage, covered });
-    check(`installing the .deb installs ${library}`, covered, ownerPackage ? `owned by ${ownerPackage}` : 'no installed package owns it on this machine');
+    const entry = loader.split('\n').find(line => line.trim().startsWith(`${library} `));
+    report.libraries.push({ library, availableOnBuildHost: !!entry });
+    check(`build host loader can find ${library}`, !!entry, entry?.trim() || 'not found');
   }
   fs.rmSync(extracted, { recursive: true, force: true });
 }

@@ -3,7 +3,6 @@
 // numbers. `t` is the step API from the runner: t.c is the CDP page driver.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { el, sleep } from './linux-smoke-cdp.mjs';
 import { decodePng, snapshotImage, stats } from './linux-smoke-image.mjs';
 
@@ -78,7 +77,7 @@ export async function measuredFps(c, windowMs = 3000) {
 }
 
 // ── a ──────────────────────────────────────────────────────────────────────
-const stepHandshake = {
+export const stepHandshake = {
   id: 'a', title: 'App window loads and the core handshake completes',
   async run(t) {
     const { c } = t;
@@ -117,7 +116,7 @@ const stepHandshake = {
 };
 
 // ── b ──────────────────────────────────────────────────────────────────────
-const stepComposite = {
+export const stepComposite = {
   id: 'b', title: 'A shader layer shows a non-black composite in the editor',
   async run(t) {
     const { c } = t;
@@ -164,36 +163,67 @@ const stepComposite = {
   },
 };
 
-// ── h (quit) ───────────────────────────────────────────────────────────────
-const stepQuit = {
-  id: 'h', title: 'Output Window, fullscreen, clean quit',
-  async run(t) {
-    const { c } = t;
-    if (t.args.attach || t.args.keepOpen) { t.skip('quit: attached to an app this run did not start'); return; }
-    const before = t.descendants();
-    const cores = before.filter((p) => /ghost-render-core/.test(p.command) && !/ffmpeg/.test(p.command));
-    t.number('coreProcesses', cores.length);
-    t.check('exactly one render core process is running', cores.length === 1, cores.map((p) => `${p.pid} ${p.command.slice(0, 80)}`).join(' | '));
-    const closeButton = "document.querySelector('button.win-close')";
-    if (await c.exists(closeButton)) {
-      await c.clickElement(closeButton).catch(() => {}); // the page goes away mid-click
-    } else {
-      t.note('no DOM close button on this platform (OS title bar); asking the app to quit with SIGTERM');
-      t.app().kill('SIGTERM');
-    }
-    const exit = await Promise.race([t.app().exited, sleep(20000).then(() => null)]);
-    t.check('app process exits within 20 s of Close', !!exit, exit ? `code=${exit.code} signal=${exit.signal}` : 'still running');
-    await sleep(1500);
-    const orphans = before.filter((p) => t.alive(p.pid));
-    t.number('processesBefore', before.length);
-    t.number('orphans', orphans.length);
-    t.check('no orphan processes (core, helpers, ffmpeg) survive the quit', orphans.length === 0, orphans.map((p) => `${p.pid} ${p.command.slice(0, 100)}`).join(' | '));
-    if (t.isLinux) {
-      let stray = '';
-      try { stray = execFileSync('pgrep', ['-fl', 'ghost-render-core'], { encoding: 'utf8' }).trim(); } catch { /* none */ }
-      t.check('no ghost-render-core left on the machine', stray === '', stray);
-    }
-  },
-};
+// ── shared UI helpers ──────────────────────────────────────────────────────
+/** A `<label class="field">` in the inspector, by its caption. */
+export const field = (caption) => `[...document.querySelectorAll('label.field')].find(l=>l.querySelector('.lbl')?.textContent.trim()===${JSON.stringify(caption)})`;
 
-export const STEPS = [stepHandshake, stepComposite, stepQuit];
+/**
+ * Pick an option of a closed <select> with the keyboard. Focus comes from a
+ * real click on the control's caption where it has one (a click on the control
+ * itself opens a native popup menu on macOS that CDP keys cannot reach), then
+ * the option's first letters are typed, as a person would.
+ */
+export async function typeAheadSelect(c, selectExpression, captionExpression, text) {
+  if (captionExpression) await c.clickElement(captionExpression);
+  if (!(await c.eval(`document.activeElement===(${selectExpression})`))) await c.eval(`(${selectExpression}).focus()`);
+  await sleep(150);
+  for (const ch of text) await c.key(ch, { wait: 40 });
+  await sleep(1100); // let the type-ahead buffer reset
+  return c.eval(`(${selectExpression}).selectedOptions[0]?.textContent.trim()`);
+}
+
+export const chooseField = (c, caption, text) => typeAheadSelect(c, `${field(caption)}.querySelector('select')`, `${field(caption)}.querySelector('.lbl')`, text);
+
+/** Type a value into a number field found by aria-label and commit it. */
+export async function setNumberField(c, ariaLabel, text) {
+  const input = el.byAriaLabel(ariaLabel);
+  const p = await c.center(input);
+  await c.click(p.x, p.y, { clickCount: 3 });
+  await c.key('a', process.platform === 'darwin' ? { meta: true, commands: ['selectAll'] } : { ctrl: true, commands: ['selectAll'] });
+  await c.type(String(text));
+  await c.key('Enter');
+  await c.key('Tab');
+  await sleep(200);
+  return c.eval(`(${input})?.value`);
+}
+
+/** Tick or untick a checkbox found by a page expression, with a real click. */
+export async function setCheckbox(c, checkboxExpression, wanted) {
+  if ((await c.eval(`!!(${checkboxExpression})?.checked`)) !== wanted) await c.clickElement(checkboxExpression);
+  await sleep(250);
+  return c.eval(`!!(${checkboxExpression})?.checked`);
+}
+
+export const layerRow = (name) => `[...document.querySelectorAll('.layer-item')].find(r=>r.querySelector('.layer-name')?.textContent.trim()===${JSON.stringify(name)})`;
+export const layerNames = (c) => c.eval("JSON.stringify([...document.querySelectorAll('.layer-item .layer-name')].map(e=>e.textContent.trim()))").then(JSON.parse);
+
+/** Show or hide a layer with its eye button. */
+export async function setLayerVisible(c, name, visible) {
+  await openTab(c, 'Layers');
+  const button = `${layerRow(name)}?.querySelector('.btn-visibility')`;
+  const shown = (await c.eval(`${button}?.title`)) === 'Hide layer';
+  if (shown !== visible) await c.clickElement(button);
+  await sleep(300);
+}
+
+/** Drop a file from disk onto an element (real drag-and-drop events). */
+export async function dropFile(c, targetExpression, file) {
+  const p = await c.center(targetExpression);
+  const data = { items: [], files: [file], dragOperationsMask: 1 };
+  for (const type of ['dragEnter', 'dragOver', 'drop']) {
+    await c.send('Input.dispatchDragEvent', { type, x: p.x, y: p.y, data });
+    await sleep(200);
+  }
+}
+
+export { round };

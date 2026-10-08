@@ -8,6 +8,15 @@ const windows = process.platform === 'win32';
 const binary = join(process.cwd(), 'native-renderer/target/release',
   windows ? 'ghost-render-core.exe' : 'ghost-render-core');
 
+// Geometry/compositing tests also run on Linux Vulkan (including CI lavapipe).
+// Keep hardware-decoder tests separate: Linux uses the software decode path.
+export const gpuTestPlatform = {
+  windows,
+  binary,
+  runnable: ['win32', 'darwin', 'linux'].includes(process.platform) && existsSync(binary),
+  rendererBackend: windows ? 'd3d12' : process.platform === 'darwin' ? 'metal' : 'vulkan',
+};
+
 export const hardwareTestPlatform = {
   windows,
   binary,

@@ -38,12 +38,20 @@ export async function connect(target) {
   let next = 0;
   const pending = new Map();
   const consoleLines = [];
+  const dialogs = [];
   ws.on('message', (data) => {
     const message = JSON.parse(data.toString());
     if (message.method === 'Runtime.consoleAPICalled') {
       const text = (message.params.args || []).map((a) => a.value ?? a.description ?? '').join(' ');
       consoleLines.push(`[${message.params.type}] ${text}`.slice(0, 600));
       if (consoleLines.length > 4000) consoleLines.splice(0, 1000);
+      return;
+    }
+    if (message.method === 'Page.javascriptDialogOpening') {
+      // alert()/confirm() from the page: note what it said and let it go on.
+      dialogs.push({ type: message.params.type, message: message.params.message, at: Date.now() });
+      consoleLines.push(`[dialog:${message.params.type}] ${message.params.message}`.slice(0, 600));
+      setTimeout(() => { send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {}); }, 300);
       return;
     }
     if (message.method === 'Runtime.exceptionThrown') {
@@ -74,7 +82,7 @@ export async function connect(target) {
 
   const modifiers = (o) => (o?.alt ? 1 : 0) | (o?.ctrl ? 2 : 0) | (o?.meta ? 4 : 0) | (o?.shift ? 8 : 0);
   const api = {
-    send, consoleLines, url: target.url,
+    send, consoleLines, dialogs, url: target.url,
     /** Evaluate an expression in the page; promises are awaited. */
     async eval(expression, timeoutMs = 60000) {
       const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, timeoutMs);

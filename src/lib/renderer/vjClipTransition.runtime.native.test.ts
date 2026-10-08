@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { createLayer, type Layer } from '../types';
-import { hardwareTestPlatform as platform, closeNativeTestCore } from './nativeHardwareTestPlatform';
+import { gpuTestPlatform as platform, closeNativeTestCore } from './nativeHardwareTestPlatform';
 import { buildVJClipTransitionGraph, buildVJClipTransitionPrecompileCommands, buildVJClipTransitionUniformUpdate, type VJClipTransitionGraphOptions } from './vjClipTransitionNative';
 import { buildVJMixGraph, buildVJMixPrecompileCommands } from './vjMixNative';
 import { VJ_CROSSFADE_TRANSITION_IDS } from './vjCrossfadeNative';

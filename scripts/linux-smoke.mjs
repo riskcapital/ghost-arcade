@@ -12,14 +12,20 @@
 //   node scripts/linux-smoke.mjs --attach --port 9234 --only c,d     (app already running)
 //
 // Steps: a handshake, b editor composite, c Screen, d calibration, e Interactive,
-// f recording, g VJ mode, h Output Window / fullscreen / quit.
+// f recording, g VJ mode, g2 clip with sound, h Output Window / fullscreen / quit.
 import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, waitForTarget, sleep } from './linux-smoke-cdp.mjs';
-import { STEPS } from './linux-smoke-steps.mjs';
+import { stepHandshake, stepComposite } from './linux-smoke-steps.mjs';
+import { stepScreen, stepCalibration } from './linux-smoke-screens.mjs';
+import { stepInteractive } from './linux-smoke-live.mjs';
+import { stepRecording, stepVj } from './linux-smoke-show.mjs';
+import { stepClipAudio, stepOutputAndQuit } from './linux-smoke-output.mjs';
+
+const STEPS = [stepHandshake, stepComposite, stepScreen, stepCalibration, stepInteractive, stepRecording, stepVj, stepClipAudio, stepOutputAndQuit];
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);

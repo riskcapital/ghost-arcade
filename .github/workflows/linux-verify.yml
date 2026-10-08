@@ -12,6 +12,7 @@ on:
   push:
     branches:
       - 'ci/linux-**'
+      - 'integrate/desktop-1008'
   workflow_dispatch:
 
 permissions:
@@ -37,7 +38,8 @@ env:
 jobs:
   # ── Native render core (release binary every other job uses) ─────────────
   core:
-    runs-on: ubuntu-latest
+    # Compile against glibc 2.35 so the packaged core also runs on Ubuntu 22.04.
+    runs-on: ubuntu-22.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -50,8 +52,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             native-renderer/target
-          key: linux-verify-core-release-${{ hashFiles('native-renderer/Cargo.lock') }}
-          restore-keys: linux-verify-core-release-
+          key: linux-verify-core-ubuntu22-release-${{ hashFiles('native-renderer/Cargo.lock') }}
+          restore-keys: linux-verify-core-ubuntu22-release-
       - name: Build native render core
         run: node scripts/build-native-core.mjs --arch=host
       - name: Record what the core links against
@@ -133,7 +135,7 @@ jobs:
       - name: vitest (every suite; native GPU tests run on lavapipe)
         id: vitest
         continue-on-error: true
-        run: xvfb-run -a npx vitest run --reporter=default --reporter=json --outputFile.json=linux-smoke-out/vitest.json
+        run: xvfb-run -a npx vitest run --maxWorkers=1 --no-file-parallelism --testTimeout=60000 --hookTimeout=120000 --reporter=default --reporter=json --outputFile.json=linux-smoke-out/vitest.json
 
       - name: Start the dev server
         run: |
@@ -209,6 +211,12 @@ jobs:
         id: packages
         continue-on-error: true
         run: node scripts/linux-package-check.mjs dist-electron linux-package-out
+      - name: Install deb in clean Ubuntu 22.04 and 24.04 containers
+        id: clean_install
+        continue-on-error: true
+        run: |
+          bash scripts/linux-clean-install.sh dist-electron 22.04
+          bash scripts/linux-clean-install.sh dist-electron 24.04
       - name: Smoke run of the packaged AppImage
         id: appimage
         continue-on-error: true
@@ -249,4 +257,4 @@ jobs:
         if: always()
         run: |
           echo "packages: ${{ steps.packages.outcome }}  appimage: ${{ steps.appimage.outcome }}"
-          test "${{ steps.packages.outcome }}" = "success" && test "${{ steps.appimage.outcome }}" = "success"
+          test "${{ steps.packages.outcome }}" = "success" && test "${{ steps.clean_install.outcome }}" = "success" && test "${{ steps.appimage.outcome }}" = "success"

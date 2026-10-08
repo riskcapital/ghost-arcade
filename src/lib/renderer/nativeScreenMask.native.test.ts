@@ -2,7 +2,7 @@ import { projectorCalibrationUniforms, inverseProjectorHomography } from '../out
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { closeNativeTestCore, hardwareTestPlatform as platform } from './nativeHardwareTestPlatform';
+import { closeNativeTestCore, gpuTestPlatform as platform } from './nativeHardwareTestPlatform';
 import { screenMaskAlpha } from '../stores/screenMaskGeometry';
 import type { ScreenMask } from '../stores/settings';
 
