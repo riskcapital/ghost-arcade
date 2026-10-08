@@ -102,6 +102,8 @@ export function newSurface(index: number): Surface {
     points: gridPoints(),
   };
 }
+/** Blend mode a new set gives each row: Screen above an opaque bottom row (L4 / B4). */
+export const starterBlend = (row: number): Layer['blend'] => (row % 4 === 3 ? 'normal' : 'screen');
 export function defaultShow(): Show {
   const featured=['lumenstrata','lumenveil','murmur','prism','pulse','quantumchamber','sentinels','tendril','tide','chrysalis','crystallon','dispersion','drift','aurora','chladniplate'].map(n=>'featured-'+n);
   const preferred=['ga-ghostfx','dm-plasma-flow','room-ember-drift','dm-kaleidoscope','dm-liquid-metal','dm-tunnel','room-cosmic-nebula','ar-frequency-rings','sm-fireflies','dm-neon-lines','ar-spectral-aurora','sm-lava-lamp-blobs','room-aurora-curtains'];
@@ -126,7 +128,9 @@ export function defaultShow(): Show {
       enabled: true,
       opacity: 1,
       fit: 'contain',
-      blend: 'normal',
+      // L1 is the top of the stack. Only the bottom row of each deck is opaque, so a clip
+      // launched on any lower row shows through instead of hiding behind L1.
+      blend: starterBlend(i),
       speed: 1,
       intensity: 1,
       params: {},

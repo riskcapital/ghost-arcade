@@ -156,3 +156,17 @@ it('loads a full playable eight-column deck on first launch and preserves saved 
     vi.unstubAllGlobals();
   }
 });
+
+it('gives a new set blend modes that keep every launched row visible, and leaves saved sets alone', () => {
+  const fresh = defaultShow();
+  // Draw order is L4 -> L1, so only the bottom row of each deck may be an opaque Normal layer.
+  expect(fresh.layers.map(l => l.blend)).toEqual(['screen', 'screen', 'screen', 'normal', 'screen', 'screen', 'screen', 'normal']);
+  const saved = defaultShow();
+  saved.layers.forEach((layer, row) => { layer.blend = row === 1 ? 'multiply' : 'normal'; });
+  const reopened = normalizeShow(JSON.parse(JSON.stringify(saved)));
+  expect(reopened.layers.map(l => l.blend)).toEqual(['normal', 'multiply', 'normal', 'normal', 'normal', 'normal', 'normal', 'normal']);
+  // A layer saved without a blend mode predates the field and was drawn as Normal.
+  const legacy = JSON.parse(JSON.stringify(saved));
+  delete legacy.layers[0].blend;
+  expect(normalizeShow(legacy).layers[0].blend).toBe('normal');
+});
