@@ -11,6 +11,9 @@ import './lib/theming/fonts.css';
 // Global skin overrides — re-skins the existing markup to the v10
 // visual identity (toolbar chips, layer rows, faders, status bar) so
 // the new design lands without per-component edits.
+// The one blue: --ga-blue-* steps, all derived from the theme's --ga-blue token.
+// Same file as the mobile app, so both share one scale.
+import './lib/mobile/studio/blueScale.css';
 import './lib/theming/studio-skin.css';
 import { installRangeProgressSync } from './lib/theming/rangeProgress';
 

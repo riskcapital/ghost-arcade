@@ -3,6 +3,7 @@ import { initErrorReporter } from './lib/utils/errorReporter';
 import { silenceThreeSerializationNoise } from './lib/utils/silenceThreePatches';
 import './lib/theming/store';
 import './lib/theming/fonts.css';
+import './lib/mobile/studio/blueScale.css';
 import './lib/theming/studio-skin.css';
 import { installRangeProgressSync } from './lib/theming/rangeProgress';
 

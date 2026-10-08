@@ -167,8 +167,8 @@
     width: 100%;
     height: 28px;
     color: inherit;
-    background: var(--ga-slot, #151c26);
-    border: 1px solid #3d4a5c;
+    background: var(--ga-slot, var(--ga-blue-800));
+    border: 1px solid var(--ga-blue-mute-600);
     border-radius: 3px;
     padding: 4px;
   }
@@ -198,26 +198,26 @@
     font-size: 10px;
     min-height: 28px;
     padding: 3px 8px;
-    border: 1px solid var(--ga-line-2, #394454);
-    background: var(--ga-slot, #131820);
+    border: 1px solid var(--ga-line-2, var(--ga-blue-mute-600));
+    background: var(--ga-slot, var(--ga-blue-900));
     color: inherit;
     border-radius: 4px;
   }
   .assigned {
-    color: #91caff;
-    border-color: #639aff;
+    color: var(--ga-blue-200);
+    border-color: var(--ga-blue-300);
   }
   input {
     width: 100%;
     height: 32px;
     touch-action: none;
-    accent-color: var(--ga-accent, #6988ed);
+    accent-color: var(--ga-accent, var(--ga-blue-mute-300));
     cursor: ew-resize;
     margin: 0;
   }
   button:focus-visible,
   input:focus-visible {
-    outline: 2px solid #8abaff;
+    outline: 2px solid var(--ga-blue-200);
     outline-offset: 2px;
   }
   @media (pointer: coarse) {
