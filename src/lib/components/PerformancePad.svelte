@@ -4,6 +4,7 @@
   // "Like shooting visuals - connect mind to music and make visuals like dancing"
 
   import { onMount, onDestroy } from 'svelte';
+  import { blue } from '../theming/blueScale';
   import { performanceStore } from '../audio/performanceEngine';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { audioStore } from '../stores/audio';
@@ -128,7 +129,7 @@
     }
 
     // Grid lines (subtle)
-    padCtx.strokeStyle = 'rgba(103, 232, 249, 0.06)';
+    padCtx.strokeStyle = blue(300, 0.06);
     padCtx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
       padCtx.beginPath();
@@ -142,7 +143,7 @@
     }
 
     // Crosshair (center reference)
-    padCtx.strokeStyle = 'rgba(103, 232, 249, 0.12)';
+    padCtx.strokeStyle = blue(300, 0.12);
     padCtx.lineWidth = 1;
     padCtx.beginPath();
     padCtx.moveTo(w / 2, 0);
@@ -194,34 +195,34 @@
 
     // Outer glow
     const gradient = padCtx.createRadialGradient(cx, cy, 0, cx, cy, pulseSize * 2.5);
-    gradient.addColorStop(0, pad.isPressed ? 'rgba(103, 232, 249, 0.4)' : 'rgba(103, 232, 249, 0.15)');
-    gradient.addColorStop(1, 'rgba(103, 232, 249, 0)');
+    gradient.addColorStop(0, pad.isPressed ? blue(300, 0.4) : blue(300, 0.15));
+    gradient.addColorStop(1, blue(300, 0));
     padCtx.fillStyle = gradient;
     padCtx.beginPath();
     padCtx.arc(cx, cy, pulseSize * 2.5, 0, Math.PI * 2);
     padCtx.fill();
 
     // Inner dot
-    padCtx.fillStyle = pad.isPressed ? '#67E8F9' : 'rgba(103, 232, 249, 0.8)';
+    padCtx.fillStyle = pad.isPressed ? blue(300) : blue(300, 0.8);
     padCtx.beginPath();
     padCtx.arc(cx, cy, cursorSize / 2, 0, Math.PI * 2);
     padCtx.fill();
 
     // Ring
-    padCtx.strokeStyle = '#67E8F9';
+    padCtx.strokeStyle = blue(300);
     padCtx.lineWidth = 1.5;
     padCtx.beginPath();
     padCtx.arc(cx, cy, pulseSize, 0, Math.PI * 2);
     padCtx.stroke();
 
     // Position readout
-    padCtx.fillStyle = 'rgba(103, 232, 249, 0.5)';
+    padCtx.fillStyle = blue(300, 0.5);
     padCtx.font = '9px monospace';
     padCtx.fillText(`${pad.x.toFixed(2)}, ${pad.y.toFixed(2)}`, 4, h - 4);
 
     // Param binding labels
     if (pad.paramX) {
-      padCtx.fillStyle = 'rgba(103, 232, 249, 0.4)';
+      padCtx.fillStyle = blue(300, 0.4);
       padCtx.font = '9px monospace';
       padCtx.textAlign = 'center';
       padCtx.fillText(pad.paramX, w / 2, h - 4);
@@ -229,7 +230,7 @@
     }
     if (pad.paramY) {
       padCtx.save();
-      padCtx.fillStyle = 'rgba(103, 232, 249, 0.4)';
+      padCtx.fillStyle = blue(300, 0.4);
       padCtx.font = '9px monospace';
       padCtx.translate(12, h / 2);
       padCtx.rotate(-Math.PI / 2);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import { blue } from '../theming/blueScale';
   import { dmxActivity, dmxStore, getDmxUniverseValues, listDmxUniverses } from '../dmx/dmxStore';
   import {
     DMX_CHANNELS,
@@ -170,11 +171,11 @@
       context.fillRect(x + 1, y + 1, cellWidth - 2, cellHeight - 2);
       if (value > 0) {
         const fill = (cellHeight - 2) * (value / 255);
-        context.fillStyle = boundChannels.has(index + 1) ? 'rgba(76, 209, 255, 0.85)' : 'rgba(76, 209, 255, 0.38)';
+        context.fillStyle = boundChannels.has(index + 1) ? blue(300, 0.85) : blue(400, 0.45);
         context.fillRect(x + 1, y + cellHeight - 1 - fill, cellWidth - 2, fill);
       }
       if (boundChannels.has(index + 1) || hoverChannel === index + 1) {
-        context.strokeStyle = hoverChannel === index + 1 ? '#ffffff' : '#4cd1ff';
+        context.strokeStyle = hoverChannel === index + 1 ? '#ffffff' : blue(300);
         context.lineWidth = 1;
         context.strokeRect(x + 1.5, y + 1.5, cellWidth - 3, cellHeight - 3);
       }

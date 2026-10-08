@@ -1,4 +1,5 @@
 import type { WLEDNormalizedPoint, WLEDSourceRegion } from '../types';
+import { blue } from '../theming/blueScale';
 
 export interface LEDMapPreviewOptions {
   /** Resolved points in physical LED order, normalized to the composite. */
@@ -31,7 +32,7 @@ export function drawLEDMapPreview(canvas: HTMLCanvasElement, options: LEDMapPrev
   context.clearRect(0, 0, cssWidth, cssHeight);
 
   const gradient = context.createLinearGradient(0, 0, cssWidth, cssHeight);
-  gradient.addColorStop(0, '#0f1c24');
+  gradient.addColorStop(0, blue('mute-800'));
   gradient.addColorStop(0.5, '#101116');
   gradient.addColorStop(1, '#251423');
   context.fillStyle = gradient;
@@ -61,9 +62,9 @@ export function drawLEDMapPreview(canvas: HTMLCanvasElement, options: LEDMapPrev
     }
   }
 
-  context.fillStyle = 'rgba(76,209,255,0.06)';
+  context.fillStyle = blue(400, 0.08);
   context.fillRect(region.x * cssWidth, region.y * cssHeight, region.width * cssWidth, region.height * cssHeight);
-  context.strokeStyle = '#4cd1ff';
+  context.strokeStyle = blue(300);
   context.setLineDash([5, 4]);
   context.strokeRect(
     region.x * cssWidth + 0.5,

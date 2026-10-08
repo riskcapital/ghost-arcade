@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import type { OutputSlice } from '../stores/settings';
+import { blue } from '../theming/blueScale';
 import type {
   ProjectionSimGizmoMode,
   ProjectionSimObject,
@@ -566,7 +567,7 @@ export class ProjectionSimulatorRenderer {
     const sceneSize = box.isEmpty() ? 4 : box.getSize(new THREE.Vector3()).length();
     const radius = THREE.MathUtils.clamp(sceneSize * 0.012, 0.025, 0.12);
     for (const marker of markers) {
-      const color = marker.selected ? '#4fe3ff' : marker.matched ? '#ffcf3a' : '#ff5a7a';
+      const color = marker.selected ? blue(300) : marker.matched ? '#ffcf3a' : '#ff5a7a';
       const sphere = new THREE.Mesh(
         new THREE.SphereGeometry(radius, 16, 10),
         new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 }),

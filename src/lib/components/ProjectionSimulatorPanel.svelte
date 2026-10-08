@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import { blue } from '../theming/blueScale';
   import { get } from 'svelte/store';
   import { settings, type OutputSlice } from '../stores/settings';
   import { workspace } from '../stores/workspace';
@@ -1039,12 +1040,12 @@
       if (!point.image) return;
       const x = point.image[0] * sx;
       const y = point.image[1] * sy;
-      ctx.strokeStyle = selected ? '#4fe3ff' : '#ffcf3a';
+      ctx.strokeStyle = selected ? blue(300) : '#ffcf3a';
       ctx.lineWidth = 2 * dpr;
       ctx.beginPath();
       ctx.arc(x, y, 7 * dpr, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.fillStyle = selected ? '#4fe3ff' : '#ffcf3a';
+      ctx.fillStyle = selected ? blue(300) : '#ffcf3a';
       ctx.fillText(String(index + 1), x + 10 * dpr, y - 9 * dpr);
     });
     if (calibrationCursor && calibrationPointId) {
