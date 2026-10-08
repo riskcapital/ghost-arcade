@@ -140,3 +140,7 @@
 @media (prefers-reduced-motion: reduce) {
   [data-reorder-active] > [data-reorder-item] {transition:none;}
 }
+
+/* Flux: the program picture is the XY pad, so it takes the full width of a phone. */
+.studio[data-layout='phone'][data-layout].flux-tab:not(.clean) .preview-frame {max-width:none;}
+.studio[data-layout][data-layout].flux-tab .preview {touch-action:none;}

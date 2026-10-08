@@ -185,6 +185,7 @@
     lastScreenTap={x:e.clientX,y:e.clientY,time:performance.now()};
   }
   import FluxPanel from './FluxPanel.svelte';
+  import FluxPad from './FluxPad.svelte';
   import {defaultFlux} from '../../mobile/studio/flux';
   let flux=defaultFlux();
   import PerformanceMixer from "./PerformanceMixer.svelte";
@@ -1339,7 +1340,7 @@
 <input class="file-input" type="file" accept="image/*" multiple aria-label="Import photos" bind:this={photoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="video/*,image/*" multiple aria-label="Import media" bind:this={mediaInput} onchange={importMedia} />
 <input class="file-input" type="file" accept=".ghostset,application/json" bind:this={setInput} onchange={importSet} />
-<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map'} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
+<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
   <header class="app-header">
     <div class="brand">
       <img class="brand-mark" src="./icon-new.png" alt="" />
@@ -1407,15 +1408,16 @@
                     onpointercancel={endDrag}><span></span></button
                   >{/if}{/each}{/if}
           {/if}
+          {#if tab==='flux' && !clean && !visualsDown}<FluxPad value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>{/if}
           {#if tab==='map' && mappingTool==='paint' && show.mapping && !clean}
             <PaintPad surfaces={show.surfaces} config={paint} beat={()=>engine?.beatClock?.()??0} onstroke={startStroke} onfinish={finishStroke} onlimit={()=>flash('Paint memory is full. Clear or undo strokes to keep drawing.')}/>
           {/if}
         </div>
       </div>
       <div class="monitor-tools">
-        {#if !tablet && tab!=='map'}<button class="preview-toggle" aria-label={compactPreview?'Expand preview':'Compact preview'} aria-pressed={compactPreview} onclick={()=>compactPreview=!compactPreview}><Icon name="eye" size={16}/></button>{/if}
+        {#if !tablet && tab!=='map' && tab!=='flux'}<button class="preview-toggle" aria-label={compactPreview?'Expand preview':'Compact preview'} aria-pressed={compactPreview} onclick={()=>compactPreview=!compactPreview}><Icon name="eye" size={16}/></button>{/if}
         {#if interactiveLive}<button onclick={openInteractive}>Interactive</button><button onclick={()=>interactiveWorkspace?.restoreMix()}>Return to mix</button>{/if}
-        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':'LIVE COMPOSITION'}</span><button
+        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':'LIVE COMPOSITION'}</span><button
           class:active={frozen}
           onclick={setFrozen}
           aria-pressed={frozen}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume' : 'Hold'}</button
