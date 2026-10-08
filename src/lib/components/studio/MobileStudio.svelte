@@ -154,6 +154,7 @@
   import Icon from './StudioIcon.svelte';
   import StudioDecks from './StudioDecks.svelte';
   import { StudioEngine } from '../../mobile/studio/engine';
+  import { keepAwake } from '../../mobile/studio/wakeLock';
   import { standaloneShaderPaths } from '../../mobile/studio/shaderAvailability';
   const libraryShaders=MOBILE_SHADERS.filter(s=>!s.requiresImage&&standaloneShaderPaths.has(s.path)).sort((a,b)=>Number(b.id.startsWith('featured-'))-Number(a.id.startsWith('featured-')));
   let failedThumbnails=new Set<string>();
@@ -870,14 +871,8 @@
       videoPosition = t?.time || 0;
       videoDuration = t?.duration || 0;
     }, 50);
-    let wake: { release: () => Promise<void> } | undefined;
-    void (navigator as any).wakeLock
-      ?.request('screen')
-      .then((lock: any) => {
-        if (disposed) void lock.release();
-        else wake = lock;
-      })
-      .catch(() => {});
+    // Held for as long as the studio is open, and asked for again after every trip to the background.
+    const awake = keepAwake();
     return () => {
       stopAuto();
       tabletQuery.removeEventListener('change',updateTablet);
@@ -892,7 +887,7 @@
       clearTimeout(restoreTimer);
       externalOutput?.destroy();
       engine?.destroy();
-      void wake?.release();
+      awake.stop();
     };
   });
 </script>
