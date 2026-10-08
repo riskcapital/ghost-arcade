@@ -21,20 +21,39 @@
 
   import {touchSliders} from '../../mobile/studio/touchSliders';
   import '../../mobile/studio/touchSliders.css';
-  import {nextAutoClip,varyAutoParams} from '../../mobile/studio/autopilot';
+  import {nextAutoClip,varyAutoParams,autopilotResponse,type AutoEvent} from '../../mobile/studio/autopilot';
   let autoOn=false,autoSettings=false,autoClips=true,autoParams=true,autoRandom=false;
   let autoInterval=16,autoVariation=.12,autoRows=Array(8).fill(true);
   let autoNext=0,autoParamNext=0,autoLast=-1,autoEpoch=0;
   let autoJobs=new Map<number,{clip:Clip;ready:boolean}>();
+  /** Paused by the performer taking a row over by hand. The Auto button and a notice offer Resume. */
+  let autoPaused=false;
   function stopAuto(){
-    autoOn=false;autoEpoch++;
+    autoOn=false;autoPaused=false;autoEpoch++;
     for(const row of autoJobs.keys())engine?.cancelPrepared(row);
     autoJobs.clear();
   }
-  function startAuto(){
-    stopAuto();checkpoint();autoOn=true;
+  /** Drop anything Autopilot has prepared and time its next change from now. It stays on. */
+  function rearmAuto(){
+    for(const row of autoJobs.keys())engine?.cancelPrepared(row);
+    autoJobs.clear();autoEpoch++;
     const b=(performance.now()-clockOrigin)*show.bpm/60000;
     autoNext=Math.floor(b)+autoInterval;autoParamNext=Math.floor(b)+4;autoLast=b;
+  }
+  function startAuto(){
+    stopAuto();checkpoint();autoOn=true;
+    rearmAuto();
+    if(noticeAction)clearNotice();
+  }
+  /** Route every performer action through one policy so nothing switches Autopilot off silently. */
+  function autoEvent(event:AutoEvent){
+    if(!autoOn)return;
+    const response=autopilotResponse(event);
+    if(response==='rearm')rearmAuto();
+    else if(response==='pause'){
+      stopAuto();autoPaused=true;
+      flash('Autopilot paused.',{label:'Resume',run:startAuto},8000);
+    }
   }
   function autoTick(now:number){
     if(!autoOn||!engine)return;
@@ -49,6 +68,8 @@
       const epoch=autoEpoch;
       show.layers.forEach((l,row)=>{
         if((!show.dualDeck&&row>=4)||!autoRows[row]||!l.enabled||loading[row]||pending[row])return;
+        // The row open in Controls keeps its clip while the performer shapes it.
+        if(clipControlsOpen&&row===selectedLayer)return;
         // Leave live camera sources under manual control.
         if(['camera','depth'].includes(show.clips.find(c=>c.id===l.clipId)?.kind??''))return;
         const clip=nextAutoClip(show,row,autoRandom);if(!clip)return;
@@ -62,7 +83,7 @@
     }
     if(b>=autoParamNext){
       if(autoParams){
-        show.layers=show.layers.map((l,row)=>autoRows[row]&&l.enabled&&show.clips.find(c=>c.id===l.clipId)?.kind==='shader'
+        show.layers=show.layers.map((l,row)=>autoRows[row]&&l.enabled&&!(clipControlsOpen&&row===selectedLayer)&&show.clips.find(c=>c.id===l.clipId)?.kind==='shader'
           ?{...l,params:varyAutoParams(autoEngine.parameters(row),l.params,autoVariation)}:l);
         persist();
       }
@@ -223,10 +244,14 @@
   $: if (engine && controlSourceKey) refreshParams();
   $: activeEffects = fxScope==='comp' ? (show.effects||[]) : fxScope==='clip' ? (activeClip?.effects||[]) : layer.effects;
   $: pageCount = Math.max(1, Math.ceil(show.clips.length / 12));
-  function flash(message: string) {
+  type NoticeAction = { label: string; run: () => void };
+  let noticeAction: NoticeAction | null = null;
+  function clearNotice() { clearTimeout(noticeTimer); notice = ''; noticeAction = null; }
+  function flash(message: string, action: NoticeAction | null = null, ms = 3500) {
     notice = message;
+    noticeAction = action;
     clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => (notice = ''), 3500);
+    noticeTimer = setTimeout(clearNotice, ms);
   }
   function checkpoint() {
     history.push(show);
@@ -251,6 +276,7 @@
     if (!next) return;
     show = next;
     cancelQueued();
+    autoEvent('undo');
     await engine?.restore(show);
     refreshParams();
     canUndo = history.canUndo;
@@ -271,7 +297,6 @@
     videoDuration = t?.duration || 0;
   }
   function cancelQueued() {
-    stopAuto();
     pending = {};
     for (let i = 0; i < 8; i++) engine?.cancelPrepared(i);
   }
@@ -285,7 +310,6 @@
   }
   function toggleClip(clip:Clip,index:number) {
     if(clipUnavailable(clip)){flash(unavailableMessage(clip));return;}
-    stopAuto();
     changeLayer(index);
     controlView='source';
     const running=show.layers[index].clipId===clip.id || pending[index]?.clip.id===clip.id || launchingClips[index]?.clipId===clip.id;
@@ -296,6 +320,7 @@
       if(doubleTap)stopRow(index);
     }else{
       lastPlayingTap=null;
+      autoEvent('launch');
       void launch(clip,index);
     }
   }
@@ -372,7 +397,7 @@
     persist();
   }
   function stopRow(index: number) {
-    stopAuto();
+    autoEvent('stop');
     delete launchingClips[index];loading[index]=false;loading=[...loading];
     checkpoint(); const next = { ...pending }; delete next[index]; pending = next; engine?.cancelPrepared(index); engine?.clear(index);
     show.layers[index] = { ...show.layers[index], clipId: null };
@@ -554,7 +579,7 @@
     show.activeBlockId=id;persist();flash('Block saved. Clip changes now update this block.');
   }
   function recallScene(index:number) {
-    stopAuto();
+    autoEvent('block');
     checkpoint();
     if(show.activeBlockId)show.scenes=show.scenes.map(b=>b.id===show.activeBlockId?{...b,launchGrid:copy(show.launchGrid)}:b);
     const block=show.scenes[index];show.launchGrid=copy(block.launchGrid || show.launchGrid);show.activeBlockId=block.id;
@@ -563,7 +588,10 @@
   function setBpm(value: number) {
     show.bpm = clamp(value, 30, 240);
     clockOrigin = performance.now();
-    cancelQueued();
+    // A new tempo re-times what is queued. It never cancels a launch or switches Autopilot off.
+    const now = clockOrigin;
+    pending = Object.fromEntries(Object.entries(pending).map(([row, request]) => [row, Number.isFinite(request.at) ? { ...request, at: nextBeat(now, clockOrigin, show.bpm) } : request]));
+    autoEvent('tempo');
     persist();
   }
   function tap() {
@@ -604,7 +632,6 @@
   }
   function openControls(row:number){
     if(!clipControlsOpen)controlsReturnFocus=document.activeElement as HTMLElement|null;
-    stopAuto();
     lastPlayingTap=null;
     changeLayer(row);
     controlView='source';
@@ -699,6 +726,7 @@
     } catch {}
     checkpoint();
     cancelQueued();
+    autoEvent('set');
     show = copy(next);
     selectedSurface = 0;
     bank = 0;
@@ -730,6 +758,7 @@
       const next = normalizeShow(JSON.parse(await file.text()));
       checkpoint();
       cancelQueued();
+      autoEvent('set');
       show = next;
       selectedSurface = 0;
       bank = 0;
@@ -1078,17 +1107,17 @@
               onSelect={changeLayer}
               onControls={openControls}
               onMixer={openMixer}
-              onLaunch={(row, clip) => { stopAuto(); changeLayer(row); void launch(clip, row); }}
+              onLaunch={(row, clip) => { autoEvent('launch'); changeLayer(row); void launch(clip, row); }}
               onTap={(row,clip)=>toggleClip(clip,row)}
               onRemove={(row,column)=>{const id=show.launchGrid[row][column];if(show.layers[row].clipId===id||pending[row]?.clip.id===id||launchingClips[row]?.clipId===id)stopRow(row);else checkpoint();show.launchGrid[row][column]=null;persist();}}
               onStop={stopRow}
               onEdit={(row, column) => { mixerOpen=false;clipControlsOpen=false;editSlot = { row, column }; changeLayer(row); tab = 'library'; }}
-              onDual={(enabled) => { checkpoint();stopAuto(); show.dualDeck = enabled;if(!enabled&&selectedLayer>=4)changeLayer(0); persist(); }}
+              onDual={(enabled) => { checkpoint();autoEvent('settings'); show.dualDeck = enabled;if(!enabled&&selectedLayer>=4)changeLayer(0); persist(); }}
               onMix={(value) => { show.crossfade = value; persist(); }}
-              onArrange={()=>stopAuto()}
+              onArrange={()=>autoEvent('arrange')}
               onMove={(from,to)=>{
                 if(from.row===to.row&&from.column===to.column)return;
-                checkpoint();stopAuto();
+                checkpoint();autoEvent('arrange');
                 const grid=show.launchGrid.map(row=>[...row]);
                 const clip=grid[from.row][from.column];if(!clip)return;
                 grid[from.row][from.column]=grid[to.row][to.column]??null;
@@ -1097,19 +1126,19 @@
               }}
             ><div slot="view-switch" class="segmented deck-view-switch"><button class:active={!sceneMode} onclick={()=>sceneMode=false}>Clips</button><button class:active={sceneMode} onclick={()=>sceneMode=true}>Blocks</button></div>
           <div class="autopilot-bar" slot="autopilot">
-            <button class:running={autoOn} aria-pressed={autoOn} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':'OFF'}</span></button>
+            <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
             <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
           </div>
 <svelte:fragment slot="autopilot-settings">          {#if autoSettings}<section class="auto-options" aria-label="Autopilot settings">
             <div class="auto-switches">
-              <button aria-pressed={autoClips} class:active={autoClips} onclick={()=>{stopAuto();autoClips=!autoClips;}}><Icon name="grid" size={16}/>Clips</button>
-              <button aria-pressed={autoParams} class:active={autoParams} onclick={()=>{stopAuto();autoParams=!autoParams;}}><Icon name="controls" size={16}/>Parameters</button>
+              <button aria-pressed={autoClips} class:active={autoClips} onclick={()=>{autoClips=!autoClips;if(!autoClips&&!autoParams)stopAuto();else autoEvent('settings');}}><Icon name="grid" size={16}/>Clips</button>
+              <button aria-pressed={autoParams} class:active={autoParams} onclick={()=>{autoParams=!autoParams;if(!autoClips&&!autoParams)stopAuto();else autoEvent('settings');}}><Icon name="controls" size={16}/>Parameters</button>
             </div>
-            <div class="auto-fields"><label>Change clips<select aria-label="Change clips" bind:value={autoInterval} onchange={stopAuto}><option value={4}>4 beats</option><option value={8}>8 beats</option><option value={16}>16 beats</option><option value={32}>32 beats</option></select></label>
-            <label>Order<select aria-label="Clip order" bind:value={autoRandom} onchange={stopAuto}><option value={false}>In order</option><option value={true}>Random</option></select></label></div>
+            <div class="auto-fields"><label>Change clips<select aria-label="Change clips" bind:value={autoInterval} onchange={()=>autoEvent('settings')}><option value={4}>4 beats</option><option value={8}>8 beats</option><option value={16}>16 beats</option><option value={32}>32 beats</option></select></label>
+            <label>Order<select aria-label="Clip order" bind:value={autoRandom} onchange={()=>autoEvent('settings')}><option value={false}>In order</option><option value={true}>Random</option></select></label></div>
             <label class="auto-amount">Variation / 4 beats <output>{Math.round(autoVariation*100)}%</output><input type="range" min="0" max=".4" step=".01" data-default=".12" bind:value={autoVariation} aria-label="Autopilot variation"/></label>
-            <div class="auto-rows">{#each show.layers.slice(0,show.dualDeck?8:4) as l,i}<button aria-label={`Autopilot layer ${i+1}`} aria-pressed={autoRows[i]} class:active={autoRows[i]} onclick={()=>{stopAuto();autoRows[i]=!autoRows[i];}}>L{i+1}</button>{/each}</div>
-            <p>Follows BPM / Tap. Cameras stay manual. Changes apply to selected, enabled layers. Start Autopilot after choosing settings.</p>
+            <div class="auto-rows">{#each show.layers.slice(0,show.dualDeck?8:4) as l,i}<button aria-label={`Autopilot layer ${i+1}`} aria-pressed={autoRows[i]} class:active={autoRows[i]} onclick={()=>{autoRows[i]=!autoRows[i];autoEvent('settings');}}>L{i+1}</button>{/each}</div>
+            <p>Follows BPM / Tap. Cameras stay manual. Changes apply to selected, enabled layers, and take effect right away. Launching or stopping a clip by hand pauses Autopilot until you resume it.</p>
           </section>{/if}
 </svelte:fragment></StudioDecks>
           {/if}
@@ -1144,6 +1173,7 @@
                 onclick={() => {
                   checkpoint();
                   cancelQueued();
+                  autoEvent('stop');
                   engine?.clear(selectedLayer);
                   patchLayer({ clipId: null });
                   refreshParams();
@@ -1439,6 +1469,7 @@
             <button class="icon-button" data-close-controls aria-label="Close clip controls" onclick={closeControls}><Icon name="close" size={20}/></button>
           </header>
           {#if frozen || blackout}<div class="controls-notice" role="status">{blackout?'Output is blacked out.':'Output is held.'} Changes appear when you resume.<button onclick={()=>{if(blackout)setBlackout();if(frozen)setFrozen();}}>Resume</button></div>{:else if activeClip && (!layer.enabled || layer.opacity === 0)}<p class="controls-notice" role="status">This layer is muted. Raise its level in Mix to see your changes.</p>{:else if show.dualDeck && (selectedLayer < 4 ? show.crossfade === 1 : show.crossfade === 0)}<p class="controls-notice" role="status">This deck is faded out. Move the A/B crossfader to see your changes.</p>{/if}
+          {#if autoOn && autoRows[selectedLayer]}<p class="controls-notice" role="status">Autopilot is on. This row keeps its clip while Controls is open.</p>{/if}
           <div class="clip-controls-body">{@render sourceControls(true)}</div>
         </section>
       {/if}
@@ -1514,7 +1545,7 @@
       <span>{error}</span><button class="icon-button" onclick={() => (error = '')} aria-label="Dismiss error"
         ><Icon name="close" size={16} /></button
       >
-    </div>{:else if notice}<div class="toast" role="status">{notice}</div>{/if}
+    </div>{:else if notice}<div class="toast" role="status"><span>{notice}</span>{#if noticeAction}<button class="toast-action" data-notice-action onclick={()=>{const action=noticeAction;clearNotice();action?.run();}}>{noticeAction.label}</button>{/if}</div>{/if}
   {#if clean}<button class="exit-clean" onclick={() => (clean = false)}>Return to studio</button>{/if}
 </div>
 {#if toolkitOpen}<CaptureToolkit mappingSurfaces={show.surfaces} oninteractive={()=>{toolkitOpen=false;openInteractive();}} oninteractiveoutput={interactiveOutput} {oncompanion} onclose={()=>toolkitOpen=false} onprepare={prepareCaptureTool} onshots={importCameraShots}/>{/if}
@@ -1583,6 +1614,7 @@
           } catch {}
           checkpoint();
           cancelQueued();
+          autoEvent('set');
           show = defaultShow();
           selectedSurface = 0;
           bank = 0;
@@ -1612,6 +1644,8 @@
   .autopilot-bar button span{font:10px ui-monospace;color:#a6adb9;}
   .autopilot-bar button.running{color:#b7f375;background:#24311c;border-radius:4px;}
   .autopilot-bar button.running span{color:#b7f375;}
+  .autopilot-bar button.paused{color:#ffc570;}
+  .autopilot-bar button.paused span{color:#ffc570;}
   .auto-options{padding:12px;border:1px solid var(--ga-line-2);border-radius:6px;margin-bottom:10px;background:var(--ga-card);}
   .auto-switches,.auto-fields,.auto-rows{display:flex;gap:8px;margin-bottom:10px;}
   .auto-switches button{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-height:44px;}
@@ -2801,6 +2835,17 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .toast .toast-action {
+    min-height: 36px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
+    background: var(--ga-selection-bg);
+    border: 1px solid var(--ga-selection-line);
+    border-radius: 5px;
+    color: var(--ga-selection-ink);
   }
   .toast.error {
     background: #462333;

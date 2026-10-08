@@ -19,3 +19,16 @@ export function varyAutoParams(inputs:ISFInput[],params:Record<string,number|boo
  }
  return next;
 }
+
+/** Things a performer does while Autopilot is running. */
+export type AutoEvent='tempo'|'panel'|'select'|'arrange'|'settings'|'block'|'undo'|'launch'|'stop'|'set';
+/**
+ * What each of those does to Autopilot. Only taking a row over by hand (launching or stopping a
+ * clip, or opening another set) pauses it, and the app then says so and offers Resume. Tempo,
+ * blocks, undo and settings re-time the next change; looking at a panel changes nothing.
+ */
+export function autopilotResponse(event:AutoEvent):'keep'|'rearm'|'pause'{
+ if(event==='launch'||event==='stop'||event==='set')return 'pause';
+ if(event==='tempo'||event==='settings'||event==='block'||event==='undo')return 'rearm';
+ return 'keep';
+}
