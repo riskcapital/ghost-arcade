@@ -13307,15 +13307,47 @@ impl App {
                 _ => None,
             })
             .collect();
+        let mut job = job;
         if !new_targets.is_empty() {
-            self.pending_native_graph_jobs.retain(|pending| {
-                !pending.render_plans.iter().any(|plan| match &plan.target {
+            // A replaced job may carry the ONE upload of a persistent buffer
+            // (a point cloud, a mesh): the sender queues it once and from
+            // then on only refers to the buffer. Dropping it with the stale
+            // job left the layer black for good whenever the next frame's
+            // graph arrived before this one had run. Hand the data on to the
+            // job that replaces it.
+            let mut carried: Vec<(String, usize, bool, Vec<u8>)> = Vec::new();
+            self.pending_native_graph_jobs.retain_mut(|pending| {
+                let replaced = pending.render_plans.iter().any(|plan| match &plan.target {
                     NativeComputeGraphRenderTarget::SourceFrame { source_id, .. } => {
                         new_targets.iter().any(|target| target == source_id)
                     }
                     _ => false,
-                })
+                });
+                if replaced {
+                    for buffer in pending.buffers.iter_mut() {
+                        if buffer.persistent && !buffer.initial_bytes.is_empty() {
+                            carried.push((
+                                buffer.id.clone(),
+                                buffer.byte_length as usize,
+                                buffer.clear,
+                                std::mem::take(&mut buffer.initial_bytes),
+                            ));
+                        }
+                    }
+                }
+                !replaced
             });
+            for (id, byte_length, clear, bytes) in carried {
+                if let Some(buffer) = job.buffers.iter_mut().find(|buffer| buffer.id == id) {
+                    if buffer.persistent
+                        && buffer.initial_bytes.is_empty()
+                        && buffer.byte_length as usize == byte_length
+                    {
+                        buffer.initial_bytes = bytes;
+                        buffer.clear = buffer.clear || clear;
+                    }
+                }
+            }
         }
         self.pending_native_graph_jobs.push(job);
         Ok(())

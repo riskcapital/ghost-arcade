@@ -207,6 +207,41 @@ try {
       await delay(200);
     }
   }
+  // The one-time point upload must survive the core's coalescing. The app
+  // queues a graph every frame; the core keeps only the newest pending graph
+  // per source. When the graph that carries the points and the next one arrive
+  // before the core renders, the upload used to be thrown away with the older
+  // graph, and the layer stayed black for good.
+  {
+    const packed = splat.packSplatNativePoints(twoPlaneCloud(200_000));
+    const layerId = 'solid-check-coalesce';
+    const sourceId = 'gpu:solid-check-coalesce:splat';
+    const content = { ...types.createDefaultSplatContent(), dataType: 'pointcloud', pointSize: 3, backgroundOpacity: 0, autoRotate: false };
+    let frame = 0;
+    const graph = (withPoints) => ({
+      type: 'queue_compute_graph',
+      ...splat.buildSplatNativeComputeGraph({
+        sourceId, content, pointCount: packed.pointCount, pointsBufferId: 'splat:solid-check-coalesce:points',
+        pointsB64: withPoints ? splat.encodeSplatBufferBase64(packed.buffer) : null, width, height, time: 0, frameDelta: 1 / 60, frameIndex: ++frame,
+      }).config,
+    });
+    await rpc('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: layerId, z_index: 0, opacity: 1, blend_mode: 'normal', corners: fullFrame },
+        { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+        { type: 'bind_media_source', layer_id: layerId, source_id: sourceId, uri: `native-graph://${layerId}`, source_type: 'gpu:splat' },
+        graph(true), graph(false), graph(false),
+        { type: 'present' },
+      ],
+    }, 60_000);
+    for (let i = 0; i < 20; i++) { await rpc('submit_commands', { commands: [graph(false), { type: 'present' }] }); await delay(20); }
+    const centre = pixelReader(await rpc('frame_snapshot', { include_pixels: true }, 30_000))(0.5, 0.5);
+    const ok = centre[0] > 200;
+    if (!ok) failed++;
+    report.coalesce = { centre, ok };
+    console.log(`upload followed at once by newer graphs: centre rgb ${centre}  ${ok ? 'PASS' : 'FAIL (points were dropped)'}`);
+    await rpc('submit_commands', { commands: [{ type: 'remove_layer', layer_id: layerId }, { type: 'present' }] });
+  }
   const status = await rpc('status');
   report.adapter = status.adapter_name;
   report.resolution = `${width}x${height}`;
