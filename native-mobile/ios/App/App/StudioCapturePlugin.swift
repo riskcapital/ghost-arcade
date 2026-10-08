@@ -85,8 +85,10 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func deleteScan(_ call:CAPPluginCall){guard let id=call.getString("id"),UUID(uuidString:id) != nil else{call.reject("Invalid scan.");return};DispatchQueue.global(qos:.userInitiated).async{do{try FileManager.default.removeItem(at:ScanFiles.root().appendingPathComponent(id));call.resolve()}catch{call.reject(error.localizedDescription)}}}
     @objc func shareScan(_ call: CAPPluginCall) {
         guard let id = call.getString("id"), UUID(uuidString: id) != nil else { call.reject("Invalid scan."); return }
-        guard let file = try? ScanFiles.root().appendingPathComponent(id).appendingPathComponent("scan.ply"),
-              FileManager.default.fileExists(atPath: file.path) else { call.reject("Scan file not found."); return }
+        guard let folder = try? ScanFiles.root().appendingPathComponent(id) else { call.reject("Scan file not found."); return }
+        // Shared under its own name ("Stage left 2026-10-08 1432.ply"), so scans stay apart on the desktop.
+        let file = ScanFiles.plyURL(in: folder)
+        guard FileManager.default.fileExists(atPath: file.path) else { call.reject("Scan file not found."); return }
         share(file, anchor: nil) { outcome in
             switch outcome {
             case .completed: call.resolve(["shared": true])
@@ -242,15 +244,30 @@ enum ScanFiles {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
     }
-    static func save(points:[ScanPoint],name:String,mode:String,thumbnail:Data?,chunks:[URL]=[],archivedCount:Int=0)throws->[String:Any]{
-        let id=UUID().uuidString,folder=try root().appendingPathComponent(id,isDirectory:true);try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
-        do{let bytes=try writeScanPLY(points:points,chunks:chunks,archivedCount:archivedCount,to:folder.appendingPathComponent("scan.ply"));if let thumbnail=thumbnail{try thumbnail.write(to:folder.appendingPathComponent("preview.jpg"),options:.atomic)}
-            let meta:[String:Any]=["id":id,"name":name,"points":points.count+archivedCount,"bytes":bytes,"created":ISO8601DateFormatter().string(from:Date()),"mode":mode]
-            try JSONSerialization.data(withJSONObject:meta).write(to:folder.appendingPathComponent("metadata.json"),options:.atomic)
+    /// Writes one scan folder: the PLY under a readable name, a preview picture and metadata.json.
+    static func save(result: ScanResult, name: String, mode: String, preset: String, thumbnail: Data?) throws -> [String: Any] {
+        let id = UUID().uuidString, folder = try root().appendingPathComponent(id, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        do {
+            let now = Date(), created = ISO8601DateFormatter().string(from: now)
+            let stamp = DateFormatter(); stamp.locale = Locale(identifier: "en_US_POSIX"); stamp.dateFormat = "yyyy-MM-dd HHmm"
+            let file = scanFileName(name, stamp: stamp.string(from: now))
+            let bytes = try writeScanPLY(result, comments: scanPLYComments(result, preset: preset, created: created), to: folder.appendingPathComponent(file))
+            if let thumbnail = thumbnail { try thumbnail.write(to: folder.appendingPathComponent("preview.jpg"), options: .atomic) }
+            let size = result.boundsMax - result.boundsMin
+            let meta: [String: Any] = ["id": id, "name": name, "points": result.count, "bytes": bytes, "created": created, "mode": mode, "file": file, "preset": preset,
+                                       "voxelMm": Double(result.voxel * 1000), "sizeM": [Double(size.x), Double(size.y), Double(size.z)], "cropped": result.cropped]
+            try JSONSerialization.data(withJSONObject: meta).write(to: folder.appendingPathComponent("metadata.json"), options: .atomic)
             return meta
-        }catch{try? FileManager.default.removeItem(at:folder);throw error}
+        } catch { try? FileManager.default.removeItem(at: folder); throw error }
     }
-    static func list()throws->[[String:Any]]{try FileManager.default.contentsOfDirectory(at:root(),includingPropertiesForKeys:nil).compactMap{folder in guard UUID(uuidString:folder.lastPathComponent) != nil,let data=try? Data(contentsOf:folder.appendingPathComponent("metadata.json")),var meta=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any] else{return nil};meta["url"]=folder.appendingPathComponent("scan.ply").absoluteString;meta["thumbnail"]=folder.appendingPathComponent("preview.jpg").absoluteString;return meta}.sorted{($0["created"] as? String ?? "")>($1["created"] as? String ?? "")}}
+    /// The PLY inside a scan folder. Scans saved by older versions are all called scan.ply.
+    static func plyURL(in folder: URL, meta: [String: Any]? = nil) -> URL {
+        let stored = meta ?? ((try? Data(contentsOf: folder.appendingPathComponent("metadata.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])
+        if let file = stored?["file"] as? String, !file.isEmpty, file == (file as NSString).lastPathComponent, file.hasSuffix(".ply") { return folder.appendingPathComponent(file) }
+        return folder.appendingPathComponent("scan.ply")
+    }
+    static func list()throws->[[String:Any]]{try FileManager.default.contentsOfDirectory(at:root(),includingPropertiesForKeys:nil).compactMap{folder in guard UUID(uuidString:folder.lastPathComponent) != nil,let data=try? Data(contentsOf:folder.appendingPathComponent("metadata.json")),var meta=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any] else{return nil};meta["url"]=plyURL(in:folder,meta:meta).absoluteString;meta["thumbnail"]=folder.appendingPathComponent("preview.jpg").absoluteString;return meta}.sorted{($0["created"] as? String ?? "")>($1["created"] as? String ?? "")}}
 }
 
 

@@ -629,7 +629,7 @@ enum ScanHint: Equatable {
         case .tooClose: return "Too close. Move back a little."
         case .tooFar: return "Too far. Move closer."
         case .moveSlower: return "Move slower."
-        case .lowLight: return "Low light. Colours may look noisy."
+        case .lowLight: return "Low light. Colors may look noisy."
         case .covered: return "This part is done. Scan a new area."
         case .noDepth: return "No depth here. Aim at a solid surface."
         }

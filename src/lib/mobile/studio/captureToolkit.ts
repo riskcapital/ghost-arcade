@@ -1,5 +1,5 @@
 export type CaptureCapabilities = { lidar: boolean; dualCamera: boolean; platform: string };
-export type SavedScan = { id: string; name: string; points: number; bytes: number; created: string; mode: string; url: string; thumbnail: string };
+export type SavedScan = { id: string; name: string; points: number; bytes: number; created: string; mode: string; url: string; thumbnail: string; file?: string; preset?: string; voxelMm?: number; sizeM?: [number, number, number]; cropped?: boolean };
 export type CameraShot = { name: string; url: string };
 type CaptureBridge = { getPlatform?:()=>string; nativePromise?:(plugin:string,method:string,args:Record<string,unknown>)=>Promise<unknown>; convertFileSrc?:(url:string)=>string };
 function bridge():CaptureBridge|undefined { return (window as unknown as {Capacitor?:CaptureBridge}).Capacitor; }
