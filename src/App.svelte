@@ -8464,7 +8464,7 @@
     --ga-statusbar-height: 26px;
     --ga-bottom-dock-height: 48px;
     --ga-bottom-rail-offset: calc(var(--ga-statusbar-height) + var(--ga-bottom-dock-height));
-    --ga-slider-fill: color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent);
+    --ga-slider-fill: color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent);
   }
 
   :global(*) {
@@ -8650,7 +8650,7 @@
       ),
       linear-gradient(
         90deg,
-        var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) 0 var(--ga-range-progress),
+        var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent)) 0 var(--ga-range-progress),
         transparent var(--ga-range-progress) 100%
       ),
       var(--ga-slot, #050607);
@@ -8713,7 +8713,7 @@
   }
   :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-moz-range-progress) {
     height: 12px;
-    background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent));
+    background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent));
     border-radius: 8px 0 0 8px;
   }
   :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-moz-range-thumb) {
@@ -9209,7 +9209,7 @@
     min-width: 230px;
     padding: 6px;
     background: #14161c;
-    border: 1px solid #2c313d;
+    border: 1px solid var(--ga-blue-mute-800);
     border-radius: 6px;
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
     font-size: 12px;
@@ -9234,11 +9234,11 @@
     text-align: left;
     cursor: pointer;
   }
-  .display-menu-item:hover { background: #232734; }
+  .display-menu-item:hover { background: var(--ga-blue-mute-800); }
   .display-menu-item.checked { color: #fff; }
   .display-menu-check {
     width: 10px;
-    color: #4f8cff;
+    color: var(--ga-blue-300);
   }
   .display-menu-dim {
     margin-left: auto;
@@ -9248,7 +9248,7 @@
   .display-menu-sep {
     height: 1px;
     margin: 5px 4px;
-    background: #262b36;
+    background: var(--ga-blue-mute-800);
   }
   .display-menu-hint {
     padding: 4px 8px 6px;
@@ -9307,9 +9307,9 @@
 
 	  .stage-sim-btn:hover,
 	  .stage-sim-btn.active {
-	    background: rgba(91, 141, 239, 0.10);
-	    border-color: rgba(91, 141, 239, 0.40);
-	    color: #8fb9ff;
+	    background: var(--ga-blue-a08);
+	    border-color: var(--ga-blue-a45);
+	    color: var(--ga-blue-200);
 	  }
 
 	  .map-sim-btn:hover,
@@ -9554,15 +9554,15 @@
   }
 
   .freeze-btn.active {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    border-color: var(--ga-blue-line, rgba(91, 141, 239, 0.38));
-    color: var(--ga-blue, #5b8def);
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    border-color: var(--ga-blue-line, var(--ga-blue-a08));
+    color: var(--ga-blue, #5278ff);
     box-shadow: none;
   }
 
   .freeze-btn.active:hover {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    color: var(--ga-blue, #5b8def);
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    color: var(--ga-blue, #5278ff);
   }
 
   /* Blackout button */
@@ -9854,9 +9854,9 @@
 	  }
 
 	  .stage-btn.active {
-	    background: rgba(91, 141, 239, 0.10);
-	    border-color: rgba(91, 141, 239, 0.38);
-	    color: #8fb9ff;
+	    background: var(--ga-blue-a08);
+	    border-color: var(--ga-blue-a45);
+	    color: var(--ga-blue-200);
 	  }
 
 	  .stage-edit-icon {
@@ -10203,7 +10203,7 @@
   .toolbar.stage-edit-toolbar-hidden { display: none !important; }
   .statusbar.stage-edit-status-hidden { display: none !important; }
   .vj-stage-guides { position: absolute; z-index: 11; overflow: visible; pointer-events: none; }
-  .vj-stage-guides path { fill: rgba(35, 75, 125, 0.025); stroke: #7fb4f9; stroke-width: 1.5; stroke-dasharray: 7 5; vector-effect: non-scaling-stroke; pointer-events: visiblePainted; cursor: pointer; }
+  .vj-stage-guides path { fill: color-mix(in srgb, var(--ga-blue-mute-600) 2.5%, transparent); stroke: var(--ga-blue-200); stroke-width: 1.5; stroke-dasharray: 7 5; vector-effect: non-scaling-stroke; pointer-events: visiblePainted; cursor: pointer; }
   .vj-stage-guides path.selected { stroke: #e6f2ff; stroke-width: 2; stroke-dasharray: none; }
   .vj-stage-screen-label { fill: #c6dbf7; font: 600 11px Inter, system-ui, sans-serif; paint-order: stroke; stroke: #0d1119; stroke-width: 3px; pointer-events: none; }
 
@@ -10374,8 +10374,8 @@
   }
 
   .grid-toggle-btn.active {
-    background: rgba(0, 204, 255, 0.15);
-    color: #00ccff;
+    background: var(--ga-blue-a16);
+    color: var(--ga-blue-300);
   }
 
   .snap-toggle-btn.active {
@@ -10480,7 +10480,7 @@
      ink, and a cool halo — the same language as the VJ button and the other
      filled accent controls. */
   .status-pill.on {
-    color: #16202b;
+    color: var(--ga-blue-mute-800);
     background: linear-gradient(180deg, #f4f9fd, #cfdde9);
     border-color: rgba(214, 228, 240, 0.72) !important;
     box-shadow: 0 0 12px rgba(176, 200, 222, 0.32);
@@ -10509,7 +10509,7 @@
   /* On an ice-white pill the icon reads as dark ink, not a glowing neon
      stroke — the glow was fighting the fill and looked muddy. */
   .status-pill.on .status-pill-icon {
-    color: #16202b;
+    color: var(--ga-blue-mute-800);
     filter: none;
   }
   .map-tool-pill {

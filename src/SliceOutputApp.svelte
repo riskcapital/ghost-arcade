@@ -1038,7 +1038,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     pointer-events: none;
   }
   .slice-waiting code {
-    color: #5fa8ff;
+    color: var(--ga-blue-300);
     padding: 0 4px;
   }
   .esc-hint {
