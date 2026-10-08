@@ -49,7 +49,10 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'esnext',
+    // The app's minimum is iOS 16.0. 'esnext' left class static blocks in
+    // the three.js chunk, which Safari only understands from 16.4, so that
+    // chunk could not load on 16.0–16.3.
+    target: 'safari16',
     minify: 'esbuild',
     sourcemap: false,
     outDir: resolve(rootDir, 'dist-native-mobile'),
