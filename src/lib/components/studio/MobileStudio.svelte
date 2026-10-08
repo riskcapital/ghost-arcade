@@ -1762,7 +1762,7 @@
       {/if}
   </main>
   {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
-  {#if tempoOpen}<button class="sheet-scrim" data-sheet-scrim tabindex="-1" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}></button><div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px`}>
+  {#if tempoOpen}<div class="sheet-scrim" data-sheet-scrim role="presentation" onclick={(e) => { if (e.target === e.currentTarget) tempoOpen = false; }}><div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px`}>
     <header><strong>TEMPO AND AUDIO</strong><button class="icon-button" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}><Icon name="close" size={18} /></button></header>
     <div class="tempo-sheet-row">
       <button class="tap" onclick={tap}>Tap tempo</button>
@@ -1771,7 +1771,7 @@
     </div>
     <button class="mic-toggle" class:active={mic} aria-pressed={mic} disabled={micBusy} onclick={toggleMic} aria-label={mic ? 'Disable microphone' : 'Enable microphone'}><Icon name="mic" size={18} /><span>{mic ? 'Microphone on' : 'Microphone off'}</span></button>
     <p>Tap in time to set the tempo. The microphone drives Audio response on every clip.</p>
-  </div>{/if}
+  </div></div>{/if}
   <footer class="master-bar" bind:this={footerEl}>
     {#if show.dualDeck}<div class="mobile-decks">
       <button
@@ -3019,7 +3019,7 @@
     gap: 8px;
   }
   .toast .toast-action {
-    min-height: 36px;
+    min-height: 44px;
     padding: 0 12px;
     font-size: 12px;
     font-weight: 650;
@@ -3034,9 +3034,9 @@
     border-color: #a75e79;
   }
   .toast .icon-button {
-    width: 30px;
-    height: 30px;
-    min-height: 30px;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
   }
   .modal-backdrop {
     position: fixed;

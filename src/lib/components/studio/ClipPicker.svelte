@@ -103,7 +103,7 @@
   });
 </script>
 
-<div class="clip-picker" bind:this={root} role="dialog" aria-modal="true" aria-label={target ? `Add a clip to ${target}` : 'Add a clip'} data-clip-picker onkeydown={key}>
+<div class="clip-picker" bind:this={root} role="dialog" tabindex="-1" aria-modal="true" aria-label={target ? `Add a clip to ${target}` : 'Add a clip'} data-clip-picker onkeydown={key}>
   <header>
     <button class="back" data-picker-close aria-label="Close and go back to the deck" onclick={onclose}><Icon name="left" size={18} />Deck</button>
     <h2>Add a clip{#if target}<small>{target}</small>{/if}</h2>

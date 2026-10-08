@@ -53,7 +53,7 @@
 </script>
 
 <div class="scrim" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}>
-    <div class="effect-browser" bind:this={root} role="dialog" aria-modal="true" aria-label={scope ? `Add an effect to ${scope}` : 'Add an effect'} data-effect-browser onkeydown={key}>
+    <div class="effect-browser" bind:this={root} role="dialog" tabindex="-1" aria-modal="true" aria-label={scope ? `Add an effect to ${scope}` : 'Add an effect'} data-effect-browser onkeydown={key}>
     <header>
       <h2>Add an effect{#if scope}<small>{scope}</small>{/if}</h2>
       <button class="close" data-effects-close aria-label="Close effects" onclick={onclose}><Icon name="close" size={20} /></button>

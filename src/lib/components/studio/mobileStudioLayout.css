@@ -162,5 +162,7 @@
 
 /* Tempo and audio is a small sheet: a tap anywhere else closes it instead of landing on a control
    that is half under it. Hold and Blackout stay live above the scrim. */
-.studio[data-layout] .sheet-scrim {position:fixed;inset:0;z-index:29;background:transparent;border:0;padding:0;margin:0;min-height:0;}
+.studio[data-layout] .sheet-scrim {position:fixed;inset:0;z-index:29;background:transparent;}
 .studio[data-layout].tempo-open .monitor-tools {position:relative;z-index:31;}
+.studio[data-layout='tablet-portrait'][data-layout].flux-tab .preview-frame {max-width:min(100%,680px);}
+.studio[data-layout='tablet-portrait'][data-layout].flux-tab:not(.performance) .monitor {max-height:46%;}
