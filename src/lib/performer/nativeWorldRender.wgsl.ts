@@ -352,10 +352,22 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // in x, so overlap both ends of the unwrapped cylinder symmetrically.
     // At either boundary the same two samples meet with equal weights.
     let x = fract((p.x + 1.0) * 0.5) * 2.0 - 1.0;
-    let wrapped = vec2<f32>(x, p.y);
-    let opposite = vec2<f32>(x - select(-2.0, 2.0, x >= 0.0), p.y);
+    // Depth scrolls with time and grows without bound toward the centre.
+    // Most worlds only draw near the origin (the vortex inside r < 1.2), so
+    // left unwrapped they scrolled out of range within seconds and the
+    // tunnel went black for good. Wrap depth the same way, so the world
+    // repeats down the tunnel, with the same equal-weight overlap at the
+    // wrap. It also keeps the coordinate small however long a set runs.
+    let y = fract((p.y + 1.0) * 0.5) * 2.0 - 1.0;
+    let oppositeX = x - select(-2.0, 2.0, x >= 0.0);
     let overlap = smoothstep(0.6, 1.0, abs(x)) * 0.5;
-    result = mix(sampleWorld(wrapped), sampleWorld(opposite), overlap);
+    result = mix(sampleWorld(vec2<f32>(x, y)), sampleWorld(vec2<f32>(oppositeX, y)), overlap);
+    let overlapY = smoothstep(0.6, 1.0, abs(y)) * 0.5;
+    if (overlapY > 0.0) {
+      let oppositeY = y - select(-2.0, 2.0, y >= 0.0);
+      let across = mix(sampleWorld(vec2<f32>(x, oppositeY)), sampleWorld(vec2<f32>(oppositeX, oppositeY)), overlap);
+      result = mix(result, across, overlapY);
+    }
   } else {
     result = sampleWorld(p);
   }
