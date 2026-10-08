@@ -1085,6 +1085,58 @@ describe('native renderer broker capability overlay', () => {
     expect(broker.coreCapabilitiesConfirmed).toBe(false);
     expect(broker.capabilities.features.native_output_mirror_texture).toBe(false);
   });
+
+  /** A broker whose core answers `start` at once and the handshake only on
+   *  its third attempt, as a core does while the driver compiles pipelines. */
+  function brokerWithSlowHandshake(platform: NodeJS.Platform) {
+    const broker = createBroker({ encoderAvailable: true, platform });
+    const calls: string[] = [];
+    broker.findExecutable = () => '/not/launched/ghost-render-core';
+    broker.ensureProcess = () => { broker.child = { killed: false }; };
+    broker.send = async (method: string) => {
+      calls.push(method);
+      if (method === 'start') return { running: true, backend: 'vulkan', backend_ready: true };
+      if (calls.filter(name => name === 'get_capabilities').length < 3) {
+        throw new Error('Native render core timed out handling get_capabilities');
+      }
+      return { features: { frame_snapshot: true }, implemented_methods: ['status', 'get_capabilities'] };
+    };
+    return { broker, calls };
+  }
+
+  it('waits for a slow first handshake on Linux instead of starting with the backend not ready', async () => {
+    // The editor starts its sync once. Ending start() not-ready because the
+    // core was still compiling pipelines left every layer black for the
+    // session, although the core answered a few seconds later.
+    const { broker, calls } = brokerWithSlowHandshake('linux');
+    const status = await broker.start({});
+    expect(calls.filter(name => name === 'get_capabilities')).toHaveLength(3);
+    expect(status.backend_ready).toBe(true);
+    expect(status.last_frame_error ?? null).toBeNull();
+    expect(broker.coreCapabilitiesConfirmed).toBe(true);
+    expect(broker.capabilities.features.frame_snapshot).toBe(true);
+  });
+
+  it('still fails the Linux start at once when the core has gone away', async () => {
+    const { broker, calls } = brokerWithSlowHandshake('linux');
+    const send = broker.send;
+    broker.send = async (method: string) => {
+      if (method === 'get_capabilities') broker.child = { killed: true };
+      return send(method);
+    };
+    const status = await broker.start({});
+    expect(calls.filter(name => name === 'get_capabilities')).toHaveLength(1);
+    expect(status.backend_ready).toBe(false);
+    expect(status.last_frame_error).toContain('capabilities handshake failed');
+  });
+
+  it.each(['darwin', 'win32'] as const)('leaves the single handshake attempt unchanged on %s', async (platform) => {
+    const { broker, calls } = brokerWithSlowHandshake(platform);
+    const status = await broker.start({});
+    expect(calls.filter(name => name === 'get_capabilities')).toHaveLength(1);
+    expect(status.backend_ready).toBe(false);
+    expect(status.last_frame_error).toContain('capabilities handshake failed');
+  });
 });
 
 describe('clip transition RPC bridge', () => {
