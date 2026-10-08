@@ -614,7 +614,7 @@ class NativeRendererBroker {
       case 'native_renderer_detach_output_window':
         return this.sendIfRunning('detach_output_window', args, { fallback: null });
       case 'native_renderer_set_output_window':
-        return this.sendIfRunning('set_output_window', args, { fallback: null });
+        return this.sendIfRunning('set_output_window', args, { fallback: null, timeoutMs: 15000 });
       case 'native_renderer_start_native_recording':
         return this.sendIfRunning('start_native_recording', args, { fallback: null, timeoutMs: 15000 });
       case 'native_renderer_stop_native_recording':
@@ -1091,7 +1091,20 @@ class NativeRendererBroker {
 
   async getCapabilities() {
     if (!this.child || this.child.killed) return this.capabilities;
-    await this.refreshCapabilities();
+    // Canvas, output, media and status panels share this manifest. Coalesce
+    // their polls instead of queueing identical RPCs behind a slow GPU frame.
+    if (!this.coreCapabilitiesConfirmed || Date.now() >= (this.nextCapabilityRefreshAt || 0)) {
+      if (!this.capabilityRefreshPromise) {
+        this.nextCapabilityRefreshAt = Date.now() + 2000;
+        this.capabilityRefreshPromise = this.refreshCapabilities().finally(() => {
+          this.capabilityRefreshPromise = null;
+        });
+      }
+      await this.capabilityRefreshPromise;
+    }
+    this.capabilities = applyBrokerCapabilityOverlay(this.capabilities,
+      this.textureShareStatus(), this.nativeEditorPreviewStatus(),
+      this.nativeFrameEncoderStatus(), this.videoFramePrefetchStatus(), this.platform);
     return this.capabilities;
   }
 

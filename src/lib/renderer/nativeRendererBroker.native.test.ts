@@ -1045,6 +1045,24 @@ describe('native renderer broker capability overlay', () => {
     expect(status.last_rpc_error_method).toBe('status');
   });
 
+  it('coalesces simultaneous capability polls and reuses the confirmed manifest briefly', async () => {
+    const broker = createBroker();
+    let calls = 0;
+    broker.send = async () => {
+      calls++;
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return coreCapabilities({ frame_snapshot: true });
+    };
+    const replies = await Promise.all(Array.from({ length: 12 }, () => broker.getCapabilities()));
+    expect(calls).toBe(1);
+    expect(replies.every(reply => reply.core_capabilities_confirmed)).toBe(true);
+    await broker.getCapabilities();
+    expect(calls).toBe(1);
+    broker.nextCapabilityRefreshAt = 0;
+    await broker.getCapabilities();
+    expect(calls).toBe(2);
+  });
+
   it('keeps confirmed capabilities when a later capability refresh times out', async () => {
     // A busy core answering get_capabilities slowly used to wipe the broker
     // back to default capabilities AND mark the backend not ready, so the
