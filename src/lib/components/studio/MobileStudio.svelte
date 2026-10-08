@@ -8,6 +8,27 @@
   import {currentLayout, watchLayout} from '../../mobile/studio/layout';
   import './mobileStudioLayout.css';
   import BlockTabs from './BlockTabs.svelte';
+  import CoachStrip from './CoachStrip.svelte';
+  import ClipPicker from './ClipPicker.svelte';
+  import {loadPreferences,savePreferences,feel,type StudioPreferences} from '../../mobile/studio/preferences';
+  import {startCoach,coachAfter,coachLaunch,type CoachState} from '../../mobile/studio/coach';
+  // Choices of this device (haptics, launch on touch-down, hints already seen). Written at once,
+  // so "first run" is decided on the first launch only.
+  let prefs=loadPreferences();
+  savePreferences(prefs);
+  function setPrefs(patch:Partial<StudioPreferences>){prefs={...prefs,...patch};savePreferences(prefs);}
+  let coach:CoachState=startCoach();
+  function coachMove(next:CoachState){
+    if(prefs.coachDone||next===coach)return;
+    coach=next;
+    if(next.done){setPrefs({coachDone:true});flash('That is the basics. Have a good set.');}
+  }
+  /** A clip launched by a finger (not Autopilot): the haptic tap and the coach's launch steps. */
+  function handLaunch(row:number){
+    feel(prefs,'launch');
+    // Rows of a deck that is switched off still hold a clip id; they are not playing.
+    coachMove(coachLaunch(coach,show.layers.slice(0,show.dualDeck?8:4).flatMap((l,i)=>l.clipId?[i]:[]),row));
+  }
   import {MAX_BLOCKS,addBlock,blockTabs,deleteBlock,duplicateBlock,ensureOpenBlock,switchBlock,type BlockState} from '../../mobile/studio/blocks';
   let layoutInfo=currentLayout();
   $: tablet=layoutInfo.mixer==='docked';
@@ -110,9 +131,20 @@
   function interactiveOutput(target:HTMLCanvasElement|null){if(!interactiveOutputAllowed)return;interactiveLive=!!target;externalOutput?.destroy();externalOutput=new ExternalOutput(target??output,status=>outputStatus=status);externalOutput.configure(outputPreferences);}
   $: if(engine)engine.previewSuspended=interactiveOpen&&(interactiveLive||outputStatus.state!=='live');
 
-  import {captureFileURL,type CameraShot} from '../../mobile/studio/captureToolkit';
+  import {captureFileURL,captureCapabilities,type CameraShot} from '../../mobile/studio/captureToolkit';
+  /** "+ Add": the full-height clip picker, and the source tab it opens on. */
+  let pickerOpen=false;
+  let pickerSource:'visuals'|'media'|'camera'='visuals';
+  function openPicker(slot:{row:number;column:number}|null=null){
+    mixerOpen=false;clipControlsOpen=false;tempoOpen=false;
+    editSlot=slot;if(slot)changeLayer(slot.row);
+    tab='perform';pickerOpen=true;
+  }
+  function closePicker(){pickerOpen=false;editSlot=null;}
+  const rowName=(row:number)=>show.dualDeck?`${row<4?'A':'B'}${row%4+1}`:`L${row+1}`;
+  /** null until the device has answered. Only then is the depth camera offered. */
+  let lidar:boolean|null=null;
   let toolkitOpen=false;
-  let importOptions=false;
   let videoInput:HTMLInputElement,photoInput:HTMLInputElement;
   async function prepareCaptureTool(){
     mixerOpen=false;
@@ -166,7 +198,6 @@
   import { shareFile, isNativePlatform } from '../../mobile/studio/nativeShare';
   import { standaloneShaderPaths } from '../../mobile/studio/shaderAvailability';
   const libraryShaders=MOBILE_SHADERS.filter(s=>!s.requiresImage&&standaloneShaderPaths.has(s.path)).sort((a,b)=>Number(b.id.startsWith('featured-'))-Number(a.id.startsWith('featured-')));
-  let failedThumbnails=new Set<string>();
   import { MOBILE_SHADERS, findShader } from '../../mobile/standaloneShaderList';
   import { MOBILE_EFFECTS } from '../../mobile/standaloneEffects';
   import { EFFECT_PARAM_DEFS } from '../../effects/effectParamDefs';
@@ -207,7 +238,7 @@
 
   let show = loadShow();
   let setBank = savedSets();
-  let tab: 'perform' | 'map' | 'fx' | 'library' | 'flux' = 'perform';
+  let tab: 'perform' | 'map' | 'fx' | 'flux' = 'perform';
   let mixerOpen=false;
   let clipControlsOpen=false;
   let controlsReturnFocus:HTMLElement|null=null;
@@ -220,9 +251,7 @@
   let shaderInputId: string | null = null;
   let shaderMediaInput: HTMLInputElement;
   let editSlot: { row: number; column: number } | null = null;
-  let search = '',
-    category = 'all',
-    settings = false,
+  let settings = false,
     clean = false,
     blackout = false,
     frozen = false,
@@ -253,9 +282,6 @@
   $: setList = setBank.some((s) => s.id === show.id) ? setBank : [show, ...setBank];
   $: surface = show.surfaces[selectedSurface];
   $: visibleClips = show.clips.slice(bank * 12, bank * 12 + 12);
-  $: filteredShaders = libraryShaders.filter(
-    (s) => !failedThumbnails.has(s.id) && (category === 'all' || s.category === category) && s.name.toLowerCase().includes(search.toLowerCase()),
-  );
   $: groupedParams=groupParams(params.filter(p=>['float','long','bool','color','point2D','event'].includes(p.TYPE)));
   $: activeClip = show.clips.find((c) => c.id === layer.clipId);
   // Source metadata must follow the actual playing layer, including library selection.
@@ -388,6 +414,7 @@
   function selectBlock(id: string) {
     const next = switchBlock(show, id, uid);
     if (!next) return;
+    feel(prefs,'switch');
     autoEvent('block');
     checkpoint();
     applyBlocks(next);
@@ -477,6 +504,7 @@
     }else{
       lastPlayingTap=null;
       autoEvent('launch');
+      handLaunch(index);
       void launch(clip,index);
     }
   }
@@ -548,6 +576,7 @@
     show.launchGrid[row][column] = clip.id;
     changeLayer(row);
     editSlot = null;
+    pickerOpen = false;
     tab = 'perform';
     // The deck opens at column 1; bring the new pad into view and pulse it so "tap its pad" is possible.
     freshPad = { row, column };
@@ -562,6 +591,7 @@
   let freshTimer: ReturnType<typeof setTimeout>;
   function stopRow(index: number) {
     autoEvent('stop');
+    feel(prefs,'stop');
     delete launchingClips[index];loading[index]=false;loading=[...loading];
     checkpoint(); const next = { ...pending }; delete next[index]; pending = next; engine?.cancelPrepared(index); engine?.clear(index);
     show.layers[index] = { ...show.layers[index], clipId: null };
@@ -783,6 +813,7 @@
   }
   function setBlackout() {
     blackout = !blackout;
+    feel(prefs,'blackout');
     if (engine) engine.blackout = blackout;
   }
   function toggleGrid() {
@@ -803,6 +834,7 @@
     mixerOpen=false;
     tab='perform';
     clipControlsOpen=true;
+    coachMove(coachAfter(coach,'controls'));
   }
   function closeControls(){clipControlsOpen=false;}
   function focusControlsTray(node:HTMLElement){
@@ -1022,6 +1054,7 @@
     }
   }
   onMount(() => {
+    if(hasNativeLive())void captureCapabilities().then(c=>lidar=!!c.lidar).catch(()=>lidar=false);
     const stopLayout=watchLayout(info=>{layoutInfo=info;if(info.mixer==='docked')mixerOpen=false;});
     let disposed = false;
     try {
@@ -1324,7 +1357,7 @@
   <nav class="tabs" aria-label="Workspace">
     {#each [{id:'perform',label:'Perform',icon:'grid'}, {id:'flux',label:'Flux',icon:'flux'}, {id:'map',label:'Map',icon:'map'}, {id:'interactive',label:'Studio',icon:'depth'}, {id:'tools',label:'Tools',icon:'scan'}, {id:'desktop',label:'Desktop',icon:'output'}] as t}
       <button class:active={!mixerOpen && tab===t.id} aria-pressed={!mixerOpen && tab===t.id}
-        onclick={async()=>{if(t.id==='desktop'){await prepareCaptureTool();oncompanion();}else if(t.id==='tools')toolkitOpen=true;else if(t.id==='interactive')openInteractive();else selectTab(t.id as typeof tab);}}><Icon name={t.icon}/><span>{t.label}</span></button>
+        onclick={async()=>{feel(prefs,'switch');if(t.id==='desktop'){await prepareCaptureTool();oncompanion();}else if(t.id==='tools')toolkitOpen=true;else if(t.id==='interactive')openInteractive();else selectTab(t.id as typeof tab);}}><Icon name={t.icon}/><span>{t.label}</span></button>
     {/each}
   </nav>
   <main class="workspace">
@@ -1392,16 +1425,18 @@
 
       <div class="panel-scroll" inert={clipControlsOpen && !dockedInspector && layoutInfo.inspector!=='bottom'}>
         {#if tab === 'perform'}
-          <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><button onclick={()=>{editSlot=null;selectTab('library');}}><Icon name="plus" size={18}/>Add clip</button></div>
+          {#if !prefs.coachDone && !clean}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
+          <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><button class="add-clip" data-add-clip aria-haspopup="dialog" onclick={()=>openPicker()}><Icon name="plus" size={18}/>Add</button></div>
             <StudioDecks {show} {selectedLayer} {pending} {loading} highlight={freshPad}
               onSelect={changeLayer}
               onControls={openControls}
               onMixer={openMixer}
-              onLaunch={(row, clip) => { autoEvent('launch'); changeLayer(row); void launch(clip, row); }}
+              onLaunch={(row, clip) => { autoEvent('launch'); handLaunch(row); changeLayer(row); void launch(clip, row); }}
+              launchOnDown={prefs.launchOnTouchDown}
               onTap={(row,clip)=>toggleClip(clip,row)}
               onRemove={(row,column)=>{const id=show.launchGrid[row][column];if(show.layers[row].clipId===id||pending[row]?.clip.id===id||launchingClips[row]?.clipId===id)stopRow(row);else checkpoint();show.launchGrid[row][column]=null;persist();}}
               onStop={stopRow}
-              onEdit={(row, column) => { mixerOpen=false;clipControlsOpen=false;editSlot = { row, column }; changeLayer(row); tab = 'library'; }}
+              onEdit={(row, column) => openPicker({ row, column })}
               onDual={(enabled) => { checkpoint();autoEvent('settings'); show.dualDeck = enabled;if(!enabled&&selectedLayer>=4)changeLayer(0); persist(); }}
               onMix={(value) => { show.crossfade = value; persist(); }}
               onArrange={()=>autoEvent('arrange')}
@@ -1632,65 +1667,6 @@
           </p>
         {:else if tab === 'fx'}
           {@render sourceControls()}
-        {:else}
-          <div class="library-heading">
-            <div class="library-nav">
-              <button class="subtle" onclick={()=>{editSlot=null;importOptions=false;tab='perform';}}><Icon name="left" size={17}/>Back to deck</button>
-              <button class="primary" aria-expanded={importOptions} onclick={() => importOptions=!importOptions}><Icon name="plus" size={18} />Import</button>
-            </div>
-              <h1>{editSlot ? `Load ${show.dualDeck ? (editSlot.row<4?'A':'B') : 'L'}${show.dualDeck ? editSlot.row%4+1 : editSlot.row+1} · slot ${editSlot.column + 1}` : 'Choose a clip'}</h1>
-          </div>
-          {#if importOptions}<div class="import-options" aria-label="Import options">
-            <button onclick={()=>{importOptions=false;videoInput.click();}}><Icon name="play" size={20}/><span>Videos<small>Show video files only</small></span></button>
-            <button onclick={()=>{importOptions=false;photoInput.click();}}><Icon name="library" size={20}/><span>Photos<small>Show images only</small></span></button>
-            <button onclick={()=>{importOptions=false;mediaInput.click();}}><Icon name="upload" size={20}/><span>All media<small>Videos and images</small></span></button>
-          </div>{/if}
-          <div class="segmented wide" style="margin-bottom:12px"><button onclick={()=>addCamera('environment')}>＋ Rear camera</button><button onclick={()=>addCamera('user')}>＋ Front camera</button>{#if hasNativeLive()}<button onclick={addDepth}>＋ Depth camera</button>{/if}</div>
-          <label class="search"
-            ><Icon name="search" size={18} /><input
-              placeholder="Find a shader…"
-              bind:value={search}
-              aria-label="Search shaders"
-            /></label
-          >
-          <div class="categories">
-            {#each ['all', ...new Set(libraryShaders.map(s => s.category))] as cat}<button
-                class:active={category === cat}
-                onclick={() => (category = cat)}
-                >{cat === 'all' ? 'All shaders' : cat[0].toUpperCase() + cat.slice(1)}</button
-              >{/each}
-          </div>
-          <div class="library-grid">
-            {#each filteredShaders as shader}<button onclick={() => addShader(shader.id)}
-                ><img
-                  src={shaderThumbnail(shader.id)}
-                  alt=""
-                  loading="lazy"
-                  onerror={() => failedThumbnails=new Set([...failedThumbnails,shader.id])}
-                /><strong>{shader.name}</strong><small>{shader.requiresImage ? 'Choose image / video' : shader.category} <span>+</span></small></button
-              >{/each}
-          </div>
-          {#if !filteredShaders.length}<p class="hint">No shaders match that search.</p>{/if}
-          <div class="section-heading">
-            <span>IMPORTED ON THIS DEVICE</span><button onclick={() => {importOptions=true;document.querySelector(".library-heading")?.scrollIntoView({block:"start"});}}>+ Add media</button>
-          </div>
-          {#each show.clips.filter((c) => c.kind !== 'shader') as clip}<div class="media-row">
-              <button
-                onclick={() => {
-                  assignClip(clip);
-                  tab = 'perform';
-                }}
-                ><Icon name={clip.kind === 'video' ? 'play' : 'library'} /><span
-                  >{clip.name}<small>{clip.kind}</small></span
-                ></button
-              ><button class="icon-button" onclick={() => removeClip(clip)} aria-label={`Remove ${clip.name}`}
-                ><Icon name="trash" size={16} /></button
-              >
-            </div>{/each}
-          <p class="hint">
-            Videos and images are saved locally for your next session. H.264 MP4 is the most portable video format for
-            phones.
-          </p>
         {/if}
       </div>
     </section>
@@ -1790,6 +1766,11 @@
         ><Icon name="close" size={16} /></button
       >
     </div>{:else if notice}<div class="toast" role="status"><span>{notice}</span>{#if noticeAction}<button class="toast-action" data-notice-action onclick={()=>{const action=noticeAction;clearNotice();action?.run();}}>{noticeAction.label}</button>{/if}</div>{/if}
+  {#if pickerOpen}<ClipPicker target={editSlot?`${rowName(editSlot.row)} · slot ${editSlot.column+1}`:`${rowName(selectedLayer)} · next free slot`}
+    visuals={libraryShaders} media={show.clips.filter(c=>c.kind==='video'||c.kind==='image')} bind:source={pickerSource}
+    depth={hasNativeLive()&&lidar===true} depthReason={hasNativeLive()?'Depth camera needs a LiDAR sensor (iPhone Pro or iPad Pro). This device does not have one.':'Depth camera works in the Ghost Arcade app on an iPhone or iPad with LiDAR.'}
+    onvisual={addShader} onclip={clip=>assignClip(clip)} onimport={kind=>(kind==='video'?videoInput:kind==='photo'?photoInput:mediaInput).click()}
+    oncamera={addCamera} ondepth={addDepth} onremove={removeClip} onclose={closePicker}/>{/if}
   {#if clean}<button class="exit-clean" onclick={() => (clean = false)}>Return to studio</button>{/if}
 </div>
 {#if toolkitOpen}<CaptureToolkit mappingSurfaces={show.surfaces} oninteractive={()=>{toolkitOpen=false;openInteractive();}} oninteractiveoutput={interactiveOutput} {oncompanion} onclose={()=>toolkitOpen=false} onprepare={prepareCaptureTool} onshots={importCameraShots}/>{/if}
@@ -1864,6 +1845,11 @@
           >
         </div>
       </div>
+      <div class="feel-card" role="group" aria-label="Touch and feel">
+        <span class="eyebrow">TOUCH AND FEEL</span>
+        <label class="switch-row"><span><strong>Haptics</strong><small>A light tap when you launch, stop, black out or switch tabs. iPhone only.</small></span><input type="checkbox" role="switch" data-pref-haptics checked={prefs.haptics} onchange={(e)=>{setPrefs({haptics:e.currentTarget.checked});feel(prefs,'switch');}} /></label>
+        <label class="switch-row"><span><strong>Launch on touch-down</strong><small>Clips start the moment your finger lands, not when it lifts. A swipe that starts on a clip launches it too.</small></span><input type="checkbox" role="switch" data-pref-touchdown checked={prefs.launchOnTouchDown} onchange={(e)=>setPrefs({launchOnTouchDown:e.currentTarget.checked})} /></label>
+      </div>
       <div class="storage-card" role="group" aria-label="Storage on this device">
         <span class="eyebrow">STORAGE ON THIS DEVICE</span>
         {#if storage}
@@ -1887,13 +1873,6 @@
  .ghost-movements{padding:12px 0}.ghost-movements strong{font-size:12px;color:var(--ga-ink-0)}.ghost-movements>div{display:flex;gap:6px;margin-top:8px}.ghost-movements button{flex:1;min-height:44px;background:var(--ga-selection-bg);border:1px solid var(--ga-selection-line);border-radius:5px;color:var(--ga-ink-0)}
   .mapping-tools{margin-bottom:12px}.mapping-tools button{display:flex;gap:7px;align-items:center;justify-content:center;min-height:44px;}
 
-  .library-heading{display:grid;gap:14px;margin-bottom:18px;min-width:0;}
-  .library-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-  .library-nav button{display:flex;align-items:center;gap:6px;min-height:44px;}
-  .library-heading h1{margin:0;font-size:18px;line-height:1.3;overflow-wrap:anywhere;}
-  .import-options{display:grid;gap:6px;padding:8px;margin-bottom:14px;border:1px solid var(--ga-line-3);border-radius:7px;background:var(--ga-card);}
-  .import-options button{display:flex;align-items:center;gap:12px;text-align:left;min-height:52px;padding:8px 12px;}
-  .import-options small{display:block;font-size:11px;color:var(--ga-ink-2);margin-top:3px;}
 
   .autopilot-bar{display:flex;align-items:center;gap:0;border:1px solid var(--ga-line-2);border-radius:5px;background:var(--ga-slot);padding:0;}
   .autopilot-bar button{display:flex;align-items:center;gap:5px;min-height:44px;border:0;background:transparent;padding:0 7px;}
@@ -2859,121 +2838,6 @@
     padding: 5px 8px;
     min-height: 34px;
   }
-  .search {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    background: var(--ga-slot);
-    border: 1px solid var(--ga-line-2);
-    border-radius: 8px;
-    padding: 0 12px;
-    color: var(--ga-ink-1);
-  }
-  .search input {
-    min-width:0;
-    background: none !important;
-    border: 0 !important;
-    width: 100%;
-    min-height: 44px !important;
-    padding: 9px 0 !important;
-  }
-  .categories {
-    width:100%;
-    min-width:0;
-    touch-action:pan-x;
-    flex-shrink:0;
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    margin: 13px 0 19px;
-    scrollbar-width: none;
-  }
-  .categories button {
-    flex:0 0 auto;
-    white-space: nowrap;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--ga-ink-1);
-    font-size: 10px;
-    min-height: 32px;
-    padding: 5px 10px;
-  }
-  .categories button.active {
-    background: var(--ga-selection-bg);
-    color: var(--ga-selection-ink);
-    border-color: var(--ga-selection-line);
-  }
-  .library-grid {
-    width:100%;
-    min-width:0;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 22px;
-  }
-  .library-grid > button {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    text-align: left;
-    gap: 0;
-    padding: 0;
-    overflow: hidden;
-    background: var(--ga-card);
-    border-radius: var(--ga-r-tile);
-  }
-  .library-grid img {
-    width: 100%;
-    aspect-ratio: 1.4;
-    object-fit: cover;
-    background: var(--ga-slot);
-  }
-  .library-grid strong {
-    font-size: 11px;
-    font-weight: 550;
-    line-height: 1.3;
-    margin: 10px 9px 5px;
-  }
-  .library-grid small {
-    display: flex;
-    justify-content: space-between;
-    font-size: 9px;
-    color: var(--ga-ink-1);
-    margin: 0 9px 9px;
-    text-transform: capitalize;
-  }
-  .library-grid small span {
-    color: var(--ga-blue);
-  }
-  .media-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    border: 1px solid var(--ga-line-2);
-    border-radius: 8px;
-    margin-bottom: 7px;
-    padding: 4px;
-  }
-  .media-row > button:first-child {
-    flex: 1;
-    justify-content: start;
-    text-align: left;
-    background: none;
-    border: 0;
-    min-width: 0;
-  }
-  .media-row span {
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .media-row small {
-    display: block;
-    font-size: 10px;
-    color: var(--ga-ink-1);
-  }
   .master-bar {
     display: flex;
     justify-content: space-between;
@@ -3112,7 +2976,22 @@
   .settings-dialog .field-grid button {
     font-size: 12px;
   }
-  .saved-sets, .storage-card { display: grid; gap: 6px; margin: 16px 0; }
+  .saved-sets, .storage-card, .feel-card { display: grid; gap: 6px; margin: 16px 0; }
+  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 6px 0; cursor: pointer; }
+  .switch-row > span { display: grid; gap: 2px; min-width: 0; }
+  .switch-row strong { font-size: 13px; font-weight: 600; color: var(--ga-ink-0); }
+  .switch-row small { font-size: 12px; line-height: 1.4; color: var(--ga-ink-1); }
+  .switch-row input {
+    appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 52px; height: 32px; margin: 0; padding: 0;
+    border-radius: 16px; border: 1px solid var(--ga-line-3); background: var(--ga-slot); cursor: pointer; transition: background .15s;
+  }
+  .switch-row input::after {
+    content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%;
+    background: var(--ga-ink-1); transition: transform .15s, background .15s;
+  }
+  .switch-row input:checked { background: var(--ga-blue-500); border-color: var(--ga-blue-400); }
+  .switch-row input:checked::after { transform: translateX(20px); background: #fff; }
+  .switch-row input:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
   .storage-card { padding: 14px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-soft); background: var(--ga-sub); }
   .storage-card p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ga-ink-1); }
   .storage-card > button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; }
@@ -3544,19 +3423,6 @@
     .settings-dialog input,
     .settings-dialog select {
       font-size: 16px !important;
-    }
-    .library-grid {
-    width:100%;
-    min-width:0;
-      gap: 8px;
-    }
-    .library-grid strong {
-      font-size: 10px;
-      margin: 8px 7px 4px;
-    }
-    .library-grid small {
-      margin: 0 7px 8px;
-      font-size: 8px;
     }
   }
   @media (max-height: 650px) and (orientation: landscape) {

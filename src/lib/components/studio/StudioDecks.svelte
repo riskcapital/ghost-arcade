@@ -19,6 +19,8 @@
   type Slot={row:number;column:number};
   export let onMove:(from:Slot,to:Slot)=>void;
   export let onArrange:()=>void;
+  /** Launch a pad when the finger lands instead of when it lifts (a device preference, off by default). */
+  export let launchOnDown=false;
   /** A slot that was just filled: scrolled into view and pulsed so the new clip is not off-screen. */
   export let highlight:Slot|null=null;
   let revealed:Slot|null=null;
@@ -97,7 +99,11 @@
   let suppressTap=false;
   function cancelHold(){if(hold)clearTimeout(hold.timer);hold=null;}
   function openMenu(row:number,column:number,clip:Clip){cancelHold();suppressTap=true;menu={row,column,clip};dialog.showModal();}
-  function holdPad(e:PointerEvent,row:number,column:number,clip?:Clip){cancelHold();suppressTap=false;if(!clip||e.button!==0||!e.isPrimary)return;hold={id:e.pointerId,x:e.clientX,y:e.clientY,timer:setTimeout(()=>openMenu(row,column,clip),500)};}
+  function holdPad(e:PointerEvent,row:number,column:number,clip?:Clip){cancelHold();suppressTap=false;if(!clip||e.button!==0||!e.isPrimary)return;
+    // Touch-down launch: only for a pad that is not already playing or queued, so the double tap
+    // that stops a playing clip and the hold menu keep working. The lift's click is then ignored.
+    if(launchOnDown&&e.pointerType!=='mouse'&&!clipUnavailable(clip)&&show.layers[row].clipId!==clip.id&&pending[row]?.clip.id!==clip.id){onTap(row,clip);suppressTap=true;}
+hold={id:e.pointerId,x:e.clientX,y:e.clientY,timer:setTimeout(()=>openMenu(row,column,clip),500)};}
   function movePad(e:PointerEvent){if(hold&&Math.hypot(e.clientX-hold.x,e.clientY-hold.y)>10)cancelHold();}
   function closeMenu(){dialog.close();menu=null;}
   function menuAction(remove=false){const slot=menu;closeMenu();if(slot){if(remove)onRemove(slot.row,slot.column);else onEdit(slot.row,slot.column);}}

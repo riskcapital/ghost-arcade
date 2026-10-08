@@ -39,7 +39,8 @@ type Slot = {
   image?: HTMLImageElement;
 };
 const shaderSources = new Map<string, Promise<string>>();
-function shaderSource(id: string) {
+/** A library shader's source, fetched once. Also used by the clip picker's preview. */
+export function shaderSource(id: string) {
   let p = shaderSources.get(id);
   if (!p) {
     const shader = findShader(id);
