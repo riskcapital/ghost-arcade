@@ -180,7 +180,17 @@ async function waitForCaptureSource(captureSource: string, timeoutMs = 4000): Pr
     if (state && Number(state.width) > 0 && Number(state.height) > 0 && Number(state.frame ?? 1) > 0) {
       return { width: Number(state.width), height: Number(state.height) };
     }
-    if (Date.now() > deadline) throw new Error('The recording source is not rendering.');
+    if (Date.now() > deadline) {
+      // One layer or one VJ row records from a shared texture, which the core
+      // only has on macOS and Windows.
+      if (captureSource === 'record_target') {
+        const caps = await getNativeRendererCapabilities().catch(() => null);
+        if ((caps as any)?.output_shared_texture_export?.platform === 'unsupported') {
+          throw new Error('Recording one layer is not available on this system. Record the composition instead.');
+        }
+      }
+      throw new Error('The recording source is not rendering.');
+    }
     await delay(50);
   }
 }
