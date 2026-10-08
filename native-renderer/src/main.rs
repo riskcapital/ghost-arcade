@@ -20936,7 +20936,7 @@ impl RenderState {
                 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                 {
                     presented = Self::blit_to_linux_slice_window(
-                        &self.device, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
+                        &self.device, &self.wgpu_adapter, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
                 }
             }
             self.queue.submit(Some(encoder.finish()));
@@ -21053,33 +21053,51 @@ impl RenderState {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn blit_to_linux_slice_window(
         device: &wgpu::Device,
+        adapter: &wgpu::Adapter,
         windows: &mut HashMap<String, LinuxSliceWindow>,
         id: &str,
         encoder: &mut wgpu::CommandEncoder,
         source: &wgpu::TextureView,
     ) -> Option<wgpu::SurfaceTexture> {
         let window = windows.get_mut(id)?;
-        let frame = match window.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+        let usable = match window.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => {
+                let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                window.blitter.copy(device, encoder, source, &view);
+                return Some(frame);
+            }
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // A resize can leave an acquired drawable suboptimal. It still
                 // owns the swapchain: release it before configuring a new one.
                 drop(frame);
-                window.surface.configure(device, &window.config);
-                return None;
+                Self::reconfigure_linux_slice_surface(device, adapter, window)
             }
             // Outdated or lost after a resize or a display change: put the
             // surface back and draw this Screen on the next frame. A timeout
             // or an occluded window just skips one.
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                window.surface.configure(device, &window.config);
-                return None;
+                Self::reconfigure_linux_slice_surface(device, adapter, window)
             }
-            _ => return None,
+            _ => true,
         };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        window.blitter.copy(device, encoder, source, &view);
-        Some(frame)
+        if !usable {
+            eprintln!("[ghost-core] Screen {id}: its window is gone; presenter released");
+            windows.remove(id);
+        }
+        None
+    }
+
+    /// Configure a Screen's surface again, unless its window no longer exists.
+    /// Electron can close the Screen window before the detach request reaches
+    /// a busy core; configuring a surface whose X11 window is gone is a wgpu
+    /// validation error, which would take the whole core down.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    fn reconfigure_linux_slice_surface(device: &wgpu::Device, adapter: &wgpu::Adapter, window: &LinuxSliceWindow) -> bool {
+        if window.surface.get_capabilities(adapter).formats.is_empty() {
+            return false;
+        }
+        window.surface.configure(device, &window.config);
+        true
     }
 
     fn ensure_projector_view_renderer(&mut self) -> &mut projector_view::ProjectorViewRenderer {
@@ -21171,7 +21189,7 @@ impl RenderState {
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             {
                 presented = Self::blit_to_linux_slice_window(
-                    &self.device, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
+                    &self.device, &self.wgpu_adapter, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
             }
         }
         self.queue.submit(Some(encoder.finish()));
