@@ -144,3 +144,7 @@
 /* Flux: the program picture is the XY pad, so it takes the full width of a phone. */
 .studio[data-layout='phone'][data-layout].flux-tab:not(.clean) .preview-frame {max-width:none;}
 .studio[data-layout][data-layout].flux-tab .preview {touch-action:none;}
+
+/* "+ Add" is the one filled button above the deck. */
+.studio[data-layout][data-layout] .perform-actions .add-clip {padding:6px 16px;font-size:13px;font-weight:650;background:var(--ga-blue-500);border-color:var(--ga-blue-400);color:#fff;}
+.studio[data-layout][data-layout] .perform-actions .add-clip svg {color:#fff !important;}

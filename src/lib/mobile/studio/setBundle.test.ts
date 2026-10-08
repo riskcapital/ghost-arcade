@@ -12,7 +12,11 @@ function setWithMedia(): { show: Show; store: Map<string, Blob> } {
   const store = new Map<string, Blob>([['v1', new Blob([bytes(70000, 3)], { type: 'video/mp4' })], ['p1', new Blob([bytes(1234, 9)], { type: 'image/png' })], ['other', new Blob([bytes(10, 1)])]]);
   return { show, store };
 }
-const same = async (a: Blob, b: Blob) => Buffer.from(await a.arrayBuffer()).equals(Buffer.from(await b.arrayBuffer()));
+const same = async (a: Blob, b: Blob) => {
+  const x = new Uint8Array(await a.arrayBuffer()), y = new Uint8Array(await b.arrayBuffer());
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+};
+const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 
 describe('set with media in one file', () => {
   it('lists each file a set uses once', () => {
@@ -38,7 +42,7 @@ describe('set with media in one file', () => {
     const { show, store } = setWithMedia();
     const packed = await packSet(show, async (id) => store.get(id));
     const wire = await blobToBase64(packed.blob);
-    const opened = await unpackSet(new Blob([Buffer.from(wire, 'base64')]));
+    const opened = await unpackSet(new Blob([fromBase64(wire)]));
     expect(await same(opened.media[0].blob, store.get('v1')!)).toBe(true);
     expect((opened.show as Show).name).toBe('Friday rig');
   });

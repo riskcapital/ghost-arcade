@@ -150,7 +150,11 @@ describe('large files and iOS Settings', () => {
   it('encodes a file larger than one slice exactly like a single pass', async () => {
     const { blobToBase64 } = await import('./nativeShare');
     const bytes = Uint8Array.from({ length: 3 * 0x80000 + 12345 }, (_, i) => (i * 7 + 3) % 256);
-    expect(await blobToBase64(new Blob([bytes]))).toBe(Buffer.from(bytes).toString('base64'));
+    const encoded = await blobToBase64(new Blob([bytes]));
+    expect(encoded.length).toBe(Math.ceil(bytes.length / 3) * 4);
+    const decoded = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
+    expect(decoded.length).toBe(bytes.length);
+    expect(decoded.every((v, i) => v === bytes[i])).toBe(true);
     expect(await blobToBase64(new Blob([]))).toBe('');
   });
   it('offers Open Settings only where the app build can do it', async () => {

@@ -27,6 +27,8 @@ describe('effect browser catalogue', () => {
   it('filters by shelf, and searches across shelves with prefix matches first', () => {
     expect(browseEffects(entries, 'blur').every((e) => e.shelf === 'blur')).toBe(true);
     expect(browseEffects(entries, 'all').length).toBe(entries.length);
+    expect(browseEffects(entries, 'all')[0].shelf).toBe('featured');
+    expect(new Set(browseEffects(entries, 'all').map((e) => e.type)).size).toBe(entries.length);
     const blur = browseEffects(entries, 'color', 'blur');
     expect(blur[0].label).toBe('Blur');
     expect(blur.some((e) => e.label === 'Zoom Blur')).toBe(true);

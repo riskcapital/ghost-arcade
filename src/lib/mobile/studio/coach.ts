@@ -6,8 +6,8 @@ export type CoachStep = { id: CoachEvent; title: string; hint: string };
 
 export const COACH_STEPS: CoachStep[] = [
   { id: 'launch', title: 'Launch a clip', hint: 'Tap any picture in the deck.' },
-  { id: 'layer', title: 'Layer a second clip', hint: 'Tap a clip on another row. Both play together.' },
-  { id: 'controls', title: 'Open Controls', hint: 'Tap Controls to change the look of the playing clip.' },
+  { id: 'layer', title: 'Layer a second clip', hint: 'Tap a picture on another row.' },
+  { id: 'controls', title: 'Open Controls', hint: 'Tap Controls to change the look.' },
 ];
 
 export type CoachState = { step: number; done: boolean };

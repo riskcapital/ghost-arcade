@@ -59,7 +59,12 @@ const fold = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').tr
  */
 export function browseEffects(entries: EffectEntry[], shelf: string, search = ''): EffectEntry[] {
   const query = fold(search);
-  if (!query) return shelf === 'all' ? entries : entries.filter((e) => e.shelf === shelf);
+  if (!query) {
+    if (shelf !== 'all') return entries.filter((e) => e.shelf === shelf);
+    // Everything, shelf by shelf in display order, so "All" reads like the shelves laid end to end.
+    const order = new Map(EFFECT_SHELVES.map((s, i) => [s.id, i]));
+    return entries.map((e, i) => ({ e, i })).sort((a, b) => (order.get(a.e.shelf) ?? 99) - (order.get(b.e.shelf) ?? 99) || a.i - b.i).map((x) => x.e);
+  }
   const shelfNames = new Map(EFFECT_SHELVES.map((s) => [s.id, fold(s.label)]));
   const words = query.split(' ');
   const scored = entries.flatMap((e, order) => {

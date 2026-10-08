@@ -134,14 +134,15 @@ hold={id:e.pointerId,x:e.clientX,y:e.clientY,timer:setTimeout(()=>openMenu(row,c
           <div class="clip-row" class:selected={row === selectedLayer}>
             <div class="row-control">
               <button class="row-name" onclick={() => {onSelect(row);onControls(row);}} aria-label={`Edit controls for layer ${row+1}`} aria-pressed={selectedLayer === row}>{show.dualDeck ? `${row < 4 ? 'A' : 'B'}${row % 4 + 1}` : `L${row + 1}`}<Icon name="settings" size={18}/></button>
-              <button class="level-button" aria-label={`Mix row ${row+1}`} onclick={()=>onMixer(row)} style={`--level:${show.layers[row].opacity*100}%`}>{Math.round(show.layers[row].opacity*100)}%</button>
-              <button class="stop" aria-label={`Stop row ${row + 1}`} onclick={() => onStop(row)}>■</button>
+              <button class="level-button" aria-label={`Mix row ${row+1}, level ${Math.round(show.layers[row].opacity*100)} percent`} onclick={()=>onMixer(row)} style={`--level:${show.layers[row].opacity*100}%`}>{Math.round(show.layers[row].opacity*100)}%</button>
+              <button class="stop" aria-label={`Stop row ${row + 1}`} disabled={!show.layers[row].clipId&&!pending[row]&&!loading[row]} onclick={() => onStop(row)}><span aria-hidden="true">■</span></button>
             </div>
             {#each columns as column}
               {@const clip = show.clips.find(c => c.id === show.launchGrid[row]?.[column])}
               <div class="clip-slot" data-clip-slot data-row={row} data-column={column}>
               <button class="pad" class:picked={same(picked,{row,column})} class:drag-source={!!drag?.moving&&same(drag.from,{row,column})} class:drop-target={same(drop,{row,column})} class:live={!!clip && show.layers[row].clipId === clip.id} class:queued={!!clip && pending[row]?.clip.id === clip.id} class:empty={!clip} class:unavailable={clipUnavailable(clip)} class:fresh={same(highlight,{row,column})}
-                aria-label={clip && clipUnavailable(clip) && !arrange ? `${clip.name} is not available on this device` : clip ? `${arrange ? 'Move' : show.layers[row].clipId===clip.id ? 'Select' : pending[row]?.clip.id===clip.id ? 'Select queued' : 'Launch'} ${clip.name} on row ${row + 1}` : `Add clip to row ${row + 1} column ${column + 1}`}
+                aria-label={clip && clipUnavailable(clip) && !arrange ? `${clip.name} is not available on this device` : clip ? `${arrange ? 'Move' : show.layers[row].clipId===clip.id ? 'Select' : pending[row]?.clip.id===clip.id ? 'Select queued' : 'Launch'} ${clip.name} on row ${row + 1}${arrange ? '' : show.layers[row].clipId===clip.id ? ', playing' : pending[row]?.clip.id===clip.id ? ', queued' : ''}` : `Add clip to row ${row + 1} column ${column + 1}`}
+                aria-pressed={clip ? (arrange ? same(picked,{row,column}) : show.layers[row].clipId===clip.id) : undefined}
                 onpointerdown={e=>dragDown(e,row,column,clip)} onpointermove={dragMove} onpointerup={dragEnd} onpointercancel={dragEnd} onlostpointercapture={()=>{if(drag)cancelDrag();}}
                 oncontextmenu={e=>{if(clip){e.preventDefault();openMenu(row,column,clip);}}}
                 onkeydown={e=>{if(clip&&(e.key==='ContextMenu'||(e.shiftKey&&e.key==='F10'))){e.preventDefault();openMenu(row,column,clip);}}}

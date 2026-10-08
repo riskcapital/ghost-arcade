@@ -199,7 +199,7 @@
   import StudioDecks from './StudioDecks.svelte';
   import { StudioEngine } from '../../mobile/studio/engine';
   import { keepAwake } from '../../mobile/studio/wakeLock';
-  import { shareFile, isNativePlatform } from '../../mobile/studio/nativeShare';
+  import { shareFile, isNativePlatform, canOpenAppSettings, mentionsSettings, openAppSettings } from '../../mobile/studio/nativeShare';
   import { standaloneShaderPaths } from '../../mobile/studio/shaderAvailability';
   const libraryShaders=MOBILE_SHADERS.filter(s=>!s.requiresImage&&standaloneShaderPaths.has(s.path)).sort((a,b)=>Number(b.id.startsWith('featured-'))-Number(a.id.startsWith('featured-')));
   import { MOBILE_SHADERS, findShader } from '../../mobile/standaloneShaderList';
@@ -864,6 +864,14 @@
     clipControlsOpen=true;
     coachMove(coachAfter(coach,'controls'));
   }
+  /** A small sheet: focus goes in when it opens, Escape closes it, focus returns to the opener. */
+  function focusSheet(node:HTMLElement,close:()=>void){
+    const opener=document.activeElement as HTMLElement|null;
+    node.querySelector<HTMLElement>('button:not([disabled])')?.focus({preventScroll:true});
+    const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}};
+    node.addEventListener('keydown',key);
+    return {destroy(){node.removeEventListener('keydown',key);if(opener?.isConnected)opener.focus({preventScroll:true});}};
+  }
   function closeControls(){clipControlsOpen=false;effectBrowser=false;}
   function focusControlsTray(node:HTMLElement){
     node.querySelector<HTMLElement>('[data-close-controls]')?.focus({preventScroll:true});
@@ -1235,7 +1243,7 @@
             >
           </div>
           {/if}
-          <div class="segmented wide" aria-label="Control view"><button class:active={controlView==='source'} onclick={()=>controlView='source'}>Source</button><button class:active={controlView==='effects'} onclick={()=>controlView='effects'}>FX</button></div>
+          <div class="segmented wide" aria-label="Control view"><button class:active={controlView==='source'} aria-pressed={controlView==='source'} onclick={()=>controlView='source'}>Source</button><button class:active={controlView==='effects'} aria-pressed={controlView==='effects'} onclick={()=>controlView='effects'}>FX</button></div>
           {#if controlView==='source'}
           {#if !activeClip}<div class="empty-state"><Icon name="grid" size={28}/><h2>No clip playing</h2><p>Launch a clip, then tap the layer gear to edit its look.</p><button onclick={closeControls}>Back to clips</button></div>{:else}
           {#if activeClip?.kind==='camera'||activeClip?.kind==='depth'}<CameraFxPanel params={layer.params} onchange={setParam} onstart={checkpoint}/>{/if}
@@ -1327,7 +1335,7 @@
           </details>
           {/if}
           {:else}
-          <div class="segmented wide" aria-label="Effect scope">{#each [{id:'comp',name:'Comp'},{id:'layer',name:'Layer'},{id:'clip',name:'Clip'}] as scope}<button class:active={fxScope===scope.id} disabled={scope.id==='clip'&&!activeClip} onclick={()=>fxScope=scope.id as typeof fxScope}>{scope.name}</button>{/each}</div>
+          <div class="segmented wide" aria-label="Effect scope">{#each [{id:'comp',name:'Comp'},{id:'layer',name:'Layer'},{id:'clip',name:'Clip'}] as scope}<button class:active={fxScope===scope.id} aria-pressed={fxScope===scope.id} disabled={scope.id==='clip'&&!activeClip} onclick={()=>fxScope=scope.id as typeof fxScope}>{scope.name}</button>{/each}</div>
           <p class="scope-context">{fxScope==='comp'?'Composition · final output':fxScope==='clip'?`Clip · ${activeClip?.name || 'Launch a clip first'}`:`Layer ${show.dualDeck ? selectedLayer % 4 + 1 : selectedLayer+1} · stays when clips change`}</p>
           <div class="section-heading">
             <span>EFFECT CHAIN · {activeEffects.length} OF 8</span><button class="add-effect" data-add-effect aria-haspopup="dialog"
@@ -1417,14 +1425,14 @@
   </header>
   <nav class="tabs" aria-label="Workspace">
     {#each [{id:'perform',label:'Perform',icon:'grid'}, {id:'flux',label:'Flux',icon:'flux'}, {id:'map',label:'Map',icon:'map'}, {id:'interactive',label:'Studio',icon:'depth'}, {id:'tools',label:'Tools',icon:'scan'}, {id:'desktop',label:'Desktop',icon:'output'}] as t}
-      <button class:active={!mixerOpen && tab===t.id} aria-pressed={!mixerOpen && tab===t.id}
+      <button class:active={!mixerOpen && tab===t.id} aria-pressed={!mixerOpen && tab===t.id} aria-current={!mixerOpen && tab===t.id ? 'page' : undefined}
         onclick={async()=>{feel(prefs,'switch');if(t.id==='desktop'){await prepareCaptureTool();oncompanion();}else if(t.id==='tools')toolkitOpen=true;else if(t.id==='interactive')openInteractive();else selectTab(t.id as typeof tab);}}><Icon name={t.icon}/><span>{t.label}</span></button>
     {/each}
   </nav>
   <main class="workspace">
     <section class="monitor">
       <div class="monitor-heading">
-        <span><i class:stopped={blackout}></i>{blackout ? 'BLACKOUT' : frozen ? 'HOLD' : 'PROGRAM'}</span><span
+        <span role="status" aria-label={blackout ? 'Output blacked out' : frozen ? 'Output held' : 'Output live'}><i class:stopped={blackout}></i>{blackout ? 'BLACKOUT' : frozen ? 'HOLD' : 'PROGRAM'}</span><span
           >{show.quality}p <b>·</b> {#if detail < 1}<em class="detail-reduced" data-detail title="Detail lowered to hold the frame rate">DETAIL {Math.round(detail * 100)}%</em>{' '}<b>·</b>{' '}{/if}{fps} FPS</span
         >
       </div>
@@ -1469,6 +1477,7 @@
             <PaintPad surfaces={show.surfaces} config={paint} beat={()=>engine?.beatClock?.()??0} onstroke={startStroke} onfinish={finishStroke} onlimit={()=>flash('Paint memory is full. Clear or undo strokes to keep drawing.')}/>
           {/if}
         </div>
+        {#if tab==='perform' && !prefs.coachDone && !clean && !visualsDown}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
       </div>
       <div class="monitor-tools">
         {#if !tablet && tab!=='map' && tab!=='flux'}<button class="preview-toggle" aria-label={compactPreview?'Expand preview':'Compact preview'} aria-pressed={compactPreview} onclick={()=>compactPreview=!compactPreview}><Icon name="eye" size={16}/></button>{/if}
@@ -1492,7 +1501,6 @@
             <div><button class="primary" data-repair-fix onclick={fixSet}>Fix this set</button><button data-repair-keep onclick={() => (repairOffer = null)}>Keep as it is</button></div>
             <small>You can undo the fix. It also stays in Set settings.</small>
           </section>{/if}
-          {#if !prefs.coachDone && !clean}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
           <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><button class="add-clip" data-add-clip aria-haspopup="dialog" onclick={()=>openPicker()}><Icon name="plus" size={18}/>Add</button></div>
             <StudioDecks {show} {selectedLayer} {pending} {loading} highlight={freshPad}
               onSelect={changeLayer}
@@ -1575,8 +1583,8 @@
             >
           </div>
           <div class="segmented wide mapping-tools">
-            <button class:active={mappingTool==='edit'} onclick={()=>mappingTool='edit'}><Icon name="map" size={17}/>Edit screens</button>
-            <button class:active={mappingTool==='paint'} onclick={paintMode}><Icon name="paint" size={17}/>Paint</button>
+            <button class:active={mappingTool==='edit'} aria-pressed={mappingTool==='edit'} onclick={()=>mappingTool='edit'}><Icon name="map" size={17}/>Edit screens</button>
+            <button class:active={mappingTool==='paint'} aria-pressed={mappingTool==='paint'} onclick={paintMode}><Icon name="paint" size={17}/>Paint</button>
           </div>
           {#if mappingTool==='paint'}<PaintPanel onselect={index=>selectedSurface=index} value={paint} surfaces={show.surfaces} selected={selectedSurface} onchange={patchPaint} onundo={()=>{checkpoint();patchPaint({strokes:paint.strokes.slice(0,-1)});}} onclear={()=>{checkpoint();patchPaint({strokes:[],loop:false});}}/>{/if}
           {#if !show.mapping}<p class="hint mapping-off-hint" role="status">Mapping is off, so your output is unchanged. Turn it on here, or move a corner to start.</p>{/if}
@@ -1589,7 +1597,7 @@
                 show.mapping = !show.mapping;
                 persist();
               }}>{show.mapping ? 'Mapping on' : 'Mapping off'}</button
-            ><button class:active={mappingGrid} aria-pressed={mappingGrid} onclick={()=>mappingGrid=!mappingGrid}><Icon name="grid" size={16}/>Grid</button><button class:active={mappingSnap} aria-pressed={mappingSnap} onclick={()=>mappingSnap=!mappingSnap}><Icon name="snap" size={16}/>Snap</button><button class:active={testGrid} onclick={toggleGrid}><Icon name="grid" size={16} />Test grid</button
+            ><button class:active={mappingGrid} aria-pressed={mappingGrid} onclick={()=>mappingGrid=!mappingGrid}><Icon name="grid" size={16}/>Grid</button><button class:active={mappingSnap} aria-pressed={mappingSnap} onclick={()=>mappingSnap=!mappingSnap}><Icon name="snap" size={16}/>Snap</button><button class:active={testGrid} aria-pressed={testGrid} onclick={toggleGrid}><Icon name="grid" size={16} />Test grid</button
             ><select
               aria-label="Stage layout preset"
               value=""
@@ -1625,6 +1633,7 @@
                   <button
                     class="icon-button"
                     class:active={surface.locked}
+                    aria-pressed={surface.locked}
                     onclick={() => {
                       checkpoint();
                       patchSurface({ locked: !surface.locked });
@@ -1633,6 +1642,7 @@
                   ><button
                     class="icon-button"
                     class:active={surface.enabled}
+                    aria-pressed={surface.enabled}
                     onclick={() => {
                       checkpoint();
                       patchSurface({ enabled: !surface.enabled });
@@ -1678,6 +1688,7 @@
               <div class="segmented wide">
                 <button
                   class:active={surface.mode === 'corners'}
+                  aria-pressed={surface.mode === 'corners'}
                   disabled={surface.locked}
                   onclick={() => {
                     checkpoint();
@@ -1686,6 +1697,7 @@
                   }}>Corner warp</button
                 ><button
                   class:active={surface.mode === 'mesh'}
+                  aria-pressed={surface.mode === 'mesh'}
                   disabled={surface.locked}
                   onclick={() => {
                     checkpoint();
@@ -1738,7 +1750,7 @@
       </div>
     </section>
       {#if clipControlsOpen || dockedInspector}
-        <section class="clip-controls-tray" aria-label="Clip controls" use:focusControlsTray>
+        <section class="clip-controls-tray" role={dockedInspector ? 'region' : 'dialog'} aria-label={`Controls for ${rowName(selectedLayer)}${activeClip ? `, ${activeClip.name}` : ''}`} use:focusControlsTray>
           <header class="clip-controls-header">
             <div><span class="eyebrow">{show.dualDeck ? `DECK ${selectedLayer < 4 ? 'A' : 'B'} · LAYER ${selectedLayer % 4 + 1}` : `LAYER ${selectedLayer + 1}`}</span><h2>{activeClip?.name || 'No clip playing'}</h2></div>
             {#if !dockedInspector}<button class="icon-button" data-close-controls aria-label="Close clip controls" onclick={closeControls}><Icon name="close" size={20}/></button>{/if}
@@ -1750,7 +1762,7 @@
       {/if}
   </main>
   {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
-  {#if tempoOpen}<div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px`}>
+  {#if tempoOpen}<div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px`}>
     <header><strong>TEMPO AND AUDIO</strong><button class="icon-button" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}><Icon name="close" size={18} /></button></header>
     <div class="tempo-sheet-row">
       <button class="tap" onclick={tap}>Tap tempo</button>
@@ -1829,7 +1841,7 @@
     </div>
   </footer>
   {#if error}<div class="toast error" role="alert">
-      <span>{error}</span><button class="icon-button" onclick={() => (error = '')} aria-label="Dismiss error"
+      <span>{error}</span>{#if mentionsSettings(error) && canOpenAppSettings()}<button class="toast-action" data-open-settings onclick={() => void openAppSettings()}>Open Settings</button>{/if}<button class="icon-button" onclick={() => (error = '')} aria-label="Dismiss error"
         ><Icon name="close" size={16} /></button
       >
     </div>{:else if notice}<div class="toast" role="status"><span>{notice}</span>{#if noticeAction}<button class="toast-action" data-notice-action onclick={()=>{const action=noticeAction;clearNotice();action?.run();}}>{noticeAction.label}</button>{/if}</div>{/if}
@@ -2266,6 +2278,7 @@
     background: #ff778e;
   }
   .preview-frame {
+    position: relative;
     width: 100%;
     border: 1px solid var(--ga-line-2);
     border-radius: var(--ga-r-soft);
