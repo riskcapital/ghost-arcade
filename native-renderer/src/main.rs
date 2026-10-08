@@ -5650,6 +5650,11 @@ impl App {
             if let Err(error) = result { if req.id != 0 { self.send_error(req.id, error); } }
             return;
         }
+        if matches!(req.method.as_str(), "frame_snapshot" | "get_frame_snapshot")
+            && (req.params.get("source_id").is_some() || req.params.get("layer_id").is_some()) {
+            if let Err(error) = self.start_source_preview(&req) { if req.id != 0 { self.send_error(req.id, error); } }
+            return;
+        }
         if req.method == "prefetch_media" && string_at(&req.params, &["source_type"]).as_deref() == Some("image") {
             if self.image_prefetch_waiters.values().map(Vec::len).sum::<usize>() >= 256 {
                 if req.id != 0 { self.send_error(req.id, "image prefetch request queue is full".to_string()); }
@@ -7422,10 +7427,19 @@ impl App {
                 write_f32_le(&mut buffer.initial_bytes, 3, delta);
                 write_f32_le(&mut buffer.initial_bytes, 10, smooth.energy);
                 if let Some(effects) = graph_layer.params["interactiveScene"]["effects"].as_array() {
-                    if let Some(effect) = effects.iter().find(|e| e["id"].as_str().is_some_and(|id| buffer.id.contains(&format!(":{id}:interactive:")))) {
+                    // `...:<effect id>:interactive:uniform`: read the id out of the
+                    // buffer name instead of formatting one string per effect per frame.
+                    let effect_id = buffer.id.rsplit_once(":interactive:")
+                        .and_then(|(prefix, _)| prefix.rsplit_once(':'))
+                        .map(|(_, id)| id);
+                    if let Some(effect) = effects.iter().find(|e| e["id"].as_str().is_some_and(|id| Some(id) == effect_id)) {
                         for (key, slot, min, max, fallback, scale) in [("energy",6,0.0,1.0,0.6,1.0),("gravity",7,-1.0,1.0,0.25,1.0),("hue",12,0.0,360.0,185.0,1.0/360.0),("trails",13,0.0,1.0,0.7,1.0),("opacity",18,0.0,1.0,1.0,1.0)] {
                             let base = effect["params"][key].as_f64().map(|v|v as f32).unwrap_or(fallback);
                             let m = &effect["mods"][key]; let source=m["source"].as_str().unwrap_or("manual");
+                            // An unmodulated value belongs to the installed uniform, which the
+                            // app updates in place (Auto, keyframes, sliders) without
+                            // reinstalling the graph. Only a modulated slot is driven here.
+                            if source=="manual" { continue; }
                             let speed=m["speed"].as_f64().unwrap_or(0.15) as f32;
                             let phase=time*speed*if m["bpmSync"]==true { self.audio1[3].max(1.0)/60.0 } else {1.0};
                             let mut signal=match source {"sub"|"bass"|"kick"|"snare"=>smooth.bass,"lowMid"=>(smooth.bass+smooth.mid)*0.5,"mid"=>smooth.mid,"highMid"=>(smooth.mid+smooth.treble)*0.5,"treble"|"air"|"presence"|"high"=>smooth.treble,"amplitude"=>smooth.energy,"beatPhase"=>self.audio1[2],"lfo-sine"=>0.5+0.5*(phase*std::f32::consts::TAU).sin(),"lfo-tri"=>1.0-(phase.rem_euclid(1.0)*2.0-1.0).abs(),"lfo-saw"=>phase.rem_euclid(1.0),"lfo-square"=>if phase.rem_euclid(1.0)<0.5 {1.0}else{0.0},_=>0.5};
@@ -12586,19 +12600,9 @@ impl App {
 
     fn frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
         if params.get("source_id").is_some() || params.get("layer_id").is_some() {
-            let layer = string_at(params, &["layer_id"]).and_then(|id| self.scene_layers.get(&id));
-            let source_id = layer.and_then(|layer| layer.shader_source_id.clone())
-                .or_else(|| string_at(params, &["source_id"]))
-                .or_else(|| layer.and_then(|layer| layer.source_id.clone()))
-                .ok_or("Source preview is not ready")?;
-            let slot = *self.source_frame_slots.get(&source_id).ok_or("Source preview is not ready")?;
-            let frame = self.source_frames.get(&source_id).ok_or("Source preview is not ready")?;
-            let rect = frame.source_rect;
-            let max_dim = number_at(params, &["max_dim"]).unwrap_or(640.0).clamp(64.0, 1024.0) as u32;
-            let renderer = self.renderer.as_mut().ok_or("Native renderer is unavailable")?;
-            let snapshot = renderer.source_crop_snapshot(slot, rect, max_dim)?;
-            self.note_frame_snapshot(&snapshot);
-            return Ok(snapshot);
+            let request = SourcePreviewRequest::from_params(params);
+            let pending = self.prepare_source_preview(params, &request)?;
+            return request.encode(&pending.finish()?);
         }
         let include_pixels = bool_at(params, &["include_pixels"]).unwrap_or(false);
         let max_dim = number_at(params, &["max_dim"])
@@ -12616,6 +12620,43 @@ impl App {
         self.refresh_renderer_timing_stats();
         self.note_frame_snapshot(&snapshot);
         Ok(snapshot)
+    }
+
+    /// Queue the GPU copy of one layer's source for an editor preview.
+    fn prepare_source_preview(&mut self, params: &Value, request: &SourcePreviewRequest) -> Result<PendingFrameReadback, String> {
+        let layer = string_at(params, &["layer_id"]).and_then(|id| self.scene_layers.get(&id));
+        let source_id = layer.and_then(|layer| layer.shader_source_id.clone())
+            .or_else(|| string_at(params, &["source_id"]))
+            .or_else(|| layer.and_then(|layer| layer.source_id.clone()))
+            .ok_or("Source preview is not ready")?;
+        let slot = *self.source_frame_slots.get(&source_id).ok_or("Source preview is not ready")?;
+        let rect = self.source_frames.get(&source_id).ok_or("Source preview is not ready")?.source_rect;
+        let renderer = self.renderer.as_mut().ok_or("Native renderer is unavailable")?;
+        let pending = renderer.prepare_source_crop_readback(slot, rect, request)?;
+        self.stats.frame_snapshot_reads = self.stats.frame_snapshot_reads.saturating_add(1);
+        self.stats.frame_health_checks = self.stats.frame_health_checks.saturating_add(1);
+        self.stats.frame_snapshot_bytes_read = self.stats.frame_snapshot_bytes_read
+            .saturating_add(pending.width as u64 * pending.height as u64 * 4);
+        Ok(pending)
+    }
+
+    /// Editor preview of a layer's source. Only the copy is queued on the
+    /// render thread; waiting for the GPU, measuring and encoding the pixels
+    /// happen on a worker, so a preview refresh never holds up an output frame.
+    fn start_source_preview(&mut self, req: &RpcRequest) -> Result<(), String> {
+        let request = SourcePreviewRequest::from_params(&req.params);
+        let pending = self.prepare_source_preview(&req.params, &request)?;
+        let response_tx = self.response_tx.clone();
+        let id = req.id;
+        thread::spawn(move || {
+            let result = pending.finish().and_then(|frame| request.encode(&frame));
+            if id != 0 {
+                let reply = match result { Ok(result) => json!({"id":id,"ok":true,"result":result}),
+                    Err(error) => json!({"id":id,"ok":false,"error":error}) };
+                let _ = response_tx.send(reply.to_string());
+            }
+        });
+        Ok(())
     }
 
     // Compiled everywhere. It used to be macOS/Windows only because it read
@@ -24196,7 +24237,9 @@ impl RenderState {
 
     // Read only the raw source, before layer crop/warp/FX. Reuse bounded
     // GPU targets and downsample before the modal's occasional readback.
-    fn source_crop_snapshot(&mut self, slot: usize, rect: [f32; 4], max_dim: u32) -> Result<Value, String> {
+    /// Copy one source frame slot, scaled to the preview size, into a readback
+    /// buffer. Returns as soon as the copy is queued; `finish()` waits for it.
+    fn prepare_source_crop_readback(&mut self, slot: usize, rect: [f32; 4], request: &SourcePreviewRequest) -> Result<PendingFrameReadback, String> {
         let size = self.source_frame_size as u32;
         let x = (rect[0] * size as f32).round().max(0.0) as u32;
         let y = (rect[1] * size as f32).round().max(0.0) as u32;
@@ -24204,9 +24247,7 @@ impl RenderState {
         let y = y.min(size - 1);
         let width = ((rect[2] * size as f32).round() as u32).clamp(1, size - x);
         let height = ((rect[3] * size as f32).round() as u32).clamp(1, size - y);
-        let scale = (max_dim as f32 / width.max(height) as f32).min(1.0);
-        let w = (width as f32 * scale).round().max(1.0) as u32;
-        let h = (height as f32 * scale).round().max(1.0) as u32;
+        let (w, h) = request.target_size(width, height);
         if !matches!(&self.source_crop_preview, Some((raw, _, _, sw, sh, pw, ph)) if (*sw,*sh,*pw,*ph)==(width,height,w,h) && raw.format() == self.source_frame_format) {
             let make = |label, width, height, format, usage| self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label), size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -24217,7 +24258,9 @@ impl RenderState {
                 wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING);
             let target = make("Crop preview", w, h, wgpu::TextureFormat::Rgba8Unorm,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
-            let blitter = TextureBlitterBuilder::new(&self.device, wgpu::TextureFormat::Rgba8Unorm).build();
+            // The preview is smaller than the source: filter, do not point-sample.
+            let blitter = TextureBlitterBuilder::new(&self.device, wgpu::TextureFormat::Rgba8Unorm)
+                .sample_type(wgpu::FilterMode::Linear).build();
             self.source_crop_preview = Some((raw, target, blitter, width, height, w, h));
         }
         let (raw, target, blitter, _, _, _, _) = self.source_crop_preview.as_ref().unwrap();
@@ -24228,7 +24271,7 @@ impl RenderState {
             raw.as_image_copy(), wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
         blitter.copy(&self.device, &mut encoder, &raw.create_view(&Default::default()), &target.create_view(&Default::default()));
         self.queue.submit(Some(encoder.finish()));
-        Ok(read_texture_to_frame(&self.device, &self.queue, target, wgpu::TextureFormat::Rgba8Unorm, w, h, "Crop preview")?.to_json(true))
+        prepare_texture_readback(&self.device, &self.queue, target, wgpu::TextureFormat::Rgba8Unorm, w, h, "Crop preview")
     }
 
     fn read_frame_snapshot(&mut self) -> Result<FrameSnapshotReadback, String> {
@@ -31217,6 +31260,64 @@ fn prepare_texture_readback(
 
     Ok(PendingFrameReadback { device: device.clone(), buffer, format, width, height, unpadded_bytes_per_row, padded_bytes_per_row })
 }
+/// What an editor preview asked for: how big, and how to send it.
+///
+/// `width`/`height` give the size on screen, so a 16:9 preview is not read
+/// back as the square source texture; without them `max_dim` scales the crop
+/// uniformly as before. `encoding: "jpeg"` sends a JPEG a twentieth the size
+/// of the raw pixels (no alpha: the frame as it looks over black).
+#[derive(Clone, Debug, PartialEq)]
+struct SourcePreviewRequest {
+    width: Option<u32>,
+    height: Option<u32>,
+    max_dim: u32,
+    jpeg_quality: Option<u8>,
+    include_pixels: bool,
+}
+
+impl SourcePreviewRequest {
+    fn from_params(params: &Value) -> Self {
+        let dimension = |key: &str| number_at(params, &[key])
+            .filter(|value| value.is_finite() && *value >= 1.0)
+            .map(|value| value.round().clamp(16.0, 1024.0) as u32);
+        let jpeg = string_at(params, &["encoding"]).is_some_and(|value| value.eq_ignore_ascii_case("jpeg"));
+        Self {
+            width: dimension("width"),
+            height: dimension("height"),
+            max_dim: number_at(params, &["max_dim"]).unwrap_or(640.0).clamp(64.0, 1024.0) as u32,
+            jpeg_quality: jpeg.then(|| number_at(params, &["quality"]).unwrap_or(82.0).clamp(30.0, 95.0) as u8),
+            include_pixels: bool_at(params, &["include_pixels"]).unwrap_or(true),
+        }
+    }
+
+    /// Size to render for a source crop of `width` x `height`. Never larger
+    /// than the crop itself.
+    fn target_size(&self, width: u32, height: u32) -> (u32, u32) {
+        if let (Some(w), Some(h)) = (self.width, self.height) {
+            return (w.min(width).max(1), h.min(height).max(1));
+        }
+        let scale = (self.max_dim as f32 / width.max(height) as f32).min(1.0);
+        ((width as f32 * scale).round().max(1.0) as u32, (height as f32 * scale).round().max(1.0) as u32)
+    }
+
+    fn encode(&self, frame: &FrameSnapshotReadback) -> Result<Value, String> {
+        let Some(quality) = self.jpeg_quality.filter(|_| self.include_pixels) else {
+            return Ok(frame.to_json(self.include_pixels));
+        };
+        let mut rgb = Vec::with_capacity(frame.pixels.len() / 4 * 3);
+        for px in frame.pixels.chunks_exact(4) { rgb.extend_from_slice(&px[..3]); }
+        let mut jpeg = Vec::with_capacity(rgb.len() / 8);
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, quality)
+            .encode(&rgb, frame.width, frame.height, image::ExtendedColorType::Rgb8)
+            .map_err(|err| format!("preview JPEG encode failed: {err}"))?;
+        let mut value = frame.to_json(false);
+        value["encoding"] = json!("jpeg");
+        value["jpeg_bytes"] = json!(jpeg.len());
+        value["jpeg_b64"] = json!(base64::engine::general_purpose::STANDARD.encode(&jpeg));
+        Ok(value)
+    }
+}
+
 static LIVE_FRAME_STREAM: Mutex<Option<(u16, String, std::net::TcpStream)>> = Mutex::new(None);
 static LIVE_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_DIAGNOSTIC_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
