@@ -69,3 +69,26 @@ npm run ios:export
 npm run ios:validate
 npm run ios:upload
 ```
+
+## iOS native bridge (StudioCapture)
+
+The web layer talks to the iOS shell through `Capacitor.nativePromise('StudioCapture', method, args)`. Every call resolves or rejects; none waits forever. Added in 1.1:
+
+| Call | Result | Notes |
+| --- | --- | --- |
+| `shareFile({ filename, base64, mimeType, anchor? })` | `{ completed: boolean }` | Writes the bytes to a temporary file with that name, shows the share sheet, removes the file afterwards. `completed` is false when the user cancels. `anchor` is optional: `{ x, y, width, height }` of the button in viewport CSS pixels (`getBoundingClientRect()`), used to point the iPad popover at it. Rejects when another native screen is open, the name or data is empty, or the data is over 250 MB. `base64` may be a `data:` URL. |
+| `haptic({ type })` | `{}` | `type` is `light`, `medium`, `heavy`, `selection`, `success`, `warning` or `error`. Silent on iPad. Rejects on any other type. |
+| `takePairingLink()` | `{ url: string }` | Unchanged call. Returns a tapped `ghostarcade://pair?...` link once, then `''`. Works for links that launch the app and links that arrive while it runs. |
+
+Window events from native:
+
+- `ghost-pairing-link`: a pairing link has arrived. It carries no data; call `takePairingLink()` to collect it. Polling still works, the event only removes the need for it.
+- `ghost-external-display`: unchanged.
+
+Behaviour the web layer can rely on:
+
+- The screen stays awake while the app is active. The web wake lock is no longer needed on iOS.
+- Camera frames from `ghostcapture://live/<source>` follow the interface orientation. Frame flags keep their meaning (4 = rotate colour for portrait, 8 = depth frame is landscape).
+- Dual-camera stills returned by `openDualCamera` are temporary. Copy them straight away, as `importCameraShots` does; they are deleted two minutes after the session ends.
+- Share sheets never offer Save to Photos, because the app has no photo library permission.
+- Not handled yet: opening a `.ghostset` from the Files app. The file types are declared but the app is not offered as an opener (`LSHandlerRank` None in `Info.plist`). To add it, pass the opened file to the web layer and change the rank to `Owner`.
