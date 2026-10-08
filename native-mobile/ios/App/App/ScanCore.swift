@@ -267,6 +267,17 @@ final class ScanAccumulator {
                     }
                 }
             }
+            // Far away the sensor's samples are wider apart than the voxels, so the same voxel is rarely hit
+            // twice. Join the nearest point within half a sample (at most 1.5 voxels) instead of scattering new ones.
+            let footprint = z / f.fx
+            if i < 0, footprint > voxel {
+                let (cellX, cellY, cellZ) = scanUnpackCell(key)
+                var nearest = min(0.5 * footprint, 1.5 * voxel); nearest *= nearest
+                for dz in -1...1 { for dy in -1...1 { for dx in -1...1 {
+                    let j = Int(table.find(scanPackCell(cellX + dx, cellY + dy, cellZ + dz))); guard j >= 0 else { continue }
+                    let gap = simd_distance_squared(position[j], p); if gap < nearest { nearest = gap; i = j }
+                } } }
+            }
             if i >= 0 {
                 let wOld = min(weight[i], 24), a = wNew / (wOld + wNew)
                 position[i] += (p - position[i]) * a; color[i] += (c - color[i]) * a; weight[i] = wOld + wNew

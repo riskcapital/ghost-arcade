@@ -292,6 +292,21 @@ export(cropped, "object-detail-cropped.ply", preset: "detail")
 var roomCrop = ScanFinalizeOptions(); roomCrop.autoCrop = true
 check("crop: not applied to a sweep along a wall", !acc.finalize(roomCrop).cropped)
 
+// 5b. A wall 4 m away on the finest preset: samples are 19 mm apart, voxels 5 mm. It must not thin out or vanish.
+let farWall: [Shape] = [.box(lo: SIMD3(-3, 0, -4.05), hi: SIMD3(3, 2.6, -4))]
+var farRandom = Random(state: 11)
+let distant = ScanAccumulator(preset: .detail); distant.maxDepth = 5
+for k in 0..<40 { let x = -0.6 + 1.2 * Float(k) / 39, scenePose = lookAt(SIMD3(x, 1.3, 0), SIMD3(x, 1.3, -4))
+    var r = render(farWall, scenePose, rng: &farRandom, noise: 0.002, flying: true, salt: 0.002); r.transform = sceneToWorld(scenePose); _ = integrate(distant, r) }
+let distantResult = distant.finalize()
+var farTiles = [Int](repeating: 0, count: 10 * 8), farDepth: Float = 0
+for p in distantResult.positions { let s = worldToScene(toWorld(p, distantResult)); farDepth += (s.z + 4) * (s.z + 4)
+    guard s.x > -1, s.x < 1, s.y > 0.5, s.y < 2.1 else { continue }; farTiles[min(9, Int((s.x + 1) * 5)) + 10 * min(7, Int((s.y - 0.5) * 5))] += 1 }
+let farMean = Float(farTiles.reduce(0, +)) / 80, farSd = sqrt(farTiles.reduce(Float(0)) { $0 + (Float($1) - farMean) * (Float($1) - farMean) } / 80)
+// Thickness stays near one reading's noise (8 mm at 4 m): far points are too sparse per frame to average further.
+check("far wall: kept and even at 4 m on Detail", Float(distantResult.count) > 0.75 * Float(distantResult.captured) && farTiles.min()! > 0 && farSd / farMean < 0.1 && sqrt(farDepth / Float(distantResult.count)) < 0.011,
+      "\(distantResult.count) of \(distantResult.captured) kept, \(f(farMean, 0)) points per 20 cm tile, variation \(f(farSd / farMean * 100, 1))%, thickness rms \(f(sqrt(farDepth / Float(max(1, distantResult.count))) * 1000, 2)) mm")
+
 // 6. Depth playground: one frame at a time.
 let live = ScanAccumulator(preset: .balanced); live.maxDepth = 3.5
 _ = integrate(live, roomFrames[40], singleFrame: true); let liveFirst = live.count

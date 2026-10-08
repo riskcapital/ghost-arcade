@@ -295,7 +295,7 @@ final class ScanViewController: UIViewController, ARSessionDelegate {
         }
         // Tracking is back. What follows is a new sweep, so it can be undone if it lands misaligned.
         if trackingLost { trackingLost = false; if !liveMode { accumulator.beginSweep() } }
-        if scanTooFastToMerge(speed: speed, turn: turn) { DispatchQueue.main.async { if !self.paused { self.hint.text = ScanHint.moveSlower.text } }; return }
+        if !liveMode, scanTooFastToMerge(speed: speed, turn: turn) { DispatchQueue.main.async { if !self.paused { self.hint.text = ScanHint.moveSlower.text } }; return }
         // Standing still adds nothing new: merge now and then for noise, not every frame.
         let moved = simd_distance(pose.columns.3, lastMergePose.columns.3), turned = acos(min(1, max(-1, simd_dot(pose.columns.2, lastMergePose.columns.2)))) * 180 / .pi
         if !liveMode, accumulator.count > 0, moved < 0.015, turned < 1.5, now - lastMerge < 0.6 { return }
@@ -377,7 +377,7 @@ final class ScanViewController: UIViewController, ARSessionDelegate {
         let position = SCNGeometrySource(data: picture.positions, semantic: .vertex, vectorCount: picture.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)
         let color = SCNGeometrySource(data: picture.colors, semantic: .color, vectorCount: picture.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: 4, dataOffset: 0, dataStride: 16)
         let element = SCNGeometryElement(data: nil, primitiveType: .point, primitiveCount: picture.count, bytesPerIndex: 0)
-        element.pointSize = CGFloat(pointSize); element.minimumPointScreenSpaceRadius = 1.2; element.maximumPointScreenSpaceRadius = 12
+        element.pointSize = CGFloat(pointSize); element.minimumPointScreenSpaceRadius = 1.5; element.maximumPointScreenSpaceRadius = 12
         let geometry = SCNGeometry(sources: [position, color], elements: [element])
         let material = SCNMaterial(); material.lightingModel = .constant; material.diffuse.contents = UIColor.white; material.isDoubleSided = true
         geometry.materials = [material]
