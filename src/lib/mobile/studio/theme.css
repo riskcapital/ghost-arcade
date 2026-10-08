@@ -28,3 +28,18 @@
   --ga-hardware-bg: linear-gradient(180deg, var(--ga-raise), var(--ga-bar));
   --ga-hardware-shadow: inset 0 1px 0 var(--ga-metal-hi), 0 1px 2px rgba(0,0,0,.45);
 }
+
+/* Icons carry the desktop's icon accent: the Arcade theme's `icon` token (--ga-icon), set on
+   :root by native-mobile-main.ts. One rule for every line icon (StudioIcon and the inline ones),
+   in the tab bar, toolbars, tool lists and empty states, whatever state the control is in.
+   !important for the same reason as the desktop skin: it has to beat component-scoped colours.
+   The fallback is the token's own value in arcade.ts, as the desktop rules write it.
+   Opt-out, as on the desktop where colour carries meaning: the starter scene cards keep their
+   own per-scene colour (the desktop Studio shows the same cards the same way). */
+:root[data-theme] svg:is([stroke='currentColor'], [fill='currentColor']):not(.starter *) {
+  color: var(--ga-icon, #5278ff) !important;
+}
+/* A disabled control is dimmed as a whole. Lift its icon towards ink so it stays readable. */
+:root[data-theme] :is(:disabled, [aria-disabled='true']) svg:is([stroke='currentColor'], [fill='currentColor']):not(.starter *) {
+  color: color-mix(in srgb, var(--ga-icon, #5278ff) 40%, var(--ga-ink-0, #f2ede4)) !important;
+}
