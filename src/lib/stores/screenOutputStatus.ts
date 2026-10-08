@@ -9,6 +9,9 @@ export const screenOutputError = writable<string | null>(null);
  *  can never bring a test pattern back during a show. */
 export type ScreenAlignmentAid = 'grid' | 'identify';
 export const screenAlignmentAids = writable<Record<string, ScreenAlignmentAid>>({});
+/** Screens whose grid is switched on, whether or not an identify flash is
+ *  covering it right now: what a Show / Hide button should reflect. */
+export const screenAlignmentGridIds = writable<string[]>([]);
 
 /** Screens whose grid is on, including one hidden behind an identify flash. */
 const gridScreens = new Set<string>();
@@ -19,6 +22,7 @@ function publishAlignmentAids() {
   for (const id of gridScreens) next[id] = 'grid';
   for (const id of identifyTimers.keys()) next[id] = 'identify';
   screenAlignmentAids.set(next);
+  screenAlignmentGridIds.set([...gridScreens]);
 }
 
 export function setScreenAlignmentGrid(screenIds: string[], on: boolean) {

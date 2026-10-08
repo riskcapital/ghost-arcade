@@ -4,7 +4,7 @@
   import { settings } from '../stores/settings';
   import { screens, screenActions } from '../stores/screens';
   import { scheduleHistorySnapshot, recordDiscreteAction } from '../stores/historyHooks';
-  import { screenAlignmentAids, setScreenAlignmentGrid, identifyScreen } from '../stores/screenOutputStatus';
+  import { screenAlignmentGridIds, setScreenAlignmentGrid, identifyScreen } from '../stores/screenOutputStatus';
   import {
     defaultProjectorCorners, defaultOverlap, inverseProjectorHomography, nudgeProjectorCorner, overlapBandValid,
     overlapGamma, overlapPartner, overlapPairInStep, pairedOverlapPatches, DEFAULT_OVERLAP_GAMMA,
@@ -43,7 +43,7 @@
   const partnerMissing = $derived(!!band.partnerId && !partner);
   const inStep = $derived(!!partner && overlapPairInStep(screen, partner));
   const screenNumber = $derived($screens.findIndex(s => s.id === screen.id) + 1);
-  const gridOn = $derived($screenAlignmentAids[screen.id] === 'grid');
+  const gridOn = $derived($screenAlignmentGridIds.includes(screen.id));
   const legacyBlend = $derived((screen.edgeBlendLeft ?? 0) + (screen.edgeBlendRight ?? 0) + (screen.edgeBlendTop ?? 0) + (screen.edgeBlendBottom ?? 0) > 0);
 
   $effect(() => { chosenPartner = partner?.id ?? ''; });
