@@ -4,7 +4,13 @@
   import PaintPad from './PaintPad.svelte';
   import PaintPanel from './PaintPanel.svelte';
   import {defaultPaint,type PaintConfig,type PaintStroke} from '../../mobile/studio/paint';
-  let tablet=false;
+  import {groupParams,paramLabel} from '../../mobile/studio/paramGroups';
+  import {currentLayout, watchLayout} from '../../mobile/studio/layout';
+  import './mobileStudioLayout.css';
+  let layoutInfo=currentLayout();
+  $: tablet=layoutInfo.mixer==='docked';
+  let compactPreview=layoutInfo.short;
+  $: dockedInspector=layoutInfo.inspector==='side' && tab==='perform';
   let mappingTool:'edit'|'paint'='edit';
   $: paint=show.paint??defaultPaint();
   function patchPaint(patch:Partial<PaintConfig>){show.paint={...paint,...patch};persist();}
@@ -250,6 +256,7 @@
   $: filteredShaders = libraryShaders.filter(
     (s) => !failedThumbnails.has(s.id) && (category === 'all' || s.category === category) && s.name.toLowerCase().includes(search.toLowerCase()),
   );
+  $: groupedParams=groupParams(params.filter(p=>['float','long','bool','color','point2D','event'].includes(p.TYPE)));
   $: activeClip = show.clips.find((c) => c.id === layer.clipId);
   // Source metadata must follow the actual playing layer, including library selection.
   $: controlSourceKey = `${selectedLayer}:${layer.clipId ?? ''}`;
@@ -984,9 +991,7 @@
     }
   }
   onMount(() => {
-    const tabletQuery=matchMedia('(min-width: 1000px) and (min-height: 650px)');
-    const updateTablet=()=>{tablet=tabletQuery.matches;if(tablet)mixerOpen=false;};
-    updateTablet();tabletQuery.addEventListener('change',updateTablet);
+    const stopLayout=watchLayout(info=>{layoutInfo=info;if(info.mixer==='docked')mixerOpen=false;});
     let disposed = false;
     try {
       startEngine();
@@ -1019,7 +1024,7 @@
     const awake = keepAwake();
     return () => {
       stopAuto();
-      tabletQuery.removeEventListener('change',updateTablet);
+      stopLayout();
       disposed = true;interactiveOutputAllowed=false;
       cancelAnimationFrame(autoFrame);
       clearInterval(timer);
@@ -1035,6 +1040,52 @@
     };
   });
 </script>
+{#snippet shaderParam(p:ISFInput)}
+{#if p.TYPE === 'color'}<label
+                  class="toggle-row"
+                  ><span>{paramLabel(p)}</span><input
+                    type="color"
+                    value={colorHex(layer.params[p.NAME] ?? p.DEFAULT)}
+                    onchange={(e) => {
+                      checkpoint();
+                      setParam(p.NAME, colorValue(e.currentTarget.value));
+                    }}
+                  /></label
+                >{:else if p.TYPE === 'event'}<button class="secondary" onclick={() => setParam(p.NAME, Number(layer.params[p.NAME] ?? 0) + 1)}>{paramLabel(p)}</button>
+                {:else if p.TYPE === 'point2D'}
+                  {#each [0, 1] as axis}
+                    {@const point = (layer.params[p.NAME] ?? p.DEFAULT ?? [0, 0]) as number[]}
+                    {@const lower = Array.isArray(p.MIN) ? p.MIN[axis] : 0}
+                    {@const upper = Array.isArray(p.MAX) ? p.MAX[axis] : 1}
+                    <label class="range-row"><span>{paramLabel(p)} {axis ? 'Y' : 'X'}</span><input type="range" min={lower} max={upper} step={(upper-lower)/200} data-default={Array.isArray(p.DEFAULT) ? p.DEFAULT[axis] : undefined} value={point[axis]} class="blue-fill" style:--range-fill={sliderFill(point[axis], lower, upper)} oninput={e => { const next = [...point]; next[axis] = Number(e.currentTarget.value); setParam(p.NAME, next); }} /><output>{point[axis].toFixed(1)}</output></label>
+                  {/each}
+                {:else if p.TYPE === 'bool'}<label class="toggle-row"
+                  ><span>{paramLabel(p)}</span><input
+                    type="checkbox"
+                    checked={Boolean(layer.params[p.NAME] ?? p.DEFAULT)}
+                    onchange={(e) => setParam(p.NAME, e.currentTarget.checked)}
+                  /></label
+                >{:else if p.TYPE === 'long' && p.VALUES}<label class="field"
+                  >{paramLabel(p)}<select
+                    value={Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0)}
+                    onchange={(e) => setParam(p.NAME, Number(e.currentTarget.value))}
+                    >{#each p.VALUES as v, i}<option value={v}>{p.LABELS?.[i] || v}</option>{/each}</select
+                  ></label
+                >{:else}<label class="range-row"
+                  ><span>{paramLabel(p)}</span><input
+                    type="range"
+                    min={p.MIN ?? 0}
+                    max={p.MAX ?? 1}
+                    step={p.TYPE === 'long' ? 1 : ((p.MAX ?? 1) - (p.MIN ?? 0)) / 200}
+                    data-default={typeof p.DEFAULT === 'number' ? p.DEFAULT : undefined}
+                    value={Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0)}
+                    class="blue-fill"
+                    style:--range-fill={sliderFill(Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0), p.MIN ?? 0, p.MAX ?? 1)}
+                    onpointerdown={checkpoint}
+                    oninput={(e) => setParam(p.NAME, Number(e.currentTarget.value))}
+                  /><output>{Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0).toFixed(2)}</output></label
+                >{/if}
+{/snippet}
 {#snippet sourceControls(inTray=false)}
           {#if !inTray}
           <div class="panel-heading">
@@ -1052,7 +1103,7 @@
           {/if}
           <div class="segmented wide" aria-label="Control view"><button class:active={controlView==='source'} onclick={()=>controlView='source'}>Source</button><button class:active={controlView==='effects'} onclick={()=>controlView='effects'}>FX</button></div>
           {#if controlView==='source'}
-          {#if !activeClip}<div class="empty-state"><Icon name="grid" size={28}/><h2>No clip playing</h2><p>Launch a clip, then use its gear to edit the live source.</p><button onclick={closeControls}>Back to clips</button></div>{:else}
+          {#if !activeClip}<div class="empty-state"><Icon name="grid" size={28}/><h2>No clip playing</h2><p>Launch a clip, then tap the layer gear to edit its look.</p><button onclick={closeControls}>Back to clips</button></div>{:else}
           {#if activeClip?.kind==='camera'||activeClip?.kind==='depth'}<CameraFxPanel params={layer.params} onchange={setParam} onstart={checkpoint}/>{/if}
           {#if activeClip?.shaderId==='ga-ghostfx'}<div class="ghost-movements"><strong>GhostFX · {ghostMovements[liveGhostMovement??(Number(layer.params.movement)||0)]}</strong><div><button aria-label="Previous GhostFX movement" onclick={()=>ghostMove(-1)}>← Prev</button><button aria-label="Random GhostFX movement" onclick={()=>ghostMove(0)}>↝ Random</button><button aria-label="Next GhostFX movement" onclick={()=>ghostMove(1)}>Next →</button></div></div>{/if}
           <div class="inspector-card">
@@ -1072,52 +1123,73 @@
                 oninput={(e) => patchLayer({ intensity: Number(e.currentTarget.value) })}
               /><output>{layer.intensity.toFixed(2)}</output></label
             >
-            {#each params.filter( (p) => ['float', 'long', 'bool', 'color', 'point2D', 'event'].includes(p.TYPE), ) as p}{#if p.TYPE === 'color'}<label
-                  class="toggle-row"
-                  ><span>{p.LABEL || p.NAME}</span><input
-                    type="color"
-                    value={colorHex(layer.params[p.NAME] ?? p.DEFAULT)}
-                    onchange={(e) => {
-                      checkpoint();
-                      setParam(p.NAME, colorValue(e.currentTarget.value));
-                    }}
-                  /></label
-                >{:else if p.TYPE === 'event'}<button class="secondary" onclick={() => setParam(p.NAME, Number(layer.params[p.NAME] ?? 0) + 1)}>{p.LABEL || p.NAME}</button>
-                {:else if p.TYPE === 'point2D'}
-                  {#each [0, 1] as axis}
-                    {@const point = (layer.params[p.NAME] ?? p.DEFAULT ?? [0, 0]) as number[]}
-                    {@const lower = Array.isArray(p.MIN) ? p.MIN[axis] : 0}
-                    {@const upper = Array.isArray(p.MAX) ? p.MAX[axis] : 1}
-                    <label class="range-row"><span>{p.LABEL || p.NAME} {axis ? 'Y' : 'X'}</span><input type="range" min={lower} max={upper} step={(upper-lower)/200} data-default={Array.isArray(p.DEFAULT) ? p.DEFAULT[axis] : undefined} value={point[axis]} class="blue-fill" style:--range-fill={sliderFill(point[axis], lower, upper)} oninput={e => { const next = [...point]; next[axis] = Number(e.currentTarget.value); setParam(p.NAME, next); }} /><output>{point[axis].toFixed(1)}</output></label>
-                  {/each}
-                {:else if p.TYPE === 'bool'}<label class="toggle-row"
-                  ><span>{p.LABEL || p.NAME}</span><input
-                    type="checkbox"
-                    checked={Boolean(layer.params[p.NAME] ?? p.DEFAULT)}
-                    onchange={(e) => setParam(p.NAME, e.currentTarget.checked)}
-                  /></label
-                >{:else if p.TYPE === 'long' && p.VALUES}<label class="field"
-                  >{p.LABEL || p.NAME}<select
-                    value={Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0)}
-                    onchange={(e) => setParam(p.NAME, Number(e.currentTarget.value))}
-                    >{#each p.VALUES as v, i}<option value={v}>{p.LABELS?.[i] || v}</option>{/each}</select
-                  ></label
-                >{:else}<label class="range-row"
-                  ><span>{p.LABEL || p.NAME}</span><input
-                    type="range"
-                    min={p.MIN ?? 0}
-                    max={p.MAX ?? 1}
-                    step={p.TYPE === 'long' ? 1 : ((p.MAX ?? 1) - (p.MIN ?? 0)) / 200}
-                    data-default={typeof p.DEFAULT === 'number' ? p.DEFAULT : undefined}
-                    value={Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0)}
-                    class="blue-fill"
-                    style:--range-fill={sliderFill(Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0), p.MIN ?? 0, p.MAX ?? 1)}
-                    onpointerdown={checkpoint}
-                    oninput={(e) => setParam(p.NAME, Number(e.currentTarget.value))}
-                  /><output>{Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0).toFixed(2)}</output></label
-                >{/if}{/each}
+            {#each groupedParams.pinned as p}{@render shaderParam(p)}{/each}
+            {#key controlSourceKey}
+              {#each groupedParams.groups as group}<details class="param-group" open={params.length<=10 || (!groupedParams.pinned.length && group.id==='look')}><summary>{group.label}<span>{group.params.length}</span></summary>{#each group.params as p}{@render shaderParam(p)}{/each}</details>{/each}
+            {/key}
             {#if inTray && (params.length || activeClip?.params)}<div class="look-actions"><button data-reset-look disabled={!activeClip?.params} onclick={resetLook}>Reset look</button>{#if params.length}<button class="new-variation" onclick={variation}>New variation</button>{/if}</div>{/if}
           </div>
+          <details class="param-group transport-card"><summary>Playback &amp; layer</summary>
+            <div class="section-heading">
+              <span>{activeClip?.name || 'NO CLIP LOADED'}</span><button
+                onclick={() => {
+                  checkpoint();
+                  cancelQueued();
+                  autoEvent('stop');
+                  engine?.clear(selectedLayer);
+                  patchLayer({ clipId: null });
+                  refreshParams();
+                }}>Clear layer</button
+              >
+            </div>
+            {#if videoDuration > 0}<label class="range-row"
+                ><span>Position</span><input
+                  aria-label="Video position"
+                  type="range"
+                  min="0"
+                  max={videoDuration}
+                  step=".01"
+                  value={videoPosition}
+                  oninput={(e) => engine?.seek(selectedLayer, Number(e.currentTarget.value))}
+                /><output>{videoPosition.toFixed(1)}s</output></label
+              >{/if}
+            <label class="range-row"
+              ><span>Speed</span><input
+                type="range"
+                min="0"
+                max="3"
+                step=".01"
+                data-default="1"
+                value={layer.speed}
+                onpointerdown={checkpoint}
+                oninput={(e) => patchLayer({ speed: Number(e.currentTarget.value) })}
+              /><output>{layer.speed.toFixed(2)}×</output></label
+            >
+            <label class="range-row"
+              ><span>Source fit</span><select
+                value={layer.fit}
+                onchange={(e) => {
+                  checkpoint();
+                  patchLayer({ fit: e.currentTarget.value as typeof layer.fit });
+                }}
+                >{#each ['contain', 'fill', 'stretch'] as fit}<option value={fit}
+                    >{fit[0].toUpperCase() + fit.slice(1)}</option
+                  >{/each}</select
+              ></label
+            >
+            <label class="range-row"
+              ><span>Blend</span><select
+                value={layer.blend}
+                onchange={(e) => {
+                  checkpoint();
+                  patchLayer({ blend: e.currentTarget.value as typeof layer.blend });
+                }}
+                >{#each ['normal', 'add', 'screen', 'multiply', 'difference'] as mode}<option value={mode}
+                    >{mode[0].toUpperCase() + mode.slice(1)}</option
+                  >{/each}</select
+              ></label
+            >
+          </details>
           {/if}
           {:else}
           <div class="segmented wide" aria-label="Effect scope">{#each [{id:'comp',name:'Comp'},{id:'layer',name:'Layer'},{id:'clip',name:'Clip'}] as scope}<button class:active={fxScope===scope.id} disabled={scope.id==='clip'&&!activeClip} onclick={()=>fxScope=scope.id as typeof fxScope}>{scope.name}</button>{/each}</div>
@@ -1198,13 +1270,12 @@
 <input class="file-input" type="file" accept="image/*" multiple aria-label="Import photos" bind:this={photoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="video/*,image/*" multiple aria-label="Import media" bind:this={mediaInput} onchange={importMedia} />
 <input class="file-input" type="file" accept=".ghostset,application/json" bind:this={setInput} onchange={importSet} />
-<div class="studio" class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
+<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map'} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
   <header class="app-header">
     <div class="brand">
       <img class="brand-mark" src="./icon-new.png" alt="" />
       <img class="brand-wordmark" src="./logo-wordmark.svg" alt="Ghost Arcade" />
     </div>
-    <button class="icon-button" onclick={async()=>{await prepareCaptureTool();oncompanion();}} aria-label="Desktop Companion" title="Desktop Companion">↔</button>
     <button class="set-title" onclick={() => (settings = true)}>{show.name}<span>⌄</span></button>
     <div class="header-actions">
       <button class="icon-button" disabled={!canUndo} onclick={() => undo()} aria-label="Undo"
@@ -1218,6 +1289,12 @@
       >
     </div>
   </header>
+  <nav class="tabs" aria-label="Workspace">
+    {#each [{id:'perform',label:'Perform',icon:'grid'}, {id:'flux',label:'Flux',icon:'flux'}, {id:'map',label:'Map',icon:'map'}, {id:'interactive',label:'Studio',icon:'depth'}, {id:'tools',label:'Tools',icon:'scan'}, {id:'desktop',label:'Desktop',icon:'output'}] as t}
+      <button class:active={!mixerOpen && tab===t.id} aria-pressed={!mixerOpen && tab===t.id}
+        onclick={async()=>{if(t.id==='desktop'){await prepareCaptureTool();oncompanion();}else if(t.id==='tools')toolkitOpen=true;else if(t.id==='interactive')openInteractive();else selectTab(t.id as typeof tab);}}><Icon name={t.icon}/><span>{t.label}</span></button>
+    {/each}
+  </nav>
   <main class="workspace">
     <section class="monitor">
       <div class="monitor-heading">
@@ -1267,6 +1344,7 @@
         </div>
       </div>
       <div class="monitor-tools">
+        {#if !tablet && tab!=='map'}<button class="preview-toggle" aria-label={compactPreview?'Expand preview':'Compact preview'} aria-pressed={compactPreview} onclick={()=>compactPreview=!compactPreview}><Icon name="eye" size={16}/></button>{/if}
         {#if interactiveLive}<button onclick={openInteractive}>Interactive</button><button onclick={()=>interactiveWorkspace?.restoreMix()}>Return to mix</button>{/if}
         <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':'LIVE COMPOSITION'}</span><button
           class:active={frozen}
@@ -1279,15 +1357,10 @@
       {#if tablet && tab==='perform' && !clean}<PerformanceMixer embedded {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
     </section>
     <section class="control-panel">
-      <nav class="tabs" aria-label="Workspace">
-        {#each [{ id: 'perform', label: 'Perform', icon: 'grid' }, { id:'flux',label:'Flux',icon:'flux' }, { id: 'fx', label: 'Controls', icon: 'controls' }, { id: 'map', label: 'Map', icon: 'map' }, {id:'interactive',label:'Interactive',icon:'depth'}, {id:'tools',label:'Tools',icon:'scan'}] as t}<button
-            class:active={!mixerOpen && (clipControlsOpen ? t.id==='fx' : tab === t.id)}
-            onclick={() => t.id==='tools' ? toolkitOpen=true : t.id==='interactive' ? openInteractive() : selectTab(t.id as typeof tab)}
-            aria-pressed={!mixerOpen && (clipControlsOpen ? t.id==='fx' : tab===t.id)}><Icon name={t.icon} /><span>{t.label}</span></button
-          >{/each}
-      </nav>
-      <div class="panel-scroll" inert={clipControlsOpen}>
+
+      <div class="panel-scroll" inert={clipControlsOpen && !dockedInspector && layoutInfo.inspector!=='bottom'}>
         {#if tab === 'perform'}
+          <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><button onclick={()=>{editSlot=null;selectTab('library');}}><Icon name="plus" size={18}/>Add clip</button></div>
           {#if sceneMode}<div class="block-navigation">            <div class="segmented">
               <button class:active={!sceneMode} onclick={() => (sceneMode = false)}>Clips</button><button
                 class:active={sceneMode}
@@ -1378,67 +1451,7 @@
               /><output>{Math.round(show.master * 100)}%</output></label
             >
           </div>
-          {#if !tablet}<div class="transport-card">
-            <div class="section-heading">
-              <span>{activeClip?.name || 'NO CLIP LOADED'}</span><button
-                onclick={() => {
-                  checkpoint();
-                  cancelQueued();
-                  autoEvent('stop');
-                  engine?.clear(selectedLayer);
-                  patchLayer({ clipId: null });
-                  refreshParams();
-                }}>Clear layer</button
-              >
-            </div>
-            {#if videoDuration > 0}<label class="range-row"
-                ><span>Position</span><input
-                  aria-label="Video position"
-                  type="range"
-                  min="0"
-                  max={videoDuration}
-                  step=".01"
-                  value={videoPosition}
-                  oninput={(e) => engine?.seek(selectedLayer, Number(e.currentTarget.value))}
-                /><output>{videoPosition.toFixed(1)}s</output></label
-              >{/if}
-            <label class="range-row"
-              ><span>Speed</span><input
-                type="range"
-                min="0"
-                max="3"
-                step=".01"
-                data-default="1"
-                value={layer.speed}
-                onpointerdown={checkpoint}
-                oninput={(e) => patchLayer({ speed: Number(e.currentTarget.value) })}
-              /><output>{layer.speed.toFixed(2)}×</output></label
-            >
-            <label class="range-row"
-              ><span>Source fit</span><select
-                value={layer.fit}
-                onchange={(e) => {
-                  checkpoint();
-                  patchLayer({ fit: e.currentTarget.value as typeof layer.fit });
-                }}
-                >{#each ['contain', 'fill', 'stretch'] as fit}<option value={fit}
-                    >{fit[0].toUpperCase() + fit.slice(1)}</option
-                  >{/each}</select
-              ></label
-            >
-            <label class="range-row"
-              ><span>Blend</span><select
-                value={layer.blend}
-                onchange={(e) => {
-                  checkpoint();
-                  patchLayer({ blend: e.currentTarget.value as typeof layer.blend });
-                }}
-                >{#each ['normal', 'add', 'screen', 'multiply', 'difference'] as mode}<option value={mode}
-                    >{mode[0].toUpperCase() + mode.slice(1)}</option
-                  >{/each}</select
-              ></label
-            >
-          </div>{/if}
+
 
         {:else if tab === 'flux'}
           <FluxPanel value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>
@@ -1673,18 +1686,18 @@
           </p>
         {/if}
       </div>
-      {#if clipControlsOpen}
+    </section>
+      {#if clipControlsOpen || dockedInspector}
         <section class="clip-controls-tray" aria-label="Clip controls" use:focusControlsTray>
           <header class="clip-controls-header">
             <div><span class="eyebrow">{show.dualDeck ? `DECK ${selectedLayer < 4 ? 'A' : 'B'} · LAYER ${selectedLayer % 4 + 1}` : `LAYER ${selectedLayer + 1}`}</span><h2>{activeClip?.name || 'No clip playing'}</h2></div>
-            <button class="icon-button" data-close-controls aria-label="Close clip controls" onclick={closeControls}><Icon name="close" size={20}/></button>
+            {#if !dockedInspector}<button class="icon-button" data-close-controls aria-label="Close clip controls" onclick={closeControls}><Icon name="close" size={20}/></button>{/if}
           </header>
           {#if frozen || blackout}<div class="controls-notice" role="status">{blackout?'Output is blacked out.':'Output is held.'} Changes appear when you resume.<button onclick={()=>{if(blackout)setBlackout();if(frozen)setFrozen();}}>Resume</button></div>{:else if activeClip && (!layer.enabled || layer.opacity === 0)}<p class="controls-notice" role="status">This layer is muted. Raise its level in Mix to see your changes.</p>{:else if show.dualDeck && (selectedLayer < 4 ? show.crossfade === 1 : show.crossfade === 0)}<p class="controls-notice" role="status">This deck is faded out. Move the A/B crossfader to see your changes.</p>{/if}
           {#if autoOn && autoRows[selectedLayer]}<p class="controls-notice" role="status">Autopilot is on. This row keeps its clip while Controls is open.</p>{/if}
           <div class="clip-controls-body">{@render sourceControls(true)}</div>
         </section>
       {/if}
-    </section>
   </main>
   {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
   <footer class="master-bar">
@@ -1734,7 +1747,7 @@
         }}><span class="phone-label">Q</span><span class="desktop-label">Quantize</span></button
       >
     </div>
-    <div class="master-actions">{#if flux.active}<button aria-label="Release Flux" onclick={()=>{flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}>FX off</button>{/if}<button class:active={mixerOpen} onclick={()=>tablet?selectTab("perform"):mixerOpen=!mixerOpen} aria-label="Open performance mixer">Mix</button>
+    <div class="master-actions">{#if flux.active}<button aria-label="Release Flux" onclick={()=>{flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}>FX off</button>{/if}{#if !tablet}<button class:active={mixerOpen} onclick={()=>mixerOpen=!mixerOpen} aria-label="Open performance mixer">Mix</button>{/if}
       <button
         class="icon-button"
         class:active={mic}
@@ -3676,30 +3689,7 @@
     .performance .phone-mix {display:none;}
   }
 
-  .studio.tablet.performance:not(.clean) .workspace{grid-template-columns:minmax(340px,.9fr) minmax(0,1.6fr);}
-  .studio.tablet.performance:not(.clean) .monitor{padding:14px;justify-content:flex-start;overflow:auto;}
-  .studio.tablet.performance:not(.clean) .control-panel{display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;}
-  .studio.tablet.performance .panel-scroll{padding:12px;min-height:0;overflow:auto;}
-  .studio.tablet.performance :global(.decks.dual){grid-template-columns:repeat(2,minmax(0,1fr));}
-  .studio.tablet.performance .phone-mix{display:none;}
-  .studio.tablet.mapping:not(.clean) .workspace{grid-template-columns:minmax(0,1fr) 310px;max-width:none;}
-  .studio.tablet.mapping:not(.clean) .monitor{padding:14px;justify-content:center;}
-  .studio.tablet.mapping .panel-scroll{padding:12px;}
-  .studio.tablet.mapping .tabs{grid-template-columns:repeat(6,minmax(0,1fr));}
-  .studio.tablet.mapping .tabs button{padding:8px 2px;min-width:0;font-size:9px;}
-  .studio.tablet.mapping .panel-heading h1{font-size:17px;}
-  .studio.tablet.mapping .panel-heading{gap:8px;}
-
- .studio.tablet.performance .panel-scroll>.panel-heading{margin-bottom:8px;}
- .studio.tablet.performance :global(.deck-toolbar){margin-bottom:6px;}
- .studio.tablet.performance :global(.pad){height:52px;min-height:52px;}
- .studio.tablet.performance :global(.row-control){grid-template-rows:24px 24px;}
- .studio.tablet.performance :global(.deck>header){padding:6px 8px;}
- .studio.tablet.performance :global(.deck-hint){display:none;}
-
- .studio.tablet.performance .monitor-tools{padding:6px 0;}
- .block-navigation{display:flex;justify-content:flex-end;margin-bottom:10px}.deck-view-switch{flex:none}.deck-view-switch button{min-height:44px}
- .studio.tablet.performance:not(.clean) .monitor{padding-bottom:0}.studio.tablet.performance .monitor>:global(.mixer-tray.embedded){flex:1 0 auto;min-height:260px;margin-bottom:0;border-radius:7px 7px 0 0}
+  .block-navigation{display:flex;justify-content:flex-end;margin-bottom:10px}.deck-view-switch{flex:none}.deck-view-switch button{min-height:44px}
 
   .clip-controls-tray{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--ga-inspector-bg);border-top:1px solid var(--ga-line-3);box-shadow:0 -8px 24px #0004;animation:controls-in 180ms ease-out;}
   .clip-controls-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding:10px 14px;border-bottom:1px solid var(--ga-line-2);background:var(--ga-faceplate-bg);}

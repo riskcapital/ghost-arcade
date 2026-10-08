@@ -1,6 +1,23 @@
 {
   "method": "Static code cost: high/extreme excluded, comments ignored",
-  "retained": 318,
+  "retained": 319,
+  "budgeted": [
+    {
+      "path": "ISF/GA-GhostFX.fs",
+      "level": "extreme",
+      "score": 42,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "many loops",
+        "heavy transcendental math"
+      ],
+      "budget": {
+        "scale": 0.6,
+        "detail": 0.7
+      }
+    }
+  ],
   "excluded": [
     {
       "path": "ISF/51_SacredGeometryCathedral.fs",
@@ -48,17 +65,6 @@
       "hints": [
         "large shader source",
         "raymarch/long-step loop pattern",
-        "heavy transcendental math"
-      ]
-    },
-    {
-      "path": "ISF/GA-GhostFX.fs",
-      "level": "extreme",
-      "score": 42,
-      "hints": [
-        "large shader source",
-        "heavy branching",
-        "many loops",
         "heavy transcendental math"
       ]
     },

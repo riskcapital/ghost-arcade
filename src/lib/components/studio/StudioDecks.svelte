@@ -126,7 +126,7 @@
         {#each rows as row}
           <div class="clip-row" class:selected={row === selectedLayer}>
             <div class="row-control">
-              <button class="row-name" onclick={() => onSelect(row)} aria-label={`Select layer ${row+1}`} aria-pressed={selectedLayer === row}>{show.dualDeck ? `${row < 4 ? 'A' : 'B'}${row % 4 + 1}` : `L${row + 1}`}</button>
+              <button class="row-name" onclick={() => {onSelect(row);onControls(row);}} aria-label={`Edit controls for layer ${row+1}`} aria-pressed={selectedLayer === row}>{show.dualDeck ? `${row < 4 ? 'A' : 'B'}${row % 4 + 1}` : `L${row + 1}`}<Icon name="settings" size={15}/></button>
               <button class="level-button" aria-label={`Mix row ${row+1}`} onclick={()=>onMixer(row)} style={`--level:${show.layers[row].opacity*100}%`}>{Math.round(show.layers[row].opacity*100)}%</button>
               <button class="stop" aria-label={`Stop row ${row + 1}`} onclick={() => onStop(row)}>■</button>
             </div>
@@ -141,9 +141,7 @@
                 onclick={() => { if(suppressTap){suppressTap=false;return;} if(arrange)arrangeTap({row,column},clip);else if(!clip)onEdit(row,column);else onTap(row,clip); }}>
                 {#if clip}{#key clip.id}<ClipThumbnail {clip}/>{/key}{#if clipUnavailable(clip)}<span class="unavailable-badge">Unavailable</span>{/if}{#if arrange}<span class="drag-grip" aria-hidden="true">⠿</span>{/if}<span class="status-dot" aria-hidden="true"></span>{:else}<span class="plus">+</span>{/if}
               </button>
-              {#if clip && show.layers[row].clipId === clip.id && !arrange}
-                <button class="clip-settings" disabled={loading[row]} aria-label={`Edit ${clip.name} on ${show.dualDeck ? `Deck ${row < 4 ? 'A' : 'B'} · Layer ${row % 4 + 1}` : `Layer ${row + 1}`}`} title={`Edit ${clip.name}`} onpointerdown={e=>{e.stopPropagation();cancelHold();}} onclick={e=>{e.stopPropagation();e.currentTarget.focus({preventScroll:true});suppressTap=false;onControls(row);}}><Icon name="settings" size={16}/></button>
-              {/if}
+
               </div>
             {/each}
           </div>
@@ -159,7 +157,7 @@
 <dialog bind:this={dialog} class="clip-menu" aria-label="Clip actions" onclose={()=>menu=null} onclick={e=>{if(e.target===dialog)closeMenu();}}>
  {#if menu}<div class="menu-content"><strong>{menu.clip.name}</strong><span>{show.dualDeck ? `${menu.row < 4 ? 'A' : 'B'}${menu.row % 4 + 1}` : `L${menu.row + 1}`} · Slot {menu.column+1}</span><button onclick={()=>menuAction()}>Replace clip</button><button class="remove" onclick={()=>menuAction(true)}>Remove clip</button><button onclick={closeMenu}>Cancel</button></div>{/if}
 </dialog>
-<p class="deck-hint">{arrange ? 'Drag or tap two slots to move / swap. Playing clips continue unchanged.' : 'Tap to play. Use the gear on a playing clip to edit its look. Double-tap a playing clip to stop. Hold to replace or remove.'}</p>
+<p class="deck-hint">{arrange ? 'Drag or tap two slots to move / swap. Playing clips continue unchanged.' : 'Tap to play. Tap a layer’s gear to edit its look. Double-tap a playing clip to stop. Hold to replace or remove.'}</p>
 {#if drag?.moving}<div class="drag-preview" style:left={`${drag.x}px`} style:top={`${drag.y}px`}><ClipThumbnail clip={drag.clip}/><span>{drag.clip.name}</span></div>{/if}
 <svelte:window onkeydown={e=>{if(e.key==='Escape'){cancelDrag();picked=null;}}} onblur={()=>{cancelDrag();picked=null;}}/>
 <style>
@@ -170,10 +168,6 @@
  .pad.unavailable :global(img){opacity:.28;filter:grayscale(1);}
  .unavailable-badge{position:absolute;left:0;right:0;bottom:0;padding:3px 2px;font-size:9px;line-height:1.2;letter-spacing:.03em;text-align:center;color:var(--ga-ink-1);background:#000b;pointer-events:none;}
  .clip-slot .pad{width:100%;display:block;}
- .clip-settings{position:absolute;right:0;top:0;z-index:2;width:44px;height:44px;min-height:44px;padding:0;display:grid;place-items:center;background:transparent;border:0;box-shadow:none;color:var(--ga-ink-0);}
- .clip-settings::before{content:'';position:absolute;inset:7px;border:1px solid var(--ga-line-3);border-radius:6px;background:var(--ga-faceplate-bg);box-shadow:0 2px 8px #0008;}
- .clip-settings :global(svg){position:relative;pointer-events:none;}
- .clip-settings:hover::before,.clip-settings:focus-visible::before{background:var(--ga-selection-bg);border-color:var(--ga-selection-line);}
  .deck-switch{display:flex;align-items:center;gap:5px;white-space:nowrap}.deck-options,.deck-actions{min-width:0}.deck-toolbar{gap:4px}.deck-actions{flex-wrap:nowrap!important;gap:4px!important}
 
  .deck-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:nowrap}.deck-actions .arrange-toggle{margin-left:0}
@@ -209,14 +203,14 @@
   .column-row,.clip-row{display:grid;grid-template-columns:92px repeat(var(--columns),80px);gap:4px;width:max-content;margin-bottom:4px;}
   .clip-row:last-child{margin-bottom:0}.row-label{position:sticky;left:0;z-index:3;background:var(--ga-void);font-size:10px;display:grid;place-items:center;}
   .column-row button{min-height:44px;font-size:11px;}
-  .row-control{position:sticky;left:0;z-index:3;display:grid;grid-template-columns:44px 1fr;grid-template-rows:30px 30px;gap:2px;padding:0;background:var(--ga-faceplate-bg);border:1px solid var(--ga-line-2);border-radius:4px;}
-  .row-name{grid-row:1/3;grid-column:1;font-weight:650;min-height:0;}.level-button{grid-column:2;min-height:0;font-size:10px;}.stop{grid-column:2;min-height:0;font-size:10px;}
+  .row-control{position:sticky;left:0;z-index:3;display:grid;grid-template-columns:44px 1fr;grid-template-rows:44px 44px;gap:2px;padding:0;background:var(--ga-faceplate-bg);border:1px solid var(--ga-line-2);border-radius:4px;}
+  .row-name{display:flex;flex-direction:column;gap:8px;grid-row:1/3;grid-column:1;font-weight:650;min-height:0;}.level-button{grid-column:2;min-height:0;font-size:10px;}.stop{grid-column:2;min-height:0;font-size:10px;}
   .selected .row-control{border-color:var(--ga-selection-line)}.selected .row-name{background:var(--ga-selection-bg)}
-  .pad{position:relative;isolation:isolate;height:64px;min-height:64px;padding:0;overflow:hidden;background:var(--ga-slot);box-shadow:none;user-select:none;touch-action:pan-x pan-y;}
+  .pad{position:relative;isolation:isolate;height:92px;min-height:92px;padding:0;overflow:hidden;background:var(--ga-slot);box-shadow:none;user-select:none;touch-action:pan-x pan-y;}
   .pad img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;}
   .live{border:2px solid var(--ga-selection-line);box-shadow:inset 0 0 0 1px var(--ga-selection-line)}.status-dot{position:absolute;right:5px;bottom:5px;width:6px;height:6px;border-radius:50%;background:transparent;}.live .status-dot{background:var(--ga-green);box-shadow:0 0 0 2px #0008}.queued .status-dot{background:#ffc570}.queued{border-color:#ffc570}
   .empty{border-style:dashed;}.plus{font-size:22px;color:var(--ga-ink-2)}.add-columns{font-size:11px;margin:6px 0;min-height:32px;padding:4px 12px;}
-  @media(max-width:760px){header{display:none}.deck-toolbar{margin-bottom:6px}.deck-toolbar button{padding:4px 7px;min-height:34px;font-size:11px}.decks{gap:6px}}
+  @media(max-width:760px){header{display:none}.deck-toolbar{margin-bottom:6px}.deck-toolbar button{padding:4px 7px;min-height:44px;font-size:11px}.decks{gap:6px}}
   .deck-mix{display:flex;align-items:center;gap:12px;border:1px solid var(--ga-line-2);border-radius:var(--ga-r-soft);padding:10px 12px;background:var(--ga-faceplate-bg)}
   .deck-mix>div{flex:1;min-width:0}.deck-mix button{width:44px;font-weight:650}.deck-mix label{display:flex;justify-content:space-between;font-size:10px;color:var(--ga-ink-1)}
   .deck-hint{font-size:11px;line-height:1.5;color:var(--ga-ink-2)}

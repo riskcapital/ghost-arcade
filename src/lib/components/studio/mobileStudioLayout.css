@@ -1,0 +1,104 @@
+/* Named layouts share the breakpoint policy in layout.ts. The repeated attribute keeps
+   these rules above the older component-scoped width rules during the layout migration. */
+.studio[data-layout][data-layout]:not(.clean) {
+  grid-template-areas: 'header' 'workspace' 'transport' 'nav';
+  grid-template-rows: 52px minmax(0,1fr) auto 54px;
+}
+.studio[data-layout] > .app-header { grid-area:header; }
+.studio[data-layout] > .workspace { grid-area:workspace; position:relative; max-width:none; }
+.studio[data-layout] > .tabs { grid-area:nav; }
+.studio[data-layout] > .master-bar { grid-area:transport; }
+.studio[data-layout][data-layout] > .tabs {padding:0 4px;gap:0;border-top:1px solid var(--ga-line-2);}
+.studio[data-layout][data-layout] > .tabs button {min-height:48px;min-width:44px;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px;}
+.studio[data-layout][data-layout] .monitor-tools button {min-width:44px;min-height:44px;flex:none;}
+.studio[data-layout][data-layout] .monitor-tools > span {font-size:10px;letter-spacing:.02em;overflow-wrap:anywhere;}
+.studio[data-layout][data-layout] .monitor-heading {font-size:10px;}
+.studio[data-layout][data-layout] .perform-actions {display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;}
+.studio[data-layout] .perform-actions button {min-height:44px;font-size:12px;padding:6px 10px;}
+.studio[data-layout] .perform-actions button span {font-size:11px;color:var(--ga-ink-2);}
+.studio[data-layout][data-layout] .master-bar {min-height:52px;padding:4px 10px;gap:6px;}
+.studio[data-layout][data-layout] .master-bar button {min-width:44px;min-height:44px;padding:4px 7px;}
+.studio[data-layout][data-layout] .master-bar .tempo {gap:6px;}
+.studio[data-layout][data-layout] .master-bar .beat-dots {display:none;}
+.studio[data-layout][data-layout] .master-bar .mobile-decks {height:44px;}
+.studio[data-layout][data-layout] .clip-controls-tray {inset:auto 0 0;height:68%;max-height:100%;border-radius:12px 12px 0 0;box-shadow:0 -6px 32px #0009;}
+.studio[data-layout][data-layout] .clip-controls-body {padding-bottom:18px;}
+.studio[data-layout][data-layout] .deck-toolbar {flex-wrap:wrap;row-gap:6px;}
+.studio[data-layout][data-layout] .deck-toolbar button {min-height:44px;}
+.studio[data-layout][data-layout] .pad {height:92px;min-height:92px;}
+.studio[data-layout][data-layout] .row-control {grid-template-rows:44px 44px;}
+.studio[data-layout][data-layout] .mixer-tray.embedded button,
+.studio[data-layout][data-layout] .mixer-tray.embedded select {min-height:44px;}
+.studio[data-layout][data-layout] .mixer-tray.embedded .channels {min-height:240px;}
+/* Phone: preview stays mounted while its footprint can shrink, leaving more deck visible. */
+.studio[data-layout='phone'][data-layout]:not(.clean) .workspace {display:flex;flex-direction:column;}
+.studio[data-layout='phone'][data-layout]:not(.clean) .monitor {display:block;padding:6px 10px 0;flex:none;}
+.studio[data-layout='phone'][data-layout]:not(.clean) .preview-frame {max-width:330px;margin:auto;}
+.studio[data-layout='phone'][data-layout].compact-preview:not(.clean) .preview-frame {max-width:160px;}
+.studio[data-layout='phone'][data-layout]:not(.clean) .monitor-tools {padding:2px 0;}
+.studio[data-layout='phone'][data-layout] .panel-scroll {padding:8px 10px 16px;}
+.studio[data-layout='phone'][data-layout] .brand-wordmark {max-width:128px;}
+.studio[data-layout='phone'][data-layout] .brand-mark {display:none;}
+.studio[data-layout='phone'][data-layout] .app-header {padding:0 10px;gap:4px;}
+/* In portrait the inspector takes the remaining space, never a percentage that
+   can cover a tall preview. Its contents scroll independently. */
+.studio[data-layout='phone'][data-layout].clip-editing .control-panel {display:none;}
+.studio[data-layout='phone'][data-layout].clip-editing .clip-controls-tray {position:relative;inset:auto;flex:1;min-height:0;height:auto;}
+.studio[data-layout='phone'][data-layout].clip-editing .preview-frame {max-width:min(330px,34dvh);}
+/* Short landscape: navigation becomes a rail; no tall bars steal the working height. */
+.studio[data-layout='phone-landscape'][data-layout]:not(.clean) {
+  grid-template-columns:62px minmax(0,1fr);
+  grid-template-areas:'nav header' 'nav workspace' 'nav transport';
+  grid-template-rows:44px minmax(0,1fr) auto;
+}
+.studio[data-layout='phone-landscape'][data-layout] > .tabs {flex-direction:column;overflow:auto;padding:0;}
+.studio[data-layout='phone-landscape'][data-layout] > .tabs button {flex:1;min-height:44px;font-size:10px;}
+.studio[data-layout='phone-landscape'][data-layout] .app-header {padding:0 10px;gap:10px;}
+.studio[data-layout='phone-landscape'][data-layout] .brand-wordmark {width:125px;}
+.studio[data-layout='phone-landscape'][data-layout] .brand-mark {display:none;}
+.studio[data-layout='phone-landscape'][data-layout]:not(.clean) .workspace {display:grid;grid-template-columns:minmax(190px,.75fr) minmax(0,1.4fr);}
+.studio[data-layout='phone-landscape'][data-layout]:not(.clean) .monitor {display:flex;padding:6px 8px;justify-content:flex-start;overflow:auto;}
+.studio[data-layout='phone-landscape'][data-layout] .preview-frame {max-width:100%;}
+.studio[data-layout='phone-landscape'][data-layout] .monitor-tools {flex-wrap:wrap;padding:2px 0;}
+.studio[data-layout='phone-landscape'][data-layout] .monitor-tools > span {display:none;}
+.studio[data-layout='phone-landscape'][data-layout] .preview-toggle {display:none;}
+.studio[data-layout='phone-landscape'][data-layout] .panel-scroll {padding:6px 8px 16px;}
+.studio[data-layout='phone-landscape'][data-layout] .clip-controls-tray {left:36%;height:100%;border-radius:0;}
+.studio[data-layout='phone-landscape'][data-layout] .mobile-decks {display:none;}
+/* Wide tablet: output and mixer, clip deck, and source inspector are all visible. */
+.studio[data-layout='tablet'][data-layout]:not(.clean) {grid-template-areas:'header' 'nav' 'workspace' 'transport';grid-template-rows:56px 50px minmax(0,1fr) 56px;}
+.studio[data-layout='tablet'][data-layout] > .tabs button {flex-direction:row;font-size:12px;}
+.studio[data-layout='tablet'][data-layout].performance:not(.clean) .workspace {grid-template-columns:minmax(270px,.85fr) minmax(300px,1.35fr) minmax(265px,.85fr);}
+.studio[data-layout='tablet'][data-layout].performance:not(.clean) .monitor {padding:10px;justify-content:flex-start;overflow:auto;}
+.studio[data-layout='tablet'][data-layout].performance .control-panel {display:flex;overflow:hidden;}
+.studio[data-layout='tablet'][data-layout].performance .panel-scroll {padding:10px;}
+.studio[data-layout='tablet'][data-layout].performance .decks.dual {grid-template-columns:1fr;}
+.studio[data-layout='tablet'][data-layout].performance .clip-controls-tray {position:relative;inset:auto;height:100%;border-radius:0;border-left:1px solid var(--ga-line-2);box-shadow:none;animation:none;}
+.studio[data-layout='tablet'][data-layout].performance .monitor > .mixer-tray.embedded {flex:1 0 auto;min-height:300px;margin:0;}
+.studio[data-layout='tablet'][data-layout].mapping:not(.clean) .workspace {grid-template-columns:minmax(0,1fr) 300px;}
+/* Portrait tablet / Split View: a preview-and-mixer band above a full-width deck. */
+.studio[data-layout='tablet-portrait'][data-layout]:not(.clean) .workspace {display:flex;flex-direction:column;}
+.studio[data-layout='tablet-portrait'][data-layout]:not(.clean) .monitor {padding:10px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);grid-template-rows:auto minmax(0,1fr) auto;gap:0 10px;flex:none;max-height:40%;overflow:auto;}
+.studio[data-layout='tablet-portrait'][data-layout] .monitor-heading {grid-column:1;}
+.studio[data-layout='tablet-portrait'][data-layout] .preview-frame {grid-column:1;align-self:center;max-width:400px;}
+.studio[data-layout='tablet-portrait'][data-layout] .monitor-tools {grid-column:1;flex-wrap:wrap;padding:4px 0;}
+.studio[data-layout='tablet-portrait'][data-layout] .monitor > .mixer-tray.embedded {grid-column:2;grid-row:1/4;margin:0;min-height:0;overflow:auto;}
+.studio[data-layout='tablet-portrait'][data-layout] .control-panel {flex:1;min-height:0;}
+.studio[data-layout='tablet-portrait'][data-layout] .panel-scroll {padding:10px;}
+.studio[data-layout='tablet-portrait'][data-layout] .phone-mix {display:none;}
+.studio[data-layout='tablet-portrait'][data-layout][data-inspector='bottom'] .clip-controls-tray {position:relative;flex:0 0 35%;inset:auto;width:100%;height:35%;border-radius:0;box-shadow:none;}
+.studio[data-layout='tablet-portrait'][data-layout].mapping .monitor {display:flex;max-height:50%;}
+.studio[data-layout='tablet-portrait'][data-layout]:not(.performance) .monitor {display:flex;max-height:38%;}
+
+.studio[data-layout] .param-group {border-top:1px solid var(--ga-line-2);margin-top:10px;}
+.studio[data-layout] .param-group summary {display:flex;align-items:center;justify-content:space-between;min-height:48px;cursor:pointer;font-size:13px;font-weight:650;list-style:none;}
+.studio[data-layout] .param-group summary::before {content:'›';margin-right:8px;color:var(--ga-ink-2);}
+.studio[data-layout] .param-group[open] summary::before {transform:rotate(90deg);}
+.studio[data-layout] .param-group summary span {margin-left:auto;color:var(--ga-ink-2);font-size:11px;}
+.studio[data-layout] .param-group summary::-webkit-details-marker {display:none;}
+.studio[data-layout] .param-group summary:focus-visible {outline:2px solid var(--ga-focus);outline-offset:2px;}
+.studio[data-layout][data-layout] .mixer-tray {max-height:75dvh;overflow:auto;}
+.studio[data-layout][data-layout] .mixer-tray .switches {flex-direction:column;}
+.studio[data-layout][data-layout] .mixer-tray .switches button {min-height:44px;min-width:44px;}
+.studio[data-layout][data-layout] .mixer-tray .channels {grid-template-columns:repeat(5,minmax(52px,1fr));}
+.studio[data-layout][data-layout] .mixer-tray.embedded {max-height:none;}
