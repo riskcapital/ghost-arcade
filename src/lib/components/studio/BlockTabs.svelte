@@ -32,11 +32,19 @@
   $: menu = menuIndex >= 0 ? tabs[menuIndex] ?? null : null;
   $: if (menuIndex >= tabs.length) closeMenu();
   $: activeKey = tabs.find((t) => t.active)?.id ?? '';
-  $: void reveal(activeKey, tabs.length);
+  // Bring the open tab into view when it changes. Only the strip moves: scrollIntoView would
+  // also scroll the deck back up to the tabs every time a clip is launched.
+  let revealed = '';
+  $: revealKey = `${activeKey}:${tabs.length}`;
+  $: if (revealKey !== revealed) { revealed = revealKey; void reveal(); }
 
-  async function reveal(_key: string, _count: number) {
+  async function reveal() {
     await tick();
-    strip?.querySelector('.block-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const tab = strip?.querySelector<HTMLElement>('.block-tab.active');
+    if (!tab || !strip) return;
+    const start = tab.offsetLeft, end = start + tab.offsetWidth, room = strip.clientWidth - 52; // 52: the pinned "+"
+    if (start < strip.scrollLeft) strip.scrollLeft = start;
+    else if (end > strip.scrollLeft + room) strip.scrollLeft = end - room;
   }
 
   function openMenu(index: number) {
@@ -138,7 +146,7 @@
 <style>
   .block-tabs { margin: 0 0 8px; min-width: 0; }
   .strip {
-    display: flex; gap: 4px; align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain;
+    position: relative; display: flex; gap: 4px; align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain;
     scrollbar-width: none; -webkit-overflow-scrolling: touch; padding: 0 0 1px;
     border-bottom: 1px solid var(--ga-line-2);
   }
