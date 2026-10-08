@@ -161,11 +161,19 @@
   import { MOBILE_SHADERS, findShader } from '../../mobile/standaloneShaderList';
   import { MOBILE_EFFECTS } from '../../mobile/standaloneEffects';
   import { EFFECT_PARAM_DEFS } from '../../effects/effectParamDefs';
-  import { putAsset } from '../../mobile/studio/assets';
+  import { putAsset, listAssets, deleteAssets, unusedAssets, totalBytes, formatBytes, type AssetInfo } from '../../mobile/studio/assets';
   import {
     loadShow,
-    saveShow,
+    saveCurrentShow,
     savedSets,
+    upsertSet,
+    removeSet,
+    renameSet,
+    writeSetBank,
+    MAX_SAVED_SETS,
+    referencedAssetIds,
+    renameBlock,
+    removeBlock,
     defaultShow,
     normalizeShow,
     clipUnavailable,
@@ -234,6 +242,8 @@
   let nudgeStep = 0.001;
   let taps: number[] = [];
   $: layer = show.layers[selectedLayer];
+  // The set being played is always listed, even before its first save reaches the list.
+  $: setList = setBank.some((s) => s.id === show.id) ? setBank : [show, ...setBank];
   $: surface = show.surfaces[selectedSurface];
   $: visibleClips = show.clips.slice(bank * 12, bank * 12 + 12);
   $: filteredShaders = libraryShaders.filter(
@@ -263,14 +273,120 @@
     if(show.activeBlockId)show.scenes=show.scenes.map(b=>b.id===show.activeBlockId?{...b,launchGrid:copy(show.launchGrid)}:b);
     show = { ...show };
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      try {
-        saveShow(show);
-        setBank = savedSets();
-      } catch {
-        error = 'Your device could not save this set. Export a set file before closing.';
-      }
-    }, 250);
+    // Autosave writes only the set being played. The list of saved sets is written far less
+    // often, so dragging a control never re-reads and rewrites every set on the render thread.
+    saveTimer = setTimeout(saveNow, 400);
+  }
+  const SAVE_FAILED = 'Your device could not save this set. Export a set file before closing.';
+  let bankTimer: ReturnType<typeof setTimeout> | undefined, bankDirty = false, bankFullWarned = false;
+  function saveNow() {
+    clearTimeout(saveTimer);
+    try { saveCurrentShow(show); } catch { error = SAVE_FAILED; }
+    bankDirty = true;
+    bankTimer ??= setTimeout(flushBank, 5000);
+  }
+  function writeBank() {
+    try { writeSetBank(setBank); } catch { error = SAVE_FAILED; }
+  }
+  function flushBank() {
+    clearTimeout(bankTimer); bankTimer = undefined;
+    if (!bankDirty) return;
+    bankDirty = false;
+    const result = upsertSet(setBank, show);
+    if (result.full) {
+      // Never push an older set out to make room. Say so once instead.
+      if (!bankFullWarned) { bankFullWarned = true; error = `This device already holds ${MAX_SAVED_SETS} sets, so this one is not in your saved list. Delete a set you no longer need in Set settings.`; }
+      return;
+    }
+    setBank = result.bank;
+    writeBank();
+  }
+  /** Write everything now: before switching sets, when the app is hidden, and on close. */
+  function flushSaves() { saveNow(); flushBank(); }
+  // ── Saved sets ────────────────────────────────────────────────────────────
+  let setEdit: { id: string; mode: 'rename' | 'delete'; name: string } | null = null;
+  let freshConfirm = false;
+  function renameSavedSet(id: string, name: string) {
+    if (!name.trim()) { setEdit = null; return; }
+    if (id === show.id) { show.name = name.trim().slice(0, 100); persist(); }
+    setBank = renameSet(setBank, id, name);
+    writeBank();
+    setEdit = null;
+  }
+  function deleteSavedSet(id: string) {
+    if (id === show.id) return;
+    const name = setBank.find((s) => s.id === id)?.name ?? 'Set';
+    setBank = removeSet(setBank, id);
+    writeBank();
+    setEdit = null;
+    flash(`${name} deleted.`);
+    void refreshStorage();
+  }
+  /** A new set needs a free place: nothing already saved is dropped to make one. */
+  function roomForNewSet(replacingId?: string) {
+    flushSaves();
+    if (setBank.length < MAX_SAVED_SETS || (replacingId && setBank.some((s) => s.id === replacingId))) return true;
+    error = `This device holds ${MAX_SAVED_SETS} sets. Delete one you no longer need, then try again.`;
+    return false;
+  }
+  async function startFreshSet() {
+    freshConfirm = false;
+    if (!roomForNewSet()) return;
+    checkpoint();
+    cancelQueued();
+    autoEvent('set');
+    show = defaultShow();
+    selectedSurface = 0;
+    bank = 0;
+    await engine?.restore(show);
+    refreshParams();
+    persist();
+    settings = false;
+    flash('New set started. Your last set is saved on this device.');
+  }
+  // ── Imported media ────────────────────────────────────────────────────────
+  let storage: { files: number; bytes: number; unused: AssetInfo[]; unusedBytes: number } | null = null;
+  let storageBusy = false, mediaConfirm = false;
+  async function refreshStorage() {
+    try {
+      const all = await listAssets();
+      const unused = unusedAssets(all, referencedAssetIds([show, ...setBank, ...history.states]));
+      storage = { files: all.length, bytes: totalBytes(all), unused, unusedBytes: totalBytes(unused) };
+    } catch { storage = null; }
+  }
+  async function deleteUnusedMedia() {
+    mediaConfirm = false;
+    if (storageBusy) return;
+    storageBusy = true;
+    try {
+      flushSaves();
+      await refreshStorage();
+      const unused = storage?.unused ?? [];
+      if (!unused.length) return;
+      await deleteAssets(unused.map((asset) => asset.id));
+      flash(`${unused.length} file${unused.length === 1 ? '' : 's'} deleted. ${formatBytes(totalBytes(unused))} freed.`);
+      await refreshStorage();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Could not delete the media.';
+    } finally { storageBusy = false; }
+  }
+  $: if (settings) void refreshStorage(); else { setEdit = null; freshConfirm = false; mediaConfirm = false; }
+  // ── Blocks ────────────────────────────────────────────────────────────────
+  let blockEdit: string | null = null;
+  function renameBlockTo(id: string, name: string) {
+    if (!name.trim() || show.scenes.find((b) => b.id === id)?.name === name.trim()) return;
+    checkpoint();
+    show.scenes = renameBlock(show, id, name);
+    persist();
+  }
+  function deleteBlock(id: string) {
+    const name = show.scenes.find((b) => b.id === id)?.name ?? 'Block';
+    checkpoint();
+    const next = removeBlock(show, id);
+    show.scenes = next.scenes; show.activeBlockId = next.activeBlockId;
+    blockEdit = null;
+    persist();
+    flash(`${name} deleted.`, { label: 'Undo', run: () => void undo() }, 6000);
   }
   async function undo(redo = false) {
     const next = redo ? history.redo(show) : history.undo(show);
@@ -721,10 +837,8 @@
   }
   async function openSavedSet(id: string) {
     const next = setBank.find((s) => s.id === id);
-    if (!next) return;
-    try {
-      saveShow(show);
-    } catch {}
+    if (!next || next.id === show.id) return;
+    flushSaves();
     checkpoint();
     cancelQueued();
     autoEvent('set');
@@ -757,6 +871,7 @@
     if (!file) return;
     try {
       const next = normalizeShow(JSON.parse(await file.text()));
+      if (!roomForNewSet(next.id)) return;
       checkpoint();
       cancelQueued();
       autoEvent('set');
@@ -871,6 +986,10 @@
       videoPosition = t?.time || 0;
       videoDuration = t?.duration || 0;
     }, 50);
+    // iOS can end the app while it is in the background, so nothing may wait in a timer there.
+    const saveWhenHidden = () => { if (document.visibilityState === 'hidden') flushSaves(); };
+    document.addEventListener('visibilitychange', saveWhenHidden);
+    window.addEventListener('pagehide', flushSaves);
     // Held for as long as the studio is open, and asked for again after every trip to the background.
     const awake = keepAwake();
     return () => {
@@ -879,11 +998,10 @@
       disposed = true;interactiveOutputAllowed=false;
       cancelAnimationFrame(autoFrame);
       clearInterval(timer);
-      clearTimeout(saveTimer);
       clearTimeout(noticeTimer);
-      try {
-        saveShow(show);
-      } catch {}
+      document.removeEventListener('visibilitychange', saveWhenHidden);
+      window.removeEventListener('pagehide', flushSaves);
+      flushSaves();
       clearTimeout(restoreTimer);
       externalOutput?.destroy();
       engine?.destroy();
@@ -1139,14 +1257,20 @@
             </div>
 </div>{/if}
           {#if sceneMode}<div class="clip-grid">
-              {#each show.scenes as scene, i}<button class="scene-pad" onclick={() => recallScene(i)}
+              {#each show.scenes as scene, i}<div class="scene-slot"><button class="scene-pad" onclick={() => recallScene(i)}
                   ><span class="pad-number">{String(i + 1).padStart(2, '0')}</span><Icon name="grid" size={28} /><strong
                     >{scene.name}</strong
                   ><small>{show.activeBlockId===scene.id?'Current block':'Load clip grid'}</small></button
-                >{/each}<button class="clip-pad add-pad" onclick={captureScene}
+                ><button class="scene-edit" data-block-edit aria-label={`Rename or delete ${scene.name}`} aria-expanded={blockEdit===scene.id} onclick={() => (blockEdit = blockEdit === scene.id ? null : scene.id)}><Icon name="settings" size={16} /></button></div>{/each}<button class="clip-pad add-pad" onclick={captureScene}
                 ><Icon name="plus" size={26} /><span>Save as new block</span></button
               >
             </div>
+            {#if blockEdit && show.scenes.some((b) => b.id === blockEdit)}{@const editing = show.scenes.find((b) => b.id === blockEdit)!}
+              <div class="block-editor" role="group" aria-label="Edit block">
+                <label class="field">Block name<input data-block-name value={editing.name} maxlength="80" onchange={(e) => renameBlockTo(editing.id, e.currentTarget.value)} /></label>
+                <div class="card-actions"><button data-block-delete onclick={() => deleteBlock(editing.id)}><Icon name="trash" size={16} />Delete block</button><button onclick={() => (blockEdit = null)}>Done</button></div>
+              </div>
+            {/if}
             <p class="hint">
               Blocks save the clips in your deck grid. Edits update the current block; switching blocks keeps your live mix and mapping playing.
             </p>
@@ -1618,11 +1742,24 @@
         >
       </div>
       <label class="field">Set name<input bind:value={show.name} oninput={persist} /></label>
-      {#if setBank.length}<label class="field"
-          >Saved on this device<select value={show.id} onchange={(e) => openSavedSet(e.currentTarget.value)}
-            >{#each setBank as set}<option value={set.id}>{set.name}</option>{/each}</select
-          ></label
-        >{/if}
+      <div class="saved-sets" role="group" aria-label="Sets saved on this device">
+        <span class="eyebrow">SAVED ON THIS DEVICE · {setList.length} OF {MAX_SAVED_SETS}</span>
+        {#each setList as set (set.id)}{@const current = set.id === show.id}{@const name = current ? show.name : set.name}
+          <div class="set-row" class:current data-set-row={set.id}>
+            {#if setEdit?.id === set.id && setEdit.mode === 'rename'}
+              <input aria-label="New set name" value={setEdit.name} oninput={(e) => { if (setEdit) setEdit.name = e.currentTarget.value; }} onkeydown={(e) => { if (e.key === 'Enter' && setEdit) renameSavedSet(set.id, setEdit.name); }} />
+              <button data-set-save onclick={() => setEdit && renameSavedSet(set.id, setEdit.name)}>Save</button><button onclick={() => (setEdit = null)}>Cancel</button>
+            {:else if setEdit?.id === set.id && setEdit.mode === 'delete'}
+              <span class="set-confirm">Delete “{name}”? This cannot be undone.</span>
+              <button class="danger" data-set-delete-confirm onclick={() => deleteSavedSet(set.id)}>Delete</button><button onclick={() => (setEdit = null)}>Cancel</button>
+            {:else}
+              <button class="set-open" disabled={current} aria-label={current ? `${name}, open now` : `Open ${name}`} onclick={() => openSavedSet(set.id)}><strong>{name}</strong><small>{current ? 'Open now' : 'Tap to open'}</small></button>
+              <button data-set-rename aria-label={`Rename ${name}`} onclick={() => (setEdit = { id: set.id, mode: 'rename', name })}>Rename</button>
+              <button class="icon-button" data-set-delete aria-label={`Delete ${name}`} disabled={current} title={current ? 'Open another set first' : 'Delete set'} onclick={() => (setEdit = { id: set.id, mode: 'delete', name })}><Icon name="trash" size={16} /></button>
+            {/if}
+          </div>
+        {/each}
+      </div>
       <div class="field-grid">
         <button onclick={exportSet}><Icon name="save" />Export set</button><button onclick={() => setInput.click()}
           ><Icon name="upload" />Open set</button
@@ -1654,23 +1791,22 @@
           >
         </div>
       </div>
-      <button
-        class="subtle"
-        onclick={() => {
-          try {
-            saveShow(show);
-          } catch {}
-          checkpoint();
-          cancelQueued();
-          autoEvent('set');
-          show = defaultShow();
-          selectedSurface = 0;
-          bank = 0;
-          void engine?.restore(show);
-          persist();
-          settings = false;
-        }}>Start a fresh set</button
-      >
+      <div class="storage-card" role="group" aria-label="Storage on this device">
+        <span class="eyebrow">STORAGE ON THIS DEVICE</span>
+        {#if storage}
+          <p data-storage-summary>{setList.length} set{setList.length === 1 ? '' : 's'} · {storage.files} imported file{storage.files === 1 ? '' : 's'}, {formatBytes(storage.bytes)}{#if storage.unused.length}{' · '}{storage.unused.length} not used by any set, {formatBytes(storage.unusedBytes)}{/if}</p>
+          {#if mediaConfirm}
+            <div class="confirm-row"><span>Delete {storage.unused.length} unused file{storage.unused.length === 1 ? '' : 's'}? This cannot be undone.</span><button class="danger" data-media-delete-confirm disabled={storageBusy} onclick={deleteUnusedMedia}>Delete</button><button onclick={() => (mediaConfirm = false)}>Cancel</button></div>
+          {:else if storage.unused.length}
+            <button data-media-delete disabled={storageBusy} onclick={() => (mediaConfirm = true)}><Icon name="trash" size={16} />Delete unused media</button>
+          {:else}<p class="hint">Every imported file is used by a saved set.</p>{/if}
+        {:else}<p class="hint">Media storage is not available right now.</p>{/if}
+      </div>
+      {#if freshConfirm}
+        <div class="confirm-row" role="alertdialog" aria-label="Start a fresh set"><span>Start a fresh set? “{show.name}” stays saved on this device.</span><button data-fresh-confirm onclick={startFreshSet}>Start fresh</button><button onclick={() => (freshConfirm = false)}>Cancel</button></div>
+      {:else}
+        <button class="subtle" data-fresh onclick={() => (freshConfirm = true)}>Start a fresh set</button>
+      {/if}
     </div>
   </div>{/if}
 
@@ -2418,6 +2554,15 @@
     background: var(--ga-card);
     border-color: var(--ga-line-2);
   }
+  .scene-slot { position: relative; min-width: 0; }
+  .scene-slot .scene-pad { width: 100%; }
+  .scene-edit {
+    position: absolute; right: 0; top: 0; z-index: 2; width: 44px; height: 44px; min-height: 44px; padding: 0;
+    display: grid; place-items: center; background: transparent; border: 0; box-shadow: none; color: var(--ga-ink-1);
+  }
+  .scene-edit[aria-expanded='true'] { color: var(--ga-selection-ink); }
+  .block-editor { margin-top: 12px; padding: 12px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-soft); background: var(--ga-card); }
+  .block-editor .card-actions button { display: flex; align-items: center; gap: 6px; min-height: 44px; }
   .scene-pad strong {
     font-size: 13px;
   }
@@ -2954,6 +3099,21 @@
   .settings-dialog .field-grid button {
     font-size: 12px;
   }
+  .saved-sets, .storage-card { display: grid; gap: 6px; margin: 16px 0; }
+  .storage-card { padding: 14px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-soft); background: var(--ga-sub); }
+  .storage-card p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ga-ink-1); }
+  .storage-card > button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; }
+  .set-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .set-row button { min-height: 44px; font-size: 12px; }
+  .set-row .set-open { flex: 1; min-width: 0; display: grid; gap: 2px; text-align: left; padding: 6px 10px; }
+  .set-row .set-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .set-row .set-open small { font-size: 10px; color: var(--ga-ink-2); }
+  .set-row.current .set-open { border-color: var(--ga-selection-line); background: var(--ga-selection-bg); opacity: 1; }
+  .set-row input { flex: 1; min-width: 0; min-height: 44px; }
+  .set-confirm { flex: 1; min-width: 0; font-size: 12px; line-height: 1.4; color: var(--ga-ink-0); }
+  .confirm-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; line-height: 1.4; }
+  .confirm-row span { flex: 1 1 180px; min-width: 0; }
+  .confirm-row button { min-height: 44px; }
   .info-card {
     display: flex;
     gap: 14px;

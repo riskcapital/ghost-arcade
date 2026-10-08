@@ -303,7 +303,7 @@ export function loadShow(): Show {
 }
 export function savedSets(): Show[] {
   try {
-    const raw = JSON.parse(localStorage.getItem('ga-mobile-studio-sets-v1') || '[]');
+    const raw = JSON.parse(localStorage.getItem(SETS_KEY) || '[]');
     return Array.isArray(raw)
       ? raw.flatMap((s) => {
           try {
@@ -317,10 +317,53 @@ export function savedSets(): Show[] {
     return [];
   }
 }
-export function saveShow(show: Show) {
+export const SETS_KEY = 'ga-mobile-studio-sets-v1';
+/** Sets kept on the device. Reaching it stops new sets being started; nothing is ever dropped. */
+export const MAX_SAVED_SETS = 24;
+/** Autosave of the set being played. Cheap: one set, no reading back. */
+export function saveCurrentShow(show: Show) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(show));
-  const sets = savedSets().filter((s) => s.id !== show.id);
-  localStorage.setItem('ga-mobile-studio-sets-v1', JSON.stringify([show, ...sets].slice(0, 24)));
+}
+/**
+ * The saved-set list with `show` placed first. Pure, so the list lives in memory and is written
+ * only when it changes. When the list is full and `show` is new it is returned unchanged with
+ * `full` set: the caller tells the performer instead of an older set quietly disappearing.
+ */
+export function upsertSet(bank: Show[], show: Show): { bank: Show[]; full: boolean } {
+  const others = bank.filter((s) => s.id !== show.id);
+  if (others.length === bank.length && bank.length >= MAX_SAVED_SETS) return { bank, full: true };
+  return { bank: [show, ...others], full: false };
+}
+export function removeSet(bank: Show[], id: string): Show[] {
+  return bank.filter((s) => s.id !== id);
+}
+export function renameSet(bank: Show[], id: string, name: string): Show[] {
+  const clean = name.trim().slice(0, 100);
+  return clean ? bank.map((s) => (s.id === id ? { ...s, name: clean } : s)) : bank;
+}
+export function writeSetBank(bank: Show[]) {
+  localStorage.setItem(SETS_KEY, JSON.stringify(bank));
+}
+/** True when a brand-new set could not be kept because the device already holds the maximum. */
+export const setBankFull = (bank: Show[], currentId?: string) => bank.filter((s) => s.id !== currentId).length >= MAX_SAVED_SETS;
+/** One-shot save used on exit paths. Never drops a saved set. */
+export function saveShow(show: Show) {
+  saveCurrentShow(show);
+  const { bank, full } = upsertSet(savedSets(), show);
+  if (!full) writeSetBank(bank);
+}
+/** Every imported-media id still used by a clip in any of these sets. */
+export function referencedAssetIds(shows: Show[]): Set<string> {
+  const ids = new Set<string>();
+  for (const show of shows) for (const clip of show?.clips ?? []) if (clip.assetId) ids.add(clip.assetId);
+  return ids;
+}
+export function renameBlock(show: Show, id: string, name: string): Scene[] {
+  const clean = name.trim().slice(0, 80);
+  return clean ? show.scenes.map((b) => (b.id === id ? { ...b, name: clean } : b)) : show.scenes;
+}
+export function removeBlock(show: Show, id: string): Pick<Show, 'scenes' | 'activeBlockId'> {
+  return { scenes: show.scenes.filter((b) => b.id !== id), activeBlockId: show.activeBlockId === id ? undefined : show.activeBlockId };
 }
 export function layerGain(show: Show, index: number) {
   const l = show.layers[index];
@@ -373,6 +416,10 @@ export class History {
   }
   get canRedo() {
     return !!this.future.length;
+  }
+  /** Every state undo or redo could bring back, so their media is not treated as unused. */
+  get states(): Show[] {
+    return [...this.past, ...this.future];
   }
 }
 
