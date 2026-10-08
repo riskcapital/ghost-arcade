@@ -26,11 +26,12 @@ export const stepClipAudio = {
     }
     const before = corePids(t);
     const item = "[...document.querySelectorAll('.media-item')].find(e=>e.textContent.includes('g2-tone-clip'))";
+    // Drop on the Vid tab's own list. Dropped over a tile of another tab (the
+    // shader list after step g) the file is not imported.
+    await c.clickElement("[...document.querySelectorAll('.media-tray .tab, .tab')].find(b=>/^Vid/.test(b.textContent.trim()))");
+    await sleep(300);
     await dropFile(c, "document.querySelector('.media-content[aria-label=\"Media drop zone\"]')", clip);
-    if (!(await c.waitFor(`!!(${item})`, 30000, 'clip in the media library').catch(() => false))) {
-      await c.clickElement("[...document.querySelectorAll('.media-tray .tab, .tab')].find(b=>/^Vid/.test(b.textContent.trim()))");
-      await c.waitFor(`!!(${item})`, 90000, 'clip under the Vid tab');
-    }
+    await c.waitFor(`!!(${item})`, 90000, 'clip under the Vid tab');
     await c.clickElement(el.byTitle('Select layer 2 on Deck A'));
     await c.clickElement(item);
     const cell = "[...document.querySelectorAll('.clip-cell.has-clip')].find(e=>e.textContent.includes('g2-tone-clip'))";
