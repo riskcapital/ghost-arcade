@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B10000000000000000000005 /* StudioLiveCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* StudioLiveCapture.swift */; };
+		B10000000000000000000003 /* DualCameraViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* DualCameraViewController.swift */; };
+		B10000000000000000000002 /* ScanViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ScanViewController.swift */; };
+		B10000000000000000000001 /* StudioCapturePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* StudioCapturePlugin.swift */; };
+		B10000000000000000000000 /* ScanCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000000 /* ScanCore.swift */; };
+		A83333333333333333333333 /* ExternalOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A84444444444444444444444 /* ExternalOutput.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
@@ -19,6 +25,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B20000000000000000000005 /* StudioLiveCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLiveCapture.swift; sourceTree = "<group>"; };
+		B20000000000000000000003 /* DualCameraViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraViewController.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* ScanViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanViewController.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* StudioCapturePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioCapturePlugin.swift; sourceTree = "<group>"; };
+		B20000000000000000000000 /* ScanCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanCore.swift; sourceTree = "<group>"; };
+		A84444444444444444444444 /* ExternalOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalOutput.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -77,6 +89,12 @@
 			children = (
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
+				A84444444444444444444444 /* ExternalOutput.swift */,
+				B20000000000000000000005 /* StudioLiveCapture.swift */,
+				B20000000000000000000003 /* DualCameraViewController.swift */,
+				B20000000000000000000002 /* ScanViewController.swift */,
+				B20000000000000000000001 /* StudioCapturePlugin.swift */,
+				B20000000000000000000000 /* ScanCore.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -214,6 +232,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				A83333333333333333333333 /* ExternalOutput.swift in Sources */,
+				B10000000000000000000005 /* StudioLiveCapture.swift in Sources */,
+				B10000000000000000000003 /* DualCameraViewController.swift in Sources */,
+				B10000000000000000000002 /* ScanViewController.swift in Sources */,
+				B10000000000000000000001 /* StudioCapturePlugin.swift in Sources */,
+				B10000000000000000000000 /* ScanCore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -352,7 +376,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = VM2BVNY795;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -373,7 +397,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = VM2BVNY795;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;

@@ -3,9 +3,12 @@ const config = {
   appName: 'Ghost Arcade',
   webDir: '../dist-native-mobile',
   ios: {
-    contentInset: 'always',
+    contentInset: 'never',
     limitsNavigationsToAppBoundDomains: false,
     backgroundColor: '#000000',
+  },
+  plugins: {
+    SystemBars: { style: 'DARK' },
   },
   android: {
     backgroundColor: '#000000',

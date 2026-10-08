@@ -59,13 +59,13 @@
       showLeds={true}
       ledCount={8}
     />
-    <select class="blend-select" value={blendMode} on:change={handleBlendChange}>
+    <select aria-label={`Layer ${layerIndex + 1} blend mode`} class="blend-select" value={blendMode} on:change={handleBlendChange}>
       {#each blendModes as mode}
         <option value={mode}>{mode}</option>
       {/each}
     </select>
     <button
-      class="stop-btn"
+      aria-label={`Stop layer ${layerIndex + 1}`} class="stop-btn"
       class:playing={isPlaying}
       on:click={() => onStopLayer(layerIndex)}
       disabled={!isPlaying}
@@ -89,13 +89,13 @@
         ledCount={8}
       />
     </div>
-    <select class="blend-select-h" value={blendMode} on:change={handleBlendChange}>
+    <select aria-label={`Layer ${layerIndex + 1} blend mode`} class="blend-select-h" value={blendMode} on:change={handleBlendChange}>
       {#each blendModes as mode}
-        <option value={mode}>{mode.slice(0, 6)}</option>
+        <option value={mode}>{mode}</option>
       {/each}
     </select>
     <button
-      class="stop-btn-h"
+      aria-label={`Stop layer ${layerIndex + 1}`} class="stop-btn-h"
       class:playing={isPlaying}
       on:click={() => onStopLayer(layerIndex)}
       disabled={!isPlaying}

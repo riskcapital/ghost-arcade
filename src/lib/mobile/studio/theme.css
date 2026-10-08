@@ -1,0 +1,30 @@
+/* Mobile shares the desktop Arcade theme tokens, but owns its touch layout. */
+@font-face {
+  font-family: 'Satoshi';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('/fonts/satoshi.woff2') format('woff2');
+}
+:root {
+  color-scheme: dark;
+  --ga-selection-bg: #172a5b;
+  --ga-selection-line: #3d59b8;
+  --ga-selection-ink: #e0e8ff;
+  --ga-focus: #7996ff;
+}
+
+/* Desktop Arcade faceplate and hardware finishes, shared by all mobile panels. */
+:root {
+  --ga-slider-fill: #2f4ad6;
+  --ga-slider-glow: rgba(58, 88, 230, .55);
+  --ga-faceplate-bg:
+    linear-gradient(180deg, rgba(255,255,255,.030), transparent 3px),
+    repeating-linear-gradient(180deg, rgba(255,255,255,.014) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, var(--ga-card), var(--ga-void));
+  --ga-inspector-bg:
+    repeating-linear-gradient(180deg, rgba(255,255,255,.010) 0 1px, transparent 1px 3px),
+    var(--ga-panel);
+  --ga-hardware-bg: linear-gradient(180deg, var(--ga-raise), var(--ga-bar));
+  --ga-hardware-shadow: inset 0 1px 0 var(--ga-metal-hi), 0 1px 2px rgba(0,0,0,.45);
+}

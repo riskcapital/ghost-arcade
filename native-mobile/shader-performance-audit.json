@@ -1,0 +1,310 @@
+{
+  "method": "Static code cost: high/extreme excluded, comments ignored",
+  "retained": 318,
+  "excluded": [
+    {
+      "path": "ISF/51_SacredGeometryCathedral.fs",
+      "level": "high",
+      "score": 36,
+      "hints": [
+        "large shader source",
+        "many loops",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/52_ChaoticOrbitalMesh.fs",
+      "level": "high",
+      "score": 26,
+      "hints": [
+        "large shader source",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/AR-GeodesicBloom.fs",
+      "level": "high",
+      "score": 37,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/AR-MobiusStrip.fs",
+      "level": "high",
+      "score": 37,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/AR-WaveformHelix.fs",
+      "level": "high",
+      "score": 37,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/GA-GhostFX.fs",
+      "level": "extreme",
+      "score": 42,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "many loops",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/InfiniteGrid.fs",
+      "level": "high",
+      "score": 30,
+      "hints": [
+        "large shader source",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/MirrorRealm.fs",
+      "level": "high",
+      "score": 26,
+      "hints": [
+        "large shader source"
+      ]
+    },
+    {
+      "path": "ISF/OssiferousRadiolaria.fs",
+      "level": "high",
+      "score": 32,
+      "hints": [
+        "large shader source",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/PrismaticVoid.fs",
+      "level": "high",
+      "score": 26,
+      "hints": [
+        "large shader source"
+      ]
+    },
+    {
+      "path": "ISF/QuantumLattice.fs",
+      "level": "high",
+      "score": 26,
+      "hints": [
+        "large shader source"
+      ]
+    },
+    {
+      "path": "ISF/SM-ElectricFence.fs",
+      "level": "high",
+      "score": 26,
+      "hints": [
+        "large shader source"
+      ]
+    },
+    {
+      "path": "ISF/SM-RicochetLaser.fs",
+      "level": "high",
+      "score": 26,
+      "hints": [
+        "large shader source"
+      ]
+    },
+    {
+      "path": "ISF/SolLeWittCubes.fs",
+      "level": "high",
+      "score": 36,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern"
+      ]
+    },
+    {
+      "path": "ISF/ThreeBody.fs",
+      "level": "extreme",
+      "score": 54,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/VoronoiWarpDrive.fs",
+      "level": "high",
+      "score": 26,
+      "hints": [
+        "large shader source"
+      ]
+    },
+    {
+      "path": "ISF/crystal-dimension.fs",
+      "level": "extreme",
+      "score": 41,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_01_SphereCluster.fs",
+      "level": "high",
+      "score": 30,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_02_ChromeSpheres.fs",
+      "level": "high",
+      "score": 37,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_03_WireframeGeo.fs",
+      "level": "extreme",
+      "score": 45,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_04_CubeField.fs",
+      "level": "high",
+      "score": 37,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_05_NeonCubes.fs",
+      "level": "extreme",
+      "score": 41,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_08_OrganicSculpt.fs",
+      "level": "high",
+      "score": 33,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_11_InfiniteHall.fs",
+      "level": "high",
+      "score": 33,
+      "hints": [
+        "large shader source",
+        "raymarch/long-step loop pattern"
+      ]
+    },
+    {
+      "path": "ISF/fractal-dimension-supreme.fs",
+      "level": "extreme",
+      "score": 54,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/fractal-tunnel-cosmos.fs",
+      "level": "high",
+      "score": 36,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/mega-blob-fusion.fs",
+      "level": "extreme",
+      "score": 49,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/organic-dimension.fs",
+      "level": "extreme",
+      "score": 60,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "many loops",
+        "raymarch/long-step loop pattern",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/psychedelic-noise-flow.fs",
+      "level": "high",
+      "score": 32,
+      "hints": [
+        "large shader source",
+        "heavy branching"
+      ]
+    },
+    {
+      "path": "ISF/quantum-grids.fs",
+      "level": "extreme",
+      "score": 42,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "many loops",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/tron-organic-fusion.fs",
+      "level": "high",
+      "score": 27,
+      "hints": [
+        "large shader source",
+        "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/wireframe-mesh-3d.fs",
+      "level": "high",
+      "score": 31,
+      "hints": [
+        "large shader source",
+        "heavy branching",
+        "heavy transcendental math"
+      ]
+    }
+  ]
+}

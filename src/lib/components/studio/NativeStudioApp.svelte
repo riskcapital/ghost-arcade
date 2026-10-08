@@ -1,0 +1,16 @@
+<script lang="ts">
+ import {onMount} from 'svelte';
+
+ import MobileStudio from './MobileStudio.svelte';
+ import MobileApp from '../MobileApp.svelte';
+ import {parseCompanionLink} from '../../mobile/studio/companionLink';
+ let remote=false,dialog=false,scanning=false,link='',draft='',error='';
+ async function scan(){scanning=true;error='';try{if(cap?.getPlatform?.()!=='ios')throw new Error('Use your camera to scan the desktop QR, or paste its pairing link below. In-app scanning is currently available on iPhone and iPad.');const result=await cap.nativePromise('StudioCapture','scanPairingCode',{});if(result.url)open(result.url);}catch(e){error=e instanceof Error?e.message:'Could not open camera.';}finally{scanning=false;}}
+ const cap=(window as any).Capacitor;
+ const native=()=>['ios','android'].includes(cap?.getPlatform?.());
+ function open(raw:string){try{link=parseCompanionLink(raw);remote=true;dialog=false;error='';}catch(e){error=e instanceof Error?e.message:'Invalid pairing link';dialog=true;}}
+ onMount(()=>{let disposed=false,busy=false;const poll=async()=>{if(busy||disposed||!native())return;busy=true;try{const result=await cap.nativePromise(cap.getPlatform()==='ios'?'StudioCapture':'CompanionLink','takePairingLink',{});if(!disposed&&result.url)open(result.url);}catch{}finally{busy=false;}};void poll();const timer=setInterval(poll,1200);return()=>{disposed=true;clearInterval(timer);};});
+</script>
+{#if remote}{#key link}<MobileApp nativeShell pairingLink={link} onExit={()=>remote=false}/>{/key}{:else}<MobileStudio oncompanion={()=>dialog=true}/>{/if}
+{#if dialog}<div class="backdrop"><div class="pair-panel" role="dialog" tabindex="-1" aria-modal="true" aria-label="Desktop Companion"><header><h2>Desktop Connect</h2><button onclick={()=>dialog=false} aria-label="Close companion setup">×</button></header><p>On your desktop, open Connect Mobile → App Connect. Keep both devices on the same Wi-Fi network.</p><button class="connect" disabled={scanning} onclick={scan}>{scanning?"Scanner open…":"Scan desktop QR"}</button><p>Or paste the desktop pairing link below.</p><label>Pairing link<input type="url" bind:value={draft} placeholder="Paste desktop pairing link" autocapitalize="off" autocomplete="off" spellcheck="false"/></label>{#if error}<p role="alert">{error}</p>{/if}<button class="connect" disabled={!draft.trim()} onclick={()=>open(draft)}>Connect to desktop</button><small>Your standalone set stays saved. Desktop mode controls the desktop’s show.</small></div></div>{/if}
+<style>.backdrop{position:fixed;inset:0;z-index:200;background:#000b;display:grid;place-items:center;padding:20px}.pair-panel{max-width:480px;padding:24px;background:var(--ga-inspector-bg);border:1px solid var(--ga-line-3);border-radius:12px;color:var(--ga-ink-0);font:14px system-ui}header{display:flex;align-items:center;justify-content:space-between}h2{font-size:18px}p{line-height:1.5;color:var(--ga-ink-1)}label{display:grid;gap:8px}input,button{font:inherit;color:inherit;background:var(--ga-slot);border:1px solid var(--ga-line-3);border-radius:5px;min-height:44px;padding:8px}input{min-width:0}.connect{width:100%;margin:16px 0;background:var(--ga-selection-bg)}small{display:block;color:var(--ga-ink-2);line-height:1.5}</style>

@@ -6,6 +6,7 @@
     "src/lib/components/MobileApp.svelte",
     "src/lib/components/MobileModeSelect.svelte",
     "src/lib/components/StandaloneApp.svelte",
+    "src/lib/components/studio/**/*.svelte",
     "src/lib/components/StandaloneProjectionMap.svelte",
     "src/lib/components/StandaloneShaderPicker.svelte",
     "src/lib/components/mobile/**/*.svelte",

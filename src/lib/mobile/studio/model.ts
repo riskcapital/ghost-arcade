@@ -1,0 +1,344 @@
+import { normalizeCrossfade, type CrossfadeSettings } from './crossfade';
+import {standaloneShaderPaths} from './shaderAvailability';
+import {normalizePaint,type PaintConfig} from './paint';
+import type { LookConfig } from './looks/types';
+import { EDGE_LOOKS } from './looks/edgeLookCatalog';
+import { MOBILE_EDGE_STROKES, MOBILE_EDGE_FILLS } from './looks/renderer';
+import { MOBILE_SHADERS } from '../standaloneShaderList';
+import { MOBILE_EFFECTS, type MobileEffectInstance } from '../standaloneEffects';
+export type Point = { x: number; y: number };
+export type EffectChain = (MobileEffectInstance & { id: string })[];
+export type Clip = {
+  effects?: EffectChain;
+  id: string;
+  name: string;
+  kind: 'shader' | 'video' | 'image' | 'camera' | 'depth';
+  facing?: 'user'|'environment';
+  shaderId?: string;
+  assetId?: string;
+  thumbnail?: string;
+};
+export type Layer = {
+  solo?: boolean;
+  look?: LookConfig;
+  id: string;
+  name: string;
+  clipId: string | null;
+  enabled: boolean;
+  opacity: number;
+  fit: 'stretch' | 'contain' | 'fill';
+  blend: 'normal' | 'add' | 'screen' | 'multiply' | 'difference';
+  speed: number;
+  intensity: number;
+  params: Record<string, number | boolean | number[]>;
+  effects: (MobileEffectInstance & { id: string })[];
+};
+export type Surface = {
+  look?: LookConfig;
+  id: string;
+  name: string;
+  source: number | 'mix';
+  enabled: boolean;
+  locked: boolean;
+  fit: 'stretch' | 'contain' | 'fill';
+  feather: number;
+  mode: 'corners' | 'mesh';
+  points: Point[];
+};
+export type Scene = { launchGrid?: (string|null)[][]; clipEffects?: Record<string, EffectChain>; effects?: EffectChain; id: string; name: string; layers: Layer[]; crossfade: number; dualDeck?: boolean };
+export type Show = {
+  paint?:PaintConfig;
+  activeBlockId?: string;
+  effects: EffectChain;
+  version: 1;
+  id: string;
+  name: string;
+  clips: Clip[];
+  layers: Layer[];
+  surfaces: Surface[];
+  scenes: Scene[];
+  bpm: number;
+  quantize: boolean;
+  crossfade: number;
+  crossfadeSettings?: CrossfadeSettings;
+  dualDeck: boolean;
+  launchGrid: (string | null)[][];
+  master: number;
+  quality: 540 | 720 | 1080;
+  mapping: boolean;
+};
+export const uid = () => crypto.randomUUID();
+export const clamp = (v: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : lo));
+export const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v));
+export const shaderThumbnail = (id: string) => {
+  const s = MOBILE_SHADERS.find((s) => s.id === id);
+  return s
+    ? `${import.meta.env.BASE_URL}ISF/thumbnails/${s.path
+        .replace(/^ISF\//, '')
+        .replace(/\.fs$/, '')
+        .replaceAll('/', '_')}.jpg`
+    : '';
+};
+export function gridPoints(x = 0.08, y = 0.08, w = 0.84, h = 0.84): Point[] {
+  return Array.from({ length: 9 }, (_, i) => ({ x: x + ((i % 3) * w) / 2, y: y + (Math.floor(i / 3) * h) / 2 }));
+}
+export function newSurface(index: number): Surface {
+  return {
+    id: uid(),
+    name: `Surface ${index + 1}`,
+    source: 'mix',
+    enabled: true,
+    locked: false,
+    fit: 'stretch',
+    feather: 0,
+    mode: 'corners',
+    points: gridPoints(),
+  };
+}
+export function defaultShow(): Show {
+  const featured=['lumenstrata','lumenveil','murmur','prism','pulse','quantumchamber','sentinels','tendril','tide','chrysalis','crystallon','dispersion','drift','aurora','chladniplate'].map(n=>'featured-'+n);
+  const preferred=['ga-ghostfx','dm-plasma-flow','room-ember-drift','dm-kaleidoscope','dm-liquid-metal','dm-tunnel','room-cosmic-nebula','ar-frequency-rings','sm-fireflies','dm-neon-lines','ar-spectral-aurora','sm-lava-lamp-blobs','room-aurora-curtains'];
+  const performanceShader=(shader:typeof MOBILE_SHADERS[number])=>!shader.requiresImage&&standaloneShaderPaths.has(shader.path)&&!/(test.?pattern|test.?bars|safe.?area|uv.?grid|grid.?matrix|solid.?color|calibrat|checker)/i.test(shader.id+' '+shader.path);
+  const eligible=MOBILE_SHADERS.filter(performanceShader);
+  const ids=[...featured,...preferred].filter(id=>eligible.some(s=>s.id===id));
+  for(const shader of eligible)if(ids.length<64&&!ids.includes(shader.id))ids.push(shader.id);
+  // Deliberate opening rows on both decks, not catalog-order utility shaders.
+  const rows=Array.from({length:8},(_,row)=>Array.from({length:8},(_,col)=>ids[(row*8+col)%ids.length]));
+  const curateRow=(priorities:string[])=>[...new Set([...priorities.filter(id=>ids.includes(id)),...ids])].slice(0,8);
+  rows[0]=curateRow(featured.slice(0,8));
+  rows[4]=curateRow([...featured.slice(8),'ga-ghostfx']);
+  return {
+    version: 1,
+    id: uid(),
+    name: 'Untitled set',
+    clips: ids.map((id) => ({ id, shaderId: id, name: MOBILE_SHADERS.find((s) => s.id === id)!.name, kind: 'shader' })),
+    layers: Array.from({ length: 8 }, (_, i) => ({
+      id: `layer-${i}`,
+      name: `Layer ${i + 1}`,
+      clipId: i === 0 ? rows[0][0] : i === 4 ? rows[4][0] : null,
+      enabled: true,
+      opacity: 1,
+      fit: 'contain',
+      blend: 'normal',
+      speed: 1,
+      intensity: 1,
+      params: {},
+      effects: [],
+    })),
+    surfaces: [newSurface(0)],
+    scenes: [],
+    effects: [],
+    bpm: 120,
+    quantize: false,
+    crossfade: 0,
+    crossfadeSettings: normalizeCrossfade(),
+    dualDeck: false,
+    launchGrid: rows,
+    master: 1,
+    quality: 720,
+    mapping: false,
+  };
+}
+export function normalizeShow(raw: unknown): Show {
+  let r = raw as Show;
+  if (!r || r.version !== 1 || !Array.isArray(r.layers) || !Array.isArray(r.clips) || !Array.isArray(r.surfaces))
+    throw new Error('This is not a Ghost Arcade mobile set.');
+  const base = defaultShow();
+  // Before the explicit deck toggle, saved sets always used A/B routing.
+  // New sets store false explicitly; preserve the mix for those legacy files.
+  r={...r,dualDeck:r.dualDeck===undefined?true:!!r.dualDeck};
+  // Older dual sets used A1/A2/B1/B2. Preserve B in the expanded second deck.
+  if(r.layers.length===4&&r.dualDeck){
+    const expand=<T>(items:T[],empty:()=>T)=>[items[0],items[1],empty(),empty(),items[2],items[3],empty(),empty()];
+    r={...r,layers:expand(r.layers,()=>({...base.layers[2],clipId:null})),launchGrid:expand(r.launchGrid??[[],[],[],[]],()=>[]),
+      surfaces:r.surfaces.map(s=>({...s,source:s.source==='mix'?'mix':s.source%2})),
+      scenes:(r.scenes??[]).map(s=>s.layers?.length===4?{...s,layers:expand(s.layers,()=>({...base.layers[2],clipId:null})),launchGrid:expand(s.launchGrid??[[],[],[],[]],()=>[])}:s)};
+  }
+  // Fill only the untouched original demo; never overwrite custom clip grids.
+  const oldDemo=['dm-plasma-flow','room-ember-drift','dm-kaleidoscope','dm-liquid-metal','dm-tunnel','room-cosmic-nebula','ar-frequency-rings','sm-fireflies','dm-neon-lines','ar-spectral-aurora','sm-lava-lamp-blobs','room-aurora-curtains'];
+  if(!r.dualDeck&&r.clips.length===12&&r.clips.every(c=>oldDemo.includes(c.id))&&r.launchGrid?.length===4&&r.launchGrid.every((row,i)=>row.slice(0,3).every((id,j)=>id===oldDemo[i*3+j])&&row.slice(3).every(id=>!id))){
+    const grid=base.launchGrid.map(row=>[...row]);for(let i=0;i<4;i++)for(let j=0;j<3;j++)grid[i][j]=r.launchGrid[i][j];
+    r={...r,clips:[...r.clips,...base.clips.filter(c=>!r.clips.some(old=>old.id===c.id))],launchGrid:grid};
+  }
+  const clips = r.clips
+    .filter((c) => c && typeof c.id === 'string' && ['shader', 'image', 'video','camera','depth'].includes(c.kind))
+    .slice(0, 2048)
+    .map((c) => ({ ...c, effects: normalizeEffects(c.effects), name: String(c.name || 'Untitled clip').slice(0, 100) }));
+  const layers = (items: Layer[]) =>
+    base.layers.map((b, i) => {
+      const l = items?.[i];
+      if (!l) return b;
+      return {
+        ...b,
+        solo: !!l.solo,
+        clipId: clips.some((c) => c.id === l.clipId) ? l.clipId : null,
+        enabled: l.enabled !== false,
+        opacity: clamp(l.opacity),
+        fit: ['stretch', 'contain', 'fill'].includes(l.fit) ? l.fit : 'contain',
+        speed: clamp(l.speed, 0, 3),
+        intensity: clamp(l.intensity, 0, 2),
+        blend: ['normal', 'add', 'screen', 'multiply', 'difference'].includes(l.blend) ? l.blend : 'normal',
+        params: l.params && typeof l.params === 'object' ? l.params : {},
+        effects: normalizeEffects(l.effects),
+      } as Layer;
+    });
+  return {
+    ...base,
+    id: typeof r.id === 'string' ? r.id : base.id,
+    name: String(r.name || base.name).slice(0, 100),
+    clips,
+    effects: normalizeEffects(r.effects),
+    layers: layers(r.layers),
+    surfaces: r.surfaces
+      .slice(0, 16)
+      .map((s, i) => ({
+        ...newSurface(i),
+        id: String(s.id || uid()),
+        name: String(s.name || `Surface ${i + 1}`).slice(0, 80),
+        source: s.source === 'mix' ? 'mix' : clamp(Math.round(Number(s.source)), 0, 3),
+        enabled: s.enabled !== false,
+        locked: !!s.locked,
+        fit: ['stretch', 'contain', 'fill'].includes(s.fit) ? s.fit : 'stretch',
+        feather: clamp(s.feather, 0, 0.4),
+        look: normalizeLook(s.look ?? (s.source === 'mix' ? r.layers.find(l=>l?.look?.enabled)?.look : r.layers[Number(s.source)]?.look)),
+        mode: s.mode === 'mesh' ? 'mesh' : 'corners',
+        points:
+          Array.isArray(s.points) && s.points.length === 9
+            ? s.points.map((p) => ({ x: clamp(p.x, -0.5, 1.5), y: clamp(p.y, -0.5, 1.5) }))
+            : gridPoints(),
+      })),
+    activeBlockId: typeof r.activeBlockId==='string' && r.scenes?.some(s=>s.id===r.activeBlockId) ? r.activeBlockId : undefined,
+    scenes: (Array.isArray(r.scenes) ? r.scenes : [])
+      .slice(0, 16)
+      .map((s) => ({
+        id: String(s.id || uid()),
+        name: String(s.name || 'Block').replace(/^Scene /,'Block ').slice(0, 80),
+        launchGrid: Array.from({length:8},(_,row)=>Array.from({length:Math.max(4,Math.min(48,s.launchGrid?.[row]?.length||4))},(_,col)=>{const id=s.launchGrid?.[row]?.[col] ?? (!s.launchGrid&&col===0?s.layers?.[row]?.clipId:null);return clips.some(c=>c.id===id)?id!:null;})),
+        layers: layers(s.layers),
+        clipEffects: s.clipEffects ? Object.fromEntries(Object.entries(s.clipEffects).filter(([id])=>clips.some(c=>c.id===id)).map(([id,fx])=>[id,normalizeEffects(fx)])) : undefined,
+        effects: normalizeEffects(s.effects),
+        crossfade: clamp(s.crossfade),
+        dualDeck: s.dualDeck === undefined ? true : !!s.dualDeck,
+      })),
+    bpm: clamp(r.bpm, 30, 240),
+    quantize: !!r.quantize,
+    crossfade: clamp(r.crossfade),
+    crossfadeSettings: normalizeCrossfade(r.crossfadeSettings),
+    dualDeck: r.dualDeck === undefined ? false : !!r.dualDeck,
+    launchGrid: Array.from({ length: 8 }, (_, row) => {
+      const saved = r.launchGrid?.[row];
+      if (Array.isArray(saved)) return Array.from({ length: Math.max(4, Math.min(48, saved.length)) }, (_, col) => clips.some(c => c.id === saved[col]) ? saved[col] : null);
+      // Preserve old active sources; distribute the former shared bank across rows.
+      const rowClips = clips.filter((_, i) => i % 8 === row).map(c => c.id);
+      const active = r.layers[row]?.clipId;
+      if (active && clips.some(c => c.id === active) && !rowClips.includes(active)) rowClips.unshift(active);
+      return Array.from({ length: Math.max(4, Math.min(48, rowClips.length)) }, (_, col) => rowClips[col] ?? null);
+    }),
+    master: clamp(r.master),
+    quality: [540, 720, 1080].includes(r.quality) ? r.quality : 720,
+    mapping: !!r.mapping,
+    paint: normalizePaint(r.paint),
+  };
+}
+export const STORAGE_KEY = 'ga-mobile-studio-v1';
+export function loadShow(): Show {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) return normalizeShow(JSON.parse(saved));
+  } catch {
+    /* preserve old data; start a new set */
+  }
+  return defaultShow();
+}
+export function savedSets(): Show[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem('ga-mobile-studio-sets-v1') || '[]');
+    return Array.isArray(raw)
+      ? raw.flatMap((s) => {
+          try {
+            return [normalizeShow(s)];
+          } catch {
+            return [];
+          }
+        })
+      : [];
+  } catch {
+    return [];
+  }
+}
+export function saveShow(show: Show) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(show));
+  const sets = savedSets().filter((s) => s.id !== show.id);
+  localStorage.setItem('ga-mobile-studio-sets-v1', JSON.stringify([show, ...sets].slice(0, 24)));
+}
+export function layerGain(show: Show, index: number) {
+  const l = show.layers[index];
+  const deck = show.dualDeck ? (index < 4 ? 1 - show.crossfade : show.crossfade) : index<4?1:0;
+  return baseLayerGain(show,index) * deck;
+}
+export function nextBeat(now: number, origin: number, bpm: number): number {
+  const duration = 60000 / clamp(bpm, 30, 240);
+  return origin + (Math.floor((now - origin) / duration) + 1) * duration;
+}
+/** Interpolate the control lattice when editing a corner, retaining a coherent quad. */
+export function movePoint(surface: Surface, index: number, point: Point): Surface {
+  const s = copy(surface);
+  s.points[index] = { x: clamp(point.x, -0.5, 1.5), y: clamp(point.y, -0.5, 1.5) };
+  if (s.mode === 'corners') {
+    const [a, b, c, d] = [s.points[0], s.points[2], s.points[8], s.points[6]];
+    s.points = Array.from({ length: 9 }, (_, i) => {
+      const u = (i % 3) / 2,
+        v = Math.floor(i / 3) / 2;
+      return {
+        x: a.x * (1 - u) * (1 - v) + b.x * u * (1 - v) + c.x * u * v + d.x * (1 - u) * v,
+        y: a.y * (1 - u) * (1 - v) + b.y * u * (1 - v) + c.y * u * v + d.y * (1 - u) * v,
+      };
+    });
+  }
+  return s;
+}
+export class History {
+  private past: Show[] = [];
+  private future: Show[] = [];
+  push(show: Show) {
+    this.past.push(copy(show));
+    if (this.past.length > 40) this.past.shift();
+    this.future = [];
+  }
+  undo(current: Show): Show | null {
+    const s = this.past.pop();
+    if (!s) return null;
+    this.future.push(copy(current));
+    return s;
+  }
+  redo(current: Show): Show | null {
+    const s = this.future.pop();
+    if (!s) return null;
+    this.past.push(copy(current));
+    return s;
+  }
+  get canUndo() {
+    return !!this.past.length;
+  }
+  get canRedo() {
+    return !!this.future.length;
+  }
+}
+
+export function normalizeLook(value: LookConfig | undefined): LookConfig | undefined {
+ if(!value || !(value.id === 'custom' || EDGE_LOOKS.some(l => l.id === value.id))) return undefined;
+ return {id:value.id,palette:String(value.palette||'neon'),enabled:value.enabled!==false,amount:clamp(value.amount ?? 1),speed:clamp(value.speed ?? 1,0,3),width:clamp(value.width ?? 1,.25,4),stroke:MOBILE_EDGE_STROKES.includes(value.stroke||'')?value.stroke:undefined,fill:MOBILE_EDGE_FILLS.includes(value.fill||'')?value.fill:undefined};
+}
+/** Screen row assignments follow the corresponding row across both decks. */
+export function mappingRows(source: number, dualDeck: boolean): number[] {
+ return dualDeck ? [source % 4, source % 4 + 4] : [source];
+}
+
+export function baseLayerGain(show: Show,index:number):number {
+ const l=show.layers[index];
+ const rows=show.layers.slice(show.dualDeck&&index>=4?4:0,show.dualDeck&&index>=4?8:4);
+ return !!l?.enabled && (show.dualDeck||index<4) && (!rows.some(row=>row.solo) || l.solo) ? l.opacity : 0;
+}
+export function normalizeEffects(effects:EffectChain|undefined):EffectChain {
+ return (Array.isArray(effects)?effects:[]).filter(e=>e && MOBILE_EFFECTS.some(d=>d.type===e.type&&!d.internal)).slice(0,8).map(e=>({...e,id:typeof e.id==='string'?e.id:uid(),enabled:e.enabled!==false,params:e.params&&typeof e.params==='object'?e.params:{}}));
+}

@@ -1,0 +1,3342 @@
+<script lang="ts">
+  import {ghostMovements} from '../../mobile/studio/ghostFXMotion';
+  export let oncompanion:()=>void=()=>{};
+  import PaintPad from './PaintPad.svelte';
+  import PaintPanel from './PaintPanel.svelte';
+  import {defaultPaint,type PaintConfig,type PaintStroke} from '../../mobile/studio/paint';
+  let tablet=false;
+  let mappingTool:'edit'|'paint'='edit';
+  $: paint=show.paint??defaultPaint();
+  function patchPaint(patch:Partial<PaintConfig>){show.paint={...paint,...patch};persist();}
+  function startStroke(stroke:PaintStroke){
+    checkpoint();
+    show.paint={...paint,strokes:[...paint.strokes,stroke].slice(-64)};
+    show={...show};
+  }
+  function finishStroke(){if(show.paint)show.paint={...show.paint,strokes:show.paint.strokes.filter(s=>s.samples.length)};persist();}
+  function paintMode(){
+    if(!show.surfaces.length)addSurface();
+    show.mapping=true;mappingTool='paint';persist();
+  }
+
+  import {touchSliders} from '../../mobile/studio/touchSliders';
+  import '../../mobile/studio/touchSliders.css';
+  import {nextAutoClip,varyAutoParams} from '../../mobile/studio/autopilot';
+  let autoOn=false,autoSettings=false,autoClips=true,autoParams=true,autoRandom=false;
+  let autoInterval=16,autoVariation=.12,autoRows=Array(8).fill(true);
+  let autoNext=0,autoParamNext=0,autoLast=-1,autoEpoch=0;
+  let autoJobs=new Map<number,{clip:Clip;ready:boolean}>();
+  function stopAuto(){
+    autoOn=false;autoEpoch++;
+    for(const row of autoJobs.keys())engine?.cancelPrepared(row);
+    autoJobs.clear();
+  }
+  function startAuto(){
+    stopAuto();checkpoint();autoOn=true;
+    const b=(performance.now()-clockOrigin)*show.bpm/60000;
+    autoNext=Math.floor(b)+autoInterval;autoParamNext=Math.floor(b)+4;autoLast=b;
+  }
+  function autoTick(now:number){
+    if(!autoOn||!engine)return;
+    const autoEngine=engine;
+    const b=(now-clockOrigin)*show.bpm/60000;
+    if(document.hidden||frozen||b<autoLast||b-autoLast>2){
+      for(const row of autoJobs.keys())engine.cancelPrepared(row);
+      autoJobs.clear();autoEpoch++;autoNext=Math.floor(b)+autoInterval;autoParamNext=Math.floor(b)+4;autoLast=b;return;
+    }
+    autoLast=b;
+    if(autoClips&&b>=autoNext-1&&b<autoNext&&autoJobs.size===0){
+      const epoch=autoEpoch;
+      show.layers.forEach((l,row)=>{
+        if((!show.dualDeck&&row>=4)||!autoRows[row]||!l.enabled||loading[row]||pending[row])return;
+        // Leave live camera sources under manual control.
+        if(['camera','depth'].includes(show.clips.find(c=>c.id===l.clipId)?.kind??''))return;
+        const clip=nextAutoClip(show,row,autoRandom);if(!clip)return;
+        const job={clip,ready:false};autoJobs.set(row,job);
+        void autoEngine.prepare(row,clip).then(ok=>{if(epoch===autoEpoch&&autoJobs.get(row)===job)job.ready=ok;}).catch(e=>{if(epoch===autoEpoch)error=e instanceof Error?e.message:'Autopilot could not prepare a clip.';});
+      });
+    }
+    if(b>=autoNext){
+      for(const [row,job] of autoJobs){if(job.ready&&!loading[row]&&!pending[row])void launch(job.clip,row,true);else engine.cancelPrepared(row);}
+      autoJobs.clear();autoNext=Math.floor(b)+autoInterval;
+    }
+    if(b>=autoParamNext){
+      if(autoParams){
+        show.layers=show.layers.map((l,row)=>autoRows[row]&&l.enabled&&show.clips.find(c=>c.id===l.clipId)?.kind==='shader'
+          ?{...l,params:varyAutoParams(autoEngine.parameters(row),l.params,autoVariation)}:l);
+        persist();
+      }
+      autoParamNext=Math.floor(b)+4;
+    }
+  }
+
+  import {stopNativeFeeds,hasNativeLive} from '../../mobile/studio/nativeLive';
+  import {releaseCamerasForToolkit} from '../../mobile/studio/camera';
+  import CameraFxPanel from './CameraFxPanel.svelte';
+  import CaptureToolkit from './CaptureToolkit.svelte';
+  import MobileInteractiveWorkspace from './MobileInteractiveWorkspace.svelte';
+  let interactiveOpen=false,interactiveMounted=false,interactiveLive=false;
+  let interactiveWorkspace:MobileInteractiveWorkspace;
+  function openInteractive(){interactiveMounted=true;interactiveOpen=true;mixerOpen=false;}
+  function interactiveOutput(target:HTMLCanvasElement|null){if(!interactiveOutputAllowed)return;interactiveLive=!!target;externalOutput?.destroy();externalOutput=new ExternalOutput(target??output,status=>outputStatus=status);externalOutput.configure(outputPreferences);}
+  $: if(engine)engine.previewSuspended=interactiveOpen&&(interactiveLive||outputStatus.state!=='live');
+
+  import {captureFileURL,type CameraShot} from '../../mobile/studio/captureToolkit';
+  let toolkitOpen=false;
+  let importOptions=false;
+  let videoInput:HTMLInputElement,photoInput:HTMLInputElement;
+  async function prepareCaptureTool(){
+    mixerOpen=false;
+    for(let i=0;i<show.layers.length;i++){
+      const ids=[show.layers[i].clipId,pending[i]?.clip.id,launchingClips[i]?.clipId];
+      if(ids.some(id=>['camera','depth'].includes(show.clips.find(c=>c.id===id)?.kind??'')))stopRow(i);
+    }
+    await releaseCamerasForToolkit();
+    await stopNativeFeeds();
+  }
+  async function importCameraShots(shots:CameraShot[]){
+    if(!shots.length)return;checkpoint();
+    for(const shot of shots){
+      const response=await fetch(captureFileURL(shot.url));if(!response.ok)throw new Error('Could not read the captured camera image.');
+      const blob=await response.blob(), id=uid();await putAsset(id,blob);
+      show.clips=[...show.clips,{id,assetId:id,name:shot.name,kind:'image'}];persist();
+    }
+  }
+  import OutputPanel from './OutputPanel.svelte';
+  import {ExternalOutput,loadOutputPreferences,type OutputStatus} from '../../mobile/studio/externalOutput';
+  let externalOutput:ExternalOutput|undefined;
+  let interactiveOutputAllowed=true;
+  let outputSettings=false;
+  let outputPreferences=loadOutputPreferences();
+  let outputStatus:OutputStatus={native:false,connected:false,state:'disconnected'};
+  import {snapMappingPoint,hitMappingScreens} from '../../mobile/studio/mappingInteraction';
+  let mappingGrid=false, mappingSnap=false;
+  let lastScreenTap={x:-100,y:-100,time:0};
+  function selectPreviewScreen(e:MouseEvent){
+    if(mappingTool==='paint'||tab!=='map'||(e.target as HTMLElement).closest('.warp-handle'))return;
+    const r=preview.getBoundingClientRect(),p={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};
+    const hits=hitMappingScreens(p,show.surfaces);if(!hits.length)return;
+    const repeated=performance.now()-lastScreenTap.time<700&&Math.hypot(e.clientX-lastScreenTap.x,e.clientY-lastScreenTap.y)<12;
+    selectedSurface=repeated?hits[(hits.indexOf(selectedSurface)+1)%hits.length]:hits[0];
+    lastScreenTap={x:e.clientX,y:e.clientY,time:performance.now()};
+  }
+  import FluxPanel from './FluxPanel.svelte';
+  import {defaultFlux} from '../../mobile/studio/flux';
+  let flux=defaultFlux();
+  import PerformanceMixer from "./PerformanceMixer.svelte";
+  import LookControls from "./LookControls.svelte";
+  import { onMount, tick } from 'svelte';
+
+  function sliderFill(value: number, min: number, max: number): number {
+    return max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
+  }
+  import Icon from './StudioIcon.svelte';
+  import StudioDecks from './StudioDecks.svelte';
+  import { StudioEngine } from '../../mobile/studio/engine';
+  import { standaloneShaderPaths } from '../../mobile/studio/shaderAvailability';
+  const libraryShaders=MOBILE_SHADERS.filter(s=>!s.requiresImage&&standaloneShaderPaths.has(s.path)).sort((a,b)=>Number(b.id.startsWith('featured-'))-Number(a.id.startsWith('featured-')));
+  let failedThumbnails=new Set<string>();
+  import { MOBILE_SHADERS, findShader } from '../../mobile/standaloneShaderList';
+  import { MOBILE_EFFECTS } from '../../mobile/standaloneEffects';
+  import { EFFECT_PARAM_DEFS } from '../../effects/effectParamDefs';
+  import { putAsset } from '../../mobile/studio/assets';
+  import {
+    loadShow,
+    saveShow,
+    savedSets,
+    defaultShow,
+    normalizeShow,
+    newSurface,
+    gridPoints,
+    movePoint,
+    copy,
+    uid,
+    clamp,
+    shaderThumbnail,
+    nextBeat,
+    History,
+    type EffectChain,
+    type Clip,
+    type Show,
+    type Surface,
+  } from '../../mobile/studio/model';
+  import type { ISFInput } from '../../isf/parser';
+
+  let show = loadShow();
+  let setBank = savedSets();
+  let tab: 'perform' | 'map' | 'fx' | 'library' | 'flux' = 'perform';
+  let mixerOpen=false;
+  let clipControlsOpen=false;
+  let controlsReturnFocus:HTMLElement|null=null;
+  let controlView: 'source'|'effects'='source';
+  let fxScope: 'comp'|'layer'|'clip'='layer';
+  let selectedLayer = 0,
+    selectedSurface = 0,
+    selectedPoint = 0,
+    bank = 0;
+  let shaderInputId: string | null = null;
+  let shaderMediaInput: HTMLInputElement;
+  let editSlot: { row: number; column: number } | null = null;
+  let sceneMode = false,
+    search = '',
+    category = 'all',
+    settings = false,
+    clean = false,
+    blackout = false,
+    frozen = false,
+    mic = false,
+    micBusy = false,
+    testGrid = false;
+  let output: HTMLCanvasElement, preview: HTMLDivElement, mediaInput: HTMLInputElement, setInput: HTMLInputElement;
+  let engine: StudioEngine | undefined,
+    fps = 0,
+    error = '',
+    notice = '',
+    loading = Array(8).fill(false),
+    params: ISFInput[] = [];
+  let pending: Record<number, { clip: Clip; at: number }> = {},
+    clockOrigin = performance.now(),
+    beat = 0;
+  let videoPosition = 0,
+    videoDuration = 0;
+  let saveTimer: ReturnType<typeof setTimeout>, noticeTimer: ReturnType<typeof setTimeout>;
+  let history = new History(),
+    canUndo = false,
+    canRedo = false;
+  let drag: { id: number; surface: number; point: number } | null = null;
+  let taps: number[] = [];
+  $: layer = show.layers[selectedLayer];
+  $: surface = show.surfaces[selectedSurface];
+  $: visibleClips = show.clips.slice(bank * 12, bank * 12 + 12);
+  $: filteredShaders = libraryShaders.filter(
+    (s) => !failedThumbnails.has(s.id) && (category === 'all' || s.category === category) && s.name.toLowerCase().includes(search.toLowerCase()),
+  );
+  $: activeClip = show.clips.find((c) => c.id === layer.clipId);
+  // Source metadata must follow the actual playing layer, including library selection.
+  $: controlSourceKey = `${selectedLayer}:${layer.clipId ?? ''}`;
+  $: if (engine && controlSourceKey) refreshParams();
+  $: activeEffects = fxScope==='comp' ? (show.effects||[]) : fxScope==='clip' ? (activeClip?.effects||[]) : layer.effects;
+  $: pageCount = Math.max(1, Math.ceil(show.clips.length / 12));
+  function flash(message: string) {
+    notice = message;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => (notice = ''), 3500);
+  }
+  function checkpoint() {
+    history.push(show);
+    canUndo = history.canUndo;
+    canRedo = history.canRedo;
+  }
+  function persist() {
+    if(show.activeBlockId)show.scenes=show.scenes.map(b=>b.id===show.activeBlockId?{...b,launchGrid:copy(show.launchGrid)}:b);
+    show = { ...show };
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try {
+        saveShow(show);
+        setBank = savedSets();
+      } catch {
+        error = 'Your device could not save this set. Export a set file before closing.';
+      }
+    }, 250);
+  }
+  async function undo(redo = false) {
+    const next = redo ? history.redo(show) : history.undo(show);
+    if (!next) return;
+    show = next;
+    cancelQueued();
+    await engine?.restore(show);
+    refreshParams();
+    canUndo = history.canUndo;
+    canRedo = history.canRedo;
+    persist();
+  }
+  function changeLayer(index: number) {
+    selectedLayer = index;
+    refreshParams();
+  }
+  // Shared with the renderer so all movement controls stay in sync.
+  let liveGhostMovement:number|undefined;
+  function ghostMove(direction:number){checkpoint();const current=engine?.ghostMovement(selectedLayer)??(Number(layer.params.movement)||0);setParam('journey',false);setParam('movement',direction===0?(current+1+Math.floor(Math.random()*(ghostMovements.length-1)))%ghostMovements.length:(current+direction+ghostMovements.length)%ghostMovements.length);}
+  function refreshParams() {
+    params = (engine?.parameters(selectedLayer) || []).filter(p=>!p.NAME.startsWith('_ghost'));
+    const t = engine?.videoTime(selectedLayer);
+    videoPosition = t?.time || 0;
+    videoDuration = t?.duration || 0;
+  }
+  function cancelQueued() {
+    stopAuto();
+    pending = {};
+    for (let i = 0; i < 8; i++) engine?.cancelPrepared(i);
+  }
+  const launchingClips: Record<number, {clipId:string}> = {};
+  let lastPlayingTap:{row:number;clipId:string;at:number}|null=null;
+  function toggleClip(clip:Clip,index:number) {
+    stopAuto();
+    changeLayer(index);
+    controlView='source';
+    const running=show.layers[index].clipId===clip.id || pending[index]?.clip.id===clip.id || launchingClips[index]?.clipId===clip.id;
+    const now=performance.now();
+    if(running){
+      const doubleTap=lastPlayingTap?.row===index && lastPlayingTap.clipId===clip.id && now-lastPlayingTap.at<=350;
+      lastPlayingTap=doubleTap?null:{row:index,clipId:clip.id,at:now};
+      if(doubleTap)stopRow(index);
+    }else{
+      lastPlayingTap=null;
+      void launch(clip,index);
+    }
+  }
+  async function launch(clip: Clip, index = selectedLayer, queued = false) {
+    if (show.quantize && !queued) {
+      const request = { clip, at: Infinity };
+      pending = { ...pending, [index]: request };
+      try {
+        const ready = await engine?.prepare(index, clip);
+        if (ready && pending[index] === request)
+          pending = { ...pending, [index]: { clip, at: nextBeat(performance.now(), clockOrigin, show.bpm) } };
+      } catch (e) {
+        if (pending[index] === request) {
+          const next = { ...pending };
+          delete next[index];
+          pending = next;
+          error = e instanceof Error ? e.message : 'Could not prepare this clip.';
+        }
+      }
+      return;
+    }
+    const rest = { ...pending };
+    delete rest[index];
+    pending = rest;
+    const launchRequest={clipId:clip.id};
+    launchingClips[index]=launchRequest;
+    loading[index] = true;
+    loading = [...loading];
+    error = '';
+    try {
+      const accepted = await engine?.launch(index, clip);
+      if (!accepted) return;
+      show.layers[index] = { ...show.layers[index], clipId: clip.id, enabled: true, ...(clip.kind==='camera'?{fit:'fill' as const}:{}), params: clip.shaderId ? { ...findShader(clip.shaderId)?.defaults } : {} };
+      persist();
+      if (index === selectedLayer) refreshParams();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Could not launch this clip.';
+    } finally {
+      if(launchingClips[index]===launchRequest){delete launchingClips[index];loading[index] = false;loading = [...loading];}
+    }
+  }
+  function patchLayer(patch: Partial<typeof layer>) {
+    show.layers[selectedLayer] = { ...show.layers[selectedLayer], ...patch };
+    persist();
+  }
+  function patchSurface(patch: Partial<Surface>) {
+    if (!surface) return;
+    show.surfaces[selectedSurface] = { ...surface, ...patch };
+    persist();
+  }
+  function assignClip(clip: Clip) {
+    let row = editSlot?.row ?? selectedLayer;
+    let column = editSlot?.column ?? show.launchGrid[row].findIndex(id => !id);
+    if (column < 0) column = show.launchGrid[row].length;
+    if (column >= 48) { error = 'This row is full. Choose a slot to replace.'; return; }
+    show.launchGrid[row][column] = clip.id;
+    changeLayer(row);
+    editSlot = null;
+    tab = 'perform';
+    flash('Clip loaded. Tap its pad to launch.');
+    persist();
+  }
+  function stopRow(index: number) {
+    stopAuto();
+    delete launchingClips[index];loading[index]=false;loading=[...loading];
+    checkpoint(); const next = { ...pending }; delete next[index]; pending = next; engine?.cancelPrepared(index); engine?.clear(index);
+    show.layers[index] = { ...show.layers[index], clipId: null };
+    persist(); refreshParams();
+  }
+  function addDepth(){
+    checkpoint();let clip=show.clips.find(c=>c.kind==='depth');
+    if(!clip){clip={id:uid(),name:'LiDAR Depth',kind:'depth'};show.clips=[...show.clips,clip];}
+    assignClip(clip);flash('Depth camera loaded. Tap to launch; Controls opens depth FX.');
+  }
+  function addCamera(facing:'user'|'environment') {
+    checkpoint();const id=`camera-${facing}`;
+    let clip=show.clips.find(c=>c.id===id);
+    if(!clip){clip={id,name:facing==='user'?'Front camera':'Rear camera',kind:'camera',facing};show.clips=[...show.clips,clip];}
+    assignClip(clip);flash('Camera loaded. Tap its pad to start capture.');
+  }
+  function addShader(id: string) {
+    const shader = findShader(id)!;
+    if (shader.requiresImage) { shaderInputId = id; shaderMediaInput.click(); return; }
+    let clip = show.clips.find((c) => c.shaderId === id);
+    checkpoint();
+    if (!clip) {
+      clip = { id: uid(), shaderId: id, name: shader.name, kind: 'shader' };
+      show.clips = [...show.clips, clip];
+    }
+    bank = Math.floor(show.clips.indexOf(clip) / 12);
+    assignClip(clip);
+    tab = 'perform';
+    persist();
+  }
+  async function importShaderSource(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0]; input.value = '';
+    const shader = shaderInputId ? findShader(shaderInputId) : undefined;
+    shaderInputId = null;
+    if (!file || !shader) return;
+    try {
+      const assetId = uid(); await putAsset(assetId, file); checkpoint();
+      const clip: Clip = { id: uid(), kind: 'shader', shaderId: shader.id, assetId, name: `${shader.name} · ${file.name}` };
+      show.clips = [...show.clips, clip]; assignClip(clip);
+    } catch (e) { error = e instanceof Error ? e.message : 'Could not load shader input.'; }
+  }
+  async function importMedia(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files || []);
+    input.value = '';
+    if (!files.length) return;
+    checkpoint();
+    let first: Clip | undefined;
+    for (const file of files) {
+      if (!file.type.startsWith('video/') && !file.type.startsWith('image/')) {
+        error = `${file.name} is not a supported image or video.`;
+        continue;
+      }
+      const id = uid();
+      try {
+        await putAsset(id, file);
+        const clip: Clip = {
+          id,
+          assetId: id,
+          name: file.name,
+          kind: file.type.startsWith('video/') ? 'video' : 'image',
+        };
+        show.clips = [...show.clips, clip];
+        first ??= clip;
+      } catch (e) {
+        error = e instanceof Error ? e.message : 'Media import failed.';
+      }
+    }
+    if (first) {
+      tab = 'perform';
+      bank = Math.floor(show.clips.findIndex((c) => c.id === first!.id) / 12);
+      assignClip(first);
+      flash(`${files.length} file${files.length === 1 ? '' : 's'} added to this device`);
+    }
+    persist();
+  }
+  function removeClip(clip: Clip) {
+    checkpoint();
+    show.clips = show.clips.filter((c) => c.id !== clip.id);
+    show.launchGrid = show.launchGrid.map(row => row.map(id => id === clip.id ? null : id));
+    show.layers = show.layers.map((l, i) => {
+      if (l.clipId !== clip.id) return l;
+      engine?.clear(i);
+      return { ...l, clipId: null };
+    });
+    bank = Math.min(bank, Math.max(0, Math.ceil(show.clips.length / 12) - 1));
+    persist();
+  }
+  function selectTab(next: typeof tab) {
+    if(next==='fx'){openControls(selectedLayer);return;}
+    clipControlsOpen=false;
+    mixerOpen=false;
+    tab = next;
+    if (next === 'map' && !show.mapping) {
+      checkpoint();
+      show.mapping = true;
+      persist();
+    }
+  }
+  function addSurface(preset = 'single') {
+    checkpoint();
+    show.mapping = true;
+    if (preset === 'single') {
+      if (show.surfaces.length >= 16) {
+        flash('A set supports up to 16 surfaces.');
+        return;
+      }
+      show.surfaces = [...show.surfaces, newSurface(show.surfaces.length)];
+      selectedSurface = show.surfaces.length - 1;
+    } else if(preset==='paint-box'){
+      const corners=[
+        [[.5,.1],[.82,.28],[.5,.46],[.18,.28]],
+        [[.18,.28],[.5,.46],[.5,.88],[.18,.68]],
+        [[.5,.46],[.82,.28],[.82,.68],[.5,.88]],
+      ];
+      show.surfaces=corners.map((c,i)=>({...newSurface(i),name:['Box · top','Box · left','Box · right'][i],points:Array.from({length:9},(_,n)=>{
+        const u=(n%3)/2,v=Math.floor(n/3)/2;
+        return{x:c[0][0]*(1-u)*(1-v)+c[1][0]*u*(1-v)+c[2][0]*u*v+c[3][0]*(1-u)*v,y:c[0][1]*(1-u)*(1-v)+c[1][1]*u*(1-v)+c[2][1]*u*v+c[3][1]*(1-u)*v};
+      })}));
+      const [top,left,right]=show.surfaces;
+      show.paint={...paint,enabled:true,isolate:true,brush:'slime',color:'#beff63',strokes:[],loop:false,links:[
+        {from:top.id,edge:'bottom',to:left.id,entry:'top',flip:false},
+        {from:top.id,edge:'right',to:right.id,entry:'top',flip:true},
+        {from:left.id,edge:'right',to:right.id,entry:'left',flip:false},
+      ]};
+      selectedSurface=0;mappingTool='paint';
+    } else {
+      const count = preset === 'triptych' ? 3 : 2;
+      show.surfaces = Array.from({ length: count }, (_, i) => ({
+        ...newSurface(i),
+        name: `Panel ${i + 1}`,
+        points: gridPoints(0.04 + (i * 0.94) / count, 0.12, 0.88 / count, 0.76),
+      }));
+      selectedSurface = 0;
+    }
+    persist();
+  }
+  function beginDrag(e: PointerEvent, index: number) {
+    if (!surface || surface.locked) return;
+    e.preventDefault();
+    checkpoint();
+    selectedPoint = index;
+    drag = { id: e.pointerId, surface: selectedSurface, point: index };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function dragPoint(e: PointerEvent) {
+    if (!drag || drag.id !== e.pointerId) return;
+    const r = preview.getBoundingClientRect();
+    let point={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};
+    if(mappingSnap)point=snapMappingPoint(point,show.surfaces,drag.surface,r.width,r.height);
+    show.surfaces[drag.surface] = movePoint(show.surfaces[drag.surface], drag.point, point);
+    show = { ...show };
+  }
+  function endDrag(e: PointerEvent) {
+    if (drag?.id !== e.pointerId) return;
+    drag = null;
+    persist();
+  }
+  function nudge(dx: number, dy: number) {
+    if (!surface || surface.locked) return;
+    checkpoint();
+    const p = surface.points[selectedPoint];
+    show.surfaces[selectedSurface] = movePoint(surface, selectedPoint, { x: p.x + dx, y: p.y + dy });
+    persist();
+  }
+  function meshPath(s: Surface) {
+    return [0, 1, 2, 5, 8, 7, 6, 3, 0].map((i) => `${s.points[i].x * 1000},${s.points[i].y * 562.5}`).join(' ');
+  }
+  function captureScene() {
+    if(show.scenes.length>=16){flash('A set supports up to 16 blocks.');return;}
+    checkpoint();const id=uid();
+    show.scenes=[...show.scenes,{id,name:`Block ${show.scenes.length+1}`,launchGrid:copy(show.launchGrid),layers:copy(show.layers),crossfade:show.crossfade}];
+    show.activeBlockId=id;persist();flash('Block saved. Clip changes now update this block.');
+  }
+  function recallScene(index:number) {
+    stopAuto();
+    checkpoint();
+    if(show.activeBlockId)show.scenes=show.scenes.map(b=>b.id===show.activeBlockId?{...b,launchGrid:copy(show.launchGrid)}:b);
+    const block=show.scenes[index];show.launchGrid=copy(block.launchGrid || show.launchGrid);show.activeBlockId=block.id;
+    sceneMode=false;persist();flash(`${block.name} loaded. Playing clips continue.`);
+  }
+  function setBpm(value: number) {
+    show.bpm = clamp(value, 30, 240);
+    clockOrigin = performance.now();
+    cancelQueued();
+    persist();
+  }
+  function tap() {
+    const now = performance.now();
+    if (taps.length && now - taps[taps.length - 1] > 2000) taps = [];
+    taps = [...taps.slice(-5), now];
+    if (taps.length > 1) setBpm(Math.round(60000 / ((now - taps[0]) / (taps.length - 1))));
+  }
+  async function toggleMic() {
+    if (micBusy) return;
+    micBusy = true;
+    try {
+      await engine?.microphone(!mic);
+      mic = !mic;
+    } catch {
+      error = 'Microphone access was not available. Check microphone permission in Settings.';
+    } finally {
+      micBusy = false;
+    }
+  }
+  function setFrozen() {
+    frozen = !frozen;
+    if (engine) engine.frozen = frozen;
+  }
+  function setBlackout() {
+    blackout = !blackout;
+    if (engine) engine.blackout = blackout;
+  }
+  function toggleGrid() {
+    testGrid = !testGrid;
+    if (engine) engine.testGrid = testGrid;
+  }
+  function patchEffects(effects:EffectChain) {
+    if(fxScope==='comp') show.effects=effects;
+    else if(fxScope==='clip') {if(!activeClip)return;show.clips=show.clips.map(c=>c.id===activeClip.id?{...c,effects}:c);}
+    else show.layers[selectedLayer]={...show.layers[selectedLayer],effects};
+    persist();
+  }
+  function openControls(row:number){
+    if(!clipControlsOpen)controlsReturnFocus=document.activeElement as HTMLElement|null;
+    stopAuto();
+    lastPlayingTap=null;
+    changeLayer(row);
+    controlView='source';
+    mixerOpen=false;
+    tab='perform';
+    clipControlsOpen=true;
+  }
+  function closeControls(){clipControlsOpen=false;}
+  function focusControlsTray(node:HTMLElement){
+    node.querySelector<HTMLElement>('[data-close-controls]')?.focus({preventScroll:true});
+    return {destroy(){const opener=controlsReturnFocus;controlsReturnFocus=null;void tick().then(()=>{if(!clipControlsOpen&&opener?.isConnected)opener.focus({preventScroll:true});});}};
+  }
+  function openMixer(row=selectedLayer){clipControlsOpen=false;changeLayer(row);if(!tablet)mixerOpen=true;else selectTab("perform");}
+  function addEffect(type: string) {
+    if (activeEffects.length >= 8) { flash("Each FX scope supports up to eight effects."); return; }
+    const def = MOBILE_EFFECTS.find((e) => e.type === type)!;
+    checkpoint();
+    patchEffects([...activeEffects, { id: uid(), type, enabled: true, params: { ...def.defaults } }]);
+  }
+  function setEffect(index: number, key: string, value: number) {
+    const effects = copy(activeEffects);
+    effects[index].params[key] = value;
+    patchEffects(effects);
+  }
+  function colorHex(value: unknown) {
+    const v = Array.isArray(value) ? value : [1, 1, 1];
+    return (
+      '#' +
+      v
+        .slice(0, 3)
+        .map((n) =>
+          Math.round(clamp(Number(n)) * 255)
+            .toString(16)
+            .padStart(2, '0'),
+        )
+        .join('')
+    );
+  }
+  function colorValue(value: string) {
+    return [
+      parseInt(value.slice(1, 3), 16) / 255,
+      parseInt(value.slice(3, 5), 16) / 255,
+      parseInt(value.slice(5, 7), 16) / 255,
+      1,
+    ];
+  }
+  function variation() {
+    checkpoint();
+    const values = { ...layer.params };
+    for (const p of params) {
+      if (p.TYPE === 'float')
+        values[p.NAME] = (p.MIN ?? 0) + ((p.MAX ?? 1) - (p.MIN ?? 0)) * (0.15 + Math.random() * 0.7);
+      else if (p.TYPE === 'long' && p.VALUES?.length)
+        values[p.NAME] = p.VALUES[Math.floor(Math.random() * p.VALUES.length)];
+    }
+    patchLayer({ params: values });
+  }
+  function focusDialog(node: HTMLElement) {
+    const previous = document.activeElement as HTMLElement | null;
+    node.focus();
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const elements = Array.from(
+        node.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href]'),
+      ).filter((el) => el.offsetParent !== null);
+      const first = elements[0],
+        last = elements.at(-1);
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) {
+        e.preventDefault();
+        last?.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first?.focus();
+      }
+    };
+    node.addEventListener('keydown', trap);
+    return {
+      destroy() {
+        node.removeEventListener('keydown', trap);
+        previous?.focus();
+      },
+    };
+  }
+  function setParam(name: string, value: number | boolean | number[]) {
+    patchLayer({ params: { ...show.layers[selectedLayer].params, [name]: value } });
+  }
+  async function openSavedSet(id: string) {
+    const next = setBank.find((s) => s.id === id);
+    if (!next) return;
+    try {
+      saveShow(show);
+    } catch {}
+    checkpoint();
+    cancelQueued();
+    show = copy(next);
+    selectedSurface = 0;
+    bank = 0;
+    await engine?.restore(show);
+    refreshParams();
+    persist();
+    settings = false;
+  }
+  function exportSet() {
+    const blob = new Blob([JSON.stringify(show, null, 2)], { type: 'application/json' });
+    download(blob, `${show.name}.ghostset`);
+    flash('Set saved. Imported media stays on this device.');
+  }
+  function download(blob: Blob, name: string) {
+    const url = URL.createObjectURL(blob),
+      a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+  async function importSet(event: Event) {
+    const input = event.target as HTMLInputElement,
+      file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      const next = normalizeShow(JSON.parse(await file.text()));
+      checkpoint();
+      cancelQueued();
+      show = next;
+      selectedSurface = 0;
+      bank = 0;
+      await engine?.restore(show);
+      refreshParams();
+      persist();
+      settings = false;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Could not open this set.';
+    }
+  }
+  function onKey(e: KeyboardEvent) {
+    if(clipControlsOpen){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeControls();}return;}
+    if(e.defaultPrevented||interactiveOpen||(e.target as HTMLElement)?.closest('button,[role=dialog],dialog'))return;
+    if ((e.target as HTMLElement)?.matches('input,select,textarea')) return;
+    if (e.key === 'Escape') {
+      clean = false;
+      settings = false;
+    }
+    if (e.code === 'Space') {
+      e.preventDefault();
+      setFrozen();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+      e.preventDefault();
+      void undo(e.shiftKey);
+    }
+  }
+  onMount(() => {
+    const tabletQuery=matchMedia('(min-width: 1000px) and (min-height: 650px)');
+    const updateTablet=()=>{tablet=tabletQuery.matches;if(tablet)mixerOpen=false;};
+    updateTablet();tabletQuery.addEventListener('change',updateTablet);
+    let disposed = false;
+    try {
+      engine = new StudioEngine(output, () => show);
+      externalOutput=new ExternalOutput(output,status=>outputStatus=status);
+      engine.beatClock = () => (performance.now() - clockOrigin) * show.bpm / 60000;
+      engine.onStats = (value) => (fps = value);
+      engine.onError = (message) => (error = message);
+      engine.start();
+      void engine.restore(show).then(() => {
+        if (!disposed) refreshParams();
+      });
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Video engine unavailable.';
+    }
+    let autoFrame=0;
+    const frame=(now:number)=>{autoTick(now);autoFrame=requestAnimationFrame(frame);};
+    autoFrame=requestAnimationFrame(frame);
+    const timer = setInterval(() => {
+      const now = performance.now();
+      beat = Math.floor((now - clockOrigin) / (60000 / show.bpm)) % 4;
+      for (const [key, value] of Object.entries(pending))
+        if (now >= value.at) void launch(value.clip, Number(key), true);
+      const t = engine?.videoTime(selectedLayer);
+      liveGhostMovement=engine?.ghostMovement(selectedLayer);
+      videoPosition = t?.time || 0;
+      videoDuration = t?.duration || 0;
+    }, 50);
+    let wake: { release: () => Promise<void> } | undefined;
+    void (navigator as any).wakeLock
+      ?.request('screen')
+      .then((lock: any) => {
+        if (disposed) void lock.release();
+        else wake = lock;
+      })
+      .catch(() => {});
+    return () => {
+      stopAuto();
+      tabletQuery.removeEventListener('change',updateTablet);
+      disposed = true;interactiveOutputAllowed=false;
+      cancelAnimationFrame(autoFrame);
+      clearInterval(timer);
+      clearTimeout(saveTimer);
+      clearTimeout(noticeTimer);
+      try {
+        saveShow(show);
+      } catch {}
+      externalOutput?.destroy();
+      engine?.destroy();
+      void wake?.release();
+    };
+  });
+</script>
+{#snippet sourceControls(inTray=false)}
+          {#if !inTray}
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">{show.dualDeck ? `DECK ${selectedLayer < 4 ? "A" : "B"} · LAYER ${selectedLayer % 4 + 1}` : `LAYER ${selectedLayer + 1}`} · {activeClip?.kind || 'EMPTY'}</span>
+              <h1>{activeClip?.name || 'Source & effects'}</h1>
+            </div>
+            <select
+              aria-label="Effect layer"
+              value={selectedLayer}
+              onchange={(e) => changeLayer(Number(e.currentTarget.value))}
+              >{#each show.layers.slice(0,show.dualDeck?8:4) as _, i}<option value={i}>{show.dualDeck ? `Deck ${i < 4 ? "A" : "B"} · Layer ${i % 4 + 1}` : `Layer ${i + 1}`}</option>{/each}</select
+            >
+          </div>
+          {/if}
+          <div class="segmented wide" aria-label="Control view"><button class:active={controlView==='source'} onclick={()=>controlView='source'}>Source</button><button class:active={controlView==='effects'} onclick={()=>controlView='effects'}>FX</button></div>
+          {#if controlView==='source'}
+          {#if !activeClip}<div class="empty-state"><Icon name="grid" size={28}/><h2>No clip playing</h2><p>Launch a clip, then use its gear to edit the live source.</p><button onclick={closeControls}>Back to clips</button></div>{:else}
+          {#if activeClip?.kind==='camera'||activeClip?.kind==='depth'}<CameraFxPanel params={layer.params} onchange={setParam} onstart={checkpoint}/>{/if}
+          {#if activeClip?.shaderId==='ga-ghostfx'}<div class="ghost-movements"><strong>GhostFX · {ghostMovements[liveGhostMovement??(Number(layer.params.movement)||0)]}</strong><div><button aria-label="Previous GhostFX movement" onclick={()=>ghostMove(-1)}>← Prev</button><button aria-label="Random GhostFX movement" onclick={()=>ghostMove(0)}>↝ Random</button><button aria-label="Next GhostFX movement" onclick={()=>ghostMove(1)}>Next →</button></div></div>{/if}
+          <div class="inspector-card">
+            {#if !inTray}<div class="section-heading">
+              <span>SOURCE CONTROLS</span><button disabled={!params.length} onclick={variation}>New variation</button>
+            </div>{/if}
+            <label class="range-row"
+              ><span>Audio response</span><input
+                type="range"
+                min="0"
+                max="2"
+                step=".01"
+                value={layer.intensity}
+                class="blue-fill"
+                style:--range-fill={sliderFill(layer.intensity, 0, 2)}
+                oninput={(e) => patchLayer({ intensity: Number(e.currentTarget.value) })}
+              /><output>{layer.intensity.toFixed(2)}</output></label
+            >
+            {#each params.filter( (p) => ['float', 'long', 'bool', 'color', 'point2D', 'event'].includes(p.TYPE), ) as p}{#if p.TYPE === 'color'}<label
+                  class="toggle-row"
+                  ><span>{p.LABEL || p.NAME}</span><input
+                    type="color"
+                    value={colorHex(layer.params[p.NAME] ?? p.DEFAULT)}
+                    onchange={(e) => {
+                      checkpoint();
+                      setParam(p.NAME, colorValue(e.currentTarget.value));
+                    }}
+                  /></label
+                >{:else if p.TYPE === 'event'}<button class="secondary" onclick={() => setParam(p.NAME, Number(layer.params[p.NAME] ?? 0) + 1)}>{p.LABEL || p.NAME}</button>
+                {:else if p.TYPE === 'point2D'}
+                  {#each [0, 1] as axis}
+                    {@const point = (layer.params[p.NAME] ?? p.DEFAULT ?? [0, 0]) as number[]}
+                    {@const lower = Array.isArray(p.MIN) ? p.MIN[axis] : 0}
+                    {@const upper = Array.isArray(p.MAX) ? p.MAX[axis] : 1}
+                    <label class="range-row"><span>{p.LABEL || p.NAME} {axis ? 'Y' : 'X'}</span><input type="range" min={lower} max={upper} step={(upper-lower)/200} value={point[axis]} class="blue-fill" style:--range-fill={sliderFill(point[axis], lower, upper)} oninput={e => { const next = [...point]; next[axis] = Number(e.currentTarget.value); setParam(p.NAME, next); }} /><output>{point[axis].toFixed(1)}</output></label>
+                  {/each}
+                {:else if p.TYPE === 'bool'}<label class="toggle-row"
+                  ><span>{p.LABEL || p.NAME}</span><input
+                    type="checkbox"
+                    checked={Boolean(layer.params[p.NAME] ?? p.DEFAULT)}
+                    onchange={(e) => setParam(p.NAME, e.currentTarget.checked)}
+                  /></label
+                >{:else if p.TYPE === 'long' && p.VALUES}<label class="field"
+                  >{p.LABEL || p.NAME}<select
+                    value={Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0)}
+                    onchange={(e) => setParam(p.NAME, Number(e.currentTarget.value))}
+                    >{#each p.VALUES as v, i}<option value={v}>{p.LABELS?.[i] || v}</option>{/each}</select
+                  ></label
+                >{:else}<label class="range-row"
+                  ><span>{p.LABEL || p.NAME}</span><input
+                    type="range"
+                    min={p.MIN ?? 0}
+                    max={p.MAX ?? 1}
+                    step={p.TYPE === 'long' ? 1 : ((p.MAX ?? 1) - (p.MIN ?? 0)) / 200}
+                    value={Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0)}
+                    class="blue-fill"
+                    style:--range-fill={sliderFill(Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0), p.MIN ?? 0, p.MAX ?? 1)}
+                    onpointerdown={checkpoint}
+                    oninput={(e) => setParam(p.NAME, Number(e.currentTarget.value))}
+                  /><output>{Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0).toFixed(2)}</output></label
+                >{/if}{/each}
+            {#if inTray && params.length}<button class="new-variation" onclick={variation}>New variation</button>{/if}
+          </div>
+          {/if}
+          {:else}
+          <div class="segmented wide" aria-label="Effect scope">{#each [{id:'comp',name:'Comp'},{id:'layer',name:'Layer'},{id:'clip',name:'Clip'}] as scope}<button class:active={fxScope===scope.id} disabled={scope.id==='clip'&&!activeClip} onclick={()=>fxScope=scope.id as typeof fxScope}>{scope.name}</button>{/each}</div>
+          <p class="scope-context">{fxScope==='comp'?'Composition · final output':fxScope==='clip'?`Clip · ${activeClip?.name || 'Launch a clip first'}`:`Layer ${show.dualDeck ? selectedLayer % 4 + 1 : selectedLayer+1} · stays when clips change`}</p>
+          <div class="section-heading">
+            <span>EFFECT CHAIN · {activeEffects.length}</span><select
+              disabled={activeEffects.length >= 8 || (fxScope==='clip'&&!activeClip)}
+              aria-label="Add effect"
+              value=""
+              onchange={(e) => {
+                if (e.currentTarget.value) addEffect(e.currentTarget.value);
+                e.currentTarget.value = '';
+              }}
+              ><option value="">+ Add effect</option>{#each [...new Set(MOBILE_EFFECTS.filter(e=>!e.internal).map(e=>e.category))].sort() as category}<optgroup label={category}>{#each MOBILE_EFFECTS.filter(e=>!e.internal&&e.category===category) as effect}<option value={effect.type}>{effect.label}</option>{/each}</optgroup>{/each}</select
+            >
+          </div>
+          {#each activeEffects as effect, i}<div class="inspector-card">
+              <div class="section-heading">
+                <button
+                  class:active={effect.enabled}
+                  onclick={() => {
+                    checkpoint();
+                    const effects = copy(activeEffects);
+                    effects[i].enabled = !effect.enabled;
+                    patchEffects(effects);
+                  }}>{effect.enabled ? '●' : '○'} {MOBILE_EFFECTS.find((e) => e.type === effect.type)?.label}</button
+                ><button
+                  class="icon-button"
+                  onclick={() => {
+                    checkpoint();
+                    patchEffects(activeEffects.filter((_, j) => j !== i));
+                  }}
+                  aria-label="Remove effect"><Icon name="close" size={16} /></button
+                >
+              </div>
+              {#each MOBILE_EFFECTS.find(d => d.type === effect.type)?.controls || EFFECT_PARAM_DEFS[effect.type] || [] as p}<label class="range-row"
+                  ><span>{p.name}</span>{#if p.type === "select" && p.options}<select aria-label={p.name} value={effect.params[p.param] ?? p.default} disabled={!effect.enabled} onchange={e=>{checkpoint();setEffect(i,p.param,Number(e.currentTarget.value));}}>{#each p.options as option}<option value={option.value}>{option.label}</option>{/each}</select>{:else}<input
+                    type="range"
+                    min={p.min}
+                    max={p.max}
+                    step={p.step}
+                    value={effect.params[p.param] ?? p.default}
+                    class="blue-fill"
+                    style:--range-fill={sliderFill(Number(effect.params[p.param] ?? p.default), p.min, p.max)}
+                    disabled={!effect.enabled}
+                    onpointerdown={checkpoint}
+                    oninput={(e) => setEffect(i, p.param, Number(e.currentTarget.value))}
+                  /><output>{Number(effect.params[p.param] ?? p.default).toFixed(2)}</output>{/if}</label
+                >{/each}
+            </div>{/each}
+          {#if !activeEffects.length}<div class="empty-state">
+              <Icon name="fx" size={32} />
+              <h2>No effects added</h2>
+              <p>Choose an effect for the selected scope.</p>
+            </div>{/if}
+          {/if}
+
+{/snippet}
+<input type="file" accept="image/*,video/*" aria-label="Shader source media" bind:this={shaderMediaInput} onchange={importShaderSource} hidden />
+
+
+<svelte:window onkeydown={onKey} />
+<input class="file-input" type="file" accept="video/*" multiple aria-label="Import videos" bind:this={videoInput} onchange={importMedia} />
+<input class="file-input" type="file" accept="image/*" multiple aria-label="Import photos" bind:this={photoInput} onchange={importMedia} />
+<input class="file-input" type="file" accept="video/*,image/*" multiple aria-label="Import media" bind:this={mediaInput} onchange={importMedia} />
+<input class="file-input" type="file" accept=".ghostset,application/json" bind:this={setInput} onchange={importSet} />
+<div class="studio" class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
+  <header class="app-header">
+    <div class="brand">
+      <img class="brand-mark" src="./icon-new.png" alt="" />
+      <img class="brand-wordmark" src="./logo-wordmark.svg" alt="Ghost Arcade" />
+    </div>
+    <button class="icon-button" onclick={async()=>{await prepareCaptureTool();oncompanion();}} aria-label="Desktop Companion" title="Desktop Companion">↔</button>
+    <button class="set-title" onclick={() => (settings = true)}>{show.name}<span>⌄</span></button>
+    <div class="header-actions">
+      <button class="icon-button" disabled={!canUndo} onclick={() => undo()} aria-label="Undo"
+        ><Icon name="undo" /></button
+      ><button class="icon-button" disabled={!canRedo} onclick={() => undo(true)} aria-label="Redo"
+        ><Icon name="redo" /></button
+      ><button class="icon-button" class:active={outputStatus.state==='live'} onclick={() => (outputSettings = true)} aria-label="Output settings"
+        ><Icon name="output" /></button
+      ><button class="icon-button" onclick={() => (settings = true)} aria-label="Set settings"
+        ><Icon name="settings" /></button
+      >
+    </div>
+  </header>
+  <main class="workspace">
+    <section class="monitor">
+      <div class="monitor-heading">
+        <span><i class:stopped={blackout}></i>{blackout ? 'BLACKOUT' : frozen ? 'HOLD' : 'PROGRAM'}</span><span
+          >{show.quality}p <b>·</b> {fps} FPS</span
+        >
+      </div>
+      <div class="preview-frame">
+        <div class="preview" bind:this={preview} onclick={selectPreviewScreen}>
+          <canvas bind:this={output} aria-label="Live video output"></canvas>
+          {#if tab === 'map' && !clean}
+            <svg class="mapping-lines" viewBox="0 0 1000 562.5" aria-hidden="true">
+              {#if mappingGrid}<defs><pattern id="mapping-guide-grid" width="62.5" height="62.5" patternUnits="userSpaceOnUse"><path d="M62.5 0H0V62.5" fill="none" stroke="#91b4ed" stroke-opacity=".4" stroke-width="1"/></pattern></defs><rect width="1000" height="562.5" fill="url(#mapping-guide-grid)"/>{/if}
+              {#each show.surfaces as s, i}<polyline
+                  points={meshPath(s)}
+                  class:chosen={i === selectedSurface}
+                  class:dim={!s.enabled}
+                /><text x={s.points[0].x * 1000 + 12} y={s.points[0].y * 562.5 + 28}>{i + 1} · {s.name}</text>{/each}
+              {#if surface?.mode === 'mesh'}{#each [0, 1, 2] as row}<polyline
+                    class="mesh-line"
+                    points={[0, 1, 2]
+                      .map((c) => `${surface.points[row * 3 + c].x * 1000},${surface.points[row * 3 + c].y * 562.5}`)
+                      .join(' ')}
+                  /><polyline
+                    class="mesh-line"
+                    points={[0, 1, 2]
+                      .map((c) => `${surface.points[c * 3 + row].x * 1000},${surface.points[c * 3 + row].y * 562.5}`)
+                      .join(' ')}
+                  />{/each}{/if}
+            </svg>
+            {#if mappingTool==='edit' && surface && !surface.locked}{#each surface.points as p, i}{#if surface.mode === 'mesh' || [0, 2, 6, 8].includes(i)}<button
+                    class="warp-handle"
+                    class:selected={selectedPoint === i}
+                    style:left={`${p.x * 100}%`}
+                    style:top={`${p.y * 100}%`}
+                    aria-label={`Warp point ${i + 1}`}
+                    onpointerdown={(e) => beginDrag(e, i)}
+                    onpointermove={dragPoint}
+                    onpointerup={endDrag}
+                    onpointercancel={endDrag}><span></span></button
+                  >{/if}{/each}{/if}
+          {/if}
+          {#if tab==='map' && mappingTool==='paint' && show.mapping && !clean}
+            <PaintPad surfaces={show.surfaces} config={paint} beat={()=>engine?.beatClock?.()??0} onstroke={startStroke} onfinish={finishStroke} onlimit={()=>flash('Paint memory is full. Clear or undo strokes to keep drawing.')}/>
+          {/if}
+        </div>
+      </div>
+      <div class="monitor-tools">
+        {#if interactiveLive}<button onclick={openInteractive}>Interactive</button><button onclick={()=>interactiveWorkspace?.restoreMix()}>Return to mix</button>{/if}
+        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():'Drag points to fit your surface' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':'LIVE COMPOSITION'}</span><button
+          class:active={frozen}
+          onclick={setFrozen}
+          aria-pressed={frozen}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume' : 'Hold'}</button
+        ><button class:danger={blackout} onclick={setBlackout} aria-pressed={blackout}
+          ><Icon name="blackout" size={16} />Blackout</button
+        >
+      </div>
+      {#if tablet && tab==='perform' && !clean}<PerformanceMixer embedded {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
+    </section>
+    <section class="control-panel">
+      <nav class="tabs" aria-label="Workspace">
+        {#each [{ id: 'perform', label: 'Perform', icon: 'grid' }, { id:'flux',label:'Flux',icon:'flux' }, { id: 'fx', label: 'Controls', icon: 'controls' }, { id: 'map', label: 'Map', icon: 'map' }, {id:'interactive',label:'Interactive',icon:'depth'}, {id:'tools',label:'Tools',icon:'scan'}] as t}<button
+            class:active={!mixerOpen && (clipControlsOpen ? t.id==='fx' : tab === t.id)}
+            onclick={() => t.id==='tools' ? toolkitOpen=true : t.id==='interactive' ? openInteractive() : selectTab(t.id as typeof tab)}
+            aria-pressed={!mixerOpen && (clipControlsOpen ? t.id==='fx' : tab===t.id)}><Icon name={t.icon} /><span>{t.label}</span></button
+          >{/each}
+      </nav>
+      <div class="panel-scroll" inert={clipControlsOpen}>
+        {#if tab === 'perform'}
+          {#if sceneMode}<div class="block-navigation">            <div class="segmented">
+              <button class:active={!sceneMode} onclick={() => (sceneMode = false)}>Clips</button><button
+                class:active={sceneMode}
+                onclick={() => (sceneMode = true)}>Blocks</button
+              >
+            </div>
+</div>{/if}
+          {#if sceneMode}<div class="clip-grid">
+              {#each show.scenes as scene, i}<button class="scene-pad" onclick={() => recallScene(i)}
+                  ><span class="pad-number">{String(i + 1).padStart(2, '0')}</span><Icon name="grid" size={28} /><strong
+                    >{scene.name}</strong
+                  ><small>{show.activeBlockId===scene.id?'Current block':'Load clip grid'}</small></button
+                >{/each}<button class="clip-pad add-pad" onclick={captureScene}
+                ><Icon name="plus" size={26} /><span>Save as new block</span></button
+              >
+            </div>
+            <p class="hint">
+              Blocks save the clips in your deck grid. Edits update the current block; switching blocks keeps your live mix and mapping playing.
+            </p>
+          {:else}
+            <StudioDecks {show} {selectedLayer} {pending} {loading}
+              onSelect={changeLayer}
+              onControls={openControls}
+              onMixer={openMixer}
+              onLaunch={(row, clip) => { stopAuto(); changeLayer(row); void launch(clip, row); }}
+              onTap={(row,clip)=>toggleClip(clip,row)}
+              onRemove={(row,column)=>{const id=show.launchGrid[row][column];if(show.layers[row].clipId===id||pending[row]?.clip.id===id||launchingClips[row]?.clipId===id)stopRow(row);else checkpoint();show.launchGrid[row][column]=null;persist();}}
+              onStop={stopRow}
+              onEdit={(row, column) => { mixerOpen=false;clipControlsOpen=false;editSlot = { row, column }; changeLayer(row); tab = 'library'; }}
+              onDual={(enabled) => { checkpoint();stopAuto(); show.dualDeck = enabled;if(!enabled&&selectedLayer>=4)changeLayer(0); persist(); }}
+              onMix={(value) => { show.crossfade = value; persist(); }}
+              onArrange={()=>stopAuto()}
+              onMove={(from,to)=>{
+                if(from.row===to.row&&from.column===to.column)return;
+                checkpoint();stopAuto();
+                const grid=show.launchGrid.map(row=>[...row]);
+                const clip=grid[from.row][from.column];if(!clip)return;
+                grid[from.row][from.column]=grid[to.row][to.column]??null;
+                grid[to.row][to.column]=clip;
+                show.launchGrid=grid;persist();
+              }}
+            ><div slot="view-switch" class="segmented deck-view-switch"><button class:active={!sceneMode} onclick={()=>sceneMode=false}>Clips</button><button class:active={sceneMode} onclick={()=>sceneMode=true}>Blocks</button></div>
+          <div class="autopilot-bar" slot="autopilot">
+            <button class:running={autoOn} aria-pressed={autoOn} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':'OFF'}</span></button>
+            <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
+          </div>
+<svelte:fragment slot="autopilot-settings">          {#if autoSettings}<section class="auto-options" aria-label="Autopilot settings">
+            <div class="auto-switches">
+              <button aria-pressed={autoClips} class:active={autoClips} onclick={()=>{stopAuto();autoClips=!autoClips;}}><Icon name="grid" size={16}/>Clips</button>
+              <button aria-pressed={autoParams} class:active={autoParams} onclick={()=>{stopAuto();autoParams=!autoParams;}}><Icon name="controls" size={16}/>Parameters</button>
+            </div>
+            <div class="auto-fields"><label>Change clips<select aria-label="Change clips" bind:value={autoInterval} onchange={stopAuto}><option value={4}>4 beats</option><option value={8}>8 beats</option><option value={16}>16 beats</option><option value={32}>32 beats</option></select></label>
+            <label>Order<select aria-label="Clip order" bind:value={autoRandom} onchange={stopAuto}><option value={false}>In order</option><option value={true}>Random</option></select></label></div>
+            <label class="auto-amount">Variation / 4 beats <output>{Math.round(autoVariation*100)}%</output><input type="range" min="0" max=".4" step=".01" bind:value={autoVariation} aria-label="Autopilot variation"/></label>
+            <div class="auto-rows">{#each show.layers.slice(0,show.dualDeck?8:4) as l,i}<button aria-label={`Autopilot layer ${i+1}`} aria-pressed={autoRows[i]} class:active={autoRows[i]} onclick={()=>{stopAuto();autoRows[i]=!autoRows[i];}}>L{i+1}</button>{/each}</div>
+            <p>Follows BPM / Tap. Cameras stay manual. Changes apply to selected, enabled layers. Start Autopilot after choosing settings.</p>
+          </section>{/if}
+</svelte:fragment></StudioDecks>
+          {/if}
+          <div class="phone-mix">
+            <label class="range-row"
+              ><span>Layer level</span><input
+                type="range"
+                min="0"
+                max="1"
+                step=".001"
+                value={layer.opacity}
+                onpointerdown={checkpoint}
+                oninput={(e) => patchLayer({ opacity: Number(e.currentTarget.value) })}
+              /><output>{Math.round(layer.opacity * 100)}%</output></label
+            >
+            <label class="range-row"
+              ><span>Master level</span><input
+                type="range"
+                min="0"
+                max="1"
+                step=".001"
+                bind:value={show.master}
+                oninput={persist}
+              /><output>{Math.round(show.master * 100)}%</output></label
+            >
+          </div>
+          {#if !tablet}<div class="transport-card">
+            <div class="section-heading">
+              <span>{activeClip?.name || 'NO CLIP LOADED'}</span><button
+                onclick={() => {
+                  checkpoint();
+                  cancelQueued();
+                  engine?.clear(selectedLayer);
+                  patchLayer({ clipId: null });
+                  refreshParams();
+                }}>Clear layer</button
+              >
+            </div>
+            {#if videoDuration > 0}<label class="range-row"
+                ><span>Position</span><input
+                  aria-label="Video position"
+                  type="range"
+                  min="0"
+                  max={videoDuration}
+                  step=".01"
+                  value={videoPosition}
+                  oninput={(e) => engine?.seek(selectedLayer, Number(e.currentTarget.value))}
+                /><output>{videoPosition.toFixed(1)}s</output></label
+              >{/if}
+            <label class="range-row"
+              ><span>Speed</span><input
+                type="range"
+                min="0"
+                max="3"
+                step=".01"
+                value={layer.speed}
+                onpointerdown={checkpoint}
+                oninput={(e) => patchLayer({ speed: Number(e.currentTarget.value) })}
+              /><output>{layer.speed.toFixed(2)}×</output></label
+            >
+            <label class="range-row"
+              ><span>Source fit</span><select
+                value={layer.fit}
+                onchange={(e) => {
+                  checkpoint();
+                  patchLayer({ fit: e.currentTarget.value as typeof layer.fit });
+                }}
+                >{#each ['contain', 'fill', 'stretch'] as fit}<option value={fit}
+                    >{fit[0].toUpperCase() + fit.slice(1)}</option
+                  >{/each}</select
+              ></label
+            >
+            <label class="range-row"
+              ><span>Blend</span><select
+                value={layer.blend}
+                onchange={(e) => {
+                  checkpoint();
+                  patchLayer({ blend: e.currentTarget.value as typeof layer.blend });
+                }}
+                >{#each ['normal', 'add', 'screen', 'multiply', 'difference'] as mode}<option value={mode}
+                    >{mode[0].toUpperCase() + mode.slice(1)}</option
+                  >{/each}</select
+              ></label
+            >
+          </div>{/if}
+
+        {:else if tab === 'flux'}
+          <FluxPanel value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>
+        {:else if tab === 'map'}
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">PROJECTION WORKSPACE</span>
+              <h1>Screen mapping</h1>
+            </div>
+            <button class="icon-button primary" onclick={() => addSurface()} aria-label="Add surface"
+              ><Icon name="plus" /></button
+            >
+          </div>
+          <div class="segmented wide mapping-tools">
+            <button class:active={mappingTool==='edit'} onclick={()=>mappingTool='edit'}><Icon name="map" size={17}/>Edit screens</button>
+            <button class:active={mappingTool==='paint'} onclick={paintMode}><Icon name="paint" size={17}/>Paint</button>
+          </div>
+          {#if mappingTool==='paint'}<PaintPanel onselect={index=>selectedSurface=index} value={paint} surfaces={show.surfaces} selected={selectedSurface} onchange={patchPaint} onundo={()=>{checkpoint();patchPaint({strokes:paint.strokes.slice(0,-1)});}} onclear={()=>{checkpoint();patchPaint({strokes:[],loop:false});}}/>{/if}
+          <div class="mapping-toolbar">
+            <button
+              class:active={show.mapping}
+              onclick={() => {
+                checkpoint();
+                show.mapping = !show.mapping;
+                persist();
+              }}>{show.mapping ? 'Mapping on' : 'Mapping off'}</button
+            ><button class:active={mappingGrid} aria-pressed={mappingGrid} onclick={()=>mappingGrid=!mappingGrid}><Icon name="grid" size={16}/>Grid</button><button class:active={mappingSnap} aria-pressed={mappingSnap} onclick={()=>mappingSnap=!mappingSnap}><Icon name="snap" size={16}/>Snap</button><button class:active={testGrid} onclick={toggleGrid}><Icon name="grid" size={16} />Test grid</button
+            ><select
+              aria-label="Stage layout preset"
+              value=""
+              onchange={(e) => {
+                if (e.currentTarget.value) addSurface(e.currentTarget.value);
+                e.currentTarget.value = '';
+              }}
+              ><option value="">Layouts…</option><option value="split">Two panels</option><option value="triptych"
+                >Triptych</option><option value="paint-box">Paint box · linked faces</option
+              ></select
+            >
+          </div>
+          <div class="surface-list">
+            {#each show.surfaces as s, i}<button
+                class:active={selectedSurface === i}
+                onclick={() => {
+                  selectedSurface = i;
+                  selectedPoint = 0;
+                }}
+                ><span class="surface-index">{i + 1}</span><span
+                  ><strong>{s.name}</strong><small
+                    >{s.source === 'mix' ? 'Full composition' : `Layer ${(show.dualDeck ? s.source % 4 : s.source) + 1}${show.dualDeck ? " · A/B" : ""}`} · {s.mode === 'mesh'
+                      ? 'Mesh'
+                      : 'Corners'}</small
+                  ></span
+                >{#if s.locked}<Icon name="lock" size={16} />{/if}<i class:lit={s.enabled}></i></button
+              >{/each}
+          </div>
+          {#if surface && mappingTool==='edit'}<div class="inspector-card">
+              <div class="section-heading">
+                <span>SURFACE {selectedSurface + 1}</span>
+                <div class="inline">
+                  <button
+                    class="icon-button"
+                    class:active={surface.locked}
+                    onclick={() => {
+                      checkpoint();
+                      patchSurface({ locked: !surface.locked });
+                    }}
+                    aria-label="Lock surface"><Icon name={surface.locked ? 'lock' : 'unlock'} size={17} /></button
+                  ><button
+                    class="icon-button"
+                    class:active={surface.enabled}
+                    onclick={() => {
+                      checkpoint();
+                      patchSurface({ enabled: !surface.enabled });
+                    }}
+                    aria-label="Toggle surface visibility"><Icon name="eye" size={17} /></button
+                  >
+                </div>
+              </div>
+              <label class="field"
+                >Name<input
+                  value={surface.name}
+                  onchange={(e) => {
+                    checkpoint();
+                    patchSurface({ name: e.currentTarget.value });
+                  }}
+                /></label
+              >
+              <div class="field-grid">
+                <label class="field"
+                  >Content<select aria-label="Screen content"
+                    value={surface.source === 'mix' ? 'mix' : show.dualDeck ? surface.source % 4 : surface.source}
+                    onchange={(e) => {
+                      checkpoint();
+                      patchSurface({ source: e.currentTarget.value === 'mix' ? 'mix' : Number(e.currentTarget.value) });
+                    }}
+                    ><option value="mix">Full composition</option>{#each show.layers.slice(0,4) as _, i}<option value={i}
+                        >Layer {i + 1}{show.dualDeck?' · follows A/B':''}</option
+                      >{/each}</select
+                  ></label
+                ><label class="field"
+                  >Fit<select
+                    value={surface.fit}
+                    onchange={(e) => {
+                      checkpoint();
+                      patchSurface({ fit: e.currentTarget.value as Surface['fit'] });
+                    }}
+                    >{#each ['stretch', 'contain', 'fill'] as fit}<option value={fit}
+                        >{fit[0].toUpperCase() + fit.slice(1)}</option
+                      >{/each}</select
+                  ></label
+                >
+              </div>
+              <div class="segmented wide">
+                <button
+                  class:active={surface.mode === 'corners'}
+                  disabled={surface.locked}
+                  onclick={() => {
+                    checkpoint();
+                    patchSurface({ mode: 'corners' });
+                    selectedPoint = 0;
+                  }}>Corner warp</button
+                ><button
+                  class:active={surface.mode === 'mesh'}
+                  disabled={surface.locked}
+                  onclick={() => {
+                    checkpoint();
+                    patchSurface({ mode: 'mesh' });
+                  }}>3 × 3 mesh</button
+                >
+              </div>
+              <label class="range-row"
+                ><span>Edge fade</span><input
+                  type="range"
+                  min="0"
+                  max=".4"
+                  step=".005"
+                  value={surface.feather}
+                  onpointerdown={checkpoint}
+                  oninput={(e) => patchSurface({ feather: Number(e.currentTarget.value) })}
+                /><output>{Math.round(surface.feather * 100)}%</output></label
+              >
+              <LookControls value={surface.look} onchange={(look) => { checkpoint(); patchSurface({look}); }} onapplyall={() => {checkpoint(); show.surfaces = show.surfaces.map(s => ({...s,look:copy(surface.look)}));persist();}} />
+              <div class="nudge">
+                <span>Point {selectedPoint + 1}<small>Fine adjustment · 0.1%</small></span><button
+                  disabled={surface.locked}
+                  onclick={() => nudge(-0.001, 0)}
+                  aria-label="Nudge left">←</button
+                ><button disabled={surface.locked} onclick={() => nudge(0, -0.001)} aria-label="Nudge up">↑</button
+                ><button disabled={surface.locked} onclick={() => nudge(0, 0.001)} aria-label="Nudge down">↓</button
+                ><button disabled={surface.locked} onclick={() => nudge(0.001, 0)} aria-label="Nudge right">→</button>
+              </div>
+              <div class="card-actions">
+                <button
+                  disabled={surface.locked}
+                  onclick={() => {
+                    checkpoint();
+                    patchSurface({ points: gridPoints() });
+                  }}>Reset geometry</button
+                ><button
+                  onclick={() => {
+                    checkpoint();
+                    show.surfaces = show.surfaces.filter((_, i) => i !== selectedSurface);
+                    selectedSurface = Math.max(0, selectedSurface - 1);
+                    persist();
+                  }}><Icon name="trash" size={16} />Remove</button
+                >
+              </div>
+            </div>{/if}
+          <p class="hint">
+            Route one layer to several surfaces. Warp points move the actual image, including outside its original
+            rectangle. Mapping remains live during clip changes.
+          </p>
+        {:else if tab === 'fx'}
+          {@render sourceControls()}
+        {:else}
+          <div class="library-heading">
+            <div class="library-nav">
+              <button class="subtle" onclick={()=>{editSlot=null;importOptions=false;tab='perform';}}><Icon name="left" size={17}/>Back to deck</button>
+              <button class="primary" aria-expanded={importOptions} onclick={() => importOptions=!importOptions}><Icon name="plus" size={18} />Import</button>
+            </div>
+              <h1>{editSlot ? `Load ${show.dualDeck ? (editSlot.row<4?'A':'B') : 'L'}${show.dualDeck ? editSlot.row%4+1 : editSlot.row+1} · slot ${editSlot.column + 1}` : 'Choose a clip'}</h1>
+          </div>
+          {#if importOptions}<div class="import-options" aria-label="Import options">
+            <button onclick={()=>{importOptions=false;videoInput.click();}}><Icon name="play" size={20}/><span>Videos<small>Show video files only</small></span></button>
+            <button onclick={()=>{importOptions=false;photoInput.click();}}><Icon name="library" size={20}/><span>Photos<small>Show images only</small></span></button>
+            <button onclick={()=>{importOptions=false;mediaInput.click();}}><Icon name="upload" size={20}/><span>All media<small>Videos and images</small></span></button>
+          </div>{/if}
+          <div class="segmented wide" style="margin-bottom:12px"><button onclick={()=>addCamera('environment')}>＋ Rear camera</button><button onclick={()=>addCamera('user')}>＋ Front camera</button>{#if hasNativeLive()}<button onclick={addDepth}>＋ Depth camera</button>{/if}</div>
+          <label class="search"
+            ><Icon name="search" size={18} /><input
+              placeholder="Find a shader…"
+              bind:value={search}
+              aria-label="Search shaders"
+            /></label
+          >
+          <div class="categories">
+            {#each ['all', ...new Set(libraryShaders.map(s => s.category))] as cat}<button
+                class:active={category === cat}
+                onclick={() => (category = cat)}
+                >{cat === 'all' ? 'All shaders' : cat[0].toUpperCase() + cat.slice(1)}</button
+              >{/each}
+          </div>
+          <div class="library-grid">
+            {#each filteredShaders as shader}<button onclick={() => addShader(shader.id)}
+                ><img
+                  src={shaderThumbnail(shader.id)}
+                  alt=""
+                  loading="lazy"
+                  onerror={() => failedThumbnails=new Set([...failedThumbnails,shader.id])}
+                /><strong>{shader.name}</strong><small>{shader.requiresImage ? 'Choose image / video' : shader.category} <span>+</span></small></button
+              >{/each}
+          </div>
+          {#if !filteredShaders.length}<p class="hint">No shaders match that search.</p>{/if}
+          <div class="section-heading">
+            <span>IMPORTED ON THIS DEVICE</span><button onclick={() => {importOptions=true;document.querySelector(".library-heading")?.scrollIntoView({block:"start"});}}>+ Add media</button>
+          </div>
+          {#each show.clips.filter((c) => c.kind !== 'shader') as clip}<div class="media-row">
+              <button
+                onclick={() => {
+                  assignClip(clip);
+                  tab = 'perform';
+                }}
+                ><Icon name={clip.kind === 'video' ? 'play' : 'library'} /><span
+                  >{clip.name}<small>{clip.kind}</small></span
+                ></button
+              ><button class="icon-button" onclick={() => removeClip(clip)} aria-label={`Remove ${clip.name}`}
+                ><Icon name="trash" size={16} /></button
+              >
+            </div>{/each}
+          <p class="hint">
+            Videos and images are saved locally for your next session. H.264 MP4 is the most portable video format for
+            phones.
+          </p>
+        {/if}
+      </div>
+      {#if clipControlsOpen}
+        <section class="clip-controls-tray" aria-label="Clip controls" use:focusControlsTray>
+          <header class="clip-controls-header">
+            <div><span class="eyebrow">{show.dualDeck ? `DECK ${selectedLayer < 4 ? 'A' : 'B'} · LAYER ${selectedLayer % 4 + 1}` : `LAYER ${selectedLayer + 1}`}</span><h2>{activeClip?.name || 'No clip playing'}</h2></div>
+            <button class="icon-button" data-close-controls aria-label="Close clip controls" onclick={closeControls}><Icon name="close" size={20}/></button>
+          </header>
+          {#if frozen || blackout}<div class="controls-notice" role="status">{blackout?'Output is blacked out.':'Output is held.'} Changes appear when you resume.<button onclick={()=>{if(blackout)setBlackout();if(frozen)setFrozen();}}>Resume</button></div>{:else if activeClip && (!layer.enabled || layer.opacity === 0)}<p class="controls-notice" role="status">This layer is muted. Raise its level in Mix to see your changes.</p>{:else if show.dualDeck && (selectedLayer < 4 ? show.crossfade === 1 : show.crossfade === 0)}<p class="controls-notice" role="status">This deck is faded out. Move the A/B crossfader to see your changes.</p>{/if}
+          <div class="clip-controls-body">{@render sourceControls(true)}</div>
+        </section>
+      {/if}
+    </section>
+  </main>
+  {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
+  <footer class="master-bar">
+    {#if show.dualDeck}<div class="mobile-decks">
+      <button
+        onclick={() => {
+          show.crossfade = 0;
+          persist();
+        }}>A</button
+      ><input
+        aria-label="Mobile deck crossfader"
+        type="range"
+        min="0"
+        max="1"
+        step=".001"
+        bind:value={show.crossfade}
+        oninput={persist}
+      /><button
+        onclick={() => {
+          show.crossfade = 1;
+          persist();
+        }}>B</button
+      >
+    </div>{/if}
+    <div class="tempo">
+      <div class="beat-dots">
+        {#each [0, 1, 2, 3] as n}<i class:lit={beat === n}></i>{/each}
+      </div>
+      <button class="tap" onclick={tap}>TAP</button><label
+        ><input
+          aria-label="Tempo in BPM"
+          type="number"
+          min="30"
+          max="240"
+          value={show.bpm}
+          onchange={(e) => setBpm(Number(e.currentTarget.value))}
+        /><span>BPM</span></label
+      ><button
+        class:active={show.quantize}
+        onclick={() => {
+          show.quantize = !show.quantize;
+          if (!show.quantize) cancelQueued();
+          persist();
+        }}>Q<span class="desktop-label">uantize</span></button
+      >
+    </div>
+    <div class="master-actions">{#if flux.active}<button aria-label="Release Flux" onclick={()=>{flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}>FX off</button>{/if}<button class:active={mixerOpen} onclick={()=>tablet?selectTab("perform"):mixerOpen=!mixerOpen} aria-label="Open performance mixer">Mix</button>
+      <button
+        class="icon-button"
+        class:active={mic}
+        disabled={micBusy}
+        onclick={toggleMic}
+        aria-label={mic ? 'Disable microphone' : 'Enable microphone'}><Icon name="mic" /></button
+      ><label class="master-level"
+        ><span>MASTER</span><input
+          aria-label="Master output level"
+          type="range"
+          min="0"
+          max="1"
+          step=".001"
+          bind:value={show.master}
+          oninput={persist}
+        /></label
+      >
+    </div>
+  </footer>
+  {#if error}<div class="toast error" role="alert">
+      <span>{error}</span><button class="icon-button" onclick={() => (error = '')} aria-label="Dismiss error"
+        ><Icon name="close" size={16} /></button
+      >
+    </div>{:else if notice}<div class="toast" role="status">{notice}</div>{/if}
+  {#if clean}<button class="exit-clean" onclick={() => (clean = false)}>Return to studio</button>{/if}
+</div>
+{#if toolkitOpen}<CaptureToolkit mappingSurfaces={show.surfaces} oninteractive={()=>{toolkitOpen=false;openInteractive();}} oninteractiveoutput={interactiveOutput} {oncompanion} onclose={()=>toolkitOpen=false} onprepare={prepareCaptureTool} onshots={importCameraShots}/>{/if}
+{#if interactiveMounted}<MobileInteractiveWorkspace bind:this={interactiveWorkspace} open={interactiveOpen} outputLevel={show.master} outputHeld={frozen} outputBlackout={blackout} mappingSurfaces={show.surfaces} outputLabel={blackout&&interactiveLive?'Blackout active':frozen&&interactiveLive?'Output held':outputStatus.state==='live'?`Live · ${outputStatus.display?.name??'External display'}`:outputStatus.state==='connecting'?'Connecting…':outputStatus.state==='off'?'External output disabled':outputStatus.state==='error'?outputStatus.message??'Output needs attention':'No external display connected'} onpreparecamera={prepareCaptureTool} onoutput={interactiveOutput} onoutputsettings={()=>outputSettings=true} onclose={()=>interactiveOpen=false}/>{/if}
+{#if outputSettings}<OutputPanel source={interactiveLive?'interactive':'mix'} status={outputStatus} preferences={outputPreferences} quality={show.quality} onpreferences={value=>{outputPreferences=value;externalOutput?.configure(value);}} onquality={quality=>{show.quality=quality;persist();}} onwireless={()=>externalOutput?.chooseWireless()} onclose={()=>outputSettings=false} onretry={()=>externalOutput?.retry()} onpreview={()=>{outputSettings=false;if(interactiveLive){interactiveOpen=true;interactiveWorkspace?.previewOutput();}else clean=true;}}/>{/if}
+{#if settings}<div class="modal-backdrop" role="presentation">
+    <div
+      class="settings-dialog"
+      use:focusDialog
+      role="dialog"
+      aria-modal="true"
+      aria-label="Set and output settings"
+      tabindex="-1"
+    >
+      <div class="panel-heading">
+        <div>
+          <span class="eyebrow">GHOST ARCADE</span>
+          <h1>Your set, your stage</h1>
+        </div>
+        <button class="icon-button" onclick={() => (settings = false)} aria-label="Close settings"
+          ><Icon name="close" /></button
+        >
+      </div>
+      <label class="field">Set name<input bind:value={show.name} oninput={persist} /></label>
+      {#if setBank.length}<label class="field"
+          >Saved on this device<select value={show.id} onchange={(e) => openSavedSet(e.currentTarget.value)}
+            >{#each setBank as set}<option value={set.id}>{set.name}</option>{/each}</select
+          ></label
+        >{/if}
+      <div class="field-grid">
+        <button onclick={exportSet}><Icon name="save" />Export set</button><button onclick={() => setInput.click()}
+          ><Icon name="upload" />Open set</button
+        >
+      </div>
+      <p class="hint">
+        Automatically saved on this device. Set files contain your layout, clips, and scenes; imported media must also
+        exist on the receiving device.
+      </p>
+      <label class="field"
+        >Output quality<select bind:value={show.quality} onchange={persist}
+          ><option value={540}>540p · longer sessions</option><option value={720}>720p · balanced</option><option
+            value={1080}>1080p · maximum detail</option
+          ></select
+        ></label
+      >
+      <div class="info-card">
+        <Icon name="output" />
+        <div>
+          <strong>Project with clean output</strong>
+          <p>
+            Open Output settings in the header to configure a wireless or wired display. Connected displays receive only the finished composition; controls stay on this device.
+          </p>
+          <button
+            onclick={() => {
+              settings = false;
+              outputSettings = true;
+            }}>Output settings</button
+          >
+        </div>
+      </div>
+      <button
+        class="subtle"
+        onclick={() => {
+          try {
+            saveShow(show);
+          } catch {}
+          checkpoint();
+          cancelQueued();
+          show = defaultShow();
+          selectedSurface = 0;
+          bank = 0;
+          void engine?.restore(show);
+          persist();
+          settings = false;
+        }}>Start a fresh set</button
+      >
+    </div>
+  </div>{/if}
+
+<style>
+ .ghost-movements{padding:12px 0}.ghost-movements strong{font-size:12px;color:var(--ga-ink-0)}.ghost-movements>div{display:flex;gap:6px;margin-top:8px}.ghost-movements button{flex:1;min-height:44px;background:var(--ga-selection-bg);border:1px solid var(--ga-selection-line);border-radius:5px;color:var(--ga-ink-0)}
+  .mapping-tools{margin-bottom:12px}.mapping-tools button{display:flex;gap:7px;align-items:center;justify-content:center;min-height:44px;}
+
+  .library-heading{display:grid;gap:14px;margin-bottom:18px;min-width:0;}
+  .library-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .library-nav button{display:flex;align-items:center;gap:6px;min-height:44px;}
+  .library-heading h1{margin:0;font-size:18px;line-height:1.3;overflow-wrap:anywhere;}
+  .import-options{display:grid;gap:6px;padding:8px;margin-bottom:14px;border:1px solid var(--ga-line-3);border-radius:7px;background:var(--ga-card);}
+  .import-options button{display:flex;align-items:center;gap:12px;text-align:left;min-height:52px;padding:8px 12px;}
+  .import-options small{display:block;font-size:11px;color:var(--ga-ink-2);margin-top:3px;}
+
+  .autopilot-bar{display:flex;align-items:center;gap:0;border:1px solid var(--ga-line-2);border-radius:5px;background:var(--ga-slot);padding:0;}
+  .autopilot-bar button{display:flex;align-items:center;gap:5px;min-height:44px;border:0;background:transparent;padding:0 7px;}
+  .autopilot-bar strong{font-size:12px;font-weight:650;}
+  .autopilot-bar button span{font:10px ui-monospace;color:#a6adb9;}
+  .autopilot-bar button.running{color:#b7f375;background:#24311c;border-radius:4px;}
+  .autopilot-bar button.running span{color:#b7f375;}
+  .auto-options{padding:12px;border:1px solid var(--ga-line-2);border-radius:6px;margin-bottom:10px;background:var(--ga-card);}
+  .auto-switches,.auto-fields,.auto-rows{display:flex;gap:8px;margin-bottom:10px;}
+  .auto-switches button{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-height:44px;}
+  .auto-fields label{flex:1;min-width:0;display:grid;gap:6px;font-size:11px;color:var(--ga-ink-2);}
+  .auto-fields select{width:100%;font-size:12px;min-height:44px;}
+  .auto-amount{display:grid;grid-template-columns:1fr auto;align-items:center;font-size:12px;}
+  .auto-amount input{grid-column:1/-1;}
+  .auto-amount output{color:#b7f375;font:11px ui-monospace;}
+  .auto-rows button{flex:1;min-height:44px;}
+  .auto-options p{font-size:11px;color:#a6adb9;line-height:1.5;margin:4px 0;}
+
+  .performance-hidden { display: none !important; }
+  :global(html),
+  :global(body) {
+    margin: 0;
+    background: var(--ga-void);
+    color: var(--ga-ink-0);
+    font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif);
+    font-weight: 500;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+  :global(*) {
+    box-sizing: border-box;
+  }
+  .studio,
+  .settings-dialog {
+    --bg: var(--ga-void);
+    --panel: var(--ga-panel);
+    --raised: var(--ga-card);
+    --line: var(--ga-line-2);
+    --muted: var(--ga-ink-1);
+    --text: var(--ga-ink-0);
+    --accent: var(--ga-coral);
+    --deep: var(--ga-selection-bg);
+    --green: var(--ga-green);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.45;
+    letter-spacing: 0;
+  }
+  .studio {
+    height: 100dvh;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 64px minmax(0, 1fr) 66px;
+    background: var(--bg);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  button,
+  input,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+  button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 40px;
+    border: 1px solid var(--line);
+    border-radius: var(--ga-r-hard);
+    background: var(--ga-hardware-bg);
+    box-shadow: var(--ga-hardware-shadow);
+    padding: 8px 12px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    font-weight: 550;
+  }
+  button:hover {
+    border-color: var(--ga-line-3);
+  }
+  button:active {
+    background: var(--ga-raise);
+  }
+  button:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  button.active,
+  button.primary {
+    background: var(--deep);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
+  }
+  button.primary {
+    background: var(--ga-coral-soft);
+    border-color: var(--ga-coral-line);
+    color: var(--ga-coral);
+  }
+  button.danger {
+    background: #572737;
+    color: #ffb2bb;
+    border-color: #b55268;
+  }
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--ga-focus);
+    outline-offset: 3px;
+  }
+  button.subtle {
+    background: none;
+    color: var(--muted);
+  }
+  input:not([type='range']):not([type='checkbox']),
+  select {
+    background: var(--ga-slot);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    min-height: 44px;
+    padding: 9px 12px;
+    max-width: 100%;
+    font-size: 16px;
+  }
+  input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    width: 100%;
+    height: 48px;
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+    touch-action: pan-y;
+  }
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 10px;
+    border-radius: 5px;
+    background: repeating-linear-gradient(90deg, transparent 0 calc(12.5% - 1px), var(--ga-line-2) calc(12.5% - 1px) 12.5%), var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+  }
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 22px;
+    height: 28px;
+    border-radius: var(--ga-r-hard);
+    background: linear-gradient(var(--ga-slider-fill), var(--ga-slider-fill)) center / 10px 2px no-repeat, linear-gradient(180deg, var(--ga-raise), var(--ga-card));
+    border: 1px solid var(--ga-line-3);
+    box-shadow: 0 2px 5px #0009;
+    margin-top: -10px;
+  }
+  input[type='range']::-moz-range-track {
+    height: 8px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: 5px;
+  }
+  input[type='range']::-moz-range-progress {
+    height: 8px;
+    background: var(--ga-slider-fill);
+    border-radius: 5px;
+  }
+  input[type='range']::-moz-range-thumb {
+    height: 26px;
+    width: 20px;
+    background: linear-gradient(var(--ga-slider-fill), var(--ga-slider-fill)) center / 10px 2px no-repeat, linear-gradient(180deg, var(--ga-raise), var(--ga-card));
+    border: 1px solid var(--ga-line-3);
+    border-radius: var(--ga-r-hard);
+  }
+  input.blue-fill::-webkit-slider-runnable-track {
+    background: repeating-linear-gradient(90deg, transparent 0 calc(12.5% - 1px), var(--ga-line-2) calc(12.5% - 1px) 12.5%), linear-gradient(90deg, #2f4ad6 0 calc(10px + (100% - 20px) * var(--range-fill, 0)), var(--ga-slot) calc(10px + (100% - 20px) * var(--range-fill, 0)) 100%);
+  }
+  input.blue-fill::-webkit-slider-thumb {
+    background: linear-gradient(#7996ff, #7996ff) center / 10px 2px no-repeat, linear-gradient(180deg, var(--ga-raise), var(--ga-card));
+  }
+  input.blue-fill::-moz-range-progress {
+    background: #2f4ad6;
+  }
+  input.blue-fill::-moz-range-thumb {
+    background: linear-gradient(#7996ff, #7996ff) center / 10px 2px no-repeat, linear-gradient(180deg, var(--ga-raise), var(--ga-card));
+  }
+  input[type='checkbox'] {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--accent);
+  }
+  select {
+    cursor: pointer;
+  }
+  h1,
+  h2,
+  p {
+    margin: 0;
+  }
+  h1 {
+    font-size: 15px;
+    line-height: 1.3;
+    letter-spacing: 0;
+    font-weight: 620;
+  }
+  h2 {
+    font-size: 14px;
+    letter-spacing: 0;
+  }
+  .icon-button {
+    width: 40px;
+    height: 40px;
+    flex: none;
+    padding: 0;
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+  .file-input {
+    display: none;
+  }
+  .primary {
+    background: var(--deep);
+  }
+  .app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--line);
+    gap: 20px;
+    background: var(--ga-faceplate-bg);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 750;
+    letter-spacing: 0.8px;
+  }
+  .brand-wordmark { width: 180px; height: 28px; object-fit: contain; }
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    object-fit: contain;
+    flex: none;
+  }
+  .set-title {
+    box-shadow: none;
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    font-size: 12px;
+    max-width: 35%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .set-title span {
+    margin-left: 12px;
+  }
+  .header-actions {
+    display: flex;
+    gap: 3px;
+  }
+  .workspace {
+    min-width:0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(370px, 1fr);
+    min-height: 0;
+    max-width: 1800px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .monitor {
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    overflow: auto;
+    border-right: 1px solid var(--line);
+    background: var(--ga-void);
+  }
+  .monitor-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 1px;
+    margin: 0 0 10px;
+  }
+  .monitor-heading span:first-child {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ga-ink-0);
+  }
+  .monitor-heading b {
+    padding: 0 5px;
+    color: var(--ga-ink-2);
+  }
+  i {
+    width: 6px;
+    height: 6px;
+    display: inline-block;
+    border-radius: 50%;
+    background: var(--ga-ink-3);
+  }
+  .monitor-heading i,
+  i.lit {
+    background: var(--green);
+    box-shadow: 0 0 9px #75d8b638;
+  }
+  .monitor-heading i.stopped {
+    background: #ff778e;
+  }
+  .preview-frame {
+    width: 100%;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft);
+    padding: 5px;
+    background: var(--ga-slot);
+    box-shadow: inset 0 1px 0 var(--ga-line-2);
+  }
+  .preview {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #000;
+    touch-action: none;
+  }
+  .preview canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .monitor-tools {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    padding: 10px 0 22px;
+  }
+  .monitor-tools > span {
+    margin-right: auto;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--muted);
+  }
+  .monitor-tools button {
+    font-size: 11px;
+    background: transparent;
+    min-height: 34px;
+    padding: 5px 8px;
+  }
+  .monitor-tools button.danger {
+    background: #572737;
+  }
+  .mixer {
+    border-top: 1px solid var(--line);
+    padding-top: 17px;
+  }
+  .section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 10px;
+    letter-spacing: 1.1px;
+    color: var(--muted);
+    font-weight: 650;
+    margin: 0 0 12px;
+  }
+  .section-heading > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 70%;
+  }
+  .section-heading button {
+    font-size: 11px;
+    letter-spacing: 0;
+    font-weight: 500;
+    background: transparent;
+    padding: 4px 8px;
+    min-height: 32px;
+  }
+  .section-heading select {
+    font-size: 12px;
+    letter-spacing: 0;
+    min-height: 36px;
+  }
+  .channel-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .channel {
+    min-width: 0;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft);
+    padding: 10px;
+  }
+  .channel.selected {
+    border-color: var(--ga-selection-line);
+    background: var(--ga-selection-bg);
+  }
+  .channel-select {
+    box-shadow: none;
+    width: 100%;
+    border: 0;
+    background: none;
+    padding: 0;
+    gap: 5px;
+    justify-content: space-between;
+    min-height: 26px;
+  }
+  .layer-number {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ga-ink-0);
+  }
+  .channel-select > span:nth-child(2) {
+    font-size: 8px;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+  }
+  .channel > strong {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--ga-ink-1);
+    margin: 12px 0 5px;
+  }
+  .channel-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+  .channel-bottom button {
+    min-height: 28px;
+    padding: 2px 6px;
+    font-size: 8px;
+    background: none;
+  }
+  .channel-bottom button.active {
+    background: var(--ga-selection-bg);
+    border: 1px solid var(--ga-selection-line);
+  }
+  .crossfader {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 15px 0 0;
+  }
+  .crossfader button {
+    min-height: 32px;
+    height: 32px;
+    width: 32px;
+    font-size: 12px;
+    background: var(--ga-card);
+    color: var(--ga-ink-0);
+    border-color: var(--ga-line-2);
+  }
+  .crossfader input {
+    accent-color: var(--ga-green);
+  }
+  .control-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    background: var(--ga-inspector-bg);
+  }
+  .tabs {
+    background: var(--ga-faceplate-bg);
+    display: flex;
+    flex: none;
+    border-bottom: 1px solid var(--line);
+    padding: 0;
+    gap: 5px;
+  }
+  .tabs button {
+    flex: 1;
+    min-width:0;
+    min-height:44px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    color: var(--muted);
+    padding: 10px 6px 13px;
+    font-size: 12px;
+    gap: 8px;
+  }
+  .tabs button.active {
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    border-bottom-color: var(--ga-selection-line);
+  }
+  .panel-scroll {
+    flex:1;
+    min-width:0;
+    width:100%;
+    box-sizing:border-box;
+    overflow-x:hidden;
+    -webkit-overflow-scrolling:touch;
+    padding: 16px;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--ga-raise) transparent;
+  }
+  .panel-heading {
+    min-width:0;
+    flex-wrap:wrap;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .eyebrow {
+    display: block;
+    color: var(--ga-ink-1);
+    font-size: 9px;
+    letter-spacing: 1px;
+    font-weight: 650;
+    margin-bottom: 7px;
+  }
+  .segmented {
+    display: flex;
+    background: var(--ga-slot);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 3px;
+    flex: none;
+  }
+  .segmented button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+    min-height: 30px;
+    border-radius: 5px;
+    padding: 5px 10px;
+  }
+  .segmented button.active {
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+  }
+  .segmented.wide {
+    margin: 16px 0;
+    display: flex;
+  }
+  .segmented.wide button {
+    flex: 1;
+    min-height: 38px;
+    font-size: 12px;
+  }
+  .layer-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .layer-tabs button {
+    min-width: 0;
+    gap: 5px;
+    padding: 7px 5px;
+    background: var(--ga-card);
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .layer-tabs button > span {
+    color: var(--ga-ink-0);
+    font-weight: 700;
+  }
+  .layer-tabs button > small {
+    margin-left: auto;
+    font-size: 8px;
+    opacity: 0.6;
+  }
+  .layer-tabs button.active {
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    border-color: var(--ga-selection-line);
+  }
+  .clip-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+  }
+  .clip-pad {
+    min-width: 0;
+    aspect-ratio: 1.16;
+    position: relative;
+    overflow: hidden;
+    display: block;
+    text-align: left;
+    padding: 0;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft);
+    isolation: isolate;
+  }
+  .clip-pad img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.8;
+    z-index: -2;
+  }
+  .clip-pad:after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(0deg, #060504 0%, #100f0d38 75%);
+    z-index: -1;
+  }
+  .clip-pad.playing {
+    border: 2px solid var(--ga-green);
+    box-shadow: inset 0 0 0 1px var(--ga-green);
+  }
+  .clip-pad.queued {
+    border-color: #ffd37e;
+    border-style: dashed;
+  }
+  .pad-number {
+    position: absolute;
+    top: 8px;
+    left: 9px;
+    font:
+      10px ui-monospace,
+      SFMono-Regular,
+      monospace;
+    color: var(--ga-ink-0);
+    text-shadow: 0 1px 4px #000;
+  }
+  .clip-kind {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 7px;
+    letter-spacing: 0.8px;
+    background: var(--ga-slot);
+    padding: 2px 4px;
+    border-radius: 3px;
+    color: var(--ga-ink-1);
+  }
+  .pad-name {
+    position: absolute;
+    bottom: 11px;
+    left: 11px;
+    right: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .pad-name strong {
+    font-size: 12px;
+    line-height: 1.2;
+    font-weight: 570;
+  }
+  .pad-name > span {
+    font-size: 7px;
+    letter-spacing: 1px;
+    color: var(--ga-ink-1);
+  }
+  .playing .pad-name > span {
+    color: var(--ga-selection-ink);
+  }
+  .add-pad {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+    justify-content: center;
+    border-style: dashed;
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
+  }
+  .add-pad:after {
+    display: none;
+  }
+  .add-pad span {
+    font-size: 11px;
+  }
+  .scene-pad {
+    position: relative;
+    aspect-ratio: 1.16;
+    display: flex;
+    flex-direction: column;
+    background: var(--ga-card);
+    border-color: var(--ga-line-2);
+  }
+  .scene-pad strong {
+    font-size: 13px;
+  }
+  .scene-pad small {
+    font-size: 9px;
+    color: var(--muted);
+  }
+  .bank-row {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    align-items: center;
+    margin: 9px 0 18px;
+    color: var(--ga-ink-1);
+    font-size: 9px;
+    letter-spacing: 1.5px;
+  }
+  .bank-row small {
+    color: var(--ga-ink-2);
+  }
+  .bank-row .icon-button {
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+  }
+  .transport-card,
+  .inspector-card {
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft);
+    padding: 16px;
+    margin-bottom: 15px;
+  }
+  .transport-card .section-heading {
+    letter-spacing: 0.6px;
+  }
+  .range-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin: 9px 0;
+    font-size: 12px;
+  }
+  .range-row > span {
+    width: 86px;
+    flex: none;
+    color: var(--ga-ink-1);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .range-row input {
+    min-width: 0;
+  }
+  .range-row output {
+    width: 44px;
+    text-align: right;
+    flex: none;
+    color: var(--ga-blue);
+    font:
+      11px ui-monospace,
+      monospace;
+  }
+  .range-row select {
+    flex: 1;
+    min-width: 0;
+    text-transform: capitalize;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--ga-ink-1);
+    margin: 13px 0;
+  }
+  .field-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .field-grid .field {
+    min-width: 0;
+  }
+  .hint {
+    font-size: 11px;
+    color: var(--ga-ink-1);
+    line-height: 1.75;
+    margin: 14px 0;
+  }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--ga-ink-1);
+    padding: 10px 0;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 35px 16px;
+    color: var(--ga-ink-1);
+  }
+  .empty-state h2 {
+    margin: 16px 0 10px;
+    color: var(--ga-ink-0);
+  }
+  .empty-state p {
+    font-size: 12px;
+    line-height: 1.8;
+    max-width: 330px;
+    margin: auto;
+  }
+  .mapping-lines {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .mapping-lines polyline {
+    fill: none;
+    stroke: #83a4d5;
+    stroke-width: 1;
+    stroke-dasharray: 6 5;
+    vector-effect: non-scaling-stroke;
+  }
+  .mapping-lines polyline.chosen {
+    stroke: #8ab7ff;
+    stroke-width: 2;
+    stroke-dasharray: none;
+  }
+  .mapping-lines polyline.dim {
+    opacity: 0.3;
+  }
+  .mapping-lines text {
+    font-size: 17px;
+    fill: #e3edff;
+    paint-order: stroke;
+    stroke: #07101f;
+    stroke-width: 3px;
+  }
+  .mapping-lines polyline.mesh-line {
+    stroke: #77adff;
+    opacity: 0.6;
+    stroke-width: 1;
+    stroke-dasharray: none;
+  }
+  .warp-handle {
+    box-shadow: none;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 44px;
+    height: 44px;
+    border: 0 !important;
+    background: none !important;
+    padding: 0;
+    touch-action: none;
+    z-index: 2;
+  }
+  .warp-handle span {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #e4f0ff;
+    border-radius: 50%;
+    background: #4e8bed;
+    box-shadow: 0 0 0 4px #07101b66;
+  }
+  .warp-handle.selected span {
+    background: #91f0d0;
+    border-color: #fff;
+    box-shadow: 0 0 0 5px #7decc32a;
+  }
+  .mapping-toolbar {
+    display: flex;
+    gap: 7px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .mapping-toolbar button,
+  .mapping-toolbar select {
+    font-size: 11px;
+    min-height: 38px;
+    padding: 6px 9px;
+  }
+  .surface-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+    margin-bottom: 18px;
+  }
+  .surface-list > button {
+    justify-content: start;
+    text-align: left;
+    padding: 10px;
+    min-width: 0;
+    background: var(--ga-card);
+  }
+  .surface-list > button.active {
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+  }
+  .surface-index {
+    color: var(--ga-ink-0);
+    font-size: 11px;
+    border: 1px solid var(--ga-line-3);
+    border-radius: 4px;
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-content: center;
+    flex: none;
+  }
+  .surface-list strong {
+    font-size: 11px;
+    display: block;
+    font-weight: 550;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    max-width: 120px;
+  }
+  .surface-list small {
+    font-size: 9px;
+    color: var(--ga-ink-1);
+    display: block;
+    margin-top: 3px;
+  }
+  .surface-list i {
+    margin-left: auto;
+    flex: none;
+  }
+  .inline {
+    display: flex;
+    gap: 4px;
+  }
+  .nudge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 16px 0;
+  }
+  .nudge > span {
+    font-size: 11px;
+    margin-right: auto;
+    color: var(--ga-ink-1);
+  }
+  .nudge small {
+    display: block;
+    font-size: 8px;
+    color: var(--ga-ink-2);
+    margin-top: 3px;
+  }
+  .nudge button {
+    min-height: 36px;
+    width: 36px;
+    padding: 0;
+    font-size: 16px;
+  }
+  .card-actions {
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid var(--ga-line-2);
+    padding-top: 14px;
+    margin-top: 14px;
+  }
+  .card-actions button {
+    font-size: 10px;
+    background: none;
+    color: var(--ga-ink-1);
+    padding: 5px 8px;
+    min-height: 34px;
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: 8px;
+    padding: 0 12px;
+    color: var(--ga-ink-1);
+  }
+  .search input {
+    min-width:0;
+    background: none !important;
+    border: 0 !important;
+    width: 100%;
+    min-height: 44px !important;
+    padding: 9px 0 !important;
+  }
+  .categories {
+    width:100%;
+    min-width:0;
+    touch-action:pan-x;
+    flex-shrink:0;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    margin: 13px 0 19px;
+    scrollbar-width: none;
+  }
+  .categories button {
+    flex:0 0 auto;
+    white-space: nowrap;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ga-ink-1);
+    font-size: 10px;
+    min-height: 32px;
+    padding: 5px 10px;
+  }
+  .categories button.active {
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    border-color: var(--ga-selection-line);
+  }
+  .library-grid {
+    width:100%;
+    min-width:0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .library-grid > button {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+    background: var(--ga-card);
+    border-radius: var(--ga-r-tile);
+  }
+  .library-grid img {
+    width: 100%;
+    aspect-ratio: 1.4;
+    object-fit: cover;
+    background: var(--ga-slot);
+  }
+  .library-grid strong {
+    font-size: 11px;
+    font-weight: 550;
+    line-height: 1.3;
+    margin: 10px 9px 5px;
+  }
+  .library-grid small {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    color: var(--ga-ink-1);
+    margin: 0 9px 9px;
+    text-transform: capitalize;
+  }
+  .library-grid small span {
+    color: var(--ga-blue);
+  }
+  .media-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    border: 1px solid var(--ga-line-2);
+    border-radius: 8px;
+    margin-bottom: 7px;
+    padding: 4px;
+  }
+  .media-row > button:first-child {
+    flex: 1;
+    justify-content: start;
+    text-align: left;
+    background: none;
+    border: 0;
+    min-width: 0;
+  }
+  .media-row span {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .media-row small {
+    display: block;
+    font-size: 10px;
+    color: var(--ga-ink-1);
+  }
+  .master-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 22px;
+    border-top: 1px solid var(--line);
+    background: var(--ga-faceplate-bg);
+    gap: 14px;
+  }
+  .tempo,
+  .master-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .beat-dots {
+    display: flex;
+    gap: 5px;
+    margin-right: 4px;
+  }
+  .beat-dots i {
+    width: 5px;
+    height: 5px;
+  }
+  .beat-dots i.lit {
+    background: var(--ga-slider-fill);
+  }
+  .tempo > label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tempo input {
+    width: 66px;
+    min-height: 36px !important;
+    padding: 5px 4px !important;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    border: 0 !important;
+    background: none !important;
+    font-size: 18px !important;
+    font-weight: 620;
+  }
+  .tempo > label > span {
+    color: var(--ga-ink-1);
+    font-size: 9px;
+    letter-spacing: 1px;
+  }
+  .tempo > button {
+    font-size: 10px;
+    min-height: 35px;
+    padding: 5px 9px;
+    background: transparent;
+    color: var(--ga-ink-1);
+  }
+  .tempo > button.active {
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+  }
+  .master-level {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .master-level span {
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--ga-ink-1);
+  }
+  .master-level input {
+    width: 110px;
+  }
+  .master-actions .icon-button.recording {
+    color: #ff8c9d;
+    border: 1px solid #984258;
+    background: #3d1d2c;
+    width: auto;
+    min-width: 40px;
+    padding: 0 8px;
+  }
+  .toast {
+    position: fixed;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: min(540px, calc(100vw - 28px));
+    padding: 13px 17px;
+    background: var(--ga-raise);
+    border: 1px solid var(--ga-line-3);
+    border-radius: var(--ga-r-soft);
+    box-shadow: 0 8px 40px #0008;
+    z-index: 60;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .toast.error {
+    background: #462333;
+    border-color: #a75e79;
+  }
+  .toast .icon-button {
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+  }
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: #02060cbb;
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .settings-dialog {
+    max-width: 500px;
+    width: 100%;
+    max-height: 90dvh;
+    overflow-y: auto;
+    border: 1px solid var(--ga-line-3);
+    background: var(--ga-inspector-bg);
+    border-radius: 12px;
+    padding: 26px;
+    box-shadow: 0 24px 100px #0009;
+  }
+  .settings-dialog .field-grid button {
+    font-size: 12px;
+  }
+  .info-card {
+    display: flex;
+    gap: 14px;
+    padding: 17px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft);
+    margin: 20px 0;
+    background: var(--ga-sub);
+  }
+  .info-card > :global(svg) {
+    flex: none;
+    color: var(--ga-blue);
+  }
+  .info-card strong {
+    font-size: 13px;
+  }
+  .info-card p {
+    font-size: 11px;
+    color: var(--ga-ink-1);
+    line-height: 1.7;
+    margin: 8px 0 12px;
+  }
+  .info-card button {
+    font-size: 11px;
+  }
+  .recording-result {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .recording-result video {
+    width: 100%;
+    border-radius: 8px;
+    background: #000;
+  }
+  .mobile-decks {
+    display: none;
+  }
+  .phone-mix {
+    display: none;
+  }
+  input[type='number'] {
+    appearance: textfield;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .exit-clean {
+    position: fixed;
+    right: 20px;
+    top: calc(20px + env(safe-area-inset-top));
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.2s;
+    font-size: 12px;
+  }
+  .exit-clean {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0 !important;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    cursor: none;
+  }
+  .clean {
+    display: block;
+    background: #000;
+    padding: 0;
+  }
+  .clean .app-header,
+  .clean .control-panel,
+  .clean .monitor-heading,
+  .clean .monitor-tools,
+  .clean .mixer,
+  .clean .master-bar,
+  .clean .toast {
+    display: none;
+  }
+  .clean .workspace,
+  .clean .monitor {
+    display: block;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    background: #000;
+  }
+  .clean .preview-frame {
+    position: absolute;
+    inset: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    display: grid;
+    place-items: center;
+  }
+  .clean .preview {
+    width: min(100vw, 177.7778dvh);
+    aspect-ratio: 16/9;
+  }
+  @media (min-width: 1500px) {
+    .workspace {
+      grid-template-columns: minmax(0, 1.35fr) minmax(480px, 1fr);
+    }
+    .panel-scroll {
+      padding: 30px;
+    }
+    .clip-pad {
+      aspect-ratio: 1.4;
+    }
+    .monitor {
+      padding: 38px;
+    }
+  }
+  @media (max-width: 1000px) and (min-width: 761px) {
+    .workspace {
+      grid-template-columns: minmax(0, 1fr) minmax(350px, 1fr);
+    }
+    .monitor {
+      padding: 14px;
+    }
+    .panel-scroll {
+      padding: 18px;
+    }
+    .channel-grid {
+      gap: 5px;
+    }
+    .channel {
+      padding: 6px;
+    }
+    .channel-select > span:nth-child(2) {
+      font-size: 6px;
+    }
+    .channel > strong {
+      font-size: 9px;
+    }
+    .panel-heading h1 {
+      font-size: 15px;
+    }
+    .tabs {
+      padding: 0;
+    }
+    .tabs button {
+      font-size: 10px;
+      gap: 5px;
+    }
+    .master-level {
+      display: none;
+    }
+    .pad-name strong {
+      font-size: 11px;
+    }
+  }
+  @media (max-width: 760px) {
+    .mobile-decks {
+      display: flex;
+      grid-column: 1/-1;
+      align-items: center;
+      gap: 12px;
+      height: 30px;
+    }
+    .mobile-decks button {
+      width: 30px;
+      min-height: 28px;
+      height: 28px;
+      padding: 0;
+      font-size: 11px;
+      background: var(--ga-card);
+      border-color: var(--ga-line-2);
+    }
+    .mobile-decks input {
+      min-width: 0;
+      accent-color: var(--ga-green);
+    }
+    .phone-mix {
+      display: block;
+      padding: 0 0 12px;
+    }
+    .studio {
+      grid-template-rows: 52px minmax(0, 1fr) auto;
+    }
+    .app-header {
+      padding: 0 14px;
+      gap: 6px;
+    }
+    .brand {
+      flex: 1;
+      min-width: 0;
+      font-size: 9px;
+      letter-spacing: 1px;
+      gap: 8px;
+    }
+    .brand-wordmark { flex: 1; min-width: 0; max-width: 150px; width: 150px; height: 24px; }
+    .brand-mark {
+      width: 29px;
+      height: 29px;
+      font-size: 18px;
+    }
+    .set-title {
+      display: none;
+    }
+    .header-actions {
+      flex: none;
+      gap: 0;
+    }
+    .app-header .icon-button {
+      width: 44px;
+      height: 44px;
+      min-height: 44px;
+    }
+    .header-actions .icon-button:nth-child(2) {
+      display: none;
+    }
+    .workspace {
+      display: flex;
+      flex-direction: column;
+    }
+    .monitor {
+      display: block;
+      flex: none;
+      padding: 10px 14px 0;
+      overflow: visible;
+      border: 0;
+      background: var(--ga-inspector-bg);
+    }
+    .monitor-heading {
+      font-size: 8px;
+      margin-bottom: 6px;
+    }
+    .preview-frame {
+      border-radius: 8px;
+      padding: 4px;
+      max-width: 520px;
+      margin: auto;
+    }
+    .monitor-tools {
+      padding: 6px 0;
+      max-width: 520px;
+      margin: auto;
+    }
+    .monitor-tools > span {
+      font-size: 8px;
+      letter-spacing: 0.5px;
+    }
+    .monitor-tools button {
+      font-size: 10px;
+      min-height: 28px;
+      padding: 3px 7px;
+    }
+    .monitor-tools button :global(svg) {
+      width: 13px;
+      height: 13px;
+    }
+    .mixer {
+      display: none;
+    }
+    .control-panel {
+      flex: 1;
+      overflow: hidden;
+    }
+    .tabs {
+      order: 0;
+      padding: 2px 10px 0;
+      gap: 0;
+    }
+    .tabs button {
+      flex-direction: column;
+      font-size: 9px;
+      padding: 5px 2px;
+      gap: 3px;
+      min-height: 48px;
+    }
+    .tabs button :global(svg) {
+      width: 17px;
+      height: 17px;
+    }
+    .panel-scroll {
+      padding: 16px 14px 20px;
+    }
+    .panel-heading {
+      margin-bottom: 14px;
+      gap: 8px;
+    }
+    h1 {
+      font-size: 15px;
+    }
+    .eyebrow {
+      font-size: 8px;
+      margin-bottom: 5px;
+      letter-spacing: 1.3px;
+    }
+    .segmented button {
+      font-size: 10px;
+      padding: 5px 8px;
+      min-height: 28px;
+    }
+    .layer-tabs {
+      gap: 5px;
+      margin-bottom: 12px;
+    }
+    .layer-tabs button {
+      min-height: 38px;
+      font-size: 10px;
+    }
+    .clip-grid {
+      gap: 8px;
+    }
+    .clip-pad {
+      aspect-ratio: 1.3;
+    }
+    .pad-name {
+      bottom: 9px;
+      left: 9px;
+    }
+    .pad-name strong {
+      font-size: 10px;
+    }
+    .pad-name > span {
+      font-size: 6px;
+    }
+    .pad-number {
+      font-size: 8px;
+      top: 6px;
+      left: 7px;
+    }
+    .clip-kind {
+      font-size: 6px;
+      right: 6px;
+      top: 6px;
+    }
+    .master-bar {
+      display: grid;
+      grid-template-columns: max-content max-content;
+      min-width:0;
+      overflow-x:auto;
+      padding: 4px 8px;
+      gap: 4px;
+    }
+    .tempo {
+      gap: 5px;
+    }
+    .beat-dots {
+      display: none;
+    }
+    .tempo input {
+      width: 49px;
+      font-size: 17px !important;
+    }
+    .tempo > label {
+      gap: 4px;
+    }
+    .tempo > label > span {
+      font-size: 8px;
+    }
+    .tempo > button {
+      min-height: 36px;
+      padding: 5px 8px;
+      font-size: 9px;
+    }
+    .master-bar button { min-height:44px; }
+    .master-bar .mobile-decks button { min-height:28px; }
+    .master-actions > button { padding:4px 8px; }
+    .master-actions {
+      gap: 2px;
+    }
+    .master-actions .icon-button {
+      width: 44px;
+      height: 44px;
+      min-height: 44px;
+    }
+    .master-level {
+      display: none;
+    }
+    .desktop-label {
+      display: none;
+    }
+    .transport-card,
+    .inspector-card {
+      padding: 13px;
+    }
+    .range-row {
+      gap: 8px;
+    }
+    .range-row > span {
+      width: 77px;
+      font-size: 10px;
+    }
+    .range-row output {
+      font-size: 10px;
+    }
+    .mapping .monitor {
+      padding: 15px 20px 0;
+    }
+    .mapping .preview-frame {
+      padding: 0;
+      border-radius: 0;
+    }
+    .surface-list {
+      gap: 6px;
+    }
+    .surface-list strong {
+      max-width: 95px;
+    }
+    .nudge button {
+      width: 35px;
+      height: 39px;
+    }
+    .modal-backdrop {
+      padding: 12px;
+      align-items: flex-end;
+    }
+    .settings-dialog {
+      border-radius: 18px 18px 8px 8px;
+      padding: 22px 19px;
+      max-height: 92dvh;
+    }
+    .settings-dialog h1 {
+      font-size: 22px;
+    }
+    .settings-dialog input,
+    .settings-dialog select {
+      font-size: 16px !important;
+    }
+    .library-grid {
+    width:100%;
+    min-width:0;
+      gap: 8px;
+    }
+    .library-grid strong {
+      font-size: 10px;
+      margin: 8px 7px 4px;
+    }
+    .library-grid small {
+      margin: 0 7px 8px;
+      font-size: 8px;
+    }
+  }
+  @media (max-height: 650px) and (orientation: landscape) {
+    .phone-mix {
+      display: block;
+    }
+    .studio {
+      grid-template-rows: 48px minmax(0, 1fr) auto;
+    }
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
+    }
+    .monitor {
+      display: flex;
+      padding: 12px;
+      justify-content: center;
+      overflow: auto;
+    }
+    .mixer {
+      display: none;
+    }
+    .preview-frame {
+      max-width: none;
+    }
+    .panel-scroll {
+      padding: 13px;
+    }
+    .tabs {
+      padding-top: 0;
+    }
+    .tabs button {
+      padding: 7px 3px;
+    }
+    .clip-pad {
+      aspect-ratio: 1.3;
+    }
+    .master-level {
+      display: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+  @media (min-width: 1000px) {
+    .performance:not(.clean) .workspace { grid-template-columns: minmax(270px, .72fr) minmax(0, 2fr); }
+    .performance:not(.clean) .monitor { justify-content: flex-start; padding-top: 28px; }
+  }
+
+  .scope-context { color:var(--ga-ink-1);font-size:12px;margin-bottom:16px; }
+  .mixing .panel-scroll { padding-bottom:380px; }
+  @media(max-width:760px){
+    .studio.performance .monitor {display:block;padding:15px 20px 0;}
+    .studio.performance .preview-frame {width:auto;padding:0;border-radius:0;}
+    .range-row {grid-template-columns:minmax(0,1fr) 46px;gap:0 10px;font-size:13px;margin:10px 0;}
+    .range-row>span {grid-column:1;grid-row:1;}
+    .range-row>output {grid-column:2;grid-row:1;}
+    .range-row>input[type='range'], .range-row>select {grid-column:1/-1;grid-row:2;min-height:48px;}
+    .studio.mixing .monitor {display:block;}
+    .mixing .workspace {padding-bottom:0;}
+    .mixing .panel-scroll {padding-bottom:360px;}
+    .mixing.performance .panel-heading, .mixing.performance :global(.deck-toolbar), .mixing.performance :global(.deck-hint), .mixing.performance :global(.add-columns) {display:none;}
+    .mixing.performance .panel-scroll {padding-top:6px;}
+    .performance .phone-mix {display:none;}
+  }
+
+  .studio.tablet.performance:not(.clean) .workspace{grid-template-columns:minmax(340px,.9fr) minmax(0,1.6fr);}
+  .studio.tablet.performance:not(.clean) .monitor{padding:14px;justify-content:flex-start;overflow:auto;}
+  .studio.tablet.performance:not(.clean) .control-panel{display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;}
+  .studio.tablet.performance .panel-scroll{padding:12px;min-height:0;overflow:auto;}
+  .studio.tablet.performance :global(.decks.dual){grid-template-columns:repeat(2,minmax(0,1fr));}
+  .studio.tablet.performance .phone-mix{display:none;}
+  .studio.tablet.mapping:not(.clean) .workspace{grid-template-columns:minmax(0,1fr) 310px;max-width:none;}
+  .studio.tablet.mapping:not(.clean) .monitor{padding:14px;justify-content:center;}
+  .studio.tablet.mapping .panel-scroll{padding:12px;}
+  .studio.tablet.mapping .tabs{grid-template-columns:repeat(6,minmax(0,1fr));}
+  .studio.tablet.mapping .tabs button{padding:8px 2px;min-width:0;font-size:9px;}
+  .studio.tablet.mapping .panel-heading h1{font-size:17px;}
+  .studio.tablet.mapping .panel-heading{gap:8px;}
+
+ .studio.tablet.performance .panel-scroll>.panel-heading{margin-bottom:8px;}
+ .studio.tablet.performance :global(.deck-toolbar){margin-bottom:6px;}
+ .studio.tablet.performance :global(.pad){height:52px;min-height:52px;}
+ .studio.tablet.performance :global(.row-control){grid-template-rows:24px 24px;}
+ .studio.tablet.performance :global(.deck>header){padding:6px 8px;}
+ .studio.tablet.performance :global(.deck-hint){display:none;}
+
+ .studio.tablet.performance .monitor-tools{padding:6px 0;}
+ .block-navigation{display:flex;justify-content:flex-end;margin-bottom:10px}.deck-view-switch{flex:none}.deck-view-switch button{min-height:44px}
+ .studio.tablet.performance:not(.clean) .monitor{padding-bottom:0}.studio.tablet.performance .monitor>:global(.mixer-tray.embedded){flex:1 0 auto;min-height:260px;margin-bottom:0;border-radius:7px 7px 0 0}
+
+  .clip-controls-tray{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--ga-inspector-bg);border-top:1px solid var(--ga-line-3);box-shadow:0 -8px 24px #0004;animation:controls-in 180ms ease-out;}
+  .clip-controls-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding:10px 14px;border-bottom:1px solid var(--ga-line-2);background:var(--ga-faceplate-bg);}
+  .clip-controls-header>div{min-width:0;}.clip-controls-header h2{font-size:15px;line-height:1.3;overflow-wrap:anywhere;}.clip-controls-header .eyebrow{margin-bottom:3px;font-size:9px;}.clip-controls-header .icon-button{width:44px;height:44px;min-height:44px;}
+  .clip-controls-body{flex:1;min-height:0;min-width:0;padding:12px 14px max(18px,env(safe-area-inset-bottom));overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+  .clip-controls-body .segmented{margin:0 0 12px;}.clip-controls-body .segmented button{min-height:44px;font-size:12px;}.clip-controls-body .inspector-card{margin-top:12px;}.clip-controls-body .range-row{display:grid;min-width:0;grid-template-columns:minmax(0,1fr) 52px;gap:0 10px;}.clip-controls-body .range-row>span{width:auto;min-width:0;font-size:12px;grid-column:1;grid-row:1;overflow:visible;overflow-wrap:anywhere;}.clip-controls-body .range-row>output{width:auto;font-size:12px;grid-column:2;grid-row:1;}.clip-controls-body .range-row>input,.clip-controls-body .range-row>select{grid-column:1/-1;grid-row:2;width:100%;min-width:0;min-height:44px;}.clip-controls-body .section-heading{flex-wrap:wrap;gap:8px;}.clip-controls-body .section-heading button{min-height:44px;}.clip-controls-body .toggle-row{min-height:44px;gap:12px;}.clip-controls-body .toggle-row>span{min-width:0;overflow-wrap:anywhere;}
+  .controls-notice{display:flex;align-items:center;gap:8px;flex:none;margin:0;padding:8px 14px;background:var(--ga-coral-soft);color:var(--ga-coral);font-size:11px;line-height:1.4;}.controls-notice button{min-height:44px;margin-left:auto;}
+  @keyframes controls-in{from{transform:translateY(32px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  .clip-controls-body .new-variation{width:100%;min-height:44px;margin-top:12px;}
+  @media(max-width:760px) and (max-height:650px){.studio.clip-editing .monitor{padding-top:8px;}.studio.clip-editing .preview-frame{max-width:min(100%,34dvh);}.clip-controls-header{padding-top:6px;padding-bottom:6px;}}
+  @media(prefers-reduced-motion:reduce){.clip-controls-tray{animation:none;}}
+</style>

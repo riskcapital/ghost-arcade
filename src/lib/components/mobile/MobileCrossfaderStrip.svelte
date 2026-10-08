@@ -14,6 +14,9 @@
    *     (linear / equal-power / sharp) from the small selectors.
    */
   import { onMount, onDestroy } from 'svelte';
+  import MobileBankToggle from './MobileBankToggle.svelte';
+  export let showDeckTabs=false;
+  export let onDeckChange:(bank:'A'|'B')=>void=()=>{};
 
   export let enabled: boolean = false;
   export let value: number = 0;            // 0 = full A · 1 = full B
@@ -173,7 +176,7 @@
   $: deckBBias = localValue;
 </script>
 
-<div data-help-page="mobile-control" class="xfade {orientation}" class:disabled={!enabled} class:compact>
+<div data-help-page="mobile-control" class="xfade {orientation}" class:disabled={!enabled} class:compact class:with-deck-tabs={showDeckTabs}>
   <div class="xfade-header">
     <button
       class="xfade-power"
@@ -186,7 +189,7 @@
         <line x1="12" y1="2" x2="12" y2="12"/>
       </svg>
     </button>
-    <span class="xfade-label">XFADE</span>
+    <span class="xfade-label">Crossfade</span>{#if showDeckTabs}<MobileBankToggle activeBank={selectedDeck} onChange={onDeckChange}/>{:else}<span class="xfade-readout">A {Math.round(deckABias*100)}% · B {Math.round(deckBBias*100)}%</span>{/if}
   </div>
 
   <!-- Cut buttons -->
@@ -194,17 +197,17 @@
     <button
       class="xfade-cut a"
       class:active={enabled && deckABias > 0.95}
-      class:selected={selectedDeck === 'A'}
+
       onclick={onCutA}
       disabled={!enabled}
-    >A</button>
+     aria-label="Cut to deck A">Cut A</button>
     <button
       class="xfade-cut b"
       class:active={enabled && deckBBias > 0.95}
-      class:selected={selectedDeck === 'B'}
+
       onclick={onCutB}
       disabled={!enabled}
-    >B</button>
+     aria-label="Cut to deck B">Cut B</button>
   </div>
 
   <!-- Fader -->
@@ -214,6 +217,10 @@
     bind:this={touchAreaEl}
     onmousedown={handleMouseDown}
     role="slider"
+    aria-label="Crossfade between decks"
+    aria-orientation={orientation}
+    aria-disabled={!enabled}
+    onkeydown={e=>{if(!enabled)return;let next=localValue;if(e.key==='ArrowRight'||e.key==='ArrowDown')next+=.02;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')next-=.02;else if(e.key==='Home')next=0;else if(e.key==='End')next=1;else return;e.preventDefault();localValue=Math.max(0,Math.min(1,next));onChange(localValue);}}
     aria-valuenow={Math.round(localValue * 100)}
     aria-valuemin={0}
     aria-valuemax={100}
@@ -248,7 +255,7 @@
        other mode the blend math tints the transition's overlap zone
        so e.g. "glitch + multiply" gives multiplied scattered shards. -->
   <div class="xfade-modes">
-    <select
+    <label>Transition<select aria-label="Crossfade transition"
       class="xfade-select"
       value={transition}
       onchange={(e) => onTransitionChange((e.target as HTMLSelectElement).value)}
@@ -258,8 +265,8 @@
       {#each TRANSITIONS as t}
         <option value={t.value}>{t.label}</option>
       {/each}
-    </select>
-    <select
+    </select></label>
+    <label>Blend mode<select aria-label="Crossfade blend mode"
       class="xfade-select"
       value={blendMode}
       onchange={(e) => onBlendModeChange((e.target as HTMLSelectElement).value)}
@@ -269,7 +276,7 @@
       {#each BLEND_MODES as b}
         <option value={b}>{b}</option>
       {/each}
-    </select>
+    </select></label>
   </div>
 </div>
 

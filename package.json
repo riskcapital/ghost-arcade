@@ -74,7 +74,8 @@
     "postinstall": "node scripts/sign-dev-electron.mjs",
     "prebuild": "node scripts/generate-isf-thumbnail-manifest.mjs",
     "predev": "node scripts/generate-isf-thumbnail-manifest.mjs",
-    "isf:thumbnails": "node scripts/generate-isf-thumbnail-manifest.mjs"
+    "isf:thumbnails": "node scripts/generate-isf-thumbnail-manifest.mjs",
+    "prebuild:native-mobile": "node scripts/mobile-shader-library.mjs"
   },
   "dependencies": {
     "@ffmpeg/core": "^0.12.6",

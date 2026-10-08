@@ -1,3 +1,6 @@
+import { FLUX_EFFECT } from './studio/flux';
+import { DESKTOP_MOBILE_EFFECTS } from './studio/desktopEffects';
+import type { EffectParamDef } from '../effects/effectParamDefs';
 // Mobile-side effect chain — fragment-shader post-process passes that
 // run after a layer's source shader. Each effect is a separate program
 // that samples the previous pass's framebuffer texture (`uInput`) and
@@ -28,7 +31,9 @@ export interface MobileEffectDef {
   /** Display label — copies desktop catalog labels for consistency. */
   label: string;
   /** Loose category tag for the picker accordion. */
-  category: 'Color' | 'Stylize' | 'Distort' | 'Glitch' | 'Masking';
+  category: string;
+  controls?: EffectParamDef[];
+  integerParams?: string[];
   /** GLSL fragment-shader body. Required varying: `vUv`. Required
    *  uniforms: `uInput` (sampler2D), `uResolution` (vec2), `uTime`
    *  (float). Plus whatever extras the param binder pushes. */
@@ -60,7 +65,8 @@ void main() {
 `;
 }
 
-export const MOBILE_EFFECTS: MobileEffectDef[] = [
+const LEGACY_MOBILE_EFFECTS: MobileEffectDef[] = [
+  {type:'_copy',label:'Copy',category:'Internal',internal:true,defaults:{},fragment:wrapEffect('','gl_FragColor=c;')},
   {
     type: 'invert',
     label: 'Invert',
@@ -228,6 +234,8 @@ export const MOBILE_EFFECTS: MobileEffectDef[] = [
     ),
   },
 ];
+
+export const MOBILE_EFFECTS: MobileEffectDef[] = [FLUX_EFFECT, ...DESKTOP_MOBILE_EFFECTS, ...LEGACY_MOBILE_EFFECTS.filter(e => !DESKTOP_MOBILE_EFFECTS.some(d => d.type === e.type))];
 
 export function findMobileEffect(type: string): MobileEffectDef | undefined {
   return MOBILE_EFFECTS.find(e => e.type === type);

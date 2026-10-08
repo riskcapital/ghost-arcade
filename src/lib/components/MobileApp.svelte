@@ -1,5 +1,11 @@
 <script lang="ts">
+  export let nativeShell=false;
+  export let pairingLink="";
+  export let onExit:()=>void=()=>{};
+  import CompanionMapping from "./studio/CompanionMapping.svelte";
   import { onMount, onDestroy, tick } from 'svelte';
+  import PairedStudio from './studio/PairedStudio.svelte';
+  let showPairedStudio=false;
   import { createDefaultLayerShape } from '../types';
   import type { Project, Point2D, WarpCorners, BlendMode, Effect, EffectType, EffectParams, LayerShape, LayerShapeParams, LayerShapeType } from '../types';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
@@ -40,6 +46,7 @@
   } from '../remote/remotePairing';
 
   // Connection state
+  let mappingVJSource=false;
   let connected = false;
   let connecting = false;
   let serverUrl = '';
@@ -91,6 +98,7 @@
   }
 
   // Mobile mode switcher: mapping, VJ, phone vision, or paint.
+  let lastDesktopMode: 'mapping' | 'vj' | null = null;
   let mobileMode: 'mapping' | 'vj' | 'vision' | 'paint' = 'mapping';
 
   // ─── Light Painting (iPad Apple Pencil) ─────────────────────────
@@ -1107,6 +1115,7 @@
     activeBlockId: string;
     layerStates: VJLayerStateInfo[];
     bankBLayerStates?: VJLayerStateInfo[];
+    desktopMode?: 'mapping' | 'vj' | null;
     isLive: boolean;
     masterOpacity?: number;
     compositionEffects?: Effect[];
@@ -1318,12 +1327,13 @@
     });
 
     // Determine server URL: prefer saved, then derive from page hostname
-    const hostname = window.location.hostname;
-    const params = new URLSearchParams(window.location.search);
+    const linkedURL=new URL(pairingLink || window.location.href);
+    const hostname = linkedURL.hostname;
+    const params = linkedURL.searchParams;
     // The desktop's QR link names the WebSocket port when it is not the
     // default, and a link is fresher than whatever was saved last time.
     const linkedPort = Number(params.get('ws'));
-    const defaultUrl = `ws://${hostname}:${Number.isInteger(linkedPort) && linkedPort > 0 && linkedPort < 65536 ? linkedPort : 9001}`;
+    const defaultUrl = `${linkedURL.protocol==='https:'?'wss':'ws'}://${hostname}:${Number.isInteger(linkedPort) && linkedPort > 0 && linkedPort < 65536 ? linkedPort : 9001}`;
     const openedFromLink = params.has(PAIRING_QUERY_PARAM) || params.has('ws');
     let savedUrl: string | null = null;
     try { savedUrl = localStorage.getItem('ghost-arcade_server_url'); } catch { /* private browsing */ }
@@ -1347,7 +1357,7 @@
     // A scanned QR link carries the pairing code. Keep it, then take it back
     // out of the address bar so it is not left on screen or in a bookmark.
     const linkedCode = cleanPairingCode(params.get(PAIRING_QUERY_PARAM) ?? '');
-    if (linkedCode && rememberPairingToken(linkedCode)) {
+    if (linkedCode && rememberPairingToken(linkedCode) && !nativeShell) {
       params.delete(PAIRING_QUERY_PARAM);
       const query = params.toString();
       history.replaceState(history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
@@ -1548,6 +1558,8 @@
     }
     connected = false;
     connecting = false;
+    mappingVJSource=false;
+    lastDesktopMode = null;
     projectState = null;
     if (connectTimeout) {
       clearTimeout(connectTimeout);
@@ -1590,6 +1602,7 @@
 
   function handleMessage(msg: { type: string; [key: string]: unknown }) {
     switch (msg.type) {
+      case 'companion_capabilities': mappingVJSource=msg.mappingVJSource===true;break;
       case 'sync': {
         const incomingProject = msg.project as Project;
         preserveMappingEffectDragValues(incomingProject);
@@ -1604,7 +1617,7 @@
       }
 
       case 'control_point': {
-        const { layerId, corner, position } = (msg.payload as unknown) as {
+        const { layerId, corner, position } = ((msg.payload ?? msg) as unknown) as {
           layerId: string;
           corner: keyof WarpCorners;
           position: Point2D;
@@ -1620,7 +1633,7 @@
       }
 
       case 'mesh_point': {
-        const { layerId, row, col, position } = (msg.payload as unknown) as {
+        const { layerId, row, col, position } = ((msg.payload ?? msg) as unknown) as {
           layerId: string;
           row: number;
           col: number;
@@ -1637,7 +1650,7 @@
       }
 
       case 'parameter': {
-        const { layerId, param, value } = (msg.payload as unknown) as {
+        const { layerId, param, value } = ((msg.payload ?? msg) as unknown) as {
           layerId: string;
           param: string;
           value: number | string | boolean;
@@ -1737,6 +1750,16 @@
         break;
       }
 
+      case 'warp_mode': {
+        const layer=projectState?.layers.find(l=>l.id===msg.layerId);
+        if(layer&&(msg.mode==='corners'||msg.mode==='mesh')){layer.warpMode=msg.mode;projectState=projectState;}
+        break;
+      }
+      case 'set_mapping_vj_source': {
+        const layer=projectState?.layers.find(l=>l.id===msg.layerId);
+        if(layer&&(msg.source===null||typeof msg.source==='number')){layer.vjLayerIndex=msg.source===null?undefined:msg.source;layer.vjGroupId=undefined;projectState=projectState;}
+        break;
+      }
       case 'select_layer':
         selectedLayerId = msg.layerId as string;
         break;
@@ -1804,6 +1827,10 @@
       case 'vj_clips_sync': {
         // Receive VJ clips state from desktop
         const incoming = (msg.vjClips as VJClipsState) || null;
+        if (incoming?.desktopMode === 'vj' || incoming?.desktopMode === 'mapping') {
+          if (incoming.desktopMode !== lastDesktopMode) mobileMode = incoming.desktopMode;
+          lastDesktopMode = incoming.desktopMode;
+        }
         if (incoming && vjClipsState && activeDrags.size > 0) {
           // ── Preserve locally-dragged values to prevent bounce-back ──
           // Any drag key marked active by a sender means the local UI is
@@ -3164,6 +3191,7 @@
     : [];
 </script>
 
+
 <svelte:window
   ontouchmove={(e) => {
     if (draggingCorner) handleTouchMove(e);
@@ -3172,7 +3200,9 @@
   ontouchend={handleTouchEnd}
 />
 
-<div data-help-page="mobile-control" class="mobile-app">
+{#if showPairedStudio && ws && connected}<PairedStudio socket={ws} onclose={()=>showPairedStudio=false}/>{/if}
+<div data-help-page="mobile-control" class="mobile-app" class:native-companion={nativeShell}>
+  {#if nativeShell}<header class="companion-brand"><img src="/icon-new.png" alt=""/><div><img class="companion-wordmark" src="/logo-wordmark.svg" alt="Ghost Arcade"/><small><span class:online={connected}></span>{connected?"DESKTOP CONNECTED":"DESKTOP CONNECT"}</small></div><button class="native-exit" disabled={!connected} onclick={()=>{stopPhoneVision();showPairedStudio=true;}}>Tools</button><button class="native-exit" onclick={onExit} aria-label="← Standalone">← Studio</button></header>{/if}
   {#if !connected}
     <!-- Connection Screen -->
     <div class="connect-screen">
@@ -3264,20 +3294,20 @@
           class:active={mobileMode === 'vj'}
           onclick={() => mobileMode = 'vj'}
         >VJ</button>
-        {#if showVisionMode}
+        {#if showVisionMode && !nativeShell}
           <button
             class="mode-pill"
             class:active={mobileMode === 'vision'}
             onclick={() => mobileMode = 'vision'}
           >Vision</button>
         {/if}
-        <button
+        {#if !nativeShell}<button
           class="mode-pill"
           class:active={mobileMode === 'paint'}
           onclick={() => mobileMode = 'paint'}
-        >Paint</button>
+        >Paint</button>{/if}
       </div>
-      {#if mobileMode === 'mapping'}
+      {#if mobileMode === 'mapping' && !nativeShell}
         <!-- Output freeze pill — pause/play the output canvas from the
              phone. State is mirrored from desktop's outputFrozen store, so
              the icon flips even if someone toggles freeze elsewhere. -->
@@ -3305,7 +3335,7 @@
           {showMediaLibrary ? 'Close' : 'Media'}
         </button>
       {/if}
-      <button class="disconnect-btn" onclick={disconnect} title="Disconnect">×</button>
+      <button class="disconnect-btn" onclick={disconnect} aria-label="Disconnect desktop" title="Disconnect desktop">×</button>
     </div>
 
     {#if mobileMode === 'vj'}
@@ -3358,6 +3388,7 @@
         {beatPulseIntensity}
       />
     {:else if mobileMode === 'mapping'}
+    {#if nativeShell}<CompanionMapping project={projectState} selectedId={selectedLayerId} onselect={selectLayer} oncorner={sendControlPoint} onmesh={sendMeshPoint} onmode={sendWarpMode} onresize={sendMeshResize} onparameter={sendParameter} canRoute={mappingVJSource} layerCount={vjClipsState?.layerStates?.length||4} onroute={(id,source)=>{if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'set_mapping_vj_source',layerId:id,source}));}}/>{:else}
     <!-- Layer Selector -->
     <div class="layer-selector mapping-layer-selector">
       <div class="layer-selector-heading">
@@ -4298,6 +4329,7 @@
         </div>
       </div>
     {/if}
+    {/if}
     {:else if showVisionMode && mobileMode === 'vision'}
       <div class="vision-mode">
         <div class="vision-preview-card">
@@ -4562,12 +4594,16 @@
 </div>
 
 <style>
+ .companion-brand{display:flex;align-items:center;gap:10px;padding:8px 12px;min-height:52px;box-sizing:border-box;flex:none;background:var(--ga-hardware-bg);border-bottom:1px solid var(--ga-line-2);font-family:'Satoshi',system-ui,sans-serif}.companion-brand>img{width:30px;height:30px;border-radius:6px}.companion-brand>div{flex:1;min-width:0}.companion-wordmark{width:145px;height:18px;object-fit:contain;object-position:left}.companion-brand small{display:flex;align-items:center;gap:5px;font-size:8px;letter-spacing:.12em;color:var(--ga-ink-2);margin-top:3px}.companion-brand small span{width:5px;height:5px;border-radius:50%;background:#737980}.companion-brand small span.online{background:#99cb9c}.native-exit{font:600 12px 'Satoshi',system-ui;min-height:44px;padding:8px 12px;border:1px solid var(--ga-line-3);border-radius:6px;background:var(--ga-hardware-bg);color:var(--ga-ink-1);touch-action:manipulation}
+ .native-companion{touch-action:auto}
+ .native-companion .mode-strip{padding:6px 12px;background:var(--ga-bar);border-bottom:1px solid var(--ga-line-2)}.native-companion .mode-pill{min-height:40px;font:650 12px 'Satoshi',system-ui;letter-spacing:.02em;border-radius:5px}.native-companion .mode-pill.active{background:var(--ga-selection-bg)!important;color:var(--ga-selection-ink)!important;box-shadow:inset 0 0 0 1px var(--ga-selection-line)!important}.native-companion .disconnect-btn{width:40px;min-height:40px;border-radius:6px;background:var(--ga-hardware-bg);color:var(--ga-ink-2);border:1px solid var(--ga-line-2)}
+
   .mobile-app {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    top: env(safe-area-inset-top, 0px);
+    left: env(safe-area-inset-left, 0px);
+    right: env(safe-area-inset-right, 0px);
+    bottom: env(safe-area-inset-bottom, 0px);
     background: var(--bg-primary, #0d0d10);
     color: var(--text-primary, #eee);
     font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);

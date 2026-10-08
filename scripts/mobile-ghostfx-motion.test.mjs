@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';import {build} from 'esbuild';
+const b=await build({entryPoints:['src/lib/mobile/studio/ghostFXMotion.ts'],bundle:true,write:false,format:'esm',platform:'node'});const {GhostFXMotion,ghostMovements}=await import('data:text/javascript;base64,'+Buffer.from(b.outputFiles[0].text).toString('base64'));
+const silent={audioBass:0,audioMid:0,audioHigh:0,audioLevel:0,audioBeat:0},loud={...silent,audioBass:1,audioMid:.8,audioHigh:.7,audioLevel:1,audioBeat:1};
+const m=new GhostFXMotion();m.update(silent,1/60,0);const first=m.update(loud,1/60,13);assert.ok(first.audio.audioBass<.08,'A hit cannot jump the bass envelope');assert.equal(first.audio.audioBeat,0);assert.ok(first.inputs._ghost13<.04);assert.equal(ghostMovements.length,14);
+let last=first;for(let i=0;i<600;i++){last=m.update(loud,1/60,13);const sum=ghostMovements.reduce((n,_,j)=>n+last.inputs['_ghost'+j],0);assert.ok(Math.abs(sum-1)<1e-9);}assert.ok(last.inputs._ghost13>.99);
+const a=new GhostFXMotion(),c=new GhostFXMotion();let aa,cc;for(let i=0;i<300;i++)aa=a.update(loud,1/30,5);for(let i=0;i<600;i++)cc=c.update(loud,1/60,5);assert.ok(Math.abs(aa.inputs._ghostClock-cc.inputs._ghostClock)<.003);assert.ok(Math.abs(aa.audio.audioBass-cc.audio.audioBass)<1e-8);
+const noAudio=new GhostFXMotion(),quiet=new GhostFXMotion();for(let i=0;i<60;i++){aa=noAudio.update(loud,1/60,0,.6,2.5,0);cc=quiet.update(silent,1/60,0,.6,2.5,0);}assert.equal(aa.inputs._ghostClock,cc.inputs._ghostClock);
+console.log('PASS 14 movements, bounded audio onset, normalized morph weights, frame-rate independent envelope/clock, reactivity zero');
+
+const explorer=new GhostFXMotion(()=>.37),visited=new Set([0]);for(let world=0;world<13;world++){for(let frame=0;frame<151;frame++)explorer.update(silent,.1,0,.6,2.5,1,true,15);visited.add(explorer.currentMovement);}assert.equal(visited.size,14);explorer.update(silent,.1,4,.6,2.5,1,false);assert.equal(explorer.currentMovement,4);console.log('PASS Journey explores every world without repeats and manual selection takes control');

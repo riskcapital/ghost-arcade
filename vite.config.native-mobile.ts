@@ -1,7 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { copyFileSync, existsSync, readFileSync } from 'fs';
+import { copyFileSync, existsSync, readFileSync, rmSync } from 'fs';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -19,6 +19,12 @@ export default defineConfig({
         const source = resolve(rootDir, 'dist-native-mobile/native-mobile.html');
         const target = resolve(rootDir, 'dist-native-mobile/index.html');
         if (existsSync(source)) copyFileSync(source, target);
+        // These desktop assets explicitly prohibit commercial redistribution.
+        const excluded: string[] = JSON.parse(readFileSync(resolve(rootDir, 'native-mobile/release-exclusions.json'), 'utf8'));
+        for (const path of excluded) {
+          rmSync(resolve(rootDir, 'dist-native-mobile', path), { force: true });
+          rmSync(resolve(rootDir, 'dist-native-mobile/ISF/thumbnails', path.slice(4, -3).replaceAll('/', '_') + '.jpg'), { force: true });
+        }
       },
     },
   ],

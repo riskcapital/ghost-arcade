@@ -21,6 +21,8 @@
 // at 0.9 decay ≈ 250ms).
 
 export interface AudioUniforms {
+  spectrum?: Uint8Array<ArrayBuffer>;
+  waveform?: Uint8Array<ArrayBuffer>;
   audioBass: number;
   audioMid: number;
   audioHigh: number;
@@ -94,6 +96,7 @@ export class StandaloneAudio {
   private analyser: AnalyserNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
+  private wave = new Uint8Array(new ArrayBuffer(1024));
   private freq: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(0));
 
   // Beat detection: envelope follower on the bass band.
@@ -146,6 +149,9 @@ export class StandaloneAudio {
   update(now = performance.now()): void {
     if (!this.analyser || !this.ready) return;
     this.analyser.getByteFrequencyData(this.freq);
+    this.analyser.getByteTimeDomainData(this.wave);
+    this.uniforms.spectrum = this.freq;
+    this.uniforms.waveform = this.wave;
 
     // dt for framerate-independent smoothing. Clamped so a tab-switch
     // pause doesn't blow the long-baseline towards zero with a giant

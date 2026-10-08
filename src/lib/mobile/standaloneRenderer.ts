@@ -93,6 +93,7 @@ varying vec2 vUv;
 uniform sampler2D uMedia;
 uniform vec2 uResolution;
 uniform vec2 uMediaResolution;
+uniform bool uMirror;
 
 void main() {
   vec2 outAspect = vec2(uResolution.x / max(uResolution.y, 1.0), 1.0);
@@ -105,6 +106,7 @@ void main() {
     scale.x = outAspect.x / mediaAspect.x;
   }
   uv = (uv - 0.5) * scale + 0.5;
+  if(uMirror) uv.x=1.0-uv.x;
   gl_FragColor = texture2D(uMedia, clamp(uv, 0.0, 1.0));
 }
 `;
@@ -114,6 +116,7 @@ interface UniformLoc {
   TIMEDELTA: WebGLUniformLocation | null;
   FRAMEINDEX: WebGLUniformLocation | null;
   RENDERSIZE: WebGLUniformLocation | null;
+  DATE: WebGLUniformLocation | null;
   audioBass: WebGLUniformLocation | null;
   audioMid: WebGLUniformLocation | null;
   audioHigh: WebGLUniformLocation | null;
@@ -125,6 +128,7 @@ interface UniformLoc {
 }
 
 interface MediaLoc {
+  uMirror: WebGLUniformLocation | null;
   uMedia: WebGLUniformLocation | null;
   uResolution: WebGLUniformLocation | null;
   uMediaResolution: WebGLUniformLocation | null;
@@ -149,14 +153,21 @@ interface FBO {
 }
 
 export class StandaloneRenderer {
+  onEffectError: (message: string) => void = () => {};
   private gl: WebGLRenderingContext;
   private quadBuffer: WebGLBuffer;
   private program: WebGLProgram | null = null;
   private locs: UniformLoc | null = null;
   private mediaLocs: MediaLoc | null = null;
   private inputs: ISFInput[] = [];
+  private mediaMirror=false;
   private mediaElement: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement | null = null;
+  private shaderImage: HTMLImageElement | HTMLVideoElement | null = null;
+  private shaderImageTexture: WebGLTexture | null = null;
+  private shaderImageUploaded = false;
   private mediaTexture: WebGLTexture | null = null;
+  private spectrumPixels = new Uint8Array(256 * 4);
+  private waveformPixels = new Uint8Array(256 * 4);
   private audioFFTTex: WebGLTexture;
   private audioWaveformTex: WebGLTexture;
   private startTime = performance.now();
@@ -180,11 +191,17 @@ export class StandaloneRenderer {
   // removing effects mid-frame is cheap (no reallocation unless the
   // canvas resizes).
   private effectChain: MobileEffectInstance[] = [];
+  private sourcePrograms = new Map<string, WebGLProgram>();
+  private outputFbo: FBO | null = null;
+  private renderWidth = 1;
+  private renderHeight = 1;
+  private fixedSize: [number, number] | null = null;
+  private inputValues: Record<string, number | boolean | number[]> = {};
   private effectCache = new Map<string, CompiledEffect>();
   private fbos: [FBO | null, FBO | null] = [null, null];
 
-  constructor(private canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext('webgl', { premultipliedAlpha: false, antialias: false });
+  constructor(private canvas: HTMLCanvasElement, private sharedContext?: WebGLRenderingContext) {
+    const gl = sharedContext ?? canvas.getContext('webgl', { premultipliedAlpha: false, antialias: false });
     if (!gl) throw new Error('WebGL not available');
     this.gl = gl;
     this.quadBuffer = this.createQuad();
@@ -217,6 +234,13 @@ export class StandaloneRenderer {
   ): Promise<void> {
     const parsed: ParsedISF = parseISF(source);
     let frag = parsed.fragmentShader;
+    // WebGL1 requires enabling derivatives on the context and putting extension
+    // directives before precision/uniform declarations injected by the parser.
+    if (/\b(fwidth|dFdx|dFdy)\s*\(/.test(frag)) {
+      if (!this.gl.getExtension('OES_standard_derivatives')) throw new Error('This shader needs derivatives, unavailable on this device.');
+      frag = frag.replace(/^\s*#extension GL_OES_standard_derivatives[^\n]*\n/gm, '');
+      frag = '#extension GL_OES_standard_derivatives : enable\n' + frag;
+    }
     if (!audioNative) {
       if (audioInject && audioInject.length > 0) {
         frag = applyShaderInjectPatches(frag, audioInject);
@@ -224,9 +248,23 @@ export class StandaloneRenderer {
         frag = injectUniversalAudioPatch(frag);
       }
     }
-    const program = this.compile(VERTEX_SHADER, frag);
-    if (this.program) this.gl.deleteProgram(this.program);
+    let program = this.sourcePrograms.get(frag);
+    if (!program) {
+      program = this.compile(VERTEX_SHADER, frag);
+      this.sourcePrograms.set(frag, program);
+    } else {
+      this.sourcePrograms.delete(frag);
+      this.sourcePrograms.set(frag, program);
+    }
+    if (this.program && this.mediaElement) this.gl.deleteProgram(this.program);
+    while (this.sourcePrograms.size > 8) {
+      const key = this.sourcePrograms.keys().next().value!;
+      this.gl.deleteProgram(this.sourcePrograms.get(key)!);
+      this.sourcePrograms.delete(key);
+    }
     this.program = program;
+    this.shaderImage = null;
+    this.shaderImageUploaded = false;
     this.mediaElement = null;
     this.mediaLocs = null;
     this.inputs = parsed.metadata.INPUTS ?? [];
@@ -236,17 +274,25 @@ export class StandaloneRenderer {
     this.scaledTime = 0;
   }
 
+  setShaderImage(source: HTMLImageElement | HTMLVideoElement | null) {
+    this.shaderImage = source;
+    this.shaderImageUploaded = false;
+    if (!this.shaderImageTexture) this.shaderImageTexture = this.createMediaTexture();
+  }
+
   /** Use an image/video/canvas element as the layer source. It still
    *  runs through the same post-process effect chain as shader layers. */
-  loadMediaSource(source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement): void {
+  loadMediaSource(source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement, mirror=false): void {
+    this.mediaMirror=mirror;
     const program = this.compile(VERTEX_SHADER, MEDIA_FRAGMENT_SHADER);
-    if (this.program) this.gl.deleteProgram(this.program);
+    if (this.program && this.mediaElement) this.gl.deleteProgram(this.program);
     this.program = program;
     this.locs = null;
     this.inputs = [];
     this.mediaElement = source;
     if (!this.mediaTexture) this.mediaTexture = this.createMediaTexture();
     this.mediaLocs = {
+      uMirror: this.gl.getUniformLocation(program, 'uMirror'),
       uMedia: this.gl.getUniformLocation(program, 'uMedia'),
       uResolution: this.gl.getUniformLocation(program, 'uResolution'),
       uMediaResolution: this.gl.getUniformLocation(program, 'uMediaResolution'),
@@ -258,7 +304,7 @@ export class StandaloneRenderer {
   }
 
   clearSource(): void {
-    if (this.program) this.gl.deleteProgram(this.program);
+    if (this.program && this.mediaElement) this.gl.deleteProgram(this.program);
     this.program = null;
     this.locs = null;
     this.mediaLocs = null;
@@ -302,15 +348,45 @@ export class StandaloneRenderer {
     }
   }
 
+  /** The standalone studio schedules every layer and the output in one frame. */
+  drawFrame(width: number, height: number): void {
+    this.fixedSize = [Math.max(1, width), Math.max(1, height)];
+    this.render();
+  }
+
+  /** Post-process an existing GPU texture without decoding or copying it to the CPU. */
+  processTexture(input: {texture:WebGLTexture;width:number;height:number}, chain:MobileEffectInstance[],time:number) {
+    const gl=this.gl;
+    this.fixedSize=[input.width,input.height];this.resize();this.setEffectChain(chain);
+    if(!this.effectChain.length)return input;
+    if(!this.outputFbo || this.outputFbo.w!==input.width || this.outputFbo.h!==input.height){
+      if(this.outputFbo){gl.deleteFramebuffer(this.outputFbo.fb);gl.deleteTexture(this.outputFbo.tex);}
+      this.outputFbo=this.createFBO(input.width,input.height);
+    }
+    this.ensureFBOs(input.width,input.height);gl.disable(gl.BLEND);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,this.fbos[0]!.fb);
+    this.applyEffectPass({type:'_copy',params:{},enabled:true},input.texture,time);
+    this.runEffectChain(time);return this.textureOutput!;
+  }
+
+  setShaderInputs(values: Record<string, number | boolean | number[]>): void {
+    this.inputValues = values;
+  }
+
+  get textureOutput(): { texture: WebGLTexture; width: number; height: number } | null {
+    return this.outputFbo ? { texture: this.outputFbo.tex, width: this.outputFbo.w, height: this.outputFbo.h } : null;
+  }
+
   resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = Math.floor(this.canvas.clientWidth * dpr);
-    const h = Math.floor(this.canvas.clientHeight * dpr);
-    if (this.canvas.width !== w || this.canvas.height !== h) {
+    const w = this.fixedSize?.[0] ?? Math.floor(this.canvas.clientWidth * dpr);
+    const h = this.fixedSize?.[1] ?? Math.floor(this.canvas.clientHeight * dpr);
+    this.renderWidth = w; this.renderHeight = h;
+    if (!this.sharedContext && (this.canvas.width !== w || this.canvas.height !== h)) {
       this.canvas.width = w;
       this.canvas.height = h;
     }
-    this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    this.gl.viewport(0, 0, this.renderWidth, this.renderHeight);
   }
 
   destroy() {
@@ -318,15 +394,19 @@ export class StandaloneRenderer {
     const gl = this.gl;
     gl.deleteBuffer(this.quadBuffer);
     gl.deleteTexture(this.audioFFTTex);
+    if (this.shaderImageTexture) gl.deleteTexture(this.shaderImageTexture);
     gl.deleteTexture(this.audioWaveformTex);
     if (this.mediaTexture) gl.deleteTexture(this.mediaTexture);
-    if (this.program) gl.deleteProgram(this.program);
+    if (this.program && this.mediaElement) gl.deleteProgram(this.program);
+    for (const program of this.sourcePrograms.values()) gl.deleteProgram(program);
+    this.sourcePrograms.clear();
     for (const fbo of this.fbos) {
       if (!fbo) continue;
       gl.deleteFramebuffer(fbo.fb);
       gl.deleteTexture(fbo.tex);
     }
     this.fbos = [null, null];
+    if (this.outputFbo) { gl.deleteFramebuffer(this.outputFbo.fb); gl.deleteTexture(this.outputFbo.tex); this.outputFbo = null; }
     for (const compiled of this.effectCache.values()) {
       gl.deleteProgram(compiled.program);
     }
@@ -338,7 +418,7 @@ export class StandaloneRenderer {
     if (!this.program) return;
 
     const now = performance.now();
-    const dt = (now - this.lastFrameTime) / 1000;
+    const dt = Math.min(0.1, (now - this.lastFrameTime) / 1000);
     this.lastFrameTime = now;
     // Accumulate scaled time — multiplying real elapsed seconds by
     // clipSpeed lets the user freeze (0), slow-mo (0.5), or rocket (2+)
@@ -348,6 +428,11 @@ export class StandaloneRenderer {
     const time = this.scaledTime;
 
     this.resize();
+    if (this.sharedContext && (!this.outputFbo || this.outputFbo.w !== this.renderWidth || this.outputFbo.h !== this.renderHeight)) {
+      if (this.outputFbo) { gl.deleteFramebuffer(this.outputFbo.fb); gl.deleteTexture(this.outputFbo.tex); }
+      this.outputFbo = this.createFBO(this.renderWidth, this.renderHeight);
+    }
+    gl.disable(gl.BLEND);
 
     // Effect chain present? Render the source shader into FBO 0, then
     // ping-pong each effect, last writes to the default framebuffer
@@ -355,12 +440,12 @@ export class StandaloneRenderer {
     // render straight to canvas — same hot path as before.
     const usingChain = this.effectChain.length > 0;
     if (usingChain) {
-      this.ensureFBOs(this.canvas.width, this.canvas.height);
+      this.ensureFBOs(this.renderWidth, this.renderHeight);
       const target = this.fbos[0]!;
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
       gl.viewport(0, 0, target.w, target.h);
     } else {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.outputFbo?.fb ?? null);
     }
 
     if (this.mediaElement) {
@@ -388,7 +473,9 @@ export class StandaloneRenderer {
     if (L.TIME) gl.uniform1f(L.TIME, time);
     if (L.TIMEDELTA) gl.uniform1f(L.TIMEDELTA, dt);
     if (L.FRAMEINDEX) gl.uniform1i(L.FRAMEINDEX, this.frameIndex);
-    if (L.RENDERSIZE) gl.uniform2f(L.RENDERSIZE, this.canvas.width, this.canvas.height);
+    if (L.RENDERSIZE) gl.uniform2f(L.RENDERSIZE, this.renderWidth, this.renderHeight);
+
+    if (L.DATE) { const date = new Date(); gl.uniform4f(L.DATE, date.getFullYear(), date.getMonth()+1, date.getDate(), date.getHours()*3600 + date.getMinutes()*60 + date.getSeconds() + date.getMilliseconds()/1000); }
 
     // Audio scalars (matched to desktop's uniform set per shader-curation audit).
     // clipIntensity scales each one — 0 freezes reactivity, 1 = normal,
@@ -409,18 +496,42 @@ export class StandaloneRenderer {
     // to avoid driver complaints about unbound samplers.
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.audioFFTTex);
-    if (L.audioFFT) gl.uniform1i(L.audioFFT, 0);
+    if (L.audioFFT) {
+      for (let i = 0; i < 256; i++) { const v = a.spectrum?.[Math.floor(i * a.spectrum.length / 256)] ?? 0; this.spectrumPixels.fill(v, i * 4, i * 4 + 3); this.spectrumPixels[i * 4 + 3] = 255; }
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.spectrumPixels);
+      gl.uniform1i(L.audioFFT, 0);
+    }
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.audioWaveformTex);
-    if (L.audioWaveform) gl.uniform1i(L.audioWaveform, 1);
+    if (L.audioWaveform) {
+      for (let i = 0; i < 256; i++) { const v = a.waveform?.[Math.floor(i * a.waveform.length / 256)] ?? 128; this.waveformPixels.fill(v, i * 4, i * 4 + 3); this.waveformPixels[i * 4 + 3] = 255; }
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.waveformPixels);
+      gl.uniform1i(L.audioWaveform, 1);
+    }
 
+    if (this.inputs.some(input => input.TYPE === 'image')) {
+      if (!this.shaderImageTexture) this.shaderImageTexture = this.createMediaTexture();
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.shaderImageTexture);
+      const source = this.shaderImage;
+      if (source && (!this.shaderImageUploaded || source instanceof HTMLVideoElement)
+        && (!(source instanceof HTMLVideoElement) || source.readyState >= 2)) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        this.shaderImageUploaded = true;
+      }
+    }
     // Per-shader INPUTS: just push the default value. Sliders / preset
     // recall come in a later phase.
     for (const input of this.inputs) {
       const loc = L.inputs.get(input.NAME);
       if (!loc) continue;
-      const def = getInputDefault(input);
+      const def = this.inputValues[input.NAME] ?? getInputDefault(input);
       switch (input.TYPE) {
+        case 'image':
+          gl.uniform1i(loc, 2);
+          break;
         case 'float':
         case 'event':
           gl.uniform1f(loc, typeof def === 'number' ? def : 0);
@@ -477,8 +588,9 @@ export class StandaloneRenderer {
     } finally {
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
     }
+    if (loc.uMirror) gl.uniform1i(loc.uMirror,this.mediaMirror?1:0);
     if (loc.uMedia) gl.uniform1i(loc.uMedia, 0);
-    if (loc.uResolution) gl.uniform2f(loc.uResolution, this.canvas.width, this.canvas.height);
+    if (loc.uResolution) gl.uniform2f(loc.uResolution, this.renderWidth, this.renderHeight);
     if (loc.uMediaResolution) gl.uniform2f(loc.uMediaResolution, mediaW, mediaH);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     this.frameIndex++;
@@ -497,8 +609,8 @@ export class StandaloneRenderer {
     for (let i = 0; i < chain.length; i++) {
       const isLast = i === chain.length - 1;
       if (isLast) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.outputFbo?.fb ?? null);
+        gl.viewport(0, 0, this.renderWidth, this.renderHeight);
       } else {
         const out = this.fbos[dst]!;
         gl.bindFramebuffer(gl.FRAMEBUFFER, out.fb);
@@ -530,7 +642,7 @@ export class StandaloneRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, inputTex);
     if (compiled.uInput) gl.uniform1i(compiled.uInput, 0);
-    if (compiled.uResolution) gl.uniform2f(compiled.uResolution, this.canvas.width, this.canvas.height);
+    if (compiled.uResolution) gl.uniform2f(compiled.uResolution, this.renderWidth, this.renderHeight);
     if (compiled.uTime) gl.uniform1f(compiled.uTime, time);
 
     // Push per-effect params. Missing params fall back to the def's
@@ -540,22 +652,40 @@ export class StandaloneRenderer {
       for (const [name, loc] of compiled.params) {
         if (!loc) continue;
         const v = inst.params[name];
-        gl.uniform1f(loc, typeof v === 'number' ? v : (def.defaults[name] ?? 0));
+        const value = typeof v === 'number' ? v : (def.defaults[name] ?? 0);
+        if (def.integerParams?.includes(name)) gl.uniform1i(loc, Math.round(value));
+        else gl.uniform1f(loc, value);
       }
     }
 
+    const audioValues = [this.audio.audioLevel, this.audio.audioBass, this.audio.audioHigh, this.audio.audioBeat];
+    ['uAudio', 'uAudioBass', 'uAudioHigh', 'uAudioBeatPulse'].forEach((name, i) => {
+      const location = compiled.params.get(name);
+      if (location) gl.uniform1f(location, audioValues[i]);
+    });
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
   private getOrCompileEffect(type: string): CompiledEffect | null {
     const hit = this.effectCache.get(type);
-    if (hit) return hit;
+    if (hit) { this.effectCache.delete(type); this.effectCache.set(type, hit); return hit; }
     const def = findMobileEffect(type);
     if (!def) return null;
     const gl = this.gl;
-    const program = this.compile(VERTEX_SHADER, def.fragment);
+    let program: WebGLProgram;
+    try { program = this.compile(VERTEX_SHADER, def.fragment); }
+    catch (error) {
+      // A device-specific FX compiler limitation must never freeze playback.
+      this.onEffectError(`${def.label} is unavailable on this device; playback continues.`);
+      program = this.compile(VERTEX_SHADER, 'precision highp float; varying vec2 vUv; uniform sampler2D uInput; void main(){gl_FragColor=texture2D(uInput,vUv);}');
+    }
+    if (this.effectCache.size >= 24) {
+      const oldest = this.effectCache.keys().next().value!;
+      gl.deleteProgram(this.effectCache.get(oldest)!.program);
+      this.effectCache.delete(oldest);
+    }
     const params = new Map<string, WebGLUniformLocation | null>();
-    for (const k of Object.keys(def.defaults)) {
+    for (const k of [...Object.keys(def.defaults), 'uAudio', 'uAudioBass', 'uAudioHigh', 'uAudioBeatPulse']) {
       params.set(k, gl.getUniformLocation(program, k));
     }
     const compiled: CompiledEffect = {
@@ -598,6 +728,7 @@ export class StandaloneRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) { gl.deleteFramebuffer(fb); gl.deleteTexture(tex); throw new Error('Not enough GPU memory for this layer. Choose a lower output quality.'); }
     return { fb, tex, w, h };
   }
 
@@ -643,6 +774,7 @@ export class StandaloneRenderer {
       TIMEDELTA: gl.getUniformLocation(program, 'TIMEDELTA'),
       FRAMEINDEX: gl.getUniformLocation(program, 'FRAMEINDEX'),
       RENDERSIZE: gl.getUniformLocation(program, 'RENDERSIZE'),
+      DATE: gl.getUniformLocation(program, 'DATE'),
       audioBass: gl.getUniformLocation(program, 'audioBass'),
       audioMid: gl.getUniformLocation(program, 'audioMid'),
       audioHigh: gl.getUniformLocation(program, 'audioHigh'),

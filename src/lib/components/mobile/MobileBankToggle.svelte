@@ -20,12 +20,12 @@
     class="bank-btn a"
     class:active={activeBank === 'A'}
     onclick={() => onChange('A')}
-  >A</button>
+   aria-pressed={activeBank === 'A'}>Deck A</button>
   <button
     class="bank-btn b"
     class:active={activeBank === 'B'}
     onclick={() => onChange('B')}
-  >B</button>
+   aria-pressed={activeBank === 'B'}>Deck B</button>
 </div>
 
 <style>

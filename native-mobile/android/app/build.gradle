@@ -1,5 +1,9 @@
 apply plugin: 'com.android.application'
 
+// Release credentials live outside the repository and are supplied by the release lane.
+def releaseStore = System.getenv('GHOST_ANDROID_KEYSTORE')
+def releaseSigningReady = releaseStore && System.getenv('GHOST_ANDROID_STORE_PASSWORD') && System.getenv('GHOST_ANDROID_KEY_ALIAS') && System.getenv('GHOST_ANDROID_KEY_PASSWORD')
+
 android {
     namespace = "com.ghostarcade.mobile"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,8 +20,19 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (releaseSigningReady) {
+            release {
+                storeFile file(releaseStore)
+                storePassword System.getenv('GHOST_ANDROID_STORE_PASSWORD')
+                keyAlias System.getenv('GHOST_ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('GHOST_ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseSigningReady) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

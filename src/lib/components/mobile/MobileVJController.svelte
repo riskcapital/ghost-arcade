@@ -1,5 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import '../../mobile/studio/companionVJ.css';
+  import {touchSliders} from '../../mobile/studio/touchSliders';
+  import '../../mobile/studio/touchSliders.css';
+  import Icon from '../studio/StudioIcon.svelte';
   import VJClipGrid from './VJClipGrid.svelte';
   import VJMixerStrip from './VJMixerStrip.svelte';
   import VJMasterSection from './VJMasterSection.svelte';
@@ -220,7 +224,7 @@
   <!--    - Bottom row groups all build / energy / safety controls      -->
   <!--      (macros, tempo, master, STOP) on one easy-to-reach line.    -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div data-help-page="mobile-control" class="vj-controller tablet" class:landscape={isLandscape} class:portrait={!isLandscape} bind:this={controllerEl}>
+  <div data-help-page="mobile-control" class="vj-controller tablet studio companion-vj" use:touchSliders={vjClipsState} class:landscape={isLandscape} class:portrait={!isLandscape} bind:this={controllerEl}>
 
     <!-- ROW 1: Snapshots (single dense row across the top) -->
     {#if vjClipsState.snapshots && vjClipsState.snapshots.length > 0}
@@ -235,21 +239,28 @@
       </div>
     {/if}
 
-    <!-- ROW 2: Header strip (block + bank toggle) -->
-    {#if blocks.length > 1 || !crossfaderOn}
-      <div class="header-strip">
-        {#if blocks.length > 1}
-          <div class="header-slot block">
-            <VJBlockSelector {blocks} {activeBlockId} {onSetBlock} />
+    {#if blocks.length > 1}<div class="header-strip"><VJBlockSelector {blocks} {activeBlockId} {onSetBlock}/></div>{/if}
+          <div class="tablet-crossfade">
+            <MobileCrossfaderStrip
+              enabled={crossfaderOn}
+              value={crossfaderValue}
+              transition={crossfaderTransition}
+              curve={crossfaderCurve}
+              blendMode={crossfaderBlendMode}
+              selectedDeck={activeBank}
+              showDeckTabs={true}
+              onDeckChange={(bank)=>activeBank=bank}
+              orientation="horizontal"
+              onChange={onCrossfaderChange}
+              onToggleEnabled={onCrossfaderToggle}
+              onCutA={onCutA}
+              onCutB={onCutB}
+              onTransitionChange={onCrossfaderTransition}
+              onCurveChange={onCrossfaderCurve}
+              onBlendModeChange={onCrossfaderBlendMode}
+            />
           </div>
-        {/if}
-        {#if !crossfaderOn}
-          <div class="header-slot bank">
-            <MobileBankToggle activeBank={activeBank} onChange={(b) => activeBank = b} />
-          </div>
-        {/if}
-      </div>
-    {/if}
+
 
     <!-- ROW 3: Main work area -->
     <div class="main-work-area" class:dual={crossfaderOn}>
@@ -269,26 +280,6 @@
               />
               <VJColumnTriggers {numColumns} isTablet={true} onTriggerColumn={(ci) => triggerColumn(ci, 'A')} />
             </div>
-          </div>
-
-          <div class="xfader-stack">
-            <MobileCrossfaderStrip
-              enabled={crossfaderOn}
-              value={crossfaderValue}
-              transition={crossfaderTransition}
-              curve={crossfaderCurve}
-              blendMode={crossfaderBlendMode}
-              selectedDeck={vjClipsState.selectedDeck ?? 'A'}
-              orientation="vertical"
-              compact={true}
-              onChange={onCrossfaderChange}
-              onToggleEnabled={onCrossfaderToggle}
-              onCutA={onCutA}
-              onCutB={onCutB}
-              onTransitionChange={onCrossfaderTransition}
-              onCurveChange={onCrossfaderCurve}
-              onBlendModeChange={onCrossfaderBlendMode}
-            />
           </div>
 
           <div class="deck-clips b">
@@ -316,7 +307,7 @@
                 {layerState}
                 isTablet={true}
                 compact={true}
-                faderHeight={112}
+                faderHeight={96}
                 onOpacityChange={(li, o) => setLayerOpacity(li, o, 'A')}
                 onBlendModeChange={(li, b) => setLayerBlendMode(li, b, 'A')}
                 onStopLayer={(li) => stopLayer(li, 'A')}
@@ -364,7 +355,7 @@
                 {layerState}
                 isTablet={true}
                 compact={true}
-                faderHeight={112}
+                faderHeight={96}
                 onOpacityChange={(li, o) => setLayerOpacity(li, o, 'B')}
                 onBlendModeChange={(li, b) => setLayerBlendMode(li, b, 'B')}
                 onStopLayer={(li) => stopLayer(li, 'B')}
@@ -393,7 +384,7 @@
                 {layerState}
                 isTablet={true}
                 compact={true}
-                faderHeight={128}
+                faderHeight={96}
                 onOpacityChange={(li, o) => setLayerOpacity(li, o, activeBank)}
                 onBlendModeChange={(li, b) => setLayerBlendMode(li, b, activeBank)}
                 onStopLayer={(li) => stopLayer(li, activeBank)}
@@ -492,7 +483,7 @@
   <!--  Bottom: master section                                          -->
   <!--  Crossfader gets a slim horizontal strip when enabled           -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div data-help-page="mobile-control" class="vj-controller phone" class:landscape={isLandscape} bind:this={controllerEl}>
+  <div data-help-page="mobile-control" class="vj-controller phone studio companion-vj" use:touchSliders={vjClipsState} class:landscape={isLandscape} bind:this={controllerEl}>
     <!-- Top: tempo strip (always visible — primary surface) -->
     <div class="phone-top-strip">
       <MobileTempoStrip
@@ -511,22 +502,22 @@
     </div>
 
     <!-- Bank toggle + block selector row -->
-    <div class="phone-control-row">
-      {#if blocks.length > 1}
+    {#if blocks.length > 1}<div class="phone-control-row">
         <VJBlockSelector {blocks} {activeBlockId} {onSetBlock} />
-      {/if}
-      <MobileBankToggle activeBank={activeBank} onChange={(b) => activeBank = b} compact={true} />
-    </div>
+    </div>{/if}
 
     <!-- Crossfader strip (horizontal, only when enabled) -->
-    {#if crossfaderOn}
       <div class="phone-xfader-strip">
         <MobileCrossfaderStrip
           enabled={crossfaderOn}
           value={crossfaderValue}
           transition={crossfaderTransition}
           curve={crossfaderCurve}
-          selectedDeck={vjClipsState.selectedDeck ?? 'A'}
+          blendMode={crossfaderBlendMode}
+          onBlendModeChange={onCrossfaderBlendMode}
+          selectedDeck={activeBank}
+          showDeckTabs={true}
+          onDeckChange={(bank)=>activeBank=bank}
           orientation="horizontal"
           onChange={onCrossfaderChange}
           onToggleEnabled={onCrossfaderToggle}
@@ -536,7 +527,6 @@
           onCurveChange={onCrossfaderCurve}
         />
       </div>
-    {/if}
 
     {#if isLandscape}
       <!-- LANDSCAPE: Side-by-side layout for clip grid + active tab panel -->
@@ -581,15 +571,15 @@
 
       <!-- Phone tab strip — switches the bottom panel content -->
       <div class="phone-tab-strip">
-        <button class="tab-btn" class:active={phoneTab === 'mixer'} onclick={() => phoneTab = 'mixer'}>MIX</button>
+        <button class="tab-btn" class:active={phoneTab === 'mixer'} onclick={() => phoneTab = 'mixer'}><Icon name="mixer" size={16}/><span>Mixer</span></button>
         {#if vjClipsState.macros && vjClipsState.macros.length > 0}
-          <button class="tab-btn" class:active={phoneTab === 'macros'} onclick={() => phoneTab = 'macros'}>MAC</button>
+          <button class="tab-btn" class:active={phoneTab === 'macros'} onclick={() => phoneTab = 'macros'}><Icon name="controls" size={16}/><span>Macros</span></button>
         {/if}
         {#if vjClipsState.snapshots && vjClipsState.snapshots.length > 0}
-          <button class="tab-btn" class:active={phoneTab === 'snaps'} onclick={() => phoneTab = 'snaps'}>SNAP</button>
+          <button class="tab-btn" class:active={phoneTab === 'snaps'} onclick={() => phoneTab = 'snaps'}><Icon name="grid" size={16}/><span>Snaps</span></button>
         {/if}
-        <button class="tab-btn" class:active={phoneTab === 'shader'} onclick={() => phoneTab = 'shader'}>SHD</button>
-        <button class="tab-btn" class:active={phoneTab === 'effects'} onclick={() => phoneTab = 'effects'}>FX</button>
+        <button class="tab-btn" class:active={phoneTab === 'shader'} onclick={() => phoneTab = 'shader'}><Icon name="flux" size={16}/><span>Shader</span></button>
+        <button class="tab-btn" class:active={phoneTab === 'effects'} onclick={() => phoneTab = 'effects'}><Icon name="fx" size={16}/><span>FX</span></button>
       </div>
 
       <!-- Phone tab content -->
@@ -648,7 +638,7 @@
       </div>
     {/if}
 
-    <!-- Master section (pinned to bottom) -->
+    <!-- Master follows the layer controls in the scrolling phone layout. -->
     <VJMasterSection
       {masterOpacity}
       {isLive}
