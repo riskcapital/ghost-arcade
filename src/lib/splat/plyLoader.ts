@@ -48,6 +48,9 @@ export interface PLYData {
     max: { x: number; y: number; z: number };
   };
   center: { x: number; y: number; z: number };
+  /** Point spacing in metres, from a `comment voxel_size_m <n>` header line
+   *  (the Ghost Arcade phone scanner writes one). */
+  voxelSizeM?: number;
 }
 
 export interface PLYLoadProgress {
@@ -116,12 +119,14 @@ function parseHeader(text: string): {
   elements: PLYElement[];
   format: 'ascii' | 'binary_little_endian' | 'binary_big_endian';
   headerLength: number;
+  voxelSizeM?: number;
 } {
   const lines = text.split('\n');
   const elements: PLYElement[] = [];
   let currentElement: PLYElement | null = null;
   let format: 'ascii' | 'binary_little_endian' | 'binary_big_endian' = 'ascii';
   let headerLength = 0;
+  let voxelSizeM: number | undefined;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -129,6 +134,10 @@ function parseHeader(text: string): {
 
     if (line === 'end_header') {
       break;
+    }
+
+    if (line.startsWith('comment ') && voxelSizeM === undefined) {
+      voxelSizeM = parseVoxelSizeComment(line);
     }
 
     if (line.startsWith('format ')) {
@@ -167,7 +176,16 @@ function parseHeader(text: string): {
     }
   }
 
-  return { elements, format, headerLength };
+  return { elements, format, headerLength, voxelSizeM };
+}
+
+/** `comment voxel_size_m 0.008` -> 0.008. Anything that is not a sane point
+ *  spacing in metres (0.1 mm .. 1 m) is ignored. */
+export function parseVoxelSizeComment(line: string): number | undefined {
+  const match = /^comment\s+voxel_size_m\s+([0-9.eE+-]+)\s*$/.exec(line.trim());
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value >= 0.0001 && value <= 1 ? value : undefined;
 }
 
 // Get byte size for a PLY type
@@ -836,7 +854,7 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
   const decoder = new TextDecoder('ascii');
   const headerText = decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 10000)));
 
-  const { elements, format, headerLength } = parseHeader(headerText);
+  const { elements, format, headerLength, voxelSizeM } = parseHeader(headerText);
 
   const vertexElement = elements.find((e) => e.name === 'vertex');
   if (!vertexElement) {
@@ -949,6 +967,7 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
     hasUVs,
     boundingBox,
     center,
+    voxelSizeM,
   };
 }
 
@@ -959,7 +978,7 @@ export async function parsePLYBufferProgressive(buffer: ArrayBuffer, options: PL
   if (!headerProbe.includes('end_header')) {
     throw new Error('PLY header is incomplete or exceeds the supported 64 KB header limit');
   }
-  const { elements, format, headerLength } = parseHeader(headerProbe);
+  const { elements, format, headerLength, voxelSizeM } = parseHeader(headerProbe);
   const vertexElement = elements.find((element) => element.name === 'vertex');
   if (!vertexElement) throw new Error('PLY file does not contain vertex element');
   if (headerLength >= buffer.byteLength) throw new Error('PLY file contains a header but no vertex data');
@@ -992,6 +1011,7 @@ export async function parsePLYBufferProgressive(buffer: ArrayBuffer, options: PL
     hasUVs,
     boundingBox,
     center,
+    voxelSizeM,
   };
 }
 
@@ -1022,6 +1042,7 @@ export interface PLYPointBufferData {
   sampleCount: number;
   boundingBox: PLYData['boundingBox'];
   center: PLYData['center'];
+  voxelSizeM?: number;
 }
 
 export interface PLYPointBufferOptions {
@@ -1400,6 +1421,7 @@ export function pointCloudBuffersFromPLYData(
       y: (minY + maxY) / 2,
       z: (minZ + maxZ) / 2,
     },
+    voxelSizeM: data.voxelSizeM,
   };
 }
 
@@ -1408,7 +1430,7 @@ export function parsePLYPointBuffers(
   options: PLYPointBufferOptions = {},
 ): PLYPointBufferData {
   const { text: headerText, headerLength } = extractPLYHeader(buffer);
-  const { elements, format } = parseHeader(headerText);
+  const { elements, format, voxelSizeM } = parseHeader(headerText);
   const vertexElement = elements.find(e => e.name === 'vertex');
   if (!vertexElement) {
     throw new Error('PLY file does not contain vertex element');
@@ -1552,6 +1574,7 @@ export function parsePLYPointBuffers(
       y: (minY + maxY) / 2,
       z: (minZ + maxZ) / 2,
     },
+    voxelSizeM,
   };
 }
 

@@ -117,6 +117,7 @@ import {
   buildSplatNativePrecompileCommands,
   encodeSplatBufferBase64,
   packSplatNativePoints,
+  splatPointSizeForSpacing,
   SPLAT_MAX_POINTS as SPLAT_NATIVE_MAX_POINTS,
 } from '$lib/renderer/splatNative';
 import { splatPointer } from '$lib/stores/splatPointer';
@@ -5285,7 +5286,7 @@ export class NativeRendererSync {
     fileSig: string;
     uploadedSig: string;
     loading: boolean;
-    packed: { buffer: Float32Array; pointCount: number } | null;
+    packed: ReturnType<typeof packSplatNativePoints> | null;
     textureSig: string;
     textureUploadedSig: string;
     texture: { rgba: Uint8ClampedArray; width: number; height: number } | null;
@@ -5445,10 +5446,23 @@ export class NativeRendererSync {
       // renderer that owns parsing to report them).
       try {
         const { project } = await import('$lib/stores/layers');
-        project.updateSplatContent(layerId, {
+        const { get } = await import('svelte/store');
+        const update: Partial<SplatContent> = {
           pointCount: pointData.sourceVertexCount ?? state.packed.pointCount,
           activePointCount: state.packed.pointCount,
-        } as Partial<SplatContent>);
+        };
+        // A scan that states its point spacing gets a Point Size that just
+        // closes the gaps, once per file: after that the slider is the user's.
+        const sizeKey = String((content as { _originalFileName?: string })._originalFileName ?? content.filePath);
+        if (plyData.voxelSizeM && pointData.dataType !== 'gaussian' && content.autoPointSizeFor !== sizeKey) {
+          const kept = Math.max(1, state.packed.pointCount) / Math.max(1, plyData.sourceVertexCount || state.packed.pointCount);
+          // Thinning a surface to a fraction f widens the gaps by 1 / sqrt(f).
+          const spacing = plyData.voxelSizeM * state.packed.norm / Math.sqrt(Math.min(1, kept));
+          const height = Number((get(project) as { height?: number })?.height) || 1080;
+          update.pointSize = splatPointSizeForSpacing(spacing, height, content.cameraFov);
+          update.autoPointSizeFor = sizeKey;
+        }
+        project.updateSplatContent(layerId, update);
       } catch { /* store unavailable in tests */ }
     } catch (err) {
       console.warn('[NativeRendererSync] native splat point load failed', layerId, err);

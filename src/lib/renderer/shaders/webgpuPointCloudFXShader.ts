@@ -59,6 +59,11 @@ export const pointCloudFXParamSchema: ParamControl[] = [
     showWhen: { topology: 'strokes' } },
   { kind: 'slider', key: 'opacity', label: 'Opacity', group: 'Topology',
     min: 0, max: 1, step: 0.01, default: 1.0 },
+  // Off by default: this instrument's looks are built on soft, blended
+  // points, and saved projects must not change. Scans arrive as a Point
+  // Cloud layer, where Solid Points starts on.
+  { kind: 'toggle', key: 'solidPoints', label: 'Solid Points', group: 'Topology',
+    default: false },
 
   // ── Filter Gesture ────────────────────────────────────────────
   // Signal-loss-style point-cloud gestures: named, performable

@@ -289,3 +289,30 @@ describe('native point buffers', () => {
   });
 
 });
+
+describe('PLY scan metadata', () => {
+  const header = (comments: string[]) => `ply
+format ascii 1.0
+${comments.map((c) => `comment ${c}`).join('\n')}
+element vertex 1
+property float x
+property float y
+property float z
+end_header
+0 0 0
+`;
+
+  it('reads the point spacing a scanner wrote as a comment', () => {
+    const buffer = stringToBuffer(header(['Ghost Arcade LiDAR scan', 'preset balanced', 'voxel_size_m 0.0080']));
+    expect(parsePLYBuffer(buffer).voxelSizeM).toBeCloseTo(0.008);
+    expect(parsePLYPointBuffers(buffer).voxelSizeM).toBeCloseTo(0.008);
+    expect(pointCloudBuffersFromPLYData(parsePLYBuffer(buffer)).voxelSizeM).toBeCloseTo(0.008);
+  });
+
+  it('ignores a missing or senseless spacing', () => {
+    expect(parsePLYBuffer(stringToBuffer(header(['made by something else']))).voxelSizeM).toBeUndefined();
+    expect(parsePLYBuffer(stringToBuffer(header(['voxel_size_m 0']))).voxelSizeM).toBeUndefined();
+    expect(parsePLYBuffer(stringToBuffer(header(['voxel_size_m 25']))).voxelSizeM).toBeUndefined();
+    expect(parsePLYBuffer(stringToBuffer(header(['voxel_size_m abc']))).voxelSizeM).toBeUndefined();
+  });
+});

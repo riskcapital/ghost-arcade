@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { SplatContent, SplatImportOrientation } from '../types';
 import type { PLYData, PLYVertex } from './plyLoader';
+import { robustFrameFromVertices, type RobustFrame } from './robustBounds';
 
 export const SPLAT_TARGET_DIAMETER = 4;
 export const SPLAT_IMPORT_ORIENTATION_OPTIONS: ReadonlyArray<{
@@ -22,13 +23,29 @@ export interface SplatNormalization {
   size: number;
 }
 
-export function computeSplatNormalization(data: PLYData): SplatNormalization {
+const frameCache = new WeakMap<object, RobustFrame>();
+
+/** Framing box of a parsed cloud: the bulk of the points, strays ignored
+ *  (robustBounds.ts). Falls back to the stored box when there are no vertices. */
+export function splatFrameBox(data: PLYData): Pick<RobustFrame, 'min' | 'max' | 'center' | 'size'> {
+  if (data.vertices.length > 0) {
+    let frame = frameCache.get(data.vertices);
+    if (!frame) {
+      frame = robustFrameFromVertices(data.vertices);
+      frameCache.set(data.vertices, frame);
+    }
+    if (frame.size > 0) return frame;
+  }
   const { min, max } = data.boundingBox;
-  const size = Math.max(max.x - min.x, max.y - min.y, max.z - min.z);
+  return { min, max, center: data.center, size: Math.max(max.x - min.x, max.y - min.y, max.z - min.z) };
+}
+
+export function computeSplatNormalization(data: PLYData): SplatNormalization {
+  const frame = splatFrameBox(data);
   return {
-    center: data.center,
-    scale: SPLAT_TARGET_DIAMETER / Math.max(size, 1e-6),
-    size,
+    center: frame.center,
+    scale: SPLAT_TARGET_DIAMETER / Math.max(frame.size, 1e-6),
+    size: frame.size,
   };
 }
 

@@ -8,6 +8,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { loadPLY } from '../splat';
+import { splatFrameBox } from '../splat/splatTransform';
 import type { ProjectionSimObject, ProjectionSimPrimitiveKind } from './types';
 
 export interface PrimitivePart {
@@ -92,15 +93,15 @@ export async function loadProjectionSimPly(url: string): Promise<PlyGeometry> {
   const normals = ply.vertices.every((v) => v.nx !== undefined && v.ny !== undefined && v.nz !== undefined)
     ? new Float32Array(ply.vertices.length * 3)
     : null;
-  const sx = ply.boundingBox.max.x - ply.boundingBox.min.x || 1;
-  const sy = ply.boundingBox.max.y - ply.boundingBox.min.y || 1;
-  const sz = ply.boundingBox.max.z - ply.boundingBox.min.z || 1;
-  const maxDim = Math.max(sx, sy, sz);
+  // Framed on the bulk of the cloud so one stray point cannot shrink it.
+  const frame = splatFrameBox(ply);
+  const center = frame.center;
+  const maxDim = frame.size || 1;
   for (let i = 0; i < ply.vertices.length; i++) {
     const v = ply.vertices[i];
-    positions[i * 3] = (v.x - ply.center.x) / maxDim;
-    positions[i * 3 + 1] = (v.y - ply.center.y) / maxDim;
-    positions[i * 3 + 2] = (v.z - ply.center.z) / maxDim;
+    positions[i * 3] = (v.x - center.x) / maxDim;
+    positions[i * 3 + 1] = (v.y - center.y) / maxDim;
+    positions[i * 3 + 2] = (v.z - center.z) / maxDim;
     colors[i * 3] = (v.r ?? 255) / 255;
     colors[i * 3 + 1] = (v.g ?? 255) / 255;
     colors[i * 3 + 2] = (v.b ?? 255) / 255;

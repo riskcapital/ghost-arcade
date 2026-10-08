@@ -7,6 +7,7 @@
 import type { SplatContent } from '$lib/types';
 import { resolveSplatAnimationClock } from '$lib/splat/splatMotion';
 import { composeSplatRotationRadians, hexToRgb01 } from '$lib/splat/splatTransform';
+import { robustFrameFromPositions, type RobustFrame } from '$lib/splat/robustBounds';
 
 export const SPLAT_NATIVE_SHADER_ID = 'splat/render-v1';
 /** Compute module for the light-space opacity volume (three entries). */
@@ -227,23 +228,19 @@ export function packSplatNativePoints(data: {
   alpha?: Float32Array;
   splatScale?: Float32Array;
   sampleCount: number;
-}): { buffer: Float32Array; pointCount: number } {
+}): { buffer: Float32Array; pointCount: number; frame: RobustFrame; norm: number } {
   const count = Math.min(SPLAT_MAX_POINTS, Math.max(0, data.sampleCount | 0));
   const out = new Float32Array(count * SPLAT_POINT_VEC4S * 4);
   const u32 = new Uint32Array(out.buffer);
   // Normalize to the release renderer's framing: centered at the origin
   // and scaled so the largest extent spans ~4 units (SPLAT_TARGET_DIAMETER),
   // which the default camera distance of 5 frames nicely.
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-  for (let i = 0; i < count; i++) {
-    const x = data.positions[i * 3], y = data.positions[i * 3 + 1], z = data.positions[i * 3 + 2];
-    if (x < minX) minX = x; if (x > maxX) maxX = x;
-    if (y < minY) minY = y; if (y > maxY) maxY = y;
-    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-  }
-  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
-  const extent = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+  // The box comes from the bulk of the cloud (robustBounds.ts): one stray
+  // far point no longer shrinks and offsets the whole import. A clean cloud
+  // gets exactly its raw bounding box.
+  const frame = robustFrameFromPositions(data.positions, count);
+  const cx = frame.center.x, cy = frame.center.y, cz = frame.center.z;
+  const extent = Math.max(frame.size, 1e-6);
   const norm = 4 / extent;
   for (let i = 0; i < count; i++) {
     const base = i * 8;
@@ -264,7 +261,7 @@ export function packSplatNativePoints(data: {
       : clamp(0.65 + rawScale * norm * 160, 0.45, 10);
     out[base + 5] = 1;
   }
-  return { buffer: out, pointCount: count };
+  return { buffer: out, pointCount: count, frame, norm };
 }
 
 export function encodeSplatBufferBase64(buffer: Float32Array): string {
@@ -384,6 +381,24 @@ export interface SplatNativeGraphOptions {
    *  (shadow-volume edge, march steps, scatter cap). Defaults to
    *  `balanced`, which is what the native path already ran at. */
   qualityTier?: SplatQualityTier;
+}
+
+/** True when the layer draws opaque, depth-writing points. Off for Gaussian
+ *  data and the Gaussians render mode: those are soft by nature and blend. */
+export function splatSolidPoints(content: Pick<SplatContent, 'solidPoints' | 'renderMode' | 'dataType'>): boolean {
+  return content.solidPoints === true && content.renderMode !== 'gaussians' && content.dataType !== 'gaussian';
+}
+
+/** Point Size that just closes the gaps of a cloud whose neighbours sit
+ *  `spacing` apart (in the normalised 4-unit frame). A sprite is
+ *  pointSize * 3 * 6 / distance pixels wide and a gap is
+ *  spacing * height / (2 * distance * tan(fov / 2)) pixels, so with size
+ *  attenuation on the answer does not depend on the camera distance. 1.5 gaps
+ *  wide covers the diagonal of a square grid with a little to spare. */
+export function splatPointSizeForSpacing(spacing: number, height: number, fovDeg = 50): number {
+  const fov = (clamp(finite(fovDeg, 50), 10, 120) * Math.PI) / 180;
+  const size = 1.5 * Math.max(0, finite(spacing, 0)) * Math.max(2, finite(height, 1080)) / (36 * Math.tan(fov / 2));
+  return Math.round(clamp(size, 0.1, 20) * 20) / 20;
 }
 
 export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
@@ -608,6 +623,7 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   const tier: SplatQualityTier = options.qualityTier ?? 'balanced';
   const budget = SPLAT_VOLUMETRIC_BUDGETS[tier] ?? SPLAT_VOLUMETRIC_BUDGETS.balanced;
   const volOn = c.volumetricEnabled === true;
+  const solid = splatSolidPoints(c);
   const shadowDim = splatShadowDim(c.volumetricShadowRes, budget.shadowDimCap, budget.shadowDim);
   // The light frame is fitted to the cloud's bounding sphere. The packed
   // cloud is normalised to a ~4-unit extent (SPLAT_TARGET_DIAMETER), so
@@ -664,7 +680,7 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   put4(51, scatterCount, scatterStride,
     clamp(finite(c.volumetricShadowStrength, 0.5), 0, 1),
     Math.max(0, finite(c.volumetricStrength, 1.4)));
-  put4(52, clamp(finite(c.volumetricAnisotropy, 0.6), -0.95, 0.95), radiusUnit, 0, 0);
+  put4(52, clamp(finite(c.volumetricAnisotropy, 0.6), -0.95, 0.95), radiusUnit, splatSolidPoints(c) ? 1 : 0, 0);
   const invVp = invertMat4(vp);
   if (invVp) data.set(invVp, 53 * 4);
   const eye = splatCameraEye(c, time);
@@ -834,8 +850,10 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
         include_snapshot: !!options.includeSnapshot && !volOn,
         // Mirrors the WebGL material: content.depthTest toggles the test,
         // depth writes stay off (transparent points, depthWrite: false).
-        depth: c.depthTest === true,
-        depth_write: false,
+        // Solid points (splatSolidPoints) test AND write depth: that is what
+        // stops the back of a scan showing through the front.
+        depth: solid || c.depthTest === true,
+        depth_write: solid,
         depth_compare: 'less-equal',
         blend: 'alpha',
         primitive: 'triangle-list',
@@ -931,7 +949,7 @@ struct SplatParams {
   sh6: vec4<f32>,      // 49: spotBlend, volumetricOn, marchSteps, radiusUnit
   sh7: vec4<f32>,      // 50: volumeOrigin.xyz, scatterExtinction
   sh8: vec4<f32>,      // 51: scatterCount, scatterStride, splatShadow, rayStrength
-  sh9: vec4<f32>,      // 52: anisotropy, refRadius, 0, 0
+  sh9: vec4<f32>,      // 52: anisotropy, refRadius, solidPoints, 0
   iv0: vec4<f32>,      // 53: invViewProj col0
   iv1: vec4<f32>,      // 54: invViewProj col1
   iv2: vec4<f32>,      // 55: invViewProj col2
@@ -1584,6 +1602,11 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
   let normalZ = sqrt(max(0.0, 1.0 - min(dot(coord * 2.0, coord * 2.0), 1.0)));
   let pointNormal = normalize(vec3<f32>(coord * 2.0, normalZ));
   let mode = i32(sp.render0.z + 0.5);
+  // Solid points: every surviving pixel of a sprite is opaque and writes
+  // depth, so the near side of a scan hides the far side whatever the draw
+  // order. Soft edges would need sorting, so they become hard; the shading
+  // that the other modes carried in alpha moves into the colour.
+  let solid = sp.sh9.z > 0.5 && mode != 1;
   if (mode == 0) {
     if (dist > 0.5) { discard; }
     edge = 1.0 - smoothstep(0.4, 0.5, dist);
@@ -1599,6 +1622,12 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
   } else {
     if (abs(coord.x) + abs(coord.y) > 0.5) { discard; }
     edge = 1.0 - (abs(coord.x) + abs(coord.y)) * 0.5;
+  }
+
+  var solidShade = 1.0;
+  if (solid) {
+    if (mode == 2) { solidShade = edge; }
+    edge = 1.0;
   }
 
   var color = in.color.rgb;
@@ -1821,6 +1850,15 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
   }
 
   if (frag.a < 0.004) { discard; }
+  if (solid) {
+    // Anything less than opaque (Opacity, fades, fog) becomes a fixed
+    // screen-door pattern: a pixel is either drawn in full or not at all, so
+    // partial opacity still needs no sorting.
+    let px = floor(in.position.xy);
+    let door = fract(52.9829189 * fract(dot(px, vec2<f32>(0.06711056, 0.00583715))));
+    if (frag.a < mix(0.004, 0.996, door)) { discard; }
+    return vec4<f32>(clamp(frag.rgb * solidShade, vec3<f32>(0.0), vec3<f32>(2.0)), 1.0);
+  }
   return vec4<f32>(clamp(frag.rgb, vec3<f32>(0.0), vec3<f32>(2.0)) * frag.a, frag.a);
 }
 

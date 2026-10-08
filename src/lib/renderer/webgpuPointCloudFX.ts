@@ -762,7 +762,7 @@ struct U {
   fogColor:     vec3<f32>,
   fogOpacity:   f32,
   fogDensity:   f32,
-  _pad5:        f32,
+  solid:        f32,        // 1 = opaque depth-writing points (see solidPoints)
   _pad6:        f32,
   _pad7:        f32,
 };
@@ -992,9 +992,19 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let d = distance(in.uv, vec2<f32>(0.5, 0.5)) * 2.0;
     mask = smoothstep(1.0, 0.2, d);
   }
-  let a = in.alpha * mask * in.gaussianOpacityScale;
   let fogT = clamp((1.0 - exp(-in.depth01 * max(u.fogDensity, 0.0) * 4.0)) * u.fogOpacity, 0.0, 1.0);
   let color = mix(in.color, u.fogColor, fogT);
+  if (u.solid > 0.5 && u.topology != 2u && in.gaussian < 0.5) {
+    // Solid points: a hard disc, each pixel drawn in full or not at all, with
+    // depth written by the pass. The near side of a scan hides the far side
+    // without sorting. Opacity below 1 becomes a fixed screen-door pattern.
+    if (distance(in.uv, vec2<f32>(0.5, 0.5)) > 0.5) { discard; }
+    let px = floor(in.pos.xy);
+    let door = fract(52.9829189 * fract(dot(px, vec2<f32>(0.06711056, 0.00583715))));
+    if (in.alpha < mix(0.004, 0.996, door)) { discard; }
+    return vec4<f32>(color, 1.0);
+  }
+  let a = in.alpha * mask * in.gaussianOpacityScale;
   return vec4<f32>(color * a, a);
 }
 `;
@@ -1098,6 +1108,8 @@ export interface PointCloudFXParams {
   topology: Topology;
   pointSize: number;
   opacity: number;
+  /** Opaque points that hide what is behind them (plain clouds, not strokes). */
+  solidPoints: boolean;
   // motion
   windStrength: number;
   windScale: number;
@@ -1177,6 +1189,7 @@ const DEFAULT_PARAMS: PointCloudFXParams = {
   topology: 'points',
   pointSize: DEFAULT_POINT_SIZE,
   opacity: 1.0,
+  solidPoints: false,
   windStrength: 0.05,
   windScale: 1.0,
   anchorPull: 2.0,
@@ -1302,6 +1315,8 @@ type PointCloudFXNativeGraphRenderPass = {
   clear: boolean;
   clear_color?: [number, number, number, number];
   include_snapshot?: boolean;
+  depth?: boolean;
+  depth_write?: boolean;
   blend: 'replace' | 'alpha' | 'add';
   vertex_count: number;
   instance_count: number;
@@ -1442,6 +1457,12 @@ function matrixRotateZ(rad: number): Float32Array {
   return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 }
 
+/** Solid points apply to plain clouds drawn as points or billboards. Strokes
+ *  and Gaussian splats are soft by nature and keep blending. */
+export function pointCloudFXSolid(params: Pick<PointCloudFXParams, 'solidPoints' | 'topology'>, gaussian: boolean): boolean {
+  return params.solidPoints === true && params.topology !== 'strokes' && !gaussian;
+}
+
 function pointCloudFXParamsFromRaw(
   raw: Record<string, any> | null | undefined,
   audioBass: number,
@@ -1459,6 +1480,7 @@ function pointCloudFXParamsFromRaw(
     topology,
     pointSize: clampNumber(finiteNumber(p.pointSize, DEFAULT_PARAMS.pointSize), 0.0001, 0.2),
     opacity: clampNumber(finiteNumber(p.opacity, DEFAULT_PARAMS.opacity), 0, 1),
+    solidPoints: p.solidPoints === true,
     windStrength: clampNumber(finiteNumber(p.windStrength, DEFAULT_PARAMS.windStrength), 0, 8),
     windScale: clampNumber(finiteNumber(p.windScale, DEFAULT_PARAMS.windScale), 0.01, 24),
     anchorPull: clampNumber(finiteNumber(p.anchorPull, DEFAULT_PARAMS.anchorPull), 0, 16),
@@ -1877,6 +1899,7 @@ function buildPointCloudFXRenderUniform(
   state: PointCloudFXNativeGraphState,
   width: number,
   height: number,
+  solid = false,
 ): string {
   const viewProj = buildPointCloudFXViewProj(params, state, width, height);
   const ruBuf = new ArrayBuffer(192);
@@ -1899,6 +1922,7 @@ function buildPointCloudFXRenderUniform(
   ruF[34] = params.fogColor[2];
   ruF[35] = Math.max(params.fogOpacity, fogModeBoost * params.filterAmount * 0.65);
   ruF[36] = Math.max(params.fogDensity, fogModeBoost * (0.45 + params.filterAmount * 1.4));
+  ruF[37] = solid ? 1 : 0;
   return bufferToBase64(ruBuf);
 }
 
@@ -1941,6 +1965,7 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
   const sortStepSource = source.find((item) => item.shaderId === POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep)!;
   const renderSource = source.find((item) => item.stage === 'render')!;
   const shouldDepthSort = options.pointData.depthSortEnabled && options.pointData.sortCount > 1;
+  const solidPass = pointCloudFXSolid(params, options.pointData.hasGaussianPayload);
   const buffers: PointCloudFXNativeGraphBuffer[] = [
     {
       id: id('home'),
@@ -1976,7 +2001,7 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
       id: id('render-uniform'),
       kind: 'uniform',
       byte_length: 192,
-      initial_b64: buildPointCloudFXRenderUniform(params, state, width, height),
+      initial_b64: buildPointCloudFXRenderUniform(params, state, width, height, solidPass),
     },
   ];
   const passes: PointCloudFXNativeGraphPass[] = [
@@ -2055,6 +2080,8 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
           clear: true,
           clear_color: [0, 0, 0, 0],
           include_snapshot: false,
+          // Solid points test and write depth (see fs_main).
+          ...(solidPass ? { depth: true, depth_write: true } : {}),
           blend: 'alpha',
           vertex_count: 6,
           instance_count: options.pointData.pointCount,
@@ -2090,6 +2117,10 @@ export class WebGPUPointCloudFX {
   private renderBindGroup: any = null;
 
   private pointCount = 0;
+  private hasGaussianPayload = false;
+  private solidPipeline: any = null;
+  private depthTexture: any = null;
+  private depthSize = '';
   private viewportW = 1920;
   private viewportH = 1080;
   private prevFrameTime = 0;
@@ -2179,6 +2210,34 @@ export class WebGPUPointCloudFX {
       },
       primitive: { topology: 'triangle-list' },
     });
+    // Same shader with depth test + write, for solid points.
+    this.solidPipeline = this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.renderBindGroupLayout] }),
+      vertex:   { module: renderModule, entryPoint: 'vs_main' },
+      fragment: {
+        module: renderModule,
+        entryPoint: 'fs_main',
+        targets: [{ format: this.presentFormat, blend: BLEND_PREMULT_OVER }],
+      },
+      primitive: { topology: 'triangle-list' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+    });
+  }
+
+  private solidDepthView(): any {
+    const w = Math.max(1, Math.round(this.viewportW));
+    const h = Math.max(1, Math.round(this.viewportH));
+    const key = `${w}x${h}`;
+    if (!this.depthTexture || this.depthSize !== key) {
+      try { this.depthTexture?.destroy?.(); } catch { /* */ }
+      this.depthTexture = this.device.createTexture({
+        size: [w, h],
+        format: 'depth24plus',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      this.depthSize = key;
+    }
+    return this.depthTexture.createView();
   }
 
   /** Replace the cloud's geometry. `positions` is a Float32Array of
@@ -2199,6 +2258,7 @@ export class WebGPUPointCloudFX {
       pointSize: this.params.pointSize,
     });
     if (!packed) return;
+    this.hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
     const {
       sourceCount,
       pointCount: n,
@@ -2448,6 +2508,8 @@ export class WebGPUPointCloudFX {
     ruF[34] = this.params.fogColor[2];
     ruF[35] = Math.max(this.params.fogOpacity, fogModeBoost * this.params.filterAmount * 0.65);
     ruF[36] = Math.max(this.params.fogDensity, fogModeBoost * (0.45 + this.params.filterAmount * 1.4));
+    const solid = pointCloudFXSolid(this.params, this.hasGaussianPayload);
+    ruF[37] = solid ? 1 : 0;
     this.device.queue.writeBuffer(this.renderUniformBuffer, 0, ruBuf);
 
     // ── Render pass ────────────────────────────────────────────
@@ -2457,8 +2519,16 @@ export class WebGPUPointCloudFX {
         loadOp: 'load',
         storeOp: 'store',
       }],
+      ...(solid ? {
+        depthStencilAttachment: {
+          view: this.solidDepthView(),
+          depthClearValue: 1,
+          depthLoadOp: 'clear',
+          depthStoreOp: 'discard',
+        },
+      } : {}),
     });
-    pass.setPipeline(this.renderPipeline);
+    pass.setPipeline(solid ? this.solidPipeline : this.renderPipeline);
     pass.setBindGroup(0, this.renderBindGroup);
     pass.draw(6, this.pointCount, 0, 0);
     pass.end();
@@ -2468,6 +2538,8 @@ export class WebGPUPointCloudFX {
     try { this.homeBuffer?.destroy?.(); } catch { /* */ }
     try { this.liveBuffer?.destroy?.(); } catch { /* */ }
     try { this.sortBuffer?.destroy?.(); } catch { /* */ }
+    try { this.depthTexture?.destroy?.(); } catch { /* */ }
+    this.depthTexture = null;
     if (this.computeUniformBufferHandle) this.computeUniformBufferHandle.release();
     else try { this.computeUniformBuffer?.destroy?.(); } catch { /* */ }
     if (this.renderUniformBufferHandle) this.renderUniformBufferHandle.release();

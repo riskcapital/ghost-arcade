@@ -1931,6 +1931,11 @@ export interface SplatContent {
   pointSizeAttenuation: boolean;  // Size decreases with distance
   sizeAttenuation: boolean;       // Alias for UI
   depthTest: boolean;             // Enable depth testing
+  /** Opaque points that hide what is behind them. Missing (older projects) = off,
+   *  so saved looks do not change; new layers start with it on. */
+  solidPoints?: boolean;
+  /** File the Point Size was last set for from the scan's own point spacing. */
+  autoPointSizeFor?: string;
   opacity: number;                // Global opacity 0-1
 
   // Colors
@@ -2207,6 +2212,7 @@ export function createDefaultSplatContent(): SplatContent {
     pointSizeAttenuation: true,
     sizeAttenuation: true,
     depthTest: true,
+    solidPoints: true,
     opacity: 1,
 
     useOriginalColors: true,

@@ -14,6 +14,7 @@ import type {
 import {
   composeSplatRotationRadians,
   computeSplatNormalization,
+  splatFrameBox,
   hexToRgb01,
   normalizedGaussianScale,
   normalizedSplatPosition,
@@ -93,6 +94,7 @@ export const baselineVertexShader = `
 export const baselineFragmentShader = `
   uniform float opacity;
   uniform int renderMode;
+  uniform bool solidPoints;
   uniform bool useOriginalColors;
   uniform vec3 colorA;
   uniform vec3 colorB;
@@ -101,6 +103,14 @@ export const baselineFragmentShader = `
   varying vec3 vColor;
   varying float vAlpha;
   varying vec3 vGaussianShape;
+
+  // Solid points: a pixel is drawn in full or not at all, and the material
+  // writes depth, so the near side of a scan hides the far side.
+  vec4 solidPointColor(vec4 c, float shade) {
+    float door = fract(52.9829189 * fract(dot(floor(gl_FragCoord.xy), vec2(0.06711056, 0.00583715))));
+    if (c.a < mix(0.004, 0.996, door)) discard;
+    return vec4(c.rgb * shade, 1.0);
+  }
 
   void main() {
     vec2 coord = gl_PointCoord - vec2(0.5);
@@ -137,6 +147,11 @@ export const baselineFragmentShader = `
       ? vColor
       : mix(colorA / 255.0, colorB / 255.0, colorMix);
 
+    if (solidPoints && renderMode != 1) {
+      float shade = renderMode == 2 ? edgeAlpha : 1.0;
+      gl_FragColor = solidPointColor(vec4(color, vAlpha * opacity), shade);
+      return;
+    }
     gl_FragColor = vec4(color, vAlpha * opacity * edgeAlpha);
   }
 `;
@@ -746,6 +761,7 @@ export const fragmentShader = `
   uniform float time;
   uniform float opacity;
   uniform int renderMode;
+  uniform bool solidPoints;
 
   // Lighting and atmosphere
   uniform bool lightingEnabled;
@@ -1167,6 +1183,14 @@ export const fragmentShader = `
     return fragColor;
   }
 
+  // Solid points: a pixel is drawn in full or not at all, and the material
+  // writes depth, so the near side of a scan hides the far side.
+  vec4 solidPointColor(vec4 c, float shade) {
+    float door = fract(52.9829189 * fract(dot(floor(gl_FragCoord.xy), vec2(0.06711056, 0.00583715))));
+    if (c.a < mix(0.004, 0.996, door)) discard;
+    return vec4(c.rgb * shade, 1.0);
+  }
+
   void main() {
     if (vDiscard > 0.5) discard;
 
@@ -1210,6 +1234,13 @@ export const fragmentShader = `
       // Cubes - diamond shape
       if (abs(coord.x) + abs(coord.y) > 0.5) discard;
       edgeAlpha = 1.0 - (abs(coord.x) + abs(coord.y)) * 0.5;
+    }
+
+    bool solid = solidPoints && renderMode != 1;
+    float solidShade = 1.0;
+    if (solid) {
+      if (renderMode == 2) solidShade = edgeAlpha;
+      edgeAlpha = 1.0;
     }
 
     // Get base color
@@ -1284,6 +1315,10 @@ export const fragmentShader = `
       fragColor.a *= revealFactor * mouseInfluence + (1.0 - mouseInfluence);
     }
 
+    if (solid) {
+      gl_FragColor = solidPointColor(fragColor, solidShade);
+      return;
+    }
     gl_FragColor = fragColor;
   }
 `;
@@ -1424,7 +1459,7 @@ export class SplatRenderer {
 
     // Normalize every import into the same working volume. Architectural scans,
     // face captures, and compact splats otherwise arrive several orders apart.
-    const bb = data.boundingBox;
+    const bb = splatFrameBox(data);
     const normalization = computeSplatNormalization(data);
     this.pointCloudBounds.min.set(
       (bb.min.x - normalization.center.x) * normalization.scale,
@@ -1800,6 +1835,7 @@ export class SplatRenderer {
       sizeAttenuation: { value: true },
       opacity: { value: 1 },
       renderMode: { value: 0 },
+      solidPoints: { value: false },
 
       // Animation
       animationProgress: { value: 0 },
@@ -2289,8 +2325,11 @@ export class SplatRenderer {
 
     // Update camera
     this.updateCamera(content);
+    const solid = content.solidPoints === true && content.renderMode !== 'gaussians' && content.dataType !== 'gaussian';
+    u.solidPoints.value = solid;
     if (this.material) {
-      this.material.depthTest = content.depthTest;
+      this.material.depthTest = solid || content.depthTest;
+      this.material.depthWrite = solid;
     }
   }
 

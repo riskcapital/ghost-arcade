@@ -10158,6 +10158,11 @@ impl App {
             self.native_graph_shader_source(render_shader_id, "fs_main")?;
         self.native_graph_shader_source(render_shader_id, "vs_main")?;
         let should_sort = asset.depth_sort_enabled && asset.sort_count > 1;
+        // Solid points: plain clouds as points or billboards write depth, so
+        // the near side hides the far side. Strokes and Gaussian splats (the
+        // only clouds that are depth sorted) stay soft and blended.
+        let solid_points =
+            params.solid_points && params.topology_id != 2 && !asset.depth_sort_enabled;
         let (sort_fill_hash, sort_fill_source, sort_step_hash, sort_step_source) = if should_sort {
             let fill = self.native_graph_shader_source(sort_fill_shader_id, "cs_main")?;
             let step = self.native_graph_shader_source(sort_step_shader_id, "cs_main")?;
@@ -10243,6 +10248,7 @@ impl App {
                     &state,
                     self.pending_width,
                     self.pending_height,
+                    solid_points,
                 ),
                 persistent: true,
                 clear: false,
@@ -10442,9 +10448,10 @@ impl App {
         let render_plans = vec![NativeComputeGraphRenderPlan {
             name: "point-cloud-fx/render".to_string(),
             cache_key: format!(
-                "graph-render:{render_shader_id}:{render_hash}:vs_main:fs_main:{}:{}:nodepth:read:{}:{render_layout}",
+                "graph-render:{render_shader_id}:{render_hash}:vs_main:fs_main:{}:{}:{}:{}:{render_layout}",
                 NativeComputeGraphRenderBlend::Alpha.signature(),
                 NativeComputeGraphPrimitiveTopology::TriangleList.signature(),
+                if solid_points { "depth:write" } else { "nodepth:read" },
                 NativeComputeGraphDepthCompare::Less.signature(),
             ),
             source: render_source,
@@ -10465,8 +10472,8 @@ impl App {
             indirect_offset: 0,
             clear_color: [0.0, 0.0, 0.0, 0.0],
             primitive_topology: NativeComputeGraphPrimitiveTopology::TriangleList,
-            depth_enabled: false,
-            depth_write: false,
+            depth_enabled: solid_points,
+            depth_write: solid_points,
             depth_compare: NativeComputeGraphDepthCompare::Less,
             depth_load: false,
             bindings: render_bindings,
@@ -28008,6 +28015,8 @@ struct NativePointCloudParams {
     topology_id: u32,
     point_size: f32,
     opacity: f32,
+    /// Opaque, depth-writing points (pointCloudFXSolid in webgpuPointCloudFX.ts).
+    solid_points: bool,
     wind_strength: f32,
     wind_scale: f32,
     anchor_pull: f32,
@@ -28102,6 +28111,7 @@ fn normalize_point_cloud_native_params(params: &Value) -> NativePointCloudParams
         topology_id,
         point_size: native_graph_param_f32(params, "pointSize", 0.0001, 0.2, 0.006),
         opacity: native_graph_param_f32(params, "opacity", 0.0, 1.0, 1.0),
+        solid_points: native_graph_param_bool(params, "solidPoints", false),
         wind_strength: native_graph_param_f32(params, "windStrength", 0.0, 8.0, 0.05),
         wind_scale: native_graph_param_f32(params, "windScale", 0.01, 24.0, 1.0),
         anchor_pull: native_graph_param_f32(params, "anchorPull", 0.0, 16.0, 2.0),
@@ -28277,6 +28287,7 @@ fn build_point_cloud_render_bytes(
     state: &NativePointCloudGraphState,
     width: u32,
     height: u32,
+    solid: bool,
 ) -> Vec<u8> {
     let mut bytes = vec![0_u8; 192];
     for (index, value) in point_cloud_view_proj(params, state, width, height)
@@ -28314,6 +28325,7 @@ fn build_point_cloud_render_bytes(
             0.0
         }),
     );
+    write_f32_le(&mut bytes, 37, if solid { 1.0 } else { 0.0 });
     bytes
 }
 

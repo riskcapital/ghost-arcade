@@ -6,6 +6,7 @@ import {
   buildPointCloudFXNativePointData,
   buildPointCloudFXNativePrecompileCommands,
   getPointCloudFXNativeShaderSources,
+  pointCloudFXSolid,
   pointCloudSourceIndexForSample,
 } from './webgpuPointCloudFX';
 
@@ -416,5 +417,51 @@ describe('Point Cloud FX native graph', () => {
       resource: 'gpu:layer-gaussian:point-cloud-fx:point-cloud-fx:sort-pairs',
       kind: 'read-only-storage',
     });
+  });
+});
+
+describe('Point Cloud FX solid points', () => {
+  const build = (params: Record<string, unknown>, gaussian = false) => {
+    const { positions, colors } = makePoints(64);
+    const pointData = buildPointCloudFXNativePointData(positions, colors, {
+      maxPoints: 64,
+      signature: `solid-${JSON.stringify(params)}-${gaussian}`,
+      ...(gaussian ? { gaussian: true, depthSort: true } : {}),
+    });
+    const graph = buildPointCloudFXNativeComputeGraph({
+      sourceId: 'gpu:solid:point-cloud-fx',
+      pointData,
+      params,
+      width: 1920,
+      height: 1080,
+      time: 0,
+      frameDelta: 1 / 60,
+      frameIndex: 1,
+      reset: true,
+    });
+    const uniform = (graph.config.buffers as Array<{ id: string; initial_b64?: string }>)
+      .find((buffer) => buffer.id.endsWith(':render-uniform'))!;
+    return { pass: graph.config.render_passes[0], solidFlag: floatsFromBase64(uniform.initial_b64!)[37] };
+  };
+
+  it('stays soft and blended unless asked (saved projects do not change)', () => {
+    const { pass, solidFlag } = build({ topology: 'points' });
+    expect(pass.depth).toBeUndefined();
+    expect(pass.depth_write).toBeUndefined();
+    expect(solidFlag).toBe(0);
+  });
+
+  it('writes depth for plain points and billboards', () => {
+    for (const topology of ['points', 'billboards']) {
+      const { pass, solidFlag } = build({ topology, solidPoints: true });
+      expect(pass).toMatchObject({ depth: true, depth_write: true, blend: 'alpha' });
+      expect(solidFlag).toBe(1);
+    }
+  });
+
+  it('leaves strokes and Gaussian splats blended', () => {
+    expect(build({ topology: 'strokes', solidPoints: true }).solidFlag).toBe(0);
+    expect(build({ topology: 'points', solidPoints: true }, true).pass.depth_write).toBeUndefined();
+    expect(pointCloudFXSolid({ solidPoints: true, topology: 'points' }, true)).toBe(false);
   });
 });

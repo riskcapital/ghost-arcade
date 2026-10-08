@@ -859,6 +859,21 @@
           </div>
 
           <div class="property-row checkbox">
+            <label title="Points hide what is behind them. Turn off for soft, see-through points.">
+              <input
+                type="checkbox"
+                checked={sc.solidPoints === true}
+                disabled={sc.renderMode === 'gaussians' || sc.dataType === 'gaussian'}
+                onchange={(e) => doUpdate({ solidPoints: (e.target as HTMLInputElement).checked })}
+                data-midi-path="map:splat:solidPoints"
+                data-midi-label="Solid Points"
+                data-midi-mode="toggle"
+              />
+              Solid Points
+            </label>
+          </div>
+
+          <div class="property-row checkbox">
             <label>
               <input
                 type="checkbox"

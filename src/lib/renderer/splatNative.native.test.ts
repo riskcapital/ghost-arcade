@@ -11,6 +11,8 @@ import {
   buildSplatNativeComputeGraph,
   buildSplatNativePrecompileCommands,
   packSplatNativePoints,
+  splatPointSizeForSpacing,
+  splatSolidPoints,
   splatShadowDim,
   splatShadowFrame,
   splatSpotBlend,
@@ -265,5 +267,45 @@ describe('native Splat graph', () => {
     // Degenerate up vector: lw parallel to +Y must still be orthonormal.
     expect(Math.hypot(...frame.lu)).toBeCloseTo(1, 6);
     expect(Math.hypot(...frame.lv)).toBeCloseTo(1, 6);
+  });
+});
+
+describe('solid points', () => {
+  const renderPass = (graph: ReturnType<typeof buildGraph>) =>
+    (graph.config.render_passes as Array<Record<string, unknown>>).find((pass) => pass.name === 'splat-render')!;
+
+  it('new layers write depth so the near side hides the far side', () => {
+    const graph = buildGraph();
+    expect(createDefaultSplatContent().solidPoints).toBe(true);
+    expect(renderPass(graph)).toEqual(expect.objectContaining({ depth: true, depth_write: true }));
+    expect(v4(uniformOf(graph), 52)[2]).toBe(1);
+    expect(SPLAT_NATIVE_WGSL).toContain('let solid = sp.sh9.z > 0.5 && mode != 1;');
+  });
+
+  it('projects saved before the option render exactly as before', () => {
+    const graph = buildGraph({ solidPoints: undefined });
+    expect(renderPass(graph)).toEqual(expect.objectContaining({ depth: true, depth_write: false, blend: 'alpha' }));
+    expect(v4(uniformOf(graph), 52)[2]).toBe(0);
+    const noDepth = buildGraph({ solidPoints: undefined, depthTest: false });
+    expect(renderPass(noDepth)).toEqual(expect.objectContaining({ depth: false, depth_write: false }));
+  });
+
+  it('keeps Gaussian data and the Gaussians look soft', () => {
+    expect(splatSolidPoints({ solidPoints: true, renderMode: 'points', dataType: 'pointcloud' } as never)).toBe(true);
+    expect(splatSolidPoints({ solidPoints: true, renderMode: 'gaussians', dataType: 'pointcloud' } as never)).toBe(false);
+    expect(splatSolidPoints({ solidPoints: true, renderMode: 'points', dataType: 'gaussian' } as never)).toBe(false);
+    expect(renderPass(buildGraph({ renderMode: 'gaussians' })).depth_write).toBe(false);
+  });
+
+  it('sizes points to close the gaps of a scan with a known spacing', () => {
+    // 8 mm points in a 3 m room: 0.008 * 4 / 3 units apart in the 4-unit frame.
+    const size = splatPointSizeForSpacing(0.008 * 4 / 3, 1080, 50);
+    // Sprite width in pixels at distance d is size * 18 / d; the gap is
+    // spacing * 1080 / (2 d tan 25 deg). Their ratio must be 1.5 (to the 0.05 step).
+    const ratio = (size * 18) / ((0.008 * 4 / 3) * 1080 / (2 * Math.tan((25 * Math.PI) / 180)));
+    expect(ratio).toBeGreaterThan(1.4);
+    expect(ratio).toBeLessThan(1.6);
+    expect(splatPointSizeForSpacing(0, 1080)).toBe(0.1);
+    expect(splatPointSizeForSpacing(10, 1080)).toBe(20);
   });
 });
