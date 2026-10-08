@@ -20988,6 +20988,10 @@ impl RenderState {
                 .create_window(attrs)
                 .map_err(|err| format!("could not create the Screen child window: {err}"))?,
         );
+        // The child only shows the picture. With an empty input shape, clicks
+        // and keys over it reach the Screen window underneath, so Esc and
+        // double-click there keep working once the core is presenting.
+        let _ = window.set_cursor_hittest(false);
         let surface = self
             .wgpu_instance
             .create_surface(Arc::clone(&window))
