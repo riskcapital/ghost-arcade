@@ -12225,7 +12225,12 @@ impl App {
             // its slot was cleared when it was assigned. Composition uses the
             // most recent chain that actually rendered.
             self.pending_native_graph_jobs.extend(native_graph_jobs.split_off(generated_graph_jobs));
-            self.pending_render_retry = true;
+            // No immediate retry: a retry runs "as soon as the GPU is free",
+            // which for a warming pipeline is a hot loop of a thousand-plus
+            // frames a second. On D3D12 that starved the worker compiling the
+            // pipeline, so it never finished and the effect never appeared.
+            // The pending jobs keep the loop alive (has_offscreen_work), and
+            // the next frame slot picks the pipeline up once it is built.
             render_result = renderer.render(
                 self.command_phase, gpu_layers.len() as u32, render_time, frame_index,
                 &gpu_layers, source_preview_pixels.as_deref(), stage3d_mesh_frame.as_ref(),
@@ -12491,7 +12496,8 @@ impl App {
                 if !pipeline_warming {
                     self.pending_native_graph_jobs.extend(native_graph_jobs.split_off(generated_graph_jobs));
                 }
-                self.pending_render_retry = true;
+                // Wait for the next frame slot rather than spinning; see the
+                // warming branch above.
             }
             Err(err) => {
                 self.stats.swapchain_last_present_result = if err.contains("surface lost") {

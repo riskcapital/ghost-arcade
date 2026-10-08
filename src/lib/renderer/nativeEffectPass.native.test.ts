@@ -36,6 +36,26 @@ type NativeRpc = {
   close(): Promise<string>;
 };
 
+/** Snapshot until the picture is no longer `stale`. The effect pipeline is
+ *  built on a worker the first time it is used, and the layer correctly
+ *  shows its raw input until then. Metal builds it in well under 200 ms;
+ *  D3D12 takes about six seconds cold (the app pre-warms it at startup), so
+ *  a fixed 200 ms wait could only ever read the warm-up frame on Windows. */
+async function snapshotAfterChange(
+  rpc: { send(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<any> },
+  params: Record<string, unknown>,
+  stale: string,
+  timeoutMs = 20000,
+): Promise<any> {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot = await rpc.send('frame_snapshot', params);
+  while (snapshot.checksum === stale && Date.now() < deadline) {
+    await delay(25);
+    snapshot = await rpc.send('frame_snapshot', params);
+  }
+  return snapshot;
+}
+
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -3530,8 +3550,7 @@ describe('Native effect-pass template', () => {
       expect(firstResult.dropped).toBe(0);
       const warming = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 2 });
       assertVisibleSnapshot('raw input while effect pipeline warms', warming);
-      await delay(200);
-      const firstEffect = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 2 });
+      const firstEffect = await snapshotAfterChange(rpc, { include_pixels: false, frame_index: 2 }, raw.checksum);
       assertVisibleSnapshot('first effect input', firstEffect);
       expect(firstEffect.checksum).not.toBe(raw.checksum);
 
@@ -3540,8 +3559,7 @@ describe('Native effect-pass template', () => {
       const switching = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 3 });
       assertVisibleSnapshot('replacement input while effect updates', switching);
       expect(switching.checksum).not.toBe(firstEffect.checksum);
-      await delay(200);
-      const secondEffect = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 3 });
+      const secondEffect = await snapshotAfterChange(rpc, { include_pixels: false, frame_index: 3 }, firstEffect.checksum);
       assertVisibleSnapshot('replacement effect input', secondEffect);
       expect(secondEffect.checksum).not.toBe(firstEffect.checksum);
     } finally {
@@ -3583,8 +3601,7 @@ describe('Native effect-pass template', () => {
       ] });
       const warming = await rpc.send('frame_snapshot', { include_pixels: false });
       assertVisibleSnapshot('shader while effect warms', warming);
-      await delay(200);
-      const firstEffect = await rpc.send('frame_snapshot', { include_pixels: false });
+      const firstEffect = await snapshotAfterChange(rpc, { include_pixels: false }, raw.checksum);
       assertVisibleSnapshot('shader with effect', firstEffect);
       expect(firstEffect.checksum).not.toBe(raw.checksum);
       await rpc.send('submit_commands', { commands: [
@@ -3595,8 +3612,7 @@ describe('Native effect-pass template', () => {
         { type: 'render_isf_to_layer', layer_id: layerId },
         { type: 'queue_compute_graph', ...graph(3).config },
       ] });
-      await delay(200);
-      const switched = await rpc.send('frame_snapshot', { include_pixels: false });
+      const switched = await snapshotAfterChange(rpc, { include_pixels: false }, firstEffect.checksum);
       assertVisibleSnapshot('replacement shader with effect', switched);
       expect(switched.checksum).not.toBe(firstEffect.checksum);
     } finally {
