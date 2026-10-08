@@ -56,7 +56,7 @@
 
   .bank-btn.a.active {
     background: var(--ga-blue-a16);
-    color: var(--ga-blue-300);
+    color: var(--ga-blue-200);
     box-shadow: 0 0 6px var(--ga-blue-a45);
   }
   .bank-btn.b.active {

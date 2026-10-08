@@ -375,7 +375,7 @@
   .xfade-cut.a.active, .xfade-cut.a.selected {
     background: var(--ga-blue-a16);
     border-color: var(--ga-blue-a70);
-    color: var(--ga-blue-300);
+    color: var(--ga-blue-200);
     box-shadow: 0 0 8px var(--ga-blue-a45);
   }
   .xfade-cut.b.active, .xfade-cut.b.selected {
@@ -443,14 +443,14 @@
     height: 2px;
     left: 0;
   }
-  .xfade.vertical .xfade-endpoint.a { top: 0; background: var(--ga-blue-300); }
+  .xfade.vertical .xfade-endpoint.a { top: 0; background: var(--ga-blue-200); }
   .xfade.vertical .xfade-endpoint.b { bottom: 0; background: #CE93D8; }
   .xfade.horizontal .xfade-endpoint {
     height: 100%;
     width: 2px;
     top: 0;
   }
-  .xfade.horizontal .xfade-endpoint.a { left: 0; background: var(--ga-blue-300); }
+  .xfade.horizontal .xfade-endpoint.a { left: 0; background: var(--ga-blue-200); }
   .xfade.horizontal .xfade-endpoint.b { right: 0; background: #CE93D8; }
 
   .xfade-center {

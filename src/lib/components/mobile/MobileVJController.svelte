@@ -789,8 +789,8 @@
     flex-shrink: 0;
   }
   .deck-tag.a {
-    background: var(--ga-blue-a16);
-    color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
+    color: var(--ga-blue-200);
     text-shadow: 0 0 6px var(--ga-blue-a45);
   }
   .deck-tag.b {
