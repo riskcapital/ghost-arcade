@@ -7,6 +7,8 @@
   import {groupParams,paramLabel} from '../../mobile/studio/paramGroups';
   import {currentLayout, watchLayout} from '../../mobile/studio/layout';
   import './mobileStudioLayout.css';
+  import BlockTabs from './BlockTabs.svelte';
+  import {MAX_BLOCKS,addBlock,blockTabs,deleteBlock,duplicateBlock,ensureOpenBlock,switchBlock,type BlockState} from '../../mobile/studio/blocks';
   let layoutInfo=currentLayout();
   $: tablet=layoutInfo.mixer==='docked';
   let compactPreview=layoutInfo.short;
@@ -180,7 +182,6 @@
     MAX_SAVED_SETS,
     referencedAssetIds,
     renameBlock,
-    removeBlock,
     defaultShow,
     normalizeShow,
     clipUnavailable,
@@ -219,8 +220,7 @@
   let shaderInputId: string | null = null;
   let shaderMediaInput: HTMLInputElement;
   let editSlot: { row: number; column: number } | null = null;
-  let sceneMode = false,
-    search = '',
+  let search = '',
     category = 'all',
     settings = false,
     clean = false,
@@ -380,21 +380,52 @@
   }
   $: if (settings) void refreshStorage(); else { setEdit = null; freshConfirm = false; mediaConfirm = false; }
   // ── Blocks ────────────────────────────────────────────────────────────────
-  let blockEdit: string | null = null;
-  function renameBlockTo(id: string, name: string) {
-    if (!name.trim() || show.scenes.find((b) => b.id === id)?.name === name.trim()) return;
+  $: blockTabList = blockTabs(show);
+  function applyBlocks(next: BlockState) {
+    show.scenes = next.scenes; show.activeBlockId = next.activeBlockId; show.launchGrid = next.launchGrid;
+  }
+  /** Opens another block. Playing clips keep playing; only the deck's pads change. */
+  function selectBlock(id: string) {
+    const next = switchBlock(show, id, uid);
+    if (!next) return;
+    autoEvent('block');
     checkpoint();
-    show.scenes = renameBlock(show, id, name);
+    applyBlocks(next);
     persist();
   }
-  function deleteBlock(id: string) {
-    const name = show.scenes.find((b) => b.id === id)?.name ?? 'Block';
+  function newBlock() {
+    const next = addBlock(show, uid);
+    if (!next) { flash(`A set supports up to ${MAX_BLOCKS} blocks.`); return; }
     checkpoint();
-    const next = removeBlock(show, id);
-    show.scenes = next.scenes; show.activeBlockId = next.activeBlockId;
-    blockEdit = null;
+    applyBlocks(next);
     persist();
-    flash(`${name} deleted.`, { label: 'Undo', run: () => void undo() }, 6000);
+    flash(`${next.added.name} added.`);
+  }
+  function renameBlockTab(id: string, name: string) {
+    const clean = name.trim();
+    if (!clean) return;
+    checkpoint();
+    // The deck of an older set becomes a real block the moment it is given a name.
+    if (!id) { applyBlocks(ensureOpenBlock(show, uid)); id = show.activeBlockId ?? ''; }
+    show.scenes = renameBlock(show, id, clean);
+    persist();
+  }
+  function copyBlock(id: string) {
+    const next = duplicateBlock(show, id, uid);
+    if (!next) { flash(`A set supports up to ${MAX_BLOCKS} blocks.`); return; }
+    checkpoint();
+    applyBlocks(next);
+    persist();
+    flash(`${next.added.name} added.`);
+  }
+  function deleteBlockTab(id: string) {
+    const next = deleteBlock(show, id, uid);
+    if (!next) { flash('A set keeps at least one block.'); return; }
+    if (next.activeBlockId !== show.activeBlockId) autoEvent('block');
+    checkpoint();
+    applyBlocks(next);
+    persist();
+    flash(`${next.removed.name} deleted.`, { label: 'Undo', run: () => void undo() }, 6000);
   }
   async function undo(redo = false) {
     const next = redo ? history.redo(show) : history.undo(show);
@@ -518,7 +549,6 @@
     changeLayer(row);
     editSlot = null;
     tab = 'perform';
-    sceneMode = false;
     // The deck opens at column 1; bring the new pad into view and pulse it so "tap its pad" is possible.
     freshPad = { row, column };
     clearTimeout(freshTimer);
@@ -705,19 +735,6 @@
   }
   function meshPath(s: Surface) {
     return [0, 1, 2, 5, 8, 7, 6, 3, 0].map((i) => `${s.points[i].x * 1000},${s.points[i].y * 562.5}`).join(' ');
-  }
-  function captureScene() {
-    if(show.scenes.length>=16){flash('A set supports up to 16 blocks.');return;}
-    checkpoint();const id=uid();
-    show.scenes=[...show.scenes,{id,name:`Block ${show.scenes.length+1}`,launchGrid:copy(show.launchGrid),layers:copy(show.layers),crossfade:show.crossfade}];
-    show.activeBlockId=id;persist();flash('Block saved. Clip changes now update this block.');
-  }
-  function recallScene(index:number) {
-    autoEvent('block');
-    checkpoint();
-    if(show.activeBlockId)show.scenes=show.scenes.map(b=>b.id===show.activeBlockId?{...b,launchGrid:copy(show.launchGrid)}:b);
-    const block=show.scenes[index];show.launchGrid=copy(block.launchGrid || show.launchGrid);show.activeBlockId=block.id;
-    sceneMode=false;persist();flash(`${block.name} loaded. Playing clips continue.`);
   }
   function setBpm(value: number) {
     show.bpm = clamp(value, 30, 240);
@@ -1376,32 +1393,6 @@
       <div class="panel-scroll" inert={clipControlsOpen && !dockedInspector && layoutInfo.inspector!=='bottom'}>
         {#if tab === 'perform'}
           <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><button onclick={()=>{editSlot=null;selectTab('library');}}><Icon name="plus" size={18}/>Add clip</button></div>
-          {#if sceneMode}<div class="block-navigation">            <div class="segmented">
-              <button class:active={!sceneMode} onclick={() => (sceneMode = false)}>Clips</button><button
-                class:active={sceneMode}
-                onclick={() => (sceneMode = true)}>Blocks</button
-              >
-            </div>
-</div>{/if}
-          {#if sceneMode}<div class="clip-grid">
-              {#each show.scenes as scene, i}<div class="scene-slot"><button class="scene-pad" onclick={() => recallScene(i)}
-                  ><span class="pad-number">{String(i + 1).padStart(2, '0')}</span><Icon name="grid" size={28} /><strong
-                    >{scene.name}</strong
-                  ><small>{show.activeBlockId===scene.id?'Current block':'Load clip grid'}</small></button
-                ><button class="scene-edit" data-block-edit aria-label={`Rename or delete ${scene.name}`} aria-expanded={blockEdit===scene.id} onclick={() => (blockEdit = blockEdit === scene.id ? null : scene.id)}><Icon name="settings" size={16} /></button></div>{/each}<button class="clip-pad add-pad" onclick={captureScene}
-                ><Icon name="plus" size={26} /><span>Save as new block</span></button
-              >
-            </div>
-            {#if blockEdit && show.scenes.some((b) => b.id === blockEdit)}{@const editing = show.scenes.find((b) => b.id === blockEdit)!}
-              <div class="block-editor" role="group" aria-label="Edit block">
-                <label class="field">Block name<input data-block-name value={editing.name} maxlength="80" onchange={(e) => renameBlockTo(editing.id, e.currentTarget.value)} /></label>
-                <div class="card-actions"><button data-block-delete onclick={() => deleteBlock(editing.id)}><Icon name="trash" size={16} />Delete block</button><button onclick={() => (blockEdit = null)}>Done</button></div>
-              </div>
-            {/if}
-            <p class="hint">
-              Blocks save the clips in your deck grid. Edits update the current block; switching blocks keeps your live mix and mapping playing.
-            </p>
-          {:else}
             <StudioDecks {show} {selectedLayer} {pending} {loading} highlight={freshPad}
               onSelect={changeLayer}
               onControls={openControls}
@@ -1423,7 +1414,8 @@
                 grid[to.row][to.column]=clip;
                 show.launchGrid=grid;persist();
               }}
-            ><div slot="view-switch" class="segmented deck-view-switch"><button class:active={!sceneMode} onclick={()=>sceneMode=false}>Clips</button><button class:active={sceneMode} onclick={()=>sceneMode=true}>Blocks</button></div>
+            ><BlockTabs slot="blocks" tabs={blockTabList} canAdd={blockTabList.length < MAX_BLOCKS}
+              onselect={selectBlock} onadd={newBlock} onrename={renameBlockTab} onduplicate={copyBlock} ondelete={deleteBlockTab} />
           <div class="autopilot-bar" slot="autopilot">
             <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
             <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
@@ -1440,7 +1432,7 @@
             <p>Follows BPM / Tap. Cameras stay manual. Changes apply to selected, enabled layers, and take effect right away. Launching or stopping a clip by hand pauses Autopilot until you resume it.</p>
           </section>{/if}
 </svelte:fragment></StudioDecks>
-          {/if}
+          
           <div class="phone-mix">
             <label class="range-row"
               ><span>Layer level</span><input
@@ -2527,24 +2519,8 @@
     color: var(--ga-selection-ink);
     border-color: var(--ga-selection-line);
   }
-  .clip-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 9px;
-  }
-  .clip-pad {
-    min-width: 0;
-    aspect-ratio: 1.16;
-    position: relative;
-    overflow: hidden;
-    display: block;
-    text-align: left;
-    padding: 0;
-    background: var(--ga-slot);
-    border: 1px solid var(--ga-line-2);
-    border-radius: var(--ga-r-soft);
-    isolation: isolate;
-  }
+  
+  
   .clip-pad img {
     position: absolute;
     inset: 0;
@@ -2554,13 +2530,7 @@
     opacity: 0.8;
     z-index: -2;
   }
-  .clip-pad:after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(0deg, #060504 0%, #100f0d38 75%);
-    z-index: -1;
-  }
+  
   .clip-pad.playing {
     border: 2px solid var(--ga-green);
     box-shadow: inset 0 0 0 1px var(--ga-green);
@@ -2569,17 +2539,7 @@
     border-color: #ffd37e;
     border-style: dashed;
   }
-  .pad-number {
-    position: absolute;
-    top: 8px;
-    left: 9px;
-    font:
-      10px ui-monospace,
-      SFMono-Regular,
-      monospace;
-    color: var(--ga-ink-0);
-    text-shadow: 0 1px 4px #000;
-  }
+  
   .clip-kind {
     position: absolute;
     top: 8px;
@@ -2613,46 +2573,18 @@
   .playing .pad-name > span {
     color: var(--ga-selection-ink);
   }
-  .add-pad {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    align-items: center;
-    justify-content: center;
-    border-style: dashed;
-    background: var(--ga-card);
-    color: var(--ga-ink-1);
-  }
-  .add-pad:after {
-    display: none;
-  }
-  .add-pad span {
-    font-size: 11px;
-  }
-  .scene-pad {
-    position: relative;
-    aspect-ratio: 1.16;
-    display: flex;
-    flex-direction: column;
-    background: var(--ga-card);
-    border-color: var(--ga-line-2);
-  }
-  .scene-slot { position: relative; min-width: 0; }
-  .scene-slot .scene-pad { width: 100%; }
-  .scene-edit {
-    position: absolute; right: 0; top: 0; z-index: 2; width: 44px; height: 44px; min-height: 44px; padding: 0;
-    display: grid; place-items: center; background: transparent; border: 0; box-shadow: none; color: var(--ga-ink-1);
-  }
-  .scene-edit[aria-expanded='true'] { color: var(--ga-selection-ink); }
-  .block-editor { margin-top: 12px; padding: 12px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-soft); background: var(--ga-card); }
-  .block-editor .card-actions button { display: flex; align-items: center; gap: 6px; min-height: 44px; }
-  .scene-pad strong {
-    font-size: 13px;
-  }
-  .scene-pad small {
-    font-size: 9px;
-    color: var(--muted);
-  }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   .bank-row {
     display: flex;
     justify-content: center;
@@ -3085,11 +3017,7 @@
     font-size: 18px !important;
     font-weight: 620;
   }
-  .tempo > label > span {
-    color: var(--ga-ink-1);
-    font-size: 9px;
-    letter-spacing: 1px;
-  }
+  
   .tempo > button {
     font-size: 10px;
     min-height: 35px;
@@ -3314,9 +3242,7 @@
     .panel-scroll {
       padding: 30px;
     }
-    .clip-pad {
-      aspect-ratio: 1.4;
-    }
+    
     .monitor {
       padding: 38px;
     }
@@ -3511,12 +3437,8 @@
       min-height: 38px;
       font-size: 10px;
     }
-    .clip-grid {
-      gap: 8px;
-    }
-    .clip-pad {
-      aspect-ratio: 1.3;
-    }
+    
+    
     .pad-name {
       bottom: 9px;
       left: 9px;
@@ -3527,11 +3449,7 @@
     .pad-name > span {
       font-size: 6px;
     }
-    .pad-number {
-      font-size: 8px;
-      top: 6px;
-      left: 7px;
-    }
+    
     .clip-kind {
       font-size: 6px;
       right: 6px;
@@ -3558,9 +3476,7 @@
     .tempo > label {
       gap: 4px;
     }
-    .tempo > label > span {
-      font-size: 8px;
-    }
+    
     .tempo > button {
       min-height: 36px;
       padding: 5px 8px;
@@ -3572,11 +3488,7 @@
     .master-actions {
       gap: 2px;
     }
-    .master-actions .icon-button {
-      width: 44px;
-      height: 44px;
-      min-height: 44px;
-    }
+    
     .master-level {
       display: none;
     }
@@ -3679,9 +3591,7 @@
     .tabs button {
       padding: 7px 3px;
     }
-    .clip-pad {
-      aspect-ratio: 1.3;
-    }
+    
     .master-level {
       display: none;
     }
@@ -3714,7 +3624,7 @@
     .performance .phone-mix {display:none;}
   }
 
-  .block-navigation{display:flex;justify-content:flex-end;margin-bottom:10px}.deck-view-switch{flex:none}.deck-view-switch button{min-height:44px}
+  .deck-view-switch{flex:none}
 
   .clip-controls-tray{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--ga-inspector-bg);border-top:1px solid var(--ga-line-3);box-shadow:0 -8px 24px #0004;animation:controls-in 180ms ease-out;}
   .clip-controls-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding:10px 14px;border-bottom:1px solid var(--ga-line-2);background:var(--ga-faceplate-bg);}

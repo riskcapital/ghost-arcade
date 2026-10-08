@@ -117,6 +117,7 @@
 </div>
 <slot name="autopilot-settings"/>
 {#if arrange}<p class="arrange-help">{picked?'Tap a destination to move or swap. Tap the selected clip to cancel.':'Drag clips to move; drop on another to swap. Hold for Replace / Remove.'}</p>{/if}
+<slot name="blocks"/>
 <div class="decks" class:dual={show.dualDeck} class:arranging={arrange}>
   {#each decks as rows, deck}
     <section class="deck" aria-label={show.dualDeck ? `Deck ${deck === 0 ? 'A' : 'B'}` : 'Clip launcher'}>
