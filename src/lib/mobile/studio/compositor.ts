@@ -353,7 +353,8 @@ export class StudioCompositor {
     g.disable(g.BLEND);
 
   }
-  destroy() {
+  /** `releaseContext` frees the GPU context with the canvas. Keep it when a new engine reuses the canvas. */
+  destroy(releaseContext = true) {
     const g = this.gl;
     this.looks.destroy();
     this.crossfade.destroy();
@@ -365,6 +366,6 @@ export class StudioCompositor {
       g.deleteTexture(t.texture);
       g.deleteFramebuffer(t.frame);
     }
-    g.getExtension('WEBGL_lose_context')?.loseContext();
+    if (releaseContext) g.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

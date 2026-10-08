@@ -83,6 +83,15 @@ export class StudioEngine {
   previewSuspended = false;
   onStats: (fps: number) => void = () => {};
   onError: (error: string) => void = () => {};
+  /**
+   * Rendering has stopped: the GPU context was lost (iOS reclaims it under memory pressure or in
+   * the background) or a frame could not be drawn. This engine is finished; the owner builds a new
+   * one, on the same canvas once the context is restored or on a fresh canvas if it never is.
+   */
+  onStopped: (reason: 'lost' | 'failed', message?: string) => void = (_reason, message) => { if (message) this.onError(message); };
+  /** The browser restored the lost context. Every GPU resource is gone, so rebuild the engine. */
+  onRestored: () => void = () => {};
+  get stopped() { return this.contextFailed; }
   constructor(
     canvas: HTMLCanvasElement,
     private getShow: () => Show,
@@ -100,13 +109,18 @@ export class StudioEngine {
       this.slots.push({ canvas: c, renderer, effects, preparation: 0, generation: 0, clipId: null, params: [] });
     }
     canvas.addEventListener('webglcontextlost', this.contextLost);
+    canvas.addEventListener('webglcontextrestored', this.contextRestored);
   }
   private contextLost = (event: Event) => {
+    // Without preventDefault the browser never restores the context.
     event.preventDefault();
     if (this.dead) return;
     this.contextFailed = true;
     cancelAnimationFrame(this.raf);
-    this.onError('Graphics memory was interrupted. Save your set, then reload. Try a lower output quality.');
+    this.onStopped('lost');
+  };
+  private contextRestored = () => {
+    if (!this.dead) this.onRestored();
   };
   private disposePrepared(p?: Prepared) {
     p?.native?.destroy();
@@ -374,7 +388,9 @@ export class StudioEngine {
         this.compositor.render(show, inputs, this.blackout, this.testGrid, this.lookTime, audio.audioBeat, this.lookBeat, composition.some(e=>e.enabled) ? input => {this.compositionFX.setAudio(audio);return this.compositionFX.processTexture(input,composition,this.lookTime);} : undefined);
       } catch (e) {
         this.contextFailed = true;
-        this.onError(e instanceof Error ? e.message : 'The video engine could not render this frame.');
+        cancelAnimationFrame(this.raf);
+        this.onStopped('failed', e instanceof Error ? e.message : 'The video engine could not render this frame.');
+        return;
       }
       this.frames++;
       if (now - this.lastReport > 1000) {
@@ -404,7 +420,8 @@ export class StudioEngine {
       }),
     );
   }
-  destroy() {
+  /** `keepContext` leaves the canvas's GPU context alive for an engine being rebuilt on it. */
+  destroy(keepContext = false) {
     this.dead = true;
     cancelAnimationFrame(this.raf);
     this.audio.stop();
@@ -418,7 +435,8 @@ export class StudioEngine {
       s.effects.destroy();
     }
     this.compositor.canvas.removeEventListener('webglcontextlost', this.contextLost);
+    this.compositor.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     this.compositionFX.destroy();
-    this.compositor.destroy();
+    this.compositor.destroy(!keepContext);
   }
 }

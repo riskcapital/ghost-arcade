@@ -788,22 +788,73 @@
       void undo(e.shiftKey);
     }
   }
+  // ── Visuals engine lifecycle ──────────────────────────────────────────────
+  // iOS can take the GPU context away (memory pressure, a long spell in the background). The engine
+  // then stops and is rebuilt here: on the same canvas when the browser restores the context, or
+  // on a fresh canvas from the Restart visuals button when it does not.
+  let visualsDown = false, visualsRestarting = false, canvasGeneration = 0;
+  let restoreTimer: ReturnType<typeof setTimeout>;
+  function startEngine() {
+    const next = new StudioEngine(output, () => show);
+    next.beatClock = () => (performance.now() - clockOrigin) * show.bpm / 60000;
+    next.onStats = (value) => (fps = value);
+    next.onError = (message) => (error = message);
+    next.onStopped = (reason, message) => {
+      if (engine !== next) return;
+      visualsDown = true; fps = 0;
+      clearTimeout(restoreTimer);
+      // A lost context normally comes back by itself within a moment; a failed frame never does.
+      if (reason === 'failed') error = message || 'The visuals stopped.';
+      else restoreTimer = setTimeout(() => { if (visualsDown && engine === next) error = 'The visuals were interrupted and did not come back by themselves.'; }, 4000);
+    };
+    next.onRestored = () => { if (engine === next) void restartVisuals(false); };
+    next.frozen = frozen; next.blackout = blackout; next.testGrid = testGrid; next.flux = flux;
+    engine = next;
+    next.start();
+    if (mic) void next.microphone(true).catch(() => { mic = false; });
+  }
+  async function restartVisuals(freshCanvas: boolean) {
+    if (visualsRestarting) return;
+    visualsRestarting = true;
+    clearTimeout(restoreTimer);
+    try {
+      cancelQueued();
+      autoJobs.clear();
+      // Reusing the canvas: its (restored) context must survive the old engine's teardown.
+      engine?.destroy(!freshCanvas);
+      engine = undefined;
+      if (freshCanvas) {
+        // A new canvas gets a new GPU context when the old one cannot be revived.
+        canvasGeneration++;
+        await tick();
+        if (!interactiveLive) { externalOutput?.destroy(); externalOutput = new ExternalOutput(output, status => outputStatus = status); externalOutput.configure(outputPreferences); }
+      }
+      startEngine();
+      await engine!.restore(show);
+      visualsDown = false; error = '';
+      refreshParams();
+      if (autoOn) rearmAuto();
+      flash('Visuals restarted.');
+    } catch (e) {
+      visualsDown = true;
+      error = e instanceof Error ? e.message : 'The visuals could not restart.';
+    } finally {
+      visualsRestarting = false;
+    }
+  }
   onMount(() => {
     const tabletQuery=matchMedia('(min-width: 1000px) and (min-height: 650px)');
     const updateTablet=()=>{tablet=tabletQuery.matches;if(tablet)mixerOpen=false;};
     updateTablet();tabletQuery.addEventListener('change',updateTablet);
     let disposed = false;
     try {
-      engine = new StudioEngine(output, () => show);
+      startEngine();
       externalOutput=new ExternalOutput(output,status=>outputStatus=status);
-      engine.beatClock = () => (performance.now() - clockOrigin) * show.bpm / 60000;
-      engine.onStats = (value) => (fps = value);
-      engine.onError = (message) => (error = message);
-      engine.start();
-      void engine.restore(show).then(() => {
+      void engine!.restore(show).then(() => {
         if (!disposed) { refreshParams(); noteUnavailable(); }
       });
     } catch (e) {
+      visualsDown = true;
       error = e instanceof Error ? e.message : 'Video engine unavailable.';
     }
     let autoFrame=0;
@@ -838,6 +889,7 @@
       try {
         saveShow(show);
       } catch {}
+      clearTimeout(restoreTimer);
       externalOutput?.destroy();
       engine?.destroy();
       void wake?.release();
@@ -1023,7 +1075,8 @@
       </div>
       <div class="preview-frame">
         <div class="preview" bind:this={preview} onclick={selectPreviewScreen}>
-          <canvas bind:this={output} aria-label="Live video output"></canvas>
+          {#key canvasGeneration}<canvas bind:this={output} aria-label="Live video output"></canvas>{/key}
+          {#if visualsDown}<div class="visuals-down" role="alert"><strong>{visualsRestarting ? 'Restarting visuals…' : 'Visuals interrupted'}</strong><span>Your set is safe.</span><button data-restart-visuals disabled={visualsRestarting} onclick={() => restartVisuals(true)}>Restart visuals</button></div>{/if}
           {#if tab === 'map' && !clean}
             <svg class="mapping-lines" viewBox="0 0 1000 562.5" aria-hidden="true">
               {#if mappingGrid}<defs><pattern id="mapping-guide-grid" width="62.5" height="62.5" patternUnits="userSpaceOnUse"><path d="M62.5 0H0V62.5" fill="none" stroke="#91b4ed" stroke-opacity=".4" stroke-width="1"/></pattern></defs><rect width="1000" height="562.5" fill="url(#mapping-guide-grid)"/>{/if}
@@ -1974,6 +2027,31 @@
     width: 100%;
     height: 100%;
     display: block;
+  }
+  .visuals-down {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 6px;
+    padding: 12px;
+    text-align: center;
+    background: #000c;
+    font-size: 12px;
+    color: var(--ga-ink-1);
+  }
+  .visuals-down strong { font-size: 14px; color: var(--ga-ink-0); }
+  .visuals-down button {
+    min-height: 44px;
+    margin-top: 6px;
+    padding: 0 18px;
+    font-weight: 650;
+    background: var(--ga-selection-bg);
+    border: 1px solid var(--ga-selection-line);
+    border-radius: 5px;
+    color: var(--ga-selection-ink);
   }
   .monitor-tools {
     display: flex;
