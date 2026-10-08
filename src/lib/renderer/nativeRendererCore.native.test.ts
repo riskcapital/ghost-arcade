@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import type { SignalFrame } from '$lib/mediapipe/signals';
 import { nativeShaderSourceFromJavascript } from './nativeJsShaderSource';
+import { closeNativeTestCore } from './nativeHardwareTestPlatform';
 import {
   buildNativePluginGraph,
   buildNativePluginPrecompileCommands,
@@ -89,7 +90,9 @@ function createNativeRpc(): NativeRpc {
       } catch {
         // The process may already be gone after an assertion failure.
       }
-      child.kill();
+      // Wait for the exit: Windows keeps a decoded fixture locked until the
+      // core is gone, and the test deletes its fixtures right after closing.
+      await closeNativeTestCore(child);
     },
   };
 }

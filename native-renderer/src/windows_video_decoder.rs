@@ -334,9 +334,57 @@ fn set_position(reader: &IMFSourceReader, position: i64) -> Result<(), String> {
         .map_err(|e| failure("Seek persistent video reader", e))
 }
 
+/// A lead-in longer than this is taken as authored (video that really starts
+/// late) and left alone; reorder delay is a handful of frames.
+const MAX_STREAM_ORIGIN_HNS: i64 = 10_000_000;
+
+/// The timestamp of the first picture in the stream. A B-frame H.264/HEVC
+/// file stores its pictures with a reorder delay that the container's edit
+/// list is meant to cancel, so the first picture shows at zero. Media
+/// Foundation does not always apply it: the same file then starts two or
+/// three frames late, every seek lands that many frames early and the last
+/// frames fall past the trim end. Reading the origin from the stream itself
+/// makes the first picture time zero whichever way the source behaves.
+/// Compressed samples arrive in decode order, so take the smallest of the
+/// first few rather than the first.
+fn video_origin(reader: &IMFSourceReader) -> Result<i64, String> {
+    set_position(reader, 0)?;
+    let mut origin = None::<i64>;
+    for _ in 0..32 {
+        let mut flags = 0;
+        let mut timestamp = 0;
+        let mut sample = None;
+        unsafe {
+            reader.ReadSample(
+                VIDEO_STREAM,
+                0,
+                None,
+                Some(&mut flags),
+                Some(&mut timestamp),
+                Some(&mut sample),
+            )
+        }
+        .map_err(|e| failure("Read compressed video head timing", e))?;
+        if flags & MF_SOURCE_READERF_ERROR.0 as u32 != 0 {
+            return Err("Compressed video timing probe failed".into());
+        }
+        if let Some(sample) = sample {
+            let pts = unsafe { sample.GetSampleTime() }.unwrap_or(timestamp);
+            origin = Some(origin.map_or(pts, |old| old.min(pts)));
+        }
+        if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+            break;
+        }
+    }
+    set_position(reader, 0)?;
+    Ok(origin.filter(|origin| (0..=MAX_STREAM_ORIGIN_HNS).contains(origin)).unwrap_or(0))
+}
+
 /// Probe compressed timestamps only, before an uncompressed decoder is loaded.
 /// This avoids a longer audio tail becoming a freeze at every video loop.
-fn video_duration(reader: &IMFSourceReader, container_end: i64, fps: f64) -> Result<i64, String> {
+/// `origin` is the stream's first timestamp (video_origin); the result is
+/// measured from it.
+fn video_duration(reader: &IMFSourceReader, container_end: i64, fps: f64, origin: i64) -> Result<i64, String> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let fallback_duration = (HNS_PER_SECOND / fps).round().max(1.0) as i64;
     let mut window = 10_000_000i64;
@@ -376,7 +424,7 @@ fn video_duration(reader: &IMFSourceReader, container_end: i64, fps: f64) -> Res
                 }
             }
             if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
-                if let Some(end) = maximum_end.filter(|end| *end > 0) {
+                if let Some(end) = maximum_end.map(|end| end.saturating_sub(origin)).filter(|end| *end > 0) {
                     set_position(reader, 0)?;
                     return Ok(end.min(container_end));
                 }
@@ -400,6 +448,11 @@ pub struct WindowsVideoDecoder {
     metadata: VideoMetadata,
     output: OutputFormat,
     pending: Option<GpuVideoFrame>,
+    /// The stream's first timestamp (video_origin). Every time this decoder
+    /// takes or reports is measured from it.
+    origin_hns: i64,
+    /// The container's own duration: the last position the reader accepts.
+    container_end_hns: i64,
     start_hns: i64,
     end_hns: i64,
     last_hns: Option<i64>,
@@ -484,7 +537,8 @@ impl WindowsVideoDecoder {
             .ok_or("Video asset duration is invalid")?;
         unsafe { reader.SetCurrentMediaType(VIDEO_STREAM, None, &native) }
             .map_err(|e| failure("Select compressed video timing probe", e))?;
-        let end_hns = video_duration(&reader, container_end, fps)?;
+        let origin_hns = video_origin(&reader)?;
+        let end_hns = video_duration(&reader, container_end, fps, origin_hns)?;
         let requested = unsafe { MFCreateMediaType() }
             .map_err(|e| failure("Create hardware output format", e))?;
         unsafe {
@@ -523,6 +577,8 @@ impl WindowsVideoDecoder {
                 interlace_mode: 0,
             },
             pending: None,
+            origin_hns,
+            container_end_hns: container_end,
             start_hns: 0,
             end_hns,
             last_hns: None,
@@ -603,7 +659,10 @@ impl WindowsVideoDecoder {
         self.end_hns = end;
         self.ended = start == end;
         if !self.ended {
-            set_position(self.reader.as_ref().unwrap(), start)?;
+            // Shifting by the origin can point just past the container's end
+            // for a seek at the last frames; the reader rejects that outright.
+            let position = start.saturating_add(self.origin_hns).min(self.container_end_hns);
+            set_position(self.reader.as_ref().unwrap(), position)?;
         }
         Ok(())
     }
@@ -784,7 +843,7 @@ impl WindowsVideoDecoder {
                 continue;
             };
             validate_sample_progressive(&sample, self.output.interlace_mode)?;
-            let pts = unsafe { sample.GetSampleTime() }.unwrap_or(timestamp);
+            let pts = unsafe { sample.GetSampleTime() }.unwrap_or(timestamp).saturating_sub(self.origin_hns);
             let duration = unsafe { sample.GetSampleDuration() }
                 .ok()
                 .filter(|duration| *duration > 0)
