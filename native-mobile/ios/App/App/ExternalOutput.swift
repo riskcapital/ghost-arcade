@@ -60,7 +60,8 @@ final class OutputSceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 final class StudioBridgeViewController: CAPBridgeViewController {
     // Capacitor only reads the iPhone orientation list, so iPad is answered here: every orientation.
-    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown }
+    // iPhone stays in portrait.
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { UIDevice.current.userInterfaceIdiom == .pad ? .all : .portrait }
 
     private var outputDelegate: OutputUIDelegate?
     private var pairingObserver: NSObjectProtocol?

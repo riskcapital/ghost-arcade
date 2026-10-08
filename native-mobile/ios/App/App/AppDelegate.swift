@@ -5,8 +5,10 @@ import Capacitor
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
+    // iPhone is portrait only; iPad turns every way. This answer wins over Info.plist at run time,
+    // so it has to say the same thing.
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown
+        UIDevice.current.userInterfaceIdiom == .pad ? .all : .portrait
     }
 
 

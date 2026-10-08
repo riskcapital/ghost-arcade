@@ -78,6 +78,7 @@ The web layer talks to the iOS shell through `Capacitor.nativePromise('StudioCap
 | --- | --- | --- |
 | `shareFile({ filename, base64, mimeType, anchor? })` | `{ completed: boolean }` | Writes the bytes to a temporary file with that name, shows the share sheet, removes the file afterwards. `completed` is false when the user cancels. `anchor` is optional: `{ x, y, width, height }` of the button in viewport CSS pixels (`getBoundingClientRect()`), used to point the iPad popover at it. Rejects when another native screen is open, the name or data is empty, or the data is over 250 MB. `base64` may be a `data:` URL. |
 | `haptic({ type })` | `{}` | `type` is `light`, `medium`, `heavy`, `selection`, `success`, `warning` or `error`. Silent on iPad. Rejects on any other type. |
+| `openAppSettings()` | `{}` | Opens this app's page in iOS Settings (camera, microphone, local network switches). The web layer shows an Open Settings button next to a "refused" message only when this method is listed in `Capacitor.PluginHeaders`. Rejects when Settings cannot be opened. |
 | `takePairingLink()` | `{ url: string }` | Unchanged call. Returns a tapped `ghostarcade://pair?...` link once, then `''`. Works for links that launch the app and links that arrive while it runs. |
 
 Window events from native:

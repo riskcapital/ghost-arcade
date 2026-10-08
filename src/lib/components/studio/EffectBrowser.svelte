@@ -53,8 +53,7 @@
 </script>
 
 <div class="scrim" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}>
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <section class="effect-browser" bind:this={root} role="dialog" aria-modal="true" aria-label={scope ? `Add an effect to ${scope}` : 'Add an effect'} data-effect-browser onkeydown={key}>
+    <div class="effect-browser" bind:this={root} role="dialog" aria-modal="true" aria-label={scope ? `Add an effect to ${scope}` : 'Add an effect'} data-effect-browser onkeydown={key}>
     <header>
       <h2>Add an effect{#if scope}<small>{scope}</small>{/if}</h2>
       <button class="close" data-effects-close aria-label="Close effects" onclick={onclose}><Icon name="close" size={20} /></button>
@@ -77,7 +76,7 @@
       </div>
       {#if !shown.length}<p class="none">No effect matches “{search}”.</p>{/if}
     </div>
-  </section>
+  </div>
 </div>
 
 <style>
@@ -106,7 +105,8 @@
   .chips button.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
   .chips svg, .glyph svg { color: var(--ga-icon, var(--ga-blue-400)); }
   .count { flex: none; margin: 8px 2px; font-size: 12px; color: var(--ga-ink-1); }
-  .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  /* The list ends above the home indicator: nothing tappable scrolls through that strip. */
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: 16px; margin-bottom: env(safe-area-inset-bottom); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(164px, 1fr)); gap: 6px; }
   .tile { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 56px; padding: 6px 10px 6px 8px; text-align: left; content-visibility: auto; contain-intrinsic-size: 164px 56px; }
   .glyph { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 8px; background: var(--ga-blue-800); border: 1px solid var(--ga-blue-mute-600); }

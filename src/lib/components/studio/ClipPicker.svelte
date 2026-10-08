@@ -103,8 +103,7 @@
   });
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="clip-picker" bind:this={root} role="dialog" aria-modal="true" aria-label={target ? `Add a clip to ${target}` : 'Add a clip'} data-clip-picker onkeydown={key}>
+<div class="clip-picker" bind:this={root} role="dialog" aria-modal="true" aria-label={target ? `Add a clip to ${target}` : 'Add a clip'} data-clip-picker onkeydown={key}>
   <header>
     <button class="back" data-picker-close aria-label="Close and go back to the deck" onclick={onclose}><Icon name="left" size={18} />Deck</button>
     <h2>Add a clip{#if target}<small>{target}</small>{/if}</h2>
@@ -179,7 +178,7 @@
       <p class="note">The camera starts when you launch its clip, and iOS asks for permission the first time.</p>
     </div>
   {/if}
-</section>
+</div>
 
 <style>
   .clip-picker {
@@ -219,7 +218,8 @@
   .chips { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 8px; padding-bottom: 1px; }
   .chips::-webkit-scrollbar { display: none; }
   .chips button { flex: none; min-height: 44px; padding: 0 14px; font-size: 13px; }
-  .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  /* The list ends above the home indicator: nothing tappable scrolls through that strip. */
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: 16px; margin-bottom: env(safe-area-inset-bottom); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
   .tile { position: relative; display: grid; padding: 0; overflow: hidden; text-align: left; content-visibility: auto; contain-intrinsic-size: 104px 86px; background: var(--ga-slot); }
   .tile img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; pointer-events: none; }

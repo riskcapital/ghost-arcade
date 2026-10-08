@@ -1404,7 +1404,7 @@
 <input class="file-input" type="file" accept="image/*" multiple aria-label="Import photos" bind:this={photoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="video/*,image/*" multiple aria-label="Import media" bind:this={mediaInput} onchange={importMedia} />
 <input class="file-input" type="file" accept=".ghostset,application/json,application/octet-stream" aria-label="Open a set file" bind:this={setInput} onchange={importSet} />
-<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
+<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:tempo-open={tempoOpen} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
   <header class="app-header">
     <div class="brand">
       <img class="brand-mark" src="./icon-new.png" alt="" />
@@ -1762,7 +1762,7 @@
       {/if}
   </main>
   {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
-  {#if tempoOpen}<div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px`}>
+  {#if tempoOpen}<button class="sheet-scrim" data-sheet-scrim tabindex="-1" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}></button><div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px`}>
     <header><strong>TEMPO AND AUDIO</strong><button class="icon-button" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}><Icon name="close" size={18} /></button></header>
     <div class="tempo-sheet-row">
       <button class="tap" onclick={tap}>Tap tempo</button>
