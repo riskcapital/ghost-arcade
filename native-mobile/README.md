@@ -48,10 +48,17 @@ APP_STORE_CONNECT_API_KEY_PATH=/secure/path/AuthKey_ABC123DEFG.p8 \
 npm run ios:testflight
 ```
 
-The build uses the root app version by default and generates a UTC timestamp build number. Override it when needed:
+The version and build number come from the Xcode project (`MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` on the App target), never from the desktop `package.json`. The lane stops if either is missing or differs between Debug and Release. Check what will be built:
 
 ```sh
-MOBILE_BUILD_NUMBER=202606220101 npm run ios:archive
+node scripts/ios-testflight.mjs version   # prints e.g. 1.1 (5)
+```
+
+Raise the build number in Xcode for every upload. To override for one run only:
+
+```sh
+MOBILE_BUILD_NUMBER=6 npm run ios:archive
+MOBILE_MARKETING_VERSION=1.1.1 MOBILE_BUILD_NUMBER=7 npm run ios:archive
 ```
 
 If you only need part of the lane:

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveVersions } from './ios-version.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const mobileDir = path.resolve(scriptDir, '..');
@@ -12,12 +13,13 @@ const iosDir = path.join(mobileDir, 'ios');
 const appDir = path.join(iosDir, 'App');
 const workspace = path.join(appDir, 'App.xcworkspace');
 const exportOptionsPath = path.join(iosDir, 'build', 'ExportOptions.testflight.plist');
+const xcodeProjectPath = path.join(appDir, 'App.xcodeproj', 'project.pbxproj');
 
-const rootPackage = readJson(path.join(repoRoot, 'package.json'));
 const capacitorConfigText = fs.readFileSync(path.join(mobileDir, 'capacitor.config.ts'), 'utf8');
 const bundleId = env('MOBILE_IOS_BUNDLE_ID') || readCapacitorString('appId') || 'com.ghostarcade.mobile';
-const marketingVersion = env('MOBILE_MARKETING_VERSION') || rootPackage.version || '1.0.0';
-const buildNumber = env('MOBILE_BUILD_NUMBER') || timestampBuildNumber();
+// The Xcode project is the only source of the iOS version. The desktop package version is a
+// different product line; a missing or inconsistent project value stops the run instead of guessing.
+const { marketingVersion, buildNumber, marketingSource, buildSource } = iosVersions();
 const teamId = env('APPLE_TEAM_ID') || env('DEVELOPMENT_TEAM') || '';
 const archivePath = path.resolve(env('MOBILE_ARCHIVE_PATH') || path.join(iosDir, 'build', 'archives', `GhostArcade-${marketingVersion}-${buildNumber}.xcarchive`));
 const exportPath = path.resolve(env('MOBILE_EXPORT_PATH') || path.join(iosDir, 'build', 'testflight', `${marketingVersion}-${buildNumber}`));
@@ -39,6 +41,9 @@ main().catch((error) => {
 
 async function main() {
   switch (mode) {
+    case 'version':
+      console.log(`${marketingVersion} (${buildNumber})`);
+      return;
     case 'doctor':
       doctor();
       return;
@@ -165,6 +170,7 @@ function printContext() {
   console.log('[TestFlight] Ghost Arcade iOS');
   console.log(`  Bundle:  ${context.bundleId}`);
   console.log(`  Version: ${context.marketingVersion} (${context.buildNumber})`);
+  console.log(`           version from ${marketingSource}, build from ${buildSource}`);
   console.log(`  Team:    ${context.teamId || '(Xcode automatic)'}`);
   console.log(`  Archive: ${context.archivePath}`);
   console.log(`  Export:  ${context.exportPath}`);
@@ -293,25 +299,19 @@ function codeSigningIdentityCount() {
   return match ? Number(match[1]) : 0;
 }
 
-function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+function iosVersions() {
+  try {
+    return resolveVersions(fs.readFileSync(xcodeProjectPath, 'utf8'), process.env);
+  } catch (error) {
+    console.error(`\n[TestFlight] Cannot tell which version to build: ${error.message}`);
+    console.error(`[TestFlight] Project: ${xcodeProjectPath}`);
+    process.exit(1);
+  }
 }
 
 function readCapacitorString(key) {
   const match = capacitorConfigText.match(new RegExp(`${key}:\\s*['"]([^'"]+)['"]`));
   return match?.[1] || '';
-}
-
-function timestampBuildNumber() {
-  const now = new Date();
-  const pad = (value) => String(value).padStart(2, '0');
-  return [
-    now.getUTCFullYear(),
-    pad(now.getUTCMonth() + 1),
-    pad(now.getUTCDate()),
-    pad(now.getUTCHours()),
-    pad(now.getUTCMinutes()),
-  ].join('');
 }
 
 function env(name) {
@@ -335,6 +335,7 @@ function escapeXml(value) {
 
 function usage() {
   console.log(`Usage:
+  node scripts/ios-testflight.mjs version
   node scripts/ios-testflight.mjs doctor
   node scripts/ios-testflight.mjs archive
   node scripts/ios-testflight.mjs export
@@ -347,6 +348,10 @@ Common environment:
   APP_STORE_CONNECT_KEY_ID=ABC123DEFG
   APP_STORE_CONNECT_ISSUER_ID=00000000-0000-0000-0000-000000000000
   APP_STORE_CONNECT_API_KEY_PATH=/secure/path/AuthKey_ABC123DEFG.p8
-  MOBILE_BUILD_NUMBER=202606220101
+
+The version and build number come from the Xcode project (App target).
+Override for one run only when needed:
+  MOBILE_MARKETING_VERSION=1.1.1
+  MOBILE_BUILD_NUMBER=6
 `);
 }
