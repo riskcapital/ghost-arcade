@@ -73,6 +73,18 @@ describe('desktop requests to the local server', () => {
     expect(new Headers(init.headers).get('Authorization')).toBe('Bearer TOKEN');
   });
 
+  it('sends the private host credential only to the loopback API', async () => {
+    const mock = vi.fn(async () => new Response('{}')); vi.stubGlobal('fetch', mock);
+    vi.stubGlobal('window', {ghostRemote:{info:async()=>({token:'PHONE',desktopCredential:'PRIVATE',wsPort:9001,httpPort:9002})}});
+    const {localServerFetch, getRemotePairingInfo, withPairingToken} = await load();
+    const info = await getRemotePairingInfo();
+    expect(withPairingToken('http://192.168.1.2:9002',info!.token)).not.toContain('PRIVATE');
+    await localServerFetch('/api/shaders',{method:'POST'});
+    const [url, init] = mock.mock.calls[0] as unknown as [string,RequestInit];
+    expect(url).toBe('http://localhost:9002/api/shaders');
+    expect(new Headers(init.headers).get('X-GA-Desktop')).toBe('PRIVATE');
+  });
+
   it('pick up the new token after a reset', async () => {
     let token = 'OLD';
     vi.stubGlobal('window', {

@@ -2154,6 +2154,9 @@ const {
 } = require('../server/pairing.cjs');
 
 let remotePairingToken = null;
+// What makes the editor the host on the remote's servers. Never leaves this
+// machine: not in the QR link, not on disk, new on every launch.
+const remoteDesktopCredential = require('crypto').randomBytes(32).toString('hex');
 
 function remotePairingFile() {
   return path.join(app.getPath('userData'), 'remote-pairing.json');
@@ -2172,8 +2175,9 @@ function getRemotePairingToken() {
   return remotePairingToken;
 }
 
-function remotePairingInfo() {
-  return { token: getRemotePairingToken(), wsPort: REMOTE_WS_PORT, httpPort: REMOTE_HTTP_PORT };
+function remotePairingInfo({ host = true } = {}) {
+  const info = { token: getRemotePairingToken(), wsPort: REMOTE_WS_PORT, httpPort: REMOTE_HTTP_PORT };
+  return host ? { ...info, desktopCredential: remoteDesktopCredential } : info;
 }
 
 /** New token, which unpairs every phone, the ones connected right now too. */
@@ -2242,6 +2246,7 @@ async function startNodeServer() {
           WS_PORT: String(REMOTE_WS_PORT),
           HTTP_PORT: String(REMOTE_HTTP_PORT),
           GA_PAIRING_TOKEN: getRemotePairingToken(),
+          GA_DESKTOP_CREDENTIAL: remoteDesktopCredential,
           ELECTRON_RUN_AS_NODE: '1',
         },
         windowsHide: true,
@@ -2273,6 +2278,7 @@ async function startNodeServer() {
   }
 
   // The in-process server refuses every connection until it has the token.
+  embeddedServerModule?.setDesktopCredential?.(remoteDesktopCredential);
   embeddedServerModule?.setPairingToken?.(getRemotePairingToken());
 }
 
@@ -5611,8 +5617,10 @@ function registerIpcHandlers() {
   // --- LAN remote pairing ---
   // The editor shows the token beside the Connect Mobile QR code, puts it in
   // the QR link, and presents it on its own connection to the server.
-  ipcMain.handle('remote_pairing_info', () => remotePairingInfo());
-  ipcMain.handle('remote_pairing_reset', () => resetRemotePairing());
+  // Only the editor is the host. Output and Screen windows still get the token
+  // for their own reads, as before, but not the host credential.
+  ipcMain.handle('remote_pairing_info', (event) => remotePairingInfo({ host: event.sender === mainWindow?.webContents }));
+  ipcMain.handle('remote_pairing_reset', (event) => event.sender === mainWindow?.webContents ? resetRemotePairing() : null);
 
   // --- MCP ---
   ipcMain.handle('mcp_start', async (_, { port } = {}) => startMcpServer(mainWindow, port));

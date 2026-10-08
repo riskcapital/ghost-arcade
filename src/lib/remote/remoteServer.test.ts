@@ -9,6 +9,7 @@ import { WebSocket } from 'ws';
  */
 
 const TOKEN = 'ABCD0EFGH1JKMN2P';
+const HOST = 'host-secret-'.repeat(6);
 const NEW_TOKEN = 'QRST3VWXY4Z56789';
 
 let server: typeof import('../../../server/ws-server.js');
@@ -26,6 +27,7 @@ beforeAll(async () => {
   quiet.push(vi.spyOn(console, 'warn').mockImplementation(() => {}));
   server = await import('../../../server/ws-server.js');
   ({ wsPort, httpPort } = await server.listening);
+  server.setDesktopCredential(HOST);
 });
 
 afterAll(() => {
@@ -58,6 +60,13 @@ async function waitFor<T>(read: () => T | undefined, ms = 2000): Promise<T> {
     if (Date.now() > until) throw new Error('timed out waiting');
     await new Promise((r) => setTimeout(r, 10));
   }
+}
+
+async function openDesktop() {
+  const peer = await openSocket(`?pair=${TOKEN}`);
+  peer.ws!.send(JSON.stringify({type:'register_desktop', credential:HOST}));
+  await waitFor(() => peer.received!.find(m => m.type === 'desktop_registered'));
+  return peer;
 }
 
 function closed(ws: WebSocket): Promise<number> {
@@ -100,7 +109,7 @@ describe('WebSocket upgrades', () => {
   });
 
   it('stamps each phone on its Interactive scenes and answers only that phone', async () => {
-    const desktop = await openSocket(`?pair=${TOKEN}`);
+    const desktop = await openDesktop();
     const phoneA = await openSocket(`?pair=${TOKEN}`);
     const phoneB = await openSocket(`?pair=${TOKEN}`);
     // A phone cannot pick its own `from`, least of all another phone's.
@@ -129,7 +138,7 @@ describe('WebSocket upgrades', () => {
   });
 
   it('relays control messages between paired devices', async () => {
-    const desktop = await openSocket(`?pair=${TOKEN}`);
+    const desktop = await openDesktop();
     const phone = (await openSocket(`?pair=${TOKEN}`)).ws!;
     phone.send(JSON.stringify({ type: 'set_vj_layer_opacity', layerIndex: 0, opacity: 0.25 }));
     const relayed = await waitFor(() => desktop.received!.find((m) => m.type === 'set_vj_layer_opacity'));
@@ -226,6 +235,84 @@ describe('HTTP requests', () => {
     });
     expect(res.status).toBe(204);
     expect(res.headers.get('access-control-allow-headers')).toMatch(/Authorization/);
+  });
+});
+
+describe('paired devices cannot become the host or access other phones', () => {
+  beforeAll(() => server.setPairingToken(TOKEN));
+  it('rejects host registration and authoritative state writes from a paired phone', async () => {
+    const host = await openDesktop();
+    const phone = await openSocket(`?pair=${TOKEN}`);
+    try {
+      phone.ws!.send(JSON.stringify({type:'register_desktop', credential:TOKEN}));
+      await waitFor(() => phone.received!.find(m => m.code === 'host_authorization_required'));
+      for (const type of ['sync','library_sync','vj_clips_sync','shader_library_sync','output_freeze_state']) {
+        phone.ws!.send(JSON.stringify({type, marker:'untrusted',project:{layers:[]},library:[],shaders:[]}));
+      }
+      // A later benign control is a barrier: WebSocket messages are ordered.
+      phone.ws!.send(JSON.stringify({type:'set_vj_master_opacity',opacity:0.5}));
+      await waitFor(() => host.received!.find(m => m.type === 'set_vj_master_opacity'));
+      expect(host.received!.some(m => m.marker === 'untrusted')).toBe(false);
+      const observer = await openSocket(`?pair=${TOKEN}`);
+      expect(observer.received!.find(m => m.type === 'sync')?.project).not.toEqual({layers:[]});
+      observer.ws!.close();
+    } finally { host.ws!.close(); phone.ws!.close(); }
+  });
+
+  it('only lets phones select sources already advertised by the desktop', async () => {
+    const host = await openDesktop(); const phone = await openSocket(`?pair=${TOKEN}`);
+    try {
+      host.ws!.send(JSON.stringify({type:'shader_library_sync',shaders:[{id:'safe',src:'/ISF/Safe.fs'}]}));
+      await waitFor(() => phone.received!.find(m => m.type === 'shader_library_sync' && m.shaders?.[0]?.id === 'safe'));
+      phone.ws!.send(JSON.stringify({type:'set_layer_source',layerId:'L1',sourceType:'shader',sourceSrc:'http://169.254.169.254/latest/meta-data/'}));
+      phone.ws!.send(JSON.stringify({type:'set_layer_source',layerId:'L1',sourceType:'shader',sourceSrc:'/ISF/Safe.fs'}));
+      await waitFor(() => host.received!.find(m => m.type === 'set_layer_source'));
+      expect(host.received!.filter(m => m.type === 'set_layer_source').map(m=>m.sourceSrc)).toEqual(['/ISF/Safe.fs']);
+    } finally { host.ws!.close(); phone.ws!.close(); }
+  });
+
+  it('targets camera SDP, ICE and calibration to their owning phone', async () => {
+    const host = await openDesktop(); const a = await openSocket(`?pair=${TOKEN}`); const b = await openSocket(`?pair=${TOKEN}`);
+    try {
+      a.ws!.send(JSON.stringify({type:'phone_camera_offer',sessionId:'camera-a',sdp:'private-offer'}));
+      await waitFor(() => host.received!.find(m => m.type === 'phone_camera_offer'));
+      b.ws!.send(JSON.stringify({type:'phone_camera_ice',sessionId:'camera-a',candidate:'spoofed'}));
+      b.ws!.send(JSON.stringify({type:'set_vj_master_opacity',opacity:0.4}));
+      await waitFor(() => host.received!.find(m => m.type === 'set_vj_master_opacity'));
+      expect(host.received!.some(m => m.candidate === 'spoofed')).toBe(false);
+      host.ws!.send(JSON.stringify({type:'phone_camera_answer',sessionId:'camera-a',sdp:'private-answer'}));
+      await waitFor(() => a.received!.find(m => m.type === 'phone_camera_answer'));
+      expect(b.received!.some(m => m.type.startsWith('phone_camera_'))).toBe(false);
+      a.ws!.send(JSON.stringify({type:'studio_calibration_offer',requestId:'cal-a',json:'private-depth'}));
+      await waitFor(() => host.received!.find(m => m.type === 'studio_calibration_offer'));
+      host.ws!.send(JSON.stringify({type:'studio_calibration_status',requestId:'cal-a',accepted:true}));
+      await waitFor(() => a.received!.find(m => m.type === 'studio_calibration_status'));
+      expect(b.received!.some(m => m.type.startsWith('studio_calibration_'))).toBe(false);
+    } finally { for (const peer of [host,a,b]) peer.ws!.close(); }
+  });
+
+  it('keeps an app 1.0 phone working: query-string token, bundled shader path, camera after a reconnect', async () => {
+    const host = await openDesktop(); let phone = await openSocket(`?pair=${TOKEN}`);
+    try {
+      phone.ws!.send(JSON.stringify({type:'set_layer_source',layerId:'L1',sourceType:'shader',sourceSrc:'./ISF/DM-Plasma%20Wave.fs',sourceName:'Plasma Wave'}));
+      await waitFor(() => host.received!.find(m => m.type === 'set_layer_source' && m.sourceSrc === './ISF/DM-Plasma%20Wave.fs'));
+      phone.ws!.send(JSON.stringify({type:'phone_vision_native_start',sessionId:'vision-1'}));
+      await waitFor(() => host.received!.find(m => m.type === 'phone_vision_native_start'));
+      const gone = closed(phone.ws!); phone.ws!.close(); await gone;
+      phone = await openSocket(`?pair=${TOKEN}`);
+      phone.ws!.send(JSON.stringify({type:'phone_vision_native_frame',sessionId:'vision-1',width:4,height:4}));
+      await waitFor(() => host.received!.find(m => m.type === 'phone_vision_native_frame'));
+      host.ws!.send(JSON.stringify({type:'phone_vision_status',sessionId:'vision-1',status:'live'}));
+      await waitFor(() => phone.received!.find(m => m.type === 'phone_vision_status'));
+    } finally { host.ws!.close(); phone.ws!.close(); }
+  });
+
+  it('refuses shader writes even with the phone pairing token', async () => {
+    const res = await fetch(`http://127.0.0.1:${httpPort}/api/shaders`, {
+      method:'POST',headers:{Authorization:`Bearer ${TOKEN}`,'Content-Type':'application/json'},body:'{}',
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({error:'desktop_authorization_required'});
   });
 });
 

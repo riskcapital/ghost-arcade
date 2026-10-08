@@ -31,6 +31,7 @@ const {
   pairingTokenMatches,
   presentedPairingToken,
 } = require('./pairing.cjs');
+const { HOST_MESSAGES, authorizedHost, permittedSource } = require('./remote-access.cjs');
 
 // Shader library directory - in packaged Electron, extraResources land in resources/
 // while __dirname is inside app.asar/server/, so we need to go up two levels to resources/
@@ -257,6 +258,13 @@ let shaderLibraryState = [];
 // Connected clients
 const clients = new Set();
 let desktopClient = null;
+// Never included in QR links, sync data or logs. Delivered by Electron IPC.
+let desktopCredential = process.env.GA_DESKTOP_CREDENTIAL || null;
+export function setDesktopCredential(value) {
+  desktopCredential = typeof value === 'string' && value.length >= 32 ? value : null;
+  if (desktopClient) { desktopClient.close(4401, 'host credential changed'); desktopClient = null; }
+}
+const privateRoutes = new Map();
 
 // The WebSocket port's own HTTP server. Upgrades go to the WebSocket server
 // below; the only plain request it answers is /pair/check. Browsers hide why a
@@ -348,6 +356,7 @@ wss.on('connection', (ws, req) => {
   // Interactive Studio: one phone keeps one identity across reconnects.
   ws.studioAddress = String(clientIp || 'unknown').replace(/[^\w.:-]/g, '_').slice(0, 39);
   ws.studioPeers = new Set();
+  ws.remoteAddress = clientIp;
 
   // Send current state to new client
   ws.send(JSON.stringify({
@@ -429,6 +438,7 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     console.log(`[-] Client disconnected: ${clientIp}`);
     clients.delete(ws);
+    for (const [key, owner] of privateRoutes) if (owner === ws) privateRoutes.delete(key);
 
     if (ws === desktopClient) {
       desktopClient = null;
@@ -445,10 +455,17 @@ wss.on('connection', (ws, req) => {
 });
 
 function handleMessage(sender, msg) {
+  if (HOST_MESSAGES.has(msg.type) && sender !== desktopClient) return;
   switch (msg.type) {
     case 'register_desktop':
-      // Desktop app registers itself as the host
+      // Possession of the QR pairing code never grants host authority.
+      if (!authorizedHost(desktopCredential, msg.credential, sender.remoteAddress)) {
+        sender.send(JSON.stringify({ type: 'error', code: 'host_authorization_required' }));
+        break;
+      }
+      if (desktopClient && desktopClient !== sender) desktopClient.close(4409, 'host replaced');
       desktopClient = sender;
+      sender.send(JSON.stringify({ type: 'desktop_registered' }));
       console.log('[*] Desktop client registered');
       break;
 
@@ -578,6 +595,7 @@ function handleMessage(sender, msg) {
     }
 
     case 'set_layer_source':
+      if (!permittedSource(msg, mediaLibraryState, shaderLibraryState)) break;
       // Mobile triggers a media source on a layer
       // Forward to desktop to handle the actual media loading
       console.log(`[*] Set layer source: ${msg.layerId} -> ${msg.sourceType}:${msg.sourceName}`);
@@ -854,7 +872,7 @@ function handleMessage(sender, msg) {
     case 'studio_scene':
       // The desktop keeps one session per phone, so every scene is stamped
       // with who sent it. A client cannot choose another phone's id.
-      broadcast(sender, { ...msg, from: studioPeerId(sender, msg) });
+      sendDesktop({ ...msg, from: studioPeerId(sender, msg) });
       break;
     case 'studio_scene_status':
       // Desktop's answer to one phone (a rejected scene): deliver it there.
@@ -862,8 +880,14 @@ function handleMessage(sender, msg) {
       break;
     case 'studio_calibration_offer':
     case 'studio_calibration_status':
+      relayPrivate(sender, msg, 'calibration', msg.requestId, msg.type === 'studio_calibration_offer');
+      break;
     case 'studio_capabilities_request':
+      sendDesktop(msg);
+      break;
     case 'studio_capabilities':
+      broadcast(sender, msg);
+      break;
     case 'phone_camera_offer':
     case 'phone_camera_answer':
     case 'phone_camera_ice':
@@ -872,7 +896,11 @@ function handleMessage(sender, msg) {
     case 'phone_vision_command':
     case 'phone_vision_status':
     case 'phone_vision_native_frame':
-      broadcast(sender, msg);
+      // A session belongs to the first phone that uses its id, whichever
+      // message comes first (ICE can precede the offer, and a phone that
+      // reconnects carries on with frames). Another phone cannot reuse it or
+      // receive its SDP/depth frames.
+      relayPrivate(sender, msg, 'camera', msg.sessionId, msg.type !== 'phone_camera_stop');
       break;
 
     // ═══ Crossfader messages (dual-deck mode) ═══
@@ -964,6 +992,28 @@ function handleMessage(sender, msg) {
   }
 }
 
+function sendDesktop(msg) {
+  if (desktopClient?.readyState === WebSocket.OPEN) desktopClient.send(JSON.stringify(msg));
+}
+function relayPrivate(sender, msg, kind, id, mayStart) {
+  if (typeof id !== 'string' || !/^[\w.:-]{1,128}$/.test(id)) return;
+  const key = `${kind}:${id}`;
+  let owner = privateRoutes.get(key);
+  if (sender === desktopClient) {
+    if (owner?.readyState === WebSocket.OPEN) owner.send(JSON.stringify(msg));
+  } else {
+    if (!owner && mayStart) {
+      // A phone that restarts sessions without stopping them keeps its newest 8.
+      const mine = [...privateRoutes].filter(([, peer]) => peer === sender);
+      if (mine.length >= 8) privateRoutes.delete(mine[0][0]);
+      privateRoutes.set(key, sender); owner = sender;
+    }
+    if (owner !== sender) return;
+    sendDesktop(msg);
+  }
+  if (msg.type === 'phone_camera_stop' || msg.type === 'studio_calibration_status') privateRoutes.delete(key);
+}
+
 /**
  * Who a `studio_scene` came from. The address survives a Wi-Fi reconnect and
  * tells two phones apart; a client may add an id of its own (`clientId`) so
@@ -977,7 +1027,7 @@ function studioPeerId(ws, msg) {
 }
 
 function sendToStudioPeer(sender, msg) {
-  if (typeof msg.to !== 'string') { broadcast(sender, msg); return; }
+  if (typeof msg.to !== 'string') return;
   const data = JSON.stringify(msg);
   for (const client of clients) {
     if (client !== sender && client.readyState === WebSocket.OPEN && client.studioPeers?.has(msg.to)) {
@@ -1195,7 +1245,7 @@ const httpServer = http.createServer(async (req, res) => {
   const isLocalOrigin = !origin || /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin);
   res.setHeader('Access-Control-Allow-Origin', isLocalOrigin ? (origin || '*') : 'null');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-GA-Desktop');
 
   // Handle preflight requests. Browsers never send credentials on these, and
   // answering one reads and changes nothing, so it comes before the token check.
@@ -1218,6 +1268,13 @@ const httpServer = http.createServer(async (req, res) => {
   // those. SameSite=Strict keeps pages from other sites from riding on it.
   if (url.searchParams.has(PAIRING_QUERY_PARAM)) {
     res.setHeader('Set-Cookie', `${PAIRING_COOKIE}=${pairingToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`);
+  }
+
+  if (!['GET', 'HEAD'].includes(req.method)
+      && !authorizedHost(desktopCredential, req.headers['x-ga-desktop'], req.socket.remoteAddress)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'desktop_authorization_required' }));
+    return;
   }
 
   // Shader API endpoints

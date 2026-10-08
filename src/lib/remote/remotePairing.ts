@@ -13,6 +13,7 @@
 
 export interface RemotePairingInfo {
   token: string;
+  desktopCredential?: string;
   wsPort: number;
   httpPort: number;
 }
@@ -50,6 +51,7 @@ function toInfo(raw: unknown): RemotePairingInfo | null {
   if (!r || typeof r.token !== 'string' || !r.token) return null;
   return {
     token: r.token,
+    ...(typeof r.desktopCredential === 'string' ? { desktopCredential: r.desktopCredential } : {}),
     wsPort: portOr(r.wsPort, DEFAULT_REMOTE_WS_PORT),
     httpPort: portOr(r.httpPort, DEFAULT_REMOTE_HTTP_PORT),
   };
@@ -62,7 +64,10 @@ function browserPairingInfo(): RemotePairingInfo | null {
   const token = cleanPairingCode(params.get(PAIRING_QUERY_PARAM) || recallPairingToken());
   if (!token) return null;
   if (params.has(PAIRING_QUERY_PARAM)) rememberPairingToken(token);
-  return { token, wsPort: portOr(params.get('ws'), DEFAULT_REMOTE_WS_PORT),
+  // Explicit local development only; never persisted or added to a QR URL.
+  const desktopCredential = ['localhost','127.0.0.1','[::1]'].includes(window.location?.hostname)
+    ? params.get('host') : null;
+  return { token, ...(desktopCredential ? {desktopCredential} : {}), wsPort: portOr(params.get('ws'), DEFAULT_REMOTE_WS_PORT),
     httpPort: portOr(params.get('http'), DEFAULT_REMOTE_HTTP_PORT) };
 }
 
@@ -157,6 +162,7 @@ export async function localServerFetch(pathname: string, init: RequestInit = {})
   const info = await getRemotePairingInfo();
   const headers = new Headers(init.headers);
   if (info) headers.set('Authorization', `Bearer ${info.token}`);
+  if (info?.desktopCredential) headers.set('X-GA-Desktop', info.desktopCredential);
   const port = info?.httpPort ?? DEFAULT_REMOTE_HTTP_PORT;
   return fetch(`http://localhost:${port}${pathname}`, { ...init, headers });
 }

@@ -2908,6 +2908,7 @@
   let httpPort = DEFAULT_REMOTE_HTTP_PORT; // HTTP info server port
   // Every device on the remote's servers presents this, the desktop included.
   let pairingToken = '';
+  let desktopCredential = '';
 
   // Token and ports for the LAN remote, from main. Outside the desktop app
   // there are none and the defaults stand.
@@ -2915,6 +2916,7 @@
     const info = await getRemotePairingInfo();
     if (!info) return;
     pairingToken = info.token;
+    desktopCredential = info.desktopCredential || '';
     wsPort = info.wsPort;
     httpPort = info.httpPort;
   }
@@ -3802,7 +3804,7 @@
       wsServerReady = true;
       connectionError = '';
       // Register as desktop client — mobileConnected will be set by client_count messages
-      ws?.send(JSON.stringify({ type: 'register_desktop' }));
+      ws?.send(JSON.stringify({ type: 'register_desktop', credential: desktopCredential }));
       // Send initial state
       syncState();
     };
@@ -5086,6 +5088,7 @@
       const info = await resetRemotePairing();
       if (info) {
         pairingToken = info.token;
+        desktopCredential = info.desktopCredential || '';
         // The server dropped every connection made with the old token, this
         // window's included, so come back with the new one.
         connectToServer();
