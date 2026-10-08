@@ -680,6 +680,10 @@
 .interactive-workspace.handheld .effect-title {
   min-height: 44px;
 }
+.interactive-workspace.handheld summary:not(:where(.param *, .mt *, .studio-timeline *)) {
+  min-height: 44px;
+  box-sizing: border-box;
+}
 .interactive-workspace.handheld .effect-title small {
   font-size: 11px;
 }
@@ -697,8 +701,8 @@
   gap: 4px;
 }
 .interactive-workspace.handheld .transport button:not(:where(.param *, .mt *, .studio-timeline *)) {
-  width: 36px;
-  min-width: 36px;
+  width: 44px;
+  min-width: 44px;
   padding: 0;
 }
 .interactive-workspace.handheld .segmented {

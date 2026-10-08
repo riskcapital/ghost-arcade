@@ -49,7 +49,7 @@
 .studio[data-layout='phone-landscape'][data-layout]:not(.clean) {
   grid-template-columns:62px minmax(0,1fr);
   grid-template-areas:'nav header' 'nav workspace' 'nav transport';
-  grid-template-rows:44px minmax(0,1fr) auto;
+  grid-template-rows:46px minmax(0,1fr) auto;
 }
 .studio[data-layout='phone-landscape'][data-layout] > .tabs {flex-direction:column;overflow:auto;padding:0;}
 .studio[data-layout='phone-landscape'][data-layout] > .tabs button {flex:1;min-height:44px;font-size:10px;}
@@ -102,3 +102,17 @@
 .studio[data-layout][data-layout] .mixer-tray .switches button {min-height:44px;min-width:44px;}
 .studio[data-layout][data-layout] .mixer-tray .channels {grid-template-columns:repeat(5,minmax(52px,1fr));}
 .studio[data-layout][data-layout] .mixer-tray.embedded {max-height:none;}
+
+/* 44 pt minimum for everything a finger taps. Measured with the layout audit at 393x852,
+   852x393, 1366x1024, 1024x1366 and a 507 pt Split View column. */
+.studio[data-layout][data-layout] .panel-scroll :is(button, select),
+.studio[data-layout][data-layout] .mixer-tray :is(button, select),
+.studio[data-layout][data-layout] .app-header button,
+.studio[data-layout][data-layout] .master-bar input,
+:root[data-ga-layout] .modal-backdrop :is(button, select) {min-height:44px;}
+.studio[data-layout][data-layout] :is(.icon-button, .auto-settings, .segmented button, .nudge button, .flux .tools button, .looks-panel header button),
+:root[data-ga-layout] .modal-backdrop .icon-button {min-width:44px;}
+.studio[data-layout][data-layout] .master-bar .tempo input {min-height:44px !important;}
+/* Corner handles reach 22 px past the preview: keep Hold and Blackout clear of them. */
+.studio[data-layout][data-layout].mapping .monitor-tools {margin-top:22px;}
+.studio[data-layout='phone-landscape'][data-layout].mapping:not(.clean) .monitor {padding-left:22px;padding-right:22px;}
