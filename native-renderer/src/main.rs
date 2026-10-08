@@ -103,6 +103,7 @@ use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
     NSApplication, NSApplicationPresentationOptions, NSView, NSWindow, NSWindowOrderingMode,
+    NSWindowCollectionBehavior, NSStatusWindowLevel, NSNormalWindowLevel,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::MainThreadMarker;
@@ -4418,6 +4419,34 @@ fn set_managed_output_fullscreen(window: &Window, fullscreen: bool) {
     // borderless top-level window is the correct fullscreen primitive here.
     window.set_fullscreen(None);
     window.set_decorations(!fullscreen);
+    if let Ok(handle) = window.window_handle() {
+        if let Some(ns_window) = appkit_window_for_raw_handle(handle.as_raw()) {
+            // Presentation options stop hiding system chrome when the editor (or
+            // another application) becomes active. Keep the dedicated projector
+            // above both the menu (24) and its status items (25), without raising
+            // the editor or entering a separate fullscreen Space.
+            ns_window.setLevel(if fullscreen { NSStatusWindowLevel + 1 } else { NSNormalWindowLevel });
+            // SAFETY: all managed output changes run on the AppKit event thread.
+            unsafe {
+                ns_window.setHidesOnDeactivate(false);
+                ns_window.setCollectionBehavior(if fullscreen {
+                    NSWindowCollectionBehavior::CanJoinAllSpaces
+                        | NSWindowCollectionBehavior::Stationary
+                        | NSWindowCollectionBehavior::IgnoresCycle
+                        | NSWindowCollectionBehavior::FullScreenAuxiliary
+                } else {
+                    NSWindowCollectionBehavior::Default
+                });
+            }
+            if fullscreen {
+                if let Some(screen) = ns_window.screen() {
+                    // AppKit's full frame includes the menu/Dock area. Using the
+                    // visible frame here would leave a strip of desktop exposed.
+                    ns_window.setFrame_display(screen.frame(), true);
+                }
+            }
+        }
+    }
     set_appkit_projector_presentation(fullscreen);
 }
 
@@ -18902,7 +18931,8 @@ impl ApplicationHandler<UserEvent> for App {
                 self.output_window_attached = false;
                 set_appkit_projector_presentation(false);
                 renderer.window.set_visible(false);
-                renderer.window.set_fullscreen(None);
+                set_managed_output_fullscreen(&renderer.window, false);
+                renderer.window.set_cursor_visible(true);
                 self.stats.swapchain_last_present_result = "detached".to_string();
                 self.stats.swapchain_last_present_error.clear();
                 event_loop.set_control_flow(ControlFlow::Wait);
@@ -18914,7 +18944,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.output_window_attached = false;
                 set_appkit_projector_presentation(false);
                 renderer.window.set_visible(false);
-                renderer.window.set_fullscreen(None);
+                set_managed_output_fullscreen(&renderer.window, false);
                 renderer.window.set_cursor_visible(true);
                 self.stats.swapchain_last_present_result = "detached".to_string();
                 self.stats.swapchain_last_present_error.clear();
