@@ -345,6 +345,9 @@ wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
   console.log(`[+] Client connected: ${clientIp}`);
   clients.add(ws);
+  // Interactive Studio: one phone keeps one identity across reconnects.
+  ws.studioAddress = String(clientIp || 'unknown').replace(/[^\w.:-]/g, '_').slice(0, 39);
+  ws.studioPeers = new Set();
 
   // Send current state to new client
   ws.send(JSON.stringify({
@@ -849,6 +852,14 @@ function handleMessage(sender, msg) {
     // relays setup/control messages; camera video travels as a native
     // RTCPeerConnection media track.
     case 'studio_scene':
+      // The desktop keeps one session per phone, so every scene is stamped
+      // with who sent it. A client cannot choose another phone's id.
+      broadcast(sender, { ...msg, from: studioPeerId(sender, msg) });
+      break;
+    case 'studio_scene_status':
+      // Desktop's answer to one phone (a rejected scene): deliver it there.
+      sendToStudioPeer(sender, msg);
+      break;
     case 'studio_calibration_offer':
     case 'studio_calibration_status':
     case 'studio_capabilities_request':
@@ -950,6 +961,28 @@ function handleMessage(sender, msg) {
 
     default:
       console.log('[?] Unknown message type:', msg.type);
+  }
+}
+
+/**
+ * Who a `studio_scene` came from. The address survives a Wi-Fi reconnect and
+ * tells two phones apart; a client may add an id of its own (`clientId`) so
+ * several tabs or devices behind one address stay separate too.
+ */
+function studioPeerId(ws, msg) {
+  const own = typeof msg.clientId === 'string' && /^[\w-]{1,40}$/.test(msg.clientId) ? `:${msg.clientId}` : '';
+  const id = `${ws.studioAddress || 'unknown'}${own}`;
+  if (ws.studioPeers && ws.studioPeers.size < 8) ws.studioPeers.add(id);
+  return id;
+}
+
+function sendToStudioPeer(sender, msg) {
+  if (typeof msg.to !== 'string') { broadcast(sender, msg); return; }
+  const data = JSON.stringify(msg);
+  for (const client of clients) {
+    if (client !== sender && client.readyState === WebSocket.OPEN && client.studioPeers?.has(msg.to)) {
+      client.send(data);
+    }
   }
 }
 

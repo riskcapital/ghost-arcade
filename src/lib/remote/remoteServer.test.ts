@@ -99,6 +99,35 @@ describe('WebSocket upgrades', () => {
     byHeader.ws!.close();
   });
 
+  it('stamps each phone on its Interactive scenes and answers only that phone', async () => {
+    const desktop = await openSocket(`?pair=${TOKEN}`);
+    const phoneA = await openSocket(`?pair=${TOKEN}`);
+    const phoneB = await openSocket(`?pair=${TOKEN}`);
+    // A phone cannot pick its own `from`, least of all another phone's.
+    phoneA.ws!.send(JSON.stringify({ type: 'studio_scene', clientId: 'a', from: 'spoofed', active: true }));
+    phoneB.ws!.send(JSON.stringify({ type: 'studio_scene', clientId: 'b', active: true }));
+    const scenes = await waitFor(() => {
+      const seen = desktop.received!.filter((m) => m.type === 'studio_scene');
+      return seen.length === 2 ? seen : undefined;
+    });
+    const [fromA, fromB] = ['a', 'b'].map((id) => scenes.find((m) => m.clientId === id).from as string);
+    expect(fromA).toMatch(/^[\w.:-]{1,80}$/);
+    expect(fromA.endsWith(':a')).toBe(true);
+    expect(fromB.endsWith(':b')).toBe(true);
+    expect(fromA).not.toBe(fromB);
+    // Without an id of its own a phone is still told apart by its address.
+    phoneA.ws!.send(JSON.stringify({ type: 'studio_scene', active: false }));
+    const bare = await waitFor(() => desktop.received!.find((m) => m.type === 'studio_scene' && !m.clientId));
+    expect(bare.from).toMatch(/^[\w.:-]{1,80}$/);
+
+    desktop.ws!.send(JSON.stringify({ type: 'studio_scene_status', to: fromB, accepted: false, error: 'too large' }));
+    const status = await waitFor(() => phoneB.received!.find((m) => m.type === 'studio_scene_status'));
+    expect(status).toMatchObject({ accepted: false, error: 'too large' });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(phoneA.received!.some((m) => m.type === 'studio_scene_status')).toBe(false);
+    for (const peer of [desktop, phoneA, phoneB]) peer.ws!.close();
+  });
+
   it('relays control messages between paired devices', async () => {
     const desktop = await openSocket(`?pair=${TOKEN}`);
     const phone = (await openSocket(`?pair=${TOKEN}`)).ws!;
