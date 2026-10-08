@@ -14,6 +14,7 @@ import {
   packNativeEffectPassUniforms,
 } from './nativeEffectPass';
 import { buildPlanetNativePrecompileCommands } from './shaders/webgpuPlanet';
+import { softwareVulkanRunner } from './nativeHardwareTestPlatform';
 
 const nativeCoreBin = join(
   process.cwd(),
@@ -1891,7 +1892,8 @@ describe('Native effect-pass template', () => {
     ]));
   });
 
-  const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
+  // Real-time bound: 8 s RPC deadlines and frame-to-frame change checks.
+  const itIfNativeCore = existsSync(nativeCoreBin) && !softwareVulkanRunner ? it : it.skip;
 
   itIfNativeCore('renders an uploaded source frame through the native effect-pass graph', async () => {
     const rpc = createNativeRpc();

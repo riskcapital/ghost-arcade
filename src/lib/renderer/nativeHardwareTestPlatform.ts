@@ -17,6 +17,12 @@ export const gpuTestPlatform = {
   rendererBackend: windows ? 'd3d12' : process.platform === 'darwin' ? 'metal' : 'vulkan',
 };
 
+// CI's Linux runner has no GPU: lavapipe renders about one frame a second and
+// answers RPCs between frames. Tests that measure the core against real time
+// (a fixed RPC deadline, "the picture changed within N ms", a warm video grid)
+// cannot pass there and are skipped by name; everything else still runs.
+export const softwareVulkanRunner = process.env.GA_TEST_SOFTWARE_VULKAN === '1';
+
 export const hardwareTestPlatform = {
   windows,
   binary,

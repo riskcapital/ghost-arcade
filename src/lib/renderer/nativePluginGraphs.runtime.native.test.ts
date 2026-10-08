@@ -15,6 +15,7 @@ import {
   buildNativePluginPrecompileCommands,
   type NativePluginGraphState,
 } from './nativePluginGraphs';
+import { softwareVulkanRunner } from './nativeHardwareTestPlatform';
 
 const nativeCoreBin = join(
   process.cwd(),
@@ -22,6 +23,8 @@ const nativeCoreBin = join(
   process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core',
 );
 const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
+// A Performer world must show a picture within a real-time deadline.
+const itIfRealTimeCore = softwareVulkanRunner ? it.skip : itIfNativeCore;
 
 type Rpc = {
   send: (method: string, params?: Record<string, unknown>, timeoutMs?: number) => Promise<any>;
@@ -245,7 +248,7 @@ describe('native plugin graphs (runtime, real core)', () => {
     expect(Number(snapshot.nonzero_pixels)).toBe(0);
   }, 15000);
 
-  itIfNativeCore.each([0, 1 / 7, 1])('renders a visible Performer world with palette %s', async (palette) => {
+  itIfRealTimeCore.each([0, 1 / 7, 1])('renders a visible Performer world with palette %s', async (palette) => {
     const layerId = 'performer-world-runtime';
     const sourceId = 'plugin:performer-world:A:0';
     const built = buildNativePluginGraph({

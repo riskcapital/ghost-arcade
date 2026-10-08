@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { softwareVulkanRunner } from './nativeHardwareTestPlatform';
 
 const binary = join(process.cwd(), 'native-renderer/target/release',
   process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core');
@@ -177,7 +178,8 @@ nativeDescribe('native video startup and handoff', () => {
     } finally { await rpc.close(); }
   }, 20000);
 
-  it('keeps a twelve-video grid warm and launches its oldest column without cold decoders', async () => {
+  // Twelve software-decoded videos cannot preroll in time at one frame a second.
+  it.skipIf(softwareVulkanRunner)('keeps a twelve-video grid warm and launches its oldest column without cold decoders', async () => {
     const rpc = core('hardware');
     try {
       await start(rpc);

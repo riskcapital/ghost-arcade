@@ -18,6 +18,16 @@ const selectScreen = async (c, name) => {
 const openIds = (c) => rpc(c, 'output_list_slice_windows');
 const sliceState = async (c, id) => ((await rpc(c, 'native_renderer_get_slice_output_state'))?.slices || []).find((s) => s.id === id) || null;
 
+/** `sliceState`, asked again while the core is too busy to answer. */
+async function settledSliceState(c, id, attempts = 8) {
+  for (let i = 0; i < attempts; i++) {
+    const state = await sliceState(c, id).catch(() => null);
+    if (state) return state;
+    await sleep(1000);
+  }
+  return null;
+}
+
 /** Screens tab > + Add Screen > Send to: Physical display > the first display. Returns the Screen's name. */
 export async function addDisplayScreen(c) {
   await openTab(c, 'Screens');
@@ -73,11 +83,18 @@ export const stepScreen = {
     const id = await openScreen(c, screen.name);
     t.shared.screenA = { name: screen.name, id, display: screen.display };
     t.check('Screen window is open', (await openIds(c)).includes(id), id);
-    const first = await sliceState(c, id);
-    await sleep(2500);
-    const second = await sliceState(c, id);
+    // A software adapter draws about one frame a second and can miss a
+    // status request, so read until there is an answer and allow it time.
+    const first = await settledSliceState(c, id);
+    const began = Date.now();
+    let second = null;
+    while (Date.now() - began < 30000) {
+      await sleep(2500);
+      second = await settledSliceState(c, id);
+      if (Number(second?.frame) > Number(first?.frame) && (!t.isLinux || second?.presented === true)) break;
+    }
     t.number('sliceSize', `${second?.width}x${second?.height}`);
-    t.number('sliceFrames', `${first?.frame} -> ${second?.frame} in 2.5 s`);
+    t.number('sliceFrames', `${first?.frame} -> ${second?.frame} in ${round((Date.now() - began) / 1000, 1)} s`);
     t.check('core keeps rendering the Screen (frame counter advances)', Number(second?.frame) > Number(first?.frame), `${first?.frame} -> ${second?.frame}`);
     const slice = await coreSnapshot(c, `slice:${id}`);
     const sliceStats = stats(slice.image);
@@ -117,7 +134,12 @@ export const stepScreen = {
       if (!closed) await closeScreen(c, screen.name);
       const reopened = await openScreen(c, screen.name);
       t.shared.screenA.id = reopened;
-      const again = await sliceState(c, reopened);
+      let again = null;
+      for (let i = 0; i < 12; i++) {
+        again = await settledSliceState(c, reopened);
+        if (again?.presented === true && Number(again?.frame) > 0) break;
+        await sleep(2500);
+      }
       t.check('the Screen reopens and presents again', again?.presented === true && Number(again?.frame) > 0, JSON.stringify(again));
     } else {
       t.skip('X11 window, screenshot and Esc checks are Linux-only');
