@@ -3395,3 +3395,7 @@ it('invalidates the regular display binding after an urgent video retrigger', as
     expect(sync.lastLayers.has(layer.id)).toBe(false);
   } finally { submit.mockRestore(); }
 });
+
+it('routes the Interactive layer type to the real native graph',()=>{
+ expect(nativeUnsupportedSourceReason({id:'interactive',type:'interactive',source:{id:'source',type:'effect',effectSource:{effectType:'performer-world'}}},true)).toBeNull();
+});

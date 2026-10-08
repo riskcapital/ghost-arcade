@@ -67,6 +67,96 @@
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
   import ShowTimeline from './lib/components/ShowTimeline.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
+  import InteractiveStudio from './lib/components/studio/InteractiveStudio.svelte';
+  import {readMobileCalibration} from './lib/output/mobileCalibrationImport';
+  let pendingPhoneCalibration='';
+  onMount(()=>{const open=(event:Event)=>openInteractiveStudio((event as CustomEvent).detail?.layerId);window.addEventListener('open-interactive-studio',open);return()=>{window.removeEventListener('open-interactive-studio',open);};});
+  import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
+  let showInteractiveStudio=false, studioOpened=false, studioPage='interactive';
+  import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
+  let studioLayerId='',studioSlot:{row:number;col:number;id:string}|null=null,studioSignature='',studioWasActive=false,studioOwner='local';
+  let phoneStudioTimer:ReturnType<typeof setTimeout>|undefined;
+  function studioScene(scene:InteractiveScene,inputs:Interaction[],active:boolean,paused:boolean,owner='local'){
+    if(studioWasActive&&owner!==studioOwner)return;
+    if(!active&&owner!==studioOwner)return;
+    if(active)studioOwner=owner;
+    if(!active){if(studioWasActive){if(studioLayerId)project.updateLayer(studioLayerId,{visible:false});if(studioSlot&&get(vjClipLauncher).layerStates[studioSlot.row]?.activeClip?.id===studioSlot.id)vjClipLauncher.stopLayer(studioSlot.row);}studioWasActive=false;return;}
+    const effectSource={effectType:'performer-world' as const,interactiveScene:validateInteractiveScene(scene),interactiveInputs:inputs,interactivePaused:paused};
+    const signature=JSON.stringify(effectSource);if(studioWasActive&&signature===studioSignature)return;studioSignature=signature;
+    if(!studioWasActive){
+      if(get(vjClipLauncher).isOpen){const vj=get(vjClipLauncher);let slot=studioSlot&&vj.clipGrid[studioSlot.row]?.[studioSlot.col]?.id===studioSlot.id?studioSlot:null;
+       if(!slot){let row=0,col=vj.clipGrid[0].findIndex(c=>!c);if(col<0){if(vj.numColumns>=64)throw Error('Free a VJ clip slot before launching Interactive Studio.');col=vj.numColumns;vjClipLauncher.addColumn();}slot={row,col,id:crypto.randomUUID()};vjClipLauncher.setClip(row,col,{id:slot.id,type:'effect',name:'Interactive Studio',src:'plugin://performer-world',effectSource});}studioSlot=slot;vjClipLauncher.updateClipEffectSource(slot.row,slot.col,effectSource);vjClipLauncher.triggerClip(slot.row,slot.col);
+      }else{if(!get(project).layers.some(l=>l.id===studioLayerId))studioLayerId=get(project).layers.find(l=>l.source?.effectSource?.interactiveScene)?.id??project.addLayer('Interactive Studio')??'';if(!studioLayerId)throw Error('Could not create an Interactive Studio layer.');if(studioLayerId){project.setLayerSource(studioLayerId,{id:'interactive-native',type:'effect',src:'plugin://performer-world',name:'Interactive Studio',effectSource});project.updateLayer(studioLayerId,{visible:true});}}
+    }
+    if(studioLayerId){const layer=get(project).layers.find(l=>l.id===studioLayerId);if(layer?.source)project.update(p=>({...p,layers:p.layers.map(l=>l.id===studioLayerId?{...l,source:{...layer.source!,effectSource}}:l)}));}
+    if(studioSlot&&get(vjClipLauncher).clipGrid[studioSlot.row]?.[studioSlot.col]?.id===studioSlot.id)vjClipLauncher.updateClipEffectSource(studioSlot.row,studioSlot.col,effectSource);
+    studioWasActive=true;
+  }
+  import {mergeInteractiveEdit,editableEffects} from './lib/mobile/studio/interactiveEffects';
+  import {createNativeSourcePreview} from './lib/sync/nativeSourcePreview';
+  import {recordDiscreteAction} from './lib/stores/historyHooks';
+  let studioEditorLayer='',studioEditorClip:{row:number;col:number;id:string;deck:'A'|'B'}|null=null;
+  let studioEditorScene:InteractiveScene|null=null,studioPreviousEdit:InteractiveScene|undefined;
+  let studioEditor:InteractiveStudio|undefined,studioEditorPaused=false;
+  let studioEditorActive=true,studioEditorProject='',studioEditorRevision=0,studioEditorSignature='';
+  $: studioTimelineId=studioEditorClip?`vj-${studioEditorClip.id}`:studioEditorLayer;
+  const studioNativeFrame=createNativeSourcePreview(()=>studioEditorClip?`vj-layer-${studioEditorClip.row}${get(vjClipLauncher).crossfaderEnabled?'-'+studioEditorClip.deck:''}`:studioEditorLayer);
+  function studioCurrentSource(){
+    if(studioEditorClip){const v=get(vjClipLauncher);return (studioEditorClip.deck==='B'?v.bankBClipGrid:v.clipGrid)[studioEditorClip.row]?.[studioEditorClip.col]?.effectSource;}
+    return get(project).layers.find(l=>l.id===studioEditorLayer)?.source?.effectSource;
+  }
+  function openInteractiveStudio(layerId?:string){
+    const p=get(project),vj=get(vjClipLauncher);studioEditorClip=null;
+    if(!layerId&&vj.isOpen){
+      const deck=vj.selectedDeck??'A',grid=deck==='B'?vj.bankBClipGrid:vj.clipGrid,states=deck==='B'?vj.bankBLayerStates:vj.layerStates;
+      const row=vj.selectedLayerIndex??0,active=states[row]?.activeClip;
+      let col=active?.effectSource?.interactiveScene?states[row].activeColumn:null;
+      if(col===null||col===undefined){col=grid[row].findIndex(c=>!c);if(col<0){if(vj.numColumns>=64){showToast('Free a clip slot before opening Interactive Studio.','warning');return;}col=vj.numColumns;vjClipLauncher.addColumn();}
+        const scene=defaultInteractive();scene.effects=editableEffects(scene);
+        vjClipLauncher.setClip(row,col,{id:crypto.randomUUID(),type:'effect',name:'Interactive Studio',src:'plugin://performer-world',effectSource:{effectType:'performer-world',interactiveScene:scene}},deck);
+      }
+      const clip=(deck==='B'?get(vjClipLauncher).bankBClipGrid:get(vjClipLauncher).clipGrid)[row][col]!;
+      studioEditorClip={row,col,id:clip.id,deck};studioEditorLayer='';vjClipLauncher.triggerClip(row,col,deck);studioEditorActive=true;
+    }else{
+      const selected=p.layers.find(l=>l.id===(layerId??p.selectedLayerId)&&l.source?.effectSource?.interactiveScene);
+      studioEditorLayer=selected?.id??(!layerId?p.layers.find(l=>l.source?.effectSource?.interactiveScene)?.id:'')??'';
+      if(!studioEditorLayer)studioEditorLayer=project.addLayer('Interactive Studio','interactive')??'';
+      if(!studioEditorLayer)return;project.selectLayer(studioEditorLayer);studioEditorActive=get(project).layers.find(l=>l.id===studioEditorLayer)?.visible!==false;
+    }
+    studioEditorPaused=studioCurrentSource()?.interactivePaused??false;
+    studioEditorScene=structuredClone(studioCurrentSource()?.interactiveScene??defaultInteractive());
+    studioPreviousEdit=undefined;studioEditorSignature='';studioEditorProject=p.id;studioEditorRevision++;
+    studioPage='interactive';studioOpened=true;showInteractiveStudio=true;
+  }
+  function editStudioScene(scene:InteractiveScene,inputs:Interaction[],active:boolean,paused:boolean){
+    if(!showInteractiveStudio||get(project).id!==studioEditorProject)return;
+    const current=studioCurrentSource();if(!current?.interactiveScene)return;
+    const signature=JSON.stringify({scene,inputs,active,paused});if(signature===studioEditorSignature)return;
+    const edited=mergeInteractiveEdit(studioPreviousEdit,validateInteractiveScene(scene),current.interactiveScene);
+    studioPreviousEdit=structuredClone(scene);studioEditorSignature=signature;
+    const effectSource={...current,interactiveScene:edited,interactiveInputs:inputs,interactivePaused:paused};
+    if(studioEditorClip){const {row,col,deck}=studioEditorClip;vjClipLauncher.updateClipEffectSource(row,col,effectSource,deck);if(active!==studioEditorActive){if(active)vjClipLauncher.triggerClip(row,col,deck);else vjClipLauncher.stopLayer(row,deck);}}
+    else project.update(p=>({...p,layers:p.layers.map(l=>l.id===studioEditorLayer&&l.source?{...l,visible:active,source:{...l.source,effectSource}}:l)}));
+    studioEditorActive=active;
+  }
+  function closeInteractiveStudio(){studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();}
+  function studioParamRecord(id:string,key:string,value:number,label:string){keyframeTimeline.autoRecord(studioTimelineId,`interactive:${id}:${key}`,value,label,'number');}
+  function studioAddKeyframe(id:string,key:string,value:number,label:string){
+    keyframeTimeline.addKeyframe(studioTimelineId,`interactive:${id}:${key}`,get(keyframeTimeline).config.currentTime,value,'sine',label,'number');
+  }
+  function captureStudioScene(scene:InteractiveScene):InteractiveScene{
+    const k=get(keyframeTimeline),live=studioCurrentSource()?.interactiveScene;
+    const merged=live?mergeInteractiveEdit(studioPreviousEdit,scene,live):scene;
+    return {...merged,animation:{duration:k.config.duration,loop:k.config.isLooping,tracks:structuredClone(k.timelines[studioTimelineId]?.tracks.filter(t=>t.key.startsWith('interactive:'))??[])}};
+  }
+  function restoreStudioAnimation(scene:InteractiveScene){
+    studioPreviousEdit=undefined;
+    const others=keyframeTimeline.exportAll().filter(t=>t.layerId!==studioTimelineId);
+    keyframeTimeline.importAll([...others,{layerId:studioTimelineId,tracks:scene.animation?.tracks??[]}]);
+    if(!scene.animation)return;
+    keyframeTimeline.setDuration(Math.max(get(keyframeTimeline).config.duration,scene.animation.duration));keyframeTimeline.setLooping(scene.animation.loop);keyframeTimeline.seek(0);
+  }
+  function studioToggleTimeline(){keyframeTimeline.selectLayer(studioTimelineId);keyframeTimeline.toggleOpen();}
   import MediaPipeLearnHUD from './lib/components/MediaPipeLearnHUD.svelte';
   import MediaPipeLearnOverlay from './lib/components/MediaPipeLearnOverlay.svelte';
   import GridOverlay from './lib/components/GridOverlay.svelte';
@@ -3115,6 +3205,8 @@
     return `${PHONE_CAMERA_SOURCE_PREFIX}/${sessionId}`;
   }
 
+  let studioFeedLabel = 'Phone Camera';
+
   function sendPhoneVisionSignal(payload: Record<string, unknown>) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(payload));
@@ -3171,10 +3263,11 @@
       // renderer can still consume the element once playback starts.
     }
 
+    if (phoneVisionSessionId !== sessionId) { video.pause(); video.srcObject=null; return; }
     const existing = get(mediaLibrary).find(item => item.id === PHONE_CAMERA_MEDIA_ID);
     const mediaItem = {
       id: PHONE_CAMERA_MEDIA_ID,
-      name: 'Phone Camera',
+      name: studioFeedLabel,
       src: phoneVisionMediaSrc(sessionId),
       type: 'video' as const,
       videoElement: video,
@@ -3186,10 +3279,10 @@
       ...state,
       status: 'live',
       sessionId,
-      label: 'Phone Camera',
+      label: studioFeedLabel,
       error: '',
     }));
-    sendPhoneVisionStatus('live');
+    sendPhoneVisionStatus('live', {sourceReady:true,label:studioFeedLabel});
   }
 
   function phoneCameraMediaSource(emitError = true): MediaSource | null {
@@ -3394,6 +3487,13 @@
   ) {
     destroyPhoneVisionSession(false);
     phoneVisionSessionId = sessionId;
+    const feed = detail.studioFeed as any;
+    const labels:Record<string,string>={rear:'Mobile Rear Camera',front:'Mobile Selfie',dual:'Mobile Dual Camera',depth:'Mobile Depth Map',contours:'Mobile Depth Contours',points:'Mobile Point Cloud',interactive:'Interactive Studio'};
+    studioFeedLabel='Phone Camera';
+    if(feed){
+      if(feed.schema!=='ghost-mobile-feed'||feed.version!==1||!Object.hasOwn(labels,feed.kind)||feed.metricDepth!==false||feed.content!=='visual-rgba'){sendPhoneVisionStatus('failed',{error:'Unsupported Studio feed.'});destroyPhoneVisionSession(true);return;}
+      studioFeedLabel=labels[feed.kind];
+    }
     const facingMode = phoneVisionFacingMode(detail);
     const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
       ? {
@@ -3559,6 +3659,24 @@
         // reflects reality from the moment it mounts (rather than waiting
         // for the user to toggle it for the first time).
         syncOutputFreeze(get(outputFrozen));
+        break;
+
+      case 'studio_calibration_offer': {
+        try{
+          if(typeof msg.json!=='string'||msg.json.length>8_000_000)throw Error('Invalid calibration size.');
+          readMobileCalibration(msg.json);pendingPhoneCalibration=msg.json;
+          sendPhoneVisionSignal({type:'studio_calibration_status',requestId:msg.requestId,accepted:true});
+        }catch(error){sendPhoneVisionSignal({type:'studio_calibration_status',requestId:msg.requestId,accepted:false,error:error instanceof Error?error.message:'Invalid calibration.'});}
+        break;
+      }
+      case 'studio_scene': {
+        try {const data=msg as any;if(JSON.stringify(data).length>150000)break;const scene=validateInteractiveScene(data.scene);const inputs=Array.isArray(data.inputs)?data.inputs.slice(0,8).filter((p:any)=>Number.isFinite(p.point?.x)&&Number.isFinite(p.point?.y)&&Number.isFinite(p.strength)):[];
+          studioScene(scene,inputs,data.active===true,data.paused===true,'phone');clearTimeout(phoneStudioTimer);
+          if(data.active)phoneStudioTimer=setTimeout(()=>studioScene(scene,[],false,false,'phone'),3000);
+        }catch(error){console.warn('[Interactive Studio] Invalid remote scene',error);}break;
+      }
+      case 'studio_capabilities_request':
+        sendPhoneVisionSignal({type:'studio_capabilities',version:1,visualFeeds:true,metricDepth:false,nativeInteractive:true});
         break;
 
       case 'phone_camera_offer': {
@@ -6700,6 +6818,10 @@
         </button>
 
         <!-- Settings Button -->
+        <button class="stage-btn interactive-studio-btn" onclick={()=>openInteractiveStudio()} title="Interactive Studio and phone calibration" aria-label="Interactive Studio">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m6 18 5-5 3 3 4-6"/></svg>
+          <span class="tb-label">Interactive</span>
+        </button>
         <button class="settings-btn" onclick={() => showSettings = true} title="Settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
@@ -7736,7 +7858,7 @@
     <LayerSequencer />
 
     <!-- Keyframe Timeline (slide-up panel) -->
-    <KeyframeTimeline />
+    {#if !showInteractiveStudio}<KeyframeTimeline />{/if}
 
     <!-- Show Timeline (slide-up panel) — audio tracks + preset arrangement -->
     <ShowTimeline />
@@ -7817,6 +7939,12 @@
     {/if}
 
     <!-- Settings Panel — output transforms now read from $settings.output -->
+    {#if showInteractiveStudio}
+      <div class="studio-workshop-backdrop" class:studio-hidden={!showInteractiveStudio}><section class="studio-workshop" role="dialog" aria-label="Interactive Studio tools" aria-modal="true" tabindex="-1">
+        <nav><button onclick={()=>studioPage='interactive'}>Interactive Studio</button><button onclick={()=>studioPage='calibration'}>Phone calibration{pendingPhoneCalibration?' •':''}</button><button onclick={closeInteractiveStudio}>Close</button></nav>
+        {#if studioPage==='interactive'}{#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={$project.layers.filter(l=>l.id!==studioLayerId&&l.corners).map(l=>({name:l.name,enabled:l.visible,mode:l.warpMode==='mesh'?'mesh':'corners',points:[l.corners.topLeft,l.corners.topRight,l.corners.bottomRight,l.corners.bottomLeft].map(p=>({x:p.x,y:1-p.y}))}))} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}{:else}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
+      </section></div>
+    {/if}
     <SettingsPanel
       isOpen={showSettings}
       onClose={() => showSettings = false}
@@ -8496,6 +8624,9 @@
      Stage buttons keep their aria-label. */
   .tb-short {
     display: none;
+  }
+  .toolbar:global(.tb-measuring) :global(*) {
+    transition: none !important;
   }
 
   /* 1: tighter spacing. */
@@ -10868,4 +10999,5 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
+.studio-workshop-backdrop{position:fixed;inset:0;z-index:9999;background:#000b;display:grid;place-items:center;padding:24px}.studio-workshop{width:min(1200px,96vw);max-height:94vh;overflow:auto;background:var(--ga-inspector-bg,var(--ga-card,#141414));color:var(--ga-ink-0,#eee);border:1px solid var(--ga-line-3,#444);border-radius:var(--ga-r-soft,6px)}.studio-workshop-backdrop.studio-hidden{display:none}.studio-workshop nav{display:flex;gap:8px;padding:12px}.studio-workshop nav button{padding:10px 16px;background:var(--ga-hardware-bg,var(--ga-card,#202020));color:inherit;border:1px solid var(--ga-line-2,#444);border-radius:var(--ga-r-hard,3px)}
 </style>

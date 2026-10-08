@@ -40,6 +40,15 @@ describe('native plugin graphs', () => {
       'ghostfx/post',
       'handfx/compute',
       'handfx/render',
+      'interactive/emission',
+      'interactive/geometry',
+      'interactive/fluid',
+      'interactive/matter-particles',
+      'interactive/mass',
+      'interactive/light',
+      'interactive/matter-render',
+      'interactive/compute',
+      'interactive/render',
       'performer-world/render',
     ]);
   });

@@ -1,3 +1,5 @@
+import {defaultInteractive} from '../mobile/studio/interactive';
+import {editableEffects} from '../mobile/studio/interactiveEffects';
 import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
 import { normalizeAutopilot } from './vjAutopilot';
@@ -196,6 +198,8 @@ function captureStagePresetSnapshot(
     thumbnail,
     createdAt: Date.now(),
     layers: cloneStagePresetLayers(currentProject.layers, 'capture'),
+    keyframeSettings: keyframeTimeline.exportSettings(),
+    keyframeTimelines: structuredClone(keyframeTimeline.exportAll().filter(t=>currentProject.layers.some(l=>l.id===t.layerId))),
     scope,
     surfaceId,
     surfaceSnapshot,
@@ -246,7 +250,7 @@ function placeNewLayer(layers: Layer[], newLayer: Layer, selectedLayerId: string
   }
 }
 
-const NATIVE_READY_LAYER_TYPES = new Set<LayerType>(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'group', 'screen', 'mask']);
+const NATIVE_READY_LAYER_TYPES = new Set<LayerType>(['interactive', 'media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'group', 'screen', 'mask']);
 
 function nativeLayerTypePending(type: LayerType): boolean {
   return NATIVE_ENGINE_ONLY && Boolean(get(settings).experimental?.outputNativeCore) && !NATIVE_READY_LAYER_TYPES.has(type);
@@ -422,6 +426,11 @@ void main() {
       layers: structuredClone(preset.layers).map(migrateStageLayerCorners),
     }));
     vjClipLauncher.setStagePreset(preset.id);
+    if(preset.keyframeTimelines){
+      const others=keyframeTimeline.exportAll().filter(t=>!preset.layers.some(l=>l.id===t.layerId));
+      keyframeTimeline.importAll([...others,...structuredClone(preset.keyframeTimelines)]);
+      keyframeTimeline.restoreSettings(preset.keyframeSettings);keyframeTimeline.seek(0);
+    }
 
     if (surfaceSnapshot) {
       surfaceStore.restorePresetSurface(surfaceSnapshot);
@@ -475,7 +484,11 @@ void main() {
               ? `Mask ${project.layers.filter(l => l.type === 'mask').length + 1}`
               : `Layer ${project.layers.filter(l => l.type === 'media').length + 1}`
         );
-        const newLayer = createLayer(id, layerName, type);
+        const newLayer = createLayer(id, type==='interactive'?(name||'Interactive Studio'):layerName, type);
+        if(type==='interactive'){
+          const scene=defaultInteractive();scene.effects=editableEffects(scene);
+          newLayer.source={id:generateUUID(),type:'effect',src:'plugin://performer-world',name:'Interactive Studio',effectSource:{effectType:'performer-world',interactiveScene:scene}};
+        }
         if (type === 'media' && initialShapeType) {
           newLayer.layerShape = createDefaultLayerShape(initialShapeType);
         }
@@ -4296,6 +4309,7 @@ void main() {
       };
       const kfState = get(keyframeTimeline);
       const keyframesSnap = {
+        settings: keyframeTimeline.exportSettings(),
         snapshot: JSON.parse(JSON.stringify(keyframeTimeline.exportAll())),
         wasPlaying: !!kfState.config.isPlaying,
       };
@@ -4379,6 +4393,7 @@ void main() {
       };
       const kfState = get(keyframeTimeline);
       const keyframesSnap = {
+        settings: keyframeTimeline.exportSettings(),
         snapshot: JSON.parse(JSON.stringify(keyframeTimeline.exportAll())),
         wasPlaying: !!kfState.config.isPlaying,
       };
@@ -4578,6 +4593,7 @@ void main() {
           }
           if (kfSnap?.snapshot) {
             keyframeTimeline.importAll(kfSnap.snapshot);
+            keyframeTimeline.restoreSettings(kfSnap.settings);keyframeTimeline.seek(0);
             if (kfSnap.wasPlaying && restoreTransports) {
               // seek(0) rewinds the playhead and re-evaluates overrides
               // WITHOUT wiping the timelines we just imported. Earlier
@@ -5141,6 +5157,8 @@ void main() {
             createdAt: comp.createdAt,
             layers: comp.layers.map(layer => this._exportLayer(layer)),
             synthVision: comp.synthVision,
+            keyframes: comp.keyframes,
+            sequencer: comp.sequencer,
           })),
           // Export decks
           decks: currentProject.vjMode.decks.map(deck => ({
@@ -5411,6 +5429,7 @@ void main() {
         modulation: exportModulations,
         // Include keyframe timelines
         keyframeTimelines: keyframeTimeline.exportAll(),
+        keyframeSettings: keyframeTimeline.exportSettings(),
         // Include macro knobs (8 user-assignable knobs with destinations)
         macros: macros.serialize(),
         // Include OSC config (port + bindings). The listener is
@@ -5875,6 +5894,8 @@ void main() {
                 return imported;
               }),
               synthVision: comp.synthVision,
+              keyframes: comp.keyframes,
+              sequencer: comp.sequencer,
             })),
             decks: (vjm.decks || []).map((deck: any) => ({
               id: deck.id || generateUUID(),
@@ -6252,6 +6273,7 @@ void main() {
         // Import keyframe timelines
         if (Array.isArray((parsed as any).keyframeTimelines)) {
           keyframeTimeline.importAll((parsed as any).keyframeTimelines);
+          keyframeTimeline.restoreSettings((parsed as any).keyframeSettings);keyframeTimeline.seek(0);
         } else {
           keyframeTimeline.reset();
         }

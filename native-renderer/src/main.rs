@@ -7394,15 +7394,45 @@ impl App {
             if !matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform) {
                 continue;
             }
+            // Interactive material settings contain light depth/power at slots
+            // 2/3, not a render clock. Preserve authored values during replay.
+            if graph_layer.kind == NativeGraphLayerKind::PerformerWorld
+                && buffer.id.ends_with(":interactive:matter")
+            {
+                if buffer.initial_bytes.len() >= 192 && graph_layer.params["interactivePaused"] != true {
+                    write_f32_le(&mut buffer.initial_bytes, 40, smooth.bass);
+                    write_f32_le(&mut buffer.initial_bytes, 41, smooth.mid);
+                    write_f32_le(&mut buffer.initial_bytes, 42, smooth.treble);
+                    write_f32_le(&mut buffer.initial_bytes, 43, smooth.energy);
+                    write_f32_le(&mut buffer.initial_bytes, 44, self.audio1[2]);
+                    write_f32_le(&mut buffer.initial_bytes, 45, self.audio1[3].max(1.0));
+                }
+                continue;
+            }
             if graph_layer.kind == NativeGraphLayerKind::PerformerWorld
                 && buffer.initial_bytes.len() == 80
             {
                 // Performer worlds are a persistent native overlay. The
                 // installed uniform owns world/space/XY parameters; only the
                 // render clock and live audio envelope advance here.
+                if graph_layer.params["interactivePaused"] != true {
                 write_f32_le(&mut buffer.initial_bytes, 2, time);
                 write_f32_le(&mut buffer.initial_bytes, 3, delta);
                 write_f32_le(&mut buffer.initial_bytes, 10, smooth.energy);
+                if let Some(effects) = graph_layer.params["interactiveScene"]["effects"].as_array() {
+                    if let Some(effect) = effects.iter().find(|e| e["id"].as_str().is_some_and(|id| buffer.id.contains(&format!(":{id}:interactive:")))) {
+                        for (key, slot, min, max, fallback, scale) in [("energy",6,0.0,1.0,0.6,1.0),("gravity",7,-1.0,1.0,0.25,1.0),("hue",12,0.0,360.0,185.0,1.0/360.0),("trails",13,0.0,1.0,0.7,1.0),("opacity",18,0.0,1.0,1.0,1.0)] {
+                            let base = effect["params"][key].as_f64().map(|v|v as f32).unwrap_or(fallback);
+                            let m = &effect["mods"][key]; let source=m["source"].as_str().unwrap_or("manual");
+                            let speed=m["speed"].as_f64().unwrap_or(0.15) as f32;
+                            let phase=time*speed*if m["bpmSync"]==true { self.audio1[3].max(1.0)/60.0 } else {1.0};
+                            let mut signal=match source {"sub"|"bass"|"kick"|"snare"=>smooth.bass,"lowMid"=>(smooth.bass+smooth.mid)*0.5,"mid"=>smooth.mid,"highMid"=>(smooth.mid+smooth.treble)*0.5,"treble"|"air"|"presence"|"high"=>smooth.treble,"amplitude"=>smooth.energy,"beatPhase"=>self.audio1[2],"lfo-sine"=>0.5+0.5*(phase*std::f32::consts::TAU).sin(),"lfo-tri"=>1.0-(phase.rem_euclid(1.0)*2.0-1.0).abs(),"lfo-saw"=>phase.rem_euclid(1.0),"lfo-square"=>if phase.rem_euclid(1.0)<0.5 {1.0}else{0.0},_=>0.5};
+                            let value=if source=="manual" {base} else if let (Some(lo),Some(hi))=(m["rangeMin"].as_f64(),m["rangeMax"].as_f64()) {if m["invert"]==true {signal=1.0-signal;}min+(lo as f32+(hi-lo) as f32*signal)*(max-min)} else {if !source.starts_with("lfo-")&&source!="beatPhase" {signal=0.5+signal*0.5;}if m["invert"]==true {signal=1.0-signal;}base+(signal-0.5)*m["amount"].as_f64().unwrap_or(0.5) as f32*(max-min)};
+                            write_f32_le(&mut buffer.initial_bytes,slot,value.clamp(min,max)*scale);
+                        }
+                    }
+                }
+                }
                 continue;
             }
             if matches!(

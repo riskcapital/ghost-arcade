@@ -528,6 +528,12 @@ function createKeyframeTimelineStore() {
       update(s => ({ ...s, timelines }));
     },
 
+    exportSettings(){const {duration,isLooping}=get({subscribe}).config;return {duration,isLooping};},
+    restoreSettings(raw:unknown){
+      const value=raw as {duration?:number;isLooping?:boolean}|undefined;
+      if(!value)return;
+      update(s=>({...s,config:{...s.config,duration:Number.isFinite(value.duration)?Math.max(1,Math.min(86400,value.duration!)):s.config.duration,isLooping:typeof value.isLooping==='boolean'?value.isLooping:s.config.isLooping}}));
+    },
     // ── Utilities ──
     hasKeyframes(layerId: string): boolean {
       const state = get({ subscribe });

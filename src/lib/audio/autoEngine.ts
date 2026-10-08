@@ -33,6 +33,7 @@
  */
 
 import { get } from 'svelte/store';
+import {advanceInteractiveAuto} from '../mobile/studio/interactiveEffects';
 import { resolveAutoValue as resolveValue, advanceAutoPhase, autoClipPosition } from './autoWave';
 import { launchClockPosition } from '../stores/launchClock';
 import { project } from '../stores/layers';
@@ -82,6 +83,11 @@ function tick(now: number) {
     if (!layer) continue;
     const clipPosition = autoClipPosition(layer.source, now);
 
+    const interactive=layer.source?.effectSource?.interactiveScene;
+    if(interactive&&!layer.source?.effectSource?.interactivePaused){
+      const next=advanceInteractiveAuto(interactive,dt,beat,crossfader);
+      if(next!==interactive)project.update(p=>({...p,layers:p.layers.map(l=>l.id===layer.id&&l.source?{...l,source:{...l.source,effectSource:{...l.source.effectSource!,interactiveScene:next}}}:l)}));
+    }
     // Effects — paramAuto sidecar on each Effect
     if (layer.effects) {
       for (const fx of layer.effects) {
@@ -244,6 +250,11 @@ function tick(now: number) {
       // (1) Shader params on the active clip
       const clip = layerState.activeClip;
       const clipPosition = autoClipPosition(clip, now);
+      const interactive=clip?.effectSource?.interactiveScene;
+      if(interactive&&!clip.effectSource.interactivePaused&&layerState.activeColumn!==null){
+        const next=advanceInteractiveAuto(interactive,dt,beat,crossfader);
+        if(next!==interactive)vjClipLauncher.updateClipEffectSource(i,layerState.activeColumn,{...clip.effectSource,interactiveScene:next},bank);
+      }
       if (clip?.shaderValueAuto) {
         const writes: Record<string, number> = {};
         let any = false;

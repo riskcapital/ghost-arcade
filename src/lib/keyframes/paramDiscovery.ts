@@ -1,3 +1,4 @@
+import {effectParams} from '../mobile/studio/interactiveEffects';
 import { EDGE_STROKE_SHAPE_PARAMS, EDGE_TRIM_PARAMS, edgeTypeDef } from '../drawing/edgeEffectCatalog';
 import type { Layer } from '../types';
 import { effectParamLabels } from '../effects/effectUX';
@@ -23,6 +24,11 @@ export interface KeyframeableParam {
 export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
   const params: KeyframeableParam[] = [];
 
+  for(const effect of layer.source?.effectSource?.interactiveScene?.effects??[]){
+    const group=`Interactive · ${effect.name}`;
+    params.push({key:`interactive:${effect.id}:enabled`,label:'Enabled',type:'boolean',defaultValue:effect.enabled,group});
+    for(const d of effectParams(effect.kind))params.push({key:`interactive:${effect.id}:${d.key}`,label:d.label,type:'number',min:d.min,max:d.max,step:d.step,defaultValue:effect.params[d.key]??d.value,group});
+  }
   // ── Shader parameters ──
   if (layer.source?.shaderInputs) {
     for (const input of layer.source.shaderInputs) {

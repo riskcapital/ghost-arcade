@@ -51,13 +51,14 @@
   import { onMount, onDestroy } from 'svelte';
   import { scale } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
-  import { defaultModRange, hasModRange, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { defaultModRange, hasModRange, type ModSource, type ParamModulation } from '../audio/modulationControls';
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { audioStore } from '../stores/audio';
   import type { AutoConfig, KeyframeEasing } from '../types';
   import { KEYFRAME_EASINGS } from '../keyframes/easing';
 
   export let label: string;
+  export let onInteractionStart:()=>void=()=>{};
   /** Anchor element (the mod chip button) the tray positions against. */
   export let anchor: HTMLElement;
   /** Current source ('manual' when nothing is assigned). */
@@ -70,6 +71,7 @@
   export let supportsAuto = true;
   export let supportsModulation = true;
   export let supportsClipPosition = true;
+  export let supportsCrossfader = true;
   export let autoHint = 'Drag the cyan handles on the param slider to clip the sweep range.';
   export let onClose: () => void;
   export let onSetSource: (s: ModSource) => void;
@@ -228,27 +230,71 @@
   let top = 0;
   let left = 0;
   const WIDTH = 252;
+  let width = WIDTH;
+  let maxHeight = 600;
+  let compact = false;
+  let restoreFocus = true;
+  let layoutFrame: number | null = null;
+  let trayResize: ResizeObserver | undefined;
 
   let flipped = false;
 
   function position() {
     if (!anchor) return;
+    const viewport = window.visualViewport;
+    const viewportWidth = viewport?.width ?? window.innerWidth;
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const x = viewport?.offsetLeft ?? 0;
+    const y = viewport?.offsetTop ?? 0;
+    compact = window.matchMedia('(pointer: coarse)').matches || viewportWidth < 600;
+    width = Math.min(compact ? 420 : WIDTH, Math.max(1, viewportWidth - 16));
+    maxHeight = Math.max(1, viewportHeight - 16);
     const r = anchor.getBoundingClientRect();
-    const h = trayEl?.offsetHeight ?? 320;
-    left = Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8));
+    const h = Math.min(trayEl?.offsetHeight ?? 320, maxHeight);
+    if (compact) {
+      left = x + (viewportWidth - width) / 2;
+      top = y + viewportHeight - h - 8;
+      flipped = false;
+      return;
+    }
+    left = Math.max(x + 8, Math.min(r.right - width, x + viewportWidth - width - 8));
     // Below the chip by default; flip above when there's no room.
-    flipped = r.bottom + 6 + h > window.innerHeight - 8;
-    top = flipped ? Math.max(8, r.top - h - 6) : r.bottom + 6;
+    flipped = r.bottom + 6 + h > y + viewportHeight - 8;
+    top = Math.max(y + 8, Math.min(flipped ? r.top - h - 6 : r.bottom + 6, y + viewportHeight - h - 8));
+  }
+
+  function close() {
+    restoreFocus = true;
+    onClose();
+  }
+
+  function naturalValue(fraction: number): number {
+    return Number(((paramMin ?? 0) + fraction * ((paramMax ?? 1) - (paramMin ?? 0))).toFixed(6));
+  }
+
+  function setNaturalRange(value: string, minimum: boolean) {
+    if (!value.trim() || !rangeSupported) return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const fraction = (n - paramMin!) / (paramMax! - paramMin!);
+    if (minimum) setRangeMin(fraction);
+    else setRangeMax(fraction);
   }
 
   function onWindowPointerDown(e: PointerEvent) {
     const t = e.target as Node;
     if (trayEl?.contains(t)) return;
     if (anchor?.contains(t)) return;
+    // A click outside may focus another control. Do not steal that focus.
+    restoreFocus = false;
     onClose();
   }
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') onClose();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      close();
+    }
   }
   function onReflow() {
     position();
@@ -257,19 +303,33 @@
   onMount(() => {
     position();
     // Re-measure after first paint (height depends on category section).
-    requestAnimationFrame(position);
+    layoutFrame = requestAnimationFrame(() => {
+      position();
+      trayEl?.querySelector<HTMLButtonElement>('.mt-cats button.active')?.focus({ preventScroll: true });
+    });
     tickPreview();
     window.addEventListener('pointerdown', onWindowPointerDown, true);
     window.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', onReflow);
     window.addEventListener('scroll', onReflow, true);
+    window.visualViewport?.addEventListener('resize', onReflow);
+    window.visualViewport?.addEventListener('scroll', onReflow);
+    if (trayEl && typeof ResizeObserver !== 'undefined') {
+      trayResize = new ResizeObserver(position);
+      trayResize.observe(trayEl);
+    }
   });
   onDestroy(() => {
     if (rafId !== null) cancelAnimationFrame(rafId);
+    if (layoutFrame !== null) cancelAnimationFrame(layoutFrame);
+    trayResize?.disconnect();
     window.removeEventListener('pointerdown', onWindowPointerDown, true);
     window.removeEventListener('keydown', onKeydown, true);
     window.removeEventListener('resize', onReflow);
     window.removeEventListener('scroll', onReflow, true);
+    window.visualViewport?.removeEventListener('resize', onReflow);
+    window.visualViewport?.removeEventListener('scroll', onReflow);
+    if (restoreFocus && anchor?.isConnected && (trayEl?.contains(document.activeElement) || document.activeElement === document.body)) anchor.focus({ preventScroll: true });
   });
 
   // Reposition when the content section changes height.
@@ -277,9 +337,12 @@
 </script>
 
 <div data-help-page="effects"
+  onpointerdown={onInteractionStart}
+  onkeydown={e=>{if(!e.repeat&&["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","Enter"," "].includes(e.key))onInteractionStart();}}
   class="mt"
+  class:compact
   bind:this={trayEl}
-  style="top:{top}px; left:{left}px; width:{WIDTH}px; transform-origin: {flipped ? 'bottom' : 'top'} right"
+  style="top:{top}px; left:{left}px; width:{width}px; max-height:{maxHeight}px; transform-origin: {flipped ? 'bottom' : 'top'} right"
   role="dialog"
   aria-label="Modulation settings for {label}"
   in:scale={{ duration: 160, start: 0.94, opacity: 0, easing: quintOut }}
@@ -287,19 +350,19 @@
 >
   <div class="mt-head">
     <span class="mt-title" title={label}>{label}</span>
-    <button class="mt-close" onclick={onClose} title="Close" aria-label="Close">✕</button>
+    <button class="mt-close" onclick={close} title="Close" aria-label={`Close modulation settings for ${label}`}>✕</button>
   </div>
 
   <!-- Category row -->
   <div class="mt-cats">
-    <button class:active={category === 'manual'} onclick={() => pickCategory('manual')}>Manual</button>
+    <button class:active={category === 'manual'} aria-pressed={category === 'manual'} onclick={() => pickCategory('manual')}>Manual</button>
     {#if supportsModulation}
-    <button class:active={category === 'audio'} class="cat-audio" onclick={() => pickCategory('audio')}>Audio</button>
-    <button class:active={category === 'lfo'} class="cat-lfo" onclick={() => pickCategory('lfo')}>LFO</button>
-    <button class:active={category === 'sync'} class="cat-sync" onclick={() => pickCategory('sync')}>Beat</button>
+    <button class:active={category === 'audio'} aria-pressed={category === 'audio'} class="cat-audio" onclick={() => pickCategory('audio')}>Audio</button>
+    <button class:active={category === 'lfo'} aria-pressed={category === 'lfo'} class="cat-lfo" onclick={() => pickCategory('lfo')}>LFO</button>
+    <button class:active={category === 'sync'} aria-pressed={category === 'sync'} class="cat-sync" onclick={() => pickCategory('sync')}>Beat</button>
     {/if}
     {#if supportsAuto}
-      <button class:active={category === 'auto'} class="cat-auto" onclick={() => pickCategory('auto')}>Auto</button>
+      <button class:active={category === 'auto'} aria-pressed={category === 'auto'} class="cat-auto" onclick={() => pickCategory('auto')}>Auto</button>
     {/if}
   </div>
 
@@ -311,13 +374,13 @@
     <div class="mt-section-label">Band</div>
     <div class="mt-grid">
       {#each AUDIO_SOURCES as s (s.v)}
-        <button class="mt-cell" class:active={source === s.v} onclick={() => onSetSource(s.v)}>{s.l}</button>
+        <button class="mt-cell" class:active={source === s.v} aria-pressed={source === s.v} onclick={() => onSetSource(s.v)}>{s.l}</button>
       {/each}
     </div>
     <div class="mt-section-label">Onsets — fire on the hit, decay smooth</div>
     <div class="mt-grid mt-grid-2">
       {#each ONSET_SOURCES as s (s.v)}
-        <button class="mt-cell" class:active={source === s.v} onclick={() => onSetSource(s.v)}>{s.l}</button>
+        <button class="mt-cell" class:active={source === s.v} aria-pressed={source === s.v} onclick={() => onSetSource(s.v)}>{s.l}</button>
       {/each}
     </div>
   {/if}
@@ -326,7 +389,7 @@
     <div class="mt-section-label">Shape</div>
     <div class="mt-grid mt-grid-4">
       {#each LFO_SOURCES as s (s.v)}
-        <button class="mt-cell" class:active={source === s.v} title={s.l} onclick={() => onSetSource(s.v)}>
+        <button class="mt-cell" class:active={source === s.v} aria-pressed={source === s.v} title={s.l} onclick={() => onSetSource(s.v)}>
           <span class="mt-glyph">{s.glyph}</span>{s.l}
         </button>
       {/each}
@@ -341,7 +404,7 @@
       <div class="mt-section-label">Rate</div>
       <div class="mt-grid mt-grid-rates">
         {#each SYNC_RATES as r (r.v)}
-          <button class="mt-cell" class:active={activeRate === r.v} onclick={() => onPatchMod({ speed: r.v })}>{r.l}</button>
+          <button class="mt-cell" class:active={activeRate === r.v} aria-pressed={activeRate === r.v} onclick={() => onPatchMod({ speed: r.v })}>{r.l}</button>
         {/each}
       </div>
       {#if bpm <= 0}
@@ -350,7 +413,7 @@
     {:else}
       <div class="mt-row">
         <span class="mt-row-label">Speed</span>
-        <input type="range" min="0.05" max="10" step="0.05" value={speed}
+        <input aria-label={`${label} LFO speed in hertz`} type="range" min="0.05" max="10" step="0.05" value={speed}
           oninput={(e) => onPatchMod({ speed: parseFloat((e.target as HTMLInputElement).value) })} />
         <span class="mt-row-val">{speed.toFixed(2)}Hz</span>
       </div>
@@ -380,11 +443,15 @@
           <span>Min <b>{unitLabel(rMin)}</b></span>
           <span>Max <b>{unitLabel(rMax)}</b></span>
         </div>
+        <div class="mt-touch-range">
+          <label>Minimum<input aria-label={`${label} modulation minimum value`} type="number" min={paramMin} max={naturalValue(rMax - RANGE_GAP)} step="any" value={naturalValue(rMin)} onchange={e => setNaturalRange(e.currentTarget.value, true)} /></label>
+          <label>Maximum<input aria-label={`${label} modulation maximum value`} type="number" min={naturalValue(rMin + RANGE_GAP)} max={paramMax} step="any" value={naturalValue(rMax)} onchange={e => setNaturalRange(e.currentTarget.value, false)} /></label>
+        </div>
       </div>
     {:else}
       <div class="mt-row">
         <span class="mt-row-label">Depth</span>
-        <input type="range" min="0" max="1" step="0.01" value={depth}
+        <input aria-label={`${label} modulation depth`} type="range" min="0" max="1" step="0.01" value={depth}
           oninput={(e) => onPatchMod({ amount: parseFloat((e.target as HTMLInputElement).value) })} />
         <span class="mt-row-val">{(depth * 100).toFixed(0)}%</span>
       </div>
@@ -414,11 +481,12 @@
       <div class="mt-row mt-auto-transport">
         <button class="mt-play" class:playing={auto.playing}
           onclick={() => onPatchAuto({ playing: !auto!.playing })}
+          aria-label={`${auto.playing ? 'Pause' : 'Resume'} ${label} Auto sweep`} aria-pressed={auto.playing}
           title={auto.playing ? 'Pause' : 'Play'}>{auto.playing ? '❚❚' : '▶'}</button>
         {#if auto.timing !== 'crossfader' && auto.timing !== 'clip'}
         <div class="mt-mode">
-          <button class:active={auto.mode === 'loop'} onclick={() => onPatchAuto({ mode: 'loop' })}>Loop</button>
-          <button class:active={auto.mode === 'pingpong'} onclick={() => onPatchAuto({ mode: 'pingpong' })}>Ping-pong</button>
+          <button class:active={auto.mode === 'loop'} aria-pressed={auto.mode === 'loop'} onclick={() => onPatchAuto({ mode: 'loop' })}>Loop</button>
+          <button class:active={auto.mode === 'pingpong'} aria-pressed={auto.mode === 'pingpong'} onclick={() => onPatchAuto({ mode: 'pingpong' })}>Ping-pong</button>
         </div>
         {/if}
       </div>
@@ -426,7 +494,7 @@
         <span class="mt-row-label">Driver</span>
         <select class="mt-curve" aria-label="Auto movement driver" value={auto.timing ?? 'free'}
           onchange={(event) => onPatchAuto({ timing: event.currentTarget.value as AutoConfig['timing'] })}>
-          <option value="free">Free</option><option value="beat">Beat sync</option><option value="crossfader">Crossfader A/B</option>{#if supportsClipPosition || auto.timing === 'clip'}<option value="clip" disabled={!supportsClipPosition}>Clip position{supportsClipPosition ? '' : ' (unavailable)'}</option>{/if}
+          <option value="free">Free</option><option value="beat">Beat sync</option>{#if supportsCrossfader}<option value="crossfader">Crossfader A/B</option>{/if}{#if supportsClipPosition || auto.timing === 'clip'}<option value="clip" disabled={!supportsClipPosition}>Clip position{supportsClipPosition ? '' : ' (unavailable)'}</option>{/if}
         </select>
       </label>
       {#if auto.timing === 'beat'}
@@ -447,7 +515,7 @@
       {:else}
       <div class="mt-row">
         <span class="mt-row-label">Speed</span>
-        <input type="range" min="0.01" max="1" step="0.005" value={auto.speedHz}
+        <input aria-label={`${label} Auto speed in hertz`} type="range" min="0.01" max="1" step="0.005" value={auto.speedHz}
           oninput={(e) => onPatchAuto({ speedHz: parseFloat((e.target as HTMLInputElement).value) })} />
         <span class="mt-row-val">{auto.speedHz.toFixed(2)}Hz</span>
       </div>
@@ -470,6 +538,9 @@
   .mt-curve { flex: 1; min-width: 0; padding: 5px 7px; border: 1px solid #343d50; border-radius: 5px; background: #121925; color: #dde6fa; font: inherit; }
   .mt-curve:focus-visible { outline: 2px solid #7397ed; outline-offset: 2px; }
   .mt {
+    box-sizing: border-box;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     position: fixed;
     z-index: 4000;
     background: var(--bg-tertiary, #17171b);
@@ -718,4 +789,18 @@
   .mt-mode button.active { background: rgba(92, 225, 230, 0.18); color: #5ce1e6; }
   .mt-auto .mt-row input[type='range'] { accent-color: #5ce1e6; }
   .mt-auto .mt-row-val { color: #5ce1e6; }
+  .mt button:focus-visible, .mt input:focus-visible { outline: 2px solid #8abaff; outline-offset: 2px; }
+  .mt-touch-range { display: none; }
+  .mt.compact { gap: 12px; padding: 14px; font-size: 13px; border-radius: 12px; }
+  .mt.compact button, .mt.compact select, .mt.compact input[type='number'] { min-height: 44px; }
+  .mt.compact .mt-close, .mt.compact .mt-play { width: 44px; height: 44px; min-width: 44px; }
+  .mt.compact .mt-cats button, .mt.compact .mt-cell, .mt.compact .mt-mode button { font-size: 12px; }
+  .mt.compact .mt-row input[type='range'] { height: 48px; touch-action: none; }
+  .mt.compact .mt-check { min-height: 44px; font-size: 13px; }
+  .mt.compact .mt-check input { width: 24px; height: 24px; }
+  .mt.compact .mt-range-track, .mt.compact .mt-range-vals { display: none; }
+  .mt.compact .mt-touch-range { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .mt-touch-range label { min-width: 0; display: grid; gap: 6px; font-size: 12px; }
+  .mt-touch-range input { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border: 1px solid #56657e; border-radius: 5px; background: #121925; color: #dde6fa; font: inherit; }
+  .mt.compact .mt-section-label, .mt.compact .mt-hint, .mt.compact .mt-row-label { color: var(--text-secondary, #b8bbc5); }
 </style>

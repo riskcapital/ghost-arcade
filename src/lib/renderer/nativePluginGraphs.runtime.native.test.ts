@@ -1,3 +1,5 @@
+import {makeEffect} from '../mobile/studio/interactiveEffects';
+import {defaultInteractive,defaultMatter,validateScene} from '../mobile/studio/interactive';
 // Runtime gate for the native plugin graphs: compiles every plugin shader
 // through the real render core (naga validation, not string checks) and runs
 // the GhostFX Liquid scene end-to-end for several simulated frames, asserting
@@ -6,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { existsSync } from 'node:fs';
+import { existsSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   buildNativePluginGraph,
@@ -30,7 +32,7 @@ function createRpc(): Rpc {
   const child: ChildProcessWithoutNullStreams = spawn(nativeCoreBin, [], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  child.stderr.resume(); // drain, never block the core on stderr
+  if(process.env.GA_SHADER_DEBUG)child.stderr.on('data',d=>process.stderr.write(d));else child.stderr.resume(); // drain, never block the core on stderr
   const rl = createInterface({ input: child.stdout });
   const pending = new Map<number, { res: (v: any) => void; rej: (e: Error) => void }>();
   let nextId = 1;
@@ -96,7 +98,7 @@ describe('native plugin graphs (runtime, real core)', () => {
   });
 
   itIfNativeCore('compiles every plugin shader through the core with zero failures', async () => {
-    await rpc!.send('submit_commands', { commands: buildNativePluginPrecompileCommands() });
+    if(process.env.GA_SHADER_DEBUG){for(const cmd of buildNativePluginPrecompileCommands()){await rpc!.send('submit_commands',{commands:[cmd]});await new Promise(r=>setTimeout(r,35));const st=await rpc!.send('status');if(st.last_shader_error)console.error(cmd.shader_id,st.last_shader_error);}}else await rpc!.send('submit_commands', { commands: buildNativePluginPrecompileCommands() });
     // Precompiles drain through the per-frame queue; poll until settled.
     const expected = buildNativePluginPrecompileCommands().length;
     let status: any = null;
@@ -338,6 +340,182 @@ describe('native plugin graphs (runtime, real core)', () => {
     expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(320 * 180 * 0.01);
     expect(Number(snapshot.max_luma ?? 0)).toBeGreaterThan(0.05);
   }, 30000);
+
+  itIfNativeCore('runs every Interactive Studio movement on persistent native GPU buffers', async()=>{
+    const images:string[]=[];
+    for(const preset of ['architecture','garden','walls','ribbons','orbit','electric','light','balls','smoke','cloud','liquid','fire'] as const){
+      const scene={...defaultInteractive(),preset,seed:['architecture','garden','walls','ribbons','orbit','electric','light','balls','smoke','cloud','liquid','fire'].indexOf(preset)+10};const sourceId='interactive-native-test',layerId='interactive-native-test';
+      const params={interactiveScene:scene,interactiveInputs:[{id:'finger',point:{x:.7,y:.5},strength:1,mode:'vortex'}]};
+      const graph=buildNativePluginGraph({kind:'performer-world',sourceId,params,width:320,height:180,time:1,frameDelta:1/60,frameIndex:1,reset:true,audio:{active:true,bass:.5,mid:.3,treble:.2,energy:.5,beatPhase:0,beatPulse:0,amplitude:.5}});
+      await rpc!.send('submit_commands',{commands:[
+        {type:'upsert_layer',layer_id:layerId,z_index:999,opacity:1,blend_mode:'normal',corners:{topLeft:{x:0,y:0},topRight:{x:1,y:0},bottomRight:{x:1,y:1},bottomLeft:{x:0,y:1}}},
+        {type:'set_native_graph_layer',layer_id:layerId,kind:'performer-world',instrument_source_id:sourceId,composite_source_id:sourceId,input_source_id:null,effect_graph:graph.config,params},
+        {type:'bind_media_source',layer_id:layerId,source_id:sourceId,uri:'plugin://performer-world',source_type:'video'}]});
+      await new Promise(r=>setTimeout(r,900));
+      const frame=await rpc!.send('frame_snapshot',{include_pixels:true});
+      const status=await rpc!.send('status');if(process.env.GA_SHADER_DEBUG){console.log(preset,status.last_frame_error,status.last_shader_error);writeFileSync('/tmp/matter-'+preset+'.json',JSON.stringify({...frame,debugStatus:status}));}expect(status.shader_precompile_failed,String(status.last_shader_error)).toBe(0);
+      expect(frame.nonzero_pixels,preset).toBeGreaterThan(320*180*.01);expect(frame.max_luma,preset).toBeGreaterThan(.08);images.push(frame.rgba_b64);
+    }
+    expect(new Set(images).size).toBe(12);
+    await rpc!.send('submit_commands',{commands:[{type:'remove_layer',layer_id:'interactive-native-test'}]});
+  },30000);
+
+  itIfNativeCore.each(['balls', 'liquid'] as const)('keeps %s emitting across lifetimes and expires stopped or shortened emissions', async (kind) => {
+    const effect = makeEffect(kind);
+    Object.assign(effect.params, { lifetime: 1, flow: 1, x: .25, y: .12, radius: .01 });
+    const scene = { ...defaultInteractive(), seed: 4567, surfaces: [], effects: [effect] };
+    const sourceId = `interactive-lifecycle-${kind}`;
+    let frame = 0;
+    let paused = false;
+    async function advance(seconds: number) {
+      // Run the real GPU passes at a fixed 20 Hz, batching ten steps per RPC.
+      // No native graph layer is installed, so the core cannot replay extra steps.
+      let remaining = Math.round(seconds / .05);
+      let result: any;
+      let particleId = '', massId = '', emissionId = '';
+      while (remaining > 0) {
+        const count = Math.min(remaining, 10);
+        const graph = buildNativePluginGraph({ kind: 'performer-world', sourceId,
+          params: { interactiveScene: scene, interactivePaused: paused }, width: 320, height: 180,
+          time: frame * .05, frameDelta: .05, frameIndex: frame, reset: frame === 0,
+          audio: { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 } });
+        const buffers = graph.config.buffers as any[];
+        particleId = buffers.find(b => b.id.endsWith(':particles')).id;
+        massId = buffers.find(b => b.id.endsWith(':mass')).id;
+        emissionId = buffers.find(b => b.id.endsWith(':emission')).id;
+        result = await rpc!.send('compute_graph', { ...graph.config,
+          passes: Array.from({ length: count }, (_, i) => (graph.config.passes as any[]).map(p => ({ ...p, name: `${p.name}-${i}` }))).flat(),
+          readbacks: remaining === count ? [particleId, massId, emissionId].map(id => ({ id, include_bytes: true })) : [],
+        });
+        frame += count; remaining -= count;
+      }
+      const bytes = Buffer.from(result.readbacks[particleId].bytes_b64, 'base64');
+      const particles = Array.from({ length: kind === 'balls' ? 96 : 4096 }, (_, i) => ({
+        x: bytes.readFloatLE(i * 32), y: bytes.readFloatLE(i * 32 + 4), age: bytes.readFloatLE(i * 32 + 16),
+      })).filter(p => p.age > 0);
+      return { bytes, particles, mass: Buffer.from(result.readbacks[massId].bytes_b64, 'base64'),
+        emission: Buffer.from(result.readbacks[emissionId].bytes_b64, 'base64') };
+    }
+    let sample = await advance(4);
+    expect(sample.particles.length).toBeGreaterThan(kind === 'balls' ? 5 : 500);
+    expect(sample.particles.every(p => p.age < 1)).toBe(true);
+    expect(sample.particles.some(p => p.age < .2 && p.y < .2)).toBe(true);
+    effect.params.x = .75;
+    sample = await advance(.5);
+    expect(sample.particles.some(p => p.age < .2 && p.x > .7)).toBe(true);
+    paused = true;
+    const frozen = await advance(.5);
+    expect(frozen.bytes.equals(sample.bytes)).toBe(true);
+    expect(frozen.emission.equals(sample.emission)).toBe(true);
+    paused = false;
+    effect.params.lifetime = 6;
+    sample = await advance(3);
+    expect(sample.particles.some(p => p.age > 2)).toBe(true);
+    effect.params.lifetime = 1;
+    sample = await advance(.05);
+    expect(sample.particles.every(p => p.age < 1)).toBe(true);
+    effect.params.flow = 0;
+    sample = await advance(2);
+    expect(sample.particles).toHaveLength(0);
+    expect(sample.mass.every(v => v === 0)).toBe(true);
+    sample = await advance(2); // Expired particles must never resurrect in place.
+    expect(sample.particles).toHaveLength(0);
+    effect.params.flow = 1;
+    effect.emission = 'burst';
+    sample = await advance(1);
+    expect(sample.particles).toHaveLength(0);
+    effect.burst++;
+    sample = await advance(.25);
+    expect(sample.particles.length).toBeGreaterThan(0);
+    sample = await advance(2);
+    expect(sample.particles).toHaveLength(0);
+    expect(sample.mass.every(v => v === 0)).toBe(true);
+    effect.emission = 'pulse';
+    effect.params.period = 2; effect.params.duration = .4;
+    sample = await advance(4);
+    // A pulse train must resume after previous particles have expired.
+    const counts: number[] = [];
+    for (let i = 0; i < 8; i++) counts.push((await advance(.5)).particles.length);
+    expect(Math.max(...counts)).toBeGreaterThan(0);
+    expect(Math.min(...counts)).toBe(0);
+  }, 30000);
+
+  itIfNativeCore('reconstructs a continuous liquid stream and renders the native surface', async () => {
+    const effect = makeEffect('liquid');
+    const scene = { ...defaultInteractive(), seed: 8893, surfaces: [], effects: [effect] };
+    const sourceId = 'interactive-liquid-surface';
+    await rpc!.send('submit_commands', { commands: [
+      { type: 'upsert_layer', layer_id: sourceId, z_index: 99999, opacity: 1, blend_mode: 'normal', corners: { topLeft: { x: 0, y: 0 }, topRight: { x: 1, y: 0 }, bottomRight: { x: 1, y: 1 }, bottomLeft: { x: 0, y: 1 } } },
+      { type: 'bind_media_source', layer_id: sourceId, source_id: sourceId, uri: 'plugin://performer-world', source_type: 'video' },
+    ] });
+    let result: any, massId = '';
+    for (let batch = 0; batch < 36; batch++) {
+      const graph = buildNativePluginGraph({ kind: 'performer-world', sourceId, params: { interactiveScene: scene },
+        width: 960, height: 540, time: batch / 6, frameDelta: 1 / 60, frameIndex: batch, reset: batch === 0,
+        audio: { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 } });
+      massId = (graph.config.buffers as any[]).find(b => b.id.endsWith(':mass')).id;
+      result = await rpc!.send('compute_graph', { ...graph.config,
+        passes: Array.from({ length: 10 }, (_, i) => (graph.config.passes as any[]).map(p => ({ ...p, name: `${p.name}-${i}` }))).flat(),
+        readbacks: batch === 35 ? [{ id: massId, include_bytes: true }] : [],
+      });
+    }
+    const density = Buffer.from(result.readbacks[massId].bytes_b64, 'base64');
+    // Every row below the nozzle contains reconstructed water, not a sequence of isolated dots.
+    let wetRows = 0;
+    for (let y = 24; y < 100; y++) {
+      let peak = 0;
+      for (let x = 110; x < 146; x++) peak = Math.max(peak, density.readUInt32LE((y * 256 + x) * 4) / 4096);
+      if (peak > .14) wetRows++;
+    }
+    expect(wetRows).toBeGreaterThan(65);
+    const params = { interactiveScene: scene, interactivePaused: true };
+    const frozen = buildNativePluginGraph({ kind: 'performer-world', sourceId, params,
+      width: 960, height: 540, time: 6, frameDelta: 1 / 60, frameIndex: 37, reset: false,
+      audio: { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 } });
+    await rpc!.send('submit_commands', { commands: [{ type: 'set_native_graph_layer', layer_id: sourceId,
+      kind: 'performer-world', instrument_source_id: sourceId, composite_source_id: sourceId,
+      input_source_id: null, effect_graph: frozen.config, params }] });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const shot = await rpc!.send('frame_snapshot', { layer_id: sourceId, max_dim: 960, include_pixels: true });
+    expect(shot.nonzero_pixels).toBeGreaterThan(1000);
+    if (process.env.GA_SHADER_DEBUG) writeFileSync('/tmp/interactive-liquid-stream.json', JSON.stringify(shot));
+    await rpc!.send('submit_commands', { commands: [{ type: 'remove_layer', layer_id: sourceId }] });
+  }, 20000);
+
+  itIfNativeCore('combines an effect stack and keeps manual bursts and GPU modulation live', async()=>{
+    const layerId='interactive-stack-runtime',sourceId=layerId;
+    const fire=makeEffect('fire');fire.emission='burst';fire.params.y=.65;fire.params.duration=2;fire.params.hue=15;
+    const light=makeEffect('light');light.params.lightPower=0;light.params.haze=.5;light.params.ambient=0;
+    const scene={...defaultInteractive(),surfaces:[],seed:812,effects:[fire,light]};
+    async function publish(reset=false){const params={interactiveScene:scene};const graph=buildNativePluginGraph({kind:'performer-world',sourceId,params,width:320,height:180,time:1,frameDelta:1/60,frameIndex:1,reset,audio:{active:false,bass:0,mid:0,treble:0,energy:0,beatPhase:0,beatPulse:0,amplitude:0}});await rpc!.send('submit_commands',{commands:[{type:'upsert_layer',layer_id:layerId,z_index:99999,opacity:1,blend_mode:'normal',corners:{topLeft:{x:0,y:0},topRight:{x:1,y:0},bottomRight:{x:1,y:1},bottomLeft:{x:0,y:1}}},{type:'set_native_graph_layer',layer_id:layerId,kind:'performer-world',instrument_source_id:sourceId,composite_source_id:sourceId,input_source_id:null,effect_graph:graph.config,params},{type:'bind_media_source',layer_id:layerId,source_id:sourceId,uri:'plugin://performer-world',source_type:'video'}]});}
+    await publish(true);await new Promise(r=>setTimeout(r,500));const idle=await rpc!.send('frame_snapshot',{include_pixels:true});
+    fire.burst++;await publish();await new Promise(r=>setTimeout(r,1100));const burst=await rpc!.send('frame_snapshot',{include_pixels:true});expect(burst.average_luma).toBeGreaterThan(idle.average_luma+.001);
+    light.params.lightPower=2;light.params.hue=210;fire.emission='continuous';const liquid=makeEffect('liquid');liquid.params.x=.72;liquid.params.y=.15;scene.effects.push(liquid);await publish();await new Promise(r=>setTimeout(r,2200));const mixed=await rpc!.send('frame_snapshot',{include_pixels:true});expect(mixed.nonzero_pixels).toBeGreaterThan(2000);expect(mixed.rgba_b64).not.toBe(burst.rgba_b64);
+    const editor=await rpc!.send('frame_snapshot',{layer_id:layerId,max_dim:320,include_pixels:true});expect(editor.rgba_b64).toBeTruthy();expect(editor.width).toBeGreaterThan(0);expect(editor.nonzero_pixels).toBeGreaterThan(2000);
+    light.mods.lightPower={source:'lfo-sine',speed:.5,amount:1,invert:false,rangeMin:0,rangeMax:1};await publish();await new Promise(r=>setTimeout(r,300));const mod1=await rpc!.send('frame_snapshot',{include_pixels:true});await new Promise(r=>setTimeout(r,850));const mod2=await rpc!.send('frame_snapshot',{include_pixels:true});expect(mod1.rgba_b64).not.toBe(mod2.rgba_b64);
+    const status=await rpc!.send('status');expect(status.last_frame_error).toBeNull();expect(status.last_shader_error).toBeNull();if(process.env.GA_SHADER_DEBUG)writeFileSync('/tmp/interactive-stack-mixed.json',JSON.stringify(mixed));await rpc!.send('submit_commands',{commands:[{type:'remove_layer',layer_id:layerId}]});
+  },30000);
+
+  itIfNativeCore('lights extruded blockers and emits fire, smoke and liquid from an authored box', async()=>{
+    const sourceId='interactive-material-test',layerId=sourceId;
+    const initial=defaultInteractive();initial.surfaces=[{...initial.surfaces[0],points:[{x:.38,y:.4},{x:.62,y:.4},{x:.62,y:.65},{x:.38,y:.65}],height:.45}];
+    async function render(material:'none'|'fire'|'smoke'|'liquid',height:number,power:number){
+      const scene=validateScene({...initial,preset:material==='none'?'light':material,seed:123,surfaces:initial.surfaces.map(s=>({...s,material,height})),matter:{...defaultMatter(),lightX:.2,lightY:.12,lightPower:power,haze:.65}});
+      const params={interactiveScene:scene};const graph=buildNativePluginGraph({kind:'performer-world',sourceId,params,width:320,height:180,time:1,frameDelta:1/60,frameIndex:1,reset:true,audio:{active:false,bass:0,mid:0,treble:0,energy:0,beatPhase:0,beatPulse:0,amplitude:0}});
+      await rpc!.send('submit_commands',{commands:[{type:'upsert_layer',layer_id:layerId,z_index:9999,opacity:1,blend_mode:'normal',corners:{topLeft:{x:0,y:0},topRight:{x:1,y:0},bottomRight:{x:1,y:1},bottomLeft:{x:0,y:1}}},{type:'set_native_graph_layer',layer_id:layerId,kind:'performer-world',instrument_source_id:sourceId,composite_source_id:sourceId,input_source_id:null,effect_graph:graph.config,params},{type:'bind_media_source',layer_id:layerId,source_id:sourceId,uri:'plugin://performer-world',source_type:'video'}]});
+      await new Promise(r=>setTimeout(r,material==='none'?700:2400));const frame=await rpc!.send('frame_snapshot',{include_pixels:true});const status=await rpc!.send('status');expect(status.last_frame_error).toBeNull();expect(status.last_shader_error).toBeNull();if(process.env.GA_SHADER_DEBUG)writeFileSync('/tmp/matter-box-'+material+'-'+height+'-'+power+'.json',JSON.stringify(frame));return Buffer.from(frame.rgba_b64,'base64');
+    }
+    const unlit=await render('none',.45,0),lit=await render('none',.45,2.4),flat=await render('none',.02,2.4);
+    const mean=(b:Buffer)=>b.reduce((sum,v,i)=>sum+(i%4===3?0:v),0)/(320*180*3);
+    expect(mean(lit)-mean(unlit),'authored light power survives native replay').toBeGreaterThan(5);
+    let shadowPixels=0;for(let i=0;i<lit.length;i+=4)if(flat[i]+flat[i+1]+flat[i+2]>lit[i]+lit[i+1]+lit[i+2]+12)shadowPixels++;
+    expect(shadowPixels,'blocker extrusion removes light behind the box').toBeGreaterThan(150);
+    const flame=await render('fire',.45,1.4),smoke=await render('smoke',.45,1.4),liquid=await render('liquid',.45,1.4);
+    let hot=0;for(let i=0;i<flame.length;i+=4)if(Math.max(flame[i],flame[i+2])>150&&Math.abs(flame[i]-flame[i+2])>60)hot++;
+    expect(hot,'visible fire emission attached to the surface').toBeGreaterThan(80);
+    expect(flame.equals(smoke)).toBe(false);expect(smoke.equals(liquid)).toBe(false);
+    await rpc!.send('submit_commands',{commands:[{type:'remove_layer',layer_id:layerId}]});
+  },30000);
 
   itIfNativeCore('renders GhostFX Liquid visibly with specular highlights', async () => {
     const sourceId = 'plugin:layer:ghostfx';

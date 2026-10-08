@@ -129,7 +129,7 @@
     <circle cx="12" cy="11" r="0.75" fill="currentColor"/>
   </svg>
 
-{:else if resolvedId === 'performer'}
+{:else if resolvedId === 'performer' || effectType === 'performer-world'}
   <!-- Performer: keyboard-launched orbits around a nucleus. -->
   <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
     <circle cx="12" cy="12" r="1.6" fill="currentColor"/>

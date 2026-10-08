@@ -8,6 +8,8 @@
   import TimelineTrackList from './timeline/TimelineTrackList.svelte';
   import TimelineGrid from './timeline/TimelineGrid.svelte';
 
+  export let embedded=false;
+  export let targetId:string|null=null;
   $: isOpen = $keyframeTimeline.isOpen;
 
   // Hide the keyframe timeline entirely when the user is in VJ Mode.
@@ -17,7 +19,7 @@
   // macro, and snapshot UIs we layered in. Auto-close the tray if it
   // happens to be open when the user enters VJ mode so users don't get
   // stuck with a tray they can't toggle.
-  $: hiddenInVJ = $vjClipLauncher.isOpen;
+  $: hiddenInVJ = !embedded && $vjClipLauncher.isOpen;
   $: if (hiddenInVJ && isOpen) keyframeTimeline.setOpen(false);
 
   // Scroll sync between TrackList and TimelineGrid
@@ -75,7 +77,8 @@
   // In VJ mode, keyframes are keyed per-clip (not per-layer) so switching clips shows
   // each clip's own keyframes independently.
   $: {
-    if (vjMode && vjActiveClip) {
+    if(embedded&&targetId){if($keyframeTimeline.selectedLayerId!==targetId)keyframeTimeline.selectLayer(targetId);}
+    else if (vjMode && vjActiveClip) {
       const vjLayerId = `vj-${vjActiveClip.id}`;
       if ($keyframeTimeline.selectedLayerId !== vjLayerId) {
         keyframeTimeline.selectLayer(vjLayerId);
@@ -182,6 +185,7 @@
     if (!targetLayer) return param.defaultValue;
     const l = targetLayer;
     if (param.key === 'layer:opacity') return l.opacity;
+    if(param.key.startsWith('interactive:')){const [,id,key]=param.key.split(':');const e=l.source?.effectSource?.interactiveScene?.effects?.find(e=>e.id===id);return (key==='enabled'?e?.enabled:e?.params[key])??param.defaultValue;}
     if (param.key.startsWith('shader:')) {
       const v = l.source?.shaderValues?.[param.key.slice(7)] ?? param.defaultValue;
       // Vector-valued uniforms can't be keyframed as a scalar — fall back to default.
@@ -228,7 +232,7 @@
 
 <!-- Toggle button + tray are hidden in VJ mode (content-creation tool,
      not a live-performance one). See `hiddenInVJ` reactive above. -->
-{#if !hiddenInVJ}
+{#if !hiddenInVJ && !embedded}
   <button data-help-page="show-timeline"
     class="kf-toggle"
     class:active={isOpen}
@@ -249,7 +253,7 @@
 
 <!-- Slide-up panel -->
 {#if isOpen && !hiddenInVJ}
-  <div data-help-page="show-timeline" class="kf-tray">
+  <div data-help-page="show-timeline" class="kf-tray" class:embedded>
     <div class="kf-header-btns">
       <button class="kf-clear" onclick={() => { console.log('[KF Timeline] Clear All clicked'); showClearConfirm = true; }} title="Clear all keyframes">
         Clear All
@@ -386,6 +390,7 @@
     box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
   }
 
+  .kf-tray.embedded{position:relative;bottom:auto;left:auto;right:auto;flex:0 0 280px;height:280px;min-height:200px;z-index:2;}
   .kf-header-btns {
     position: absolute;
     top: 6px;

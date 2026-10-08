@@ -150,6 +150,10 @@ export interface IntegratedEffectSource {
   performerWorldPointerDown?: boolean;
   performerWorldParams?: number[];
   performerWorldPump?: number;
+  interactiveScene?: import('./mobile/studio/interactive').InteractiveScene;
+  interactiveInputs?: import('./mobile/studio/interactive').Interaction[];
+  interactivePaused?: boolean;
+  interactiveReset?: number;
   // Fluid simulation params
   fluidMode?: number;      // 0=SMOKE, 1=FIRE, 2=INK, 3=NEON, 4=THERMAL
   fluidViscosity?: number;
@@ -415,6 +419,7 @@ export interface JSAnimationSource {
 export type ContentFitMode = 'stretch' | 'fill' | 'crop';
 
 export type LayerType =
+  | 'interactive'
   | 'media'
   | 'mask'
   | 'lines'
@@ -4945,6 +4950,8 @@ export interface StagePreset {
   thumbnail?: string;
   createdAt: number;
   layers: Layer[];  // Deep clone of mapping layers with vjLayerIndex assignments
+  keyframeTimelines?: LayerKeyframeTimeline[];
+  keyframeSettings?: {duration:number;isLooping:boolean};
   scope?: 'project' | 'global';  // Two-tier: 'project' saved in .ghost-arcade, 'global' in localStorage
   /** Surface whose slices and Stage FX own this preset. Added in 1.9.98;
    *  older presets recover the relationship from slice-to-layer bindings. */
@@ -5028,6 +5035,7 @@ export interface Composition {
     wasPlaying: boolean;  // sub-store's isPlaying flag at save time
   };
   keyframes?: {
+    settings?: {duration:number;isLooping:boolean};
     snapshot: any;        // output of keyframeTimeline.exportAll()
     wasPlaying: boolean;  // config.isPlaying at save time
   };

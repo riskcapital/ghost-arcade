@@ -47,6 +47,9 @@ export function fitToolbar(header: HTMLElement) {
 
   const fit = () => {
     frame = null;
+    // Skin transitions must not animate widths while we measure candidate
+    // layouts, otherwise the observer can oscillate between compact levels.
+    header.classList.add('tb-measuring');
     while (level < LEVELS && overflowing()) apply(level + 1);
     while (level > 0) {
       const current = level;
@@ -56,6 +59,8 @@ export function fitToolbar(header: HTMLElement) {
         break;
       }
     }
+    void header.offsetWidth;
+    header.classList.remove('tb-measuring');
   };
 
   const schedule = () => {

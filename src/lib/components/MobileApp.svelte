@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
+  import PairedStudio from './studio/PairedStudio.svelte';
+  let showPairedStudio=false;
   import { createDefaultLayerShape } from '../types';
   import type { Project, Point2D, WarpCorners, BlendMode, Effect, EffectType, EffectParams, LayerShape, LayerShapeParams, LayerShapeType } from '../types';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
@@ -3172,6 +3174,7 @@
   ontouchend={handleTouchEnd}
 />
 
+{#if showPairedStudio && ws && connected}<PairedStudio socket={ws} onclose={()=>showPairedStudio=false}/>{/if}
 <div data-help-page="mobile-control" class="mobile-app">
   {#if !connected}
     <!-- Connection Screen -->
@@ -3264,6 +3267,7 @@
           class:active={mobileMode === 'vj'}
           onclick={() => mobileMode = 'vj'}
         >VJ</button>
+        <button class="mode-pill" disabled={!connected} onclick={()=>{stopPhoneVision();showPairedStudio=true;}}>Tools</button>
         {#if showVisionMode}
           <button
             class="mode-pill"

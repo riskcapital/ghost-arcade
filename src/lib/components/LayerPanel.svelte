@@ -1044,6 +1044,9 @@
               </svg>
               Media Layer
             </button>
+            <button onclick={()=>{const layerId=project.addLayer('Interactive Studio','interactive');showAddLayerMenu=false;if(layerId)window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId}}));}}>
+              <PluginIcon effectType="performer-world" size={14}/> Interactive
+            </button>
             <button
               title="Add custom shape media layer"
               onclick={() => { project.addLayer(undefined, 'media', 'custom'); showAddLayerMenu = false; }}
@@ -2011,7 +2014,7 @@
           {:else}
 
           <div class="layer-properties media-properties">
-        <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : 'Media'})</h4>
+        <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : layer.type === 'interactive' ? 'Interactive' : 'Media'})</h4>
         <!-- Source picks where a surface's picture comes from, so it only
              belongs on the layers that route someone else's feed. A media or
              custom-shape layer draws its own content -- video, shader,
@@ -2514,8 +2517,11 @@
           </div>
         {/if}
 
+        {#if layer.source?.effectSource?.interactiveScene}
+          <button class="btn-small" onclick={()=>window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId:layer.id}}))}>Edit Interactive Studio</button>
+        {/if}
         <!-- Content Fit Mode (for media/screen/shader layers) -->
-        {#if layer.type === 'media' || layer.type === 'screen'}
+        {#if layer.type === 'media' || layer.type === 'screen' || layer.type === 'interactive'}
           <div class="property-row">
             <label>Content Fit</label>
             <select
@@ -2530,7 +2536,7 @@
           </div>
         {/if}
 
-        {#if layer.type === 'media' || layer.type === 'screen'}
+        {#if layer.type === 'media' || layer.type === 'screen' || layer.type === 'interactive'}
           <div class="property-row source-crop-row">
             <label>Source Crop</label>
             <button

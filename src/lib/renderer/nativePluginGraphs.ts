@@ -1,3 +1,5 @@
+import {MATTER_EMISSION,MATTER_GEOMETRY,MATTER_FLUID,MATTER_PARTICLES,MATTER_MASS,MATTER_LIGHT,MATTER_RENDER} from './nativeInteractiveMatter';
+import {buildInteractiveGraph,INTERACTIVE_COMPUTE,INTERACTIVE_RENDER} from './nativeInteractiveGraph';
 import { VOYAGE_SCENES, VOYAGE_WGSL } from '$lib/effects/ghostfx/scenes/voyage.wgsl';
 import { worldPaletteIndex } from '../performer/worldPalettes';
 import type { RendererCommand } from '$lib/api/native-renderer';
@@ -580,6 +582,15 @@ export function buildNativePluginPrecompileCommands(): NativePluginPrecompileCom
     { type: 'precompile_shader', shader_id: 'ghostfx/post', stage: 'render', source: POST_WGSL, entry: 'fsComposite' },
     { type: 'precompile_shader', shader_id: 'handfx/compute', stage: 'compute', source: HAND_COMPUTE_WGSL, entry: 'cs_update' },
     { type: 'precompile_shader', shader_id: 'handfx/render', stage: 'render', source: HAND_RENDER_WGSL, entry: 'fs_particle' },
+    { type:'precompile_shader',shader_id:'interactive/emission',stage:'compute',source:MATTER_EMISSION,entry:'cs_emission' },
+    { type:'precompile_shader',shader_id:'interactive/geometry',stage:'compute',source:MATTER_GEOMETRY,entry:'cs_geometry' },
+    { type:'precompile_shader',shader_id:'interactive/fluid',stage:'compute',source:MATTER_FLUID,entry:'cs_advect' },
+    { type:'precompile_shader',shader_id:'interactive/matter-particles',stage:'compute',source:MATTER_PARTICLES,entry:'cs_step' },
+    { type:'precompile_shader',shader_id:'interactive/mass',stage:'compute',source:MATTER_MASS,entry:'cs_splat' },
+    { type:'precompile_shader',shader_id:'interactive/light',stage:'compute',source:MATTER_LIGHT,entry:'cs_light' },
+    { type:'precompile_shader',shader_id:'interactive/matter-render',stage:'render',source:MATTER_RENDER,entry:'fs_bg' },
+    { type: 'precompile_shader', shader_id: 'interactive/compute', stage: 'compute', source: INTERACTIVE_COMPUTE, entry: 'cs_main' },
+    { type: 'precompile_shader', shader_id: 'interactive/render', stage: 'render', source: INTERACTIVE_RENDER, entry: 'fs_bg' },
     { type: 'precompile_shader', shader_id: 'performer-world/render', stage: 'render', source: PERFORMER_WORLD_RENDER_WGSL, entry: 'fs_main' },
   ];
 }
@@ -1623,7 +1634,7 @@ function buildPerformerWorldGraph(options: NativePluginGraphOptions): NativePlug
 
 export function buildNativePluginGraph(options: NativePluginGraphOptions): NativePluginGraphBuildResult {
   if (options.kind === 'ghostfx') return buildGhostFxGraph(options);
-  if (options.kind === 'performer-world') return buildPerformerWorldGraph(options);
+  if (options.kind === 'performer-world') return options.params.interactiveScene ? buildInteractiveGraph(options) : buildPerformerWorldGraph(options);
   return buildHandGraph(options);
 }
 

@@ -1,3 +1,4 @@
+import {applyInteractiveOverrides} from '../mobile/studio/interactiveEffects';
 import { projectorCalibrationUniforms } from '../output/projectorCalibration';
 import { composeNativeGraphs } from '../renderer/nativeGraphComposition';
 import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } from '../renderer/vjGroupNative';
@@ -3411,7 +3412,7 @@ interface NativeUnsupportedSourceOptions {
   routeDisabledByFailures?: boolean;
 }
 
-const NATIVE_READY_LAYER_TYPES = new Set(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'screen', 'group', 'mask']);
+const NATIVE_READY_LAYER_TYPES = new Set(['interactive', 'media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'screen', 'group', 'mask']);
 
 function nativeUnsupportedGeometryReason(layer: Layer): string | null {
   const warpMode = String(layer.warpMode || 'corners').trim().toLowerCase();
@@ -8712,7 +8713,7 @@ export class NativeRendererSync {
 
     let changed = false;
     const mapped = layers.map((layer) => {
-      const kf = kfOverrides?.[layer.id];
+      const kf = kfOverrides?.[layer.id.startsWith('vj-layer-')&&layer.source?.id?`vj-${layer.source.id}`:layer.id];
       const seqMult = seqOverrides?.[layer.id];
       if (!kf && seqMult === undefined) return layer;
 
@@ -8722,6 +8723,7 @@ export class NativeRendererSync {
         next.opacity = (next.opacity ?? 1) * seqMult;
       }
       if (kf) {
+        if(next.source?.effectSource?.interactiveScene)next.source={...next.source,effectSource:{...next.source.effectSource,interactiveScene:applyInteractiveOverrides(next.source.effectSource.interactiveScene,kf)}};
         let shaderValues: Record<string, any> | null = null;
         let effects: any[] | null = null;
         for (const [key, value] of Object.entries(kf)) {

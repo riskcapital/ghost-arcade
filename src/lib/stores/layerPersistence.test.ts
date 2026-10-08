@@ -1974,3 +1974,28 @@ it('routes MIDI group levels and FX by identity without creating outputs', async
     expect(get(vjClipLauncher).groups).toHaveLength(1);
   } finally { vjClipLauncher.set(original); }
 });
+
+
+describe('Interactive layer project and preset persistence',()=>{
+ it('preserves effect hierarchy, materials, Auto, Mod and keyframes through actual save/import and presets',async()=>{
+  const {makeEffect}=await import('../mobile/studio/interactiveEffects');
+  const {defaultInteractive}=await import('../mobile/studio/interactive');
+  const {keyframeTimeline}=await import('./keyframeTimeline');
+  const {discoverKeyframeableParams}=await import('../keyframes/paramDiscovery');
+  const fire=makeEffect('fire','stage'),light=makeEffect('light');fire.emission='burst';fire.params.hue=305;
+  light.paramAuto={lightX:{phase:.3,mode:'pingpong',speedHz:.2,min:.1,max:.9,playing:true,easing:'sine'}};
+  fire.mods.heat={source:'bass',amount:.5,speed:.15,invert:false,rangeMin:.2,rangeMax:.8};
+  const scene={...defaultInteractive(),effects:[fire,light]};
+  const layer={...types.createLayer('interactive-save','Interactive','interactive'),source:{id:'interactive-source',type:'effect',src:'plugin://performer-world',name:'Interactive',effectSource:{effectType:'performer-world',interactiveScene:scene}}};
+  expect(layers.project.importProject({version:'2.0.16',project:{id:'interactive-project',name:'Interactive test',width:1920,height:1080,layers:[layer]}})).toBe(true);
+  const track=`interactive:${fire.id}:heat`;keyframeTimeline.addKeyframe(layer.id,track,0,.5,'sine','Heat','number');keyframeTimeline.addKeyframe(layer.id,track,4,2,'linear','Heat','number');
+  keyframeTimeline.setDuration(64);keyframeTimeline.setLooping(false);
+  const composition=layers.project.saveComposition('Flame and light'),stage=layers.project.createStagePresetSnapshot('Interactive stage');
+  const saved=JSON.parse(JSON.stringify(layers.project.exportProject()));expect(layers.project.importProject(saved)).toBe(true);
+  let restored=get(layers.project).layers[0];expect(restored.type).toBe('interactive');expect(get(keyframeTimeline).config).toMatchObject({duration:64,isLooping:false});expect(restored.source?.effectSource?.interactiveScene).toEqual(scene);
+  expect(discoverKeyframeableParams(restored).some(p=>p.key===track)).toBe(true);expect(get(keyframeTimeline).timelines[layer.id].tracks[0].keyframes).toHaveLength(2);
+  keyframeTimeline.clearAll();layers.project.loadComposition(composition,{restoreTransports:true,recordHistory:false});await new Promise<void>(r=>queueMicrotask(r));expect(get(keyframeTimeline).timelines[layer.id].tracks[0].keyframes).toHaveLength(2);
+  keyframeTimeline.clearAll();layers.project.loadStagePresetSnapshot(stage);expect(get(keyframeTimeline).timelines[layer.id].tracks[0].keyframes).toHaveLength(2);
+  expect(get(layers.project).layers[0].source?.effectSource?.interactiveScene?.effects?.map(e=>e.id)).toEqual([fire.id,light.id]);
+ });
+});

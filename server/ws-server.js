@@ -848,6 +848,11 @@ function handleMessage(sender, msg) {
     // Phone Vision: WebRTC media path. The WebSocket server only
     // relays setup/control messages; camera video travels as a native
     // RTCPeerConnection media track.
+    case 'studio_scene':
+    case 'studio_calibration_offer':
+    case 'studio_calibration_status':
+    case 'studio_capabilities_request':
+    case 'studio_capabilities':
     case 'phone_camera_offer':
     case 'phone_camera_answer':
     case 'phone_camera_ice':
