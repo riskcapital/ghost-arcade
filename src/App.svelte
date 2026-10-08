@@ -68,78 +68,183 @@
   import ShowTimeline from './lib/components/ShowTimeline.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import InteractiveStudio from './lib/components/studio/InteractiveStudio.svelte';
-  import {readMobileCalibration} from './lib/output/mobileCalibrationImport';
-  let pendingPhoneCalibration='';
-  onMount(()=>{const open=(event:Event)=>openInteractiveStudio((event as CustomEvent).detail?.layerId);window.addEventListener('open-interactive-studio',open);return()=>{window.removeEventListener('open-interactive-studio',open);};});
   import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
-  let showInteractiveStudio=false, studioOpened=false, studioPage='interactive';
+  import {readMobileCalibration} from './lib/output/mobileCalibrationImport';
+  import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
-  let studioLayerId='',studioSlot:{row:number;col:number;id:string}|null=null,studioSignature='',studioWasActive=false,studioOwner='local';
-  let phoneStudioTimer:ReturnType<typeof setTimeout>|undefined;
-  function studioScene(scene:InteractiveScene,inputs:Interaction[],active:boolean,paused:boolean,owner='local'){
-    if(studioWasActive&&owner!==studioOwner)return;
-    if(!active&&owner!==studioOwner)return;
-    if(active)studioOwner=owner;
-    if(!active){if(studioWasActive){if(studioLayerId)project.updateLayer(studioLayerId,{visible:false});if(studioSlot&&get(vjClipLauncher).layerStates[studioSlot.row]?.activeClip?.id===studioSlot.id)vjClipLauncher.stopLayer(studioSlot.row);}studioWasActive=false;return;}
-    const effectSource={effectType:'performer-world' as const,interactiveScene:validateInteractiveScene(scene),interactiveInputs:inputs,interactivePaused:paused};
-    const signature=JSON.stringify(effectSource);if(studioWasActive&&signature===studioSignature)return;studioSignature=signature;
-    if(!studioWasActive){
-      if(get(vjClipLauncher).isOpen){const vj=get(vjClipLauncher);let slot=studioSlot&&vj.clipGrid[studioSlot.row]?.[studioSlot.col]?.id===studioSlot.id?studioSlot:null;
-       if(!slot){let row=0,col=vj.clipGrid[0].findIndex(c=>!c);if(col<0){if(vj.numColumns>=64)throw Error('Free a VJ clip slot before launching Interactive Studio.');col=vj.numColumns;vjClipLauncher.addColumn();}slot={row,col,id:crypto.randomUUID()};vjClipLauncher.setClip(row,col,{id:slot.id,type:'effect',name:'Interactive Studio',src:'plugin://performer-world',effectSource});}studioSlot=slot;vjClipLauncher.updateClipEffectSource(slot.row,slot.col,effectSource);vjClipLauncher.triggerClip(slot.row,slot.col);
-      }else{if(!get(project).layers.some(l=>l.id===studioLayerId))studioLayerId=get(project).layers.find(l=>l.source?.effectSource?.interactiveScene)?.id??project.addLayer('Interactive Studio')??'';if(!studioLayerId)throw Error('Could not create an Interactive Studio layer.');if(studioLayerId){project.setLayerSource(studioLayerId,{id:'interactive-native',type:'effect',src:'plugin://performer-world',name:'Interactive Studio',effectSource});project.updateLayer(studioLayerId,{visible:true});}}
-    }
-    if(studioLayerId){const layer=get(project).layers.find(l=>l.id===studioLayerId);if(layer?.source)project.update(p=>({...p,layers:p.layers.map(l=>l.id===studioLayerId?{...l,source:{...layer.source!,effectSource}}:l)}));}
-    if(studioSlot&&get(vjClipLauncher).clipGrid[studioSlot.row]?.[studioSlot.col]?.id===studioSlot.id)vjClipLauncher.updateClipEffectSource(studioSlot.row,studioSlot.col,effectSource);
-    studioWasActive=true;
-  }
-  import {mergeInteractiveEdit,editableEffects} from './lib/mobile/studio/interactiveEffects';
+  import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
+  import {PhoneSessions,PHONE_SCENE_MAX_BYTES,phoneSenderId,sanitizePhoneInputs,type PhoneSceneState} from './lib/mobile/studio/phoneSessions';
+  import {pickEditorClipRow,pickEditorClipSlot,pickPhoneClipSlot,isPhoneInteractiveClip} from './lib/mobile/studio/studioTargets';
+  import {isTypingTarget,studioModalKeyAction} from './lib/utils/studioModalKeys';
   import {createNativeSourcePreview} from './lib/sync/nativeSourcePreview';
   import {recordDiscreteAction} from './lib/stores/historyHooks';
+
+  // ── Interactive Studio (desktop editor) ───────────────────────────────
+  let pendingPhoneCalibration='';
+  let showInteractiveStudio=false, studioPage:'interactive'|'calibration'='interactive';
+  let studioDialog:HTMLElement|undefined;
+  /** The layer being edited, or in VJ mode the clip. Exactly one is set while open. */
   let studioEditorLayer='',studioEditorClip:{row:number;col:number;id:string;deck:'A'|'B'}|null=null;
   let studioEditorScene:InteractiveScene|null=null,studioPreviousEdit:InteractiveScene|undefined;
   let studioEditor:InteractiveStudio|undefined,studioEditorPaused=false;
   let studioEditorActive=true,studioEditorProject='',studioEditorRevision=0,studioEditorSignature='';
+  /** The scene object and authoring signature this editor last put in the
+   *  store. Anything else showing up there was written from outside. */
+  let studioSeenScene:InteractiveScene|undefined,studioOwnSignature='';
+  /** True while an editor instance is being replaced: its teardown flush
+   *  carries the scene that was just superseded and must not be written back. */
+  let studioEditorMuted=false;
   $: studioTimelineId=studioEditorClip?`vj-${studioEditorClip.id}`:studioEditorLayer;
-  const studioNativeFrame=createNativeSourcePreview(()=>studioEditorClip?`vj-layer-${studioEditorClip.row}${get(vjClipLauncher).crossfaderEnabled?'-'+studioEditorClip.deck:''}`:studioEditorLayer);
+
+  function studioClipStates(deck:'A'|'B'){const v=get(vjClipLauncher);return {grid:deck==='B'?v.bankBClipGrid:v.clipGrid,states:deck==='B'?v.bankBLayerStates:v.layerStates};}
   function studioCurrentSource(){
-    if(studioEditorClip){const v=get(vjClipLauncher);return (studioEditorClip.deck==='B'?v.bankBClipGrid:v.clipGrid)[studioEditorClip.row]?.[studioEditorClip.col]?.effectSource;}
+    if(studioEditorClip){const clip=studioClipStates(studioEditorClip.deck).grid[studioEditorClip.row]?.[studioEditorClip.col];return clip?.id===studioEditorClip.id?clip.effectSource:undefined;}
     return get(project).layers.find(l=>l.id===studioEditorLayer)?.source?.effectSource;
   }
+  /** The edited scene is on the output: its layer is visible, or its clip is the one playing. */
+  function studioTargetLive(){
+    if(studioEditorClip)return studioClipStates(studioEditorClip.deck).states[studioEditorClip.row]?.activeClip?.id===studioEditorClip.id;
+    return get(project).layers.find(l=>l.id===studioEditorLayer)?.visible!==false;
+  }
+  const studioNativeFrame=createNativeSourcePreview({
+    layerId:()=>studioEditorClip?`vj-layer-${studioEditorClip.row}${get(vjClipLauncher).crossfaderEnabled?'-'+studioEditorClip.deck:''}`:studioEditorLayer,
+    // No readback for a hidden page, a stopped layer or one that is gone.
+    live:()=>showInteractiveStudio&&studioPage==='interactive'&&!!studioCurrentSource()?.interactiveScene&&studioTargetLive(),
+    // A paused or empty scene does not move: read it once per edit, not 30 times a second.
+    stillKey:()=>{const source=studioCurrentSource();return source?.interactivePaused||!source?.interactiveScene?.effects?.some(e=>e.enabled)?studioEditorSignature:null;},
+  });
+
   function openInteractiveStudio(layerId?:string){
-    const p=get(project),vj=get(vjClipLauncher);studioEditorClip=null;
+    if(showInteractiveStudio)closeInteractiveStudio();
+    const p=get(project),vj=get(vjClipLauncher);studioEditorClip=null;studioEditorLayer='';
+    // Keys are cut off while the Studio is open, so a held Space would never be released.
+    isSpacePressed=false;isPanning=false;
     if(!layerId&&vj.isOpen){
-      const deck=vj.selectedDeck??'A',grid=deck==='B'?vj.bankBClipGrid:vj.clipGrid,states=deck==='B'?vj.bankBLayerStates:vj.layerStates;
-      const row=vj.selectedLayerIndex??0,active=states[row]?.activeClip;
-      let col=active?.effectSource?.interactiveScene?states[row].activeColumn:null;
-      if(col===null||col===undefined){col=grid[row].findIndex(c=>!c);if(col<0){if(vj.numColumns>=64){showToast('Free a clip slot before opening Interactive Studio.','warning');return;}col=vj.numColumns;vjClipLauncher.addColumn();}
+      // VJ mode edits a clip. Reuse the Interactive clip already in the row;
+      // a new one is placed but never launched, so opening the editor does
+      // not change what is on the output.
+      const deck=vj.selectedDeck??'A',{grid,states}=studioClipStates(deck);
+      const activeColumns=states.map(s=>s?.activeColumn??null);
+      const row=vj.selectedLayerIndex??pickEditorClipRow(grid,activeColumns);
+      const slot=pickEditorClipSlot(grid[row]??[],activeColumns[row],vj.numColumns);
+      if(!slot){showToast('Free a clip slot before opening Interactive Studio.','warning');return;}
+      if(slot.addColumn)vjClipLauncher.addColumn();
+      if(slot.create){
         const scene=defaultInteractive();scene.effects=editableEffects(scene);
-        vjClipLauncher.setClip(row,col,{id:crypto.randomUUID(),type:'effect',name:'Interactive Studio',src:'plugin://performer-world',effectSource:{effectType:'performer-world',interactiveScene:scene}},deck);
+        vjClipLauncher.setClip(row,slot.col,{id:crypto.randomUUID(),type:'effect',name:'Interactive Studio',src:'plugin://performer-world',effectSource:{effectType:'performer-world',interactiveScene:scene}},deck);
       }
-      const clip=(deck==='B'?get(vjClipLauncher).bankBClipGrid:get(vjClipLauncher).clipGrid)[row][col]!;
-      studioEditorClip={row,col,id:clip.id,deck};studioEditorLayer='';vjClipLauncher.triggerClip(row,col,deck);studioEditorActive=true;
+      const clip=studioClipStates(deck).grid[row]?.[slot.col];if(!clip)return;
+      studioEditorClip={row,col:slot.col,id:clip.id,deck};
     }else{
-      const selected=p.layers.find(l=>l.id===(layerId??p.selectedLayerId)&&l.source?.effectSource?.interactiveScene);
-      studioEditorLayer=selected?.id??(!layerId?p.layers.find(l=>l.source?.effectSource?.interactiveScene)?.id:'')??'';
+      const scenic=(l:Layer)=>!!l.source?.effectSource?.interactiveScene;
+      const chosen=p.layers.find(l=>l.id===(layerId??p.selectedLayerId)&&scenic(l));
+      // Without an explicit choice, never fall back to a layer a phone is driving.
+      studioEditorLayer=chosen?.id??(!layerId?p.layers.find(l=>scenic(l)&&!l.source?.effectSource?.interactiveRemote)?.id:'')??'';
       if(!studioEditorLayer)studioEditorLayer=project.addLayer('Interactive Studio','interactive')??'';
-      if(!studioEditorLayer)return;project.selectLayer(studioEditorLayer);studioEditorActive=get(project).layers.find(l=>l.id===studioEditorLayer)?.visible!==false;
+      if(!studioEditorLayer)return;
+      project.selectLayer(studioEditorLayer);
+      adoptPhoneLayerForDesktop(studioEditorLayer);
     }
-    studioEditorPaused=studioCurrentSource()?.interactivePaused??false;
-    studioEditorScene=structuredClone(studioCurrentSource()?.interactiveScene??defaultInteractive());
+    const source=studioCurrentSource();
+    studioEditorActive=studioTargetLive();
+    studioEditorPaused=source?.interactivePaused??false;
+    studioEditorScene=structuredClone(source?.interactiveScene??defaultInteractive());
+    studioSeenScene=source?.interactiveScene;studioOwnSignature=interactiveEditSignature(studioEditorScene);
     studioPreviousEdit=undefined;studioEditorSignature='';studioEditorProject=p.id;studioEditorRevision++;
-    studioPage='interactive';studioOpened=true;showInteractiveStudio=true;
+    studioPage='interactive';showInteractiveStudio=true;
+    void studioTick().then(()=>studioDialog?.focus({preventScroll:true}));
   }
   function editStudioScene(scene:InteractiveScene,inputs:Interaction[],active:boolean,paused:boolean){
-    if(!showInteractiveStudio||get(project).id!==studioEditorProject)return;
+    if(!showInteractiveStudio||studioEditorMuted||get(project).id!==studioEditorProject)return;
     const current=studioCurrentSource();if(!current?.interactiveScene)return;
     const signature=JSON.stringify({scene,inputs,active,paused});if(signature===studioEditorSignature)return;
     const edited=mergeInteractiveEdit(studioPreviousEdit,validateInteractiveScene(scene),current.interactiveScene);
     studioPreviousEdit=structuredClone(scene);studioEditorSignature=signature;
     const effectSource={...current,interactiveScene:edited,interactiveInputs:inputs,interactivePaused:paused};
-    if(studioEditorClip){const {row,col,deck}=studioEditorClip;vjClipLauncher.updateClipEffectSource(row,col,effectSource,deck);if(active!==studioEditorActive){if(active)vjClipLauncher.triggerClip(row,col,deck);else vjClipLauncher.stopLayer(row,deck);}}
+    if(studioEditorClip){
+      const {row,col,deck,id}=studioEditorClip;vjClipLauncher.updateClipEffectSource(row,col,effectSource,deck);
+      if(active!==studioEditorActive){
+        if(active)vjClipLauncher.triggerClip(row,col,deck);
+        // Stop only our own clip: the row may be playing something else by now.
+        else if(studioClipStates(deck).states[row]?.activeClip?.id===id)vjClipLauncher.stopLayer(row,deck);
+      }
+    }
     else project.update(p=>({...p,layers:p.layers.map(l=>l.id===studioEditorLayer&&l.source?{...l,visible:active,source:{...l.source,effectSource}}:l)}));
     studioEditorActive=active;
+    studioSeenScene=studioCurrentSource()?.interactiveScene;studioOwnSignature=interactiveEditSignature(edited);
   }
-  function closeInteractiveStudio(){studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();}
+  function closeInteractiveStudio(){
+    if(!showInteractiveStudio)return;
+    studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();
+  }
+  /** The layer or clip under the editor went away (deleted, undone, another
+   *  project). There is nothing left to flush into, so close and say why. */
+  function studioTargetLost(message:string){
+    if(!showInteractiveStudio)return;
+    showInteractiveStudio=false;showToast(message,'info');
+  }
+  /** The stored scene changed without the editor writing it (an undo, a
+   *  preset, the same project reloaded). Remount the editor on what is stored
+   *  so the editor and the output cannot drift apart. */
+  function studioReloadEditor(){
+    const source=studioCurrentSource();if(!source?.interactiveScene)return;
+    studioEditorMuted=true;
+    studioEditorActive=studioTargetLive();studioEditorPaused=source.interactivePaused??false;
+    studioEditorScene=structuredClone(source.interactiveScene);
+    studioSeenScene=source.interactiveScene;studioOwnSignature=interactiveEditSignature(source.interactiveScene);
+    studioPreviousEdit=undefined;studioEditorSignature='';studioEditorRevision++;
+    void studioTick().then(()=>{studioEditorMuted=false;});
+    showToast('The scene changed outside the editor, so the editor reloaded it.','info');
+  }
+  function studioWatchTarget(){
+    if(!showInteractiveStudio)return;
+    if(get(project).id!==studioEditorProject){studioTargetLost('Interactive Studio closed because another project was opened.');return;}
+    const scene=studioCurrentSource()?.interactiveScene;
+    if(!scene){studioTargetLost(studioEditorClip?'Interactive Studio closed because its clip was removed.':'Interactive Studio closed because its layer was removed.');return;}
+    if(scene===studioSeenScene)return;
+    studioSeenScene=scene;
+    if(interactiveEditSignature(scene)!==studioOwnSignature)studioReloadEditor();
+  }
+  let studioWatchQueued=false;
+  function studioQueueWatch(){
+    if(!showInteractiveStudio||studioWatchQueued)return;
+    studioWatchQueued=true;queueMicrotask(()=>{studioWatchQueued=false;studioWatchTarget();});
+  }
+
+  /**
+   * The Studio is modal. This listener sits on <html>, so a key reaches it
+   * after the Studio's own controls (and anything shown above it, like the
+   * Mod tray or a confirm) have had their turn, and before the app-wide
+   * shortcut handlers on document and window, which it cuts off.
+   * See studioModalKeys.ts for the two keys that are deliberately kept.
+   */
+  function studioKeyGate(event:KeyboardEvent){
+    if(!showInteractiveStudio)return;
+    event.stopPropagation();
+    const action=studioModalKeyAction(event,{typing:isTypingTarget(event.target),timelineOpen:get(keyframeTimeline).isOpen});
+    if(action==='blackout'){
+      event.preventDefault();
+      const blackout=!get(settings).output.blackout;
+      settings.update(s=>({...s,output:{...s.output,blackout}}));
+      showToast(blackout?'Output blacked out. Press B to bring it back.':'Blackout ended.','warning');
+    }else if(action==='timeline-transport'){
+      event.preventDefault();
+      if(get(keyframeTimeline).config.isPlaying)keyframeTimeline.pause();else keyframeTimeline.play();
+    }
+  }
+  onMount(()=>{
+    const open=(event:Event)=>openInteractiveStudio((event as CustomEvent).detail?.layerId);
+    window.addEventListener('open-interactive-studio',open);
+    const root=document.documentElement;
+    root.addEventListener('keydown',studioKeyGate);root.addEventListener('keyup',studioKeyGate);
+    const unwatch=[project.subscribe(studioQueueWatch),vjClipLauncher.subscribe(studioQueueWatch)];
+    return()=>{
+      window.removeEventListener('open-interactive-studio',open);
+      root.removeEventListener('keydown',studioKeyGate);root.removeEventListener('keyup',studioKeyGate);
+      unwatch.forEach(stop=>stop());phoneSessions.dispose();
+    };
+  });
+
   function studioParamRecord(id:string,key:string,value:number,label:string){keyframeTimeline.autoRecord(studioTimelineId,`interactive:${id}:${key}`,value,label,'number');}
   function studioAddKeyframe(id:string,key:string,value:number,label:string){
     keyframeTimeline.addKeyframe(studioTimelineId,`interactive:${id}:${key}`,get(keyframeTimeline).config.currentTime,value,'sine',label,'number');
@@ -157,6 +262,89 @@
     keyframeTimeline.setDuration(Math.max(get(keyframeTimeline).config.duration,scene.animation.duration));keyframeTimeline.setLooping(scene.animation.loop);keyframeTimeline.seek(0);
   }
   function studioToggleTimeline(){keyframeTimeline.selectLayer(studioTimelineId);keyframeTimeline.toggleOpen();}
+  /** Other layers' corner quads, offered to the editor as outlines to import. */
+  function studioMappingSurfaces(layers:Layer[],editing:string){
+    const unit=(v:number)=>Math.max(0,Math.min(1,v));
+    return layers.filter(l=>l.id!==editing&&l.corners).map(l=>({name:l.name,enabled:l.visible,mode:l.warpMode==='mesh'?'mesh':'corners',
+      points:[l.corners.topLeft,l.corners.topRight,l.corners.bottomRight,l.corners.bottomLeft].map(p=>({x:unit(p.x),y:unit(1-p.y)}))}));
+  }
+
+  // ── Interactive scenes from paired phones ─────────────────────────────
+  // A phone only ever writes to the layer or clip that carries its own
+  // sender id (effectSource.interactiveRemote). Desktop-authored scenes never
+  // carry one, so a phone cannot overwrite or hide them.
+  const PHONE_SCENE_NAME='Phone Interactive';
+  function phoneLayerId(phone:string){return get(project).layers.find(l=>l.source?.effectSource?.interactiveScene&&l.source.effectSource.interactiveRemote===phone)?.id;}
+  function phoneClipSlot(phone:string){
+    const grid=get(vjClipLauncher).clipGrid;
+    for(let row=0;row<grid.length;row++){const col=grid[row].findIndex(clip=>isPhoneInteractiveClip(clip,phone));if(col>=0)return {row,col,id:grid[row][col]!.id};}
+    return null;
+  }
+  /** Change the phone's scene wherever it lives. Returns false when it has no target. */
+  function patchPhoneTargets(phone:string,patch:(source:NonNullable<Layer['source']>['effectSource'])=>NonNullable<Layer['source']>['effectSource'],layerPatch:Partial<Layer>={}){
+    const layerId=phoneLayerId(phone),slot=phoneClipSlot(phone);
+    if(layerId)project.update(p=>({...p,layers:p.layers.map(l=>l.id===layerId&&l.source?{...l,...layerPatch,source:{...l.source,effectSource:patch(l.source.effectSource)}}:l)}));
+    if(slot)vjClipLauncher.updateClipEffectSource(slot.row,slot.col,patch(get(vjClipLauncher).clipGrid[slot.row][slot.col]!.effectSource));
+    return !!layerId||!!slot;
+  }
+  function startPhoneScene(phone:string,effectSource:NonNullable<Layer['source']>['effectSource']){
+    const vj=get(vjClipLauncher);
+    if(vj.isOpen){
+      const activeColumns=vj.layerStates.map(s=>s?.activeColumn??null);
+      const slot=pickPhoneClipSlot(vj.clipGrid,activeColumns,phone,vj.numColumns);
+      if(!slot){showToast('No free clip slot for the phone scene. Free a slot, then launch from the phone again.','warning');return;}
+      if(slot.create)vjClipLauncher.setClip(slot.row,slot.col,{id:crypto.randomUUID(),type:'effect',name:PHONE_SCENE_NAME,src:'plugin://performer-world',effectSource});
+      else vjClipLauncher.updateClipEffectSource(slot.row,slot.col,effectSource);
+      if(!slot.launch)showToast(`Phone scene is ready on VJ layer ${slot.row+1}. Launch it when you want it on the output.`,'info');
+      else if(activeColumns[slot.row]!==slot.col)vjClipLauncher.triggerClip(slot.row,slot.col);
+      return;
+    }
+    let layerId=phoneLayerId(phone);
+    if(!layerId){
+      // A layer of its own. Creating it must not move the operator's selection.
+      const selected=get(project).selectedLayerId;
+      layerId=project.addLayer(PHONE_SCENE_NAME,'interactive')??undefined;
+      if(!layerId){showToast('Could not create a layer for the phone scene.','warning');return;}
+      if(selected)project.selectLayer(selected);
+    }
+    project.update(p=>({...p,layers:p.layers.map(l=>l.id===layerId&&l.source?{...l,visible:true,source:{...l.source,name:PHONE_SCENE_NAME,effectSource}}:l)}));
+  }
+  const phoneSessions=new PhoneSessions({
+    apply(phone,state:PhoneSceneState,starting){
+      const effectSource={effectType:'performer-world' as const,interactiveScene:state.scene,interactiveInputs:state.inputs,interactivePaused:state.paused,interactiveRemote:phone};
+      // A target the operator deleted is recreated like a fresh start.
+      if(starting||!patchPhoneTargets(phone,()=>effectSource))startPhoneScene(phone,effectSource);
+    },
+    releaseInputs(phone){patchPhoneTargets(phone,source=>({...source!,interactiveInputs:[]}));},
+    stop(phone){
+      // Hide the phone's own layer and stop its own clip. Touches go too, so a
+      // finger held at disconnect is neither replayed nor saved with the project.
+      const slot=phoneClipSlot(phone);
+      patchPhoneTargets(phone,source=>({...source!,interactiveInputs:[]}),{visible:false});
+      if(slot&&get(vjClipLauncher).layerStates[slot.row]?.activeClip?.id===slot.id)vjClipLauncher.stopLayer(slot.row);
+    },
+  });
+  /** Opening a phone's layer in the desktop editor makes it a desktop scene;
+   *  the phone gets a new layer of its own the next time it sends. */
+  function adoptPhoneLayerForDesktop(layerId:string){
+    const phone=get(project).layers.find(l=>l.id===layerId)?.source?.effectSource?.interactiveRemote;if(!phone)return;
+    phoneSessions.forget(phone);
+    project.update(p=>({...p,layers:p.layers.map(l=>{if(l.id!==layerId||!l.source?.effectSource)return l;const {interactiveRemote:_owner,...effectSource}=l.source.effectSource;return {...l,source:{...l.source,effectSource:{...effectSource,interactiveInputs:[]}}};})}));
+  }
+  function receivePhoneScene(data:Record<string,any>){
+    const phone=phoneSenderId(data.from);
+    const reject=(reason:string,error:string)=>{
+      // Still proof the phone is there: keep what it already has on the output.
+      phoneSessions.keepAlive(phone);
+      console.warn('[Interactive Studio] Phone scene rejected:',error);
+      if(phoneSessions.shouldNotifyRejection(phone))sendPhoneVisionSignal({type:'studio_scene_status',to:phone,accepted:false,reason,error,limit:PHONE_SCENE_MAX_BYTES});
+    };
+    const size=JSON.stringify(data).length;
+    if(size>PHONE_SCENE_MAX_BYTES){reject('too-large',`Scene is too large to send (${Math.round(size/1000)} KB, limit ${PHONE_SCENE_MAX_BYTES/1000} KB). Remove some objects or points.`);return;}
+    let scene:InteractiveScene;
+    try{scene=validateInteractiveScene(data.scene);}catch(error){reject('invalid',error instanceof Error?error.message:'Invalid scene.');return;}
+    phoneSessions.receive(phone,{scene,inputs:sanitizePhoneInputs(data.inputs),paused:data.paused===true},data.active===true);
+  }
   import MediaPipeLearnHUD from './lib/components/MediaPipeLearnHUD.svelte';
   import MediaPipeLearnOverlay from './lib/components/MediaPipeLearnOverlay.svelte';
   import GridOverlay from './lib/components/GridOverlay.svelte';
@@ -1788,6 +1976,9 @@
 
     // Keyboard handlers for spacebar panning + undo/redo
     const handleKeyDown = (e: KeyboardEvent) => {
+      // The Interactive Studio is modal and owns the keyboard (studioKeyGate
+      // normally stops the event before it gets here).
+      if (showInteractiveStudio) return;
       const target = e.target as HTMLElement;
       // A focused <select> takes letters as typeahead; without it here, typing
       // to pick an option also fired single-key shortcuts (B blacks out the
@@ -2053,6 +2244,7 @@
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (showInteractiveStudio) return;
       if (e.code === 'Space') {
         isSpacePressed = false;
         // Stop panning when space is released
@@ -3669,12 +3861,9 @@
         }catch(error){sendPhoneVisionSignal({type:'studio_calibration_status',requestId:msg.requestId,accepted:false,error:error instanceof Error?error.message:'Invalid calibration.'});}
         break;
       }
-      case 'studio_scene': {
-        try {const data=msg as any;if(JSON.stringify(data).length>150000)break;const scene=validateInteractiveScene(data.scene);const inputs=Array.isArray(data.inputs)?data.inputs.slice(0,8).filter((p:any)=>Number.isFinite(p.point?.x)&&Number.isFinite(p.point?.y)&&Number.isFinite(p.strength)):[];
-          studioScene(scene,inputs,data.active===true,data.paused===true,'phone');clearTimeout(phoneStudioTimer);
-          if(data.active)phoneStudioTimer=setTimeout(()=>studioScene(scene,[],false,false,'phone'),3000);
-        }catch(error){console.warn('[Interactive Studio] Invalid remote scene',error);}break;
-      }
+      case 'studio_scene':
+        receivePhoneScene(msg as Record<string,any>);
+        break;
       case 'studio_capabilities_request':
         sendPhoneVisionSignal({type:'studio_capabilities',version:1,visualFeeds:true,metricDepth:false,nativeInteractive:true});
         break;
@@ -5565,6 +5754,9 @@
   }
 
   function handleUndo() {
+    // The Studio keeps its own undo. Rolling the project back under it would
+    // leave the editor and the output showing different scenes.
+    if (showInteractiveStudio) return;
     fileMenuOpen = false;
     // Commit any debounced-but-not-yet-recorded slider or keyframe edit first,
     // so it becomes its own undo step instead of being silently lost or merged
@@ -5579,6 +5771,7 @@
   }
 
   function handleRedo() {
+    if (showInteractiveStudio) return;
     fileMenuOpen = false;
     flushPendingHistorySnapshot();
     history.suppress();
@@ -7940,9 +8133,19 @@
 
     <!-- Settings Panel — output transforms now read from $settings.output -->
     {#if showInteractiveStudio}
-      <div class="studio-workshop-backdrop" class:studio-hidden={!showInteractiveStudio}><section class="studio-workshop" role="dialog" aria-label="Interactive Studio tools" aria-modal="true" tabindex="-1">
-        <nav><button onclick={()=>studioPage='interactive'}>Interactive Studio</button><button onclick={()=>studioPage='calibration'}>Phone calibration{pendingPhoneCalibration?' •':''}</button><button onclick={closeInteractiveStudio}>Close</button></nav>
-        {#if studioPage==='interactive'}{#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={$project.layers.filter(l=>l.id!==studioLayerId&&l.corners).map(l=>({name:l.name,enabled:l.visible,mode:l.warpMode==='mesh'?'mesh':'corners',points:[l.corners.topLeft,l.corners.topRight,l.corners.bottomRight,l.corners.bottomLeft].map(p=>({x:p.x,y:1-p.y}))}))} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}{:else}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
+      <div class="studio-workshop-backdrop"><section bind:this={studioDialog} class="studio-workshop" role="dialog" aria-label="Interactive Studio tools" aria-modal="true" tabindex="-1">
+        <nav>
+          <button class:active={studioPage==='interactive'} aria-pressed={studioPage==='interactive'} onclick={()=>studioPage='interactive'}>Interactive Studio</button>
+          <button class:active={studioPage==='calibration'} aria-pressed={studioPage==='calibration'} onclick={()=>studioPage='calibration'}>Phone calibration{pendingPhoneCalibration?' •':''}</button>
+          <button onclick={closeInteractiveStudio}>Close</button>
+        </nav>
+        <!-- The editor stays mounted behind the calibration page: remounting it
+             would restore the scene it was opened with and publish that over
+             every edit made since. -->
+        <div class="studio-page" style:display={studioPage==='interactive'?'contents':'none'}>
+          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
+        </div>
+        {#if studioPage==='calibration'}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
       </section></div>
     {/if}
     <SettingsPanel
@@ -10999,5 +11202,5 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
-.studio-workshop-backdrop{position:fixed;inset:0;z-index:9999;background:#000b;display:grid;place-items:center;padding:24px}.studio-workshop{width:min(1200px,96vw);max-height:94vh;overflow:auto;background:var(--ga-inspector-bg,var(--ga-card,#141414));color:var(--ga-ink-0,#eee);border:1px solid var(--ga-line-3,#444);border-radius:var(--ga-r-soft,6px)}.studio-workshop-backdrop.studio-hidden{display:none}.studio-workshop nav{display:flex;gap:8px;padding:12px}.studio-workshop nav button{padding:10px 16px;background:var(--ga-hardware-bg,var(--ga-card,#202020));color:inherit;border:1px solid var(--ga-line-2,#444);border-radius:var(--ga-r-hard,3px)}
+.studio-workshop-backdrop{position:fixed;inset:0;z-index:9999;background:#000b;display:grid;place-items:center;padding:24px}.studio-workshop{width:min(1200px,96vw);max-height:94vh;overflow:auto;background:var(--ga-inspector-bg,var(--ga-card,#141414));color:var(--ga-ink-0,#eee);border:1px solid var(--ga-line-3,#444);border-radius:var(--ga-r-soft,6px)}.studio-workshop nav{display:flex;gap:8px;padding:12px}.studio-workshop nav button{padding:10px 16px;background:var(--ga-hardware-bg,var(--ga-card,#202020));color:inherit;border:1px solid var(--ga-line-2,#444);border-radius:var(--ga-r-hard,3px)}.studio-workshop nav button.active{border-color:var(--ga-violet-line,var(--ga-line-3,#666));background:var(--ga-violet-soft,var(--ga-card,#2a2a2a))}.studio-workshop:focus{outline:none}
 </style>

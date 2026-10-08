@@ -153,7 +153,10 @@ export interface IntegratedEffectSource {
   interactiveScene?: import('./mobile/studio/interactive').InteractiveScene;
   interactiveInputs?: import('./mobile/studio/interactive').Interaction[];
   interactivePaused?: boolean;
-  interactiveReset?: number;
+  /** Set on a layer or clip a paired phone drives: the sender id of that
+   *  phone. Desktop-authored scenes never carry it, and a phone only ever
+   *  writes to a target that carries its own id. */
+  interactiveRemote?: string;
   // Fluid simulation params
   fluidMode?: number;      // 0=SMOKE, 1=FIRE, 2=INK, 3=NEON, 4=THERMAL
   fluidViscosity?: number;
