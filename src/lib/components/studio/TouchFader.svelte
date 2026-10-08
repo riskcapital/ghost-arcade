@@ -3,10 +3,20 @@
  export let label='Level';
  export let onchange:(value:number)=>void;
  export let onstart:()=>void=()=>{};
+ import {faderValue} from '../../mobile/studio/touchSliders';
  let active:number|null=null;
- function update(e:PointerEvent){const box=e.currentTarget as HTMLElement;const rect=box.getBoundingClientRect();onchange(Math.min(1,Math.max(0,1-(e.clientY-rect.top-12)/Math.max(1,rect.height-24))));}
- function down(e:PointerEvent){if(active!==null)return;e.preventDefault();active=e.pointerId;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);onstart();update(e);}
- function move(e:PointerEvent){if(active===e.pointerId)update(e);}
+ // The level moves by the distance dragged from wherever the fader was touched. Touching the
+ // thumb or the track never jumps the level to the finger.
+ let grab={y:0,value:1,started:false};
+ function down(e:PointerEvent){if(active!==null)return;e.preventDefault();active=e.pointerId;grab={y:e.clientY,value,started:false};(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);}
+ function move(e:PointerEvent){
+  if(active!==e.pointerId)return;
+  const dy=e.clientY-grab.y;
+  // A 2 px dead zone keeps a resting finger from nudging the level; it is taken off the travel
+  // so the level leaves its starting value smoothly.
+  if(!grab.started){if(Math.abs(dy)<2)return;grab.started=true;grab.y+=Math.sign(dy)*2;onstart();}
+  onchange(faderValue(grab.value,e.clientY-grab.y,(e.currentTarget as HTMLElement).getBoundingClientRect().height-24));
+ }
  function up(e:PointerEvent){if(active===e.pointerId)active=null;}
  function key(e:KeyboardEvent){const delta=e.key==='ArrowUp'?.01:e.key==='ArrowDown'?-.01:e.key==='PageUp'?.1:e.key==='PageDown'?-.1:0;if(!delta&&!['Home','End'].includes(e.key))return;e.preventDefault();onstart();onchange(e.key==='Home'?0:e.key==='End'?1:Math.min(1,Math.max(0,value+delta)));}
 </script>

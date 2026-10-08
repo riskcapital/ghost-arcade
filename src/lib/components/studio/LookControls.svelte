@@ -90,6 +90,7 @@
           min={p.min}
           max={p.max}
           step=".01"
+          data-default="1"
           value={value[p.key as 'amount']}
           oninput={(e) => patch({ [p.key]: Number(e.currentTarget.value) })}
         /><output>{value[p.key as 'amount'].toFixed(2)}</output></label

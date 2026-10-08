@@ -3,6 +3,7 @@
  import {touchSliders} from '../../mobile/studio/touchSliders';
  import '../../mobile/studio/touchSliders.css';
  import type {Project,Point2D,WarpCorners} from '../../types';
+ import {grabOffset,draggedPoint} from '../../mobile/studio/mappingInteraction';
  export let project:Project|null;export let selectedId:string|null;
  export let canRoute=false;export let layerCount=4;export let onroute:(id:string,source:number|null)=>void=()=>{};
  export let onselect:(id:string)=>void;
@@ -17,6 +18,8 @@
  $: fitWidth=Math.max(1,Math.min(viewportWidth-48,(viewportHeight-48)*stageAspect));
  let grid=true,snap=false,zoom=1,stage:HTMLDivElement,drag:number|null=null;
  let draft:WarpCorners|null=null,mesh:Point2D[][]|null=null;
+ // Finger-to-handle offset at touch-down, so a corner moves by the distance dragged and never jumps.
+ let grab={x:0,y:0};
  let selectedCorner: keyof WarpCorners='topLeft';let selectedMesh:[number,number]|null=null;
  let pending:(()=>void)|null=null,frame=0;
  $: layer=project?.layers.find(l=>l.id===selectedId);
@@ -24,8 +27,8 @@
  $: handles=layer?.warpMode==='mesh'&&mesh?mesh.flatMap((row,r)=>row.map((p,c)=>({key:`${r}:${c}`,p,r,c,corner:null}))):draft?keys.map(corner=>({key:corner,p:draft![corner],corner,r:-1,c:-1})):[];
  function send(action:()=>void){pending=action;if(!frame)frame=requestAnimationFrame(()=>{frame=0;const p=pending;pending=null;p?.();});}
  function flush(){if(frame)cancelAnimationFrame(frame);frame=0;const p=pending;pending=null;p?.();}
- function move(e:PointerEvent){if(drag!==e.pointerId||!layer)return;const box=stage.getBoundingClientRect();const fix=(v:number)=>Math.max(-1,Math.min(2,snap?Math.round(v*20)/20:v));const p={x:fix((e.clientX-box.left)/box.width),y:fix(1-(e.clientY-box.top)/box.height)};const id=layer.id;if(selectedMesh&&mesh){const [r,c]=selectedMesh;mesh[r][c]=p;mesh=mesh;send(()=>onmesh(id,r,c,p));}else if(draft){draft[selectedCorner]=p;draft=draft;const corner=selectedCorner;send(()=>oncorner(id,corner,p));}}
- function down(e:PointerEvent,h:typeof handles[number]){if(drag!==null||layer?.locked)return;e.preventDefault();e.stopPropagation();drag=e.pointerId;selectedCorner=h.corner||'topLeft';selectedMesh=h.corner?null:[h.r,h.c];(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);}
+ function move(e:PointerEvent){if(drag!==e.pointerId||!layer)return;const box=stage.getBoundingClientRect();const fix=(v:number)=>Math.max(-1,Math.min(2,snap?Math.round(v*20)/20:v));const at=draggedPoint({x:e.clientX,y:e.clientY},grab,box);const p={x:fix(at.x),y:fix(1-at.y)};const id=layer.id;if(selectedMesh&&mesh){const [r,c]=selectedMesh;mesh[r][c]=p;mesh=mesh;send(()=>onmesh(id,r,c,p));}else if(draft){draft[selectedCorner]=p;draft=draft;const corner=selectedCorner;send(()=>oncorner(id,corner,p));}}
+ function down(e:PointerEvent,h:typeof handles[number]){if(drag!==null||layer?.locked)return;e.preventDefault();e.stopPropagation();drag=e.pointerId;grab=grabOffset({x:e.clientX,y:e.clientY},{x:h.p.x,y:1-h.p.y},stage.getBoundingClientRect());selectedCorner=h.corner||'topLeft';selectedMesh=h.corner?null:[h.r,h.c];(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);}
  function finish(e:PointerEvent){if(drag!==e.pointerId)return;flush();if(layer&&draft){layer.corners=structuredClone(draft);if(layer.meshGrid&&mesh)layer.meshGrid.points=structuredClone(mesh);}drag=null;}
  function nudge(dx:number,dy:number){if(!layer||!draft||layer.locked)return;const p=selectedMesh&&mesh?mesh[selectedMesh[0]][selectedMesh[1]]:draft[selectedCorner];const q={x:p.x+dx/(project?.width||1920),y:p.y-dy/(project?.height||1080)};if(selectedMesh&&mesh){mesh[selectedMesh[0]][selectedMesh[1]]=q;mesh=mesh;onmesh(layer.id,...selectedMesh,q);}else{draft[selectedCorner]=q;draft=draft;oncorner(layer.id,selectedCorner,q);}}
  onDestroy(()=>{if(frame)cancelAnimationFrame(frame);});

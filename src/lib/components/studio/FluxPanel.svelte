@@ -28,8 +28,8 @@
   </div>
   <div class="modules">{#each FLUX_MODULES as m}<button class:active={value.modules.includes(m.id)} aria-label={`Flux ${m.name}`} aria-pressed={value.modules.includes(m.id)} title={m.hint} onclick={()=>toggle(m.id)}>{m.name}</button>{/each}</div>
  </div>
- <label class="amount"><span>Wet / dry</span><input aria-label="Flux wet dry" type="range" min="0" max="1" step=".01" value={value.mix} oninput={e=>patch({mix:Number(e.currentTarget.value)})}/><output>{Math.round(value.mix*100)}%</output></label>
- <label class="amount"><span>Energy</span><input aria-label="Flux Energy" type="range" min="0" max="1" step=".01" value={value.energy||0} oninput={e=>patch({energy:Number(e.currentTarget.value)})}/><output>{Math.round((value.energy||0)*100)}%</output></label>
+ <label class="amount"><span>Wet / dry</span><input aria-label="Flux wet dry" type="range" min="0" max="1" step=".01" data-default=".8" value={value.mix} oninput={e=>patch({mix:Number(e.currentTarget.value)})}/><output>{Math.round(value.mix*100)}%</output></label>
+ <label class="amount"><span>Energy</span><input aria-label="Flux Energy" type="range" min="0" max="1" step=".01" data-default="0" value={value.energy||0} oninput={e=>patch({energy:Number(e.currentTarget.value)})}/><output>{Math.round((value.energy||0)*100)}%</output></label>
  <p>Pencil pressure or a second finger’s height adds Energy: deeper warp, zoom and color. Standard finger touches do not measure pressure.</p>
  <p>{value.latch?'On: keeps your last position when you lift your finger.':'Off: FX play only while you touch the pad.'} Stack modules with your other hand—each combination changes the gesture.</p>
 </div>

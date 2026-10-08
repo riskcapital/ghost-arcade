@@ -12,7 +12,7 @@
  <div class="modules">{#each modules as m}<button class:active={!!params[m.key]} aria-pressed={!!params[m.key]} onclick={()=>{onstart();onchange(m.key,!params[m.key]);}}><span class="module-title"><Icon name={m.icon} size={19}/><strong>{m.name}</strong></span><small>{m.hint}</small></button>{/each}</div>
  <p>Move to generate. Combine effects; lower Camera visibility to perform with just the generated visuals.</p>
  {#if enabled}<div class="options"><label>Color<select aria-label="Camera FX color" value={Number(params.cameraPalette??0)} onchange={e=>onchange('cameraPalette',Number(e.currentTarget.value))}>{#each ['Glacier','Ember','Jade','Orchid','White','Camera colors'] as name,i}<option value={i}>{name}</option>{/each}</select></label><button class:active={!!params.cameraHold} aria-pressed={!!params.cameraHold} onclick={()=>onchange('cameraHold',!params.cameraHold)}>Hold motion</button></div>
- {#each sliders as s}{@const value=Number(params[s.key]??s.value)}<label class="slider"><span>{s.name}</span><input aria-label={s.name} type="range" min={s.min} max={s.max} step=".01" {value} style:--range-fill={(value-s.min)/(s.max-s.min)} onpointerdown={onstart} oninput={e=>onchange(s.key,Number(e.currentTarget.value))}/><output>{value.toFixed(2)}</output></label>{/each}
+ {#each sliders as s}{@const value=Number(params[s.key]??s.value)}<label class="slider"><span>{s.name}</span><input aria-label={s.name} type="range" min={s.min} max={s.max} step=".01" data-default={s.value} {value} style:--range-fill={(value-s.min)/(s.max-s.min)} onpointerdown={onstart} oninput={e=>onchange(s.key,Number(e.currentTarget.value))}/><output>{value.toFixed(2)}</output></label>{/each}
  {/if}
 </section>
 <style>

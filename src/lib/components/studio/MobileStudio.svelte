@@ -109,7 +109,7 @@
   let outputSettings=false;
   let outputPreferences=loadOutputPreferences();
   let outputStatus:OutputStatus={native:false,connected:false,state:'disconnected'};
-  import {snapMappingPoint,hitMappingScreens} from '../../mobile/studio/mappingInteraction';
+  import {snapMappingPoint,hitMappingScreens,grabOffset,draggedPoint,holdRepeat} from '../../mobile/studio/mappingInteraction';
   let mappingGrid=false, mappingSnap=false;
   let lastScreenTap={x:-100,y:-100,time:0};
   function selectPreviewScreen(e:MouseEvent){
@@ -205,7 +205,8 @@
   let history = new History(),
     canUndo = false,
     canRedo = false;
-  let drag: { id: number; surface: number; point: number } | null = null;
+  let drag: { id: number; surface: number; point: number; offset: { x: number; y: number }; moved: boolean } | null = null;
+  let nudgeStep = 0.001;
   let taps: number[] = [];
   $: layer = show.layers[selectedLayer];
   $: surface = show.surfaces[selectedSurface];
@@ -495,28 +496,34 @@
   function beginDrag(e: PointerEvent, index: number) {
     if (!surface || surface.locked) return;
     e.preventDefault();
-    checkpoint();
     selectedPoint = index;
-    show.mapping = true;
-    drag = { id: e.pointerId, surface: selectedSurface, point: index };
+    // Remember where inside the handle the finger landed: the corner then moves by the distance
+    // dragged. Touching a handle selects it and changes nothing.
+    const offset = grabOffset({ x: e.clientX, y: e.clientY }, surface.points[index], preview.getBoundingClientRect());
+    drag = { id: e.pointerId, surface: selectedSurface, point: index, offset, moved: false };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function dragPoint(e: PointerEvent) {
     if (!drag || drag.id !== e.pointerId) return;
     const r = preview.getBoundingClientRect();
-    let point={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};
+    let point=draggedPoint({x:e.clientX,y:e.clientY},drag.offset,r);
+    if(!drag.moved){
+      const from=show.surfaces[drag.surface].points[drag.point];
+      if(Math.hypot((point.x-from.x)*r.width,(point.y-from.y)*r.height)<1)return;
+      drag.moved=true;checkpoint();show.mapping=true;
+    }
     if(mappingSnap)point=snapMappingPoint(point,show.surfaces,drag.surface,r.width,r.height);
     show.surfaces[drag.surface] = movePoint(show.surfaces[drag.surface], drag.point, point);
     show = { ...show };
   }
   function endDrag(e: PointerEvent) {
     if (drag?.id !== e.pointerId) return;
+    const moved = drag.moved;
     drag = null;
-    persist();
+    if (moved) persist();
   }
   function nudge(dx: number, dy: number) {
     if (!surface || surface.locked) return;
-    checkpoint();
     show.mapping = true;
     const p = surface.points[selectedPoint];
     show.surfaces[selectedSurface] = movePoint(surface, selectedPoint, { x: p.x + dx, y: p.y + dy });
@@ -823,6 +830,7 @@
                 min="0"
                 max="2"
                 step=".01"
+                data-default="1"
                 value={layer.intensity}
                 class="blue-fill"
                 style:--range-fill={sliderFill(layer.intensity, 0, 2)}
@@ -845,7 +853,7 @@
                     {@const point = (layer.params[p.NAME] ?? p.DEFAULT ?? [0, 0]) as number[]}
                     {@const lower = Array.isArray(p.MIN) ? p.MIN[axis] : 0}
                     {@const upper = Array.isArray(p.MAX) ? p.MAX[axis] : 1}
-                    <label class="range-row"><span>{p.LABEL || p.NAME} {axis ? 'Y' : 'X'}</span><input type="range" min={lower} max={upper} step={(upper-lower)/200} value={point[axis]} class="blue-fill" style:--range-fill={sliderFill(point[axis], lower, upper)} oninput={e => { const next = [...point]; next[axis] = Number(e.currentTarget.value); setParam(p.NAME, next); }} /><output>{point[axis].toFixed(1)}</output></label>
+                    <label class="range-row"><span>{p.LABEL || p.NAME} {axis ? 'Y' : 'X'}</span><input type="range" min={lower} max={upper} step={(upper-lower)/200} data-default={Array.isArray(p.DEFAULT) ? p.DEFAULT[axis] : undefined} value={point[axis]} class="blue-fill" style:--range-fill={sliderFill(point[axis], lower, upper)} oninput={e => { const next = [...point]; next[axis] = Number(e.currentTarget.value); setParam(p.NAME, next); }} /><output>{point[axis].toFixed(1)}</output></label>
                   {/each}
                 {:else if p.TYPE === 'bool'}<label class="toggle-row"
                   ><span>{p.LABEL || p.NAME}</span><input
@@ -865,6 +873,7 @@
                     min={p.MIN ?? 0}
                     max={p.MAX ?? 1}
                     step={p.TYPE === 'long' ? 1 : ((p.MAX ?? 1) - (p.MIN ?? 0)) / 200}
+                    data-default={typeof p.DEFAULT === 'number' ? p.DEFAULT : undefined}
                     value={Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0)}
                     class="blue-fill"
                     style:--range-fill={sliderFill(Number(layer.params[p.NAME] ?? p.DEFAULT ?? 0), p.MIN ?? 0, p.MAX ?? 1)}
@@ -915,6 +924,7 @@
                     min={p.min}
                     max={p.max}
                     step={p.step}
+                    data-default={p.default}
                     value={effect.params[p.param] ?? p.default}
                     class="blue-fill"
                     style:--range-fill={sliderFill(Number(effect.params[p.param] ?? p.default), p.min, p.max)}
@@ -1082,7 +1092,7 @@
             </div>
             <div class="auto-fields"><label>Change clips<select aria-label="Change clips" bind:value={autoInterval} onchange={stopAuto}><option value={4}>4 beats</option><option value={8}>8 beats</option><option value={16}>16 beats</option><option value={32}>32 beats</option></select></label>
             <label>Order<select aria-label="Clip order" bind:value={autoRandom} onchange={stopAuto}><option value={false}>In order</option><option value={true}>Random</option></select></label></div>
-            <label class="auto-amount">Variation / 4 beats <output>{Math.round(autoVariation*100)}%</output><input type="range" min="0" max=".4" step=".01" bind:value={autoVariation} aria-label="Autopilot variation"/></label>
+            <label class="auto-amount">Variation / 4 beats <output>{Math.round(autoVariation*100)}%</output><input type="range" min="0" max=".4" step=".01" data-default=".12" bind:value={autoVariation} aria-label="Autopilot variation"/></label>
             <div class="auto-rows">{#each show.layers.slice(0,show.dualDeck?8:4) as l,i}<button aria-label={`Autopilot layer ${i+1}`} aria-pressed={autoRows[i]} class:active={autoRows[i]} onclick={()=>{stopAuto();autoRows[i]=!autoRows[i];}}>L{i+1}</button>{/each}</div>
             <p>Follows BPM / Tap. Cameras stay manual. Changes apply to selected, enabled layers. Start Autopilot after choosing settings.</p>
           </section>{/if}
@@ -1095,6 +1105,7 @@
                 min="0"
                 max="1"
                 step=".001"
+                data-default="1"
                 value={layer.opacity}
                 onpointerdown={checkpoint}
                 oninput={(e) => patchLayer({ opacity: Number(e.currentTarget.value) })}
@@ -1106,6 +1117,7 @@
                 min="0"
                 max="1"
                 step=".001"
+                data-default="1"
                 bind:value={show.master}
                 oninput={persist}
               /><output>{Math.round(show.master * 100)}%</output></label
@@ -1140,6 +1152,7 @@
                 min="0"
                 max="3"
                 step=".01"
+                data-default="1"
                 value={layer.speed}
                 onpointerdown={checkpoint}
                 oninput={(e) => patchLayer({ speed: Number(e.currentTarget.value) })}
@@ -1308,6 +1321,7 @@
                   min="0"
                   max=".4"
                   step=".005"
+                  data-default="0"
                   value={surface.feather}
                   onpointerdown={checkpoint}
                   oninput={(e) => patchSurface({ feather: Number(e.currentTarget.value) })}
@@ -1315,13 +1329,9 @@
               >
               <LookControls value={surface.look} onchange={(look) => { checkpoint(); patchSurface({look}); }} onapplyall={() => {checkpoint(); show.surfaces = show.surfaces.map(s => ({...s,look:copy(surface.look)}));persist();}} />
               <div class="nudge">
-                <span>Point {selectedPoint + 1}<small>Fine adjustment · 0.1%</small></span><button
-                  disabled={surface.locked}
-                  onclick={() => nudge(-0.001, 0)}
-                  aria-label="Nudge left">←</button
-                ><button disabled={surface.locked} onclick={() => nudge(0, -0.001)} aria-label="Nudge up">↑</button
-                ><button disabled={surface.locked} onclick={() => nudge(0, 0.001)} aria-label="Nudge down">↓</button
-                ><button disabled={surface.locked} onclick={() => nudge(0.001, 0)} aria-label="Nudge right">→</button>
+                <span>Point {selectedPoint + 1}<small>Tap to step, hold to repeat</small></span>
+                <div class="nudge-steps" role="group" aria-label="Nudge step size">{#each [{step:0.001,label:'0.1%'},{step:0.01,label:'1%'}] as option}<button data-nudge-step class:active={nudgeStep===option.step} aria-pressed={nudgeStep===option.step} onclick={()=>nudgeStep=option.step}>{option.label}</button>{/each}</div>
+                {#each [{x:-1,y:0,label:'Nudge left',glyph:'←'},{x:0,y:-1,label:'Nudge up',glyph:'↑'},{x:0,y:1,label:'Nudge down',glyph:'↓'},{x:1,y:0,label:'Nudge right',glyph:'→'}] as arrow}<button class="nudge-arrow" disabled={surface.locked} aria-label={arrow.label} use:holdRepeat={{start:checkpoint,step:()=>nudge(arrow.x*nudgeStep,arrow.y*nudgeStep)}}>{arrow.glyph}</button>{/each}
               </div>
               <div class="card-actions">
                 <button
@@ -1474,6 +1484,7 @@
       ><label class="master-level"
         ><span>MASTER</span><input
           aria-label="Master output level"
+          data-default="1"
           type="range"
           min="0"
           max="1"
@@ -2545,6 +2556,11 @@
     padding: 0;
     font-size: 16px;
   }
+  .nudge { flex-wrap: wrap; }
+  .nudge .nudge-arrow { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .nudge-steps { display: flex; gap: 2px; margin-right: 6px; }
+  .nudge .nudge-steps button { width: auto; min-width: 40px; padding: 0 7px; font-size: 11px; }
+  .nudge .nudge-steps button.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
   .card-actions {
     display: flex;
     justify-content: space-between;

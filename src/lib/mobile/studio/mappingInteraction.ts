@@ -28,3 +28,32 @@ export function paintHit(p:Point,surfaces:Surface[]):{surface:string;u:number;v:
   }
  }return null;
 }
+
+type Box={left:number;top:number;width:number;height:number};
+/** Pixels from the handle's centre to the finger at touch-down. Kept for the whole drag so a
+ *  corner moves by the distance dragged and never jumps under the finger. */
+export function grabOffset(pointer:Point,handle:Point,box:Box):Point{
+ return {x:pointer.x-(box.left+handle.x*box.width),y:pointer.y-(box.top+handle.y*box.height)};
+}
+/** Normalized position of a handle being dragged with a finger that grabbed it `offset` off-centre. */
+export function draggedPoint(pointer:Point,offset:Point,box:Box):Point{
+ return {x:(pointer.x-offset.x-box.left)/Math.max(1,box.width),y:(pointer.y-offset.y-box.top)/Math.max(1,box.height)};
+}
+/** Hold-to-repeat for nudge buttons: once on press, then repeating after a short delay. */
+export function holdRepeat(node:HTMLElement,options:{step:()=>void;start?:()=>void;delay?:number;interval?:number}){
+ let current=options,timer:ReturnType<typeof setTimeout>|undefined,pointer:number|null=null;
+ const stop=()=>{clearTimeout(timer);timer=undefined;pointer=null;};
+ const down=(e:PointerEvent)=>{
+  if(e.button!==0||pointer!==null||(node as HTMLButtonElement).disabled)return;
+  pointer=e.pointerId;current.start?.();current.step();
+  const repeat=()=>{if((node as HTMLButtonElement).disabled){stop();return;}current.step();timer=setTimeout(repeat,current.interval??70);};
+  timer=setTimeout(repeat,current.delay??380);
+ };
+ const up=(e:PointerEvent)=>{if(e.pointerId===pointer)stop();};
+ // Keyboard and assistive activation arrive as a click with no pointer sequence.
+ const click=(e:MouseEvent)=>{if(e.detail===0){current.start?.();current.step();}};
+ node.addEventListener('pointerdown',down);node.addEventListener('pointerup',up);node.addEventListener('pointercancel',up);node.addEventListener('pointerleave',up);node.addEventListener('click',click);
+ node.addEventListener('contextmenu',prevent);
+ return{update(next:typeof options){current=next;},destroy(){stop();node.removeEventListener('pointerdown',down);node.removeEventListener('pointerup',up);node.removeEventListener('pointercancel',up);node.removeEventListener('pointerleave',up);node.removeEventListener('click',click);node.removeEventListener('contextmenu',prevent);}};
+}
+const prevent=(e:Event)=>e.preventDefault();
