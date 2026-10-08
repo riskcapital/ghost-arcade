@@ -1,6 +1,7 @@
 import UIKit
 import ARKit
 import AVFoundation
+import UniformTypeIdentifiers
 import Capacitor
 
 /// A tapped `ghostarcade://pair?...` link waits here until the web layer takes it.
@@ -46,7 +47,9 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name:"openDualCamera",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"listScans",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"shareScan",returnType:CAPPluginReturnPromise),
-        CAPPluginMethod(name:"deleteScan",returnType:CAPPluginReturnPromise)
+        CAPPluginMethod(name:"deleteScan",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"shareFile",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"haptic",returnType:CAPPluginReturnPromise)
     ]
     @objc func shareInteractiveScene(_ call: CAPPluginCall) { sharePreparation(call, schema: "ghost-interactive", prefix: "Interactive") }
     @objc func shareCalibrationPreparation(_ call: CAPPluginCall) { sharePreparation(call, schema: "ghost-calibration", prefix: "Calibration") }
@@ -56,24 +59,15 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
               object["schema"] as? String == schema, object["version"] as? Int == 1 else {
             call.reject("Invalid or oversized preparation package."); return
         }
-        DispatchQueue.main.async {
-            guard let host = self.bridge?.viewController, host.presentedViewController == nil else {
-                call.reject("Close the other native tool before sharing."); return
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(prefix + "-" + UUID().uuidString + (schema == "ghost-calibration" ? ".ghostcal.json" : ".ghostinteractive.json"))
+        do { try data.write(to: file, options: .atomic) } catch { call.reject(error.localizedDescription); return }
+        share(file, anchor: nil) { outcome in
+            try? FileManager.default.removeItem(at: file)
+            switch outcome {
+            case .completed: call.resolve()
+            case .cancelled: call.reject("Export cancelled. Your preparation is still here.")
+            case .unavailable(let reason), .failed(let reason): call.reject(reason)
             }
-            let file = FileManager.default.temporaryDirectory.appendingPathComponent(prefix + "-" + UUID().uuidString + (schema == "ghost-calibration" ? ".ghostcal.json" : ".ghostinteractive.json"))
-            do {
-                try data.write(to: file, options: .atomic)
-                let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
-                sheet.popoverPresentationController?.sourceView = host.view
-                sheet.popoverPresentationController?.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.midY, width: 1, height: 1)
-                sheet.completionWithItemsHandler = { _, completed, _, error in
-                    try? FileManager.default.removeItem(at: file)
-                    if let error = error { call.reject(error.localizedDescription) }
-                    else if completed { call.resolve() }
-                    else { call.reject("Export cancelled. Your preparation is still here.") }
-                }
-                host.present(sheet, animated: true)
-            } catch { call.reject(error.localizedDescription) }
         }
     }
     @objc func calibrationReference(_ call: CAPPluginCall) {
@@ -84,15 +78,137 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func liveConfigure(_ call: CAPPluginCall) {
         let sources = call.getArray("sources", String.self) ?? []
         let configure = { StudioLiveCapture.shared.configure(sources) { error in if let error = error { call.reject(error.localizedDescription) } else { call.resolve() } } }
-        if sources.isEmpty { configure() } else { permission(call, then: configure) }
+        if sources.isEmpty { configure() } else { permission(call, presents: false, then: configure) }
     }
     @objc func capabilities(_ call:CAPPluginCall){call.resolve(["lidar":ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth),"dualCamera":AVCaptureMultiCamSession.isMultiCamSupported,"platform":"ios"])}
     @objc func listScans(_ call:CAPPluginCall){DispatchQueue.global(qos:.userInitiated).async{do{call.resolve(["scans":try ScanFiles.list()])}catch{call.reject(error.localizedDescription)}}}
     @objc func deleteScan(_ call:CAPPluginCall){guard let id=call.getString("id"),UUID(uuidString:id) != nil else{call.reject("Invalid scan.");return};DispatchQueue.global(qos:.userInitiated).async{do{try FileManager.default.removeItem(at:ScanFiles.root().appendingPathComponent(id));call.resolve()}catch{call.reject(error.localizedDescription)}}}
-    @objc func shareScan(_ call:CAPPluginCall){guard let id=call.getString("id"),UUID(uuidString:id) != nil else{call.reject("Invalid scan.");return};DispatchQueue.main.async{do{let file=try ScanFiles.root().appendingPathComponent(id).appendingPathComponent("scan.ply");guard FileManager.default.fileExists(atPath:file.path),let host=self.bridge?.viewController else{call.reject("Scan file not found.");return};let sheet=UIActivityViewController(activityItems:[file],applicationActivities:nil);sheet.popoverPresentationController?.sourceView=host.view;sheet.popoverPresentationController?.sourceRect=CGRect(x:host.view.bounds.midX,y:host.view.bounds.midY,width:1,height:1);sheet.completionWithItemsHandler={_,completed,_,error in if let error=error{call.reject(error.localizedDescription)}else{call.resolve(["shared":completed])}};host.present(sheet,animated:true)}catch{call.reject(error.localizedDescription)}}}
-    private func permission(_ call:CAPPluginCall,then:@escaping ()->Void){
-        let run={DispatchQueue.main.async{guard let host=self.bridge?.viewController,host.presentedViewController==nil else{call.reject("Close the current native tool first.");return};then()}}
-        switch AVCaptureDevice.authorizationStatus(for:.video){case .authorized:run();case .notDetermined:AVCaptureDevice.requestAccess(for:.video){granted in if granted{run()}else{call.reject("Camera access was denied. Enable it in iOS Settings.")}};default:call.reject("Camera access is disabled in iOS Settings.")}
+    @objc func shareScan(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), UUID(uuidString: id) != nil else { call.reject("Invalid scan."); return }
+        guard let file = try? ScanFiles.root().appendingPathComponent(id).appendingPathComponent("scan.ply"),
+              FileManager.default.fileExists(atPath: file.path) else { call.reject("Scan file not found."); return }
+        share(file, anchor: nil) { outcome in
+            switch outcome {
+            case .completed: call.resolve(["shared": true])
+            case .cancelled: call.resolve(["shared": false])
+            case .unavailable(let reason), .failed(let reason): call.reject(reason)
+            }
+        }
+    }
+    // MARK: Share sheet
+
+    enum ShareOutcome { case completed, cancelled, unavailable(String), failed(String) }
+
+    /// Shows the system share sheet for one file and reports exactly one outcome, whatever happens to the sheet.
+    /// `anchor` is the control that opened it, in web view points; iPad points the popover at it.
+    private func share(_ file: URL, anchor: CGRect?, done: @escaping (ShareOutcome) -> Void) {
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController, host.viewIfLoaded?.window != nil else { done(.unavailable("Sharing is not available right now.")); return }
+            guard host.presentedViewController == nil else { done(.unavailable("Close the other native tool before sharing.")); return }
+            let once = ShareOnce(done)
+            let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+            // Saving to Photos needs a permission this app does not ask for. Files, AirDrop and the rest stay.
+            sheet.excludedActivityTypes = [.saveToCameraRoll]
+            if let popover = sheet.popoverPresentationController {
+                // iPad shows the sheet as a popover, which must be anchored inside the window.
+                let bounds = host.view.bounds
+                popover.sourceView = host.view
+                if let anchor = anchor?.intersection(bounds), !anchor.isNull, anchor.width >= 1, anchor.height >= 1 {
+                    popover.sourceRect = anchor
+                } else {
+                    popover.sourceRect = CGRect(x: bounds.midX, y: bounds.midY, width: 1, height: 1)
+                    popover.permittedArrowDirections = []
+                }
+            }
+            sheet.completionWithItemsHandler = { _, completed, _, error in
+                if let error = error { once.report(.failed(error.localizedDescription)) } else { once.report(completed ? .completed : .cancelled) }
+            }
+            host.present(sheet, animated: true)
+        }
+    }
+    /// shareFile({ filename, base64, mimeType, anchor?: { x, y, width, height } }) -> { completed }
+    /// Writes the bytes to a temporary file with that name, shows the share sheet, then removes the file.
+    @objc func shareFile(_ call: CAPPluginCall) {
+        guard let name = Self.safeFilename(call.getString("filename"), mimeType: call.getString("mimeType")) else { call.reject("A file name is needed to share."); return }
+        guard var text = call.getString("base64"), !text.isEmpty else { call.reject("There is nothing to share."); return }
+        if text.hasPrefix("data:"), let comma = text.firstIndex(of: ",") { text = String(text[text.index(after: comma)...]) }
+        guard text.utf8.count / 4 * 3 <= 250_000_000 else { call.reject("This file is too large to share."); return }
+        guard let data = Data(base64Encoded: text, options: .ignoreUnknownCharacters), !data.isEmpty else { call.reject("The file could not be read."); return }
+        // Its own folder, so the shared file keeps exactly the name the user will see.
+        let folder = SharedFiles.root().appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let file = folder.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: file, options: .atomic)
+        } catch { try? FileManager.default.removeItem(at: folder); call.reject(error.localizedDescription); return }
+        var anchor: CGRect?
+        if let box = call.getObject("anchor") {
+            let value = { (key: String) in (box[key] as? NSNumber)?.doubleValue }
+            if let x = value("x"), let y = value("y"), let width = value("width"), let height = value("height"),
+               [x, y, width, height].allSatisfy({ $0.isFinite }) { anchor = CGRect(x: x, y: y, width: width, height: height) }
+        }
+        share(file, anchor: anchor) { outcome in
+            try? FileManager.default.removeItem(at: folder)
+            switch outcome {
+            case .completed: call.resolve(["completed": true])
+            case .cancelled: call.resolve(["completed": false])
+            case .unavailable(let reason), .failed(let reason): call.reject(reason)
+            }
+        }
+    }
+    /// Only the last path component is kept, so a name can never point outside the temporary folder.
+    static func safeFilename(_ raw: String?, mimeType: String?) -> String? {
+        var name = ((raw ?? "") as NSString).lastPathComponent
+        name = name.components(separatedBy: CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "/\\:"))).joined()
+        name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != ".", name != ".." else { return nil }
+        if name.hasPrefix(".") { name = "File" + name }
+        if (name as NSString).pathExtension.isEmpty, let mimeType = mimeType, let ext = UTType(mimeType: mimeType)?.preferredFilenameExtension { name += "." + ext }
+        let ext = (name as NSString).pathExtension
+        var base = (name as NSString).deletingPathExtension
+        while (base + "." + ext).utf8.count > 200, base.count > 1 { base.removeLast() }
+        return ext.isEmpty ? base : base + "." + ext
+    }
+
+    // MARK: Haptics
+
+    // Main thread only. Kept alive so a tap does not pay the generator start-up cost every time.
+    private lazy var impacts: [String: UIImpactFeedbackGenerator] = ["light": UIImpactFeedbackGenerator(style: .light), "medium": UIImpactFeedbackGenerator(style: .medium), "heavy": UIImpactFeedbackGenerator(style: .heavy)]
+    private lazy var selection = UISelectionFeedbackGenerator()
+    private lazy var notice = UINotificationFeedbackGenerator()
+    /// haptic({ type: 'light' | 'medium' | 'heavy' | 'selection' | 'success' | 'warning' | 'error' }) -> {}
+    @objc func haptic(_ call: CAPPluginCall) {
+        let type = call.getString("type") ?? ""
+        DispatchQueue.main.async {
+            switch type {
+            case "light", "medium", "heavy": self.impacts[type]?.impactOccurred(); self.impacts[type]?.prepare()
+            case "selection": self.selection.selectionChanged(); self.selection.prepare()
+            case "success": self.notice.notificationOccurred(.success)
+            case "warning": self.notice.notificationOccurred(.warning)
+            case "error": self.notice.notificationOccurred(.error)
+            default: call.reject("Unknown haptic type."); return
+            }
+            call.resolve([:])
+        }
+    }
+
+    // MARK: Camera permission
+
+    /// Every path ends in `then()` or a rejection. `presents` is false for calls that show no native screen.
+    private func permission(_ call: CAPPluginCall, presents: Bool = true, then: @escaping () -> Void) {
+        let run = {
+            DispatchQueue.main.async {
+                if presents {
+                    guard let host = self.bridge?.viewController, host.viewIfLoaded?.window != nil, host.presentedViewController == nil else { call.reject("Close the current native tool first."); return }
+                }
+                then()
+            }
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: run()
+        case .notDetermined: AVCaptureDevice.requestAccess(for: .video) { granted in if granted { run() } else { call.reject("Camera access was denied. Enable it in iOS Settings.") } }
+        default: call.reject("Camera access is disabled in iOS Settings.")
+        }
     }
     @objc func openScanner(_ call:CAPPluginCall){
         guard ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else{call.reject("LiDAR scanning requires a LiDAR-equipped iPhone Pro or iPad Pro.");return}
@@ -103,8 +219,29 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
     private func present(_ controller:UIViewController){let nav=UINavigationController(rootViewController:controller);nav.modalPresentationStyle = .fullScreen;nav.overrideUserInterfaceStyle = .dark;let appearance=UINavigationBarAppearance();appearance.configureWithOpaqueBackground();appearance.backgroundColor=UIColor(red:0.035,green:0.045,blue:0.06,alpha:1);appearance.titleTextAttributes=[.foregroundColor:UIColor.white];nav.navigationBar.standardAppearance=appearance;nav.navigationBar.scrollEdgeAppearance=appearance;nav.navigationBar.tintColor=UIColor(red:0.55,green:0.7,blue:1,alpha:1);bridge?.viewController?.present(nav,animated:true)}
 }
 
+/// Reports a share outcome exactly once. If the sheet goes away without calling back
+/// (dismissed in code, or never shown), the call still ends as cancelled instead of hanging.
+private final class ShareOnce {
+    private var done: ((StudioCapturePlugin.ShareOutcome) -> Void)?
+    init(_ done: @escaping (StudioCapturePlugin.ShareOutcome) -> Void) { self.done = done }
+    func report(_ outcome: StudioCapturePlugin.ShareOutcome) { let done = self.done; self.done = nil; done?(outcome) }
+    deinit { done?(.cancelled) }
+}
+
+/// Temporary copies handed to the share sheet.
+enum SharedFiles {
+    static func root() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("GhostShare", isDirectory: true) }
+    /// Nothing can be mid-share at launch, so anything still here is from a run that ended early.
+    static func purge() { try? FileManager.default.removeItem(at: root()) }
+}
+
 enum ScanFiles {
-    static func root()throws->URL{let root=FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0].appendingPathComponent("GhostScans",isDirectory:true);try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true);return root}
+    static func root() throws -> URL {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { throw NSError(domain: "GhostScans", code: 1, userInfo: [NSLocalizedDescriptionKey: "App storage is unavailable."]) }
+        let root = documents.appendingPathComponent("GhostScans", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
     static func save(points:[ScanPoint],name:String,mode:String,thumbnail:Data?,chunks:[URL]=[],archivedCount:Int=0)throws->[String:Any]{
         let id=UUID().uuidString,folder=try root().appendingPathComponent(id,isDirectory:true);try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
         do{let bytes=try writeScanPLY(points:points,chunks:chunks,archivedCount:archivedCount,to:folder.appendingPathComponent("scan.ply"));if let thumbnail=thumbnail{try thumbnail.write(to:folder.appendingPathComponent("preview.jpg"),options:.atomic)}
@@ -121,7 +258,7 @@ private final class PairingScannerViewController: UIViewController, AVCaptureMet
     var onDone: ((String?) -> Void)?
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "live.ghostarcade.pairing-scanner")
-    private var preview: AVCaptureVideoPreviewLayer!
+    private lazy var preview = AVCaptureVideoPreviewLayer(session: session)
     private let hint = UILabel()
     private var finished = false
     override func viewDidLoad() {
@@ -129,7 +266,6 @@ private final class PairingScannerViewController: UIViewController, AVCaptureMet
         title = "Desktop Connect"
         view.backgroundColor = .black
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(cancel))
-        preview = AVCaptureVideoPreviewLayer(session: session)
         preview.videoGravity = .resizeAspectFill
         view.layer.addSublayer(preview)
         hint.text = "Point at the QR in desktop Connect Mobile"
