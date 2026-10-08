@@ -68,6 +68,8 @@ const outputStatus = async (c) => {
   return { attached: !!s?.output_window_attached, ready: !!s?.output_swapchain_ready, presented: Number(s?.swapchain_presented || 0), last: s?.swapchain_last_present_result, error: s?.swapchain_last_present_error };
 };
 
+const OUTPUT_TITLE = '^Ghost Arcade Native Output$';
+
 export const stepOutputAndQuit = {
   id: 'h', title: 'Output Window opens, fullscreen toggles, the app quits cleanly',
   async run(t) {
@@ -86,9 +88,9 @@ export const stepOutputAndQuit = {
     t.number('outputPresent', `${out.presented} -> ${later.presented} frames presented in 3 s (last result ${later.last})`);
     if (t.isLinux) {
       t.check('core presents frames into the Output Window', later.presented > out.presented, `${out.presented} -> ${later.presented}, last ${later.last} ${later.error || ''}`);
-      const id = findWindows('Ghost Render Core').map((entry) => windowInfo(entry)).find((info) => info?.viewable && info.width > 100);
+      const id = findWindows(OUTPUT_TITLE).map((entry) => windowInfo(entry)).find((info) => info?.viewable && info.width > 100);
       t.number('x11OutputWindow', id ? `${id.id} ${id.width}x${id.height}+${id.x}+${id.y}` : 'not found');
-      t.check('Output Window is on the X display', !!id, 'no viewable "Ghost Render Core" window');
+      t.check('Output Window is on the X display', !!id, 'no viewable "Ghost Arcade Native Output" window');
       const root = rootScreenshot(path.join(t.outDir, 'h-x11-output-window.png'));
       if (id && root) {
         const shown = stats(root, { x: id.x, y: id.y, width: id.width, height: id.height });
@@ -100,11 +102,11 @@ export const stepOutputAndQuit = {
       let full = null;
       for (let i = 0; i < 30; i++) {
         await sleep(500);
-        full = findWindows('Ghost Render Core').map((entry) => ({ ...windowInfo(entry), state: windowState(entry) })).find((info) => info?.viewable && info.width === size?.width && info.height === size?.height) || null;
+        full = findWindows(OUTPUT_TITLE).map((entry) => ({ ...windowInfo(entry), state: windowState(entry) })).find((info) => info?.viewable && info.width === size?.width && info.height === size?.height) || null;
         if (full) break;
       }
       t.number('x11Fullscreen', full ? `${full.width}x${full.height}+${full.x}+${full.y} ${full.state}` : `no window at ${size?.width}x${size?.height}`);
-      t.check('Fullscreen makes the output cover the display', !!full, full ? '' : JSON.stringify(findWindows('Ghost Render Core').map((entry) => windowInfo(entry))));
+      t.check('Fullscreen makes the output cover the display', !!full, full ? '' : JSON.stringify(findWindows(OUTPUT_TITLE).map((entry) => windowInfo(entry))));
       const fullOut = await outputStatus(c);
       await sleep(2000);
       const fullLater = await outputStatus(c);
