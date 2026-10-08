@@ -13,6 +13,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Scene-based launches deliver links through StudioSceneDelegate; this covers a launch without scenes.
         if let url = launchOptions?[.url] as? URL { PairingLinkInbox.receive(url) }
+        // Nothing is in use at launch: clear camera stills and share-sheet copies left by an earlier run.
+        DualCameraStills.purge()
+        DispatchQueue.global(qos: .utility).async { SharedFiles.purge() }
         return true
     }
 

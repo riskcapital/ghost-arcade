@@ -2,8 +2,50 @@ import UIKit
 import AVFoundation
 import CoreImage
 
+/// Dual-camera stills are a hand-off: the web layer copies each one into its own library right after the session.
+/// They live in Caches, never in Documents (which shows in Files and is backed up), one folder per session,
+/// and a folder is removed as soon as no session is using it.
+enum DualCameraStills {
+    private static let lock = NSLock()
+    private static var inUse = Set<String>()
+    private static let files = DispatchQueue(label: "live.ghostarcade.dualcamera.files", qos: .utility)
+    private static func root() -> URL? { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("GhostCamera", isDirectory: true) }
+
+    /// Starts a session: reserves its name, then clears out whatever no session is using.
+    static func begin() -> String {
+        let session = UUID().uuidString
+        lock.lock(); inUse.insert(session); lock.unlock()
+        purge()
+        return session
+    }
+    static func folder(_ session: String) throws -> URL {
+        guard let root = root() else { throw NSError(domain: "GhostCapture", code: 2, userInfo: [NSLocalizedDescriptionKey: "App storage is unavailable."]) }
+        let folder = root.appendingPathComponent(session, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+    /// Ends a session. Stills handed to the web layer stay long enough to be copied, then go.
+    static func end(_ session: String, handedOff: Bool) {
+        let release = { lock.lock(); inUse.remove(session); lock.unlock(); purge() }
+        if handedOff { DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: release) } else { release() }
+    }
+    /// Removes every still that no open or just-finished session is using. Also removes Documents/GhostCamera,
+    /// which earlier versions filled and never emptied; those images were already copied into the clip library.
+    static func purge() {
+        files.async {
+            let manager = FileManager.default
+            if let legacy = manager.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("GhostCamera", isDirectory: true) { try? manager.removeItem(at: legacy) }
+            guard let root = root(), let entries = try? manager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
+            // Read the sessions in use after listing: a folder can only exist once its session is reserved.
+            lock.lock(); let keep = inUse; lock.unlock()
+            for entry in entries where !keep.contains(entry.lastPathComponent) { try? manager.removeItem(at: entry) }
+        }
+    }
+}
+
 final class DualCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
     var onDone: (([[String: String]]) -> Void)?
+    private let stills = DualCameraStills.begin()
     private let session = AVCaptureMultiCamSession()
     private let queue = DispatchQueue(label: "live.ghostarcade.dualcamera", qos: .userInitiated)
     private let backView = UIView(), frontView = UIView(), stage = UIView()
@@ -117,8 +159,7 @@ final class DualCameraViewController: UIViewController, AVCaptureVideoDataOutput
                 for (name, buffer) in [("Rear", rear), ("Selfie", front)] {
                     let image = CIImage(cvPixelBuffer: buffer)
                     guard let cg = context.createCGImage(image, from: image.extent), let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.9) else { throw self.failure("Could not capture the camera frame.") }
-                    let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("GhostCamera", isDirectory: true); try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                    let file = root.appendingPathComponent(UUID().uuidString + ".jpg"); try data.write(to: file, options: .atomic)
+                    let file = try DualCameraStills.folder(self.stills).appendingPathComponent(UUID().uuidString + ".jpg"); try data.write(to: file, options: .atomic)
                     pair.append(["name": "\(name) camera", "url": file.absoluteString])
                 }
                 DispatchQueue.main.async { self.shots.append(contentsOf: pair); self.status.text = "Pair captured. Done adds both images to your clip library."; self.finishCapture() }
@@ -126,6 +167,6 @@ final class DualCameraViewController: UIViewController, AVCaptureVideoDataOutput
         }
     }
     private func finishCapture() { capturing = false; captureButton.isEnabled = !paused; navigationItem.rightBarButtonItem?.isEnabled = true }
-    @objc private func close() { guard !closed, !capturing else { return }; closed = true; queue.async { self.session.stopRunning(); self.outputs.forEach { $0.setSampleBufferDelegate(nil, queue: nil) }; self.frames.removeAll(); DispatchQueue.main.async { self.dismiss(animated: true) { self.onDone?(self.shots) } } } }
+    @objc private func close() { guard !closed, !capturing else { return }; closed = true; queue.async { self.session.stopRunning(); self.outputs.forEach { $0.setSampleBufferDelegate(nil, queue: nil) }; self.frames.removeAll(); DispatchQueue.main.async { self.dismiss(animated: true) { self.onDone?(self.shots); DualCameraStills.end(self.stills, handedOff: !self.shots.isEmpty) } } } }
     deinit { NotificationCenter.default.removeObserver(self) }
 }
