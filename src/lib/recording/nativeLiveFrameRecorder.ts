@@ -180,17 +180,7 @@ async function waitForCaptureSource(captureSource: string, timeoutMs = 4000): Pr
     if (state && Number(state.width) > 0 && Number(state.height) > 0 && Number(state.frame ?? 1) > 0) {
       return { width: Number(state.width), height: Number(state.height) };
     }
-    if (Date.now() > deadline) {
-      // One layer or one VJ row records from a shared texture, which the core
-      // only has on macOS and Windows.
-      if (captureSource === 'record_target') {
-        const caps = await getNativeRendererCapabilities().catch(() => null);
-        if ((caps as any)?.output_shared_texture_export?.platform === 'unsupported') {
-          throw new Error('Recording one layer is not available on this system. Record the composition instead.');
-        }
-      }
-      throw new Error('The recording source is not rendering.');
-    }
+    if (Date.now() > deadline) throw new Error('The recording source is not rendering.');
     await delay(50);
   }
 }
@@ -353,7 +343,15 @@ export async function startNativeRendererLiveFrameRecording(
   const recordTarget = request ? recordTargetParams(request.source, request.alpha) : null;
   let sourceSize: { width: number; height: number } | null = null;
   if (recordTarget) {
-    await invoke('native_renderer_set_record_target', recordTarget);
+    // One layer, or a composition with transparency, records from a shared
+    // texture, which the core only has on macOS and Windows. On Linux it
+    // refuses at once; say so instead of waiting for a source that never renders.
+    const linux = /Linux/i.test(globalThis.navigator?.userAgent ?? '');
+    const applied = await invoke<unknown>('native_renderer_set_record_target', recordTarget)
+      .catch((error) => { if (linux) return null; throw error; });
+    if (applied == null && linux) {
+      throw new Error('Recording a single layer or transparency is not available on Linux. Record the composition instead.');
+    }
   }
   if (captureSource !== 'output') {
     try {
