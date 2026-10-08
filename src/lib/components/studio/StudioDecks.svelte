@@ -126,7 +126,7 @@
         {#each rows as row}
           <div class="clip-row" class:selected={row === selectedLayer}>
             <div class="row-control">
-              <button class="row-name" onclick={() => {onSelect(row);onControls(row);}} aria-label={`Edit controls for layer ${row+1}`} aria-pressed={selectedLayer === row}>{show.dualDeck ? `${row < 4 ? 'A' : 'B'}${row % 4 + 1}` : `L${row + 1}`}<Icon name="settings" size={15}/></button>
+              <button class="row-name" onclick={() => {onSelect(row);onControls(row);}} aria-label={`Edit controls for layer ${row+1}`} aria-pressed={selectedLayer === row}>{show.dualDeck ? `${row < 4 ? 'A' : 'B'}${row % 4 + 1}` : `L${row + 1}`}<Icon name="settings" size={18}/></button>
               <button class="level-button" aria-label={`Mix row ${row+1}`} onclick={()=>onMixer(row)} style={`--level:${show.layers[row].opacity*100}%`}>{Math.round(show.layers[row].opacity*100)}%</button>
               <button class="stop" aria-label={`Stop row ${row + 1}`} onclick={() => onStop(row)}>■</button>
             </div>
@@ -204,7 +204,7 @@
   .clip-row:last-child{margin-bottom:0}.row-label{position:sticky;left:0;z-index:3;background:var(--ga-void);font-size:10px;display:grid;place-items:center;}
   .column-row button{min-height:44px;font-size:11px;}
   .row-control{position:sticky;left:0;z-index:3;display:grid;grid-template-columns:44px 1fr;grid-template-rows:44px 44px;gap:2px;padding:0;background:var(--ga-faceplate-bg);border:1px solid var(--ga-line-2);border-radius:4px;}
-  .row-name{display:flex;flex-direction:column;gap:8px;grid-row:1/3;grid-column:1;font-weight:650;min-height:0;}.level-button{grid-column:2;min-height:0;font-size:10px;}.stop{grid-column:2;min-height:0;font-size:10px;}
+  .row-name{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:0;line-height:1;letter-spacing:.02em;grid-row:1/3;grid-column:1;font-weight:650;min-height:0;}.level-button{grid-column:2;min-height:0;font-size:10px;}.stop{grid-column:2;min-height:0;font-size:10px;}
   .selected .row-control{border-color:var(--ga-selection-line)}.selected .row-name{background:var(--ga-selection-bg)}
   .pad{position:relative;isolation:isolate;height:92px;min-height:92px;padding:0;overflow:hidden;background:var(--ga-slot);box-shadow:none;user-select:none;touch-action:pan-x pan-y;}
   .pad img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;}

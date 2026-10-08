@@ -116,3 +116,19 @@
 /* Corner handles reach 22 px past the preview: keep Hold and Blackout clear of them. */
 .studio[data-layout][data-layout].mapping .monitor-tools {margin-top:22px;}
 .studio[data-layout='phone-landscape'][data-layout].mapping:not(.clean) .monitor {padding-left:22px;padding-right:22px;}
+
+/* Footer: tempo value, the BPM label that opens Tempo and audio, Quantize, then Mix / Master. */
+.studio[data-layout][data-layout] .master-bar .tempo > label {gap:0;}
+.studio[data-layout][data-layout] .master-bar .tempo-open {display:inline-flex;align-items:center;gap:5px;min-width:56px;font-size:10px;letter-spacing:1px;}
+.studio[data-layout][data-layout] .master-bar .tempo-open span {font-size:13px;letter-spacing:0;line-height:1;transform:translateY(-2px);}
+.studio[data-layout] .tempo-sheet {position:fixed;z-index:30;width:min(320px,calc(100vw - 20px));box-sizing:border-box;padding:6px 12px 12px;display:grid;gap:10px;background:var(--ga-inspector-bg);border:1px solid var(--ga-line-3);border-radius:10px;box-shadow:0 -8px 32px #000b;}
+.studio[data-layout] .tempo-sheet header {display:flex;align-items:center;justify-content:space-between;min-height:44px;}
+.studio[data-layout] .tempo-sheet header strong {font-size:11px;letter-spacing:.08em;color:var(--ga-ink-1);}
+.studio[data-layout][data-layout] .tempo-sheet header .icon-button {min-width:44px;min-height:44px;background:none;border:0;}
+.studio[data-layout] .tempo-sheet-row {display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;}
+.studio[data-layout][data-layout] .tempo-sheet .tap {min-height:56px;min-width:44px;font-size:14px;font-weight:650;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
+.studio[data-layout] .tempo-sheet output {font-size:18px;font-weight:620;font-variant-numeric:tabular-nums;min-width:86px;text-align:right;}
+.studio[data-layout] .tempo-sheet p {margin:0;font-size:11px;line-height:1.5;color:var(--ga-ink-2);}
+.studio[data-layout][data-layout] .mic-toggle {display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:44px;font-size:12px;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
+.studio[data-layout][data-layout] .mic-toggle.active {background:var(--ga-selection-bg);border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
+.studio[data-layout][data-layout] .mic-toggle.inline {margin:4px 0 8px;}

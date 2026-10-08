@@ -728,6 +728,20 @@
     autoEvent('tempo');
     persist();
   }
+  /** Tap tempo and the microphone live in a small sheet opened from the BPM label in the footer. */
+  let tempoOpen = false;
+  let footerEl: HTMLElement;
+  let tempoAnchor = { left: 10, bottom: 60 };
+  function toggleTempo() {
+    if (!tempoOpen && footerEl) {
+      // The footer scrolls its own overflow, so the sheet is placed from the footer's box instead of inside it.
+      const box = footerEl.getBoundingClientRect();
+      tempoAnchor = { left: Math.round(box.left) + 10, bottom: Math.round(window.innerHeight - box.top) + 8 };
+    }
+    tempoOpen = !tempoOpen;
+  }
+  // A rotation or Split View resize moves the footer: close rather than float in the wrong place.
+  $: if (layoutInfo) tempoOpen = false;
   function tap() {
     const now = performance.now();
     if (taps.length && now - taps[taps.length - 1] > 2000) taps = [];
@@ -1123,6 +1137,7 @@
                 oninput={(e) => patchLayer({ intensity: Number(e.currentTarget.value) })}
               /><output>{layer.intensity.toFixed(2)}</output></label
             >
+            <button class="mic-toggle inline" class:active={mic} aria-pressed={mic} disabled={micBusy} onclick={toggleMic}><Icon name="mic" size={18} /><span>{mic ? 'Microphone on' : 'Microphone off'}</span></button>
             {#each groupedParams.pinned as p}{@render shaderParam(p)}{/each}
             {#key controlSourceKey}
               {#each groupedParams.groups as group}<details class="param-group" open={params.length<=10 || (!groupedParams.pinned.length && group.id==='look')}><summary>{group.label}<span>{group.params.length}</span></summary>{#each group.params as p}{@render shaderParam(p)}{/each}</details>{/each}
@@ -1700,7 +1715,17 @@
       {/if}
   </main>
   {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
-  <footer class="master-bar">
+  {#if tempoOpen}<div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px`}>
+    <header><strong>TEMPO AND AUDIO</strong><button class="icon-button" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}><Icon name="close" size={18} /></button></header>
+    <div class="tempo-sheet-row">
+      <button class="tap" onclick={tap}>Tap tempo</button>
+      <div class="beat-dots" aria-hidden="true">{#each [0, 1, 2, 3] as n}<i class:lit={beat === n}></i>{/each}</div>
+      <output>{show.bpm} BPM</output>
+    </div>
+    <button class="mic-toggle" class:active={mic} aria-pressed={mic} disabled={micBusy} onclick={toggleMic} aria-label={mic ? 'Disable microphone' : 'Enable microphone'}><Icon name="mic" size={18} /><span>{mic ? 'Microphone on' : 'Microphone off'}</span></button>
+    <p>Tap in time to set the tempo. The microphone drives Audio response on every clip.</p>
+  </div>{/if}
+  <footer class="master-bar" bind:this={footerEl}>
     {#if show.dualDeck}<div class="mobile-decks">
       <button
         onclick={() => {
@@ -1726,7 +1751,7 @@
       <div class="beat-dots">
         {#each [0, 1, 2, 3] as n}<i class:lit={beat === n}></i>{/each}
       </div>
-      <button class="tap" onclick={tap}>TAP</button><label
+      <label
         ><input
           aria-label="Tempo in BPM"
           type="number"
@@ -1734,7 +1759,13 @@
           max="240"
           value={show.bpm}
           onchange={(e) => setBpm(Number(e.currentTarget.value))}
-        /><span>BPM</span></label
+        /></label
+      ><button
+        class="tempo-open"
+        class:active={tempoOpen}
+        aria-expanded={tempoOpen}
+        aria-label="Tempo and audio"
+        onclick={toggleTempo}>BPM<span aria-hidden="true">⌄</span></button
       ><button
         class:active={show.quantize}
         aria-pressed={show.quantize}
@@ -1748,13 +1779,7 @@
       >
     </div>
     <div class="master-actions">{#if flux.active}<button aria-label="Release Flux" onclick={()=>{flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}>FX off</button>{/if}{#if !tablet}<button class:active={mixerOpen} onclick={()=>mixerOpen=!mixerOpen} aria-label="Open performance mixer">Mix</button>{/if}
-      <button
-        class="icon-button"
-        class:active={mic}
-        disabled={micBusy}
-        onclick={toggleMic}
-        aria-label={mic ? 'Disable microphone' : 'Enable microphone'}><Icon name="mic" /></button
-      ><label class="master-level"
+<label class="master-level"
         ><span>MASTER</span><input
           aria-label="Master output level"
           data-default="1"
