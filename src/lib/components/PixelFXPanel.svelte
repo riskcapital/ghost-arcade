@@ -583,7 +583,7 @@
   .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
   .mode-btn { background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-800); color: #b0b6c0; padding: 6px 8px; border-radius: 3px; cursor: pointer; font-size: 12px; transition: all 0.1s; }
   .mode-btn:hover { background: var(--ga-blue-mute-800); color: #fff; }
-  .mode-btn.active { background: linear-gradient(135deg, var(--ga-blue-600) 0%, var(--ga-blue-mute-800) 100%); border-color: var(--ga-blue-300); color: var(--ga-blue-300); }
+  .mode-btn.active { background: linear-gradient(135deg, var(--ga-blue-600) 0%, var(--ga-blue-mute-800) 100%); border-color: var(--ga-blue-300); color: var(--ga-blue-100); }
   .hint { margin-top: 6px; padding: 6px 8px; background: var(--ga-blue-900); border-left: 2px solid var(--ga-blue-300); font-size: 11.5px; color: #8a96a6; line-height: 1.4; border-radius: 0 3px 3px 0; }
   .slider-col { display: flex; flex-direction: column; gap: 8px; }
   .toggle-inline { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11px; opacity: 0.8; cursor: pointer; }

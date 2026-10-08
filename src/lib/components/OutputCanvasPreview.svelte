@@ -25,7 +25,7 @@
   $: viewH = Math.max(80, Math.round((VIEW_W * masterHeight) / Math.max(1, masterWidth)));
 
   const COLORS = [
-    '#5fa8ff', '#ff7e5f', '#5fff8e', '#ffe55f',
+    'var(--ga-blue-300)', '#ff7e5f', '#5fff8e', '#ffe55f',
     '#c25fff', '#5fffe7', '#ff5f9e', '#a5ff5f',
   ];
 

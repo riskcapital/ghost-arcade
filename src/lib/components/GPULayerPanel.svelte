@@ -673,7 +673,7 @@
     transition: all 0.08s;
   }
   .shader-btn:hover { background: var(--ga-blue-mute-800); color: #fff; border-color: var(--ga-blue-mute-600); }
-  .shader-btn.active { background: linear-gradient(135deg, var(--ga-blue-600) 0%, var(--ga-blue-mute-800) 100%); border-color: var(--ga-blue-300); color: var(--ga-blue-300); }
+  .shader-btn.active { background: linear-gradient(135deg, var(--ga-blue-600) 0%, var(--ga-blue-mute-800) 100%); border-color: var(--ga-blue-300); color: var(--ga-blue-100); }
   .shader-btn-label { font-size: 13px; font-weight: 500; }
   .shader-btn-cat { font-size: 10.5px; opacity: 0.7; margin-top: 2px; }
   .slider-col { display: flex; flex-direction: column; gap: 8px; }
