@@ -1676,7 +1676,7 @@ fn alignment_tint() -> vec3<f32> {
 /// projectors of a pair draw the same lines, circles, diagonals and cell
 /// numbers and they must coincide on the wall. Drawn without the overlap
 /// fade: the band boundaries are marked in yellow instead.
-fn alignment_grid(uv: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
+fn alignment_grid(uv: vec2<f32>, dims: vec2<f32>, fade_uv: vec2<f32>) -> vec3<f32> {
   let aspect = dims.x / max(dims.y, 1.0);
   let cols = 16.0;
   let rows = max(1.0, round(cols / aspect));
@@ -1690,8 +1690,11 @@ fn alignment_grid(uv: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
   let sw = max(fwidth(side), vec2<f32>(0.000001));
   let diag = vec2<f32>(top.x - top.y, top.x + top.y - 1.0);
   let dw = max(fwidth(diag), vec2<f32>(0.000001));
+  // The fade is measured before the master warp (calibrated_overlap), so
+  // its boundary lines are too; the grid itself follows the content.
   let band = u.projector_calibration[3];
-  let edges = vec2<f32>(top.x - mix(band.x, band.y, top.y), top.x - mix(band.z, band.w, top.y));
+  let fade = vec2<f32>(fade_uv.x, 1.0 - fade_uv.y);
+  let edges = vec2<f32>(fade.x - mix(band.x, band.y, fade.y), fade.x - mix(band.z, band.w, fade.y));
   let ew = max(fwidth(edges), vec2<f32>(0.000001));
   let border = min(min(top.x, 1.0 - top.x) / max(fwidth(top.x), 0.000001), min(top.y, 1.0 - top.y) / max(fwidth(top.y), 0.000001));
 
@@ -1724,7 +1727,8 @@ fn screen_alignment_aid(screen_uv: vec2<f32>, comp_uv: vec2<f32>, comp_dims: vec
   // The target's own aspect, from how fast its UV crosses a pixel.
   let aspect = abs(dpdy(screen_uv.y)) / max(abs(dpdx(screen_uv.x)), 0.0000001);
   let code = i32(floor(u.dome2.w + 0.5));
-  if (u.dome2.z > 0.5 && code == 7) { return vec4<f32>(alignment_grid(comp_uv, comp_dims) * mask, 1.0); }
+  let fade_uv = slice_warp_uv(output_rotate_uv(projector_local_uv(screen_uv).xy));
+  if (u.dome2.z > 0.5 && code == 7) { return vec4<f32>(alignment_grid(comp_uv, comp_dims, fade_uv) * mask, 1.0); }
   if (u.dome2.z > 0.5 && code == 8) { return vec4<f32>(alignment_identify(screen_uv, aspect), 1.0); }
   return vec4<f32>(0.0);
 }

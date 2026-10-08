@@ -101,7 +101,11 @@ const SIZE = 128;
 /** Snapshot pixels are BGRA, top row first. Returns [r, g, b] at a pixel. */
 function pixel(frame: any, x: number, y: number): [number, number, number] {
   const bytes = Buffer.from(frame.rgba_b64, 'base64');
-  const stride = Number(frame.padded_bytes_per_row ?? frame.bytes_per_row ?? Number(frame.width) * 4);
+  // Pixels arrive tightly packed. padded_bytes_per_row describes the GPU
+  // copy and only equals the row length when the width is a multiple of 64
+  // (1080 is not), so trust it only if the byte count says rows are padded.
+  const packed = Number(frame.bytes_per_row ?? Number(frame.width) * 4);
+  const stride = bytes.length === packed * Number(frame.height) ? packed : Number(frame.padded_bytes_per_row ?? packed);
   const offset = y * stride + x * 4;
   const p = [...bytes.subarray(offset, offset + 4)];
   if (String(frame.format).toLowerCase().startsWith('bgra')) [p[0], p[2]] = [p[2], p[0]];
@@ -265,6 +269,73 @@ suite('Native screen masks', () => {
       expect(Math.abs(pixel(await shot('left'), 10, 64)[0] - grey)).toBeLessThanOrEqual(2);
     } finally { await rpc.close(); }
   }, 30000);
+
+  it('calibrates and blends portrait 1080 x 1920 projectors, upright and turned a quarter', async () => {
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: 256, height: 144, source_frame_size: 256, target_fps: 30 } });
+      // Coordinate image: red = x, green = y from the top.
+      const N = 128;
+      await rpc.commands([
+        { type: 'upload_source_frame', source_id: 'coords', width: N, height: N, seq: 1,
+          rgba_b64: Buffer.from(Array.from({ length: N * N }, (_, i) => [Math.round((i % N) / (N - 1) * 255), Math.round(Math.floor(i / N) / (N - 1) * 255), 0, 255]).flat()).toString('base64') },
+        { type: 'upsert_layer', layer_id: 'coords', opacity: 1, corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } } },
+        { type: 'bind_media_source', layer_id: 'coords', source_id: 'coords', uri: 'test://image', source_type: 'image' },
+      ]);
+      const W = 1080, H = 1920;
+      const band = { enabled: true, startTop: .46, startBottom: .4, endTop: .54, endBottom: .6 };
+      const quads = { left: [{ x: .04, y: .02 }, { x: .93, y: .07 }, { x: 1, y: .97 }, { x: 0, y: 1 }], right: [{ x: 0, y: .05 }, { x: .97, y: 0 }, { x: .9, y: .96 }, { x: .06, y: .9 }] };
+      const crop = { left: [0, .6], right: [.4, .6] };
+      const sides = ['left', 'right'] as const;
+      const linear = (v: number) => { const x = v / 255; return x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4; };
+      const shot = async (id: string) => rpc.send('output_shared_texture_snapshot', { include_pixels: true, capture_source: `slice:${id}` });
+      // Forward map (content u,v from the top -> raster), by inverting the uniform's matrix.
+      const forward = (corners: { x: number; y: number }[]) => {
+        const [a, b, c, d, e, f, g, h, i] = inverseProjectorHomography(corners)!;
+        const m = [e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i, a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d];
+        return (u: number, v: number) => { const z = m[6] * u + m[7] * v + m[8]; return [Math.floor((m[0] * u + m[1] * v + m[2]) / z * W), Math.floor((m[3] * u + m[4] * v + m[5]) / z * H)]; };
+      };
+      for (const rotation of [0, 90]) {
+        await rpc.send('set_slice_outputs', { slices: sides.map(side => slice(side, { width: W, height: H, rotation, cropX: crop[side][0], cropW: crop[side][1],
+          projectorCalibration: projectorCalibrationUniforms({ projectorCalibration: { enabled: true, corners: quads[side] }, overlapBand: { ...band, side } }) })) });
+        await new Promise(r => setTimeout(r, 200));
+        const frames = { left: await shot('left'), right: await shot('right') };
+        expect([frames.left.width, frames.left.height]).toEqual([W, H]);
+        // Content point (x, y from top) -> where the Screen's own picture (u, v) holds it.
+        // A quarter turn puts the picture's top along the raster's left edge.
+        const local = (side: 'left' | 'right', x: number, y: number) => { const s = (x - crop[side][0]) / crop[side][1]; return rotation === 0 ? [s, y] : [y, 1 - s]; };
+        // Geometry, away from the fade: each projector shows the right content.
+        for (const [side, x] of [['left', .1], ['left', .3], ['right', .7], ['right', .9]] as const) for (const y of [.15, .5, .85]) {
+          const [u, v] = local(side, x, y); const [px, py] = forward(quads[side])(u, v);
+          const got = pixel(frames[side], px, py);
+          expect(Math.abs(got[0] - x * 255), `${side} rot ${rotation} red at ${x},${y}: ${got}`).toBeLessThan(4);
+          expect(Math.abs(got[1] - y * 255), `${side} rot ${rotation} green at ${x},${y}: ${got}`).toBeLessThan(4);
+        }
+        // Fade: the two projectors add up to the content along the angled band.
+        for (const y of [.2, .5, .8]) for (const t of [.25, .5, .75]) {
+          const x = band.startTop + (band.startBottom - band.startTop) * y + ((band.endTop + (band.endBottom - band.endTop) * y) - (band.startTop + (band.startBottom - band.startTop) * y)) * t;
+          const sample = (side: 'left' | 'right') => { const [u, v] = local(side, x, y); const [px, py] = forward(quads[side])(u, v); return pixel(frames[side], px, py); };
+          const l = sample('left'), r = sample('right');
+          expect(Math.abs(linear(l[0]) + linear(r[0]) - linear(x * 255)), `rot ${rotation} sum at ${x.toFixed(3)},${y}`).toBeLessThan(.02);
+          expect(Math.abs(linear(l[1]) + linear(r[1]) - linear(y * 255)), `rot ${rotation} sum at ${x.toFixed(3)},${y}`).toBeLessThan(.02);
+        }
+        // Outside the corrected quad is black.
+        expect(pixel(frames.left, 3, 3)).toEqual([0, 0, 0]);
+        expect(pixel(frames.right, W - 3, H - 3)).toEqual([0, 0, 0]);
+      }
+      // Identify on a portrait raster: the digit sits in the middle, upright, inside the frame.
+      const identify = slice('left', { width: W, height: H, alignmentAid: 2, projectorCalibration: projectorCalibrationUniforms({}) });
+      (identify.projectorCalibration as number[][])[4][3] = 1;
+      await rpc.send('set_slice_outputs', { slices: [identify] });
+      await new Promise(r => setTimeout(r, 200));
+      const flash = await shot('left');
+      // "1" in a 3x5 cell: its bottom row is a full bar, its top row only the middle column.
+      const box = { h: .5 * (W / H) * 5 / 11 * 1.6 * H, w: .5 * (W / H) * 5 / 11 * 1.6 * 11 / 5 / (W / H) * W };
+      const cell = (cx: number, cy: number) => pixel(flash, Math.round(W / 2 - box.w / 2 + (4 + cx + .5) / 11 * box.w), Math.round(H / 2 - box.h / 2 + (cy + .5) / 5 * box.h));
+      expect(cell(0, 4)).toEqual([255, 255, 255]); expect(cell(1, 4)).toEqual([255, 255, 255]); expect(cell(2, 4)).toEqual([255, 255, 255]);
+      expect(cell(1, 0)).toEqual([255, 255, 255]); expect(cell(0, 0)).toEqual([64, 64, 64]); expect(cell(2, 0)).toEqual([64, 64, 64]);
+    } finally { await rpc.close(); }
+  }, 40000);
 
   it('keeps inside, cuts inverted holes, feathers monotonically and follows a corner-pinned screen', async () => {
     const rpc = core();
