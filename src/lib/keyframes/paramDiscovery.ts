@@ -1,4 +1,4 @@
-import {effectParams} from '../mobile/studio/interactiveEffects';
+import {effectParams,effectLabels} from '../mobile/studio/interactiveEffects';
 import { EDGE_STROKE_SHAPE_PARAMS, EDGE_TRIM_PARAMS, edgeTypeDef } from '../drawing/edgeEffectCatalog';
 import type { Layer } from '../types';
 import { effectParamLabels } from '../effects/effectUX';
@@ -24,8 +24,12 @@ export interface KeyframeableParam {
 export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
   const params: KeyframeableParam[] = [];
 
-  for(const effect of layer.source?.effectSource?.interactiveScene?.effects??[]){
-    const group=`Interactive · ${effect.name}`;
+  // Two effects of one style would share a group header and could not be
+  // told apart, so each group carries the effect's own label.
+  const interactiveEffects=layer.source?.effectSource?.interactiveScene?.effects;
+  const interactiveLabels=effectLabels(Array.isArray(interactiveEffects)?interactiveEffects:[]);
+  for(const effect of Array.isArray(interactiveEffects)?interactiveEffects:[]){
+    const group=`Interactive · ${interactiveLabels.get(effect.id)}`;
     params.push({key:`interactive:${effect.id}:enabled`,label:'Enabled',type:'boolean',defaultValue:effect.enabled,group});
     for(const d of effectParams(effect.kind))params.push({key:`interactive:${effect.id}:${d.key}`,label:d.label,type:'number',min:d.min,max:d.max,step:d.step,defaultValue:effect.params[d.key]??d.value,group});
   }

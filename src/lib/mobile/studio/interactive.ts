@@ -110,6 +110,15 @@ export function defaultInteractive(): InteractiveScene {
     ],
   };
 }
+/** Longest surface id or name kept in a scene. */
+export const SURFACE_TEXT_LIMIT = 100;
+/**
+ * Check a scene from anywhere (a file, a phone, a saved project, the editor)
+ * and return a copy built ONLY from the fields the scene model knows. Unknown
+ * keys, extra point or surface data and oversized strings do not survive, so
+ * nothing that passes can carry a payload into saves, undo snapshots or the
+ * render core's parameters.
+ */
 export function validateScene(raw: unknown): InteractiveScene {
   const s = raw as InteractiveScene;
   if (
@@ -129,14 +138,17 @@ export function validateScene(raw: unknown): InteractiveScene {
   const ids = new Set<string>();
   for (const p of s.surfaces) {
     if (
+      !p ||
       typeof p.id !== 'string' ||
+      p.id.length < 1 ||
+      p.id.length > SURFACE_TEXT_LIMIT ||
       ids.has(p.id) ||
       typeof p.name !== 'string' ||
       !['solid', 'emitter', 'attractor', 'trigger'].includes(p.behavior) ||
       !Array.isArray(p.points) ||
       p.points.length < 3 ||
       p.points.length > 64 ||
-      p.points.some((v) => !Number.isFinite(v.x) || !Number.isFinite(v.y) || v.x < 0 || v.x > 1 || v.y < 0 || v.y > 1)
+      p.points.some((v) => !v || !Number.isFinite(v.x) || !Number.isFinite(v.y) || v.x < 0 || v.x > 1 || v.y < 0 || v.y > 1)
     )
       throw Error('Invalid surface geometry.');
     if (p.material !== undefined && !['none', 'fire', 'smoke', 'liquid', 'points'].includes(p.material))
@@ -151,19 +163,71 @@ export function validateScene(raw: unknown): InteractiveScene {
     if (v !== undefined && !Number.isFinite(v)) throw Error('Invalid material controls.');
     if (v !== undefined) matter[k] = Math.max(k === 'lightHeight' ? 0.05 : 0, Math.min(k === 'lightPower' ? 3 : 1, v));
   }
-  return JSON.parse(
-    JSON.stringify({
-      ...s,
-      matter,
-      animation: validateInteractiveAnimation(s.animation, s.effects ?? []),
-      ...(s.effects ? { effects: validateEffects(s.effects, ids) } : {}),
-      name: s.name.slice(0, 100),
-      energy: Math.max(0, Math.min(1, s.energy)),
-      gravity: Math.max(-1, Math.min(1, s.gravity)),
-      hue: Math.max(0, Math.min(360, s.hue)),
-      trails: Math.max(0, Math.min(1, s.trails)),
-    }),
-  );
+  const effects = s.effects === undefined || s.effects === null ? undefined : validateEffects(s.effects, ids);
+  const animation = validateInteractiveAnimation(s.animation ?? undefined, effects ?? []);
+  const surfaces: InteractiveSurface[] = s.surfaces.map((p) => ({
+    id: p.id,
+    name: p.name.slice(0, SURFACE_TEXT_LIMIT),
+    behavior: p.behavior,
+    points: p.points.map((v) => ({ x: v.x, y: v.y })),
+    ...(p.material !== undefined ? { material: p.material } : {}),
+    ...(p.height !== undefined ? { height: p.height } : {}),
+  }));
+  return {
+    schema: 'ghost-interactive',
+    version: 1,
+    name: s.name.slice(0, 100),
+    ...(s.seed !== undefined ? { seed: s.seed } : {}),
+    preset: s.preset,
+    matter,
+    ...(effects ? { effects } : {}),
+    ...(animation ? { animation } : {}),
+    surfaces,
+    energy: Math.max(0, Math.min(1, s.energy)),
+    gravity: Math.max(-1, Math.min(1, s.gravity)),
+    hue: Math.max(0, Math.min(360, s.hue)),
+    trails: Math.max(0, Math.min(1, s.trails)),
+  };
+}
+/** Stands in for a stored scene that could not be read: nothing on screen,
+ *  and a name that says why when the editor is opened on it. */
+export function unreadableInteractive(): InteractiveScene {
+  return { ...defaultInteractive(), name: 'Unreadable scene', surfaces: [], effects: [] };
+}
+type StoredInteractive = {
+  interactiveScene?: unknown;
+  interactiveInputs?: unknown;
+  interactivePaused?: unknown;
+  interactiveRemote?: unknown;
+};
+/**
+ * Make an effect source from a project file, a preset or a pasted clip safe to
+ * use. A source without a scene is returned untouched. A scene is validated
+ * and rebuilt; one that does not validate (hand-edited, damaged, written by a
+ * newer build) is replaced by an empty scene and reported through `onReset`,
+ * so one bad layer cannot stop the rest of the project from rendering.
+ * Touches are live input and never come back from storage.
+ */
+export function sanitizeStoredInteractive<T extends StoredInteractive | null | undefined>(
+  effectSource: T,
+  onReset?: (error: Error) => void,
+): T {
+  if (!effectSource || typeof effectSource !== 'object' || effectSource.interactiveScene === undefined) return effectSource;
+  let interactiveScene: InteractiveScene;
+  try {
+    interactiveScene = validateScene(effectSource.interactiveScene);
+  } catch (error) {
+    onReset?.(error instanceof Error ? error : new Error(String(error)));
+    interactiveScene = unreadableInteractive();
+  }
+  const { interactiveRemote: remote, ...rest } = effectSource;
+  return {
+    ...rest,
+    interactiveScene,
+    interactiveInputs: [],
+    interactivePaused: effectSource.interactivePaused === true,
+    ...(typeof remote === 'string' && /^[\w.:-]{1,80}$/.test(remote) ? { interactiveRemote: remote } : {}),
+  } as unknown as T;
 }
 export function inside(p: Point, vertices: Point[]) {
   let hit = false;
