@@ -155,8 +155,13 @@ suite('Native screen masks', () => {
         const state = await rpc.send('get_slice_output_state');
         expect(state.available).toBe(true);
         expect(state.slices.map((s:any)=>s.id).sort()).toEqual(['left','right']);
-        const handles = state.slices.map((s:any)=>s.shared_name ?? s.handle);
-        expect(new Set(handles).size).toBe(2);
+        // Linux presents native windows, rather than exporting D3D/IOSurface handles.
+        // Independent IDs, rendered frames and per-slice pixel checks below apply everywhere.
+        if (process.platform !== 'linux') {
+          const handles = state.slices.map((s:any)=>s.shared_name ?? s.handle);
+          expect(handles.every(Boolean)).toBe(true);
+          expect(new Set(handles).size).toBe(2);
+        }
         expect(state.slices.every((s:any)=>s.frame>0)).toBe(true);
         const left=await rpc.send('output_shared_texture_snapshot',{include_pixels:true,capture_source:'slice:left'}),right=await rpc.send('output_shared_texture_snapshot',{include_pixels:true,capture_source:'slice:right'});
         expect(pixel(left,0,0)).toEqual([0,0,0]);

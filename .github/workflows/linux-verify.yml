@@ -29,6 +29,7 @@ env:
   # What the app and the core load at runtime, plus the virtual display, a
   # window manager (fullscreen needs one), software Vulkan and the tools the
   # smoke run measures with.
+  GA_TEST_SOFTWARE_VULKAN: '1'
   APT_RUNTIME: >-
     xvfb openbox dbus-x11 xdotool x11-utils imagemagick ffmpeg
     mesa-vulkan-drivers libvulkan1 vulkan-tools
@@ -132,6 +133,14 @@ jobs:
           xvfb-run -a vulkaninfo --summary | tee linux-smoke-out/vulkaninfo.txt || true
           aplay -l 2>&1 | tee linux-smoke-out/alsa-devices.txt || true
 
+      # Ubuntu 24.04 blocks unprivileged user namespaces, so an unpackaged
+      # Electron needs its setuid sandbox helper, which is what the .deb's
+      # post-install script sets up on a real machine.
+      - name: Give the unpackaged Electron its sandbox helper
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+
       - name: vitest (every suite; native GPU tests run on lavapipe)
         id: vitest
         continue-on-error: true
@@ -142,13 +151,6 @@ jobs:
           npm run dev > linux-smoke-out/vite.log 2>&1 &
           for i in $(seq 1 90); do curl -sf http://localhost:1420/ > /dev/null && break; sleep 1; done
           curl -sf http://localhost:1420/ > /dev/null
-      # Ubuntu 24.04 blocks unprivileged user namespaces, so an unpackaged
-      # Electron needs its setuid sandbox helper, which is what the .deb's
-      # post-install script sets up on a real machine.
-      - name: Give the unpackaged Electron its sandbox helper
-        run: |
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - name: Smoke run (real app, Xvfb + openbox, software Vulkan)
         id: smoke
         continue-on-error: true

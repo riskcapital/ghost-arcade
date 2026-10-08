@@ -185,7 +185,11 @@ async function renderReferences(cases: ReferenceCase[]): Promise<Record<string, 
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const dir = ${JSON.stringify(tmp)};
-app.commandLine.appendSwitch('disable-gpu-sandbox');
+if (process.env.GA_TEST_SOFTWARE_VULKAN === '1') {
+  app.commandLine.appendSwitch('use-gl', 'angle');
+  app.commandLine.appendSwitch('use-angle', 'swiftshader');
+  app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+}
 app.whenReady().then(async () => {
   try {
     const win = new BrowserWindow({ show: false, width: 64, height: 64, webPreferences: { offscreen: true, backgroundThrottling: false, contextIsolation: true } });
@@ -205,7 +209,12 @@ app.whenReady().then(async () => {
     child.stderr!.on('data', (c) => { stderr += c; });
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => { child.kill(); reject(new Error(`reference renderer timed out: ${stderr}`)); }, 120000);
-      child.on('exit', () => { clearTimeout(timer); resolve(); });
+      child.on('error', error => { clearTimeout(timer); reject(error); });
+      child.on('exit', (code, signal) => {
+        clearTimeout(timer);
+        if (code !== 0) reject(new Error(`reference renderer exited ${code ?? signal}: ${stderr}`));
+        else resolve();
+      });
     });
     const payload = JSON.parse(readFileSync(join(tmp, 'output.json'), 'utf8'));
     if (!payload.ok) throw new Error(payload.error);

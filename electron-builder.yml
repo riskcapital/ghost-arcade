@@ -188,6 +188,10 @@ deb:
     - libsecret-1-0
     - libasound2t64 | libasound2
     - libxkbcommon-x11-0
+    - libx11-xcb1
+    - libxcursor1
+    - libxrandr2
+    - libxi6
     - libvulkan1
 
 linux:

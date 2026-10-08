@@ -80,7 +80,9 @@ async function start(rpc: Core) {
   const status = await rpc.send('start', { config: { backend: platform.rendererBackend,
     width: 64, height: 36, source_frame_size: 256, target_fps: 60, native_quality_policy: 'fixed' } });
   expect(status.backend_ready).toBe(true);
-  expect(status.adapter_is_software).toBe(false);
+  // Pixel/timing correctness is also exercised by CI's Vulkan CPU adapter.
+  // Hardware runs must still prove they did not silently fall back to software.
+  if (process.env.GA_TEST_SOFTWARE_VULKAN !== '1') expect(status.adapter_is_software).toBe(false);
   await rpc.commands([
     ...buildVJClipTransitionPrecompileCommands(), ...buildVJMixPrecompileCommands(),
     solid('src:green', [0, 255, 0, 255]), ...imageLayer('background', 'src:green', 100, 1),

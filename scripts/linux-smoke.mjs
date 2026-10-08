@@ -81,17 +81,21 @@ let app = null;
 let appLog = null;
 function launch() {
   const profile = path.resolve(args.profile || path.join(outDir, 'profile'));
-  fs.rmSync(profile, { recursive: true, force: true });
+  // Never erase an arbitrary --profile directory. Each run owns a fresh child.
   fs.mkdirSync(profile, { recursive: true });
+  const runProfile = fs.mkdtempSync(path.join(profile, 'run-'));
   const packaged = !!args.exec;
   const command = packaged ? path.resolve(args.exec) : require('electron');
   const commandArgs = [
     ...args.execArgs, ...(packaged ? [] : [root]),
     `--remote-debugging-port=${args.port}`,
+    // The CI runner has no graphics device. Keep this opt-in confined to tests.
+    ...(process.env.GA_TEST_SOFTWARE_VULKAN === '1'
+      ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []),
     // Packaged builds ignore GA_USER_DATA_DIR; Chromium's own switch moves the profile there.
-    ...(packaged ? [`--user-data-dir=${profile}`] : []),
+    ...(packaged ? [`--user-data-dir=${runProfile}`] : []),
   ];
-  const env = { ...process.env, GA_USER_DATA_DIR: profile, ELECTRON_ENABLE_LOGGING: '1' };
+  const env = { ...process.env, GA_USER_DATA_DIR: runProfile, ELECTRON_ENABLE_LOGGING: '1' };
   if (args.devUrl) env.VITE_DEV_SERVER_URL = args.devUrl;
   appLog = fs.createWriteStream(path.join(outDir, 'app.log'));
   log(`launching ${command} ${commandArgs.join(' ')}`);

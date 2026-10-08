@@ -21025,8 +21025,11 @@ impl RenderState {
         let frame = match window.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                // A resize can leave an acquired drawable suboptimal. It still
+                // owns the swapchain: release it before configuring a new one.
+                drop(frame);
                 window.surface.configure(device, &window.config);
-                frame
+                return None;
             }
             // Outdated or lost after a resize or a display change: put the
             // surface back and draw this Screen on the next frame. A timeout
@@ -24865,7 +24868,8 @@ impl RenderState {
                     Some(frame)
                 }
                 wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                    self.surface.configure(&self.device, &self.config);
+                    // Present this valid frame first; configuring while it is
+                    // acquired panics on Vulkan after resize/fullscreen changes.
                     present_outcome = SurfacePresentOutcome::SuboptimalPresented;
                     Some(frame)
                 }
@@ -25021,6 +25025,9 @@ impl RenderState {
         }
         if let Some(frame) = surface_frame {
             self.queue.present(frame);
+            if matches!(present_outcome, SurfacePresentOutcome::SuboptimalPresented) {
+                self.surface.configure(&self.device, &self.config);
+            }
         }
         self.last_frame_error = None;
         Ok(present_outcome)
