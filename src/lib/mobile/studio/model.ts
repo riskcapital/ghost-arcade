@@ -51,6 +51,8 @@ export type Surface = {
 };
 export type Scene = { launchGrid?: (string|null)[][]; clipEffects?: Record<string, EffectChain>; effects?: EffectChain; id: string; name: string; layers: Layer[]; crossfade: number; dualDeck?: boolean };
 export type Show = {
+  /** Format revision. Absent on sets saved by app 1.0; 2 from app 1.1 on (see setRepair.ts). */
+  rev?: number;
   paint?:PaintConfig;
   activeBlockId?: string;
   effects: EffectChain;
@@ -110,6 +112,8 @@ export function newSurface(index: number, fullFrame = false): Surface {
 }
 /** Blend mode a new set gives each row: Screen above an opaque bottom row (L4 / B4). */
 export const starterBlend = (row: number): Layer['blend'] => (row % 4 === 3 ? 'normal' : 'screen');
+/** The set format revision this app writes. */
+export const SET_REV = 2;
 export function defaultShow(): Show {
   const featured=['lumenstrata','lumenveil','murmur','prism','pulse','quantumchamber','sentinels','tendril','tide','chrysalis','crystallon','dispersion','drift','aurora','chladniplate'].map(n=>'featured-'+n);
   const preferred=['ga-ghostfx','dm-plasma-flow','room-ember-drift','dm-kaleidoscope','dm-liquid-metal','dm-tunnel','room-cosmic-nebula','ar-frequency-rings','sm-fireflies','dm-neon-lines','ar-spectral-aurora','sm-lava-lamp-blobs','room-aurora-curtains'];
@@ -124,6 +128,7 @@ export function defaultShow(): Show {
   rows[4]=curateRow([...featured.slice(8),'ga-ghostfx']);
   return {
     version: 1,
+    rev: SET_REV,
     id: uid(),
     name: 'Untitled set',
     clips: ids.map((id) => ({ id, shaderId: id, name: MOBILE_SHADERS.find((s) => s.id === id)!.name, kind: 'shader' })),
@@ -202,6 +207,8 @@ export function normalizeShow(raw: unknown): Show {
     });
   const next: Show = {
     ...base,
+    // Kept exactly as saved: a set without it came from app 1.0 and may be offered a repair.
+    rev: typeof r.rev === 'number' && Number.isFinite(r.rev) ? r.rev : undefined,
     id: typeof r.id === 'string' ? r.id : base.id,
     name: String(r.name || base.name).slice(0, 100),
     clips,

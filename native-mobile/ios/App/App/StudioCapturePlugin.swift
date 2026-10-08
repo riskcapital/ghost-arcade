@@ -49,7 +49,8 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name:"shareScan",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"deleteScan",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"shareFile",returnType:CAPPluginReturnPromise),
-        CAPPluginMethod(name:"haptic",returnType:CAPPluginReturnPromise)
+        CAPPluginMethod(name:"haptic",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"openAppSettings",returnType:CAPPluginReturnPromise)
     ]
     @objc func shareInteractiveScene(_ call: CAPPluginCall) { sharePreparation(call, schema: "ghost-interactive", prefix: "Interactive") }
     @objc func shareCalibrationPreparation(_ call: CAPPluginCall) { sharePreparation(call, schema: "ghost-calibration", prefix: "Calibration") }
@@ -191,6 +192,17 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
             default: call.reject("Unknown haptic type."); return
             }
             call.resolve([:])
+        }
+    }
+
+    /// openAppSettings() -> {}   Opens this app's page in iOS Settings, where camera, microphone and
+    /// local network access are switched on. The app is left in the background; nothing else changes.
+    @objc func openAppSettings(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let url = URL(string: UIApplication.openSettingsURLString), UIApplication.shared.canOpenURL(url) else { call.reject("Settings could not be opened."); return }
+            UIApplication.shared.open(url, options: [:]) { opened in
+                if opened { call.resolve([:]) } else { call.reject("Settings could not be opened.") }
+            }
         }
     }
 

@@ -145,3 +145,34 @@ describe('helpers', () => {
     expect(decoded[99_999]).toBe(bytes[99_999]);
   });
 });
+
+describe('large files and iOS Settings', () => {
+  it('encodes a file larger than one slice exactly like a single pass', async () => {
+    const { blobToBase64 } = await import('./nativeShare');
+    const bytes = Uint8Array.from({ length: 3 * 0x80000 + 12345 }, (_, i) => (i * 7 + 3) % 256);
+    expect(await blobToBase64(new Blob([bytes]))).toBe(Buffer.from(bytes).toString('base64'));
+    expect(await blobToBase64(new Blob([]))).toBe('');
+  });
+  it('offers Open Settings only where the app build can do it', async () => {
+    const { canOpenAppSettings, openAppSettings, mentionsSettings } = await import('./nativeShare');
+    const g = globalThis as { Capacitor?: unknown };
+    const before = g.Capacitor;
+    try {
+      delete g.Capacitor;
+      expect(canOpenAppSettings()).toBe(false);
+      expect(await openAppSettings()).toBe(false);
+      const calls: string[] = [];
+      g.Capacitor = { getPlatform: () => 'ios', nativePromise: async (_p: string, m: string) => { calls.push(m); return {}; }, PluginHeaders: [{ name: 'StudioCapture', methods: [{ name: 'openAppSettings' }] }] };
+      expect(canOpenAppSettings()).toBe(true);
+      expect(await openAppSettings()).toBe(true);
+      expect(calls).toEqual(['openAppSettings']);
+      g.Capacitor = { getPlatform: () => 'ios', nativePromise: async () => ({}), PluginHeaders: [{ name: 'StudioCapture', methods: [{ name: 'haptic' }] }] };
+      expect(canOpenAppSettings()).toBe(false);
+    } finally { g.Capacitor = before; }
+    expect(mentionsSettings('Camera access was denied. Enable it in iOS Settings.')).toBe(true);
+    expect(mentionsSettings('Camera access is disabled in iOS Settings.')).toBe(true);
+    expect(mentionsSettings('Microphone access was not available. Check microphone permission in Settings.')).toBe(true);
+    expect(mentionsSettings('Could not launch this clip.')).toBe(false);
+    expect(mentionsSettings('Open Output settings in the header.')).toBe(false);
+  });
+});

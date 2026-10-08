@@ -98,3 +98,18 @@ export function deleteBlock(show: Show, id: string, makeId: () => string): (Bloc
   const first = scenes[0];
   return { scenes, activeBlockId: first.id, launchGrid: copy(first.launchGrid ?? show.launchGrid), removed };
 }
+
+/**
+ * Moves a block to another place in the tab row. The open block stays open and the deck is
+ * untouched. A set whose deck is not a block yet gets it saved first, so every tab can move.
+ */
+export function moveBlock(show: Show, from: number, to: number, makeId: () => string): BlockState | null {
+  const base = ensureOpenBlock(show, makeId);
+  const last = base.scenes.length - 1;
+  const target = Math.max(0, Math.min(last, Math.round(to)));
+  if (!Number.isInteger(from) || from < 0 || from > last || from === target) return null;
+  const scenes = [...base.scenes];
+  const [block] = scenes.splice(from, 1);
+  scenes.splice(target, 0, block);
+  return { ...base, scenes };
+}

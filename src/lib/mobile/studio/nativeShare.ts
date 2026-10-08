@@ -10,6 +10,7 @@
 //     share popover. completed is false when the sheet is closed without choosing anything.
 //     A second call while a sheet is open rejects.
 //   haptic({ type }) -> {}
+//   openAppSettings() -> {}   opens this app's page in iOS Settings (camera, microphone, local network)
 // Older app builds and Android do not have these methods, so both are feature-detected.
 
 type PluginHeader = { name: string; methods?: Array<{ name: string }> };
@@ -54,11 +55,18 @@ export function safeFileName(name: string, fallback = 'Ghost Arcade file'): stri
 }
 
 export async function blobToBase64(blob: Blob): Promise<string> {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = '';
-  // Chunked so a large file never overflows the argument list.
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
+  // Read and encoded a slice at a time (a multiple of three bytes, so the pieces join into valid
+  // base64). A set with its videos can be over 100 MB; one pass would hold it three times over.
+  const SLICE = 3 * 0x80000;
+  const pieces: string[] = [];
+  for (let at = 0; at < blob.size; at += SLICE) {
+    const bytes = new Uint8Array(await blob.slice(at, at + SLICE).arrayBuffer());
+    let binary = '';
+    // Chunked so a large slice never overflows the argument list.
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    pieces.push(btoa(binary));
+  }
+  return pieces.join('');
 }
 
 export type ShareAnchor = { x: number; y: number; width: number; height: number };
@@ -134,3 +142,16 @@ export function haptic(type: HapticType = 'light'): void {
 }
 /** Test hook: forget that a build was found to have no haptics. */
 export function resetHapticsProbe(): void { hapticsMissing = false; }
+
+/** True when this app build can open its own page in iOS Settings. */
+export function canOpenAppSettings(): boolean {
+  return nativeMethodAvailable('StudioCapture', 'openAppSettings') === true;
+}
+/** Opens this app's page in iOS Settings, where camera and microphone access are switched on. */
+export async function openAppSettings(): Promise<boolean> {
+  const cap = bridge();
+  if (!canOpenAppSettings() || !cap?.nativePromise) return false;
+  try { await cap.nativePromise('StudioCapture', 'openAppSettings', {}); return true; } catch { return false; }
+}
+/** True for a message that tells the person to change a permission in iOS Settings. */
+export const mentionsSettings = (message: string): boolean => /\bSettings\b/.test(message) && /camera|microphone|access|permission/i.test(message);
