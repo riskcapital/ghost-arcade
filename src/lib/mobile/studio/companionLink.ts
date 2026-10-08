@@ -96,6 +96,28 @@ export function rememberedDesktop(storage: Store | null = store()): { host: stri
   }
 }
 
+/**
+ * The remembered desktop's WebSocket address with its pairing code, for a short job of its own
+ * (sending a saved scan) while the standalone studio stays on screen. Null when no desktop is
+ * remembered or the stored address is not on the local network.
+ */
+export function rememberedDesktopSocket(storage: Store | null = store()): { host: string; url: string } | null {
+  try {
+    const token = (storage?.getItem(TOKEN_KEY) || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+    const server = storage?.getItem(SERVER_KEY);
+    if (!/^[A-Z0-9]{8,128}$/.test(token) || !server) return null;
+    const ws = new URL(server);
+    if (!['ws:', 'wss:'].includes(ws.protocol) || ws.username || ws.password || !isLocalNetworkHost(ws.hostname)) return null;
+    ws.pathname = '/';
+    ws.hash = '';
+    ws.search = '';
+    ws.searchParams.set('pair', token);
+    return { host: ws.hostname.replace(/^\[|\]$/g, ''), url: ws.toString() };
+  } catch {
+    return null;
+  }
+}
+
 /** Remove the remembered desktop and its pairing code from this device. */
 export function forgetDesktop(storage: Store | null = store()): void {
   try { storage?.removeItem(TOKEN_KEY); storage?.removeItem(SERVER_KEY); } catch { /* storage unavailable */ }

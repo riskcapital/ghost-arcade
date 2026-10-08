@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {parseCompanionLink,isLocalNetworkHost,companionHost,rememberedDesktop,forgetDesktop} from './companionLink';
+import {parseCompanionLink,isLocalNetworkHost,companionHost,rememberedDesktop,rememberedDesktopSocket,forgetDesktop} from './companionLink';
 describe('native desktop pairing',()=>{
  const link='http://192.168.1.3:9002/?pair=ABCD-EFGH-1234-5678&ws=9003#/mobile';
  it('accepts browser and app QR links with the correct host and ports',()=>{const normalized=parseCompanionLink(link);expect(new URL(normalized).hostname).toBe('192.168.1.3');expect(new URL(normalized).searchParams.get('ws')).toBe('9003');expect(parseCompanionLink('ghostarcade://pair?url='+encodeURIComponent(link))).toBe(normalized);});
@@ -48,6 +48,15 @@ describe('the remembered desktop',()=>{
   expect(rememberedDesktop(storage({'ghost-arcade_server_url':'ws://192.168.1.3:9001'}))).toBeNull();
   expect(rememberedDesktop(storage({'ghost-arcade_pairing_token':'ABCDEFGH12345678','ghost-arcade_server_url':'ws://203.0.113.5:9001'}))).toBeNull();
   expect(rememberedDesktop(null)).toBeNull();
+ });
+ it('gives the socket address for a job of its own (sending a scan), local network only',()=>{
+  const socket=rememberedDesktopSocket(storage({'ghost-arcade_pairing_token':'abcd-efgh-1234-5678','ghost-arcade_server_url':'ws://192.168.1.3:9003/old?x=1#y'}))!;
+  expect(socket).toEqual({host:'192.168.1.3',url:'ws://192.168.1.3:9003/?pair=ABCDEFGH12345678'});
+  expect(rememberedDesktopSocket(storage({'ghost-arcade_pairing_token':'ABCDEFGH12345678','ghost-arcade_server_url':'ws://203.0.113.5:9001'}))).toBeNull();
+  expect(rememberedDesktopSocket(storage({'ghost-arcade_pairing_token':'ABCDEFGH12345678','ghost-arcade_server_url':'http://192.168.1.3:9001'}))).toBeNull();
+  expect(rememberedDesktopSocket(storage({'ghost-arcade_pairing_token':'ABCDEFGH12345678','ghost-arcade_server_url':'ws://u:p@192.168.1.3:9001'}))).toBeNull();
+  expect(rememberedDesktopSocket(storage({'ghost-arcade_server_url':'ws://192.168.1.3:9001'}))).toBeNull();
+  expect(rememberedDesktopSocket(null)).toBeNull();
  });
  it('can be forgotten',()=>{
   const s=storage({'ghost-arcade_pairing_token':'ABCDEFGH12345678','ghost-arcade_server_url':'ws://192.168.1.3:9003','ga-mobile-studio-v1':'{}'});
