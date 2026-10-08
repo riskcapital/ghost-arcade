@@ -5,6 +5,11 @@ import type { ChildProcess } from 'node:child_process';
 // A supported host with a built core must pass real hardware checks. Decoder,
 // driver, codec-extension and GPU failures must not become runtime skips.
 const windows = process.platform === 'win32';
+// Linux has no hardware video decode or shared-texture path, so the suites
+// that need those cannot pass there and Linux stays off by default. The
+// render-and-read-back suites do run on Vulkan: GA_NATIVE_TESTS_LINUX=1 opts
+// a Linux host in, for checking the core there (pick the suites to run).
+const linux = process.platform === 'linux' && process.env.GA_NATIVE_TESTS_LINUX === '1';
 const binary = join(process.cwd(), 'native-renderer/target/release',
   windows ? 'ghost-render-core.exe' : 'ghost-render-core');
 
@@ -27,12 +32,13 @@ export const rpcDeadlineScale = softwareVulkanRunner ? 4 : 1;
 
 export const hardwareTestPlatform = {
   windows,
+  linux,
   binary,
-  runnable: (windows || process.platform === 'darwin') && existsSync(binary),
-  rendererBackend: windows ? 'd3d12' : 'metal',
+  runnable: (windows || process.platform === 'darwin' || linux) && existsSync(binary),
+  rendererBackend: windows ? 'd3d12' : linux ? 'vulkan' : 'metal',
   decoderBackend: windows ? 'media-foundation' : 'videotoolbox',
   uploadTransport: windows ? 'native-video-dxgi' : 'native-video-iosurface',
-  label: windows ? 'Media Foundation / D3D12' : 'VideoToolbox / Metal',
+  label: windows ? 'Media Foundation / D3D12' : linux ? 'Vulkan (no hardware video)' : 'VideoToolbox / Metal',
 };
 
 // Windows keeps fixture files locked until the decoder process has exited.

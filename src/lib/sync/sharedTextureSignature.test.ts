@@ -21,10 +21,12 @@ import { join } from 'node:path';
  * a number the sender may never increment.
  */
 
+// A Windows checkout has CRLF line endings; the block below is matched with
+// LF, and Windows is the one platform this guard exists for.
 const syncSource = readFileSync(
   join(process.cwd(), 'src', 'lib', 'sync', 'nativeRendererSync.ts'),
   'utf8',
-);
+).replace(/\r\n/g, '\n');
 
 function sharedTextureSignatureBlock(): string {
   const start = syncSource.indexOf("const signature = [\n      'shared',");

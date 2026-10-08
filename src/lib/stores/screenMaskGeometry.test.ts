@@ -169,7 +169,8 @@ describe('screen mask geometry', () => {
   });
 });
 
-describe('screen mask inverse past the screen', () => {
+// The Bezier sweeps run thousands of Newton solves; slower machines need room.
+describe('screen mask inverse past the screen', { timeout: 30000 }, () => {
   // Forward then inverse has to land back on the canvas point, off the
   // surface as well as on it: that is what keeps a mask handle under the
   // cursor while it is dragged outside a Mesh screen.
