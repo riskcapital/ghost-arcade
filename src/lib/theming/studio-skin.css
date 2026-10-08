@@ -58,10 +58,10 @@
   --ga-type-control: 12px;
   --ga-type-caption: 11px;
   --ga-type-title: 14px;
-  --ga-selection-bg: #172a5b;
-  --ga-selection-line: #3d59b8;
+  --ga-selection-bg: var(--ga-blue-700);
+  --ga-selection-line: var(--ga-blue-500);
   --ga-selection-ink: #e0e8ff;
-  --ga-focus: #7996ff;
+  --ga-focus: var(--ga-blue-300);
 }
 
 body {
@@ -79,8 +79,8 @@ body {
 
 /* Arcade: deep retro blue fill (matches the marquee/CRT palette). */
 html[data-theme="arcade"] body {
-  --ga-slider-fill: #2f4ad6;
-  --ga-slider-glow: rgba(58, 88, 230, 0.55);
+  --ga-slider-fill: var(--ga-blue-500);
+  --ga-slider-glow: var(--ga-blue-a45);
 }
 
 /* ============================================================
@@ -298,7 +298,7 @@ html[data-theme="arcade"] body {
 .stage-btn.active {
   background: var(--ga-violet, #9b87f5) !important;
   border-color: var(--ga-violet, #9b87f5) !important;
-  color: #160f2e !important;
+  color: var(--ga-blue-800) !important;
 }
 
 /* Connect Mobile — outline button */
@@ -362,7 +362,7 @@ html[data-theme="arcade"] body {
 }
 .layer-panel .btn-add:hover,
 .layer-panel .btn-add.active {
-  background: rgba(155, 135, 245, 0.18) !important;
+  background: var(--ga-blue-a16) !important;
 }
 
 /* Layer row */
@@ -456,7 +456,7 @@ html[data-theme="arcade"] body {
     ),
     linear-gradient(
       90deg,
-      var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) 0
+      var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent)) 0
         calc(11px + (100% - 22px) * var(--ga-range-pct, 0)),
       transparent calc(11px + (100% - 22px) * var(--ga-range-pct, 0)) 100%
     ),
@@ -583,7 +583,7 @@ html[data-theme="arcade"] body {
 .media-library .library-tab.active,
 .media-library .tab-btn.active {
   color: var(--ga-ink-0, #eef0f4) !important;
-  border-bottom-color: var(--ga-blue, #5b8def) !important;
+  border-bottom-color: var(--ga-blue, #5278ff) !important;
 }
 
 /* ── AI buttons row — violet generate + blue video, side-by-side ── */
@@ -610,7 +610,7 @@ html[data-theme="arcade"] body {
   padding: 0 !important;
 }
 .media-library .btn-ai-generate:hover {
-  background: rgba(155, 135, 245, 0.18) !important;
+  background: var(--ga-blue-a16) !important;
 }
 .media-library .btn-ai-video {
   display: inline-flex !important;
@@ -619,16 +619,16 @@ html[data-theme="arcade"] body {
   gap: 7px !important;
   height: 38px !important;
   border-radius: var(--ga-r-soft, 7px) !important;
-  border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38)) !important;
-  background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10)) !important;
-  color: var(--ga-blue, #5b8def) !important;
+  border: 1px solid var(--ga-blue-line, var(--ga-blue-a08)) !important;
+  background: var(--ga-blue-soft, var(--ga-blue-a28)) !important;
+  color: var(--ga-blue, #5278ff) !important;
   font-weight: 700 !important;
   font-size: 14px !important;
   cursor: pointer !important;
   padding: 0 !important;
 }
 .media-library .btn-ai-video:hover {
-  background: rgba(91, 141, 239, 0.18) !important;
+  background: var(--ga-blue-a16) !important;
 }
 
 /* ── Bottom footer — side-by-side Add / Library ── */
@@ -650,7 +650,7 @@ html[data-theme="arcade"] body {
   border-radius: var(--ga-r-soft, 7px) !important;
   border: none !important;
   background: var(--ga-violet, #9b87f5) !important;
-  color: #160f2e !important;
+  color: var(--ga-blue-800) !important;
   font-weight: 700 !important;
   font-size: 14px !important;
   cursor: pointer !important;
@@ -703,7 +703,7 @@ html[data-theme="arcade"] body {
     ),
     linear-gradient(
       90deg,
-      var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) 0
+      var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent)) 0
         calc(11px + (100% - 22px) * var(--ga-range-pct, 0)),
       transparent calc(11px + (100% - 22px) * var(--ga-range-pct, 0)) 100%
     ),
@@ -765,7 +765,7 @@ html[data-theme="arcade"] body {
 .epr-slider::-moz-range-progress,
 .fx-panel input[type="range"]:not(.hue-slider)::-moz-range-progress {
   height: 12px !important;
-  background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) !important;
+  background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent)) !important;
   border-radius: 8px 0 0 8px !important;
 }
 .media-library input[type="range"]:not(.hue-slider)::-moz-range-thumb,
@@ -920,7 +920,7 @@ html[data-theme="arcade"] body {
 :is(.primary-btn, .btn-save, .btn-recover, .apply-stage-btn, .empty-btn.primary, .pwa-install-btn, .connect-form button, .library-load-btn, .stage-preset-save-btn, .library-add-btn, .folder-input-ok) {
   background: var(--ga-violet, #9b87f5) !important;
   border: 1px solid var(--ga-violet, #9b87f5) !important;
-  color: #160f2e !important;
+  color: var(--ga-blue-800) !important;
   border-radius: var(--ga-r-soft, 7px) !important;
   font-weight: 800 !important;
   box-shadow: none !important;
@@ -1248,7 +1248,7 @@ html[data-theme="arcade"] body {
 
 .stage3d-root .seg-btn.on {
   background: var(--ga-violet, #9b87f5) !important;
-  color: #160f2e !important;
+  color: var(--ga-blue-800) !important;
 }
 
 /* ============================================================
@@ -1349,7 +1349,7 @@ html[data-theme="arcade"] body {
    ARCADE THEME — warm shifts on top
    ============================================================ */
 html[data-theme="arcade"] {
-  --ga-slider-fill: rgba(34, 49, 108, 0.78);
+  --ga-slider-fill: color-mix(in srgb, var(--ga-blue-700) 78%, transparent);
   --ga-faceplate-bg:
     linear-gradient(180deg, rgba(255, 255, 255, 0.030), transparent 3px),
     repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px),
@@ -1607,7 +1607,7 @@ html[data-theme="arcade"] :is(
   background: linear-gradient(180deg, #f4f9fd, #a9c3d8) !important;
   border: 1px solid var(--ga-coral, #ff6f5e) !important;
   border-radius: var(--ga-r-hard, 3px) !important;
-  color: #16202b !important;
+  color: var(--ga-blue-mute-800) !important;
   font-family: var(--ga-font-display, 'Geist', system-ui, sans-serif) !important;
   font-weight: 700 !important;
   box-shadow:
@@ -1752,7 +1752,7 @@ html[data-theme="arcade"] input[type="checkbox"]:checked {
 }
 
 html[data-theme="arcade"] input[type="checkbox"]:checked::after {
-  border-color: #16202b !important;
+  border-color: var(--ga-blue-mute-800) !important;
 }
 
 html[data-theme="arcade"] :is(
@@ -1776,7 +1776,7 @@ html[data-theme="arcade"] :is(
     ),
     linear-gradient(
       90deg,
-      var(--ga-slider-fill, rgba(34, 49, 108, 0.78)) 0
+      var(--ga-slider-fill, var(--ga-blue-500)) 0
         calc(7.5px + (100% - 15px) * var(--ga-range-pct, 0)),
       transparent calc(7.5px + (100% - 15px) * var(--ga-range-pct, 0)) 100%
     ),
@@ -1813,14 +1813,14 @@ html[data-theme="arcade"] .fx-panel input[type="range"]:not(.hue-slider)::-webki
     linear-gradient(
       90deg,
       transparent 0 3px,
-      var(--ga-slider-fill, #2f4ad6) 3px calc(100% - 3px),
+      var(--ga-slider-fill, var(--ga-blue-500)) 3px calc(100% - 3px),
       transparent calc(100% - 3px) 100%
     ) center / 100% 2px no-repeat,
     linear-gradient(180deg, #46433d, #1b1916) !important;
   box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.60),
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 0 5px var(--ga-slider-glow, rgba(58, 88, 230, 0.55)) !important;
+    0 0 5px var(--ga-slider-glow, var(--ga-blue-a45)) !important;
 }
 
 html[data-theme="arcade"] .toggle-slider {
@@ -1999,7 +1999,7 @@ html[data-theme="arcade"] .bottom-dock .pill {
 html[data-theme="arcade"] .bottom-dock .pill.on {
   background: linear-gradient(180deg, #f4f9fd, #a9c3d8) !important;
   border-color: var(--ga-coral, #ff6f5e) !important;
-  color: #16202b !important;
+  color: var(--ga-blue-mute-800) !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.38),
     0 0 14px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
@@ -2135,7 +2135,7 @@ html[data-theme="arcade"] .stage3d-root input[type="range"] {
     ),
     linear-gradient(
       90deg,
-      var(--ga-slider-fill, rgba(34, 49, 108, 0.78)) 0
+      var(--ga-slider-fill, var(--ga-blue-500)) 0
         calc(7.5px + (100% - 15px) * var(--ga-range-pct, 0)),
       transparent calc(7.5px + (100% - 15px) * var(--ga-range-pct, 0)) 100%
     ),
@@ -2157,14 +2157,14 @@ html[data-theme="arcade"] .stage3d-root input[type="range"]::-webkit-slider-thum
     linear-gradient(
       90deg,
       transparent 0 3px,
-      var(--ga-slider-fill, #2f4ad6) 3px calc(100% - 3px),
+      var(--ga-slider-fill, var(--ga-blue-500)) 3px calc(100% - 3px),
       transparent calc(100% - 3px) 100%
     ) center / 100% 2px no-repeat,
     linear-gradient(180deg, #46433d, #1b1916) !important;
   box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.60),
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 0 5px var(--ga-slider-glow, rgba(58, 88, 230, 0.55)) !important;
+    0 0 5px var(--ga-slider-glow, var(--ga-blue-a45)) !important;
 }
 
 html[data-theme="arcade"] .stage3d-root input[type="range"]::-moz-range-thumb {
@@ -2176,7 +2176,7 @@ html[data-theme="arcade"] .stage3d-root input[type="range"]::-moz-range-thumb {
   box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.60),
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 0 5px var(--ga-slider-glow, rgba(58, 88, 230, 0.55)) !important;
+    0 0 5px var(--ga-slider-glow, var(--ga-blue-a45)) !important;
 }
 
 /* ============================================================
@@ -2500,8 +2500,8 @@ html[data-theme="arcade"] :is(input[type="text"], input[type="number"], input[ty
 
 /* Mapping's media inspector owns its compact row layout and selected controls. */
 html .layer-panel .media-properties :is(.shape-icon-btn.active, .warp-mode-btn.active, .vt-audio-toggle.active) {
-  background: var(--ga-selection-bg, #172a5b) !important;
+  background: var(--ga-selection-bg, var(--ga-blue-700)) !important;
   color: var(--ga-selection-ink, #e0e8ff) !important;
-  border-color: var(--ga-selection-line, #3d59b8) !important;
+  border-color: var(--ga-selection-line, var(--ga-blue-500)) !important;
   box-shadow: none !important;
 }
