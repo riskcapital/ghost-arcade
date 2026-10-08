@@ -2868,9 +2868,11 @@
     padding: 0;
     font-size: 16px;
   }
-  .nudge { flex-wrap: wrap; }
+  /* Label on its own line, then step size and the four arrows together on one row. */
+  .nudge { flex-wrap: wrap; row-gap: 8px; }
+  .nudge > span { flex: 1 1 100%; margin-right: 0; }
   .nudge .nudge-arrow { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-  .nudge-steps { display: flex; gap: 2px; margin-right: 6px; }
+  .nudge-steps { display: flex; gap: 2px; margin-right: auto; }
   .nudge .nudge-steps button { width: auto; min-width: 40px; padding: 0 7px; font-size: 11px; }
   .nudge .nudge-steps button.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
   .card-actions {
@@ -3150,7 +3152,7 @@
   .storage-card > button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; }
   .set-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .set-row button { min-height: 44px; font-size: 12px; }
-  .set-row .set-open { flex: 1; min-width: 0; display: grid; gap: 2px; text-align: left; padding: 6px 10px; }
+  .set-row .set-open { flex: 1; min-width: 0; display: grid; gap: 2px; justify-items: start; text-align: left; padding: 6px 10px; }
   .set-row .set-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .set-row .set-open small { font-size: 10px; color: var(--ga-ink-2); }
   .set-row.current .set-open { border-color: var(--ga-selection-line); background: var(--ga-selection-bg); opacity: 1; }
