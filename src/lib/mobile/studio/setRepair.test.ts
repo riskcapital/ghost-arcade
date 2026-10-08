@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SET_REV, defaultShow, fullFramePoints, gridPoints, normalizeShow, type Show } from './model';
-import { acceptAsIs, needsRepair, repairSet, repairSummary, setProblems } from './setRepair';
+import { needsRepair, repairSet, repairSummary, setProblems } from './setRepair';
 import { moveBlock, addBlock, blockTabs } from './blocks';
 
 /** A set as app 1.0 wrote it: no revision, all rows Normal, and (optionally) the Map tab visited. */
@@ -69,12 +69,6 @@ describe('one-time repair of sets saved by app 1.0', () => {
     expect(after.mapping).toBe(true);
     expect(after.surfaces[0].points).toEqual(fullFramePoints());
     expect(after.surfaces[0].feather).toBe(0.1);
-  });
-  it('"Keep as it is" only marks the set as seen', () => {
-    const show = firstVersionSet();
-    const kept = acceptAsIs(show);
-    expect({ ...kept, rev: undefined }).toEqual({ ...show, rev: undefined });
-    expect(needsRepair(setProblems(kept))).toBe(false);
   });
 });
 

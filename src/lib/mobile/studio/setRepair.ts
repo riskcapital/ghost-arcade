@@ -5,7 +5,8 @@
 //   2. Mapping is on with the one starter surface still at its 8% inset, because looking at the
 //      Map tab switched mapping on. The output has a black border the performer never asked for.
 // A set is never changed without being asked: the studio detects these, offers "Fix this set"
-// once, and the fix is one undo step.
+// once, and the fix is one undo step. Declining changes nothing at all; the fix stays available
+// in Set settings for as long as the set still has the problem.
 import { SET_REV, copy, fullFramePoints, gridPoints, starterBlend, type Show } from './model';
 
 export type SetProblems = {
@@ -68,6 +69,3 @@ export function repairSet(show: Show, problems: SetProblems = setProblems(show))
   next.rev = SET_REV;
   return next;
 }
-
-/** Marks a set as looked at, with nothing changed, so it reads as a current set from now on. */
-export const acceptAsIs = (show: Show): Show => ({ ...show, rev: SET_REV });

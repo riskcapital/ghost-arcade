@@ -206,6 +206,7 @@
   import { MOBILE_EFFECTS } from '../../mobile/standaloneEffects';
   import { EFFECT_PARAM_DEFS } from '../../effects/effectParamDefs';
   import { putAsset, getAsset, listAssets, deleteAssets, unusedAssets, totalBytes, formatBytes, type AssetInfo } from '../../mobile/studio/assets';
+  import { setProblems, needsRepair, repairSet, repairSummary, type SetProblems } from '../../mobile/studio/setRepair';
   import { packSet, unpackSet, setMediaSize, BundleTooLarge, BUNDLE_MAX_BYTES } from '../../mobile/studio/setBundle';
   import {
     loadShow,
@@ -957,8 +958,29 @@
     persist();
     settings = false;
     noteUnavailable();
+    offerRepair();
   }
-  function offerRepair() {}
+  // ── One-time repair for sets saved by app 1.0 ─────────────────────────────
+  // Offered once per set, never applied silently. Declining changes nothing; the fix stays in
+  // Set settings while the set still has the problem.
+  let repairOffer: SetProblems | null = null;
+  $: setFix = setProblems(show);
+  function offerRepair() {
+    const problems = setProblems(show);
+    repairOffer = needsRepair(problems) && !prefs.repairOffered.includes(show.id) ? problems : null;
+    if (repairOffer) setPrefs({ repairOffered: [...prefs.repairOffered, show.id] });
+  }
+  function fixSet() {
+    const problems = setProblems(show);
+    repairOffer = null;
+    if (!needsRepair(problems)) return;
+    checkpoint();
+    show = repairSet(show, problems);
+    persist();
+    settings = false;
+    const done = [problems.hiddenDecks.length ? 'lower rows now show through' : '', problems.inset ? 'the picture fills the frame' : ''].filter(Boolean).join(' and ');
+    flash(`Set fixed: ${done}.`, { label: 'Undo', run: () => void undo() }, 9000);
+  }
   let exporting = false;
   const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
   /**
@@ -1109,7 +1131,7 @@
       startEngine();
       externalOutput=new ExternalOutput(output,status=>outputStatus=status);
       void engine!.restore(show).then(() => {
-        if (!disposed) { refreshParams(); noteUnavailable(); }
+        if (!disposed) { refreshParams(); noteUnavailable(); offerRepair(); }
       });
     } catch (e) {
       visualsDown = true;
@@ -1465,6 +1487,11 @@
 
       <div class="panel-scroll" inert={clipControlsOpen && !dockedInspector && layoutInfo.inspector!=='bottom'}>
         {#if tab === 'perform'}
+          {#if repairOffer && !clean}<section class="repair-offer" data-repair-offer aria-label="Fix this set">
+            <p>{repairSummary(repairOffer)} Nothing has been changed.</p>
+            <div><button class="primary" data-repair-fix onclick={fixSet}>Fix this set</button><button data-repair-keep onclick={() => (repairOffer = null)}>Keep as it is</button></div>
+            <small>You can undo the fix. It also stays in Set settings.</small>
+          </section>{/if}
           {#if !prefs.coachDone && !clean}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
           <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><button class="add-clip" data-add-clip aria-haspopup="dialog" onclick={()=>openPicker()}><Icon name="plus" size={18}/>Add</button></div>
             <StudioDecks {show} {selectedLayer} {pending} {loading} highlight={freshPad}
@@ -1886,6 +1913,12 @@
           >
         </div>
       </div>
+      {#if needsRepair(setFix)}<div class="storage-card" role="group" aria-label="Fix this set" data-repair-settings>
+        <span class="eyebrow">SAVED BY AN OLDER VERSION</span>
+        <p>{repairSummary(setFix)}</p>
+        <button data-repair-fix onclick={fixSet}>Fix this set</button>
+        <p class="hint">Changes the blend of rows 1 to 3 to Screen{setFix.inset ? ' and sets the surface back to the full frame' : ''}. Your clips, blocks and looks stay as they are, and Undo brings the set back.</p>
+      </div>{/if}
       <div class="feel-card" role="group" aria-label="Touch and feel">
         <span class="eyebrow">TOUCH AND FEEL</span>
         <label class="switch-row"><span><strong>Haptics</strong><small>A light tap when you launch, stop, black out or switch tabs. iPhone only.</small></span><input type="checkbox" role="switch" data-pref-haptics checked={prefs.haptics} onchange={(e)=>{setPrefs({haptics:e.currentTarget.checked});feel(prefs,'switch');}} /></label>
@@ -3555,4 +3588,9 @@
   .effect-heading .reorder-handle:disabled{opacity:.3;}
   .effect-heading .effect-toggle{min-height:44px;justify-content:flex-start;text-align:left;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .effect-heading .icon-button{width:44px;height:44px;min-height:44px;}
+  .repair-offer{display:grid;gap:8px;margin:0 0 8px;padding:10px 12px;border:1px solid var(--ga-coral-line);border-radius:var(--ga-r-soft);background:var(--ga-coral-soft);}
+  .repair-offer p{margin:0;font-size:13px;line-height:1.4;color:var(--ga-ink-0);}
+  .repair-offer div{display:flex;flex-wrap:wrap;gap:8px;}
+  .repair-offer button{min-height:44px;padding:0 14px;font-size:13px;font-weight:650;}
+  .repair-offer small{font-size:12px;color:var(--ga-ink-1);}
 </style>
