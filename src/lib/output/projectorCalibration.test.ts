@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultProjectorCorners, inverseProjectorHomography, projectorCalibrationUniforms, pairedOverlapPatches, overlapPartner, overlapPairInStep, nudgeProjectorCorner, overlapGamma } from './projectorCalibration';
+import { defaultProjectorCorners, inverseProjectorHomography, projectorCalibrationUniforms, pairedOverlapPatches, overlapPartner, overlapPairInStep, nudgeProjectorCorner, overlapGamma, type OverlapBand } from './projectorCalibration';
 describe('projector calibration',()=>{
   it('maps all four destination corners back to their source corners with perspective correction',()=>{
     const corners=[{x:.2,y:.1},{x:.85,y:.2},{x:.95,y:.9},{x:.05,y:.95}];
@@ -11,7 +11,7 @@ describe('projector calibration',()=>{
     expect(projectorCalibrationUniforms({projectorCalibration:{enabled:true,corners:[{x:0,y:0},{x:1,y:1},{x:1,y:0},{x:0,y:1}]}})[2][3]).toBe(-1);
     expect(inverseProjectorHomography(Array(4).fill({x:0,y:0}))).toBeNull();
   });
-  const band={enabled:true,side:'left' as const,startTop:.46,startBottom:.4,endTop:.54,endBottom:.6};
+  const band:OverlapBand={enabled:true,side:'left',startTop:.46,startBottom:.4,endTop:.54,endBottom:.6};
   it('keeps both Screens of a pair on one band, with crops that cover it and opposite sides',()=>{
     const patches=pairedOverlapPatches({...band,gamma:2.6},'a','b');
     expect(patches.a).toMatchObject({cropX:0,cropW:.6,overlapBand:{side:'left',partnerId:'b',startTop:.46,endBottom:.6,gamma:2.6}});
@@ -27,7 +27,8 @@ describe('projector calibration',()=>{
     expect(overlapPairInStep(screens[0],{...screens[1],cropX:.3})).toBe(false);
   });
   it('finds the partner of a pair made before partner ids were stored, and none once it is deleted',()=>{
-    const a={id:'a',overlapBand:{...band}}, b={id:'b',overlapBand:{...band,side:'right' as const}};
+    type Paired={id:string;overlapBand:OverlapBand};
+    const a:Paired={id:'a',overlapBand:{...band}}, b:Paired={id:'b',overlapBand:{...band,side:'right'}};
     expect(overlapPartner(a,[a,b])?.id).toBe('b');
     expect(overlapPartner(a,[a])).toBeNull();
     expect(overlapPartner({id:'a',overlapBand:{...band,partnerId:'gone'}},[a,b])).toBeNull();
