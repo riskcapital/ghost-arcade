@@ -1181,7 +1181,7 @@
             <path
               d={polygonToPath(penDraft, false)}
               fill="none"
-              stroke="#4cd1ff"
+              stroke="var(--ga-blue-300)"
               stroke-width={1.5 / zoom}
               opacity="0.9"
             />
@@ -1191,7 +1191,7 @@
                 y1={penDraft[penDraft.length - 1].y}
                 x2={penCursor.x}
                 y2={penCursor.y}
-                stroke="#4cd1ff"
+                stroke="var(--ga-blue-300)"
                 stroke-width={1.5 / zoom}
                 stroke-dasharray="{4 / zoom},{3 / zoom}"
                 opacity="0.6"
@@ -1200,18 +1200,18 @@
             {#each penDraft as v, vi}
               {#if v.cpIn}
                 <line x1={v.x} y1={v.y} x2={v.cpIn.x} y2={v.cpIn.y}
-                      stroke="#4cd1ff" stroke-width={0.7 / zoom} opacity="0.5" />
-                <circle cx={v.cpIn.x} cy={v.cpIn.y} r={2.5 / zoom} fill="#4cd1ff" opacity="0.7" />
+                      stroke="var(--ga-blue-300)" stroke-width={0.7 / zoom} opacity="0.5" />
+                <circle cx={v.cpIn.x} cy={v.cpIn.y} r={2.5 / zoom} fill="var(--ga-blue-300)" opacity="0.7" />
               {/if}
               {#if v.cpOut}
                 <line x1={v.x} y1={v.y} x2={v.cpOut.x} y2={v.cpOut.y}
-                      stroke="#4cd1ff" stroke-width={0.7 / zoom} opacity="0.5" />
-                <circle cx={v.cpOut.x} cy={v.cpOut.y} r={2.5 / zoom} fill="#4cd1ff" opacity="0.7" />
+                      stroke="var(--ga-blue-300)" stroke-width={0.7 / zoom} opacity="0.5" />
+                <circle cx={v.cpOut.x} cy={v.cpOut.y} r={2.5 / zoom} fill="var(--ga-blue-300)" opacity="0.7" />
               {/if}
               <rect
                 x={v.x - 3.5 / zoom} y={v.y - 3.5 / zoom}
                 width={7 / zoom} height={7 / zoom}
-                fill="#4cd1ff" stroke="#0a0a0c" stroke-width={1 / zoom}
+                fill="var(--ga-blue-300)" stroke="#0a0a0c" stroke-width={1 / zoom}
               />
             {/each}
           {/if}

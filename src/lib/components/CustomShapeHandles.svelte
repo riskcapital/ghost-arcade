@@ -523,10 +523,10 @@
           <line
             x1={cpInPx.x} y1={cpInPx.y}
             x2={cpOutPx.x} y2={cpOutPx.y}
-            stroke="#7EC8E3" stroke-width="1" opacity="0.85"
+            stroke="var(--ga-blue-200)" stroke-width="1" opacity="0.85"
           />
-          <circle cx={cpInPx.x} cy={cpInPx.y} r="4" fill="#7EC8E3" opacity="0.9" />
-          <circle cx={cpOutPx.x} cy={cpOutPx.y} r="4" fill="#7EC8E3" opacity="0.9" />
+          <circle cx={cpInPx.x} cy={cpInPx.y} r="4" fill="var(--ga-blue-200)" opacity="0.9" />
+          <circle cx={cpOutPx.x} cy={cpOutPx.y} r="4" fill="var(--ga-blue-200)" opacity="0.9" />
         {/if}
 
         <!-- Anchor dot, on top of everything else -->
@@ -563,7 +563,7 @@
             <line
               x1={anchorPx.x} y1={anchorPx.y}
               x2={cpOutPx.x} y2={cpOutPx.y}
-              stroke="#00bfff" stroke-width="1" opacity="0.7"
+              stroke="var(--ga-blue-300)" stroke-width="1" opacity="0.7"
             />
           {/if}
           {#if pt.cpIn}
@@ -572,7 +572,7 @@
             <line
               x1={anchorPx.x} y1={anchorPx.y}
               x2={cpInPx.x} y2={cpInPx.y}
-              stroke="#00bfff" stroke-width="1" opacity="0.7"
+              stroke="var(--ga-blue-300)" stroke-width="1" opacity="0.7"
             />
           {/if}
         {/each}

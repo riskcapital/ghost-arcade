@@ -455,7 +455,7 @@
             {#if $selectedSVGContent?.svgSource}
               <div class="svg-loaded">
                 <div class="svg-preview">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#67E8F9" stroke-width="2">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ga-blue-300)" stroke-width="2">
                     <path d="M9 12l2 2 4-4" />
                     <circle cx="12" cy="12" r="10" />
                   </svg>

@@ -503,7 +503,7 @@
             y1={tangentOrigin.y}
             x2={handle.x}
             y2={handle.y}
-            stroke="#00d4ff"
+            stroke="var(--ga-blue-300)"
             stroke-width="1"
             stroke-opacity="0.8"
             stroke-dasharray={handle.linked ? undefined : '3,3'}
@@ -525,7 +525,7 @@
           <polygon
             points="{c0x},{c0y} {c1x},{c1y} {c2x},{c2y} {c3x},{c3y}"
             fill="none"
-            stroke="rgba(100, 200, 255, 0.3)"
+            stroke="var(--ga-blue-a28)"
             stroke-width="1"
             stroke-dasharray="4,4"
           />

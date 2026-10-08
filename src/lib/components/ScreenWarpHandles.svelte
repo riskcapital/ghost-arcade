@@ -699,7 +699,7 @@
         {#if isSel}
           {#each tangentHandlesOf(s) as handle (handle.side)}
             <line x1={handle.ox} y1={handle.oy} x2={handle.x} y2={handle.y}
-              stroke="#00d4ff" stroke-width="1" stroke-opacity="0.8" stroke-dasharray={handle.linked ? undefined : '3,3'} />
+              stroke="var(--ga-blue-300)" stroke-width="1" stroke-opacity="0.8" stroke-dasharray={handle.linked ? undefined : '3,3'} />
           {/each}
         {/if}
       {/if}
@@ -720,7 +720,7 @@
           {@const editing = isSel && $selectedScreenMaskId === m.id}
           {@const open = m.points.length < 3 || (editing && $screenMaskPlacing)}
           {@const pts = polyPath(open ? screenMaskCanvasPoints(s, m) : screenMaskCanvasOutline(s, m))}
-          {@const mstroke = editing ? '#4dd8ff' : isSel ? 'rgba(77, 216, 255, 0.7)' : 'rgba(77, 216, 255, 0.3)'}
+          {@const mstroke = editing ? 'var(--ga-blue-300)' : isSel ? 'var(--ga-blue-a70)' : 'var(--ga-blue-a28)'}
           {@const mdash = m.enabled ? (editing ? 'none' : '6 4') : '2 4'}
           {#if !open}
             <polygon points={pts} fill="none" stroke={mstroke} stroke-width={editing ? 2 : 1} stroke-dasharray={mdash} />
@@ -764,7 +764,7 @@
                 {@const h = p[which]}
                 {#if h}
                   {@const hc = screenContentToCanvas(s, h)}
-                  <line x1={px(v.x)} y1={py(v.y)} x2={px(hc.x)} y2={py(hc.y)} stroke="#4dd8ff" stroke-width="1" stroke-opacity="0.8" />
+                  <line x1={px(v.x)} y1={py(v.y)} x2={px(hc.x)} y2={py(hc.y)} stroke="var(--ga-blue-300)" stroke-width="1" stroke-opacity="0.8" />
                 {/if}
               {/each}
             {/each}

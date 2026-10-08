@@ -3494,7 +3494,7 @@
                 y1={line.from.y}
                 x2={line.to.x}
                 y2={line.to.y}
-                stroke="#67E8F9"
+                stroke="var(--ga-blue-300)"
                 stroke-width="2"
               />
             {/each}
@@ -3521,7 +3521,7 @@
                 y1={line.from.y}
                 x2={line.to.x}
                 y2={line.to.y}
-                stroke="#00aaff"
+                stroke="var(--ga-blue-300)"
                 stroke-width="1"
                 opacity="0.6"
               />

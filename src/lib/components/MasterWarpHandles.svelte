@@ -519,7 +519,7 @@
           {@const o = g.points[tangentPoint.row][tangentPoint.col]}
           {#each tangentHandles as handle (handle.side)}
             <line x1={meshPx(o.x, o.y)} y1={meshPy(o.x, o.y)} x2={handle.x} y2={handle.y}
-              stroke="#00d4ff" stroke-width="1" stroke-opacity="0.8" stroke-dasharray={handle.linked ? undefined : '3,3'} />
+              stroke="var(--ga-blue-300)" stroke-width="1" stroke-opacity="0.8" stroke-dasharray={handle.linked ? undefined : '3,3'} />
           {/each}
         {/if}
         <text x={meshPx(g.points[0][0].x, g.points[0][0].y) + 6} y={meshPy(g.points[0][0].x, g.points[0][0].y) + 16} fill="#f0a35e"

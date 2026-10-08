@@ -931,7 +931,7 @@
           <polygon
             points="{c0.x},{c0.y} {c1.x},{c1.y} {c2.x},{c2.y} {c3.x},{c3.y}"
             fill="none"
-            stroke="rgba(100, 200, 255, 0.3)"
+            stroke="var(--ga-blue-a28)"
             stroke-width="1"
             stroke-dasharray="4,4"
           />
@@ -970,7 +970,7 @@
           y1={selectionBoundsPx ? selectionBoundsPx.bottom : edgePositions.bottom.y}
           x2={visibleScalePosition.x}
           y2={visibleScalePosition.y}
-          stroke="#00ccff"
+          stroke="var(--ga-blue-300)"
           stroke-width="1"
           stroke-dasharray="3,3"
         />

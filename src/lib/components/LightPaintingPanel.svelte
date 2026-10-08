@@ -543,7 +543,7 @@
       ? { stroke: 'rgba(255,90,90,0.95)',  fill: '#FF8080', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
       : pathEditTool === 'insert'
       ? { stroke: 'rgba(120,220,140,0.95)', fill: '#80E89C', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
-      : { stroke: 'rgba(103,232,249,0.95)', fill: '#67E8F9', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850' }
+      : { stroke: 'var(--ga-blue-300)', fill: 'var(--ga-blue-300)', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850' }
   );
   $: pathHandlePositions = (isPathEditMode && editHandles)
     ? editHandles.map(h => normToOverlayPx(h.x, h.y))
@@ -1060,7 +1060,7 @@
           <path d={penPreviewSvg.path} fill="none" stroke="rgba(255,255,255,0.4)"
             stroke-width={Math.max(1, currentBrush.size * 0.1)} stroke-linecap="round" stroke-linejoin="round" />
           {#each penPreviewSvg.handles as h}
-            <line x1={h.x1} y1={h.y1} x2={h.x2} y2={h.y2} stroke="rgba(103,232,249,0.5)" stroke-width="1" />
+            <line x1={h.x1} y1={h.y1} x2={h.x2} y2={h.y2} stroke="var(--ga-blue-a45)" stroke-width="1" />
             <circle cx={h.x2} cy={h.y2} r="3" fill="#BB86FC" opacity="0.7" />
           {/each}
           {#each penPreviewSvg.dots as dot}
@@ -1089,7 +1089,7 @@
           <path
             d={pathGuidePathD}
             fill="none"
-            stroke="rgba(103,232,249,0.95)"
+            stroke="var(--ga-blue-300)"
             stroke-width="1.5"
             stroke-dasharray="4 3"
             pointer-events="none"
@@ -1118,7 +1118,7 @@
                 cx={pathHandlePositions[i]?.x ?? 0}
                 cy={pathHandlePositions[i]?.y ?? 0}
                 r={pathDragHandleIndex === i ? 11 : 9}
-                fill={pathDragHandleIndex === i ? 'rgba(103,232,249,0.35)' : 'transparent'}
+                fill={pathDragHandleIndex === i ? 'var(--ga-blue-a28)' : 'transparent'}
                 stroke={h.isAnchor ? pathToolPalette.anchorStroke : pathToolPalette.stroke}
                 stroke-width="1.5"
                 style="cursor: {pathEditTool === 'delete' ? 'not-allowed' : pathEditTool === 'insert' ? 'crosshair' : 'grab'}; pointer-events: all; touch-action: none;"
@@ -1157,8 +1157,8 @@
               y={Math.min(pathMarqueeStart.y, pathMarqueeCurrent.y)}
               width={Math.abs(pathMarqueeCurrent.x - pathMarqueeStart.x)}
               height={Math.abs(pathMarqueeCurrent.y - pathMarqueeStart.y)}
-              fill="rgba(103,232,249,0.10)"
-              stroke="rgba(103,232,249,0.95)"
+              fill="var(--ga-blue-a08)"
+              stroke="var(--ga-blue-300)"
               stroke-width="1"
               stroke-dasharray="4 3"
               pointer-events="none"

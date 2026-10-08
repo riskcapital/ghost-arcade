@@ -5143,7 +5143,7 @@
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
                   {gpuClip.name || 'GPU Shader'}
-                  <span class="shader-params-layer-badge" style="background: rgba(85, 215, 239, 0.22); color: #6ee7f7;">GPU</span>
+                  <span class="shader-params-layer-badge" style="background: var(--ga-blue-a28); color: var(--ga-blue-300);">GPU</span>
                 </span>
               </div>
               <div class="shader-params-panel-list">
@@ -5262,7 +5262,7 @@
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
                   {vClip.name || 'Video'}
-                  <span class="shader-params-layer-badge" style="background: rgba(96, 165, 250, 0.3); color: #60a5fa;">VID</span>
+                  <span class="shader-params-layer-badge" style="background: var(--ga-blue-a28); color: var(--ga-blue-300);">VID</span>
                 </span>
               </div>
               <div class="shader-params-panel-list">

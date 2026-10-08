@@ -171,10 +171,10 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <svg bind:this={editor} class:large={largeEditor} viewBox="{-MARGIN * aspect} {-MARGIN} {aspect * (1 + 2 * MARGIN)} {1 + 2 * MARGIN}" style:aspect-ratio={aspect}
       role="application" tabindex="0" aria-label="Projector destination corners. Arrow keys move the selected corner by one output pixel." onkeydown={nudge}>
-      <rect x="0" y="0" width={aspect} height="1" fill="#080b10" stroke="#46566b" stroke-width="0.006" />
-      <polygon points={calibration.corners.map(p => `${p.x * aspect},${p.y}`).join(' ')} fill="#3368a944" stroke={valid ? '#56c8ff' : '#ff685b'} stroke-width="0.008" />
+      <rect x="0" y="0" width={aspect} height="1" fill="#080b10" stroke="var(--ga-blue-mute-600)" stroke-width="0.006" />
+      <polygon points={calibration.corners.map(p => `${p.x * aspect},${p.y}`).join(' ')} fill="color-mix(in srgb, var(--ga-blue-600) 26.67%, transparent)" stroke={valid ? 'var(--ga-blue-300)' : '#ff685b'} stroke-width="0.008" />
       {#each calibration.corners as point, i}
-        <circle cx={point.x * aspect} cy={point.y} r="0.04" fill={i === selectedCorner ? '#ffd45c' : '#56c8ff'} stroke="#080b10" stroke-width="0.008"
+        <circle cx={point.x * aspect} cy={point.y} r="0.04" fill={i === selectedCorner ? '#ffd45c' : 'var(--ga-blue-300)'} stroke="#080b10" stroke-width="0.008"
           onpointerdown={e => drag(e, i)} role="presentation" />
       {/each}
     </svg>
