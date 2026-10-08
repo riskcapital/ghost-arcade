@@ -155,6 +155,7 @@
   import StudioDecks from './StudioDecks.svelte';
   import { StudioEngine } from '../../mobile/studio/engine';
   import { keepAwake } from '../../mobile/studio/wakeLock';
+  import { shareFile, isNativePlatform } from '../../mobile/studio/nativeShare';
   import { standaloneShaderPaths } from '../../mobile/studio/shaderAvailability';
   const libraryShaders=MOBILE_SHADERS.filter(s=>!s.requiresImage&&standaloneShaderPaths.has(s.path)).sort((a,b)=>Number(b.id.startsWith('featured-'))-Number(a.id.startsWith('featured-')));
   let failedThumbnails=new Set<string>();
@@ -851,18 +852,21 @@
     settings = false;
     noteUnavailable();
   }
-  function exportSet() {
-    const blob = new Blob([JSON.stringify(show, null, 2)], { type: 'application/json' });
-    download(blob, `${show.name}.ghostset`);
-    flash('Set saved. Imported media stays on this device.');
-  }
-  function download(blob: Blob, name: string) {
-    const url = URL.createObjectURL(blob),
-      a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  let exporting = false;
+  async function exportSet() {
+    if (exporting) return;
+    exporting = true;
+    try {
+      const blob = new Blob([JSON.stringify(show, null, 2)], { type: 'application/json' });
+      // Only claim success when the file really left: a finished share sheet, or a started download.
+      const done = await shareFile(`${show.name}.ghostset`, blob, 'application/json');
+      if (done) flash(isNativePlatform() ? 'Set shared. Imported media stays on this device.' : 'Set file downloaded. Imported media stays on this device.');
+      else flash('Export cancelled. Nothing was shared.');
+    } catch {
+      error = 'This set could not be exported. Try again.';
+    } finally {
+      exporting = false;
+    }
   }
   async function importSet(event: Event) {
     const input = event.target as HTMLInputElement,
@@ -1761,7 +1765,7 @@
         {/each}
       </div>
       <div class="field-grid">
-        <button onclick={exportSet}><Icon name="save" />Export set</button><button onclick={() => setInput.click()}
+        <button data-export-set disabled={exporting} onclick={exportSet}><Icon name="save" />{exporting ? 'Exporting…' : 'Export set'}</button><button onclick={() => setInput.click()}
           ><Icon name="upload" />Open set</button
         >
       </div>
