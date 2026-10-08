@@ -6437,7 +6437,9 @@ impl App {
                     ],
                     dome0: self.output_stage.dome0,
                     dome1: self.output_stage.dome1,
-                    dome2: [self.output_stage.dome2[0], blend_gamma as f32, 1.0, 0.0],
+                    // w: Screen alignment aid (7 numbered grid, 8 identify);
+                    // the main output's test patterns never reach a Screen.
+                    dome2: [self.output_stage.dome2[0], blend_gamma as f32, 1.0, match read(&["alignmentAid"], 0.0).round() as i32 { 1 => 7.0, 2 => 8.0, _ => 0.0 }],
                     edge_gamma: [
                         read(&["edgeBlendLeftGamma"], blend_gamma).clamp(0.05, 8.0) as f32,
                         read(&["edgeBlendRightGamma"], blend_gamma).clamp(0.05, 8.0) as f32,

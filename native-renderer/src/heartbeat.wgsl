@@ -1542,7 +1542,8 @@ fn screen_mask_alpha(uv: vec2<f32>) -> f32 {
 /// which is the whole point of an alignment pattern.
 fn apply_test_pattern(color_in: vec3<f32>, uv: vec2<f32>, aspect: f32) -> vec3<f32> {
   let code = i32(floor(u.dome2.w + 0.5));
-  if (code <= 0) { return color_in; }
+  // 7 and 8 are Screen alignment aids, drawn by fs_output.
+  if (code <= 0 || code > 6) { return color_in; }
   if (code == 4) { return vec3<f32>(1.0); }
   if (code == 5) {
     return vec3<f32>(uv.x, uv.y, 1.0 - uv.x);
@@ -1618,7 +1619,131 @@ fn calibrated_overlap(uv: vec2<f32>) -> f32 {
   let start = mix(band.x,band.y,1.0-composition_uv.y);
   let end = mix(band.z,band.w,1.0-composition_uv.y);
   let weight = clamp((composition_uv.x-start)/max(end-start,0.000001),0.0,1.0);
-  return select(1.0-weight,weight,u.projector_calibration[4].y>0.5);
+  // The ramp is linear in light, which sums to one on a projector with a
+  // standard 2.2 response. Row 4 z reshapes it (2.2 / projector gamma) so a
+  // darker or brighter projector mode still sums to the unblended level.
+  let shape = u.projector_calibration[4].z;
+  let exponent = select(1.0, shape, shape > 0.01);
+  let side = select(1.0-weight,weight,u.projector_calibration[4].y>0.5);
+  return pow(side, exponent);
+}
+
+/// 3x5 digit glyphs, three bits per row from the top, bit 14 = top left.
+fn digit_bits(d: i32) -> u32 {
+  switch d {
+    case 0 { return 0x7B6Fu; }
+    case 1 { return 0x2C97u; }
+    case 2 { return 0x73E7u; }
+    case 3 { return 0x73CFu; }
+    case 4 { return 0x5BC9u; }
+    case 5 { return 0x79CFu; }
+    case 6 { return 0x79EFu; }
+    case 7 { return 0x7249u; }
+    case 8 { return 0x7BEFu; }
+    default { return 0x7BCFu; }
+  }
+}
+
+/// Coverage of `value` (0-999, no leading zeros) in a box 11 units wide and
+/// 5 tall; `p` is 0..1 across that box with y down.
+fn number_coverage(p: vec2<f32>, value: i32) -> f32 {
+  if (p.x < 0.0 || p.x >= 1.0 || p.y < 0.0 || p.y >= 1.0) { return 0.0; }
+  let count = select(select(1, 2, value >= 10), 3, value >= 100);
+  // Centre the digits that are actually drawn.
+  let width = f32(count) * 4.0 - 1.0;
+  let x = p.x * 11.0 - (11.0 - width) * 0.5;
+  if (x < 0.0 || x >= width) { return 0.0; }
+  let slot = i32(floor(x / 4.0));
+  let gx = i32(floor(x - f32(slot) * 4.0));
+  if (gx > 2) { return 0.0; }
+  var divisor = 1;
+  for (var i = slot; i < count - 1; i = i + 1) { divisor = divisor * 10; }
+  let digit = (value / divisor) % 10;
+  let gy = i32(clamp(floor(p.y * 5.0), 0.0, 4.0));
+  let bit = u32(14 - (gy * 3 + gx));
+  return f32((digit_bits(digit) >> bit) & 1u);
+}
+
+/// Colour of this Screen's alignment marks: the left projector of a pair
+/// draws green and the right magenta, so marks that land on each other read
+/// white and a doubled mark shows which projector is off. Unpaired: white.
+fn alignment_tint() -> vec3<f32> {
+  if (u.projector_calibration[4].x < 0.5) { return vec3<f32>(1.0); }
+  return select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 1.0), u.projector_calibration[4].y > 0.5);
+}
+
+/// Numbered alignment grid in COMPOSITION coordinates (y-up `uv`), so both
+/// projectors of a pair draw the same lines, circles, diagonals and cell
+/// numbers and they must coincide on the wall. Drawn without the overlap
+/// fade: the band boundaries are marked in yellow instead.
+fn alignment_grid(uv: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
+  let aspect = dims.x / max(dims.y, 1.0);
+  let cols = 16.0;
+  let rows = max(1.0, round(cols / aspect));
+  let top = vec2<f32>(uv.x, 1.0 - uv.y);
+  let g = top * vec2<f32>(cols, rows);
+  let gw = max(fwidth(g), vec2<f32>(0.000001));
+  let px = (top - vec2<f32>(0.5)) * dims;
+  let radius = length(px);
+  let rw = max(fwidth(radius), 0.000001);
+  let side = vec2<f32>(length(px - vec2<f32>(-0.25 * dims.x, 0.0)), length(px - vec2<f32>(0.25 * dims.x, 0.0)));
+  let sw = max(fwidth(side), vec2<f32>(0.000001));
+  let diag = vec2<f32>(top.x - top.y, top.x + top.y - 1.0);
+  let dw = max(fwidth(diag), vec2<f32>(0.000001));
+  let band = u.projector_calibration[3];
+  let edges = vec2<f32>(top.x - mix(band.x, band.y, top.y), top.x - mix(band.z, band.w, top.y));
+  let ew = max(fwidth(edges), vec2<f32>(0.000001));
+  let border = min(min(top.x, 1.0 - top.x) / max(fwidth(top.x), 0.000001), min(top.y, 1.0 - top.y) / max(fwidth(top.y), 0.000001));
+
+  // Distances in output pixels; every mark is about three pixels wide.
+  let cell = abs(fract(g + vec2<f32>(0.5)) - vec2<f32>(0.5)) / gw;
+  var mark = 1.0 - smoothstep(1.0, 2.0, min(cell.x, cell.y));
+  mark = max(mark, 1.0 - smoothstep(1.0, 2.0, abs(radius - 0.45 * dims.y) / rw));
+  let ring = abs(side - vec2<f32>(0.22 * dims.y)) / sw;
+  mark = max(mark, 1.0 - smoothstep(1.0, 2.0, min(ring.x, ring.y)));
+  let slash = abs(diag) / dw;
+  mark = max(mark, 0.6 * (1.0 - smoothstep(0.75, 1.75, min(slash.x, slash.y))));
+  let index = floor(g);
+  let number = i32(index.y * cols + index.x) + 1;
+  let label = (fract(g) - vec2<f32>(0.2, 0.36)) / vec2<f32>(0.6, 0.28);
+  mark = max(mark, number_coverage(label, number));
+
+  var color = mix(vec3<f32>(0.03), alignment_tint(), mark);
+  if (u.projector_calibration[4].x > 0.5) {
+    let line = abs(edges) / ew;
+    color = mix(color, vec3<f32>(1.0, 0.85, 0.0), 1.0 - smoothstep(1.5, 2.5, min(line.x, line.y)));
+  }
+  return mix(color, vec3<f32>(1.0), 1.0 - smoothstep(3.0, 4.0, border));
+}
+
+/// Screen alignment aids replace a Screen's picture and skip its grade,
+/// overlap fade and masks. dome2.w: 7 = numbered grid in composition space
+/// (through the Screen's crop, warp and projector corners), 8 = identify.
+/// Returns alpha 1 when an aid was drawn.
+fn screen_alignment_aid(screen_uv: vec2<f32>, comp_uv: vec2<f32>, comp_dims: vec2<f32>, mask: f32) -> vec4<f32> {
+  // The target's own aspect, from how fast its UV crosses a pixel.
+  let aspect = abs(dpdy(screen_uv.y)) / max(abs(dpdx(screen_uv.x)), 0.0000001);
+  let code = i32(floor(u.dome2.w + 0.5));
+  if (u.dome2.z > 0.5 && code == 7) { return vec4<f32>(alignment_grid(comp_uv, comp_dims) * mask, 1.0); }
+  if (u.dome2.z > 0.5 && code == 8) { return vec4<f32>(alignment_identify(screen_uv, aspect), 1.0); }
+  return vec4<f32>(0.0);
+}
+
+/// Identify: this Screen's number, large and upright, over a tinted field
+/// with a white frame, in the projector's own raster (no geometry applied).
+fn alignment_identify(screen_uv: vec2<f32>, aspect_in: f32) -> vec3<f32> {
+  let quarter = i32(floor(u.out1.x + 0.5));
+  let r = output_rotate_uv(screen_uv);
+  let aspect = select(aspect_in, 1.0 / max(aspect_in, 0.0001), quarter == 1 || quarter == 3);
+  let top = vec2<f32>(r.x, 1.0 - r.y);
+  // Box 11:5 units, half the shorter side tall, centred.
+  let height = select(0.5, 0.5 * aspect * 5.0 / 11.0 * 1.6, aspect < 1.0);
+  let size = vec2<f32>(height * 11.0 / 5.0 / aspect, height);
+  let p = (top - vec2<f32>(0.5) + size * 0.5) / size;
+  let frame = min(min(screen_uv.x, 1.0 - screen_uv.x) * aspect_in, min(screen_uv.y, 1.0 - screen_uv.y));
+  var color = alignment_tint() * 0.25;
+  color = mix(color, vec3<f32>(1.0), number_coverage(p, i32(u.projector_calibration[4].w + 0.5)));
+  return mix(color, vec3<f32>(1.0), step(frame, 0.02));
 }
 /// Projector pixel -> the screen's content UV, where its masks are drawn:
 /// through the projector calibration and rotation, before the warp. The
@@ -3633,6 +3758,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let straight = select(vec3<f32>(0.0), color / max(a, 0.0001), a > 0.0001);
     return vec4<f32>(clamp(straight, vec3<f32>(0.0), vec3<f32>(1.0)), a);
   }
+  // The compositor draws a Screen directly when nothing needs the shared
+  // master; u.resolution is the composition there.
+  let aid = screen_alignment_aid(in.uv, canvas_uv, u.resolution, dome_mask);
+  if (aid.a > 0.5) { return vec4<f32>(aid.rgb * u.output_gate, 1.0); }
   color = apply_test_pattern(color, in.uv, aspect);
   if (u.dome2.z > 0.5) {
     color = slice_output_grade(color, in.uv) * dome_mask * screen_mask_alpha(screen_content_uv(in.uv));
@@ -3660,6 +3789,11 @@ fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
     mask *= domed.z;
   }
   var color = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(uv.x, 1.0 - uv.y), 0.0).rgb;
+  // Screen alignment aids replace the picture and skip the grade, overlap
+  // fade and masks: 7 = numbered grid in composition space (through this
+  // Screen's crop, warp and projector corners), 8 = identify.
+  let aid = screen_alignment_aid(in.uv, uv, vec2<f32>(textureDimensions(creative_master)), mask);
+  if (aid.a > 0.5) { return vec4<f32>(aid.rgb * u.output_gate, 1.0); }
   color = apply_test_pattern(color, in.uv, aspect);
   if (u.dome2.z > 0.5) {
     color = slice_output_grade(color, in.uv) * mask * screen_mask_alpha(screen_content_uv(in.uv));

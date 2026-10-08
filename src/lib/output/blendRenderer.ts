@@ -305,7 +305,9 @@ const FRAG_SHADER = /* glsl */ `
       vec4 b=uCalibration[3];
       float start=mix(b.x,b.y,1.0-srcUv.y), end=mix(b.z,b.w,1.0-srcUv.y);
       float weight=clamp((srcUv.x-start)/max(end-start,0.000001),0.0,1.0);
-      alpha *= uCalibration[4].y>0.5 ? weight : 1.0-weight;
+      // Row 4 z reshapes the ramp for the projector's gamma (0 = linear), as in the core.
+      float shape=uCalibration[4].z>0.01 ? uCalibration[4].z : 1.0;
+      alpha *= pow(uCalibration[4].y>0.5 ? weight : 1.0-weight, shape);
     }
 
     float liftMix = mix(alpha, smoothstep(0.0, 1.0, alpha), uBlackFeather);

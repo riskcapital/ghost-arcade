@@ -196,6 +196,76 @@ suite('Native screen masks', () => {
     } finally { await rpc.close(); }
   },30000);
 
+  it('shapes the pair fade for the projector gamma and draws the alignment grid and identify aids', async () => {
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: SIZE, height: SIZE, source_frame_size: 128, target_fps: 30 } });
+      const grey = 180;
+      await rpc.commands([
+        { type: 'upload_source_frame', source_id: 'flat', width: 32, height: 32, seq: 1, rgba_b64: Buffer.from(Array.from({ length: 1024 }, () => [grey, grey, grey, 255]).flat()).toString('base64') },
+        { type: 'upsert_layer', layer_id: 'flat', opacity: 1, corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } } },
+        { type: 'bind_media_source', layer_id: 'flat', source_id: 'flat', uri: 'test://image', source_type: 'image' },
+      ]);
+      const band = { enabled: true, startTop: .4, startBottom: .4, endTop: .6, endBottom: .6 };
+      const pair = (gamma: number, extra: Command = {}) => (['left', 'right'] as const).map(side => slice(side, {
+        cropX: side === 'left' ? 0 : .4, cropW: .6,
+        projectorCalibration: projectorCalibrationUniforms({ overlapBand: { ...band, side, gamma } }), ...extra,
+      }));
+      const shot = async (id: string) => rpc.send('output_shared_texture_snapshot', { include_pixels: true, capture_source: `slice:${id}` });
+      const linear = (v: number) => { const x = v / 255; return x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4; };
+
+      // A projector with gamma G emits signal^G: the encoded fade must then
+      // add up to the unblended level after that response, not before it.
+      for (const gamma of [2.2, 2.75, 1.8]) {
+        await rpc.send('set_slice_outputs', { slices: pair(gamma) });
+        await new Promise(r => setTimeout(r, 120));
+        const [left, right] = [await shot('left'), await shot('right')];
+        for (const t of [.25, .5, .75]) {
+          const x = .4 + .2 * t;
+          const l = linear(pixel(left, Math.floor(x / .6 * SIZE), 64)[0]) / linear(grey);
+          const r = linear(pixel(right, Math.floor((x - .4) / .6 * SIZE), 64)[0]) / linear(grey);
+          expect(l ** (gamma / 2.2) + r ** (gamma / 2.2), `emitted sum, gamma ${gamma}, t ${t}`).toBeGreaterThan(.96);
+          expect(l ** (gamma / 2.2) + r ** (gamma / 2.2), `emitted sum, gamma ${gamma}, t ${t}`).toBeLessThan(1.04);
+        }
+        // Outside the band each projector is at full level, whatever the gamma.
+        expect(Math.abs(pixel(left, 10, 64)[0] - grey)).toBeLessThanOrEqual(2);
+        expect(Math.abs(pixel(right, 118, 64)[0] - grey)).toBeLessThanOrEqual(2);
+      }
+
+      // Alignment grid: composition space, so the same line lands on both
+      // Screens (green on the left projector, magenta on the right), with no fade.
+      const BIG = 512;
+      await rpc.send('set_slice_outputs', { slices: pair(2.2, { width: BIG, height: BIG, alignmentAid: 1 }) });
+      await new Promise(r => setTimeout(r, 150));
+      const [gl, gr] = [await shot('left'), await shot('right')];
+      const near = (got: number[], want: number[], what: string) => want.forEach((v, i) => expect(Math.abs(got[i] - v), `${what}: ${got}`).toBeLessThanOrEqual(12));
+      near(pixel(gl, 426, 38), [0, 255, 0], 'left grid line at composition x = 0.5');
+      near(pixel(gr, 85, 38), [255, 0, 255], 'right grid line at composition x = 0.5');
+      near(pixel(gl, 240, 38), [8, 8, 8], 'cell background');
+      near(pixel(gl, 341, 38), [255, 217, 0], 'left band boundary');
+      near(pixel(gr, 0, 38), [255, 217, 0], 'right band boundary');
+      near(pixel(gl, 1, 1), [255, 255, 255], 'composition border');
+      // Cell 21 (column 5, row 2): a lit and an unlit pixel of its "2".
+      near(pixel(gl, 234, 44), [0, 255, 0], 'digit stroke');
+      near(pixel(gl, 231, 46), [8, 8, 8], 'digit gap');
+
+      // Identify: the Screen's number in the raster, on its side's tint.
+      const identify = pair(2.2, { width: BIG, height: BIG, alignmentAid: 2 });
+      (identify[1].projectorCalibration as number[][])[4][3] = 2;
+      await rpc.send('set_slice_outputs', { slices: identify });
+      await new Promise(r => setTimeout(r, 150));
+      const flash = await shot('right');
+      near(pixel(flash, 256, 153), [255, 255, 255], 'top stroke of the 2');
+      near(pixel(flash, 204, 204), [64, 0, 64], 'tinted field inside the glyph box');
+      near(pixel(flash, 2, 2), [255, 255, 255], 'frame');
+
+      // Aids off: the picture and its fade are back.
+      await rpc.send('set_slice_outputs', { slices: pair(2.2) });
+      await new Promise(r => setTimeout(r, 120));
+      expect(Math.abs(pixel(await shot('left'), 10, 64)[0] - grey)).toBeLessThanOrEqual(2);
+    } finally { await rpc.close(); }
+  }, 30000);
+
   it('keeps inside, cuts inverted holes, feathers monotonically and follows a corner-pinned screen', async () => {
     const rpc = core();
     try {
