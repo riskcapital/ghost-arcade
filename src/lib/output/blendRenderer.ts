@@ -471,7 +471,11 @@ function setSourceFrame(source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoE
     sourceTexture.magFilter = THREE.LinearFilter;
     sourceTexture.wrapS = THREE.ClampToEdgeWrapping;
     sourceTexture.wrapT = THREE.ClampToEdgeWrapping;
-    (sourceTexture as any).colorSpace = THREE.SRGBColorSpace;
+    // Leave the bytes as they are: the shader does its own srgbToLinear and
+    // linearToSrgb round trip. Tagging the texture sRGB made three.js decode
+    // it as well, so mid-tones were decoded twice and came out dark (188 in,
+    // 128 out) on every Screen sender, the atlas and the WebGL Master Warp.
+    (sourceTexture as any).colorSpace = THREE.NoColorSpace;
   }
   sourceTexture.needsUpdate = true;
   if (material) material.uniforms.uSource.value = sourceTexture;
@@ -929,7 +933,8 @@ export function renderMasterWarpToCanvas(
     masterSourceTex.magFilter = THREE.LinearFilter;
     masterSourceTex.wrapS = THREE.ClampToEdgeWrapping;
     masterSourceTex.wrapT = THREE.ClampToEdgeWrapping;
-    (masterSourceTex as any).colorSpace = THREE.SRGBColorSpace;
+    // Raw bytes; the shader decodes (see setSourceFrame).
+    (masterSourceTex as any).colorSpace = THREE.NoColorSpace;
   }
   masterSourceTex.needsUpdate = true;
   masterMaterial!.uniforms.uSource.value = masterSourceTex;
@@ -1076,7 +1081,8 @@ function setAtlasSource(source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoE
     atlasSourceTex.magFilter = THREE.LinearFilter;
     atlasSourceTex.wrapS = THREE.ClampToEdgeWrapping;
     atlasSourceTex.wrapT = THREE.ClampToEdgeWrapping;
-    (atlasSourceTex as any).colorSpace = THREE.SRGBColorSpace;
+    // Raw bytes; the shader decodes (see setSourceFrame).
+    (atlasSourceTex as any).colorSpace = THREE.NoColorSpace;
   }
   atlasSourceTex.needsUpdate = true;
   if (atlasMaterial) atlasMaterial.uniforms.uSource.value = atlasSourceTex;
