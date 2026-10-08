@@ -22,14 +22,14 @@ describe('native editor preview cost',()=>{
   expect(Array.from(px.slice(12,16))).toEqual([13,14,15,16]);
  });
  it('asks for the size on screen, not a 960 px square',()=>{
-  expect(previewRequestSize(864,486,1)).toEqual({width:864,height:486});
-  expect(previewRequestSize(864,486,2)).toEqual({width:960,height:540});
-  expect(previewRequestSize(560,315,1)).toEqual({width:560,height:316});
-  expect(previewRequestSize(0,0,2)).toEqual({width:480,height:270});
+  expect(previewRequestSize(864,486)).toEqual({width:864,height:486});
+  expect(previewRequestSize(560,315)).toEqual({width:560,height:316});
+  expect(previewRequestSize(1728,972)).toEqual({width:960,height:540});
+  expect(previewRequestSize(0,0)).toEqual({width:480,height:270});
  });
  it('backs off with the round trip and never polls faster than 30 Hz',()=>{
   expect(previewInterval(5)).toBeCloseTo(PREVIEW_MIN_INTERVAL_MS);
-  expect(previewInterval(60)).toBe(120);
+  expect(previewInterval(60)).toBe(90);
   expect(previewInterval(5000)).toBe(250);
  });
  it('makes no request for a stopped, deleted or hidden layer',async()=>{

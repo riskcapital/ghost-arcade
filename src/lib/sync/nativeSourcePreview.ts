@@ -22,22 +22,23 @@ export function sourceSnapshotPixels(s:SourceSnapshot):Uint8ClampedArray<ArrayBu
 }
 /** Longest side the editor ever asks for (the old fixed request). */
 export const PREVIEW_MAX_DIM=960;
-/** The snapshot size for a preview shown at `cssWidth` x `cssHeight`: what is
- * on screen, with a little extra on dense displays, never more than the old
- * fixed 960 and never the square source texture. */
-export function previewRequestSize(cssWidth:number,cssHeight:number,pixelRatio=1):{width:number;height:number}{
+/** The snapshot size for a preview shown at `cssWidth` x `cssHeight`: the size
+ * it has on screen in CSS pixels, never more than the old fixed 960 and never
+ * the square source texture. A dense display does not get more: the cost of a
+ * read grows with its pixels (encoding 960x540 takes 30 ms, 640x360 takes 13),
+ * and the simulation behind the picture is coarser than either. */
+export function previewRequestSize(cssWidth:number,cssHeight:number):{width:number;height:number}{
  if(!(cssWidth>0)||!(cssHeight>0))return {width:480,height:270};
- const density=Math.max(1,Math.min(1.5,pixelRatio||1));
- const scale=Math.min(density,PREVIEW_MAX_DIM/Math.max(cssWidth,cssHeight));
+ const scale=Math.min(1,PREVIEW_MAX_DIM/Math.max(cssWidth,cssHeight));
  const even=(v:number)=>Math.max(64,Math.round(v*scale/2)*2);
  return {width:even(cssWidth),height:even(cssHeight)};
 }
 /** Fastest the preview refreshes, and the slowest it backs off to. */
 export const PREVIEW_MIN_INTERVAL_MS=1000/30,PREVIEW_MAX_INTERVAL_MS=250;
-/** Wait at least twice the last round trip, so the readback never takes more
- * than about half of the render core's attention however slow it gets. */
+/** Wait one and a half round trips between reads, so the preview slows down
+ * by itself when the core or the link is busy instead of queueing behind it. */
 export function previewInterval(roundTripMs:number):number{
- return Math.max(PREVIEW_MIN_INTERVAL_MS,Math.min(PREVIEW_MAX_INTERVAL_MS,roundTripMs*2));
+ return Math.max(PREVIEW_MIN_INTERVAL_MS,Math.min(PREVIEW_MAX_INTERVAL_MS,roundTripMs*1.5));
 }
 const STILL_READS=3,STILL_READ_GAP_MS=150;
 export type NativeSourcePreviewOptions={
@@ -85,7 +86,7 @@ export function createNativeSourcePreview(target:(()=>string)|NativeSourcePrevie
   if(settling&&stillReads>=STILL_READS)return true;
   busy=true;
   try{
-   const size=previewRequestSize(canvas.clientWidth,canvas.clientHeight,globalThis.devicePixelRatio);
+   const size=previewRequestSize(canvas.clientWidth,canvas.clientHeight);
    const s=await invoke('native_renderer_get_frame_snapshot',{layer_id:id,include_pixels:true,...size,max_dim:Math.max(size.width,size.height),encoding:'jpeg',quality:82}) as SourceSnapshot|null;
    if(id!==options.layerId()||!canvas.isConnected||!s||!await paintSnapshot(canvas,s)){if(shownId!==id)shownId='';return shownId===id;}
    shownId=id;stillReads=settling?stillReads+1:1;shownStill=still;

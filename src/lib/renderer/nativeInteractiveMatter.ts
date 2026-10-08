@@ -26,6 +26,9 @@ fn particleFade(age:f32)->f32{if(age<=0.||age>=lifetime()){return 0.;}return smo
 fn emissionGate()->f32{if(m.emission.x<.5){return 1.;}if(m.emission.x<1.5){let period=max(ctrl(22u,m.emission.z),.2);return select(0.,1.,fract(emissionState[1].w/period)*period<ctrl(23u,m.emission.w));}return select(0.,1.,emissionState[0].y>0.);}
 fn tintColor()->vec3<f32>{let h=ctrl(24u,m.look.x)/360.;let k=fract(vec3<f32>(h)+vec3<f32>(0.,2./3.,1./3.));return clamp(abs(k*6.-3.)-1.,vec3<f32>(0.),vec3<f32>(1.))*.85+.15;}
 
+// pow() with a negative base is undefined in WGSL (NaN on drivers that do
+// not fold a constant exponent), so squares are written out.
+fn sq(x:f32)->f32{return x*x;}
 fn hash(v:f32)->f32{return fract(sin(v*127.1+311.7)*43758.5453);}
 fn palette(t:f32)->vec3<f32>{return .52+.48*cos(6.28318*(vec3<f32>(t)+vec3<f32>(0.,.33,.67)));}
 fn aspect()->vec2<f32>{return vec2<f32>(u.view.x/u.view.y,1.);}
@@ -84,13 +87,13 @@ fn fluid(p:vec2<f32>)->vec4<f32>{let q=clamp(p*vec2<f32>(256.,144.)-.5,vec2<f32>
  for(var j=1u;j<=8u;j++){let q=mix(uv,back,f32(j)/8.);if(geometry[cell(q)].wall.x<0.){back=mix(uv,back,f32(j-1u)/8.);break;}}
  var f=fluid(back);if(emissionState[0].w>.5){f=vec4<f32>(0.);}
  let src=geometry[i].source;var smoke=src.y;var heat=src.x;
- if(m.grid.w>.5){let d=(uv-emitterPosition())*aspect();let spot=exp(-dot(d,d)/max(pow(ctrl(18u,m.emitter.z),2.),.00001));smoke+=spot*select(0.,1.,u.style.x==8.);heat+=spot*select(0.,1.,u.style.x==11.);}
- if(m.grid.w<.5&&m.material.z<.5){if(u.style.x==8.){smoke+=exp(-pow((uv.x-.5)*12.,2.))*smoothstep(.96,.99,uv.y);}if(u.style.x==11.){heat+=exp(-pow((uv.x-.5)*9.,2.))*smoothstep(.96,.99,uv.y);}}
+ if(m.grid.w>.5){let d=(uv-emitterPosition())*aspect();let spot=exp(-dot(d,d)/max(sq(ctrl(18u,m.emitter.z)),.00001));smoke+=spot*select(0.,1.,u.style.x==8.);heat+=spot*select(0.,1.,u.style.x==11.);}
+ if(m.grid.w<.5&&m.material.z<.5){if(u.style.x==8.){smoke+=exp(-sq((uv.x-.5)*12.))*smoothstep(.96,.99,uv.y);}if(u.style.x==11.){heat+=exp(-sq((uv.x-.5)*9.))*smoothstep(.96,.99,uv.y);}}
  let flow=ctrl(7u,m.physics.w)*3.*emissionGate();f.z=clamp(f.z*exp(-dt/max(ctrl(27u,m.look.w),.2))+(smoke+heat*ctrl(4u,m.physics.x))*dt*flow*3.,0.,3.);f.w=clamp(f.w*exp(-dt/max(ctrl(27u,m.look.w),.2)*1.8)+heat*dt*flow*9.*ctrl(31u,m.surface.w),0.,2.);
  let curl=vec2<f32>(cos(uv.y*32.+u.view.z*.5)+sin(uv.y*65.-u.view.z),sin(uv.x*28.-u.view.z*.4));
  f.x+=curl.x*dt*.075*(f.z+f.w)*ctrl(26u,m.look.z);f.y-=dt*(f.z*.06+f.w*.35)*ctrl(31u,m.surface.w);f=vec4<f32>(f.xy*(exp(-dt*.12)),f.zw);
  for(var t=0u;t<u32(u.flags.y);t++){let input=touches[t];let d=(input.xy-uv)*aspect();let force=dt*input.z*.035/(dot(d,d)+.009);let radial=select(select(1.,-1.,input.w==1.),.1,input.w==2.);let swirl=select(.2,1.5,input.w==2.);f=vec4<f32>(f.xy+((d*radial+vec2<f32>(-d.y,d.x)*swirl)*force/aspect()),f.zw);}
- if(m.grid.w>.5){let d=uv-emitterPosition();let nozzle=exp(-dot(d,d)/max(pow(ctrl(18u,m.emitter.z)*2.,2.),.00001));let a=ctrl(39u,m.lighting.w)*.0174533;f=vec4<f32>(f.xy+vec2<f32>(cos(a),sin(a))*ctrl(19u,m.emitter.w)*nozzle*dt*flow,f.zw);}
+ if(m.grid.w>.5){let d=uv-emitterPosition();let nozzle=exp(-dot(d,d)/max(sq(ctrl(18u,m.emitter.z)*2.),.00001));let a=ctrl(39u,m.lighting.w)*.0174533;f=vec4<f32>(f.xy+vec2<f32>(cos(a),sin(a))*ctrl(19u,m.emitter.w)*nozzle*dt*flow,f.zw);}
  f=vec4<f32>(clamp(f.xy,vec2<f32>(-.65),vec2<f32>(.65)),f.zw);fieldOut[i]=f;
 }
 fn velocity(p:vec2<i32>,fallback:vec2<f32>)->vec2<f32>{let i=ix(p);return select(fieldIn[i].xy,vec2<f32>(0.),geometry[i].wall.x<0.);}
@@ -174,7 +177,7 @@ fn visibility(p:vec3<f32>,light:vec3<f32>)->f32{let delta=light-p;var visible=1.
  let g=geometry[i].wall;let surfaceZ=select(0.,g.w,g.x<0.);let ground=visibility(vec3<f32>(uv,surfaceZ+.012),light);
  var col=vec3<f32>(0.);var trans=1.;let f=fluid[i];let tint=tintColor();
  for(var j=0u;j<16u;j++){let z=.95-f32(j)*.059;if(z<surfaceZ){break;}let p=vec3<f32>(uv,z);let d=(light-p)*vec3<f32>(aspect(),1.);let dist=length(d);let gHG=.35;let ct=d.z/max(dist,.001);let phase=(1.-gHG*gHG)/pow(max(1.+gHG*gHG-2.*gHG*ct,.01),1.5);
-  let density=ctrl(4u,m.physics.x)*.6+f.z*exp(-pow((z-.17)*4.,2.))*2.;let grain=1.-ctrl(26u,m.look.z)*.25+ctrl(26u,m.look.z)*.25*fbm(vec3<f32>(uv*12.,z*8.-u.view.z*.1));let extinction=exp(-density*grain*.059);let axis=normalize(vec3<f32>((vec2<f32>(ctrl(32u,m.beam.x),ctrl(33u,m.beam.y))-light.xy)*aspect(),-light.z));let cutoff=cos(ctrl(34u,m.beam.z)*.00872665);let cone=smoothstep(cutoff, min(.999,cutoff+.01+ctrl(35u,m.beam.w)*.25),dot(-d/max(dist,.001),axis));let scatter=tint*ctrl(3u,m.light.w)*visibility(p,light)*phase*cone/(1.+dist*dist*ctrl(37u,m.lighting.y));col+=trans*(1.-extinction)*scatter;trans*=extinction;
+  let density=ctrl(4u,m.physics.x)*.6+f.z*exp(-sq((z-.17)*4.))*2.;let grain=1.-ctrl(26u,m.look.z)*.25+ctrl(26u,m.look.z)*.25*fbm(vec3<f32>(uv*12.,z*8.-u.view.z*.1));let extinction=exp(-density*grain*.059);let axis=normalize(vec3<f32>((vec2<f32>(ctrl(32u,m.beam.x),ctrl(33u,m.beam.y))-light.xy)*aspect(),-light.z));let cutoff=cos(ctrl(34u,m.beam.z)*.00872665);let cone=smoothstep(cutoff, min(.999,cutoff+.01+ctrl(35u,m.beam.w)*.25),dot(-d/max(dist,.001),axis));let scatter=tint*ctrl(3u,m.light.w)*visibility(p,light)*phase*cone/(1.+dist*dist*ctrl(37u,m.lighting.y));col+=trans*(1.-extinction)*scatter;trans*=extinction;
  }
  lighting[i]=vec4<f32>(col,ground);
 }
@@ -206,18 +209,26 @@ fn flame(t:f32)->vec3<f32>{return vec3<f32>(min(2.,t*3.),pow(max(t,0.),1.7)*1.2,
   let ripple=vec2<f32>(sin(uv.y*45.-u.view.z*2.3)+sin(uv.x*31.+u.view.z*1.1),cos(uv.x*38.-u.view.z*1.8))*min(d,.9)*.025;
   let normal=normalize(vec3<f32>(-grad*(2.4/(1.+d*2.))+ripple,.24));let rough=ctrl(29u,m.surface.y);let refract=ctrl(30u,m.surface.z);
   let l=normalize(vec3<f32>(-.35,-.55,.85));let halfway=normalize(l+vec3<f32>(0.,0.,1.));
-  let spec=pow(max(dot(normal,halfway),0.),mix(180.,12.,rough));let fres=.035+.965*pow(1.-normal.z,5.);
+  let spec=pow(max(dot(normal,halfway),0.),mix(180.,12.,rough));let fres=.035+.965*pow(max(1.-normal.z,0.),5.);
   let reflection=reflect(vec3<f32>(0.,0.,-1.),normal);let sky=mix(vec3<f32>(.015,.028,.045),vec3<f32>(.52,.68,.78),smoothstep(-.5,.8,reflection.y));
-  let strip=exp(-pow((reflection.x+reflection.y*.35-.15)/(.065+rough*.2),2.));
+  let strip=exp(-sq((reflection.x+reflection.y*.35-.15)/(.065+rough*.2)));
   let thickness=1.-exp(-d*.9);let transmission=mix(tint*.46,tint*.055,thickness);
   let distorted=uv+normal.xy*.06*refract;let caustic=pow(.5+.5*sin(distorted.x*42.+sin(distorted.y*29.-u.view.z*.8)*2.),14.)*.06*refract;
   let water=transmission*(.65+.35*normal.z)+sky*(.18+fres*.82)+vec3<f32>(strip*(.15+fres*.85)*(1.-rough*.65)+spec*1.5+caustic);
   col=mix(col,water,coverage);alpha=max(alpha,coverage);
  }
- if(u.style.x==6.){col+=tint*ctrl(38u,m.lighting.z);alpha=max(alpha,clamp(max(col.r,max(col.g,col.b))*2.,0.,1.));}col=vec3<f32>(1.)-exp(-col*1.25);return vec4<f32>(pow(max(col,vec3<f32>(0.)),vec3<f32>(.85)),alpha*ctrl(25u,m.look.y));
+ if(u.style.x==6.){col+=tint*ctrl(38u,m.lighting.z);alpha=max(alpha,clamp(max(col.r,max(col.g,col.b))*2.,0.,1.));}col=vec3<f32>(1.)-exp(-col*1.25);
+ // The source frame is premultiplied: colour AND coverage scale with the
+ // effect's opacity, and coverage is never below the light it carries, so
+ // glow survives over other layers and opacity 0 leaves nothing behind.
+ let shaded=pow(max(col,vec3<f32>(0.)),vec3<f32>(.85));let opacity=clamp(ctrl(25u,m.look.y),0.,1.);
+ let coverage=clamp(max(alpha,max(shaded.r,max(shaded.g,shaded.b))),0.,1.);
+ return vec4<f32>(min(shaded,vec3<f32>(coverage))*opacity,coverage*opacity);
 }
 @vertex fn vs_particle(@builtin(vertex_index) vi:u32,@builtin(instance_index) ii:u32)->V{
  let p=particles[ii];var corners=array<vec2<f32>,6>(vec2<f32>(-1.,-1.),vec2<f32>(1.,-1.),vec2<f32>(-1.,1.),vec2<f32>(-1.,1.),vec2<f32>(1.,-1.),vec2<f32>(1.,1.));let c=corners[vi];let ball=u.style.x==7.;var size=select(.0018+p.life.y*.0015,p.life.w,ball);if(u.style.x==10.||u.style.x==6.||u.style.x==8.||m.material.w>.5){size=0.;}var o:V;let offset=c*size/aspect();o.pos=vec4<f32>((p.state.xy+offset)*vec2<f32>(2.,-2.)+vec2<f32>(-1.,1.),0.,1.);o.uv=c;o.world=p.state.xy;o.color=vec4<f32>(mix(tintColor(),vec3<f32>(1.),p.life.y*.2),ctrl(25u,m.look.y)*particleFade(p.life.x));return o;
 }
-@fragment fn fs_particle(v:V)->@location(0) vec4<f32>{let r=dot(v.uv,v.uv);if(r>1.||v.color.a<=0.){discard;}let ball=u.style.x==7.;if(ball){let normal=vec3<f32>(v.uv*vec2<f32>(1.,-1.),sqrt(max(0.,1.-r)));let light=normalize((lightPosition()-vec3<f32>(v.world,.08))*vec3<f32>(aspect(),1.));let h=normalize(light+vec3<f32>(0.,0.,1.));let diffuse=max(dot(normal,light),0.);let spec=pow(max(dot(normal,h),0.),90.);let rim=pow(1.-normal.z,3.);let col=v.color.rgb*(.12+diffuse*.7)+vec3<f32>(spec*1.3+rim*.3);return vec4<f32>(col,v.color.a);}let glow=exp(-r*3.);let tint=select(v.color.rgb,tintColor(),u.style.x==11.||m.material.z>.5);return vec4<f32>(tint*glow,glow*.65*v.color.a);}
+@fragment fn fs_particle(v:V)->@location(0) vec4<f32>{let r=dot(v.uv,v.uv);if(r>1.||v.color.a<=0.){discard;}let ball=u.style.x==7.;if(ball){let normal=vec3<f32>(v.uv*vec2<f32>(1.,-1.),sqrt(max(0.,1.-r)));let light=normalize((lightPosition()-vec3<f32>(v.world,.08))*vec3<f32>(aspect(),1.));let h=normalize(light+vec3<f32>(0.,0.,1.));let diffuse=max(dot(normal,light),0.);let spec=pow(max(dot(normal,h),0.),90.);let rim=pow(max(1.-normal.z,0.),3.);let col=min(v.color.rgb*(.12+diffuse*.7)+vec3<f32>(spec*1.3+rim*.3),vec3<f32>(1.));return vec4<f32>(col*v.color.a,v.color.a);}let glow=exp(-r*3.);let tint=select(v.color.rgb,tintColor(),u.style.x==11.||m.material.z>.5);let lit=tint*glow;
+ // Premultiplied like the surface pass: fade and opacity dim the colour too.
+ return vec4<f32>(lit*v.color.a,max(glow*.65,max(lit.r,max(lit.g,lit.b)))*v.color.a);}
 `;

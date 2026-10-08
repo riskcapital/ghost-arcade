@@ -1,6 +1,6 @@
-import {effectScene,type InteractiveEffect} from '../mobile/studio/interactiveEffects';
+import type {InteractiveEffect} from '../mobile/studio/interactiveEffects';
 import {buildMatterPasses} from './nativeInteractiveMatterGraph';
-import {validateScene, defaultMatter, INTERACTIVE_PRESETS, type InteractiveScene} from '../mobile/studio/interactive';
+import {validateScene, INTERACTIVE_PRESETS, type InteractiveScene} from '../mobile/studio/interactive';
 import type {NativePluginGraphOptions,NativePluginGraphBuildResult} from './nativePluginGraphs';
 export const INTERACTIVE_PARTICLES=16384;
 const common=/* wgsl */`
@@ -71,7 +71,8 @@ struct V { @builtin(position) pos:vec4<f32>,@location(0) uv:vec2<f32>,@location(
    for(var t=0u;t<u32(u.flags.y);t++){let input=touches[t];if(shapes[s*66u+1u].w==3.&&contains(s,input.xy)){let r=length((v.uv-input.xy)*vec2<f32>(aspect,1.));color+=palette(u.params.x+r)*pow(.5+.5*cos(r*110.-time*8.),14.)*exp(-r*3.)*.6;}}
   }
  }
- return vec4<f32>(color,clamp(max(color.r,max(color.g,color.b))*2.,0.,1.)*u.flags.z);
+ // Premultiplied: opacity (flags.z) scales the colour as well as the coverage.
+ let lit=min(color,vec3<f32>(1.));return vec4<f32>(lit*u.flags.z,clamp(max(color.r,max(color.g,color.b))*2.,0.,1.)*u.flags.z);
 }
 @vertex fn vs_particle(@builtin(vertex_index) vi:u32,@builtin(instance_index) ii:u32)->V{
  let p=particles[ii];var corners=array<vec2<f32>,6>(vec2<f32>(-1.,-1.),vec2<f32>(1.,-1.),vec2<f32>(-1.,1.),vec2<f32>(-1.,1.),vec2<f32>(1.,-1.),vec2<f32>(1.,1.));let c=corners[vi];
@@ -81,17 +82,160 @@ struct V { @builtin(position) pos:vec4<f32>,@location(0) uv:vec2<f32>,@location(
 }
 @fragment fn fs_particle(v:V)->@location(0) vec4<f32>{let glow=exp(-dot(v.uv,v.uv)*3.);return vec4<f32>(v.color.rgb*glow*v.color.a,glow*v.color.a);}
 `;
-function b64(a:ArrayBuffer){const bytes=new Uint8Array(a);let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s);}
-export function buildInteractiveGraph(options:NativePluginGraphOptions):NativePluginGraphBuildResult{
- const stackScene=validateScene(options.params.interactiveScene);if(stackScene.effects){const enabled=stackScene.effects.filter(e=>e.enabled);const configs=enabled.map(e=>buildInteractiveGraph({...options,sourceId:options.sourceId,params:{...options.params,interactiveScene:effectScene(stackScene,e),interactiveEffect:e},state:null}).config);
- const buffers=configs.flatMap(c=>c.buffers as any[]),passes=configs.flatMap(c=>c.passes as any[]),render_passes=configs.flatMap(c=>c.render_passes as any[]);if(!render_passes.length){const blank=buildInteractiveGraph({...options,params:{...options.params,interactiveScene:{...stackScene,effects:undefined,preset:'architecture',surfaces:[],energy:0},interactiveEffect:{id:'empty',params:{opacity:0}}}});return blank;}render_passes.forEach((p,i)=>{p.clear=i===0;});return {state:options.state??{scene:'interactive-stack',prevFrameTime:options.time,historyHead:0},config:{buffers,passes,render_passes,readbacks:[]}};
+/** A buffer whose bytes the app owns. `key` is its content without the slots
+ * the render core advances itself (clock, audio), so an unchanged key means
+ * there is nothing to send. */
+export type InteractiveGraphValue={id:string;initial_b64:string;key:string};
+export type InteractiveGraphMeta={
+ /** Everything that decides which buffers and passes exist. While it is
+  * unchanged the installed graph stays and only `values` are updated. */
+ topology:string;
+ values:InteractiveGraphValue[];
+ /** Every effect in the scene, enabled or not. An effect that is switched off
+  * keeps its simulation; one that leaves this list has its buffers released. */
+ effectIds:string[];
+ /** Buffer id prefix of one effect. */
+ bufferPrefix:(effectId:string)=>string;
+};
+export type InteractiveGraphBuildResult=NativePluginGraphBuildResult&{interactive:InteractiveGraphMeta};
+/** `key` never leaves the app: it is stripped before the graph is sent. */
+export type GraphBuffer={id:string;kind:string;byte_length:number;initial_b64?:string;key?:string;persistent?:boolean;clear?:boolean};
+type GraphPass={name:string;shader_id:string;entry:string;dispatch:number[];bindings:object[]};
+type GraphRender={name:string;instance_count:number;blend:string;clear:boolean;clear_color?:number[];[key:string]:unknown};
+export type InteractivePart={buffers:GraphBuffer[];passes:GraphPass[];render_passes:GraphRender[]};
+/** Floats per surface: bounds, centroid/count/behaviour, then 64 points. */
+export const SHAPE_FLOATS=66*4;
+const MATERIALS=['none','fire','smoke','liquid','points'],BEHAVIORS=['solid','emitter','attractor','trigger'];
+export function interactiveB64(data:ArrayBufferView):string{
+ const bytes=new Uint8Array(data.buffer,data.byteOffset,data.byteLength);let s='';
+ for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192) as unknown as number[]);
+ return btoa(s);
+}
+/** A buffer the app fills. `coreSlots` are the floats the core rewrites on
+ * every frame; they are left out of the key that decides whether to resend. */
+export function valueBuffer(id:string,kind:'uniform'|'storage',data:Float32Array,coreSlots?:number[]):GraphBuffer{
+ const initial_b64=interactiveB64(data);let key=initial_b64;
+ if(coreSlots){const copy=data.slice();for(const slot of coreSlots)copy[slot]=0;key=interactiveB64(copy);}
+ return {id,kind,byte_length:data.byteLength,initial_b64,key};
+}
+/** Clock, frame delta and audio level: written by the core on every frame. */
+export const UNIFORM_CORE_SLOTS=[2,3,10];
+/** Bass, mid, treble, energy, beat phase and tempo in the matter settings. */
+export const MATTER_CORE_SLOTS=[40,41,42,43,44,45];
+/** Surface geometry, sized to the surfaces in use (not a fixed 32): the
+ * shaders only read `count` entries, and a two-surface scene is 2 KB to send
+ * instead of 34 KB per effect. Materials are filled in per effect. */
+function sceneShapes(surfaces:InteractiveScene['surfaces'],ownMaterials:boolean):Float32Array{
+ const shapes=new Float32Array(Math.max(1,surfaces.length)*SHAPE_FLOATS);
+ surfaces.forEach((s,i)=>{
+  const base=i*SHAPE_FLOATS;let minX=1,minY=1,maxX=0,maxY=0,sumX=0,sumY=0;
+  for(const p of s.points){minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);sumX+=p.x;sumY+=p.y;}
+  shapes.set([minX,minY,maxX,maxY,sumX/s.points.length,sumY/s.points.length,s.points.length,BEHAVIORS.indexOf(s.behavior)],base);
+  s.points.forEach((p,j)=>{shapes[base+8+j*4]=p.x;shapes[base+9+j*4]=p.y;});
+  shapes[base+10]=ownMaterials?Math.max(0,MATERIALS.indexOf(s.material??'none')):0;shapes[base+11]=s.height??.25;
+ });
+ return shapes;
+}
+function touchInputs(raw:unknown):{data:Float32Array;count:number}{
+ const data=new Float32Array(8*4),list=Array.isArray(raw)?raw.slice(0,8):[];
+ list.forEach((p:any,i:number)=>{
+  if(!Number.isFinite(p?.point?.x)||!Number.isFinite(p?.point?.y))return;
+  data.set([Math.max(0,Math.min(1,p.point.x)),Math.max(0,Math.min(1,p.point.y)),Math.max(0,Math.min(1,Number(p.strength)||0)),p.mode==='repel'?1:p.mode==='vortex'?2:0],i*4);
+ });
+ return {data,count:list.length};
+}
+/** The values the core modulates from the installed parameters rather than
+ * from a buffer. They change the installed graph, so they are structural. */
+const CORE_MOD_KEYS=['energy','gravity','hue','trails','opacity'];
+function coreModSignature(effect:InteractiveEffect):string{
+ let signature='';
+ for(const key of CORE_MOD_KEYS){const mod=effect.mods?.[key];if(mod&&mod.source!=='manual')signature+=`${key}=${JSON.stringify(mod)}@${effect.params[key]};`;}
+ return signature;
+}
+/** One effect's (or a legacy single-style scene's) buffers and passes. */
+function buildPart(options:NativePluginGraphOptions,scene:InteractiveScene,effect:InteractiveEffect|undefined,idPrefix:string,shapes:Float32Array,shapesB64:string,touches:{data:Float32Array;count:number},touchesB64:string,materials:Set<string>):InteractivePart{
+ const id=(n:string)=>`${idPrefix}:interactive:${n}`;
+ const params=effect?.params,preset=INTERACTIVE_PRESETS.indexOf(scene.preset);
+ const u=new Float32Array(20);u.set([options.width,options.height,options.time,options.frameDelta,preset,scene.surfaces.length,params?.energy??scene.energy,params?.gravity??scene.gravity,0,0,options.audio.active?options.audio.energy:0,0,(params?.hue??scene.hue)/360,params?.trails??scene.trails,0,options.params.interactivePaused?1:0,Number(scene.seed)||0,Math.min(8,touches.count),params?.opacity??1,0]);
+ const shared:GraphBuffer[]=[
+  valueBuffer(id('uniform'),'uniform',u,UNIFORM_CORE_SLOTS),
+  {id:id('surfaces'),kind:'storage',byte_length:shapes.byteLength,initial_b64:shapesB64},
+  {id:id('touches'),kind:'storage',byte_length:touches.data.byteLength,initial_b64:touchesB64},
+ ];
+ if(preset>=6||materials.size)return buildMatterPasses(options,scene,id,shared,materials,effect);
+ const uniform={binding:0,resource:id('uniform'),kind:'uniform'},geometry={binding:1,resource:id('surfaces'),kind:'read-only-storage'},touch={binding:3,resource:id('touches'),kind:'read-only-storage'};
+ const bindings=[uniform,geometry,{binding:2,resource:id('particles'),kind:'read-only-storage'},touch];
+ const render=(name:string,vertex:string,fragment:string,blend:string,vertices:number,instances:number):GraphRender=>({name,shader_id:'interactive/render',vertex_entry:vertex,fragment_entry:fragment,target:'source_frame',source_id:options.sourceId,seq:options.frameIndex,clear:false,blend,vertex_count:vertices,instance_count:instances,bindings});
+ return {
+  buffers:[...shared,{id:id('particles'),kind:'storage',byte_length:INTERACTIVE_PARTICLES*32,persistent:true,clear:!!options.reset}],
+  passes:[{name:'interactive-simulate',shader_id:'interactive/compute',entry:'cs_main',dispatch:[INTERACTIVE_PARTICLES/64,1,1],bindings:[uniform,geometry,{binding:2,resource:id('particles'),kind:'storage'},touch]}],
+  render_passes:[render('interactive-surfaces','vs_bg','fs_bg','alpha',3,1),render('interactive-particles','vs_particle','fs_particle','add',6,INTERACTIVE_PARTICLES)],
+ };
+}
+/** An empty stack: one pass that clears the layer to transparent. No
+ * simulation, and a one-particle placeholder for the shader's binding. */
+function buildBlankPart(options:NativePluginGraphOptions,idPrefix:string):InteractivePart{
+ const id=(n:string)=>`${idPrefix}:interactive:${n}`;
+ const u=new Float32Array(20);u.set([options.width,options.height,options.time,options.frameDelta]);
+ const bindings=[{binding:0,resource:id('uniform'),kind:'uniform'},{binding:1,resource:id('surfaces'),kind:'read-only-storage'},{binding:2,resource:id('particles'),kind:'read-only-storage'},{binding:3,resource:id('touches'),kind:'read-only-storage'}];
+ return {
+  buffers:[
+   valueBuffer(id('uniform'),'uniform',u,UNIFORM_CORE_SLOTS),
+   valueBuffer(id('surfaces'),'storage',new Float32Array(SHAPE_FLOATS)),
+   valueBuffer(id('touches'),'storage',new Float32Array(32)),
+   valueBuffer(id('particles'),'storage',new Float32Array(8)),
+  ],
+  passes:[],
+  render_passes:[{name:'interactive-empty',shader_id:'interactive/render',vertex_entry:'vs_bg',fragment_entry:'fs_bg',target:'source_frame',source_id:options.sourceId,seq:options.frameIndex,clear:false,blend:'alpha',vertex_count:3,instance_count:1,bindings}],
+ };
+}
+/**
+ * Build the render graph for an Interactive scene.
+ *
+ * The scene is validated once. Every effect draws premultiplied colour over a
+ * transparent frame, so the layer has real alpha and each effect's opacity
+ * dims it. The result also says what is structure and what is only values:
+ * the frame sync reinstalls the graph when `interactive.topology` changes and
+ * otherwise sends just the value buffers that changed (Auto, keyframes,
+ * sliders, touches, dragged surfaces).
+ */
+export function buildInteractiveGraph(options:NativePluginGraphOptions):InteractiveGraphBuildResult{
+ const scene=validateScene(options.params.interactiveScene);
+ const source=`performer-world:${options.sourceId.replace(/[^a-zA-Z0-9:_-]+/g,'_').slice(0,120)}`;
+ const bufferPrefix=(effectId:string)=>`${source}:${effectId}:interactive:`;
+ const touches=touchInputs(options.params.interactiveInputs),touchesB64=interactiveB64(touches.data);
+ const parts:InteractivePart[]=[],effectIds:string[]=[];let mods='';
+ if(scene.effects){
+  // Geometry is the same for every effect; only the material on an effect's
+  // target surface differs, so it is laid out once and encoded once per
+  // distinct (target, material) pair instead of once per effect.
+  const base=sceneShapes(scene.surfaces,false),encoded=new Map<string,{shapes:Float32Array;b64:string}>();
+  for(const effect of scene.effects){
+   if(!effect.enabled)continue;
+   const material=({fire:'fire',smoke:'smoke',liquid:'liquid',cloud:'points'} as Record<string,string>)[effect.kind]??'none';
+   const target=material==='none'?-1:scene.surfaces.findIndex(s=>s.id===effect.target),key=target<0?'-':`${target}:${material}`;
+   let own=encoded.get(key);
+   if(!own){const shapes=target<0?base:base.slice();if(target>=0)shapes[target*SHAPE_FLOATS+10]=MATERIALS.indexOf(material);own={shapes,b64:interactiveB64(shapes)};encoded.set(key,own);}
+   const view:InteractiveScene={...scene,effects:undefined,preset:effect.kind,hue:effect.params.hue??scene.hue,matter:{...scene.matter!,...effect.params}};
+   parts.push(buildPart(options,view,effect,`${source}:${effect.id}`,own.shapes,own.b64,touches,touchesB64,new Set(target>=0?[material]:[])));
+   mods+=`${effect.id}[${coreModSignature(effect)}]`;
+  }
+  effectIds.push(...scene.effects.map(e=>e.id));
+  if(!parts.length)parts.push(buildBlankPart(options,`${source}:empty`));
+ }else{
+  const shapes=sceneShapes(scene.surfaces,true);
+  parts.push(buildPart(options,scene,undefined,source,shapes,interactiveB64(shapes),touches,touchesB64,new Set(scene.surfaces.map(s=>s.material??'none').filter(m=>m!=='none'))));
  }
- const scene=validateScene(options.params.interactiveScene);const effect=options.params.interactiveEffect as InteractiveEffect|undefined;const id=(n:string)=>`performer-world:${options.sourceId.replace(/[^a-zA-Z0-9:_-]+/g,'_').slice(0,120)}${effect?':'+effect.id:''}:interactive:${n}`;
- const u=new Float32Array(20);u.set([options.width,options.height,options.time,options.frameDelta,INTERACTIVE_PRESETS.indexOf(scene.preset),scene.surfaces.length,scene.energy,scene.gravity,0,0,options.audio.active?options.audio.energy:0,0,scene.hue/360,scene.trails,0,options.params.interactivePaused?1:0,Number(scene.seed)||0,0,0,0]);
- const shapes=new Float32Array(32*66*4);scene.surfaces.forEach((s,i)=>{const base=i*66*4;shapes.set([Math.min(...s.points.map(p=>p.x)),Math.min(...s.points.map(p=>p.y)),Math.max(...s.points.map(p=>p.x)),Math.max(...s.points.map(p=>p.y)),s.points.reduce((v,p)=>v+p.x,0)/s.points.length,s.points.reduce((v,p)=>v+p.y,0)/s.points.length,s.points.length,['solid','emitter','attractor','trigger'].indexOf(s.behavior)],base);s.points.forEach((p,j)=>shapes.set([p.x,p.y,j===0?['none','fire','smoke','liquid','points'].indexOf(s.material??'none'):0,j===0?(s.height??.25):0],base+8+j*4));});
- const inputs=new Float32Array(8*4);const raw=Array.isArray(options.params.interactiveInputs)?options.params.interactiveInputs:[];raw.slice(0,8).forEach((p:any,i:number)=>{if(!Number.isFinite(p.point?.x)||!Number.isFinite(p.point?.y))return;inputs.set([Math.max(0,Math.min(1,p.point.x)),Math.max(0,Math.min(1,p.point.y)),Math.max(0,Math.min(1,Number(p.strength)||0)),p.mode==='repel'?1:p.mode==='vortex'?2:0],i*4);});u[17]=Math.min(8,raw.length);u[18]=effect?.params.opacity??1;
- if(INTERACTIVE_PRESETS.indexOf(scene.preset)>=6||scene.surfaces.some(s=>s.material&&s.material!=='none'))return buildMatterPasses(options,scene,id,u,shapes,inputs,b64,effect);
- const uniform={binding:0,resource:id('uniform'),kind:'uniform'},geometry={binding:1,resource:id('surfaces'),kind:'read-only-storage'},touches={binding:3,resource:id('touches'),kind:'read-only-storage'};
- const bindings=[uniform,geometry,{binding:2,resource:id('particles'),kind:'read-only-storage'},touches];
- return{state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{buffers:[{id:id('uniform'),kind:'uniform',byte_length:80,initial_b64:b64(u.buffer)},{id:id('surfaces'),kind:'storage',byte_length:shapes.byteLength,initial_b64:b64(shapes.buffer)},{id:id('touches'),kind:'storage',byte_length:inputs.byteLength,initial_b64:b64(inputs.buffer)},{id:id('particles'),kind:'storage',byte_length:INTERACTIVE_PARTICLES*32,persistent:true,clear:!!options.reset}],passes:[{name:'interactive-simulate',shader_id:'interactive/compute',entry:'cs_main',dispatch:[INTERACTIVE_PARTICLES/64,1,1],bindings:[uniform,geometry,{binding:2,resource:id('particles'),kind:'storage'},touches]}],render_passes:[{name:'interactive-surfaces',shader_id:'interactive/render',vertex_entry:'vs_bg',fragment_entry:'fs_bg',target:'source_frame',source_id:options.sourceId,seq:options.frameIndex,clear:true,blend:'alpha',vertex_count:3,instance_count:1,bindings},{name:'interactive-particles',shader_id:'interactive/render',vertex_entry:'vs_particle',fragment_entry:'fs_particle',target:'source_frame',source_id:options.sourceId,seq:options.frameIndex,clear:false,blend:'add',vertex_count:6,instance_count:INTERACTIVE_PARTICLES,bindings}],readbacks:[]}};
+ const buffers=parts.flatMap(p=>p.buffers),passes=parts.flatMap(p=>p.passes),render_passes=parts.flatMap(p=>p.render_passes);
+ // Content over transparent: the first pass clears to zero alpha (the core's
+ // default clear is opaque black, which made the whole layer opaque).
+ render_passes.forEach((pass,i)=>{pass.clear=i===0;if(i===0)pass.clear_color=[0,0,0,0];});
+ const values:InteractiveGraphValue[]=buffers.filter(b=>b.initial_b64!==undefined).map(b=>({id:b.id,initial_b64:b.initial_b64!,key:b.key??b.initial_b64!}));
+ const topology=[
+  options.params.interactivePaused?'paused':'running',mods,
+  buffers.map(b=>`${b.id}:${b.kind}:${b.byte_length}:${b.persistent?1:0}`).join('|'),
+  passes.map(p=>`${p.name}@${p.shader_id}/${p.entry}:${p.dispatch.join('x')}`).join('|'),
+  render_passes.map(r=>`${r.name}:${r.instance_count}:${r.blend}`).join('|'),
+ ].join('#');
+ return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{buffers:buffers.map(({key:_key,...buffer})=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix}};
 }

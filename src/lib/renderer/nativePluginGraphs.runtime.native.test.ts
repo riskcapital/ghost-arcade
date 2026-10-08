@@ -496,6 +496,51 @@ describe('native plugin graphs (runtime, real core)', () => {
     const status=await rpc!.send('status');expect(status.last_frame_error).toBeNull();expect(status.last_shader_error).toBeNull();if(process.env.GA_SHADER_DEBUG)writeFileSync('/tmp/interactive-stack-mixed.json',JSON.stringify(mixed));await rpc!.send('submit_commands',{commands:[{type:'remove_layer',layer_id:layerId}]});
   },30000);
 
+  itIfNativeCore('gives every Interactive style real alpha and an opacity that works, updated in place', async()=>{
+    // The layer used to be opaque black behind every style, and opacity did
+    // nothing on the six matter styles. Read the layer's own source frame:
+    // it must have content, must not be opaque, and must empty out when the
+    // effect's opacity goes to 0, sent as a value update with no reinstall.
+    type Meta={topology:string;values:{id:string;initial_b64:string;key:string}[]};
+    const layerId='interactive-opacity-runtime',sourceId=layerId,quiet={active:false,bass:0,mid:0,treble:0,energy:0,beatPhase:0,beatPulse:0,amplitude:0};
+    const wait=(ms:number)=>new Promise(r=>setTimeout(r,ms));
+    const build=(scene:object,reset:boolean,frame:number)=>buildNativePluginGraph({kind:'performer-world',sourceId,params:{interactiveScene:scene},width:320,height:180,time:frame/60,frameDelta:1/60,frameIndex:frame,reset,audio:quiet}) as ReturnType<typeof buildNativePluginGraph>&{interactive:Meta};
+    const install=async(scene:object)=>{const graph=build(scene,true,1);await rpc!.send('submit_commands',{commands:[
+      {type:'upsert_layer',layer_id:layerId,z_index:99998,opacity:1,blend_mode:'normal',corners:{topLeft:{x:0,y:0},topRight:{x:1,y:0},bottomRight:{x:1,y:1},bottomLeft:{x:0,y:1}}},
+      {type:'set_native_graph_layer',layer_id:layerId,kind:'performer-world',instrument_source_id:sourceId,composite_source_id:sourceId,input_source_id:null,effect_graph:graph.config,params:{interactiveScene:scene}},
+      {type:'bind_media_source',layer_id:layerId,source_id:sourceId,uri:'plugin://performer-world',source_type:'video'}]});return graph;};
+    const sourceAlpha=async()=>{const frame=await rpc!.send('frame_snapshot',{layer_id:layerId,width:160,height:90,include_pixels:false});return {alpha:Number(frame.mean_rgba[3]),transparent:Number(frame.transparent_pixels),pixels:frame.width*frame.height};};
+    const report:string[]=[];
+    for(const kind of ['architecture','garden','walls','ribbons','orbit','electric','light','balls','smoke','cloud','liquid','fire'] as const){
+      const effect=makeEffect(kind),scene={...defaultInteractive(),seed:31,effects:[effect]};
+      const installed=await install(scene);await wait(900);
+      const full=await sourceAlpha();
+      effect.params.opacity=0;
+      const next=build(scene,false,60);
+      expect(next.interactive.topology,kind).toBe(installed.interactive.topology);
+      const sent=new Map(installed.interactive.values.map(v=>[v.id,v.key]));
+      const changed=next.interactive.values.filter(v=>sent.get(v.id)!==v.key);
+      // The frame uniform always carries opacity; matter styles keep it in their settings too.
+      expect(changed.map(v=>v.id.split(':').pop()).sort().join('+'),kind).toMatch(/^(matter\+)?uniform$/);
+      const summary=await rpc!.send('submit_commands',{commands:changed.map(v=>({type:'update_native_graph_buffer',layer_id:layerId,buffer_id:v.id,initial_b64:v.initial_b64}))});
+      expect(Number(summary?.dropped??0),kind).toBe(0);
+      await wait(250);
+      const gone=await sourceAlpha();
+      report.push(`${kind} ${full.alpha.toFixed(3)}->${gone.alpha.toFixed(4)}`);
+      expect(full.alpha,`${kind} draws something`).toBeGreaterThan(0.002);
+      expect(full.alpha,`${kind} is not an opaque frame`).toBeLessThan(0.9);
+      // Light fills the frame with haze, so every pixel has some coverage; the others leave most of it clear.
+      if(kind!=='light')expect(full.transparent,`${kind} leaves the rest transparent`).toBeGreaterThan(full.pixels*0.05);
+      expect(gone.alpha,`${kind} at opacity 0`).toBeLessThan(0.0005);
+    }
+    if(process.env.GA_SHADER_DEBUG)console.log('[interactive-opacity]',report.join('  '));
+    await install({...defaultInteractive(),effects:[]});await wait(250);
+    const empty=await sourceAlpha();
+    expect(empty.alpha).toBe(0);expect(empty.transparent).toBe(empty.pixels);
+    const status=await rpc!.send('status');expect(status.last_frame_error).toBeNull();expect(status.last_shader_error).toBeNull();
+    await rpc!.send('submit_commands',{commands:[{type:'remove_layer',layer_id:layerId}]});
+  },60000);
+
   itIfNativeCore('lights extruded blockers and emits fire, smoke and liquid from an authored box', async()=>{
     const sourceId='interactive-material-test',layerId=sourceId;
     const initial=defaultInteractive();initial.surfaces=[{...initial.surfaces[0],points:[{x:.38,y:.4},{x:.62,y:.4},{x:.62,y:.65},{x:.38,y:.65}],height:.45}];

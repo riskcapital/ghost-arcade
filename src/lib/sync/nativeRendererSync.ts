@@ -1,4 +1,6 @@
 import {applyInteractiveOverrides} from '../mobile/studio/interactiveEffects';
+import type {InteractiveGraphBuildResult} from '../renderer/nativeInteractiveGraph';
+import {showToast} from '../stores/errorToast';
 import { projectorCalibrationUniforms } from '../output/projectorCalibration';
 import { composeNativeGraphs } from '../renderer/nativeGraphComposition';
 import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } from '../renderer/vjGroupNative';
@@ -625,6 +627,13 @@ type NativeGraphRouteState = {
   lastQueuedAtMs?: number;
   routeFingerprint?: string;
   lastFailureAtMs?: number;
+  /** Interactive scenes: the structure that is installed in the core, the
+   *  value buffers it was last sent, and the effects that own GPU buffers. */
+  interactiveTopology?: string;
+  interactiveValueKeys?: Map<string, string>;
+  interactiveEffectIds?: string[];
+  /** Message of the build failure already reported for this route. */
+  reportedBuildFailure?: string;
 };
 
 type NativeGraphManifestEntry = NonNullable<NativeRendererCapabilities['native_graph_instrument_manifest']>[number];
@@ -5670,6 +5679,31 @@ export class NativeRendererSync {
     return false;
   }
 
+  /** Buffer id prefixes of Interactive effects removed from their stack. */
+  private pendingGraphBufferPrunes: string[] = [];
+
+  /**
+   * A layer's plugin graph could not be built from its own data. Say so once,
+   * for that layer, and leave its last good graph in place. The frame goes on
+   * for every other layer.
+   */
+  private reportPluginGraphBuildFailure(
+    route: Pick<NativeGraphLayerRoute, 'kind' | 'key'>,
+    layer: Pick<Layer, 'id' | 'name'>,
+    err: unknown,
+    routeState: NativeGraphRouteState,
+  ) {
+    const message = err instanceof Error ? err.message : String(err);
+    this.nativeGraphRouteFailures += 1;
+    this.nativeGraphRouteLastFailure = `${route.kind}:${layer.id}:${message}`.slice(0, 240);
+    if (routeState.reportedBuildFailure === message) return;
+    routeState.reportedBuildFailure = message;
+    routeState.lastFailureAtMs = Date.now();
+    console.error(`[NativeRendererSync] "${layer.name}" cannot be rendered: its ${route.kind} scene could not be built (${message}). Other layers are unaffected.`, err);
+    nativeFailedRouteLayers.update((ids) => (ids.includes(layer.id) ? ids : [...ids, layer.id]));
+    showToast(`"${layer.name}" cannot be shown: its scene could not be read (${message})`, 'warning');
+  }
+
   private recordNativeGraphRouteFailure(
     route: Pick<NativeGraphLayerRoute, 'kind' | 'key'>,
     layerId: string,
@@ -8848,10 +8882,20 @@ export class NativeRendererSync {
           this.applyTimelineOverrides(this.latestLayers),
         );
       } while (this.running && this.startupReady && this.flushAgain);
+    } catch (err) {
+      // Every caller fires this without awaiting it, so a throw here was an
+      // unhandled rejection on every frame with nothing in the log to say
+      // which frame work failed. Report it, at most once every five seconds.
+      const now = Date.now();
+      if (now - this.lastFlushFailureAtMs > 5000) {
+        this.lastFlushFailureAtMs = now;
+        console.error('[NativeRendererSync] frame sync failed; the output keeps its last frame until this is resolved', err);
+      }
     } finally {
       this.flushInFlight = false;
     }
   }
+  private lastFlushFailureAtMs = 0;
 
   private async flushOnce(width: number, height: number, layers: Layer[]) {
     if (!this.running || !this.startupReady) return;
@@ -9489,7 +9533,13 @@ export class NativeRendererSync {
             console.warn('[NativeRendererSync] HandFX MediaPipe input failed to start', error);
           });
         }
-        const pluginGraph = nativeGraphRoute.kind === 'vj-crossfade'
+        // A scene that cannot be built (damaged data that slipped past the
+        // loaders) fails here for its own layer only. Thrown further up, it
+        // aborted the whole frame batch, so no layer updated again.
+        let pluginGraphFailed = false;
+        let pluginGraph: ReturnType<typeof buildVJCrossfadeGraph> | ReturnType<typeof buildNativePluginGraph> | ReturnType<typeof buildVJMixGraph> | NonNullable<typeof groupedMixGraph> | null = null;
+        try {
+        pluginGraph = nativeGraphRoute.kind === 'vj-crossfade'
           ? installPluginGraph && crossfadeGraphOptions
             ? clipTransitionGraphOptions
               ? buildVJClipTransitionGraph(clipTransitionGraphOptions)
@@ -9526,8 +9576,54 @@ export class NativeRendererSync {
               reset: !routeState.state,
             })
           : null;
+        } catch (err) {
+          pluginGraphFailed = true;
+          this.reportPluginGraphBuildFailure(nativeGraphRoute, layer, err, routeState);
+        }
+        if (!pluginGraphFailed && routeState.reportedBuildFailure !== undefined) {
+          routeState.reportedBuildFailure = undefined;
+          nativeFailedRouteLayers.update((ids) => (ids.includes(layer.id) ? ids.filter((id) => id !== layer.id) : ids));
+        }
         if (pluginGraph && 'state' in pluginGraph) routeState.state = (pluginGraph as { state: NativePluginGraphState }).state;
-        const effectGraph = nativeGraphRoute.effectPasses?.length && nativeGraphRoute.source.id !== graphSource.id
+        // Interactive scenes: reinstall only when the structure changed. Auto,
+        // keyframes, sliders, touches and dragged surfaces only change values,
+        // which go out as small in-place buffer updates.
+        const interactive = pluginGraph && 'interactive' in pluginGraph
+          ? (pluginGraph as InteractiveGraphBuildResult).interactive
+          : null;
+        let interactiveValuesOnly = false;
+        if (interactive) {
+          const topology = [
+            interactive.topology, width, height, nativeGraphEffectSig,
+            graphSource.id, nativeGraphRoute.source.id, nativeGraphRoute.inputSource?.id ?? '',
+          ].join('\u241f');
+          const sent = routeState.interactiveValueKeys;
+          interactiveValuesOnly = !!prev && !!sent && routeState.interactiveTopology === topology;
+          if (interactiveValuesOnly) {
+            for (const value of interactive.values) {
+              if (sent!.get(value.id) === value.key) continue;
+              commands.push({
+                type: 'update_native_graph_buffer',
+                layer_id: layer.id,
+                buffer_id: value.id,
+                initial_b64: value.initial_b64,
+              });
+            }
+          } else {
+            // An effect that left the stack still holds its simulation
+            // buffers (about 5 MB of GPU memory each). Release them once the
+            // graph that no longer uses them is installed.
+            const kept = new Set(interactive.effectIds);
+            for (const effectId of routeState.interactiveEffectIds ?? []) {
+              if (!kept.has(effectId)) this.pendingGraphBufferPrunes.push(interactive.bufferPrefix(effectId));
+            }
+          }
+          routeState.interactiveTopology = topology;
+          routeState.interactiveValueKeys = new Map(interactive.values.map((value) => [value.id, value.key]));
+          routeState.interactiveEffectIds = interactive.effectIds;
+        }
+        const skipInstall = pluginGraphFailed || interactiveValuesOnly;
+        const effectGraph = !skipInstall && nativeGraphRoute.effectPasses?.length && nativeGraphRoute.source.id !== graphSource.id
           ? buildNativeEffectPassChainGraph({
               sourceId: graphSource.id,
               targetSourceId: nativeGraphRoute.source.id,
@@ -9546,7 +9642,7 @@ export class NativeRendererSync {
               seq: graphFrameIndex * 16 + 8,
             })
           : null;
-        if ((nativeGraphRoute.kind !== 'vj-crossfade' && nativeGraphRoute.kind !== 'vj-mix') || installPluginGraph) {
+        if (!skipInstall && ((nativeGraphRoute.kind !== 'vj-crossfade' && nativeGraphRoute.kind !== 'vj-mix') || installPluginGraph)) {
           commands.push({
             type: 'set_native_graph_layer',
             layer_id: layer.id,
@@ -9876,6 +9972,11 @@ export class NativeRendererSync {
     const batchSummary = await submitNativeRendererBatch(batch);
     this.warnNativeCommandDrops(batchSummary, 'frame-batch');
     if (!this.running || lifecycleGeneration !== this.lifecycleGeneration) return;
+    if (this.pendingGraphBufferPrunes.length) {
+      // After the batch: the graph that still used these buffers is gone.
+      const prefixes = this.pendingGraphBufferPrunes.splice(0);
+      void this.clearNativeGraphBuffers(prefixes);
+    }
     if (Number(batchSummary?.dropped ?? 0) > 0) {
       for (const id of current.keys()) this.nativeSceneLayerIds.add(id);
       this.lastLayers.clear();
