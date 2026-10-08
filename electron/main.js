@@ -9016,7 +9016,13 @@ function createProjectionSimWindow(targetDisplayId = null) {
  */
 function enterSliceFullscreen(win) {
   if (process.platform !== 'darwin' || !win || win.isDestroyed()) return;
+  // Pin the projector above menu/status windows even when a different app is
+  // active. Keep simple fullscreen's existing close/Escape lifecycle intact.
+  const bounds = screen.getDisplayMatching(win.getBounds()).bounds;
   try { win.setSimpleFullScreen(true); } catch { /* */ }
+  try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* */ }
+  try { win.setAlwaysOnTop(true, 'main-menu', 2); } catch { /* */ }
+  try { win.setBounds(bounds); } catch { /* */ }
 }
 
 function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false, experimentalZeroCopy = false) {
