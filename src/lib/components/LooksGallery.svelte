@@ -147,7 +147,7 @@
   .looks-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 4px 16px 10px; }
   .looks-scope { display: flex; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 7px; overflow: hidden; }
   .looks-scope button { background: none; border: 0; color: #b9bdc8; padding: 5px 10px; cursor: pointer; font-size: 12px; }
-  .looks-scope button.active { background: rgba(120, 140, 255, 0.25); color: #fff; }
+  .looks-scope button.active { background: var(--ga-blue-a28); color: #fff; }
   .looks-scope button:disabled { opacity: 0.4; cursor: default; }
   .looks-palettes { display: flex; gap: 5px; flex-wrap: wrap; }
   .palette { display: flex; padding: 3px; gap: 1px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.12); background: #0b0b0f; cursor: pointer; }
@@ -158,7 +158,7 @@
   .look-thumb { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 7px; background: #000; border: 1px solid rgba(255, 255, 255, 0.1); }
   .look-strip { position: absolute; left: 0; top: 0; height: 100%; width: 800%; max-width: none; animation: look-strip 1s steps(8) infinite; }
   .look-card:hover .look-thumb, .look-card:focus-visible .look-thumb { border-color: rgba(255, 255, 255, 0.5); }
-  .look-card.active .look-thumb { border-color: #8fa0ff; box-shadow: 0 0 0 2px rgba(143, 160, 255, 0.55); }
+  .look-card.active .look-thumb { border-color: var(--ga-blue-300); box-shadow: 0 0 0 2px var(--ga-blue-a45); }
   .look-name { font-size: 12px; color: #d5d8e0; }
   .look-card.active .look-name { color: #fff; font-weight: 600; }
   .looks-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 16px 14px; border-top: 1px solid rgba(255, 255, 255, 0.08); }

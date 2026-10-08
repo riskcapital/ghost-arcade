@@ -59,10 +59,10 @@
   .audio-settings input { min-width: 0; flex: 1; }
   .strip-tools { display:flex; align-items:center; justify-content:flex-end; gap:2px; }
   button { display:flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; border:1px solid var(--border-color, #343438); border-radius:5px; background:var(--bg-secondary, #1b1b20); color:var(--text-secondary, #ada9a2); cursor:pointer; }
-  button:hover, button.active { color:var(--ga-selection-ink, #e0e8ff); background:var(--ga-selection-bg, #172a5b); border-color:var(--ga-selection-line, #3d59b8); }
+  button:hover, button.active { color:var(--ga-selection-ink, #e0e8ff); background:var(--ga-selection-bg, var(--ga-blue-700)); border-color:var(--ga-selection-line, var(--ga-blue-500)); }
   .strip-tools button { width:20px; height:20px; min-width:20px; min-height:20px; border-radius:3px; font-size:10px; font-weight:700; }
   .strip-tools svg { width:12px; height:12px; }
-  .settings-tray { position:fixed; margin:0; width:304px; box-sizing:border-box; max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); overflow:auto; padding:12px; border:1px solid var(--ga-selection-line, #3d59b8); border-radius:8px; background:var(--bg-primary, #16140f); color:var(--text-primary, #e8e8e8); box-shadow:0 12px 40px #0009; font-family:inherit; font-size:var(--ga-type-control, 12px); }
+  .settings-tray { position:fixed; margin:0; width:304px; box-sizing:border-box; max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); overflow:auto; padding:12px; border:1px solid var(--ga-selection-line, var(--ga-blue-500)); border-radius:8px; background:var(--bg-primary, #16140f); color:var(--text-primary, #e8e8e8); box-shadow:0 12px 40px #0009; font-family:inherit; font-size:var(--ga-type-control, 12px); }
   header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   header strong { font-size:13px; font-weight:650; } header span { color:var(--text-secondary, #ada9a2); font-weight:500; }
   label { display:flex; align-items:center; gap:8px; min-height:32px; }

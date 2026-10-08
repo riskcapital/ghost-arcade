@@ -232,7 +232,7 @@
     overflow-y: auto;
     padding: 14px;
     color: var(--text-primary, #ddd);
-    background: #181820;
+    background: var(--ga-blue-900);
     font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     font-size: 13px;
     box-sizing: border-box;
@@ -248,7 +248,7 @@
   }
   .badge {
     font-size: 10px;
-    background: linear-gradient(135deg, #6df, #b9f);
+    background: linear-gradient(135deg, var(--ga-blue-300), #b9f);
     color: #000;
     padding: 2px 6px;
     border-radius: 999px;
@@ -289,9 +289,9 @@
     cursor: pointer;
     transition: all 0.15s;
   }
-  .brush-button:hover { background: #2d2d3a; color: #fff; border-color: #6df; }
+  .brush-button:hover { background: #2d2d3a; color: #fff; border-color: var(--ga-blue-300); }
   .brush-button.active {
-    background: linear-gradient(135deg, #6df, #b9f);
+    background: linear-gradient(135deg, var(--ga-blue-300), #b9f);
     color: #000;
     font-weight: 700;
     border-color: transparent;
@@ -313,7 +313,7 @@
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     text-align: right;
-    color: #6df;
+    color: var(--ga-blue-300);
   }
   .row.color-row { grid-template-columns: 90px 40px 1fr; }
   .row.color-row input[type="color"] {
@@ -325,7 +325,7 @@
     padding: 0;
   }
   input[type="range"] {
-    accent-color: #6df;
+    accent-color: var(--ga-blue-300);
     width: 100%;
   }
   .actions { display: flex; gap: 6px; }

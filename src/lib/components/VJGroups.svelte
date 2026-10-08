@@ -66,19 +66,19 @@
   .launches { margin-top: 8px; font-size: 11px; color: #aebdd5; }
   .columns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
   .columns button { min-width: 26px; }
-  .columns button.queued { background: #213e79; border-color: #739ae8; }
+  .columns button.queued { background: var(--ga-blue-700); border-color: var(--ga-blue-300); }
   .groups { position: relative; font-size: 12px; }
-  .groups-trigger { cursor: pointer; list-style: none; padding: 7px 10px; border: 1px solid #343b48; border-radius: 6px; color: #c8d0dd; background: #15181d; }
-  .groups-trigger.active { background: #172b55; border-color: #3c5790; }
-  .tray { position: fixed; inset: auto; margin: 0; box-sizing: border-box; color: #d6dfef; font-size: 12px; width: 356px; max-width: calc(100vw - 16px); max-height: min(65vh, 480px); overflow-y: auto; white-space: normal; padding: 12px; border: 1px solid #35435e; border-radius: 9px; background: #11151d; box-shadow: 0 10px 30px #0009; }
+  .groups-trigger { cursor: pointer; list-style: none; padding: 7px 10px; border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; color: #c8d0dd; background: #15181d; }
+  .groups-trigger.active { background: var(--ga-blue-700); border-color: var(--ga-blue-600); }
+  .tray { position: fixed; inset: auto; margin: 0; box-sizing: border-box; color: #d6dfef; font-size: 12px; width: 356px; max-width: calc(100vw - 16px); max-height: min(65vh, 480px); overflow-y: auto; white-space: normal; padding: 12px; border: 1px solid var(--ga-blue-mute-600); border-radius: 9px; background: #11151d; box-shadow: 0 10px 30px #0009; }
   p { color: #9ea9ba; font-size: 11px; margin: 7px 0; }
-  .group { border-top: 1px solid #2b3342; padding: 9px 0; }
+  .group { border-top: 1px solid var(--ga-blue-mute-800); padding: 9px 0; }
   .head, .controls, .create { display: flex; gap: 7px; align-items: center; }
   .head { margin-bottom: 7px; }
   .head input { flex: 1; min-width: 0; }
-  .controls input { flex: 1; min-width: 0; accent-color: #476dc4; }
+  .controls input { flex: 1; min-width: 0; accent-color: var(--ga-blue-500); }
   .controls span { width: 34px; font-variant-numeric: tabular-nums; }
-  input, select, button { border: 1px solid #344158; border-radius: 5px; color: #d6dfef; background: #182237; padding: 4px 6px; font-size: 12px; }
+  input, select, button { border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; color: #d6dfef; background: var(--ga-blue-mute-800); padding: 4px 6px; font-size: 12px; }
   button { cursor: pointer; } button:disabled { opacity: .4; cursor: default; }
   .create { margin-top: 9px; }
 </style>

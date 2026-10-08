@@ -42,7 +42,7 @@
   }
 
   .toast-info {
-    border-left-color: #3b82f6;
+    border-left-color: var(--ga-blue-400);
   }
 
   .toast-content {

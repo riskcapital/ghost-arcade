@@ -87,12 +87,12 @@
   textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid #343641; border-radius: 3px; background: #08090d; color: #fff; padding: 7px; font: inherit; }
   .range-row { display: grid; grid-template-columns: 72px minmax(80px, 1fr) 42px; align-items: center; gap: 7px; min-height: 28px; }
   .range-row input { width: 100%; accent-color: #49d298; }
-  output { color: #66e0f2; font: 10px var(--ga-font-mono, monospace); text-align: right; }
+  output { color: var(--ga-blue-300); font: 10px var(--ga-font-mono, monospace); text-align: right; }
   .select-row, .color-row, .toggle-row, .button-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; }
   select { min-width: 150px; max-width: 70%; border: 1px solid #343641; border-radius: 3px; background: #08090d; color: #d7d9df; padding: 5px 7px; }
   input[type='color'] { width: 38px; height: 25px; padding: 0; border: 1px solid #3b3e49; background: transparent; }
   input[type='checkbox'] { accent-color: #b67aff; }
-  button { min-height: 25px; border: 1px solid #3a3d48; border-radius: 3px; background: #1b1d25; color: #b8bac2; cursor: pointer; }
+  button { min-height: 25px; border: 1px solid #3a3d48; border-radius: 3px; background: var(--ga-blue-mute-800); color: #b8bac2; cursor: pointer; }
   button.active { border-color: #c27aff; background: #6d3a8c; color: #fff; }
   .button-row div, .color-row div { display: flex; gap: 3px; align-items: center; }
   .button-row button { width: 31px; }

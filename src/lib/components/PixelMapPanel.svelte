@@ -799,12 +799,12 @@
   }
 
   .power-toggle input:checked + span {
-    background: rgba(76, 209, 255, 0.34);
+    background: var(--ga-blue-a28);
   }
 
   .power-toggle input:checked + span::after {
     transform: translateX(12px);
-    background: #4cd1ff;
+    background: var(--ga-blue-300);
   }
 
   .state {
@@ -899,7 +899,7 @@
   }
 
   .check-option input {
-    accent-color: #4cd1ff;
+    accent-color: var(--ga-blue-300);
   }
 
   .stats-row {
@@ -913,7 +913,7 @@
   }
 
   .stats-row b {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-weight: 500;
   }
@@ -949,8 +949,8 @@
 
   .add-button:hover,
   .tool-row button:hover {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
   }
 
   .empty {
@@ -984,8 +984,8 @@
   }
 
   .fixture-row.selected {
-    border-color: #4cd1ff;
-    background: rgba(76, 209, 255, 0.05);
+    border-color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
 
   .fixture-name {
@@ -1050,8 +1050,8 @@
   }
 
   .panel-tabs button.active {
-    color: #4cd1ff;
-    border-bottom-color: #4cd1ff;
+    color: var(--ga-blue-300);
+    border-bottom-color: var(--ga-blue-300);
   }
 
   .panel-body {
@@ -1155,14 +1155,14 @@
 
   .range-grid b,
   .wide-range b {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-weight: 500;
   }
 
   input[type='range'] {
     width: 100%;
-    accent-color: #4cd1ff;
+    accent-color: var(--ga-blue-300);
   }
 
   .wide-range {
@@ -1184,9 +1184,9 @@
   }
 
   .test-patterns button.active {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
-    background: rgba(76, 209, 255, 0.08);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
 
   .test-color {
@@ -1258,7 +1258,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    background: rgba(76, 209, 255, 0.55);
+    background: var(--ga-blue-a45);
     border-right: 1px solid #0d0d11;
   }
 

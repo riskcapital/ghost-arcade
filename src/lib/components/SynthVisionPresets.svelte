@@ -161,7 +161,7 @@
     color: var(--text-secondary, #aaa);
   }
   .sv-scope-toggle.global {
-    border-color: rgba(100, 200, 255, 0.3);
+    border-color: var(--ga-blue-a28);
   }
 
   .sv-preset-save-btn,
@@ -215,8 +215,8 @@
     color: var(--text-primary, #e8e8e8);
   }
   .sv-preset-btn.active {
-    background: rgba(100, 200, 255, 0.15);
-    border-color: rgba(100, 200, 255, 0.3);
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-a28);
     color: var(--text-primary, #e8e8e8);
   }
   .sv-preset-btn.global-preset {

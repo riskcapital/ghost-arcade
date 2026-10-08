@@ -580,7 +580,7 @@
 
   .btn-generate:hover:not(:disabled) {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(103, 232, 249, 0.3);
+    box-shadow: 0 4px 12px var(--ga-blue-a28);
   }
 
   .btn-generate:disabled {

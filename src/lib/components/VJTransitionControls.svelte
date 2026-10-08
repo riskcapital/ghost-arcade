@@ -114,11 +114,11 @@
   .duration-row span { color: var(--ga-ink-1, #adb3bf); }
   input[type="text"] { width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
   input[type="text"], select { min-width: 0; min-height: 30px; box-sizing: border-box; padding: 5px 8px; font: inherit; color: var(--ga-ink-0, #eef0f4); background: var(--ga-slot, #101218); border: 1px solid var(--ga-line-2, #303540); border-radius: var(--ga-r-hard, 5px); }
-  .duration-slider { width: 100%; margin: 10px 0 12px; accent-color: var(--ga-selection-line, #3d59b8); }
+  .duration-slider { width: 100%; margin: 10px 0 12px; accent-color: var(--ga-selection-line, var(--ga-blue-500)); }
   .inherit { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; font-size: var(--ga-type-control, 12px); }
   p { margin: 10px 0 0; font-size: var(--ga-type-caption, 11px); line-height: 1.45; color: var(--ga-ink-1, #adb3bf); }
   .duration-error { color: #e0b29d; }
   input[aria-invalid="true"] { border-color: #c88d74; }
-  input:focus-visible { outline: 2px solid var(--ga-focus, #7996ff); outline-offset: 2px; }
+  input:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
   input:disabled { opacity: .45; }
 </style>

@@ -1760,8 +1760,8 @@
     background: linear-gradient(180deg, rgba(97, 214, 164, 0.075), rgba(255,255,255,0.02));
   }
   .toolbar-cluster.edit-actions {
-    border-color: rgba(91, 141, 239, 0.20);
-    background: linear-gradient(180deg, rgba(91, 141, 239, 0.065), rgba(255,255,255,0.02));
+    border-color: var(--ga-blue-a16);
+    background: linear-gradient(180deg, var(--ga-blue-a08), rgba(255,255,255,0.02));
   }
   .toolbar-cluster.view-actions {
     border-color: rgba(255,255,255,0.09);
@@ -2078,7 +2078,7 @@
   }
   .psim-calibration-pad.armed {
     cursor: crosshair;
-    border-color: rgba(79, 227, 255, 0.55);
+    border-color: var(--ga-blue-a45);
   }
   .calib-step {
     margin: 0;
@@ -2142,8 +2142,8 @@
     font-size: 11px;
   }
   .calib-point.selected .calib-point-main {
-    border-color: rgba(79, 227, 255, 0.6);
-    background: rgba(79, 227, 255, 0.12);
+    border-color: var(--ga-blue-a70);
+    background: var(--ga-blue-a16);
   }
   .calib-err { color: #ffcf3a; font-variant-numeric: tabular-nums; }
   .calib-result {
@@ -2168,7 +2168,7 @@
     color: #ffd08a;
   }
   .wide-btn.on {
-    background: rgba(79, 227, 255, 0.14);
-    border-color: rgba(79, 227, 255, 0.5);
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-a45);
   }
 </style>

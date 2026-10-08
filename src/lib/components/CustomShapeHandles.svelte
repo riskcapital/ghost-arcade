@@ -756,9 +756,9 @@
   }
 
   .vertex-handle.selected {
-    background: #00bfff;
+    background: var(--ga-blue-300);
     border-color: #fff;
-    box-shadow: 0 0 10px rgba(0, 191, 255, 0.9);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--ga-blue-300) 90%, transparent);
     transform: scale(1.3);
   }
 
@@ -785,7 +785,7 @@
     margin-left: -4px;
     margin-top: -4px;
     border-radius: 50%;
-    background: #00bfff;
+    background: var(--ga-blue-300);
     border: 1.5px solid #fff;
     cursor: grab;
     pointer-events: auto;
@@ -794,7 +794,7 @@
 
   .cp-handle:hover {
     transform: scale(1.4);
-    box-shadow: 0 0 6px rgba(0, 191, 255, 0.8);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
   }
 
   /* Pen toolbar */

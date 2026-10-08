@@ -7831,7 +7831,7 @@
 
   .native-engine-pending__actions button:hover {
     border-color: var(--ga-icon, #5278ff);
-    background: var(--ga-blue-soft, rgba(82, 120, 255, 0.18));
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
   }
 
   .blackout-overlay {

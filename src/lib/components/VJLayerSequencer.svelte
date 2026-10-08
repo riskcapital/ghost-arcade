@@ -351,7 +351,7 @@
     font-weight: 900;
     letter-spacing: 0.12em;
   }
-  .deck-a .vj-seq-deck-title { color: #7EC8E3; }
+  .deck-a .vj-seq-deck-title { color: var(--ga-blue-200); }
   .deck-b .vj-seq-deck-title { color: #FF8577; }
   .vj-seq-deck-clear {
     width: 26px;
@@ -411,7 +411,7 @@
     border-radius: 999px;
     background: var(--ga-coral, #ff6f5e);
   }
-  .vj-seq-body.split .deck-a .layer-dot { background: #7EC8E3; }
+  .vj-seq-body.split .deck-a .layer-dot { background: var(--ga-blue-200); }
   .vj-seq-body.split .deck-b .layer-dot { background: #FF8577; }
   .seq-cell {
     width: 26px;
@@ -430,8 +430,8 @@
     border-color: var(--ga-coral, #ff6f5e);
   }
   .vj-seq-body.split .deck-a .seq-cell.on {
-    background: #7EC8E3;
-    border-color: #7EC8E3;
+    background: var(--ga-blue-200);
+    border-color: var(--ga-blue-200);
   }
   .vj-seq-body.split .deck-b .seq-cell.on {
     background: #FF8577;
@@ -455,7 +455,7 @@
     animation: vj-seq-fire 0.22s ease-out;
   }
   .vj-seq-body.split .deck-a .seq-cell.firing {
-    background: color-mix(in srgb, #7EC8E3 70%, var(--ga-green, #46d18a));
+    background: color-mix(in srgb, var(--ga-blue-200) 70%, var(--ga-green, #46d18a));
   }
   .vj-seq-body.split .deck-b .seq-cell.firing {
     background: color-mix(in srgb, #FF8577 70%, var(--ga-green, #46d18a));

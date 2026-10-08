@@ -40,8 +40,8 @@
 
 <style>
   .ndi-output { color: var(--ga-ink-1, #bdc6d4); font-size: 13px; line-height: 1.6; }
-  .status-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; border: 1px solid #304366; border-radius: 9px; background: #142039; }
-  button { border: 1px solid #3c5073; border-radius: 6px; background: #1e304f; color: #e2ebfa; padding: 6px 12px; cursor: pointer; }
+  .status-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--ga-blue-mute-600); border-radius: 9px; background: var(--ga-blue-mute-800); }
+  button { border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; background: var(--ga-blue-mute-800); color: #e2ebfa; padding: 6px 12px; cursor: pointer; }
   button:disabled { opacity: .5; }
   h4 { margin-bottom: 6px; color: var(--ga-ink-0, #eef0f4); }
   ol { padding-left: 20px; }

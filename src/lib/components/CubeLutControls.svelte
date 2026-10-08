@@ -42,13 +42,13 @@
 </div>
 {#if error}<p data-help-page="effects" class="lut-error" role="alert">{error}</p>{/if}
 <style>
-  .lut-control { display:flex; align-items:center; gap:8px; padding:10px; margin:4px 0 12px; border:1px solid #303744; border-radius:8px; background:#101319; }
+  .lut-control { display:flex; align-items:center; gap:8px; padding:10px; margin:4px 0 12px; border:1px solid var(--ga-blue-mute-800); border-radius:8px; background:#101319; }
   input { display:none; }
   .lut-info { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
   .lut-name { color:#e2e7ef; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .lut-detail { color:#909ba9; font-size:10px; }
-  button { padding:6px 9px; border:1px solid #3c527e; border-radius:6px; color:#e0e9ff; background:#182d57; font:inherit; font-size:11px; white-space:nowrap; cursor:pointer; }
-  button:hover { background:#203c70; } button:focus-visible { outline:2px solid #7197e7; outline-offset:2px; } button:disabled { opacity:.5; cursor:wait; }
+  button { padding:6px 9px; border:1px solid var(--ga-blue-mute-600); border-radius:6px; color:#e0e9ff; background:var(--ga-blue-700); font:inherit; font-size:11px; white-space:nowrap; cursor:pointer; }
+  button:hover { background:var(--ga-blue-700); } button:focus-visible { outline:2px solid var(--ga-blue-300); outline-offset:2px; } button:disabled { opacity:.5; cursor:wait; }
   .clear { background:transparent; border-color:transparent; color:#99a4b4; font-size:16px; padding:2px 5px; }
   .lut-error { font-size:11px; color:#edb6ac; line-height:1.4; margin:4px 0 10px; }
 </style>

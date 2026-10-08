@@ -652,12 +652,12 @@
   }
 
   .power-toggle input:checked + span {
-    background: rgba(76, 209, 255, 0.34);
+    background: var(--ga-blue-a28);
   }
 
   .power-toggle input:checked + span::after {
     transform: translateX(12px);
-    background: #4cd1ff;
+    background: var(--ga-blue-300);
   }
 
   .state {
@@ -722,7 +722,7 @@
   }
 
   .check-option input {
-    accent-color: #4cd1ff;
+    accent-color: var(--ga-blue-300);
   }
 
   .stats-row {
@@ -736,7 +736,7 @@
   }
 
   .stats-row b {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-weight: 500;
   }
@@ -767,7 +767,7 @@
   }
 
   .section-note code {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
   }
 
   .list-title {
@@ -813,8 +813,8 @@
 
   .add-button:hover,
   .learn-button:hover:not(:disabled) {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
   }
 
   .learn-button {
@@ -921,8 +921,8 @@
   }
 
   .binding-row.learned {
-    border-color: #4cd1ff;
-    background: rgba(76, 209, 255, 0.05);
+    border-color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
 
   .binding-row input,
@@ -953,7 +953,7 @@
   }
 
   .inv input {
-    accent-color: #4cd1ff;
+    accent-color: var(--ga-blue-300);
   }
 
   .meter {
@@ -967,6 +967,6 @@
   .meter span {
     display: block;
     height: 100%;
-    background: #4cd1ff;
+    background: var(--ga-blue-300);
   }
 </style>

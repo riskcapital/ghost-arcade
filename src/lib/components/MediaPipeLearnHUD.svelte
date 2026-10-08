@@ -291,7 +291,7 @@
   .mp-learn-meter {
     position: relative;
     height: 6px;
-    background: #15102a;
+    background: var(--ga-blue-900);
     border-radius: 2px;
     overflow: hidden;
     margin-left: 62px;

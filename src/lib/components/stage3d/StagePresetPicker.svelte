@@ -77,7 +77,7 @@
   }
   h2 { margin: 0; font-size: 18px; font-weight: 600; }
   .close-x {
-    background: #1c1e28;
+    background: var(--ga-blue-mute-800);
     border: none;
     color: #fff;
     width: 30px;
@@ -116,7 +116,7 @@
     margin-bottom: 4px;
   }
   .thumb.empty {
-    background: #1c1e28;
+    background: var(--ga-blue-mute-800);
     border: 1px dashed #3a3c46;
   }
   .thumb-letter, .thumb-glyph {

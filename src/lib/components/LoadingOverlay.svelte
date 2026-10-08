@@ -71,12 +71,12 @@
     width: min(320px, 70vw);
     height: 4px;
     overflow: hidden;
-    background: #232833;
+    background: var(--ga-blue-mute-800);
   }
 
   .progress-fill {
     height: 100%;
-    background: #67e8f9;
+    background: var(--ga-blue-300);
     transition: width 90ms linear;
   }
 

@@ -492,7 +492,7 @@
     width: 100%;
     max-height: min(64vh, 620px);
     overflow: hidden;
-    background: repeating-conic-gradient(#17191f 0% 25%, #101217 0% 50%) 0 / 16px 16px;
+    background: repeating-conic-gradient(var(--ga-blue-900) 0% 25%, #101217 0% 50%) 0 / 16px 16px;
     border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 4px;
   }
@@ -530,7 +530,7 @@
     position: absolute;
     min-width: 18px;
     min-height: 18px;
-    border: 2px solid #4cd1ff;
+    border: 2px solid var(--ga-blue-300);
     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.56);
     cursor: move;
   }
@@ -556,7 +556,7 @@
     padding: 0;
     border: 2px solid #050607;
     border-radius: 50%;
-    background: #4cd1ff;
+    background: var(--ga-blue-300);
     cursor: pointer;
   }
 
@@ -661,8 +661,8 @@
   .source-crop-primary {
     min-width: 82px;
     padding: 0 14px;
-    background: #4cd1ff;
-    border: 1px solid #4cd1ff;
+    background: var(--ga-blue-300);
+    border: 1px solid var(--ga-blue-300);
     color: #041116;
     font-weight: 700;
   }

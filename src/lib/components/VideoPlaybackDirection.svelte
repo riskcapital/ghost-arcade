@@ -20,7 +20,7 @@
   button { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0;
     border-radius: var(--ga-r-hard, 5px); color: var(--text-secondary, #a6adba);
     background: var(--ga-card, #16191f); border: 1px solid var(--border-secondary, #303540); cursor: pointer; }
-  button:hover { color: var(--text-primary, #eef0f4); border-color: #485064; }
-  button.active { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, #172a5b); border-color: var(--ga-selection-line, #3d59b8); }
-  button:focus-visible { outline: 2px solid var(--ga-focus, #7996ff); outline-offset: 2px; }
+  button:hover { color: var(--text-primary, #eef0f4); border-color: var(--ga-blue-mute-600); }
+  button.active { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, var(--ga-blue-700)); border-color: var(--ga-selection-line, var(--ga-blue-500)); }
+  button:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
 </style>

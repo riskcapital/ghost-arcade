@@ -161,7 +161,7 @@
     display: flex;
     flex-direction: column;
     background: linear-gradient(180deg, #0e0a1a, #0a0612);
-    border-bottom: 1px solid #2a2a3a;
+    border-bottom: 1px solid var(--ga-blue-mute-800);
     padding: 8px;
     gap: 6px;
     max-height: 460px;
@@ -188,7 +188,7 @@
     letter-spacing: 0.4px;
   }
   .hy-hotkey-hint kbd {
-    background: #15102a;
+    background: var(--ga-blue-900);
     border: 1px solid #2a2235;
     color: var(--text-secondary, #aaa);
     border-radius: 3px;
@@ -295,7 +295,7 @@
     gap: 4px;
     border-bottom: 1px solid #110a1c;
   }
-  .hy-row:hover { background: #15102a; }
+  .hy-row:hover { background: var(--ga-blue-900); }
   .hy-row.active { background: rgba(255, 107, 107, 0.15); }
   .hy-row.active .hy-row-name { color: #fff; }
   .hy-row-name {

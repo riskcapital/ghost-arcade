@@ -535,8 +535,8 @@
 </div>
 
 <style>
-  .mt-curve { flex: 1; min-width: 0; padding: 5px 7px; border: 1px solid #343d50; border-radius: 5px; background: #121925; color: #dde6fa; font: inherit; }
-  .mt-curve:focus-visible { outline: 2px solid #7397ed; outline-offset: 2px; }
+  .mt-curve { flex: 1; min-width: 0; padding: 5px 7px; border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; background: var(--ga-blue-900); color: #dde6fa; font: inherit; }
+  .mt-curve:focus-visible { outline: 2px solid var(--ga-blue-300); outline-offset: 2px; }
   .mt {
     box-sizing: border-box;
     overflow-y: auto;
@@ -746,7 +746,7 @@
     pointer-events: auto; cursor: ew-resize; width: 6px; height: 18px; border-radius: 2px; border: none;
     background: #5ce1e6; box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
   }
-  .mt-range-handle:focus-visible::-webkit-slider-thumb { outline: 2px solid #7397ed; outline-offset: 1px; }
+  .mt-range-handle:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--ga-blue-300); outline-offset: 1px; }
   .mt-range-vals { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted, #888); font-variant-numeric: tabular-nums; }
   .mt-range-vals b { color: #5ce1e6; font-weight: 600; }
   .mt-range-enable {
@@ -789,7 +789,7 @@
   .mt-mode button.active { background: rgba(92, 225, 230, 0.18); color: #5ce1e6; }
   .mt-auto .mt-row input[type='range'] { accent-color: #5ce1e6; }
   .mt-auto .mt-row-val { color: #5ce1e6; }
-  .mt button:focus-visible, .mt input:focus-visible { outline: 2px solid #8abaff; outline-offset: 2px; }
+  .mt button:focus-visible, .mt input:focus-visible { outline: 2px solid var(--ga-blue-200); outline-offset: 2px; }
   .mt-touch-range { display: none; }
   .mt.compact { gap: 12px; padding: 14px; font-size: 13px; border-radius: 12px; }
   .mt.compact button, .mt.compact select, .mt.compact input[type='number'] { min-height: 44px; }
@@ -801,6 +801,6 @@
   .mt.compact .mt-range-track, .mt.compact .mt-range-vals { display: none; }
   .mt.compact .mt-touch-range { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
   .mt-touch-range label { min-width: 0; display: grid; gap: 6px; font-size: 12px; }
-  .mt-touch-range input { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border: 1px solid #56657e; border-radius: 5px; background: #121925; color: #dde6fa; font: inherit; }
+  .mt-touch-range input { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; background: var(--ga-blue-900); color: #dde6fa; font: inherit; }
   .mt.compact .mt-section-label, .mt.compact .mt-hint, .mt.compact .mt-row-label { color: var(--text-secondary, #b8bbc5); }
 </style>

@@ -1194,7 +1194,7 @@
 
   /* Edge handles (rectangles) */
   .edge-handle {
-    background: #00aaff;
+    background: var(--ga-blue-300);
     border: 2px solid #fff;
     border-radius: 3px;
     cursor: move;
@@ -1217,7 +1217,7 @@
   }
 
   .edge-handle:hover {
-    background: #00ccff;
+    background: var(--ga-blue-300);
     transform: scale(1.1);
   }
 
@@ -1256,7 +1256,7 @@
   }
 
   .move-handle:hover {
-    background: rgba(103, 232, 249, 0.2);
+    background: var(--ga-blue-a16);
     transform: scale(1.1);
     opacity: 1;
   }
@@ -1317,17 +1317,17 @@
     margin-left: -14px;
     margin-top: -14px;
     background: rgba(0, 0, 0, 0.7);
-    border: 2px solid #00ccff;
+    border: 2px solid var(--ga-blue-300);
     border-radius: 50%;
     cursor: ns-resize;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #00ccff;
+    color: var(--ga-blue-300);
   }
 
   .scale-handle:hover {
-    background: rgba(0, 204, 255, 0.2);
+    background: var(--ga-blue-a16);
     transform: scale(1.1);
   }
 
@@ -1369,9 +1369,9 @@
     gap: 4px;
     padding: 8px;
     background: rgba(10, 10, 14, 0.92);
-    border: 1px solid #4cd1ff;
+    border: 1px solid var(--ga-blue-300);
     border-radius: 8px;
-    box-shadow: 0 4px 24px rgba(76, 209, 255, 0.25);
+    box-shadow: 0 4px 24px var(--ga-blue-a28);
     z-index: 30;
     backdrop-filter: blur(8px);
   }
@@ -1381,7 +1381,7 @@
     text-align: center;
     font-size: 11px;
     letter-spacing: 1px;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     text-transform: uppercase;
     font-weight: 600;
   }
@@ -1400,8 +1400,8 @@
     touch-action: manipulation;  /* suppress 300ms tap delay on iOS */
   }
   .ft-btn:hover, .ft-btn:active {
-    background: rgba(76, 209, 255, 0.18);
-    border-color: #4cd1ff;
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-300);
     color: #fff;
   }
   .ft-up    { grid-column: 2; grid-row: 2; }

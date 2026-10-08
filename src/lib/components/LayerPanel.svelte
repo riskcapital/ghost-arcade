@@ -3572,7 +3572,7 @@
   }
 
   .mapping-composition-row.enabled {
-    background: rgba(55, 178, 227, 0.07);
+    background: var(--ga-blue-a08);
   }
 
   .mapping-composition-toggle {
@@ -3590,7 +3590,7 @@
   .mapping-composition-toggle input {
     width: 15px;
     height: 15px;
-    accent-color: var(--ga-blue, #37b2e3);
+    accent-color: var(--ga-blue, #5278ff);
   }
 
   .composition-edit-btn,
@@ -3613,7 +3613,7 @@
   .composition-edit-btn:hover,
   .composition-mini-btn:hover:not(:disabled),
   .mapping-stage-live:hover {
-    border-color: rgba(55, 178, 227, 0.45);
+    border-color: var(--ga-blue-a45);
     color: #fff;
   }
 
@@ -3630,9 +3630,9 @@
 
   .composition-mini-btn.active,
   .mapping-stage-live.active {
-    background: rgba(55, 178, 227, 0.18);
-    border-color: rgba(55, 178, 227, 0.58);
-    color: #63d6ff;
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-a70);
+    color: var(--ga-blue-300);
   }
 
   .layers-section.composition-open {
@@ -3680,8 +3680,8 @@
 
   .composition-tabs button.active {
     color: #e9fbff;
-    border-color: rgba(55, 178, 227, 0.55);
-    background: rgba(55, 178, 227, 0.14);
+    border-color: var(--ga-blue-a45);
+    background: var(--ga-blue-a16);
   }
 
   .composition-section-header,
@@ -3726,7 +3726,7 @@
   }
 
   .composition-effect-item.live {
-    border-color: rgba(55, 178, 227, 0.5);
+    border-color: var(--ga-blue-a45);
   }
 
   .composition-effect-header {
@@ -3754,9 +3754,9 @@
 
   .native-effect-badge {
     flex: 0 0 auto;
-    border: 1px solid rgba(88, 231, 255, 0.38);
-    background: rgba(88, 231, 255, 0.08);
-    color: #58e7ff;
+    border: 1px solid var(--ga-blue-a45);
+    background: var(--ga-blue-a08);
+    color: var(--ga-blue-300);
     border-radius: 3px;
     padding: 2px 5px;
     font-size: 9px;
@@ -3867,8 +3867,8 @@
   }
 
   .mapping-stage-effects .effect-item.live {
-    background: rgba(76, 209, 255, 0.04);
-    border-left: 2px solid #4cd1ff;
+    background: color-mix(in srgb, var(--ga-blue-400) 4%, transparent);
+    border-left: 2px solid var(--ga-blue-300);
   }
 
   .mapping-stage-effects .effect-header {
@@ -3900,7 +3900,7 @@
   }
 
   .stage-fx-icon {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     flex: 0 0 auto;
   }
 
@@ -3920,15 +3920,15 @@
   }
 
   .effect-live-radio:hover {
-    border-color: #4cd1ff;
+    border-color: var(--ga-blue-300);
     color: var(--text-secondary, #aaa);
   }
 
   .effect-live-radio.active {
-    color: #4cd1ff;
-    border-color: #4cd1ff;
-    background: rgba(76, 209, 255, 0.12);
-    box-shadow: 0 0 8px rgba(76, 209, 255, 0.35);
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-300);
+    background: var(--ga-blue-a16);
+    box-shadow: 0 0 8px var(--ga-blue-a28);
   }
 
   .stage-effect-hold-button {
@@ -4024,8 +4024,8 @@
   }
 
   .effect-cycle-toggle.included {
-    color: #4cd1ff;
-    border-color: rgba(76, 209, 255, 0.35);
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-a28);
   }
 
   .btn-add {
@@ -4052,7 +4052,7 @@
   }
 
   .btn-add:hover {
-    background: rgba(155, 135, 245, 0.18);
+    background: var(--ga-blue-a16);
   }
 
   /* Looks shares the Add Layer button's look (class btn-add, so every
@@ -4064,8 +4064,8 @@
   .btn-looks :global(.looks-icon) { color: var(--ga-icon, #5278ff); }
   .btn-looks.invite { animation: looks-invite 1.6s ease-in-out infinite; }
   @keyframes looks-invite {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(82, 120, 255, 0); }
-    50% { box-shadow: 0 0 0 3px rgba(82, 120, 255, 0.28); }
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ga-blue-400) 0%, transparent); }
+    50% { box-shadow: 0 0 0 3px var(--ga-blue-a28); }
   }
 
   .layer-list {
@@ -4112,8 +4112,8 @@
   }
 
   .layer-item.multi-selected {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    border: 1px solid var(--ga-blue-line, var(--ga-blue-a08));
   }
 
   .layer-item.native-pending {
@@ -4752,7 +4752,7 @@
   .btn-small:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
   .btn-small:disabled { opacity: 0.45; cursor: not-allowed; }
   .source-crop-row .btn-small { min-height: 26px; }
-  .source-crop-edit { color: var(--ga-ink-0, #eef0f4); border-color: rgba(76, 209, 255, 0.35); }
+  .source-crop-edit { color: var(--ga-ink-0, #eef0f4); border-color: var(--ga-blue-a28); }
   .source-crop-reset { color: var(--ga-ink-1, #9aa0ac); }
   .source-crop-value { color: var(--ga-ink-2, #5e6571); }
 
@@ -5089,14 +5089,14 @@
   }
 
   .shape-icon-btn:hover {
-    border-color: #67E8F9;
+    border-color: var(--ga-blue-300);
     color: #d6faff;
   }
 
   .shape-icon-btn.active {
-    border-color: #67E8F9;
-    color: #67E8F9;
-    background: rgba(103, 232, 249, 0.08);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
 
   .shape-mask-section .property-row select {
@@ -5264,7 +5264,7 @@
   .effect-reset {
     background: none;
     border: none;
-    color: #7ec8e3;
+    color: var(--ga-blue-200);
     font-size: 15px;
     line-height: 1;
     cursor: pointer;
@@ -5458,7 +5458,7 @@
 
   /* Lines layer thumbnail */
   .layer-thumbnail.lines {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    background: linear-gradient(135deg, var(--ga-blue-mute-800) 0%, var(--ga-blue-800) 100%);
     border: 1px solid #00ffc844;
   }
 
@@ -5816,7 +5816,7 @@
   .media-properties .shape-icon-btn { height: 28px; padding: 0; border-radius: 5px; }
   .media-properties .shape-icon-btn.active, .media-properties .warp-mode-btn.active,
   .media-properties .vt-audio-toggle.active { color: var(--ga-selection-ink, #e0e8ff);
-    background: var(--ga-selection-bg, #172a5b); border-color: var(--ga-selection-line, #3d59b8); }
+    background: var(--ga-selection-bg, var(--ga-blue-700)); border-color: var(--ga-selection-line, var(--ga-blue-500)); }
   .media-properties .mask-section, .media-properties .shape-mask-section { margin-top: 12px; padding-top: 10px; }
   .media-properties .mask-section .property-row label { white-space: nowrap; flex-shrink: 0; }
   .media-properties .mask-point-count { font-size: 11px; text-align: right; }
@@ -5826,5 +5826,5 @@
   .media-properties .video-controls-panel { padding: 8px; }
   .media-properties .vt-time { font-size: 11px; font-variant-numeric: tabular-nums; margin-left: auto; }
   .media-properties .vt-audio-num { color: var(--ga-ink-1, #9aa0ac); }
-  .media-properties button:focus-visible, .media-properties select:focus-visible { outline: 2px solid var(--ga-focus, #7996ff); outline-offset: 2px; }
+  .media-properties button:focus-visible, .media-properties select:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
 </style>

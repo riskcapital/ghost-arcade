@@ -1385,14 +1385,14 @@
   }
   .back-btn:hover {
     background: #1c1c24;
-    border-color: #4cd1ff;
+    border-color: var(--ga-blue-300);
     color: #fff;
   }
   .back-arrow { font-size: 15px; line-height: 1; }
   .title {
     font-size: 12px;
     letter-spacing: 2px;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-weight: 600;
   }
   .surface-name-input {
@@ -1405,7 +1405,7 @@
     min-width: 160px;
   }
   .surface-name-input:hover { border-color: #2a2a30; }
-  .surface-name-input:focus { border-color: #4cd1ff; outline: none; }
+  .surface-name-input:focus { border-color: var(--ga-blue-300); outline: none; }
   .surface-dims {
     color: #666;
     font-size: 12px;
@@ -1446,13 +1446,13 @@
     font-weight: 500;
   }
   .tool-btn:hover {
-    border-color: #4cd1ff;
+    border-color: var(--ga-blue-300);
     color: #fff;
   }
   .tool-btn.active {
-    background: rgba(76,209,255,0.15);
-    border-color: #4cd1ff;
-    color: #4cd1ff;
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
   }
   .tool-btn.import-btn {
     width: auto;
@@ -1460,14 +1460,14 @@
     font-size: 12.5px;
     letter-spacing: 0.5px;
     font-weight: 600;
-    background: linear-gradient(180deg, rgba(76,209,255,0.18), rgba(76,209,255,0.08));
-    border-color: rgba(76,209,255,0.4);
-    color: #b6e8ff;
+    background: linear-gradient(180deg, var(--ga-blue-a16), var(--ga-blue-a08));
+    border-color: var(--ga-blue-a45);
+    color: var(--ga-blue-100);
     gap: 6px;
   }
   .tool-btn.import-btn:hover {
-    background: linear-gradient(180deg, rgba(76,209,255,0.32), rgba(76,209,255,0.18));
-    border-color: #4cd1ff;
+    background: linear-gradient(180deg, var(--ga-blue-a28), var(--ga-blue-a16));
+    border-color: var(--ga-blue-300);
     color: #fff;
   }
   .tool-btn.import-btn .import-icon {
@@ -1513,7 +1513,7 @@
      so it visually echoes the STAGE button in the main header (the
      workspace's entry point) and Import SVG. */
   .apply-stage-btn {
-    background: linear-gradient(135deg, #4cd1ff, #6f5cff);
+    background: linear-gradient(135deg, var(--ga-blue-300), var(--ga-blue-400));
     color: #fff;
     border: none;
     padding: 7px 14px;
@@ -1523,12 +1523,12 @@
     letter-spacing: 0.4px;
     cursor: pointer;
     transition: all 0.15s;
-    box-shadow: 0 0 0 1px rgba(76,209,255,0.4), 0 2px 8px rgba(76,209,255,0.2);
+    box-shadow: 0 0 0 1px var(--ga-blue-a45), 0 2px 8px var(--ga-blue-a16);
   }
   .apply-stage-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, #80dfff, #8a7aff);
+    background: linear-gradient(135deg, var(--ga-blue-200), var(--ga-blue-400));
     transform: scale(1.03);
-    box-shadow: 0 0 0 1px #4cd1ff, 0 4px 14px rgba(76,209,255,0.35);
+    box-shadow: 0 0 0 1px var(--ga-blue-300), 0 4px 14px var(--ga-blue-a28);
   }
   .apply-stage-btn:disabled {
     opacity: 0.4;
@@ -1538,8 +1538,8 @@
   /* Binding card — shown in the inspector when a slice is linked to
      a mapping layer post-apply. */
   .binding-card {
-    background: rgba(76,209,255,0.06);
-    border: 1px solid rgba(76,209,255,0.25);
+    background: var(--ga-blue-a08);
+    border: 1px solid var(--ga-blue-a28);
     border-radius: 5px;
     padding: 10px;
     margin-top: 4px;
@@ -1554,13 +1554,13 @@
   .binding-name {
     font-size: 14px;
     font-weight: 600;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     margin-bottom: 8px;
   }
   .binding-action {
     background: transparent;
-    border: 1px solid #4cd1ff;
-    color: #4cd1ff;
+    border: 1px solid var(--ga-blue-300);
+    color: var(--ga-blue-300);
     padding: 5px 10px;
     border-radius: 4px;
     font-size: 12px;
@@ -1569,11 +1569,11 @@
     width: 100%;
   }
   .binding-action:hover {
-    background: rgba(76,209,255,0.15);
+    background: var(--ga-blue-a16);
     color: #fff;
   }
   .inspector-stat .muted { color: #555; font-style: italic; }
-  .inspector-note strong { color: #4cd1ff; font-weight: 600; }
+  .inspector-note strong { color: var(--ga-blue-300); font-weight: 600; }
 
   /* ── Stage Effects panel ── */
   .effects-section {
@@ -1586,7 +1586,7 @@
     justify-content: space-between;
     font-size: 11px;
     letter-spacing: 1.5px;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     text-transform: uppercase;
     margin-bottom: 10px;
     font-weight: 600;
@@ -1602,15 +1602,15 @@
     color: #bbb;
     line-height: 1.6;
     padding: 10px 12px;
-    background: rgba(76,209,255,0.05);
-    border-left: 2px solid rgba(76,209,255,0.4);
+    background: var(--ga-blue-a08);
+    border-left: 2px solid var(--ga-blue-a45);
     border-radius: 0 4px 4px 0;
   }
   .effects-pointer p {
     margin: 0 0 6px;
   }
   .effects-pointer strong {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-weight: 600;
   }
   .effects-catalog-list {
@@ -1626,10 +1626,10 @@
     padding: 4px 0;
     font-size: 12px;
     color: var(--text-muted, #888);
-    border-top: 1px solid rgba(76,209,255,0.08);
+    border-top: 1px solid var(--ga-blue-a08);
   }
   .effects-catalog-icon {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-size: 14px;
     width: 18px;
     text-align: center;
@@ -1693,9 +1693,9 @@
     border-color: #2a2a30;
   }
   .palette-btn.active {
-    background: rgba(76,209,255,0.15);
-    border-color: #4cd1ff;
-    color: #4cd1ff;
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
   }
   .palette-btn .p-icon {
     font-size: 17px;
@@ -1712,17 +1712,17 @@
     color: inherit;
   }
   .palette-btn.primary-btn {
-    background: linear-gradient(180deg, rgba(76,209,255,0.18), rgba(76,209,255,0.06));
-    border-color: rgba(76,209,255,0.4);
-    color: #b6e8ff;
+    background: linear-gradient(180deg, var(--ga-blue-a16), var(--ga-blue-a08));
+    border-color: var(--ga-blue-a45);
+    color: var(--ga-blue-100);
   }
   .palette-btn.primary-btn:hover {
-    background: linear-gradient(180deg, rgba(76,209,255,0.32), rgba(76,209,255,0.16));
-    border-color: #4cd1ff;
+    background: linear-gradient(180deg, var(--ga-blue-a28), var(--ga-blue-a16));
+    border-color: var(--ga-blue-300);
     color: #fff;
   }
   .palette-btn.primary-btn .p-label {
-    color: #b6e8ff;
+    color: var(--ga-blue-100);
     font-weight: 600;
   }
 
@@ -1768,11 +1768,11 @@
     background: rgba(255,255,255,0.03);
   }
 	  .slice-row.selected {
-	    background: rgba(76,209,255,0.08);
-	    border-left-color: #4cd1ff;
+	    background: var(--ga-blue-a08);
+	    border-left-color: var(--ga-blue-300);
 	  }
 	  .slice-row.selected.primary {
-	    background: rgba(76,209,255,0.14);
+	    background: var(--ga-blue-a16);
 	  }
   .slice-color-dot {
     width: 10px;
@@ -1834,8 +1834,8 @@
 	       above. */
 	  }
 	  .slice-marquee {
-	    fill: rgba(76, 209, 255, 0.10);
-	    stroke: rgba(76, 209, 255, 0.85);
+	    fill: var(--ga-blue-a08);
+	    stroke: color-mix(in srgb, var(--ga-blue-300) 85%, transparent);
 	    stroke-dasharray: 6 4;
 	    pointer-events: none;
 	  }
@@ -1863,7 +1863,7 @@
   .empty-title {
     font-size: 19px;
     font-weight: 700;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     letter-spacing: 2px;
     margin: 0 0 6px;
   }
@@ -1892,17 +1892,17 @@
   }
   .empty-btn:hover {
     background: #1c1c24;
-    border-color: #4cd1ff;
+    border-color: var(--ga-blue-300);
     color: #fff;
   }
   .empty-btn.primary {
-    background: linear-gradient(135deg, #4cd1ff, #6f5cff);
+    background: linear-gradient(135deg, var(--ga-blue-300), var(--ga-blue-400));
     border-color: transparent;
     color: #fff;
     font-weight: 600;
   }
   .empty-btn.primary:hover {
-    background: linear-gradient(135deg, #80dfff, #8a7aff);
+    background: linear-gradient(135deg, var(--ga-blue-200), var(--ga-blue-400));
     transform: scale(1.02);
   }
   .empty-hint {
@@ -1921,12 +1921,12 @@
      canvas. The .drop-active class on the canvas root provides the
      dashed border accent; this is the centered card. */
   .design-canvas.drop-active {
-    box-shadow: inset 0 0 0 3px rgba(76,209,255,0.6);
+    box-shadow: inset 0 0 0 3px var(--ga-blue-a70);
   }
   .canvas-drop-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(76,209,255,0.08);
+    background: var(--ga-blue-a08);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1935,11 +1935,11 @@
   }
   .drop-card {
     background: rgba(10, 10, 14, 0.95);
-    border: 2px dashed #4cd1ff;
+    border: 2px dashed var(--ga-blue-300);
     border-radius: 12px;
     padding: 24px 40px;
     text-align: center;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
   }
   .drop-icon {
     display: block;
@@ -1993,7 +1993,7 @@
     font-size: 13px;
   }
   .inspector-section input[type="text"]:focus {
-    border-color: #4cd1ff;
+    border-color: var(--ga-blue-300);
     outline: none;
   }
   .inspector-section input[type="color"] {
@@ -2031,17 +2031,17 @@
     text-align: left;
   }
   .inspector-action:hover {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
-    background: rgba(76,209,255,0.06);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
   .inspector-note {
     font-size: 11px;
     color: #555;
     line-height: 1.5;
     padding: 8px;
-    background: rgba(76,209,255,0.04);
-    border-left: 2px solid rgba(76,209,255,0.3);
+    background: color-mix(in srgb, var(--ga-blue-400) 4%, transparent);
+    border-left: 2px solid var(--ga-blue-a28);
     margin-top: 8px;
   }
   .inspector-empty {

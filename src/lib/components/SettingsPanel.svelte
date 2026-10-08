@@ -3425,7 +3425,7 @@
   }
   .setting-row.sub-row input[type="range"] {
     width: 140px;
-    accent-color: #6df;
+    accent-color: var(--ga-blue-300);
   }
   .setting-row.sub-row input[type="color"] {
     width: 32px;
@@ -3639,7 +3639,7 @@
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 13px;
   }
-  .port-input:focus { border-color: #4cd1ff; outline: none; }
+  .port-input:focus { border-color: var(--ga-blue-300); outline: none; }
   .osc-status-dot {
     display: inline-block;
     width: 8px; height: 8px;
@@ -3700,9 +3700,9 @@
   .osc-status-dot.idle      { background: #555; }
   .osc-last {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: #b6e8ff;
+    color: var(--ga-blue-100);
     font-size: 12px;
-    background: rgba(76,209,255,0.06);
+    background: var(--ga-blue-a08);
     padding: 1px 4px;
     border-radius: 3px;
   }
@@ -3777,7 +3777,7 @@
     font-size: 12px;
     width: 100%;
   }
-  .osc-binding-row input:focus, .osc-binding-row select:focus { border-color: #4cd1ff; outline: none; }
+  .osc-binding-row input:focus, .osc-binding-row select:focus { border-color: var(--ga-blue-300); outline: none; }
   .osc-binding-row input.invalid-path, .osc-learn-form input.invalid-path {
     border-color: #ff6868;
     box-shadow: 0 0 0 1px rgba(255, 104, 104, 0.18);
@@ -3804,15 +3804,15 @@
     gap: 16px;
     padding: 12px;
     margin-top: 12px;
-    border: 1px solid rgba(76, 209, 255, 0.28);
-    background: rgba(76, 209, 255, 0.06);
+    border: 1px solid var(--ga-blue-a28);
+    background: var(--ga-blue-a08);
     border-radius: 5px;
   }
   .osc-template strong { color: var(--text-primary, #ddd); font-size: 13px; }
   .osc-template p { color: var(--text-muted, #888); font-size: 12px; margin: 4px 0 7px; }
-  .osc-template code { color: #4cd1ff; font-size: 11px; }
+  .osc-template code { color: var(--ga-blue-300); font-size: 11px; }
   .osc-template span { color: var(--text-muted, #888); font-size: 11px; margin-left: 6px; }
-  .osc-add-btn.template { flex: 0 0 auto; border-color: rgba(76, 209, 255, 0.45); color: #4cd1ff; }
+  .osc-add-btn.template { flex: 0 0 auto; border-color: var(--ga-blue-a45); color: var(--ga-blue-300); }
   .osc-add-btn {
     background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
@@ -3822,7 +3822,7 @@
     cursor: pointer;
     font-size: 12px;
   }
-  .osc-add-btn:hover { border-color: #4cd1ff; color: #4cd1ff; }
+  .osc-add-btn:hover { border-color: var(--ga-blue-300); color: var(--ga-blue-300); }
   .osc-add-btn.learn { border-color: rgba(255,214,102,0.5); color: #ffd166; }
   .osc-add-btn.learn:hover { background: rgba(255,214,102,0.1); color: #fff; }
   .osc-add-btn.learn.active {
@@ -3867,7 +3867,7 @@
     color: var(--text-muted, #888);
     font-size: 12px;
   }
-  .osc-path-reference summary { cursor: pointer; color: #4cd1ff; }
+  .osc-path-reference summary { cursor: pointer; color: var(--ga-blue-300); }
   .osc-path-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3886,8 +3886,8 @@
     color: var(--text-muted, #888);
     cursor: pointer;
   }
-  .osc-path-grid button:hover { border-color: #4cd1ff; }
-  .osc-path-grid code { color: #4cd1ff; overflow-wrap: anywhere; }
+  .osc-path-grid button:hover { border-color: var(--ga-blue-300); }
+  .osc-path-grid code { color: var(--ga-blue-300); overflow-wrap: anywhere; }
   .osc-add-btn.learn.active {
     background: rgba(255,214,102,0.22);
     border-color: #ffd166;
@@ -4180,7 +4180,7 @@
   }
 
   .primary-btn:hover {
-    background: #5dd3e3;
+    background: var(--ga-blue-300);
   }
 
   .info-box {
@@ -4763,7 +4763,7 @@
 
   /* Update banner */
   .update-banner {
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.12), rgba(126, 200, 227, 0.08));
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.12), color-mix(in srgb, var(--ga-blue-200) 8%, transparent));
     border: 1px solid rgba(168, 85, 247, 0.3);
     border-radius: 6px;
     padding: 12px 14px;
@@ -4825,7 +4825,7 @@
     font-size: 13px;
     font-weight: 600;
     padding: 6px 14px;
-    background: linear-gradient(90deg, #FF8577, #7EC8E3);
+    background: linear-gradient(90deg, #FF8577, var(--ga-blue-200));
     border: none;
     color: #0a0a0a;
     border-radius: 4px;

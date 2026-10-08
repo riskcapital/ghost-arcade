@@ -296,14 +296,14 @@
 
 <style>
   .movement-nav { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 12px 0; }
-  .movement-nav button { min-height: 40px; min-width: 0; padding: 6px; border: 1px solid #344057; border-radius: 6px; background: #172235; color: #dce9fa; font: inherit; font-size: 12px; cursor: pointer; }
-  .movement-nav button:hover { background: #233c65; border-color: #7299d5; }
-  .movement-nav button:focus-visible { outline: 2px solid #8dc8ff; outline-offset: 2px; }
-  .handfx-guide { padding: 14px; margin: 10px 0 16px; border: 1px solid #304a78; border-radius: 10px; background: linear-gradient(135deg, #142542, #101820); }
-  .handfx-eyebrow { color: #a9c6fa; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+  .movement-nav button { min-height: 40px; min-width: 0; padding: 6px; border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; background: var(--ga-blue-mute-800); color: #dce9fa; font: inherit; font-size: 12px; cursor: pointer; }
+  .movement-nav button:hover { background: var(--ga-blue-700); border-color: var(--ga-blue-mute-300); }
+  .movement-nav button:focus-visible { outline: 2px solid var(--ga-blue-200); outline-offset: 2px; }
+  .handfx-guide { padding: 14px; margin: 10px 0 16px; border: 1px solid var(--ga-blue-mute-600); border-radius: 10px; background: linear-gradient(135deg, var(--ga-blue-800), var(--ga-blue-900)); }
+  .handfx-eyebrow { color: var(--ga-blue-200); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
   .handfx-guide p { color: #bac8dc; font-size: 12px; line-height: 1.5; margin: 8px 0 0; }
   .handfx-guide .handfx-gesture { color: #e1edff; }
-  .control-row select { box-sizing: border-box; min-width: 0; max-width: 100%; text-overflow: ellipsis; width: 100%; min-height: 34px; padding: 6px 9px; color: #e1edff; background: #101722; border: 1px solid #34445d; border-radius: 7px; font: inherit; font-size: 12px; }
+  .control-row select { box-sizing: border-box; min-width: 0; max-width: 100%; text-overflow: ellipsis; width: 100%; min-height: 34px; padding: 6px 9px; color: #e1edff; background: var(--ga-blue-900); border: 1px solid var(--ga-blue-mute-600); border-radius: 7px; font: inherit; font-size: 12px; }
 
   .panel-empty {
     padding: 20px;
@@ -328,8 +328,8 @@
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    background: linear-gradient(90deg, #111118, #16162a);
-    border-bottom: 1px solid #2a2a3a;
+    background: linear-gradient(90deg, #111118, var(--ga-blue-900));
+    border-bottom: 1px solid var(--ga-blue-mute-800);
   }
 
   .header-icon {
@@ -447,7 +447,7 @@
   }
 
   .sel-btn:hover {
-    background: #2a2a38;
+    background: var(--ga-blue-mute-800);
     color: var(--text-primary, #ddd);
   }
 
@@ -506,7 +506,7 @@
     width: 0;
     height: 18px;
     -webkit-appearance: none;
-    background: #2a2a38;
+    background: var(--ga-blue-mute-800);
     border-radius: 2px;
     cursor: pointer;
   }

@@ -421,7 +421,7 @@
     display: flex;
     gap: 2px;
     padding: 3px;
-    border: 1px solid #374151;
+    border: 1px solid var(--ga-blue-mute-600);
     border-radius: 4px;
     background: rgba(8, 12, 17, 0.94);
     box-shadow: 0 5px 18px rgba(0, 0, 0, 0.45);
@@ -451,12 +451,12 @@
   .mode-strip button.active {
     color: #f9fafb;
     border-color: #4b5563;
-    background: #1f2937;
+    background: var(--ga-blue-mute-800);
   }
 
   .mode-strip button.active {
-    color: #67e8f9;
-    border-color: #0891b2;
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-mute-300);
   }
 
   .tool-icon {
@@ -477,7 +477,7 @@
   }
 
   .active kbd {
-    color: #22d3ee;
+    color: var(--ga-blue-300);
   }
 
   .rotation-strip {
@@ -489,7 +489,7 @@
     align-items: center;
     gap: 3px;
     padding: 4px 5px;
-    border: 1px solid #374151;
+    border: 1px solid var(--ga-blue-mute-600);
     border-radius: 4px;
     background: rgba(8, 12, 17, 0.96);
     box-shadow: 0 5px 18px rgba(0, 0, 0, 0.45);
@@ -506,10 +506,10 @@
   .rotation-strip button {
     height: 24px;
     padding: 0 7px;
-    border: 1px solid #374151;
+    border: 1px solid var(--ga-blue-mute-600);
     border-radius: 2px;
     color: #d1d5db;
-    background: #111827;
+    background: var(--ga-blue-900);
     font: inherit;
     font-size: 9px;
     cursor: pointer;
@@ -517,13 +517,13 @@
 
   .rotation-strip button:hover {
     color: #ffffff;
-    border-color: #0891b2;
-    background: #1f2937;
+    border-color: var(--ga-blue-mute-300);
+    background: var(--ga-blue-mute-800);
   }
 
   .rotation-strip .flip-upright {
-    color: #67e8f9;
-    border-color: #155e75;
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-mute-600);
   }
 
   .drag-surface {
@@ -589,7 +589,7 @@
 
   .axis-z {
     width: 35px;
-    background: #3b82f6;
+    background: var(--ga-blue-400);
     transform: rotate(42deg);
   }
 
@@ -618,7 +618,7 @@
   .axis-z-tip {
     left: 72px;
     top: 69px;
-    border-left: 9px solid #3b82f6;
+    border-left: 9px solid var(--ga-blue-400);
     border-top: 6px solid transparent;
     border-bottom: 6px solid transparent;
     transform: rotate(42deg);
@@ -650,7 +650,7 @@
     top: 41px;
     width: 14px;
     height: 14px;
-    border: 2px solid #6ee7f9;
+    border: 2px solid var(--ga-blue-300);
     background: #0b1118;
     box-sizing: border-box;
     z-index: 4;
@@ -677,8 +677,8 @@
   }
 
   .rotate-ring-z {
-    border-color: #3b82f6;
-    box-shadow: 0 0 7px rgba(59, 130, 246, 0.35);
+    border-color: var(--ga-blue-400);
+    box-shadow: 0 0 7px var(--ga-blue-a28);
   }
 
   .rotate-ring-x {
@@ -702,7 +702,7 @@
     top: 47px;
     width: 42px;
     height: 3px;
-    background: #38bdf8;
+    background: var(--ga-blue-300);
     transform: rotate(-45deg);
     transform-origin: 0 50%;
   }
@@ -713,7 +713,7 @@
     top: 10px;
     width: 14px;
     height: 14px;
-    border: 3px solid #38bdf8;
+    border: 3px solid var(--ga-blue-300);
     background: #0b1118;
     box-sizing: border-box;
   }

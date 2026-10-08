@@ -369,7 +369,7 @@
 
   .mp-meter {
     height: 6px;
-    background: #15102a;
+    background: var(--ga-blue-900);
     border-radius: 2px;
     overflow: hidden;
   }
@@ -417,7 +417,7 @@
   .mp-bind-path { color: var(--text-primary, #ddd); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mp-bind-meter {
     height: 4px;
-    background: #15102a;
+    background: var(--ga-blue-900);
     border-radius: 2px;
     overflow: hidden;
   }

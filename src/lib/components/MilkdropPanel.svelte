@@ -186,7 +186,7 @@
     display: flex;
     flex-direction: column;
     background: linear-gradient(180deg, #0e0a1a, #0a0612);
-    border-bottom: 1px solid #2a2a3a;
+    border-bottom: 1px solid var(--ga-blue-mute-800);
     padding: 8px;
     gap: 8px;
     max-height: 360px;
@@ -198,16 +198,16 @@
   .mk-btn {
     flex: 1;
     padding: 5px 0;
-    background: #1a1530;
+    background: var(--ga-blue-800);
     border: 1px solid #3a2960;
     border-radius: 3px;
-    color: #c9b8ff;
+    color: var(--ga-blue-200);
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.12s;
   }
-  .mk-btn:hover { background: #2a1f50; color: #fff; }
+  .mk-btn:hover { background: var(--ga-blue-700); color: #fff; }
   .mk-btn.cut { background: #3a0d2a; border-color: #8a1f5e; color: #ff80c0; }
   .mk-btn.cut:hover { background: #5a153f; }
   .mk-btn.lock.active { background: #0d3320; border-color: #22c55e; color: #4ade80; }
@@ -220,7 +220,7 @@
     margin-top: -4px;
   }
   .mk-hotkey-hint kbd {
-    background: #15102a;
+    background: var(--ga-blue-900);
     border: 1px solid #2a2235;
     color: var(--text-secondary, #aaa);
     border-radius: 3px;
@@ -300,7 +300,7 @@
     gap: 4px;
     border-bottom: 1px solid #110a1c;
   }
-  .mk-row:hover { background: #15102a; }
+  .mk-row:hover { background: var(--ga-blue-900); }
   .mk-row.active { background: #2a1560; }
   .mk-row.active .mk-row-name { color: #fff; }
   .mk-row-name {

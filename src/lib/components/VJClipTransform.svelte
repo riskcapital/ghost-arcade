@@ -165,13 +165,13 @@
   .vt-tf-num {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
-    color: #6df;
+    color: var(--ga-blue-300);
     text-align: right;
   }
 
   .vt-tf-row input[type="range"] {
     width: 100%;
-    accent-color: #6df;
+    accent-color: var(--ga-blue-300);
   }
 
   .vt-tf-select {
@@ -206,9 +206,9 @@
   }
 
   .vt-toggle-btn.active {
-    border-color: rgba(109, 240, 255, 0.45);
-    background: rgba(109, 240, 255, 0.16);
-    color: #6df;
+    border-color: var(--ga-blue-a45);
+    background: var(--ga-blue-a16);
+    color: var(--ga-blue-300);
   }
 
   .vt-tf-reset {

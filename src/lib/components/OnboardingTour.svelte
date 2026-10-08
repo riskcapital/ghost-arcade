@@ -343,9 +343,9 @@
     transition: background 0.15s;
   }
   .ot-progress-dot:hover { background: rgba(255, 255, 255, 0.18); }
-  .ot-progress-dot.done { background: rgba(126, 200, 227, 0.45); }
+  .ot-progress-dot.done { background: color-mix(in srgb, var(--ga-blue-200) 45%, transparent); }
   .ot-progress-dot.active {
-    background: linear-gradient(90deg, #FF8577, #7EC8E3);
+    background: linear-gradient(90deg, #FF8577, var(--ga-blue-200));
   }
 
   .ot-content {
@@ -397,7 +397,7 @@
     position: absolute;
     left: 0;
     top: 0;
-    color: #7EC8E3;
+    color: var(--ga-blue-200);
     font-size: 11px;
   }
 
@@ -429,9 +429,9 @@
 
   .ot-action {
     display: inline-block;
-    background: rgba(126, 200, 227, 0.12);
-    border: 1px solid rgba(126, 200, 227, 0.45);
-    color: #7EC8E3;
+    background: color-mix(in srgb, var(--ga-blue-200) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-blue-200) 45%, transparent);
+    color: var(--ga-blue-200);
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -441,7 +441,7 @@
     transition: background 0.15s, transform 0.12s;
   }
   .ot-action:hover {
-    background: rgba(126, 200, 227, 0.22);
+    background: color-mix(in srgb, var(--ga-blue-200) 22%, transparent);
     transform: translateY(-1px);
   }
 
@@ -474,7 +474,7 @@
   }
 
   .ot-next {
-    background: linear-gradient(135deg, #FF8577, #7EC8E3);
+    background: linear-gradient(135deg, #FF8577, var(--ga-blue-200));
     border: none;
     color: #0a0a0a;
     font-size: 13px;

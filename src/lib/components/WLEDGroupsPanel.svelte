@@ -191,7 +191,7 @@
   }
 
   label input {
-    accent-color: #4cd1ff;
+    accent-color: var(--ga-blue-300);
   }
 
   label span {

@@ -952,16 +952,16 @@
   .handle.mask-point-handle {
     width: 12px; height: 12px;
     margin-left: -6px; margin-top: -6px;
-    background: #4dd8ff;
+    background: var(--ga-blue-300);
     border: 2px solid #fff;
     border-radius: 2px;
     cursor: grab;
     z-index: 70;
   }
-  .mask-point-handle.first { background: #ffffff; border-color: #4dd8ff; }
+  .mask-point-handle.first { background: #ffffff; border-color: var(--ga-blue-300); }
   /* While placing, the first vertex closes the shape: ring it so it reads
      as a target, like a pen tool's start point. */
-  .mask-point-handle.first.closable { cursor: pointer; box-shadow: 0 0 0 4px rgba(77, 216, 255, 0.45); }
+  .mask-point-handle.first.closable { cursor: pointer; box-shadow: 0 0 0 4px var(--ga-blue-a45); }
   .mask-point-handle.first.closable:hover { transform: scale(1.5); }
   .mask-point-handle:hover { transform: scale(1.25); }
   .mask-point-handle.dragging { cursor: grabbing; transform: scale(1.35); background: #ffff00; }
@@ -970,8 +970,8 @@
     margin-left: -7px; margin-top: -7px;
     border-radius: 50%;
     background: rgba(0, 0, 0, 0.7);
-    border: 1px solid rgba(77, 216, 255, 0.8);
-    color: #4dd8ff;
+    border: 1px solid color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
+    color: var(--ga-blue-300);
     font-size: 12px;
     line-height: 12px;
     text-align: center;
@@ -986,8 +986,8 @@
     width: 9px; height: 9px;
     margin-left: -5px; margin-top: -5px;
     border-radius: 50%;
-    background: #0b1720;
-    border: 2px solid #4dd8ff;
+    background: var(--ga-blue-900);
+    border: 2px solid var(--ga-blue-300);
     cursor: grab;
     z-index: 70;
   }
@@ -1019,7 +1019,7 @@
 
   /* Edge handles — same as WarpHandles edge-handle. */
   .edge-handle {
-    background: #00aaff;
+    background: var(--ga-blue-300);
     border: 2px solid #fff;
     border-radius: 3px;
     cursor: move;
@@ -1028,7 +1028,7 @@
   .edge-handle.edge-bottom { width: 40px; height: 12px; margin-left: -20px; margin-top: -6px; }
   .edge-handle.edge-left,
   .edge-handle.edge-right { width: 12px; height: 40px; margin-left: -6px; margin-top: -20px; }
-  .edge-handle:hover { background: #00ccff; transform: scale(1.1); }
+  .edge-handle:hover { background: var(--ga-blue-300); transform: scale(1.1); }
   .edge-handle.dragging { background: #ffff00; transform: scale(1.15); }
 
   /* Move handle — same as WarpHandles move-handle. */
@@ -1095,7 +1095,7 @@
     position: absolute;
     width: 9px; height: 9px;
     margin-left: -5px; margin-top: -5px;
-    background: #00d4ff;
+    background: var(--ga-blue-300);
     border: 1px solid #fff;
     transform: rotate(45deg);
     pointer-events: auto;
@@ -1103,10 +1103,10 @@
     z-index: 52;
     transition: transform 0.1s ease;
   }
-  .tangent-handle.unlinked { background: transparent; border: 2px solid #00d4ff; }
+  .tangent-handle.unlinked { background: transparent; border: 2px solid var(--ga-blue-300); }
   .tangent-handle:hover, .tangent-handle.dragging { transform: rotate(45deg) scale(1.4); }
   .tangent-handle.dragging { cursor: grabbing; }
-  .tangent-handle.selected { box-shadow: 0 0 8px #00d4ff; transform: rotate(45deg) scale(1.3); }
+  .tangent-handle.selected { box-shadow: 0 0 8px var(--ga-blue-300); transform: rotate(45deg) scale(1.3); }
 
   .handle-label {
     position: absolute;

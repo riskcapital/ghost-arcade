@@ -188,7 +188,7 @@
   .fft-bar:nth-child(2) { background: #f97316; }
   .fft-bar:nth-child(3) { background: #eab308; }
   .fft-bar:nth-child(4) { background: #22c55e; }
-  .fft-bar:nth-child(5) { background: #3b82f6; }
+  .fft-bar:nth-child(5) { background: var(--ga-blue-400); }
   .fft-bar:nth-child(6) { background: #a855f7; }
 
   .fft-label {

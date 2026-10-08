@@ -227,7 +227,7 @@
     display: flex;
     flex-direction: column;
     background: linear-gradient(180deg, #0e0a1a, #0a0612);
-    border-bottom: 1px solid #2a2a3a;
+    border-bottom: 1px solid var(--ga-blue-mute-800);
     padding: 8px 8px 10px;
     gap: 6px;
   }

@@ -613,7 +613,7 @@
   label { display: grid; min-width: 0; gap: 4px; }
   label.wide { grid-column: 1 / -1; }
   label > span { display: flex; justify-content: space-between; color: #85858f; text-transform: capitalize; }
-  label b { color: #4bd7ff; font-weight: 400; }
+  label b { color: var(--ga-blue-300); font-weight: 400; }
   label select, label input[type='text'] { min-width: 0; width: 100%; padding: 5px; }
   label input[type='range'] { min-width: 0; width: 100%; accent-color: #4fd59a; }
   label input[type='color'] {

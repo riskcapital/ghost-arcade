@@ -303,14 +303,14 @@
   }
 
   .midi-indicator.learning {
-    border-color: #00e5ff;
-    background: rgba(0, 229, 255, 0.15);
+    border-color: var(--ga-blue-300);
+    background: var(--ga-blue-a16);
     animation: midi-pulse 0.8s ease-in-out infinite alternate;
   }
 
   @keyframes midi-pulse {
-    0% { border-color: #00e5ff; box-shadow: 0 0 4px rgba(0, 229, 255, 0.3); }
-    100% { border-color: #00b8d4; box-shadow: 0 0 12px rgba(0, 229, 255, 0.6); }
+    0% { border-color: var(--ga-blue-300); box-shadow: 0 0 4px var(--ga-blue-a28); }
+    100% { border-color: var(--ga-blue-300); box-shadow: 0 0 12px var(--ga-blue-a70); }
   }
 
   .midi-tag {
@@ -332,9 +332,9 @@
   .midi-learn-label {
     font-size: 10px;
     font-weight: 700;
-    color: #00e5ff;
+    color: var(--ga-blue-300);
     letter-spacing: 1px;
-    text-shadow: 0 0 6px rgba(0, 229, 255, 0.8);
+    text-shadow: 0 0 6px color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
     pointer-events: none;
   }
 
@@ -344,7 +344,7 @@
     left: 0;
     right: 0;
     height: 28px;
-    background: rgba(20, 20, 40, 0.95);
+    background: var(--ga-blue-900);
     border-top: 2px solid #bb86fc;
     display: flex;
     align-items: center;
@@ -365,7 +365,7 @@
   }
 
   .midi-learn-status {
-    color: #00e5ff;
+    color: var(--ga-blue-300);
     flex: 1;
   }
   .midi-learn-status strong {

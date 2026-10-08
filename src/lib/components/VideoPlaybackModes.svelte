@@ -63,11 +63,11 @@
     transition: background .15s, border-color .15s, color .15s;
   }
   button:hover { background: rgba(255, 255, 255, .1); color: var(--text-primary, #eee); }
-  button:focus-visible { outline: 2px solid var(--ga-focus, #7996ff); outline-offset: 2px; }
+  button:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
   button.active {
-    background: var(--ga-selection-bg, #172a5b);
+    background: var(--ga-selection-bg, var(--ga-blue-700));
     color: var(--ga-selection-ink, #e0e8ff);
-    border-color: var(--ga-selection-line, #3d59b8);
+    border-color: var(--ga-selection-line, var(--ga-blue-500));
   }
   svg { flex-shrink: 0; }
   .direction {

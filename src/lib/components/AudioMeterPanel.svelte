@@ -257,7 +257,7 @@
   .amp-bandstrip i:nth-child(3) { background: #eab308; } /* lowMid */
   .amp-bandstrip i:nth-child(4) { background: #22c55e; } /* mid */
   .amp-bandstrip i:nth-child(5) { background: #14b8a6; } /* highMid */
-  .amp-bandstrip i:nth-child(6) { background: #3b82f6; } /* treble */
+  .amp-bandstrip i:nth-child(6) { background: var(--ga-blue-400); } /* treble */
   .amp-bandstrip i:nth-child(7) { background: #8b5cf6; } /* air */
   .amp-bandstrip i:nth-child(8) { background: #ec4899; } /* presence */
 
@@ -406,7 +406,7 @@
   .amp-band-lomid    { background: #eab308; }
   .amp-band-mid      { background: #22c55e; }
   .amp-band-himid    { background: #14b8a6; }
-  .amp-band-treble   { background: #3b82f6; }
+  .amp-band-treble   { background: var(--ga-blue-400); }
   .amp-band-air      { background: #8b5cf6; }
   .amp-band-presence { background: #ec4899; }
 
@@ -435,7 +435,7 @@
     box-shadow: 0 0 8px #f97316aa;
   }
   .amp-ks-dot.amp-snare.flash {
-    background: #3b82f6;
-    box-shadow: 0 0 8px #3b82f6aa;
+    background: var(--ga-blue-400);
+    box-shadow: 0 0 8px var(--ga-blue-a70);
   }
 </style>

@@ -117,17 +117,17 @@
 
 <style>
   .edge-presets { margin: 4px 8px 8px; font-size: 12px; color: #b9c0cd; }
-  summary { cursor: pointer; width: fit-content; padding: 4px 9px; border: 1px solid #343944; border-radius: 6px; background: #171a20; font-size: 11px; }
-  summary:hover, .edge-presets[open] > summary { color: #e4ecff; background: #192d59; border-color: #4564a1; }
+  summary { cursor: pointer; width: fit-content; padding: 4px 9px; border: 1px solid #343944; border-radius: 6px; background: var(--ga-blue-900); font-size: 11px; }
+  summary:hover, .edge-presets[open] > summary { color: #e4ecff; background: var(--ga-blue-700); border-color: var(--ga-blue-600); }
   .tray { padding: 10px; margin-top: 6px; border: 1px solid #343944; border-radius: 8px; background: #11151d; }
   label { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
   select, input { width: 100%; box-sizing: border-box; min-width: 0; padding: 7px 8px; background: #090c12; color: #e1e6ef; border: 1px solid #343944; border-radius: 5px; font: inherit; }
   .actions, form { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; margin-top: 10px; }
-  button { border: 1px solid #3b4351; border-radius: 5px; padding: 6px 9px; background: #202632; color: #e1e6ef; font: inherit; cursor: pointer; }
-  .primary { background: #1b3569; border-color: #496daf; }
+  button { border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; padding: 6px 9px; background: var(--ga-blue-mute-800); color: #e1e6ef; font: inherit; cursor: pointer; }
+  .primary { background: var(--ga-blue-700); border-color: var(--ga-blue-600); }
   .delete { margin-left: auto; }
   button:disabled { opacity: .4; cursor: default; }
   p { font-size: 11px; line-height: 1.5; margin: 8px 0 0; overflow-wrap: anywhere; }
   .summary { color: #d7dce6; }
-  :is(summary, button, input, select):focus-visible { outline: 2px solid #7397ed; outline-offset: 2px; }
+  :is(summary, button, input, select):focus-visible { outline: 2px solid var(--ga-blue-300); outline-offset: 2px; }
 </style>

@@ -5640,7 +5640,7 @@ void main() {
 
 <style>
   .sv-world-palette { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; color: #adb9ce; font-size: 12px; }
-  .sv-world-palette select { min-width: 0; padding: 6px 9px; border: 1px solid #344568; border-radius: 6px; background: #121c30; color: #e3ecff; font: inherit; }
+  .sv-world-palette select { min-width: 0; padding: 6px 9px; border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; background: var(--ga-blue-mute-800); color: #e3ecff; font: inherit; }
 
   :root {
     /* Use global theme variables for consistent styling */
@@ -7381,12 +7381,12 @@ void main() {
     display: block;
   }
   .sv-edit-item-thumb.shader {
-    background: linear-gradient(135deg, #3a2a4a, #2a2a3a);
+    background: linear-gradient(135deg, #3a2a4a, var(--ga-blue-mute-800));
     color: #a080c0;
   }
   .sv-edit-item-thumb.video {
-    background: linear-gradient(135deg, #2a3a4a, #2a2a3a);
-    color: #80a0c0;
+    background: linear-gradient(135deg, var(--ga-blue-mute-800), var(--ga-blue-mute-800));
+    color: var(--ga-blue-mute-300);
   }
   .sv-edit-item-thumb.image {
     background: linear-gradient(135deg, #3a4a2a, #2a3a2a);
@@ -7544,16 +7544,16 @@ void main() {
     line-height: 1;
   }
   .sv-scope-toggle.global {
-    border-color: rgba(100,200,255,0.4);
-    background: rgba(100,200,255,0.1);
+    border-color: var(--ga-blue-a45);
+    background: var(--ga-blue-a08);
   }
   .sv-preset-scope {
     font-size: 10px;
     font-weight: bold;
-    color: rgba(100,200,255,0.8);
+    color: color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
     margin-right: 3px;
   }
   .global-preset {
-    border-color: rgba(100,200,255,0.3) !important;
+    border-color: var(--ga-blue-a28) !important;
   }
 </style>

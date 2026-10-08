@@ -62,11 +62,11 @@
   button, select { min-height: 28px; border: 1px solid #34383f; border-radius: 5px; background: #121419; color: #dce0e7; font: inherit; padding: 4px 8px; }
   .output-button { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
   .output-button span, .status { color: #969eab; font-size: 11px; }
-  .muted, .active { background: #172a5b; border-color: #3d59b8; }
-  .output-panel { color: #dce0e7; font-size: 12px; position: fixed; margin: 0; inset: auto; overflow-y: auto; width: 280px; max-width: calc(100vw - 16px); padding: 14px; border: 1px solid #343b49; border-radius: 8px; background: #111318; box-shadow: 0 12px 36px #0009; }
+  .muted, .active { background: var(--ga-blue-700); border-color: var(--ga-blue-500); }
+  .output-panel { color: #dce0e7; font-size: 12px; position: fixed; margin: 0; inset: auto; overflow-y: auto; width: 280px; max-width: calc(100vw - 16px); padding: 14px; border: 1px solid var(--ga-blue-mute-600); border-radius: 8px; background: #111318; box-shadow: 0 12px 36px #0009; }
   .panel-heading { display: flex; justify-content: space-between; align-items: center; font-weight: 650; margin-bottom: 12px; }
   label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0; }
-  select, input { width: 100%; accent-color: #3d59b8; }
+  select, input { width: 100%; accent-color: var(--ga-blue-500); }
   p { margin: 10px 0 0; line-height: 1.4; overflow-wrap: anywhere; }
   .error { color: #e6b77a; font-size: 11px; }
 </style>

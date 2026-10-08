@@ -687,7 +687,7 @@
     height: 9px;
     margin-left: -5px;
     margin-top: -5px;
-    background: #00d4ff;
+    background: var(--ga-blue-300);
     border: 1px solid #fff;
     transform: rotate(45deg);
     pointer-events: auto;
@@ -701,7 +701,7 @@
 
   .tangent-handle.unlinked {
     background: transparent;
-    border: 2px solid #00d4ff;
+    border: 2px solid var(--ga-blue-300);
   }
 
   .tangent-handle:hover,
@@ -714,7 +714,7 @@
   }
 
   .tangent-handle.selected {
-    box-shadow: 0 0 8px #00d4ff;
+    box-shadow: 0 0 8px var(--ga-blue-300);
     transform: rotate(45deg) scale(1.3);
   }
 

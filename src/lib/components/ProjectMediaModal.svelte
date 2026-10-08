@@ -76,7 +76,7 @@
   .details { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
   .details span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#9da4b4; }
   small { color:#8ccca4; } .missing,.error { color:#ffad9c; }
-  button { border:1px solid #4c5260; background:#292e38; color:inherit; border-radius:6px; padding:8px 12px; cursor:pointer; }
+  button { border:1px solid #4c5260; background:var(--ga-blue-mute-800); color:inherit; border-radius:6px; padding:8px 12px; cursor:pointer; }
   button:disabled { opacity:.45; cursor:default; } footer { margin-top:18px; flex-wrap:wrap; justify-content:flex-end; }
-  .result { overflow-wrap:anywhere; color:#a5caff; }
+  .result { overflow-wrap:anywhere; color:var(--ga-blue-200); }
 </style>

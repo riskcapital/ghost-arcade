@@ -543,8 +543,8 @@
   .macro-assignment > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 5px; }
   .macro-assignment-range { display: flex; align-items: center; gap: 6px; }
   .macro-assignment-range label { display: flex; align-items: center; gap: 4px; }
-  .macro-assignment-range input { width: 65px; min-width: 0; padding: 4px; border-radius: 5px; background: #11151c; color: #dce6fa; border: 1px solid #344467; }
-  .macro-assignment-range button { border: 1px solid #344467; border-radius: 5px; background: #172747; color: #dce6fa; cursor: pointer; }
+  .macro-assignment-range input { width: 65px; min-width: 0; padding: 4px; border-radius: 5px; background: #11151c; color: #dce6fa; border: 1px solid var(--ga-blue-mute-600); }
+  .macro-assignment-range button { border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; background: var(--ga-blue-800); color: #dce6fa; cursor: pointer; }
 
   .macro-chain-warning {
     font-size: 11px;
@@ -954,9 +954,9 @@
   }
   .native-effect-badge {
     flex: 0 0 auto;
-    border: 1px solid rgba(88, 231, 255, 0.38);
-    background: rgba(88, 231, 255, 0.08);
-    color: #58e7ff;
+    border: 1px solid var(--ga-blue-a45);
+    background: var(--ga-blue-a08);
+    color: var(--ga-blue-300);
     border-radius: 3px;
     padding: 2px 5px;
     font-size: 9px;

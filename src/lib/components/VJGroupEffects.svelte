@@ -66,18 +66,18 @@
   pickerOpen = false;
 }} />
 <style>
-  .fx { margin-top: 8px; border: 1px solid #303c52; border-radius: 6px; padding: 7px; }
+  .fx { margin-top: 8px; border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; padding: 7px; }
   summary { cursor: pointer; font-size: 11px; color: #bccbe4; }
   summary span { font-variant-numeric: tabular-nums; margin-left: 5px; }
   p { font-size: 11px; color: #9ea9ba; margin: 8px 0; }
   .warning { color: #e4ba7b; }
-  .effect { border-top: 1px solid #303c52; padding: 8px 0; }
+  .effect { border-top: 1px solid var(--ga-blue-mute-600); padding: 8px 0; }
   .effect-head { display: flex; gap: 4px; align-items: center; }
   .effect-head strong { flex: 1; min-width: 0; font-size: 11px; }
   .bypassed strong { color: #818a9b; }
-  button, select { color: #d6dfef; background: #182237; border: 1px solid #344158; border-radius: 5px; padding: 3px 6px; font-size: 11px; }
+  button, select { color: #d6dfef; background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; padding: 3px 6px; font-size: 11px; }
   button { cursor: pointer; } button:disabled { opacity: .35; }
-  button.active { background: #203b72; border-color: #486bb0; }
+  button.active { background: var(--ga-blue-700); border-color: var(--ga-blue-600); }
   .parameters { margin-top: 7px; display: block; }
   .parameters :global(.ni) { margin-top: 7px; }
   .choice { display: flex; gap: 8px; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 11px; }

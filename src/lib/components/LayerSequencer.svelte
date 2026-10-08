@@ -429,12 +429,12 @@
   }
   .seq-cont-btn:hover {
     color: var(--text-secondary, #aaa);
-    border-color: rgba(76,209,255,0.4);
+    border-color: var(--ga-blue-a45);
   }
   .seq-cont-btn.active {
-    color: #4cd1ff;
-    border-color: rgba(76,209,255,0.55);
-    background: rgba(76,209,255,0.08);
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-a45);
+    background: var(--ga-blue-a08);
   }
 
   .seq-layer-name {
@@ -448,15 +448,15 @@
      can see at a glance which rows are gating alpha vs. fully gating
      the layer. Keeps the active/current accents distinct. */
   .seq-cell.continuous {
-    border-color: rgba(76,209,255,0.18);
+    border-color: var(--ga-blue-a16);
   }
   .seq-cell.active.continuous {
-    background: #4cd1ff;
-    border-color: rgba(76,209,255,0.55);
-    box-shadow: 0 0 4px rgba(76,209,255,0.25);
+    background: var(--ga-blue-300);
+    border-color: var(--ga-blue-a45);
+    box-shadow: 0 0 4px var(--ga-blue-a28);
   }
   .seq-cell.active.continuous:hover {
-    background: #6fdcff;
+    background: var(--ga-blue-300);
   }
 
   /* ═══════════════════════════════════

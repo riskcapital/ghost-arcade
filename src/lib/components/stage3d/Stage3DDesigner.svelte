@@ -1023,7 +1023,7 @@
   .stage3d-root.external .toast { pointer-events: auto; }
   .reel-host { position: absolute; inset: 0; pointer-events: none; z-index: 25; }
   .reel-host :global(.reel-panel) { pointer-events: auto; }
-  .tbtn.reel-on { background: #3b2a63; border-color: #5b46a3; }
+  .tbtn.reel-on { background: #3b2a63; border-color: var(--ga-blue-600); }
   .viewport-fallback {
     position: absolute;
     inset: 0;
@@ -1056,7 +1056,7 @@
     background: rgba(20, 22, 30, 0.85);
     color: #fff; font-size: 21px; cursor: pointer;
   }
-  .icon-btn:hover { background: rgba(40, 44, 56, 0.95); }
+  .icon-btn:hover { background: var(--ga-blue-mute-800); }
   .seg {
     display: flex; gap: 2px;
     background: rgba(255, 255, 255, 0.04);

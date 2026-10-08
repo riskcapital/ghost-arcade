@@ -521,7 +521,7 @@
   }
   .kf-mark:hover { color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff); font-size: 19px; }
   .kf-mark:active { cursor: grabbing; color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 55%, #ffffff); }
-  .kf-mark.bool { color: #7EC8E3; }
+  .kf-mark.bool { color: var(--ga-blue-200); }
   .kf-mark.selected {
     color: #FFD96B;
     text-shadow: 0 0 6px rgba(255, 217, 107, 0.9);

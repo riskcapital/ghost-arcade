@@ -5216,7 +5216,7 @@
 
   .tab.active {
     color: var(--ga-ink-0, #eef0f4);
-    border-bottom-color: var(--ga-blue, #5b8def);
+    border-bottom-color: var(--ga-blue, #5278ff);
     background: transparent;
   }
 
@@ -5227,7 +5227,7 @@
   .tab-count {
     font-size: 9px;
     background: transparent;
-    color: var(--ga-blue, #5b8def);
+    color: var(--ga-blue, #5278ff);
     padding: 0;
     border-radius: 0;
     line-height: 1.2;
@@ -5240,7 +5240,7 @@
 
   .tab.active .tab-count {
     background: transparent;
-    color: var(--ga-blue, #5b8def);
+    color: var(--ga-blue, #5278ff);
   }
 
   .tab-live {
@@ -5350,7 +5350,7 @@
   .reset-params {
     background: none;
     border: none;
-    color: var(--ga-blue, #5b8def);
+    color: var(--ga-blue, #5278ff);
     font-size: 15px;
     cursor: pointer;
     padding: 0 6px;
@@ -5557,7 +5557,7 @@
   }
   .param-select {
     flex: 1;
-    background-color: #1a1a2e;
+    background-color: var(--ga-blue-mute-800);
     color: var(--text-primary, #ccc);
     border: 1px solid #333;
     border-radius: 3px;
@@ -5570,7 +5570,7 @@
      button so it reads as "do something" rather than "set a value". */
   .param-event-btn {
     flex: 1;
-    background-color: #1a1a2e;
+    background-color: var(--ga-blue-mute-800);
     color: #BB86FC;
     border: 1px solid #BB86FC;
     border-radius: 3px;
@@ -5682,9 +5682,9 @@
   }
 
   .category-toggle.active {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    color: var(--ga-blue, #5b8def);
-    border-left-color: var(--ga-blue, #5b8def);
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    color: var(--ga-blue, #5278ff);
+    border-left-color: var(--ga-blue, #5278ff);
   }
 
   .category-toggle.user-folder {
@@ -5707,7 +5707,7 @@
 
   .category-sep {
     height: 1px;
-    background: #2a2f3b;
+    background: var(--ga-blue-mute-800);
     margin: 4px 8px;
   }
 
@@ -5724,7 +5724,7 @@
   }
 
   .category-toggle.active .category-count {
-    color: var(--ga-blue, #5b8def);
+    color: var(--ga-blue, #5278ff);
   }
 
   .folder-bar {
@@ -5749,14 +5749,14 @@
   }
 
   .folder-chip:hover {
-    border-color: #67E8F9;
+    border-color: var(--ga-blue-300);
     color: #d8f9ff;
   }
 
   .folder-chip.active {
-    border-color: #67E8F9;
-    color: #67E8F9;
-    background: rgba(103, 232, 249, 0.12);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-a16);
   }
 
   .folder-chip.active::after {
@@ -5767,7 +5767,7 @@
     bottom: -6px;
     height: 2px;
     border-radius: 999px;
-    background: #67E8F9;
+    background: var(--ga-blue-300);
     opacity: 0.95;
   }
 
@@ -5786,7 +5786,7 @@
   .folder-open-divider {
     height: 1px;
     margin: 4px 0 8px;
-    background: rgba(103, 232, 249, 0.75);
+    background: color-mix(in srgb, var(--ga-blue-300) 75%, transparent);
   }
 
   .all-clips-label {
@@ -5815,14 +5815,14 @@
   }
 
   .media-item.drag-over-reorder {
-    border-color: #6eb5ff;
-    box-shadow: 0 0 8px rgba(110,181,255,0.4);
+    border-color: var(--ga-blue-300);
+    box-shadow: 0 0 8px var(--ga-blue-a45);
     transform: scale(0.95);
   }
 
   .media-item.item-selected {
-    border-color: var(--ga-blue, #5b8def);
-    box-shadow: 0 0 0 1px var(--ga-blue, #5b8def);
+    border-color: var(--ga-blue, #5278ff);
+    box-shadow: 0 0 0 1px var(--ga-blue, #5278ff);
   }
 
   .media-item img {
@@ -5836,7 +5836,7 @@
     z-index: 9000;
     min-width: 190px;
     background: #14161d;
-    border: 1px solid #2c3240;
+    border: 1px solid var(--ga-blue-mute-800);
     border-radius: 8px;
     padding: 6px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
@@ -5855,7 +5855,7 @@
   }
 
   .ctx-btn:hover {
-    background: rgba(103, 232, 249, 0.12);
+    background: var(--ga-blue-a16);
     color: #e8feff;
   }
 
@@ -5909,7 +5909,7 @@
 
   .ctx-sep {
     height: 1px;
-    background: #2a2f3b;
+    background: var(--ga-blue-mute-800);
     margin: 6px 4px;
   }
 
@@ -6030,7 +6030,7 @@
 
   .user-badge {
     display: inline-block;
-    color: #5db4ff;
+    color: var(--ga-blue-300);
     font-weight: bold;
     margin-right: 3px;
     font-size: 13px;
@@ -6113,9 +6113,9 @@
     width: 20px;
     height: 20px;
     background: rgba(7, 8, 9, 0.75);
-    border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
+    border: 1px solid var(--ga-blue-line, var(--ga-blue-a08));
     border-radius: 50%;
-    color: var(--ga-blue, #5b8def);
+    color: var(--ga-blue, #5278ff);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -6124,16 +6124,16 @@
   }
 
   .edit-btn:hover {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
   }
 
   .loop-btn {
     width: 20px;
     height: 20px;
     background: rgba(7, 8, 9, 0.75);
-    border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
+    border: 1px solid var(--ga-blue-line, var(--ga-blue-a08));
     border-radius: 50%;
-    color: var(--ga-blue, #5b8def);
+    color: var(--ga-blue, #5278ff);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -6142,7 +6142,7 @@
   }
 
   .loop-btn:hover:not(:disabled) {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
   }
 
   .loop-btn:disabled {
@@ -6151,8 +6151,8 @@
   }
 
   .loop-btn.active {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    box-shadow: 0 0 0 1px var(--ga-blue, #5b8def);
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    box-shadow: 0 0 0 1px var(--ga-blue, #5278ff);
   }
 
   :global(.loop-options-popover) {
@@ -6253,7 +6253,7 @@
   }
 
   :global(.loop-create-btn:hover) {
-    background: #5dd3e3;
+    background: var(--ga-blue-300);
   }
 
   /* ==========================================
@@ -6399,13 +6399,13 @@
   }
 
   :global(.timelapse-start) {
-    background: rgba(103, 232, 249, 0.15);
+    background: var(--ga-blue-a16);
     color: #BB86FC;
-    border-color: rgba(103, 232, 249, 0.4);
+    border-color: var(--ga-blue-a45);
   }
 
   :global(.timelapse-start:hover) {
-    background: rgba(103, 232, 249, 0.3);
+    background: var(--ga-blue-a28);
   }
 
   :global(.timelapse-pause) {
@@ -6546,7 +6546,7 @@
     height: 36px;
     padding: 0;
     background: var(--ga-violet, #9b87f5);
-    color: #160f2e;
+    color: var(--ga-blue-800);
     border: none;
     border-radius: var(--ga-r-soft, 7px);
     font-size: 14px;
@@ -6610,18 +6610,18 @@
   }
 
   .ai-generate-btn:hover {
-    background: rgba(155, 135, 245, 0.18);
+    background: var(--ga-blue-a16);
     box-shadow: none;
   }
 
   .ai-video-btn {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    border-color: var(--ga-blue-line, rgba(91, 141, 239, 0.38));
-    color: var(--ga-blue, #5b8def);
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    border-color: var(--ga-blue-line, var(--ga-blue-a08));
+    color: var(--ga-blue, #5278ff);
   }
   .ai-video-btn:hover {
-    background: rgba(91, 141, 239, 0.18);
-    border-color: var(--ga-blue-line, rgba(91, 141, 239, 0.38));
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-line, var(--ga-blue-a08));
     box-shadow: none;
   }
 
@@ -7122,7 +7122,7 @@
   .source-add-btn:hover:not(:disabled) {
     border-color: #BB86FC;
     color: #BB86FC;
-    background: #1a2a2d;
+    background: var(--ga-blue-mute-800);
   }
 
   .source-add-btn:disabled {
@@ -7138,7 +7138,7 @@
   .source-add-btn.spout.active {
     border-color: #a78bfa;
     color: #a78bfa;
-    background: #1e1a2d;
+    background: var(--ga-blue-mute-800);
   }
 
   .source-add-btn.ndi {
@@ -7147,9 +7147,9 @@
 
   .source-add-btn.ndi:hover,
   .source-add-btn.ndi.active {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
-    background: #10242c;
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-mute-800);
   }
 
   .spout-picker {
@@ -7186,13 +7186,13 @@
   .spout-sender-btn:hover {
     border-color: #a78bfa;
     color: #a78bfa;
-    background: #1e1a2d;
+    background: var(--ga-blue-mute-800);
   }
 
   .ndi-picker .ndi-sender-btn:hover {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
-    background: #10242c;
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-mute-800);
   }
 
   .spout-no-senders {
@@ -7419,7 +7419,7 @@
   .source-apply-btn:hover {
     border-color: #BB86FC;
     color: #BB86FC;
-    background: #1a2a2d;
+    background: var(--ga-blue-mute-800);
   }
 
   .source-stop-btn:hover {
@@ -7535,7 +7535,7 @@
 
   .cpm-card:hover {
     border-color: #BB86FC;
-    background: #1f1c2a;
+    background: var(--ga-blue-mute-800);
   }
 
   .cpm-thumb {

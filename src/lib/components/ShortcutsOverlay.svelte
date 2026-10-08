@@ -78,7 +78,7 @@
   .shortcut-overlay {
     position: relative;
     background: #15151a;
-    border: 1px solid rgba(78, 112, 210, 0.5);
+    border: 1px solid color-mix(in srgb, var(--ga-blue-500) 50%, transparent);
     border-radius: 10px;
     padding: 24px 28px;
     max-width: 760px;
@@ -112,7 +112,7 @@
     margin: 0 0 18px;
     font-size: 19px;
     font-weight: 600;
-    color: #b7c9fa;
+    color: var(--ga-blue-200);
   }
   .shortcut-columns {
     display: grid;
@@ -123,7 +123,7 @@
     margin: 0 0 8px;
     font-size: 12px;
     font-weight: 600;
-    color: #b7c9fa;
+    color: var(--ga-blue-200);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }

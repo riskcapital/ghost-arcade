@@ -506,7 +506,7 @@
 </div>
 
 <style>
-  .epr-macro { max-width: 85px; min-width: 0; border: 1px solid #344467; border-radius: 5px; background: #172747; color: #cbd9f5; font-size: 10px; padding: 2px; }
+  .epr-macro { max-width: 85px; min-width: 0; border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; background: var(--ga-blue-800); color: #cbd9f5; font-size: 10px; padding: 2px; }
 
   .expression-error { font-size: 11px; line-height: 1.4; color: #e0b29d; }
   input[aria-invalid="true"] { border-color: #c88d74; }
@@ -594,7 +594,7 @@
     min-width: 44px;
     background: transparent;
     border: 1px dashed transparent;
-    color: #67e8f9;
+    color: var(--ga-blue-300);
     font: inherit;
     font-size: 12px;
     font-weight: 500;
@@ -605,14 +605,14 @@
     text-align: right;
   }
   .epr-value:hover {
-    background: rgba(103, 232, 249, 0.08);
-    border-color: rgba(103, 232, 249, 0.35);
+    background: var(--ga-blue-a08);
+    border-color: var(--ga-blue-a28);
   }
   .epr-edit {
     flex: 0 0 auto;
     width: 56px;
     background: #0f1219;
-    border: 1px solid #67e8f9;
+    border: 1px solid var(--ga-blue-300);
     color: #e0e7ef;
     font: inherit;
     font-size: 12px;
@@ -635,7 +635,7 @@
   }
   .epr-slider {
     width: 100%;
-    accent-color: #67e8f9;
+    accent-color: var(--ga-blue-300);
   }
   .epr.modulated .epr-slider {
     accent-color: #ff00ff;

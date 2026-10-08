@@ -99,9 +99,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #374151;
+    border: 1px solid var(--ga-blue-mute-600);
     border-radius: 2px;
-    background: #111827;
+    background: var(--ga-blue-900);
     color: #6b7280;
     font-size: 10px;
     /* No transition on the active state: a fade would smear the very thing
@@ -117,8 +117,8 @@
   }
 
   .beat.active {
-    background: #22d3ee;
-    border-color: #67e8f9;
+    background: var(--ga-blue-300);
+    border-color: var(--ga-blue-300);
     color: #04140a;
     font-weight: 700;
   }
@@ -143,7 +143,7 @@
   }
 
   .sep {
-    color: #374151;
+    color: var(--ga-blue-mute-600);
   }
 
   .warn b,
