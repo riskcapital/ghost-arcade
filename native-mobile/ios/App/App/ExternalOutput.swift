@@ -13,10 +13,15 @@ final class StudioSceneDelegate: UIResponder, UIWindowSceneDelegate {
             self.window = window
             window.makeKeyAndVisible()
         }
+        // A link that launched the app arrives here, not through openURLContexts.
+        open(connectionOptions.urlContexts)
     }
     func sceneDidBecomeActive(_ scene: UIScene) { StudioExternalOutput.shared.publishConnection() }
-    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-        for context in URLContexts { _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: context.url, options: [:]) }
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) { open(URLContexts) }
+    private func open(_ contexts: Set<UIOpenURLContext>) {
+        for context in contexts where !PairingLinkInbox.receive(context.url) {
+            _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: context.url, options: [:])
+        }
     }
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
         _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, continue: userActivity, restorationHandler: { _ in })
@@ -49,6 +54,7 @@ final class StudioBridgeViewController: CAPBridgeViewController {
     override var shouldAutorotate: Bool { UIDevice.current.userInterfaceIdiom != .pad }
 
     private var outputDelegate: OutputUIDelegate?
+    private var pairingObserver: NSObjectProtocol?
     override func webViewConfiguration(for instanceConfiguration: InstanceConfiguration) -> WKWebViewConfiguration {
         let config = super.webViewConfiguration(for: instanceConfiguration)
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
@@ -63,7 +69,12 @@ final class StudioBridgeViewController: CAPBridgeViewController {
         outputDelegate = delegate
         webView.uiDelegate = delegate
         StudioExternalOutput.shared.attachController(webView)
+        // The event carries no link. The web layer collects it with StudioCapture.takePairingLink, exactly once.
+        pairingObserver = NotificationCenter.default.addObserver(forName: PairingLinkInbox.arrived, object: nil, queue: .main) { [weak self] _ in
+            self?.webView?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('ghost-pairing-link'));", completionHandler: nil)
+        }
     }
+    deinit { if let pairingObserver = pairingObserver { NotificationCenter.default.removeObserver(pairingObserver) } }
 }
 
 // Forward Capacitor's permission dialogs/file pickers rather than replacing their behavior.

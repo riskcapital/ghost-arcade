@@ -11,7 +11,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        if let url=launchOptions?[.url] as? URL, url.scheme == "ghostarcade", url.host == "pair" { StudioCapturePlugin.pendingPairingURL=url.absoluteString }
+        // Scene-based launches deliver links through StudioSceneDelegate; this covers a launch without scenes.
+        if let url = launchOptions?[.url] as? URL { PairingLinkInbox.receive(url) }
         return true
     }
 
@@ -40,7 +41,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
         // Called when the app was launched with a url. Feel free to add additional processing here,
         // but if you want the App API to support tracking app url opens, make sure to keep this call
-        if url.scheme == "ghostarcade" && url.host == "pair" { StudioCapturePlugin.pendingPairingURL=url.absoluteString;return true }
+        if PairingLinkInbox.receive(url) { return true }
         return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
     }
 

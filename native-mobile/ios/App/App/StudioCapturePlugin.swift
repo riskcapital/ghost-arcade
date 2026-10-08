@@ -3,10 +3,35 @@ import ARKit
 import AVFoundation
 import Capacitor
 
+/// A tapped `ghostarcade://pair?...` link waits here until the web layer takes it.
+/// One slot, taken once: the newest link wins and no link is ever delivered twice.
+enum PairingLinkInbox {
+    /// Posted on the main queue when a link arrives, so the web layer can be told to collect it.
+    static let arrived = Notification.Name("GhostPairingLinkArrived")
+    private static let lock = NSLock()
+    private static var pending: String?
+    static func accepts(_ url: URL) -> Bool { url.scheme?.lowercased() == "ghostarcade" && url.host?.lowercased() == "pair" }
+    /// Returns true when the URL was a pairing link (and so must not be forwarded anywhere else).
+    @discardableResult static func receive(_ url: URL) -> Bool {
+        guard accepts(url) else { return false }
+        let link = url.absoluteString
+        guard link.utf8.count <= 4096 else { return true }
+        lock.lock(); pending = link; lock.unlock()
+        // The link carries the pairing code, so only the fact that one arrived is logged.
+        NSLog("[GhostPair] pairing link received")
+        DispatchQueue.main.async { NotificationCenter.default.post(name: arrived, object: nil) }
+        return true
+    }
+    static func take() -> String? { lock.lock(); defer { lock.unlock() }; let link = pending; pending = nil; return link }
+}
+
 @objc(StudioCapturePlugin)
 public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
-    static var pendingPairingURL:String?=nil
-    @objc func takePairingLink(_ call:CAPPluginCall){let url=Self.pendingPairingURL;Self.pendingPairingURL=nil;call.resolve(["url":url ?? ""])}
+    @objc func takePairingLink(_ call: CAPPluginCall) {
+        let link = PairingLinkInbox.take()
+        if link != nil { NSLog("[GhostPair] pairing link handed to the app") }
+        call.resolve(["url": link ?? ""])
+    }
     public let identifier="StudioCapturePlugin"
     public let jsName="StudioCapture"
     public let pluginMethods:[CAPPluginMethod]=[
