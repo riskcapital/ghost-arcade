@@ -20,8 +20,10 @@
 
   export let onmove: (delta: number) => void;
   export let onremove: () => void;
-  /** A one-step change to the effect (emit target, emission, burst). */
+  /** A one-step change to the effect (emit target, emission). */
   export let onpatch: (patch: Partial<InteractiveEffect>) => void;
+  /** Fire a manual burst now. */
+  export let onburst: () => void;
   export let onplacing: () => void;
   /** A slider or Mod control is about to change: remember the scene for undo. */
   export let onstart: () => void;
@@ -87,7 +89,7 @@
         </select>
       </label>
       {#if current.emission === 'burst'}
-        <button class="wide live" onclick={() => onpatch({ burst: current.burst + 1 })}>◉ Trigger burst</button>
+        <button class="wide live" onclick={onburst}>◉ Trigger burst</button>
       {/if}
     {/if}
     {#if positionable}

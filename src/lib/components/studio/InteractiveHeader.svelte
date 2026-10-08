@@ -41,9 +41,18 @@
     >
       {fullScreen ? '↙ Window' : '⛶ Full screen'}
     </button>
-    <button onclick={onclose} aria-label="Return to performance controls">
-      {nativeOutput && outputActive ? 'View output' : 'Back'}
-    </button>
+    {#if handheld}
+      <button class="close-action" onclick={onclose} aria-label="Return to performance controls">Back</button>
+    {:else}
+      <button
+        class="close-action"
+        onclick={onclose}
+        aria-label="Close Interactive Studio"
+        title={outputActive ? 'Close the editor (Esc). The scene keeps playing.' : 'Close the editor (Esc)'}
+      >
+        <Icon name="close" size={14} />Close
+      </button>
+    {/if}
   </div>
 </header>
 {#if showOutputStatus}

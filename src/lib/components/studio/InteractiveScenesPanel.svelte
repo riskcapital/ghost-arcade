@@ -10,6 +10,8 @@
   export let savedScenes: SavedInteractiveScene[] = [];
   /** The scene removed last, offered back with one button. */
   export let removedScene: SavedInteractiveScene | undefined = undefined;
+  /** The phone keeps the working scene as a draft; on desktop it lives in the project. */
+  export let persistDraft = false;
 
   export let onstarter: (id: InteractiveStarter) => void;
   export let onsave: () => void;
@@ -36,7 +38,11 @@
   <button onclick={onsave}><Icon name="save" size={16} />Save current</button>
 </div>
 {#if !savedScenes.length}
-  <p class="hint">Save a scene to keep a version. Your current draft saves automatically on this device.</p>
+  <p class="hint">
+    {persistDraft
+      ? 'Save a scene to keep a version. Your current draft saves automatically on this device.'
+      : 'Save a scene to keep a version on this computer. The current scene is part of your project.'}
+  </p>
 {/if}
 <div class="saved-scenes">
   {#each savedScenes as saved}

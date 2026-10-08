@@ -112,6 +112,39 @@ describe('editor object edits', () => {
     expect(edit.transformSurface(scene, first.id, 0.5).surfaces[0].points).not.toEqual(first.points);
   });
 
+  it('adds each new shape in its own spot', () => {
+    let scene = { ...defaultInteractive(), surfaces: [] as InteractiveScene['surfaces'] };
+    const centres = new Set<string>();
+    for (const kind of ['box', 'box', 'circle', 'triangle', 'box'] as const) {
+      const added = edit.addShape(scene, kind, 16 / 9)!;
+      scene = added.scene;
+      const c = added.surface.points.reduce((v, p) => ({ x: v.x + p.x, y: v.y + p.y }), { x: 0, y: 0 });
+      centres.add(
+        (c.x / added.surface.points.length).toFixed(3) + ',' + (c.y / added.surface.points.length).toFixed(3),
+      );
+    }
+    expect(centres.size).toBe(5);
+  });
+
+  it('returns the same scene when a transform has no room, so nothing is recorded', () => {
+    const scene = defaultInteractive();
+    const id = scene.surfaces[0].id;
+    expect(edit.transformSurface(scene, id, 10)).toBe(scene);
+    expect(edit.transformSurface(scene, 'missing', 1.1)).toBe(scene);
+    expect(edit.transformSurface(scene, id, 1.1)).not.toBe(scene);
+  });
+
+  it('nudges a shape and stops at the canvas edge', () => {
+    const scene = defaultInteractive();
+    const first = scene.surfaces[0];
+    const moved = edit.nudgeSurface(scene, first.id, 0.01, -0.02);
+    expect(moved.surfaces[0].points[0].x).toBeCloseTo(first.points[0].x + 0.01);
+    expect(moved.surfaces[0].points[0].y).toBeCloseTo(first.points[0].y - 0.02);
+    const atEdge = edit.nudgeSurface(scene, first.id, -5, 0);
+    expect(Math.min(...atEdge.surfaces[0].points.map((p) => p.x))).toBe(0);
+    expect(edit.nudgeSurface(atEdge, first.id, -0.01, 0)).toBe(atEdge);
+  });
+
   it('bumps the seed to restart simulations', () => {
     expect(edit.reseed({ ...defaultInteractive(), seed: 999999 }).seed).toBe(0);
     expect(edit.reseed(defaultInteractive()).seed).toBe(1);

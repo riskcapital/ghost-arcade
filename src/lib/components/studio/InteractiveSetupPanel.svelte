@@ -1,6 +1,8 @@
 <script lang="ts">
   /** Setup tab: audio input, scene name, save / export / import and the camera reference. */
   export let nativeOutput = false;
+  /** Phone or tablet: the camera choice is rear / selfie. */
+  export let handheld = false;
   export let audioOn = false;
   export let sceneName = '';
   /** Line under the scene name: where the scene is kept. */
@@ -45,15 +47,15 @@
 </div>
 <label>
   Import scene
-  <input type="file" accept=".json,.ghostinteractive" onchange={onimport} />
+  <input type="file" accept=".json,.ghostinteractive,application/json" onchange={onimport} />
 </label>
 <details>
   <summary>Camera interaction</summary>
   <label>
     Camera
     <select bind:value={facing} disabled={camera || cameraBusy}>
-      <option value="rear">Rear</option>
-      <option value="front">Mirrored selfie</option>
+      <option value="rear">{handheld ? 'Rear' : 'Normal'}</option>
+      <option value="front">{handheld ? 'Mirrored selfie' : 'Mirrored'}</option>
     </select>
   </label>
   <div class="tools">

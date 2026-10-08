@@ -8,6 +8,8 @@
   export let selected = '';
   /** There are corner-mapped layers whose outlines can be copied in. */
   export let canImportMapping = false;
+  /** Every effect slot is in use, so nothing more can be attached. */
+  export let effectsFull = false;
 
   export let onshape: (kind: ShapeKind) => void;
   export let onselect: (id: string) => void;
@@ -23,6 +25,7 @@
   export let onimportmapping: () => void;
 
   const ROTATE_STEP = Math.PI / 12;
+  const sliderKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
 
   $: chosen = surfaces.find((s) => s.id === selected);
   $: full = surfaces.length >= MAX_SURFACES;
@@ -64,19 +67,25 @@
       step=".01"
       value={chosen.height ?? 0.25}
       onpointerdown={onheightstart}
+      onkeydown={(e) => {
+        if (sliderKeys.includes(e.key) && !e.repeat) onheightstart();
+      }}
       oninput={(e) => onheight(+e.currentTarget.value)}
     />
   </label>
   <div class="group-label">Attach an effect</div>
   <div class="tools">
-    <button class="ignite" onclick={() => onattach('fire')}>♨ Ignite</button>
-    <button onclick={() => onattach('smoke')}>Smoke</button>
-    <button onclick={() => onattach('liquid')}>Pour</button>
+    <button class="ignite" disabled={effectsFull} onclick={() => onattach('fire')}>♨ Ignite</button>
+    <button disabled={effectsFull} onclick={() => onattach('smoke')}>Smoke</button>
+    <button disabled={effectsFull} onclick={() => onattach('liquid')}>Pour</button>
   </div>
+  {#if effectsFull}
+    <p class="hint limit">All effect slots are in use. Remove an effect to attach another.</p>
+  {/if}
   <div class="tools">
     <button onclick={() => ontransform(0.9)}>Scale −</button>
     <button onclick={() => ontransform(1.1)}>Scale +</button>
-    <button onclick={() => ontransform(1, ROTATE_STEP)}>Rotate</button>
+    <button onclick={() => ontransform(1, ROTATE_STEP)} title="Rotate 15°">Rotate</button>
   </div>
   <div class="tools">
     <button onclick={onduplicate} disabled={full}>Duplicate</button>

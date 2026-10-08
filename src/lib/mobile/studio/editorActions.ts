@@ -12,7 +12,7 @@ import {
   type EffectKind,
   type InteractiveEffect,
 } from './interactiveEffects';
-import { makeSurface, transformPoints, translatePoints } from './surfaceEditing';
+import { DEFAULT_ASPECT, makeSurface, spawnPoint, transformPoints, translatePoints } from './surfaceEditing';
 
 export const MAX_SURFACES = 32;
 export const MAX_DRAFT_POINTS = 64;
@@ -67,13 +67,14 @@ export function placeEmitter(scene: InteractiveScene, effect: InteractiveEffect,
 
 // ── Objects ────────────────────────────────────────────────────────────────
 
-/** Add a ready-made shape. Returns null when the scene is full. */
+/** Add a ready-made shape in a free spot. Returns null when the scene is full. */
 export function addShape(
   scene: InteractiveScene,
   kind: ShapeKind,
+  aspect = DEFAULT_ASPECT,
 ): { scene: InteractiveScene; surface: InteractiveSurface } | null {
   if (scene.surfaces.length >= MAX_SURFACES) return null;
-  const surface = makeSurface(kind, scene.surfaces.length);
+  const surface = makeSurface(kind, scene.surfaces.length, aspect, spawnPoint(scene.surfaces, aspect));
   return { scene: { ...scene, surfaces: [...scene.surfaces, surface] }, surface };
 }
 
@@ -116,8 +117,27 @@ export function removeSurface(scene: InteractiveScene, id: string): InteractiveS
   };
 }
 
-export function transformSurface(scene: InteractiveScene, id: string, scale: number, angle = 0): InteractiveScene {
-  return mapSurface(scene, id, (s) => ({ ...s, points: transformPoints(s.points, scale, angle) }));
+/** Scale and rotate about the shape's centre. The scene comes back unchanged when there is no room. */
+export function transformSurface(
+  scene: InteractiveScene,
+  id: string,
+  scale: number,
+  angle = 0,
+  aspect = DEFAULT_ASPECT,
+): InteractiveScene {
+  const surface = scene.surfaces.find((s) => s.id === id);
+  if (!surface) return scene;
+  const points = transformPoints(surface.points, scale, angle, aspect);
+  return points === surface.points ? scene : setSurfacePoints(scene, id, points);
+}
+
+/** Move a shape by a normalised offset, stopping at the canvas edge. */
+export function nudgeSurface(scene: InteractiveScene, id: string, dx: number, dy: number): InteractiveScene {
+  const surface = scene.surfaces.find((s) => s.id === id);
+  if (!surface) return scene;
+  const points = translatePoints(surface.points, dx, dy);
+  if (points.every((p, i) => p.x === surface.points[i].x && p.y === surface.points[i].y)) return scene;
+  return setSurfacePoints(scene, id, points);
 }
 
 export function setSurfacePoints(scene: InteractiveScene, id: string, points: Point[]): InteractiveScene {

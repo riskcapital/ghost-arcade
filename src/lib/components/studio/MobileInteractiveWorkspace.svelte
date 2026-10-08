@@ -1,8 +1,11 @@
 <script lang="ts">
+  /** Full-screen dialog around the Interactive Studio editor on the phone and tablet. */
   import { onDestroy } from 'svelte';
   import InteractiveStudio from './InteractiveStudio.svelte';
   import type { Point } from '../../mobile/studio/interactive';
   export let open = false;
+  /** Width ÷ height of the output the scene plays on. Optional: 16:9 when not passed. */
+  export let aspect = 16 / 9;
   export let outputLevel = 1,
     outputHeld = false,
     outputBlackout = false;
@@ -51,6 +54,7 @@
     {onoutputsettings}
     {onoutput}
     {onclose}
+    {aspect}
   />
 </dialog>
 

@@ -1,5 +1,7 @@
 <script lang="ts">
   /** Effects tab, top half: the ordered effect stack and the control that adds to it. */
+  import { tick } from 'svelte';
+  import Icon from './StudioIcon.svelte';
   import {
     EFFECT_KINDS,
     EFFECT_NAMES,
@@ -20,13 +22,51 @@
   /** Move effect `from` to where effect `to` is. */
   export let onreorder: (from: string, to: string) => void;
 
-  let effectToAdd = '';
   let dragEffect = '';
+  let menuOpen = false;
+  let addButton: HTMLButtonElement;
+  let menu: HTMLDivElement | undefined;
 
-  function add() {
-    if (!effectToAdd) return;
-    onadd(effectToAdd as EffectKind);
-    effectToAdd = '';
+  $: full = effects.length >= MAX_INTERACTIVE_EFFECTS;
+  $: if (full) menuOpen = false;
+
+  const items = () => [...(menu?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+
+  async function toggleMenu() {
+    menuOpen = !menuOpen;
+    if (!menuOpen) return;
+    await tick();
+    items()[0]?.focus({ preventScroll: false });
+  }
+  function closeMenu(refocus = true) {
+    if (!menuOpen) return;
+    menuOpen = false;
+    if (refocus) addButton?.focus({ preventScroll: true });
+  }
+  /** One effect per explicit choice: a click, or Enter / Space on the focused item. */
+  function choose(kind: EffectKind) {
+    closeMenu();
+    onadd(kind);
+  }
+  /** Arrow keys move through the list; they never add anything. */
+  function menuKey(e: KeyboardEvent) {
+    const list = items();
+    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    let next = -1;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') next = (at + 1) % list.length;
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') next = (at - 1 + list.length) % list.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = list.length - 1;
+    else if (e.key === 'Escape') closeMenu();
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (next >= 0) list[next]?.focus();
+  }
+  /** A press anywhere else closes the list. */
+  function pressOutside(e: PointerEvent) {
+    const target = e.target as Node;
+    if (menuOpen && !menu?.contains(target) && !addButton?.contains(target)) closeMenu(false);
   }
 
   function drop(e: DragEvent, target: string) {
@@ -37,19 +77,41 @@
   }
 </script>
 
+<svelte:window onpointerdowncapture={pressOutside} />
+
 <div class="panel-heading">
   <strong>Effect stack</strong><span>{effects.length}/{MAX_INTERACTIVE_EFFECTS}</span>
 </div>
-<select
-  aria-label="Add visual effect"
-  bind:value={effectToAdd}
-  onchange={add}
-  disabled={effects.length >= MAX_INTERACTIVE_EFFECTS}
+<div
+  class="add-effect"
+  onfocusout={(e) => {
+    if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) closeMenu(false);
+  }}
 >
-  <option value="">＋ Add visual effect</option>
-  {#each EFFECT_KINDS as kind}<option value={kind}>{EFFECT_NAMES[kind]}</option>{/each}
-</select>
-<p class="hint">Use ↑ ↓ to reorder. The last effect sits on top.</p>
+  <button
+    class="wide add-effect-button"
+    bind:this={addButton}
+    disabled={full}
+    aria-haspopup="menu"
+    aria-expanded={menuOpen}
+    onclick={toggleMenu}
+  >
+    <Icon name="plus" size={16} />Add effect
+  </button>
+  {#if menuOpen}
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <div class="add-effect-menu" role="menu" aria-label="Add effect" bind:this={menu} onkeydown={menuKey}>
+      {#each EFFECT_KINDS as kind}
+        <button role="menuitem" onclick={() => choose(kind)}>{EFFECT_NAMES[kind]}</button>
+      {/each}
+    </div>
+  {/if}
+</div>
+{#if full}
+  <p class="hint limit">All {MAX_INTERACTIVE_EFFECTS} effect slots are in use. Remove one to add another.</p>
+{:else}
+  <p class="hint">Use ↑ ↓ to reorder. The last effect sits on top.</p>
+{/if}
 <div class="effect-list">
   {#each effects as effect, i (effect.id)}
     <div
