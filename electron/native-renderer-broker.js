@@ -661,7 +661,7 @@ class NativeRendererBroker {
     const result = await this.send('start', args, { timeoutMs: startTimeoutMs });
     this.lastStatus = normalizeStatus(result, this.lastStatus);
     try {
-      await this.refreshCapabilities({ requireCore: true });
+      await this.handshakeAfterStart(result);
     } catch (err) {
       this.lastStatus = {
         ...this.lastStatus,
@@ -670,6 +670,41 @@ class NativeRendererBroker {
       };
     }
     return this.lastStatus;
+  }
+
+  /**
+   * The capability handshake that ends start().
+   *
+   * One 5s attempt is enough where the core starts in a second or two. On
+   * Linux the core answers `start` and then goes straight into the driver's
+   * first-run pipeline compiles, so on a cold shader cache (first launch after
+   * install, or a slow or software Vulkan driver) the handshake behind them
+   * can take longer than 5s. A timeout there used to end start() with
+   * backend_ready=false, and the editor's sync starts once and does not try
+   * again: the broker completed the handshake seconds later on a status poll,
+   * but nothing was ever sent to the core, so every layer stayed black until
+   * the app was restarted. Seen on the packaged AppImage's first launch on
+   * ubuntu-latest: handshake confirmed after 10.8s, composite black.
+   *
+   * So while the core process is alive and only slow, keep asking, for as long
+   * as start() itself is allowed. A core that has exited, or any failure that
+   * is not a timeout, still fails at once. Other platforms are unchanged.
+   */
+  async handshakeAfterStart(startResult) {
+    const patienceMs = this.platform === 'linux' ? 180000 : 0;
+    const deadline = Date.now() + patienceMs;
+    for (;;) {
+      try {
+        return await this.refreshCapabilities({ requireCore: true });
+      } catch (err) {
+        const slow = /timed out/i.test(err?.message || String(err));
+        const alive = !!(this.child && !this.child.killed);
+        if (!slow || !alive || Date.now() >= deadline) throw err;
+        // The failed attempt marked the backend not ready; the core said
+        // otherwise a moment ago and has not gone away.
+        this.lastStatus = normalizeStatus(startResult, this.lastStatus);
+      }
+    }
   }
 
   async uploadSourceGpuSharedTexture(args = {}) {
