@@ -89,7 +89,10 @@ export function clipUnavailable(clip: Clip | undefined): boolean {
 export function gridPoints(x = 0.08, y = 0.08, w = 0.84, h = 0.84): Point[] {
   return Array.from({ length: 9 }, (_, i) => ({ x: x + ((i % 3) * w) / 2, y: y + (Math.floor(i / 3) * h) / 2 }));
 }
-export function newSurface(index: number): Surface {
+/** The whole output frame: where a set's first surface starts, so turning mapping on changes nothing. */
+export const fullFramePoints = (): Point[] => gridPoints(0, 0, 1, 1);
+const sameGrid = (a: Point[], b: Point[]) => a.length === b.length && a.every((p, i) => Math.abs(p.x - b[i].x) < 1e-6 && Math.abs(p.y - b[i].y) < 1e-6);
+export function newSurface(index: number, fullFrame = false): Surface {
   return {
     id: uid(),
     name: `Surface ${index + 1}`,
@@ -99,7 +102,7 @@ export function newSurface(index: number): Surface {
     fit: 'stretch',
     feather: 0,
     mode: 'corners',
-    points: gridPoints(),
+    points: fullFrame ? fullFramePoints() : gridPoints(),
   };
 }
 /** Blend mode a new set gives each row: Screen above an opaque bottom row (L4 / B4). */
@@ -136,7 +139,7 @@ export function defaultShow(): Show {
       params: {},
       effects: [],
     })),
-    surfaces: [newSurface(0)],
+    surfaces: [newSurface(0, true)],
     scenes: [],
     effects: [],
     bpm: 120,
@@ -194,7 +197,7 @@ export function normalizeShow(raw: unknown): Show {
         effects: normalizeEffects(l.effects),
       } as Layer;
     });
-  return {
+  const next: Show = {
     ...base,
     id: typeof r.id === 'string' ? r.id : base.id,
     name: String(r.name || base.name).slice(0, 100),
@@ -251,6 +254,12 @@ export function normalizeShow(raw: unknown): Show {
     mapping: !!r.mapping,
     paint: normalizePaint(r.paint),
   };
+  // Sets made before mapping became opt-in hold one untouched surface inset by 8%. While mapping is
+  // still off that inset was never on screen, so start it full-frame: switching mapping on then
+  // leaves the picture alone. A set with mapping already on is the performer's and stays as saved.
+  if (!next.mapping && next.surfaces.length === 1 && sameGrid(next.surfaces[0].points, gridPoints()))
+    next.surfaces[0] = { ...next.surfaces[0], points: fullFramePoints() };
+  return next;
 }
 export const STORAGE_KEY = 'ga-mobile-studio-v1';
 export function loadShow(): Show {

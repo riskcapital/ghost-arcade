@@ -149,6 +149,7 @@
     clipUnavailable,
     newSurface,
     gridPoints,
+    fullFramePoints,
     movePoint,
     copy,
     uid,
@@ -449,12 +450,9 @@
     if(next==='fx'){openControls(selectedLayer);return;}
     clipControlsOpen=false;
     mixerOpen=false;
+    // Looking at Map never changes the output. Mapping starts from the toggle, a new surface,
+    // Paint, or the first corner the performer moves.
     tab = next;
-    if (next === 'map' && !show.mapping) {
-      checkpoint();
-      show.mapping = true;
-      persist();
-    }
   }
   function addSurface(preset = 'single') {
     checkpoint();
@@ -464,7 +462,7 @@
         flash('A set supports up to 16 surfaces.');
         return;
       }
-      show.surfaces = [...show.surfaces, newSurface(show.surfaces.length)];
+      show.surfaces = [...show.surfaces, newSurface(show.surfaces.length, !show.surfaces.length)];
       selectedSurface = show.surfaces.length - 1;
     } else if(preset==='paint-box'){
       const corners=[
@@ -499,6 +497,7 @@
     e.preventDefault();
     checkpoint();
     selectedPoint = index;
+    show.mapping = true;
     drag = { id: e.pointerId, surface: selectedSurface, point: index };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
@@ -518,6 +517,7 @@
   function nudge(dx: number, dy: number) {
     if (!surface || surface.locked) return;
     checkpoint();
+    show.mapping = true;
     const p = surface.points[selectedPoint];
     show.surfaces[selectedSurface] = movePoint(surface, selectedPoint, { x: p.x + dx, y: p.y + dy });
     persist();
@@ -1009,7 +1009,7 @@
       </div>
       <div class="monitor-tools">
         {#if interactiveLive}<button onclick={openInteractive}>Interactive</button><button onclick={()=>interactiveWorkspace?.restoreMix()}>Return to mix</button>{/if}
-        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():'Drag points to fit your surface' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':'LIVE COMPOSITION'}</span><button
+        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':'LIVE COMPOSITION'}</span><button
           class:active={frozen}
           onclick={setFrozen}
           aria-pressed={frozen}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume' : 'Hold'}</button
@@ -1188,9 +1188,11 @@
             <button class:active={mappingTool==='paint'} onclick={paintMode}><Icon name="paint" size={17}/>Paint</button>
           </div>
           {#if mappingTool==='paint'}<PaintPanel onselect={index=>selectedSurface=index} value={paint} surfaces={show.surfaces} selected={selectedSurface} onchange={patchPaint} onundo={()=>{checkpoint();patchPaint({strokes:paint.strokes.slice(0,-1)});}} onclear={()=>{checkpoint();patchPaint({strokes:[],loop:false});}}/>{/if}
+          {#if !show.mapping}<p class="hint mapping-off-hint" role="status">Mapping is off, so your output is unchanged. Turn it on here, or move a corner to start.</p>{/if}
           <div class="mapping-toolbar">
             <button
               class:active={show.mapping}
+              aria-pressed={show.mapping}
               onclick={() => {
                 checkpoint();
                 show.mapping = !show.mapping;
@@ -1326,7 +1328,7 @@
                   disabled={surface.locked}
                   onclick={() => {
                     checkpoint();
-                    patchSurface({ points: gridPoints() });
+                    patchSurface({ points: fullFramePoints() });
                   }}>Reset geometry</button
                 ><button
                   onclick={() => {

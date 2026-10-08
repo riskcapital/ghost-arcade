@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { MOBILE_SHADERS } from '../standaloneShaderList';
 import { standaloneShaderPaths } from './shaderAvailability';
-import { loadShow, STORAGE_KEY, defaultShow, normalizeShow, newSurface, movePoint, History, nextBeat, layerGain, mappingRows } from './model';
+import { loadShow, STORAGE_KEY, defaultShow, normalizeShow, newSurface, gridPoints, fullFramePoints, movePoint, History, nextBeat, layerGain, mappingRows } from './model';
 import { quadPoint, surfaceVertices } from './compositor';
 describe('standalone mobile show', () => {
   it('starts with a single deck and crossfades only when dual decks are enabled', () => {
@@ -169,4 +169,27 @@ it('gives a new set blend modes that keep every launched row visible, and leaves
   const legacy = JSON.parse(JSON.stringify(saved));
   delete legacy.layers[0].blend;
   expect(normalizeShow(legacy).layers[0].blend).toBe('normal');
+});
+
+it('starts mapping off with a full-frame first surface so opening Map cannot shrink the picture', () => {
+  const fresh = defaultShow();
+  expect(fresh.mapping).toBe(false);
+  expect(fresh.surfaces).toHaveLength(1);
+  expect(fresh.surfaces[0].points[0]).toEqual({ x: 0, y: 0 });
+  expect(fresh.surfaces[0].points[8]).toEqual({ x: 1, y: 1 });
+  expect(newSurface(0, true).points).toEqual(fullFramePoints());
+  // Later surfaces start inset so their corners can be told apart and grabbed.
+  expect(newSurface(1).points[0]).toEqual({ x: 0.08, y: 0.08 });
+});
+it('re-frames an untouched inset surface only while mapping is still off', () => {
+  const never = defaultShow();
+  never.surfaces[0].points = gridPoints();
+  expect(normalizeShow(JSON.parse(JSON.stringify(never))).surfaces[0].points).toEqual(fullFramePoints());
+  const live = defaultShow();
+  live.mapping = true;
+  live.surfaces[0].points = gridPoints();
+  expect(normalizeShow(JSON.parse(JSON.stringify(live))).surfaces[0].points).toEqual(gridPoints());
+  const edited = defaultShow();
+  edited.surfaces[0].points = gridPoints(0.1, 0.08, 0.8, 0.84);
+  expect(normalizeShow(JSON.parse(JSON.stringify(edited))).surfaces[0].points[0]).toEqual({ x: 0.1, y: 0.08 });
 });
