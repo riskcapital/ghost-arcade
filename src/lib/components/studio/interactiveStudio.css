@@ -927,8 +927,31 @@
   position: relative;
   inset: auto !important;
   flex: none;
-  height: clamp(170px, 30dvh, 280px);
+  height: clamp(170px, 26dvh, 280px);
   min-height: 0;
+}
+
+/* A short desktop window (720 px tall and thereabouts): tighten the chrome so
+   the preview keeps a usable size, also with the timeline open. */
+@media (max-height: 800px) {
+  .interactive-workspace.native-editor > header {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .interactive-workspace.native-editor > header small {
+    display: none;
+  }
+  .interactive-workspace.native-editor .work {
+    padding-top: 8px;
+    padding-bottom: 2px;
+  }
+  .interactive-workspace.native-editor .canvas-toolbar {
+    padding-bottom: 6px;
+  }
+  .interactive-workspace.native-editor .canvas-footer {
+    min-height: 44px;
+    padding: 5px 0;
+  }
 }
 
 /* ── Desktop dialog ──────────────────────────────────────────────────────── */
