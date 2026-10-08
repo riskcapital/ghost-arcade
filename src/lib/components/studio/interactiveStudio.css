@@ -1,0 +1,899 @@
+/*
+ * Interactive Studio editor styles.
+ *
+ * One stylesheet for the editor and all of its Interactive* components
+ * (imported by InteractiveStudio.svelte). Everything is scoped under
+ * `.interactive-workspace`, the editor's root element.
+ *
+ * Root modifiers:
+ *   .native-editor      desktop, previewing native frames
+ *   .handheld           phone / tablet layout (44 px touch targets)
+ *   .studio-fullscreen  editor fills the window
+ *   .clean-preview      only the output preview is shown
+ *
+ * Generic rules (button, label, .active, …) end with
+ *   :not(:where(.param *, .mt *, .kf-tray *))
+ * so they style the editor's own controls only. Parameter rows
+ * (InteractiveParam), the Mod tray and the embedded keyframe timeline live
+ * inside the editor but bring their own styles. `:where()` keeps the guard
+ * from adding specificity.
+ */
+.interactive-workspace .workspace-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #0c111a;
+  border-bottom: 1px solid #303945;
+}
+.interactive-workspace .workspace-status > span {
+  font-size: 11px;
+  font-weight: 650;
+}
+.interactive-workspace .workspace-status small {
+  display: block;
+  letter-spacing: 0;
+  font-size: 10px;
+  margin-top: 2px;
+  color: #aebbc9;
+}
+.interactive-workspace .workspace-status .live {
+  background: none !important;
+  border: 0 !important;
+}
+.interactive-workspace .workspace-status button,
+.interactive-workspace .saved-heading button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.interactive-workspace .starter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.interactive-workspace .starter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: 7px;
+  padding: 13px !important;
+  border-top: 2px solid var(--starter-color) !important;
+  min-width: 0;
+}
+.interactive-workspace .starter svg {
+  color: var(--starter-color);
+}
+.interactive-workspace .starter strong {
+  font-size: 13px;
+}
+.interactive-workspace .starter span {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #adbac9;
+}
+.interactive-workspace .saved-heading {
+  margin-top: 22px;
+}
+.interactive-workspace .saved-scenes {
+  display: grid;
+  gap: 6px;
+}
+.interactive-workspace .saved-scenes button {
+  display: grid;
+  text-align: left;
+  gap: 4px;
+}
+.interactive-workspace .saved-scenes small {
+  letter-spacing: 0;
+}
+.interactive-workspace .disclosure:not(:where(.param *, .mt *, .kf-tray *)) {
+  display: flex;
+  justify-content: space-between;
+}
+.interactive-workspace .draft-status {
+  font-size: 11px;
+  color: #9fc9b1;
+}
+.interactive-workspace .transport button:not(:where(.param *, .mt *, .kf-tray *)) {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+}
+.interactive-workspace.native-editor {
+  display: flex;
+  flex-direction: column;
+  height: calc(94dvh - 70px);
+  min-height: 480px;
+}
+.interactive-workspace.native-editor .layout {
+  flex: 1;
+  min-height: 0;
+}
+.interactive-workspace.native-editor .work,
+.interactive-workspace.native-editor aside:not(:where(.param *, .mt *, .kf-tray *)) {
+  max-height: none;
+  min-height: 0;
+}
+.interactive-workspace.native-editor .viewport {
+  container-type: size;
+}
+.interactive-workspace.native-editor .stage {
+  width: min(100%, calc(100cqh * 16 / 9));
+  max-height: none;
+}
+.interactive-workspace .stage canvas.native-reference {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.interactive-workspace .stage canvas.camera-overlay {
+  mix-blend-mode: screen;
+}
+.interactive-workspace .preview-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: #acbacb;
+  font-size: 12px;
+}
+.interactive-workspace {
+  --accent: var(--ga-selection-line, #7592ee);
+  background: var(--ga-inspector-bg, var(--ga-card, #15171b));
+  color: var(--ga-ink-0, #e4e8ee);
+  font: 12px/1.5 system-ui;
+  padding: 0;
+  min-width: 0;
+}
+.interactive-workspace.studio-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+.interactive-workspace.studio-fullscreen > header {
+  padding-top: 28px;
+}
+.interactive-workspace.studio-fullscreen .layout {
+  flex: 1;
+  min-height: 0;
+}
+.interactive-workspace.studio-fullscreen .work,
+.interactive-workspace.studio-fullscreen aside:not(:where(.param *, .mt *, .kf-tray *)) {
+  max-height: none;
+}
+.interactive-workspace > header {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ga-line-2, #34383f);
+}
+.interactive-workspace h2:not(:where(.param *, .mt *, .kf-tray *)) {
+  font-size: 18px;
+  font-weight: 650;
+  margin: 2px 0;
+}
+.interactive-workspace .engine-badge {
+  font-size: 9px;
+  color: #a0bce8;
+  font-weight: 500;
+  border: 1px solid #45516b;
+  padding: 3px 5px;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.interactive-workspace small:not(:where(.param *, .mt *, .kf-tray *)) {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ga-ink-2, #99a7b9);
+}
+.interactive-workspace .header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.interactive-workspace .layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  min-height: 580px;
+}
+.interactive-workspace .work {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 12px;
+  background: var(--ga-canvas-bg, #070a10);
+}
+.interactive-workspace aside:not(:where(.param *, .mt *, .kf-tray *)) {
+  border-left: 1px solid var(--ga-line-2, #34383f);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.interactive-workspace .work,
+.interactive-workspace aside:not(:where(.param *, .mt *, .kf-tray *)) {
+  max-height: calc(92dvh - 148px);
+}
+.interactive-workspace .inspector-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 10px;
+  border-bottom: 1px solid var(--ga-line-2, #34383f);
+}
+.interactive-workspace .inspector-body {
+  padding: 12px;
+  overflow: auto;
+  min-height: 0;
+  scrollbar-gutter: stable;
+}
+.interactive-workspace .canvas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+.interactive-workspace .segmented,
+.interactive-workspace .transport:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace .tools:not(:where(.param *, .mt *, .kf-tray *)) {
+  display: flex;
+  gap: 5px;
+}
+.interactive-workspace .tools:not(:where(.param *, .mt *, .kf-tray *)) {
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.interactive-workspace .tools > *:not(:where(.param *, .mt *, .kf-tray *)) {
+  flex: 1;
+}
+.interactive-workspace .viewport {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.interactive-workspace .stage {
+  width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16/9;
+  position: relative;
+  touch-action: none;
+  background: #03060c;
+  overflow: hidden;
+  border: 1px solid #303945;
+}
+.interactive-workspace .stage canvas,
+.interactive-workspace .stage svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.interactive-workspace .stage svg .emitter circle {
+  fill: none;
+  stroke: #a6e9ef;
+  stroke-width: 2;
+}
+.interactive-workspace .emitter text {
+  fill: #a6e9ef;
+  font: 10px system-ui;
+  letter-spacing: 1px;
+}
+.interactive-workspace .stage polygon {
+  fill: #69b7ff05;
+  stroke: #7aa1bf;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.interactive-workspace .stage polygon.selected {
+  stroke: #ffb160;
+  stroke-width: 2;
+}
+.interactive-workspace .stage circle {
+  fill: #ffb160;
+  stroke: white;
+  stroke-width: 1.5;
+}
+.interactive-workspace .stage polyline {
+  stroke: #ffb160;
+  fill: none;
+  stroke-width: 2;
+}
+.interactive-workspace .canvas-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  color: var(--ga-ink-2, #8998ad);
+  font-size: 10px;
+}
+.interactive-workspace .canvas-footer span:last-child {
+  text-align: right;
+}
+.interactive-workspace .panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 10px;
+}
+.interactive-workspace .panel-heading strong {
+  font-size: 12px;
+}
+.interactive-workspace .panel-heading > span,
+.interactive-workspace .order:not(:where(.param *, .mt *, .kf-tray *)) {
+  font:
+    10px ui-monospace,
+    monospace;
+  color: #8290a5;
+}
+.interactive-workspace .effect-list {
+  display: grid;
+  gap: 5px;
+}
+.interactive-workspace .effect-card {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--ga-line-2, #34383f);
+  border-radius: 4px;
+  padding: 3px 8px;
+  background: var(--ga-slot, #121720);
+}
+.interactive-workspace .effect-card.active {
+  border-color: var(--accent);
+  background: var(--ga-selection-bg, #25314b);
+}
+.interactive-workspace .effect-title {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0 !important;
+  background: none !important;
+  padding: 5px !important;
+  box-shadow: none !important;
+  display: grid;
+}
+.interactive-workspace .effect-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.interactive-workspace .effect-title small {
+  font-size: 9px;
+  letter-spacing: 0;
+}
+.interactive-workspace .grip:not(:where(.param *, .mt *, .kf-tray *)) {
+  font-size: 17px;
+  color: #687587;
+  cursor: grab;
+}
+.interactive-workspace .effect-detail {
+  border-top: 1px solid var(--ga-line-2, #34383f);
+  margin-top: 15px;
+  padding-top: 14px;
+}
+.interactive-workspace .mini-tools {
+  display: flex;
+  gap: 4px;
+}
+.interactive-workspace .mini-tools button {
+  min-height: 26px;
+  padding: 2px 8px;
+}
+.interactive-workspace .group-label {
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #8da4c6;
+  margin: 18px 0 8px;
+  border-bottom: 1px solid var(--ga-line-2, #34383f);
+  padding-bottom: 6px;
+}
+.interactive-workspace .surface-list {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+.interactive-workspace .surface-list button {
+  display: flex;
+  justify-content: space-between;
+  text-align: left;
+  gap: 8px;
+}
+.interactive-workspace .surface-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.interactive-workspace .surface-list small {
+  letter-spacing: 0;
+}
+.interactive-workspace .wide:not(:where(.param *, .mt *, .kf-tray *)) {
+  width: 100%;
+  margin: 5px 0;
+}
+.interactive-workspace .danger:not(:where(.param *, .mt *, .kf-tray *)) {
+  color: #ffa69b;
+}
+.interactive-workspace .ignite:not(:where(.param *, .mt *, .kf-tray *)) {
+  color: #ffae70;
+}
+.interactive-workspace .live:not(:where(.param *, .mt *, .kf-tray *)) {
+  color: #b6f7bd !important;
+  border-color: #518657 !important;
+  background: #193326 !important;
+}
+.interactive-workspace .active:not(:where(.param *, .mt *, .kf-tray *)) {
+  background: var(--ga-selection-bg, #27354d);
+  border-color: var(--accent);
+}
+.interactive-workspace button:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace input:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace select:not(:where(.param *, .mt *, .kf-tray *)) {
+  font: inherit;
+  box-sizing: border-box;
+  color: inherit;
+  max-width: 100%;
+}
+.interactive-workspace button:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace select:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace input:not([type='range']):not([type='checkbox']):not(:where(.param *, .mt *, .kf-tray *)) {
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--ga-line-3, #404955);
+  background: var(--ga-hardware-bg, var(--ga-slot, #1b2029));
+  border-radius: var(--ga-r-hard, 4px);
+}
+.interactive-workspace button:not(:where(.param *, .mt *, .kf-tray *)) {
+  touch-action: manipulation;
+  cursor: pointer;
+}
+.interactive-workspace button:disabled:not(:where(.param *, .mt *, .kf-tray *)) {
+  opacity: 0.4;
+  cursor: default;
+}
+.interactive-workspace button:focus-visible:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace input:focus-visible:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace select:focus-visible:not(:where(.param *, .mt *, .kf-tray *)) {
+  outline: 2px solid #8abaff;
+  outline-offset: 2px;
+}
+.interactive-workspace label:not(:where(.param *, .mt *, .kf-tray *)) {
+  display: block;
+  font-size: 11px;
+  margin: 12px 0;
+}
+.interactive-workspace label > input:not([type='checkbox']):not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace select:not(:where(.param *, .mt *, .kf-tray *)) {
+  width: 100%;
+  display: block;
+  margin-top: 4px;
+}
+.interactive-workspace input[type='range']:not(:where(.param *, .mt *, .kf-tray *)) {
+  height: 36px;
+  accent-color: var(--accent);
+  touch-action: none;
+}
+.interactive-workspace input[type='checkbox']:not(:where(.param *, .mt *, .kf-tray *)) {
+  accent-color: var(--accent);
+}
+.interactive-workspace output:not(:where(.param *, .mt *, .kf-tray *)) {
+  float: right;
+}
+.interactive-workspace .hint:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace .empty:not(:where(.param *, .mt *, .kf-tray *)) {
+  font-size: 10px;
+  color: var(--ga-ink-2, #99a7ba);
+}
+.interactive-workspace p[role='status']:not(:where(.param *, .mt *, .kf-tray *)) {
+  font-size: 11px;
+  color: #9bc7fa;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.interactive-workspace .camera-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.interactive-workspace summary:not(:where(.param *, .mt *, .kf-tray *)) {
+  cursor: pointer;
+  padding: 12px 0;
+}
+.interactive-workspace .check:not(:where(.param *, .mt *, .kf-tray *)) {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+@media (max-width: 850px) {
+  .interactive-workspace > header {
+    padding: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .interactive-workspace .header-actions {
+    flex: 1;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .interactive-workspace h2:not(:where(.param *, .mt *, .kf-tray *)) {
+    font-size: 16px;
+  }
+  .interactive-workspace .layout {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .interactive-workspace.studio-fullscreen {
+    overflow: auto;
+    display: block;
+  }
+  .interactive-workspace .work,
+  .interactive-workspace aside:not(:where(.param *, .mt *, .kf-tray *)) {
+    max-height: none;
+  }
+  .interactive-workspace .viewport {
+    min-height: 190px;
+    flex: none;
+  }
+  .interactive-workspace .inspector-body {
+    max-height: none;
+    overflow: visible;
+  }
+  .interactive-workspace aside:not(:where(.param *, .mt *, .kf-tray *)) {
+    border-left: 0;
+    border-top: 1px solid #34383f;
+  }
+  .interactive-workspace .inspector-tabs {
+    position: sticky;
+    top: 0;
+    background: var(--ga-card, #15171b);
+    z-index: 2;
+  }
+  .interactive-workspace .canvas-toolbar {
+    flex-wrap: wrap;
+  }
+  .interactive-workspace .canvas-footer {
+    flex-wrap: wrap;
+  }
+  .interactive-workspace .canvas-footer span:last-child {
+    text-align: left;
+  }
+  .interactive-workspace .stage {
+    aspect-ratio: 16/9;
+    max-height: none;
+  }
+  .interactive-workspace .work {
+    padding: 8px;
+  }
+  .interactive-workspace .engine-badge {
+    display: none;
+  }
+}
+@media (pointer: coarse) {
+  .interactive-workspace button:not(:where(.param *, .mt *, .kf-tray *)),
+  .interactive-workspace select:not(:where(.param *, .mt *, .kf-tray *)) {
+    min-height: 44px;
+  }
+  .interactive-workspace .effect-card {
+    min-height: 48px;
+  }
+  .interactive-workspace input[type='range']:not(:where(.param *, .mt *, .kf-tray *)) {
+    height: 44px;
+  }
+}
+.interactive-workspace.handheld {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.interactive-workspace.handheld > header {
+  padding: 10px 12px;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.interactive-workspace.handheld > header small {
+  display: none;
+}
+.interactive-workspace.handheld h2:not(:where(.param *, .mt *, .kf-tray *)) {
+  font-size: 15px;
+}
+.interactive-workspace.handheld .engine-badge,
+.interactive-workspace.handheld .fullscreen-action {
+  display: none;
+}
+.interactive-workspace.handheld .header-actions {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.interactive-workspace.handheld .header-actions button {
+  font-size: 11px;
+  padding: 6px 9px;
+}
+.interactive-workspace.handheld .layout {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) 330px;
+}
+.interactive-workspace.handheld .work,
+.interactive-workspace.handheld aside:not(:where(.param *, .mt *, .kf-tray *)) {
+  max-height: none;
+  min-height: 0;
+}
+.interactive-workspace.handheld .inspector-body {
+  overflow: auto;
+  overscroll-behavior: contain;
+  max-height: none;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
+  scrollbar-gutter: auto;
+}
+.interactive-workspace.handheld button:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace.handheld select:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace.handheld .mini-tools button {
+  min-height: 44px;
+}
+.interactive-workspace.handheld .mini-tools button {
+  min-width: 44px;
+}
+.interactive-workspace.handheld .effect-card input {
+  width: 24px;
+  height: 44px;
+  margin: 0;
+}
+.interactive-workspace.handheld label > input:not([type='checkbox']):not(:where(.param *, .mt *, .kf-tray *)) {
+  min-height: 44px;
+}
+.interactive-workspace.handheld .canvas-footer span:last-child {
+  display: none;
+}
+.interactive-workspace.handheld .canvas-footer {
+  min-height: 28px;
+  padding: 7px 0;
+  font-size: 11px;
+}
+.interactive-workspace.handheld .inspector-tabs {
+  position: static;
+  padding: 8px;
+}
+.interactive-workspace.handheld .grip:not(:where(.param *, .mt *, .kf-tray *)) {
+  display: none;
+}
+.interactive-workspace.handheld .effect-title {
+  min-height: 44px;
+}
+.interactive-workspace.handheld .effect-title small {
+  font-size: 11px;
+}
+.interactive-workspace.handheld .hint:not(:where(.param *, .mt *, .kf-tray *)) {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.interactive-workspace.handheld .group-label {
+  font-size: 10px;
+}
+.interactive-workspace.handheld .canvas-toolbar {
+  flex-wrap: nowrap;
+}
+.interactive-workspace.handheld .transport:not(:where(.param *, .mt *, .kf-tray *)) {
+  gap: 4px;
+}
+.interactive-workspace.handheld .transport button:not(:where(.param *, .mt *, .kf-tray *)) {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+}
+.interactive-workspace.handheld .segmented {
+  flex: 1;
+  gap: 4px;
+}
+.interactive-workspace.handheld .segmented button {
+  flex: 1;
+  padding: 4px;
+  font-size: 11px;
+}
+.interactive-workspace.handheld .viewport {
+  flex: 1;
+  min-height: 0;
+}
+.interactive-workspace.handheld p[role='status']:empty:not(:where(.param *, .mt *, .kf-tray *)) {
+  display: none;
+}
+.interactive-workspace.handheld p[role='status']:not(:where(.param *, .mt *, .kf-tray *)) {
+  font-size: 10px;
+  max-height: 30px;
+  overflow: auto;
+}
+@media (max-width: 680px) and (min-height: 501px) {
+  .interactive-workspace.handheld .layout {
+    display: flex;
+    flex-direction: column;
+  }
+  .interactive-workspace.handheld .work {
+    flex: none;
+    padding: 8px 10px 0;
+  }
+  .interactive-workspace.handheld .viewport {
+    flex: none;
+    min-height: 0;
+  }
+  .interactive-workspace.handheld .stage {
+    width: min(100%, calc(25dvh * 16 / 9));
+    max-height: 25dvh;
+  }
+  .interactive-workspace.handheld aside:not(:where(.param *, .mt *, .kf-tray *)) {
+    flex: 1;
+    overflow: hidden;
+    border-left: 0;
+    border-top: 1px solid #303945;
+  }
+  .interactive-workspace.handheld .inspector-body {
+    flex: 1;
+  }
+  .interactive-workspace.handheld .canvas-toolbar {
+    padding-bottom: 6px;
+  }
+  .interactive-workspace.handheld .canvas-footer {
+    min-height: 20px;
+    padding: 4px 0;
+  }
+  .interactive-workspace.handheld .inspector-tabs {
+    padding: 5px 8px;
+  }
+  .interactive-workspace.handheld .workspace-status {
+    padding: 4px 12px;
+  }
+  .interactive-workspace.handheld .panel-heading {
+    margin-top: 0;
+  }
+}
+@media (max-height: 500px) {
+  .interactive-workspace.handheld .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+  .interactive-workspace.handheld > header {
+    padding: 4px 12px;
+  }
+  .interactive-workspace.handheld .workspace-status {
+    display: none;
+  }
+  .interactive-workspace.handheld .work {
+    padding: 8px;
+  }
+  .interactive-workspace.handheld .viewport {
+    min-height: 0;
+    container-type: size;
+  }
+  .interactive-workspace.handheld .stage {
+    width: min(100%, calc(100cqh * 16 / 9));
+    max-height: 100%;
+  }
+  .interactive-workspace.handheld .canvas-footer {
+    display: none;
+  }
+  .interactive-workspace.handheld aside:not(:where(.param *, .mt *, .kf-tray *)) {
+    border-top: 0;
+    border-left: 1px solid #303945;
+  }
+}
+.interactive-workspace .program-preview {
+  visibility: hidden;
+}
+.interactive-workspace.clean-preview .stage .program-preview {
+  visibility: visible;
+  z-index: 3;
+}
+.interactive-workspace.clean-preview > header,
+.interactive-workspace.clean-preview > .workspace-status,
+.interactive-workspace.clean-preview aside:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace.clean-preview .canvas-toolbar,
+.interactive-workspace.clean-preview .canvas-footer,
+.interactive-workspace.clean-preview .tools:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace.clean-preview p[role='status']:not(:where(.param *, .mt *, .kf-tray *)),
+.interactive-workspace.clean-preview .stage svg {
+  display: none !important;
+}
+.interactive-workspace.clean-preview .layout {
+  display: flex !important;
+}
+.interactive-workspace.clean-preview .work {
+  flex: 1;
+  padding: 0;
+}
+.interactive-workspace.clean-preview .viewport {
+  height: 100%;
+  flex: 1;
+}
+.interactive-workspace.clean-preview .stage {
+  width: 100%;
+  max-height: 100%;
+  border: 0;
+}
+.interactive-workspace .return-preview {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: 12px;
+  z-index: 20;
+  background: #111b !important;
+  border: 1px solid #8894a3 !important;
+  min-height: 44px;
+}
+.interactive-workspace.handheld .touch-tool {
+  width: 100px;
+  flex: none;
+  margin: 0;
+  font-size: 11px;
+}
+.interactive-workspace.handheld .canvas-footer {
+  align-items: center;
+}
+.interactive-workspace.handheld p[role='status']:not(:empty):not(:where(.param *, .mt *, .kf-tray *)) {
+  padding: 8px;
+  border: 1px solid #3b5372;
+  background: #1b293d;
+  margin: 0 0 12px;
+  max-height: none;
+  font-size: 11px;
+}
+.interactive-workspace.handheld .workspace-status {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.interactive-workspace.handheld .workspace-status button {
+  min-height: 44px;
+}
+@media (max-width: 680px) and (max-height: 650px) and (min-height: 501px) {
+  .interactive-workspace.handheld .stage {
+    width: min(100%, calc(18dvh * 16 / 9));
+    max-height: 18dvh;
+  }
+  .interactive-workspace.handheld > header {
+    padding: 5px 10px;
+  }
+  .interactive-workspace.handheld .workspace-status small {
+    font-size: 9px;
+  }
+  .interactive-workspace.handheld .canvas-footer {
+    font-size: 10px;
+  }
+  .interactive-workspace.handheld .canvas-toolbar {
+    padding-bottom: 4px;
+  }
+}
+.interactive-workspace .saved-row {
+  display: flex;
+  gap: 6px;
+}
+.interactive-workspace .saved-row > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.interactive-workspace .saved-row .delete-saved {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  flex: none;
+}
+.interactive-workspace .saved-row strong {
+  overflow-wrap: anywhere;
+}
