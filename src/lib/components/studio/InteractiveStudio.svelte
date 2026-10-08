@@ -1,189 +1,1176 @@
 <script lang="ts">
- import {getVisualAudioSnapshot} from '../../audio/visualAudio';
- import {StandaloneAudio} from '../../mobile/standaloneAudio';
- let mobileAudio:StandaloneAudio|undefined,audioOn=false;
- async function toggleAudio(){if(audioOn){mobileAudio?.stop();audioOn=false;return;}try{mobileAudio??=new StandaloneAudio();await mobileAudio.start();audioOn=true;}catch(e){message=(e as Error).message;}}
- import InteractiveParam from './InteractiveParam.svelte';
- import Icon from './StudioIcon.svelte';
- import {InteractiveProgram} from '../../mobile/studio/interactiveProgram';
- export let outputLevel=1,outputHeld=false,outputBlackout=false;
- let programCanvas:HTMLCanvasElement,program=new InteractiveProgram(),cleanPreview=false;
- export function previewOutput(){cleanPreview=true;}
- import {INTERACTIVE_STARTERS,starterScene,readInteractiveDraft,writeInteractiveDraft,readInteractivePresets,saveInteractivePreset,removeInteractivePreset,restoreInteractivePreset,type InteractiveStarter,type SavedInteractiveScene} from '../../mobile/studio/interactiveLibrary';
- export let onpreparecamera:()=>Promise<void>=async()=>{};
- export let referencePreview=false;
- export function restoreMix(){if(outputActive)sendOutput();}
- export let handheld=false;
- export let visible=true;
- export let persistDraft=false;
- export let outputLabel='';
- export let onoutputsettings:(()=>void)|undefined=undefined;
- let ready=false,draftStatus='Saved on this device',lastDraft='',saveTimer:ReturnType<typeof setInterval>|undefined;
- let removedScene:SavedInteractiveScene|undefined;
- let savedScenes:SavedInteractiveScene[]=[],advanced=false,lastEffect='',qualityLabel='';
- $: if(lastEffect!==selectedEffect){lastEffect=selectedEffect;advanced=false;}
- $: if(ready&&!visible){flush();if(!outputActive){stopCamera();mobileAudio?.stop();audioOn=false;}}
- const essentialKeys=['opacity','hue','energy','trails','flow','lifetime','heat','size','viscosity','lightPower','spread','haze'];
- $: basicDefinitions=definitions.filter(d=>essentialKeys.includes(d.key)).slice(0,7);
- $: advancedDefinitions=definitions.filter(d=>!basicDefinitions.includes(d));
- function draftSave(){if(!persistDraft||!ready)return;try{const next=captureScene(scene),json=JSON.stringify(next);if(json===lastDraft)return;writeInteractiveDraft(localStorage,next);lastDraft=json;draftStatus='Saved on this device';}catch{draftStatus='Not saved — export a backup';}}
- function closeEditor(){draftSave();flush();onclose();}
- function useStarter(id:InteractiveStarter){checkpoint();const next=starterScene(id);restore(next);onrestore(next);inspector='effects';setMode('perform');message='Scene ready. Drag the preview to interact. Undo restores your previous scene.';}
- function recallSaved(id:string){const found=savedScenes.find(s=>s.id===id);if(!found)return;checkpoint();restore(found.scene);onrestore(found.scene);inspector='effects';message='Saved scene loaded. Undo restores your previous scene.';}
- function removeSaved(id:string){try{const found=savedScenes.find(s=>s.id===id);savedScenes=removeInteractivePreset(localStorage,id);removedScene=found;message='Saved scene removed. Your current draft is unchanged.';}catch(e){message=(e as Error).message;}}
- function undoRemoveSaved(){if(!removedScene)return;try{savedScenes=restoreInteractivePreset(localStorage,removedScene);removedScene=undefined;message='Saved scene restored.';}catch(e){message=(e as Error).message;}}
- function savePreset(){try{savedScenes=saveInteractivePreset(localStorage,captureScene(scene));draftSave();message='Saved a new scene in your library.';}catch(e){message=(e as Error).message;}}
+  /**
+   * Interactive Studio editor.
+   *
+   * This component owns the scene, the undo history, the preview loop, the
+   * keyboard and the camera / file plumbing, and lays out the parts:
+   *
+   *   InteractiveHeader        title bar and output controls
+   *   InteractiveToolbar       Select / Draw / Play, undo, redo, pause, restart
+   *   InteractiveStage         preview canvases, shape overlay, pointer input
+   *   InteractiveStageTools    hint line and the tools of the current mode
+   *   Interactive*Panel        the four inspector tabs
+   *
+   * Scene edits are pure functions in mobile/studio/editorActions.ts, undo in
+   * editorHistory.ts, the key map in editorKeyboard.ts. Styles for the whole
+   * editor are in interactiveStudio.css.
+   *
+   * The same files run on desktop (native preview) and on the phone and tablet
+   * (`handheld`), so every change has to work with touch as well.
+   */
+  import './interactiveStudio.css';
+  import { onMount, onDestroy, tick } from 'svelte';
+  import type { AutoConfig } from '../../types';
+  import type { ParamModulation } from '../../audio/modulationControls';
+  import { getVisualAudioSnapshot } from '../../audio/visualAudio';
+  import { StandaloneAudio } from '../../mobile/standaloneAudio';
+  import { InteractiveProgram } from '../../mobile/studio/interactiveProgram';
+  import {
+    defaultInteractive,
+    validateScene,
+    InteractiveWorld,
+    MotionSensor,
+    defaultMatter,
+    type InteractiveScene,
+    type Point,
+    type Interaction,
+    type Behavior,
+  } from '../../mobile/studio/interactive';
+  import {
+    effectParams,
+    editableEffects,
+    MAX_INTERACTIVE_EFFECTS,
+    type EffectKind,
+    type EffectParam,
+    type InteractiveEffect,
+  } from '../../mobile/studio/interactiveEffects';
+  import {
+    starterScene,
+    readInteractiveDraft,
+    writeInteractiveDraft,
+    readInteractivePresets,
+    saveInteractivePreset,
+    removeInteractivePreset,
+    restoreInteractivePreset,
+    type InteractiveStarter,
+    type SavedInteractiveScene,
+  } from '../../mobile/studio/interactiveLibrary';
+  import { DEFAULT_ASPECT, importCornerSurfaces } from '../../mobile/studio/surfaceEditing';
+  import * as edit from '../../mobile/studio/editorActions';
+  import * as past from '../../mobile/studio/editorHistory';
+  import { editorKey, type EditorKeyCommand } from '../../mobile/studio/editorKeyboard';
+  import { DesktopFeedPreview } from '../../mobile/studio/desktopFeed';
+  import { shareInteractiveScene } from '../../mobile/studio/captureToolkit';
+  import { dialogHostOf, isCovered, keyTargetOf, trapTab } from './interactiveEditorFocus';
+  import type { EditorMode, EmitterMarker, InspectorTab, TouchTool } from './interactiveEditorTypes';
+  import InteractiveHeader from './InteractiveHeader.svelte';
+  import InteractiveToolbar from './InteractiveToolbar.svelte';
+  import InteractiveStage from './InteractiveStage.svelte';
+  import InteractiveStageTools from './InteractiveStageTools.svelte';
+  import InteractiveScenesPanel from './InteractiveScenesPanel.svelte';
+  import InteractiveEffectStack from './InteractiveEffectStack.svelte';
+  import InteractiveEffectParams from './InteractiveEffectParams.svelte';
+  import InteractiveObjectsPanel from './InteractiveObjectsPanel.svelte';
+  import InteractiveSetupPanel from './InteractiveSetupPanel.svelte';
 
- import {EFFECT_NAMES,EFFECT_KINDS,MAX_INTERACTIVE_EFFECTS,makeEffect,editableEffects,effectParams,reorderEffects,type EffectKind,type InteractiveEffect} from '../../mobile/studio/interactiveEffects';
- import type {AutoConfig} from '../../types';
- import type {ParamModulation} from '../../audio/modulationControls';
- import {onMount,onDestroy,tick} from 'svelte';
- import {defaultInteractive,validateScene,InteractiveWorld,MotionSensor,inside,type InteractiveScene,type Point,type Interaction,type Behavior,defaultMatter,type SurfaceMaterial} from '../../mobile/studio/interactive';
- import {translatePoints,transformPoints,makeSurface,importCornerSurfaces} from '../../mobile/studio/surfaceEditing';
- import {DesktopFeedPreview} from '../../mobile/studio/desktopFeed';
- import {shareInteractiveScene} from '../../mobile/studio/captureToolkit';
- export let onclose:()=>void;
- export let remoteOutput=false;
- export let nativeOutput=false;
- export let nativeFrame:((canvas:HTMLCanvasElement)=>Promise<boolean>)|undefined=undefined;
- export let initialActive=false;
- export let initialPaused=false;
- export function flush(){pointers.clear();motion=[];onscene(scene,[],outputActive,paused);}
- export let captureScene:(scene:InteractiveScene)=>InteractiveScene=s=>s;
- export let onrestore:(scene:InteractiveScene)=>void=()=>{};
- export let onparam:(effectId:string,key:string,value:number,label:string)=>void=()=>{};
- export let onkeyframe:((effectId:string,key:string,value:number,label:string)=>void)|undefined=undefined;
- export let ontimeline:(()=>void)|undefined=undefined;
- let nativeReady=false,nativeFrameAt=0,nativeFailures=0,lastQualityAt=0,lastMobileFrame=0;
- export let initialScene:InteractiveScene|null=null;
- export let onscene:(scene:InteractiveScene,inputs:Interaction[],active:boolean,paused:boolean)=>void=()=>{};
- let fullScreen=false,inspector:'presets'|'effects'|'objects'|'scene'='effects',selectedEffect='',effectToAdd='',dragEffect='',placingEmitter=false;
- $: effects=scene.effects??[];
- $: activeEffect=effects.find(e=>e.id===selectedEffect);
- $: definitions=activeEffect?effectParams(activeEffect.kind):[];
- function patchEffect(patch:Partial<InteractiveEffect>,record=true){if(record)checkpoint();scene={...scene,effects:scene.effects?.map(e=>e.id===selectedEffect?{...e,...patch}:e)};}
- function effectValue(key:string,value:number){if(activeEffect){patchEffect({params:{...activeEffect.params,[key]:value}},false);onparam(activeEffect.id,key,value,definitions.find(d=>d.key===key)?.label??key);}}
- function effectAuto(key:string,value:AutoConfig|undefined){if(!activeEffect)return;const paramAuto={...activeEffect.paramAuto};if(value)paramAuto[key]=value;else delete paramAuto[key];patchEffect({paramAuto},false);}
- function effectMod(key:string,value:ParamModulation|undefined){if(!activeEffect)return;const mods={...activeEffect.mods};if(value)mods[key]=value;else delete mods[key];patchEffect({mods},false);}
- function addEffect(kind:EffectKind,target='point'){if(effects.length>=MAX_INTERACTIVE_EFFECTS)return;checkpoint();const e=makeEffect(kind,target);scene={...scene,effects:[...effects,e]};selectedEffect=e.id;inspector='effects';effectToAdd='';}
- function removeEffect(){checkpoint();scene={...scene,effects:effects.filter(e=>e.id!==selectedEffect)};selectedEffect=scene.effects?.at(-1)?.id??'';}
- function reorder(from:string,to:string){checkpoint();scene={...scene,effects:reorderEffects(effects,from,to)};dragEffect='';}
- function moveEffect(delta:number){const i=effects.findIndex(e=>e.id===selectedEffect);if(effects[i+delta])reorder(selectedEffect,effects[i+delta].id);}
- function placeEmitter(p:Point){if(!activeEffect)return;if(activeEffect.kind==='light')patchEffect({params:{...activeEffect.params,lightX:p.x,lightY:p.y}},false);else patchEffect({target:'point',params:{...activeEffect.params,x:p.x,y:p.y}},false);}
- let tool: 'attract'|'repel'|'vortex'='attract',bodyStart:Point|null=null,bodyPoints:Point[]=[],lastPublish=0;
- export let mappingSurfaces:{name:string;points:Point[];enabled:boolean;mode:string}[]=[];
- export let onoutput:(canvas:HTMLCanvasElement|null)=>void=()=>{};
- let scene=defaultInteractive(),mode:'perform'|'draw'|'edit'='edit',selected='stage',draft:Point[]=[],message='',canvas:HTMLCanvasElement,stage:HTMLDivElement;
- let cameraCanvas:HTMLCanvasElement,preview:DesktopFeedPreview|undefined,camera=false,cameraBusy=false,facing:'rear'|'front'='rear',cameraOpacity=.35,sensitivity=.6,motionEnabled=false;
- let paused=initialPaused,outputActive=initialActive,energy=.6,gravity=.25,trails=.7,hue=185,matter=defaultMatter();
- let raf=0,last=0,lastSample=0,alive=true,epoch=0,drag=-1,pointers=new Map<number,Interaction>(),motion:Interaction[]=[],history:InteractiveScene[]=[];
- let fx:HTMLCanvasElement,small:HTMLCanvasElement,world=new InteractiveWorld(),sensor=new MotionSensor();
- const key='ghost-interactive-scene-v1';
- $: scene={...scene,energy,gravity,trails,hue,matter};
- $: chosen=scene.surfaces.find(s=>s.id===selected);
- function checkpoint(){history=[...history.slice(-19),structuredClone(scene)];}
- function restore(s:InteractiveScene){scene=validateScene(s);scene={...scene,effects:editableEffects(scene)};selectedEffect=(scene.effects?.find(e=>e.enabled)??scene.effects?.[0])?.id??'';matter=scene.matter??defaultMatter();energy=scene.energy;gravity=scene.gravity;trails=scene.trails;hue=scene.hue;selected=scene.surfaces[0]?.id??'';draft=[];world.reset();fx?.getContext('2d')?.clearRect(0,0,fx.width,fx.height);}
- function material(value:SurfaceMaterial){if(!chosen)return;checkpoint();scene={...scene,surfaces:scene.surfaces.map(s=>s.id===selected?{...s,material:value}:s)};message=value==='fire'?`${chosen.name} is burning. Drag it to move the flame source.`:value==='none'?'Surface effect removed.':'';}
- function preset(value:InteractiveScene['preset']){checkpoint();const effect:SurfaceMaterial|undefined=value==='fire'?'fire':value==='smoke'?'smoke':value==='liquid'?'liquid':value==='cloud'?'points':undefined;scene={...scene,preset:value,seed:((scene.seed??0)+1)%1000000,surfaces:scene.surfaces.map(s=>effect&&s.id===selected?{...s,material:effect}:s)};world.reset();}
- function pos(e:PointerEvent):Point{const b=stage.getBoundingClientRect();return{x:Math.max(0,Math.min(1,(e.clientX-b.left)/b.width)),y:Math.max(0,Math.min(1,(e.clientY-b.top)/b.height))};}
- function down(e:PointerEvent){stage.focus({preventScroll:true});stage.setPointerCapture(e.pointerId);const p=pos(e);if(placingEmitter){checkpoint();placeEmitter(p);return;}if(mode==='perform'){pointers.set(e.pointerId,{id:'touch-'+e.pointerId,point:p,strength:e.pressure>0?Math.max(.3,e.pressure):1,mode:tool});return;}if(mode==='draw'){if(draft.length<64)draft=[...draft,p];return;}checkpoint();const b=stage.getBoundingClientRect();let distance=28;drag=-1;for(const s of scene.surfaces)for(let i=0;i<s.points.length;i++){const d=Math.hypot((s.points[i].x-p.x)*b.width,(s.points[i].y-p.y)*b.height);if(d<distance){distance=d;selected=s.id;drag=i;}}if(drag<0){const hit=[...scene.surfaces].reverse().find(s=>inside(p,s.points));if(hit){selected=hit.id;bodyStart=p;bodyPoints=structuredClone(hit.points);}else selected='';}}
- function move(e:PointerEvent){const p=pos(e);if(placingEmitter&&stage.hasPointerCapture(e.pointerId)){placeEmitter(p);return;}if(mode==='edit'&&bodyStart&&stage.hasPointerCapture(e.pointerId))scene={...scene,surfaces:scene.surfaces.map(s=>s.id===selected?{...s,points:translatePoints(bodyPoints,p.x-bodyStart!.x,p.y-bodyStart!.y)}:s)};if(mode==='perform'&&pointers.has(e.pointerId))pointers.set(e.pointerId,{id:'touch-'+e.pointerId,point:p,strength:e.pressure>0?Math.max(.3,e.pressure):1,mode:tool});if(mode==='edit'&&drag>=0&&stage.hasPointerCapture(e.pointerId))scene={...scene,surfaces:scene.surfaces.map(s=>s.id===selected?{...s,points:s.points.map((v,i)=>i===drag?p:v)}:s)};}
- function up(e:PointerEvent){if(stage.hasPointerCapture(e.pointerId))stage.releasePointerCapture(e.pointerId);pointers.delete(e.pointerId);drag=-1;bodyStart=null;}
- function removeSurface(){if(!chosen)return;checkpoint();scene={...scene,surfaces:scene.surfaces.filter(s=>s.id!==selected),effects:effects.map(e=>e.target===selected?{...e,target:'point'}:e)};selected=scene.surfaces[0]?.id??'';}
- function quickShape(kind:'box'|'circle'|'triangle'){if(scene.surfaces.length>=32)return;checkpoint();const next=makeSurface(kind,scene.surfaces.length);scene={...scene,surfaces:[...scene.surfaces,next]};selected=next.id;inspector='objects';setMode('edit');}
- function duplicate(){if(!chosen||scene.surfaces.length>=32)return;checkpoint();const next={...structuredClone(chosen),id:crypto.randomUUID(),name:chosen.name+' copy',points:translatePoints(chosen.points,.03,.03)};scene={...scene,surfaces:[...scene.surfaces,next]};selected=next.id;}
- function transform(scale:number,angle=0){if(!chosen)return;checkpoint();scene={...scene,surfaces:scene.surfaces.map(s=>s.id===selected?{...s,points:transformPoints(s.points,scale,angle)}:s)};}
- function rename(value:string){if(!chosen||value===chosen.name)return;checkpoint();scene={...scene,surfaces:scene.surfaces.map(s=>s.id===selected?{...s,name:value.slice(0,80)}:s)};}
- function undo(){if(!history.length)return;const previous=history.at(-1)!;history=history.slice(0,-1);restore(previous);}
- function keyboard(e:KeyboardEvent){if(!(e.target instanceof HTMLElement)||e.target.closest('input,select,textarea,button'))return;if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();e.stopPropagation();removeSurface();}if((e.metaKey||e.ctrlKey)&&e.key==='z'){e.preventDefault();e.stopPropagation();undo();}if(e.key==='Escape')setMode('edit');}
- function setMode(value:typeof mode){mode=value;pointers.clear();draft=[];drag=-1;}
- function add(){if(draft.length<3||scene.surfaces.length>=32)return;checkpoint();const id=crypto.randomUUID();scene={...scene,surfaces:[...scene.surfaces,{id,name:`Surface ${scene.surfaces.length+1}`,behavior:'solid',points:draft}]};selected=id;draft=[];mode='edit';}
- function behavior(value:Behavior){checkpoint();scene={...scene,surfaces:scene.surfaces.map(s=>s.id===selected?{...s,behavior:value}:s)};}
- function importMapping(){checkpoint();const surfaces=importCornerSurfaces(mappingSurfaces);if(!surfaces.length){message='No corner-mapped surfaces to import.';return;}try{restore({...scene,surfaces});message='Copied corner-mapped surfaces. Mesh surfaces are omitted; changes here stay independent.';}catch(e){message=(e as Error).message;}}
- async function startCamera(){if(cameraBusy)return;stopCamera();const token=epoch;cameraBusy=true;camera=true;await tick();const next=new DesktopFeedPreview(cameraCanvas,facing,s=>{message=s;motion=[];});preview=next;try{await onpreparecamera();await next.start();if(token===epoch)message='Camera is a local reference. Enable Motion input to interact; this is not calibrated projector tracking.';}catch(e){if(token===epoch){message=(e as Error).message;camera=false;}}finally{if(token===epoch)cameraBusy=false;}}
- function stopCamera(){epoch++;preview?.destroy();preview=undefined;camera=false;cameraBusy=false;motion=[];sensor.reset();}
- function save(){try{localStorage.setItem(key,JSON.stringify(validateScene(captureScene(scene))));message='Scene saved on this device.';}catch(e){message='Could not save: '+(e as Error).message;}}
- function load(){try{const saved=localStorage.getItem(key);if(!saved)throw Error('No saved scene yet.');const next=validateScene(JSON.parse(saved));checkpoint();restore(next);onrestore(next);message='Scene restored.';}catch(e){message=(e as Error).message;}}
- async function importFile(e:Event){const file=(e.target as HTMLInputElement).files?.[0];if(!file)return;try{if(file.size>2_000_000)throw Error('Scene file is too large.');const next=validateScene(JSON.parse(await file.text()));checkpoint();restore(next);onrestore(next);message='Scene imported.';}catch(e){message=(e as Error).message;}(e.target as HTMLInputElement).value='';}
- async function exportFile(){try{const json=JSON.stringify(validateScene(captureScene(scene)));if(await shareInteractiveScene(json)){message='Scene shared.';return;}const url=URL.createObjectURL(new Blob([json],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='Ghost-Interactive.ghostinteractive.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);message='Scene exported for Interactive Studio.';}catch(e){message=(e as Error).message;}}
- function sendOutput(){outputActive=!outputActive;try{if(!nativeOutput)onoutput(outputActive?programCanvas:null);onscene(scene,[...pointers.values(),...motion],outputActive,paused);}catch(e){outputActive=false;message=(e as Error).message;return;}message=nativeOutput?(outputActive?'Native GPU layer is live. The editor shows the same simulation before output warping.':'Native interactive layer stopped.'):outputActive&&remoteOutput?'Sending the clean scene to desktop. Connection status appears above.':outputActive?'Interactive scene selected for the app’s clean external output. Connect a display using Output settings.':'Studio mix restored to external output.';}
- onMount(()=>{outputActive=initialActive;const restored=initialScene??(persistDraft?readInteractiveDraft(localStorage):null);restore(restored??starterScene('balls'));if(persistDraft&&!restored)inspector='presets';savedScenes=readInteractivePresets(localStorage);ready=true;saveTimer=setInterval(draftSave,1000);fx=document.createElement('canvas');fx.width=960;fx.height=540;small=document.createElement('canvas');small.width=64;small.height=36;canvas.width=960;canvas.height=540;programCanvas.width=960;programCanvas.height=540;
-  const frame=(now:number)=>{if(!alive)return;raf=requestAnimationFrame(frame);if(!nativeOutput||referencePreview){if(now-lastMobileFrame<1000/30-1)return;lastMobileFrame=now;}const dt=last?Math.min(.05,(now-last)/1000):1/60;last=now;if(document.hidden){pointers.clear();motion=[];sensor.reset();}if(now-lastPublish>50){lastPublish=now;onscene(scene,[...pointers.values(),...motion],outputActive,paused);}if(document.hidden||(!visible&&!outputActive))return;
-   if(camera&&preview&&motionEnabled&&now-lastSample>100){lastSample=now;try{const c=small.getContext('2d',{willReadFrequently:true})!;c.drawImage(cameraCanvas,0,0,64,36);motion=sensor.sample(c.getImageData(0,0,64,36).data,64,36,sensitivity);}catch{motion=[];}}else if(!motionEnabled)motion=[];
-   if(nativeOutput&&!referencePreview){
-    if(nativeFrame&&now-nativeFrameAt>1000/30){nativeFrameAt=now;void nativeFrame(canvas).then(ok=>{if(ok){nativeReady=true;nativeFailures=0;}else if(++nativeFailures>90)nativeReady=false;});}
-    return;
-   }
-   {let audio=getVisualAudioSnapshot();let bands:Record<string,number>={...audio.bands,amplitude:audio.energy,kick:audio.kick,snare:audio.snare};if(audioOn&&mobileAudio){mobileAudio.update(now);const a=mobileAudio.uniforms;bands={bass:a.audioBass,sub:a.audioBass,mid:a.audioMid,lowMid:a.audioMid,highMid:a.audioHigh,treble:a.audioHigh,air:a.audioHigh,high:a.audioHigh,presence:a.audioHigh,amplitude:a.audioLevel,kick:a.audioBass,snare:a.audioHigh};}world.update(scene,paused?0:dt,[...pointers.values(),...motion],bands,audio.bpm||120);world.draw(fx.getContext('2d')!,scene,960,540,paused?0:dt);if(now-lastQualityAt>1500){lastQualityAt=now;qualityLabel=world.qualityDiagnostics().description;}}
-   const c=canvas.getContext('2d')!;c.globalCompositeOperation='source-over';c.globalAlpha=1;c.fillStyle='#03060c';c.fillRect(0,0,960,540);if(camera&&preview){c.globalAlpha=cameraOpacity;c.drawImage(cameraCanvas,0,0,960,540);c.globalAlpha=1;}c.globalCompositeOperation='screen';c.drawImage(fx,0,0);c.globalCompositeOperation='source-over';if(outputActive||cleanPreview)program.draw(canvas,programCanvas,{held:outputHeld,blackout:outputBlackout,level:outputLevel});
-  };raf=requestAnimationFrame(frame);
- });
- onDestroy(()=>{draftSave();clearInterval(saveTimer);world.dispose();program.dispose();flush();mobileAudio?.stop();alive=false;cancelAnimationFrame(raf);stopCamera();pointers.clear();if(outputActive&&!nativeOutput)onoutput(null);});
+  // ── Props ────────────────────────────────────────────────────────────────
+  export let outputLevel = 1,
+    outputHeld = false,
+    outputBlackout = false;
+  export let onpreparecamera: () => Promise<void> = async () => {};
+  export let referencePreview = false;
+  export let handheld = false;
+  export let visible = true;
+  export let persistDraft = false;
+  export let outputLabel = '';
+  export let onoutputsettings: (() => void) | undefined = undefined;
+  export let onclose: () => void;
+  export let remoteOutput = false;
+  export let nativeOutput = false;
+  export let nativeFrame: ((canvas: HTMLCanvasElement) => Promise<boolean>) | undefined = undefined;
+  export let initialActive = false;
+  export let initialPaused = false;
+  /** Returns the scene as it should be saved; the desktop adds the layer's keyframe tracks. */
+  export let captureScene: (scene: InteractiveScene) => InteractiveScene = (s) => s;
+  /** A whole scene was loaded (or a load was undone): the host restores its keyframe tracks from it. */
+  export let onrestore: (scene: InteractiveScene) => void = () => {};
+  export let onparam: (effectId: string, key: string, value: number, label: string) => void = () => {};
+  export let onkeyframe: ((effectId: string, key: string, value: number, label: string) => void) | undefined =
+    undefined;
+  export let ontimeline: (() => void) | undefined = undefined;
+  export let initialScene: InteractiveScene | null = null;
+  export let onscene: (
+    scene: InteractiveScene,
+    inputs: Interaction[],
+    active: boolean,
+    paused: boolean,
+  ) => void = () => {};
+  export let mappingSurfaces: { name: string; points: Point[]; enabled: boolean; mode: string }[] = [];
+  export let onoutput: (canvas: HTMLCanvasElement | null) => void = () => {};
+  /**
+   * Width ÷ height of the composition the scene plays in. The stage, the shape
+   * overlay and all pointer maths follow it, so a circle here is a circle in
+   * the output. Optional: 16:9 when the host does not pass it.
+   */
+  export let aspect = DEFAULT_ASPECT;
+
+  // ── Methods the host calls ───────────────────────────────────────────────
+  export function previewOutput() {
+    cleanPreview = true;
+  }
+  export function restoreMix() {
+    if (outputActive) sendOutput();
+  }
+  /** Drop live touches and publish the scene once more (before closing or hiding). */
+  export function flush() {
+    pointers.clear();
+    motion = [];
+    onscene(scene, [], outputActive, paused);
+  }
+
+  // ── State ────────────────────────────────────────────────────────────────
+  /** Longest side of the preview canvases the phone simulation draws into. */
+  const PREVIEW_LONG_SIDE = 960;
+  /** Arrow-key step as a fraction of the stage width; Shift moves ten times as far. */
+  const NUDGE_STEP = 1 / 400;
+  const MESSAGE_MS = 6000;
+
+  /** One undo step: the scene and what was selected in it. */
+  type Snapshot = {
+    scene: InteractiveScene;
+    selected: string;
+    selectedEffect: string;
+    /** The scene carries the keyframe tracks (taken around a scene load). */
+    tracks: boolean;
+  };
+  /** A question shown in the inspector before a destructive step. */
+  type Question = { title: string; detail: string; action: string; run: () => void };
+
+  let root: HTMLElement;
+  let scene = defaultInteractive();
+  let history = past.emptyHistory<Snapshot>();
+  let mode: EditorMode = 'edit';
+  let inspector: InspectorTab = 'effects';
+  let selected = 'stage';
+  let selectedEffect = '';
+  let lastEffect = '';
+  let advanced = false;
+  let placingEmitter = false;
+  let draft: Point[] = [];
+  let tool: TouchTool = 'attract';
+  let message = '';
+  let messageTimer: ReturnType<typeof setTimeout> | undefined;
+  let question: Question | null = null;
+  let questionButton: HTMLButtonElement | undefined;
+  let fullScreen = false;
+  let cleanPreview = false;
+
+  // Legacy single-effect controls. They are copied into every published scene.
+  let energy = 0.6,
+    gravity = 0.25,
+    trails = 0.7,
+    hue = 185,
+    matter = defaultMatter();
+
+  // Output and preview.
+  let paused = initialPaused;
+  let outputActive = initialActive;
+  let program = new InteractiveProgram();
+  let world = new InteractiveWorld();
+  let stageView: InteractiveStage | undefined;
+  let canvas: HTMLCanvasElement | undefined;
+  let programCanvas: HTMLCanvasElement | undefined;
+  let fx: HTMLCanvasElement | undefined;
+  let nativeReady = false,
+    nativeFrameAt = 0,
+    nativeFailures = 0;
+  let qualityLabel = '',
+    lastQualityAt = 0,
+    lastMobileFrame = 0;
+  let raf = 0,
+    last = 0,
+    lastPublish = 0,
+    alive = true;
+
+  // Live input: touches on the stage and motion seen by the camera.
+  let pointers = new Map<number, Interaction>();
+  let motion: Interaction[] = [];
+
+  // Camera reference and motion sensing.
+  let cameraCanvas: HTMLCanvasElement | undefined;
+  let small: HTMLCanvasElement;
+  let preview: DesktopFeedPreview | undefined;
+  let sensor = new MotionSensor();
+  let camera = false,
+    cameraBusy = false,
+    motionEnabled = false;
+  let facing: 'rear' | 'front' = 'rear';
+  let cameraOpacity = 0.35,
+    sensitivity = 0.6;
+  let lastSample = 0,
+    epoch = 0;
+
+  // Phone microphone (desktop uses the app's own audio input).
+  let mobileAudio: StandaloneAudio | undefined,
+    audioOn = false;
+
+  // Drafts and the saved-scene library.
+  let ready = false;
+  let draftStatus = 'Saved on this device';
+  let lastDraft = '';
+  let saveTimer: ReturnType<typeof setInterval> | undefined;
+  let savedScenes: SavedInteractiveScene[] = [];
+  let removedScene: SavedInteractiveScene | undefined;
+
+  // Keyboard and focus.
+  let host: HTMLElement | null = null;
+  let nativeDialog = false;
+  let returnFocus: HTMLElement | null = null;
+
+  // ── Derived ──────────────────────────────────────────────────────────────
+  $: if (lastEffect !== selectedEffect) {
+    lastEffect = selectedEffect;
+    advanced = false;
+  }
+  $: if (ready && !visible) {
+    flush();
+    if (!outputActive) {
+      stopCamera();
+      mobileAudio?.stop();
+      audioOn = false;
+    }
+  }
+  $: effects = scene.effects ?? [];
+  $: activeEffect = effects.find((e) => e.id === selectedEffect);
+  $: definitions = activeEffect ? effectParams(activeEffect.kind) : [];
+  $: scene = { ...scene, energy, gravity, trails, hue, matter };
+  $: chosen = scene.surfaces.find((s) => s.id === selected);
+  $: nativePreview = nativeOutput && !referencePreview;
+  $: emitterMarker = emitterMarkerFor(activeEffect, definitions, placingEmitter, inspector);
+  $: effectsFull = effects.length >= MAX_INTERACTIVE_EFFECTS;
+  $: safeAspect = Number.isFinite(aspect) && aspect > 0 ? Math.max(0.2, Math.min(5, aspect)) : DEFAULT_ASPECT;
+  $: previewWidth = safeAspect >= 1 ? PREVIEW_LONG_SIDE : Math.round(PREVIEW_LONG_SIDE * safeAspect);
+  $: previewHeight = safeAspect >= 1 ? Math.round(PREVIEW_LONG_SIDE / safeAspect) : PREVIEW_LONG_SIDE;
+  $: if (ready) sizePreview(previewWidth, previewHeight);
+
+  function emitterMarkerFor(
+    effect: InteractiveEffect | undefined,
+    defs: EffectParam[],
+    placing: boolean,
+    tab: InspectorTab,
+  ): EmitterMarker | null {
+    if (!effect || !(placing || tab === 'effects')) return null;
+    if (effect.kind !== 'light' && !(effect.target === 'point' && defs.some((d) => d.key === 'x'))) return null;
+    return {
+      x: effect.params.lightX ?? effect.params.x ?? 0.5,
+      y: effect.params.lightY ?? effect.params.y ?? 0.5,
+      label: effect.kind === 'light' ? 'LIGHT' : 'EMITTER',
+    };
+  }
+
+  // ── Status line and questions ────────────────────────────────────────────
+  /** Show a short status message. It clears itself after a few seconds. */
+  function say(text: string) {
+    message = text;
+    clearTimeout(messageTimer);
+    if (text) messageTimer = setTimeout(() => (message = ''), MESSAGE_MS);
+  }
+  function ask(next: Question) {
+    question = next;
+    void tick().then(() => questionButton?.focus({ preventScroll: false }));
+  }
+  function answer(yes: boolean) {
+    const asked = question;
+    question = null;
+    if (yes) asked?.run();
+    root?.focus({ preventScroll: true });
+  }
+
+  // ── Undo and redo ────────────────────────────────────────────────────────
+  // One-step edits go through apply(). Gestures (drags, sliders, typing) call
+  // beginEdit() when they start and touchEdit() after every change, so a whole
+  // gesture is one step and a press that changes nothing is none.
+  const sameScene = (a: Snapshot, b: Snapshot) => JSON.stringify(a.scene) === JSON.stringify(b.scene);
+
+  function snapshot(tracks = false): Snapshot {
+    return { scene: structuredClone(tracks ? captureScene(scene) : scene), selected, selectedEffect, tracks };
+  }
+  /** Replace the scene in one undoable step. Returns false when nothing changed. */
+  function apply(next: InteractiveScene): boolean {
+    if (next === scene) return false;
+    const before = snapshot();
+    if (JSON.stringify(before.scene) === JSON.stringify(next)) return false;
+    history = past.record(history, before);
+    scene = next;
+    return true;
+  }
+  function beginEdit() {
+    history = past.begin(history, snapshot());
+  }
+  function touchEdit() {
+    if (history.pending) history = past.touch(history, { scene, selected, selectedEffect, tracks: false }, sameScene);
+  }
+  function undo() {
+    const step = past.undo(history, (target) => snapshot(target.tracks));
+    if (!step) return;
+    history = step.history;
+    restoreSnapshot(step.state);
+  }
+  function redo() {
+    const step = past.redo(history, (target) => snapshot(target.tracks));
+    if (!step) return;
+    history = step.history;
+    restoreSnapshot(step.state);
+  }
+  function restoreSnapshot(step: Snapshot) {
+    const keepSurface = selected,
+      keepEffect = selectedEffect;
+    const bursts = new Map(effects.map((e) => [e.id, e.burst]));
+    restore(step.scene);
+    // A manual burst that already fired must not fire again because its counter went back.
+    scene = {
+      ...scene,
+      effects: scene.effects?.map((e) => ({ ...e, burst: Math.max(e.burst, bursts.get(e.id) ?? 0) })),
+    };
+    const surface = (id: string) => scene.surfaces.some((s) => s.id === id);
+    const effect = (id: string) => !!scene.effects?.some((e) => e.id === id);
+    selected = surface(keepSurface) ? keepSurface : surface(step.selected) ? step.selected : selected;
+    selectedEffect = effect(keepEffect)
+      ? keepEffect
+      : effect(step.selectedEffect)
+        ? step.selectedEffect
+        : selectedEffect;
+    if (step.tracks) onrestore(step.scene);
+  }
+  /** Replace the whole scene (undo, starters, saved scenes, import). */
+  function restore(s: InteractiveScene) {
+    scene = validateScene(s);
+    scene = { ...scene, effects: editableEffects(scene) };
+    selectedEffect = (scene.effects?.find((e) => e.enabled) ?? scene.effects?.[0])?.id ?? '';
+    matter = scene.matter ?? defaultMatter();
+    energy = scene.energy;
+    gravity = scene.gravity;
+    trails = scene.trails;
+    hue = scene.hue;
+    selected = scene.surfaces[0]?.id ?? '';
+    draft = [];
+    placingEmitter = false;
+    world.reset();
+    fx?.getContext('2d')?.clearRect(0, 0, fx.width, fx.height);
+  }
+  function hasKeyframes(): boolean {
+    const tracks = captureScene(scene).animation?.tracks ?? [];
+    return tracks.some((t) => (t.keyframes?.length ?? 0) + (t.boolKeyframes?.length ?? 0) > 0);
+  }
+  /**
+   * Load a whole scene. The step remembers the keyframe tracks along with the
+   * scene, so Undo brings both back. Asks first when keyframes would go.
+   */
+  function loadScene(next: InteractiveScene, done: () => void) {
+    const run = () => {
+      history = past.record(history, snapshot(true));
+      restore(next);
+      onrestore(next);
+      done();
+    };
+    if (!hasKeyframes()) return run();
+    ask({
+      title: 'Replace this scene?',
+      detail: 'Its keyframes are replaced too. Undo brings the scene and its keyframes back.',
+      action: 'Replace scene',
+      run,
+    });
+  }
+
+  // ── Modes ────────────────────────────────────────────────────────────────
+  function setMode(value: EditorMode) {
+    mode = value;
+    pointers.clear();
+    draft = [];
+    stageView?.cancelDrag();
+  }
+  function chooseMode(value: EditorMode) {
+    placingEmitter = false;
+    setMode(value);
+  }
+
+  // ── Keyboard and focus ───────────────────────────────────────────────────
+  // While the editor is open it owns the keyboard. Keys pressed inside it
+  // arrive at onRootKey (after the control that had focus), keys pressed with
+  // focus on the page or elsewhere in the host dialog at onWindowKey. Both stop
+  // the key there, so the app behind never acts on it.
+  function onRootKey(e: KeyboardEvent) {
+    handleKey(e);
+  }
+  function onWindowKey(e: KeyboardEvent) {
+    if (!visible || !root?.isConnected) return;
+    const target = e.target instanceof Node ? e.target : null;
+    if (target && root.contains(target)) return;
+    const onPage = !target || target === document.body || target === document.documentElement;
+    if (!onPage && !host?.contains(target)) return;
+    if (onPage && isCovered(root, host)) return;
+    // An open Mod tray closes itself on Escape.
+    if (e.key === 'Escape' && root.querySelector('.mt')) return;
+    handleKey(e);
+  }
+  function handleKey(e: KeyboardEvent) {
+    if (e.key === 'Tab') {
+      if (host && !nativeDialog) trapTab(e, host);
+      e.stopPropagation();
+      return;
+    }
+    const target = keyTargetOf(e.target);
+    // The embedded timeline plays and pauses on Space: let that one through.
+    if (e.code === 'Space' && target === 'other' && root.querySelector('.studio-timeline > *')) return;
+    const { command, preventDefault } = editorKey(
+      { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, target },
+      {
+        mode,
+        placingEmitter,
+        draftPoints: draft.length,
+        hasSelection: !!chosen,
+        confirming: !!question,
+        fullScreen,
+        cleanPreview,
+      },
+    );
+    e.stopPropagation();
+    if (preventDefault) e.preventDefault();
+    if (command) runKey(command, e);
+  }
+  function runKey(command: EditorKeyCommand, e: KeyboardEvent) {
+    switch (command.type) {
+      case 'undo':
+        return undo();
+      case 'redo':
+        return redo();
+      case 'remove-surface':
+        return removeSurface();
+      case 'nudge': {
+        const step = NUDGE_STEP * (command.big ? 10 : 1);
+        if (!e.repeat) beginEdit();
+        scene = edit.nudgeSurface(scene, selected, command.dx * step, command.dy * step * safeAspect);
+        return touchEdit();
+      }
+      case 'finish-shape':
+        return finishDraft();
+      case 'cancel-confirm':
+        return answer(false);
+      case 'leave-field':
+        return (e.target as HTMLElement).blur();
+      case 'exit-placing':
+        placingEmitter = false;
+        return;
+      case 'exit-draw':
+        return chooseMode('edit');
+      case 'exit-clean-preview':
+        cleanPreview = false;
+        return;
+      case 'exit-fullscreen':
+        fullScreen = false;
+        return;
+      case 'close':
+        return closeEditor();
+    }
+  }
+  /** Move focus into the editor when it opens. A native `<dialog>` does this itself. */
+  function takeFocus() {
+    ({ host, native: nativeDialog } = dialogHostOf(root));
+    if (nativeDialog) return;
+    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!root.contains(document.activeElement)) root.focus({ preventScroll: true });
+  }
+  /** Give focus back to where it was once the dialog around the editor is gone. */
+  function giveFocusBack() {
+    const to = returnFocus,
+      dialog = host;
+    if (!to || nativeDialog) return;
+    setTimeout(() => {
+      if (dialog?.isConnected || !to.isConnected) return;
+      const active = document.activeElement;
+      if (!active || active === document.body) to.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  // ── Effects ──────────────────────────────────────────────────────────────
+  /** Change a parameter, Mod or Auto setting of the selected effect as part of a gesture. */
+  function adjustEffect(patch: Partial<InteractiveEffect>) {
+    scene = edit.patchEffect(scene, selectedEffect, patch);
+    touchEdit();
+  }
+  function effectValue(def: EffectParam, value: number) {
+    if (!activeEffect) return;
+    adjustEffect({ params: { ...activeEffect.params, [def.key]: value } });
+    onparam(activeEffect.id, def.key, value, def.label);
+  }
+  function effectAuto(key: string, value: AutoConfig | undefined) {
+    if (!activeEffect) return;
+    const paramAuto = { ...activeEffect.paramAuto };
+    if (value) paramAuto[key] = value;
+    else delete paramAuto[key];
+    adjustEffect({ paramAuto });
+  }
+  function effectMod(key: string, value: ParamModulation | undefined) {
+    if (!activeEffect) return;
+    const mods = { ...activeEffect.mods };
+    if (value) mods[key] = value;
+    else delete mods[key];
+    adjustEffect({ mods });
+  }
+  function addEffect(kind: EffectKind, target = 'point') {
+    const added = edit.addEffect(scene, kind, target);
+    if (!added) return say(`All ${MAX_INTERACTIVE_EFFECTS} effect slots are in use. Remove one to add another.`);
+    apply(added.scene);
+    selectedEffect = added.effect.id;
+    inspector = 'effects';
+  }
+  function removeEffect() {
+    apply(edit.removeEffect(scene, selectedEffect));
+    selectedEffect = scene.effects?.at(-1)?.id ?? '';
+  }
+  function reorder(from: string, to: string) {
+    apply(edit.moveEffect(scene, from, to));
+  }
+  function moveEffect(delta: number) {
+    const i = effects.findIndex((e) => e.id === selectedEffect);
+    if (effects[i + delta]) reorder(selectedEffect, effects[i + delta].id);
+  }
+  function selectEffect(id: string) {
+    selectedEffect = id;
+    placingEmitter = false;
+  }
+  /** Fire a manual burst. Not an undo step: there is nothing to take back. */
+  function triggerBurst() {
+    if (activeEffect) scene = edit.patchEffect(scene, activeEffect.id, { burst: activeEffect.burst + 1 });
+  }
+  function togglePlacing() {
+    placingEmitter = !placingEmitter;
+    setMode('edit');
+  }
+  function moveEmitter(p: Point) {
+    if (!activeEffect) return;
+    const from =
+      activeEffect.target === 'point' ? undefined : scene.surfaces.find((s) => s.id === activeEffect!.target);
+    scene = edit.placeEmitter(scene, activeEffect, p);
+    touchEdit();
+    if (from && activeEffect.kind !== 'light')
+      say(`${activeEffect.name} now emits from this point, not from ${from.name}.`);
+  }
+  function addKeyframe(def: EffectParam) {
+    if (!activeEffect) return;
+    onkeyframe?.(activeEffect.id, def.key, activeEffect.params[def.key] ?? def.value, def.label);
+    say(`Keyframe added: ${def.label}`);
+  }
+
+  // ── Objects ──────────────────────────────────────────────────────────────
+  function quickShape(kind: edit.ShapeKind) {
+    const added = edit.addShape(scene, kind, safeAspect);
+    if (!added) return;
+    apply(added.scene);
+    selected = added.surface.id;
+    inspector = 'objects';
+    setMode('edit');
+  }
+  function finishDraft() {
+    const added = edit.addDrawnSurface(scene, draft);
+    if (!added) return;
+    apply(added.scene);
+    selected = added.surface.id;
+    draft = [];
+    mode = 'edit';
+  }
+  function addDraftPoint(p: Point) {
+    if (draft.length < edit.MAX_DRAFT_POINTS) draft = [...draft, p];
+  }
+  function selectSurface(id: string) {
+    selected = id;
+    setMode('edit');
+  }
+  function removeSurface() {
+    if (!chosen) return;
+    apply(edit.removeSurface(scene, selected));
+    selected = scene.surfaces[0]?.id ?? '';
+  }
+  function duplicate() {
+    const added = edit.duplicateSurface(scene, selected);
+    if (!added) return;
+    apply(added.scene);
+    selected = added.surface.id;
+  }
+  function transform(scale: number, angle = 0) {
+    if (!chosen) return;
+    if (!apply(edit.transformSurface(scene, selected, scale, angle, safeAspect)))
+      say(`No room to ${angle ? 'rotate' : 'scale'} ${chosen.name} here. Move it away from the edge first.`);
+  }
+  function rename(value: string) {
+    if (chosen && value !== chosen.name) apply(edit.renameSurface(scene, selected, value));
+  }
+  function behavior(value: Behavior) {
+    apply(edit.setSurfaceBehavior(scene, selected, value));
+  }
+  function importMapping() {
+    const surfaces = importCornerSurfaces(mappingSurfaces);
+    if (!surfaces.length) return say('No corner-mapped surfaces to import.');
+    const before = snapshot();
+    try {
+      restore({ ...scene, surfaces });
+      history = past.record(history, before);
+      say('Copied corner-mapped surfaces. Mesh surfaces are omitted; changes here stay independent.');
+    } catch (e) {
+      say((e as Error).message);
+    }
+  }
+
+  // ── Scene library, drafts, files ─────────────────────────────────────────
+  function draftSave() {
+    if (!persistDraft || !ready) return;
+    try {
+      const next = captureScene(scene),
+        json = JSON.stringify(next);
+      if (json === lastDraft) return;
+      writeInteractiveDraft(localStorage, next);
+      lastDraft = json;
+      draftStatus = 'Saved on this device';
+    } catch {
+      draftStatus = 'Not saved. Export a backup.';
+    }
+  }
+  function useStarter(id: InteractiveStarter) {
+    loadScene(starterScene(id), () => {
+      inspector = 'effects';
+      setMode('perform');
+      say('Scene ready. Drag the preview to interact. Undo restores your previous scene.');
+    });
+  }
+  function recallSaved(id: string) {
+    const found = savedScenes.find((s) => s.id === id);
+    if (!found) return;
+    loadScene(found.scene, () => {
+      inspector = 'effects';
+      say('Saved scene loaded. Undo restores your previous scene.');
+    });
+  }
+  function removeSaved(id: string) {
+    try {
+      const found = savedScenes.find((s) => s.id === id);
+      savedScenes = removeInteractivePreset(localStorage, id);
+      removedScene = found;
+      say(`Saved scene removed. Your current ${persistDraft ? 'draft' : 'scene'} is unchanged.`);
+    } catch (e) {
+      say((e as Error).message);
+    }
+  }
+  function undoRemoveSaved() {
+    if (!removedScene) return;
+    try {
+      savedScenes = restoreInteractivePreset(localStorage, removedScene);
+      removedScene = undefined;
+      say('Saved scene restored.');
+    } catch (e) {
+      say((e as Error).message);
+    }
+  }
+  function savePreset() {
+    try {
+      savedScenes = saveInteractivePreset(localStorage, captureScene(scene));
+      draftSave();
+      say('Saved a new scene in your library.');
+    } catch (e) {
+      say((e as Error).message);
+    }
+  }
+  async function importFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 2_000_000) throw Error('Scene file is too large.');
+      const next = validateScene(JSON.parse(await file.text()));
+      loadScene(next, () => say('Scene imported. Undo restores your previous scene.'));
+    } catch (e) {
+      say((e as Error).message);
+    }
+    input.value = '';
+  }
+  async function exportFile() {
+    try {
+      const json = JSON.stringify(validateScene(captureScene(scene)));
+      if (await shareInteractiveScene(json)) return say('Scene shared.');
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' })),
+        a = document.createElement('a');
+      a.href = url;
+      a.download = 'Ghost-Interactive.ghostinteractive.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      say('Scene exported for Interactive Studio.');
+    } catch (e) {
+      say((e as Error).message);
+    }
+  }
+
+  // ── Camera and microphone ────────────────────────────────────────────────
+  async function startCamera() {
+    if (cameraBusy) return;
+    stopCamera();
+    const token = epoch;
+    cameraBusy = true;
+    camera = true;
+    await tick();
+    const next = new DesktopFeedPreview(cameraCanvas!, facing, (s) => {
+      say(s);
+      motion = [];
+    });
+    preview = next;
+    try {
+      await onpreparecamera();
+      await next.start();
+      if (token === epoch)
+        say('Camera is a local reference. Enable Motion input to interact; this is not calibrated projector tracking.');
+    } catch (e) {
+      if (token === epoch) {
+        say((e as Error).message);
+        camera = false;
+      }
+    } finally {
+      if (token === epoch) cameraBusy = false;
+    }
+  }
+  function stopCamera() {
+    epoch++;
+    preview?.destroy();
+    preview = undefined;
+    camera = false;
+    cameraBusy = false;
+    motion = [];
+    sensor.reset();
+  }
+  async function toggleAudio() {
+    if (audioOn) {
+      mobileAudio?.stop();
+      audioOn = false;
+      return;
+    }
+    try {
+      mobileAudio ??= new StandaloneAudio();
+      await mobileAudio.start();
+      audioOn = true;
+    } catch (e) {
+      say((e as Error).message);
+    }
+  }
+
+  // ── Output ───────────────────────────────────────────────────────────────
+  function liveInputs(): Interaction[] {
+    return [...pointers.values(), ...motion];
+  }
+  function sendOutput() {
+    outputActive = !outputActive;
+    try {
+      if (!nativeOutput) onoutput(outputActive ? programCanvas! : null);
+      onscene(scene, liveInputs(), outputActive, paused);
+    } catch (e) {
+      outputActive = false;
+      say((e as Error).message);
+      return;
+    }
+    say(
+      nativeOutput
+        ? outputActive
+          ? 'Native GPU layer is live. The editor shows the same simulation before output warping.'
+          : 'Native interactive layer stopped.'
+        : outputActive && remoteOutput
+          ? 'Sending the clean scene to desktop. Connection status appears above.'
+          : outputActive
+            ? 'Interactive scene selected for the app’s clean external output. Connect a display using Output settings.'
+            : 'Studio mix restored to external output.',
+    );
+  }
+  function closeEditor() {
+    draftSave();
+    flush();
+    onclose();
+  }
+  function interact(pointerId: number, interaction: Interaction, start: boolean) {
+    if (start || pointers.has(pointerId)) pointers.set(pointerId, interaction);
+  }
+
+  // ── Preview loop ─────────────────────────────────────────────────────────
+  /** Size the canvases the phone simulation draws into to the composition's shape. */
+  function sizePreview(width: number, height: number) {
+    for (const target of [fx, canvas, programCanvas]) {
+      if (!target || (target.width === width && target.height === height)) continue;
+      // Native frames size the preview canvas themselves.
+      if (target === canvas && nativePreview && nativeReady) continue;
+      target.width = width;
+      target.height = height;
+    }
+  }
+  /** Camera motion becomes touch-like input, sampled ten times a second. */
+  function sampleMotion(now: number) {
+    if (camera && preview && motionEnabled && now - lastSample > 100) {
+      lastSample = now;
+      try {
+        const c = small.getContext('2d', { willReadFrequently: true })!;
+        c.drawImage(cameraCanvas!, 0, 0, 64, 36);
+        motion = sensor.sample(c.getImageData(0, 0, 64, 36).data, 64, 36, sensitivity);
+      } catch {
+        motion = [];
+      }
+    } else if (!motionEnabled) motion = [];
+  }
+  /** Desktop: the core renders the scene; copy its latest frame into the stage. */
+  function requestNativeFrame(now: number) {
+    if (!nativeFrame || now - nativeFrameAt <= 1000 / 30) return;
+    nativeFrameAt = now;
+    void nativeFrame(canvas!).then((ok) => {
+      if (ok) {
+        nativeReady = true;
+        nativeFailures = 0;
+      } else if (++nativeFailures > 90) nativeReady = false;
+    });
+  }
+  /** Phone and tablet: simulate and draw the scene here. */
+  function simulate(now: number, dt: number) {
+    const audio = getVisualAudioSnapshot();
+    let bands: Record<string, number> = {
+      ...audio.bands,
+      amplitude: audio.energy,
+      kick: audio.kick,
+      snare: audio.snare,
+    };
+    if (audioOn && mobileAudio) {
+      mobileAudio.update(now);
+      const a = mobileAudio.uniforms;
+      bands = {
+        bass: a.audioBass,
+        sub: a.audioBass,
+        mid: a.audioMid,
+        lowMid: a.audioMid,
+        highMid: a.audioHigh,
+        treble: a.audioHigh,
+        air: a.audioHigh,
+        high: a.audioHigh,
+        presence: a.audioHigh,
+        amplitude: a.audioLevel,
+        kick: a.audioBass,
+        snare: a.audioHigh,
+      };
+    }
+    world.update(scene, paused ? 0 : dt, liveInputs(), bands, audio.bpm || 120);
+    world.draw(fx!.getContext('2d')!, scene, previewWidth, previewHeight, paused ? 0 : dt);
+    if (now - lastQualityAt > 1500) {
+      lastQualityAt = now;
+      qualityLabel = world.qualityDiagnostics().description;
+    }
+  }
+  /** Camera reference underneath, simulation on top, then the clean output copy. */
+  function compose() {
+    const c = canvas!.getContext('2d')!;
+    c.globalCompositeOperation = 'source-over';
+    c.globalAlpha = 1;
+    c.fillStyle = '#03060c';
+    c.fillRect(0, 0, previewWidth, previewHeight);
+    if (camera && preview) {
+      c.globalAlpha = cameraOpacity;
+      c.drawImage(cameraCanvas!, 0, 0, previewWidth, previewHeight);
+      c.globalAlpha = 1;
+    }
+    c.globalCompositeOperation = 'screen';
+    c.drawImage(fx!, 0, 0);
+    c.globalCompositeOperation = 'source-over';
+    if (outputActive || cleanPreview)
+      program.draw(canvas!, programCanvas!, { held: outputHeld, blackout: outputBlackout, level: outputLevel });
+  }
+  function frame(now: number) {
+    if (!alive) return;
+    raf = requestAnimationFrame(frame);
+    if (!nativeOutput || referencePreview) {
+      if (now - lastMobileFrame < 1000 / 30 - 1) return;
+      lastMobileFrame = now;
+    }
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
+    last = now;
+    if (document.hidden) {
+      pointers.clear();
+      motion = [];
+      sensor.reset();
+    }
+    if (now - lastPublish > 50) {
+      lastPublish = now;
+      onscene(scene, liveInputs(), outputActive, paused);
+    }
+    if (document.hidden || (!visible && !outputActive)) return;
+    sampleMotion(now);
+    if (nativeOutput && !referencePreview) {
+      requestNativeFrame(now);
+      return;
+    }
+    simulate(now, dt);
+    compose();
+  }
+
+  onMount(() => {
+    outputActive = initialActive;
+    const restored = initialScene ?? (persistDraft ? readInteractiveDraft(localStorage) : null);
+    restore(restored ?? starterScene('balls'));
+    if (persistDraft && !restored) inspector = 'presets';
+    savedScenes = readInteractivePresets(localStorage);
+    fx = document.createElement('canvas');
+    small = document.createElement('canvas');
+    small.width = 64;
+    small.height = 36;
+    sizePreview(previewWidth, previewHeight);
+    ready = true;
+    saveTimer = setInterval(draftSave, 1000);
+    window.addEventListener('keydown', onWindowKey, true);
+    takeFocus();
+    raf = requestAnimationFrame(frame);
+  });
+  onDestroy(() => {
+    draftSave();
+    clearInterval(saveTimer);
+    clearTimeout(messageTimer);
+    window.removeEventListener('keydown', onWindowKey, true);
+    world.dispose();
+    program.dispose();
+    flush();
+    mobileAudio?.stop();
+    alive = false;
+    cancelAnimationFrame(raf);
+    stopCamera();
+    pointers.clear();
+    if (outputActive && !nativeOutput) onoutput(null);
+    giveFocusBack();
+  });
 </script>
-<section class="interactive-workspace" class:studio-fullscreen={fullScreen} class:native-editor={nativeOutput&&!referencePreview} class:handheld class:clean-preview={cleanPreview} aria-label="Interactive Studio" onkeydown={keyboard} tabindex="-1">
- <header><div><small>GHOST ARCADE / INTERACTIVE</small><h2>Interactive Studio <span class="engine-badge">{referencePreview?'Local reference':nativeOutput?'Native GPU':'Mobile'}</span></h2></div><div class="header-actions">{#if ontimeline}<button onclick={ontimeline}>◇ Keyframes</button>{/if}<button class:live={outputActive} onclick={sendOutput}>{outputActive?'■ Stop':handheld?'▶ Use output':nativeOutput?'▶ Launch native layer':'▶ Send to output'}</button><button class="fullscreen-action" onclick={()=>fullScreen=!fullScreen} aria-label={fullScreen?'Exit full screen studio':'Full screen studio'}>{fullScreen?'↙ Window':'⛶ Full screen'}</button><button onclick={closeEditor} aria-label="Return to performance controls">{nativeOutput&&outputActive?'View output':'Back'}</button></div></header>
- {#if handheld&&!remoteOutput}<div class="workspace-status"><span class:live={outputActive}>{outputActive?'Interactive → Output':'Preview only'}<small>{outputLabel||'Connect a display from Output'}</small></span><button onclick={onoutputsettings} disabled={!onoutputsettings}><Icon name="output" size={16}/>Output</button></div>{/if}
- <div class="layout"><div class="work">
- <div class="canvas-toolbar"><div class="segmented"><button class:active={mode==='edit'&&!placingEmitter} onclick={()=>{placingEmitter=false;setMode('edit');}}>↖ Select</button><button class:active={mode==='draw'} onclick={()=>{placingEmitter=false;setMode('draw');}}>✎ Draw</button><button class:active={mode==='perform'} onclick={()=>{placingEmitter=false;setMode('perform');}}>◎ Play</button></div><div class="transport"><button disabled={!history.length} onclick={undo} title="Undo" aria-label="Undo last edit"><Icon name="undo" size={16}/></button><button onclick={()=>paused=!paused} aria-label={paused?'Resume simulation':'Pause simulation'} aria-pressed={paused}><Icon name={paused?'play':'pause'} size={16}/></button><button onclick={()=>{scene={...scene,seed:((scene.seed??0)+1)%1000000};world.reset();}} title="Restart all simulations" aria-label="Restart simulations"><Icon name="redo" size={16}/></button></div></div>
- <div class="viewport"><div class="stage" bind:this={stage} role="application" tabindex="0" aria-label="Interactive scene canvas" onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} onlostpointercapture={up}>
- <canvas bind:this={programCanvas} class="program-preview" aria-label="Clean interactive output"></canvas>
- <!-- The optional camera stays an editor reference underneath the native pixels. -->
- {#if camera}<canvas class="camera-source" class:native-reference={nativeOutput&&!referencePreview} style:opacity={nativeOutput&&!referencePreview?cameraOpacity:0} bind:this={cameraCanvas} aria-hidden="true"></canvas>{/if}
- <canvas bind:this={canvas} class:camera-overlay={nativeOutput&&!referencePreview&&camera} aria-label={referencePreview?'Local reference preview':nativeOutput?'Live native effect preview':'Interactive preview'}></canvas>
- {#if nativeOutput&&!referencePreview&&(!nativeReady||!outputActive)}<div class="preview-status" role="status">{outputActive?'Waiting for native effect frames…':'Layer stopped — launch to preview'}</div>{/if}
- <svg viewBox="0 0 960 540" preserveAspectRatio="none" aria-hidden="true">
- {#if mode!=='perform'}{#each scene.surfaces as s}<polygon class:selected={s.id===selected} points={s.points.map(p=>`${p.x*960},${p.y*540}`).join(' ')}/>{#if s.id===selected}{#each s.points as p}<circle cx={p.x*960} cy={p.y*540} r="6"/>{/each}{/if}{/each}{/if}
- {#if activeEffect&&(placingEmitter||inspector==='effects')&&(activeEffect.kind==='light'||(activeEffect.target==='point'&&definitions.some(d=>d.key==='x')))}<g class="emitter"><circle cx={(activeEffect.params.lightX??activeEffect.params.x??.5)*960} cy={(activeEffect.params.lightY??activeEffect.params.y??.5)*540} r="12"/><text x={(activeEffect.params.lightX??activeEffect.params.x??.5)*960+18} y={(activeEffect.params.lightY??activeEffect.params.y??.5)*540+4}>{activeEffect.kind==='light'?'LIGHT':'EMITTER'}</text></g>{/if}
- <polyline points={draft.map(p=>`${p.x*960},${p.y*540}`).join(' ')}/>{#each draft as p}<circle cx={p.x*960} cy={p.y*540} r="5"/>{/each}
- </svg></div></div>
- <div class="canvas-footer">{#if handheld&&mode==='perform'}<select class="touch-tool" aria-label="Touch interaction" bind:value={tool}><option value="attract">Attract</option><option value="repel">Repel</option><option value="vortex">Vortex</option></select>{/if}<span>{placingEmitter?'Drag on the canvas to position the source.':mode==='draw'?'Tap the outline, then finish.':mode==='perform'?'Drag to stir, attract or repel.':'Select a shape. Drag its body or corner handles.'}</span><span>{referencePreview?'Local reference · desktop renders independently':nativeOutput?'Live native source · before output warp':qualityLabel||'Mobile preview'}</span></div>
- {#if mode==='draw'}<div class="tools"><button disabled={!draft.length} onclick={()=>draft=draft.slice(0,-1)}>Undo point</button><button disabled={draft.length<3} onclick={add}>Finish shape</button></div>{/if}
- {#if mode==='perform'&&!handheld}<div class="tools">{#each ['attract','repel','vortex'] as t}<button class:active={tool===t} onclick={()=>tool=t as typeof tool}>{t}</button>{/each}</div>{/if}
- </div><aside>
- <nav class="inspector-tabs" aria-label="Interactive tools"><button class:active={inspector==='presets'} onclick={()=>inspector='presets'}>Scenes</button><button class:active={inspector==='effects'} onclick={()=>inspector='effects'}>✦ Effects</button><button class:active={inspector==='objects'} onclick={()=>{inspector='objects';placingEmitter=false;setMode('edit');}}>▧ Objects</button><button class:active={inspector==='scene'} onclick={()=>inspector='scene'}>Setup</button></nav>
- <div class="inspector-body">
- <p role="status">{message}</p>
- {#if inspector==='presets'}
- <div class="panel-heading"><strong>Start with a scene</strong><span>Ready to play</span></div>
- <p class="hint">Choose a starting point. Add effects, move objects, make it yours. Undo brings your previous scene back.</p>
- <div class="starter-grid">{#each INTERACTIVE_STARTERS as starter}<button class="starter" style:--starter-color={starter.color} onclick={()=>useStarter(starter.id)}><Icon name={starter.icon} size={24}/><strong>{starter.name}</strong><span>{starter.description}</span></button>{/each}</div>
- <div class="panel-heading saved-heading"><strong>Your scenes</strong><button onclick={savePreset}><Icon name="save" size={16}/>Save current</button></div>
- {#if !savedScenes.length}<p class="hint">Save a scene to keep a version. Your current draft saves automatically on this device.</p>{/if}
- <div class="saved-scenes">{#each savedScenes as saved}<div class="saved-row"><button onclick={()=>recallSaved(saved.id)}><strong>{saved.scene.name}</strong><small>{saved.scene.effects?.length??1} effects · {saved.scene.surfaces.length} objects</small></button><button class="delete-saved" aria-label={`Remove saved scene ${saved.scene.name}`} onclick={()=>removeSaved(saved.id)}><Icon name="trash" size={16}/></button></div>{/each}</div>{#if removedScene}<button class="wide" onclick={undoRemoveSaved}>Undo removing {removedScene.scene.name}</button>{/if}
- {:else if inspector==='effects'}
- <div class="panel-heading"><strong>Effect stack</strong><span>{effects.length}/{MAX_INTERACTIVE_EFFECTS}</span></div>
- <select aria-label="Add visual effect" bind:value={effectToAdd} onchange={()=>{if(effectToAdd)addEffect(effectToAdd as EffectKind);}} disabled={effects.length>=MAX_INTERACTIVE_EFFECTS}><option value="">＋ Add visual effect</option>{#each EFFECT_KINDS as kind}<option value={kind}>{EFFECT_NAMES[kind]}</option>{/each}</select>
- <p class="hint">Use ↑ ↓ to reorder. The last effect sits on top.</p>
- <div class="effect-list">{#each effects as effect,i (effect.id)}<div class="effect-card" class:active={selectedEffect===effect.id} draggable="true" role="group" aria-label={`${effect.name} effect`} ondragstart={e=>{dragEffect=effect.id;e.dataTransfer?.setData('text/plain',effect.id);}} ondragover={e=>e.preventDefault()} ondrop={e=>{e.preventDefault();if(dragEffect)reorder(dragEffect,effect.id);}}><span class="grip" aria-hidden="true">⠿</span><input type="checkbox" checked={effect.enabled} aria-label={`Enable ${effect.name}`} onchange={()=>{checkpoint();scene={...scene,effects:effects.map(v=>v.id===effect.id?{...v,enabled:!v.enabled}:v)};}}/><button class="effect-title" onclick={()=>{selectedEffect=effect.id;placingEmitter=false;}} aria-expanded={selectedEffect===effect.id}><span>{effect.name}</span><small>{effect.kind==='light'?'Light source':!['fire','smoke','liquid','balls','cloud'].includes(effect.kind)?'Scene effect':effect.target==='point'?'Free emitter':scene.surfaces.find(s=>s.id===effect.target)?.name??'Free emitter'}</small></button><span class="order">{i+1}</span></div>{/each}</div>
- {#if activeEffect}<div class="effect-detail"><div class="panel-heading"><strong>{activeEffect.name}</strong><div class="mini-tools"><button onclick={()=>moveEffect(-1)} disabled={effects[0]?.id===selectedEffect} aria-label="Move effect up">↑</button><button onclick={()=>moveEffect(1)} disabled={effects.at(-1)?.id===selectedEffect} aria-label="Move effect down">↓</button><button class="danger" onclick={removeEffect} aria-label="Remove effect">×</button></div></div>
- {#if ['fire','smoke','liquid','balls','cloud'].includes(activeEffect.kind)}<label>Emit from<select value={activeEffect.target} onchange={e=>patchEffect({target:e.currentTarget.value})}><option value="point">Position on canvas</option>{#each scene.surfaces as s}<option value={s.id}>{s.name} · outline</option>{/each}</select></label><label>Emission<select value={activeEffect.emission} onchange={e=>patchEffect({emission:e.currentTarget.value as InteractiveEffect['emission']})}><option value="continuous">Continuous flow</option><option value="pulse">Repeating bursts</option><option value="burst">Manual burst</option></select></label>{#if activeEffect.emission==='burst'}<button class="wide live" onclick={()=>patchEffect({burst:activeEffect.burst+1})}>◉ Trigger burst</button>{/if}{/if}
- {#if definitions.some(d=>d.key==='x'||d.key==='lightX')}<button class="wide" class:active={placingEmitter} onclick={()=>{placingEmitter=!placingEmitter;setMode('edit');}}>{placingEmitter?'✓ Done positioning':activeEffect.kind==='light'?'◎ Position light on canvas':'◎ Position emitter on canvas'}</button>{/if}
- {#each [{label:'Look & motion',defs:basicDefinitions,extra:false},{label:'Advanced controls',defs:advancedDefinitions,extra:true}] as section}{#if section.extra}<button class="wide disclosure" aria-expanded={advanced} onclick={()=>advanced=!advanced}>{advanced?'−':'＋'} Advanced controls <span>{section.defs.length}</span></button>{:else}<div class="group-label">{section.label}</div>{/if}{#if !section.extra||advanced}{#each section.defs.filter(d=>(d.key!=='period'||activeEffect?.emission==='pulse')&&(d.key!=='duration'||activeEffect?.emission!=='continuous')) as def}<InteractiveParam {def} onstart={checkpoint} value={activeEffect.params[def.key]??def.value} mod={activeEffect.mods[def.key]} onchange={v=>effectValue(def.key,v)} onmod={v=>effectMod(def.key,v)} auto={activeEffect.paramAuto?.[def.key]} onauto={v=>effectAuto(def.key,v)} supportsCrossfader={nativeOutput} onkeyframe={onkeyframe?()=>{onkeyframe?.(activeEffect!.id,def.key,activeEffect!.params[def.key]??def.value,def.label);message=`Keyframe added: ${def.label}`;}:undefined}/>{/each}{/if}{/each}</div>{:else}<p class="empty">Add an effect to start building your scene.</p>{/if}
- {:else if inspector==='objects'}
- <div class="panel-heading"><strong>Objects & blockers</strong><span>{scene.surfaces.length}/32</span></div><div class="tools"><button disabled={scene.surfaces.length>=32} onclick={()=>quickShape('box')}>▭ Box</button><button disabled={scene.surfaces.length>=32} onclick={()=>quickShape('circle')}>○ Circle</button><button disabled={scene.surfaces.length>=32} onclick={()=>quickShape('triangle')}>△ Triangle</button></div>
- <div class="surface-list">{#each scene.surfaces as s}<button class:active={s.id===selected} onclick={()=>{selected=s.id;setMode('edit');}}><span>{s.name}</span><small>{s.behavior}</small></button>{/each}</div>
- {#if chosen}<label>Object name<input value={chosen.name} onchange={e=>rename(e.currentTarget.value)} maxlength="80"/></label><label>Interaction<select value={chosen.behavior} onchange={e=>behavior(e.currentTarget.value as Behavior)}><option value="solid">Solid blocker</option><option value="emitter">Emitter boundary</option><option value="attractor">Attractor</option><option value="trigger">Trigger region</option></select></label><label>Blocker depth <output>{(chosen.height??.25).toFixed(2)}</output><input type="range" min=".02" max=".9" step=".01" value={chosen.height??.25} onpointerdown={checkpoint} oninput={e=>scene={...scene,surfaces:scene.surfaces.map(s=>s.id===selected?{...s,height:+e.currentTarget.value}:s)}}/></label>
- <div class="group-label">Attach an effect</div><div class="tools"><button class="ignite" onclick={()=>addEffect('fire',selected)}>♨ Ignite</button><button onclick={()=>addEffect('smoke',selected)}>Smoke</button><button onclick={()=>addEffect('liquid',selected)}>Pour</button></div><div class="tools"><button onclick={()=>transform(.9)}>Scale −</button><button onclick={()=>transform(1.1)}>Scale +</button><button onclick={()=>transform(1,Math.PI/12)}>Rotate</button></div><div class="tools"><button onclick={duplicate} disabled={scene.surfaces.length>=32}>Duplicate</button><button class="danger" onclick={removeSurface}>Delete object</button></div>{:else}<p class="hint">Select or draw an object to edit its geometry and attach an effect.</p>{/if}
- <button class="wide" disabled={!mappingSurfaces.some(s=>s.enabled&&s.mode==='corners')} onclick={importMapping}>Import mapping outlines</button>
- {:else}
- {#if !nativeOutput}<button class="wide" onclick={toggleAudio}>{audioOn?'Stop microphone':'Enable audio modulation'}</button>{:else}<p class="hint">Audio Mod uses the desktop audio input. LFO and beat controls keep running when this editor closes.</p>{/if}
- <label>Scene name<input value={scene.name} onfocus={checkpoint} oninput={e=>{scene={...scene,name:e.currentTarget.value.slice(0,120)};}} maxlength="120"/></label><p class="draft-status" role="status">{persistDraft?draftStatus:'Export your scene to keep a portable copy.'}</p><div class="tools"><button onclick={savePreset}>Save scene</button><button onclick={()=>inspector='presets'}>My scenes</button><button onclick={exportFile}>Export</button></div><label>Import scene<input type="file" accept=".json,.ghostinteractive" onchange={importFile}/></label>
- <details><summary>Camera interaction</summary><label>Camera<select bind:value={facing} disabled={camera||cameraBusy}><option value="rear">Rear</option><option value="front">Mirrored selfie</option></select></label><div class="tools"><button disabled={cameraBusy} onclick={startCamera}>{cameraBusy?'Opening…':'Start camera'}</button><button onclick={stopCamera} disabled={!camera}>Stop</button></div><label class="check"><input type="checkbox" bind:checked={motionEnabled}/> Motion input</label><label>Sensitivity<input type="range" min="0" max="1" step=".01" bind:value={sensitivity}/></label><label>Reference camera opacity<input type="range" min="0" max="1" step=".01" bind:value={cameraOpacity}/></label><p class="hint">Local movement sensing; not calibrated depth tracking.</p></details>
- {/if}</div></aside></div>
- {#if cleanPreview}<button class="return-preview" onclick={()=>cleanPreview=false}>Back to Interactive</button>{/if}
- <slot name="timeline"/>
-</section>
-<style>
- .workspace-status{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:#0c111a;border-bottom:1px solid #303945}.workspace-status>span{font-size:11px;font-weight:650}.workspace-status small{display:block;letter-spacing:0;font-size:10px;margin-top:2px;color:#aebbc9}.workspace-status .live{background:none!important;border:0!important}.workspace-status button,.saved-heading button{display:flex;align-items:center;gap:6px}.starter-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.starter{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:7px;padding:13px!important;border-top:2px solid var(--starter-color)!important;min-width:0}.starter :global(svg){color:var(--starter-color)}.starter strong{font-size:13px}.starter span{font-size:11px;line-height:1.45;color:#adbac9}.saved-heading{margin-top:22px}.saved-scenes{display:grid;gap:6px}.saved-scenes button{display:grid;text-align:left;gap:4px}.saved-scenes small{letter-spacing:0}.disclosure{display:flex;justify-content:space-between}.draft-status{font-size:11px;color:#9fc9b1}.transport button{display:grid;place-items:center;min-width:34px}
- .native-editor{display:flex;flex-direction:column;height:calc(94dvh - 70px);min-height:480px}.native-editor .layout{flex:1;min-height:0}.native-editor .work,.native-editor aside{max-height:none;min-height:0}.native-editor .viewport{container-type:size}.native-editor .stage{width:min(100%,calc(100cqh * 16 / 9));max-height:none}.stage canvas.native-reference{position:absolute;width:100%;height:100%;object-fit:cover}.stage canvas.camera-overlay{mix-blend-mode:screen}
- .preview-status{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;color:#acbacb;font-size:12px}.interactive-workspace{--accent:var(--ga-selection-line,#7592ee);background:var(--ga-inspector-bg,var(--ga-card,#15171b));color:var(--ga-ink-0,#e4e8ee);font:12px/1.5 system-ui;padding:0;min-width:0}.studio-fullscreen{position:fixed;inset:0;z-index:10001;display:flex;flex-direction:column;height:100dvh}.studio-fullscreen>header{padding-top:28px}.studio-fullscreen .layout{flex:1;min-height:0}.studio-fullscreen .work,.studio-fullscreen aside{max-height:none}header{display:flex;gap:16px;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--ga-line-2,#34383f)}h2{font-size:18px;font-weight:650;margin:2px 0}.engine-badge{font-size:9px;color:#a0bce8;font-weight:500;border:1px solid #45516b;padding:3px 5px;border-radius:3px;vertical-align:middle}small{font-size:9px;letter-spacing:.1em;color:var(--ga-ink-2,#99a7b9)}.header-actions{display:flex;gap:6px;align-items:center}.layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:580px}.work{display:flex;flex-direction:column;min-width:0;padding:12px;background:var(--ga-canvas-bg,#070a10)}aside{border-left:1px solid var(--ga-line-2,#34383f);min-width:0;display:flex;flex-direction:column}.work,aside{max-height:calc(92dvh - 148px)}.inspector-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:10px;border-bottom:1px solid var(--ga-line-2,#34383f)}.inspector-body{padding:12px;overflow:auto;min-height:0;scrollbar-gutter:stable}.canvas-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:10px}.segmented,.transport,.tools{display:flex;gap:5px}.tools{flex-wrap:wrap;margin:10px 0}.tools>*{flex:1}.viewport{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}.stage{width:100%;max-height:100%;aspect-ratio:16/9;position:relative;touch-action:none;background:#03060c;overflow:hidden;border:1px solid #303945}.stage canvas,.stage svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.stage svg .emitter circle{fill:none;stroke:#a6e9ef;stroke-width:2}.emitter text{fill:#a6e9ef;font:10px system-ui;letter-spacing:1px}polygon{fill:#69b7ff05;stroke:#7aa1bf;stroke-width:1;vector-effect:non-scaling-stroke}polygon.selected{stroke:#ffb160;stroke-width:2}circle{fill:#ffb160;stroke:white;stroke-width:1.5}polyline{stroke:#ffb160;fill:none;stroke-width:2}.canvas-footer{display:flex;justify-content:space-between;gap:12px;padding:10px 0;color:var(--ga-ink-2,#8998ad);font-size:10px}.canvas-footer span:last-child{text-align:right}.panel-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:2px 0 10px}.panel-heading strong{font-size:12px}.panel-heading>span,.order{font:10px ui-monospace,monospace;color:#8290a5}.effect-list{display:grid;gap:5px}.effect-card{display:flex;align-items:center;gap:7px;border:1px solid var(--ga-line-2,#34383f);border-radius:4px;padding:3px 8px;background:var(--ga-slot,#121720)}.effect-card.active{border-color:var(--accent);background:var(--ga-selection-bg,#25314b)}.effect-title{flex:1;min-width:0;text-align:left;border:0!important;background:none!important;padding:5px!important;box-shadow:none!important;display:grid}.effect-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.effect-title small{font-size:9px;letter-spacing:0}.grip{font-size:17px;color:#687587;cursor:grab}.effect-detail{border-top:1px solid var(--ga-line-2,#34383f);margin-top:15px;padding-top:14px}.mini-tools{display:flex;gap:4px}.mini-tools button{min-height:26px;padding:2px 8px}.group-label{font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:#8da4c6;margin:18px 0 8px;border-bottom:1px solid var(--ga-line-2,#34383f);padding-bottom:6px}.surface-list{display:grid;gap:4px;margin:10px 0}.surface-list button{display:flex;justify-content:space-between;text-align:left;gap:8px}.surface-list span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.surface-list small{letter-spacing:0}.wide{width:100%;margin:5px 0}.danger{color:#ffa69b}.ignite{color:#ffae70}.live{color:#b6f7bd!important;border-color:#518657!important;background:#193326!important}.active{background:var(--ga-selection-bg,#27354d);border-color:var(--accent)}button,input,select{font:inherit;box-sizing:border-box;color:inherit;max-width:100%}button,select,input:not([type=range]):not([type=checkbox]){min-height:34px;padding:6px 9px;border:1px solid var(--ga-line-3,#404955);background:var(--ga-hardware-bg,var(--ga-slot,#1b2029));border-radius:var(--ga-r-hard,4px)}button{touch-action:manipulation;cursor:pointer}button:disabled{opacity:.4;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #8abaff;outline-offset:2px}label{display:block;font-size:11px;margin:12px 0}label>input:not([type=checkbox]),select{width:100%;display:block;margin-top:4px}input[type=range]{height:36px;accent-color:var(--accent);touch-action:none}input[type=checkbox]{accent-color:var(--accent)}output{float:right}.hint,.empty{font-size:10px;color:var(--ga-ink-2,#99a7ba)}p[role=status]{font-size:11px;color:#9bc7fa;margin:0;overflow-wrap:anywhere}.camera-source{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}summary{cursor:pointer;padding:12px 0}.check{display:flex;gap:8px;align-items:center}
- @media(max-width:850px){header{padding:10px;flex-wrap:wrap;gap:8px}.header-actions{flex:1;justify-content:flex-end;flex-wrap:wrap}h2{font-size:16px}.layout{grid-template-columns:1fr;min-height:0}.studio-fullscreen{overflow:auto;display:block}.work,aside{max-height:none}.viewport{min-height:190px;flex:none}.inspector-body{max-height:none;overflow:visible}aside{border-left:0;border-top:1px solid #34383f}.inspector-tabs{position:sticky;top:0;background:var(--ga-card,#15171b);z-index:2}.canvas-toolbar{flex-wrap:wrap}.canvas-footer{flex-wrap:wrap}.canvas-footer span:last-child{text-align:left}.stage{aspect-ratio:16/9;max-height:none}.work{padding:8px}.engine-badge{display:none}}@media(pointer:coarse){button,select{min-height:44px}.effect-card{min-height:48px}input[type=range]{height:44px}}
 
- .handheld{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}.handheld header{padding:10px 12px;gap:6px;flex-wrap:nowrap}.handheld header small{display:none}.handheld h2{font-size:15px}.handheld .engine-badge,.handheld .fullscreen-action{display:none}.handheld .header-actions{flex:none;flex-wrap:nowrap;gap:6px}.handheld .header-actions button{font-size:11px;padding:6px 9px}.handheld .layout{flex:1;min-height:0;overflow:hidden;grid-template-columns:minmax(0,1fr) 330px}.handheld .work,.handheld aside{max-height:none;min-height:0}.handheld .inspector-body{overflow:auto;overscroll-behavior:contain;max-height:none;padding-bottom:max(18px,env(safe-area-inset-bottom));scrollbar-gutter:auto}.handheld button,.handheld select,.handheld .mini-tools button{min-height:44px}.handheld .mini-tools button{min-width:44px}.handheld .effect-card input{width:24px;height:44px;margin:0}.handheld label>input:not([type=checkbox]){min-height:44px}.handheld .canvas-footer span:last-child{display:none}.handheld .canvas-footer{min-height:28px;padding:7px 0;font-size:11px}.handheld .inspector-tabs{position:static;padding:8px}.handheld .grip{display:none}.handheld .effect-title{min-height:44px}.handheld .effect-title small{font-size:11px}.handheld .hint{font-size:12px;line-height:1.5}.handheld .group-label{font-size:10px}.handheld .canvas-toolbar{flex-wrap:nowrap}.handheld .transport{gap:4px}.handheld .transport button{width:36px;min-width:36px;padding:0}.handheld .segmented{flex:1;gap:4px}.handheld .segmented button{flex:1;padding:4px;font-size:11px}.handheld .viewport{flex:1;min-height:0}.handheld p[role=status]:empty{display:none}.handheld p[role=status]{font-size:10px;max-height:30px;overflow:auto}
- @media(max-width:680px) and (min-height:501px){.handheld .layout{display:flex;flex-direction:column}.handheld .work{flex:none;padding:8px 10px 0}.handheld .viewport{flex:none;min-height:0}.handheld .stage{width:min(100%,calc(25dvh * 16 / 9));max-height:25dvh}.handheld aside{flex:1;overflow:hidden;border-left:0;border-top:1px solid #303945}.handheld .inspector-body{flex:1}.handheld .canvas-toolbar{padding-bottom:6px}.handheld .canvas-footer{min-height:20px;padding:4px 0}.handheld .inspector-tabs{padding:5px 8px}.handheld .workspace-status{padding:4px 12px}.handheld .panel-heading{margin-top:0}}
- @media(max-height:500px){.handheld .layout{display:grid;grid-template-columns:minmax(0,1fr) 300px}.handheld header{padding:4px 12px}.handheld .workspace-status{display:none}.handheld .work{padding:8px}.handheld .viewport{min-height:0;container-type:size}.handheld .stage{width:min(100%,calc(100cqh * 16 / 9));max-height:100%}.handheld .canvas-footer{display:none}.handheld aside{border-top:0;border-left:1px solid #303945}}
- .program-preview{visibility:hidden}.clean-preview .stage .program-preview{visibility:visible;z-index:3}.clean-preview>header,.clean-preview>.workspace-status,.clean-preview aside,.clean-preview .canvas-toolbar,.clean-preview .canvas-footer,.clean-preview .tools,.clean-preview p[role=status],.clean-preview .stage svg{display:none!important}.clean-preview .layout{display:flex!important}.clean-preview .work{flex:1;padding:0}.clean-preview .viewport{height:100%;flex:1}.clean-preview .stage{width:100%;max-height:100%;border:0}.return-preview{position:absolute;top:max(12px,env(safe-area-inset-top));right:12px;z-index:20;background:#111b!important;border:1px solid #8894a3!important;min-height:44px}
-.handheld .touch-tool{width:100px;flex:none;margin:0;font-size:11px}.handheld .canvas-footer{align-items:center}.handheld p[role=status]:not(:empty){padding:8px;border:1px solid #3b5372;background:#1b293d;margin:0 0 12px;max-height:none;font-size:11px}.handheld .workspace-status{padding-top:3px;padding-bottom:3px}.handheld .workspace-status button{min-height:44px}
-@media(max-width:680px) and (max-height:650px) and (min-height:501px){.handheld .stage{width:min(100%,calc(18dvh * 16 / 9));max-height:18dvh}.handheld header{padding:5px 10px}.handheld .workspace-status small{font-size:9px}.handheld .canvas-footer{font-size:10px}.handheld .canvas-toolbar{padding-bottom:4px}}
-.saved-row{display:flex;gap:6px}.saved-row>button:first-child{flex:1;min-width:0}.saved-row .delete-saved{display:grid;place-items:center;width:44px;min-height:44px;flex:none}.saved-row strong{overflow-wrap:anywhere}
-</style>
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<section
+  bind:this={root}
+  class="interactive-workspace"
+  class:studio-fullscreen={fullScreen}
+  class:native-editor={nativePreview}
+  class:handheld
+  class:clean-preview={cleanPreview}
+  style:--stage-aspect={safeAspect}
+  aria-label="Interactive Studio"
+  onkeydown={onRootKey}
+  tabindex="-1"
+>
+  <InteractiveHeader
+    engineLabel={referencePreview ? 'Local reference' : nativeOutput ? 'Native GPU' : 'Mobile'}
+    {outputActive}
+    {handheld}
+    {nativeOutput}
+    {fullScreen}
+    showOutputStatus={handheld && !remoteOutput}
+    {outputLabel}
+    {ontimeline}
+    onoutput={sendOutput}
+    onfullscreen={() => (fullScreen = !fullScreen)}
+    onclose={closeEditor}
+    {onoutputsettings}
+  />
+  <div class="layout">
+    <div class="work">
+      <InteractiveToolbar
+        {mode}
+        {placingEmitter}
+        canUndo={past.canUndo(history)}
+        canRedo={past.canRedo(history)}
+        {paused}
+        onmode={chooseMode}
+        onundo={undo}
+        onredo={redo}
+        onpause={() => (paused = !paused)}
+        onrestart={() => {
+          scene = edit.reseed(scene);
+          world.reset();
+        }}
+      />
+      <InteractiveStage
+        bind:this={stageView}
+        bind:canvas
+        bind:programCanvas
+        bind:cameraCanvas
+        surfaces={scene.surfaces}
+        {selected}
+        {mode}
+        {tool}
+        {placingEmitter}
+        {draft}
+        aspect={safeAspect}
+        emitter={emitterMarker}
+        {camera}
+        {cameraOpacity}
+        {nativePreview}
+        previewLabel={referencePreview
+          ? 'Local reference preview'
+          : nativeOutput
+            ? 'Live native effect preview'
+            : 'Interactive preview'}
+        previewStatus={nativePreview && (!nativeReady || !outputActive)
+          ? outputActive
+            ? 'Waiting for native effect frames…'
+            : 'Layer stopped. Launch to preview.'
+          : ''}
+        ongesture={beginEdit}
+        onselect={(id) => (selected = id)}
+        onpoints={(id, points) => {
+          scene = edit.setSurfacePoints(scene, id, points);
+          touchEdit();
+        }}
+        onvertex={(id, index, point) => {
+          scene = edit.moveSurfaceVertex(scene, id, index, point);
+          touchEdit();
+        }}
+        onemitter={moveEmitter}
+        ondraftpoint={addDraftPoint}
+        onfinish={finishDraft}
+        oninteract={interact}
+        onrelease={(id) => pointers.delete(id)}
+      />
+      <InteractiveStageTools
+        {mode}
+        {placingEmitter}
+        {handheld}
+        bind:tool
+        draftLength={draft.length}
+        markerName={emitterMarker?.label.toLowerCase() ?? ''}
+        sourceLabel={referencePreview
+          ? 'Local reference · desktop renders independently'
+          : nativeOutput
+            ? 'Live native source · before output warp'
+            : qualityLabel || 'Mobile preview'}
+        onundopoint={() => (draft = draft.slice(0, -1))}
+        onfinish={finishDraft}
+      />
+    </div>
+    <aside>
+      <nav class="inspector-tabs" aria-label="Interactive tools">
+        {#each [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['scene', 'Setup']] as [id, label]}
+          <button
+            class:active={inspector === id}
+            aria-current={inspector === id ? 'true' : undefined}
+            onclick={() => {
+              inspector = id as InspectorTab;
+              if (id === 'objects') chooseMode('edit');
+            }}
+          >
+            {label}
+          </button>
+        {/each}
+      </nav>
+      <div class="inspector-body">
+        {#if question}
+          <div class="studio-question" role="alertdialog" aria-label={question.title}>
+            <strong>{question.title}</strong>
+            <p>{question.detail}</p>
+            <div class="tools">
+              <button class="danger" bind:this={questionButton} onclick={() => answer(true)}>{question.action}</button>
+              <button onclick={() => answer(false)}>Cancel</button>
+            </div>
+          </div>
+        {/if}
+        <p role="status">{message}</p>
+        {#if inspector === 'presets'}
+          <InteractiveScenesPanel
+            {savedScenes}
+            {removedScene}
+            {persistDraft}
+            onstarter={useStarter}
+            onsave={savePreset}
+            onrecall={recallSaved}
+            onremove={removeSaved}
+            onundoremove={undoRemoveSaved}
+          />
+        {:else if inspector === 'effects'}
+          <InteractiveEffectStack
+            {effects}
+            surfaces={scene.surfaces}
+            {selectedEffect}
+            onadd={(kind) => addEffect(kind)}
+            onselect={selectEffect}
+            ontoggle={(id) => apply(edit.toggleEffect(scene, id))}
+            onreorder={reorder}
+          />
+          <InteractiveEffectParams
+            effect={activeEffect}
+            surfaces={scene.surfaces}
+            canMoveUp={effects[0]?.id !== selectedEffect}
+            canMoveDown={effects.at(-1)?.id !== selectedEffect}
+            {placingEmitter}
+            bind:advanced
+            supportsCrossfader={nativeOutput}
+            keyframes={!!onkeyframe}
+            onmove={moveEffect}
+            onremove={removeEffect}
+            onpatch={(patch) => apply(edit.patchEffect(scene, selectedEffect, patch))}
+            onburst={triggerBurst}
+            onplacing={togglePlacing}
+            onstart={beginEdit}
+            onvalue={effectValue}
+            onmod={effectMod}
+            onauto={effectAuto}
+            onkeyframe={addKeyframe}
+          />
+        {:else if inspector === 'objects'}
+          <InteractiveObjectsPanel
+            surfaces={scene.surfaces}
+            {selected}
+            {effectsFull}
+            canImportMapping={mappingSurfaces.some((s) => s.enabled && s.mode === 'corners')}
+            onshape={quickShape}
+            onselect={selectSurface}
+            onrename={rename}
+            onbehavior={behavior}
+            onheightstart={beginEdit}
+            onheight={(height) => {
+              scene = edit.setSurfaceHeight(scene, selected, height);
+              touchEdit();
+            }}
+            onattach={(kind) => addEffect(kind, selected)}
+            ontransform={transform}
+            onduplicate={duplicate}
+            ondelete={removeSurface}
+            onimportmapping={importMapping}
+          />
+        {:else}
+          <InteractiveSetupPanel
+            {nativeOutput}
+            {handheld}
+            {audioOn}
+            sceneName={scene.name}
+            saveStatus={persistDraft
+              ? draftStatus
+              : 'This scene is part of your project. Export to keep a separate copy.'}
+            bind:facing
+            {camera}
+            {cameraBusy}
+            bind:motionEnabled
+            bind:sensitivity
+            bind:cameraOpacity
+            ontoggleaudio={toggleAudio}
+            onnamestart={beginEdit}
+            onname={(name) => {
+              scene = { ...scene, name: name.slice(0, 120) };
+              touchEdit();
+            }}
+            onsave={savePreset}
+            onscenes={() => (inspector = 'presets')}
+            onexport={exportFile}
+            onimport={importFile}
+            onstartcamera={startCamera}
+            onstopcamera={stopCamera}
+          />
+        {/if}
+      </div>
+    </aside>
+  </div>
+  {#if cleanPreview}
+    <button class="return-preview" onclick={() => (cleanPreview = false)}>Back to Interactive</button>
+  {/if}
+  {#if $$slots.timeline}
+    <div class="studio-timeline"><slot name="timeline" /></div>
+  {/if}
+</section>

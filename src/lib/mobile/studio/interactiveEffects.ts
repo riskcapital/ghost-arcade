@@ -22,6 +22,26 @@ export function effectParams(kind:EffectKind):EffectParam[]{
  if(kind==='cloud')return [...look,...emitter,p('size','Point size',0,1,.35,9),p('turbulence','Swirl',0,2,.6,26),p('lifetime','Lifetime (s)',1,40,15,27)];
  return [...look,...emitter,p('heat',kind==='fire'?'Flame height / heat':'Buoyancy',.1,3,1.1,31),p('turbulence','Turbulence',0,2,.7,26),p('lifetime','Dissipation (s)',.2,8,kind==='fire'?1.2:3,27),p('haze',kind==='fire'?'Smoke amount':'Density',0,1,.5,4)];
 }
+/** Longest name an effect can carry. */
+export const EFFECT_NAME_LIMIT=40;
+/** An effect's own name, tidied and capped; its style name when it has none. */
+export function effectName(raw:unknown,kind:EffectKind):string{
+ const name=typeof raw==='string'?raw.replace(/[\u0000-\u001f\u007f]+/g,' ').replace(/\s+/g,' ').trim().slice(0,EFFECT_NAME_LIMIT).trim():'';
+ return name||EFFECT_NAMES[kind];
+}
+/** One label per effect that tells it apart from the others: its name, or
+ * the name with a number when two effects share it ("Fire 1", "Fire 2"). */
+export function effectLabels(effects:Pick<InteractiveEffect,'id'|'kind'|'name'>[]):Map<string,string>{
+ const names=effects.map(e=>effectName(e.name,e.kind)),count=new Map<string,number>();
+ for(const name of names)count.set(name,(count.get(name)??0)+1);
+ const used=new Set(names.filter(name=>count.get(name)===1)),next=new Map<string,number>(),labels=new Map<string,string>();
+ effects.forEach((e,i)=>{
+  const name=names[i];if(count.get(name)===1){labels.set(e.id,name);return;}
+  let n=next.get(name)??1,label=`${name} ${n}`;while(used.has(label))label=`${name} ${++n}`;
+  next.set(name,n+1);used.add(label);labels.set(e.id,label);
+ });
+ return labels;
+}
 export function makeEffect(kind:EffectKind,target='point'):InteractiveEffect{return{id:crypto.randomUUID(),kind,name:EFFECT_NAMES[kind],enabled:true,target,emission:'continuous',burst:0,params:Object.fromEntries(effectParams(kind).map(d=>[d.key,d.value])),mods:{}};}
 /** Migrate once at the editor boundary. Legacy render descriptors retain their old path. */
 export function editableEffects(scene:InteractiveScene):InteractiveEffect[]{
@@ -35,7 +55,7 @@ export function validateEffects(raw:unknown,surfaceIds:Set<string>):InteractiveE
  if(!Array.isArray(raw)||raw.length>MAX_INTERACTIVE_EFFECTS)throw Error('Use up to eight interactive effects.');const ids=new Set<string>();
  return raw.map((e:any)=>{if(!e||typeof e.id!=='string'||!/^[\w-]{1,100}$/.test(e.id)||ids.has(e.id)||!EFFECT_KINDS.includes(e.kind)||!['continuous','pulse','burst'].includes(e.emission))throw Error('Invalid interactive effect.');ids.add(e.id);const params:Record<string,number>={},mods:Record<string,ParamModulation>={};
   for(const d of effectParams(e.kind)){const v=e.params?.[d.key]??d.value;if(!Number.isFinite(v))throw Error('Invalid effect parameter.');params[d.key]=Math.max(d.min,Math.min(d.max,v));const m=e.mods?.[d.key];if(m){if(!MOD_SOURCES.includes(m.source)||['amount','speed','rangeMin','rangeMax'].some(k=>m[k]!==undefined&&!Number.isFinite(m[k])))throw Error('Invalid effect modulation.');mods[d.key]={source:m.source,amount:Math.max(0,Math.min(1,m.amount??.5)),speed:Math.max(.01,Math.min(20,m.speed??.15)),invert:!!m.invert,bpmSync:!!m.bpmSync,...(m.rangeMin!==undefined&&m.rangeMax!==undefined?{rangeMin:Math.max(0,Math.min(1,m.rangeMin)),rangeMax:Math.max(0,Math.min(1,m.rangeMax))}:{})};}}
-  return{id:e.id,kind:e.kind,name:String(e.name??EFFECT_NAMES[e.kind as EffectKind]).slice(0,80),enabled:e.enabled!==false,target:surfaceIds.has(e.target)?e.target:'point',emission:e.emission,burst:Number.isSafeInteger(e.burst)?Math.max(0,Math.min(1e6,e.burst)):0,params,mods,paramAuto:validateInteractiveAuto(e.paramAuto,e.kind)};
+  return{id:e.id,kind:e.kind,name:effectName(e.name,e.kind),enabled:e.enabled!==false,target:surfaceIds.has(e.target)?e.target:'point',emission:e.emission,burst:Number.isSafeInteger(e.burst)?Math.max(0,Math.min(1e6,e.burst)):0,params,mods,paramAuto:validateInteractiveAuto(e.paramAuto,e.kind)};
  });
 }
 export function effectScene(scene:InteractiveScene,e:InteractiveEffect):InteractiveScene{
@@ -63,11 +83,13 @@ export function validateInteractiveAuto(raw:unknown,kind:EffectKind):Record<stri
 }
 /** Shared by the desktop Auto engine and mobile simulation; never re-seeds fields. */
 export function advanceInteractiveAuto(scene:InteractiveScene,dt:number,beat:number,crossfader?:number):InteractiveScene{
+ if(!Array.isArray(scene?.effects))return scene;
  let changed=false;
- const effects=scene.effects?.map(e=>{
+ const effects=scene.effects.map(e=>{
+  if(!e||typeof e.params!=='object'||!e.params)return e;
   let params=e.params;
   for(const [key,a] of Object.entries(e.paramAuto??{})){
-   if(!a.playing)continue;
+   if(!a||!a.playing)continue;
    a.phase=advanceAutoPhase(a,dt,beat,crossfader);
    const value=resolveAutoValue(a);
    if(value!==params[key]){if(params===e.params)params={...params};params[key]=value;changed=true;}
@@ -78,11 +100,12 @@ export function advanceInteractiveAuto(scene:InteractiveScene,dt:number,beat:num
 }
 /** Keyframes override modulation on a render copy, leaving saved Auto/Mod intact. */
 export function applyInteractiveOverrides(scene:InteractiveScene,overrides:Record<string,number|boolean>):InteractiveScene{
+ if(!Array.isArray(scene?.effects))return scene;
  let effects=scene.effects;
  for(const [key,value] of Object.entries(overrides)){
   const [prefix,id,param]=key.split(':');if(prefix!=='interactive'||!effects)continue;
   effects=effects.map(e=>{
-   if(e.id!==id)return e;if(param==='enabled')return {...e,enabled:!!value};
+   if(!e||e.id!==id)return e;if(param==='enabled')return {...e,enabled:!!value};
    const d=effectParams(e.kind).find(p=>p.key===param);if(!d||typeof value!=='number'||!Number.isFinite(value))return e;
    const mods={...e.mods},paramAuto={...e.paramAuto};delete mods[param];delete paramAuto[param];
    return {...e,mods,paramAuto,params:{...e.params,[param]:Math.max(d.min,Math.min(d.max,value))}};
@@ -104,4 +127,18 @@ export function mergeInteractiveEdit(previous:InteractiveScene|undefined,next:In
   }
   return {...e,params,paramAuto};
  })};
+}
+/**
+ * What the author made, without what the Auto engine advances: the phase of
+ * every Auto and the value of each parameter a playing Auto is driving.
+ * Two scenes with the same signature differ only by Auto playback, so a
+ * change in it while the editor is open came from outside the editor
+ * (undo, a preset, another project).
+ */
+export function interactiveEditSignature(scene: InteractiveScene): string {
+ return JSON.stringify({...scene,effects:scene.effects?.map(e=>{
+  const params={...e.params},paramAuto:Record<string,AutoConfig>={};
+  for(const [key,a] of Object.entries(e.paramAuto??{})){paramAuto[key]={...a,phase:0};if(a.playing)delete params[key];}
+  return {...e,params,paramAuto};
+ })});
 }
