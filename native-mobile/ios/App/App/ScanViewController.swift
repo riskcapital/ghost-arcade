@@ -67,7 +67,7 @@ final class ScanViewController: UIViewController, ARSessionDelegate {
         liveView.scene = SCNScene(); liveView.scene.rootNode.addChildNode(liveCloud)
         liveView.automaticallyUpdatesLighting = false; liveView.rendersCameraGrain = false; liveView.rendersMotionBlur = false
         liveView.scene.background.intensity = 0.35 // dim the camera so the captured points stand out
-        liveView.preferredFramesPerSecond = 30
+        liveView.preferredFramesPerSecond = 30; liveView.backgroundColor = .black
         reviewView.scene = SCNScene(); reviewView.scene?.rootNode.addChildNode(reviewCloud)
         reviewView.backgroundColor = .black; reviewView.allowsCameraControl = true; reviewView.isHidden = true
         reviewView.defaultCameraController.interactionMode = .orbitTurntable
@@ -87,7 +87,7 @@ final class ScanViewController: UIViewController, ARSessionDelegate {
         for (button, title, action) in [(clearButton, "Clear", #selector(clearScan)), (undoButton, "Undo", #selector(undoSweep)), (pauseButton, "Pause", #selector(togglePause)), (saveButton, "Save", #selector(saveScan))] {
             button.setTitle(title, for: .normal); button.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold); button.addTarget(self, action: action, for: .touchUpInside)
         }
-        undoButton.accessibilityLabel = "Undo last sweep"
+        undoButton.accessibilityLabel = "Undo last sweep"; undoButton.isEnabled = false
         let buttons = UIStackView(arrangedSubviews: liveMode ? [pauseButton, saveButton] : [clearButton, undoButton, pauseButton, saveButton]); buttons.distribution = .fillEqually
         let rows: [UIView] = liveMode ? [status, hint, range, looks, amount, buttons] : [status, hint, detail, range, looks, cropRow, buttons]
         let controls = UIStackView(arrangedSubviews: rows); controls.axis = .vertical; controls.spacing = 8
@@ -104,6 +104,7 @@ final class ScanViewController: UIViewController, ARSessionDelegate {
             // Reached only if the screen is opened on a device without LiDAR; the toolkit normally blocks that.
             status.text = "This device has no LiDAR sensor."; hint.text = "LiDAR scanning needs an iPhone Pro or iPad Pro."
             for control in [detail, range, looks, cropSwitch, amount] as [UIControl] { control.isEnabled = false }
+            liveView.isHidden = true
             return
         }
         status.text = liveMode ? "Live depth" : "Move slowly around what you want to scan."
