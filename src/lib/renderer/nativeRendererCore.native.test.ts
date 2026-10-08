@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import type { SignalFrame } from '$lib/mediapipe/signals';
 import { nativeShaderSourceFromJavascript } from './nativeJsShaderSource';
 import {
@@ -75,7 +76,7 @@ function createNativeRpc(): NativeRpc {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error(`native render-core timed out handling ${method}: ${stderr.trim()}`));
-      }, timeoutMs);
+      }, timeoutMs * rpcDeadlineScale);
       pending.set(id, { method, timer, resolve, reject });
       child.stdin?.write(`${JSON.stringify({ id, method, params })}\n`);
     });

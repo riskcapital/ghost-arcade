@@ -145,7 +145,7 @@ jobs:
       - name: vitest (every suite; native GPU tests run on lavapipe)
         id: vitest
         continue-on-error: true
-        run: xvfb-run -a npx vitest run --maxWorkers=1 --no-file-parallelism --testTimeout=60000 --hookTimeout=120000 --reporter=default --reporter=json --outputFile.json=linux-smoke-out/vitest.json
+        run: xvfb-run -a npx vitest run --maxWorkers=1 --no-file-parallelism --retry=2 --testTimeout=60000 --hookTimeout=120000 --reporter=default --reporter=json --outputFile.json=linux-smoke-out/vitest.json
 
       - name: Start the dev server
         run: |

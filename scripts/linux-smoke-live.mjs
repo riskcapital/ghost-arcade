@@ -27,6 +27,10 @@ async function waitForPicture(c, baseline, timeoutMs) {
   while (Date.now() < deadline) {
     last = await studioPreview(c);
     if (last.nonBlackFraction > baseline.nonBlackFraction + 0.02 && last.meanLuma > baseline.meanLuma + 0.004) return { ...last, ok: true };
+    // Where the page screenshot includes the preview (Linux), the empty stage
+    // is a flat dark fill that counts as lit everywhere, so a picture shows as
+    // many more colours instead of more lit pixels.
+    if (baseline.nonBlackFraction > 0.9 && last.distinctColours > baseline.distinctColours + 150) return { ...last, ok: true };
     await sleep(1500);
   }
   return { ...last, ok: false };
@@ -45,7 +49,7 @@ export const stepInteractive = {
     await setCheckbox(c, enabled('Living Architecture'), false);
     await sleep(2500);
     const empty = await studioPreview(c);
-    t.number('emptyStage', `meanLuma=${empty.meanLuma} nonBlack=${empty.nonBlackFraction}`);
+    t.number('emptyStage', `meanLuma=${empty.meanLuma} nonBlack=${empty.nonBlackFraction} colours=${empty.distinctColours}`);
 
     await setCheckbox(c, enabled('Living Architecture'), true);
     const simple = await waitForPicture(c, empty, 120000);

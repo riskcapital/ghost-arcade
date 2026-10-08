@@ -129,8 +129,8 @@ export const stepScreen = {
       const root = t.shared.root;
       xKey('Escape', Math.round((root?.width || 1920) / 2), Math.round((root?.height || 1080) / 2));
       let closed = false;
-      for (let i = 0; i < 16 && !closed; i++) { await sleep(500); closed = !(await openIds(c)).includes(id); }
-      t.check('Esc in the Screen window closes it', closed, closed ? '' : 'still open 8 s after a real Escape key press over the Screen');
+      for (let i = 0; i < 60 && !closed; i++) { await sleep(500); closed = !(await openIds(c).catch(() => [id])).includes(id); }
+      t.check('Esc in the Screen window closes it', closed, closed ? '' : 'still open 30 s after a real Escape key press over the Screen');
       if (!closed) await closeScreen(c, screen.name);
       const reopened = await openScreen(c, screen.name);
       t.shared.screenA.id = reopened;

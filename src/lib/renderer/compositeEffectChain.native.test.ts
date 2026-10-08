@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import {
   buildNativeEffectPassChainGraph,
   buildCompositeEffectPassChainGraph,
@@ -82,7 +83,7 @@ function createNativeRpc(): NativeRpc {
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`native rpc timeout: ${method}`));
-        }, timeoutMs);
+        }, timeoutMs * rpcDeadlineScale);
         pending.set(id, { timer, resolve, reject });
         child.stdin!.write(`${JSON.stringify({ id, method, params })}\n`);
       });

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { el, sleep } from './linux-smoke-cdp.mjs';
 import { decodePng, stats } from './linux-smoke-image.mjs';
 import { findTool, recordTake } from './linux-smoke-live.mjs';
-import { addLayer, layerNames, rpc, round, setLayerVisible } from './linux-smoke-steps.mjs';
+import { addLayer, layerNames, measuredFps, rpc, round, setLayerVisible } from './linux-smoke-steps.mjs';
 
 /** Is frame 10 of a video black? Decoded with ffmpeg into a PNG we can read. */
 function videoFrameStats(file, outDir, name) {
@@ -15,6 +15,10 @@ function videoFrameStats(file, outDir, name) {
   const png = path.join(outDir, `${name}.png`);
   try {
     execFileSync(ffmpeg, ['-v', 'error', '-y', '-i', file, '-vf', 'select=gte(n\\,10)', '-frames:v', '1', '-pix_fmt', 'rgb24', png], { timeout: 120000 });
+    return stats(decodePng(fs.readFileSync(png)));
+  } catch { /* fewer than eleven frames: a slow machine */ }
+  try {
+    execFileSync(ffmpeg, ['-v', 'error', '-y', '-i', file, '-frames:v', '1', '-pix_fmt', 'rgb24', png], { timeout: 120000 });
     return stats(decodePng(fs.readFileSync(png)));
   } catch { return null; }
 }
@@ -49,7 +53,10 @@ export const stepRecording = {
     await sleep(400);
 
     await chooseRecordSource(c, '[data-rec-source="composition"]');
-    const program = await recordTake(t, 6, profile);
+    // At about one frame a second a short take holds a frame or none.
+    const slow = (await measuredFps(c, 3000)).fps < 5;
+    t.number('takeSeconds', slow ? '13 (slow core)' : '6 and 4');
+    const program = await recordTake(t, slow ? 13 : 6, profile);
     const probe = program.probe;
     t.number('programTake', probe ? `${probe.frames} frames, ${probe.width}x${probe.height} ${probe.codec}, ${round(probe.duration, 1)} s, ${Math.round(probe.bytes / 1024)} kB` : `no file${program.message ? ` (${program.message})` : ''}`);
     t.check('program recording produced a video file', !!program.file, program.file ? path.basename(program.file) : program.message || 'no new .mp4 in the profile or temp folders');
@@ -65,7 +72,7 @@ export const stepRecording = {
     for (const [kind, selector] of [['layer', '[data-rec-source^="layer:"]'], ['screen', '[data-rec-source^="screen:"]']]) {
       const label = await chooseRecordSource(c, selector);
       if (!label) { t.note(`no ${kind} recording source is listed`); continue; }
-      const take = await recordTake(t, 4, profile);
+      const take = await recordTake(t, slow ? 13 : 4, profile);
       const frames = Number(take.probe?.frames || 0);
       const outcome = frames > 0 ? `records (${frames} frames, ${take.probe.width}x${take.probe.height})`
         : take.message ? `refused: "${take.message}"` : take.file ? 'left a file with no frames and no message' : 'nothing happened and nothing was said';

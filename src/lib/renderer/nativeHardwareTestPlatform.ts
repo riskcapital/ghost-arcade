@@ -22,6 +22,8 @@ export const gpuTestPlatform = {
 // (a fixed RPC deadline, "the picture changed within N ms", a warm video grid)
 // cannot pass there and are skipped by name; everything else still runs.
 export const softwareVulkanRunner = process.env.GA_TEST_SOFTWARE_VULKAN === '1';
+/** RPC deadlines in the runtime tests are tuned for a GPU; stretch them there. */
+export const rpcDeadlineScale = softwareVulkanRunner ? 4 : 1;
 
 export const hardwareTestPlatform = {
   windows,

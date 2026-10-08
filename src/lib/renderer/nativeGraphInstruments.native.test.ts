@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { rpcDeadlineScale, softwareVulkanRunner } from './nativeHardwareTestPlatform';
 import {
   cameraDeviceIdFromLiveSourceId,
   cameraLiveSourceId,
@@ -293,7 +294,7 @@ function createNativeRpc(): NativeRpc {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error(`native render-core timed out handling ${method}: ${stderr.trim()}`));
-      }, timeoutMs);
+      }, timeoutMs * rpcDeadlineScale);
       pending.set(id, { method, timer, resolve, reject });
       child.stdin?.write(`${JSON.stringify({ id, method, params })}\n`);
     });
@@ -1743,7 +1744,8 @@ describe('Native graph instrument runtime fixtures', () => {
     }
   }, 60000);
 
-  itIfNativeCore('keeps a video source moving when it feeds GPU shader layers', async () => {
+  // Compares two frames a fixed time apart; at one frame a second they are the same frame.
+  (softwareVulkanRunner ? it.skip : itIfNativeCore)('keeps a video source moving when it feeds GPU shader layers', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'ghost-gpu-video-source-'));
     const uri = join(directory, 'moving.mp4');
     const rpc = createNativeRpc();
