@@ -5117,7 +5117,7 @@
         width: 200,
         margin: 2,
         color: {
-          dark: '#67E8F9',
+          dark: '#7d9aff',
           light: '#1a1a1a'
         }
       });
@@ -7264,7 +7264,7 @@
         {/if}
         {#if $vjStageEdit}
           <svg class="vj-stage-guides" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px; width: {canvasWidth}px; height: {canvasHeight}px;" viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} aria-label="Live VJ screen outlines">
-            <defs><pattern id="live-stage-grid" width={canvasWidth / 8} height={canvasHeight / 4} patternUnits="userSpaceOnUse"><path d={`M ${canvasWidth / 8} 0 L 0 0 0 ${canvasHeight / 4}`} fill="none" stroke="#6e819e" stroke-width="0.6" opacity="0.28" /></pattern></defs>
+            <defs><pattern id="live-stage-grid" width={canvasWidth / 8} height={canvasHeight / 4} patternUnits="userSpaceOnUse"><path d={`M ${canvasWidth / 8} 0 L 0 0 0 ${canvasHeight / 4}`} fill="none" stroke="var(--ga-blue-mute-300)" stroke-width="0.6" opacity="0.28" /></pattern></defs>
             <rect width={canvasWidth} height={canvasHeight} fill="url(#live-stage-grid)" pointer-events="none" />
             {#each $project.layers.filter(layer => layer.type === 'screen' && layer.visible) as screen, index (screen.id)}
               <path
@@ -7328,17 +7328,17 @@
                   {@const w2 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[2].x, layerShapeControlPoints[2].y)}
                   {@const w3 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[3].x, layerShapeControlPoints[3].y)}
                   {@const wc = warpPointThroughCorners(warpCorners, layerShapeControlPoints[4].x, layerShapeControlPoints[4].y)}
-                  <line x1={w0.x * canvasWidth} y1={(1 - w0.y) * canvasHeight} x2={w3.x * canvasWidth} y2={(1 - w3.y) * canvasHeight} stroke="#67E8F9" stroke-width="1.5" />
-                  <line x1={w1.x * canvasWidth} y1={(1 - w1.y) * canvasHeight} x2={w2.x * canvasWidth} y2={(1 - w2.y) * canvasHeight} stroke="#67E8F9" stroke-width="1.5" />
-                  <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w0.x * canvasWidth} y2={(1 - w0.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
-                  <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w1.x * canvasWidth} y2={(1 - w1.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
-                  <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w2.x * canvasWidth} y2={(1 - w2.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
-                  <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w3.x * canvasWidth} y2={(1 - w3.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
+                  <line x1={w0.x * canvasWidth} y1={(1 - w0.y) * canvasHeight} x2={w3.x * canvasWidth} y2={(1 - w3.y) * canvasHeight} stroke="var(--ga-blue-300)" stroke-width="1.5" />
+                  <line x1={w1.x * canvasWidth} y1={(1 - w1.y) * canvasHeight} x2={w2.x * canvasWidth} y2={(1 - w2.y) * canvasHeight} stroke="var(--ga-blue-300)" stroke-width="1.5" />
+                  <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w0.x * canvasWidth} y2={(1 - w0.y) * canvasHeight} stroke="var(--ga-blue-300)" stroke-width="1" opacity="0.55" />
+                  <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w1.x * canvasWidth} y2={(1 - w1.y) * canvasHeight} stroke="var(--ga-blue-300)" stroke-width="1" opacity="0.55" />
+                  <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w2.x * canvasWidth} y2={(1 - w2.y) * canvasHeight} stroke="var(--ga-blue-300)" stroke-width="1" opacity="0.55" />
+                  <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w3.x * canvasWidth} y2={(1 - w3.y) * canvasHeight} stroke="var(--ga-blue-300)" stroke-width="1" opacity="0.55" />
                 {:else if ($selectedLayer.layerShape?.type === 'triangle' || $selectedLayer.layerShape?.type === 'polygon') && layerShapeControlPoints.length >= 3 && warpCorners}
                   <polygon
                     points={layerShapeControlPoints.map((p) => { const w = warpPointThroughCorners(warpCorners, p.x, p.y); return `${w.x * canvasWidth},${(1 - w.y) * canvasHeight}`; }).join(' ')}
                     fill="none"
-                    stroke="#67E8F9"
+                    stroke="var(--ga-blue-300)"
                     stroke-width="2"
                     opacity={shapeWarpModeEnabled ? 1 : 0.75}
                   />
@@ -7352,8 +7352,8 @@
                       cx={warped.x * canvasWidth}
                       cy={(1 - warped.y) * canvasHeight}
                       r={isCircleCenter ? 7 : 10}
-                      fill={isCircleCenter ? '#0B1220' : '#67E8F9'}
-                      stroke="#67E8F9"
+                      fill={isCircleCenter ? 'var(--ga-blue-900)' : 'var(--ga-blue-300)'}
+                      stroke="var(--ga-blue-300)"
                       stroke-width="2"
                       style="cursor: move;"
                       onmousedown={(e) => startShapeControlPointDrag(i, e)}
@@ -7458,7 +7458,7 @@
                       width={(maxX - minX) * canvasWidth + 10}
                       height={(maxY - minY) * canvasHeight + 10}
                       fill="none"
-                      stroke="#67E8F9"
+                      stroke="var(--ga-blue-300)"
                       stroke-width="2"
                       stroke-dasharray="5,5"
                     />
@@ -7467,7 +7467,7 @@
                       cx={screenX}
                       cy={screenY}
                       r="8"
-                      fill="#67E8F9"
+                      fill="var(--ga-blue-300)"
                       stroke="#fff"
                       stroke-width="2"
                       class="center-handle"
@@ -7548,7 +7548,7 @@
                           cy={midY}
                           r="5"
                           fill="#333"
-                          stroke="#67E8F9"
+                          stroke="var(--ga-blue-300)"
                           stroke-width="1.5"
                           class="add-vertex-handle"
                           style="cursor: pointer; pointer-events: all; opacity: 0.7;"
@@ -7560,7 +7560,7 @@
                           x={midX}
                           y={midY + 3}
                           text-anchor="middle"
-                          fill="#67E8F9"
+                          fill="var(--ga-blue-300)"
                           font-size="12"
                           font-weight="bold"
                           style="pointer-events: none;"
