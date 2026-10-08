@@ -41,6 +41,8 @@ final class DualCameraViewController: UIViewController, AVCaptureVideoDataOutput
     }
     private func configure() {
         session.beginConfiguration()
+        // Keeps both cameras running in Split View and Stage Manager on iPads that allow it.
+        if session.isMultitaskingCameraAccessSupported { session.isMultitaskingCameraAccessEnabled = true }
         do {
             for position: AVCaptureDevice.Position in [.back, .front] {
                 guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else { throw failure("Camera unavailable.") }

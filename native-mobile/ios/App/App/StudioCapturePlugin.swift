@@ -276,8 +276,12 @@ private final class PairingScannerViewController: UIViewController, AVCaptureMet
         hint.layer.cornerRadius = 12
         hint.clipsToBounds = true
         view.addSubview(hint)
+        NotificationCenter.default.addObserver(self, selector: #selector(paused), name: AVCaptureSession.wasInterruptedNotification, object: session)
+        NotificationCenter.default.addObserver(self, selector: #selector(resumed), name: AVCaptureSession.interruptionEndedNotification, object: session)
+        NotificationCenter.default.addObserver(self, selector: #selector(failed), name: AVCaptureSession.runtimeErrorNotification, object: session)
         queue.async { [self] in
             session.beginConfiguration()
+            if session.isMultitaskingCameraAccessSupported { session.isMultitaskingCameraAccessEnabled = true }
             guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
                   let input = try? AVCaptureDeviceInput(device: camera), session.canAddInput(input) else {
                 session.commitConfiguration(); showError(); return
@@ -293,6 +297,17 @@ private final class PairingScannerViewController: UIViewController, AVCaptureMet
         }
     }
     private func showError() { DispatchQueue.main.async { self.hint.text = "Camera unavailable. Cancel and try again, or paste the pairing link." } }
+    // Capture notifications arrive on any thread. The session resumes by itself after an interruption.
+    @objc private func paused() { DispatchQueue.main.async { self.hint.text = "Camera paused. It comes back when it is free." } }
+    @objc private func resumed() {
+        DispatchQueue.main.async {
+            guard !self.finished else { return } // never restart the camera after the scanner has closed
+            self.hint.text = "Point at the QR in desktop Connect Mobile"
+            self.queue.async { if !self.session.isRunning { self.session.startRunning() } }
+        }
+    }
+    @objc private func failed() { showError() }
+    deinit { NotificationCenter.default.removeObserver(self) }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         preview.frame = view.bounds

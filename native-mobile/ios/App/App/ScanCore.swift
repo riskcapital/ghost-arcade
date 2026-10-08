@@ -61,11 +61,12 @@ final class ScanArchive {
     private(set) var count = 0
     func flush(_ accumulator: inout ScanAccumulator) throws {
         guard accumulator.count > 0 else { return }
-        if folder == nil {
-            let path = FileManager.default.temporaryDirectory.appendingPathComponent("ghost-scan-" + UUID().uuidString, isDirectory: true)
-            try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true); folder = path
+        let spool: URL
+        if let folder = folder { spool = folder } else {
+            spool = FileManager.default.temporaryDirectory.appendingPathComponent("ghost-scan-" + UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true); folder = spool
         }
-        let file = folder!.appendingPathComponent("chunk-\(chunks.count).bin")
+        let file = spool.appendingPathComponent("chunk-\(chunks.count).bin")
         let points = accumulator.points
         try encodeScanPLYBody(points).write(to: file, options: .atomic)
         chunks.append(file); count += points.count; keys.formUnion(accumulator.voxels.keys)

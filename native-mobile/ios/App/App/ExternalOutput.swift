@@ -20,6 +20,11 @@ final class StudioSceneDelegate: UIResponder, UIWindowSceneDelegate {
         // A live set must never dim or lock while the app is on screen, with or without a second display.
         UIApplication.shared.isIdleTimerDisabled = true
         StudioExternalOutput.shared.publishConnection()
+        if let scene = scene as? UIWindowScene { StudioLiveCapture.shared.interfaceOrientationChanged(scene.interfaceOrientation) }
+    }
+    // Camera frames follow the phone UI as it rotates.
+    func windowScene(_ windowScene: UIWindowScene, didUpdate previousCoordinateSpace: UICoordinateSpace, interfaceOrientation previousInterfaceOrientation: UIInterfaceOrientation, traitCollection previousTraitCollection: UITraitCollection) {
+        StudioLiveCapture.shared.interfaceOrientationChanged(windowScene.interfaceOrientation)
     }
     func sceneDidEnterBackground(_ scene: UIScene) { UIApplication.shared.isIdleTimerDisabled = false }
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) { open(URLContexts) }
