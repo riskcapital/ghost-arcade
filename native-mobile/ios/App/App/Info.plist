@@ -28,15 +28,11 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Ghost Arcade uses the camera as a live source for VJ layers, projection mapping, aura effects, and point-cloud visuals.</string>
+	<string>Ghost Arcade uses the camera for live camera clips, depth and LiDAR scans, projector calibration photos, and to scan the desktop pairing code.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Ghost Arcade uses the local network to connect with Ghost Arcade desktop, OSC controllers, and performance devices on your network.</string>
+	<string>Ghost Arcade uses your local network to connect to the Ghost Arcade desktop app you pair it with.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Ghost Arcade uses the microphone for audio-reactive shaders, live VJ effects, and performance controls.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Ghost Arcade lets you choose photos and videos as sources for VJ layers and mapping compositions.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Ghost Arcade can save rendered stills, recordings, and project media to your photo library when you choose to export them.</string>
+	<string>Ghost Arcade listens through the microphone so your visuals can react to sound.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -53,6 +49,9 @@
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
@@ -85,8 +84,103 @@
 			</array>
 		</dict>
 	</dict>
-	<key>UIRequiresFullScreen</key>
+	<key>UIFileSharingEnabled</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>live.ghostarcade.set</string>
+			<key>UTTypeDescription</key>
+			<string>Ghost Arcade Set</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ghostset</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>live.ghostarcade.interactive-scene</string>
+			<key>UTTypeDescription</key>
+			<string>Ghost Arcade Interactive Scene</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ghostinteractive</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>live.ghostarcade.calibration</string>
+			<key>UTTypeDescription</key>
+			<string>Ghost Arcade Calibration</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ghostcal</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Ghost Arcade Set</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>live.ghostarcade.set</string>
+			</array>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Ghost Arcade Interactive Scene</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>live.ghostarcade.interactive-scene</string>
+			</array>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Ghost Arcade Calibration</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>live.ghostarcade.calibration</string>
+			</array>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+		</dict>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

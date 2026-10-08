@@ -16,7 +16,12 @@ final class StudioSceneDelegate: UIResponder, UIWindowSceneDelegate {
         // A link that launched the app arrives here, not through openURLContexts.
         open(connectionOptions.urlContexts)
     }
-    func sceneDidBecomeActive(_ scene: UIScene) { StudioExternalOutput.shared.publishConnection() }
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        // A live set must never dim or lock while the app is on screen, with or without a second display.
+        UIApplication.shared.isIdleTimerDisabled = true
+        StudioExternalOutput.shared.publishConnection()
+    }
+    func sceneDidEnterBackground(_ scene: UIScene) { UIApplication.shared.isIdleTimerDisabled = false }
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) { open(URLContexts) }
     private func open(_ contexts: Set<UIOpenURLContext>) {
         for context in contexts where !PairingLinkInbox.receive(context.url) {
@@ -49,9 +54,8 @@ final class OutputSceneDelegate: UIResponder, UIWindowSceneDelegate {
 }
 
 final class StudioBridgeViewController: CAPBridgeViewController {
-    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { UIDevice.current.userInterfaceIdiom == .pad ? .landscapeRight : super.supportedInterfaceOrientations }
-    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { UIDevice.current.userInterfaceIdiom == .pad ? .landscapeRight : super.preferredInterfaceOrientationForPresentation }
-    override var shouldAutorotate: Bool { UIDevice.current.userInterfaceIdiom != .pad }
+    // Capacitor only reads the iPhone orientation list, so iPad is answered here: every orientation.
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown }
 
     private var outputDelegate: OutputUIDelegate?
     private var pairingObserver: NSObjectProtocol?
@@ -100,7 +104,6 @@ final class StudioExternalOutput: NSObject, WKScriptMessageHandler {
     private weak var controller: WKWebView?
     private var window: UIWindow?
     private var output: WKWebView?
-    private var wasIdleDisabled = false
     private var revision = 0
     func isController(_ webView: WKWebView) -> Bool { controller === webView }
     func attachController(_ webView: WKWebView) {
@@ -108,18 +111,15 @@ final class StudioExternalOutput: NSObject, WKScriptMessageHandler {
         webView.configuration.userContentController.add(self, name: "ghostOutput")
     }
     func connect(_ window: UIWindow) {
-        if self.window == nil { wasIdleDisabled = UIApplication.shared.isIdleTimerDisabled }
         closeOutputView()
         self.window = window
         revision += 1
-        UIApplication.shared.isIdleTimerDisabled = true
         publishConnection()
     }
     func disconnect(_ window: UIWindow) {
         guard self.window === window else { return }
         closeOutputView()
         self.window = nil
-        UIApplication.shared.isIdleTimerDisabled = wasIdleDisabled
         publishConnection()
     }
     func publishConnection() {
