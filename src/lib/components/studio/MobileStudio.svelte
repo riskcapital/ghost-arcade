@@ -32,7 +32,7 @@
     // Rows of a deck that is switched off still hold a clip id; they are not playing.
     coachMove(coachLaunch(coach,show.layers.slice(0,show.dualDeck?8:4).flatMap((l,i)=>l.clipId?[i]:[]),row));
   }
-  import {MAX_BLOCKS,addBlock,blockTabs,deleteBlock,duplicateBlock,ensureOpenBlock,switchBlock,type BlockState} from '../../mobile/studio/blocks';
+  import {MAX_BLOCKS,addBlock,blockTabs,deleteBlock,duplicateBlock,ensureOpenBlock,moveBlock,switchBlock,type BlockState} from '../../mobile/studio/blocks';
   let layoutInfo=currentLayout();
   $: tablet=layoutInfo.mixer==='docked';
   let compactPreview=layoutInfo.short;
@@ -205,7 +205,8 @@
   import { MOBILE_SHADERS, findShader } from '../../mobile/standaloneShaderList';
   import { MOBILE_EFFECTS } from '../../mobile/standaloneEffects';
   import { EFFECT_PARAM_DEFS } from '../../effects/effectParamDefs';
-  import { putAsset, listAssets, deleteAssets, unusedAssets, totalBytes, formatBytes, type AssetInfo } from '../../mobile/studio/assets';
+  import { putAsset, getAsset, listAssets, deleteAssets, unusedAssets, totalBytes, formatBytes, type AssetInfo } from '../../mobile/studio/assets';
+  import { packSet, unpackSet, setMediaSize, BundleTooLarge, BUNDLE_MAX_BYTES } from '../../mobile/studio/setBundle';
   import {
     loadShow,
     saveCurrentShow,
@@ -385,12 +386,15 @@
   // ── Imported media ────────────────────────────────────────────────────────
   let storage: { files: number; bytes: number; unused: AssetInfo[]; unusedBytes: number } | null = null;
   let storageBusy = false, mediaConfirm = false;
+  /** Photos and videos this set uses: what "Export with media" would carry. */
+  let setMedia = { files: 0, bytes: 0 };
   async function refreshStorage() {
     try {
       const all = await listAssets();
       const unused = unusedAssets(all, referencedAssetIds([show, ...setBank, ...history.states]));
       storage = { files: all.length, bytes: totalBytes(all), unused, unusedBytes: totalBytes(unused) };
-    } catch { storage = null; }
+      setMedia = setMediaSize(show, all);
+    } catch { storage = null; setMedia = { files: 0, bytes: 0 }; }
   }
   async function deleteUnusedMedia() {
     mediaConfirm = false;
@@ -423,6 +427,15 @@
     checkpoint();
     applyBlocks(next);
     persist();
+  }
+  /** Drag or the menu arrows: the tab moves, the open block and what plays stay as they are. */
+  function moveBlockTab(from: number, to: number) {
+    const next = moveBlock(show, from, to, uid);
+    if (!next) return;
+    checkpoint();
+    applyBlocks(next);
+    persist();
+    feel(prefs,'switch');
   }
   function newBlock() {
     const next = addBlock(show, uid);
@@ -945,20 +958,33 @@
     settings = false;
     noteUnavailable();
   }
+  function offerRepair() {}
   let exporting = false;
-  async function exportSet(event?: Event) {
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  /**
+   * Shares the set as one .ghostset file. With `withMedia` the file also carries the photos and
+   * videos the set uses, so it opens complete on another device.
+   */
+  async function exportSet(event?: Event, withMedia = false) {
     if (exporting) return;
     exporting = true;
     // The iPad share popover points at the button that was tapped.
     const anchor = event?.currentTarget instanceof Element ? event.currentTarget.getBoundingClientRect() : null;
     try {
-      const blob = new Blob([JSON.stringify(show, null, 2)], { type: 'application/json' });
+      let blob: Blob, files = 0, missing = 0;
+      if (withMedia) {
+        const packed = await packSet(show, getAsset);
+        blob = packed.blob; files = packed.files; missing = packed.missing.length;
+      } else blob = new Blob([JSON.stringify(show, null, 2)], { type: 'application/json' });
       // Only claim success when the file really left: a finished share sheet, or a started download.
-      const done = await shareFile(`${show.name}.ghostset`, blob, 'application/json', anchor);
-      if (done) flash(isNativePlatform() ? 'Set shared. Imported media stays on this device.' : 'Set file downloaded. Imported media stays on this device.');
-      else flash('Export cancelled. Nothing was shared.');
+      const done = await shareFile(`${show.name}.ghostset`, blob, withMedia ? 'application/octet-stream' : 'application/json', anchor);
+      const how = isNativePlatform() ? 'Set shared' : 'Set file downloaded';
+      if (!done) flash('Export cancelled. Nothing was shared.');
+      else if (withMedia) flash(`${how} with ${plural(files, 'media file')}.${missing ? ` ${plural(missing, 'file')} could not be found on this device.` : ''}`, null, 5000);
+      else flash(`${how}. Imported media stays on this device.`);
     } catch (e) {
-      error = e instanceof Error && /latest version/.test(e.message) ? e.message : 'This set could not be exported. Try again.';
+      if (e instanceof BundleTooLarge) error = `This set uses more than ${formatBytes(BUNDLE_MAX_BYTES)} of media, which is too much for one file. Export the set only, or remove clips you do not need.`;
+      else error = e instanceof Error && /latest version/.test(e.message) ? e.message : 'This set could not be exported. Try again.';
     } finally {
       exporting = false;
     }
@@ -969,8 +995,14 @@
     input.value = '';
     if (!file) return;
     try {
-      const next = normalizeShow(JSON.parse(await file.text()));
+      // Either kind of .ghostset: the set alone, or the set with its media in the same file.
+      const opened = await unpackSet(file);
+      const next = normalizeShow(opened.show);
       if (!roomForNewSet(next.id)) return;
+      // Media first: the set is only opened once its files are safely on this device.
+      try { for (const item of opened.media) await putAsset(item.id, item.blob); }
+      catch { throw new Error('There is not enough space on this device for the media in this set. Free some space and try again.'); }
+      flushSaves();
       checkpoint();
       cancelQueued();
       autoEvent('set');
@@ -981,7 +1013,9 @@
       refreshParams();
       persist();
       settings = false;
+      if (opened.bundled) flash(`“${next.name}” opened with ${plural(opened.media.length, 'media file')}.${opened.missing.length ? ` ${plural(opened.missing.length, 'file')} were not in the set file.` : ''}`, null, 5000);
       noteUnavailable();
+      offerRepair();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not open this set.';
     }
@@ -1339,7 +1373,7 @@
 <input class="file-input" type="file" accept="video/*" multiple aria-label="Import videos" bind:this={videoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="image/*" multiple aria-label="Import photos" bind:this={photoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="video/*,image/*" multiple aria-label="Import media" bind:this={mediaInput} onchange={importMedia} />
-<input class="file-input" type="file" accept=".ghostset,application/json" bind:this={setInput} onchange={importSet} />
+<input class="file-input" type="file" accept=".ghostset,application/json,application/octet-stream" aria-label="Open a set file" bind:this={setInput} onchange={importSet} />
 <div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
   <header class="app-header">
     <div class="brand">
@@ -1456,7 +1490,7 @@
                 show.launchGrid=grid;persist();
               }}
             ><BlockTabs slot="blocks" tabs={blockTabList} canAdd={blockTabList.length < MAX_BLOCKS}
-              onselect={selectBlock} onadd={newBlock} onrename={renameBlockTab} onduplicate={copyBlock} ondelete={deleteBlockTab} />
+              onselect={selectBlock} onadd={newBlock} onrename={renameBlockTab} onduplicate={copyBlock} ondelete={deleteBlockTab} onmove={moveBlockTab} onlift={()=>feel(prefs,'switch')} />
           <div class="autopilot-bar" slot="autopilot">
             <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
             <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
@@ -1821,13 +1855,13 @@
         {/each}
       </div>
       <div class="field-grid">
-        <button data-export-set disabled={exporting} onclick={exportSet}><Icon name="save" />{exporting ? 'Exporting…' : 'Export set'}</button><button onclick={() => setInput.click()}
+        {#if setMedia.files}<button class="primary export-media" data-export-set-media disabled={exporting} onclick={(e) => exportSet(e, true)}><Icon name="save" /><span>{exporting ? 'Exporting…' : 'Export with media'}<small>{setMedia.files} file{setMedia.files === 1 ? '' : 's'}, {formatBytes(setMedia.bytes)}</small></span></button>{/if}
+        <button data-export-set disabled={exporting} onclick={(e) => exportSet(e)}><Icon name="save" />{exporting && !setMedia.files ? 'Exporting…' : setMedia.files ? 'Export set only' : 'Export set'}</button><button data-open-set onclick={() => setInput.click()}
           ><Icon name="upload" />Open set</button
         >
       </div>
-      <p class="hint">
-        Automatically saved on this device. Set files contain your layout, clips, and scenes; imported media must also
-        exist on the receiving device.
+      <p class="hint" data-export-hint>
+        Saved on this device as you work. {#if setMedia.files}Export with media puts this set and its photos and videos in one file, ready to open on another iPhone or iPad. Export set only leaves the media on this device.{:else}A set file holds your layout, clips and blocks. This set uses no imported photos or videos, so the file is complete.{/if} Open set reads both kinds.
       </p>
       <label class="field"
         >Output quality<select bind:value={show.quality} onchange={persist}
@@ -2984,6 +3018,9 @@
     font-size: 12px;
   }
   .saved-sets, .storage-card, .feel-card { display: grid; gap: 6px; margin: 16px 0; }
+  .export-media { grid-column: 1 / -1; }
+  .export-media span { display: grid; gap: 1px; text-align: left; }
+  .export-media small { font-size: 11px; font-weight: 500; opacity: .85; }
   .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 6px 0; cursor: pointer; }
   .switch-row > span { display: grid; gap: 2px; min-width: 0; }
   .switch-row strong { font-size: 13px; font-weight: 600; color: var(--ga-ink-0); }

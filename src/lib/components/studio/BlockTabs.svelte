@@ -1,12 +1,13 @@
 <script lang="ts">
   /**
    * Clip blocks as a row of tabs above the deck, the way the desktop VJ panel shows them.
-   * Tap a tab to open that block. Hold a tab, or tap the open one, for Rename / Duplicate /
-   * Delete. "+" adds an empty block.
+   * Tap a tab to open that block. Hold a tab and drag it to reorder; hold and let go, or tap the
+   * open one, for Rename / Duplicate / Delete / Move. "+" adds an empty block.
    */
   import { tick } from 'svelte';
   import Icon from './StudioIcon.svelte';
   import type { BlockTab } from '../../mobile/studio/blocks';
+  import { dragReorder } from '../../mobile/studio/reorder';
 
   export let tabs: BlockTab[] = [];
   /** False when the set already holds the most blocks it can. */
@@ -16,9 +17,12 @@
   export let onrename: (id: string, name: string) => void = () => {};
   export let onduplicate: (id: string) => void = () => {};
   export let ondelete: (id: string) => void = () => {};
+  /** A tab was dragged (or moved from its menu) to another place in the row. */
+  export let onmove: (from: number, to: number) => void = () => {};
+  /** A tab was lifted for dragging. */
+  export let onlift: () => void = () => {};
 
   const HOLD_MS = 450;
-  const HOLD_SLOP = 10;
 
   let strip: HTMLDivElement;
   /** Index of the tab whose menu is open. An index survives the tab getting its real id. */
@@ -26,8 +30,6 @@
   let renaming = false;
   let draft = '';
   let nameField: HTMLInputElement | null = null;
-  let hold: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | null = null;
-  let held = false;
 
   $: menu = menuIndex >= 0 ? tabs[menuIndex] ?? null : null;
   $: if (menuIndex >= tabs.length) closeMenu();
@@ -55,27 +57,18 @@
     menuIndex = -1;
     renaming = false;
   }
-  function cancelHold() {
-    if (hold) clearTimeout(hold.timer);
-    hold = null;
-  }
-  function press(e: PointerEvent, index: number) {
-    cancelHold();
-    held = false;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    hold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => { hold = null; held = true; openMenu(index); }, HOLD_MS) };
-  }
-  function drift(e: PointerEvent) {
-    // A finger that moves is scrolling the strip, not holding a tab.
-    if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > HOLD_SLOP) cancelHold();
-  }
   function choose(index: number) {
-    cancelHold();
-    if (held) { held = false; return; }
     const tab = tabs[index];
     if (tab.active) return menuIndex === index ? closeMenu() : openMenu(index);
     closeMenu();
     onselect(tab.id);
+  }
+  /** From the menu: one place left or right. The menu follows the tab. */
+  function step(by: number) {
+    const from = menuIndex, to = from + by;
+    if (from < 0 || to < 0 || to >= tabs.length) return;
+    onmove(from, to);
+    menuIndex = to;
   }
   async function startRename() {
     if (!menu) return;
@@ -103,13 +96,9 @@
         aria-haspopup="menu"
         aria-expanded={menuIndex === index}
         data-block-tab={tab.id}
-        title="Hold for Rename, Duplicate or Delete"
-        onpointerdown={(e) => press(e, index)}
-        onpointermove={drift}
-        onpointerup={cancelHold}
-        onpointercancel={cancelHold}
-        onpointerleave={cancelHold}
-        oncontextmenu={(e) => e.preventDefault()}
+        data-reorder-item
+        title="Hold and drag to reorder. Hold for Rename, Duplicate or Delete."
+        use:dragReorder={{ axis: 'x', index, hold: HOLD_MS, onlift, onhold: () => openMenu(index), onmove: (from, to) => { closeMenu(); onmove(from, to); } }}
         onclick={() => choose(index)}
         ><span class="block-name">{tab.name}</span>{#if tab.active}<span class="more" aria-hidden="true">⋯</span>{/if}</button
       >
@@ -136,6 +125,8 @@
         <strong>{menu.name}</strong>
         <button role="menuitem" onclick={startRename}>Rename</button>
         <button role="menuitem" disabled={!canAdd} onclick={() => { const id = menu.id; closeMenu(); onduplicate(id); }}>Duplicate</button>
+        <button role="menuitem" class="move" data-block-move="-1" aria-label={`Move ${menu.name} left`} disabled={menuIndex <= 0} onclick={() => step(-1)}><Icon name="left" size={18} /></button>
+        <button role="menuitem" class="move" data-block-move="1" aria-label={`Move ${menu.name} right`} disabled={menuIndex >= tabs.length - 1} onclick={() => step(1)}><Icon name="right" size={18} /></button>
         <button role="menuitem" class="danger" disabled={tabs.length <= 1} onclick={() => { const id = menu.id; closeMenu(); ondelete(id); }}>Delete</button>
         <button class="close" aria-label="Close block menu" onclick={closeMenu}><Icon name="close" size={18} /></button>
       {/if}
@@ -186,6 +177,9 @@
   .block-menu .primary { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
   .block-menu .danger { color: var(--ga-rec); }
   .block-menu .close { padding: 0; display: grid; place-items: center; background: none; border-color: transparent; }
+  .block-menu .move { padding: 0; display: grid; place-items: center; }
+  /* Phone: the name gets its own line so the six actions share one row. */
+  @media (max-width: 480px) { .block-menu { gap: 4px; } .block-menu strong { flex-basis: 100%; padding: 2px 6px; } .block-rename { flex-basis: 100%; } }
   .block-rename { flex: 1 1 160px; min-width: 0; display: grid; gap: 4px; font-size: 11px; color: var(--ga-ink-2); }
   .block-rename input {
     min-height: 44px; min-width: 0; box-sizing: border-box; width: 100%; padding: 0 10px; font: inherit; font-size: 16px;
