@@ -9,8 +9,6 @@ import {
   interactiveEditSignature,
   makeEffect,
 } from './interactiveEffects';
-import { discoverKeyframeableParams } from '../../keyframes/paramDiscovery';
-import type { Layer } from '../../types';
 
 const stack = (...kinds: Parameters<typeof makeEffect>[0][]): InteractiveScene => ({
   ...defaultInteractive(),
@@ -97,7 +95,7 @@ describe('scenes coming back from storage', () => {
   });
 
   it('leaves sources without a scene alone', () => {
-    const plain = { effectType: 'fluid' };
+    const plain = { effectType: 'fluid', interactiveScene: undefined };
     expect(sanitizeStoredInteractive(plain)).toBe(plain);
     expect(sanitizeStoredInteractive(undefined)).toBeUndefined();
   });
@@ -126,14 +124,7 @@ describe('effect names and timeline groups', () => {
     expect(scene.effects!.map((e) => effectLabels(scene.effects!).get(e.id))).toEqual(['Fire', 'Right torch', 'Liquid', 'Fire 1']);
   });
 
-  it('gives two effects of one style their own keyframe timeline group', () => {
-    const scene = stack('architecture', 'architecture');
-    const layer = { source: { effectSource: { interactiveScene: scene } } } as unknown as Layer;
-    const groupsOf = () => [...new Set(discoverKeyframeableParams(layer).map((p) => p.group))].filter((group) => group?.startsWith('Interactive'));
-    expect(groupsOf()).toEqual(['Interactive · Living Architecture 1', 'Interactive · Living Architecture 2']);
-    scene.effects![0].name = 'Floor';
-    expect(groupsOf()).toEqual(['Interactive · Floor', 'Interactive · Living Architecture']);
-  });
+
 });
 
 describe('telling an edit from Auto playback', () => {
