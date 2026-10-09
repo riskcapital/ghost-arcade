@@ -83,6 +83,10 @@
 
   // ── Interactive Studio (desktop editor) ───────────────────────────────
   let pendingPhoneCalibration='';
+  // Development only: show a saved phone package in the panel without a phone.
+  if (import.meta.env.DEV && typeof window !== 'undefined') window.addEventListener('ga-dev-phone-calibration', (event) => {
+    pendingPhoneCalibration = String((event as CustomEvent).detail); showInteractiveStudio = true; studioPage = 'calibration';
+  });
   let showInteractiveStudio=false, studioPage:'interactive'|'calibration'='interactive';
   let studioDialog:HTMLElement|undefined;
   /** The layer being edited, or in VJ mode the clip. Exactly one is set while open. */
