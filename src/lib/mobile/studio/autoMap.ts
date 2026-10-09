@@ -234,6 +234,8 @@ export type MappedSurface = {
   points: UV[];     // the outline in the projector's raster, normalised 0..1, top-left origin, same order as traced
   rmsPx: number;    // fit error in projector pixels
   agree: number;    // share of the measured points inside the outline that lie on one plane
+  /** Photo pixels to projector pixels on this surface's plane (3x3, row-major). */
+  toProjector: number[];
 };
 
 /**
@@ -275,5 +277,5 @@ export function mapSurface(projector: Pick<AutoMapProjector, 'plan' | 'decoded' 
     const q = applyHomography(fit.cameraToProjector, p.x, p.y);
     return { x: q.x / projector.width, y: q.y / projector.height };
   });
-  return { points, rmsPx: fit.rmsPx, agree: fit.inliers / Math.max(1, fit.samples) };
+  return { points, rmsPx: fit.rmsPx, agree: fit.inliers / Math.max(1, fit.samples), toProjector: fit.cameraToProjector };
 }

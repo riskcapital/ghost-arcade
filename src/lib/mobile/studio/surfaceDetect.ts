@@ -68,7 +68,7 @@ function miss(h: number[], p: Sample): number {
   return Math.max(Math.abs((h[0] * p.x + h[1] * p.y + h[2]) / w - p.u), Math.abs((h[3] * p.x + h[4] * p.y + h[5]) / w - p.v));
 }
 
-function convexHull(points: { x: number; y: number }[]): { x: number; y: number }[] {
+export function convexHull(points: { x: number; y: number }[]): { x: number; y: number }[] {
   const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
   const cross = (o: any, a: any, b: any) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
   const build = (list: typeof sorted) => { const out: typeof sorted = []; for (const p of list) { while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop(); out.push(p); } out.pop(); return out; };
@@ -76,7 +76,7 @@ function convexHull(points: { x: number; y: number }[]): { x: number; y: number 
 }
 
 /** Shrinks a convex outline to four sides by repeatedly replacing its cheapest edge with the meeting point of its neighbours. */
-function enclosingQuad(hull: { x: number; y: number }[]): { x: number; y: number }[] | null {
+export function enclosingQuad(hull: { x: number; y: number }[]): { x: number; y: number }[] | null {
   let poly = hull.slice();
   const meet = (a: any, b: any, c: any, d: any) => {
     const den = (a.x - b.x) * (c.y - d.y) - (a.y - b.y) * (c.x - d.x);

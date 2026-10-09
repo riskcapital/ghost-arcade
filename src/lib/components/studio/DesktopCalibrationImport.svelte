@@ -4,9 +4,13 @@
  import {readMobileCalibration,type ImportedCalibration} from '../../output/mobileCalibrationImport';
  import {inverseProjectorHomography} from '../../output/projectorCalibration';
  import {project} from '../../stores/layers';
+ import {mediaLibrary} from '../../stores/media';
+ import {createAssetRefFromGeneratedBlob} from '../../storage/assetRegistry';
  // Surfaces the phone measured with the stripe scan: each outline is already
  // in its projector's own picture, so it becomes a layer pinned to that face.
- type MappedSurface={name:string;screenId:string;screenName:string;points:{x:number;y:number}[];rmsPx:number};
+ type MappedSurface={name:string;screenId:string;screenName:string;points:{x:number;y:number}[];rmsPx:number;image?:string};
+ // A painting's photo travels as a JPEG or PNG data URL: nothing else is accepted, and not above 6 MB.
+ const pictureOf=(m:MappedSurface)=>typeof m.image==='string'&&m.image.length<8_500_000&&/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(m.image)?m.image:'';
  $: mappedSurfaces=(()=>{try{const list=JSON.parse(incoming||'{}').mappedSurfaces;return Array.isArray(list)?list.filter((m:any)=>Array.isArray(m?.points)&&m.points.length>=3&&m.points.every((p:any)=>Number.isFinite(p?.x)&&Number.isFinite(p?.y))) as MappedSurface[]:[];}catch{return [] as MappedSurface[];}})();
  let createdFor='';
  // The photo and each surface's outline on it, for showing what was found.
@@ -20,8 +24,13 @@
  // 0.4 of a stripe is the best a scan can report; well past that means the surface is not flat or moved.
  const quality=(rms:number)=>rms<17?'Clean':rms<26?'Fair':'Rough';
  const centre=(points:{x:number;y:number}[])=>({x:points.reduce((t,p)=>t+p.x,0)/points.length*100,y:points.reduce((t,p)=>t+p.y,0)/points.length*100});
- function createLayers(){
-  let made=0,skipped=0,straightened=false;
+ let creating=false;
+ async function createLayers(){
+  if(creating)return;creating=true;
+  try{await createLayersNow();}finally{creating=false;}
+ }
+ async function createLayersNow(){
+  let made=0,skipped=0,straightened=false,pictures=0,pictureFailed=false;
   // A new scan replaces the layers the last one made, unless asked to keep them.
   if(replaceOld)for(const layer of $project.layers.filter(l=>l.name.endsWith('(mapped)')))project.removeLayer(layer.id);
   for(const [index,surface] of mappedSurfaces.entries()){
@@ -37,9 +46,22 @@
    const id=project.addLayer(`${surface.name} (mapped)`,'media');
    const layerId=id;if(!layerId){skipped++;continue;}
    project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft}});made++;
+   // A painting arrives with its own photo, cut to land exactly on it: put that on the layer.
+   const picture=pictureOf(surface);
+   if(picture){
+    try{
+     const blob=await (await fetch(picture)).blob();
+     const name=`painting-${new Date().toISOString().replace(/[:.]/g,'-')}.jpg`;
+     const captured=await createAssetRefFromGeneratedBlob(blob,name,blob.type||'image/jpeg');
+     const item={id:crypto.randomUUID(),name,src:captured.runtimeUrl,type:'image' as const,thumbnail:captured.runtimeUrl,_assetRef:captured.assetRef};
+     mediaLibrary.addItem(item);
+     project.setLayerSource(layerId,{id:item.id,type:'image',src:item.src,name:item.name,_assetRef:item._assetRef});
+     pictures++;
+    }catch{pictureFailed=true;}
+   }
   }
   recordDiscreteAction();createdFor=incoming;
-  message=`${made} layer${made===1?'':'s'} created and pinned in place.${skipped?` ${skipped} skipped: only four-corner surfaces can be pinned.`:''} Drop a shader or video on each one.${straightened?' The Screen’s own corner correction was turned off so the layers sit where they were measured.':''}`;
+  message=`${made} layer${made===1?'':'s'} created and pinned in place.${skipped?` ${skipped} skipped: only four-corner surfaces can be pinned.`:''} ${pictures?`The painting’s photo is on its layer, lined up and cropped: add effects to it.`:'Drop a shader or video on each one.'}${pictureFailed?' The photo could not be saved; the layer is in place without it.':''}${straightened?' The Screen’s own corner correction was turned off so the layers sit where they were measured.':''}`;
  }
  export let incoming='';
  let seen='';
@@ -63,10 +85,10 @@
   </div>{/if}
   <div class="am-side">
    <ul>{#each mappedSurfaces as m,i}<li class:off={off.has(i)} class:hot={hover===i} onmouseenter={()=>hover=i} onmouseleave={()=>hover=-1}>
-    <label><input type="checkbox" checked={!off.has(i)} onchange={()=>flip(i)}/><b>{i+1}</b><span>{m.name}</span></label>
+    <label><input type="checkbox" checked={!off.has(i)} onchange={()=>flip(i)}/><b>{i+1}</b><span>{m.name}{pictureOf(m)?' · with its photo':''}</span></label>
     <em class={quality(Number(m.rmsPx)).toLowerCase()} title={`Fit ${Number(m.rmsPx).toFixed(1)} projector pixels`}>{quality(Number(m.rmsPx))}</em></li>{/each}</ul>
    <label class="am-option"><input type="checkbox" bind:checked={replaceOld}/>Replace layers from the last scan</label>
-   <button class="am-go" onclick={createLayers} disabled={!chosen||createdFor===incoming}>{createdFor===incoming?'Layers created':`Create ${chosen} layer${chosen===1?'':'s'}`}</button>
+   <button class="am-go" onclick={createLayers} disabled={!chosen||creating||createdFor===incoming}>{createdFor===incoming?'Layers created':`Create ${chosen} layer${chosen===1?'':'s'}`}</button>
    <p class="am-status" role="status">{message}</p>
   </div>
  </div></div>
