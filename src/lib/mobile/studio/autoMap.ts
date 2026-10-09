@@ -34,7 +34,7 @@ const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms
 export async function runAutoMap(
   link: AutoMapLink,
   camera: AutoMapCamera,
-  progress: (text: string) => void = () => {},
+  progress: (text: string, fraction?: number) => void = () => {},
   options: { settleMs?: number; encode?: (luma: Float32Array, width: number, height: number) => string } = {},
 ): Promise<AutoMapResult> {
   const settle = options.settleMs ?? SETTLE_MS;
@@ -50,7 +50,7 @@ export async function runAutoMap(
       const plan = planPatterns(screen.width, screen.height, STRIPE_CELL);
       const captures: Capture[] = [];
       for (const [step, frame] of plan.frames.entries()) {
-        progress(`${screen.name}: pattern ${step + 1} of ${plan.frames.length} (projector ${index + 1} of ${screens.length}). Keep the phone still.`);
+        progress(`${screen.name}: pattern ${step + 1} of ${plan.frames.length}`, (index + (step + 1) / plan.frames.length) / screens.length);
         await link.request('show', { screenId: screen.id, frame: stripeFrameCode(frame as PatternFrame, STRIPE_CELL) });
         await wait(settle);
         const shot = await camera.grab();
@@ -63,7 +63,7 @@ export async function runAutoMap(
       width = white.width; height = white.height;
       brightest ??= new Float32Array(width * height);
       for (let i = 0; i < brightest.length; i++) brightest[i] = Math.max(brightest[i], white.luma[i]);
-      progress(`${screen.name}: reading the patterns.`);
+      progress(`${screen.name}: finding surfaces`, (index + 1) / screens.length);
       await wait(0);
       const decoded = decodeCaptures(plan, captures);
       let seen = 0;

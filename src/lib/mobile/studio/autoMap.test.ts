@@ -99,7 +99,7 @@ describe('auto-map run', () => {
     expect(result.reference.width).toBe(CAM_W);
     expect(new Set(shown)).toEqual(new Set(['left', 'right']));
     expect(ended()).toBe(true);
-    expect(notes.some(n => n.includes('Keep the phone still'))).toBe(true);
+    expect(notes.some(n => n.includes('pattern 1 of'))).toBe(true);
   }, 30000);
 
   it('clears the stripes and explains when a projector cannot be seen', async () => {

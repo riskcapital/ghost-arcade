@@ -10,7 +10,8 @@
  function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx})=>({name,screenId,screenName,points,rmsPx}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
- export let automap:((camera:AutoMapCamera,progress:(text:string)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
+ export let automap:((camera:AutoMapCamera,progress:(text:string,fraction?:number)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
+ let fraction=0,found:HTMLDivElement;
  /** Lets the paired desktop take photos through this phone while the preview is open. */
  export let remote:((camera:AutoMapCamera)=>()=>void)|undefined=undefined;
  let stopRemote:(()=>void)|undefined;
@@ -21,18 +22,23 @@
  /** Found surfaces the user has switched off: kept on the photo, not sent. */
  let skipped=new Set<string>();
  function inside(points:UV[],p:UV){let hit=false;for(let i=0,j=points.length-1;i<points.length;j=i++){const a=points[i],b=points[j];if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)hit=!hit;}return hit;}
+ /** Tap a found surface on the results photo to switch it on or off. */
+ function tapFound(e:PointerEvent){const r=found.getBoundingClientRect();const p={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};const hit=surfaces.filter(s=>mapped.some(m=>m.surfaceId===s.id)&&inside(s.points,p)).pop();if(hit)toggle(hit.id);}
+ const centre=(points:UV[])=>({x:points.reduce((t,v)=>t+v.x,0)/points.length*1000,y:points.reduce((t,v)=>t+v.y,0)/points.length*1000});
+ $: scanned=surfaces.filter(s=>mapped.some(m=>m.surfaceId===s.id));
+ $: sending=scanned.filter(s=>!skipped.has(s.id)).length;
  function toggle(id:string){if(skipped.has(id))skipped.delete(id);else skipped.add(id);skipped=skipped;}
  /** Fit one outline against the scan: the projector that lights it best wins. */
  function mapOutline(outline:UV[]){let best:{projector:AutoMapProjector;points:UV[];rmsPx:number;agree:number}|undefined,why='';
   for(const projector of scan){try{const m=mapSurface(projector,outline);if(!best||m.agree>best.agree)best={projector,...m};}catch(e){why=e instanceof Error?e.message:'';}}
   if(!best)throw new Error(why||'This surface could not be mapped.');return best;}
  let framing=false,preview:HTMLVideoElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
- async function openAuto(){framing=true;message='Starting the camera…';const held=await uprightTurn();await tick();try{autoCamera=await openAutoMapCamera(preview,held.turn);stopRemote=remote?.(autoCamera);message='Frame every projector’s whole picture, then prop the phone so it cannot move.';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
+ async function openAuto(){framing=true;message='Starting the camera…';const held=await uprightTurn();await tick();try{autoCamera=await openAutoMapCamera(preview,held.turn);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
  function closeAuto(){stopRemote?.();stopRemote=undefined;autoCamera?.stop();autoCamera=undefined;framing=false;}
  async function startAuto(){
   if(!autoCamera||!automap)return;busy=true;
   try{
-   const result=await automap(autoCamera,text=>message=text);
+   fraction=0;const result=await automap(autoCamera,(text,part)=>{message=text;if(part!==undefined)fraction=part;});
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
    scan=result.projectors;mapped=[];skipped=new Set();
@@ -43,7 +49,7 @@
     mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:found.points,rmsPx:found.rmsPx}];
    }
    skipped=skipped;
-   message=surfaces.length?`Found ${surfaces.length} surface${surfaces.length===1?'':'s'}. Tap any you do not want to switch it off, then send to desktop.`:'No flat surface was found in the scan. Dim the room and try again, or trace a surface by hand.';
+   message=surfaces.length?'':'No flat surface was found in the scan. Dim the room and try again, or trace a surface by hand.';
   }catch(e){message=e instanceof Error?e.message:'Auto map failed.';}
   finally{busy=false;closeAuto();}
  }
@@ -71,14 +77,40 @@
  function outside(){try{return !!mapping&&surfaces.some(s=>s.points.some(v=>{const p=project(mapping!,v);return p.x<0||p.x>1||p.y<0||p.y>1;}));}catch{return true;}}
  $: mapping=(()=>{try{return projectors.length?homography(projectors[0].corners,unitCorners):null;}catch{return null;}})();
 </script>
-<section aria-label="Projector calibration workshop">
- <header><div><small>DESKTOP TOOLS · PREPARATION</small><h2>Calibration workshop</h2></div><button onclick={onclose} disabled={busy}>Back</button></header>
+<section aria-label="Projector calibration">
+ <header><div><small>DESKTOP TOOLS</small><h2>{automap?'Auto map':'Calibration workshop'}</h2></div><button class="quiet" onclick={onclose} disabled={busy}>Back</button></header>
+ {#if automap}
+ {#if framing}
+  <div class="am-stage"><video bind:this={preview} playsinline muted></video>{#if busy}<div class="am-veil"><strong>{Math.round(fraction*100)}%</strong><span>{message}</span></div>{/if}</div>
+  {#if busy}
+   <div class="am-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(fraction*100)}><i style:width={`${fraction*100}%`}></i></div>
+   <p class="am-hint">Keep the phone still and stay out of the beam.</p>
+  {:else}
+   <ul class="am-check"><li>Every surface you want is in the picture</li><li>The phone is propped so it cannot move</li><li>The room is dim</li></ul>
+   <div class="am-actions"><button class="primary" onclick={startAuto} disabled={!autoCamera}>Start scan</button><button class="quiet" onclick={closeAuto}>Cancel</button></div>
+  {/if}
+ {:else if scan.length&&reference}
+  <div class="am-stage found" bind:this={found} style:aspect-ratio={`${reference.width}/${reference.height}`} onpointerdown={tapFound} role="application" aria-label="Found surfaces. Tap one to switch it on or off." tabindex="0">
+   <img src={reference.image} alt="The scanned scene" draggable="false"/>
+   <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
+    {#each scanned as s,i}<polygon class:off={skipped.has(s.id)} points={s.points.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>{/each}
+   </svg>
+   {#each scanned as s,i}{@const c=centre(s.points)}<b class="am-tag" class:off={skipped.has(s.id)} style:left={`${c.x/10}%`} style:top={`${c.y/10}%`}>{i+1}</b>{/each}
+  </div>
+  <div class="am-summary"><strong>{sending} of {scanned.length} surfaces</strong><span>Tap a surface to switch it off</span></div>
+  <div class="am-chips">{#each scanned as s,i}<button class="am-chip" class:on={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}><b>{i+1}</b>{skipped.has(s.id)?'Off':'On'}</button>{/each}</div>
+  <div class="am-actions">{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!sending}>Send {sending} to desktop</button>{/if}<button class="quiet" onclick={openAuto}>Scan again</button></div>
+ {:else}
+  <div class="am-hero">
+   <p class="am-lead">The projector flashes a set of stripes, the phone watches, and every flat surface it lights becomes a layer on the desktop, already in place.</p>
+   <ol><li><b>1</b><span>Open the Screen on the projector from the desktop.</span></li><li><b>2</b><span>Prop the phone near the projector, looking at what it lights.</span></li><li><b>3</b><span>Scan, then send the surfaces you want.</span></li></ol>
+   <div class="am-actions"><button class="primary" onclick={openAuto} disabled={busy}>Open camera</button></div>
+  </div>
+ {/if}
+ <p class="status" role="status" class:quiet={busy}>{busy?'':message}</p>
+ <details class="manual"><summary>Manual photo tools</summary>
  <p>Capture the backdrop, trace its surfaces, then match each projector. Export the preparation or send it to a paired desktop for review. Output geometry changes only when you apply it there.</p>
  <div class="row"><label class="file">Take / import photo<input type="file" accept="image/*" capture="environment" onchange={importPhoto} disabled={busy}/></label><button onclick={capture} disabled={!lidar||busy}>Capture RGB + depth</button></div>
- {#if automap}<div class="row"><button class="primary" onclick={openAuto} disabled={busy||framing}>Auto map projectors</button></div>{/if}
- {#if framing}<div class="auto"><video bind:this={preview} playsinline muted></video>
-  <p>The desktop will show stripe patterns on each open Screen, one projector at a time, for about a minute. Dim the room, keep people out of the beam, and do not touch the phone until it finishes.</p>
-  <div class="row"><button class="primary" onclick={startAuto} disabled={busy||!autoCamera}>Start</button><button onclick={closeAuto} disabled={busy}>Cancel</button></div></div>{/if}
  {#if reference}<p class="note">Replacing the reference clears its geometry. Depth captures use the camera’s sensor orientation so photo, distances and coordinates stay aligned.</p>{/if}
  <label>Session name<input bind:value={name}/></label>
  {#if reference}
@@ -100,12 +132,62 @@
  {#if mapping&&surfaces.length}<p class="note">{outside()?'Some surface points fall outside projector 1. They are preserved in the export; verify coverage.':'Surface points fit inside projector 1’s reference.'}</p>{/if}
  <div class="row"><button onclick={save}>Save draft</button><button class="primary" onclick={download} disabled={!projectors.length||!surfaces.length}>Export preparation</button>{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!projectors.length||!surfaces.length}>Send to desktop</button>{/if}</div>
  {/if}
- <p class="status" role="status">{busy&&!framing?'Capturing…':message}</p>
  <h3>Saved preparations</h3>{#each saved as c}<div class="item"><button onclick={()=>load(c)}>{c.name} · {new Date(c.created).toLocaleDateString()}</button><button onclick={()=>{try{const next=saved.filter(x=>x.id!==c.id);localStorage.setItem(key,JSON.stringify(next));saved=next;}catch{message='Could not remove saved draft.';}}}>Delete</button></div>{/each}
  <details><summary>What still needs a projector?</summary><p>Pixel correspondence, focus, alignment, overlap, brightness matching and bump recovery require physical verification. LiDAR measures the scene, not where projector pixels land. Packages include photo-space outlines, per-projector homographies, raw depth when captured, and an inverted Gray-code pattern plan for the future desktop presenter. Automatic capture, decoding and blending are not active yet.</p></details>
+ </details>
+ {:else}
+ <p>Capture the backdrop, trace its surfaces, then match each projector. Export the preparation or send it to a paired desktop for review. Output geometry changes only when you apply it there.</p>
+ <div class="row"><label class="file">Take / import photo<input type="file" accept="image/*" capture="environment" onchange={importPhoto} disabled={busy}/></label><button onclick={capture} disabled={!lidar||busy}>Capture RGB + depth</button></div>
+ {#if reference}<p class="note">Replacing the reference clears its geometry. Depth captures use the camera’s sensor orientation so photo, distances and coordinates stay aligned.</p>{/if}
+ <label>Session name<input bind:value={name}/></label>
+ {#if reference}
+ <div class="photo" bind:this={photo} style:aspect-ratio={`${reference.width}/${reference.height}`} onpointerdown={tap} role="application" aria-label="Tap reference photo to place outline points" tabindex="0">
+  <img src={reference.image} alt="Calibration reference" draggable="false"/>
+  <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
+   {#each projectors as p}<polygon class="projector" points={p.corners.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>{/each}
+   {#each surfaces as s}<polygon class:off={skipped.has(s.id)} points={s.points.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>{/each}
+   <polyline points={points.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>
+   {#each points as p,i}<circle cx={p.x*1000} cy={p.y*1000} r="9"/><text x={p.x*1000+15} y={p.y*1000+10}>{i+1}</text>{/each}
+  </svg>
+ </div>
+ <div class="row"><button class:active={mode==='corners'} onclick={()=>{mode='corners';points=[];}}>Projector corners</button><button class:active={mode==='surface'} onclick={()=>{mode='surface';points=[];}}>Trace surface</button><button onclick={()=>points=points.slice(0,-1)} disabled={!points.length}>Undo point</button></div>
+ {#if mode==='corners'}<p>Tap the projected reference rectangle: <b>top left → top right → bottom right → bottom left</b>. These must be known projector corners, not arbitrary backdrop corners. Without a projector, save a draft and mark them later.</p><label>Projector name<input bind:value={projectorName}/></label><div class="row"><label>Width<input type="number" min="2" max="16384" bind:value={width}/></label><label>Height<input type="number" min="2" max="16384" bind:value={height}/></label></div>
+ {:else}<p>Tap around one flat surface. Finish the outline below. Four-point calibration is valid only on the same plane as the reference rectangle; other depths need additional calibration.</p>{/if}
+ <button class="primary" onclick={add} disabled={mode==='corners'?points.length!==4:points.length<3}>Add {mode==='corners'?'projector':'surface'}</button>
+ {#each projectors as p}<div class="item"><span>{p.name} · {p.width} × {p.height}</span><button onclick={()=>projectors=projectors.filter(x=>x.id!==p.id)}>Remove</button></div>{/each}
+ {#each surfaces as s}<div class="item"><span>{s.name} · {s.points.length} points{depthLabel(s.points)}</span>{#if mapped.some(m=>m.surfaceId===s.id)}<button class:active={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}>{skipped.has(s.id)?'Off':'On'}</button>{/if}<button onclick={()=>surfaces=surfaces.filter(x=>x.id!==s.id)}>Remove</button></div>{/each}
+ {#if mapping&&surfaces.length}<p class="note">{outside()?'Some surface points fall outside projector 1. They are preserved in the export; verify coverage.':'Surface points fit inside projector 1’s reference.'}</p>{/if}
+ <div class="row"><button onclick={save}>Save draft</button><button class="primary" onclick={download} disabled={!projectors.length||!surfaces.length}>Export preparation</button>{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!projectors.length||!surfaces.length}>Send to desktop</button>{/if}</div>
+ {/if}
+ <p class="status" role="status">{busy?'Capturing…':message}</p>
+ <h3>Saved preparations</h3>{#each saved as c}<div class="item"><button onclick={()=>load(c)}>{c.name} · {new Date(c.created).toLocaleDateString()}</button><button onclick={()=>{try{const next=saved.filter(x=>x.id!==c.id);localStorage.setItem(key,JSON.stringify(next));saved=next;}catch{message='Could not remove saved draft.';}}}>Delete</button></div>{/each}
+ <details><summary>What still needs a projector?</summary><p>Pixel correspondence, focus, alignment, overlap, brightness matching and bump recovery require physical verification. LiDAR measures the scene, not where projector pixels land. Packages include photo-space outlines, per-projector homographies, raw depth when captured, and an inverted Gray-code pattern plan for the future desktop presenter. Automatic capture, decoding and blending are not active yet.</p></details>
+ {/if}
 </section>
 <style>
- svg polygon.off{opacity:.35;stroke-dasharray:14 10}
- .auto video{display:block;width:100%;max-height:46vh;object-fit:contain;background:#000;border-radius:5px}
+ .am-stage{position:relative;width:100%;background:#000;border-radius:10px;overflow:hidden;border:1px solid var(--ga-line-3)}
+ .am-stage video{display:block;width:100%;max-height:52vh;object-fit:contain;background:#000}
+ .am-stage.found{touch-action:manipulation}
+ .am-stage img,.am-stage svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+ .am-stage polygon{fill:var(--ga-blue-a16);stroke:var(--ga-blue-200);stroke-width:2.5}
+ .am-stage polygon.off{fill:transparent;stroke:#ffffff66;stroke-dasharray:10 8;opacity:1}
+ .am-tag{position:absolute;transform:translate(-50%,-50%);min-width:22px;height:22px;padding:0 6px;box-sizing:border-box;border-radius:11px;background:var(--ga-blue,#5278ff);color:#fff;font:600 12px/22px system-ui;text-align:center;pointer-events:none;box-shadow:0 1px 6px #0009}
+ .am-tag.off{background:#0009;color:#fff9}
+ .am-veil{position:absolute;inset:0;display:grid;place-content:center;gap:4px;text-align:center;background:#000a;color:#fff}
+ .am-veil strong{font:600 34px/1 system-ui;font-variant-numeric:tabular-nums}.am-veil span{font-size:12px;color:#fffc}
+ .am-bar{height:4px;margin:12px 0 0;border-radius:2px;background:var(--ga-line-3);overflow:hidden}.am-bar i{display:block;height:100%;background:var(--ga-blue,#5278ff);transition:width .25s linear}
+ .am-hint{margin:10px 0 0;text-align:center;font-size:12px}
+ .am-check{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}.am-check li{position:relative;padding-left:22px;color:var(--ga-ink-1,var(--ga-ink-0));font-size:13px}.am-check li::before{content:"";position:absolute;left:4px;top:7px;width:6px;height:6px;border-radius:50%;background:var(--ga-blue,#5278ff)}
+ .am-actions{display:flex;gap:10px;margin-top:16px}.am-actions .primary{flex:1;min-height:50px;font-weight:600;font-size:15px;border-radius:10px;background:var(--ga-blue,#5278ff);border-color:transparent;color:#fff}.am-actions .primary:disabled{opacity:.35}
+ .quiet{background:transparent;border-color:var(--ga-line-3);border-radius:10px;padding:10px 16px}
+ .am-summary{display:flex;justify-content:space-between;align-items:baseline;margin-top:14px}.am-summary strong{font-size:15px}.am-summary span{font-size:12px;color:var(--ga-ink-2)}
+ .am-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+ .am-chip{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 12px 6px 6px;border-radius:20px;font-size:12px;color:var(--ga-ink-2);background:transparent}
+ .am-chip b{display:grid;place-content:center;width:26px;height:26px;border-radius:50%;background:var(--ga-line-3);color:var(--ga-ink-0);font-size:12px}
+ .am-chip.on{color:var(--ga-ink-0);border-color:var(--ga-blue-300)}.am-chip.on b{background:var(--ga-blue,#5278ff);color:#fff}
+ .am-hero{padding:6px 0 0}.am-lead{font-size:15px;line-height:1.5;color:var(--ga-ink-0);margin:8px 0 18px}
+ .am-hero ol{list-style:none;margin:0;padding:0;display:grid;gap:12px}.am-hero li{display:flex;gap:12px;align-items:flex-start}.am-hero li b{flex:none;display:grid;place-content:center;width:26px;height:26px;border-radius:50%;border:1px solid var(--ga-blue-300);color:var(--ga-blue-200);font-size:12px}.am-hero li span{padding-top:3px;color:var(--ga-ink-1,var(--ga-ink-0))}
+ .status.quiet{display:none}
+ .manual{margin-top:26px;border-top:1px solid var(--ga-line-2);padding-top:6px}.manual summary{min-height:44px;display:flex;align-items:center;color:var(--ga-ink-2);font-size:12px;letter-spacing:.04em}
  section{padding:18px;font:13px/1.5 system-ui;color:var(--ga-ink-0)}header,.row,.item{display:flex;align-items:center;gap:8px;justify-content:space-between}.row{flex-wrap:wrap;margin:12px 0}.row>*{flex:1;min-width:110px}header small{font-size:9px;letter-spacing:.12em;color:var(--ga-blue-200)}h2{font-size:20px;margin:4px 0}h3{font-size:13px}p,.note{color:var(--ga-ink-2)}button,.file,input{box-sizing:border-box;min-height:44px;border:1px solid var(--ga-line-3);border-radius:5px;background:var(--ga-slot);color:inherit;padding:10px;font:inherit}button{touch-action:manipulation}button:disabled{opacity:.4}label{display:block;font-size:11px}input{display:block;width:100%;margin-top:4px}.file{cursor:pointer;font-size:13px}.file input{width:100%;font-size:11px}.primary,.active{background:var(--ga-selection-bg);border-color:var(--ga-blue-300)}.photo{position:relative;width:100%;background:#000;touch-action:none;margin-top:12px;overflow:hidden}.photo img,.photo svg{position:absolute;width:100%;height:100%;inset:0;pointer-events:none}.photo img{object-fit:fill}polygon{fill:var(--ga-blue-a16);stroke:var(--ga-blue-200);stroke-width:2;vector-effect:non-scaling-stroke}.projector{stroke:#ffa45b;fill:#ffa45b15}polyline{fill:none;stroke:white;stroke-width:2;vector-effect:non-scaling-stroke}circle{fill:#ffa45b;stroke:#fff;stroke-width:2}text{fill:white;font-size:30px;font-weight:bold}.item{border-bottom:1px solid var(--ga-line-2);padding:8px 0}.item span{overflow-wrap:anywhere;min-width:0}.status{color:var(--ga-blue-200)}summary{min-height:44px;cursor:pointer;font-weight:bold}
 </style>
