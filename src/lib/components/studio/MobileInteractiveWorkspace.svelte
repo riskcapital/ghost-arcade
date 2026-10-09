@@ -40,6 +40,7 @@
     onclose();
   }}
 >
+  <div class="studio-fill">
   <InteractiveStudio
     bind:this={editor}
     {onpreparecamera}
@@ -56,6 +57,8 @@
     {onclose}
     {aspect}
   />
+  </div>
+  <slot name="nav" />
 </dialog>
 
 <style>
@@ -73,6 +76,16 @@
     background: #10151c;
     color: #edf2f8;
     overflow: hidden;
+  }
+  /* The editor takes the room; the workspace bar keeps its place underneath. */
+  dialog[open] {
+    display: flex;
+    flex-direction: column;
+  }
+  .studio-fill {
+    flex: 1;
+    min-height: 0;
+    position: relative;
   }
   dialog::backdrop {
     background: #03060c;
