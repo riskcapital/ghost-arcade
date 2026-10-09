@@ -6,6 +6,8 @@
  import {project} from '../../stores/layers';
  import {mediaLibrary} from '../../stores/media';
  import {createAssetRefFromGeneratedBlob} from '../../storage/assetRegistry';
+ import {traceShapes,type TracedShape} from '../../painting/vectorize';
+ import {createShapeLayers,picturePixels} from '../../painting/paintingShapes';
  // Surfaces the phone measured with the stripe scan: each outline is already
  // in its projector's own picture, so it becomes a layer pinned to that face.
  type MappedSurface={name:string;screenId:string;screenName:string;points:{x:number;y:number}[];rmsPx:number;image?:string};
@@ -25,6 +27,26 @@
  const quality=(rms:number)=>rms<17?'Clean':rms<26?'Fair':'Rough';
  const centre=(points:{x:number;y:number}[])=>({x:points.reduce((t,p)=>t+p.x,0)/points.length*100,y:points.reduce((t,p)=>t+p.y,0)/points.length*100});
  let creating=false;
+ // Cutting the painting into shapes: its patches of colour, each one a mapping layer.
+ let paintingLayer='',paintingSrc='',detail=0.35,shapes:TracedShape[]=[],tracing=false,shaping=false,shapesMade=0,shapeNote='';
+ let pixels:{data:Uint8ClampedArray;width:number;height:number}|null=null,pixelsFor='';
+ async function retrace(){
+  if(!paintingSrc)return;
+  tracing=true;
+  try{
+   if(pixelsFor!==paintingSrc){pixels=await picturePixels(paintingSrc);pixelsFor=paintingSrc;}
+   if(pixels)shapes=traceShapes(pixels.data,pixels.width,pixels.height,{detail,maxShapes:600});
+   shapeNote='';
+  }catch(e){shapes=[];shapeNote=e instanceof Error?e.message:'The picture could not be read.';}
+  finally{tracing=false;}
+ }
+ $: if(paintingSrc){detail;void retrace();}
+ async function makeShapes(){
+  if(shaping||!shapes.length||!paintingLayer)return;shaping=true;
+  try{shapesMade=await createShapeLayers(shapes,paintingLayer);shapeNote=`${shapesMade} shape layers created over the painting. Open Stage to run effects across them.`;}
+  catch(e){shapeNote=e instanceof Error?e.message:'The shapes could not be created.';}
+  finally{shaping=false;}
+ }
  async function createLayers(){
   if(creating)return;creating=true;
   try{await createLayersNow();}finally{creating=false;}
@@ -56,7 +78,7 @@
      const item={id:crypto.randomUUID(),name,src:captured.runtimeUrl,type:'image' as const,thumbnail:captured.runtimeUrl,_assetRef:captured.assetRef};
      mediaLibrary.addItem(item);
      project.setLayerSource(layerId,{id:item.id,type:'image',src:item.src,name:item.name,_assetRef:item._assetRef});
-     pictures++;
+     pictures++;paintingLayer=layerId;paintingSrc=picture;
     }catch{pictureFailed=true;}
    }
   }
@@ -91,7 +113,21 @@
    <button class="am-go" onclick={createLayers} disabled={!chosen||creating||createdFor===incoming}>{createdFor===incoming?'Layers created':`Create ${chosen} layer${chosen===1?'':'s'}`}</button>
    <p class="am-status" role="status">{message}</p>
   </div>
- </div></div>
+ </div>
+ {#if paintingSrc}<div class="am-shapes">
+  <header><small>SHAPES</small><h3>Cut the painting into shapes</h3><p>Each patch of colour becomes its own mapping layer. Less detail gives a few broad shapes; more gives many small ones.</p></header>
+  <div class="am-shapes-body">
+   <div class="am-shapes-view"><img src={paintingSrc} alt="The painting"/>
+    <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">{#each shapes as shape}<polygon points={shape.points.map(p=>`${p.x},${p.y}`).join(' ')}/>{/each}</svg></div>
+   <div class="am-shapes-side">
+    <label class="am-detail"><span>Detail</span><input type="range" min="0" max="1" step="0.01" bind:value={detail} aria-label="Shape detail"/></label>
+    <p class="am-count"><b>{shapes.length}</b> shape{shapes.length===1?'':'s'}{tracing?' …':''}</p>
+    <button class="am-go" onclick={makeShapes} disabled={!shapes.length||shaping||shapesMade>0}>{shapesMade?'Shapes created':shaping?'Creating…':`Create ${shapes.length} shape layer${shapes.length===1?'':'s'}`}</button>
+    <p class="am-status" role="status">{shapeNote}</p>
+   </div>
+  </div>
+ </div>{/if}
+ </div>
 {:else}<h2>Phone calibration import</h2><p>In the mobile app, open Tools → Projector calibration. Capture a projected rectangle, mark its corners in TL / TR / BR / BL order, then trace the desired flat surface in that same order. Export and open the file here.</p><input aria-label="Import phone calibration" type="file" accept=".json,.ghostcal" onchange={load}/>
 {#if data}<h3>{data.name}</h3><img src={data.image} alt="Calibration reference photograph"/><div class="fields"><label>Measured projector<select bind:value={projector} onchange={()=>surface=0}>{#each data.projectors as p,i}<option value={i}>{p.name} · {p.width} × {p.height}</option>{/each}</select></label><label>Traced surface<select bind:value={surface}>{#each candidate?.surfaces??[] as s,i}<option value={i}>{s.name}</option>{/each}</select></label><label>Physical output<select bind:value={target}><option value="">Choose a screen</option>{#each $screens as s}<option value={s.id}>{s.name}</option>{/each}</select></label></div>
 <svg viewBox="-0.1 -0.1 1.2 1.2" aria-label="Proposed projector raster geometry"><rect x="0" y="0" width="1" height="1" fill="#070b10" stroke="var(--ga-blue-mute-300)" stroke-width=".004"/><polygon points={(shape?.corners??shape?.points??[]).map(p=>`${p.x},${p.y}`).join(' ')} fill="var(--ga-blue-a28)" stroke="var(--ga-blue-300)" stroke-width=".008"/>{#if shape?.corners}<circle cx={shape.corners[0].x} cy={shape.corners[0].y} r=".03" fill="#ffd45c"><title>Top left of the picture</title></circle>{/if}</svg>
@@ -119,4 +155,18 @@
  .am-option{display:flex;align-items:center;gap:10px;margin:0 0 14px;color:#a7b5c7;font-size:13px;cursor:pointer}
  .am-go{width:100%;min-height:48px;border:0;border-radius:9px;background:var(--ga-blue,#5278ff);color:#fff;font-weight:600;font-size:15px;cursor:pointer}.am-go:disabled{opacity:.4;cursor:default}
  .am-status{min-height:1.6em;margin:12px 0 0;font-size:13px;color:var(--ga-blue-200)}
-section{padding:24px;color:#e5ebf4;font:14px/1.6 system-ui}h2{margin-top:0}img{display:block;max-height:260px;max-width:100%;object-fit:contain;background:#000}.fields{display:flex;gap:16px;flex-wrap:wrap}label{display:grid;gap:5px;margin:16px 0;flex:1}select,button,input{font:inherit;color:inherit;background:var(--ga-blue-mute-800);border:1px solid var(--ga-blue-mute-600);border-radius:5px;padding:10px;min-height:44px;max-width:100%}button:disabled{opacity:.4}svg{width:240px;height:240px;display:block}.note{color:#a7b5c7;font-size:12px}p[role=status]{color:var(--ga-blue-200)}.warn{color:#f0c674}</style>
+section{padding:24px;color:#e5ebf4;font:14px/1.6 system-ui}h2{margin-top:0}img{display:block;max-height:260px;max-width:100%;object-fit:contain;background:#000}.fields{display:flex;gap:16px;flex-wrap:wrap}label{display:grid;gap:5px;margin:16px 0;flex:1}select,button,input{font:inherit;color:inherit;background:var(--ga-blue-mute-800);border:1px solid var(--ga-blue-mute-600);border-radius:5px;padding:10px;min-height:44px;max-width:100%}button:disabled{opacity:.4}svg{width:240px;height:240px;display:block}.note{color:#a7b5c7;font-size:12px}p[role=status]{color:var(--ga-blue-200)}.warn{color:#f0c674} .am-shapes{margin-top:18px;padding-top:16px;border-top:1px solid var(--ga-line,rgba(255,255,255,.08))}
+ .am-shapes header small{font:600 10px/1 var(--ga-font-mono,monospace);letter-spacing:.14em;color:var(--ga-ink-3,#7d8794)}
+ .am-shapes header h3{margin:6px 0 4px;font-size:15px}
+ .am-shapes header p{margin:0 0 12px;font-size:12px;color:var(--ga-ink-2,#a9b2bd);max-width:60ch}
+ .am-shapes-body{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(200px,1fr);gap:16px;align-items:start}
+ .am-shapes-view{position:relative;border-radius:6px;overflow:hidden;background:#000;line-height:0}
+ .am-shapes-view img{width:100%;height:auto;display:block;opacity:.85}
+ .am-shapes-view svg{position:absolute;inset:0;width:100%;height:100%}
+ .am-shapes-view polygon{fill:rgba(255,255,255,.04);stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke;stroke-opacity:.85}
+ .am-shapes-side{display:flex;flex-direction:column;gap:10px}
+ .am-detail{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--ga-ink-2,#a9b2bd)}
+ .am-detail input{width:100%}
+ .am-count{margin:0;font-size:12px;color:var(--ga-ink-2,#a9b2bd)}
+ .am-count b{font-size:20px;color:var(--ga-ink-1,#fff);margin-right:4px}
+</style>
