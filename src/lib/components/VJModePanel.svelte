@@ -4154,6 +4154,7 @@
            controls in the same places. Flip-layout was removed; the option
            now lives in Settings → Appearance. -->
       <div class="header-right">
+        <div class="rec-split">
         {#if vjIsRecording}
           <div class="vj-recording-indicator">
             <span class="vj-rec-dot"></span>
@@ -4170,6 +4171,7 @@
         {#if nativePreviewActive}
           <RecordingSourcePicker disabled={vjIsRecording} compact />
         {/if}
+        </div>
 
         <!-- Same glyph mapping mode's Stage Sim button uses, so the two
              modes read as the same destination. -->
@@ -4186,7 +4188,6 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
           Stage Edit
         </button>
-        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-interactive-studio'))} title="Interactive Studio">Interactive</button>
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -7475,6 +7476,24 @@
   /* VJ Recording — matches the mapping-mode rec-btn (transparent box,
      red outline, fixed 32px height) so the same control reads the same
      in both modes. */
+  /* Record and its source menu are one control: joined, same height and outline. */
+  .rec-split {
+    display: flex;
+    align-items: stretch;
+    flex: 0 0 auto;
+  }
+  .rec-split:has(:global(.rec-source)) .vj-rec-btn {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .rec-split :global(.rec-source) {
+    align-self: stretch;
+  }
+  .rec-split :global(.rec-source-toggle) {
+    width: 24px;
+    height: 100%;
+    border-color: rgba(255, 68, 56, 0.4);
+  }
   .vj-rec-btn {
     display: inline-flex;
     align-items: center;

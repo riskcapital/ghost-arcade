@@ -77,8 +77,9 @@
     </label>
     {#if error}<span class="tempo-error" role="status">{error}</span>{/if}
     <button class="bpm-auto-btn" class:active={automatic} aria-pressed={automatic}
-      aria-label="Automatic tempo" onclick={clearTap} title={autoHelp}>
-      <span class="auto-label">AUTO</span>
+      aria-label="Detect tempo from audio" onclick={clearTap} title={`${autoStatus}. ${autoHelp}`}>
+      <i class="auto-dot" class:live={automatic && !waitingForAudio} aria-hidden="true"></i>
+      <span class="auto-label">DETECT TEMPO</span>
       <span class="auto-status" aria-live="polite">{autoStatus}</span>
     </button>
   </div>
@@ -139,31 +140,34 @@
     color: var(--ga-violet, #9b87f5);
   }
 
+  /* Dark and plain like its neighbours: on is a lit dot and brighter text, not a filled chip. */
   .bpm-auto-btn {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    flex: 0 0 108px;
-    width: 108px;
+    flex: 0 0 auto;
     height: 32px;
     box-sizing: border-box;
-    padding: 2px 6px;
-    gap: 2px;
+    padding: 0 10px;
+    gap: 7px;
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: 5px;
     background: transparent;
     color: var(--ga-ink-2, #5e6571);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.5px;
+    white-space: nowrap;
     cursor: pointer;
   }
 
-  .auto-label { font-size: 11px; line-height: 12px; }
-  .auto-status { font-family: var(--ga-font-sans, inherit); font-size: 10px; line-height: 11px; font-weight: 500; letter-spacing: 0; white-space: nowrap; }
-  .bpm-auto-btn.active { background: var(--ga-selection-bg, var(--ga-blue-700)); border-color: var(--ga-focus, var(--ga-blue-300)); color: var(--ga-selection-ink, #e0e8ff); }
+  .auto-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ga-line-3, rgba(255, 255, 255, 0.2)); }
+  .bpm-auto-btn.active .auto-dot { background: var(--ga-blue-300, #7d9bff); }
+  .bpm-auto-btn.active .auto-dot.live { background: var(--ga-blue, #5278ff); box-shadow: 0 0 6px var(--ga-blue, #5278ff); }
+  /* The state is still announced and in the tooltip; it is just not printed in the bar. */
+  .auto-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .bpm-auto-btn.active { color: var(--ga-ink-0, #e6ebf5); }
   .bpm-auto-btn:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
   .bpm-auto-btn:hover {
     color: var(--ga-selection-ink, #e0e8ff);

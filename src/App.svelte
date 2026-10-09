@@ -7031,9 +7031,9 @@
         <!-- Live FFT meter + beat/kick/snare dots + TAP tempo + BPM, with the
              audio-input tweaks popover (sensitivity, smoothing, per-band gain)
              behind the meter. Same strip VJ mode uses, so tuning audio
-             reactivity doesn't require switching modes. Self-hides when no
-             audio is active. -->
-        <AudioMeterPanel />
+             reactivity doesn't require switching modes. Always shown, so the
+             bar never rearranges when audio starts. -->
+        <AudioMeterPanel alwaysShow />
 
         <!-- Screenshot Button -->
         <button class="screenshot-btn" onclick={takeScreenshot} title="Take Screenshot">
@@ -7044,6 +7044,7 @@
         </button>
 
         <!-- Recording Button -->
+        <div class="rec-split">
         {#if isRecording}
           <div class="recording-indicator">
             <span class="rec-dot"></span>
@@ -7061,6 +7062,7 @@
         {#if nativePrimaryRenderer}
           <RecordingSourcePicker disabled={isRecording} />
         {/if}
+        </div>
 
         <!-- VJ Mixer Button -->
         <button
@@ -9269,6 +9271,40 @@
     position: relative;
     flex: 1;
     justify-content: center;
+    min-width: 0;
+  }
+  /* No empty stretches: the five main buttons share whatever room is left
+     between the menu on the left and the controls on the right. */
+  .toolbar .toolbar-center {
+    margin: 0 10px;
+  }
+  .toolbar .toolbar-center > :is(button, .output-btn, .sim-launch-btn) {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  /* Record and its source menu are one control: joined, same outline. */
+  .rec-split {
+    display: flex;
+    align-items: stretch;
+  }
+  .rec-split :global(.rec-source) {
+    align-self: stretch;
+  }
+  .rec-split:has(:global(.rec-source)) :global(.rec-btn) {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+  }
+  .rec-split :global(.rec-source-toggle) {
+    width: 22px;
+    height: 100%;
+    border-color: rgba(255, 68, 56, 0.4);
+  }
+  /* Every control keeps its full size; the bar as a whole scales (toolbarFit.ts). */
+  .toolbar :is(.toolbar-left, .toolbar-center, .toolbar-right) > * {
+    flex-shrink: 0;
+  }
+  .toolbar :is(button, .tb-label, .tb-long) {
+    white-space: nowrap;
   }
 
   /* Display picker (right-click on the output buttons). */
