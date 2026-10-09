@@ -200,6 +200,8 @@
   import FluxPad from './FluxPad.svelte';
   import {defaultFlux} from '../../mobile/studio/flux';
   let flux=defaultFlux();
+  /** Flux stays playable on the preview while performing, with whatever was set up in the Flux tab. */
+  let fluxPerform=false;
   import PerformanceMixer from "./PerformanceMixer.svelte";
   import LookControls from "./LookControls.svelte";
   import { onMount, tick } from 'svelte';
@@ -387,7 +389,7 @@
     checkpoint();
     cancelQueued();
     autoEvent('set');
-    show = defaultShow();
+    show = defaultShow(true);
     selectedSurface = 0;
     bank = 0;
     await engine?.restore(show);
@@ -1423,12 +1425,14 @@
 <input class="file-input" type="file" accept="image/*" multiple aria-label="Import photos" bind:this={photoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="video/*,image/*" multiple aria-label="Import media" bind:this={mediaInput} onchange={importMedia} />
 <input class="file-input" type="file" accept=".ghostset,application/json,application/octet-stream" aria-label="Open a set file" bind:this={setInput} onchange={importSet} />
-<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:tempo-open={tempoOpen} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
+<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:flux-perform={tab==='perform'&&fluxPerform} class:tempo-open={tempoOpen} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
   <header class="app-header">
     <div class="brand">
       <img class="brand-mark" src="./icon-new.png" alt="" />
       <img class="brand-wordmark" src="./logo-wordmark.svg" alt="Ghost Arcade" />
     </div>
+    <button class="flux-live" class:active={fluxPerform} aria-pressed={fluxPerform} aria-label={fluxPerform?'Flux on the preview: on':'Flux on the preview: off'} title="Play Flux on the preview while performing"
+      onclick={()=>{fluxPerform=!fluxPerform;feel(prefs,'switch');if(!fluxPerform&&tab!=='flux'&&flux.active){flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}}><Icon name="flux" size={18}/><span>{fluxPerform?'ON':'FLUX'}</span></button>
     <button class="set-title" onclick={() => (settings = true)}>{show.name}<span>⌄</span></button>
     <div class="header-actions">
       <button class="icon-button" disabled={!canUndo} onclick={() => undo()} aria-label="Undo"
@@ -1491,7 +1495,7 @@
                     onpointercancel={endDrag}><span></span></button
                   >{/if}{/each}{/if}
           {/if}
-          {#if tab==='flux' && !clean && !visualsDown}<FluxPad value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>{/if}
+          {#if (tab==='flux' || (tab==='perform' && fluxPerform)) && !clean && !visualsDown}<FluxPad value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>{/if}
           {#if tab==='map' && mappingTool==='paint' && show.mapping && !clean}
             <PaintPad surfaces={show.surfaces} config={paint} beat={()=>engine?.beatClock?.()??0} onstroke={startStroke} onfinish={finishStroke} onlimit={()=>flash('Paint memory is full. Clear or undo strokes to keep drawing.')}/>
           {/if}
@@ -1499,7 +1503,7 @@
         {#if tab==='perform' && !prefs.coachDone && !clean && !visualsDown}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
       </div>
       <div class="monitor-tools">
-        {#if tab==='perform' && !interactiveLive}<button class="tempo-chip" class:active={tempoOpen} aria-expanded={tempoOpen} aria-label={`Tempo ${show.bpm} BPM. Tap tempo and audio.`} onclick={toggleTempo}><strong>{show.bpm}</strong>BPM</button><button class="ab-chip" class:active={show.dualDeck} aria-pressed={show.dualDeck} aria-label="A/B decks" onclick={()=>setDual(!show.dualDeck)}>A/B</button><div class="autopilot-bar">
+        {#if tab==='perform' && !interactiveLive}<button class="tempo-chip" class:active={tempoOpen} aria-expanded={tempoOpen} aria-label={`Tempo ${show.bpm} BPM. Tap tempo and audio.`} onclick={toggleTempo}><strong>{show.bpm}</strong>BPM</button><button class="q-chip" class:active={show.quantize} aria-pressed={show.quantize} aria-label="Quantize launches to the beat" title="Quantize launches to the beat" onclick={()=>{show.quantize=!show.quantize;if(!show.quantize)cancelQueued();persist();}}>Q</button><button class="ab-chip" class:active={show.dualDeck} aria-pressed={show.dualDeck} aria-label="A/B decks" onclick={()=>setDual(!show.dualDeck)}>A/B</button><div class="autopilot-bar">
             <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
             <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
           </div>{/if}
@@ -1507,9 +1511,9 @@
         <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':''}</span><button
           class:active={frozen}
           onclick={setFrozen}
-          aria-pressed={frozen}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume' : 'Hold'}</button
-        ><button class:danger={blackout} onclick={setBlackout} aria-pressed={blackout}
-          ><Icon name="blackout" size={16} />Blackout</button
+          aria-pressed={frozen} aria-label={frozen ? 'Resume output' : 'Hold output'}><Icon name={frozen ? 'play' : 'pause'} size={16} /><span class="tool-label">{frozen ? 'Resume' : 'Hold'}</span></button
+        ><button class:danger={blackout} onclick={setBlackout} aria-pressed={blackout} aria-label="Blackout"
+          ><Icon name="blackout" size={16} /><span class="tool-label">Blackout</span></button
         >
       </div>
       {#if tablet && tab==='perform' && !clean}<PerformanceMixer embedded {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
@@ -1811,7 +1815,7 @@
         }}>B</button
       >
     </div>{/if}
-    <div class="tempo">
+    <div class="tempo" class:tablet-only={!tablet}>
       <div class="beat-dots">
         {#each [0, 1, 2, 3] as n}<i class:lit={beat === n}></i>{/each}
       </div>
@@ -1842,7 +1846,7 @@
         }}><span class="phone-label">Q</span><span class="desktop-label">Quantize</span></button
       >
     </div>
-    <div class="master-actions">{#if flux.active}<button aria-label="Release Flux" onclick={()=>{flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}>FX off</button>{/if}{#if !tablet}<button class:active={mixerOpen} onclick={()=>mixerOpen=!mixerOpen} aria-label="Open performance mixer">Mix</button>{/if}
+    <div class="master-actions">{#if flux.active}<button aria-label="Release Flux" onclick={()=>{flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}>FX off</button>{/if}
 <label class="master-level"
         ><span>MASTER</span><input
           aria-label="Master output level"

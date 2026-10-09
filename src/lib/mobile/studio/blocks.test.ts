@@ -96,3 +96,23 @@ describe('block tabs', () => {
     expect(loaded.activeBlockId).toBe(show.activeBlockId);
   });
 });
+
+import { describe as describeDemo, it as itDemo, expect as expectDemo } from 'vitest';
+import { defaultShow as demoDefault } from './model';
+describeDemo('demo set', () => {
+  itDemo('opens with four blocks of shaders, the first one on the deck', () => {
+    const show = demoDefault(true);
+    expectDemo(show.scenes.map(b => b.name)).toEqual(['Block 1', 'Block 2', 'Block 3', 'Block 4']);
+    expectDemo(show.activeBlockId).toBe(show.scenes[0].id);
+    expectDemo(show.scenes[0].launchGrid).toEqual(show.launchGrid);
+    const known = new Set(show.clips.map(c => c.id));
+    for (const block of show.scenes) {
+      const visible = block.launchGrid!.slice(0, 4).flat();
+      expectDemo(visible.every(id => !!id && known.has(id))).toBe(true);
+      // No shader twice on the four visible rows of one block.
+      expectDemo(new Set(visible).size).toBe(visible.length);
+    }
+    // Blocks are different pages, not the same deck four times.
+    expectDemo(show.scenes[1].launchGrid![0]).not.toEqual(show.scenes[0].launchGrid![0]);
+  });
+});

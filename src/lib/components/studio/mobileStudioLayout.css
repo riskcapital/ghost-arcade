@@ -198,3 +198,20 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 .studio[data-layout='phone'][data-layout] .monitor-tools > button {padding-left:7px;padding-right:7px;font-size:11px;gap:4px;}
 .studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar {margin-right:auto;}
 .studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar button {min-width:36px;padding:0 6px;}
+
+/* Phone: tempo, Q and the mixer live elsewhere now, so the bottom strip only appears when it has something to show (the A/B fader, FX off). */
+.studio[data-layout] .master-bar .tempo.tablet-only {display:none;}
+.studio[data-layout='phone'][data-layout] .master-bar:not(:has(.mobile-decks, .master-actions > button)) {display:none;}
+.studio[data-layout][data-layout] .monitor-tools .q-chip {min-width:38px;padding:0 6px;font-weight:650;font-size:12px;}
+.studio[data-layout][data-layout] .monitor-tools .q-chip.active {border-color:var(--ga-blue-300);background:var(--ga-selection-bg);color:var(--ga-ink-0);}
+
+/* Flux on the preview while performing: a small switch beside the logo. */
+.studio[data-layout] .app-header .flux-live {display:flex;align-items:center;gap:5px;flex:none;min-height:36px;padding:0 9px;border:1px solid var(--ga-line-2);border-radius:18px;background:transparent;color:var(--ga-ink-2);font:650 10px ui-monospace,monospace;letter-spacing:.08em;}
+.studio[data-layout] .app-header .flux-live.active {border-color:var(--ga-blue-300);background:var(--ga-selection-bg);color:var(--ga-ink-0);box-shadow:0 0 10px var(--ga-blue-a28);}
+.studio[data-layout='phone'][data-layout] .app-header .brand-wordmark {max-width:120px;width:120px;}
+/* Phone: the top row carries six controls, so Hold and Blackout are their icons. */
+.studio[data-layout='phone'][data-layout] .monitor-tools .tool-label {display:none;}
+.studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar {margin-right:auto;}
+/* Perform shows the picture at the same full width as Flux, and takes Flux touches when the switch is on. */
+.studio[data-layout='phone'][data-layout].performance:not(.clean):not(.clip-editing) .preview-frame {max-width:none;}
+.studio[data-layout][data-layout].flux-perform .preview {touch-action:none;}

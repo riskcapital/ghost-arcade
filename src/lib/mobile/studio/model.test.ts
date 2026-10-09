@@ -134,7 +134,8 @@ it('loads a full playable eight-column deck on first launch and preserves saved 
   try {
     const firstLaunch = loadShow();
     expect(firstLaunch.launchGrid).toHaveLength(8);
-    expect(firstLaunch.clips).toHaveLength(64);
+    // Four demo blocks of 32 visible slots each, no shader repeated between them.
+    expect(firstLaunch.clips).toHaveLength(128);
     for (const row of firstLaunch.launchGrid) {
       expect(row).toHaveLength(8);
       for (const id of row) {

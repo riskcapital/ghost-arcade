@@ -82,9 +82,11 @@
     if (menu && draft.trim()) onrename(menu.id, draft.trim());
     closeMenu();
   }
+  /** How many tab places the row shows before it needs to scroll. */
+  const ROW_SLOTS = 4;
 </script>
 
-<div class="block-tabs">
+<div class="block-tabs" class:roomy={tabs.length < ROW_SLOTS}>
   <div class="strip" role="tablist" aria-label="Clip blocks" bind:this={strip}>
     {#each tabs as tab, index (tab.id || 'deck')}
       <button
@@ -106,6 +108,8 @@
     <button class="block-add" aria-label="Add new block" title="Add new block" disabled={!canAdd} onclick={() => { closeMenu(); onadd(); }}
       ><Icon name="plus" size={18} /></button
     >
+    <!-- Empty places for blocks still to come, so the row reads as a set of tabs to fill. -->
+    {#each Array(Math.max(0, ROW_SLOTS - tabs.length - 1)) as _}<span class="block-ghost" aria-hidden="true"></span>{/each}
   </div>
   {#if menu}
     <div class="block-menu" role="menu" aria-label={`Block ${menu.name}`}>
@@ -164,6 +168,13 @@
     flex: none; display: grid; place-items: center; position: sticky; right: 0; z-index: 1;
     background: var(--ga-panel); border-color: var(--ga-line-2); border-style: dashed; border-bottom-color: transparent;
     box-shadow: -8px 0 10px -4px var(--ga-void);
+  }
+  /* While there is room, tabs, the plus and the empty places share the row evenly. */
+  .roomy .block-tab { flex: 1 1 0; min-width: 0; max-width: none; justify-content: center; }
+  .roomy .block-add { flex: 1 1 0; position: static; box-shadow: none; background: none; }
+  .block-ghost {
+    flex: 1 1 0; min-height: 44px; box-sizing: border-box; border: 1px dashed var(--ga-line-2); border-bottom-color: transparent;
+    border-radius: 6px 6px 0 0; opacity: .6;
   }
   .block-menu {
     display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px;
