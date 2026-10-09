@@ -51,3 +51,22 @@ export function clearScreenAlignmentAids() {
   gridScreens.clear();
   publishAlignmentAids();
 }
+
+/** Auto-map stripe frames the core draws on a Screen instead of its picture
+ *  while a phone photographs them (see structuredLightCodes.ts for the
+ *  frame numbers). Session-only, like the aids above, and it wins over them. */
+export const screenPatternFrames = writable<Record<string, number>>({});
+let patternWatchdog: ReturnType<typeof setTimeout> | undefined;
+
+/** Show `frame` on one Screen and black on the others, or clear with null.
+ *  A capture that stops talking is cleared after 15 s so a dropped phone
+ *  never leaves stripes on a projector. */
+export function setScreenPatternFrames(frames: Record<string, number> | null) {
+  clearTimeout(patternWatchdog);
+  screenPatternFrames.set(frames ? { ...frames } : {});
+  if (frames) patternWatchdog = setTimeout(() => screenPatternFrames.set({}), 15000);
+}
+
+/** Screens with an output window open, at the pixel size the core renders
+ *  them. Kept current by the renderer sync; an auto-map capture reads it. */
+export const openScreenOutputList = writable<{ id: string; name: string; width: number; height: number }[]>([]);

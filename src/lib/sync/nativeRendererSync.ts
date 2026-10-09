@@ -7,7 +7,7 @@ import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } fro
 import { cubeLutHandle } from '../color/cubeLutAssets';
 import { nativeVideoLaunchTime, nativeVideoAnchorRate, nativeVideoMetadataPatch } from '../media/nativeTransport';
 import { get } from 'svelte/store';
-import { screenOutputError, screenAlignmentAids } from '../stores/screenOutputStatus';
+import { screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList } from '../stores/screenOutputStatus';
 import { createLayer } from '$lib/types';
 import {
   buildVJClipTransitionGraph,
@@ -7913,6 +7913,23 @@ export class NativeRendererSync {
       .catch(() => { /* core without output-stage support */ });
   }
 
+  /** Screens with an output window open, at the pixel size the core renders
+   *  them: what an auto-map capture can put stripes on. */
+  openScreenOutputs(): { id: string; name: string; width: number; height: number }[] {
+    const out = get(settings)?.output;
+    return (out?.slices ?? [])
+      .filter((s: any) => s?.enabled !== false && this.openSliceWindowIds.includes(s?.id))
+      .map((s: any) => {
+        const display = this.displayBounds.get(Number(s.displayId));
+        const scale = display?.scaleFactor && display.scaleFactor > 0 ? display.scaleFactor : 1;
+        return {
+          id: String(s.id), name: String(s.name ?? 'Screen'),
+          width: Math.round((display?.width ?? out?.masterCanvasWidth ?? 1920) * scale),
+          height: Math.round((display?.height ?? out?.masterCanvasHeight ?? 1080) * scale),
+        };
+      });
+  }
+
   /** Mirror the open multi-output slice displays into the core, which then
    *  composites one full-resolution frame per projector. Only slices with a
    *  window actually open are sent — each costs a composite pass per frame,
@@ -7922,13 +7939,16 @@ export class NativeRendererSync {
     const out = get(settings)?.output;
     const open = new Set([...this.openSliceWindowIds, ...get(recordingScreenIds)]);
     const aids = get(screenAlignmentAids);
+    const patterns = get(screenPatternFrames);
+    openScreenOutputList.set(this.openScreenOutputs());
     const screenNumber = new Map((out?.slices ?? []).map((s: any, index: number) => [s?.id, index + 1]));
     const slices = (out?.slices ?? [])
       .filter((s: any) => s?.enabled !== false && open.has(s?.id))
       .map((s: any) => {
         // Row 4 w carries the Screen's number for the identify flash.
         const calibration = projectorCalibrationUniforms(s);
-        calibration[4][3] = aids[s.id] === 'identify' ? screenNumber.get(s.id) ?? 0 : 0;
+        const pattern = patterns[s.id];
+        calibration[4][3] = pattern !== undefined ? pattern : aids[s.id] === 'identify' ? screenNumber.get(s.id) ?? 0 : 0;
         // The window is borderless-fullscreen on its display, so render at
         // the display's own pixel resolution — that is the whole point of a
         // native slice, versus cropping a downscaled master.
@@ -7961,7 +7981,7 @@ export class NativeRendererSync {
         blackLevelFeather: s.blackLevelFeather ?? 0.5,
         projectorCalibration: calibration,
         // Session-only alignment aid drawn by the core over this Screen.
-        alignmentAid: aids[s.id] === 'grid' ? 1 : aids[s.id] === 'identify' ? 2 : 0,
+        alignmentAid: pattern !== undefined ? 3 : aids[s.id] === 'grid' ? 1 : aids[s.id] === 'identify' ? 2 : 0,
         warpMode: s.warpMode ?? 'rect',
         corners: nativeWarpCorners(s.corners),
         meshGrid: nativeWarpMeshGrid(s.meshGrid),
@@ -8167,6 +8187,7 @@ export class NativeRendererSync {
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(recordingScreenIds.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(screenAlignmentAids.subscribe(() => this.pushSliceOutputs()));
+    this.outputStateUnsubs.push(screenPatternFrames.subscribe(() => this.pushSliceOutputs()));
     // Map Sim projector views for Screens that show one. Loaded lazily so
     // the 3D loaders stay out of the startup path.
     {

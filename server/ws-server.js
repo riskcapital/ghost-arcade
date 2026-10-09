@@ -892,6 +892,12 @@ function handleMessage(sender, msg) {
       if (!scanMessageAllowed(msg)) break;
       relayPrivate(sender, msg, 'scan', msg.requestId, msg.type === 'studio_scan_offer');
       break;
+    // Auto-map: one phone asks the desktop to show stripe frames on a Screen
+    // while it photographs them; only that phone gets the answers.
+    case 'studio_automap_request':
+    case 'studio_automap_reply':
+      relayPrivate(sender, msg, 'automap', msg.requestId, msg.type === 'studio_automap_request');
+      break;
     case 'studio_capabilities_request':
       sendDesktop(msg);
       break;
@@ -1024,7 +1030,7 @@ function relayPrivate(sender, msg, kind, id, mayStart) {
     if (owner !== sender) return;
     sendDesktop(msg);
   }
-  if (msg.type === 'phone_camera_stop' || msg.type === 'studio_calibration_status' || (kind === 'scan' && scanMessageEnds(msg))) privateRoutes.delete(key);
+  if (msg.type === 'phone_camera_stop' || msg.type === 'studio_calibration_status' || (msg.type === 'studio_automap_reply' && msg.done === true) || (kind === 'scan' && scanMessageEnds(msg))) privateRoutes.delete(key);
 }
 
 /**

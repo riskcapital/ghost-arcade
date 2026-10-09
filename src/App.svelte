@@ -70,6 +70,8 @@
   import InteractiveStudio from './lib/components/studio/InteractiveStudio.svelte';
   import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
   import {readMobileCalibration} from './lib/output/mobileCalibrationImport';
+  import { openScreenOutputList, setScreenPatternFrames } from './lib/stores/screenOutputStatus';
+  import { STRIPE_BLACK, STRIPE_CELL } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
   import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
@@ -3860,6 +3862,26 @@
         syncOutputFreeze(get(outputFrozen));
         break;
 
+      case 'studio_automap_request': {
+        // A paired phone is photographing stripe frames to map a projector.
+        // It names one open Screen and a frame; every other open Screen goes
+        // black so only that projector lights the wall.
+        const requestId = msg.requestId, seq = msg.seq;
+        const open = get(openScreenOutputList);
+        if (msg.op === 'screens') {
+          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, screens: open, cell: STRIPE_CELL });
+        } else if (msg.op === 'show' && open.some(s => s.id === msg.screenId) && Number.isInteger(msg.frame) && (msg.frame as number) >= 0 && (msg.frame as number) < 66) {
+          setScreenPatternFrames(Object.fromEntries(open.map(s => [s.id, s.id === msg.screenId ? (msg.frame as number) : STRIPE_BLACK])));
+          // Answer once the projector has had time to show it.
+          setTimeout(() => sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, shown: true }), 120);
+        } else if (msg.op === 'end') {
+          setScreenPatternFrames(null);
+          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, done: true });
+        } else {
+          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, error: open.length ? 'That Screen is not open on a display.' : 'No Screen is open on a display. Use Open on display first.' });
+        }
+        break;
+      }
       case 'studio_calibration_offer': {
         try{
           if(typeof msg.json!=='string'||msg.json.length>8_000_000)throw Error('Invalid calibration size.');

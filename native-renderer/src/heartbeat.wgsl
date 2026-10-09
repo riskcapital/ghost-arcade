@@ -1719,6 +1719,36 @@ fn alignment_grid(uv: vec2<f32>, dims: vec2<f32>, fade_uv: vec2<f32>) -> vec3<f3
   return mix(color, vec3<f32>(1.0), 1.0 - smoothstep(3.0, 4.0, border));
 }
 
+/// Auto-map stripe pattern in the projector's own raster (no geometry, no
+/// rotation), top-left origin. projector_calibration[4].w carries the frame:
+/// 0 white, 1 black, else 2 + ((axis * 16 + bit) * 2 + inverted), where bit 0
+/// is the most significant bit of the Gray code of floor(pixel / 8). It must
+/// match patternValue() in structuredLight.ts exactly: the phone decodes
+/// what this draws.
+fn structured_light_pattern(screen_uv: vec2<f32>, dims: vec2<f32>) -> f32 {
+  let frame = u32(max(u.projector_calibration[4].w, 0.0) + 0.5);
+  if (frame == 0u) { return 1.0; }
+  if (frame == 1u) { return 0.0; }
+  let k = frame - 2u;
+  let inverted = k & 1u;
+  let axis = (k >> 5u) & 1u;
+  let bit = (k >> 1u) & 15u;
+  let px = vec2<f32>(screen_uv.x, 1.0 - screen_uv.y) * dims;
+  let pos = select(px.x, px.y, axis == 1u);
+  let size = select(dims.x, dims.y, axis == 1u);
+  let cells = u32(ceil(size / 8.0));
+  var bits = 0u;
+  for (var i = 0u; i < 16u; i = i + 1u) {
+    if ((1u << bits) >= cells) { break; }
+    bits = bits + 1u;
+  }
+  if (bit >= bits) { return 0.0; }
+  let cell = u32(clamp(floor(pos / 8.0), 0.0, f32(max(cells, 1u) - 1u)));
+  let gray = cell ^ (cell >> 1u);
+  let lit = ((gray >> (bits - 1u - bit)) & 1u) ^ inverted;
+  return f32(lit);
+}
+
 /// Screen alignment aids replace a Screen's picture and skip its grade,
 /// overlap fade and masks. dome2.w: 7 = numbered grid in composition space
 /// (through the Screen's crop, warp and projector corners), 8 = identify.
@@ -1730,6 +1760,11 @@ fn screen_alignment_aid(screen_uv: vec2<f32>, comp_uv: vec2<f32>, comp_dims: vec
   let fade_uv = slice_warp_uv(output_rotate_uv(projector_local_uv(screen_uv).xy));
   if (u.dome2.z > 0.5 && code == 7) { return vec4<f32>(alignment_grid(comp_uv, comp_dims, fade_uv) * mask, 1.0); }
   if (u.dome2.z > 0.5 && code == 8) { return vec4<f32>(alignment_identify(screen_uv, aspect), 1.0); }
+  if (u.dome2.z > 0.5 && code == 9) {
+    // The raster's own size, from how fast its UV crosses a pixel.
+    let dims = vec2<f32>(floor(1.0 / max(abs(dpdx(screen_uv.x)), 0.0000001) + 0.5), floor(1.0 / max(abs(dpdy(screen_uv.y)), 0.0000001) + 0.5));
+    return vec4<f32>(vec3<f32>(structured_light_pattern(screen_uv, dims)), 1.0);
+  }
   return vec4<f32>(0.0);
 }
 
