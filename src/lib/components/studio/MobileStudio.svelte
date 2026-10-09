@@ -13,6 +13,7 @@
   import EffectBrowser from './EffectBrowser.svelte';
   import {effectLabel,moveEffect} from '../../mobile/studio/effectBrowser';
   import {dragReorder} from '../../mobile/studio/reorder';
+  import {secondFingerTaps} from '../../mobile/studio/secondFingerTaps';
   import {loadPreferences,savePreferences,feel,type StudioPreferences} from '../../mobile/studio/preferences';
   import {startCoach,coachAfter,coachLaunch,type CoachState} from '../../mobile/studio/coach';
   // Choices of this device (haptics, launch on touch-down, hints already seen). Written at once,
@@ -1425,7 +1426,7 @@
 <input class="file-input" type="file" accept="image/*" multiple aria-label="Import photos" bind:this={photoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="video/*,image/*" multiple aria-label="Import media" bind:this={mediaInput} onchange={importMedia} />
 <input class="file-input" type="file" accept=".ghostset,application/json,application/octet-stream" aria-label="Open a set file" bind:this={setInput} onchange={importSet} />
-<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:flux-perform={tab==='perform'&&fluxPerform} class:tempo-open={tempoOpen} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
+<div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:flux-perform={tab==='perform'&&fluxPerform} class:tempo-open={tempoOpen} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} use:secondFingerTaps class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
   <header class="app-header">
     <div class="brand">
       <img class="brand-mark" src="./icon-new.png" alt="" />
