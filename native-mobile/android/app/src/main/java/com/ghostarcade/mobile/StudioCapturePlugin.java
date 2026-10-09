@@ -21,6 +21,7 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.CommonStatusCodes;
+import com.google.mlkit.common.MlKitException;
 import com.google.mlkit.vision.barcode.common.Barcode;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
@@ -50,11 +51,18 @@ public class StudioCapturePlugin extends Plugin {
     /** Opens Google's code scanner, which shows its own camera screen and needs no camera permission. */
     @PluginMethod public void scanPairingCode(PluginCall call) {
         GmsBarcodeScannerOptions options = new GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build();
+        final long opened = System.currentTimeMillis();
         GmsBarcodeScanning.getClient(getContext(), options).startScan()
             .addOnSuccessListener(code -> resolveScan(call, code.getRawValue()))
             .addOnCanceledListener(() -> resolveScan(call, null))
             .addOnFailureListener(error -> {
                 if (error instanceof ApiException && ((ApiException) error).getStatusCode() == CommonStatusCodes.CANCELED) { resolveScan(call, null); return; }
+                int code = error instanceof MlKitException ? ((MlKitException) error).getErrorCode() : -1;
+                if (code == MlKitException.CODE_SCANNER_CANCELLED) { resolveScan(call, null); return; }
+                // Leaving the scanner with the system Back button is reported as an internal failure.
+                // If its screen had been up for a moment, the person closed it: nothing went wrong.
+                if (code == MlKitException.INTERNAL && System.currentTimeMillis() - opened > 1500) { resolveScan(call, null); return; }
+                android.util.Log.w("GhostArcade", "Code scanner failed, code " + code, error);
                 call.reject("The code scanner could not open. Scan the desktop QR with your camera app, or paste its pairing link.");
             });
     }

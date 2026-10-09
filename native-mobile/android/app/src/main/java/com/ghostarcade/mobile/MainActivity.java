@@ -58,6 +58,19 @@ public class MainActivity extends BridgeActivity implements DisplayManager.Displ
             }
             @Override public void onCloseWindow(WebView window) { if(window == outputView) closeOutputView(); }
         });
+        // Back closes whatever sheet or dialog is open, the way Escape does. With nothing open it
+        // sends the app to the background instead of ending it, so a running show is never lost.
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                controller.evaluateJavascript("!!document.querySelector('dialog[open],[role=\"dialog\"],[role=\"alertdialog\"]')", open -> {
+                    if ("true".equals(open)) {
+                        controller.requestFocus();
+                        controller.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ESCAPE));
+                        controller.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ESCAPE));
+                    } else moveTaskToBack(true);
+                });
+            }
+        });
         displays = (DisplayManager)getSystemService(DISPLAY_SERVICE);
         displays.registerDisplayListener(this, new Handler(Looper.getMainLooper()));
         updateDisplay();
