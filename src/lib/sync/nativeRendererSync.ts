@@ -185,6 +185,7 @@ import {
 import {
   buildNativePluginGraph,
   buildNativeHandInputUpdate,
+  handFxTrackingNeeds,
   buildNativePluginPrecompileCommands,
   type NativePluginGraphState,
 } from '$lib/renderer/nativePluginGraphs';
@@ -4624,6 +4625,44 @@ function nativeSourceIdentity(source: NativeLayerSource | null | undefined): str
   return `${source.sourceType}:${source.id}:${source.uri}`;
 }
 
+const handFxTracking = { ownsBody: false, ownsFace: false, bodyNeededAt: 0, faceNeededAt: 0 };
+
+/**
+ * Start the camera tracker for a live HandFX layer with only the trackers its
+ * mode needs. Body and face tracking each cost camera frame rate, so they are
+ * switched on for the body and face modes and off again a moment after the
+ * last layer stops needing them. A tracker someone else switched on is left alone.
+ */
+function ensureHandFxTracking(params: Record<string, any> | null | undefined): void {
+  if (!params || params.handfxInput === 'demo') return;
+  const needs = handFxTrackingNeeds(params);
+  const now = performance.now();
+  if (needs.trackBody) handFxTracking.bodyNeededAt = now;
+  if (needs.trackFace) handFxTracking.faceNeededAt = now;
+  if (mediaPipeSource.isStarting()) return;
+  let next: Parameters<typeof mediaPipeSource.start>[0] | null = null;
+  if (!mediaPipeSource.isRunning()) {
+    next = { useGesture: false, targetFps: 60, numHands: 2, trackBody: needs.trackBody, trackFace: needs.trackFace };
+    handFxTracking.ownsBody = needs.trackBody;
+    handFxTracking.ownsFace = needs.trackFace;
+  } else {
+    const opts = mediaPipeSource.getOpts();
+    const addBody = needs.trackBody && !opts.trackBody;
+    const addFace = needs.trackFace && !opts.trackFace;
+    const dropBody = handFxTracking.ownsBody && opts.trackBody && now - handFxTracking.bodyNeededAt > 2500;
+    const dropFace = handFxTracking.ownsFace && opts.trackFace && now - handFxTracking.faceNeededAt > 2500;
+    if (!addBody && !addFace && !dropBody && !dropFace) return;
+    if (addBody) handFxTracking.ownsBody = true;
+    if (addFace) handFxTracking.ownsFace = true;
+    if (dropBody) handFxTracking.ownsBody = false;
+    if (dropFace) handFxTracking.ownsFace = false;
+    next = { ...opts, trackBody: (opts.trackBody || addBody) && !dropBody, trackFace: (opts.trackFace || addFace) && !dropFace };
+  }
+  void mediaPipeSource.start(next).catch((error) => {
+    console.warn('[NativeRendererSync] HandFX MediaPipe input failed to start', error);
+  });
+}
+
 function nativeGraphParamsForLayer(
   layer: Layer,
   kind: NativeGraphRouteKind,
@@ -6792,11 +6831,7 @@ export class NativeRendererSync {
           };
           this.nativeGraphRoutes.set(possibleRoute.key, routeState);
           const params = nativeGraphParamsForLayer(layer, possibleRoute.kind);
-          if (params.handfxInput !== 'demo' && !mediaPipeSource.isRunning()) {
-            void mediaPipeSource.start({ useGesture: false, targetFps: 60, numHands: 2 }).catch((error) => {
-              console.warn('[NativeRendererSync] HandFX MediaPipe input failed to start', error);
-            });
-          }
+          ensureHandFxTracking(params);
           const handFrame = mediaPipeSource.getLastFrame();
           // Refresh the small input buffers even when tracking/audio stops so
           // the GPU receives silence and Camera Off instead of stale input.
@@ -9559,15 +9594,7 @@ export class NativeRendererSync {
             routeState.lastVJMixUniformSig = uniform.signature;
           }
         }
-        if (
-          nativeGraphRoute.kind === 'handfx' &&
-          nativeGraphScaledParams?.handfxInput !== 'demo' &&
-          !mediaPipeSource.isRunning()
-        ) {
-          void mediaPipeSource.start({ useGesture: false, targetFps: 60, numHands: 2 }).catch((error) => {
-            console.warn('[NativeRendererSync] HandFX MediaPipe input failed to start', error);
-          });
-        }
+        if (nativeGraphRoute.kind === 'handfx') ensureHandFxTracking(nativeGraphScaledParams);
         // A scene that cannot be built (damaged data that slipped past the
         // loaders) fails here for its own layer only. Thrown further up, it
         // aborted the whole frame batch, so no layer updated again.

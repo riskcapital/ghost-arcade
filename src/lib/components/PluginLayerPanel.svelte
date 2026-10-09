@@ -1,14 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { mediaPipeSource } from '../mediapipe/mediaPipeSource';
+  import { HAND_FX_BODY_MODES, HAND_FX_FACE_MODES } from '../renderer/nativeHandFxField';
   let handStatus = '';
   onMount(() => {
     const refresh = () => {
       if (effectSource?.effectType !== 'handfx') return;
-      if (getVal('handfxInput', 'live') === 'demo') { handStatus = 'Rehearsal · virtual hands'; return; }
+      const mode = getVal('handfxMode', 'bridge');
+      const wantsBody = HAND_FX_BODY_MODES.includes(mode), wantsFace = HAND_FX_FACE_MODES.includes(mode);
+      if (getVal('handfxInput', 'live') === 'demo') { handStatus = wantsBody ? 'Rehearsal · virtual dancer' : wantsFace ? 'Rehearsal · virtual face' : 'Rehearsal · virtual hands'; return; }
       const error = mediaPipeSource.getError();
       if (error) { handStatus = `Camera error: ${error}`; return; }
-      if (mediaPipeSource.isStarting()) { handStatus = 'Starting camera and loading hand tracker…'; return; }
+      if (mediaPipeSource.isStarting()) { handStatus = wantsBody ? 'Starting camera and loading body tracker…' : wantsFace ? 'Starting camera and loading face tracker…' : 'Starting camera and loading hand tracker…'; return; }
+      if (wantsBody || wantsFace) {
+        const frame = mediaPipeSource.getLastFrame();
+        const seen = wantsBody ? !!frame.pose?.length : !!frame.face?.length;
+        handStatus = !mediaPipeSource.isRunning() ? 'Waiting for camera'
+          : seen ? (wantsBody ? 'Body tracked' : 'Face tracked')
+          : wantsBody ? 'Camera ready · step back until your whole body is in view' : 'Camera ready · bring your face into view';
+        return;
+      }
       const count = mediaPipeSource.getLastFrame().hands.length;
       handStatus = mediaPipeSource.isRunning()
         ? count ? `${count} hand${count === 1 ? '' : 's'} tracked${getVal('handfxMode', 'bridge') === 'bridge' && count < 2 ? ' · Energy Bridge needs two hands' : ''}` : 'Camera ready · bring your hands into view'
@@ -92,6 +103,11 @@
     web: 'Spread your fingers to stretch an electric web. Curl and rotate your hands to reshape it.',
     silk: 'Open your hands to unfurl flowing silk. Aim with your wrist; pinch to gather the strands.',
     bursts: 'Pinch thumb and index to spray. Release to let the particles drift away.',
+    bodyswarm: 'Your body is made of sparks. Stand still to hold your shape; move fast to throw it off.',
+    bodyflow: 'The frame is a fluid and your body stirs it. Sweep an arm to send a wave across the screen.',
+    bodyaura: 'A burning outline follows you. Wrists and ankles draw ribbons of light as they move.',
+    facemask: 'Your face is a mask of light. Change expression fast to shatter it; hold still and it reforms.',
+    facestream: 'Open your mouth to breathe out light. Turn your head to aim it; raise your brows to lift it.',
   };
 
   function colorToHex(value: any, fallback: any): string {
@@ -200,9 +216,9 @@
     {/if}
     {#if effectSource.effectType === 'handfx'}
       <div class="handfx-guide">
-        <span class="handfx-eyebrow">HAND PERFORMANCE</span>
+        <span class="handfx-eyebrow">{HAND_FX_BODY_MODES.includes(getVal('handfxMode', 'bridge')) ? 'BODY PERFORMANCE' : HAND_FX_FACE_MODES.includes(getVal('handfxMode', 'bridge')) ? 'FACE PERFORMANCE' : 'HAND PERFORMANCE'}</span>
         <p role="status">{handStatus}</p>
-        <p>{getVal('handfxInput', 'live') === 'demo' ? 'Rehearsal animates two virtual hands. Switch to Live hands to perform.' : 'Bring your hands into view. Show Camera and Camera Opacity control the selfie background; tracking stays on.'}</p>
+        <p>{getVal('handfxInput', 'live') === 'demo' ? 'Rehearsal plays a virtual performer. Switch to Live camera to perform.' : HAND_FX_BODY_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Step back so the camera sees your whole body. Show Camera and Camera Opacity control the camera background; tracking stays on.' : HAND_FX_FACE_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Face the camera. Show Camera and Camera Opacity control the camera background; tracking stays on.' : 'Bring your hands into view. Show Camera and Camera Opacity control the selfie background; tracking stays on.'}</p>
         <p class="handfx-gesture">{gestureGuides[getVal('handfxMode', 'bridge')] ?? 'Move your hands to shape the visual. Layer it over video using Add or Screen blend.'}</p>
       </div>
     {/if}

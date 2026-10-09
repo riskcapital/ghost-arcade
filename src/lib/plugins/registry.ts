@@ -711,13 +711,13 @@ registerPlugin({
   },
 });
 
-// ─── HandFX — GPU hand performance instrument ─────────────────────────
+// ─── HandFX — GPU hand, body and face performance instrument ──────────
 registerPlugin({
   id: 'handfx',
   name: 'HandFX',
-  description: 'Conduct energy bridges, orbital fields, laser fans and living particles with your hands. Rehearse without a camera; perform with audio-reactive color and light.',
+  description: 'Perform with your hands, your whole body or your face. Half a million particles follow every move: a body made of sparks, a fluid you stir, a face that shatters. Rehearse without a camera.',
   category: 'Generators',
-  version: '0.4.0',
+  version: '0.5.0',
   author: 'Ghost Arcade (original) · MediaPipe by Google (Apache-2.0)',
   tier: 'free',
   icon: '✋',
@@ -737,9 +737,14 @@ registerPlugin({
         { value: 'bursts',   label: 'Pinch Spray (continuous from pinch)' },
         { value: 'skeleton', label: 'Neon Skeleton' },
         { value: 'panel',    label: 'Panel (set blend → Difference to invert)' },
+        { value: 'bodyswarm', label: 'Body: Particle Body' },
+        { value: 'bodyflow', label: 'Body: Force Field' },
+        { value: 'bodyaura', label: 'Body: Aura' },
+        { value: 'facemask', label: 'Face: Mask' },
+        { value: 'facestream', label: 'Face: Breath' },
       ]},
     { name: 'Input', param: 'handfxInput', type: 'select', default: 'live', options: [
-      { value: 'live', label: 'Live hands' }, { value: 'demo', label: 'Rehearsal · no camera' },
+      { value: 'live', label: 'Live camera' }, { value: 'demo', label: 'Rehearsal · no camera' },
     ]},
     { name: 'Palette', param: 'handfxPalette', type: 'select', default: 'ocean', options: [
       { value: 'ocean', label: 'Deep Ocean' }, { value: 'ember', label: 'Ember Gold' },
@@ -751,7 +756,16 @@ registerPlugin({
     { name: 'Brightness', param: 'handfxBrightness', type: 'slider', min: 0, max: 2, step: 0.01, default: 1 },
     { name: 'Audio response', param: 'handfxAudioResponse', type: 'slider', min: 0, max: 2, step: 0.01, default: 0.65 },
     { name: 'Field size', param: 'handfxScale', type: 'slider', min: 0.3, max: 3, step: 0.01, default: 1,
-      showWhen: { param: 'handfxMode', values: ['bridge','orbit','lasers','portal','web','silk'] } },
+      showWhen: { param: 'handfxMode', values: ['bridge','orbit','lasers','portal','web','silk','bodyswarm','bodyflow','bodyaura'] } },
+    // ── Body and face modes ──
+    { name: 'Particles', param: 'handfxQuality', type: 'select', default: 'high', options: [
+      { value: 'low', label: '130 thousand' }, { value: 'medium', label: '260 thousand' },
+      { value: 'high', label: '520 thousand' }, { value: 'ultra', label: '1 million' }, { value: 'max', label: '2 million' },
+    ], showWhen: { param: 'handfxMode', values: ['bodyswarm', 'bodyflow', 'bodyaura', 'facemask', 'facestream'] } },
+    { name: 'Trails', param: 'handfxTrails', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.5,
+      showWhen: { param: 'handfxMode', values: ['bodyswarm', 'bodyflow', 'bodyaura', 'facemask', 'facestream'] } },
+    { name: 'Swirl', param: 'handfxSwirl', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.5,
+      showWhen: { param: 'handfxMode', values: ['bodyswarm', 'bodyflow', 'bodyaura', 'facemask', 'facestream'] } },
     { name: 'Strands / rings', param: 'handfxDetail', type: 'slider', min: 1, max: 8, step: 1, default: 5,
       showWhen: { param: 'handfxMode', values: ['bridge','orbit','portal','silk'] } },
     { name: 'Show Camera', param: 'handfxCameraOn', type: 'toggle', default: true },
@@ -829,6 +843,9 @@ registerPlugin({
     handfxScale: 1,
     handfxDetail: 5,
     handfxAudioResponse: 0.65,
+    handfxQuality: 'high',
+    handfxTrails: 0.5,
+    handfxSwirl: 0.5,
     handfxCameraOn: true,
     handfxSmoothing: 0.15,
     handfxPredictMs: 18,
