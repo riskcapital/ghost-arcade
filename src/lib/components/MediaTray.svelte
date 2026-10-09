@@ -2166,7 +2166,7 @@
   let midiCursor = 0;
   // Mirrors the tab the cursor belongs to, so the cursor resets on every tab
   // change — including the tab buttons, which assign `activeTab` directly.
-  let midiCursorTab: typeof activeTab = activeTab;
+  let midiCursorTab: TrayTab | 'scans' = activeTab;
   $: if (activeTab !== midiCursorTab) {
     midiCursorTab = activeTab;
     midiCursor = 0;
