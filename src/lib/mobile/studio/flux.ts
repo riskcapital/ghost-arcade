@@ -9,7 +9,8 @@ export function fluxEffect(s:FluxState,gain:number,beat:number):MobileEffectInst
  for(const m of FLUX_MODULES)params[m.id]=s.modules.includes(m.id)?1:0;
  return {type:'_flux',enabled:gain>.0005&&s.modules.length>0,params};
 }
-export const FLUX_EFFECT:MobileEffectDef={type:'_flux',label:'Flux',category:'Internal',internal:true,
+// Cast, because this file is shared with the desktop branch, whose effect type has no 'Internal' category.
+export const FLUX_EFFECT={type:'_flux',label:'Flux',category:'Internal',internal:true,
  defaults:{fluxEnergy:0,fluxX:.5,fluxY:.5,fluxGain:0,fluxBeat:0,fluxSync:0,fluxBlend:0,warp:0,fold:0,prism:0,echo:0,solar:0,slice:0,tile:0,tunnel:0,pixel:0,glitch:0,ink:0,throb:0},
  fragment:`precision highp float;
 varying vec2 vUv;uniform sampler2D uInput;uniform vec2 uResolution;uniform float uTime;
@@ -52,4 +53,4 @@ void main(){
  else if(fluxBlend>.5)blended=d+w;
  float amount=clamp(fluxGain,0.0,1.0);
  gl_FragColor=vec4(mix(d,clamp(blended,0.0,1.0),amount),mix(dry.a,max(dry.a,wet.a),amount));
-}`};
+}`} as unknown as MobileEffectDef;

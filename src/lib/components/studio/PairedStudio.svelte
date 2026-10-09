@@ -4,6 +4,10 @@
  import DesktopFeedWorkshop from './DesktopFeedWorkshop.svelte';
  import CalibrationWorkshop from './CalibrationWorkshop.svelte';
  import {runAutoMap,socketAutoMapLink,serveRemoteCapture} from '../../mobile/studio/autoMap';
+ import FluxPad from './FluxPad.svelte';
+ import FluxPanel from './FluxPanel.svelte';
+ import {defaultFlux,type FluxState} from '../../mobile/studio/flux';
+ import {createFluxLink} from '../../mobile/studio/fluxLink';
  import {captureCapabilities} from '../../mobile/studio/captureToolkit';
  import {DesktopSender} from '../../mobile/studio/desktopSender';
  import type {InteractiveScene,Interaction} from '../../mobile/studio/interactive';
@@ -20,8 +24,13 @@
  function sendCalibration(json:string){if(new TextEncoder().encode(json).length>8_000_000)throw Error('Package is too large for live transfer. Export it using Files / AirDrop.');if(socket.readyState!==WebSocket.OPEN)throw Error('Desktop disconnected.');requestId=crypto.randomUUID();socket.send(JSON.stringify({type:'studio_calibration_offer',requestId,json}));status='Waiting for desktop to accept the calibration…';clearTimeout(calibrationTimer);calibrationTimer=setTimeout(()=>status='No desktop confirmation. Update desktop or export the package instead.',8000);}
  const receive=(e:MessageEvent)=>{try{const m=JSON.parse(String(e.data));if(m.type==='studio_capabilities'){nativeInteractive=m.nativeInteractive===true;capabilitiesReady=true;session.native=nativeInteractive;clearInterval(capabilityTimer);clearTimeout(capabilityFallback);status=nativeInteractive?'Native interactive controls ready · desktop renders the scene.':'Video sending ready · choose a source below.';}if(m.type==='studio_calibration_status'&&m.requestId===requestId){clearTimeout(calibrationTimer);status=m.accepted?'Received · open Interactive Studio → Phone calibration on desktop to review.':String(m.error||'Calibration rejected.');}if(m.type==='studio_scene_status'&&m.accepted===false)status=String(m.error||'The desktop could not use this scene.');}catch{}};
  const sender=new DesktopSender(socket,s=>status=s);
+ // Flux on the desktop's outputs: the same pad and controls as on the phone's own picture.
+ let flux:FluxState=defaultFlux();
+ const fluxLink=createFluxLink(socket);
+ function fluxChanged(next:FluxState){flux=next;fluxLink.send(next);}
+ function fluxOff(){fluxLink.stop();flux={...flux,active:false,latch:false};}
  function send(canvas:HTMLCanvasElement|null,kind:string){if(!canvas){sender.stop();status='Sending stopped.';}else void sender.start(canvas,kind).catch(()=>{});}
- function select(value:string){if(value===page)return;sender.stop();page=value;status=nativeInteractive&&session.active?'Scene stays enabled while you use other tools. Return to Interactive to edit or stop it.':'Choose a source, then send it to desktop.';}
+ function select(value:string){if(value===page)return;if(page==='flux')fluxOff();sender.stop();page=value;status=nativeInteractive&&session.active?'Scene stays enabled while you use other tools. Return to Interactive to edit or stop it.':'Choose a source, then send it to desktop.';}
  function disconnected(){socketOpen=false;clearInterval(capabilityTimer);clearTimeout(capabilityFallback);clearTimeout(calibrationTimer);sender.stop();status='Desktop disconnected. Output state is unknown; reconnect and check desktop before continuing.';}
  onMount(()=>{
   socket.addEventListener('message',receive);socket.addEventListener('close',disconnected);
@@ -29,12 +38,12 @@
   capabilityFallback=setTimeout(()=>{if(!capabilitiesReady){capabilitiesReady=true;status='Desktop did not report native rendering support. Video sending is available.';}clearInterval(capabilityTimer);},3000);
   void captureCapabilities().then(c=>{if(!disposed){lidar=c.lidar;dual=c.dualCamera;}}).catch(()=>{});
  });
- onDestroy(()=>{disposed=true;clearInterval(capabilityTimer);clearTimeout(capabilityFallback);sender.stop();clearTimeout(calibrationTimer);socket.removeEventListener('message',receive);socket.removeEventListener('close',disconnected);});
+ onDestroy(()=>{disposed=true;clearInterval(capabilityTimer);clearTimeout(capabilityFallback);sender.stop();fluxLink.stop();clearTimeout(calibrationTimer);socket.removeEventListener('message',receive);socket.removeEventListener('close',disconnected);});
 </script>
 <div class="backdrop">
  <div class="paired-dialog" role="dialog" aria-modal="true" aria-label="Desktop Studio tools" tabindex="-1">
   {#if !socketOpen||(page==='interactive'&&!capabilitiesReady)}<header><strong>Desktop Studio</strong><button onclick={onclose}>Back to controls</button></header>{/if}
-  <nav aria-label="Desktop Studio tools">{#each [['interactive','Interactive'],['feeds','Camera / depth'],['calibration','Calibration']] as [id,label]}<button class:active={page===id} aria-pressed={page===id} disabled={!socketOpen} onclick={()=>select(id)}>{label}</button>{/each}</nav>
+  <nav aria-label="Desktop Studio tools">{#each [['interactive','Interactive'],['flux','Flux'],['feeds','Camera / depth'],['calibration','Calibration']] as [id,label]}<button class:active={page===id} aria-pressed={page===id} disabled={!socketOpen} onclick={()=>select(id)}>{label}</button>{/each}</nav>
   <div class="paired-context">
    <p class="connection-status" role="status">{status}</p>
    <details>
@@ -47,12 +56,19 @@
    {#if !socketOpen}<p role="alert">Reconnect from the desktop controls to resume editing.</p>
    {:else if page==='interactive'}
     {#if capabilitiesReady}{#key nativeInteractive}<InteractiveStudio handheld remoteOutput nativeOutput={nativeInteractive} referencePreview={nativeInteractive} initialScene={session.scene} initialActive={session.active&&nativeInteractive} initialPaused={session.paused} onscene={sceneChanged} onoutput={c=>{if(!nativeInteractive)send(c,'interactive');}} {onclose}/>{/key}{/if}
+   {:else if page==='flux'}<section class="flux-remote" aria-label="Flux on the desktop output">
+     <div class="flux-surface"><p>{flux.active?'Playing on the desktop output':'Touch here to play Flux on the desktop output'}</p><FluxPad value={flux} onchange={fluxChanged}/></div>
+     <FluxPanel value={flux} onchange={fluxChanged}/>
+    </section>
    {:else if page==='feeds'}<DesktopFeedWorkshop {lidar} {dual} onsend={send} {onclose}/>
    {:else}<CalibrationWorkshop {lidar} {onclose} onsend={sendCalibration} automap={(camera,progress)=>runAutoMap(socketAutoMapLink(socket),camera,progress)} remote={camera=>serveRemoteCapture(socket,camera)}/>{/if}
   </div>
  </div>
 </div>
 <style>
+ .flux-remote{padding:14px 14px 20px}
+ .flux-surface{position:relative;aspect-ratio:16/9;border:1px solid var(--ga-line-3);border-radius:10px;overflow:hidden;background:radial-gradient(circle at 50% 50%,var(--ga-blue-a16,#5278ff29),#000 70%);margin-bottom:14px}
+ .flux-surface p{position:absolute;inset:auto 0 12px;margin:0;text-align:center;font-size:12px;color:var(--ga-ink-2);pointer-events:none}
  .backdrop{position:fixed;inset:0;height:100dvh;z-index:1000;background:#000c;padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));display:grid;place-items:center;box-sizing:border-box}
  .paired-dialog{display:flex;flex-direction:column;background:var(--ga-inspector-bg,#12161d);color:var(--ga-ink-0,#e5ecf5);border:1px solid var(--ga-blue-mute-600);border-radius:10px;width:min(1150px,100%);height:100%;min-height:0;overflow:hidden;box-sizing:border-box}
  header,nav{display:flex;flex:none;align-items:center;gap:8px;padding:8px 12px}header{justify-content:space-between}button{min-height:44px;padding:8px 12px;color:inherit;background:var(--ga-blue-mute-800);border:1px solid var(--ga-blue-mute-600);border-radius:5px;font:inherit;touch-action:manipulation}nav button{flex:1;min-width:0;font-size:12px}.active{background:var(--ga-blue-600);border-color:var(--ga-blue-200)}
