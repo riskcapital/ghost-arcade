@@ -2184,7 +2184,11 @@
     : Array.from(new Map(mediaSections.flatMap(s => s.items).map(i => [i.id, i])).values())
   ) as Array<{ id: string }>;
   $: if (midiCursor > Math.max(0, midiBrowseList.length - 1)) midiCursor = Math.max(0, midiBrowseList.length - 1);
-  $: midiCursorId = midiBrowseList[midiCursor]?.id ?? null;
+  // The highlight only appears once a controller has driven the library (or
+  // while MIDI edit mode is open). Without this the first tile of every tab
+  // wore the cursor outline for everyone, controller or not.
+  let midiCursorShown = false;
+  $: midiCursorId = (midiCursorShown || $midiStore.editMode) ? (midiBrowseList[midiCursor]?.id ?? null) : null;
   // Folder tabs list the same item in both the folder and All Clips sections;
   // only the first one (the copy `midiBrowseList` dedups to) wears the cursor.
   $: midiCursorSectionId = mediaSections.find(s => s.items.some(i => i.id === midiCursorId))?.id ?? null;
@@ -2383,6 +2387,7 @@
   // ---- Event bridge from midiRouter --------------------------------------
   function handleMidiTray(e: Event) {
     if (!midiTrayOwnsEvent()) return;
+    midiCursorShown = true;
     const { action, arg, value, mode } = (e as CustomEvent<{ action: string; arg?: string; value: number; mode: string }>).detail;
     const isRelative = mode === 'relative';
     const pressed = value > 0;
