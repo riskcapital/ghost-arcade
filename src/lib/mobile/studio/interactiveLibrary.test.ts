@@ -27,10 +27,12 @@ describe('mobile interactive scenes', () => {
     for (const e of s.effects!) expect(e.target === 'point' || s.surfaces.some((o) => o.id === e.target)).toBe(true);
   });
   it('creates independent scenes without changing a previously edited starter', () => {
-    const a = starterScene('liquid'),
-      b = starterScene('liquid');
+    const a = starterScene('fire'),
+      b = starterScene('fire');
+    const original = b.effects![0].params.flow;
     a.effects![0].params.flow = 0;
-    expect(b.effects![0].params.flow).toBe(0.85);
+    expect(b.effects![0].params.flow).toBe(original);
+    expect(original).toBeGreaterThan(0);
     expect(a.effects![0].id).not.toBe(b.effects![0].id);
   });
   it('roundtrips draft, modulation, Auto and named presets without conflating them', () => {

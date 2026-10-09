@@ -9,6 +9,8 @@ export type EffectParam = {key:string;label:string;min:number;max:number;step:nu
 const p=(key:string,label:string,min:number,max:number,value:number,slot?:number,group='Look'):EffectParam=>({key,label,min,max,value,slot,group,step:max>20?1:.01});
 export const EFFECT_NAMES:Record<EffectKind,string>={architecture:'Living Architecture',garden:'Gravity Garden',walls:'Contour Waves',ribbons:'Silk Flow',orbit:'Orbital Bloom',electric:'Neural Web',light:'Volumetric Light',balls:'Kinetic Balls',smoke:'Rising Smoke',cloud:'Point Swarm',liquid:'Liquid',fire:'Fire'};
 export const EFFECT_KINDS=Object.keys(EFFECT_NAMES) as EffectKind[];
+/** What Add effect offers. Liquid is withdrawn (it does not look good enough yet); scenes that already use it still play. */
+export const OFFERED_EFFECT_KINDS=EFFECT_KINDS.filter(kind=>kind!=='liquid');
 export const MAX_INTERACTIVE_EFFECTS=8;
 export const MOD_SOURCES=['manual','sub','bass','lowMid','mid','highMid','treble','air','presence','high','amplitude','beatPhase','kick','snare','lfo-sine','lfo-tri','lfo-saw','lfo-square'] as const;
 export function effectParams(kind:EffectKind):EffectParam[]{
