@@ -42,7 +42,7 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
-  import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
+  import { BLEND_MODE_ORDER, generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
   import { audioStore } from '../stores/audio';
   import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
@@ -1028,6 +1028,7 @@
     vjStopNdiScan();
     stopAllVjLiveSources();
     window.removeEventListener('midi-stage-preset', stagePresetHandler);
+    window.removeEventListener('midi-vj-rec', midiRecHandler);
     window.removeEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
     releaseAllStageEffectHolds();
     if (vjRecorderHandle && vjIsRecording) {
@@ -1035,35 +1036,8 @@
     }
   });
 
-  // Blend modes
-  const blendModes: BlendMode[] = [
-    'normal',
-    'add',
-    'multiply',
-    'screen',
-    'overlay',
-    'difference',
-    'subtract',
-    'darken',
-    'lighten',
-    'exclusion',
-    'hardlight',
-    'softlight',
-    'color-dodge',
-    'color-burn',
-    'hue',
-    'saturation',
-    'color',
-    'luminosity',
-    'divide',
-    'average',
-    'negation',
-    'phoenix',
-    'linear-light',
-    'hard-mix',
-    'vivid-light',
-    'pin-light',
-  ];
+  // Blend modes (shared order; see BLEND_MODE_ORDER in types)
+  const blendModes = BLEND_MODE_ORDER;
 
 
   // Shader library
@@ -1105,6 +1079,12 @@
       vjRecorderHandle = null;
     }
   }
+
+  // vj:rec from midiRouter — toggles the same recorder as the header button.
+  const midiRecHandler = () => {
+    if (vjIsRecording) vjStopRecording();
+    else vjStartRecording();
+  };
 
   function formatVJRecordingDuration(seconds: number): string {
     return formatRecordingDuration(seconds);
@@ -2033,6 +2013,7 @@
     void vjStartNdiScan();
 
     window.addEventListener('midi-stage-preset', stagePresetHandler);
+    window.addEventListener('midi-vj-rec', midiRecHandler);
     window.addEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
 
     const init = async () => {
@@ -4160,11 +4141,24 @@
             <span class="vj-rec-dot"></span>
             <span class="vj-rec-time">{formatVJRecordingDuration(vjRecordingDuration)}</span>
           </div>
-          <button class="vj-stop-rec-btn" onclick={vjStopRecording}>
+          <button
+            class="vj-stop-rec-btn"
+            onclick={vjStopRecording}
+            data-midi-path="vj:rec"
+            data-midi-label="Record Output"
+            data-midi-mode="toggle"
+          >
             Stop Rec
           </button>
         {:else}
-          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
+          <button
+            class="vj-rec-btn"
+            onclick={vjStartRecording}
+            title="Record Output"
+            data-midi-path="vj:rec"
+            data-midi-label="Record Output"
+            data-midi-mode="toggle"
+          >
             ● REC
           </button>
         {/if}
@@ -5800,6 +5794,9 @@
                       disabled={states[layerIdx].locked === true}
                       onclick={(e) => { e.stopPropagation(); handleStopLayer(layerIdx, bank); }}
                       title="Stop layer (Deck {bank})"
+                      data-midi-path="{midiPrefix}:{layerIdx}:stop"
+                      data-midi-label="Deck {bank} L{layerIdx + 1} Stop"
+                      data-midi-mode="toggle"
                     >■</button>
                   </div>
                 </div>

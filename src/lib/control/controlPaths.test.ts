@@ -44,6 +44,16 @@ describe('control parameter paths', () => {
   });
 });
 
+it('validates tray paths down to the tab argument and index', () => {
+  for (const path of ['tray:browse', 'tray:load', 'tray:next', 'tray:prev', 'tray:tab', 'tray:tab:next', 'tray:tab:prev', 'tray:tab:fx', 'tray:tab:sources', 'tray:rec', 'tray:rec:0']) {
+    expect(validateControlPath(path).valid, path).toBe(true);
+  }
+  for (const path of ['tray:tab:bogus', 'tray:tab:fx:extra', 'tray:rec:abc', 'tray:nonsense']) {
+    expect(validateControlPath(path).valid, path).toBe(false);
+  }
+  expect(validateControlPath('tray:tab:bogus').reason).toContain('tray:tab:<');
+});
+
 it('validates stable group control paths without accepting incomplete actions', () => {
   for (const path of ['vj:group:group-id:level', 'vj-b:group:group-id:column:2', 'vj:group:group-id:fx:fx-id:mix', 'vj:group:group-id:fx:fx-id:param:blurRadius']) expect(validateControlPath(path).valid).toBe(true);
   for (const path of ['vj:group::level', 'vj:group:group-id:column:bad', 'vj:group:group-id:fx:fx-id:param', 'vj:group:group-id:unknown']) expect(validateControlPath(path).valid).toBe(false);

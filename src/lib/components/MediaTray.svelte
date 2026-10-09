@@ -1,7 +1,9 @@
 <script lang="ts">
   import { prepareVideoImport } from '../video/videoImport';
-  import { onMount, onDestroy } from 'svelte';
-  import { get } from 'svelte/store';
+  import { onMount, onDestroy, tick } from 'svelte';
+  import { midiStore } from '../midi/midiStore';
+  import { vjClipLauncher } from '../stores/vjClipLauncher';
+  import { get, writable, type Writable } from 'svelte/store';
   import { project, selectedLayerId, selectedLayer, layers } from '../stores/layers';
   import { activeMediaTargetLayerIds } from '../media/mediaTargeting';
   import PluginIcon from './PluginIcon.svelte';
@@ -27,6 +29,7 @@
     type VeoModel,
   } from '../api/ai-client';
   import { settings } from '../stores/settings';
+  import { TRAY_TAB_ORDER, TRAY_TAB_ALIASES, type TrayTab } from '../control/trayTabs';
   import { updateJSAnimationParams } from '../renderer/js-animation';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
@@ -232,9 +235,12 @@
   }
 
   function disposeUnusedLiveSources() {
+    const recording = get(sourceRecActive);
     const retained: LiveSource[] = [];
     for (const source of liveSources) {
-      if (liveSourceIsUsedByLayer(source)) {
+      // A take in flight keeps its source: stopping the tracks here would end
+      // the recorder and write out a truncated clip.
+      if (recording[source.id] || liveSourceIsUsedByLayer(source)) {
         retained.push(source);
       } else {
         disposeLiveSource(source);
@@ -2132,6 +2138,307 @@
     if (timelapseTimerId) clearInterval(timelapseTimerId);
   });
 
+  // =========================================================================
+  // MIDI: Media Library browsing + live-source recording
+  // Driven by `tray:*` paths forwarded from midiRouter as `midi-tray` events.
+  // =========================================================================
+  // Tab order / aliases live in ../control/trayTabs so the tray and the
+  // `tray:tab:<arg>` control-path validator cannot drift apart.
+
+  // MediaTray is mounted more than once at a time: the editor's right sidebar
+  // keeps its instance alive while VJ mode is open (the main content is only
+  // `visibility: hidden`, so the native sync keeps running) and VJModePanel
+  // mounts its own. Exactly one of them may act on a `midi-tray` event — two
+  // would load a clip into the deck *and* overwrite the selected editor
+  // layer, start two MediaRecorders on one camera, or desync the cursors.
+  const midiTrayInstances: Array<{ readonly vjMode: boolean }> = (_win.__mediaTrayMidiInstances ??= []);
+  const midiTrayInstance = { get vjMode() { return vjMode; } };
+
+  // The tray matching the active mode owns the event. If that one is not
+  // mounted — VJ mode with its media browser collapsed, say — the surviving
+  // tray takes it rather than nobody, so one instance always responds.
+  function midiTrayOwnsEvent(): boolean {
+    const wantVJ = get(vjClipLauncher).isOpen;
+    const owner = midiTrayInstances.find(t => t.vjMode === wantVJ) ?? midiTrayInstances[0];
+    return owner === midiTrayInstance;
+  }
+
+  let midiCursor = 0;
+  // Mirrors the tab the cursor belongs to, so the cursor resets on every tab
+  // change — including the tab buttons, which assign `activeTab` directly.
+  let midiCursorTab: TrayTab = activeTab;
+  $: if (activeTab !== midiCursorTab) {
+    midiCursorTab = activeTab;
+    midiCursor = 0;
+  }
+
+  // What a controller can step through on the current tab. The Saved tab is
+  // a mixed list with its own load flows, so it is skipped for now.
+  $: midiBrowseList = (
+    activeTab === 'sources' ? liveSources
+    : activeTab === 'plugins' ? availablePlugins
+    : activeTab === 'js' ? filteredJSAnimations
+    : activeTab === 'library' ? []
+    : Array.from(new Map(mediaSections.flatMap(s => s.items).map(i => [i.id, i])).values())
+  ) as Array<{ id: string }>;
+  $: if (midiCursor > Math.max(0, midiBrowseList.length - 1)) midiCursor = Math.max(0, midiBrowseList.length - 1);
+  $: midiCursorId = midiBrowseList[midiCursor]?.id ?? null;
+  // Folder tabs list the same item in both the folder and All Clips sections;
+  // only the first one (the copy `midiBrowseList` dedups to) wears the cursor.
+  $: midiCursorSectionId = mediaSections.find(s => s.items.some(i => i.id === midiCursorId))?.id ?? null;
+  $: midiEditMode = $midiStore.editMode;
+
+  function midiSetTab(tab: TrayTab) {
+    activeTab = tab;
+    if (tab === 'sources') {
+      sourcesInitialized = true;
+      enumerateWebcams();
+    }
+    midiCursor = 0;
+    void midiRevealCursor();
+  }
+
+  function midiStepTab(delta: number) {
+    const idx = Math.max(0, TRAY_TAB_ORDER.indexOf(activeTab as TrayTab));
+    const n = TRAY_TAB_ORDER.length;
+    midiSetTab(TRAY_TAB_ORDER[(idx + Math.sign(delta) + n) % n]);
+  }
+
+  function midiStepCursor(delta: number) {
+    const n = midiBrowseList.length;
+    if (!n) return;
+    midiCursor = (midiCursor + Math.sign(delta) + n) % n;
+    void midiRevealCursor();
+  }
+
+  async function midiRevealCursor() {
+    await tick();
+    if (!midiCursorId) return;
+    // Prefer the tile that actually wears the cursor: on a folder tab the id
+    // is rendered twice, and only the highlighted copy is worth scrolling to.
+    const sel = `[data-tray-id="${CSS.escape(midiCursorId)}"]`;
+    const el = document.querySelector<HTMLElement>(`${sel}.midi-cursor`)
+      ?? document.querySelector<HTMLElement>(sel);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function midiLoadCursor() {
+    const item = midiBrowseList[midiCursor] as any;
+    if (!item) return;
+    if (activeTab === 'sources') addLiveSourceToCurrentMode(item as LiveSource);
+    else if (activeTab === 'plugins') addPluginToCurrentMode(item as PluginManifest);
+    else addTrayItemToCurrentMode(item);
+  }
+
+  // ---- Live-source recording ---------------------------------------------
+  // The recorders live on the window (same trick as `__shaderCache` above) so
+  // an incidental remount cannot cut a take short: the editor sidebar swaps
+  // this tray out as soon as a non-media layer is selected, and VJModePanel's
+  // copy unmounts when VJ mode closes. `addRecordedSourceClip` writes to the
+  // mediaLibrary store, so a take needs no component instance to finish.
+  interface SourceRecording { recorder: MediaRecorder; startedAt: number; source: LiveSource }
+  const sourceRecShared = (_win.__mediaTraySourceRec ??= {
+    active: writable<Record<string, SourceRecording>>({}),
+    tick: writable(0),
+    timer: null as ReturnType<typeof setInterval> | null,
+  });
+  const sourceRecActive: Writable<Record<string, SourceRecording>> = sourceRecShared.active;
+  const sourceRecTick: Writable<number> = sourceRecShared.tick;
+
+  // Elapsed seconds per in-flight take, keyed by source id. This has to be a
+  // reactive value the markup indexes into: a helper that reads the tick in
+  // its own body is not a dependency of the template that calls it, which
+  // froze the badge at 0s.
+  $: sourceRecElapsed = sourceRecElapsedMap($sourceRecActive, $sourceRecTick);
+
+  function sourceRecElapsedMap(active: Record<string, SourceRecording>, _tick: number): Record<string, number> {
+    const now = Date.now();
+    const out: Record<string, number> = {};
+    for (const [id, r] of Object.entries(active)) out[id] = Math.floor((now - r.startedAt) / 1000);
+    return out;
+  }
+
+  function streamForSource(source: LiveSource): MediaStream | null {
+    if (source.stream && source.stream.getVideoTracks().length) return source.stream;
+    // Spout / NDI frames are drawn by native receivers inside Canvas.svelte
+    // and have no MediaStream here; fall back to the preview element if any.
+    const v = source.videoEl as (HTMLVideoElement & { captureStream?: () => MediaStream }) | undefined;
+    return v?.captureStream ? v.captureStream() : null;
+  }
+
+  function pickRecorderMime(): string | undefined {
+    // MP4 first: Chromium's WebM output has no duration header, which makes
+    // seeking / trim / loop points unreliable. WebM is the fallback.
+    return [
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ].find(m => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m));
+  }
+
+  function toggleSourceRecording(source: LiveSource | undefined) {
+    if (!source) return;
+    const active = get(sourceRecActive)[source.id];
+    if (active) {
+      if (active.recorder.state !== 'inactive') active.recorder.stop();
+      return;
+    }
+    if (source.status !== 'live') return;
+
+    const stream = streamForSource(source);
+    if (!stream) {
+      showToast(`Can't record ${source.name}: no capturable stream (Spout/NDI not supported yet)`, 'warning');
+      return;
+    }
+
+    const mimeType = pickRecorderMime();
+    // Same bitrate the main output recorder uses, read at record-start so a
+    // settings change lands on the next take. Video-only stream, so the
+    // audioBitrate setting does not apply here.
+    const videoBitsPerSecond = settings.get().recording?.videoBitrate || 5_000_000;
+    const recorder = new MediaRecorder(
+      new MediaStream(stream.getVideoTracks()),
+      mimeType ? { mimeType, videoBitsPerSecond } : { videoBitsPerSecond },
+    );
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      sourceRecActive.update(active => {
+        const { [source.id]: _done, ...rest } = active;
+        return rest;
+      });
+      if (!Object.keys(get(sourceRecActive)).length && sourceRecShared.timer) {
+        clearInterval(sourceRecShared.timer);
+        sourceRecShared.timer = null;
+      }
+      const type = recorder.mimeType || mimeType || 'video/webm';
+      void addRecordedSourceClip(new Blob(chunks, { type }), source.name);
+    };
+    recorder.start(1000);
+    sourceRecActive.update(active => ({ ...active, [source.id]: { recorder, startedAt: Date.now(), source } }));
+    if (!sourceRecShared.timer) sourceRecShared.timer = setInterval(() => sourceRecTick.update(t => t + 1), 500);
+  }
+
+  async function addRecordedSourceClip(blob: Blob, sourceName: string) {
+    if (!blob.size) return;
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+    const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
+    const name = `${sourceName.replace(/^(Spout|NDI):\s*/i, '')} ${stamp}`;
+    const id = generateUUID();
+    const url = URL.createObjectURL(blob);
+    // Persists the blob into the project-assets folder on desktop so the clip
+    // survives save / reload (data URL fallback in the browser build).
+    const { assetRef } = await createAssetRefFromGeneratedBlob(blob, `${name}.${ext}`, blob.type, url);
+
+    const video = document.createElement('video');
+    video.loop = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.src = url;
+
+    mediaLibrary.addItem({ id, name, src: url, type: 'video', videoElement: video, thumbnail: '', _assetRef: assetRef });
+    showToast(`Recorded clip added to VID: ${name}`, 'info');
+
+    await new Promise<void>((resolve) => {
+      let ok = false;
+      const done = () => { if (!ok) { ok = true; resolve(); } };
+      video.onloadeddata = done;
+      video.onerror = done;
+      if (video.readyState >= 2) done();
+      setTimeout(done, 5000);
+    });
+    try {
+      const thumbnail = await captureVideoThumbnail(video);
+      if (thumbnail) mediaLibrary.updateItem(id, { thumbnail });
+    } catch { /* tile just stays blank */ }
+  }
+
+  function stopAllSourceRecordings() {
+    for (const r of Object.values(get(sourceRecActive))) {
+      if (r.recorder.state !== 'inactive') r.recorder.stop();
+    }
+    if (sourceRecShared.timer) { clearInterval(sourceRecShared.timer); sourceRecShared.timer = null; }
+  }
+
+  // Genuine app teardown is the only thing that should cut a take short — an
+  // unmount must not. Registered once per window, and the closure only touches
+  // the shared registry, so it outlives whichever instance installed it.
+  if (!_win.__mediaTraySourceRecTeardown) {
+    _win.__mediaTraySourceRecTeardown = true;
+    window.addEventListener('pagehide', () => stopAllSourceRecordings());
+  }
+
+  // ---- Event bridge from midiRouter --------------------------------------
+  function handleMidiTray(e: Event) {
+    if (!midiTrayOwnsEvent()) return;
+    const { action, arg, value, mode } = (e as CustomEvent<{ action: string; arg?: string; value: number; mode: string }>).detail;
+    const isRelative = mode === 'relative';
+    const pressed = value > 0;
+
+    switch (action) {
+      case 'tab':
+        if (isRelative) { if (value !== 0) midiStepTab(value); return; }
+        if (!pressed) return;
+        if (arg === 'next') midiStepTab(1);
+        else if (arg === 'prev') midiStepTab(-1);
+        else if (arg && TRAY_TAB_ALIASES[arg]) midiSetTab(TRAY_TAB_ALIASES[arg]);
+        return;
+      case 'next':
+        if (pressed) midiStepCursor(1);
+        return;
+      case 'prev':
+        if (pressed) midiStepCursor(-1);
+        return;
+      case 'browse':
+        if (isRelative) { if (value !== 0) midiStepCursor(value); return; }
+        // Absolute knob / slider: position maps across the whole list.
+        if (midiBrowseList.length) {
+          midiCursor = Math.round(Math.max(0, Math.min(1, value)) * (midiBrowseList.length - 1));
+          void midiRevealCursor();
+        }
+        return;
+      case 'load':
+        if (pressed) midiLoadCursor();
+        return;
+      case 'rec': {
+        if (!pressed) return;
+        if (arg !== undefined && /^\d+$/.test(arg)) {
+          toggleSourceRecording(liveSources[parseInt(arg, 10)]);
+        } else if (activeTab === 'sources') {
+          toggleSourceRecording(liveSources[midiCursor]);
+        } else {
+          // Off the Sources tab: stop whatever take is in flight — including
+          // one started by a tray instance that has since unmounted — else
+          // start the first live source, so one pad works mid-set.
+          const recording = Object.values(get(sourceRecActive))[0];
+          toggleSourceRecording(recording ? recording.source : liveSources.find(s => s.status === 'live'));
+        }
+        return;
+      }
+    }
+  }
+
+  onMount(() => {
+    midiTrayInstances.push(midiTrayInstance);
+    // Give a take that outlived its tray its card back, so it stays visible
+    // and stoppable instead of recording invisibly.
+    const orphans = Object.values(get(sourceRecActive))
+      .map(r => r.source)
+      .filter(s => !liveSources.some(existing => existing.id === s.id));
+    if (orphans.length) liveSources = [...liveSources, ...orphans];
+
+    window.addEventListener('midi-tray', handleMidiTray);
+    return () => {
+      window.removeEventListener('midi-tray', handleMidiTray);
+      const i = midiTrayInstances.indexOf(midiTrayInstance);
+      if (i >= 0) midiTrayInstances.splice(i, 1);
+      // Recordings deliberately survive: see the registry comment above.
+    };
+  });
+
   /**
    * Dev utility: Generate thumbnails for ALL shaders and save as JPGs via Tauri.
    * Triggered by Ctrl+Shift+G. Downloads a zip or saves individually via Tauri IPC.
@@ -3655,30 +3962,42 @@
     <h3>Media Library</h3>
   </div>
 
+  {#if midiEditMode}
+    <div class="midi-tray-nav">
+      <button data-midi-path="tray:tab:prev" data-midi-label="Library: prev tab" data-midi-mode="toggle" onclick={() => midiStepTab(-1)}>⇤ Tab</button>
+      <button data-midi-path="tray:tab:next" data-midi-label="Library: next tab" data-midi-mode="toggle" onclick={() => midiStepTab(1)}>Tab ⇥</button>
+      <button data-midi-path="tray:prev" data-midi-label="Library: prev item" data-midi-mode="toggle" onclick={() => midiStepCursor(-1)}>◀</button>
+      <button data-midi-path="tray:browse" data-midi-label="Library: browse (encoder/knob)" data-midi-mode="absolute" data-midi-min="0" data-midi-max="1">⟳ Browse</button>
+      <button data-midi-path="tray:next" data-midi-label="Library: next item" data-midi-mode="toggle" onclick={() => midiStepCursor(1)}>▶</button>
+      <button data-midi-path="tray:load" data-midi-label="Library: load highlighted" data-midi-mode="toggle" onclick={midiLoadCursor}>Load</button>
+      <button data-midi-path="tray:rec" data-midi-label="Library: record source" data-midi-mode="toggle">● Src</button>
+    </div>
+  {/if}
+
   <!-- Tabs -->
   <div class="tabs">
     <div class="tab-row">
-      <button class="tab" class:active={activeTab === 'shaders'} onclick={() => activeTab = 'shaders'}>
+      <button class="tab" class:active={activeTab === 'shaders'} data-midi-path="tray:tab:fx" data-midi-label="Library tab: FX" data-midi-mode="toggle" onclick={() => activeTab = 'shaders'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
         <span>FX</span>
         {#if shaders.length}<span class="tab-count">{shaders.length}</span>{/if}
       </button>
-      <button class="tab" class:active={activeTab === 'js'} onclick={() => activeTab = 'js'}>
+      <button class="tab" class:active={activeTab === 'js'} data-midi-path="tray:tab:js" data-midi-label="Library tab: JS" data-midi-mode="toggle" onclick={() => activeTab = 'js'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
         <span>JS</span>
         {#if jsAnimations.length}<span class="tab-count">{jsAnimations.length}</span>{/if}
       </button>
-      <button class="tab" class:active={activeTab === 'library'} onclick={() => activeTab = 'library'}>
+      <button class="tab" class:active={activeTab === 'library'} data-midi-path="tray:tab:saved" data-midi-label="Library tab: Saved" data-midi-mode="toggle" onclick={() => activeTab = 'library'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         <span>Saved</span>
         {#if savedShaders.length}<span class="tab-count">{savedShaders.length}</span>{/if}
       </button>
-      <button class="tab" class:active={activeTab === 'videos'} onclick={() => activeTab = 'videos'}>
+      <button class="tab" class:active={activeTab === 'videos'} data-midi-path="tray:tab:vid" data-midi-label="Library tab: Videos" data-midi-mode="toggle" onclick={() => activeTab = 'videos'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         <span>Vid</span>
         {#if videos.length}<span class="tab-count">{videos.length}</span>{/if}
       </button>
-      <button class="tab" class:active={activeTab === 'images'} onclick={() => activeTab = 'images'}>
+      <button class="tab" class:active={activeTab === 'images'} data-midi-path="tray:tab:img" data-midi-label="Library tab: Images" data-midi-mode="toggle" onclick={() => activeTab = 'images'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         <span>Img</span>
         {#if images.length}<span class="tab-count">{images.length}</span>{/if}
@@ -3691,14 +4010,14 @@
           <span class="tab-count">{$phoneScanLibrary.length}</span>
         </button>
       {/if}
-      <button class="tab" class:active={activeTab === 'sources'} onclick={() => { activeTab = 'sources'; sourcesInitialized = true; enumerateWebcams(); }}>
+      <button class="tab" class:active={activeTab === 'sources'} data-midi-path="tray:tab:src" data-midi-label="Library tab: Sources" data-midi-mode="toggle" onclick={() => { activeTab = 'sources'; sourcesInitialized = true; enumerateWebcams(); }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
         <span>Src</span>
         {#if liveSources.filter(s => s.status === 'live').length > 0}
           <span class="tab-live">{liveSources.filter(s => s.status === 'live').length}</span>
         {/if}
       </button>
-      <button class="tab" class:active={activeTab === 'plugins'} onclick={() => { activeTab = 'plugins'; }}>
+      <button class="tab" class:active={activeTab === 'plugins'} data-midi-path="tray:tab:plug" data-midi-label="Library tab: Plugins" data-midi-mode="toggle" onclick={() => { activeTab = 'plugins'; }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
         <span>Plug</span>
       </button>
@@ -4156,9 +4475,12 @@
           </div>
         {:else}
           <div class="sources-list">
-            {#each liveSources as source (source.id)}
+            {#each liveSources as source, sourceIdx (source.id)}
               <div
                 class="source-card"
+                data-tray-id={source.id}
+                class:midi-cursor={midiCursorId === source.id}
+                class:recording={!!$sourceRecActive[source.id]}
                 class:live={source.status === 'live'}
                 class:connecting={source.status === 'connecting'}
                 draggable={vjMode && source.status === 'live' ? 'true' : 'false'}
@@ -4169,6 +4491,24 @@
                 title={liveSourceCardTitle(source)}
               >
                 <div class="source-preview">
+                  {#if source.status === 'live'}
+                    <!-- Learned by slot, not by source id: every LiveSource.id
+                         is a fresh UUID each session, so an id-keyed mapping
+                         would break on every restart. A pad learned here
+                         records whatever source occupies this slot later. -->
+                    <button
+                      class="source-rec-btn"
+                      class:active={!!$sourceRecActive[source.id]}
+                      title={$sourceRecActive[source.id] ? 'Stop recording (adds clip to VID)' : 'Record this source to a clip'}
+                      data-midi-path={`tray:rec:${sourceIdx}`}
+                      data-midi-label={`Record source ${sourceIdx + 1}: ${source.name}`}
+                      data-midi-mode="toggle"
+                      onclick={(e) => { e.stopPropagation(); toggleSourceRecording(source); }}
+                      ondblclick={(e) => e.stopPropagation()}
+                    >
+                      ● {#if $sourceRecActive[source.id]}{sourceRecElapsed[source.id] ?? 0}s{/if}
+                    </button>
+                  {/if}
                   {#if source.videoEl && source.status === 'live'}
                     <!-- svelte-ignore a11y_media_has_caption -->
                     <video
@@ -4299,6 +4639,8 @@
           {#each availablePlugins as plugin (plugin.id)}
             <button
               class="plugin-card"
+              data-tray-id={plugin.id}
+              class:midi-cursor={midiCursorId === plugin.id}
               onclick={() => addPluginToCurrentMode(plugin)}
               disabled={!vjMode && !$selectedLayer}
               draggable={vjMode ? 'true' : 'false'}
@@ -4455,6 +4797,8 @@
         {#each filteredJSAnimations as item (item.id)}
           <div
             class="media-item js-item"
+            data-tray-id={item.id}
+            class:midi-cursor={midiCursorId === item.id}
             class:threejs={item.type === 'threejs'}
             class:p5js={item.type === 'p5js'}
             onclick={() => addTrayItemToCurrentMode(item)}
@@ -4612,6 +4956,8 @@
           {#each section.items as item (item.id)}
             <div
               class="media-item"
+              data-tray-id={item.id}
+              class:midi-cursor={midiCursorId === item.id && section.id === midiCursorSectionId}
               class:selected={selectedShader?.id === item.id}
               class:item-selected={selectedTrayItemIds.includes(item.id)}
               class:processing={loopingVideoId === item.id}
@@ -7590,4 +7936,50 @@
     flex: 1 1 auto;
     min-width: 0;
   }
+
+  .midi-tray-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .midi-tray-nav button {
+    flex: 1 1 auto;
+    font-size: 10px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.04);
+    color: inherit;
+    cursor: pointer;
+  }
+  .media-item.midi-cursor,
+  .plugin-card.midi-cursor,
+  .source-card.midi-cursor {
+    outline: 2px solid #4ade80;
+    outline-offset: 1px;
+  }
+  .source-preview { position: relative; }
+  .source-rec-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 2;
+    font-size: 10px;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 80, 80, 0.6);
+    background: rgba(0, 0, 0, 0.6);
+    color: #ff5a5a;
+    cursor: pointer;
+  }
+  .source-rec-btn.active {
+    background: #e11d48;
+    color: #fff;
+    animation: source-rec-pulse 1s ease-in-out infinite;
+  }
+  .source-card.recording { box-shadow: 0 0 0 1px #e11d48 inset; }
+  @keyframes source-rec-pulse { 50% { opacity: 0.6; } }
 </style>
