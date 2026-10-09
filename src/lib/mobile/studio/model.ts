@@ -114,23 +114,23 @@ export function newSurface(index: number, fullFrame = false): Surface {
 export const starterBlend = (row: number): Layer['blend'] => (row % 4 === 3 ? 'normal' : 'screen');
 /** The set format revision this app writes. */
 export const SET_REV = 2;
-/** A starting set. With `demoBlocks`, the one a person first opens: four blocks of shaders ready to play. */
+/** A starting set. With `demoBlocks`, the one a person first opens: three full blocks of shaders ready to play. */
 export function defaultShow(demoBlocks=false): Show {
   const featured=['lumenstrata','lumenveil','murmur','prism','pulse','quantumchamber','sentinels','tendril','tide','chrysalis','crystallon','dispersion','drift','aurora','chladniplate'].map(n=>'featured-'+n);
   const preferred=['ga-ghostfx','dm-plasma-flow','room-ember-drift','dm-kaleidoscope','dm-liquid-metal','dm-tunnel','room-cosmic-nebula','ar-frequency-rings','sm-fireflies','dm-neon-lines','ar-spectral-aurora','sm-lava-lamp-blobs','room-aurora-curtains'];
   const performanceShader=(shader:typeof MOBILE_SHADERS[number])=>!shader.requiresImage&&standaloneShaderPaths.has(shader.path)&&!/(test.?pattern|test.?bars|safe.?area|uv.?grid|grid.?matrix|solid.?color|calibrat|checker)/i.test(shader.id+' '+shader.path);
   const eligible=MOBILE_SHADERS.filter(performanceShader);
   const ids=[...featured,...preferred].filter(id=>eligible.some(s=>s.id===id));
-  for(const shader of eligible)if(ids.length<(demoBlocks?128:64)&&!ids.includes(shader.id))ids.push(shader.id);
+  for(const shader of eligible)if(ids.length<(demoBlocks?96:64)&&!ids.includes(shader.id))ids.push(shader.id);
   // Deliberate opening rows on both decks, not catalog-order utility shaders.
   const rows=Array.from({length:8},(_,row)=>Array.from({length:8},(_,col)=>ids[(row*8+col)%ids.length]));
   const curateRow=(priorities:string[])=>[...new Set([...priorities.filter(id=>ids.includes(id)),...ids])].slice(0,8);
   rows[0]=curateRow(featured.slice(0,8));
   rows[4]=curateRow([...featured.slice(8),'ga-ghostfx']);
-  // The demo opens with four blocks, each a different page of shaders, so the
+  // The demo opens with three blocks, each a full page of different shaders, so the
   // tabs above the deck have somewhere to go. Block 1 is the curated deck.
   const blockGrid=(block:number)=>block===0?rows:Array.from({length:8},(_,row)=>Array.from({length:8},(_,col)=>ids[(block*32+(row%4)*8+col+(row>=4?16:0))%ids.length]));
-  const blockIds=[0,1,2,3].map(()=>uid());
+  const blockIds=[0,1,2].map(()=>uid());
   const demoLayers:Layer[]=Array.from({ length: 8 }, (_, i) => ({
       id: `layer-${i}`,
       name: `Layer ${i + 1}`,

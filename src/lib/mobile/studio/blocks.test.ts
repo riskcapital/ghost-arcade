@@ -100,9 +100,9 @@ describe('block tabs', () => {
 import { describe as describeDemo, it as itDemo, expect as expectDemo } from 'vitest';
 import { defaultShow as demoDefault } from './model';
 describeDemo('demo set', () => {
-  itDemo('opens with four blocks of shaders, the first one on the deck', () => {
+  itDemo('opens with three full blocks of shaders, the first one on the deck', () => {
     const show = demoDefault(true);
-    expectDemo(show.scenes.map(b => b.name)).toEqual(['Block 1', 'Block 2', 'Block 3', 'Block 4']);
+    expectDemo(show.scenes.map(b => b.name)).toEqual(['Block 1', 'Block 2', 'Block 3']);
     expectDemo(show.activeBlockId).toBe(show.scenes[0].id);
     expectDemo(show.scenes[0].launchGrid).toEqual(show.launchGrid);
     const known = new Set(show.clips.map(c => c.id));
@@ -111,6 +111,9 @@ describeDemo('demo set', () => {
       expectDemo(visible.every(id => !!id && known.has(id))).toBe(true);
       // No shader twice on the four visible rows of one block.
       expectDemo(new Set(visible).size).toBe(visible.length);
+      // Every slot of every row is filled, on both decks.
+      expectDemo(block.launchGrid!.length).toBe(8);
+      expectDemo(block.launchGrid!.every(row => row.length === 8 && row.every(Boolean))).toBe(true);
     }
     // Blocks are different pages, not the same deck four times.
     expectDemo(show.scenes[1].launchGrid![0]).not.toEqual(show.scenes[0].launchGrid![0]);

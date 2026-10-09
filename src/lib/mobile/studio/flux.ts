@@ -1,18 +1,21 @@
 import type {MobileEffectDef, MobileEffectInstance} from '../standaloneEffects';
 export const FLUX_MODULES=[{id:'warp',name:'Liquid',hint:'Bend and ripple'},{id:'fold',name:'Fold',hint:'Reflect and spiral'},{id:'prism',name:'Prism',hint:'Split color and space'},{id:'echo',name:'Echo',hint:'Spatial trails'},{id:'solar',name:'Solar',hint:'Remap the spectrum'},{id:'slice',name:'Slice',hint:'Cut and displace'},{id:'tile',name:'Tile',hint:'Repeat the picture'},{id:'tunnel',name:'Tunnel',hint:'Streak toward the centre'},{id:'pixel',name:'Pixel',hint:'Break into blocks'},{id:'glitch',name:'Glitch',hint:'Tear and shift bands'},{id:'ink',name:'Ink',hint:'Flatten to bold tones'},{id:'throb',name:'Pulse',hint:'Breathe with the beat'}] as const;
-export type FluxState={energy?:number;x:number;y:number;mix:number;active:boolean;latch:boolean;beat:boolean;modules:string[]};
+/** How the effected picture is laid over the clean one. The order is the shader's `fluxBlend` number. */
+export const FLUX_BLENDS=['Mix','Add','Screen','Multiply','Difference','Lighten','Overlay'] as const;
+export type FluxState={energy?:number;x:number;y:number;mix:number;blend?:number;active:boolean;latch:boolean;beat:boolean;modules:string[]};
 export const defaultFlux=():FluxState=>({x:.5,y:.5,mix:.8,active:false,latch:false,beat:false,modules:['warp','prism']});
 export function fluxEffect(s:FluxState,gain:number,beat:number):MobileEffectInstance{
- const params:Record<string,number>={fluxX:s.x,fluxY:s.y,fluxEnergy:Math.max(0,Math.min(1,s.energy||0)),fluxGain:gain,fluxBeat:s.beat?beat:0,fluxSync:s.beat?1:0};
+ const params:Record<string,number>={fluxX:s.x,fluxY:s.y,fluxEnergy:Math.max(0,Math.min(1,s.energy||0)),fluxGain:gain,fluxBeat:s.beat?beat:0,fluxSync:s.beat?1:0,fluxBlend:Math.max(0,Math.min(FLUX_BLENDS.length-1,Math.round(s.blend||0)))};
  for(const m of FLUX_MODULES)params[m.id]=s.modules.includes(m.id)?1:0;
  return {type:'_flux',enabled:gain>.0005&&s.modules.length>0,params};
 }
 export const FLUX_EFFECT:MobileEffectDef={type:'_flux',label:'Flux',category:'Internal',internal:true,
- defaults:{fluxEnergy:0,fluxX:.5,fluxY:.5,fluxGain:0,fluxBeat:0,fluxSync:0,warp:0,fold:0,prism:0,echo:0,solar:0,slice:0,tile:0,tunnel:0,pixel:0,glitch:0,ink:0,throb:0},
+ defaults:{fluxEnergy:0,fluxX:.5,fluxY:.5,fluxGain:0,fluxBeat:0,fluxSync:0,fluxBlend:0,warp:0,fold:0,prism:0,echo:0,solar:0,slice:0,tile:0,tunnel:0,pixel:0,glitch:0,ink:0,throb:0},
  fragment:`precision highp float;
 varying vec2 vUv;uniform sampler2D uInput;uniform vec2 uResolution;uniform float uTime;
 uniform float fluxEnergy,fluxX,fluxY,fluxGain,fluxBeat,fluxSync,warp,fold,prism,echo,solar,slice;
 uniform float tile,tunnel,pixel,glitch,ink,throb;
+uniform float fluxBlend;
 const float PI=3.14159265;
 vec2 wrapUV(vec2 p){return 1.0-abs(mod(p,2.0)-1.0);}
 vec4 sampleAt(vec2 p){return texture2D(uInput,wrapUV(p));}
@@ -39,5 +42,14 @@ void main(){
  if(ink>.5){float l=dot(wet.rgb,vec3(.299,.587,.114));float steps=2.0+floor((1.0-min(y,1.0))*5.0);float q=floor(l*steps+.5)/steps;vec3 tint=.5+.5*cos(6.2831853*(vec3(0.0,.33,.67)+x*.5+.6));wet.rgb=mix(vec3(q),q*tint*1.6,.6);}
  // A smooth swell, never a hard flash: once a beat when synced, slow when free.
  if(throb>.5){float ph=mix(uTime*(.5+min(y,1.0)),fluxBeat,fluxSync);float swell=pow(.5+.5*cos(ph*6.2831853),1.0+y*5.0);wet.rgb*=mix(.3,1.15,swell);}
- wet.rgb=clamp(wet.rgb,0.0,1.0);gl_FragColor=mix(dry,wet,clamp(fluxGain,0.0,1.0));
+ wet.rgb=clamp(wet.rgb,0.0,1.0);
+ vec3 d=dry.rgb,w=wet.rgb,blended=w;
+ if(fluxBlend>5.5)blended=mix(2.0*d*w,1.0-2.0*(1.0-d)*(1.0-w),step(.5,d));
+ else if(fluxBlend>4.5)blended=max(d,w);
+ else if(fluxBlend>3.5)blended=abs(d-w);
+ else if(fluxBlend>2.5)blended=d*w;
+ else if(fluxBlend>1.5)blended=1.0-(1.0-d)*(1.0-w);
+ else if(fluxBlend>.5)blended=d+w;
+ float amount=clamp(fluxGain,0.0,1.0);
+ gl_FragColor=vec4(mix(d,clamp(blended,0.0,1.0),amount),mix(dry.a,max(dry.a,wet.a),amount));
 }`};

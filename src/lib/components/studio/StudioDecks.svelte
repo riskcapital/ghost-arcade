@@ -92,17 +92,23 @@
   }
   function cancelDrag(){cancelHold();cancelAnimationFrame(scrollFrame);const d=drag;drag=null;drop=null;if(d?.el.hasPointerCapture(d.id))d.el.releasePointerCapture(d.id);}
   export let onMix: (value: number) => void;
-  let dragStart: {x:number;scroll:number;id:number}|null=null;
+  let dragStart: {x:number;y:number;scroll:number;top:number;up:HTMLElement|null;id:number}|null=null;
   let dragged=false;
-  function startDrag(e:PointerEvent){dragged=false;if(e.pointerType==='touch'||drag)return;dragStart={x:e.clientX,scroll:(e.currentTarget as HTMLElement).scrollLeft,id:e.pointerId};}
-  function moveDrag(e:PointerEvent){if(!dragStart)return;const dx=e.clientX-dragStart.x;if(Math.abs(dx)>6){dragged=true;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);(e.currentTarget as HTMLElement).scrollLeft=dragStart.scroll-dx;}}
+  /** The nearest ancestor that scrolls up and down. */
+  function scroller(from:HTMLElement){let node=from.parentElement;while(node){if(node.scrollHeight>node.clientHeight&&/auto|scroll/.test(getComputedStyle(node).overflowY))return node;node=node.parentElement;}return null;}
+  // A lone finger pans natively. A second finger (the first is on the Flux pad) gets no native
+  // pan, so the deck is moved by hand for it, like a mouse drag.
+  function startDrag(e:PointerEvent){dragged=false;if((e.pointerType==='touch'&&e.isPrimary)||drag)return;const el=e.currentTarget as HTMLElement,up=scroller(el);dragStart={x:e.clientX,y:e.clientY,scroll:el.scrollLeft,top:up?.scrollTop??0,up,id:e.pointerId};}
+  function moveDrag(e:PointerEvent){if(!dragStart||dragStart.id!==e.pointerId||drag)return;const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y;
+    if(dragged||Math.hypot(dx,dy)>8){if(!dragged){dragged=true;cancelHold();(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);}
+      (e.currentTarget as HTMLElement).scrollLeft=dragStart.scroll-dx;if(dragStart.up&&e.pointerType!=='mouse')dragStart.up.scrollTop=dragStart.top-dy;}}
   let menu: {row:number;column:number;clip:Clip}|null=null;
   let dialog:HTMLDialogElement;
   let hold: {id:number;x:number;y:number;el:HTMLElement;row:number;column:number;clip:Clip;timer:ReturnType<typeof setTimeout>}|null=null;
   let suppressTap=false;
   function cancelHold(){if(hold)clearTimeout(hold.timer);hold=null;}
   function openMenu(row:number,column:number,clip:Clip){cancelHold();suppressTap=true;menu={row,column,clip};dialog.showModal();}
-  function holdPad(e:PointerEvent,row:number,column:number,clip?:Clip){cancelHold();suppressTap=false;if(!clip||e.button!==0||!e.isPrimary)return;
+  function holdPad(e:PointerEvent,row:number,column:number,clip?:Clip){cancelHold();suppressTap=false;if(!clip||e.button!==0)return;
     // Touch-down launch: only for a pad that is not already playing or queued, so the double tap
     // that stops a playing clip and the hold menu keep working. The lift's click is then ignored.
     if(launchOnDown&&e.pointerType!=='mouse'&&!clipUnavailable(clip)&&show.layers[row].clipId!==clip.id&&pending[row]?.clip.id!==clip.id){onTap(row,clip);suppressTap=true;}
