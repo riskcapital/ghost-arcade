@@ -22,6 +22,15 @@
   /** Move effect `from` to where effect `to` is. */
   export let onreorder: (from: string, to: string) => void;
 
+  /** On a touch screen the list is the system's own picker: it cannot be
+   *  dismissed by a stray focus or pointer event before the choice lands. */
+  const touch = typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches;
+  function pickNative(e: Event) {
+    const select = e.currentTarget as HTMLSelectElement;
+    const kind = select.value as EffectKind;
+    select.value = '';
+    if (kind) onadd(kind);
+  }
   let dragEffect = '';
   let menuOpen = false;
   let addButton: HTMLButtonElement;
@@ -82,6 +91,15 @@
 <div class="panel-heading">
   <strong>Effect stack</strong><span>{effects.length}/{MAX_INTERACTIVE_EFFECTS}</span>
 </div>
+{#if touch}
+<label class="wide add-effect-button add-effect-native" class:disabled={full}>
+  <Icon name="plus" size={16} />Add effect
+  <select aria-label="Add effect" disabled={full} onchange={pickNative}>
+    <option value="">Add effect</option>
+    {#each EFFECT_KINDS as kind}<option value={kind}>{EFFECT_NAMES[kind]}</option>{/each}
+  </select>
+</label>
+{:else}
 <div
   class="add-effect"
   onfocusout={(e) => {
@@ -111,6 +129,7 @@
     </div>
   {/if}
 </div>
+{/if}
 {#if full}
   <p class="hint limit">All {MAX_INTERACTIVE_EFFECTS} effect slots are in use. Remove one to add another.</p>
 {:else}

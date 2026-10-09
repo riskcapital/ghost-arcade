@@ -179,3 +179,22 @@
 .studio[data-layout][data-layout] .perform-actions .autopilot-bar button {border:0;min-height:42px;}
 .studio[data-layout][data-layout] .perform-actions .autopilot-bar button:first-child {flex:1;justify-content:flex-start;}
 .studio[data-layout][data-layout] .perform-actions .add-clip {margin-left:0;}
+
+/* The workspace bar as it appears inside Studio: same look, outside the deck's grid. */
+nav.tabs.in-studio {display:flex;flex:none;padding:0 4px;gap:0;border-top:1px solid var(--ga-line-2);background:var(--ga-bar,#0d1117);}
+nav.tabs.in-studio button {flex:1;display:flex;align-items:center;justify-content:center;min-height:48px;min-width:44px;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px;border:0;background:transparent;color:var(--ga-ink-2);}
+nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-selection-bg);}
+/* Top row now carries tempo, A/B and Auto: keep each compact. */
+.studio[data-layout][data-layout] .monitor-tools .autopilot-bar {flex:none;}
+.studio[data-layout][data-layout] .monitor-tools .autopilot-bar button {min-width:40px;padding:0 8px;border:0;}
+.studio[data-layout='phone'][data-layout] .monitor-tools {gap:6px;}
+.studio[data-layout='phone'][data-layout] .monitor-tools .tempo-chip {padding:0 9px;}
+.studio[data-layout='phone'][data-layout] .monitor-tools .ab-chip {padding:0 9px;}
+.studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar button span {display:none;}
+.studio[data-layout='phone'][data-layout] .monitor-tools > span:empty {min-width:0;}
+.studio[data-layout='phone'][data-layout] .monitor-tools > button {padding-left:9px;padding-right:9px;}
+.studio[data-layout='phone'][data-layout] .monitor-tools {gap:5px;}
+.studio[data-layout='phone'][data-layout] .monitor-tools > span:empty {display:none;}
+.studio[data-layout='phone'][data-layout] .monitor-tools > button {padding-left:7px;padding-right:7px;font-size:11px;gap:4px;}
+.studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar {margin-right:auto;}
+.studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar button {min-width:36px;padding:0 6px;}

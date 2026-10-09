@@ -131,6 +131,17 @@
   let interactiveOpen=false,interactiveMounted=false,interactiveLive=false;
   let interactiveWorkspace:MobileInteractiveWorkspace;
   function openInteractive(){interactiveMounted=true;interactiveOpen=true;mixerOpen=false;}
+  /** The bottom bar. It stays on screen in Studio too, so every workspace is one tap away. */
+  const NAV=[{id:'perform',label:'Perform',icon:'grid'},{id:'flux',label:'Flux',icon:'flux'},{id:'map',label:'Map',icon:'map'},{id:'interactive',label:'Studio',icon:'depth'},{id:'tools',label:'Tools',icon:'scan'},{id:'ctrls',label:'Ctrls',icon:'controls'}] as const;
+  const navActive=(id:string,current:string,mixing:boolean,studio:boolean,controls:boolean)=>id==='interactive'?studio:id==='ctrls'?controls&&!studio:id==='tools'?false:!studio&&!mixing&&!controls&&current===id;
+  function navTo(id:typeof NAV[number]['id']){
+    feel(prefs,'switch');
+    if(id==='tools'){toolkitOpen=true;return;}
+    if(id==='interactive'){openInteractive();return;}
+    interactiveOpen=false;
+    if(id==='ctrls'){if(clipControlsOpen)closeControls();else{if(tab!=='perform')selectTab('perform');openControls(selectedLayer);}return;}
+    closeControls();selectTab(id);
+  }
   function interactiveOutput(target:HTMLCanvasElement|null){if(!interactiveOutputAllowed)return;interactiveLive=!!target;externalOutput?.destroy();externalOutput=new ExternalOutput(target??output,status=>outputStatus=status);externalOutput.configure(outputPreferences);}
   $: if(engine)engine.previewSuspended=interactiveOpen&&(interactiveLive||outputStatus.state!=='live');
 
@@ -1432,9 +1443,9 @@
     </div>
   </header>
   <nav class="tabs" aria-label="Workspace">
-    {#each [{id:'perform',label:'Perform',icon:'grid'}, {id:'flux',label:'Flux',icon:'flux'}, {id:'map',label:'Map',icon:'map'}, {id:'interactive',label:'Studio',icon:'depth'}, {id:'tools',label:'Tools',icon:'scan'}, {id:'desktop',label:'Desktop',icon:'output'}] as t}
-      <button class:active={!mixerOpen && tab===t.id} aria-pressed={!mixerOpen && tab===t.id} aria-current={!mixerOpen && tab===t.id ? 'page' : undefined}
-        onclick={async()=>{feel(prefs,'switch');if(t.id==='desktop'){await prepareCaptureTool();oncompanion();}else if(t.id==='tools')toolkitOpen=true;else if(t.id==='interactive')openInteractive();else selectTab(t.id as typeof tab);}}><Icon name={t.icon}/><span>{t.label}</span></button>
+    {#each NAV as t}
+      <button class:active={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-pressed={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-current={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen) ? 'page' : undefined}
+        onclick={()=>navTo(t.id)}><Icon name={t.icon}/><span>{t.label}</span></button>
     {/each}
   </nav>
   <main class="workspace">
@@ -1488,7 +1499,10 @@
         {#if tab==='perform' && !prefs.coachDone && !clean && !visualsDown}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
       </div>
       <div class="monitor-tools">
-        {#if tab==='perform' && !interactiveLive}<button class="tempo-chip" class:active={tempoOpen} aria-expanded={tempoOpen} aria-label={`Tempo ${show.bpm} BPM. Tap tempo and audio.`} onclick={toggleTempo}><strong>{show.bpm}</strong>BPM</button><button class="ab-chip" class:active={show.dualDeck} aria-pressed={show.dualDeck} aria-label="A/B decks" onclick={()=>setDual(!show.dualDeck)}>A/B</button>{/if}
+        {#if tab==='perform' && !interactiveLive}<button class="tempo-chip" class:active={tempoOpen} aria-expanded={tempoOpen} aria-label={`Tempo ${show.bpm} BPM. Tap tempo and audio.`} onclick={toggleTempo}><strong>{show.bpm}</strong>BPM</button><button class="ab-chip" class:active={show.dualDeck} aria-pressed={show.dualDeck} aria-label="A/B decks" onclick={()=>setDual(!show.dualDeck)}>A/B</button><div class="autopilot-bar">
+            <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
+            <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
+          </div>{/if}
         {#if interactiveLive}<button onclick={openInteractive}>Interactive</button><button onclick={()=>interactiveWorkspace?.restoreMix()}>Return to mix</button>{/if}
         <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':''}</span><button
           class:active={frozen}
@@ -1509,10 +1523,6 @@
             <div><button class="primary" data-repair-fix onclick={fixSet}>Fix this set</button><button data-repair-keep onclick={() => (repairOffer = null)}>Keep as it is</button></div>
             <small>You can undo the fix. It also stays in Set settings.</small>
           </section>{/if}
-          <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><div class="autopilot-bar">
-            <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
-            <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
-          </div><button class="add-clip" data-add-clip aria-haspopup="dialog" onclick={()=>openPicker()}><Icon name="plus" size={18}/>Add</button></div>
             <StudioDecks {show} {selectedLayer} {pending} {loading} highlight={freshPad}
               onSelect={changeLayer}
               onControls={openControls}
@@ -1861,7 +1871,12 @@
   {#if clean}<button class="exit-clean" onclick={() => (clean = false)}>Return to studio</button>{/if}
 </div>
 {#if toolkitOpen}<CaptureToolkit mappingSurfaces={show.surfaces} oninteractive={()=>{toolkitOpen=false;openInteractive();}} oninteractiveoutput={interactiveOutput} {oncompanion} onclose={()=>toolkitOpen=false} onprepare={prepareCaptureTool} onshots={importCameraShots}/>{/if}
-{#if interactiveMounted}<MobileInteractiveWorkspace bind:this={interactiveWorkspace} open={interactiveOpen} outputLevel={show.master} outputHeld={frozen} outputBlackout={blackout} mappingSurfaces={show.surfaces} outputLabel={blackout&&interactiveLive?'Blackout active':frozen&&interactiveLive?'Output held':outputStatus.state==='live'?`Live · ${outputStatus.display?.name??'External display'}`:outputStatus.state==='connecting'?'Connecting…':outputStatus.state==='off'?'External output disabled':outputStatus.state==='error'?outputStatus.message??'Output needs attention':'No external display connected'} onpreparecamera={prepareCaptureTool} onoutput={interactiveOutput} onoutputsettings={()=>outputSettings=true} onclose={()=>interactiveOpen=false}/>{/if}
+{#if interactiveMounted}<MobileInteractiveWorkspace bind:this={interactiveWorkspace} open={interactiveOpen} outputLevel={show.master} outputHeld={frozen} outputBlackout={blackout} mappingSurfaces={show.surfaces} outputLabel={blackout&&interactiveLive?'Blackout active':frozen&&interactiveLive?'Output held':outputStatus.state==='live'?`Live · ${outputStatus.display?.name??'External display'}`:outputStatus.state==='connecting'?'Connecting…':outputStatus.state==='off'?'External output disabled':outputStatus.state==='error'?outputStatus.message??'Output needs attention':'No external display connected'} onpreparecamera={prepareCaptureTool} onoutput={interactiveOutput} onoutputsettings={()=>outputSettings=true} onclose={()=>interactiveOpen=false}><nav class="tabs in-studio" slot="nav" aria-label="Workspace">
+    {#each NAV as t}
+      <button class:active={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-pressed={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-current={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen) ? 'page' : undefined}
+        onclick={()=>navTo(t.id)}><Icon name={t.icon}/><span>{t.label}</span></button>
+    {/each}
+  </nav></MobileInteractiveWorkspace>{/if}
 {#if outputSettings}<OutputPanel source={interactiveLive?'interactive':'mix'} status={outputStatus} preferences={outputPreferences} quality={show.quality} onpreferences={value=>{outputPreferences=value;externalOutput?.configure(value);}} onquality={quality=>{show.quality=quality;persist();}} onwireless={()=>externalOutput?.chooseWireless()} onclose={()=>outputSettings=false} onretry={()=>externalOutput?.retry()} onpreview={()=>{outputSettings=false;if(interactiveLive){interactiveOpen=true;interactiveWorkspace?.previewOutput();}else clean=true;}}/>{/if}
 {#if settings}<div class="modal-backdrop" role="presentation">
     <div
