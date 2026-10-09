@@ -10,13 +10,6 @@ export const INTERACTIVE_STARTERS = [
     description: 'A burning box, drifting smoke. Drag the box to move the source.',
   },
   {
-    id: 'liquid',
-    name: 'Liquid spill',
-    icon: 'drop',
-    color: '#77d5f5',
-    description: 'A continuous stream meets two ledges. Move the nozzle and stir.',
-  },
-  {
     id: 'light',
     name: 'After hours',
     icon: 'fx',
@@ -74,37 +67,6 @@ export function starterScene(id: InteractiveStarter): InteractiveScene {
       add('fire', { flow: 0.65, heat: 1.2, hue: 24 }, 'block'),
       add('smoke', { flow: 0.25, haze: 0.23, opacity: 0.35 }, 'block'),
     ];
-  if (id === 'liquid') {
-    scene.surfaces = [
-      {
-        id: 'ledge-left',
-        name: 'Left ledge',
-        behavior: 'solid',
-        height: 0.15,
-        points: [
-          { x: 0.12, y: 0.5 },
-          { x: 0.52, y: 0.59 },
-          { x: 0.52, y: 0.65 },
-          { x: 0.12, y: 0.56 },
-        ],
-      },
-      {
-        id: 'ledge-right',
-        name: 'Right ledge',
-        behavior: 'solid',
-        height: 0.15,
-        points: [
-          { x: 0.62, y: 0.74 },
-          { x: 0.87, y: 0.67 },
-          { x: 0.87, y: 0.73 },
-          { x: 0.62, y: 0.8 },
-        ],
-      },
-    ];
-    scene.effects = [
-      add('liquid', { x: 0.35, y: 0.12, flow: 0.85, lifetime: 5, gravity: 0.45, viscosity: 0.35, hue: 195 }),
-    ];
-  }
   if (id === 'light') {
     scene.surfaces = [0.25, 0.5, 0.75].map((x, i) => ({
       id: `column-${i}`,

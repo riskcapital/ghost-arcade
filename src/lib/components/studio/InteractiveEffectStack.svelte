@@ -3,7 +3,7 @@
   import { tick } from 'svelte';
   import Icon from './StudioIcon.svelte';
   import {
-    EFFECT_KINDS,
+    OFFERED_EFFECT_KINDS,
     EFFECT_NAMES,
     MAX_INTERACTIVE_EFFECTS,
     type EffectKind,
@@ -96,7 +96,7 @@
   <Icon name="plus" size={16} />Add effect
   <select aria-label="Add effect" disabled={full} onchange={pickNative}>
     <option value="">Add effect</option>
-    {#each EFFECT_KINDS as kind}<option value={kind}>{EFFECT_NAMES[kind]}</option>{/each}
+    {#each OFFERED_EFFECT_KINDS as kind}<option value={kind}>{EFFECT_NAMES[kind]}</option>{/each}
   </select>
 </label>
 {:else}
@@ -123,7 +123,7 @@
   {#if menuOpen}
     <!-- svelte-ignore a11y_interactive_supports_focus -->
     <div class="add-effect-menu" role="menu" aria-label="Add effect" bind:this={menu} onkeydown={menuKey}>
-      {#each EFFECT_KINDS as kind}
+      {#each OFFERED_EFFECT_KINDS as kind}
         <button role="menuitem" onclick={() => choose(kind)}>{EFFECT_NAMES[kind]}</button>
       {/each}
     </div>
