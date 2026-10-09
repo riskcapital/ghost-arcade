@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runAutoMap, type AutoMapLink, type AutoMapCamera } from './autoMap';
+import { runAutoMap, squaredSurface, type AutoMapLink, type AutoMapCamera } from './autoMap';
 import { planPatterns, patternValue, applyHomography, type PatternFrame } from './structuredLight';
 import { stripeFrameCode, STRIPE_CELL, STRIPE_CELLS } from './structuredLightCodes';
 
@@ -112,5 +112,29 @@ describe('auto-map run', () => {
   it('says what to do when no Screen is open', async () => {
     const none: AutoMapLink = { async request() { return { screens: [] }; } };
     await expect(runAutoMap(none, { async grab() { throw new Error('unused'); } })).rejects.toThrow(/Open on display/);
+  });
+});
+
+describe('squared surface', () => {
+  it('fits an upright rectangle of the picture shape inside a keystoned footprint', () => {
+    const quad = truth.left, aspect = 16 / 9;
+    const rect = squaredSurface(quad, CAM_W, CAM_H, aspect)!;
+    expect(rect).toHaveLength(4);
+    // Upright, and the picture's shape in photo pixels.
+    expect(rect[0].y).toBeCloseTo(rect[1].y, 6);
+    expect(rect[0].x).toBeCloseTo(rect[3].x, 6);
+    const w = (rect[1].x - rect[0].x) * CAM_W, h = (rect[3].y - rect[0].y) * CAM_H;
+    expect(w / h).toBeCloseTo(aspect, 3);
+    // Inside the footprint, and most of it is used.
+    const px = quad.map(p => [p.x * CAM_W, p.y * CAM_H]);
+    for (const c of rect) for (let i = 0; i < 4; i++) {
+      const [ax, ay] = px[i], [bx, by] = px[(i + 1) % 4];
+      expect((bx - ax) * (c.y * CAM_H - ay) - (by - ay) * (c.x * CAM_W - ax)).toBeGreaterThanOrEqual(0);
+    }
+    const area = (q: number[][]) => Math.abs(q.reduce((sum, [x, y], i) => sum + x * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * y, 0)) / 2;
+    expect(w * h / area(px)).toBeGreaterThan(0.55);
+  });
+  it('refuses a footprint that is not a convex quad', () => {
+    expect(squaredSurface([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 1, y: 0 }, { x: 0, y: 1 }], 100, 100, 1.5)).toBeNull();
   });
 });

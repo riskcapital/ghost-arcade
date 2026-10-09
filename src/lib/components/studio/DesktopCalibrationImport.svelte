@@ -7,6 +7,8 @@
  let seen='';
  $: if(incoming&&incoming!==seen){seen=incoming;try{data=readMobileCalibration(incoming);projector=surface=0;message='Received from phone. Review before applying to an output.';}catch(e){message=(e as Error).message;}}
  let data:ImportedCalibration|null=null,message='',projector=0,surface=0,target='';
+ // Pick the Screen this projector was measured on: the one with its name, or the only Screen there is.
+ $: if(data&&!target){const named=$screens.find(s=>s.name===data?.projectors[projector]?.name);target=named?.id??($screens.length===1?$screens[0].id:'');}
  $: candidate=data?.projectors[projector];
  $: shape=candidate?.surfaces[surface];
  async function load(e:Event){const file=(e.target as HTMLInputElement).files?.[0];if(!file)return;try{if(file.size>25_000_000)throw Error('Calibration exceeds 25 MB.');data=readMobileCalibration(await file.text());projector=surface=0;message='Review the surface and assign the matching physical projector output.';}catch(e){data=null;message=(e as Error).message;}(e.target as HTMLInputElement).value='';}
