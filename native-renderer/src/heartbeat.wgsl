@@ -77,6 +77,13 @@ struct Uniforms {
   // Beat clock (beat position, bpm, _, _): the editor's launch clock, run on
   // the render clock between anchors. Drives beat-synced Edge Effects.
   clock: vec4<f32>,
+  // Flux, played from a paired phone, applied by the output stage:
+  //   flux0 = (x, y, energy, wet amount; 0 = off)
+  //   flux1 = (beat lock, blend mode, _, module bits)
+  // Module bits follow FLUX_MODULES in flux.ts: Liquid, Fold, Prism, Echo,
+  // Solar, Slice, Tile, Tunnel, Pixel, Glitch, Ink, Pulse.
+  flux0: vec4<f32>,
+  flux1: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -3894,6 +3901,131 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 @group(1) @binding(0) var creative_master: texture_2d<f32>;
 @group(1) @binding(1) var creative_sampler: sampler;
 
+// ── Flux on the output ─────────────────────────────────────────────────────
+// The phone app's Flux effect (src/lib/mobile/studio/flux.ts), line for line,
+// so a look built on the phone is the look on the wall. It resamples the
+// finished picture, which is why it lives in the output stage.
+fn flux_has(bit: u32) -> bool {
+  return ((u32(max(u.flux1.w, 0.0) + 0.5) >> bit) & 1u) == 1u;
+}
+fn flux_rot(a: f32) -> mat2x2<f32> {
+  return mat2x2<f32>(vec2<f32>(cos(a), -sin(a)), vec2<f32>(sin(a), cos(a)));
+}
+/// The picture at `q` (same UV as fs_output's `uv`), mirrored past its edges.
+fn flux_tap(q: vec2<f32>) -> vec3<f32> {
+  let m = q - 2.0 * floor(q / 2.0);
+  let w = vec2<f32>(1.0) - abs(m - vec2<f32>(1.0));
+  return textureSampleLevel(creative_master, creative_sampler, vec2<f32>(w.x, 1.0 - w.y), 0.0).rgb;
+}
+fn flux_apply(dry: vec3<f32>, uv_in: vec2<f32>) -> vec3<f32> {
+  let PI = 3.14159265;
+  let TAU = 6.2831853;
+  let x = u.flux0.x * 2.0 - 1.0;
+  let energy = u.flux0.z;
+  let y = clamp(u.flux0.y + energy * 0.35, 0.0, 1.3);
+  let sync = clamp(u.flux1.x, 0.0, 1.0);
+  let beat = u.clock.x;
+  let clock = mix(u.time * 0.7, beat * 1.5707963, sync);
+  let pulse = mix(1.0, 0.75 + 0.25 * cos(beat * TAU), sync);
+  let warp = flux_has(0u); let fold = flux_has(1u); let prism = flux_has(2u); let echo = flux_has(3u);
+  let solar = flux_has(4u); let slice = flux_has(5u); let tile = flux_has(6u); let tunnel = flux_has(7u);
+  let pixel = flux_has(8u); let glitch = flux_has(9u); let ink = flux_has(10u); let throb = flux_has(11u);
+  let warp_f = select(0.0, 1.0, warp); let prism_f = select(0.0, 1.0, prism);
+  let echo_f = select(0.0, 1.0, echo); let fold_f = select(0.0, 1.0, fold);
+  var p = uv_in - vec2<f32>(0.5);
+  var radius = length(p);
+  if (tile) {
+    let n = 2.0 + floor(y * 5.0);
+    p = fract((p + vec2<f32>(0.5)) * n + vec2<f32>(x * 0.5, 0.0)) - vec2<f32>(0.5);
+    radius = length(p);
+  }
+  if (fold) {
+    let sectors = 3.0 + floor(y * 9.0);
+    var a = atan2(p.y, p.x) + x * PI + warp_f * radius * (y * 9.0);
+    let sector = 2.0 * PI / sectors;
+    let wrapped = a + sector * 0.5;
+    a = abs(wrapped - sector * floor(wrapped / sector) - sector * 0.5);
+    p = vec2<f32>(cos(a), sin(a)) * radius;
+  }
+  if (warp) {
+    p = flux_rot(x * radius * 5.0 + y * sin(clock) * 0.25) * p;
+    p += vec2<f32>(sin(p.y * (5.0 + y * 18.0) + clock), cos(p.x * (6.0 + y * 15.0) - clock)) * (0.015 + y * 0.14) * pulse;
+  }
+  if (slice) {
+    let bands = 5.0 + floor(y * 28.0);
+    let row = floor((p.y + 0.5) * bands);
+    p.x += sin(row * 2.399 + floor(clock * 3.0)) * (0.015 + y * 0.22) * x;
+    p.y += prism_f * sin(p.x * 15.0 + clock) * y * 0.05;
+  }
+  p = flux_rot(x * 0.35 + energy * sin(clock) * 0.4) * p / (1.0 + y * 0.65 + energy * 0.5);
+  var uv = p + vec2<f32>(0.5);
+  if (pixel) {
+    let rows = 150.0 - min(y, 1.0) * 138.0;
+    let cells = vec2<f32>(rows * u.resolution.x / max(u.resolution.y, 1.0), rows);
+    uv = (floor(uv * cells) + vec2<f32>(0.5)) / cells;
+  }
+  var wet = flux_tap(uv);
+  if (tunnel) {
+    var acc = wet;
+    var total = 1.0;
+    for (var i = 1; i < 8; i = i + 1) {
+      let f = f32(i) / 8.0;
+      let w = 1.0 - f;
+      acc += flux_tap((flux_rot(x * f * 0.6) * (uv - vec2<f32>(0.5))) * (1.0 - f * (0.08 + min(y, 1.0) * 0.5)) + vec2<f32>(0.5)) * w;
+      total += w;
+    }
+    wet = acc / total;
+  }
+  if (glitch) {
+    let tick = floor(clock * 8.0);
+    let band = floor(uv_in.y * (6.0 + y * 30.0));
+    let h = fract(sin(band * 91.7 + tick * 13.3) * 43758.5);
+    let on = step(1.0 - (0.15 + min(y, 1.0) * 0.5), h);
+    let g = vec2<f32>((h - 0.5) * (0.05 + y * 0.3) * on, 0.0);
+    let split = vec2<f32>(0.006 + 0.01 * abs(x), 0.0);
+    wet = vec3<f32>(flux_tap(uv + g + split).r, flux_tap(uv + g).g, flux_tap(uv + g - split).b);
+  }
+  if (echo) {
+    let d = vec2<f32>(x * 0.16, (y - 0.5) * 0.2);
+    let a = flux_tap((flux_rot(fold_f * x * 0.25) * p) * (1.0 + y * 0.4) + vec2<f32>(0.5) + d);
+    let b = flux_tap(p * (1.0 + y * 0.8) + vec2<f32>(0.5) - d);
+    wet = wet * 0.5 + a * 0.3 + b * 0.2;
+  }
+  if (prism) {
+    let d = (normalize(p + vec2<f32>(0.0001)) * (0.003 + y * 0.035) + vec2<f32>(x * 0.012, 0.0)) * (1.0 + warp_f * y * 2.0 + echo_f * y);
+    wet.r = flux_tap(uv + d).r;
+    wet.b = flux_tap(uv - d).b;
+    wet = mix(wet, wet.gbr, 0.2 * y);
+  }
+  if (solar) {
+    let l = dot(wet, vec3<f32>(0.299, 0.587, 0.114));
+    let pal = vec3<f32>(0.5) + 0.5 * cos(TAU * (vec3<f32>(0.0, 0.33, 0.67) + vec3<f32>(l * (1.0 + y * 3.0) + x * 0.5 + prism_f * radius * 2.0)));
+    wet = mix(wet, pal * (0.25 + 0.75 * l), 0.45 + 0.55 * y);
+  }
+  if (ink) {
+    let l = dot(wet, vec3<f32>(0.299, 0.587, 0.114));
+    let steps = 2.0 + floor((1.0 - min(y, 1.0)) * 5.0);
+    let q = floor(l * steps + 0.5) / steps;
+    let tint = vec3<f32>(0.5) + 0.5 * cos(TAU * (vec3<f32>(0.0, 0.33, 0.67) + vec3<f32>(x * 0.5 + 0.6)));
+    wet = mix(vec3<f32>(q), q * tint * 1.6, 0.6);
+  }
+  if (throb) {
+    let ph = mix(u.time * (0.5 + min(y, 1.0)), beat, sync);
+    let swell = pow(0.5 + 0.5 * cos(ph * TAU), 1.0 + y * 5.0);
+    wet *= mix(0.3, 1.15, swell);
+  }
+  wet = clamp(wet, vec3<f32>(0.0), vec3<f32>(1.0));
+  var blended = wet;
+  let mode = u.flux1.y;
+  if (mode > 5.5) { blended = mix(2.0 * dry * wet, vec3<f32>(1.0) - 2.0 * (vec3<f32>(1.0) - dry) * (vec3<f32>(1.0) - wet), step(vec3<f32>(0.5), dry)); }
+  else if (mode > 4.5) { blended = max(dry, wet); }
+  else if (mode > 3.5) { blended = abs(dry - wet); }
+  else if (mode > 2.5) { blended = dry * wet; }
+  else if (mode > 1.5) { blended = vec3<f32>(1.0) - (vec3<f32>(1.0) - dry) * (vec3<f32>(1.0) - wet); }
+  else if (mode > 0.5) { blended = dry + wet; }
+  return mix(dry, clamp(blended, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(u.flux0.w, 0.0, 1.0));
+}
+
 @fragment
 fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
   // Blackout is independent of every creative operation and calibration.
@@ -3908,6 +4040,7 @@ fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
     mask *= domed.z;
   }
   var color = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(uv.x, 1.0 - uv.y), 0.0).rgb;
+  if (u.flux0.w > 0.0005) { color = flux_apply(color, uv); }
   // Screen alignment aids replace the picture and skip the grade, overlap
   // fade and masks: 7 = numbered grid in composition space (through this
   // Screen's crop, warp and projector corners), 8 = identify.

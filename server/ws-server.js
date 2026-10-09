@@ -898,6 +898,10 @@ function handleMessage(sender, msg) {
     case 'studio_automap_reply':
       relayPrivate(sender, msg, 'automap', msg.requestId, msg.type === 'studio_automap_request');
       break;
+    // Flux played on a paired phone, applied to the desktop's outputs.
+    case 'studio_flux':
+      sendDesktop(msg);
+      break;
     case 'studio_capabilities_request':
       sendDesktop(msg);
       break;

@@ -71,6 +71,7 @@
   import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
   import {readMobileCalibration} from './lib/output/mobileCalibrationImport';
   import { openScreenOutputList, setScreenPatternFrames } from './lib/stores/screenOutputStatus';
+  import { receivePhoneFlux } from './lib/output/phoneFlux';
   import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
@@ -3866,6 +3867,9 @@
         syncOutputFreeze(get(outputFrozen));
         break;
 
+      case 'studio_flux':
+        receivePhoneFlux(msg);
+        break;
       case 'studio_automap_request': {
         // A paired phone is photographing stripe frames to map a projector.
         // It names one open Screen and a frame; every other open Screen goes

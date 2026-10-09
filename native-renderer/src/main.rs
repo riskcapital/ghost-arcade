@@ -1312,6 +1312,9 @@ struct Uniforms {
     mwarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
     /// Beat clock: (beat position, bpm, _, _). See `BeatClock`.
     clock: [f32; 4],
+    /// Flux from a paired phone: see `Uniforms.flux0` in heartbeat.wgsl.
+    flux0: [f32; 4],
+    flux1: [f32; 4],
 }
 
 #[repr(C)]
@@ -3988,6 +3991,8 @@ struct RenderState {
     paint_mask_layers: u32,
     start_time: Instant,
     beat_clock: BeatClock,
+    /// Flux played from a paired phone, applied by the output stage (zero = off).
+    output_flux: [[f32; 4]; 2],
     gpu_timing: Option<GpuTimingState>,
     gpu_frames_submitted: u64,
     gpu_frames_completed: Arc<AtomicU64>,
@@ -6849,6 +6854,17 @@ impl App {
                 "set_layer_visibility" => self.apply_layer_visibility(command),
                 "set_layer_color" => self.apply_layer_color(command),
                 "set_layer_tint" => self.apply_layer_tint(command),
+                "set_output_flux" => {
+                    // Flux from a paired phone. Absent or zero gain switches it off.
+                    let number = |key: &str, fallback: f64| command.get(key).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(fallback) as f32;
+                    let flux = [
+                        [number("x", 0.5).clamp(0.0, 1.0), number("y", 0.5).clamp(0.0, 1.0), number("energy", 0.0).clamp(0.0, 1.0), number("gain", 0.0).clamp(0.0, 1.0)],
+                        [number("beat_lock", 0.0).clamp(0.0, 1.0), number("blend", 0.0).clamp(0.0, 6.0).round(), 0.0, number("modules", 0.0).clamp(0.0, 4095.0).round()],
+                    ];
+                    if let Some(renderer) = self.renderer.as_mut() {
+                        renderer.output_flux = flux;
+                    }
+                }
                 "set_beat_clock" => {
                     let Some(anchor) = BeatClockAnchor::from_command(command) else {
                         dropped = dropped.saturating_add(1);
@@ -19322,6 +19338,8 @@ impl RenderState {
                 audio1: [0.0; 4],
                 audio2: [0.0; 4],
                 clock: [0.0, 120.0, 0.0, 0.0],
+                flux0: [0.0; 4],
+                flux1: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -20095,6 +20113,7 @@ impl RenderState {
             paint_mask_layers: 1,
             start_time: Instant::now(),
             beat_clock: BeatClock::default(),
+            output_flux: [[0.0; 4]; 2],
             gpu_timing,
             gpu_frames_submitted: 0,
             gpu_frames_completed,
@@ -20959,7 +20978,8 @@ impl RenderState {
             let needs_detail = spec.width as f32 > self.config.width as f32 * spec.stage.out0[2]
                 || spec.height as f32 > self.config.height as f32 * spec.stage.out0[3]
                 || spec.stage.swarp[0] > 0.5 || spec.stage.mwarp[0] > 0.5;
-            let direct = allow_direct && needs_detail;
+            // Flux resamples the finished picture, so a Screen must take the shared master while it plays.
+            let direct = allow_direct && needs_detail && self.output_flux[0][3] <= 0.0005;
             if direct {
                 self.write_frame_inputs(command_phase, layers.len() as u32, time_seconds, frame_count,
                     layers, None, audio0, audio1, audio2, output_gate, post_effects, spec.stage);
@@ -24547,10 +24567,15 @@ impl RenderState {
     ) {
         let time = time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32());
         let clock = self.beat_clock.uniform(time);
+        self.output_presenter.clock = clock;
+        self.output_presenter.live_time = time;
+        self.output_presenter.flux = self.output_flux;
         let uniforms = Uniforms {
             resolution: [self.config.width as f32, self.config.height as f32],
             time,
             clock,
+            flux0: self.output_flux[0],
+            flux1: self.output_flux[1],
             command_phase,
             layer_count: layers_seen as f32,
             frame_count: frame_count as f32,
