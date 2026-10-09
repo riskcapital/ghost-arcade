@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runAutoMap, squaredSurface, type AutoMapLink, type AutoMapCamera } from './autoMap';
+import { runAutoMap, mapSurface, type AutoMapLink, type AutoMapCamera } from './autoMap';
 import { planPatterns, patternValue, applyHomography, type PatternFrame } from './structuredLight';
 import { stripeFrameCode, STRIPE_CELL, STRIPE_CELLS } from './structuredLightCodes';
 
@@ -115,26 +115,22 @@ describe('auto-map run', () => {
   });
 });
 
-describe('squared surface', () => {
-  it('fits an upright rectangle of the picture shape inside a keystoned footprint', () => {
-    const quad = truth.left, aspect = 16 / 9;
-    const rect = squaredSurface(quad, CAM_W, CAM_H, aspect)!;
-    expect(rect).toHaveLength(4);
-    // Upright, and the picture's shape in photo pixels.
-    expect(rect[0].y).toBeCloseTo(rect[1].y, 6);
-    expect(rect[0].x).toBeCloseTo(rect[3].x, 6);
-    const w = (rect[1].x - rect[0].x) * CAM_W, h = (rect[3].y - rect[0].y) * CAM_H;
-    expect(w / h).toBeCloseTo(aspect, 3);
-    // Inside the footprint, and most of it is used.
-    const px = quad.map(p => [p.x * CAM_W, p.y * CAM_H]);
-    for (const c of rect) for (let i = 0; i < 4; i++) {
-      const [ax, ay] = px[i], [bx, by] = px[(i + 1) % 4];
-      expect((bx - ax) * (c.y * CAM_H - ay) - (by - ay) * (c.x * CAM_W - ax)).toBeGreaterThanOrEqual(0);
-    }
-    const area = (q: number[][]) => Math.abs(q.reduce((sum, [x, y], i) => sum + x * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * y, 0)) / 2;
-    expect(w * h / area(px)).toBeGreaterThan(0.55);
-  });
-  it('refuses a footprint that is not a convex quad', () => {
-    expect(squaredSurface([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 1, y: 0 }, { x: 0, y: 1 }], 100, 100, 1.5)).toBeNull();
-  });
+describe('outlined surface', () => {
+  it('maps an outline traced on the photo into the projector picture', async () => {
+    const { link, camera } = rig();
+    const result = await runAutoMap(link, camera, () => {}, { settleMs: 0, encode: () => '' });
+    const left = result.projectors[0];
+    // A patch well inside the left projector's footprint, traced on the photo.
+    const outline = [{ x: 0.2, y: 0.35 }, { x: 0.45, y: 0.33 }, { x: 0.46, y: 0.6 }, { x: 0.21, y: 0.62 }];
+    const mapped = mapSurface(left, outline);
+    const h = quadToQuad(truth.left.map(p => [p.x * CAM_W, p.y * CAM_H]), [[0, 0], [1920, 0], [1920, 1080], [0, 1080]]);
+    outline.forEach((p, i) => {
+      const want = applyHomography(h, p.x * CAM_W, p.y * CAM_H);
+      expect(Math.abs(mapped.points[i].x * 1920 - want.x)).toBeLessThan(12);
+      expect(Math.abs(mapped.points[i].y * 1080 - want.y)).toBeLessThan(12);
+    });
+    expect(mapped.agree).toBeGreaterThan(0.9);
+    // Outside the lit area there is nothing to fit.
+    expect(() => mapSurface(left, [{ x: 0.9, y: 0.02 }, { x: 0.98, y: 0.02 }, { x: 0.98, y: 0.08 }, { x: 0.9, y: 0.08 }])).toThrow(/does not light/);
+  }, 30000);
 });
