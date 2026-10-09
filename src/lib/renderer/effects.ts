@@ -291,6 +291,8 @@ export { effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExt
 
 export const effectShaders: Record<EffectType, string> = {
   cubeLut: '', // Native GPU storage-table pass; no GLSL material.
+  paintDrip: '', // Native effect pass only.
+  inkFlow: '', // Native effect pass only.
   // ── WebGPU effects (no GLSL shader; dispatched via gpuEffectRunner) ──
   // The engine's applyEffects() short-circuits before reaching the
   // GLSL material path for these. The empty string here is just to
@@ -4938,6 +4940,10 @@ export function getDefaultEffectParams(type: EffectType): EffectParams {
         ofdmIntensity: 0.7, ofdmMotionScale: 1, ofdmPersistence: 0.7,
         ofdmChromaSplit: 0.3, ofdmBlockSize: 12, ofdmFreeze: 0, ofdmMode: 0,
       };
+    case 'paintDrip':
+      return { dripLength: 0.35, dripColumns: 22, dripSpeed: 0.6, dripWobble: 0.4, dripGloss: 0.35, dripStreak: 0.6 };
+    case 'inkFlow':
+      return { inkAmount: 0.5, inkScale: 3, inkSpeed: 0.5, inkAngle: 90, inkStream: 0.35, inkBleed: 0.6, inkPigment: 0.5, inkMix: 1 };
     case 'flowFieldTrails':
       return {
         fftFlowScale: 4, fftTrailLength: 0.4, fftSamples: 24, fftSpeed: 0.8,

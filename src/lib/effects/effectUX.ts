@@ -2058,6 +2058,24 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
     ofdmFreeze: { label: 'Freeze', min: 0, max: 1, step: 0.01, default: 0 },
     ofdmChromaSplit: { label: 'Chroma Split', min: 0, max: 1, step: 0.01, default: 0.3 },
   },
+  paintDrip: {
+    dripLength: { label: 'Length', min: 0, max: 1, step: 0.01, default: 0.35 },
+    dripColumns: { label: 'Drips', min: 4, max: 80, step: 1, default: 22 },
+    dripSpeed: { label: 'Speed', min: 0, max: 3, step: 0.01, default: 0.6 },
+    dripStreak: { label: 'Smear', min: 0, max: 1, step: 0.01, default: 0.6 },
+    dripWobble: { label: 'Wobble', min: 0, max: 1, step: 0.01, default: 0.4 },
+    dripGloss: { label: 'Gloss', min: 0, max: 1, step: 0.01, default: 0.35 },
+  },
+  inkFlow: {
+    inkAmount: { label: 'Run', min: 0, max: 1, step: 0.01, default: 0.5 },
+    inkBleed: { label: 'Bleed', min: 0, max: 1, step: 0.01, default: 0.6 },
+    inkPigment: { label: 'Pigment', min: 0, max: 1, step: 0.01, default: 0.5 },
+    inkScale: { label: 'Swirl Size', min: 0.5, max: 12, step: 0.1, default: 3 },
+    inkSpeed: { label: 'Speed', min: 0, max: 3, step: 0.01, default: 0.5 },
+    inkStream: { label: 'Stream', min: 0, max: 1, step: 0.01, default: 0.35 },
+    inkAngle: { label: 'Stream Angle', min: 0, max: 360, step: 1, default: 90 },
+    inkMix: { label: 'Mix', min: 0, max: 1, step: 0.01, default: 1 },
+  },
   flowFieldTrails: {
     fftMode: {
       label: 'Mode', min: 0, max: 2, step: 1, default: 0, type: 'select',
@@ -3501,6 +3519,21 @@ export const effectPresets: Partial<Record<EffectType, EffectPreset[]>> = {
     { name: 'Frozen Mosh',     params: { ofdmMode: 1, ofdmIntensity: 1, ofdmMotionScale: 1.4, ofdmPersistence: 0.95, ofdmFreeze: 0.85 } },
     { name: 'Smooth Trail',    params: { ofdmMode: 2, ofdmIntensity: 0.7, ofdmMotionScale: 1, ofdmPersistence: 0.8, ofdmBlockSize: 14 } },
     { name: 'Glitch Bursts',   params: { ofdmMode: 1, ofdmIntensity: 0.85, ofdmMotionScale: 2, ofdmPersistence: 0.75, ofdmBlockSize: 8, ofdmChromaSplit: 0.85 } },
+  ],
+  paintDrip: [
+    { name: 'Off',          params: { dripLength: 0 } },
+    { name: 'Fresh Paint',  params: { dripLength: 0.3, dripColumns: 22, dripSpeed: 0.5, dripStreak: 0.6, dripWobble: 0.4, dripGloss: 0.35 } },
+    { name: 'Thin Runs',    params: { dripLength: 0.5, dripColumns: 60, dripSpeed: 0.9, dripStreak: 0.8, dripWobble: 0.2, dripGloss: 0.2 } },
+    { name: 'Heavy Melt',   params: { dripLength: 0.9, dripColumns: 10, dripSpeed: 0.35, dripStreak: 0.5, dripWobble: 0.7, dripGloss: 0.5 } },
+    { name: 'Slow Weep',    params: { dripLength: 0.2, dripColumns: 34, dripSpeed: 0.15, dripStreak: 0.9, dripWobble: 0.5, dripGloss: 0.15 } },
+  ],
+  inkFlow: [
+    { name: 'Off',            params: { inkAmount: 0 } },
+    { name: 'Ink in a Stream', params: { inkAmount: 0.55, inkBleed: 0.6, inkPigment: 0.5, inkScale: 3, inkSpeed: 0.5, inkStream: 0.5, inkAngle: 90 } },
+    { name: 'Wet on Wet',     params: { inkAmount: 0.35, inkBleed: 0.9, inkPigment: 0.3, inkScale: 5, inkSpeed: 0.25, inkStream: 0.1 } },
+    { name: 'Marbling',       params: { inkAmount: 0.9, inkBleed: 0.35, inkPigment: 0.6, inkScale: 2, inkSpeed: 0.4, inkStream: 0 } },
+    { name: 'Rain Wash',      params: { inkAmount: 0.7, inkBleed: 0.8, inkPigment: 0.7, inkScale: 6, inkSpeed: 1.1, inkStream: 0.9, inkAngle: 90 } },
+    { name: 'Slow Stain',     params: { inkAmount: 1, inkBleed: 1, inkPigment: 1, inkScale: 1.5, inkSpeed: 0.12, inkStream: 0.2 } },
   ],
   flowFieldTrails: [
     { name: 'Off',              params: { fftTrailLength: 0 } },

@@ -378,6 +378,8 @@ describe('Native effect-pass template', () => {
       ['light-paint', 182],
       ['recursive-echo', 183],
       ['cube-lut', 184],
+      ['paint-drip', 185],
+      ['ink-flow', 186],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,

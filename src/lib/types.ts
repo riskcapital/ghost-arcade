@@ -3291,6 +3291,8 @@ export type EffectType =
   // ── New Hero Effects (Batch A) ──
   | 'opticalFlowDatamosh'
   | 'flowFieldTrails'
+  | 'paintDrip'
+  | 'inkFlow'
   | 'reactionDiffusion'
   | 'neonTubeTrace'
   | 'depthParallax'
@@ -4311,6 +4313,24 @@ export interface EffectParams {
   ofdmBlockSize?: number;          // 4-32
   ofdmFreeze?: number;             // 0-1
   ofdmMode?: number;               // 0=normal, 1=glitch, 2=smooth
+
+  // Paint Drip: the picture runs down in drips
+  dripLength?: number;             // 0-1
+  dripColumns?: number;            // 4-80
+  dripSpeed?: number;              // 0-3
+  dripWobble?: number;             // 0-1
+  dripGloss?: number;              // 0-1
+  dripStreak?: number;             // 0-1
+
+  // Ink Flow: colours run into each other along a stream
+  inkAmount?: number;              // 0-1
+  inkScale?: number;               // 0.5-12
+  inkSpeed?: number;               // 0-3
+  inkAngle?: number;               // 0-360
+  inkStream?: number;              // 0-1
+  inkBleed?: number;               // 0-1
+  inkPigment?: number;             // 0-1
+  inkMix?: number;                 // 0-1
 
   // Flow Field Trails (hero)
   fftFlowScale?: number;           // 0.5-16

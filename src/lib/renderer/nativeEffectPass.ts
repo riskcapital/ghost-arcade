@@ -179,6 +179,8 @@ export type NativeEffectPassId =
   | 'chronophoto'
   | 'optical-flow-datamosh'
   | 'flow-field-trails'
+  | 'paint-drip'
+  | 'ink-flow'
   | 'reaction-diffusion'
   | 'feedback-zoom'
   | 'motion-trails'
@@ -1348,6 +1350,20 @@ export interface NativeEffectPassOptions {
     ofdmBlockSize: number;
     ofdmFreeze: number;
     ofdmMode: number;
+    dripLength: number;
+    dripColumns: number;
+    dripSpeed: number;
+    dripWobble: number;
+    dripGloss: number;
+    dripStreak: number;
+    inkAmount: number;
+    inkScale: number;
+    inkSpeed: number;
+    inkAngle: number;
+    inkStream: number;
+    inkBleed: number;
+    inkPigment: number;
+    inkMix: number;
     fftFlowScale: number;
     fftTrailLength: number;
     fftSamples: number;
@@ -1588,6 +1604,8 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'light-paint', code: 182, defaultAmount: 0.7, amountMin: 0, amountMax: 2 },
   { id: 'recursive-echo', code: 183, defaultAmount: 0.6, amountMin: 0.05, amountMax: 0.95 },
   { id: 'cube-lut', code: 184, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'paint-drip', code: 185, defaultAmount: 0.35, amountMin: 0, amountMax: 1 },
+  { id: 'ink-flow', code: 186, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -8970,6 +8988,93 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
+  if (code == 185u) {
+    // paint-drip: the picture runs down the surface in rounded drips
+    let time = u.resolution_time.z;
+    let cols = max(4.0, u.params0.x);
+    let speed = u.params0.y;
+    let wobble = u.params0.z;
+    let gloss = u.params0.w;
+    let streak = clamp(u.params1.x, 0.0, 1.0);
+    let aspect = u.resolution_time.x / max(u.resolution_time.y, 1.0);
+    var run = 0.0;
+    for (var layer = 0; layer < 3; layer = layer + 1) {
+      let fl = f32(layer);
+      let n = cols * (1.0 + fl * 0.85);
+      let sway = (value_noise2d(vec2<f32>(uv.y * 3.0 + fl * 7.0, fl * 2.3)) - 0.5) * wobble * 0.03;
+      let x = (uv.x + sway) * n + fl * 13.7;
+      let id = floor(x);
+      let fx = fract(x) * 2.0 - 1.0;
+      let h1 = hash21(vec2<f32>(id, fl * 3.1 + 1.0));
+      let h2 = hash21(vec2<f32>(id, fl * 5.7 + 9.0));
+      let h3 = hash21(vec2<f32>(id, fl * 9.3 + 4.0));
+      let half_width = 0.3 + 0.55 * h2;
+      let across = abs(fx) / half_width;
+      // Straight sides and a round bead at the end, as paint runs.
+      let bead = half_width / n * aspect * (1.0 - sqrt(max(0.0, 1.0 - min(across, 1.0) * min(across, 1.0))));
+      let inside = 1.0 - smoothstep(0.86, 1.0, across);
+      // Each drip runs out, hangs, then lets go, on its own clock.
+      let cycle = fract(time * speed * (0.12 + 0.2 * h1) + h2 * 17.0);
+      let grow = smoothstep(0.0, 0.7, cycle) * (1.0 - smoothstep(0.92, 1.0, cycle));
+      let wet = step(0.3, h3);
+      let reach = max(0.0, amount * (0.25 + 0.75 * h1) * grow / (1.0 + fl * 0.6) - bead) * inside * wet;
+      run = max(run, reach);
+    }
+    let top = uv.y - run;
+    let moved = sample_rgb(vec2<f32>(uv.x, top));
+    var smear = vec3<f32>(0.0);
+    for (var i = 0; i < 8; i = i + 1) {
+      let f = f32(i) / 7.0;
+      smear = smear + sample_rgb(vec2<f32>(uv.x, top + run * 0.65 * f));
+    }
+    var result = mix(moved, smear / 8.0, streak);
+    if (gloss > 0.001) {
+      let slope = clamp(dpdx(run) * u.resolution_time.x * 0.5, -1.0, 1.0);
+      let body = smoothstep(0.0, 0.02, run);
+      result = result + vec3<f32>(slope * gloss * 0.22 * body);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 186u) {
+    // ink-flow: colours carried along a moving stream until they run into each other
+    let time = u.resolution_time.z;
+    let flow_scale = max(0.25, u.params0.x);
+    let speed = u.params0.y;
+    let angle = u.params0.z * 0.01745329252;
+    let stream = u.params0.w;
+    let bleed = clamp(u.params1.x, 0.0, 1.0);
+    let pigment = clamp(u.params1.y, 0.0, 1.0);
+    let blend = clamp(u.params1.z, 0.0, 1.0);
+    let aspect = u.resolution_time.x / max(u.resolution_time.y, 1.0);
+    let downstream = vec2<f32>(cos(angle), sin(angle));
+    let drift = downstream * time * speed * 0.25 + vec2<f32>(sin(time * speed * 0.13), cos(time * speed * 0.17)) * 0.4;
+    var p = uv;
+    var light = vec3<f32>(0.0);
+    var dye = vec3<f32>(0.0);
+    var total = 0.0;
+    for (var i = 0; i < 24; i = i + 1) {
+      let f = f32(i) / 23.0;
+      let s = sample_rgb(clamp(p, vec2<f32>(0.0), vec2<f32>(1.0)));
+      let w = mix(exp(-f * 3.0), 1.0, bleed);
+      light = light + s * w;
+      dye = dye + log(s + vec3<f32>(0.02)) * w;
+      total = total + w;
+      let np = vec2<f32>(p.x * aspect, p.y) * flow_scale - drift;
+      let n0 = fbm2d(np);
+      let nx = fbm2d(np + vec2<f32>(0.02, 0.0));
+      let ny = fbm2d(np + vec2<f32>(0.0, 0.02));
+      let swirl = vec2<f32>(-(ny - n0), nx - n0) / 0.02 * 2.4;
+      var flow = swirl * (1.0 - stream * 0.6) + downstream * stream * 1.6;
+      let strength = length(flow);
+      if (strength > 3.0) { flow = flow * (3.0 / strength); }
+      // Look upstream: what lands here was carried from there.
+      p = p - vec2<f32>(flow.x / aspect, flow.y) * amount * 0.02;
+    }
+    let mixed = light / total;
+    let stained = exp(dye / total) - vec3<f32>(0.02);
+    let result = mix(mixed, stained, pigment);
+    return vec4<f32>(clamp(mix(src.rgb, result, blend), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
   if (code == 183u) {
     // recursive-echo: zoom+rotate+translate echo stack
     let depth = clamp(round(u.params0.x), 2.0, 16.0);
@@ -10709,6 +10814,24 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param4 = clampNumber(params.ofdmFreeze ?? params.param4, 0, 1, 0);
     param5 = clampNumber(params.ofdmMode ?? params.param5, 0, 2, 0);
     param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'paint-drip') {
+    amount = clampNumber(options.amount ?? params.dripLength ?? params.amount, 0, 1, 0.35);
+    param0 = clampNumber(params.dripColumns ?? params.param0, 4, 80, 22);
+    param1 = clampNumber(params.dripSpeed ?? params.param1, 0, 3, 0.6);
+    param2 = clampNumber(params.dripWobble ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.dripGloss ?? params.param3, 0, 1, 0.35);
+    param4 = clampNumber(params.dripStreak ?? params.param4, 0, 1, 0.6);
+    param5 = 0; param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'ink-flow') {
+    amount = clampNumber(options.amount ?? params.inkAmount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.inkScale ?? params.param0, 0.5, 12, 3);
+    param1 = clampNumber(params.inkSpeed ?? params.param1, 0, 3, 0.5);
+    param2 = clampNumber(params.inkAngle ?? params.param2, 0, 360, 90);
+    param3 = clampNumber(params.inkStream ?? params.param3, 0, 1, 0.35);
+    param4 = clampNumber(params.inkBleed ?? params.param4, 0, 1, 0.6);
+    param5 = clampNumber(params.inkPigment ?? params.param5, 0, 1, 0.5);
+    param6 = clampNumber(params.inkMix ?? params.param6, 0, 1, 1);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   } else if (options.effect === 'flow-field-trails') {
     amount = clampNumber(options.amount ?? params.fftTrailLength ?? params.amount, 0, 1, 0.4);
     param0 = clampNumber(params.fftFlowScale ?? params.param0, 0.5, 16, 4);
