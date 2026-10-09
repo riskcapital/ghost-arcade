@@ -32,7 +32,7 @@
  async function scan(){
   scanning=true;error='';note='';
   try{
-   if(cap?.getPlatform?.()!=='ios')throw new Error('Use your camera to scan the desktop QR, or paste its pairing link below. In-app scanning is currently available on iPhone and iPad.');
+   if(!native()||!cap?.nativePromise)throw new Error('Use your camera to scan the desktop QR, or paste its pairing link below.');
    const result=await cap.nativePromise('StudioCapture','scanPairingCode',{});
    if(result.url)review(result.url);
   }catch(e){error=e instanceof Error?e.message:'Could not open camera.';}

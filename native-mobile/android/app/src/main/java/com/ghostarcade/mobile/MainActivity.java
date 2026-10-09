@@ -31,6 +31,7 @@ public class MainActivity extends BridgeActivity implements DisplayManager.Displ
 
     @Override public void onCreate(Bundle savedInstanceState) {
         registerPlugin(CompanionLinkPlugin.class);
+        registerPlugin(StudioCapturePlugin.class);
         super.onCreate(savedInstanceState);
         WebView controller = getBridge().getWebView();
         controller.getSettings().setSupportMultipleWindows(true);

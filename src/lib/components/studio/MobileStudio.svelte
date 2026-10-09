@@ -1972,7 +1972,7 @@
         >
       </div>
       <p class="hint" data-export-hint>
-        Saved on this device as you work. {#if setMedia.files}Export with media puts this set and its photos and videos in one file, ready to open on another iPhone or iPad. Export set only leaves the media on this device.{:else}A set file holds your layout, clips and blocks. This set uses no imported photos or videos, so the file is complete.{/if} Open set reads both kinds.
+        Saved on this device as you work. {#if setMedia.files}Export with media puts this set and its photos and videos in one file, ready to open on another phone or tablet. Export set only leaves the media on this device.{:else}A set file holds your layout, clips and blocks. This set uses no imported photos or videos, so the file is complete.{/if} Open set reads both kinds.
       </p>
       <label class="field"
         >Output quality<select bind:value={show.quality} onchange={persist}
@@ -2005,7 +2005,7 @@
       </div>{/if}
       <div class="feel-card" role="group" aria-label="Touch and feel">
         <span class="eyebrow">TOUCH AND FEEL</span>
-        <label class="switch-row"><span><strong>Haptics</strong><small>A light tap when you launch, stop, black out or switch tabs. iPhone only.</small></span><input type="checkbox" role="switch" data-pref-haptics checked={prefs.haptics} onchange={(e)=>{setPrefs({haptics:e.currentTarget.checked});feel(prefs,'switch');}} /></label>
+        <label class="switch-row"><span><strong>Haptics</strong><small>A light tap when you launch, stop, black out or switch tabs.</small></span><input type="checkbox" role="switch" data-pref-haptics checked={prefs.haptics} onchange={(e)=>{setPrefs({haptics:e.currentTarget.checked});feel(prefs,'switch');}} /></label>
         <label class="switch-row"><span><strong>Launch on touch-down</strong><small>Clips start the moment your finger lands, not when it lifts. A swipe that starts on a clip launches it too.</small></span><input type="checkbox" role="switch" data-pref-touchdown checked={prefs.launchOnTouchDown} onchange={(e)=>setPrefs({launchOnTouchDown:e.currentTarget.checked})} /></label>
       </div>
       <div class="storage-card" role="group" aria-label="Storage on this device">

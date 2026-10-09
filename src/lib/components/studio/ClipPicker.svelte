@@ -165,7 +165,7 @@
         </div>
       {/each}
       {#if !media.length}<p class="none">Nothing imported yet. Photos and videos you add are kept on this device for your next session.</p>{/if}
-      <p class="note">H.264 MP4 is the most reliable video format on iPhone and iPad.</p>
+      <p class="note">H.264 MP4 is the most reliable video format on phones and tablets.</p>
     </div>
   {:else}
     <div class="scroll" data-picker-scroll>
@@ -175,7 +175,7 @@
         <button data-camera="depth" disabled={!depth} onclick={ondepth}><Icon name="depth" size={22} /><span><strong>Depth camera</strong><small>Live LiDAR depth as a clip</small></span></button>
       </div>
       {#if !depth}<p class="reason" data-depth-reason>{depthReason}</p>{/if}
-      <p class="note">The camera starts when you launch its clip, and iOS asks for permission the first time.</p>
+      <p class="note">The camera starts when you launch its clip, and your device asks for permission the first time.</p>
     </div>
   {/if}
 </div>
