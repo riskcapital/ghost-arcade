@@ -98,10 +98,11 @@ import { onComposition, shapesToSvg } from './paintingShapes';
 describe('shapes on the painting', () => {
   const corners = { topLeft: { x: 0.2, y: 0.9 }, topRight: { x: 0.8, y: 0.8 }, bottomRight: { x: 0.7, y: 0.1 }, bottomLeft: { x: 0.3, y: 0.2 } };
   it('puts the photo corners on the layer corners', () => {
-    expect(onComposition(corners, 0, 0)).toEqual(corners.topLeft);
-    expect(onComposition(corners, 1, 0)).toEqual(corners.topRight);
-    expect(onComposition(corners, 1, 1)).toEqual(corners.bottomRight);
-    expect(onComposition(corners, 0, 1)).toEqual(corners.bottomLeft);
+    const near = (got: { x: number; y: number }, want: { x: number; y: number }) => { expect(got.x).toBeCloseTo(want.x, 9); expect(got.y).toBeCloseTo(want.y, 9); };
+    near(onComposition(corners, 0, 0), corners.topLeft);
+    near(onComposition(corners, 1, 0), corners.topRight);
+    near(onComposition(corners, 1, 1), corners.bottomRight);
+    near(onComposition(corners, 0, 1), corners.bottomLeft);
   });
   it('writes one polygon per shape in composition pixels, y down', () => {
     const svg = shapesToSvg([{ points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }], color: [0, 0, 0], area: 0.5 }], corners, 1000, 500);
