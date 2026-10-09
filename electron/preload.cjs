@@ -46,6 +46,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // SRC tab Capture chooser — enumerates screens + app windows
   // with thumbnails so the renderer can show a Zoom/Slack-style picker.
   'screen_sources_list',
+  'camera_access_ensure',
   'native_live_capture_available', 'native_live_capture_list_cameras',
   'native_live_capture_start_camera', 'native_live_capture_start_screen',
   'native_live_capture_stop', 'native_live_capture_texture_info',

@@ -19,6 +19,9 @@
 
 import { deriveSignals, type SignalFrame, EMPTY_SIGNAL_FRAME, GESTURE_LIST, type GestureName } from './signals';
 import type { WorkerHandResult } from './mediaPipeWorker';
+import { invoke, isElectron } from '$lib/bridge';
+
+const CAMERA_FIRST_FRAME_TIMEOUT_MS = 8000;
 
 export interface MediaPipeStartOptions {
   /** Specific camera device id, or empty for default. */
@@ -210,6 +213,12 @@ export class MediaPipeSource {
           ? { deviceId: { exact: opts.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }
           : { width: { ideal: 640 }, height: { ideal: 480 } },
       };
+      // macOS gives the page a camera that never sends a frame unless the app has
+      // asked the system for access first, so ask before opening it.
+      if (isElectron) {
+        const access = await invoke<{ ok?: boolean }>('camera_access_ensure').catch(() => null);
+        if (access && access.ok === false) throw new Error('Camera access is off for Ghost Arcade. Turn it on in System Settings, Privacy & Security, Camera, then start again.');
+      }
       localStream = await navigator.mediaDevices.getUserMedia(constraints);
       if (isStale()) { disposeLocals(); return; }
 
@@ -221,10 +230,13 @@ export class MediaPipeSource {
       localVideo.style.cssText = 'position:absolute;top:-99999px;left:-99999px;pointer-events:none;';
       document.body.appendChild(localVideo);
       await new Promise<void>((resolve, reject) => {
-        const onReady = () => { localVideo!.removeEventListener('loadedmetadata', onReady); resolve(); };
-        const onErr = (e: any) => { localVideo!.removeEventListener('error', onErr); reject(e); };
+        // A camera that opens but never sends a picture must not leave the tracker waiting for ever.
+        const giveUp = setTimeout(() => reject(new Error('The camera opened but sent no picture. Check that Ghost Arcade has camera access in your system settings and that no other app is holding the camera, then start again.')), CAMERA_FIRST_FRAME_TIMEOUT_MS);
+        const onReady = () => { clearTimeout(giveUp); localVideo!.removeEventListener('loadedmetadata', onReady); resolve(); };
+        const onErr = (e: any) => { clearTimeout(giveUp); localVideo!.removeEventListener('error', onErr); reject(e); };
         localVideo!.addEventListener('loadedmetadata', onReady);
         localVideo!.addEventListener('error', onErr);
+        if (localVideo!.readyState >= 1) onReady();
       });
       if (isStale()) { disposeLocals(); return; }
       await localVideo.play();

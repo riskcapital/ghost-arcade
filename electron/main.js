@@ -6526,6 +6526,21 @@ function registerIpcHandlers() {
     }
   });
 
+  // Camera use in the page (hand, body and face tracking) goes through
+  // getUserMedia, which on macOS hands back a live track that never delivers a
+  // frame until the system permission has been asked for here.
+  ipcMain.handle('camera_access_ensure', async () => {
+    if (process.platform !== 'darwin') return { ok: true, status: 'granted' };
+    let status = 'unknown';
+    try { status = systemPreferences.getMediaAccessStatus('camera'); } catch {}
+    if (status === 'granted') return { ok: true, status };
+    let granted = false;
+    try { granted = await systemPreferences.askForMediaAccess('camera'); }
+    catch (err) { console.warn('[Camera] askForMediaAccess threw:', err?.message || err); }
+    console.log(`[Camera] permission was ${status}, after request: ${granted ? 'granted' : 'denied'}`);
+    return { ok: granted, status: granted ? 'granted' : 'denied' };
+  });
+
   ipcMain.handle('native_live_capture_start_camera', async (_event, args = {}) => {
     const addon = loadLiveCaptureAddon();
     if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
