@@ -233,15 +233,15 @@
       if (!parsed.mappings.length) {
         // An empty `mappings` array parses fine; without this a Replace would wipe
         // everything to import nothing. Nothing failed, so it's a no-op, not an error.
-        showToast('That file has no MIDI mappings — nothing loaded, existing mappings kept', 'info');
+        showToast('That file has no MIDI mappings. Nothing was changed.', 'info');
         return;
       }
       // Switching controller layouts needs a clean slate — merge-by-path would
       // leave the old layout's rows on any control the new file doesn't claim.
       const existing = $midiStore.mappings.length;
       const replace = existing > 0 && window.confirm(
-        `Replace the ${existing} existing MIDI mapping${existing === 1 ? '' : 's'} with this file?\n\n` +
-        'OK = replace all.  Cancel = keep them and merge by path.',
+        `Replace your ${existing} MIDI mapping${existing === 1 ? '' : 's'} with this file?\n\n` +
+        'OK replaces them all. Cancel keeps yours and adds the ones from the file.',
       );
       midiStore.importMappings(parsed.mappings, replace);
       const who = parsed.controller ? ` (${parsed.controller})` : '';
@@ -320,8 +320,8 @@
         class="midi-file-input"
         onchange={handleMappingFileChosen}
       />
-      <button class="midi-bar-btn" title="Load mappings from a JSON file (asks to replace or merge if any exist)" onclick={() => mappingFileInput?.click()}>LOAD</button>
-      <button class="midi-bar-btn" title="Save all mappings to a JSON file" disabled={!$midiStore.mappings.length} onclick={saveMappingsToFile}>SAVE</button>
+      <button class="midi-bar-btn" title="Load MIDI mappings from a file" onclick={() => mappingFileInput?.click()}>LOAD</button>
+      <button class="midi-bar-btn" title="Save your MIDI mappings to a file" disabled={!$midiStore.mappings.length} onclick={saveMappingsToFile}>SAVE</button>
       <button class="midi-exit-btn" onclick={() => midiStore.setEditMode(false)}>EXIT</button>
     </div>
   </div>

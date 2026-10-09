@@ -2298,7 +2298,7 @@
 
     const stream = streamForSource(source);
     if (!stream) {
-      showToast(`Can't record ${source.name}: no capturable stream (Spout/NDI not supported yet)`, 'warning');
+      showToast(`Can't record ${source.name}. NDI and Spout sources can't be recorded to a clip yet.`, 'warning');
       return;
     }
 
@@ -2349,7 +2349,7 @@
     video.src = url;
 
     mediaLibrary.addItem({ id, name, src: url, type: 'video', videoElement: video, thumbnail: '', _assetRef: assetRef });
-    showToast(`Recorded clip added to VID: ${name}`, 'info');
+    showToast(`Clip added to Vid: ${name}`, 'info');
 
     await new Promise<void>((resolve) => {
       let ok = false;
@@ -3973,13 +3973,13 @@
 
   {#if midiEditMode}
     <div class="midi-tray-nav">
-      <button data-midi-path="tray:tab:prev" data-midi-label="Library: prev tab" data-midi-mode="toggle" onclick={() => midiStepTab(-1)}>⇤ Tab</button>
-      <button data-midi-path="tray:tab:next" data-midi-label="Library: next tab" data-midi-mode="toggle" onclick={() => midiStepTab(1)}>Tab ⇥</button>
-      <button data-midi-path="tray:prev" data-midi-label="Library: prev item" data-midi-mode="toggle" onclick={() => midiStepCursor(-1)}>◀</button>
-      <button data-midi-path="tray:browse" data-midi-label="Library: browse (encoder/knob)" data-midi-mode="absolute" data-midi-min="0" data-midi-max="1">⟳ Browse</button>
-      <button data-midi-path="tray:next" data-midi-label="Library: next item" data-midi-mode="toggle" onclick={() => midiStepCursor(1)}>▶</button>
+      <button data-midi-path="tray:tab:prev" data-midi-label="Library: prev tab" data-midi-mode="toggle" onclick={() => midiStepTab(-1)}>Prev tab</button>
+      <button data-midi-path="tray:tab:next" data-midi-label="Library: next tab" data-midi-mode="toggle" onclick={() => midiStepTab(1)}>Next tab</button>
+      <button data-midi-path="tray:prev" data-midi-label="Library: prev item" data-midi-mode="toggle" onclick={() => midiStepCursor(-1)}>Prev</button>
+      <button data-midi-path="tray:browse" data-midi-label="Library: browse (encoder/knob)" data-midi-mode="absolute" data-midi-min="0" data-midi-max="1">Browse</button>
+      <button data-midi-path="tray:next" data-midi-label="Library: next item" data-midi-mode="toggle" onclick={() => midiStepCursor(1)}>Next</button>
       <button data-midi-path="tray:load" data-midi-label="Library: load highlighted" data-midi-mode="toggle" onclick={midiLoadCursor}>Load</button>
-      <button data-midi-path="tray:rec" data-midi-label="Library: record source" data-midi-mode="toggle">● Src</button>
+      <button data-midi-path="tray:rec" data-midi-label="Library: record source" data-midi-mode="toggle">Rec source</button>
     </div>
   {/if}
 
@@ -4508,7 +4508,7 @@
                     <button
                       class="source-rec-btn"
                       class:active={!!$sourceRecActive[source.id]}
-                      title={$sourceRecActive[source.id] ? 'Stop recording (adds clip to VID)' : 'Record this source to a clip'}
+                      title={$sourceRecActive[source.id] ? 'Stop recording (adds the clip to Vid)' : 'Record this source to a clip'}
                       data-midi-path={`tray:rec:${sourceIdx}`}
                       data-midi-label={`Record source ${sourceIdx + 1}: ${source.name}`}
                       data-midi-mode="toggle"
