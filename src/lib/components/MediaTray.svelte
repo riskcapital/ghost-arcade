@@ -2166,7 +2166,7 @@
   let midiCursor = 0;
   // Mirrors the tab the cursor belongs to, so the cursor resets on every tab
   // change — including the tab buttons, which assign `activeTab` directly.
-  let midiCursorTab: TrayTab = activeTab;
+  let midiCursorTab: typeof activeTab = activeTab;
   $: if (activeTab !== midiCursorTab) {
     midiCursorTab = activeTab;
     midiCursor = 0;
@@ -2179,6 +2179,8 @@
     : activeTab === 'plugins' ? availablePlugins
     : activeTab === 'js' ? filteredJSAnimations
     : activeTab === 'library' ? []
+    // Phone scans render in their own component with their own load flow.
+    : activeTab === 'scans' ? []
     : Array.from(new Map(mediaSections.flatMap(s => s.items).map(i => [i.id, i])).values())
   ) as Array<{ id: string }>;
   $: if (midiCursor > Math.max(0, midiBrowseList.length - 1)) midiCursor = Math.max(0, midiBrowseList.length - 1);
@@ -2199,8 +2201,15 @@
   }
 
   function midiStepTab(delta: number) {
-    const idx = Math.max(0, TRAY_TAB_ORDER.indexOf(activeTab as TrayTab));
     const n = TRAY_TAB_ORDER.length;
+    // The phone Scan tab is not in the controller's tab order (it only exists
+    // once a phone has sent a scan). It sits between Img and Src, so stepping
+    // off it lands on whichever of those is in the direction of travel.
+    if (activeTab === 'scans') {
+      midiSetTab(delta > 0 ? 'sources' : 'images');
+      return;
+    }
+    const idx = Math.max(0, TRAY_TAB_ORDER.indexOf(activeTab as TrayTab));
     midiSetTab(TRAY_TAB_ORDER[(idx + Math.sign(delta) + n) % n]);
   }
 
