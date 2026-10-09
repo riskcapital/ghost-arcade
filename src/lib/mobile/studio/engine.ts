@@ -84,6 +84,10 @@ export class StudioEngine {
   blackout = false;
   frozen = false;
   testGrid = false;
+  /** Set once any layer has had a clip. Until then the output shows the
+   *  alignment card; after that an empty output is black, so stopping the
+   *  last clip mid-set never puts the card on the projector. */
+  private hadClip = false;
   /** The interactive workspace can sleep the hidden deck renderer when it is not on air. */
   previewSuspended = false;
   onStats: (fps: number) => void = () => {};
@@ -341,6 +345,7 @@ export class StudioEngine {
             inputs.push(null);
             continue;
           }
+          this.hadClip = true;
           if (active && !this.frozen && s.native) s.native.draw(l.params);
           if (active && !this.frozen && !s.native) {
             s.renderer.setAudio(audio);
@@ -390,7 +395,7 @@ export class StudioEngine {
         this.fluxGain+=(target-this.fluxGain)*(1-Math.exp(-dt*22));
         const gesture=fluxEffect(this.flux,this.fluxGain,this.lookBeat);
         const composition=[...(show.effects||[]),...(gesture.enabled?[gesture]:[])];
-        this.compositor.render(show, inputs, this.blackout, this.testGrid, this.lookTime, audio.audioBeat, this.lookBeat, composition.some(e=>e.enabled) ? input => {this.compositionFX.setAudio(audio);return this.compositionFX.processTexture(input,composition,this.lookTime);} : undefined);
+        this.compositor.render(show, inputs, this.blackout, this.testGrid || !this.hadClip, this.lookTime, audio.audioBeat, this.lookBeat, composition.some(e=>e.enabled) ? input => {this.compositionFX.setAudio(audio);return this.compositionFX.processTexture(input,composition,this.lookTime);} : undefined);
       } catch (e) {
         this.contextFailed = true;
         cancelAnimationFrame(this.raf);
