@@ -1,6 +1,6 @@
 <script lang="ts">
  import {onMount,onDestroy,tick} from 'svelte';
- import {openAutoMapCamera,type AutoMapCamera,type AutoMapResult} from '../../mobile/studio/autoMap';
+ import {openAutoMapCamera,squaredSurface,type AutoMapCamera,type AutoMapResult} from '../../mobile/studio/autoMap';
  import {surfaceDepthQuality,homography,unitCorners,project,exportCalibration,grayPatternPlan,type Calibration,type UV,type Reference} from '../../mobile/studio/calibration';
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
@@ -19,7 +19,12 @@
    const result=await automap(autoCamera,text=>message=text);
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
-   message=`Mapped ${result.projectors.map(p=>`${p.name} (fit ${p.rmsPx.toFixed(1)} px)`).join(', ')}. Now trace the surface the picture should fill, then send to desktop.`;
+   // One projector: offer a squared-up picture straight away, no tracing needed.
+   const only=result.projectors.length===1?result.projectors[0]:undefined;
+   const squared=only?squaredSurface(only.corners,result.reference.width,result.reference.height,only.width/only.height):null;
+   if(squared)surfaces=[{id:crypto.randomUUID(),name:'Squared picture',points:squared}];
+   const fit=result.projectors.map(p=>`${p.name} (fit ${p.rmsPx.toFixed(1)} px)`).join(', ');
+   message=squared?`Mapped ${fit}. A squared-up picture is ready: send it to the desktop, or remove it and trace your own surface.`:`Mapped ${fit}. Now trace the surface the picture should fill, then send to desktop.`;
   }catch(e){message=e instanceof Error?e.message:'Auto map failed.';}
   finally{busy=false;closeAuto();}
  }

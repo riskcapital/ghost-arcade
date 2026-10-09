@@ -153,3 +153,47 @@ export async function openAutoMapCamera(preview?: HTMLVideoElement): Promise<Aut
     stop() { stream.getTracks().forEach(t => t.stop()); if (!preview) video.srcObject = null; },
   };
 }
+
+/**
+ * The largest upright rectangle, in the picture's own shape, that fits
+ * inside a projector's footprint in the photo. With one projector this is
+ * the obvious surface: a squared-up picture as seen from where the phone
+ * stood, with no tracing. Returns TL, TR, BR, BL in normalised photo
+ * coordinates, or null if the footprint is not a convex quad.
+ */
+export function squaredSurface(corners: UV[], photoWidth: number, photoHeight: number, aspect: number): UV[] | null {
+  if (corners.length !== 4 || !(aspect > 0)) return null;
+  const quad = corners.map(p => ({ x: p.x * photoWidth, y: p.y * photoHeight }));
+  const cross = quad.map((a, i) => {
+    const b = quad[(i + 1) % 4], c = quad[(i + 2) % 4];
+    return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+  });
+  const sign = Math.sign(cross[0]);
+  if (!sign || cross.some(v => Math.sign(v) !== sign)) return null;
+  const inside = (x: number, y: number) => quad.every((a, i) => {
+    const b = quad[(i + 1) % 4];
+    return ((b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)) * sign >= 0;
+  });
+  const fits = (cx: number, cy: number, halfHeight: number) => {
+    const halfWidth = halfHeight * aspect;
+    return inside(cx - halfWidth, cy - halfHeight) && inside(cx + halfWidth, cy - halfHeight)
+      && inside(cx + halfWidth, cy + halfHeight) && inside(cx - halfWidth, cy + halfHeight);
+  };
+  const xs = quad.map(p => p.x), ys = quad.map(p => p.y);
+  const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  let best = { cx: 0, cy: 0, half: 0 };
+  const steps = 40;
+  for (let iy = 1; iy < steps; iy++) for (let ix = 1; ix < steps; ix++) {
+    const cx = minX + (maxX - minX) * ix / steps, cy = minY + (maxY - minY) * iy / steps;
+    if (!fits(cx, cy, best.half + 0.5)) continue;
+    let low = best.half, high = (maxY - minY) / 2;
+    for (let n = 0; n < 24; n++) { const mid = (low + high) / 2; if (fits(cx, cy, mid)) low = mid; else high = mid; }
+    if (low > best.half) best = { cx, cy, half: low };
+  }
+  if (best.half < 2) return null;
+  // A hair inside the footprint, so rounding never puts a corner outside it.
+  const halfHeight = best.half * 0.995, halfWidth = halfHeight * aspect;
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => ({
+    x: (best.cx + sx * halfWidth) / photoWidth, y: (best.cy + sy * halfHeight) / photoHeight,
+  }));
+}
