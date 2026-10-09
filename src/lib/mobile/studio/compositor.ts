@@ -5,12 +5,40 @@ import { baseLayerGain, layerGain, type Show, type Surface, type Point } from '.
 const VERT = `attribute vec2 position; attribute vec2 uv; varying vec2 texCoord; void main(){texCoord=uv;gl_Position=vec4(position.x*2.-1.,1.-position.y*2.,0.,1.);}`;
 const FRAG = `precision highp float;
 varying vec2 texCoord; uniform sampler2D source; uniform sampler2D backdrop;
-uniform int mode; uniform float gain; uniform float feather; uniform vec2 fit; uniform bool contained; uniform bool grid;
+uniform int mode; uniform float gain; uniform float feather; uniform vec2 fit; uniform bool contained; uniform bool grid; uniform vec2 gridSize;
+// The alignment card, matching the desktop's empty-layer card: square grid
+// from the centre, frame, centre cross and circles, diagonals, corner
+// brackets, a grey step row and a colour row. Between the lines it is 0,0,0.
+float cardLine(float d,float h){return 1.-smoothstep(h,h+1.,abs(d));}
+vec3 alignmentCard(vec2 uv,vec2 size){
+ vec2 px=uv*size,c=px-size*.5;float shortSide=min(size.x,size.y),w=clamp(shortSide/540.,1.,3.)*.5,cell=shortSide/12.;
+ vec3 blue=vec3(.322,.471,1.),col=vec3(0.);
+ vec2 g=abs(fract(c/cell+.5)-.5)*cell,major=abs(fract(c/(cell*3.)+.5)-.5)*cell*3.;
+ col=max(col,vec3(.11)*max(cardLine(g.x,w),cardLine(g.y,w)));
+ col=max(col,vec3(.26)*max(cardLine(major.x,w),cardLine(major.y,w)));
+ float d1=abs(c.x*size.y-c.y*size.x)/length(size),d2=abs(c.x*size.y+c.y*size.x)/length(size);
+ col=max(col,vec3(.2)*max(cardLine(d1,w),cardLine(d2,w)));
+ float r=length(c);
+ col=max(col,vec3(.75)*cardLine(r-shortSide*.5+w+1.,w));
+ col=max(col,vec3(.4)*cardLine(r-shortSide*.25,w));
+ col=max(col,blue*cardLine(r-cell*.5,w));
+ col=max(col,vec3(.5)*max(cardLine(c.x,w),cardLine(c.y,w)));
+ col=max(col,vec3(1.)*max(cardLine(c.x,w)*step(abs(c.y),cell*1.5),cardLine(c.y,w)*step(abs(c.x),cell*1.5)));
+ vec2 rowHalf=vec2(cell*3.5,cell*.5),top=c+vec2(0.,cell*2.5),bottom=c-vec2(0.,cell*2.5);
+ if(abs(top.x)<rowHalf.x&&abs(top.y)<rowHalf.y)col=vec3(clamp(floor((top.x+rowHalf.x)/cell),0.,6.)/6.);
+ if(abs(bottom.x)<rowHalf.x&&abs(bottom.y)<rowHalf.y){float i=clamp(floor((bottom.x+rowHalf.x)/cell),0.,6.);
+  col=vec3((i<1.5||(i>3.5&&i<5.5))?1.:0.,i<3.5?1.:0.,mod(i,2.)<.5?1.:0.);}
+ float edge=min(min(px.x,size.x-px.x),min(px.y,size.y-px.y));
+ col=max(col,vec3(1.)*(1.-smoothstep(w*2.+1.,w*2.+2.,edge)));
+ vec2 corner=min(px,size-px);float inset=cell*.5,arm=cell*1.5;
+ col=max(col,blue*max(cardLine(corner.x-inset,w*1.5)*step(inset,corner.y)*step(corner.y,inset+arm),cardLine(corner.y-inset,w*1.5)*step(inset,corner.x)*step(corner.x,inset+arm)));
+ return col;
+}
 void main(){
  vec2 uv=(texCoord-.5)*fit+.5;
  vec4 s=texture2D(source,vec2(uv.x,1.-uv.y));
  if(contained && (uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)) s=vec4(0.);
- if(grid){vec2 p=texCoord*vec2(16.,9.);float line=step(.94,fract(p.x))+step(.94,fract(p.y));s=vec4(mix(vec3(.04,.075,.12),vec3(.2,.55,.9),min(line,1.)),1.);}
+ if(grid)s=vec4(alignmentCard(texCoord,max(gridSize,vec2(1.))),1.);
  float edge=min(min(texCoord.x,1.-texCoord.x),min(texCoord.y,1.-texCoord.y));
  s.a*=gain*(feather>0.?smoothstep(0.,feather,edge):1.);
  if(mode==-2)s.rgb*=gain*(feather>0.?smoothstep(0.,feather,edge):1.);
@@ -111,7 +139,7 @@ export class StudioCompositor {
     gl.deleteShader(f);
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
     this.buffer = gl.createBuffer()!;
-    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid'])
+    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize'])
       this.locations[name] = gl.getUniformLocation(this.program, name);
     for (let i = 0; i < 8; i++) this.sources.push(this.texture());
     for (let i = 0; i < 2; i++) this.targets.push({ texture: this.texture(), frame: gl.createFramebuffer()! });
@@ -197,6 +225,12 @@ export class StudioCompositor {
         ((16 / 9) * (Math.max(...p.map((p) => p.x)) - Math.min(...p.map((p) => p.x)))) /
         Math.max(0.0001, Math.max(...p.map((p) => p.y)) - Math.min(...p.map((p) => p.y)));
     }
+    // The card is laid out in pixels so its squares and circles stay true.
+    const span = surface
+      ? [Math.max(...surface.points.map((p) => p.x)) - Math.min(...surface.points.map((p) => p.x)),
+         Math.max(...surface.points.map((p) => p.y)) - Math.min(...surface.points.map((p) => p.y))]
+      : [1, 1];
+    g.uniform2f(L.gridSize, Math.max(1, span[0] * this.width), Math.max(1, span[1] * this.height));
     const ratio = targetAspect / sourceAspect;
     if (fit !== 'stretch') {
       if (ratio > 1 === (fit === 'contain')) fx = ratio;
