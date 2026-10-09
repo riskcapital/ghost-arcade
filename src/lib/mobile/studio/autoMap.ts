@@ -20,6 +20,7 @@ export type AutoMapProjector = {
   coverage: number;     // share of the photo that saw this projector
   plan: PatternPlan;    // kept so each outlined surface can be fitted on its own
   decoded: Decoded;
+  white: Capture;       // the fully lit photo, for finding visible edges
 };
 export type AutoMapResult = {
   reference: { image: string; width: number; height: number };
@@ -75,7 +76,7 @@ export async function runAutoMap(
         const fit = fitHomography(plan, decoded);
         if (fit.cornersInPhoto.every(p => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1)) { corners = fit.cornersInPhoto; rmsPx = fit.rmsPx; }
       } catch { /* not one plane: expected for an object */ }
-      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, corners, rmsPx, coverage: decoded.coverage, plan, decoded });
+      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, corners, rmsPx, coverage: decoded.coverage, plan, decoded, white });
     }
   } finally {
     await link.request('end').catch(() => {});

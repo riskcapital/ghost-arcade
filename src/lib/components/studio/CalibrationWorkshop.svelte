@@ -1,12 +1,13 @@
 <script lang="ts">
  import {onMount,onDestroy,tick} from 'svelte';
+ import {detectSurfaces} from '../../mobile/studio/surfaceDetect';
  import {openAutoMapCamera,uprightTurn,mapSurface,type AutoMapCamera,type AutoMapProjector,type AutoMapResult} from '../../mobile/studio/autoMap';
  import {surfaceDepthQuality,homography,unitCorners,project,exportCalibration,grayPatternPlan,type Calibration,type UV,type Reference} from '../../mobile/studio/calibration';
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
- function sendDesktop(){try{const live=mapped.filter(m=>surfaces.some(s=>s.id===m.surfaceId));onsend?.(JSON.stringify({...exportCalibration(draft()),mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx})=>({name,screenId,screenName,points,rmsPx}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
+ function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));onsend?.(JSON.stringify({...exportCalibration(draft()),mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx})=>({name,screenId,screenName,points,rmsPx}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
  export let automap:((camera:AutoMapCamera,progress:(text:string)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
@@ -17,6 +18,10 @@
  let scan:AutoMapProjector[]=[];
  type Mapped={surfaceId:string;name:string;screenId:string;screenName:string;points:UV[];rmsPx:number};
  let mapped:Mapped[]=[];
+ /** Found surfaces the user has switched off: kept on the photo, not sent. */
+ let skipped=new Set<string>();
+ function inside(points:UV[],p:UV){let hit=false;for(let i=0,j=points.length-1;i<points.length;j=i++){const a=points[i],b=points[j];if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)hit=!hit;}return hit;}
+ function toggle(id:string){if(skipped.has(id))skipped.delete(id);else skipped.add(id);skipped=skipped;}
  /** Fit one outline against the scan: the projector that lights it best wins. */
  function mapOutline(outline:UV[]){let best:{projector:AutoMapProjector;points:UV[];rmsPx:number;agree:number}|undefined,why='';
   for(const projector of scan){try{const m=mapSurface(projector,outline);if(!best||m.agree>best.agree)best={projector,...m};}catch(e){why=e instanceof Error?e.message:'';}}
@@ -30,8 +35,15 @@
    const result=await automap(autoCamera,text=>message=text);
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
-   scan=result.projectors;mapped=[];
-   message='Scan complete. Tap the corners of one flat surface (top left, top right, bottom right, bottom left), then Add surface. Repeat for each face.';
+   scan=result.projectors;mapped=[];skipped=new Set();
+   // Find the flat surfaces in the scan; nobody has to tap corners.
+   for(const projector of scan)for(const found of detectSurfaces(projector,{photo:projector.white})){
+    const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:found.outline};
+    surfaces=[...surfaces,surface];
+    mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:found.points,rmsPx:found.rmsPx}];
+   }
+   skipped=skipped;
+   message=surfaces.length?`Found ${surfaces.length} surface${surfaces.length===1?'':'s'}. Tap any you do not want to switch it off, then send to desktop.`:'No flat surface was found in the scan. Dim the room and try again, or trace a surface by hand.';
   }catch(e){message=e instanceof Error?e.message:'Auto map failed.';}
   finally{busy=false;closeAuto();}
  }
@@ -43,9 +55,9 @@
  async function importPhoto(e:Event){const file=(e.target as HTMLInputElement).files?.[0];if(!file)return;busy=true;try{
   const bitmap=await createImageBitmap(file,{imageOrientation:'from-image'}),scale=Math.min(1,1920/Math.max(bitmap.width,bitmap.height)),canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);canvas.getContext('2d')!.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();setReference({image:canvas.toDataURL('image/jpeg',.88),width:canvas.width,height:canvas.height});
  }catch{message='This photo could not be opened. Try a JPEG or PNG.';}finally{busy=false;}}
- function setReference(r:Reference){scan=[];mapped=[];reference=r;points=[];surfaces=[];projectors=[];mode='corners';message='Reference ready. Keep this photo fixed; each projector needs its own four matching corners.';}
+ function setReference(r:Reference){scan=[];mapped=[];skipped=new Set();reference=r;points=[];surfaces=[];projectors=[];mode='corners';message='Reference ready. Keep this photo fixed; each projector needs its own four matching corners.';}
  async function capture(){busy=true;let lease:Awaited<ReturnType<typeof acquireNativeFeed>>|undefined;try{lease=await acquireNativeFeed('depth');const deadline=performance.now()+10000;while(true){try{setReference(await captureCalibrationReference());break;}catch(e){if(performance.now()>deadline)throw e;await new Promise(resolve=>setTimeout(resolve,300));}}}catch(e){message=String(e instanceof Error?e.message:e);}finally{lease?.release();busy=false;}}
- function tap(e:PointerEvent){if(!reference||busy)return;const r=photo.getBoundingClientRect();const p={x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};if(mode==='corners'&&points.length===4)points=[];points=[...points,p];}
+ function tap(e:PointerEvent){if(!reference||busy)return;const r=photo.getBoundingClientRect();const p={x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};if(scan.length&&mode==='surface'&&!points.length){const hit=surfaces.filter(s=>mapped.some(m=>m.surfaceId===s.id)&&inside(s.points,p)).pop();if(hit){toggle(hit.id);return;}}if(mode==='corners'&&points.length===4)points=[];points=[...points,p];}
  function add(){try{if(mode==='corners'){homography(points,unitCorners);if(!Number.isInteger(width)||!Number.isInteger(height)||width<2||height<2||width>16384||height>16384)throw new Error('Enter a valid projector resolution.');projectors=[...projectors,{id:crypto.randomUUID(),name:projectorName,width,height,corners:points}];projectorName=`Projector ${projectors.length+1}`;mode='surface';}else{if(points.length<3)throw new Error('Tap at least three outline points.');const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points};
    if(scan.length){const fit=mapOutline(points);mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:fit.projector.id,screenName:fit.projector.name,points:fit.points,rmsPx:fit.rmsPx}];surfaces=[...surfaces,surface];points=[];message=`${surface.name} mapped on ${fit.projector.name} (fit ${fit.rmsPx.toFixed(1)} px, ${Math.round(fit.agree*100)}% of points agree). Add another face or send to desktop.`;return;}
    surfaces=[...surfaces,surface];}points=[];message='Added. Trace more surfaces or mark another projector.';}catch(e){message=(e as Error).message;}}
@@ -74,7 +86,7 @@
   <img src={reference.image} alt="Calibration reference" draggable="false"/>
   <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
    {#each projectors as p}<polygon class="projector" points={p.corners.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>{/each}
-   {#each surfaces as s}<polygon points={s.points.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>{/each}
+   {#each surfaces as s}<polygon class:off={skipped.has(s.id)} points={s.points.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>{/each}
    <polyline points={points.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>
    {#each points as p,i}<circle cx={p.x*1000} cy={p.y*1000} r="9"/><text x={p.x*1000+15} y={p.y*1000+10}>{i+1}</text>{/each}
   </svg>
@@ -84,7 +96,7 @@
  {:else}<p>Tap around one flat surface. Finish the outline below. Four-point calibration is valid only on the same plane as the reference rectangle; other depths need additional calibration.</p>{/if}
  <button class="primary" onclick={add} disabled={mode==='corners'?points.length!==4:points.length<3}>Add {mode==='corners'?'projector':'surface'}</button>
  {#each projectors as p}<div class="item"><span>{p.name} · {p.width} × {p.height}</span><button onclick={()=>projectors=projectors.filter(x=>x.id!==p.id)}>Remove</button></div>{/each}
- {#each surfaces as s}<div class="item"><span>{s.name} · {s.points.length} points{depthLabel(s.points)}</span><button onclick={()=>surfaces=surfaces.filter(x=>x.id!==s.id)}>Remove</button></div>{/each}
+ {#each surfaces as s}<div class="item"><span>{s.name} · {s.points.length} points{depthLabel(s.points)}</span>{#if mapped.some(m=>m.surfaceId===s.id)}<button class:active={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}>{skipped.has(s.id)?'Off':'On'}</button>{/if}<button onclick={()=>surfaces=surfaces.filter(x=>x.id!==s.id)}>Remove</button></div>{/each}
  {#if mapping&&surfaces.length}<p class="note">{outside()?'Some surface points fall outside projector 1. They are preserved in the export; verify coverage.':'Surface points fit inside projector 1’s reference.'}</p>{/if}
  <div class="row"><button onclick={save}>Save draft</button><button class="primary" onclick={download} disabled={!projectors.length||!surfaces.length}>Export preparation</button>{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!projectors.length||!surfaces.length}>Send to desktop</button>{/if}</div>
  {/if}
@@ -93,6 +105,7 @@
  <details><summary>What still needs a projector?</summary><p>Pixel correspondence, focus, alignment, overlap, brightness matching and bump recovery require physical verification. LiDAR measures the scene, not where projector pixels land. Packages include photo-space outlines, per-projector homographies, raw depth when captured, and an inverted Gray-code pattern plan for the future desktop presenter. Automatic capture, decoding and blending are not active yet.</p></details>
 </section>
 <style>
+ svg polygon.off{opacity:.35;stroke-dasharray:14 10}
  .auto video{display:block;width:100%;max-height:46vh;object-fit:contain;background:#000;border-radius:5px}
  section{padding:18px;font:13px/1.5 system-ui;color:var(--ga-ink-0)}header,.row,.item{display:flex;align-items:center;gap:8px;justify-content:space-between}.row{flex-wrap:wrap;margin:12px 0}.row>*{flex:1;min-width:110px}header small{font-size:9px;letter-spacing:.12em;color:var(--ga-blue-200)}h2{font-size:20px;margin:4px 0}h3{font-size:13px}p,.note{color:var(--ga-ink-2)}button,.file,input{box-sizing:border-box;min-height:44px;border:1px solid var(--ga-line-3);border-radius:5px;background:var(--ga-slot);color:inherit;padding:10px;font:inherit}button{touch-action:manipulation}button:disabled{opacity:.4}label{display:block;font-size:11px}input{display:block;width:100%;margin-top:4px}.file{cursor:pointer;font-size:13px}.file input{width:100%;font-size:11px}.primary,.active{background:var(--ga-selection-bg);border-color:var(--ga-blue-300)}.photo{position:relative;width:100%;background:#000;touch-action:none;margin-top:12px;overflow:hidden}.photo img,.photo svg{position:absolute;width:100%;height:100%;inset:0;pointer-events:none}.photo img{object-fit:fill}polygon{fill:var(--ga-blue-a16);stroke:var(--ga-blue-200);stroke-width:2;vector-effect:non-scaling-stroke}.projector{stroke:#ffa45b;fill:#ffa45b15}polyline{fill:none;stroke:white;stroke-width:2;vector-effect:non-scaling-stroke}circle{fill:#ffa45b;stroke:#fff;stroke-width:2}text{fill:white;font-size:30px;font-weight:bold}.item{border-bottom:1px solid var(--ga-line-2);padding:8px 0}.item span{overflow-wrap:anywhere;min-width:0}.status{color:var(--ga-blue-200)}summary{min-height:44px;cursor:pointer;font-weight:bold}
 </style>
