@@ -2137,6 +2137,74 @@ fn native_shape_signed_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
   return max(length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0), quad_clip);
 }
 
+/// One-pixel-true line: 1 inside `half` px of the line, 0 a pixel beyond.
+fn card_line(dist_px: f32, half: f32) -> f32 {
+  return 1.0 - smoothstep(half, half + 1.0, abs(dist_px));
+}
+
+/// What an empty layer shows: a projector alignment card on true black.
+/// Square grid from the centre, frame, centre cross and circles, diagonals,
+/// corner brackets, a colour row and a grey step row. Black stays 0,0,0 so
+/// an empty layer adds no light where the card has no line.
+fn empty_layer_card(uv: vec2<f32>, size_px: vec2<f32>) -> vec3<f32> {
+  let px = uv * size_px;
+  let c = px - size_px * 0.5;
+  let short = min(size_px.x, size_px.y);
+  let blue = vec3<f32>(0.322, 0.471, 1.0);
+  let weight = clamp(short / 540.0, 1.0, 3.0) * 0.5;
+  var col = vec3<f32>(0.0);
+
+  // Square grid counted from the centre: 12 cells across the short side.
+  let cell = short / 12.0;
+  let g = abs(fract(c / cell + vec2<f32>(0.5)) - vec2<f32>(0.5)) * cell;
+  let major = abs(fract(c / (cell * 3.0) + vec2<f32>(0.5)) - vec2<f32>(0.5)) * cell * 3.0;
+  col = max(col, vec3<f32>(0.11) * max(card_line(g.x, weight), card_line(g.y, weight)));
+  col = max(col, vec3<f32>(0.26) * max(card_line(major.x, weight), card_line(major.y, weight)));
+
+  // Corner-to-corner diagonals.
+  let d1 = abs(c.x * size_px.y - c.y * size_px.x) / length(size_px);
+  let d2 = abs(c.x * size_px.y + c.y * size_px.x) / length(size_px);
+  col = max(col, vec3<f32>(0.2) * max(card_line(d1, weight), card_line(d2, weight)));
+
+  // Circles: full short side, half, and a centre ring.
+  let r = length(c);
+  col = max(col, vec3<f32>(0.75) * card_line(r - short * 0.5 + weight + 1.0, weight));
+  col = max(col, vec3<f32>(0.4) * card_line(r - short * 0.25, weight));
+  col = max(col, blue * card_line(r - cell * 0.5, weight));
+
+  // Centre cross.
+  let cross = max(card_line(c.x, weight) * step(abs(c.y), cell * 1.5),
+    card_line(c.y, weight) * step(abs(c.x), cell * 1.5));
+  col = max(col, vec3<f32>(1.0) * cross);
+  col = max(col, vec3<f32>(0.5) * max(card_line(c.x, weight), card_line(c.y, weight)));
+
+  // Colour row above the centre, grey steps below: both two cells tall.
+  let row_half = vec2<f32>(cell * 3.5, cell * 0.5);
+  let top = c - vec2<f32>(0.0, -cell * 2.5);
+  if (abs(top.x) < row_half.x && abs(top.y) < row_half.y) {
+    let i = u32(clamp(floor((top.x + row_half.x) / cell), 0.0, 6.0));
+    let bars = array<vec3<f32>, 7>(vec3<f32>(1.0), vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(0.0, 1.0, 1.0),
+      vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
+    col = bars[i];
+  }
+  let bottom = c - vec2<f32>(0.0, cell * 2.5);
+  if (abs(bottom.x) < row_half.x && abs(bottom.y) < row_half.y) {
+    let i = clamp(floor((bottom.x + row_half.x) / cell), 0.0, 6.0);
+    col = vec3<f32>(i / 6.0);
+  }
+
+  // Frame on the layer's edge, and brackets marking each corner.
+  let edge = min(min(px.x, size_px.x - px.x), min(px.y, size_px.y - px.y));
+  col = max(col, vec3<f32>(1.0) * (1.0 - smoothstep(weight * 2.0 + 1.0, weight * 2.0 + 2.0, edge)));
+  let corner = min(px, size_px - px);
+  let inset = cell * 0.5;
+  let arm = cell * 1.5;
+  let bracket = max(card_line(corner.x - inset, weight * 1.5) * step(inset, corner.y) * step(corner.y, inset + arm),
+    card_line(corner.y - inset, weight * 1.5) * step(inset, corner.x) * step(corner.x, inset + arm));
+  col = max(col, blue * bracket);
+  return col;
+}
+
 fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
   let feather = max(layers[layer_index].shape.y, 0.0);
   let dist = native_shape_signed_distance(local_uv, layer_index);
@@ -3717,7 +3785,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
           * native_paint_mask(mesh_sample.yz, layer_index);
         let shape_mask = shape_sample.x * polygon_mask;
         content_alpha = layers[layer_index].edge_extra.y * shape_mask;
-        if (layers[layer_index].info.w > 0.5) {
+        if (layers[layer_index].edge_extra.z > 0.5 && layers[layer_index].info.w <= 0.5) {
+          // Empty layer: an alignment card on true black, sized from the
+          // layer's own edges so its squares and circles stay true.
+          let size_px = vec2<f32>(
+            0.5 * (length((tr - tl) * u.resolution) + length((br - bl) * u.resolution)),
+            0.5 * (length((bl - tl) * u.resolution) + length((br - tr) * u.resolution)));
+          layer_rgb = empty_layer_card(sample_uv, max(size_px, vec2<f32>(1.0)));
+          content_alpha = content_mask * shape_mask;
+        } else if (layers[layer_index].info.w > 0.5) {
           let preview = source_content_for_layer(sample_source_content(layers[layer_index].info.w, sample_uv, layer_index), layers[layer_index].info.z);
           layer_rgb = preview.rgb;
           content_alpha = preview.a * content_mask * shape_mask;

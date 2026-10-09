@@ -3260,7 +3260,10 @@ impl SceneLayer {
         // covers a video whose texture was evicted under pool pressure.
         let waiting_for_video = self.source_kind == source_kind("video")
             && self.frame_slot.is_none();
-        let plain_fill = !self.shader_rendered && self.source_kind < 9.0
+        // An empty layer (nothing bound, no colour of its own) draws the
+        // alignment card instead of a flat fill, so it takes the full path.
+        let empty_card = self.shows_empty_card();
+        let plain_fill = !empty_card && !self.shader_rendered && self.source_kind < 9.0
             && self.frame_slot.is_none() && self.preview_slot.is_none()
             && self.effect_count < 0.5 && self.mesh_rows < 2 && self.mesh_cols < 2
             && self.shape == [0.0, 0.0, 0.0, 1.0] && self.shape2 == [1.0, 0.7, 6.0, 0.4]
@@ -3334,7 +3337,7 @@ impl SceneLayer {
             edge_effects: self.edge.effects_gpu(),
             edge_info: self.edge.info_gpu(),
             edge_geom: self.edge.geometry,
-            edge_extra: [self.edge.seed, self.sourceless_content_alpha(), 0.0, 0.0],
+            edge_extra: [self.edge.seed, self.sourceless_content_alpha(), if empty_card { 1.0 } else { 0.0 }, 0.0],
             edge_extra2: self.edge.bbox_gpu(),
             edge_bounds: self.edge.bounds,
             edge_chunks: self.edge.chunks_gpu(),
@@ -3360,6 +3363,14 @@ impl SceneLayer {
     /// 0.56 to both, so every solid colour went to output at 56%: pure white
     /// arrived as 143/255, on the editor, the output window, Spout and in
     /// recordings alike. Media is unaffected; it takes the sourced path.
+    /// True for a layer with nothing bound and no colour of its own: it
+    /// shows the alignment card. A layer whose media is still loading keeps
+    /// its source kind and does not, so the card never flashes during a load.
+    fn shows_empty_card(&self) -> bool {
+        !self.explicit_color && !self.shader_rendered && self.source_kind < 0.5
+            && self.frame_slot.is_none() && self.preview_slot.is_none()
+    }
+
     fn sourceless_content_alpha(&self) -> f32 {
         if self.explicit_color { 1.0 } else { SOURCELESS_PLACEHOLDER_ALPHA }
     }

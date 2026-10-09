@@ -2777,7 +2777,7 @@
           nativeRendererSync?.setRenderClock(renderClockSeconds);
           const legacyRenderer = engine.getRenderer();
           legacyRenderer.setRenderTarget(null);
-          legacyRenderer.setClearColor(0x020407, 1);
+          legacyRenderer.setClearColor(0x000000, 1);
           legacyRenderer.clear(true, true, true);
           // Stage FX are driven by the dedicated native-mode RAF loop
           // installed next to scheduleNativeLayersSync — animate() does
@@ -3233,7 +3233,7 @@
           if (!browserEditorPreviewActive()) {
             const legacyRenderer = engine.getRenderer();
             legacyRenderer.setRenderTarget(null);
-            legacyRenderer.setClearColor(0x020407, 1);
+            legacyRenderer.setClearColor(0x000000, 1);
             legacyRenderer.clear(true, true, true);
           } else {
             engine.render(layersToRender, null, compEffects, macroBundles);
