@@ -60,25 +60,35 @@ suite('Auto-map stripe patterns on a Screen', () => {
     try {
       await rpc.send('start', { config: { backend: platform.rendererBackend, width: 256, height: 256, source_frame_size: 128, target_fps: 30 } });
       let wrong = 0, checked = 0;
+      const failures: string[] = [];
       for (const frame of frames(width, height, cell)) {
         const calibration = projectorCalibrationUniforms({});
         calibration[4][3] = stripeFrameCode(frame, cell);
         await rpc.send('set_slice_outputs', { slices: [{ id: 'a', width, height, cropX: 0, cropY: 0, cropW: 1, cropH: 1, warpMode: 'rect', alignmentAid: 3, projectorCalibration: calibration }] });
         await rpc.send('submit_commands', { commands: [{ type: 'present' }] });
-        await new Promise(r => setTimeout(r, 90));
-        const shot = await rpc.send('output_shared_texture_snapshot', { include_pixels: true, capture_source: 'slice:a' });
-        expect([shot.width, shot.height]).toEqual([width, height]);
-        const bytes = Buffer.from(shot.rgba_b64, 'base64');
-        const packed = width * 4;
-        const stride = bytes.length === packed * height ? packed : Number(shot.padded_bytes_per_row ?? packed);
-        for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-          const lit = bytes[y * stride + x * 4 + 1] > 127 ? 1 : 0;
-          checked++;
-          if (lit !== expected(frame, x, y, width, height, cell)) wrong++;
+        // The Screen redraws on its own clock: read until the new frame is the one on it,
+        // rather than trusting a fixed wait on a busy machine.
+        let mismatches = -1;
+        for (let attempt = 0; attempt < 30 && mismatches !== 0; attempt++) {
+          await new Promise(r => setTimeout(r, 70));
+          const shot = await rpc.send('output_shared_texture_snapshot', { include_pixels: true, capture_source: 'slice:a' });
+          expect([shot.width, shot.height]).toEqual([width, height]);
+          const bytes = Buffer.from(shot.rgba_b64, 'base64');
+          const packed = width * 4;
+          const stride = bytes.length === packed * height ? packed : Number(shot.padded_bytes_per_row ?? packed);
+          mismatches = 0;
+          for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+            const lit = bytes[y * stride + x * 4 + 1] > 127 ? 1 : 0;
+            if (lit !== expected(frame, x, y, width, height, cell)) mismatches++;
+          }
         }
+        if (mismatches) failures.push(`${JSON.stringify(frame)}: ${mismatches} pixels`);
+        checked += width * height;
+        wrong += mismatches;
       }
       expect(checked).toBeGreaterThan(width * height * 8);
+      expect(failures).toEqual([]);
       expect(wrong).toBe(0);
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 120000);
 });

@@ -1,3 +1,7 @@
+# Ghost Arcade 2.0.17 — October 9, 2026
+
+Auto map a projector from the iOS app, calibration and Interactive Studio fixes, true full-screen outputs on macOS, a top bar that scales, and Linux builds again. See [release notes](docs/releases/v2.0.17.md).
+
 # Ghost Arcade 2.0.16 — October 2, 2026
 
 Fix Windows Screen output routing so projector calibration, source warp and overlap blending reach the projector. See [release notes](docs/releases/v2.0.16.md).
