@@ -3905,7 +3905,12 @@
       case 'studio_calibration_offer': {
         try{
           if(typeof msg.json!=='string'||msg.json.length>8_000_000)throw Error('Invalid calibration size.');
-          readMobileCalibration(msg.json);pendingPhoneCalibration=msg.json;
+          // Surfaces measured by the stripe scan stand on their own: accept
+          // them even if the older whole-photo part of the package is unusable.
+          let scanned=false;
+          try{const list=JSON.parse(msg.json).mappedSurfaces;scanned=Array.isArray(list)&&list.length>0;}catch{}
+          if(!scanned)readMobileCalibration(msg.json);
+          pendingPhoneCalibration=msg.json;
           // Show what arrived instead of leaving it behind a closed panel.
           showInteractiveStudio=true;studioPage='calibration';
           sendPhoneVisionSignal({type:'studio_calibration_status',requestId:msg.requestId,accepted:true});

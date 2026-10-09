@@ -26,7 +26,7 @@
  }
  export let incoming='';
  let seen='';
- $: if(incoming&&incoming!==seen){seen=incoming;try{data=readMobileCalibration(incoming);projector=surface=0;message='Received from phone. Review before applying to an output.';}catch(e){message=(e as Error).message;}}
+ $: if(incoming&&incoming!==seen){seen=incoming;try{data=readMobileCalibration(incoming);projector=surface=0;message='Received from phone. Review before applying to an output.';}catch(e){data=null;message=mappedSurfaces.length?'':(e as Error).message;}}
  let data:ImportedCalibration|null=null,message='',projector=0,surface=0,target='';
  // Pick the Screen this projector was measured on: the one with its name, or the only Screen there is.
  $: if(data&&!target){const named=$screens.find(s=>s.name===data?.projectors[projector]?.name);target=named?.id??($screens.length===1?$screens[0].id:'');}

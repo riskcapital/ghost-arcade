@@ -7,7 +7,7 @@
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
- function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));onsend?.(JSON.stringify({...exportCalibration(draft()),mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx})=>({name,screenId,screenName,points,rmsPx}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
+ function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx})=>({name,screenId,screenName,points,rmsPx}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
  export let automap:((camera:AutoMapCamera,progress:(text:string)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
@@ -38,7 +38,7 @@
    scan=result.projectors;mapped=[];skipped=new Set();
    // Find the flat surfaces in the scan; nobody has to tap corners.
    for(const projector of scan)for(const found of detectSurfaces(projector,{photo:projector.white})){
-    const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:found.outline};
+    const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:found.outline.map(p=>({x:Math.max(0,Math.min(1,p.x)),y:Math.max(0,Math.min(1,p.y))}))};
     surfaces=[...surfaces,surface];
     mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:found.points,rmsPx:found.rmsPx}];
    }
