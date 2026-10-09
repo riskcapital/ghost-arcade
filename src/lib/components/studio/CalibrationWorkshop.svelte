@@ -1,6 +1,7 @@
 <script lang="ts">
  import {onMount,onDestroy,tick} from 'svelte';
  import {detectSurfaces} from '../../mobile/studio/surfaceDetect';
+ import {findPainting,paintingSize,rectifyPainting,clockwiseFromTopLeft} from '../../mobile/studio/painting';
  import {openAutoMapCamera,uprightTurn,mapSurface,type AutoMapCamera,type AutoMapProjector,type AutoMapResult} from '../../mobile/studio/autoMap';
  import {surfaceDepthQuality,homography,unitCorners,project,exportCalibration,grayPatternPlan,type Calibration,type UV,type Reference} from '../../mobile/studio/calibration';
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
@@ -22,6 +23,52 @@
  /** Found surfaces the user has switched off: kept on the photo, not sent. */
  let skipped=new Set<string>();
  function inside(points:UV[],p:UV){let hit=false;for(let i=0,j=points.length-1;i<points.length;j=i++){const a=points[i],b=points[j];if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)hit=!hit;}return hit;}
+ /**
+  * Painting mode: one four-corner outline around a painting on the wall. It starts where the
+  * painting was found and every corner can be dragged; sending it gives the desktop the photo
+  * of the painting, cut out so it lands exactly on the real one.
+  */
+ let painting:UV[]|null=null,grabbed=-1,paintingBusy=false;
+ function startPainting(){
+  const projector=scan[0];
+  painting=(projector&&findPainting(projector.white,projector.decoded.valid))||[{x:.3,y:.3},{x:.7,y:.3},{x:.7,y:.7},{x:.3,y:.7}];
+  message='Drag the corners onto the painting’s edges, then send it.';
+ }
+ function paintingDown(e:PointerEvent){
+  if(!painting)return;const r=found.getBoundingClientRect();
+  const p={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};
+  let best=-1,reach=Infinity;
+  painting.forEach((c,i)=>{const d=Math.hypot((c.x-p.x)*r.width,(c.y-p.y)*r.height);if(d<reach){reach=d;best=i;}});
+  if(reach>56)return;
+  grabbed=best;found.setPointerCapture(e.pointerId);e.preventDefault();
+ }
+ function paintingMove(e:PointerEvent){
+  if(grabbed<0||!painting)return;const r=found.getBoundingClientRect();
+  painting=painting.map((c,i)=>i===grabbed?{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))}:c);
+ }
+ function paintingUp(){grabbed=-1;}
+ async function sendPainting(){
+  if(!painting||!reference||!onsend)return;paintingBusy=true;
+  try{
+   const outline=clockwiseFromTopLeft(painting);
+   const fit=mapOutline(outline);
+   const projector=fit.projector;
+   const quad=fit.points.map(p=>({x:p.x*projector.width,y:p.y*projector.height}));
+   const size=paintingSize(quad);
+   // The colour photo, at the size the scan measured it.
+   const image=new Image();image.src=reference.image;await image.decode();
+   const canvas=document.createElement('canvas');canvas.width=projector.decoded.width;canvas.height=projector.decoded.height;
+   const context=canvas.getContext('2d',{willReadFrequently:true})!;context.drawImage(image,0,0,canvas.width,canvas.height);
+   const cut=rectifyPainting(context.getImageData(0,0,canvas.width,canvas.height),fit.toProjector,quad,size);
+   const out=document.createElement('canvas');out.width=size.width;out.height=size.height;
+   const pixels=out.getContext('2d')!.createImageData(size.width,size.height);pixels.data.set(cut);out.getContext('2d')!.putImageData(pixels,0,0);
+   const surface={id:crypto.randomUUID(),name:'Painting',points:outline};
+   onsend(JSON.stringify({schema:'ghost-calibration',version:1,id:crypto.randomUUID(),name,created:new Date().toISOString(),status:'prepared',reference,surfaces:[surface],projectors:[],
+    mappedSurfaces:[{name:'Painting',screenId:projector.id,screenName:projector.name,points:fit.points,rmsPx:fit.rmsPx,image:out.toDataURL('image/jpeg',.92)}]}));
+   message=`Painting sent (fit ${fit.rmsPx.toFixed(1)} px). On the desktop, choose Create layers.`;
+  }catch(e){message=e instanceof Error?e.message:'The painting could not be sent.';}
+  finally{paintingBusy=false;}
+ }
  /** Tap a found surface on the results photo to switch it on or off. */
  function tapFound(e:PointerEvent){const r=found.getBoundingClientRect();const p={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};const hit=surfaces.filter(s=>mapped.some(m=>m.surfaceId===s.id)&&inside(s.points,p)).pop();if(hit)toggle(hit.id);}
  const centre=(points:UV[])=>({x:points.reduce((t,v)=>t+v.x,0)/points.length*1000,y:points.reduce((t,v)=>t+v.y,0)/points.length*1000});
@@ -29,7 +76,7 @@
  $: sending=scanned.filter(s=>!skipped.has(s.id)).length;
  function toggle(id:string){if(skipped.has(id))skipped.delete(id);else skipped.add(id);skipped=skipped;}
  /** Fit one outline against the scan: the projector that lights it best wins. */
- function mapOutline(outline:UV[]){let best:{projector:AutoMapProjector;points:UV[];rmsPx:number;agree:number}|undefined,why='';
+ function mapOutline(outline:UV[]){let best:{projector:AutoMapProjector;points:UV[];rmsPx:number;agree:number;toProjector:number[]}|undefined,why='';
   for(const projector of scan){try{const m=mapSurface(projector,outline);if(!best||m.agree>best.agree)best={projector,...m};}catch(e){why=e instanceof Error?e.message:'';}}
   if(!best)throw new Error(why||'This surface could not be mapped.');return best;}
  let framing=false,preview:HTMLVideoElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
@@ -41,7 +88,7 @@
    fraction=0;const result=await automap(autoCamera,(text,part)=>{message=text;if(part!==undefined)fraction=part;});
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
-   scan=result.projectors;mapped=[];skipped=new Set();
+   scan=result.projectors;mapped=[];skipped=new Set();painting=null;
    // Find the flat surfaces in the scan; nobody has to tap corners.
    for(const projector of scan)for(const found of detectSurfaces(projector,{photo:projector.white})){
     const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:found.outline.map(p=>({x:Math.max(0,Math.min(1,p.x)),y:Math.max(0,Math.min(1,p.y))}))};
@@ -89,6 +136,14 @@
    <ul class="am-check"><li>Every surface you want is in the picture</li><li>The phone is propped so it cannot move</li><li>The room is dim</li></ul>
    <div class="am-actions"><button class="primary" onclick={startAuto} disabled={!autoCamera}>Start scan</button><button class="quiet" onclick={closeAuto}>Cancel</button></div>
   {/if}
+ {:else if scan.length&&reference&&painting}
+  <div class="am-stage found painting" bind:this={found} style:aspect-ratio={`${reference.width}/${reference.height}`} onpointerdown={paintingDown} onpointermove={paintingMove} onpointerup={paintingUp} onpointercancel={paintingUp} role="application" aria-label="Painting outline. Drag a corner to move it." tabindex="0">
+   <img src={reference.image} alt="The scanned scene" draggable="false"/>
+   <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"><polygon points={painting.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/></svg>
+   {#each painting as c,i}<i class="am-handle" class:held={grabbed===i} style:left={`${c.x*100}%`} style:top={`${c.y*100}%`}></i>{/each}
+  </div>
+  <div class="am-summary"><strong>Painting</strong><span>Drag each corner onto the painting’s edge</span></div>
+  <div class="am-actions">{#if onsend}<button class="primary" onclick={sendPainting} disabled={paintingBusy}>{paintingBusy?'Preparing…':'Send painting to desktop'}</button>{/if}<button class="quiet" onclick={()=>{painting=null;message='';}} disabled={paintingBusy}>Back</button></div>
  {:else if scan.length&&reference}
   <div class="am-stage found" bind:this={found} style:aspect-ratio={`${reference.width}/${reference.height}`} onpointerdown={tapFound} role="application" aria-label="Found surfaces. Tap one to switch it on or off." tabindex="0">
    <img src={reference.image} alt="The scanned scene" draggable="false"/>
@@ -100,6 +155,7 @@
   <div class="am-summary"><strong>{sending} of {scanned.length} surfaces</strong><span>Tap a surface to switch it off</span></div>
   <div class="am-chips">{#each scanned as s,i}<button class="am-chip" class:on={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}><b>{i+1}</b>{skipped.has(s.id)?'Off':'On'}</button>{/each}</div>
   <div class="am-actions">{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!sending}>Send {sending} to desktop</button>{/if}<button class="quiet" onclick={openAuto}>Scan again</button></div>
+  <button class="am-painting" onclick={startPainting}><b>Painting on this wall?</b><span>Outline it and send its photo, already lined up and cropped.</span></button>
  {:else}
   <div class="am-hero">
    <p class="am-lead">The projector flashes a set of stripes, the phone watches, and every flat surface it lights becomes a layer on the desktop, already in place.</p>
@@ -165,6 +221,11 @@
  {/if}
 </section>
 <style>
+ .am-stage.painting{touch-action:none}
+ .am-handle{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;border:2px solid #fff;background:var(--ga-blue,#5278ff);box-shadow:0 1px 8px #000c;pointer-events:none}
+ .am-handle.held{transform:scale(1.35);background:#fff;border-color:var(--ga-blue,#5278ff)}
+ .am-painting{display:grid;gap:3px;width:100%;margin-top:14px;padding:12px 14px;text-align:left;border-radius:10px;background:transparent;border:1px dashed var(--ga-line-3)}
+ .am-painting b{font-size:13px;font-weight:600}.am-painting span{font-size:12px;color:var(--ga-ink-2)}
  .am-stage{position:relative;width:100%;background:#000;border-radius:10px;overflow:hidden;border:1px solid var(--ga-line-3)}
  .am-stage video{display:block;width:100%;max-height:52vh;object-fit:contain;background:#000}
  .am-stage.found{touch-action:manipulation}
