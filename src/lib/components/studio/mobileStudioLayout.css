@@ -219,3 +219,8 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 /* An instrument, not a web page: holding a finger down never selects text or opens the system callout. */
 .studio[data-layout], .studio[data-layout] * {-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;}
 .studio[data-layout] :is(input, textarea, [contenteditable="true"]) {-webkit-user-select:text;user-select:text;}
+
+/* Header switches: compact pills, not full-height buttons. */
+.studio[data-layout][data-layout] .app-header .flux-live {min-height:30px;height:30px;padding:0 9px;border-radius:15px;}
+.studio[data-layout][data-layout] .app-header .flux-live.scramble:active {border-color:var(--ga-blue-300);background:var(--ga-selection-bg);color:var(--ga-ink-0);}
+.studio[data-layout='phone'][data-layout] .app-header .brand-wordmark {max-width:96px;width:96px;}

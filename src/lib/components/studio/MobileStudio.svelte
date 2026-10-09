@@ -134,9 +134,12 @@
   function openInteractive(){interactiveMounted=true;interactiveOpen=true;mixerOpen=false;}
   /** The bottom bar. It stays on screen in Studio too, so every workspace is one tap away. */
   const NAV=[{id:'perform',label:'Perform',icon:'grid'},{id:'flux',label:'Flux',icon:'flux'},{id:'map',label:'Map',icon:'map'},{id:'interactive',label:'Studio',icon:'depth'},{id:'tools',label:'Tools',icon:'scan'},{id:'ctrls',label:'Ctrls',icon:'controls'}] as const;
-  const navActive=(id:string,current:string,mixing:boolean,studio:boolean,controls:boolean)=>id==='interactive'?studio:id==='ctrls'?controls&&!studio:id==='tools'?false:!studio&&!mixing&&!controls&&current===id;
-  function navTo(id:typeof NAV[number]['id']){
+  const navActive=(id:string,current:string,mixing:boolean,studio:boolean,controls:boolean)=>id==='mix'?mixing:id==='interactive'?studio:id==='ctrls'?controls&&!studio:id==='tools'?false:!studio&&!mixing&&!controls&&current===id;
+  /** While performing, the first place in the bar opens the mixer; anywhere else it leads back to Perform. */
+  $: navItems=NAV.map(item=>item.id==='perform'&&tab==='perform'&&!interactiveOpen?{id:'mix' as const,label:'Mix',icon:'mixer'}:item);
+  function navTo(id:typeof NAV[number]['id']|'mix'){
     feel(prefs,'switch');
+    if(id==='mix'){closeControls();mixerOpen=!mixerOpen;return;}
     if(id==='tools'){toolkitOpen=true;return;}
     if(id==='interactive'){openInteractive();return;}
     interactiveOpen=false;
@@ -201,6 +204,35 @@
   import FluxPad from './FluxPad.svelte';
   import {defaultFlux} from '../../mobile/studio/flux';
   let flux=defaultFlux();
+  /**
+   * Scramble: every playing shader and every effect that is switched on gets new settings at once,
+   * like Tab in the desktop's Performer mode. One undo brings the old look back.
+   */
+  function scramble(){
+    if(!engine)return;
+    const shuffle=<T extends EffectChain|undefined>(chain:T):T=>(chain?chain.map(effect=>{
+      if(!effect.enabled)return effect;
+      const controls=MOBILE_EFFECTS.find(def=>def.type===effect.type)?.controls||[];
+      const params={...effect.params};
+      for(const control of controls){
+        if(control.type==='color'||!(control.max>control.min))continue;
+        if(control.type==='select'&&control.options?.length){params[control.param]=control.options[Math.floor(Math.random()*control.options.length)].value;continue;}
+        const value=control.min+Math.random()*(control.max-control.min);
+        params[control.param]=control.step>=1?Math.round(value):value;
+      }
+      return {...effect,params};
+    }) as T:chain);
+    checkpoint();
+    const playing=new Set(show.layers.map(l=>l.clipId).filter(Boolean));
+    show.layers=show.layers.map((l,row)=>{
+      const clip=show.clips.find(c=>c.id===l.clipId);
+      const params=clip?.kind==='shader'&&l.enabled?varyAutoParams(engine!.parameters(row),l.params,1):l.params;
+      return {...l,params,effects:shuffle(l.effects)};
+    });
+    show.clips=show.clips.map(clip=>playing.has(clip.id)&&clip.effects?.length?{...clip,effects:shuffle(clip.effects)}:clip);
+    show.effects=shuffle(show.effects);
+    persist();feel(prefs,'switch');
+  }
   /** Flux stays playable on the preview while performing, with whatever was set up in the Flux tab. */
   let fluxPerform=false;
   import PerformanceMixer from "./PerformanceMixer.svelte";
@@ -1446,6 +1478,7 @@
     </div>
     <button class="flux-live" class:active={fluxPerform} aria-pressed={fluxPerform} aria-label={fluxPerform?'Flux on the preview: on':'Flux on the preview: off'} title="Play Flux on the preview while performing"
       onclick={()=>{fluxPerform=!fluxPerform;feel(prefs,'switch');if(!fluxPerform&&tab!=='flux'&&flux.active){flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}}><Icon name="flux" size={18}/><span>{fluxPerform?'ON':'FLUX'}</span></button>
+    <button class="flux-live scramble" aria-label="Scramble shader and effect settings" title="Scramble every playing shader and effect" onclick={scramble}><Icon name="fx" size={16}/><span>RND</span></button>
     <button class="set-title" onclick={() => (settings = true)}>{show.name}<span>⌄</span></button>
     <div class="header-actions">
       <button class="icon-button" disabled={!canUndo} onclick={() => undo()} aria-label="Undo"
@@ -1460,7 +1493,7 @@
     </div>
   </header>
   <nav class="tabs" aria-label="Workspace">
-    {#each NAV as t}
+    {#each navItems as t}
       <button class:active={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-pressed={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-current={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen) ? 'page' : undefined}
         onclick={()=>navTo(t.id)}><Icon name={t.icon}/><span>{t.label}</span></button>
     {/each}
@@ -1889,7 +1922,7 @@
 </div>
 {#if toolkitOpen}<CaptureToolkit mappingSurfaces={show.surfaces} oninteractive={()=>{toolkitOpen=false;openInteractive();}} oninteractiveoutput={interactiveOutput} {oncompanion} onclose={()=>toolkitOpen=false} onprepare={prepareCaptureTool} onshots={importCameraShots}/>{/if}
 {#if interactiveMounted}<MobileInteractiveWorkspace bind:this={interactiveWorkspace} open={interactiveOpen} outputLevel={show.master} outputHeld={frozen} outputBlackout={blackout} mappingSurfaces={show.surfaces} outputLabel={blackout&&interactiveLive?'Blackout active':frozen&&interactiveLive?'Output held':outputStatus.state==='live'?`Live · ${outputStatus.display?.name??'External display'}`:outputStatus.state==='connecting'?'Connecting…':outputStatus.state==='off'?'External output disabled':outputStatus.state==='error'?outputStatus.message??'Output needs attention':'No external display connected'} onpreparecamera={prepareCaptureTool} onoutput={interactiveOutput} onoutputsettings={()=>outputSettings=true} onclose={()=>interactiveOpen=false}><nav class="tabs in-studio" slot="nav" aria-label="Workspace">
-    {#each NAV as t}
+    {#each navItems as t}
       <button class:active={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-pressed={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-current={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen) ? 'page' : undefined}
         onclick={()=>navTo(t.id)}><Icon name={t.icon}/><span>{t.label}</span></button>
     {/each}
