@@ -395,7 +395,13 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "handfx",
         label: "HandFX",
-        shader_ids: &["handfx/compute", "handfx/render"],
+        shader_ids: &[
+            "handfx/compute",
+            "handfx/render",
+            "handfx/field-sim",
+            "handfx/field-fluid",
+            "handfx/field-render",
+        ],
         features: &[
             "compute_graph_host",
             "compute_graph_render",

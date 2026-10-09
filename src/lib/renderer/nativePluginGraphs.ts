@@ -20,6 +20,17 @@ import { buildSpheresWgsl } from '$lib/effects/ghostfx/scenes/spheres.wgsl';
 import { POST_WGSL } from '$lib/effects/ghostfx/shaders/post.wgsl';
 import type { SignalFrame } from '$lib/mediapipe/signals';
 import { PERFORMER_WORLD_RENDER_WGSL } from '$lib/performer/nativeWorldRender.wgsl';
+import {
+  HAND_FIELD_FLUID_WGSL,
+  HAND_FIELD_RENDER_WGSL,
+  HAND_FIELD_SIM_WGSL,
+  buildHandFxFieldConfig,
+  handFxFieldModeIndex,
+  packHandFxBody,
+  type HandFxFieldState,
+} from './nativeHandFxField';
+
+export { handFxDemoFace, handFxDemoPose, handFxTrackingNeeds } from './nativeHandFxField';
 
 type NativePluginPrecompileCommand = Extract<RendererCommand, { type: 'precompile_shader' }>;
 
@@ -33,7 +44,7 @@ export const GHOSTFX_LIQUID_MAX_SPLATS = 32;
 export const GHOSTFX_LIQUID_BUBBLE_COUNT = 384;
 export const GHOSTFX_SPHERE_COUNT = 1536;
 export const GHOSTFX_SPHERE_PUFF_COUNT = 320;
-export const HAND_FX_PARTICLE_COUNT = 8_192;
+export const HAND_FX_PARTICLE_COUNT = 24_576;
 const ANALYZER_FFT_BINS = 256;
 const ANALYZER_WAVEFORM_SAMPLES = 512;
 const ANALYZER_HISTORY_ROWS = 256;
@@ -44,6 +55,8 @@ export type NativePluginGraphState = {
   historyPhase?: number;
   handPoints?: number[];
   handSides?: string[];
+  /** Smoothed body and face for the HandFX body and face modes. */
+  handField?: HandFxFieldState;
   liquidVelIsA?: boolean;
   liquidDyeIsA?: boolean;
   liquidPrevBeatPulse?: number;
@@ -278,7 +291,7 @@ struct ParticleBuffer { values: array<Particle> };
 fn hash(x: f32) -> f32 { return fract(sin(x*91.3458+17.13)*47453.5453); }
 @compute @workgroup_size(64)
 fn cs_update(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= 8192u) { return; }
+  if (gid.x >= ${HAND_FX_PARTICLE_COUNT}u) { return; }
   var p = particles.values[gid.x];
   if (u.mode >= 3u) { p.life = 0.0; particles.values[gid.x] = p; return; }
   if (u.handCount == 0u) {
@@ -501,7 +514,12 @@ fn hand_field(uv:vec2<f32>)->vec3<f32> {
 @fragment fn fs_bg(in:V)->@location(0) vec4<f32> {
   var base = vec4(vec3(0.008,0.008,0.018)*u.bgAlpha,u.bgAlpha);
   if (u.mode >= 5u) {
-    let color=hand_field(in.uv);
+    // Roll bright light off smoothly and let the hottest cores whiten, where
+    // a hard clip left flat, blown-out bands.
+    let raw=hand_field(in.uv);
+    let peak=max(raw.r,max(raw.g,raw.b));
+    let mapped=vec3(1.0)-exp(-raw*1.6);
+    let color=mapped+vec3(1.0,0.97,0.92)*smoothstep(0.9,2.6,peak)*0.35;
     let alpha=clamp(max(color.r,max(color.g,color.b)),0.0,1.0);
     return vec4(base.rgb+color,max(base.a,alpha));
   }
@@ -534,8 +552,12 @@ fn hand_field(uv:vec2<f32>)->vec3<f32> {
 }
 @fragment fn fs_particle(in:V)->@location(0) vec4<f32> {
   let softness = select(4.5,2.0,u.mode==1u);
-  let a=exp(-dot(in.uv,in.uv)*softness)*in.color.a;
-  return vec4(in.color.rgb*a,a);
+  // Three times the particles at under half the light each: smoother
+  // strokes, with a white core where they pile up.
+  // Ink keeps its exact weight (a third each), so it only gets smoother.
+  if (u.mode==1u) { let ink=exp(-dot(in.uv,in.uv)*softness)*in.color.a/3.0; return vec4(in.color.rgb*ink,ink); }
+  let a=exp(-dot(in.uv,in.uv)*softness)*in.color.a*0.45;
+  return vec4(in.color.rgb*a+vec3(1.0,0.97,0.92)*a*a*0.7,a);
 }
 @vertex fn vs_skeleton(@builtin(vertex_index) vi:u32,@builtin(instance_index) ii:u32)->V {
   let connections=array<vec2<u32>,20>(vec2(0u,1u),vec2(1u,2u),vec2(2u,3u),vec2(3u,4u),vec2(0u,5u),vec2(5u,6u),vec2(6u,7u),vec2(7u,8u),vec2(0u,9u),vec2(9u,10u),vec2(10u,11u),vec2(11u,12u),vec2(0u,13u),vec2(13u,14u),vec2(14u,15u),vec2(15u,16u),vec2(0u,17u),vec2(17u,18u),vec2(18u,19u),vec2(19u,20u));
@@ -547,7 +569,8 @@ fn hand_field(uv:vec2<f32>)->vec3<f32> {
   let dirPx=(b-a)*u.resolution;
   let safeLength=max(length(dirPx),0.0001);
   let normalPx=vec2(-dirPx.y,dirPx.x)/safeLength;
-  let widthPx=1.5+max(0.0,u.skeletonColor.a)*1.5;
+  // Three times the old width: the middle third is the bone, the rest its glow.
+  let widthPx=(1.5+max(0.0,u.skeletonColor.a)*1.5)*3.0;
   let offset=normalPx*widthPx*2.0/max(u.resolution,vec2(1.0));
   let corner=corners[vi];
   let valid=min(aLm.w,bLm.w);
@@ -558,7 +581,13 @@ fn hand_field(uv:vec2<f32>)->vec3<f32> {
   o.color=vec4(tint*max(0.0,u.skeletonColor.a)*u.performance.x*(1.0+u.performance.w*0.6),valid);
   return o;
 }
-@fragment fn fs_skeleton(in:V)->@location(0) vec4<f32>{return vec4(in.color.rgb*in.color.a,in.color.a);}
+@fragment fn fs_skeleton(in:V)->@location(0) vec4<f32>{
+  let y=abs(in.uv.y);
+  let bone=1.0-smoothstep(0.24,0.36,y);
+  let glow=exp(-y*y*7.0)*0.5*(1.0-smoothstep(0.8,1.0,y));
+  let light=(in.color.rgb*(bone+glow)+vec3(1.0,0.97,0.92)*bone*(1.0-smoothstep(0.0,0.2,y))*0.35)*in.color.a;
+  return vec4(light,in.color.a*max(bone,glow));
+}
 `;
 
 export function buildNativePluginPrecompileCommands(): NativePluginPrecompileCommand[] {
@@ -582,6 +611,9 @@ export function buildNativePluginPrecompileCommands(): NativePluginPrecompileCom
     { type: 'precompile_shader', shader_id: 'ghostfx/post', stage: 'render', source: POST_WGSL, entry: 'fsComposite' },
     { type: 'precompile_shader', shader_id: 'handfx/compute', stage: 'compute', source: HAND_COMPUTE_WGSL, entry: 'cs_update' },
     { type: 'precompile_shader', shader_id: 'handfx/render', stage: 'render', source: HAND_RENDER_WGSL, entry: 'fs_particle' },
+    { type: 'precompile_shader', shader_id: 'handfx/field-sim', stage: 'compute', source: HAND_FIELD_SIM_WGSL, entry: 'cs_particles' },
+    { type: 'precompile_shader', shader_id: 'handfx/field-fluid', stage: 'compute', source: HAND_FIELD_FLUID_WGSL, entry: 'cs_advect' },
+    { type: 'precompile_shader', shader_id: 'handfx/field-render', stage: 'render', source: HAND_FIELD_RENDER_WGSL, entry: 'fs_field' },
     { type:'precompile_shader',shader_id:'interactive/emission',stage:'compute',source:MATTER_EMISSION,entry:'cs_emission' },
     { type:'precompile_shader',shader_id:'interactive/geometry',stage:'compute',source:MATTER_GEOMETRY,entry:'cs_geometry' },
     { type:'precompile_shader',shader_id:'interactive/fluid',stage:'compute',source:MATTER_FLUID,entry:'cs_advect' },
@@ -631,6 +663,7 @@ function pluginState(options: NativePluginGraphOptions, scene: string): NativePl
     historyHead: previous?.historyHead ?? 0,
     historyPhase: previous?.historyPhase,
     handPoints: previous?.handPoints,
+    handField: previous?.handField,
     liquidVelIsA: previous?.liquidVelIsA,
     liquidDyeIsA: previous?.liquidDyeIsA,
     liquidPrevBeatPulse: previous?.liquidPrevBeatPulse,
@@ -1483,10 +1516,13 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
   state.handPoints = nextHandPoints;
   state.handSides = hands.map(hand => hand.handedness);
   const modeLabel = String(params.handfxMode ?? 'trails');
-  const mode = Math.max(0, ['trails', 'aurora', 'bursts', 'skeleton', 'panel', 'bridge', 'orbit', 'lasers', 'portal', 'web', 'silk'].indexOf(modeLabel));
+  const fieldMode = handFxFieldModeIndex(modeLabel);
+  const mode = fieldMode >= 0 ? fieldMode : Math.max(0, ['trails', 'aurora', 'bursts', 'skeleton', 'panel', 'bridge', 'orbit', 'lasers', 'portal', 'web', 'silk'].indexOf(modeLabel));
   const panelColor = hexRgb(params.handfxPanelColor, [1, 1, 1]);
   const skeletonColor = hexRgb(params.handfxSkeletonColor, [1, 0.42, 0.42]);
-  const colorModeLabel = String(params.handfxPalette && params.handfxPalette !== 'legacy' ? params.handfxPalette : mode === 1
+  const colorModeLabel = String(params.handfxPalette && params.handfxPalette !== 'legacy' ? params.handfxPalette : fieldMode >= 0
+    ? ['ember', 'ocean', 'orchid', 'cyan', 'ember'][fieldMode - 11]
+    : mode === 1
     ? params.handfxInkColorMode ?? 'coral'
     : mode === 2
       ? params.handfxSprayColorMode ?? 'rainbow'
@@ -1519,6 +1555,22 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
   f[33] = clamp(params.handfxScale, 0.3, 3, 1);
   f[34] = clamp(params.handfxDetail, 1, 8, 5);
   f[35] = options.audio.active ? clamp(params.handfxAudioResponse, 0, 2, 0.65) * Math.max(options.audio.bass, options.audio.beatPulse) : 0;
+  if (fieldMode >= 0) {
+    const packed = packHandFxBody({
+      params, width: options.width, height: options.height, time: options.time, frameDelta: options.frameDelta, frame: options.handFrame,
+    }, state.handField, fieldMode);
+    state.handField = packed.state;
+    return {
+      state,
+      config: buildHandFxFieldConfig({
+        id, sourceId: options.sourceId, frameIndex: options.frameIndex, modeIndex: fieldMode,
+        uniformB64: bufferToBase64(uniform),
+        bodyB64: bufferToBase64(packed.buffer.buffer as ArrayBuffer),
+        topologyB64: bufferToBase64(packed.topology.buffer as ArrayBuffer),
+        layout: packed.layout, cameraSourceId: options.cameraSourceId, reset: !!options.reset,
+      }),
+    };
+  }
   const bindings = [
     { binding: 0, resource: id('uniform'), kind: 'uniform' },
     { binding: 1, resource: id('landmarks'), kind: 'read-only-storage' },
@@ -1642,11 +1694,16 @@ export function buildNativeHandInputUpdate(
   options: Omit<NativePluginGraphOptions, 'kind'>,
 ): NativeHandInputUpdateResult {
   const result = buildHandGraph({ ...options, kind: 'handfx' });
+  // The face wire is worked out once, when a face is first seen. It is sent
+  // again only when it changes, not on every frame.
+  const topologyChanged = result.state.handField?.faceTopologyVersion !== options.state?.handField?.faceTopologyVersion;
   const buffers = Array.isArray((result.config as any).buffers)
     ? (result.config as any).buffers
         .filter((buffer: any) =>
           (String(buffer?.id ?? '').endsWith(':uniform') ||
-            String(buffer?.id ?? '').endsWith(':landmarks')) &&
+            String(buffer?.id ?? '').endsWith(':landmarks') ||
+            String(buffer?.id ?? '').endsWith(':body') ||
+            (topologyChanged && String(buffer?.id ?? '').endsWith(':face-topology'))) &&
           typeof buffer?.initial_b64 === 'string',
         )
         .map((buffer: any) => ({

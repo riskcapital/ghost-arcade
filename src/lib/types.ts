@@ -317,7 +317,12 @@ export interface IntegratedEffectSource {
   analyzerLabBgAlpha?: number;           // 0..1
   analyzerLabShowLabels?: boolean;
   // HandFX params (MediaPipe-driven hand visualizer)
-  handfxMode?: 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts' | 'bridge' | 'orbit' | 'lasers' | 'portal' | 'web' | 'silk';
+  handfxMode?: 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts' | 'bridge' | 'orbit' | 'lasers' | 'portal' | 'web' | 'silk'
+    | 'bodyswarm' | 'bodyflow' | 'bodyaura' | 'facemask' | 'facestream';
+  /** Particle count for the body and face modes. */
+  handfxQuality?: 'low' | 'medium' | 'high' | 'ultra' | 'max';
+  handfxTrails?: number;
+  handfxSwirl?: number;
   handfxInput?: 'live' | 'demo';
   handfxPalette?: string;
   handfxBrightness?: number;
