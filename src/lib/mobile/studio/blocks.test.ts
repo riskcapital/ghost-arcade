@@ -119,3 +119,25 @@ describeDemo('demo set', () => {
     expectDemo(show.scenes[1].launchGrid![0]).not.toEqual(show.scenes[0].launchGrid![0]);
   });
 });
+
+import { normalizeShow as loadSaved } from './model';
+describeDemo('a saved stock demo', () => {
+  itDemo('gets its empty and missing blocks filled, and a filled block is left alone', () => {
+    const old = demoDefault();                       // one deck, no blocks: the demo as it used to be
+    const upgraded = loadSaved(JSON.parse(JSON.stringify(old)));
+    expectDemo(upgraded.scenes.map(b => b.name)).toEqual(['Block 1', 'Block 2', 'Block 3']);
+    expectDemo(upgraded.scenes.every(b => b.launchGrid!.slice(0, 4).every(row => row.slice(0, 8).every(Boolean)))).toBe(true);
+    expectDemo(upgraded.launchGrid).toEqual(old.launchGrid);
+
+    const mine = demoDefault(true);
+    mine.scenes[1].launchGrid = mine.scenes[1].launchGrid!.map(row => row.map(() => null)); // an empty Block 2
+    mine.scenes[2].launchGrid![0][0] = mine.clips[5].id;                                    // a Block 3 I arranged
+    const kept = JSON.stringify(mine.scenes[2].launchGrid);
+    const result = loadSaved(JSON.parse(JSON.stringify(mine)));
+    expectDemo(result.scenes[1].launchGrid![0].every(Boolean)).toBe(true);
+    expectDemo(JSON.stringify(result.scenes[2].launchGrid)).toBe(kept);
+
+    const renamed = { ...demoDefault(), name: 'Friday set' };
+    expectDemo(loadSaved(JSON.parse(JSON.stringify(renamed))).scenes).toHaveLength(0);       // not the stock demo: untouched
+  });
+});

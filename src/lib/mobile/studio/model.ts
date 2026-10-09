@@ -168,7 +168,32 @@ export function defaultShow(demoBlocks=false): Show {
     mapping: false,
   };
 }
-export function normalizeShow(raw: unknown): Show {
+/**
+ * A set that is still the stock demo (its first block is the curated opening
+ * deck, untouched) is brought up to the current demo: three blocks, each full.
+ * Blocks the person already filled are left exactly as they are; only empty
+ * ones are filled, and missing ones are added.
+ */
+function completeDemo(show: Show): Show {
+  const stock = defaultShow(true);
+  const first = show.scenes[0]?.launchGrid ?? show.launchGrid;
+  const same = (a?: (string|null)[], b?: (string|null)[]) => !!a && !!b && b.slice(0, 8).every((id, i) => a[i] === id);
+  if (show.name !== stock.name || show.scenes.length > stock.scenes.length || ![0, 1, 2, 3].every(row => same(first?.[row], stock.launchGrid[row]))) return show;
+  const empty = (grid?: (string|null)[][]) => !grid || grid.every(row => row.every(id => !id));
+  let scenes = show.scenes.map((block, i) => (i > 0 && empty(block.launchGrid) ? { ...block, launchGrid: stock.scenes[i].launchGrid!.map(row => [...row]) } : block));
+  let activeBlockId = show.activeBlockId;
+  if (!scenes.length) { scenes = [{ ...stock.scenes[0], launchGrid: show.launchGrid.map(row => [...row]), layers: show.layers.map(layer => ({ ...layer })) }]; activeBlockId = scenes[0].id; }
+  for (let i = scenes.length; i < stock.scenes.length; i++) scenes.push({ ...stock.scenes[i], name: `Block ${i + 1}` });
+  if (scenes.every((block, i) => block === show.scenes[i]) && scenes.length === show.scenes.length) return show;
+  const known = new Set(show.clips.map(clip => clip.id));
+  // The added shaders go ahead of the person's own clips, so what they imported stays last, where they left it.
+  const own = show.clips.findIndex(clip => clip.kind !== 'shader');
+  const added = stock.clips.filter(clip => !known.has(clip.id));
+  const clips = own < 0 ? [...show.clips, ...added] : [...show.clips.slice(0, own), ...added, ...show.clips.slice(own)];
+  return { ...show, scenes, activeBlockId, clips };
+}
+export function normalizeShow(raw: unknown): Show { return completeDemo(normalizeStored(raw)); }
+function normalizeStored(raw: unknown): Show {
   let r = raw as Show;
   if (!r || r.version !== 1 || !Array.isArray(r.layers) || !Array.isArray(r.clips) || !Array.isArray(r.surfaces))
     throw new Error('This is not a Ghost Arcade mobile set.');

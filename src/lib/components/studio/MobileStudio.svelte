@@ -825,11 +825,23 @@
   function toggleTempo() {
     if (!tempoOpen && footerEl) {
       // The footer scrolls its own overflow, so the sheet is placed from the footer's box instead of inside it.
-      const box = footerEl.getBoundingClientRect();
-      tempoAnchor = { left: Math.round(box.left) + 10, bottom: Math.round(window.innerHeight - box.top) + 8 };
+      // On a phone the footer is usually hidden: sit just above the workspace bar instead.
+      let box = footerEl.getBoundingClientRect();
+      if (!box.height) box = (document.querySelector('.studio > .tabs') ?? footerEl).getBoundingClientRect();
+      tempoAnchor = box.height ? { left: Math.round(box.left) + 10, bottom: Math.round(window.innerHeight - box.top) + 8 } : { left: 10, bottom: 70 };
     }
     tempoOpen = !tempoOpen;
   }
+  /** The tempo chip is a tap pad: tap it in time to set the tempo, hold it for the tempo and audio sheet. */
+  let tempoPress = 0, tempoHold: ReturnType<typeof setTimeout> | undefined;
+  function tempoDown() {
+    tempoPress = performance.now();
+    const before = taps;
+    tap();
+    clearTimeout(tempoHold);
+    tempoHold = setTimeout(() => { taps = before; if (!tempoOpen) toggleTempo(); }, 500);
+  }
+  function tempoUp() { clearTimeout(tempoHold); }
   // A rotation or Split View resize moves the footer: close rather than float in the wrong place.
   $: if (layoutInfo) tempoOpen = false;
   function tap() {
@@ -1504,7 +1516,7 @@
         {#if tab==='perform' && !prefs.coachDone && !clean && !visualsDown}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
       </div>
       <div class="monitor-tools">
-        {#if tab==='perform' && !interactiveLive}<button class="tempo-chip" class:active={tempoOpen} aria-expanded={tempoOpen} aria-label={`Tempo ${show.bpm} BPM. Tap tempo and audio.`} onclick={toggleTempo}><strong>{show.bpm}</strong>BPM</button><button class="q-chip" class:active={show.quantize} aria-pressed={show.quantize} aria-label="Quantize launches to the beat" title="Quantize launches to the beat" onclick={()=>{show.quantize=!show.quantize;if(!show.quantize)cancelQueued();persist();}}>Q</button><button class="ab-chip" class:active={show.dualDeck} aria-pressed={show.dualDeck} aria-label="A/B decks" onclick={()=>setDual(!show.dualDeck)}>A/B</button><div class="autopilot-bar">
+        {#if tab==='perform' && !interactiveLive}<button class="tempo-chip" class:active={tempoOpen} aria-expanded={tempoOpen} aria-label={`Tempo ${show.bpm} BPM. Tap in time to set it; hold for tempo and audio.`} onpointerdown={tempoDown} onpointerup={tempoUp} onpointercancel={tempoUp} onpointerleave={tempoUp} onclick={()=>{if(performance.now()-tempoPress>1000)toggleTempo();}}><strong>{show.bpm}</strong>BPM</button><button class="q-chip" class:active={show.quantize} aria-pressed={show.quantize} aria-label="Quantize launches to the beat" title="Quantize launches to the beat" onclick={()=>{show.quantize=!show.quantize;if(!show.quantize)cancelQueued();persist();}}>Q</button><button class="ab-chip" class:active={show.dualDeck} aria-pressed={show.dualDeck} aria-label="A/B decks" onclick={()=>setDual(!show.dualDeck)}>A/B</button><div class="autopilot-bar">
             <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
             <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
           </div>{/if}
