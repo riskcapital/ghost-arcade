@@ -33,6 +33,10 @@ export interface MediaPipeStartOptions {
   targetFps?: number;
   /** Max simultaneous hands. Default 2. */
   numHands?: number;
+  /** Track one body's skeleton (33 landmarks). One more model per frame. Default false. */
+  trackBody?: boolean;
+  /** Track one face: landmarks and expressions. One more model per frame. Default false. */
+  trackFace?: boolean;
 }
 
 const DEFAULT_OPTS: Required<MediaPipeStartOptions> = {
@@ -51,6 +55,8 @@ const DEFAULT_OPTS: Required<MediaPipeStartOptions> = {
   // just needs to be high enough not to be the bottleneck.
   targetFps: 120,
   numHands: 2,
+  trackBody: false,
+  trackFace: false,
 };
 
 // Public CDN URLs for the model files. Phase 1 fetches them at runtime
@@ -61,6 +67,8 @@ const DEFAULT_OPTS: Required<MediaPipeStartOptions> = {
 // The CDN URLs remain as a fallback if the local copies are missing.
 const HAND_MODEL_CDN_URL    = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const GESTURE_MODEL_CDN_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
+const POSE_MODEL_CDN_URL    = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
+const FACE_MODEL_CDN_URL    = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task';
 
 function localModelUrl(name: string): string {
   // Same document-relative resolution as the WASM path below (see comment):
@@ -264,9 +272,11 @@ export class MediaPipeSource {
         };
         localWorker!.addEventListener('message', onMsg);
       });
-      const [handModelUrl, gestureModelUrl] = await Promise.all([
+      const [handModelUrl, gestureModelUrl, poseModelUrl, faceModelUrl] = await Promise.all([
         resolveModelUrl('hand_landmarker.task', HAND_MODEL_CDN_URL),
         resolveModelUrl('gesture_recognizer.task', GESTURE_MODEL_CDN_URL),
+        opts.trackBody ? resolveModelUrl('pose_landmarker_lite.task', POSE_MODEL_CDN_URL) : Promise.resolve(''),
+        opts.trackFace ? resolveModelUrl('face_landmarker.task', FACE_MODEL_CDN_URL) : Promise.resolve(''),
       ]);
       localWorker.postMessage({
         type: 'init',
@@ -275,6 +285,10 @@ export class MediaPipeSource {
         gestureModelUrl,
         useGesture: opts.useGesture,
         numHands: opts.numHands,
+        trackBody: opts.trackBody,
+        trackFace: opts.trackFace,
+        poseModelUrl,
+        faceModelUrl,
       });
       await initDone;
       if (isStale()) { disposeLocals(); return; }
@@ -359,7 +373,7 @@ export class MediaPipeSource {
             : h.handedness,
         }));
       }
-      const frame = deriveSignals(msg.timestamp, hands);
+      const frame = deriveSignals(msg.timestamp, hands, { pose: msg.pose, face: msg.face, mirrored: this.opts.mirror });
 
       // Suppress gesture "stuck" signals — only fire the gesture every
       // time it *changes*, so a consumer using gestures as triggers
@@ -389,7 +403,8 @@ export class MediaPipeSource {
 
 function optsEqual(a: Required<MediaPipeStartOptions>, b: Required<MediaPipeStartOptions>): boolean {
   return a.deviceId === b.deviceId && a.useGesture === b.useGesture && a.mirror === b.mirror
-    && a.targetFps === b.targetFps && a.numHands === b.numHands;
+    && a.targetFps === b.targetFps && a.numHands === b.numHands
+    && a.trackBody === b.trackBody && a.trackFace === b.trackFace;
 }
 
 export const mediaPipeSource = new MediaPipeSource();

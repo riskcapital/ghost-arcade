@@ -25,6 +25,8 @@ import {
   FilesetResolver,
   HandLandmarker,
   GestureRecognizer,
+  PoseLandmarker,
+  FaceLandmarker,
   type HandLandmarkerResult,
   type GestureRecognizerResult,
 } from '@mediapipe/tasks-vision';
@@ -46,6 +48,8 @@ export interface WorkerHandResult {
   gestureScore: number;
 }
 
+let poseLandmarker: PoseLandmarker | null = null;
+let faceLandmarker: FaceLandmarker | null = null;
 let handLandmarker: HandLandmarker | null = null;
 let gestureRecognizer: GestureRecognizer | null = null;
 let useGestureModel = true;
@@ -55,13 +59,18 @@ self.addEventListener('message', async (e: MessageEvent) => {
   const msg = e.data;
   try {
     if (msg.type === 'init') {
-      await initModels(msg.wasmUrl, msg.handModelUrl, msg.gestureModelUrl, msg.useGesture ?? true, msg.numHands ?? 2);
+      await initModels(msg.wasmUrl, msg.handModelUrl, msg.gestureModelUrl, msg.useGesture ?? true, msg.numHands ?? 2,
+        msg.trackBody ? msg.poseModelUrl : '', msg.trackFace ? msg.faceModelUrl : '');
       (self as any).postMessage({ type: 'ready' });
     } else if (msg.type === 'frame') {
       processFrame(msg.bitmap as ImageBitmap, msg.timestamp as number);
     } else if (msg.type === 'dispose') {
       try { handLandmarker?.close(); } catch {}
       try { gestureRecognizer?.close(); } catch {}
+      try { poseLandmarker?.close(); } catch {}
+      try { faceLandmarker?.close(); } catch {}
+      poseLandmarker = null;
+      faceLandmarker = null;
       handLandmarker = null;
       gestureRecognizer = null;
     }
@@ -73,6 +82,7 @@ self.addEventListener('message', async (e: MessageEvent) => {
 async function initModels(
   wasmUrl: string, handModelUrl: string, gestureModelUrl: string,
   useGesture: boolean, numHands: number,
+  poseModelUrl = '', faceModelUrl = '',
 ): Promise<void> {
   useGestureModel = useGesture;
   // useModule: true picks vision_wasm_module_internal.js (the ES-module
@@ -124,6 +134,24 @@ async function initModels(
       minTrackingConfidence: 0.5,
     });
   }
+
+  // Body and face are optional extras: each adds one more model per frame.
+  if (poseModelUrl) {
+    installFactory();
+    poseLandmarker = await PoseLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: poseModelUrl, delegate: 'GPU' },
+      runningMode: 'VIDEO', numPoses: 1,
+      minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+    });
+  }
+  if (faceModelUrl) {
+    installFactory();
+    faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: faceModelUrl, delegate: 'GPU' },
+      runningMode: 'VIDEO', numFaces: 1, outputFaceBlendshapes: true,
+      minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+    });
+  }
 }
 
 function processFrame(bitmap: ImageBitmap, timestamp: number): void {
@@ -139,10 +167,22 @@ function processFrame(bitmap: ImageBitmap, timestamp: number): void {
 
   let handResult: HandLandmarkerResult;
   let gestureResult: GestureRecognizerResult | null = null;
+  let pose: { landmarks: unknown[] } | null = null;
+  let face: { landmarks: unknown[]; blendshapes: Record<string, number> } | null = null;
   try {
     handResult = handLandmarker.detectForVideo(bitmap, timestamp);
     if (gestureRecognizer && useGestureModel) {
       gestureResult = gestureRecognizer.recognizeForVideo(bitmap, timestamp);
+    }
+    if (poseLandmarker) {
+      const found = poseLandmarker.detectForVideo(bitmap, timestamp);
+      pose = found.landmarks?.[0] ? { landmarks: found.landmarks[0] as any } : null;
+    }
+    if (faceLandmarker) {
+      const found = faceLandmarker.detectForVideo(bitmap, timestamp);
+      const blendshapes: Record<string, number> = {};
+      for (const c of found.faceBlendshapes?.[0]?.categories ?? []) blendshapes[c.categoryName] = c.score;
+      face = found.faceLandmarks?.[0] ? { landmarks: found.faceLandmarks[0] as any, blendshapes } : null;
     }
   } finally {
     bitmap.close?.();
@@ -166,5 +206,5 @@ function processFrame(bitmap: ImageBitmap, timestamp: number): void {
       gestureScore: gd?.score ?? 0,
     });
   }
-  (self as any).postMessage({ type: 'result', timestamp, hands: out });
+  (self as any).postMessage({ type: 'result', timestamp, hands: out, pose, face });
 }

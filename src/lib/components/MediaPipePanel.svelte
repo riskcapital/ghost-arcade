@@ -17,6 +17,8 @@
   let useGesture = true;
   let mirror = mediaPipeStore.source.isMirrored();
   let numHands = 2;
+  let trackBody = false;
+  let trackFace = false;
 
   $: state = $mediaPipeStore;
   $: frame = state.frame;
@@ -33,6 +35,21 @@
     [9,13],[13,14],[14,15],[15,16],   // ring
     [13,17],[17,18],[18,19],[19,20],  // pinky
     [0,17],                           // palm base
+  ];
+  // The skeleton, by MediaPipe's pose landmark numbers.
+  const POSE_CONNECTIONS: [number, number][] = [
+    [11,12],[11,23],[12,24],[23,24],              // torso
+    [11,13],[13,15],[12,14],[14,16],              // arms
+    [23,25],[25,27],[24,26],[26,28],              // legs
+    [27,31],[28,32],[15,19],[16,20],              // feet and hands
+    [0,11],[0,12],                                // head to shoulders
+  ];
+  // The face outline, the eyes and the lips, as loops of face-mesh landmark numbers.
+  const FACE_LOOPS: number[][] = [
+    [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109,10],
+    [33,160,158,133,153,144,33],
+    [263,387,385,362,380,373,263],
+    [61,39,37,0,267,269,291,405,314,17,84,181,61],
   ];
 
   function attachVideoPreview() {
@@ -66,10 +83,11 @@
     const w = overlayCanvas.width = previewWrap?.clientWidth ?? 320;
     const h = overlayCanvas.height = previewWrap?.clientHeight ?? 240;
     overlayCtx.clearRect(0, 0, w, h);
-    if (!frame.hands.length) return;
+    if (!frame.hands.length && !frame.pose && !frame.face) return;
     const scale = Math.min(w / (video.videoWidth || w), h / (video.videoHeight || h));
     const vw = (video.videoWidth || w) * scale, vh = (video.videoHeight || h) * scale;
     const ox = (w - vw) / 2, oy = (h - vh) / 2;
+    drawBodyAndFace(ox, oy, vw, vh);
     overlayCtx.lineWidth = 1.5;
     for (const hand of frame.hands) {
       const color = hand.handedness === 'Left' ? '#FF6B6B' : '#FF8585';
@@ -87,6 +105,43 @@
         overlayCtx.beginPath();
         overlayCtx.arc(ox + lm.x * vw, oy + lm.y * vh, 2, 0, Math.PI * 2);
         overlayCtx.fill();
+      }
+    }
+  }
+
+  function drawBodyAndFace(ox: number, oy: number, vw: number, vh: number) {
+    if (!overlayCtx) return;
+    if (frame.pose) {
+      overlayCtx.strokeStyle = '#7d9bff';
+      overlayCtx.fillStyle = '#7d9bff';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.beginPath();
+      for (const [a, b] of POSE_CONNECTIONS) {
+        const A = frame.pose[a], B = frame.pose[b];
+        if (!A || !B || (A.visibility ?? 1) < 0.5 || (B.visibility ?? 1) < 0.5) continue;
+        overlayCtx.moveTo(ox + A.x * vw, oy + A.y * vh);
+        overlayCtx.lineTo(ox + B.x * vw, oy + B.y * vh);
+      }
+      overlayCtx.stroke();
+      for (const i of [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]) {
+        const p = frame.pose[i];
+        if (!p || (p.visibility ?? 1) < 0.5) continue;
+        overlayCtx.beginPath();
+        overlayCtx.arc(ox + p.x * vw, oy + p.y * vh, 3, 0, Math.PI * 2);
+        overlayCtx.fill();
+      }
+    }
+    if (frame.face) {
+      overlayCtx.strokeStyle = '#e6ebf5';
+      overlayCtx.lineWidth = 1;
+      for (const loop of FACE_LOOPS) {
+        overlayCtx.beginPath();
+        loop.forEach((index, n) => {
+          const p = frame.face![index];
+          if (!p) return;
+          if (n === 0) overlayCtx!.moveTo(ox + p.x * vw, oy + p.y * vh); else overlayCtx!.lineTo(ox + p.x * vw, oy + p.y * vh);
+        });
+        overlayCtx.stroke();
       }
     }
   }
@@ -113,14 +168,17 @@
   async function start() {
     await mediaPipeStore.start({
       deviceId: pickedDeviceId || undefined,
-      useGesture, mirror, numHands,
+      useGesture, mirror, numHands, trackBody, trackFace,
     });
   }
   async function stop() { await mediaPipeStore.stop(); }
   function removeBinding(id: string) { mediaPipeBus.remove(id); }
 
   // Convenience grouping for the signal list display.
-  $: continuousSignals = SIGNAL_DEFS.filter(s => s.kind === 'continuous');
+  // Body and face rows only appear while that tracking is on, so the list stays short.
+  const isFace = (id: string) => id.startsWith('face.');
+  const isBody = (id: string) => /^(body|arm|arms|wrist|stance|head)\./.test(id);
+  $: continuousSignals = SIGNAL_DEFS.filter(s => s.kind === 'continuous' && (trackFace || !isFace(s.id)) && (trackBody || !isBody(s.id)));
   $: gestureSignals    = SIGNAL_DEFS.filter(s => s.kind === 'categorical');
 
   function fmt(v: number): string {
@@ -165,6 +223,8 @@
     <div class="mp-row mp-row-inline">
       <label><input type="checkbox" bind:checked={mirror} onchange={(e) => mediaPipeStore.source.setMirror(e.currentTarget.checked)} /> Mirror (selfie)</label>
       <label><input type="checkbox" bind:checked={useGesture} /> Canned gestures</label>
+      <label title="Track one body's skeleton: position, lean, crouch, arms, stance"><input type="checkbox" bind:checked={trackBody} /> Body</label>
+      <label title="Track one face: mouth, smile, brows, blinks, head turn, nod and tilt"><input type="checkbox" bind:checked={trackFace} /> Face</label>
       <label>Hands
         <select bind:value={numHands}>
           <option value={1}>1</option>
@@ -178,7 +238,7 @@
       </button>
     </div>
     <div class="mp-hint">
-      Hand Landmarker + Gesture Recognizer run in a Web Worker. Models load from Google's MediaPipe CDN on first start (~5 MB).
+      Hands, and Body and Face when ticked, are tracked in the background from models that ship with the app. Each extra model costs some frame rate.
     </div>
   {:else}
     <div class="mp-active">
