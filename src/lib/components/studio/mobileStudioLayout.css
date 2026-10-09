@@ -166,3 +166,16 @@
 .studio[data-layout].tempo-open .monitor-tools {position:relative;z-index:31;}
 .studio[data-layout='tablet-portrait'][data-layout].flux-tab .preview-frame {max-width:min(100%,680px);}
 .studio[data-layout='tablet-portrait'][data-layout].flux-tab:not(.performance) .monitor {max-height:46%;}
+
+/* Top row: tempo and A/B sit where the composition label was. */
+.studio[data-layout][data-layout] .monitor-tools .tempo-chip {display:flex;align-items:center;gap:6px;padding:0 12px;font:10px ui-monospace,monospace;letter-spacing:.06em;color:var(--ga-ink-2);}
+.studio[data-layout][data-layout] .monitor-tools .tempo-chip strong {font:650 17px/1 system-ui;letter-spacing:0;color:var(--ga-ink-0);font-variant-numeric:tabular-nums;}
+.studio[data-layout][data-layout] .monitor-tools .ab-chip {padding:0 12px;font-weight:650;font-size:12px;letter-spacing:.04em;}
+.studio[data-layout][data-layout] .monitor-tools :is(.tempo-chip,.ab-chip).active {border-color:var(--ga-blue-300);background:var(--ga-selection-bg);color:var(--ga-ink-0);}
+.studio[data-layout][data-layout] .monitor-tools > span:empty {flex:1;}
+/* One row: Controls, Auto, Add. Auto takes the middle and whatever room is left. */
+.studio[data-layout][data-layout] .perform-actions {justify-content:flex-start;align-items:stretch;}
+.studio[data-layout][data-layout] .perform-actions .autopilot-bar {flex:1;min-width:0;justify-content:space-between;}
+.studio[data-layout][data-layout] .perform-actions .autopilot-bar button {border:0;min-height:42px;}
+.studio[data-layout][data-layout] .perform-actions .autopilot-bar button:first-child {flex:1;justify-content:flex-start;}
+.studio[data-layout][data-layout] .perform-actions .add-clip {margin-left:0;}

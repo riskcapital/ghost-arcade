@@ -30,7 +30,6 @@
     const el=document.querySelector<HTMLElement>(`[data-clip-slot][data-row="${slot.row}"][data-column="${slot.column}"]`);
     el?.scrollIntoView({block:'nearest',inline:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
   }
-  let picked:Slot|null=null;
   let drop:Slot|null=null;
   let drag:{id:number;from:Slot;clip:Clip;x:number;y:number;startX:number;startY:number;moving:boolean;el:HTMLElement}|null=null;
   let scrollFrame=0;
@@ -55,39 +54,37 @@
     drop=targetAt(drag.x,drag.y);
     scrollFrame=requestAnimationFrame(scrollDrag);
   }
+  /** Press: a tap launches, a hold lifts the clip so it can be dragged to another slot. */
   function dragDown(e:PointerEvent,row:number,column:number,clip?:Clip){
-    if(!arrange||!clip){holdPad(e,row,column,clip);return;}
-    if(drag||e.button!==0)return;
-    cancelHold();suppressTap=false;e.preventDefault();e.stopPropagation();
-    const el=e.currentTarget as HTMLElement;el.setPointerCapture(e.pointerId);
-    drag={id:e.pointerId,from:{row,column},clip,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moving:false,el};
-    hold={id:e.pointerId,x:e.clientX,y:e.clientY,timer:setTimeout(()=>{cancelDrag();openMenu(row,column,clip);},500)};
+    holdPad(e,row,column,clip);
+  }
+  /** The hold has lasted: the clip is lifted. Drag to move it, or let go for Replace / Remove. */
+  function lift(row:number,column:number,clip:Clip){
+    const h=hold;if(!h||drag)return;hold=null;suppressTap=true;
+    try{h.el.setPointerCapture(h.id);}catch{}
+    drag={id:h.id,from:{row,column},clip,x:h.x,y:h.y,startX:h.x,startY:h.y,moving:false,el:h.el};
+    onArrange();
   }
   function dragMove(e:PointerEvent){
     if(!drag||drag.id!==e.pointerId){movePad(e);return;}
     e.preventDefault();e.stopPropagation();drag={...drag,x:e.clientX,y:e.clientY};
-    if(!drag.moving&&Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>7){cancelHold();drag.moving=true;picked=null;scrollFrame=requestAnimationFrame(scrollDrag);}
+    if(!drag.moving&&Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>7){cancelHold();drag.moving=true;scrollFrame=requestAnimationFrame(scrollDrag);}
     if(drag.moving)drop=targetAt(e.clientX,e.clientY);
   }
   function dragEnd(e:PointerEvent){
     cancelHold();if(!drag||drag.id!==e.pointerId)return;
     e.stopPropagation();const d=drag;drag=null;cancelAnimationFrame(scrollFrame);drop=null;
     if(d.el.hasPointerCapture(d.id))d.el.releasePointerCapture(d.id);
+    suppressTap=true;
     if(d.moving){
-      suppressTap=true;
       const target=e.type==='pointerup'?targetAt(e.clientX,e.clientY):null;
       if(target&&!same(d.from,target))onMove(d.from,target);
     }else if(e.type==='pointerup'){
-      // Tap-to-pick/drop is also available to keyboard and assistive input.
-      suppressTap=true;arrangeTap(d.from,d.clip);
+      // Held and let go without dragging: the clip's own menu.
+      openMenu(d.from.row,d.from.column,d.clip);
     }
   }
   function cancelDrag(){cancelHold();cancelAnimationFrame(scrollFrame);const d=drag;drag=null;drop=null;if(d?.el.hasPointerCapture(d.id))d.el.releasePointerCapture(d.id);}
-  function arrangeTap(slot:Slot,clip?:Clip){
-    if(picked){if(!same(picked,slot))onMove(picked,slot);picked=null;}
-    else if(clip)picked=slot;
-    else onEdit(slot.row,slot.column);
-  }
   export let onMix: (value: number) => void;
   let dragStart: {x:number;scroll:number;id:number}|null=null;
   let dragged=false;
@@ -95,7 +92,7 @@
   function moveDrag(e:PointerEvent){if(!dragStart)return;const dx=e.clientX-dragStart.x;if(Math.abs(dx)>6){dragged=true;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);(e.currentTarget as HTMLElement).scrollLeft=dragStart.scroll-dx;}}
   let menu: {row:number;column:number;clip:Clip}|null=null;
   let dialog:HTMLDialogElement;
-  let hold: {id:number;x:number;y:number;timer:ReturnType<typeof setTimeout>}|null=null;
+  let hold: {id:number;x:number;y:number;el:HTMLElement;timer:ReturnType<typeof setTimeout>}|null=null;
   let suppressTap=false;
   function cancelHold(){if(hold)clearTimeout(hold.timer);hold=null;}
   function openMenu(row:number,column:number,clip:Clip){cancelHold();suppressTap=true;menu={row,column,clip};dialog.showModal();}
@@ -103,12 +100,17 @@
     // Touch-down launch: only for a pad that is not already playing or queued, so the double tap
     // that stops a playing clip and the hold menu keep working. The lift's click is then ignored.
     if(launchOnDown&&e.pointerType!=='mouse'&&!clipUnavailable(clip)&&show.layers[row].clipId!==clip.id&&pending[row]?.clip.id!==clip.id){onTap(row,clip);suppressTap=true;}
-hold={id:e.pointerId,x:e.clientX,y:e.clientY,timer:setTimeout(()=>openMenu(row,column,clip),500)};}
+hold={id:e.pointerId,x:e.clientX,y:e.clientY,el:e.currentTarget as HTMLElement,timer:setTimeout(()=>lift(row,column,clip),350)};}
   function movePad(e:PointerEvent){if(hold&&Math.hypot(e.clientX-hold.x,e.clientY-hold.y)>10)cancelHold();}
   function closeMenu(){dialog.close();menu=null;}
   function menuAction(remove=false){const slot=menu;closeMenu();if(slot){if(remove)onRemove(slot.row,slot.column);else onEdit(slot.row,slot.column);}}
   onDestroy(()=>{cancelHold();cancelDrag();});
-  let arrange = false;
+  /** While a clip is lifted the page must not scroll under the finger. */
+  function holdStill(node:HTMLElement){
+    const stop=(e:TouchEvent)=>{if(drag)e.preventDefault();};
+    node.addEventListener('touchmove',stop,{passive:false});
+    return{destroy(){node.removeEventListener('touchmove',stop);}};
+  }
   $: columnCount=Math.min(48,Math.max(8,...show.launchGrid.map(row=>row.length+1)));
   $: columns=Array.from({length:columnCount},(_,i)=>i);
   $: decks = show.dualDeck ? [[0, 1, 2, 3], [4, 5, 6, 7]] : [[0, 1, 2, 3]];
@@ -117,19 +119,15 @@ hold={id:e.pointerId,x:e.clientX,y:e.clientY,timer:setTimeout(()=>openMenu(row,c
     for (const row of rows) { const clip = clipAt(row, column); if (clip && !clipUnavailable(clip)) onLaunch(row, clip); }
   }
 </script>
-<div class="deck-toolbar">
-  <div class="deck-options"><div class="mode"><button class="deck-switch" class:active={show.dualDeck} aria-label="Dual decks" aria-pressed={show.dualDeck} title="A/B decks — toggle a second deck" onclick={() => {cancelDrag();picked=null;onDual(!show.dualDeck);}}><svg width="19" height="16" viewBox="0 0 24 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1" y="2" width="9" height="16" rx="2"/><rect x="14" y="2" width="9" height="16" rx="2"/></svg><strong>A/B</strong></button></div><slot name="autopilot"/></div>
-  <div class="deck-actions"><slot name="view-switch"/><button class="arrange-toggle" aria-label={arrange?'Done arranging':'Arrange clips'} class:active={arrange} aria-pressed={arrange} onclick={() => {cancelDrag();picked=null;arrange=!arrange;onArrange();}}><Icon name={arrange?'check':'grid'} size={16}/><span class="arrange-label">{arrange ? 'Done arranging' : 'Arrange clips'}</span></button></div>
-</div>
+{#if $$slots["view-switch"]}<div class="deck-toolbar"><div class="deck-actions"><slot name="view-switch"/></div></div>{/if}
 <slot name="autopilot-settings"/>
-{#if arrange}<p class="arrange-help">{picked?'Tap a destination to move or swap. Tap the selected clip to cancel.':'Drag clips to move; drop on another to swap. Hold for Replace / Remove.'}</p>{/if}
 <slot name="blocks"/>
-<div class="decks" class:dual={show.dualDeck} class:arranging={arrange}>
+<div class="decks" class:dual={show.dualDeck} class:arranging={!!drag} use:holdStill>
   {#each decks as rows, deck}
     <section class="deck" aria-label={show.dualDeck ? `Deck ${deck === 0 ? 'A' : 'B'}` : 'Clip launcher'}>
       {#if show.dualDeck}<header><strong>{show.dualDeck ? `DECK ${deck === 0 ? 'A' : 'B'}` : 'CLIP LAUNCHER'}</strong><span>{show.dualDeck ? `${Math.round((deck === 0 ? 1 - show.crossfade : show.crossfade) * 100)}% OUTPUT` : 'LIVE MIX'}</span></header>{/if}
       <div class="matrix" style={`--columns:${columnCount}`} onpointerdown={startDrag} onpointermove={moveDrag} onpointerup={()=>dragStart=null} onpointercancel={()=>dragStart=null} onlostpointercapture={()=>dragStart=null} onclickcapture={e=>{if(dragged){e.preventDefault();e.stopPropagation();dragged=false;}}}>
-        <div class="column-row"><span class="row-label" data-deck-label>{show.dualDeck ? `DECK ${deck === 0 ? 'A' : 'B'}` : 'LAYERS'}</span>{#each columns as col}<button aria-label={`Launch ${show.dualDeck ? (deck === 0 ? 'A' : 'B') : 'deck'} column ${col + 1}`} onclick={() => columnLaunch(rows, col)} disabled={arrange}>▶ {col + 1}</button>{/each}</div>
+        <div class="column-row"><span class="row-label" data-deck-label>{show.dualDeck ? `DECK ${deck === 0 ? 'A' : 'B'}` : 'LAYERS'}</span>{#each columns as col}<button aria-label={`Launch ${show.dualDeck ? (deck === 0 ? 'A' : 'B') : 'deck'} column ${col + 1}`} onclick={() => columnLaunch(rows, col)}>▶ {col + 1}</button>{/each}</div>
         {#each rows as row}
           <div class="clip-row" class:selected={row === selectedLayer}>
             <div class="row-control">
@@ -140,14 +138,14 @@ hold={id:e.pointerId,x:e.clientX,y:e.clientY,timer:setTimeout(()=>openMenu(row,c
             {#each columns as column}
               {@const clip = show.clips.find(c => c.id === show.launchGrid[row]?.[column])}
               <div class="clip-slot" data-clip-slot data-row={row} data-column={column}>
-              <button class="pad" class:picked={same(picked,{row,column})} class:drag-source={!!drag?.moving&&same(drag.from,{row,column})} class:drop-target={same(drop,{row,column})} class:live={!!clip && show.layers[row].clipId === clip.id} class:queued={!!clip && pending[row]?.clip.id === clip.id} class:empty={!clip} class:unavailable={clipUnavailable(clip)} class:fresh={same(highlight,{row,column})}
-                aria-label={clip && clipUnavailable(clip) && !arrange ? `${clip.name} is not available on this device` : clip ? `${arrange ? 'Move' : show.layers[row].clipId===clip.id ? 'Select' : pending[row]?.clip.id===clip.id ? 'Select queued' : 'Launch'} ${clip.name} on row ${row + 1}${arrange ? '' : show.layers[row].clipId===clip.id ? ', playing' : pending[row]?.clip.id===clip.id ? ', queued' : ''}` : `Add clip to row ${row + 1} column ${column + 1}`}
-                aria-pressed={clip ? (arrange ? same(picked,{row,column}) : show.layers[row].clipId===clip.id) : undefined}
+              <button class="pad" class:picked={!!drag&&same(drag.from,{row,column})} class:drag-source={!!drag?.moving&&same(drag.from,{row,column})} class:drop-target={same(drop,{row,column})} class:live={!!clip && show.layers[row].clipId === clip.id} class:queued={!!clip && pending[row]?.clip.id === clip.id} class:empty={!clip} class:unavailable={clipUnavailable(clip)} class:fresh={same(highlight,{row,column})}
+                aria-label={clip && clipUnavailable(clip) ? `${clip.name} is not available on this device` : clip ? `${show.layers[row].clipId===clip.id ? 'Select' : pending[row]?.clip.id===clip.id ? 'Select queued' : 'Launch'} ${clip.name} on row ${row + 1}${show.layers[row].clipId===clip.id ? ', playing' : pending[row]?.clip.id===clip.id ? ', queued' : ''}. Hold to move.` : `Add clip to row ${row + 1} column ${column + 1}`}
+                aria-pressed={clip ? show.layers[row].clipId===clip.id : undefined}
                 onpointerdown={e=>dragDown(e,row,column,clip)} onpointermove={dragMove} onpointerup={dragEnd} onpointercancel={dragEnd} onlostpointercapture={()=>{if(drag)cancelDrag();}}
                 oncontextmenu={e=>{if(clip){e.preventDefault();openMenu(row,column,clip);}}}
                 onkeydown={e=>{if(clip&&(e.key==='ContextMenu'||(e.shiftKey&&e.key==='F10'))){e.preventDefault();openMenu(row,column,clip);}}}
-                onclick={() => { if(suppressTap){suppressTap=false;return;} if(arrange)arrangeTap({row,column},clip);else if(!clip)onEdit(row,column);else onTap(row,clip); }}>
-                {#if clip}{#key clip.id}<ClipThumbnail {clip}/>{/key}{#if clipUnavailable(clip)}<span class="unavailable-badge">Unavailable</span>{/if}{#if arrange}<span class="drag-grip" aria-hidden="true">⠿</span>{/if}<span class="status-dot" aria-hidden="true"></span>{:else}<span class="plus">+</span>{/if}
+                onclick={() => { if(suppressTap){suppressTap=false;return;} if(!clip)onEdit(row,column);else onTap(row,clip); }}>
+                {#if clip}{#key clip.id}<ClipThumbnail {clip}/>{/key}{#if clipUnavailable(clip)}<span class="unavailable-badge">Unavailable</span>{/if}<span class="status-dot" aria-hidden="true"></span>{:else}<span class="plus">+</span>{/if}
               </button>
 
               </div>
@@ -165,9 +163,9 @@ hold={id:e.pointerId,x:e.clientX,y:e.clientY,timer:setTimeout(()=>openMenu(row,c
 <dialog bind:this={dialog} class="clip-menu" aria-label="Clip actions" onclose={()=>menu=null} onclick={e=>{if(e.target===dialog)closeMenu();}}>
  {#if menu}<div class="menu-content"><strong>{menu.clip.name}</strong><span>{show.dualDeck ? `${menu.row < 4 ? 'A' : 'B'}${menu.row % 4 + 1}` : `L${menu.row + 1}`} · Slot {menu.column+1}</span><button onclick={()=>menuAction()}>Replace clip</button><button class="remove" onclick={()=>menuAction(true)}>Remove clip</button><button onclick={closeMenu}>Cancel</button></div>{/if}
 </dialog>
-<p class="deck-hint">{arrange ? 'Drag or tap two slots to move / swap. Playing clips continue unchanged.' : 'Tap to play. Tap a layer’s gear to edit its look. Double-tap a playing clip to stop. Hold to replace or remove.'}</p>
+<p class="deck-hint">{'Tap to play. Tap a layer’s gear to edit its look. Double-tap a playing clip to stop. Hold a clip, then drag to move it or let go to replace or remove it.'}</p>
 {#if drag?.moving}<div class="drag-preview" style:left={`${drag.x}px`} style:top={`${drag.y}px`}><ClipThumbnail clip={drag.clip}/><span>{drag.clip.name}</span></div>{/if}
-<svelte:window onkeydown={e=>{if(e.key==='Escape'){cancelDrag();picked=null;}}} onblur={()=>{cancelDrag();picked=null;}}/>
+<svelte:window onkeydown={e=>{if(e.key==='Escape'){cancelDrag();}}} onblur={()=>{cancelDrag();}}/>
 <style>
  .clip-slot{position:relative;min-width:0;}
  .pad.fresh{outline:2px solid var(--ga-selection-line);outline-offset:1px;animation:fresh-pad 1s ease-in-out 3;}

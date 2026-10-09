@@ -144,6 +144,7 @@
     tab='perform';pickerOpen=true;
   }
   function closePicker(){pickerOpen=false;editSlot=null;}
+  function setDual(enabled:boolean){checkpoint();autoEvent('settings');show.dualDeck=enabled;if(!enabled&&selectedLayer>=4)changeLayer(0);persist();}
   const rowName=(row:number)=>show.dualDeck?`${row<4?'A':'B'}${row%4+1}`:`L${row+1}`;
   /** null until the device has answered. Only then is the depth camera offered. */
   let lidar:boolean|null=null;
@@ -873,6 +874,13 @@
     return {destroy(){node.removeEventListener('keydown',key);if(opener?.isConnected)opener.focus({preventScroll:true});}};
   }
   function closeControls(){clipControlsOpen=false;effectBrowser=false;}
+  /** A press anywhere off the controls sheet closes it (not when it is docked beside the deck). */
+  function pressOffControls(e:PointerEvent){
+    if(!clipControlsOpen||dockedInspector||effectBrowser)return;
+    const target=e.target as HTMLElement|null;
+    if(!target||target.closest('.clip-controls-tray, dialog, [role="dialog"], .bottom-nav, nav'))return;
+    closeControls();
+  }
   function focusControlsTray(node:HTMLElement){
     node.querySelector<HTMLElement>('[data-close-controls]')?.focus({preventScroll:true});
     return {destroy(){const opener=controlsReturnFocus;controlsReturnFocus=null;void tick().then(()=>{if(!clipControlsOpen&&opener?.isConnected)opener.focus({preventScroll:true});});}};
@@ -1399,7 +1407,7 @@
 <input type="file" accept="image/*,video/*" aria-label="Shader source media" bind:this={shaderMediaInput} onchange={importShaderSource} hidden />
 
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onpointerdowncapture={pressOffControls} />
 <input class="file-input" type="file" accept="video/*" multiple aria-label="Import videos" bind:this={videoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="image/*" multiple aria-label="Import photos" bind:this={photoInput} onchange={importMedia} />
 <input class="file-input" type="file" accept="video/*,image/*" multiple aria-label="Import media" bind:this={mediaInput} onchange={importMedia} />
@@ -1480,9 +1488,9 @@
         {#if tab==='perform' && !prefs.coachDone && !clean && !visualsDown}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
       </div>
       <div class="monitor-tools">
-        {#if !tablet && tab!=='map' && tab!=='flux'}<button class="preview-toggle" aria-label={compactPreview?'Expand preview':'Compact preview'} aria-pressed={compactPreview} onclick={()=>compactPreview=!compactPreview}><Icon name="eye" size={16}/></button>{/if}
+        {#if tab==='perform' && !interactiveLive}<button class="tempo-chip" class:active={tempoOpen} aria-expanded={tempoOpen} aria-label={`Tempo ${show.bpm} BPM. Tap tempo and audio.`} onclick={toggleTempo}><strong>{show.bpm}</strong>BPM</button><button class="ab-chip" class:active={show.dualDeck} aria-pressed={show.dualDeck} aria-label="A/B decks" onclick={()=>setDual(!show.dualDeck)}>A/B</button>{/if}
         {#if interactiveLive}<button onclick={openInteractive}>Interactive</button><button onclick={()=>interactiveWorkspace?.restoreMix()}>Return to mix</button>{/if}
-        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':'LIVE COMPOSITION'}</span><button
+        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':''}</span><button
           class:active={frozen}
           onclick={setFrozen}
           aria-pressed={frozen}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume' : 'Hold'}</button
@@ -1501,7 +1509,10 @@
             <div><button class="primary" data-repair-fix onclick={fixSet}>Fix this set</button><button data-repair-keep onclick={() => (repairOffer = null)}>Keep as it is</button></div>
             <small>You can undo the fix. It also stays in Set settings.</small>
           </section>{/if}
-          <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><button class="add-clip" data-add-clip aria-haspopup="dialog" onclick={()=>openPicker()}><Icon name="plus" size={18}/>Add</button></div>
+          <div class="perform-actions"><button onclick={()=>openControls(selectedLayer)} aria-expanded={clipControlsOpen || dockedInspector}><Icon name="controls" size={18}/>Controls <span>L{selectedLayer+1}</span></button><div class="autopilot-bar">
+            <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
+            <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
+          </div><button class="add-clip" data-add-clip aria-haspopup="dialog" onclick={()=>openPicker()}><Icon name="plus" size={18}/>Add</button></div>
             <StudioDecks {show} {selectedLayer} {pending} {loading} highlight={freshPad}
               onSelect={changeLayer}
               onControls={openControls}
@@ -1512,7 +1523,7 @@
               onRemove={(row,column)=>{const id=show.launchGrid[row][column];if(show.layers[row].clipId===id||pending[row]?.clip.id===id||launchingClips[row]?.clipId===id)stopRow(row);else checkpoint();show.launchGrid[row][column]=null;persist();}}
               onStop={stopRow}
               onEdit={(row, column) => openPicker({ row, column })}
-              onDual={(enabled) => { checkpoint();autoEvent('settings'); show.dualDeck = enabled;if(!enabled&&selectedLayer>=4)changeLayer(0); persist(); }}
+              onDual={setDual}
               onMix={(value) => { show.crossfade = value; persist(); }}
               onArrange={()=>autoEvent('arrange')}
               onMove={(from,to)=>{
@@ -1526,10 +1537,6 @@
               }}
             ><BlockTabs slot="blocks" tabs={blockTabList} canAdd={blockTabList.length < MAX_BLOCKS}
               onselect={selectBlock} onadd={newBlock} onrename={renameBlockTab} onduplicate={copyBlock} ondelete={deleteBlockTab} onmove={moveBlockTab} onlift={()=>feel(prefs,'switch')} />
-          <div class="autopilot-bar" slot="autopilot">
-            <button class:running={autoOn} class:paused={autoPaused} aria-pressed={autoOn} aria-label={autoPaused?'Resume Autopilot':autoOn?'Turn Autopilot off':'Turn Autopilot on'} disabled={!autoClips&&!autoParams} onclick={()=>autoOn?stopAuto():startAuto()}><Icon name="autopilot" size={18}/><strong>Auto</strong><span>{autoOn?'ON':autoPaused?'PAUSED':'OFF'}</span></button>
-            <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
-          </div>
 <svelte:fragment slot="autopilot-settings">          {#if autoSettings}<section class="auto-options" aria-label="Autopilot settings">
             <div class="auto-switches">
               <button aria-pressed={autoClips} class:active={autoClips} onclick={()=>{autoClips=!autoClips;if(!autoClips&&!autoParams)stopAuto();else autoEvent('settings');}}><Icon name="grid" size={16}/>Clips</button>
@@ -1798,7 +1805,7 @@
       <div class="beat-dots">
         {#each [0, 1, 2, 3] as n}<i class:lit={beat === n}></i>{/each}
       </div>
-      <label
+      {#if tablet}<label
         ><input
           aria-label="Tempo in BPM"
           type="number"
@@ -1813,7 +1820,7 @@
         aria-expanded={tempoOpen}
         aria-label="Tempo and audio"
         onclick={toggleTempo}>BPM<span aria-hidden="true">⌄</span></button
-      ><button
+      >{/if}<button
         class:active={show.quantize}
         aria-pressed={show.quantize}
         aria-label="Quantize launches to the beat"
