@@ -1,30 +1,37 @@
 <script lang="ts">
  import {onMount,onDestroy,tick} from 'svelte';
- import {openAutoMapCamera,squaredSurface,type AutoMapCamera,type AutoMapResult} from '../../mobile/studio/autoMap';
+ import {openAutoMapCamera,uprightTurn,mapSurface,type AutoMapCamera,type AutoMapProjector,type AutoMapResult} from '../../mobile/studio/autoMap';
  import {surfaceDepthQuality,homography,unitCorners,project,exportCalibration,grayPatternPlan,type Calibration,type UV,type Reference} from '../../mobile/studio/calibration';
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
- function sendDesktop(){try{onsend?.(JSON.stringify(exportCalibration(draft())));message="Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
+ function sendDesktop(){try{const live=mapped.filter(m=>surfaces.some(s=>s.id===m.surfaceId));onsend?.(JSON.stringify({...exportCalibration(draft()),mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx})=>({name,screenId,screenName,points,rmsPx}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
  export let automap:((camera:AutoMapCamera,progress:(text:string)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
+ /** Lets the paired desktop take photos through this phone while the preview is open. */
+ export let remote:((camera:AutoMapCamera)=>()=>void)|undefined=undefined;
+ let stopRemote:(()=>void)|undefined;
+ /** The last stripe scan, kept so each outlined surface can be fitted on its own. */
+ let scan:AutoMapProjector[]=[];
+ type Mapped={surfaceId:string;name:string;screenId:string;screenName:string;points:UV[];rmsPx:number};
+ let mapped:Mapped[]=[];
+ /** Fit one outline against the scan: the projector that lights it best wins. */
+ function mapOutline(outline:UV[]){let best:{projector:AutoMapProjector;points:UV[];rmsPx:number;agree:number}|undefined,why='';
+  for(const projector of scan){try{const m=mapSurface(projector,outline);if(!best||m.agree>best.agree)best={projector,...m};}catch(e){why=e instanceof Error?e.message:'';}}
+  if(!best)throw new Error(why||'This surface could not be mapped.');return best;}
  let framing=false,preview:HTMLVideoElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
- async function openAuto(){framing=true;message='Starting the camera…';await tick();try{autoCamera=await openAutoMapCamera(preview);message='Frame every projector’s whole picture, then prop the phone so it cannot move.';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
- function closeAuto(){autoCamera?.stop();autoCamera=undefined;framing=false;}
+ async function openAuto(){framing=true;message='Starting the camera…';const held=await uprightTurn();await tick();try{autoCamera=await openAutoMapCamera(preview,held.turn);stopRemote=remote?.(autoCamera);message='Frame every projector’s whole picture, then prop the phone so it cannot move.';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
+ function closeAuto(){stopRemote?.();stopRemote=undefined;autoCamera?.stop();autoCamera=undefined;framing=false;}
  async function startAuto(){
   if(!autoCamera||!automap)return;busy=true;
   try{
    const result=await automap(autoCamera,text=>message=text);
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
-   // One projector: offer a squared-up picture straight away, no tracing needed.
-   const only=result.projectors.length===1?result.projectors[0]:undefined;
-   const squared=only?squaredSurface(only.corners,result.reference.width,result.reference.height,only.width/only.height):null;
-   if(squared)surfaces=[{id:crypto.randomUUID(),name:'Squared picture',points:squared}];
-   const fit=result.projectors.map(p=>`${p.name} (fit ${p.rmsPx.toFixed(1)} px)`).join(', ');
-   message=squared?`Mapped ${fit}. A squared-up picture is ready: send it to the desktop, or remove it and trace your own surface.`:`Mapped ${fit}. Now trace the surface the picture should fill, then send to desktop.`;
+   scan=result.projectors;mapped=[];
+   message='Scan complete. Tap the corners of one flat surface (top left, top right, bottom right, bottom left), then Add surface. Repeat for each face.';
   }catch(e){message=e instanceof Error?e.message:'Auto map failed.';}
   finally{busy=false;closeAuto();}
  }
@@ -36,10 +43,12 @@
  async function importPhoto(e:Event){const file=(e.target as HTMLInputElement).files?.[0];if(!file)return;busy=true;try{
   const bitmap=await createImageBitmap(file,{imageOrientation:'from-image'}),scale=Math.min(1,1920/Math.max(bitmap.width,bitmap.height)),canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);canvas.getContext('2d')!.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();setReference({image:canvas.toDataURL('image/jpeg',.88),width:canvas.width,height:canvas.height});
  }catch{message='This photo could not be opened. Try a JPEG or PNG.';}finally{busy=false;}}
- function setReference(r:Reference){reference=r;points=[];surfaces=[];projectors=[];mode='corners';message='Reference ready. Keep this photo fixed; each projector needs its own four matching corners.';}
+ function setReference(r:Reference){scan=[];mapped=[];reference=r;points=[];surfaces=[];projectors=[];mode='corners';message='Reference ready. Keep this photo fixed; each projector needs its own four matching corners.';}
  async function capture(){busy=true;let lease:Awaited<ReturnType<typeof acquireNativeFeed>>|undefined;try{lease=await acquireNativeFeed('depth');const deadline=performance.now()+10000;while(true){try{setReference(await captureCalibrationReference());break;}catch(e){if(performance.now()>deadline)throw e;await new Promise(resolve=>setTimeout(resolve,300));}}}catch(e){message=String(e instanceof Error?e.message:e);}finally{lease?.release();busy=false;}}
  function tap(e:PointerEvent){if(!reference||busy)return;const r=photo.getBoundingClientRect();const p={x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};if(mode==='corners'&&points.length===4)points=[];points=[...points,p];}
- function add(){try{if(mode==='corners'){homography(points,unitCorners);if(!Number.isInteger(width)||!Number.isInteger(height)||width<2||height<2||width>16384||height>16384)throw new Error('Enter a valid projector resolution.');projectors=[...projectors,{id:crypto.randomUUID(),name:projectorName,width,height,corners:points}];projectorName=`Projector ${projectors.length+1}`;mode='surface';}else{if(points.length<3)throw new Error('Tap at least three outline points.');surfaces=[...surfaces,{id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points}];}points=[];message='Added. Trace more surfaces or mark another projector.';}catch(e){message=(e as Error).message;}}
+ function add(){try{if(mode==='corners'){homography(points,unitCorners);if(!Number.isInteger(width)||!Number.isInteger(height)||width<2||height<2||width>16384||height>16384)throw new Error('Enter a valid projector resolution.');projectors=[...projectors,{id:crypto.randomUUID(),name:projectorName,width,height,corners:points}];projectorName=`Projector ${projectors.length+1}`;mode='surface';}else{if(points.length<3)throw new Error('Tap at least three outline points.');const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points};
+   if(scan.length){const fit=mapOutline(points);mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:fit.projector.id,screenName:fit.projector.name,points:fit.points,rmsPx:fit.rmsPx}];surfaces=[...surfaces,surface];points=[];message=`${surface.name} mapped on ${fit.projector.name} (fit ${fit.rmsPx.toFixed(1)} px, ${Math.round(fit.agree*100)}% of points agree). Add another face or send to desktop.`;return;}
+   surfaces=[...surfaces,surface];}points=[];message='Added. Trace more surfaces or mark another projector.';}catch(e){message=(e as Error).message;}}
  function draft():Calibration{if(!reference)throw new Error('Add a reference photo first.');return{schema:'ghost-calibration',version:1,id:crypto.randomUUID(),name,created:new Date().toISOString(),status:'prepared',reference,surfaces,projectors};}
  function save(){try{const c=draft(),next=[c,...saved].slice(0,6);localStorage.setItem(key,JSON.stringify(next));saved=next;message='Draft saved on this device.';}catch{message='Could not save. Device storage may be full; export the package instead.';}}
  function load(c:Calibration){name=c.name;reference=c.reference;surfaces=c.surfaces;projectors=c.projectors;points=[];message='Draft loaded. Verify the physical setup has not moved.';}

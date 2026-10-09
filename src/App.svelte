@@ -3868,6 +3868,26 @@
         // black so only that projector lights the wall.
         const requestId = msg.requestId, seq = msg.seq;
         const open = get(openScreenOutputList);
+        // Desktop-driven run: the phone's camera is open and takes a photo
+        // whenever asked. window.__gaAutoMap is the handle a run uses.
+        const remote = ((window as any).__gaAutoMap ??= {
+          camera: null, pending: new Map<number, (frame: any) => void>(), seq: 0,
+          screens: () => get(openScreenOutputList),
+          show: (screenId: string, frame: number) => setScreenPatternFrames(Object.fromEntries(get(openScreenOutputList).map(s => [s.id, s.id === screenId ? frame : STRIPE_BLACK]))),
+          clear: () => setScreenPatternFrames(null),
+          grab() {
+            if (!this.camera) return Promise.reject(new Error('No phone camera is waiting.'));
+            const seq = ++this.seq;
+            sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId: this.camera.requestId, seq, grab: true });
+            return new Promise((resolve, reject) => {
+              const timer = setTimeout(() => { this.pending.delete(seq); reject(new Error('The phone did not send a photo.')); }, 10000);
+              this.pending.set(seq, (frame: any) => { clearTimeout(timer); frame.error ? reject(new Error(frame.error)) : resolve(frame); });
+            });
+          },
+        });
+        if (msg.op === 'camera_ready') { remote.camera = { requestId, at: Date.now(), turn: msg.turn }; break; }
+        if (msg.op === 'camera_gone') { if (remote.camera?.requestId === requestId) remote.camera = null; break; }
+        if (msg.op === 'frame') { const done = remote.pending.get(seq as number); remote.pending.delete(seq as number); done?.(msg); break; }
         if (msg.op === 'screens') {
           sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, screens: open, cells: STRIPE_CELLS });
         } else if (msg.op === 'show' && open.some(s => s.id === msg.screenId) && Number.isInteger(msg.frame) && (msg.frame as number) >= 0 && (msg.frame as number) < 500) {
@@ -3886,6 +3906,8 @@
         try{
           if(typeof msg.json!=='string'||msg.json.length>8_000_000)throw Error('Invalid calibration size.');
           readMobileCalibration(msg.json);pendingPhoneCalibration=msg.json;
+          // Show what arrived instead of leaving it behind a closed panel.
+          showInteractiveStudio=true;studioPage='calibration';
           sendPhoneVisionSignal({type:'studio_calibration_status',requestId:msg.requestId,accepted:true});
         }catch(error){sendPhoneVisionSignal({type:'studio_calibration_status',requestId:msg.requestId,accepted:false,error:error instanceof Error?error.message:'Invalid calibration.'});}
         break;

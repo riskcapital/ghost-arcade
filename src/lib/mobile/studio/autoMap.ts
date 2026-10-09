@@ -7,17 +7,19 @@
  * The link and the camera are passed in, so the whole run can be tested
  * against a simulated projector and camera.
  */
-import { planPatterns, decodeCaptures, fitHomography, type Capture, type PatternFrame, type UV } from './structuredLight';
+import { planPatterns, decodeCaptures, fitHomography, applyHomography, type Capture, type Decoded, type PatternFrame, type PatternPlan, type UV } from './structuredLight';
 import { stripeFrameCode, STRIPE_CELL } from './structuredLightCodes';
 
 export type AutoMapScreen = { id: string; name: string; width: number; height: number };
 export type AutoMapLink = { request(op: 'screens' | 'show' | 'end', extra?: Record<string, unknown>): Promise<Record<string, any>> };
-export type AutoMapCamera = { grab(): Promise<Capture> };
+export type AutoMapCamera = { turn?: number; grab(): Promise<Capture>; jpeg?(): Promise<{ image: string; width: number; height: number }> };
 export type AutoMapProjector = {
   id: string; name: string; width: number; height: number;
   corners: UV[];        // the full picture's corners in the photo, TL TR BR BL
   rmsPx: number;        // fit error in projector pixels
   coverage: number;     // share of the photo that saw this projector
+  plan: PatternPlan;    // kept so each outlined surface can be fitted on its own
+  decoded: Decoded;
 };
 export type AutoMapResult = {
   reference: { image: string; width: number; height: number };
@@ -41,6 +43,7 @@ export async function runAutoMap(
   if (Array.isArray(listed.cells) && !listed.cells.includes(STRIPE_CELL)) throw new Error('This desktop uses a different pattern size. Update both apps.');
   const projectors: AutoMapProjector[] = [];
   let brightest: Float32Array | undefined, width = 0, height = 0;
+  let colour: { image: string; width: number; height: number } | undefined;
   try {
     for (const [index, screen] of screens.entries()) {
       const plan = planPatterns(screen.width, screen.height, STRIPE_CELL);
@@ -50,6 +53,7 @@ export async function runAutoMap(
         await link.request('show', { screenId: screen.id, frame: stripeFrameCode(frame as PatternFrame, STRIPE_CELL) });
         await wait(settle);
         const shot = await camera.grab();
+        if (step === 0 && index === 0 && camera.jpeg) colour = await camera.jpeg().catch(() => undefined);
         if (captures.length && (shot.width !== captures[0].width || shot.height !== captures[0].height)) throw new Error('The camera changed size during the capture. Keep the app open and try again.');
         captures.push(shot);
       }
@@ -61,19 +65,23 @@ export async function runAutoMap(
       progress(`${screen.name}: reading the patterns.`);
       await wait(0);
       const decoded = decodeCaptures(plan, captures);
-      let fit;
-      try { fit = fitHomography(plan, decoded); }
-      catch (error) { throw new Error(`${screen.name}: ${error instanceof Error ? error.message : 'the patterns could not be read.'}`); }
-      if (fit.cornersInPhoto.some(p => p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1)) {
-        throw new Error(`${screen.name}: part of its picture is outside the photo. Move back until the whole picture is in frame, then try again.`);
-      }
-      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, corners: fit.cornersInPhoto, rmsPx: fit.rmsPx, coverage: decoded.coverage });
+      let seen = 0;
+      for (let i = 0; i < decoded.valid.length; i++) seen += decoded.valid[i];
+      if (seen < 400) throw new Error(`${screen.name}: the stripes could not be read. Check the projector is in the photo, dim the room, and keep the phone still.`);
+      // One fit across the whole photo only suits a single flat surface, so
+      // it is a best effort: each outlined surface is fitted on its own later.
+      let corners: UV[] = [{ x: 0.05, y: 0.05 }, { x: 0.95, y: 0.05 }, { x: 0.95, y: 0.95 }, { x: 0.05, y: 0.95 }], rmsPx = Number.NaN;
+      try {
+        const fit = fitHomography(plan, decoded);
+        if (fit.cornersInPhoto.every(p => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1)) { corners = fit.cornersInPhoto; rmsPx = fit.rmsPx; }
+      } catch { /* not one plane: expected for an object */ }
+      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, corners, rmsPx, coverage: decoded.coverage, plan, decoded });
     }
   } finally {
     await link.request('end').catch(() => {});
   }
   const encode = options.encode ?? lumaToJpeg;
-  return { reference: { image: encode(brightest!, width, height), width, height }, projectors };
+  return { reference: { image: colour && !options.encode ? colour.image : encode(brightest!, width, height), width, height }, projectors };
 }
 
 /** Grey photo from luma, stretched to its own range so a dim room still reads. */
@@ -119,7 +127,33 @@ export function socketAutoMapLink(socket: WebSocket, timeoutMs = 5000): AutoMapL
 }
 
 /** The rear camera as a source of averaged luma frames. */
-export async function openAutoMapCamera(preview?: HTMLVideoElement): Promise<AutoMapCamera & { stop(): void }> {
+/**
+ * How far to turn the camera picture clockwise so it is upright, from how
+ * the phone is being held. The app is locked to portrait, so a phone on its
+ * side still delivers a portrait picture with the scene lying down.
+ * Resolves 0 when the phone will not say (no sensor, or permission refused).
+ */
+export async function uprightTurn(): Promise<{ turn: 0 | 90 | 180 | 270; gravity: [number, number] | null }> {
+  const Motion = (globalThis as any).DeviceMotionEvent;
+  if (!Motion) return { turn: 0, gravity: null };
+  try { if (typeof Motion.requestPermission === 'function' && (await Motion.requestPermission()) !== 'granted') return { turn: 0, gravity: null }; }
+  catch { return { turn: 0, gravity: null }; }
+  return new Promise(resolve => {
+    let sx = 0, sy = 0, n = 0;
+    const read = (event: DeviceMotionEvent) => { const g = event.accelerationIncludingGravity; if (g?.x != null && g?.y != null) { sx += g.x; sy += g.y; n++; } };
+    window.addEventListener('devicemotion', read);
+    setTimeout(() => {
+      window.removeEventListener('devicemotion', read);
+      if (!n) return resolve({ turn: 0, gravity: null });
+      const x = sx / n, y = sy / n;
+      // iOS reports gravity itself: about -9.8 on y upright, -9.8 on x with the top of the phone to the left.
+      const turn = Math.abs(x) > Math.abs(y) ? (x < 0 ? 270 : 90) : (y > 0 ? 180 : 0);
+      resolve({ turn, gravity: [Math.round(x * 10) / 10, Math.round(y * 10) / 10] });
+    }, 350);
+  });
+}
+
+export async function openAutoMapCamera(preview?: HTMLVideoElement, turn: 0 | 90 | 180 | 270 = 0): Promise<AutoMapCamera & { stop(): void }> {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('The camera is unavailable here. Open the installed app.');
   const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } } });
   const video = preview ?? document.createElement('video');
@@ -129,71 +163,116 @@ export async function openAutoMapCamera(preview?: HTMLVideoElement): Promise<Aut
   if (!video.videoWidth) { stream.getTracks().forEach(t => t.stop()); throw new Error('The camera did not start.'); }
   // Enough pixels to resolve the finest stripes without a slow decode.
   const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
-  const width = Math.round(video.videoWidth * scale), height = Math.round(video.videoHeight * scale);
+  const rawWidth = Math.round(video.videoWidth * scale), rawHeight = Math.round(video.videoHeight * scale);
+  const sideways = turn === 90 || turn === 270;
+  const width = sideways ? rawHeight : rawWidth, height = sideways ? rawWidth : rawHeight;
   const canvas = document.createElement('canvas');
   canvas.width = width; canvas.height = height;
   const context = canvas.getContext('2d', { willReadFrequently: true })!;
+  /** The current video frame, turned upright. */
+  const draw = () => {
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.translate(width / 2, height / 2);
+    context.rotate(turn * Math.PI / 180);
+    context.drawImage(video, -rawWidth / 2, -rawHeight / 2, rawWidth, rawHeight);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+  };
   const nextFrame = () => new Promise<void>(resolve => {
     const v = video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
     if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => resolve()); else setTimeout(resolve, 45);
   });
   return {
+    turn,
     async grab() {
       // Three frames averaged: steadier than one against sensor noise.
       const luma = new Float32Array(width * height);
       const frames = 3;
       for (let n = 0; n < frames; n++) {
         await nextFrame();
-        context.drawImage(video, 0, 0, width, height);
+        draw();
         const data = context.getImageData(0, 0, width, height).data;
         for (let i = 0, p = 0; i < luma.length; i++, p += 4) luma[i] += (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / frames;
       }
       return { width, height, luma };
+    },
+    /** One colour photo of what the camera sees now, for a desktop-driven run. */
+    async jpeg() {
+      await nextFrame(); await nextFrame();
+      draw();
+      return { image: canvas.toDataURL('image/jpeg', 0.9), width, height };
     },
     stop() { stream.getTracks().forEach(t => t.stop()); if (!preview) video.srcObject = null; },
   };
 }
 
 /**
- * The largest upright rectangle, in the picture's own shape, that fits
- * inside a projector's footprint in the photo. With one projector this is
- * the obvious surface: a squared-up picture as seen from where the phone
- * stood, with no tracing. Returns TL, TR, BR, BL in normalised photo
- * coordinates, or null if the footprint is not a convex quad.
+ * Desktop-driven capture: the phone announces its camera and then takes a
+ * photo each time the desktop asks, so the desktop can run and re-run the
+ * whole measurement while the phone sits on a tripod. Returns a stop function.
  */
-export function squaredSurface(corners: UV[], photoWidth: number, photoHeight: number, aspect: number): UV[] | null {
-  if (corners.length !== 4 || !(aspect > 0)) return null;
-  const quad = corners.map(p => ({ x: p.x * photoWidth, y: p.y * photoHeight }));
-  const cross = quad.map((a, i) => {
-    const b = quad[(i + 1) % 4], c = quad[(i + 2) % 4];
-    return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
-  });
-  const sign = Math.sign(cross[0]);
-  if (!sign || cross.some(v => Math.sign(v) !== sign)) return null;
-  const inside = (x: number, y: number) => quad.every((a, i) => {
-    const b = quad[(i + 1) % 4];
-    return ((b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)) * sign >= 0;
-  });
-  const fits = (cx: number, cy: number, halfHeight: number) => {
-    const halfWidth = halfHeight * aspect;
-    return inside(cx - halfWidth, cy - halfHeight) && inside(cx + halfWidth, cy - halfHeight)
-      && inside(cx + halfWidth, cy + halfHeight) && inside(cx - halfWidth, cy + halfHeight);
+export function serveRemoteCapture(socket: WebSocket, camera: AutoMapCamera): () => void {
+  const requestId = crypto.randomUUID();
+  const send = (body: Record<string, unknown>) => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'studio_automap_request', requestId, ...body }));
   };
-  const xs = quad.map(p => p.x), ys = quad.map(p => p.y);
-  const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-  let best = { cx: 0, cy: 0, half: 0 };
-  const steps = 40;
-  for (let iy = 1; iy < steps; iy++) for (let ix = 1; ix < steps; ix++) {
-    const cx = minX + (maxX - minX) * ix / steps, cy = minY + (maxY - minY) * iy / steps;
-    if (!fits(cx, cy, best.half + 0.5)) continue;
-    let low = best.half, high = (maxY - minY) / 2;
-    for (let n = 0; n < 24; n++) { const mid = (low + high) / 2; if (fits(cx, cy, mid)) low = mid; else high = mid; }
-    if (low > best.half) best = { cx, cy, half: low };
+  const announce = () => send({ seq: 0, op: 'camera_ready', turn: camera.turn ?? 0 });
+  const receive = async (event: MessageEvent) => {
+    let message: Record<string, any>;
+    try { message = JSON.parse(String(event.data)); } catch { return; }
+    if (message.type !== 'studio_automap_reply' || message.requestId !== requestId || !message.grab || !camera.jpeg) return;
+    try { send({ seq: message.seq, op: 'frame', ...(await camera.jpeg()) }); }
+    catch (error) { send({ seq: message.seq, op: 'frame', error: error instanceof Error ? error.message : 'capture failed' }); }
+  };
+  socket.addEventListener('message', receive);
+  announce();
+  const timer = setInterval(announce, 3000);
+  return () => { clearInterval(timer); socket.removeEventListener('message', receive); send({ seq: 0, op: 'camera_gone' }); };
+}
+
+export type MappedSurface = {
+  points: UV[];     // the outline in the projector's raster, normalised 0..1, top-left origin, same order as traced
+  rmsPx: number;    // fit error in projector pixels
+  agree: number;    // share of the measured points inside the outline that lie on one plane
+};
+
+/**
+ * Where an outlined surface sits in the projector's own picture. The outline
+ * is traced on the photo; the stripe measurements inside it are fitted as
+ * one plane, on their own, so a box face maps correctly even though the
+ * wall behind it and the face beside it are at other depths.
+ * `outline` is normalised photo coordinates. Throws a plain message when the
+ * projector did not light enough of the surface.
+ */
+export function mapSurface(projector: Pick<AutoMapProjector, 'plan' | 'decoded' | 'width' | 'height'>, outline: UV[]): MappedSurface {
+  const { decoded, plan } = projector;
+  if (outline.length < 3) throw new Error('Tap at least three corners.');
+  const quad = outline.map(p => ({ x: p.x * decoded.width, y: p.y * decoded.height }));
+  const cx = quad.reduce((sum, p) => sum + p.x, 0) / quad.length, cy = quad.reduce((sum, p) => sum + p.y, 0) / quad.length;
+  // Sample a little inside the outline: its edge pixels straddle two surfaces.
+  const inner = quad.map(p => ({ x: cx + (p.x - cx) * 0.93, y: cy + (p.y - cy) * 0.93 }));
+  const inside = (x: number, y: number) => {
+    let hit = false;
+    for (let i = 0, j = inner.length - 1; i < inner.length; j = i++) {
+      const a = inner[i], b = inner[j];
+      if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) hit = !hit;
+    }
+    return hit;
+  };
+  const valid = new Uint8Array(decoded.valid.length);
+  let count = 0;
+  const [minX, maxX] = [Math.max(0, Math.floor(Math.min(...inner.map(p => p.x)))), Math.min(decoded.width - 1, Math.ceil(Math.max(...inner.map(p => p.x))))];
+  const [minY, maxY] = [Math.max(0, Math.floor(Math.min(...inner.map(p => p.y)))), Math.min(decoded.height - 1, Math.ceil(Math.max(...inner.map(p => p.y))))];
+  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+    const i = y * decoded.width + x;
+    if (decoded.valid[i] && inside(x + 0.5, y + 0.5)) { valid[i] = 1; count++; }
   }
-  if (best.half < 2) return null;
-  // A hair inside the footprint, so rounding never puts a corner outside it.
-  const halfHeight = best.half * 0.995, halfWidth = halfHeight * aspect;
-  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => ({
-    x: (best.cx + sx * halfWidth) / photoWidth, y: (best.cy + sy * halfHeight) / photoHeight,
-  }));
+  if (count < 60) throw new Error('The projector does not light enough of this surface to map it. Outline a surface inside the projected picture.');
+  let fit;
+  try { fit = fitHomography(plan, { ...decoded, valid, coverage: count / valid.length }, { inlierPx: Math.max(12, plan.cell * 0.6) }); }
+  catch { throw new Error('This outline does not look like one flat surface. Outline each flat face on its own.'); }
+  const points = quad.map(p => {
+    const q = applyHomography(fit.cameraToProjector, p.x, p.y);
+    return { x: q.x / projector.width, y: q.y / projector.height };
+  });
+  return { points, rmsPx: fit.rmsPx, agree: fit.inliers / Math.max(1, fit.samples) };
 }
