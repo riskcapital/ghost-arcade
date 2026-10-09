@@ -85,7 +85,11 @@
 <div
   class="add-effect"
   onfocusout={(e) => {
-    if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) closeMenu(false);
+    // Close only when focus moves to something outside the list. A touch on
+    // a list item does not focus it on iOS: focus just leaves, with nowhere
+    // named, and closing then removed the item before its tap could land, so
+    // no effect was ever added from a phone. A press elsewhere is pressOutside's job.
+    if (e.relatedTarget instanceof Node && !e.currentTarget.contains(e.relatedTarget)) closeMenu(false);
   }}
 >
   <button
