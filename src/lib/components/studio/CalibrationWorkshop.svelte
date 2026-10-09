@@ -1,5 +1,6 @@
 <script lang="ts">
- import {onMount} from 'svelte';
+ import {onMount,onDestroy,tick} from 'svelte';
+ import {openAutoMapCamera,type AutoMapCamera,type AutoMapResult} from '../../mobile/studio/autoMap';
  import {surfaceDepthQuality,homography,unitCorners,project,exportCalibration,grayPatternPlan,type Calibration,type UV,type Reference} from '../../mobile/studio/calibration';
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
@@ -7,6 +8,22 @@
  export let onsend:((json:string)=>void)|undefined=undefined;
  function sendDesktop(){try{onsend?.(JSON.stringify(exportCalibration(draft())));message="Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
+ /** Runs the stripe capture against a paired desktop. Only set when paired. */
+ export let automap:((camera:AutoMapCamera,progress:(text:string)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
+ let framing=false,preview:HTMLVideoElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
+ async function openAuto(){framing=true;message='Starting the camera…';await tick();try{autoCamera=await openAutoMapCamera(preview);message='Frame every projector’s whole picture, then prop the phone so it cannot move.';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
+ function closeAuto(){autoCamera?.stop();autoCamera=undefined;framing=false;}
+ async function startAuto(){
+  if(!autoCamera||!automap)return;busy=true;
+  try{
+   const result=await automap(autoCamera,text=>message=text);
+   reference=result.reference;surfaces=[];points=[];mode='surface';
+   projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
+   message=`Mapped ${result.projectors.map(p=>`${p.name} (fit ${p.rmsPx.toFixed(1)} px)`).join(', ')}. Now trace the surface the picture should fill, then send to desktop.`;
+  }catch(e){message=e instanceof Error?e.message:'Auto map failed.';}
+  finally{busy=false;closeAuto();}
+ }
+ onDestroy(closeAuto);
  let name='Stage calibration',reference:Reference|undefined,mode:'corners'|'surface'='corners',points:UV[]=[],surfaces:Calibration['surfaces']=[],projectors:Calibration['projectors']=[];
  let projectorName='Projector 1',width=1080,height=1920,message='',busy=false,saved:Calibration[]=[],photo:HTMLDivElement;
  const key='ghost-calibration-drafts-v1';
@@ -32,6 +49,10 @@
  <header><div><small>DESKTOP TOOLS · PREPARATION</small><h2>Calibration workshop</h2></div><button onclick={onclose} disabled={busy}>Back</button></header>
  <p>Capture the backdrop, trace its surfaces, then match each projector. Export the preparation or send it to a paired desktop for review. Output geometry changes only when you apply it there.</p>
  <div class="row"><label class="file">Take / import photo<input type="file" accept="image/*" capture="environment" onchange={importPhoto} disabled={busy}/></label><button onclick={capture} disabled={!lidar||busy}>Capture RGB + depth</button></div>
+ {#if automap}<div class="row"><button class="primary" onclick={openAuto} disabled={busy||framing}>Auto map projectors</button></div>{/if}
+ {#if framing}<div class="auto"><video bind:this={preview} playsinline muted></video>
+  <p>The desktop will show stripe patterns on each open Screen, one projector at a time, for about a minute. Dim the room, keep people out of the beam, and do not touch the phone until it finishes.</p>
+  <div class="row"><button class="primary" onclick={startAuto} disabled={busy||!autoCamera}>Start</button><button onclick={closeAuto} disabled={busy}>Cancel</button></div></div>{/if}
  {#if reference}<p class="note">Replacing the reference clears its geometry. Depth captures use the camera’s sensor orientation so photo, distances and coordinates stay aligned.</p>{/if}
  <label>Session name<input bind:value={name}/></label>
  {#if reference}
@@ -53,10 +74,11 @@
  {#if mapping&&surfaces.length}<p class="note">{outside()?'Some surface points fall outside projector 1. They are preserved in the export; verify coverage.':'Surface points fit inside projector 1’s reference.'}</p>{/if}
  <div class="row"><button onclick={save}>Save draft</button><button class="primary" onclick={download} disabled={!projectors.length||!surfaces.length}>Export preparation</button>{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!projectors.length||!surfaces.length}>Send to desktop</button>{/if}</div>
  {/if}
- <p class="status" role="status">{busy?'Capturing…':message}</p>
+ <p class="status" role="status">{busy&&!framing?'Capturing…':message}</p>
  <h3>Saved preparations</h3>{#each saved as c}<div class="item"><button onclick={()=>load(c)}>{c.name} · {new Date(c.created).toLocaleDateString()}</button><button onclick={()=>{try{const next=saved.filter(x=>x.id!==c.id);localStorage.setItem(key,JSON.stringify(next));saved=next;}catch{message='Could not remove saved draft.';}}}>Delete</button></div>{/each}
  <details><summary>What still needs a projector?</summary><p>Pixel correspondence, focus, alignment, overlap, brightness matching and bump recovery require physical verification. LiDAR measures the scene, not where projector pixels land. Packages include photo-space outlines, per-projector homographies, raw depth when captured, and an inverted Gray-code pattern plan for the future desktop presenter. Automatic capture, decoding and blending are not active yet.</p></details>
 </section>
 <style>
+ .auto video{display:block;width:100%;max-height:46vh;object-fit:contain;background:#000;border-radius:5px}
  section{padding:18px;font:13px/1.5 system-ui;color:var(--ga-ink-0)}header,.row,.item{display:flex;align-items:center;gap:8px;justify-content:space-between}.row{flex-wrap:wrap;margin:12px 0}.row>*{flex:1;min-width:110px}header small{font-size:9px;letter-spacing:.12em;color:var(--ga-blue-200)}h2{font-size:20px;margin:4px 0}h3{font-size:13px}p,.note{color:var(--ga-ink-2)}button,.file,input{box-sizing:border-box;min-height:44px;border:1px solid var(--ga-line-3);border-radius:5px;background:var(--ga-slot);color:inherit;padding:10px;font:inherit}button{touch-action:manipulation}button:disabled{opacity:.4}label{display:block;font-size:11px}input{display:block;width:100%;margin-top:4px}.file{cursor:pointer;font-size:13px}.file input{width:100%;font-size:11px}.primary,.active{background:var(--ga-selection-bg);border-color:var(--ga-blue-300)}.photo{position:relative;width:100%;background:#000;touch-action:none;margin-top:12px;overflow:hidden}.photo img,.photo svg{position:absolute;width:100%;height:100%;inset:0;pointer-events:none}.photo img{object-fit:fill}polygon{fill:var(--ga-blue-a16);stroke:var(--ga-blue-200);stroke-width:2;vector-effect:non-scaling-stroke}.projector{stroke:#ffa45b;fill:#ffa45b15}polyline{fill:none;stroke:white;stroke-width:2;vector-effect:non-scaling-stroke}circle{fill:#ffa45b;stroke:#fff;stroke-width:2}text{fill:white;font-size:30px;font-weight:bold}.item{border-bottom:1px solid var(--ga-line-2);padding:8px 0}.item span{overflow-wrap:anywhere;min-width:0}.status{color:var(--ga-blue-200)}summary{min-height:44px;cursor:pointer;font-weight:bold}
 </style>
