@@ -71,7 +71,7 @@
   import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
   import {readMobileCalibration} from './lib/output/mobileCalibrationImport';
   import { openScreenOutputList, setScreenPatternFrames } from './lib/stores/screenOutputStatus';
-  import { STRIPE_BLACK, STRIPE_CELL } from './lib/mobile/studio/structuredLightCodes';
+  import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
   import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
@@ -3869,8 +3869,8 @@
         const requestId = msg.requestId, seq = msg.seq;
         const open = get(openScreenOutputList);
         if (msg.op === 'screens') {
-          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, screens: open, cell: STRIPE_CELL });
-        } else if (msg.op === 'show' && open.some(s => s.id === msg.screenId) && Number.isInteger(msg.frame) && (msg.frame as number) >= 0 && (msg.frame as number) < 66) {
+          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, screens: open, cells: STRIPE_CELLS });
+        } else if (msg.op === 'show' && open.some(s => s.id === msg.screenId) && Number.isInteger(msg.frame) && (msg.frame as number) >= 0 && (msg.frame as number) < 500) {
           setScreenPatternFrames(Object.fromEntries(open.map(s => [s.id, s.id === msg.screenId ? (msg.frame as number) : STRIPE_BLACK])));
           // Answer once the projector has had time to show it.
           setTimeout(() => sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, shown: true }), 120);

@@ -1722,11 +1722,15 @@ fn alignment_grid(uv: vec2<f32>, dims: vec2<f32>, fade_uv: vec2<f32>) -> vec3<f3
 /// Auto-map stripe pattern in the projector's own raster (no geometry, no
 /// rotation), top-left origin. projector_calibration[4].w carries the frame:
 /// 0 white, 1 black, else 2 + ((axis * 16 + bit) * 2 + inverted), where bit 0
-/// is the most significant bit of the Gray code of floor(pixel / 8). It must
+/// is the most significant bit of the Gray code of floor(pixel / cell). It must
 /// match patternValue() in structuredLight.ts exactly: the phone decodes
 /// what this draws.
 fn structured_light_pattern(screen_uv: vec2<f32>, dims: vec2<f32>) -> f32 {
-  let frame = u32(max(u.projector_calibration[4].w, 0.0) + 0.5);
+  // Hundreds carry the stripe size: cell = 8 << (number / 100), so a phone
+  // far from the wall can ask for stripes it can resolve.
+  let number = u32(max(u.projector_calibration[4].w, 0.0) + 0.5);
+  let cell_px = f32(8u << min(number / 100u, 4u));
+  let frame = number % 100u;
   if (frame == 0u) { return 1.0; }
   if (frame == 1u) { return 0.0; }
   let k = frame - 2u;
@@ -1736,14 +1740,14 @@ fn structured_light_pattern(screen_uv: vec2<f32>, dims: vec2<f32>) -> f32 {
   let px = vec2<f32>(screen_uv.x, 1.0 - screen_uv.y) * dims;
   let pos = select(px.x, px.y, axis == 1u);
   let size = select(dims.x, dims.y, axis == 1u);
-  let cells = u32(ceil(size / 8.0));
+  let cells = u32(ceil(size / cell_px));
   var bits = 0u;
   for (var i = 0u; i < 16u; i = i + 1u) {
     if ((1u << bits) >= cells) { break; }
     bits = bits + 1u;
   }
   if (bit >= bits) { return 0.0; }
-  let cell = u32(clamp(floor(pos / 8.0), 0.0, f32(max(cells, 1u) - 1u)));
+  let cell = u32(clamp(floor(pos / cell_px), 0.0, f32(max(cells, 1u) - 1u)));
   let gray = cell ^ (cell >> 1u);
   let lit = ((gray >> (bits - 1u - bit)) & 1u) ^ inverted;
   return f32(lit);

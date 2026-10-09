@@ -3,6 +3,7 @@
  import InteractiveStudio from './InteractiveStudio.svelte';
  import DesktopFeedWorkshop from './DesktopFeedWorkshop.svelte';
  import CalibrationWorkshop from './CalibrationWorkshop.svelte';
+ import {runAutoMap,socketAutoMapLink} from '../../mobile/studio/autoMap';
  import {captureCapabilities} from '../../mobile/studio/captureToolkit';
  import {DesktopSender} from '../../mobile/studio/desktopSender';
  import type {InteractiveScene,Interaction} from '../../mobile/studio/interactive';
@@ -47,7 +48,7 @@
    {:else if page==='interactive'}
     {#if capabilitiesReady}{#key nativeInteractive}<InteractiveStudio handheld remoteOutput nativeOutput={nativeInteractive} referencePreview={nativeInteractive} initialScene={session.scene} initialActive={session.active&&nativeInteractive} initialPaused={session.paused} onscene={sceneChanged} onoutput={c=>{if(!nativeInteractive)send(c,'interactive');}} {onclose}/>{/key}{/if}
    {:else if page==='feeds'}<DesktopFeedWorkshop {lidar} {dual} onsend={send} {onclose}/>
-   {:else}<CalibrationWorkshop {lidar} {onclose} onsend={sendCalibration}/>{/if}
+   {:else}<CalibrationWorkshop {lidar} {onclose} onsend={sendCalibration} automap={(camera,progress)=>runAutoMap(socketAutoMapLink(socket),camera,progress)}/>{/if}
   </div>
  </div>
 </div>
