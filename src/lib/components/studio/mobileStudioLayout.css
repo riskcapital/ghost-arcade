@@ -215,3 +215,7 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 /* Perform shows the picture at the same full width as Flux, and takes Flux touches when the switch is on. */
 .studio[data-layout='phone'][data-layout].performance:not(.clean):not(.clip-editing) .preview-frame {max-width:none;}
 .studio[data-layout][data-layout].flux-perform .preview {touch-action:none;}
+
+/* An instrument, not a web page: holding a finger down never selects text or opens the system callout. */
+.studio[data-layout], .studio[data-layout] * {-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;}
+.studio[data-layout] :is(input, textarea, [contenteditable="true"]) {-webkit-user-select:text;user-select:text;}

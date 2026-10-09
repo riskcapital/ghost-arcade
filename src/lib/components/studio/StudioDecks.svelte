@@ -72,7 +72,13 @@
     if(drag.moving)drop=targetAt(e.clientX,e.clientY);
   }
   function dragEnd(e:PointerEvent){
-    cancelHold();if(!drag||drag.id!==e.pointerId)return;
+    const pressed=hold;cancelHold();
+    // A finger lifting is the tap. iOS only sends a click for a lone finger, so with another
+    // finger down (on the Flux pad, say) the clip would never launch if this waited for one.
+    if(!drag&&pressed&&pressed.id===e.pointerId&&e.type==='pointerup'&&e.pointerType!=='mouse'&&!suppressTap&&Math.hypot(e.clientX-pressed.x,e.clientY-pressed.y)<12){
+      suppressTap=true;onTap(pressed.row,pressed.clip);return;
+    }
+    if(!drag||drag.id!==e.pointerId)return;
     e.stopPropagation();const d=drag;drag=null;cancelAnimationFrame(scrollFrame);drop=null;
     if(d.el.hasPointerCapture(d.id))d.el.releasePointerCapture(d.id);
     suppressTap=true;
@@ -92,7 +98,7 @@
   function moveDrag(e:PointerEvent){if(!dragStart)return;const dx=e.clientX-dragStart.x;if(Math.abs(dx)>6){dragged=true;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);(e.currentTarget as HTMLElement).scrollLeft=dragStart.scroll-dx;}}
   let menu: {row:number;column:number;clip:Clip}|null=null;
   let dialog:HTMLDialogElement;
-  let hold: {id:number;x:number;y:number;el:HTMLElement;timer:ReturnType<typeof setTimeout>}|null=null;
+  let hold: {id:number;x:number;y:number;el:HTMLElement;row:number;column:number;clip:Clip;timer:ReturnType<typeof setTimeout>}|null=null;
   let suppressTap=false;
   function cancelHold(){if(hold)clearTimeout(hold.timer);hold=null;}
   function openMenu(row:number,column:number,clip:Clip){cancelHold();suppressTap=true;menu={row,column,clip};dialog.showModal();}
@@ -100,11 +106,21 @@
     // Touch-down launch: only for a pad that is not already playing or queued, so the double tap
     // that stops a playing clip and the hold menu keep working. The lift's click is then ignored.
     if(launchOnDown&&e.pointerType!=='mouse'&&!clipUnavailable(clip)&&show.layers[row].clipId!==clip.id&&pending[row]?.clip.id!==clip.id){onTap(row,clip);suppressTap=true;}
-hold={id:e.pointerId,x:e.clientX,y:e.clientY,el:e.currentTarget as HTMLElement,timer:setTimeout(()=>lift(row,column,clip),350)};}
+hold={id:e.pointerId,x:e.clientX,y:e.clientY,el:e.currentTarget as HTMLElement,row,column,clip,timer:setTimeout(()=>lift(row,column,clip),350)};}
   function movePad(e:PointerEvent){if(hold&&Math.hypot(e.clientX-hold.x,e.clientY-hold.y)>10)cancelHold();}
   function closeMenu(){dialog.close();menu=null;}
   function menuAction(remove=false){const slot=menu;closeMenu();if(slot){if(remove)onRemove(slot.row,slot.column);else onEdit(slot.row,slot.column);}}
   onDestroy(()=>{cancelHold();cancelDrag();});
+  /** Runs on a finger lifting, without waiting for a click: a second finger gets no click on iOS. */
+  function touchTap(node:HTMLElement,run:()=>void){
+    let id=-1,x=0,y=0,at=0,fired=0,action=run;
+    const down=(e:PointerEvent)=>{if(e.pointerType==='mouse')return;id=e.pointerId;x=e.clientX;y=e.clientY;at=performance.now();};
+    const up=(e:PointerEvent)=>{if(e.pointerId!==id)return;id=-1;if(Math.hypot(e.clientX-x,e.clientY-y)<12&&performance.now()-at<600&&!(node as HTMLButtonElement).disabled){fired=performance.now();action();}};
+    // The click a lone finger also produces must not run it twice.
+    const click=(e:MouseEvent)=>{if(performance.now()-fired<800){e.preventDefault();e.stopImmediatePropagation();}};
+    node.addEventListener('pointerdown',down);node.addEventListener('pointerup',up);node.addEventListener('pointercancel',()=>{id=-1;});node.addEventListener('click',click,true);
+    return{update(next:()=>void){action=next;},destroy(){node.removeEventListener('pointerdown',down);node.removeEventListener('pointerup',up);node.removeEventListener('click',click,true);}};
+  }
   /** While a clip is lifted the page must not scroll under the finger. */
   function holdStill(node:HTMLElement){
     const stop=(e:TouchEvent)=>{if(drag)e.preventDefault();};
@@ -127,13 +143,13 @@ hold={id:e.pointerId,x:e.clientX,y:e.clientY,el:e.currentTarget as HTMLElement,t
     <section class="deck" aria-label={show.dualDeck ? `Deck ${deck === 0 ? 'A' : 'B'}` : 'Clip launcher'}>
       {#if show.dualDeck}<header><strong>{show.dualDeck ? `DECK ${deck === 0 ? 'A' : 'B'}` : 'CLIP LAUNCHER'}</strong><span>{show.dualDeck ? `${Math.round((deck === 0 ? 1 - show.crossfade : show.crossfade) * 100)}% OUTPUT` : 'LIVE MIX'}</span></header>{/if}
       <div class="matrix" style={`--columns:${columnCount}`} onpointerdown={startDrag} onpointermove={moveDrag} onpointerup={()=>dragStart=null} onpointercancel={()=>dragStart=null} onlostpointercapture={()=>dragStart=null} onclickcapture={e=>{if(dragged){e.preventDefault();e.stopPropagation();dragged=false;}}}>
-        <div class="column-row"><span class="row-label" data-deck-label>{show.dualDeck ? `DECK ${deck === 0 ? 'A' : 'B'}` : 'LAYERS'}</span>{#each columns as col}<button aria-label={`Launch ${show.dualDeck ? (deck === 0 ? 'A' : 'B') : 'deck'} column ${col + 1}`} onclick={() => columnLaunch(rows, col)}>▶ {col + 1}</button>{/each}</div>
+        <div class="column-row"><span class="row-label" data-deck-label>{show.dualDeck ? `DECK ${deck === 0 ? 'A' : 'B'}` : 'LAYERS'}</span>{#each columns as col}<button aria-label={`Launch ${show.dualDeck ? (deck === 0 ? 'A' : 'B') : 'deck'} column ${col + 1}`} use:touchTap={() => columnLaunch(rows, col)} onclick={() => columnLaunch(rows, col)}>▶ {col + 1}</button>{/each}</div>
         {#each rows as row}
           <div class="clip-row" class:selected={row === selectedLayer}>
             <div class="row-control">
               <button class="row-name" onclick={() => {onSelect(row);onControls(row);}} aria-label={`Edit controls for layer ${row+1}`} aria-pressed={selectedLayer === row}>{show.dualDeck ? `${row < 4 ? 'A' : 'B'}${row % 4 + 1}` : `L${row + 1}`}<Icon name="settings" size={18}/></button>
               <button class="level-button" aria-label={`Mix row ${row+1}, level ${Math.round(show.layers[row].opacity*100)} percent`} onclick={()=>onMixer(row)} style={`--level:${show.layers[row].opacity*100}%`}>{Math.round(show.layers[row].opacity*100)}%</button>
-              <button class="stop" aria-label={`Stop row ${row + 1}`} disabled={!show.layers[row].clipId&&!pending[row]&&!loading[row]} onclick={() => onStop(row)}><span aria-hidden="true">■</span></button>
+              <button class="stop" aria-label={`Stop row ${row + 1}`} disabled={!show.layers[row].clipId&&!pending[row]&&!loading[row]} use:touchTap={() => onStop(row)} onclick={() => onStop(row)}><span aria-hidden="true">■</span></button>
             </div>
             {#each columns as column}
               {@const clip = show.clips.find(c => c.id === show.launchGrid[row]?.[column])}

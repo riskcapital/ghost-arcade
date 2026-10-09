@@ -1846,7 +1846,7 @@
         }}><span class="phone-label">Q</span><span class="desktop-label">Quantize</span></button
       >
     </div>
-    <div class="master-actions">{#if flux.active}<button aria-label="Release Flux" onclick={()=>{flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}>FX off</button>{/if}
+    <div class="master-actions">
 <label class="master-level"
         ><span>MASTER</span><input
           aria-label="Master output level"
