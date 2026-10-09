@@ -67,6 +67,201 @@
       "enabled": true
     },
     {
+      "file": "Featured-lumenstrata.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-lumenveil.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-murmur.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-prism.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-pulse.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-quantumchamber.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-sentinels.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-tendril.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-tide.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-chrysalis.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-crystallon.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-dispersion.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-drift.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-aurora.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-chladniplate.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "GA2-MinimalSurface.fs",
       "tier": "demo",
       "category": "3D Room",
