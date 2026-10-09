@@ -44,7 +44,7 @@ jobs:
               echo "Release ${{ github.ref_name }} notes refreshed from $NOTES_FILE"
             fi
           else
-            NOTES_ARGS=(--notes "Signed Windows installer + notarized macOS DMGs uploaded by CI.")
+            NOTES_ARGS=(--notes "Signed Windows installer + notarized macOS DMGs + Linux AppImage/deb uploaded by CI.")
             if [ -f "$NOTES_FILE" ]; then
               NOTES_ARGS=(--notes-file "$NOTES_FILE")
             fi
@@ -312,3 +312,99 @@ jobs:
           generate_release_notes: false
           overwrite_files: true
 
+  build-linux:
+    needs: create-release
+    # 22.04 on purpose: the render core links against the runner's glibc, and a
+    # core built on a newer Ubuntu will not start on 22.04. The Linux verify
+    # workflow builds and installs on the same base.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # libfuse2 is required for AppImage runtime (Ubuntu 22+ ships
+      # libfuse3 by default; AppImages need the legacy lib). The other
+      # apt deps are electron-builder Linux extras that are routinely
+      # needed for icon / desktop-entry generation. libasound2-dev and
+      # pkg-config are for the native core: clip audio plays through cpal,
+      # whose ALSA backend (alsa-sys) links against libasound at build time.
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfuse2 \
+            rpm \
+            fakeroot \
+            dpkg \
+            libasound2-dev \
+            pkg-config
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test pairing URLs and projector calibration
+        run: npx vitest run src/lib/remote/mobileConnectionUrl.test.ts src/lib/output/projectorCalibration.test.ts src/lib/output/slicePresentation.test.ts
+
+      - name: Install native addon dependencies
+        run: npm ci --ignore-scripts
+        working-directory: electron/native
+
+      # The native NDI addon is optional and only builds on machines where
+      # the NDI SDK is already installed. Release CI intentionally does not
+      # download, install, or redistribute the NDI SDK/runtime.
+      - name: Build native addons
+        run: npm run build -- --rebuild
+        working-directory: electron/native
+
+      - name: Build frontend
+        run: npm run build
+
+      # ─── Native render core ────────────────────────────────────────────
+      # 2.0 is native-only. Without this binary electron-builder produces an
+      # installer whose app boots into NATIVE OFFLINE, so the core has to be
+      # built BEFORE electron-builder packages it (see the native-renderer
+      # entry in electron-builder.yml extraResources).
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test Screen presentation capability
+        run: cargo test --manifest-path native-renderer/Cargo.toml --locked slice_presentation
+
+      - name: Build native render core
+        run: npm run native:build
+
+      - name: Build Electron (Linux AppImage + deb)
+        # --publish never: see windows job comment. No signing on Linux.
+        run: npx electron-builder --linux AppImage deb --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux installers to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: riskcapital/ghost-arcade-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist-electron/*.AppImage
+            dist-electron/*.deb
+            dist-electron/latest-linux.yml
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          overwrite_files: true
