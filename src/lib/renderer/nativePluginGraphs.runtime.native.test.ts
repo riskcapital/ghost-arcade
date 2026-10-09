@@ -336,6 +336,9 @@ describe('native plugin graphs (runtime, real core)', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     } while (Date.now() < deadline);
     const status = await rpc!.send('status');
+    // The world stays visible for good now, so take it down: left up, it
+    // sits under the later tests that measure their own layer's brightness.
+    await rpc!.send('submit_commands', { commands: [{ type: 'remove_layer', layer_id: layerId }] });
     expect(
       Number(status.shader_precompile_failed ?? -1),
       String(status.last_shader_error ?? status.last_frame_error ?? ''),
