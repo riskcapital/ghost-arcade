@@ -17,6 +17,22 @@ export interface MappingFile {
   mappings: MidiMapping[];
 }
 
+// A mapping file is picked by the user but may come from anyone (forum post,
+// controller pack), so everything in it is bounded before it reaches the store
+// and localStorage. The shipped QuNeo layouts are ~26 KB / 99 rows.
+export const MAPPING_FILE_MAX_BYTES = 2 * 1024 * 1024;
+export const MAPPING_FILE_MAX_ROWS = 4096;
+const MAX_PATH_LENGTH = 256;
+const MAX_LABEL_LENGTH = 120;
+const MAX_ID_LENGTH = 64;
+const MAX_DISCRETE_VALUES = 256;
+const MAX_DISCRETE_VALUE_LENGTH = 120;
+const MAX_CONTROLLER_LENGTH = 80;
+// Path segments become object keys in midiRouter (layer / content patches).
+const FORBIDDEN_PATH_SEGMENT = /(^|[:.])(__proto__|prototype|constructor)([:.]|$)/i;
+
+const clip = (v: string, max: number) => (v.length > max ? v.slice(0, max) : v);
+
 const MESSAGE_TYPES: MidiMessageType[] = ['cc', 'note', 'pitchbend'];
 const MODES: MidiMappingMode[] = ['absolute', 'toggle', 'relative'];
 
@@ -25,10 +41,12 @@ function isInt(v: unknown): v is number {
 }
 
 /** Validate one raw mapping; returns null (with a reason) rather than throwing so a bad row can be reported by index. */
-function coerceMapping(raw: unknown, index: number, makeId: () => string): { mapping: MidiMapping | null; reason?: string; unrecognizedPath?: string } {
-  if (!raw || typeof raw !== 'object') return { mapping: null, reason: `row ${index}: not an object` };
+function coerceMapping(raw: unknown, index: number, makeId: () => string, seenIds: Set<string>): { mapping: MidiMapping | null; reason?: string; unrecognizedPath?: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { mapping: null, reason: `row ${index}: not an object` };
   const r = raw as Record<string, unknown>;
   if (typeof r.path !== 'string' || !r.path.trim()) return { mapping: null, reason: `row ${index}: missing path` };
+  if (r.path.trim().length > MAX_PATH_LENGTH) return { mapping: null, reason: `row ${index}: path is too long` };
+  if (FORBIDDEN_PATH_SEGMENT.test(r.path)) return { mapping: null, reason: `row ${index}: path is not allowed` };
   // Flag — never drop — a path validateControlPath doesn't recognise. The validator
   // is not a complete model of what midiRouter dispatches (vj:tempo:resync routes at
   // midiRouter.ts:539 yet fails validation), so dropping would silently delete working
@@ -42,14 +60,22 @@ function coerceMapping(raw: unknown, index: number, makeId: () => string): { map
 
   const mode = MODES.includes(r.mode as MidiMappingMode) ? (r.mode as MidiMappingMode) : 'absolute';
   const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
-  const discrete = Array.isArray(r.discreteValues) && r.discreteValues.every(v => typeof v === 'string')
+  const discrete = Array.isArray(r.discreteValues)
+    && r.discreteValues.length <= MAX_DISCRETE_VALUES
+    && r.discreteValues.every(v => typeof v === 'string' && v.length <= MAX_DISCRETE_VALUE_LENGTH)
     ? (r.discreteValues as string[])
     : undefined;
+
+  // Ids key the mapping list in Settings, so two rows must never share one. A
+  // hand-edited or copy-pasted file easily repeats them; give repeats a new id.
+  let id = typeof r.id === 'string' && r.id && r.id.length <= MAX_ID_LENGTH ? r.id : makeId();
+  if (seenIds.has(id)) id = makeId();
+  seenIds.add(id);
 
   return {
     unrecognizedPath,
     mapping: {
-      id: typeof r.id === 'string' && r.id ? r.id : makeId(),
+      id,
       channel: r.channel,
       type: r.type as MidiMessageType,
       number: r.number,
@@ -58,7 +84,7 @@ function coerceMapping(raw: unknown, index: number, makeId: () => string): { map
       max: num(r.max, 1),
       step: num(r.step, 0),
       mode,
-      label: typeof r.label === 'string' && r.label ? r.label : r.path.trim(),
+      label: clip(typeof r.label === 'string' && r.label ? r.label : r.path.trim(), MAX_LABEL_LENGTH),
       ...(discrete ? { discreteValues: discrete } : {}),
     },
   };
@@ -74,6 +100,7 @@ export interface ParsedMappingFile {
 
 /** Parse Load input. Throws only when the document as a whole is unusable. */
 export function parseMappingFile(text: string, makeId: () => string): ParsedMappingFile {
+  if (text.length > MAPPING_FILE_MAX_BYTES) throw new Error('File is too large to be a MIDI mapping file');
   let doc: unknown;
   try {
     doc = JSON.parse(text);
@@ -87,21 +114,24 @@ export function parseMappingFile(text: string, makeId: () => string): ParsedMapp
     rows = doc;
   } else if (doc && typeof doc === 'object' && Array.isArray((doc as MappingFile).mappings)) {
     const env = doc as MappingFile;
-    if (env.format && env.format !== MAPPING_FILE_FORMAT) throw new Error(`Unknown format "${env.format}"`);
+    if (env.format && env.format !== MAPPING_FILE_FORMAT) throw new Error(`Unknown format "${clip(String(env.format), 40)}"`);
     if (typeof env.version === 'number' && env.version > MAPPING_FILE_VERSION) {
       throw new Error(`Mapping file version ${env.version} is newer than this build supports (${MAPPING_FILE_VERSION})`);
     }
     rows = env.mappings;
-    controller = typeof env.controller === 'string' ? env.controller : undefined;
+    controller = typeof env.controller === 'string' && env.controller ? clip(env.controller, MAX_CONTROLLER_LENGTH) : undefined;
   } else {
     throw new Error('Expected a mappings array or a { "mappings": [...] } file');
   }
 
+  if (rows.length > MAPPING_FILE_MAX_ROWS) throw new Error(`Too many mappings (${rows.length}, limit ${MAPPING_FILE_MAX_ROWS})`);
+
+  const seenIds = new Set<string>();
   const mappings: MidiMapping[] = [];
   const skipped: string[] = [];
   const unrecognizedPaths: string[] = [];
   rows.forEach((row, i) => {
-    const { mapping, reason, unrecognizedPath } = coerceMapping(row, i, makeId);
+    const { mapping, reason, unrecognizedPath } = coerceMapping(row, i, makeId, seenIds);
     if (mapping) mappings.push(mapping);
     else if (reason) skipped.push(reason);
     if (unrecognizedPath) unrecognizedPaths.push(unrecognizedPath);
@@ -124,7 +154,21 @@ export function serializeMappingFile(mappings: MidiMapping[], controller?: strin
  * Merge: incoming rows replace existing rows on the same path (one control
  * per path, same rule as MIDI learn); everything else the user mapped is kept.
  */
-export function mergeMappings(existing: MidiMapping[], incoming: MidiMapping[]): MidiMapping[] {
+export function mergeMappings(
+  existing: MidiMapping[],
+  incoming: MidiMapping[],
+  makeId?: () => string,
+): MidiMapping[] {
   const paths = new Set(incoming.map(m => m.path));
-  return [...existing.filter(m => !paths.has(m.path)), ...incoming];
+  const kept = existing.filter(m => !paths.has(m.path));
+  if (!makeId) return [...kept, ...incoming];
+  // Loading the same file twice, or a file saved from this machine, brings ids
+  // that rows on other paths may still hold. Ids must stay unique.
+  const taken = new Set(kept.map(m => m.id));
+  const added = incoming.map(m => {
+    const next = taken.has(m.id) ? { ...m, id: makeId() } : m;
+    taken.add(next.id);
+    return next;
+  });
+  return [...kept, ...added];
 }

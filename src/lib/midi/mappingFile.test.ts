@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { mergeMappings, parseMappingFile, serializeMappingFile } from './mappingFile';
+import { MAPPING_FILE_MAX_BYTES, MAPPING_FILE_MAX_ROWS, mergeMappings, parseMappingFile, serializeMappingFile } from './mappingFile';
 import type { MidiMapping } from './midiTypes';
 
 let n = 0;
@@ -92,7 +92,66 @@ describe('parseMappingFile', () => {
   });
 });
 
+describe('parseMappingFile limits', () => {
+  it('refuses an oversized document before parsing it', () => {
+    expect(() => parseMappingFile(' '.repeat(MAPPING_FILE_MAX_BYTES + 1), makeId)).toThrow(/too large/);
+  });
+
+  it('refuses a file with more rows than any controller needs', () => {
+    const rows = Array.from({ length: MAPPING_FILE_MAX_ROWS + 1 }, () => ({ channel: 0, type: 'cc', number: 1, path: 'vj:tap' }));
+    expect(() => parseMappingFile(JSON.stringify(rows), makeId)).toThrow(/Too many/);
+  });
+
+  it('drops paths that name prototype keys or are absurdly long', () => {
+    const parsed = parseMappingFile(JSON.stringify([
+      row(),
+      row({ path: 'map:layer:__proto__' }),
+      row({ path: 'map:splat:constructor.prototype' }),
+      row({ path: `vj:0:shader:${'a'.repeat(400)}` }),
+    ]), makeId);
+    expect(parsed.mappings.map(m => m.path)).toEqual(['vj:0:opacity']);
+    expect(parsed.skipped).toHaveLength(3);
+  });
+
+  it('never returns two rows with the same id', () => {
+    const parsed = parseMappingFile(JSON.stringify([row(), row({ path: 'vj:1:opacity' }), row({ path: 'vj:2:opacity', id: 'z'.repeat(500) })]), makeId);
+    expect(new Set(parsed.mappings.map(m => m.id)).size).toBe(3);
+    expect(parsed.mappings[0].id).toBe('x');
+    expect(parsed.mappings[2].id.length).toBeLessThan(64);
+  });
+
+  it('bounds label, controller and discrete values', () => {
+    const text = JSON.stringify({
+      controller: 'c'.repeat(500),
+      mappings: [
+        row({ label: 'l'.repeat(500) }),
+        row({ path: 'vj:1:blend', id: 'y', discreteValues: Array.from({ length: 1000 }, () => 'v') }),
+      ],
+    });
+    const parsed = parseMappingFile(text, makeId);
+    expect(parsed.controller).toHaveLength(80);
+    expect(parsed.mappings[0].label).toHaveLength(120);
+    expect(parsed.mappings[1].discreteValues).toBeUndefined();
+  });
+
+  it('is not fooled by a __proto__ key in the document or a row', () => {
+    const text = '{"__proto__":{"polluted":1},"mappings":[{"__proto__":{"polluted":1},"channel":0,"type":"cc","number":1,"path":"vj:tap"}]}';
+    const parsed = parseMappingFile(text, makeId);
+    expect(parsed.mappings).toHaveLength(1);
+    expect(Object.keys(parsed.mappings[0]).sort()).toEqual(['channel', 'id', 'label', 'max', 'min', 'mode', 'number', 'path', 'step', 'type']);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
 describe('mergeMappings', () => {
+  it('gives an incoming row a new id when a kept row already holds it', () => {
+    const existing = [row({ id: 'same', path: 'vj:stopall', type: 'note', number: 45 })];
+    const merged = mergeMappings(existing, [row({ id: 'same', number: 1 })], makeId);
+    expect(merged).toHaveLength(2);
+    expect(new Set(merged.map(m => m.id)).size).toBe(2);
+    expect(merged[0].id).toBe('same');
+  });
+
   it('replaces by path and keeps everything else', () => {
     const existing = [row({ id: 'old', number: 7 }), row({ id: 'keep', path: 'vj:stopall', type: 'note', number: 45 })];
     const merged = mergeMappings(existing, [row({ id: 'new', number: 1 })]);

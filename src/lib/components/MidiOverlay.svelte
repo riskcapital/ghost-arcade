@@ -3,7 +3,7 @@
   import { midiStore } from '../midi/midiStore';
   import { macros } from '../stores/macros';
   import { showToast } from '../stores/errorToast';
-  import { parseMappingFile, serializeMappingFile } from '../midi/mappingFile';
+  import { MAPPING_FILE_MAX_BYTES, parseMappingFile, serializeMappingFile } from '../midi/mappingFile';
   import type { MidiMappingMode } from '../midi/midiTypes';
 
   interface OverlayItem {
@@ -223,6 +223,11 @@
     const file = input.files?.[0];
     input.value = ''; // allow re-picking the same file
     if (!file) return;
+    if (file.size > MAPPING_FILE_MAX_BYTES) {
+      // Checked before reading, so a wrong pick (a video, say) is never loaded into memory.
+      showToast("Couldn't load mappings: that file is too large to be a MIDI mapping file", 'error');
+      return;
+    }
     try {
       const parsed = parseMappingFile(await file.text(), midiStore.newMappingId);
       if (!parsed.mappings.length) {

@@ -255,7 +255,7 @@ function createMidiStore() {
     // Load from a mapping file (see mappingFile.ts). Merge keeps everything
     // the user mapped on other paths; replace wipes first.
     importMappings: (incoming: MidiMapping[], replace = false) => update(s => {
-      const newMappings = replace ? [...incoming] : mergeMappings(s.mappings, incoming);
+      const newMappings = replace ? [...incoming] : mergeMappings(s.mappings, incoming, generateId);
       saveMappings(newMappings);
       return { ...s, mappings: newMappings };
     }),
