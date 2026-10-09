@@ -381,10 +381,18 @@ class MidiRouter {
 
     // Layer-level properties (opacity, etc.)
     if (contentType === 'layer') {
+      // The property name comes straight from the path, and paths arrive from
+      // loaded mapping files, OSC, DMX and cues as well as Learn. Only write a
+      // field the layer already has as a number (or a boolean, for toggles), so
+      // a path like map:layer:id or map:layer:source cannot replace a layer's
+      // identity or its media with a controller value.
+      if (!Object.prototype.hasOwnProperty.call(layer, property)) return;
+      const current = (layer as any)[property];
       if (mapping.mode === 'toggle') {
-        const current = (layer as any)[property];
+        if (typeof current !== 'boolean') return;
         project.updateLayer(layer.id, { [property]: !current });
       } else {
+        if (typeof current !== 'number' || !Number.isFinite(value)) return;
         project.updateLayer(layer.id, { [property]: value });
       }
       return;
