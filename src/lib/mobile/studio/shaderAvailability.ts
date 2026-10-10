@@ -164,7 +164,6 @@ export const standaloneShaderPaths = new Set<string>([
   "ISF/FractalVoronoiBloom.fs",
   "ISF/FractalZoom.fs",
   "ISF/GA-GhostFX.fs",
-  "ISF/Galaxy of Universes+.fs",
   "ISF/GeometricWall.fs",
   "ISF/GlitchBlocks.fs",
   "ISF/HexGrid.fs",
@@ -175,7 +174,6 @@ export const standaloneShaderPaths = new Set<string>([
   "ISF/LiquidMetal.fs",
   "ISF/LithoponicErosion.fs",
   "ISF/MeltingBlobs.fs",
-  "ISF/Melty Boi.fs",
   "ISF/MercuryPool.fs",
   "ISF/MetalParticles.fs",
   "ISF/ModularGrid.fs",
@@ -190,7 +188,6 @@ export const standaloneShaderPaths = new Set<string>([
   "ISF/OrganicMetal.fs",
   "ISF/ParticleField.fs",
   "ISF/ParticleSwarm.fs",
-  "ISF/Pegasus Galaxy.fs",
   "ISF/PlasmaCalligraphy.fs",
   "ISF/RadialBurst.fs",
   "ISF/RetroSun.fs",
@@ -275,7 +272,6 @@ export const standaloneShaderPaths = new Set<string>([
   "ISF/TriangleMesh.fs",
   "ISF/Trippy Mandala.fs",
   "ISF/TrippyMandala.fs",
-  "ISF/Untitled Shader.fs",
   "ISF/VoronoiCrystalExtrusion.fs",
   "ISF/VoronoiPulse.fs",
   "ISF/VoronoiTerrainFlyover.fs",
@@ -317,6 +313,5 @@ export const standaloneShaderPaths = new Set<string>([
   "ISF/cube shaders/ROOM_19_CosmicNebula.fs",
   "ISF/cube shaders/ROOM_20_MoltenCore.fs",
   "ISF/gpt.fs",
-  "ISF/grigM_gs61327.fs",
   "ISF/organic-fluids.fs"
 ]);

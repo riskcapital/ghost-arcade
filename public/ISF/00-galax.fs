@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Galactic Video Blobs: Cosmic Connections - Galaxy-like blobs with connecting lines, influenced by video input",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],

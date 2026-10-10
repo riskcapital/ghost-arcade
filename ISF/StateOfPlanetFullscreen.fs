@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Converted from Three.js by Claude",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "State of the Planet - Static view with multi-colored tendrils, particles, orbs, and embers",
     "ISFVSN": "2.0",
     "CATEGORIES": ["Generator"],

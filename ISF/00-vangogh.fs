@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Lava Lamp Fractal Waves: Geometric Tracking - 3D waves with varied colors, splashes, and computer vision-like tracking",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],

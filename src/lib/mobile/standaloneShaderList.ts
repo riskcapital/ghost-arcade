@@ -174,7 +174,7 @@ export const MOBILE_SHADERS: MobileShader[] = [
       // stay in sync.
       { match: /sin\(t \* breathRate \* 3\.14159\)/g, replace: 'sin(t * breathRate * (1.0 + audioBeat * 1.0) * 3.14159)' },
     ],
-  },
+  }
 ];
 
 MOBILE_SHADERS.push(...[
@@ -3861,47 +3861,12 @@ MOBILE_SHADERS.push(...[
     "requiresImage": true
   },
   {
-    "id": "desktop:AnotherGridThingy.fs",
-    "path": "ISF/AnotherGridThingy.fs",
-    "name": "Another Grid Thingy",
-    "category": "other",
-    "audioNative": true,
-    "defaults": {
-      "grid_size": [
-        0.57,
-        1
-      ],
-      "bright": 0.212,
-      "glow_size": 20,
-      "rate": 0.74,
-      "rndseed": [
-        0,
-        0.29
-      ]
-    },
-    "requiresImage": false
-  },
-  {
     "id": "desktop:gpt.fs",
     "path": "ISF/gpt.fs",
     "name": "gpt",
     "category": "other",
     "audioNative": true,
     "defaults": {},
-    "requiresImage": false
-  },
-  {
-    "id": "desktop:grigM_gs61327.fs",
-    "path": "ISF/grigM_gs61327.fs",
-    "name": "grig M gs61327",
-    "category": "other",
-    "audioNative": true,
-    "defaults": {
-      "speed": 1.44,
-      "r_par": 18.25,
-      "zoom": 0.97,
-      "par_2": 0.01
-    },
     "requiresImage": false
   },
   {
@@ -3947,15 +3912,6 @@ MOBILE_SHADERS.push(...[
       "chaos_factor": 1.32,
       "symmetry": 4.515
     },
-    "requiresImage": false
-  },
-  {
-    "id": "desktop:Untitled Shader.fs",
-    "path": "ISF/Untitled Shader.fs",
-    "name": "Untitled Shader",
-    "category": "other",
-    "audioNative": true,
-    "defaults": {},
     "requiresImage": false
   },
   {

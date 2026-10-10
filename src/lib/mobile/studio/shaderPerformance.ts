@@ -42,5 +42,11 @@ export const mobileShaderBudgets: Record<string, { scale: number; detail: number
 /** Shaders stripped from the mobile release (native-mobile/release-exclusions.json). A saved set may still name them. */
 export const mobileRemovedShaderPaths = new Set<string>([
   "ISF/AnotherGridThingy.fs",
-  "ISF/InnerDimensionalMatrix.fs"
+  "ISF/Galaxy of Universes+.fs",
+  "ISF/InnerDimensionalMatrix.fs",
+  "ISF/Melty Boi.fs",
+  "ISF/Neon psy.fs",
+  "ISF/Pegasus Galaxy.fs",
+  "ISF/Untitled Shader.fs",
+  "ISF/grigM_gs61327.fs"
 ]);

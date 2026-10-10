@@ -75,7 +75,7 @@ async function main() {
     'public/ISF/DM-ElectricStorm.fs', 'public/ISF/StrobeFlash.fs',
     'public/ISF/M3D-CrystalRefract.fs', 'public/ISF/M3D-GlitchMelt.fs',
     'public/ISF/M3D-HeatSignature.fs', 'public/ISF/M3D-NeonOutline.fs',
-    'public/ISF/MoltenVoronoiCore.fs', 'public/ISF/Neon psy.fs',
+    'public/ISF/MoltenVoronoiCore.fs',
     'public/ISF/PC-DataStream.fs', 'public/ISF/PC-EnergyField.fs',
     'public/ISF/PC-ParticleTrails.fs', 'public/ISF/PC-PointExplosion.fs',
     'public/ISF/PC-VoxelWorld.fs', 'public/ISF/animated-mapper.fs',

@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "ChatGPT",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "MechDMT — geometric fractal kaleidoscope simulating the mind of a robot on DMT",
     "CATEGORIES": [ "generator" ],
     "INPUTS": [

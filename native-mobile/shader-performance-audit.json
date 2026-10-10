@@ -1,6 +1,6 @@
 {
   "method": "Static code cost: high/extreme excluded, comments ignored",
-  "retained": 319,
+  "retained": 314,
   "budgeted": [
     {
       "path": "ISF/GA-GhostFX.fs",

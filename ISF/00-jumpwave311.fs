@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Pixar-Inspired 3D Video Waves: Erupting Lava Lamp Blobs - Chaotic waves with blobs flying toward the screen",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],
