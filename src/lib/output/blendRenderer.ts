@@ -12,8 +12,7 @@ import { projectorCalibrationUniforms } from './projectorCalibration';
  *   2.  Apply per-axis rotation (0/90/180/270°).
  *   3.  Apply brightness / contrast / gamma in linear space.
  *   4.  Compute per-edge alpha using the Paul Bourke piecewise S-curve
- *       (canonical edge-blending formula used by other VJ software, other mapping software,
- *       node-based tools, VIOSO). Per-edge gamma overrides supported.
+ *       (the canonical edge-blending formula). Per-edge gamma overrides supported.
  *   5.  Add a per-channel black-level lift on the NON-overlap region
  *       with feathered boundary so real projectors don't show a
  *       brighter overlap stripe.
@@ -62,8 +61,7 @@ let readbackH = 0;
 // as a `MAX_MESH × MAX_MESH` float DataTexture, sampled with nearest
 // filtering — only the actual (rows × cols) sub-region is meaningful;
 // the rest is unused padding. 32 is generous: a 32×32 control mesh is
-// way more than typical projection-mapping rigs need (~5×5 is the
-// other mapping software default).
+// way more than typical projection-mapping rigs need (~5×5 is common).
 const MAX_MESH = 32;
 
 // ─── Shader source ─────────────────────────────────────────────────────
@@ -216,8 +214,7 @@ const FRAG_SHADER = /* glsl */ `
     if (uWarpMode == 1) {
       // Corners: bilinear interpolation of the 4 corner positions.
       // Top row = mix(TL, TR), bottom row = mix(BL, BR), then mix
-      // them down by uv.y. This is the same projective approximation
-      // other mapping software / other VJ software use for their quad-warp.
+      // them down by uv.y: the usual projective approximation for a quad-warp.
       vec2 top    = mix(uCornerTL, uCornerTR, uv.x);
       vec2 bottom = mix(uCornerBL, uCornerBR, uv.x);
       srcUv = mix(top, bottom, uv.y);

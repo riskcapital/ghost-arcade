@@ -4,7 +4,7 @@ Ghost Arcade speaks OSC in both directions: it takes control from a surface or
 a DAW, and sends state back so the surface can show what is happening.
 
 Turn it on in **Settings → OSC**. The listener defaults to UDP **8000**
-(TouchOSC's default; node-based tools tends to use 9000).
+(TouchOSC's default; some tools use 9000).
 
 ## Getting started
 

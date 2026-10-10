@@ -1,6 +1,6 @@
 /**
  * Stage Effects — procedural per-slice brightness generators that animate
- * a Surface's slices together (other VJ software "stage-pixel" pattern).
+ * a Surface's slices together.
  *
  * Architecture:
  *  - The Surface object owns its `effects: StageEffect[]` (persisted

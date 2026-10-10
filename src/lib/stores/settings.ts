@@ -707,7 +707,7 @@ export interface OutputSettings {
   // Multi-output slices (overrides legacy single-output when non-empty)
   slices: OutputSlice[];
   /** Master-canvas resolution — the "virtual canvas" all slices crop
-   *  from. Convention (other VJ software/other mapping software/Watchout): set this to the
+   *  from. Convention: set this to the
    *  union of the physical outputs minus their overlap regions, e.g.
    *  for four 1920×1080 projectors with 15% horizontal overlap →
    *  ~6528×1080. The editor composites at the editor canvas size; the
@@ -834,7 +834,7 @@ export interface ExperimentalSettings {
    *    - Multi-output ready: each presenter window calls
    *      importExternalTexture on its own MessagePort, no extra cost
    *    - Native compositor — modern Chromium media+WebGPU pipeline IS
-   *      what other VJ software builds in C++. We just consume it through web
+   *      what native apps build in C++. We just consume it through web
    *      APIs.
    *
    *  Native-only desktop builds force this off; output comes from the

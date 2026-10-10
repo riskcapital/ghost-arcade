@@ -1645,7 +1645,7 @@
   let vjNdiAvailable = false;
   let vjNdiChecked = false;
   let vjNdiScanning = false;
-  let vjNdiStatusHint = 'Open an NDI® sender in other mapping software, other VJ software, OBS, or another VJ app on this machine or network';
+  let vjNdiStatusHint = 'Open an NDI® sender in another app on this machine or network';
   async function vjStartNdiScan() {
     const api = (window as any).ghostNDI;
     if (!api) {
@@ -1681,7 +1681,7 @@
             url: typeof src === 'object' && src?.url ? String(src.url) : '',
           }))
           .filter((src: { name: string }) => src.name.length > 0);
-        vjNdiStatusHint = 'Open an NDI® sender in other mapping software, other VJ software, OBS, or another VJ app on this machine or network';
+        vjNdiStatusHint = 'Open an NDI® sender in another app on this machine or network';
       } catch (err) {
         vjNdiStatusHint = err instanceof Error ? err.message : String(err);
       } finally {
@@ -1876,7 +1876,7 @@
   let vjSpoutInput = '';
   let vjDetectedSpoutSenders: string[] = [];
   let vjTextureShareAvailable = true;
-  let vjTextureShareHint = `Open a ${getTextureShareLabel()} sender in other mapping software, other VJ software, OBS, or another VJ app`;
+  let vjTextureShareHint = `Open a ${getTextureShareLabel()} sender in another app`;
 
   async function vjScanSpout() {
     const { invoke: bridgeInvoke, isDesktopApp } = await import('$lib/bridge');
@@ -1889,7 +1889,7 @@
         }>('texture_share_info');
         vjTextureShareAvailable = !!info.available;
         vjTextureShareHint = info.available
-          ? `Open a ${info.label} sender in other mapping software, other VJ software, OBS, or another VJ app`
+          ? `Open a ${info.label} sender in another app`
           : (info.error || `${info.label} native addon unavailable`);
         if (!info.available) {
           vjDetectedSpoutSenders = [];

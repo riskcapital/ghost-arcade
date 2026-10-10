@@ -171,7 +171,7 @@
     {
       eyebrow: '9 / 9',
       title: 'You\'re ready',
-      body: 'Hit Done to dive in. The full feature reference is at FEATURES.md in the install folder. Re-run this tour anytime via File → Help → Show feature tour.',
+      body: 'Hit Done to dive in. Re-run this tour anytime via File → Help → Show feature tour.',
       bullets: [
         'Everything saves and reloads via Ctrl+S to the loaded .gha file',
         'Right-click block tabs / presets / SV presets to update in place',

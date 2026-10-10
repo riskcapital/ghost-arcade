@@ -4,7 +4,7 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
 
 /**
  * WebGPUPointCloudFX — turn a static point cloud into a living
- * conventional instrument.
+ * instrument.
  *
  * Loads a `.ply` or `.splat` file (positions + colors), uploads them
  * into immutable "home" buffers, then runs a per-frame compute pass

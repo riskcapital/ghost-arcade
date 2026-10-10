@@ -43,7 +43,7 @@ using Microsoft::WRL::ComPtr;
  * Find the best GPU adapter index for Spout.
  *
  * On NVIDIA Optimus / multi-GPU systems, the default adapter (0) is often
- * the Intel integrated GPU. But OBS, other mapping software, other VJ software etc. run on the
+ * the Intel integrated GPU. But OBS and other receiving apps run on the
  * discrete NVIDIA/AMD GPU. Spout shared texture handles CANNOT cross GPU
  * adapters — so we MUST create our D3D11 device on the same adapter as
  * the other Spout apps.
@@ -120,7 +120,7 @@ public:
         , m_hasExternalDevice(false)
         , m_adapterIndex(0)
     {
-        // Find the discrete GPU (NVIDIA/AMD) — MUST match what OBS/other mapping software use
+        // Find the discrete GPU (NVIDIA/AMD) — MUST match what receiving apps use
         int gpuAdapter = FindDiscreteGpuAdapter();
         m_adapterIndex = gpuAdapter;
 

@@ -215,9 +215,9 @@ private:
     // OpenGL's canonical orientation. publishFrameTexture with flipped:NO
     // matches — Syphon's `flipped` flag means "flipped *relative to the GL
     // coordinate system*", which we are not. Publishing flipped:YES (the
-    // earlier value) made other mapping software flip again on display, which is why the
+    // earlier value) made receiving apps flip again on display, which is why the
     // receiver saw everything upside-down and users had to toggle the flip in
-    // other mapping software to compensate.
+    // receivers to compensate.
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.Data());
     glFlush();
 
@@ -418,7 +418,7 @@ private:
 // texture with row 0 = top of the slice (matching the single-output
 // SendTexture convention), so publishFrameTexture is flipped:YES like
 // the single-output path. Consumers that respect Syphon's `flipped`
-// flag (Simple Client, other mapping software, other VJ software) display right-side-up
+// flag (Simple Client and other receivers) display right-side-up
 // without an extra toggle.
 // ============================================================
 
@@ -1127,7 +1127,7 @@ private:
     // texture). Sampled onto a standard THREE plane (UV origin bottom-left)
     // the image lands right-side-up. The earlier code did an extra
     // CPU row-flip here and the receiver displayed upside-down; removing
-    // that flip is the whole fix for the IN-from-other mapping software orientation bug.
+    // that flip is the whole fix for the incoming-frame orientation bug.
     Napi::ArrayBuffer buf = Napi::ArrayBuffer::New(env, bytes);
 
     glBindFramebuffer(GL_FRAMEBUFFER, landingFbo_);

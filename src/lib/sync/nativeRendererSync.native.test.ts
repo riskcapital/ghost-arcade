@@ -560,7 +560,7 @@ describe('native renderer sync shared-texture source frames', () => {
       type: 'spout',
       src: 'live://spout/syphon-session',
       liveSourceType: 'syphon',
-      spoutSource: { senderName: 'other VJ software Output' },
+      spoutSource: { senderName: 'Test Output' },
     } as any);
 
     expect(webcam).toMatchObject({
@@ -575,7 +575,7 @@ describe('native renderer sync shared-texture source frames', () => {
     });
     expect(syphon).toMatchObject({
       sourceType: 'live:syphon',
-      uri: 'native-live://syphon/other VJ software%20Output',
+      uri: 'native-live://syphon/Test%20Output',
     });
   });
 

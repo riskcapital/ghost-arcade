@@ -38,7 +38,7 @@ describe('resolveAssetRefForRuntime — scheme handling', () => {
       'builtin:grid',
       'live://webcam/1f0c-4a2b',
       'live://capture/screen-2',
-      'live://spout/other VJ software',
+      'live://spout/TestSender',
       'live://ndi/Studio',
       'library-shader:SM-ParticleNodes',
       'generated://text/layer-7/atlas',

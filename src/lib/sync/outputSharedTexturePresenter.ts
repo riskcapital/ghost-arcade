@@ -1,7 +1,7 @@
 /**
  * outputSharedTexturePresenter — editor-side WebGPU zero-copy sender.
  *
- * Architectural model: same-renderer-process other VJ software pattern. The
+ * Architectural model: one renderer process for editor and output. The
  * editor renderer process owns BOTH the editor window AND the output
  * window(s); the output windows are opened via `window.open()` (which
  * Chromium routes to the same renderer process for same-origin URLs).

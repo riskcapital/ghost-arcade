@@ -247,7 +247,7 @@ export class RenderEngine {
     // output + recording + export all sample from it. Applying DPR=2 on a 1080p
     // project silently turned the backing store into 4K and forced 33MB-per-frame
     // readbacks through the CPU-IPC pipe for Spout/Syphon, for zero visual
-    // benefit since consumers (other mapping software, other VJ software, the output window) all
+    // benefit since consumers (receiving apps and the output window) all
     // ingest at their own resolution.
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(width, height, false); // false = don't modify CSS styles

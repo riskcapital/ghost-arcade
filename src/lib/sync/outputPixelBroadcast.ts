@@ -2,9 +2,8 @@
  * outputPixelBroadcast — editor-side WebRTC peer that publishes the
  * main canvas as a video stream to the output window.
  *
- * Architectural goal: get as close as we can to the pro VJ-app pattern
- * (other VJ software, node-based tools, other VJ software) inside Electron's process model. The
- * pros run ONE rendering pipeline and present its frames to multiple
+ * Architectural goal: run a single pipeline inside Electron's process model:
+ * ONE rendering pipeline that presents its frames to multiple
  * display surfaces via OS-level GPU-shared resources. Electron's
  * cross-process model rules that out without native code, but
  * `canvas.captureStream()` + same-process WebRTC gets us 90% of the

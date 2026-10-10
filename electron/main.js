@@ -8,7 +8,7 @@
  *   → 'paint' event delivers OffscreenSharedTexture with DXGI handle
  *   → C++ N-API addon: OpenSharedResource1(handle) → ID3D11Texture2D
  *   → spoutDX::SendTexture(texture) → Spout shared texture (GPU VRAM)
- *   → Other apps receive (OBS, other VJ software, other mapping software, etc.)
+ *   → Other apps receive (OBS and other Spout or Syphon apps)
  *
  * No pixels touch CPU memory in the send path.
  */

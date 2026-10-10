@@ -188,7 +188,7 @@
   let ndiScanning = false;
   let ndiScanInterval: ReturnType<typeof setInterval> | null = null;
   let lastVJLiveSourcesSignature = '';
-  let ndiStatusHint = 'Open an NDI® sender in other mapping software, other VJ software, OBS, or another VJ app on this machine or network';
+  let ndiStatusHint = 'Open an NDI® sender in another app on this machine or network';
 
   // Check if running in desktop app (Electron)
   import { invoke as bridgeInvoke, isDesktopApp, getTextureShareLabel } from '$lib/bridge';
@@ -315,7 +315,7 @@
   $: textureShareUnavailable = !!$textureShareInfo && !$textureShareInfo.available;
   $: textureShareStatusHint = textureShareUnavailable
     ? ($textureShareInfo?.error || `${tsLabel} native addon unavailable`)
-    : `Open a ${tsLabel} sender in other mapping software, other VJ software, OBS, or another VJ app`;
+    : `Open a ${tsLabel} sender in another app`;
 
   type NativeLiveTextureInfo = {
     available?: boolean;
@@ -714,7 +714,7 @@
           url: typeof src === 'object' && src?.url ? String(src.url) : undefined,
         }))
         .filter((src: NdiDetectedSource) => src.name.length > 0);
-      ndiStatusHint = 'Open an NDI® sender in other mapping software, other VJ software, OBS, or another VJ app on this machine or network';
+      ndiStatusHint = 'Open an NDI® sender in another app on this machine or network';
     } catch (err) {
       ndiChecked = true;
       ndiAvailable = false;

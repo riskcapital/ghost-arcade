@@ -1260,7 +1260,7 @@
             <div class="setting-row">
               <div class="setting-label">
                 <span class="label-text">Sender Name</span>
-                <span class="label-hint">Visible to {tsLabel} receivers (e.g. OBS, node-based tools)</span>
+                <span class="label-hint">Visible to {tsLabel} receivers (e.g. OBS)</span>
               </div>
               <input
                 type="text"
@@ -1310,7 +1310,7 @@
               </svg>
               <p>
                 Output will be shared as <strong>"{$settings.output.spoutName}"</strong> to any
-                {tsLabel}-compatible application on this machine (OBS, node-based tools, etc).
+                {tsLabel}-compatible application on this machine (OBS, etc).
                 Full GPU texture sharing is available in the desktop build.
               </p>
             </div>
@@ -2137,7 +2137,7 @@
             <div class="setting-row">
               <div class="setting-label">
                 <span class="label-text">Enable Ableton Link</span>
-                <span class="label-hint">Join the tempo session on your network — Serato, Rekordbox, Ableton Live, other VJ software and other Link apps sync automatically</span>
+                <span class="label-hint">Join the tempo session on your network — Serato, Rekordbox, Ableton Live and other Link apps sync automatically</span>
               </div>
               <label class="toggle">
                 <input type="checkbox"
@@ -2217,7 +2217,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Port</span>
-              <span class="label-hint">UDP port to listen on. Common defaults: 8000 (TouchOSC default), 9000 (node-based tools). Restart on change is automatic.</span>
+              <span class="label-hint">UDP port to listen on. Common defaults: 8000 (TouchOSC default), 9000. Restart on change is automatic.</span>
             </div>
             <input
               type="number" min="1" max="65535" step="1"

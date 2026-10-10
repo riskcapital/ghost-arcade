@@ -5763,8 +5763,7 @@ export interface PixelMapConfig {
 //
 // Naming note: `StagePreset` is a pre-existing concept (saved mapping-
 // layer layout) and is intentionally unrelated. "Surface" matches the
-// projection-mapping industry vocabulary (other VJ software, other mapping software, other mapping software
-// all call these surfaces).
+// projection-mapping industry vocabulary.
 
 export interface Surface {
   id: string;
@@ -5815,7 +5814,7 @@ export interface MappingCompositionState {
 }
 
 // ── Stage Effects ────────────────────────────────────────
-// conventional "stage-pixel" effects — procedural generators that
+// Stage-pixel effects — procedural generators that
 // drive per-slice brightness in waves / pulses / sweeps so the whole
 // stage reacts together. Each slice's centroid samples the effect's
 // virtual output at that location; the resulting brightness becomes
@@ -6574,7 +6573,7 @@ export function convertShapeToCustom(shape: LayerShape): LayerShape {
       rotation: 0,
       customPoints: points,
       // Snapshot the outline as authored: dragging vertices later warps the
-      // content smoothly against this base (conventional content follow).
+      // content smoothly against this base.
       customBasePoints: points.map((point) => ({ ...point })),
       customClosed: true,
     },

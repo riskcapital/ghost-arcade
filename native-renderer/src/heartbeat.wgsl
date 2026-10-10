@@ -1053,7 +1053,7 @@ fn source_content_for_layer(sampled: vec4<f32>, source_kind: f32) -> vec4<f32> {
   return sampled;
 }
 
-// Surface-space transform for warped shapes. other mapping software-model: the shape is a
+// Surface-space transform for warped shapes. The shape is a
 // deformable surface — handles move the GEOMETRY, and both the mask and the
 // content are evaluated in the surface's local space, so they deform as one.
 fn native_shape_surface_uv(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
@@ -1074,7 +1074,7 @@ fn native_shape_surface_uv(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
 // Mean-value coordinates: content-follow for warped custom polygons. Maps a
 // pixel inside the CURRENT (dragged) polygon back to the BASE outline the
 // content was authored against, so the texture stretches smoothly with the
-// dragged vertices (conventional).
+// dragged vertices.
 fn native_custom_mvc_uv(p: vec2<f32>, layer_index: u32) -> vec2<f32> {
   let count = min(32, i32(floor(layers[layer_index].shape_meta.x + 0.5)));
   if (count < 3) {
@@ -1161,7 +1161,7 @@ fn native_barycentric(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) ->
 
 fn layer_sample_uv(raw_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
   var sampled_uv = raw_uv;
-  // Shape control-point warp (conventional). Kind 1: circle quad+center —
+  // Shape control-point warp. Kind 1: circle quad+center —
   // content is bilinearly warped through the 4 corner handles and pulled
   // toward the center handle. Kind 2: triangle — content is barycentrically
   // remapped so it stretches with the dragged vertices.
@@ -2270,7 +2270,7 @@ fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
 }
 
 // ── Edge Effects ──────────────────────────────────────────────────────────
-// conventional stroke, fill and animation stacks on a layer's outline,
+// Stroke, fill and animation stacks on a layer's outline,
 // evaluated analytically per OUTPUT pixel after the layer's warp. The
 // outline arrives already warped and flattened (edgeEffectGeometry.ts):
 // the stroke centerline in output pixels (y up) with the arc length and

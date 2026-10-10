@@ -39,7 +39,7 @@ describe('built-in demo source eligibility', () => {
     expect(gpuSourceParamIsBound({ type: 'layer', layerId: 'l1' })).toBe(true);
     expect(gpuSourceParamIsBound({ type: 'file', url: 'blob:x' })).toBe(true);
     expect(gpuSourceParamIsBound({ type: 'camera', deviceId: '' })).toBe(true);
-    expect(gpuSourceParamIsBound({ type: 'spout', senderName: 'other VJ software' })).toBe(true);
+    expect(gpuSourceParamIsBound({ type: 'spout', senderName: 'Test Sender' })).toBe(true);
   });
 
   it('engages with no source and disengages once one is bound', () => {

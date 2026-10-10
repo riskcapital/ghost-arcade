@@ -14,7 +14,7 @@
   //   - MediaRecorder captures the live composite
   //
   // What was removed (was here pre-rewrite, no longer relevant):
-  //   - Clip-launcher / banks / conventional dual deck crossfader
+  //   - Clip-launcher / banks / dual deck crossfader
   //   - Autopilot, per-clip params, projection mapping, onboarding tour,
   //     diagnostic HUD — none of those map to the layer model.
 

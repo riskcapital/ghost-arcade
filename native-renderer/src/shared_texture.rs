@@ -332,7 +332,7 @@ mod tests {
             "shared_texture_handle_byte_length": 8,
             "shared_texture_close_handle_after_import": true,
             "shared_texture_frame": 12,
-            "shared_texture_sender_name": "other VJ software"
+            "shared_texture_sender_name": "Test Sender"
         });
 
         let descriptor =
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(descriptor.handle_byte_length, Some(8));
         assert!(descriptor.close_handle_after_import);
         assert_eq!(descriptor.frame, Some(12));
-        assert_eq!(descriptor.sender_name.as_deref(), Some("other VJ software"));
+        assert_eq!(descriptor.sender_name.as_deref(), Some("Test Sender"));
         assert_eq!(descriptor.width, 1920);
         assert_eq!(descriptor.height, 1080);
     }

@@ -72,8 +72,8 @@ const FLYTHROUGH_DEF: GpuShaderDef = {
   create: (device, presentFormat) => new WebGPUFlythroughShader(device, presentFormat),
 };
 
-// Point Cloud FX — load a .ply or .splat into a living node-based tools-
-// style instrument. Bass-triggered radial burst, curl-noise wind,
+// Point Cloud FX — load a .ply or .splat into a living
+// instrument. Bass-triggered radial burst, curl-noise wind,
 // treble shimmer, a moving "proximity wave" sphere that pushes points
 // outward, dissolve radius, hue/sat/brightness, three topologies
 // (points / billboards / worm strokes). Source = file picker; the
