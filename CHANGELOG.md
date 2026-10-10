@@ -1,3 +1,7 @@
+# Ghost Arcade 2.0.18 — October 9, 2026
+
+Kinetic text with tiling, a long-text reader and audio reaction; painting studio with shape layers, Paint Drip and Ink Flow; HandFX body and face modes; Flux from a paired phone; MIDI library control and mapping files; tighter file and network access. See [release notes](docs/releases/v2.0.18.md).
+
 # Ghost Arcade 2.0.17 — October 9, 2026
 
 Auto map a projector from the iOS app, calibration and Interactive Studio fixes, true full-screen outputs on macOS, a top bar that scales, and Linux builds again. See [release notes](docs/releases/v2.0.17.md).
