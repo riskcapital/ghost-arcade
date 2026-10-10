@@ -3,8 +3,8 @@ title GhostArcade - Projection Mapping
 cd /d "%~dp0"
 echo Starting GhostArcade...
 echo.
-echo Once started, the app will open in your browser at http://localhost:5173
+echo Once started, the app will open in your browser at http://localhost:1420
 echo Press Ctrl+C to stop the server
 echo.
-start "" "http://localhost:5173"
+start "" "http://localhost:1420"
 npm run start

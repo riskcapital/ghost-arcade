@@ -67,7 +67,6 @@
     "native-mobile:testflight": "cd native-mobile && npm run ios:testflight",
     "server": "node server/ws-server.js",
     "start": "concurrently \"npm run dev\" \"npm run server\"",
-    "legacy:electron": "concurrently \"npm run dev\" \"electron .\"",
     "legacy:electron:dev": "concurrently -k \"npm run dev\" \"node -e \\\"setTimeout(() => require('child_process').execSync('electron .', {stdio:'inherit'}), 2000)\\\"\"",
     "test": "vitest run",
     "lint": "eslint src",

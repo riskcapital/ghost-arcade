@@ -35,8 +35,8 @@
  * element (gamma + crop intentionally TODO — gamma can't be done in
  * pure CSS, crop needs a math pass we haven't written yet). Without
  * these the WebRTC view delivers raw editor pixels and the user's
- * Settings → Output → Rotation/etc are ignored — Codex caught this
- * gap in the v1 prototype review.
+ * Settings → Output → Rotation/etc are ignored, a gap in the v1
+ * prototype.
  *
  * Resilience:
  *   - The output sends `ready` with a 2 s heartbeat until `connected`,

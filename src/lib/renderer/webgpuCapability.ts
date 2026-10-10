@@ -269,8 +269,8 @@ export function _resetWebGPUCapabilityForTesting(): void {
  *
  * Pre-fix this honoured a persisted settings flag too, which meant a
  * stale persisted toggle would silently impose an extra 512×512
- * WebGPU render every animation frame. Codex flagged that as a P2
- * perf regression vs the Pro folder. The pilot is a benchmarking /
+ * WebGPU render every animation frame, a perf regression vs the
+ * Pro folder. The pilot is a benchmarking /
  * diagnostic tool, not a feature — gate it on an explicit URL opt-in
  * so it can never run "by accident".
  *
