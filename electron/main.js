@@ -103,6 +103,7 @@ const nativeRendererBroker = createNativeRendererBroker({
   nativeEditorPreviewStatusProvider: () => getNativePreviewStatus(),
   nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
   sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
+  canWritePath: target => pathGrants.canWrite(target),
 });
 
 // three.js / p5.js media sources render in offscreen windows and send their
@@ -8193,7 +8194,7 @@ function registerIpcHandlers() {
           // Their frames have nowhere to go; the sync reopens them on restart.
           jsSourceHost.closeAll();
         }
-        return nativeRendererBroker.invoke(cmd, args);
+        return nativeRendererBroker.invokeFromRenderer(cmd, args);
       }
       const startArgs = args && typeof args === 'object' ? { ...args } : {};
       const config = startArgs.config && typeof startArgs.config === 'object'
@@ -8216,7 +8217,7 @@ function registerIpcHandlers() {
           console.warn('[NativeRenderer] failed to read main window native handle:', err?.message || err);
         }
       }
-      return nativeRendererBroker.invoke(cmd, { ...startArgs, config });
+      return nativeRendererBroker.invokeFromRenderer(cmd, { ...startArgs, config });
     });
   }
 
