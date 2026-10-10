@@ -17,6 +17,7 @@
 import * as THREE from 'three';
 import HydraSynth from 'hydra-synth';
 import type { VisualAudioState } from '../audio/visualAudio';
+import { resolveBundledHydraSketch } from './hydraPresets';
 
 export interface HydraParams {
   sketchCode: string;        // the active sketch source
@@ -199,12 +200,22 @@ export class HydraVisualizer {
     // First clear any running outputs; bad sketches that throw shouldn't
     // leave the previous one half-broken.
     try { this.hydra.hush?.(); } catch {}
+    // Only sketches that ship with the app run. `code` comes from the
+    // project file, and this compiles it as JavaScript in an app window.
+    const bundled = resolveBundledHydraSketch(code, this.params.sketchName);
+    if (bundled === null) {
+      console.warn('[Hydra] sketch is not a bundled preset; not running it');
+      this.compiledSketch = null;
+      // Remember the refusal so setParams does not retry it every frame.
+      this.appliedSketch = code;
+      return;
+    }
     try {
       // Build a function that takes every synth key (including `time`,
       // already provided by hydra on its synth instance) as a parameter
       // — no `with`, no global pollution. Strict mode forbids duplicate
       // parameter names, which is why we don't pass `time` separately.
-      const fn = new Function(...this.synthKeys, `"use strict";\n${code}`);
+      const fn = new Function(...this.synthKeys, `"use strict";\n${bundled}`);
       this.compiledSketch = fn;
       this.appliedSketch = code;
       // Invoke immediately so the sketch wires up its output chain

@@ -5351,6 +5351,12 @@
             const projectDir = currentProjectPath.substring(0, currentProjectPath.lastIndexOf(sep) + 1);
             const portableJson = await materializeAssetsInProject(jsonStr, projectDir);
             const result = await api.invoke('save_file_text', { path: currentProjectPath, content: portableJson });
+            // A path the app only remembers (a recovered autosave from an
+            // older version) was never chosen in a dialog: ask where to save.
+            if (result?.code === 'path-not-allowed') {
+              await saveCompositionAsInner();
+              return;
+            }
             if (!result?.success) {
               alert(`Save failed: ${result?.error || 'unknown error'}`);
               return;

@@ -409,6 +409,7 @@ export function createNativeRendererBroker({
   nativeEditorPreviewStatusProvider = null,
   nativeFrameEncoderStatusProvider = null,
   sharedTextureHandlePreparer = null,
+  canWritePath = null,
 }) {
   return new NativeRendererBroker({
     appRoot,
@@ -420,7 +421,40 @@ export function createNativeRendererBroker({
     nativeEditorPreviewStatusProvider,
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
+    canWritePath,
   });
+}
+
+// File handoff fields the core reads and then deletes. Only the broker may
+// set them, pointing at temp files it wrote itself.
+const RENDERER_FILE_HANDOFF_FIELDS = new Set([
+  'rgba_file', 'rgba_file_delete',
+  'initial_file', 'initial_file_delete',
+  'data_file', 'data_file_delete',
+  'bytes_file', 'bytes_file_delete',
+]);
+// Commands whose path / file_path / output_path the core or broker writes to.
+const RENDERER_OUTPUT_PATH_COMMANDS = new Set([
+  'native_renderer_export_frame_snapshot',
+  'native_renderer_export_snapshot_json',
+  'native_renderer_start_native_recording',
+]);
+
+/** Remove the file handoff fields from renderer input, at any depth. */
+function stripRendererFileHandoffFields(value, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 32) return value;
+  // Pixel and buffer payloads hold no fields; do not walk them.
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return value;
+  if (Array.isArray(value)) {
+    if (value.length > 0 && typeof value[0] === 'number') return value;
+    for (const item of value) stripRendererFileHandoffFields(item, depth + 1);
+    return value;
+  }
+  for (const key of Object.keys(value)) {
+    if (RENDERER_FILE_HANDOFF_FIELDS.has(key)) delete value[key];
+    else stripRendererFileHandoffFields(value[key], depth + 1);
+  }
+  return value;
 }
 
 class NativeRendererBroker {
@@ -434,6 +468,7 @@ class NativeRendererBroker {
     nativeEditorPreviewStatusProvider,
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
+    canWritePath,
   }) {
     this.appRoot = appRoot;
     this.resourcesPath = resourcesPath;
@@ -448,6 +483,9 @@ class NativeRendererBroker {
       typeof nativeFrameEncoderStatusProvider === 'function' ? nativeFrameEncoderStatusProvider : null;
     this.sharedTextureHandlePreparer =
       typeof sharedTextureHandlePreparer === 'function' ? sharedTextureHandlePreparer : null;
+    // Decides which disk paths a renderer-originated export may write.
+    // Without one, renderer input cannot name an output path at all.
+    this.canWritePath = typeof canWritePath === 'function' ? canWritePath : () => false;
     this.child = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -480,6 +518,35 @@ class NativeRendererBroker {
 
   getProcessId() {
     return this.child && !this.child.killed ? this.child.pid : null;
+  }
+
+  /**
+   * Entry point for commands that come from the renderer process. The
+   * renderer may not name files for the core to read and delete, and may
+   * only export to paths the main process allows. Main-process callers,
+   * which choose their own paths, use invoke() directly.
+   */
+  async invokeFromRenderer(command, args = {}) {
+    return this.invoke(command, this.sanitizeRendererArgs(command, args));
+  }
+
+  sanitizeRendererArgs(command, args) {
+    const cleaned = stripRendererFileHandoffFields(args);
+    if (RENDERER_OUTPUT_PATH_COMMANDS.has(command)) {
+      const target = typeof cleaned === 'string'
+        ? cleaned
+        : cleaned?.path || cleaned?.file_path || cleaned?.output_path;
+      if (typeof target !== 'string' || !target || !this.canWritePath(target)) {
+        throw new Error(`${command}: output path is not an allowed location`);
+      }
+      // One path only: the core and the broker each pick the first of
+      // path / file_path / output_path, so no second spelling may differ.
+      if (cleaned && typeof cleaned === 'object') {
+        const { path: _path, file_path: _filePath, output_path: _outputPath, ...rest } = cleaned;
+        return { ...rest, path: target };
+      }
+    }
+    return cleaned;
   }
 
   async invoke(command, args = {}) {

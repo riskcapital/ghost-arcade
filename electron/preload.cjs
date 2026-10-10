@@ -79,8 +79,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'inspect_video_import',
   'open_project_dialog',
   'download_demo_zip', 'read_project_file',
-  // Update installer download + launch
-  'open_external_url', 'download_update_installer', 'launch_update_installer',
+  'open_external_url',
   // Texture sharing info (Spout/Syphon)
   'texture_share_info',
   // Output window controls
@@ -198,7 +197,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress'];
+    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);
@@ -230,7 +229,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       // webUtils.getPathForFile is the official Electron 32+ replacement
       // for File.path. It accepts a Web File object and returns the
       // absolute path on disk. Throws if not a real File from the OS.
-      return webUtils.getPathForFile(file) || '';
+      const filePath = webUtils.getPathForFile(file) || '';
+      // Tell the main process the user handed this file over, so it can be
+      // read back through ghost-asset:// and a picked project can be saved.
+      if (filePath) {
+        try { ipcRenderer.sendSync('path_grant_picked_file', filePath); } catch { /* the path is still valid */ }
+      }
+      return filePath;
     } catch {
       return '';
     }

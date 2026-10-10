@@ -62,6 +62,14 @@ const { createPjlinkClient } = require('./pjlink.cjs');
 const { createPhoneScanStore } = require('./phone-scan-store.cjs');
 const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
 const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
+// The disk paths the renderer may write, copy to, or read back through
+// ghost-asset:// (see electron/path-grants.cjs).
+const pathGrants = require('./path-grants.cjs').createPathGrants({
+  assetDirs: [path.join(app.getPath('userData'), 'project-assets')],
+  storePath: path.join(app.getPath('userData'), 'path-grants.json'),
+});
+const PATH_NOT_ALLOWED = { success: false, code: 'path-not-allowed', error: 'That location was not chosen in a file dialog, so the app will not write there.' };
+app.on('will-quit', () => pathGrants.flush());
 const pjlinkClient = createPjlinkClient({ credentials: pjlinkCredentials });
 
 // Debug: measure main-thread event-loop lag (see main-lag-probe.js). Loaded
@@ -95,6 +103,7 @@ const nativeRendererBroker = createNativeRendererBroker({
   nativeEditorPreviewStatusProvider: () => getNativePreviewStatus(),
   nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
   sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
+  canWritePath: target => pathGrants.canWrite(target),
 });
 
 // three.js / p5.js media sources render in offscreen windows and send their
@@ -578,7 +587,9 @@ function presetForVideoQuality(quality) {
 }
 
 function createMp4FrameEncoderTempDir() {
-  return fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-mp4-'));
+  const dir = fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-mp4-'));
+  pathGrants.allowWriteDir(dir);
+  return dir;
 }
 
 function writeEncoderStdin(job, buffer, frameIndex, label) {
@@ -838,7 +849,9 @@ async function cancelJpegSequenceJob(jobIdInput) {
 }
 
 function createJpegFrameEncoderTempDir() {
-  return fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-jpeg-'));
+  const dir = fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-jpeg-'));
+  pathGrants.allowWriteDir(dir);
+  return dir;
 }
 
 function extractNextJpegFrame(job) {
@@ -6876,105 +6889,6 @@ function registerIpcHandlers() {
     }
   });
 
-  // --- Update installer download + launch ---
-  // Downloads the installer for a new version into userData/updates/, sends
-  // progress events to the renderer, and returns the local path. Renderer
-  // can then call `launch_update_installer` to spawn the installer and quit.
-  ipcMain.handle('download_update_installer', async (_, args) => {
-    try {
-      const { url } = args || {};
-      if (typeof url !== 'string' || !url) throw new Error('url required');
-
-      // Sanitize filename from URL (last path segment, alphanumeric + dot/dash)
-      const tail = url.split('/').pop() || 'installer.bin';
-      const safeName = tail.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-      const targetDir = path.join(app.getPath('userData'), 'updates');
-      fs.mkdirSync(targetDir, { recursive: true });
-      const targetPath = path.join(targetDir, safeName);
-
-      console.log('[Update] Downloading', url, '->', targetPath);
-      const response = await fetch(url, { signal: AbortSignal.timeout(15 * 60 * 1000) });
-      if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-      if (!response.body) throw new Error('No response body');
-
-      const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
-      const reader = response.body.getReader();
-      const chunks = [];
-      let received = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow?.webContents.send('update-download-progress', {
-            received,
-            total: contentLength,
-            percent: contentLength > 0 ? Math.round((received / contentLength) * 100) : -1,
-          });
-        }
-      }
-
-      fs.writeFileSync(targetPath, Buffer.concat(chunks));
-      console.log('[Update] Saved installer:', targetPath);
-      return { success: true, path: targetPath };
-    } catch (err) {
-      console.error('[Update] Download error:', err?.message || err);
-      return { success: false, error: err?.message || String(err) };
-    }
-  });
-
-  ipcMain.handle('launch_update_installer', async (_, args) => {
-    try {
-      const { path: installerPath } = args || {};
-      if (typeof installerPath !== 'string' || !installerPath) throw new Error('path required');
-      if (!fs.existsSync(installerPath)) throw new Error('installer not found');
-      // Restrict to our updates directory to prevent running arbitrary files
-      const updatesDir = path.join(app.getPath('userData'), 'updates');
-      const normalized = path.normalize(installerPath);
-      if (!normalized.startsWith(updatesDir)) {
-        throw new Error('installer path outside updates directory');
-      }
-      console.log('[Update] Launching installer:', normalized);
-
-      // Per-platform install flow.
-      //
-      // Windows: the file is an NSIS .exe — running it actually
-      // installs over the current app. Quit ourselves shortly after
-      // so the installer's "remove existing" step doesn't get
-      // blocked by a running process.
-      //
-      // macOS: the file is a .dmg. There is NO auto-install — the
-      // DMG mounts in Finder and the user drags the new app into
-      // /Applications. Previous behavior was shell.openPath(dmg) +
-      // app.quit() after 500ms, which:
-      //   (a) raced the DMG mount with our process exiting, so on
-      //       slow machines the user saw "Ghost Arcade quit while
-      //       opening" with no DMG visible.
-      //   (b) gave no clear handoff explaining that they need to
-      //       drag the app over. Just looked broken.
-      // Now we showItemInFolder + leave the app running. The
-      // renderer's success state shows a clear "drag the new
-      // version to Applications, then relaunch" message.
-      if (process.platform === 'darwin') {
-        shell.showItemInFolder(normalized);
-        return { success: true, manualInstall: true };
-      }
-
-      // Windows (and any other future auto-install platform):
-      // shell.openPath returns "" on success, error string on failure.
-      const result = await shell.openPath(normalized);
-      if (result) throw new Error(result);
-      // Give the installer a moment to spawn before quitting ourselves.
-      setTimeout(() => app.quit(), 500);
-      return { success: true, manualInstall: false };
-    } catch (err) {
-      console.error('[Update] Launch error:', err?.message || err);
-      return { success: false, error: err?.message || String(err) };
-    }
-  });
-
   // --- Project save dialog ---
   const projectMedia = require('./project-media.cjs');
   ipcMain.handle('inspect_video_import', async (_, args) => {
@@ -7021,6 +6935,7 @@ function registerIpcHandlers() {
             { name: 'All Files', extensions: ['*'] },
           ],
     });
+    if (!result.canceled && result.filePath) pathGrants.allowWriteFile(result.filePath);
     return { canceled: result.canceled, filePath: result.filePath || null };
   });
 
@@ -7042,6 +6957,7 @@ function registerIpcHandlers() {
           ],
     });
     if (result.canceled || !result.filePaths[0]) return { canceled: true, filePath: null };
+    pathGrants.registerPickedFile(result.filePaths[0]);
     return { canceled: false, filePath: result.filePaths[0] };
   });
 
@@ -7057,6 +6973,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
       fs.writeFileSync(normalized, content, 'utf8');
       return { success: true };
     } catch (err) {
@@ -7247,40 +7164,8 @@ function registerIpcHandlers() {
   });
 
   // --- CORS-free HTTP proxy (Electron 33 has native fetch) ---
-  // Security: validate URLs to prevent SSRF attacks
-  function validateProxyUrl(urlStr) {
-    let parsed;
-    try { parsed = new URL(urlStr); } catch { throw new Error('Invalid URL'); }
-    // Only allow http/https
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error('Only HTTP/HTTPS URLs allowed');
-    }
-    // Block private/internal IPs (except localhost for local services)
-    const host = parsed.hostname;
-    if (host === '0.0.0.0' || host === '::') throw new Error('Invalid host');
-    // Allow known API hosts + localhost for Spout/local services
-    const allowedHosts = [
-      'api.anthropic.com', 'generativelanguage.googleapis.com',
-      'api.lumalabs.ai', 'lumalabs.ai', 'luma.ai',
-      'replicate.com', 'api.replicate.com', 'replicate.delivery',
-      'storage.googleapis.com', 'pbxt.replicate.delivery',
-      'ghostarcade.live', 'ghostarcade.live', 'ghostarcade.app',
-      '127.0.0.1', 'localhost',
-    ];
-    const isAllowed = allowedHosts.some(h => host === h || host.endsWith('.' + h));
-    if (!isAllowed) {
-      console.warn('[Proxy] Blocked host:', host, 'from URL:', urlStr);
-      // Block RFC1918 private ranges
-      const parts = host.split('.').map(Number);
-      if (parts.length === 4 && !isNaN(parts[0])) {
-        if (parts[0] === 10) throw new Error('Private IP blocked');
-        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) throw new Error('Private IP blocked');
-        if (parts[0] === 192 && parts[1] === 168) throw new Error('Private IP blocked');
-        if (parts[0] === 169 && parts[1] === 254) throw new Error('Link-local blocked');
-      }
-    }
-    return parsed;
-  }
+  // Security: only the hosts in electron/proxy-url.cjs; everything else throws.
+  const { validateProxyUrl } = require('./proxy-url.cjs');
 
   ipcMain.handle('http_fetch', async (_, args) => {
     try {
@@ -7443,6 +7328,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const dirPath = result.filePaths[0];
+    pathGrants.allowWriteDir(dirPath);
     const dirName = path.basename(dirPath);
     return { path: dirPath, name: dirName };
   });
@@ -7859,6 +7745,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const filePath = result.filePaths[0];
+    pathGrants.allowRead(filePath);
     const stat = fs.statSync(filePath);
     const base = sanitizeOutputBase(path.basename(filePath));
     return {
@@ -7876,6 +7763,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const sequence = listImageSequenceFrames(result.filePaths[0]);
+    pathGrants.allowReadDir(sequence.folder);
     const base = sanitizeOutputBase(path.basename(sequence.folder), 'image-sequence');
     return {
       path: sequence.folder,
@@ -7894,7 +7782,9 @@ function registerIpcHandlers() {
     const result = await dialog.showSaveDialog(mainWindow, { title: `Save ${format.label}`, defaultPath: suggested,
       filters: [{ name: format.label, extensions: [format.extension] }] });
     if (result.canceled || !result.filePath) return null;
-    return { path: result.filePath.toLowerCase().endsWith(`.${format.extension}`) ? result.filePath : `${result.filePath}.${format.extension}` };
+    const chosen = result.filePath.toLowerCase().endsWith(`.${format.extension}`) ? result.filePath : `${result.filePath}.${format.extension}`;
+    pathGrants.allowWriteFile(chosen);
+    return { path: chosen };
   });
 
   ipcMain.handle('video_converter_reveal_path', async (_, args = {}) => {
@@ -7983,6 +7873,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
       const buf = Buffer.from(base64Data, 'base64');
       if (buf.length === 0 && base64Data.length > 0) {
         return { success: false, error: 'base64 decode produced empty buffer (invalid encoding)' };
@@ -8007,6 +7898,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
 
       let buffer;
       if (Buffer.isBuffer(bytes)) {
@@ -8033,6 +7925,15 @@ function registerIpcHandlers() {
   // picked-from-disk file (captured via webUtils.getPathForFile at import time)
   // alongside the .gha. Skips the base64 IPC round-trip that save_file_binary
   // requires for blob: URLs, which adds seconds per gigabyte for large videos.
+  // Preload reports every path it hands out from getPathForFile (a file the
+  // user picked or dropped). Not in the renderer's command allowlist: page
+  // content cannot send it. Synchronous so the grant exists before the page
+  // can ask ghost-asset:// for the file.
+  ipcMain.on('path_grant_picked_file', (event, filePath) => {
+    try { pathGrants.registerPickedFile(filePath); } catch { /* not a usable path */ }
+    event.returnValue = true;
+  });
+
   ipcMain.handle('copy_file_to_project', async (_, args) => {
     try {
       if (!args || typeof args !== 'object') return { success: false, error: 'Invalid arguments' };
@@ -8051,6 +7952,10 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normDest) || normDest.includes('..')) {
         return { success: false, error: 'destPath must be absolute (no traversal)' };
       }
+      if (!pathGrants.canRead(normSrc)) {
+        return { success: false, code: 'path-not-allowed', error: 'The source file is not one the app was given.' };
+      }
+      if (!pathGrants.canWrite(normDest)) return PATH_NOT_ALLOWED;
       // Same-file no-op — common when the project sits in the same dir as the
       // original media (Save in place to a project folder of curated assets).
       try {
@@ -8085,6 +7990,8 @@ function registerIpcHandlers() {
       throw new Error('File not found');
     }
     const content = fs.readFileSync(filePath, 'utf-8');
+    // Save writes back to this file, and its media loads through ghost-asset://.
+    pathGrants.registerProjectFile(filePath, content);
     return { content, dir: path.dirname(filePath) };
   });
 
@@ -8287,7 +8194,7 @@ function registerIpcHandlers() {
           // Their frames have nowhere to go; the sync reopens them on restart.
           jsSourceHost.closeAll();
         }
-        return nativeRendererBroker.invoke(cmd, args);
+        return nativeRendererBroker.invokeFromRenderer(cmd, args);
       }
       const startArgs = args && typeof args === 'object' ? { ...args } : {};
       const config = startArgs.config && typeof startArgs.config === 'object'
@@ -8310,7 +8217,7 @@ function registerIpcHandlers() {
           console.warn('[NativeRenderer] failed to read main window native handle:', err?.message || err);
         }
       }
-      return nativeRendererBroker.invoke(cmd, { ...startArgs, config });
+      return nativeRendererBroker.invokeFromRenderer(cmd, { ...startArgs, config });
     });
   }
 
@@ -9263,15 +9170,13 @@ app.whenReady().then(async () => {
   // hierarchical (scheme://host/path); the actual byte-streaming happens
   // here. We map `ghost-asset:///<absPath>` → file at <absPath>.
   //
-  // Path resolution is intentionally strict: only absolute paths, no
-  // traversal, and we do NOT confine to a project directory. Reason:
-  // users routinely save .gha files into project folders that reference
-  // media scattered across `C:\Users\*\Videos`, network drives, external
-  // SSDs, etc. Confining would block the very use case AssetRef is for.
-  // The URL is constructed by our own assetRegistry from getPathForFile
-  // and never from untrusted page content, so traversal isn't a vector
-  // unless an attacker can also forge a project file — at which point
-  // they already control the disk.
+  // Path resolution is strict: only absolute paths, no traversal, and only
+  // paths in pathGrants. We do NOT confine to a project directory: users
+  // routinely save .gha files that reference media scattered across
+  // `C:\Users\*\Videos`, network drives, external SSDs, etc. Instead a
+  // path is served when the user picked or dropped it, a project file the
+  // main process read refers to it as media, or it sits in an app asset
+  // folder. Page content alone cannot name a file to read.
   // Wrap a Response to add CORS headers. WebGL refuses to sample a video
   // texture loaded cross-origin unless the response advertises
   // Access-Control-Allow-Origin AND the <video crossOrigin="anonymous">
@@ -9310,6 +9215,9 @@ app.whenReady().then(async () => {
       const normalized = path.normalize(p);
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return addCorsHeaders(new Response('Bad path', { status: 400 }));
+      }
+      if (!pathGrants.canRead(normalized)) {
+        return addCorsHeaders(new Response('Forbidden', { status: 403 }));
       }
       if (!fs.existsSync(normalized)) {
         return addCorsHeaders(new Response('Not found', { status: 404 }));
