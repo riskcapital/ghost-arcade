@@ -229,7 +229,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       // webUtils.getPathForFile is the official Electron 32+ replacement
       // for File.path. It accepts a Web File object and returns the
       // absolute path on disk. Throws if not a real File from the OS.
-      return webUtils.getPathForFile(file) || '';
+      const filePath = webUtils.getPathForFile(file) || '';
+      // Tell the main process the user handed this file over, so it can be
+      // read back through ghost-asset:// and a picked project can be saved.
+      if (filePath) {
+        try { ipcRenderer.sendSync('path_grant_picked_file', filePath); } catch { /* the path is still valid */ }
+      }
+      return filePath;
     } catch {
       return '';
     }

@@ -62,6 +62,14 @@ const { createPjlinkClient } = require('./pjlink.cjs');
 const { createPhoneScanStore } = require('./phone-scan-store.cjs');
 const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
 const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
+// The disk paths the renderer may write, copy to, or read back through
+// ghost-asset:// (see electron/path-grants.cjs).
+const pathGrants = require('./path-grants.cjs').createPathGrants({
+  assetDirs: [path.join(app.getPath('userData'), 'project-assets')],
+  storePath: path.join(app.getPath('userData'), 'path-grants.json'),
+});
+const PATH_NOT_ALLOWED = { success: false, code: 'path-not-allowed', error: 'That location was not chosen in a file dialog, so the app will not write there.' };
+app.on('will-quit', () => pathGrants.flush());
 const pjlinkClient = createPjlinkClient({ credentials: pjlinkCredentials });
 
 // Debug: measure main-thread event-loop lag (see main-lag-probe.js). Loaded
@@ -578,7 +586,9 @@ function presetForVideoQuality(quality) {
 }
 
 function createMp4FrameEncoderTempDir() {
-  return fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-mp4-'));
+  const dir = fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-mp4-'));
+  pathGrants.allowWriteDir(dir);
+  return dir;
 }
 
 function writeEncoderStdin(job, buffer, frameIndex, label) {
@@ -838,7 +848,9 @@ async function cancelJpegSequenceJob(jobIdInput) {
 }
 
 function createJpegFrameEncoderTempDir() {
-  return fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-jpeg-'));
+  const dir = fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-jpeg-'));
+  pathGrants.allowWriteDir(dir);
+  return dir;
 }
 
 function extractNextJpegFrame(job) {
@@ -6922,6 +6934,7 @@ function registerIpcHandlers() {
             { name: 'All Files', extensions: ['*'] },
           ],
     });
+    if (!result.canceled && result.filePath) pathGrants.allowWriteFile(result.filePath);
     return { canceled: result.canceled, filePath: result.filePath || null };
   });
 
@@ -6943,6 +6956,7 @@ function registerIpcHandlers() {
           ],
     });
     if (result.canceled || !result.filePaths[0]) return { canceled: true, filePath: null };
+    pathGrants.registerPickedFile(result.filePaths[0]);
     return { canceled: false, filePath: result.filePaths[0] };
   });
 
@@ -6958,6 +6972,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
       fs.writeFileSync(normalized, content, 'utf8');
       return { success: true };
     } catch (err) {
@@ -7312,6 +7327,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const dirPath = result.filePaths[0];
+    pathGrants.allowWriteDir(dirPath);
     const dirName = path.basename(dirPath);
     return { path: dirPath, name: dirName };
   });
@@ -7728,6 +7744,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const filePath = result.filePaths[0];
+    pathGrants.allowRead(filePath);
     const stat = fs.statSync(filePath);
     const base = sanitizeOutputBase(path.basename(filePath));
     return {
@@ -7745,6 +7762,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const sequence = listImageSequenceFrames(result.filePaths[0]);
+    pathGrants.allowReadDir(sequence.folder);
     const base = sanitizeOutputBase(path.basename(sequence.folder), 'image-sequence');
     return {
       path: sequence.folder,
@@ -7763,7 +7781,9 @@ function registerIpcHandlers() {
     const result = await dialog.showSaveDialog(mainWindow, { title: `Save ${format.label}`, defaultPath: suggested,
       filters: [{ name: format.label, extensions: [format.extension] }] });
     if (result.canceled || !result.filePath) return null;
-    return { path: result.filePath.toLowerCase().endsWith(`.${format.extension}`) ? result.filePath : `${result.filePath}.${format.extension}` };
+    const chosen = result.filePath.toLowerCase().endsWith(`.${format.extension}`) ? result.filePath : `${result.filePath}.${format.extension}`;
+    pathGrants.allowWriteFile(chosen);
+    return { path: chosen };
   });
 
   ipcMain.handle('video_converter_reveal_path', async (_, args = {}) => {
@@ -7852,6 +7872,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
       const buf = Buffer.from(base64Data, 'base64');
       if (buf.length === 0 && base64Data.length > 0) {
         return { success: false, error: 'base64 decode produced empty buffer (invalid encoding)' };
@@ -7876,6 +7897,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
 
       let buffer;
       if (Buffer.isBuffer(bytes)) {
@@ -7902,6 +7924,15 @@ function registerIpcHandlers() {
   // picked-from-disk file (captured via webUtils.getPathForFile at import time)
   // alongside the .gha. Skips the base64 IPC round-trip that save_file_binary
   // requires for blob: URLs, which adds seconds per gigabyte for large videos.
+  // Preload reports every path it hands out from getPathForFile (a file the
+  // user picked or dropped). Not in the renderer's command allowlist: page
+  // content cannot send it. Synchronous so the grant exists before the page
+  // can ask ghost-asset:// for the file.
+  ipcMain.on('path_grant_picked_file', (event, filePath) => {
+    try { pathGrants.registerPickedFile(filePath); } catch { /* not a usable path */ }
+    event.returnValue = true;
+  });
+
   ipcMain.handle('copy_file_to_project', async (_, args) => {
     try {
       if (!args || typeof args !== 'object') return { success: false, error: 'Invalid arguments' };
@@ -7920,6 +7951,10 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normDest) || normDest.includes('..')) {
         return { success: false, error: 'destPath must be absolute (no traversal)' };
       }
+      if (!pathGrants.canRead(normSrc)) {
+        return { success: false, code: 'path-not-allowed', error: 'The source file is not one the app was given.' };
+      }
+      if (!pathGrants.canWrite(normDest)) return PATH_NOT_ALLOWED;
       // Same-file no-op — common when the project sits in the same dir as the
       // original media (Save in place to a project folder of curated assets).
       try {
@@ -7954,6 +7989,8 @@ function registerIpcHandlers() {
       throw new Error('File not found');
     }
     const content = fs.readFileSync(filePath, 'utf-8');
+    // Save writes back to this file, and its media loads through ghost-asset://.
+    pathGrants.registerProjectFile(filePath, content);
     return { content, dir: path.dirname(filePath) };
   });
 
@@ -9132,15 +9169,13 @@ app.whenReady().then(async () => {
   // hierarchical (scheme://host/path); the actual byte-streaming happens
   // here. We map `ghost-asset:///<absPath>` → file at <absPath>.
   //
-  // Path resolution is intentionally strict: only absolute paths, no
-  // traversal, and we do NOT confine to a project directory. Reason:
-  // users routinely save .gha files into project folders that reference
-  // media scattered across `C:\Users\*\Videos`, network drives, external
-  // SSDs, etc. Confining would block the very use case AssetRef is for.
-  // The URL is constructed by our own assetRegistry from getPathForFile
-  // and never from untrusted page content, so traversal isn't a vector
-  // unless an attacker can also forge a project file — at which point
-  // they already control the disk.
+  // Path resolution is strict: only absolute paths, no traversal, and only
+  // paths in pathGrants. We do NOT confine to a project directory: users
+  // routinely save .gha files that reference media scattered across
+  // `C:\Users\*\Videos`, network drives, external SSDs, etc. Instead a
+  // path is served when the user picked or dropped it, a project file the
+  // main process read refers to it as media, or it sits in an app asset
+  // folder. Page content alone cannot name a file to read.
   // Wrap a Response to add CORS headers. WebGL refuses to sample a video
   // texture loaded cross-origin unless the response advertises
   // Access-Control-Allow-Origin AND the <video crossOrigin="anonymous">
@@ -9179,6 +9214,9 @@ app.whenReady().then(async () => {
       const normalized = path.normalize(p);
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return addCorsHeaders(new Response('Bad path', { status: 400 }));
+      }
+      if (!pathGrants.canRead(normalized)) {
+        return addCorsHeaders(new Response('Forbidden', { status: 403 }));
       }
       if (!fs.existsSync(normalized)) {
         return addCorsHeaders(new Response('Not found', { status: 404 }));
