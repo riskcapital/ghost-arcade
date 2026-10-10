@@ -1726,6 +1726,9 @@ export interface TextReader {
   wordsPerMinute: number;  // 60-900
   wordsPerPhrase: number;  // 2-12, for 'phrase'
   loop: boolean;
+  /** 'beat' moves to the next piece on the music's beat instead of on a timer. */
+  advance?: 'time' | 'beat';
+  beatsPerPiece?: number;  // 1-8, for 'beat'
 }
 
 export type TextAlignment = 'left' | 'center' | 'right';
@@ -1737,7 +1740,13 @@ export interface TextAnimation {
   direction: 'forward' | 'reverse' | 'alternate';
   staggerDelay: number;   // Delay between each letter (0-0.5s)
   intensity: number;      // Effect strength 0-1
+  /** How much the sound drives the motion, 0-1. At 0 the animation ignores audio. */
+  audioReact?: number;
+  /** Which part of the sound drives it. */
+  audioSource?: TextAudioSource;
 }
+
+export type TextAudioSource = 'level' | 'bass' | 'mid' | 'treble' | 'beat';
 
 export interface TextContent {
   text: string;

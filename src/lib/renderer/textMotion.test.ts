@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TextContent } from '$lib/types';
-import { planTextReader, resolveTextReader, textAtlasSignature, textGlyphPlacements, type TextGlyphMetric } from './textNative';
+import { planTextReader, resolveTextReader, resolveTextReaderAt, textAtlasSignature, textGlyphPlacements, type TextGlyphMetric } from './textNative';
 
 const base: TextContent = {
   text: 'GHOST ARCADE', fontFamily: 'Inter', fontSize: 100, fontWeight: 700, fontStyle: 'normal',
@@ -168,5 +168,56 @@ describe('long text reader', () => {
     expect(performance.now() - again).toBeLessThan(200);
     // The atlas key depends on the characters used, not on the piece being shown.
     expect(textAtlasSignature(content)).toBe(textAtlasSignature({ ...content, text: story }));
+  });
+});
+
+describe('text reacting to audio', () => {
+  const l = letters('GHOST ARCADE');
+  const reactive = (type: string, audioReact: number): TextContent => ({ ...base, animation: { ...base.animation, type: type as never, audioReact, audioSource: 'bass' } });
+  const widest = (p: { scaleX: number }[]) => Math.max(...p.map(d => d.scaleX));
+
+  it('ignores the sound entirely when React is 0', () => {
+    const quiet = textGlyphPlacements(reactive('stretchWave', 0), l, 0.4, 1920, 1080, 0);
+    const loud = textGlyphPlacements(reactive('stretchWave', 0), l, 0.4, 1920, 1080, 1);
+    expect(loud).toEqual(quiet);
+  });
+
+  it('calms the motion in silence and pushes it on a loud hit', () => {
+    const silent = textGlyphPlacements(reactive('stretchWave', 1), l, 0.4, 1920, 1080, 0);
+    const half = textGlyphPlacements(reactive('stretchWave', 1), l, 0.4, 1920, 1080, 0.4);
+    const loud = textGlyphPlacements(reactive('stretchWave', 1), l, 0.4, 1920, 1080, 1);
+    expect(widest(silent)).toBeCloseTo(1, 5);
+    expect(widest(half)).toBeGreaterThan(widest(silent) + 0.3);
+    expect(widest(loud)).toBeGreaterThan(widest(half) + 0.3);
+  });
+
+  it('swells still text about its own centre', () => {
+    const rest = textGlyphPlacements(reactive('none', 1), l, 0, 1920, 1080, 0);
+    const hit = textGlyphPlacements(reactive('none', 1), l, 0, 1920, 1080, 1);
+    expect(hit[0].scaleX).toBeCloseTo(1.22, 2);
+    expect(hit[0].x).toBeLessThan(rest[0].x);
+    expect(hit[hit.length - 1].x).toBeGreaterThan(rest[rest.length - 1].x);
+    const mid = (p: { x: number; scaleX: number }[]) => (p[0].x + p[p.length - 1].x + 60 * p[p.length - 1].scaleX) / 2;
+    expect(mid(hit)).toBeCloseTo(mid(rest), 3);
+  });
+
+  it('stays finite for every style at any drive', () => {
+    for (const type of ['none', 'ticker', 'typewriter', 'stretchWave', 'elasticWide', 'tallStretch', 'trackingBreathe', 'slam', 'drumRoll', 'echoStack', 'riseStagger', 'orbit', 'sizeCascade', 'explode', 'bounce']) {
+      for (const drive of [0, 0.3, 1, 5, Number.NaN]) {
+        const p = textGlyphPlacements(reactive(type, 1), l, 1.3, 1920, 1080, drive);
+        expect(p.every(d => [d.x, d.y, d.scaleX, d.scaleY, d.rotation, d.alpha].every(Number.isFinite)), `${type} ${drive}`).toBe(true);
+      }
+    }
+  });
+
+  it('steps a long text by position for beat-driven reading', () => {
+    const story = 'One two three four five six seven eight nine ten.';
+    const content: TextContent = { ...base, text: story, reader: { enabled: true, unit: 'word', wordsPerMinute: 200, wordsPerPhrase: 4, loop: true, advance: 'beat', beatsPerPiece: 1 } };
+    expect(resolveTextReaderAt(content, 1920, 1080, 0, 0)!.text).toBe('One');
+    expect(resolveTextReaderAt(content, 1920, 1080, 3, 0.2)!.text).toBe('four');
+    expect(resolveTextReaderAt(content, 1920, 1080, 3, 0.2)!.time).toBeCloseTo(0.2);
+    expect(resolveTextReaderAt(content, 1920, 1080, 10, 0)!.text).toBe('One');
+    const once = { ...content, reader: { ...content.reader!, loop: false } };
+    expect(resolveTextReaderAt(once, 1920, 1080, 99, 0)!.text).toBe('ten.');
   });
 });

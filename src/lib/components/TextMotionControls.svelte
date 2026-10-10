@@ -1,6 +1,6 @@
 <script lang="ts">
   // Tile and long-text controls shared by the layer Text panel and the VJ text clip panel.
-  import type { TextContent, TextReader, TextTile } from '../types';
+  import type { TextAudioSource, TextContent, TextReader, TextTile } from '../types';
   import { DEFAULT_TEXT_READER, DEFAULT_TEXT_TILE, TEXT_TILE_STYLES, readingTime, wordCount } from '../text/textMotionCatalog';
 
   export let content: TextContent;
@@ -14,6 +14,9 @@
 
   const setTile = (patch: Partial<TextTile>) => onUpdate({ tile: { ...tile, ...patch } });
   const setReader = (patch: Partial<TextReader>) => onUpdate({ reader: { ...reader, ...patch } });
+  $: react = Math.max(0, Math.min(1, Number(content.animation?.audioReact ?? 0)));
+  $: source = (content.animation?.audioSource ?? 'level') as TextAudioSource;
+  const setAudio = (patch: Partial<TextContent['animation']>) => onUpdate({ animation: { ...content.animation, ...patch } });
   const num = (event: Event) => Number((event.target as HTMLInputElement).value);
 
   let fileNote = '';
@@ -33,7 +36,20 @@
 </script>
 
 <div class="tm">
-  <div class="tm-head">
+  <label class="tm-row"><span>Audio</span><input type="range" min="0" max="1" step="0.01" value={react} oninput={(e) => setAudio({ audioReact: num(e) })} aria-label="How much the sound drives the text" /><em>{Math.round(react * 100)}%</em></label>
+  {#if react > 0}
+    <label class="tm-row"><span>Follow</span>
+      <select value={source} onchange={(e) => setAudio({ audioSource: (e.target as HTMLSelectElement).value as TextAudioSource })}>
+        <option value="level">Overall level</option>
+        <option value="bass">Bass</option>
+        <option value="mid">Mids</option>
+        <option value="treble">Treble</option>
+        <option value="beat">Beat</option>
+      </select>
+    </label>
+    <p class="tm-hint">Quiet passages calm the motion, loud ones push it harder, and the text swells with the sound. Turn on audio input for this to work.</p>
+  {/if}
+  <div class="tm-head tm-gap">
     <label class="tm-switch"><input type="checkbox" checked={tile.enabled} onchange={(e) => setTile({ enabled: (e.target as HTMLInputElement).checked })} /> Tile the text</label>
   </div>
   {#if tile.enabled}
@@ -63,6 +79,16 @@
       </select>
     </label>
     {#if reader.unit === 'phrase'}<label class="tm-row"><span>Words</span><input type="range" min="2" max="12" step="1" value={reader.wordsPerPhrase} oninput={(e) => setReader({ wordsPerPhrase: num(e) })} aria-label="Words per phrase" /><em>{reader.wordsPerPhrase}</em></label>{/if}
+    <label class="tm-row"><span>Step on</span>
+      <select value={reader.advance ?? 'time'} onchange={(e) => setReader({ advance: (e.target as HTMLSelectElement).value as TextReader['advance'] })}>
+        <option value="time">A timer</option>
+        <option value="beat">The beat</option>
+      </select>
+    </label>
+    {#if reader.advance === 'beat'}
+      <label class="tm-row"><span>Beats</span><input type="range" min="1" max="8" step="1" value={reader.beatsPerPiece ?? 2} oninput={(e) => setReader({ beatsPerPiece: num(e) })} aria-label="Beats per piece" /><em>{reader.beatsPerPiece ?? 2}</em></label>
+      <p class="tm-hint">Each piece stays for this many beats. If the music stops, the timer takes over.</p>
+    {/if}
     <label class="tm-row"><span>Pace</span><input type="range" min="60" max="900" step="10" value={reader.wordsPerMinute} oninput={(e) => setReader({ wordsPerMinute: num(e) })} aria-label="Words per minute" /><em>{reader.wordsPerMinute}</em></label>
     <label class="tm-switch tm-sub"><input type="checkbox" checked={reader.loop} onchange={(e) => setReader({ loop: (e.target as HTMLInputElement).checked })} /> Start again at the end</label>
     <p class="tm-hint">{words.toLocaleString()} words, about {readingTime(content.text, reader.wordsPerMinute)} at this pace. The animation plays for each piece.</p>

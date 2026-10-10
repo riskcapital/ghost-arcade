@@ -108,6 +108,7 @@ import {
   encodeAtlasBase64,
   layoutTextGlyphs,
   resolveTextReader,
+  resolveTextReaderAt,
   textAtlasSignature,
   textNativeAtlasSourceId,
   type TextGlyphMetric,
@@ -5314,6 +5315,14 @@ export class NativeRendererSync {
 
   private nativeTextState = new Map<string, {
     atlasSig: string;
+    audioDrive?: number;
+    audioAt?: number;
+    beatPhase?: number;
+    beatPulse?: number;
+    beatCount?: number;
+    beatAt?: number;
+    readerStep?: number;
+    readerStepAt?: number;
     atlasSeq: number;
     atlasUploaded: boolean;
     atlas: TextNativeAtlas | null;
@@ -7100,7 +7109,36 @@ export class NativeRendererSync {
             if (!state.atlas) throw new Error('text atlas rasterization unavailable');
             // A long text is read a piece at a time: the atlas covers every character once, and
             // only the piece on screen is laid out, with the clock restarted for each piece.
-            const reading = resolveTextReader(content, width, height, graphTime);
+            // Sound: the chosen band, with a fast rise and a slower fall so motion lands on the hit
+            // and eases out of it. Beats are counted for readers that step in time with the music.
+            const sound = getVisualAudioSnapshot();
+            const band = content.animation?.audioSource ?? 'level';
+            const rawDrive = Math.max(0, Number(
+              band === 'bass' ? sound.bass : band === 'mid' ? sound.mid : band === 'treble' ? sound.treble
+                : band === 'beat' ? sound.beat : (sound.level ?? Math.max(sound.bass, sound.treble)),
+            ) || 0);
+            const since = Math.max(0, Math.min(0.25, graphTime - (state.audioAt ?? graphTime)));
+            state.audioDrive = Math.max(rawDrive, (state.audioDrive ?? 0) * Math.exp(-since * 7));
+            state.audioAt = graphTime;
+            const phase = Number(sound.beatPhase);
+            const pulse = Number(sound.beat) || 0;
+            const newBeat = Number.isFinite(phase) && Number(sound.bpm) > 0
+              ? phase < (state.beatPhase ?? phase) - 0.5
+              : pulse > 0.6 && (state.beatPulse ?? 0) <= 0.6;
+            state.beatPhase = Number.isFinite(phase) ? phase : undefined;
+            state.beatPulse = pulse;
+            if (newBeat) {
+              state.beatCount = (state.beatCount ?? 0) + 1;
+              state.beatAt = graphTime;
+              const per = Math.max(1, Math.min(8, Math.round(content.reader?.beatsPerPiece ?? 2)));
+              if (state.beatCount % per === 0) { state.readerStep = (state.readerStep ?? 0) + 1; state.readerStepAt = graphTime; }
+            }
+            // On the beat when there is one; if the music stops for a while the reader falls back to its timer.
+            const onBeat = content.reader?.enabled && content.reader.advance === 'beat'
+              && state.beatAt !== undefined && graphTime - state.beatAt < 2.5;
+            const reading = onBeat
+              ? resolveTextReaderAt(content, width, height, state.readerStep ?? 0, graphTime - (state.readerStepAt ?? graphTime))
+              : resolveTextReader(content, width, height, graphTime);
             const shown = reading ? { ...content, text: reading.text } : content;
             const layoutKey = [
               reading ? `reader:${reading.index}/${reading.count}:${reading.text}` : content.text,
@@ -7135,6 +7173,7 @@ export class NativeRendererSync {
               height,
               time: reading ? reading.time : graphTime,
               clockTime: graphTime,
+              audioDrive: state.audioDrive,
               frameDelta: graphDelta,
               frameIndex: graphFrameIndex,
             });
