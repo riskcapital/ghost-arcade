@@ -5562,6 +5562,18 @@ export class NativeRendererSync {
       } catch { /* store unavailable in tests */ }
     } catch (err) {
       console.warn('[NativeRendererSync] native model3d mesh load failed', layerId, err);
+      if (state.fileSig === fileSig) {
+        const reason = err instanceof Error ? err.message : String(err);
+        const detail = /no mesh geometry/i.test(reason)
+          ? 'it has no faces (only points or lines)'
+          : /\b403\b|\b404\b|fetch/i.test(reason)
+            ? 'the file could not be read. Pick it again in the 3D panel'
+            : 'the file could not be read as a 3D model';
+        try {
+          const { showToast } = await import('$lib/stores/errorToast');
+          showToast(`Could not load ${label}: ${detail}.`, 'error');
+        } catch { /* store unavailable in tests */ }
+      }
     } finally {
       endOwnedLoading(owner);
     }
