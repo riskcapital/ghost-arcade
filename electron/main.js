@@ -7148,40 +7148,8 @@ function registerIpcHandlers() {
   });
 
   // --- CORS-free HTTP proxy (Electron 33 has native fetch) ---
-  // Security: validate URLs to prevent SSRF attacks
-  function validateProxyUrl(urlStr) {
-    let parsed;
-    try { parsed = new URL(urlStr); } catch { throw new Error('Invalid URL'); }
-    // Only allow http/https
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error('Only HTTP/HTTPS URLs allowed');
-    }
-    // Block private/internal IPs (except localhost for local services)
-    const host = parsed.hostname;
-    if (host === '0.0.0.0' || host === '::') throw new Error('Invalid host');
-    // Allow known API hosts + localhost for Spout/local services
-    const allowedHosts = [
-      'api.anthropic.com', 'generativelanguage.googleapis.com',
-      'api.lumalabs.ai', 'lumalabs.ai', 'luma.ai',
-      'replicate.com', 'api.replicate.com', 'replicate.delivery',
-      'storage.googleapis.com', 'pbxt.replicate.delivery',
-      'ghostarcade.live', 'ghostarcade.live', 'ghostarcade.app',
-      '127.0.0.1', 'localhost',
-    ];
-    const isAllowed = allowedHosts.some(h => host === h || host.endsWith('.' + h));
-    if (!isAllowed) {
-      console.warn('[Proxy] Blocked host:', host, 'from URL:', urlStr);
-      // Block RFC1918 private ranges
-      const parts = host.split('.').map(Number);
-      if (parts.length === 4 && !isNaN(parts[0])) {
-        if (parts[0] === 10) throw new Error('Private IP blocked');
-        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) throw new Error('Private IP blocked');
-        if (parts[0] === 192 && parts[1] === 168) throw new Error('Private IP blocked');
-        if (parts[0] === 169 && parts[1] === 254) throw new Error('Link-local blocked');
-      }
-    }
-    return parsed;
-  }
+  // Security: only the hosts in electron/proxy-url.cjs; everything else throws.
+  const { validateProxyUrl } = require('./proxy-url.cjs');
 
   ipcMain.handle('http_fetch', async (_, args) => {
     try {
