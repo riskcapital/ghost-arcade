@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Pixar-Inspired 3D Video Waves: Random Water Surge - Chaotic waves with video input, surging toward the camera",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],

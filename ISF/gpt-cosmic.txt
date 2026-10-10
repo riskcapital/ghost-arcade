@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "ChatGPT",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Cosmic Melt Network — fluid 3D noise‑warped particle grid connected by glowing lines in molten outer space",
     "CATEGORIES": [ "generator" ],
     "INPUTS": [

@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Particles floating on an evolving lava flow with connections",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],

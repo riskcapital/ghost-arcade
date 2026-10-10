@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Converted from Three.js by Claude",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Infinite Grid - Layered grids with orange fracture lines, purple pillars, void core, and dust",
     "ISFVSN": "2.0",
     "CATEGORIES": ["Generator"],

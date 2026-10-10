@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Rotating particle field with lines connecting nearby particles",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],

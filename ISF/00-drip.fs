@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "3D Honey Video Drips with Layers - Viscous liquid dripping with layers, noise, glitch, and zoom controls",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],

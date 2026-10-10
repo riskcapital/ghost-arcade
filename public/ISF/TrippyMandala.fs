@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Infinite Mandala Patterns with Psychedelic Zoom",
-    "CREDIT": "Your Name",
+    "CREDIT": "Ghost Arcade",
     "ISFVSN": "2.0",
     "CATEGORIES": ["Generator", "Psychedelic"],
     "INPUTS": [

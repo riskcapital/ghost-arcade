@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Pixar-Inspired 3D Video Waves: Plastic Warp - 3D waves with video input and intense warping",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],

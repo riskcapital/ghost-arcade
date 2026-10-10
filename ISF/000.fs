@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Optimized spiral galaxy with turbulence and position control",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],
