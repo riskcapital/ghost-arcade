@@ -646,6 +646,10 @@ const NATIVE_VIDEO_PREROLL_FRAMES: usize = 8;
 const NATIVE_VIDEO_MAX_OUTPUT_FPS: f64 = 60.0;
 /// Used when ffmpeg's stream summary has no frame rate.
 const NATIVE_VIDEO_FALLBACK_FPS: f64 = 30.0;
+/// Longest wait between retries of a looping decoder that keeps failing.
+const NATIVE_VIDEO_RETRY_MAX: Duration = Duration::from_secs(5);
+/// How often a looping clip whose file is gone checks for it again.
+const NATIVE_VIDEO_MISSING_FILE_POLL: Duration = Duration::from_secs(1);
 
 fn video_debug() -> bool {
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -983,9 +987,38 @@ pub fn spawn_native_video_stream(
         // pass to seek and warm up rather than its last moments.
         let mut pending_standby: Option<(u32, ChildStdout)> = None;
         let mut presentation_frame = 0u64;
+        // Passes in a row that produced no frame. A looping clip whose file
+        // was moved or deleted would otherwise relaunch its decoder as fast
+        // as it can fail, for every armed clip at once.
+        let mut empty_passes = 0u32;
+        let pause = |duration: Duration| {
+            let until = Instant::now() + duration;
+            while Instant::now() < until {
+                if thread_stop.load(Ordering::Acquire) {
+                    return false;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            true
+        };
         'stream: loop {
             if thread_stop.load(Ordering::Acquire) {
                 break;
+            }
+            if empty_passes > 0 {
+                // The file is gone: wait for it to come back. Anything else
+                // that fails straight away is retried at a growing interval.
+                let wait = if path.exists() {
+                    Duration::from_millis(250u64 << empty_passes.min(5)).min(NATIVE_VIDEO_RETRY_MAX)
+                } else {
+                    NATIVE_VIDEO_MISSING_FILE_POLL
+                };
+                if !pause(wait) {
+                    break;
+                }
+                if !path.exists() {
+                    continue;
+                }
             }
             let (pid, mut stdout) = match pending_standby.take() {
                 Some(handoff) => handoff,
@@ -1098,6 +1131,14 @@ pub fn spawn_native_video_stream(
             reap(pid);
             if !loop_enabled {
                 break;
+            }
+            empty_passes = if emitted_frames == 0 { empty_passes.saturating_add(1) } else { 0 };
+            if empty_passes == 1 {
+                eprintln!(
+                    "[native-video] no frames from `{}`{}; retrying at a slower rate",
+                    path.display(),
+                    if path.exists() { "" } else { " (file not found)" }
+                );
             }
             // A looping decoder only ends on an error; start it over.
             segment_start = range_start;

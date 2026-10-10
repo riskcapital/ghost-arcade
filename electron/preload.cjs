@@ -76,6 +76,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Saves seconds per gigabyte over save_file_binary for large videos/.glb.
   'copy_file_to_project',
   'project_media_scan', 'project_media_relink', 'project_media_collect',
+  'media_files_status', 'media_find_in_folder',
   'inspect_video_import',
   'open_project_dialog',
   'download_demo_zip', 'read_project_file',

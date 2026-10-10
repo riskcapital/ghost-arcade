@@ -64,6 +64,7 @@ const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
 const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
 // The disk paths the renderer may write, copy to, or read back through
 // ghost-asset:// (see electron/path-grants.cjs).
+const mediaLocate = require('./media-locate.cjs');
 const pathGrants = require('./path-grants.cjs').createPathGrants({
   assetDirs: [path.join(app.getPath('userData'), 'project-assets')],
   storePath: path.join(app.getPath('userData'), 'path-grants.json'),
@@ -6914,6 +6915,27 @@ function registerIpcHandlers() {
   ipcMain.handle('project_media_collect', async (_, args) => {
     const { data, dir } = mediaRequest(args);
     return projectMedia.collectProjectMedia(data, dir, assertAbsolutePath(args.outputPath, 'output path'));
+  });
+
+  // Which of these media files are still on disk. Only paths the renderer
+  // may already read are answered, so this cannot be used to probe the disk.
+  ipcMain.handle('media_files_status', async (_, args) => {
+    const paths = (Array.isArray(args?.paths) ? args.paths : []).filter((p) => pathGrants.canRead(p));
+    return mediaLocate.mediaFilesStatus(paths);
+  });
+  // Ask for a folder and look inside it for files with these names. The
+  // files found become readable; the folder itself does not.
+  ipcMain.handle('media_find_in_folder', async (_, args) => {
+    const win = mainWindow || BrowserWindow.getFocusedWindow();
+    if (!win) return { canceled: true, dir: null, found: {} };
+    const result = await dialog.showOpenDialog(win, {
+      title: typeof args?.title === 'string' ? args.title.slice(0, 120) : 'Search a folder for missing media',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true, dir: null, found: {} };
+    const found = await mediaLocate.findMediaInFolder(result.filePaths[0], args?.names);
+    for (const file of Object.values(found)) pathGrants.registerPickedFile(file);
+    return { canceled: false, dir: result.filePaths[0], found };
   });
 
   // Returns the user-chosen file path (absolute) or null if cancelled.

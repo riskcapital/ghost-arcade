@@ -14,6 +14,8 @@ import { videoBeatFit } from '../media/videoBeatFit';
 // Works with shaders and videos directly (not compositions)
 
 import { writable, derived, get } from 'svelte/store';
+import { clipFilePath } from '../vj/clipFiles';
+import { pathToFileUrl } from '../storage/assetRegistry';
 import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, IntegratedEffectSource, SplatContent, Model3DContent, GPULayerContent, TextContent, ISFInputDef } from '../types';
 import { createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
 import { createThreeJSIframeContext, getThreeJSIframeContext, createJSAnimationContext, updateJSAnimationParams } from '../renderer/engine';
@@ -3208,6 +3210,63 @@ function createVJClipLauncherStore() {
           blocks: [...state.blocks, newBlock],
         };
       });
+    },
+
+    /**
+     * Point clips at files that moved. `moves` maps each old path to the new
+     * one. Every clip using an old path, in either deck and in every block,
+     * becomes a new clip on the new file; one that is playing keeps playing
+     * from the new file. Returns how many clips changed.
+     */
+    relinkClipFiles(moves: Record<string, string>): number {
+      const relinked = new Map<string, VJClip>();
+      const remap = (clip: VJClip | null): VJClip | null => {
+        if (!clip) return clip;
+        const known = relinked.get(clip.id);
+        if (known) return known;
+        const from = clipFilePath(clip);
+        const to = from ? moves[from] : undefined;
+        if (!to || to === from) return clip;
+        const { videoElement: _element, ...rest } = clip;
+        const next: VJClip = {
+          ...rest,
+          id: generateUUID(),
+          src: pathToFileUrl(to),
+          _assetRef: { ...clip._assetRef, kind: 'local-file', originalPath: to, projectPath: undefined },
+        };
+        relinked.set(clip.id, next);
+        return next;
+      };
+      // The live grids go through setClip, which arms the new file's decoder
+      // and releases the old clip's.
+      for (const deck of ['A', 'B'] as VJDeck[]) {
+        pickGrid(get({ subscribe }), deck).forEach((row, layerIndex) => row.forEach((clip, columnIndex) => {
+          const next = remap(clip);
+          if (next && next !== clip) this.setClip(layerIndex, columnIndex, next, deck);
+        }));
+      }
+      const remapGrid = (grid: (VJClip | null)[][]) => grid.map(row => row.map(remap));
+      const remapLive = (states: VJLayerState[]) => states.map(layer => {
+        const next = layer.activeClip ? relinked.get(layer.activeClip.id) : undefined;
+        return next ? { ...layer, activeClip: next } : layer;
+      });
+      update(state => {
+        const blocks = state.blocks.map(block => ({
+          ...block,
+          clipGrid: remapGrid(block.clipGrid),
+          ...(block.bankBClipGrid ? { bankBClipGrid: remapGrid(block.bankBClipGrid) } : {}),
+        }));
+        if (!relinked.size) return state;
+        return {
+          ...state,
+          blocks,
+          clipGrid: remapGrid(state.clipGrid),
+          bankBClipGrid: remapGrid(state.bankBClipGrid),
+          layerStates: remapLive(state.layerStates),
+          bankBLayerStates: remapLive(state.bankBLayerStates),
+        };
+      });
+      return relinked.size;
     },
 
     // Reorder layers (drag and drop). Layer count is shared between decks
