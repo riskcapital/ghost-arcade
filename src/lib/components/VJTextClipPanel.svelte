@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { TextAnimation, TextAnimationType, TextContent } from '../types';
+  import TextMotionControls from './TextMotionControls.svelte';
+  import { TEXT_ANIMATIONS, TEXT_EDIT_LIMIT, wordCount } from '../text/textMotionCatalog';
 
   export let content: TextContent;
   export let onUpdate: (updates: Partial<TextContent>) => void;
@@ -9,17 +11,7 @@
     'Impact', 'Georgia', 'Times New Roman', 'Courier New', 'Segoe UI', 'Roboto',
     'Montserrat', 'Oswald', 'Futura', 'Gill Sans', 'Century Gothic', 'Copperplate',
   ];
-  const animations: { value: TextAnimationType; label: string }[] = [
-    { value: 'none', label: 'None' }, { value: 'ticker', label: 'Ticker' },
-    { value: 'letterReveal', label: 'Letter Reveal' }, { value: 'typewriter', label: 'Typewriter' },
-    { value: 'fadeInLetters', label: 'Fade In' }, { value: 'waveY', label: 'Wave Y' },
-    { value: 'waveX', label: 'Wave X' }, { value: 'elastic', label: 'Elastic' },
-    { value: 'scramble', label: 'Scramble' }, { value: 'glitch3d', label: 'Glitch 3D' },
-    { value: 'perspective3d', label: 'Perspective 3D' }, { value: 'flipLetters', label: 'Flip Letters' },
-    { value: 'spiralIn', label: 'Spiral In' }, { value: 'explode', label: 'Explode' },
-    { value: 'liquid', label: 'Liquid' }, { value: 'neonPulse', label: 'Neon Pulse' },
-    { value: 'matrixRain', label: 'Matrix Rain' }, { value: 'bounce', label: 'Bounce' },
-  ];
+  const animations = TEXT_ANIMATIONS;
 
   function setAnimation(updates: Partial<TextAnimation>) {
     onUpdate({ animation: { ...content.animation, ...updates } });
@@ -29,7 +21,16 @@
 <div data-help-page="clip-launcher" class="text-clip-panel">
   <section>
     <div class="section-label">Text</div>
-    <textarea rows="3" value={content.text} oninput={(event) => onUpdate({ text: (event.target as HTMLTextAreaElement).value })}></textarea>
+    {#if content.text.length > TEXT_EDIT_LIMIT}
+      <p class="long-text">{wordCount(content.text).toLocaleString()} words loaded. <button type="button" onclick={() => onUpdate({ text: '' })}>Clear</button></p>
+    {:else}
+      <textarea rows="3" value={content.text} oninput={(event) => onUpdate({ text: (event.target as HTMLTextAreaElement).value })}></textarea>
+    {/if}
+  </section>
+
+  <section>
+    <div class="section-label">Repeat and Read</div>
+    <TextMotionControls {content} {onUpdate} />
   </section>
 
   <section>

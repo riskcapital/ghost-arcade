@@ -107,6 +107,7 @@ import {
   buildTextNativePrecompileCommands,
   encodeAtlasBase64,
   layoutTextGlyphs,
+  resolveTextReader,
   textAtlasSignature,
   textNativeAtlasSourceId,
   type TextGlyphMetric,
@@ -7097,13 +7098,18 @@ export class NativeRendererSync {
               state.atlasUploaded = false;
             }
             if (!state.atlas) throw new Error('text atlas rasterization unavailable');
+            // A long text is read a piece at a time: the atlas covers every character once, and
+            // only the piece on screen is laid out, with the clock restarted for each piece.
+            const reading = resolveTextReader(content, width, height, graphTime);
+            const shown = reading ? { ...content, text: reading.text } : content;
             const layoutKey = [
-              content.text, content.fontFamily, content.fontSize, content.fontWeight,
+              reading ? `reader:${reading.index}/${reading.count}:${reading.text}` : content.text,
+              content.fontFamily, content.fontSize, content.fontWeight,
               content.fontStyle, content.letterSpacing, content.lineHeight,
               content.alignment, width, height,
             ].join('|');
             if (state.layoutKey !== layoutKey) {
-              state.letters = layoutTextGlyphs(content, width, height);
+              state.letters = layoutTextGlyphs(shown, width, height);
               state.layoutKey = layoutKey;
             }
             const atlasSourceId = textNativeAtlasSourceId(graphSource.id);
@@ -7122,12 +7128,13 @@ export class NativeRendererSync {
             return buildTextNativeComputeGraph({
               sourceId: graphSource.id,
               atlasSourceId,
-              content,
+              content: shown,
               atlas: state.atlas,
               letters: state.letters,
               width,
               height,
-              time: graphTime,
+              time: reading ? reading.time : graphTime,
+              clockTime: graphTime,
               frameDelta: graphDelta,
               frameIndex: graphFrameIndex,
             });

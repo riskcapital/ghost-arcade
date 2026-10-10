@@ -1694,7 +1694,39 @@ export type TextAnimationType =
   | 'liquid'           // Fluid distortion warping letters
   | 'neonPulse'        // Glow intensity cycles with bloom
   | 'matrixRain'       // Characters cascade down green-on-black
-  | 'bounce';          // Physics-based bounce from top
+  | 'bounce'           // Physics-based bounce from top
+  | 'stretchWave'      // A wave of width travels through the letters, pushing neighbours
+  | 'elasticWide'      // One letter at a time balloons wide and springs back
+  | 'tallStretch'      // Letters grow tall from the baseline in a wave
+  | 'trackingBreathe'  // Letter spacing breathes from tight to wide
+  | 'slam'             // Words land from oversized, one after another
+  | 'drumRoll'         // Letters roll over like a rotating drum
+  | 'echoStack'        // Offset copies stack behind the text and breathe
+  | 'riseStagger'      // Letters rise into place with a slight turn
+  | 'orbit'            // The text runs around a turning circle
+  | 'sizeCascade';     // Letter sizes swell and shrink along the line
+
+export type TextTileStyle = 'grid' | 'brick' | 'sizes' | 'vertical' | 'scroll' | 'flip' | 'steps' | 'mix';
+
+/** Repeats the text across the layer. */
+export interface TextTile {
+  enabled: boolean;
+  columns: number;     // 1-12
+  rows: number;        // 1-12
+  style: TextTileStyle;
+  scale: number;       // size of the text inside each tile, 0.3-2
+  speed: number;       // for the moving styles, 0-2
+  variation: number;   // how strongly the style departs from a plain grid, 0-1
+}
+
+/** Steps through long text a piece at a time so an audience can read it. */
+export interface TextReader {
+  enabled: boolean;
+  unit: 'word' | 'phrase' | 'line' | 'page';
+  wordsPerMinute: number;  // 60-900
+  wordsPerPhrase: number;  // 2-12, for 'phrase'
+  loop: boolean;
+}
 
 export type TextAlignment = 'left' | 'center' | 'right';
 
@@ -1725,6 +1757,8 @@ export interface TextContent {
   shadowOffsetX: number;
   shadowOffsetY: number;
   animation: TextAnimation;
+  tile?: TextTile;
+  reader?: TextReader;
   // 3D extrusion
   enable3D: boolean;
   extrudeDepth: number;       // Depth in px (0-100)

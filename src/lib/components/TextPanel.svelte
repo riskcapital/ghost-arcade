@@ -1,6 +1,8 @@
 <script lang="ts">
   import { project, selectedLayer } from '../stores/layers';
   import type { TextAnimationType } from '../types';
+  import TextMotionControls from './TextMotionControls.svelte';
+  import { TEXT_ANIMATIONS, TEXT_ANIMATION_GROUPS, TEXT_EDIT_LIMIT, wordCount } from '../text/textMotionCatalog';
 
   // System font list (common cross-platform fonts + variable fonts)
   const systemFonts = [
@@ -39,26 +41,7 @@
   // Auto-detect on mount (works when permission already granted)
   detectFonts();
 
-  const animationTypes: { value: TextAnimationType; label: string; description: string }[] = [
-    { value: 'none', label: 'None', description: 'Static text' },
-    { value: 'ticker', label: 'Ticker', description: 'Horizontal scrolling marquee' },
-    { value: 'letterReveal', label: 'Letter Reveal', description: 'Letters appear with glow burst' },
-    { value: 'typewriter', label: 'Typewriter', description: 'Typing with cursor blink' },
-    { value: 'fadeInLetters', label: 'Fade In', description: 'Sequential letter fade' },
-    { value: 'waveY', label: 'Wave Y', description: 'Vertical sine wave' },
-    { value: 'waveX', label: 'Wave X', description: 'Horizontal sine wave' },
-    { value: 'elastic', label: 'Elastic', description: 'Bounce in with overshoot' },
-    { value: 'scramble', label: 'Scramble', description: 'Random chars resolve' },
-    { value: 'glitch3d', label: 'Glitch 3D', description: 'RGB split + skew + noise' },
-    { value: 'perspective3d', label: 'Perspective 3D', description: 'Rotating faux-3D' },
-    { value: 'flipLetters', label: 'Flip Letters', description: 'Y-axis letter rotation' },
-    { value: 'spiralIn', label: 'Spiral In', description: 'Letters spiral to position' },
-    { value: 'explode', label: 'Explode', description: 'Burst out and reassemble' },
-    { value: 'liquid', label: 'Liquid', description: 'Fluid distortion warping' },
-    { value: 'neonPulse', label: 'Neon Pulse', description: 'Glowing neon with flicker' },
-    { value: 'matrixRain', label: 'Matrix Rain', description: 'Digital rain cascade' },
-    { value: 'bounce', label: 'Bounce', description: 'Physics bounce from top' },
-  ];
+  const animationTypes = TEXT_ANIMATIONS;
 
   $: layer = $selectedLayer;
   $: tc = layer?.textContent;
@@ -72,13 +55,26 @@
     <!-- Text Input -->
     <div class="section">
       <label class="section-label">Text</label>
-      <textarea
-        class="text-input"
-        value={tc.text}
-        oninput={(e) => project.updateTextContent(layer.id, { text: (e.target as HTMLTextAreaElement).value })}
-        rows={3}
-        placeholder="Enter text..."
-      ></textarea>
+      {#if tc.text.length > TEXT_EDIT_LIMIT}
+        <div class="long-text">
+          <span>{wordCount(tc.text).toLocaleString()} words loaded. It begins: “{tc.text.slice(0, 90).replace(/\s+/g, ' ')}…”</span>
+          <button type="button" onclick={() => project.updateTextContent(layer.id, { text: '' })}>Clear</button>
+        </div>
+      {:else}
+        <textarea
+          class="text-input"
+          value={tc.text}
+          oninput={(e) => project.updateTextContent(layer.id, { text: (e.target as HTMLTextAreaElement).value })}
+          rows={3}
+          placeholder="Enter text..."
+        ></textarea>
+      {/if}
+    </div>
+
+    <!-- Tile and long text -->
+    <div class="section">
+      <label class="section-label">Repeat and Read</label>
+      <TextMotionControls content={tc} onUpdate={(updates) => project.updateTextContent(layer.id, updates)} />
     </div>
 
     <!-- Font Settings -->
@@ -361,8 +357,10 @@
           value={anim?.type ?? 'none'}
           onchange={(e) => project.updateTextAnimation(layer.id, { type: (e.target as HTMLSelectElement).value as TextAnimationType })}
         >
-          {#each animationTypes as at}
-            <option value={at.value} title={at.description}>{at.label}</option>
+          {#each TEXT_ANIMATION_GROUPS as group}
+            <optgroup label={group}>
+              {#each animationTypes.filter(a => a.group === group) as at}<option value={at.value}>{at.label}</option>{/each}
+            </optgroup>
           {/each}
         </select>
       </div>
@@ -433,6 +431,9 @@
 {/if}
 
 <style>
+  .long-text { display: flex; gap: 8px; align-items: flex-start; padding: 8px; font-size: 11px; line-height: 1.4; border-radius: 4px; color: var(--ga-ink-2, #a9b2bd); background: var(--ga-surface-2, rgba(255,255,255,.05)); }
+  .long-text span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .long-text button { flex: none; }
   .text-panel {
     display: flex;
     flex-direction: column;
