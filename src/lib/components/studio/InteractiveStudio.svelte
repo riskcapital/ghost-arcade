@@ -1129,6 +1129,14 @@
               scene = edit.setSurfaceHeight(scene, selected, height);
               touchEdit();
             }}
+            onlookstart={beginEdit}
+            onlook={(look, step) => {
+              if (step) apply(edit.setSurfaceLook(scene, selected, look));
+              else {
+                scene = edit.setSurfaceLook(scene, selected, look);
+                touchEdit();
+              }
+            }}
             onattach={(kind) => addEffect(kind, selected)}
             ontransform={transform}
             onduplicate={duplicate}

@@ -1,6 +1,6 @@
 import type {InteractiveEffect} from '../mobile/studio/interactiveEffects';
 import {buildMatterPasses} from './nativeInteractiveMatterGraph';
-import {validateScene, INTERACTIVE_PRESETS, type InteractiveScene} from '../mobile/studio/interactive';
+import {validateScene, surfaceHidden, INTERACTIVE_PRESETS, SURFACE_FILLS, type InteractiveScene} from '../mobile/studio/interactive';
 import type {NativePluginGraphOptions,NativePluginGraphBuildResult} from './nativePluginGraphs';
 export const INTERACTIVE_PARTICLES=16384;
 const common=/* wgsl */`
@@ -56,6 +56,8 @@ struct V { @builtin(position) pos:vec4<f32>,@location(0) uv:vec2<f32>,@location(
 @fragment fn fs_bg(v:V)->@location(0) vec4<f32>{
  var color=vec3<f32>(0.);let aspect=u.view.x/u.view.y;let time=u.view.z;let mode=u.style.x;
  for(var s=0u;s<u32(u.style.y);s++){
+  // An object with its own look is drawn by fs_look, not in this effect's style.
+  if(shapes[s*66u+3u].z>0.){continue;}
   let box=shapes[s*66u];if(any(v.uv<box.xy-.025)||any(v.uv>box.zw+.025)){continue;}
   let n=u32(shapes[s*66u+1u].z);var distance=10.;for(var j=0u;j<n;j++){let a=point(s,j)*vec2<f32>(aspect,1.);let b=point(s,(j+1u)%n)*vec2<f32>(aspect,1.);let p=v.uv*vec2<f32>(aspect,1.);let e=b-a;distance=min(distance,length(p-a-e*clamp(dot(p-a,e)/max(dot(e,e),.000001),0.,1.)));}
   let tint=palette(u.params.x+f32(s)*.11);let edge=exp(-distance*850.)+exp(-distance*130.)*.25; color+=tint*edge*.45;
@@ -72,6 +74,40 @@ struct V { @builtin(position) pos:vec4<f32>,@location(0) uv:vec2<f32>,@location(
   }
  }
  // Premultiplied: opacity (flags.z) scales the colour as well as the coverage.
+ let lit=min(color,vec3<f32>(1.));return vec4<f32>(lit*u.flags.z,clamp(max(color.r,max(color.g,color.b))*2.,0.,1.)*u.flags.z);
+}
+fn hueColor(h:f32)->vec3<f32>{let k=fract(vec3<f32>(h)+vec3<f32>(0.,2./3.,1./3.));return clamp(abs(k*6.-3.)-1.,vec3<f32>(0.),vec3<f32>(1.))*.85+.15;}
+fn hash2(p:vec2<f32>)->f32{return fract(sin(dot(p,vec2<f32>(127.1,311.7)))*43758.5453);}
+fn vnoise(p:vec2<f32>)->f32{let i=floor(p);let f=fract(p);let w=f*f*(3.-2.*f);return mix(mix(hash2(i),hash2(i+vec2<f32>(1.,0.)),w.x),mix(hash2(i+vec2<f32>(0.,1.)),hash2(i+vec2<f32>(1.,1.)),w.x),w.y);}
+// Objects with their own look: per object a fill pattern (z of point 1), its
+// brightness (w), outline strength and pattern size (zw of point 2), motion
+// and colour (zw of point 3). Drawn once, under the effects.
+@fragment fn fs_look(v:V)->@location(0) vec4<f32>{
+ var color=vec3<f32>(0.);let aspect=u.view.x/u.view.y;let time=u.view.z;
+ for(var s=0u;s<u32(u.style.y);s++){
+  let la=shapes[s*66u+3u].zw;if(la.x<=0.){continue;}let lb=shapes[s*66u+4u].zw;let lc=shapes[s*66u+5u].zw;
+  let filled=la.x>1.5&&la.y>0.;if(lb.x<=0.&&!filled){continue;}
+  let box=shapes[s*66u];if(any(v.uv<box.xy-.025)||any(v.uv>box.zw+.025)){continue;}
+  let n=u32(shapes[s*66u+1u].z);var distance=10.;for(var j=0u;j<n;j++){let a=point(s,j)*vec2<f32>(aspect,1.);let b=point(s,(j+1u)%n)*vec2<f32>(aspect,1.);let p=v.uv*vec2<f32>(aspect,1.);let e=b-a;distance=min(distance,length(p-a-e*clamp(dot(p-a,e)/max(dot(e,e),.000001),0.,1.)));}
+  let tint=hueColor(lc.y);color+=tint*(exp(-distance*850.)+exp(-distance*130.)*.25)*lb.x;
+  if(!contains(s,v.uv)){continue;}
+  if(filled){
+   let p=(v.uv-center(s))*vec2<f32>(aspect,1.);let radius=length(p);let k=mix(.3,2.4,lb.y);let t=time*lc.x*2.;let fill=la.x-2.;var wave=0.;
+   if(fill<.5){wave=pow(.5+.5*cos(distance*160.*k-t*1.2),10.);}
+   else if(fill<1.5){wave=pow(.5+.5*sin(p.x*32.*k+sin(p.y*19.*k+t*.5)*2.+t*.4),12.);}
+   else if(fill<2.5){wave=pow(.5+.5*cos(radius*100.*k-t*2.+sin(atan2(p.y,p.x)*5.)*2.),18.);}
+   else if(fill<3.5){wave=pow(.5+.5*sin(p.y*80.*k+sin(p.x*15.*k+t*.35)*6.),18.);}
+   else if(fill<4.5){wave=pow(.5+.5*cos(radius*130.*k-t*.7+atan2(p.y,p.x)*3.),20.);}
+   else if(fill<5.5){wave=max(pow(.5+.5*sin(p.x*100.*k+t*.3),30.),pow(.5+.5*cos(p.y*100.*k-t*.2),30.));}
+   else if(fill<6.5){wave=smoothstep(.5,.56,abs(fract((p.x+p.y)*18.*k-t*.25)-.5)*2.);}
+   else if(fill<7.5){let q=fract(p*22.*k+vec2<f32>(t*.08,0.))-.5;wave=smoothstep(.3,.24,length(q));}
+   else if(fill<8.5){let c=floor(p*14.*k+vec2<f32>(t*.12,0.));wave=abs(c.x+c.y)%2.;}
+   else if(fill<9.5){let q=p*18.*k;wave=pow(vnoise(q+vec2<f32>(t*.3,-t*.2))*.65+vnoise(q*2.3-vec2<f32>(t*.25,t*.15))*.35,2.5)*1.6;}
+   else{wave=.55+.45*sin(t*1.5)*step(.001,lc.x);}
+   color+=tint*wave*la.y;
+  }
+  for(var t=0u;t<u32(u.flags.y);t++){let input=touches[t];if(shapes[s*66u+1u].w==3.&&(filled||lb.x>0.)&&contains(s,input.xy)){let r=length((v.uv-input.xy)*vec2<f32>(aspect,1.));color+=hueColor(lc.y+r)*pow(.5+.5*cos(r*110.-time*8.),14.)*exp(-r*3.)*.6;}}
+ }
  let lit=min(color,vec3<f32>(1.));return vec4<f32>(lit*u.flags.z,clamp(max(color.r,max(color.g,color.b))*2.,0.,1.)*u.flags.z);
 }
 @vertex fn vs_particle(@builtin(vertex_index) vi:u32,@builtin(instance_index) ii:u32)->V{
@@ -125,7 +161,7 @@ export const MATTER_CORE_SLOTS=[40,41,42,43,44,45];
 /** Surface geometry, sized to the surfaces in use (not a fixed 32): the
  * shaders only read `count` entries, and a two-surface scene is 2 KB to send
  * instead of 34 KB per effect. Materials are filled in per effect. */
-function sceneShapes(surfaces:InteractiveScene['surfaces'],ownMaterials:boolean):Float32Array{
+function sceneShapes(surfaces:InteractiveScene['surfaces'],ownMaterials:boolean,sceneHue:number):Float32Array{
  const shapes=new Float32Array(Math.max(1,surfaces.length)*SHAPE_FLOATS);
  surfaces.forEach((s,i)=>{
   const base=i*SHAPE_FLOATS;let minX=1,minY=1,maxX=0,maxY=0,sumX=0,sumY=0;
@@ -133,6 +169,9 @@ function sceneShapes(surfaces:InteractiveScene['surfaces'],ownMaterials:boolean)
   shapes.set([minX,minY,maxX,maxY,sumX/s.points.length,sumY/s.points.length,s.points.length,BEHAVIORS.indexOf(s.behavior)],base);
   s.points.forEach((p,j)=>{shapes[base+8+j*4]=p.x;shapes[base+9+j*4]=p.y;});
   shapes[base+10]=ownMaterials?Math.max(0,MATERIALS.indexOf(s.material??'none')):0;shapes[base+11]=s.height??.25;
+  // Own look, in the spare halves of points 1 to 3: 0 leaves the object to
+  // the effects, 1 is an empty inside, 2 and up are the fill patterns.
+  if(s.look)shapes.set([SURFACE_FILLS.indexOf(s.look.fill)+1,s.look.brightness],base+14),shapes.set([s.look.outline,s.look.scale],base+18),shapes.set([s.look.speed,(s.look.hue??sceneHue)/360],base+22);
  });
  return shapes;
 }
@@ -189,6 +228,19 @@ function buildBlankPart(options:NativePluginGraphOptions,idPrefix:string):Intera
   render_passes:[{name:'interactive-empty',shader_id:'interactive/render',vertex_entry:'vs_bg',fragment_entry:'fs_bg',target:'source_frame',source_id:options.sourceId,seq:options.frameIndex,clear:false,blend:'alpha',vertex_count:3,instance_count:1,bindings}],
  };
 }
+/** The objects that have their own look, drawn once whatever the effects are. */
+function buildLookPart(options:NativePluginGraphOptions,scene:InteractiveScene,idPrefix:string,shapes:Float32Array,touches:{data:Float32Array;count:number},touchesB64:string):InteractivePart{
+ const part=buildBlankPart(options,idPrefix),id=(n:string)=>`${idPrefix}:interactive:${n}`;
+ const u=new Float32Array(20);u.set([options.width,options.height,options.time,options.frameDelta,0,scene.surfaces.length]);u[17]=Math.min(8,touches.count);u[18]=1;
+ part.buffers=[
+  valueBuffer(id('uniform'),'uniform',u,UNIFORM_CORE_SLOTS),
+  valueBuffer(id('surfaces'),'storage',shapes),
+  {id:id('touches'),kind:'storage',byte_length:touches.data.byteLength,initial_b64:touchesB64},
+  valueBuffer(id('particles'),'storage',new Float32Array(8)),
+ ];
+ part.render_passes[0]={...part.render_passes[0],name:'interactive-looks',fragment_entry:'fs_look'};
+ return part;
+}
 /**
  * Build the render graph for an Interactive scene.
  *
@@ -209,7 +261,7 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
   // Geometry is the same for every effect; only the material on an effect's
   // target surface differs, so it is laid out once and encoded once per
   // distinct (target, material) pair instead of once per effect.
-  const base=sceneShapes(scene.surfaces,false),encoded=new Map<string,{shapes:Float32Array;b64:string}>();
+  const base=sceneShapes(scene.surfaces,false,scene.hue),encoded=new Map<string,{shapes:Float32Array;b64:string}>();
   for(const effect of scene.effects){
    if(!effect.enabled)continue;
    const material=({fire:'fire',smoke:'smoke',liquid:'liquid',cloud:'points'} as Record<string,string>)[effect.kind]??'none';
@@ -221,9 +273,11 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
    mods+=`${effect.id}[${coreModSignature(effect)}]`;
   }
   effectIds.push(...scene.effects.map(e=>e.id));
+  if(scene.surfaces.some(s=>s.look&&!surfaceHidden(s.look)))parts.unshift(buildLookPart(options,scene,`${source}:looks`,base,touches,touchesB64));
   if(!parts.length)parts.push(buildBlankPart(options,`${source}:empty`));
  }else{
-  const shapes=sceneShapes(scene.surfaces,true);
+  const shapes=sceneShapes(scene.surfaces,true,scene.hue);
+  if(scene.surfaces.some(s=>s.look&&!surfaceHidden(s.look)))parts.push(buildLookPart(options,scene,`${source}:looks`,shapes,touches,touchesB64));
   parts.push(buildPart(options,scene,undefined,source,shapes,interactiveB64(shapes),touches,touchesB64,new Set(scene.surfaces.map(s=>s.material??'none').filter(m=>m!=='none'))));
  }
  const buffers=parts.flatMap(p=>p.buffers),passes=parts.flatMap(p=>p.passes),render_passes=parts.flatMap(p=>p.render_passes);

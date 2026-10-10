@@ -4,7 +4,7 @@
  * Every function takes a scene and returns a new one; nothing here touches
  * component state, history or the DOM, so each edit can be unit tested.
  */
-import type { Behavior, InteractiveScene, InteractiveSurface, Point } from './interactive';
+import type { Behavior, InteractiveScene, InteractiveSurface, Point, SurfaceLook } from './interactive';
 import {
   MAX_INTERACTIVE_EFFECTS,
   makeEffect,
@@ -158,6 +158,11 @@ export function setSurfaceBehavior(scene: InteractiveScene, id: string, behavior
 
 export function setSurfaceHeight(scene: InteractiveScene, id: string, height: number): InteractiveScene {
   return mapSurface(scene, id, (s) => ({ ...s, height }));
+}
+
+/** Give an object its own look, or hand it back to the effects with `undefined`. */
+export function setSurfaceLook(scene: InteractiveScene, id: string, look: SurfaceLook | undefined): InteractiveScene {
+  return mapSurface(scene, id, ({ look: _old, ...s }) => (look ? { ...s, look } : s));
 }
 
 /** New seed: every simulation starts over. */

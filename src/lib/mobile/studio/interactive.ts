@@ -27,6 +27,46 @@ export const INTERACTIVE_PRESETS = [
   'fire',
 ] as const;
 export type SurfaceMaterial = 'none' | 'fire' | 'smoke' | 'liquid' | 'points';
+/** What can be drawn inside an object. `none` leaves the inside empty. */
+export const SURFACE_FILLS = [
+  'none',
+  'contours',
+  'weave',
+  'ripples',
+  'bands',
+  'spiral',
+  'grid',
+  'stripes',
+  'dots',
+  'checker',
+  'noise',
+  'glow',
+] as const;
+export type SurfaceFill = (typeof SURFACE_FILLS)[number];
+/**
+ * An object's own appearance. An object without one is drawn by the scene's
+ * effects, each in its own style. An object with one is drawn exactly as set
+ * here and the effects leave it alone, so `fill: 'none'` with `outline: 0` is
+ * an object that still blocks, emits, attracts or triggers but shows nothing.
+ */
+export type SurfaceLook = {
+  fill: SurfaceFill;
+  /** Fill strength, 0 to 1. */
+  brightness: number;
+  /** Pattern size, 0 (large) to 1 (fine). */
+  scale: number;
+  /** Pattern motion, 0 (still) to 1. */
+  speed: number;
+  /** Outline strength, 0 (hidden) to 1. */
+  outline: number;
+  /** Own colour in degrees. Without it the object takes the scene colour. */
+  hue?: number;
+};
+export const defaultSurfaceLook = (): SurfaceLook => ({ fill: 'contours', brightness: 0.5, scale: 0.5, speed: 0.5, outline: 0.6 });
+export const invisibleSurfaceLook = (): SurfaceLook => ({ ...defaultSurfaceLook(), fill: 'none', outline: 0 });
+/** Nothing of this object reaches the output. */
+export const surfaceHidden = (look: SurfaceLook | undefined) =>
+  !!look && look.outline <= 0 && (look.fill === 'none' || look.brightness <= 0);
 export type InteractiveSurface = {
   id: string;
   name: string;
@@ -34,6 +74,7 @@ export type InteractiveSurface = {
   points: Point[];
   material?: SurfaceMaterial;
   height?: number;
+  look?: SurfaceLook;
 };
 export type MatterSettings = {
   lightX: number;
@@ -110,6 +151,7 @@ export function defaultInteractive(): InteractiveScene {
     ],
   };
 }
+const unit = (v: number) => Math.max(0, Math.min(1, v));
 /** Longest surface id or name kept in a scene. */
 export const SURFACE_TEXT_LIMIT = 100;
 /**
@@ -155,6 +197,17 @@ export function validateScene(raw: unknown): InteractiveScene {
       throw Error('Invalid surface material.');
     if (p.height !== undefined && (!Number.isFinite(p.height) || p.height < 0.02 || p.height > 0.9))
       throw Error('Invalid blocker depth.');
+    if (p.look !== undefined) {
+      const look = p.look;
+      if (
+        !look ||
+        typeof look !== 'object' ||
+        !SURFACE_FILLS.includes(look.fill) ||
+        (['brightness', 'scale', 'speed', 'outline'] as const).some((k) => !Number.isFinite(look[k])) ||
+        (look.hue !== undefined && !Number.isFinite(look.hue))
+      )
+        throw Error('Invalid object look.');
+    }
     ids.add(p.id);
   }
   const matter = defaultMatter();
@@ -172,6 +225,18 @@ export function validateScene(raw: unknown): InteractiveScene {
     points: p.points.map((v) => ({ x: v.x, y: v.y })),
     ...(p.material !== undefined ? { material: p.material } : {}),
     ...(p.height !== undefined ? { height: p.height } : {}),
+    ...(p.look !== undefined
+      ? {
+          look: {
+            fill: p.look.fill,
+            brightness: unit(p.look.brightness),
+            scale: unit(p.look.scale),
+            speed: unit(p.look.speed),
+            outline: unit(p.look.outline),
+            ...(p.look.hue !== undefined ? { hue: Math.max(0, Math.min(360, p.look.hue)) } : {}),
+          },
+        }
+      : {}),
   }));
   return {
     schema: 'ghost-interactive',
@@ -554,6 +619,18 @@ export class InteractiveWorld {
     ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'lighter';
     for (const s of scene.surfaces) {
+      if (s.look) {
+        // An object with its own look is not drawn in the effect's style.
+        if (s.look.outline > 0) {
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = `hsla(${s.look.hue ?? scene.hue},90%,65%,${0.5 * s.look.outline})`;
+          ctx.beginPath();
+          s.points.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)));
+          ctx.closePath();
+          ctx.stroke();
+        }
+        continue;
+      }
       const color = scene.hue + scene.surfaces.indexOf(s) * 37;
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = `hsla(${color},90%,65%,.3)`;

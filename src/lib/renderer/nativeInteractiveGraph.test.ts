@@ -145,3 +145,59 @@ describe('Interactive graph: a layer with real alpha', () => {
     }
   });
 });
+
+describe('Interactive graph: objects with their own look', () => {
+  const decode = (b64: string) => new Float32Array(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer);
+  const withLook = (look: InteractiveScene['surfaces'][number]['look'], kinds: EffectKind[] = ['architecture']): InteractiveScene => {
+    const scene = stack(kinds);
+    return { ...scene, surfaces: scene.surfaces.map((s, i) => (i === 0 ? { ...s, look } : s)) };
+  };
+  const custom = { fill: 'dots', brightness: 0.8, scale: 0.25, speed: 0.1, outline: 0.4, hue: 90 } as const;
+
+  it('adds no pass while every object is drawn by the effects', () => {
+    expect(renders(build(stack(['architecture']))).map((r) => r.name)).not.toContain('interactive-looks');
+  });
+
+  it('draws custom looks once, under the effects, and tells every effect to leave the object alone', () => {
+    const graph = build(withLook(custom, ['architecture', 'fire']));
+    const names = renders(graph).map((r) => r.name);
+    expect(names.filter((n) => n === 'interactive-looks')).toHaveLength(1);
+    expect(names[0]).toBe('interactive-looks');
+    expect(renders(graph)[0].clear).toBe(true);
+    const tables = buffers(graph).filter((b) => b.id.endsWith(':interactive:surfaces'));
+    expect(tables).toHaveLength(3);
+    for (const table of tables) {
+      const data = decode(table.initial_b64!);
+      expect([...data.slice(14, 16)].map((v) => +v.toFixed(3))).toEqual([9, 0.8]);
+      expect([...data.slice(18, 20)].map((v) => +v.toFixed(3))).toEqual([0.4, 0.25]);
+      expect([...data.slice(22, 24)].map((v) => +v.toFixed(3))).toEqual([0.1, 0.25]);
+      // The second object has no look of its own.
+      expect(data[SHAPE_FLOATS + 14]).toBe(0);
+    }
+  });
+
+  it('draws nothing for an invisible object but still marks it as taken', () => {
+    const graph = build(withLook({ fill: 'none', brightness: 0.5, scale: 0.5, speed: 0.5, outline: 0 }));
+    expect(renders(graph).map((r) => r.name)).not.toContain('interactive-looks');
+    const table = buffers(graph).find((b) => b.id.endsWith(':interactive:surfaces'))!;
+    expect(decode(table.initial_b64!)[14]).toBe(1);
+  });
+
+  it('treats a look slider as a value and a look switched on as structure', () => {
+    const scene = withLook(custom);
+    const relook = (look: typeof scene.surfaces[number]['look']) => ({ ...scene, surfaces: scene.surfaces.map((s, i) => (i === 0 ? { ...s, look } : s)) });
+    const installed = build(scene);
+    const brighter = build(relook({ ...custom, brightness: 0.2 }), {}, 2);
+    expect(brighter.interactive.topology).toBe(installed.interactive.topology);
+    expect(changedValues(installed, brighter).every((v) => v.id.endsWith(':interactive:surfaces'))).toBe(true);
+    expect(changedValues(installed, brighter).length).toBeGreaterThan(0);
+    expect(build(relook(undefined)).interactive.topology).not.toBe(installed.interactive.topology);
+  });
+
+  it('follows the scene colour until the object has its own', () => {
+    const { hue: _hue, ...plain } = custom;
+    const scene = { ...withLook(plain), hue: 180 };
+    const table = buffers(build(scene)).find((b) => b.id.endsWith(':looks:interactive:surfaces'))!;
+    expect(decode(table.initial_b64!)[23]).toBeCloseTo(0.5);
+  });
+});

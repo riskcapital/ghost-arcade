@@ -197,12 +197,14 @@ fn flame(t:f32)->vec3<f32>{return vec3<f32>(min(2.,t*3.),pow(max(t,0.),1.7)*1.2,
 @fragment fn fs_bg(v:V)->@location(0) vec4<f32>{
  let uv=v.uv;let geo=geometry[cell(uv)];let f=sampleF(uv);let lit=select(vec4<f32>(0.,0.,0.,1.),sampleL(uv),u.style.x==6.);let wall=geo.wall.x<0.;let tint=tintColor();let n=fbm(vec3<f32>(uv*vec2<f32>(35.,24.),u.view.z*.23));
  var col=select(vec3<f32>(0.),lit.rgb,u.style.x==6.);var alpha=0.;
- if(wall){col=vec3<f32>(.018,.024,.032)*(.25+lit.a*ctrl(3u,m.light.w))+exp(-abs(geo.wall.x)*600.)*tint*.15;alpha=.8;}
+ // A blocker with its own look is not painted here: it is drawn as set on the object, or not at all.
+ var plain=true;if(wall){for(var s=0u;s<u32(u.style.y);s++){let base=s*66u;if(shapes[base+3u].z>0.){let box=shapes[base];if(all(uv>=box.xy)&&all(uv<=box.zw)&&inside(s,uv)){plain=false;}}}}
+ if(wall&&plain){col=vec3<f32>(.018,.024,.032)*(.25+lit.a*ctrl(3u,m.light.w))+exp(-abs(geo.wall.x)*600.)*tint*.15;alpha=.8;}
  if(!wall){let smoke=1.-exp(-f.z*1.5);let normal=normalize(vec3<f32>((sampleF(uv+vec2<f32>(.004,0.)).z-sampleF(uv-vec2<f32>(.004,0.)).z)*-3.,(sampleF(uv+vec2<f32>(0.,.007)).z-sampleF(uv-vec2<f32>(0.,.007)).z)*-3.,.3));let direction=normalize(lightPosition()-vec3<f32>(uv,.2));let diffuse=.15+max(dot(normal,direction),0.)*lit.a*ctrl(3u,m.light.w);col+=mix(vec3<f32>(.3),tint,.5)*smoke*diffuse*(.6+n*.5);
   let tongues=fbm(vec3<f32>(uv*vec2<f32>(64.,38.)+vec2<f32>(sin(uv.y*25.-u.view.z*2.),u.view.z*1.8),u.view.z*.6));let heat=max(0.,f.w*(.25+tongues*.9)-f.z*.18-.035);let hot=flame(heat);col+=mix(tint*hot.r,vec3<f32>(hot.r),clamp(heat*.55,0.,.8))*2.;alpha=max(alpha,clamp(smoke+heat,0.,1.));
  }
  // Thin emissive char follows the object itself; the solver carries hot gas above it.
- for(var s=0u;s<u32(u.style.y);s++){let base=s*66u;if(shapes[base+2u].z==1.&&inside(s,uv)){let grain=fbm(vec3<f32>(uv*60.,u.view.z*.3));let cracks=pow(max(0.,1.-abs(grain-.5)*8.),7.);col+=tint*cracks*.6;}}
+ for(var s=0u;s<u32(u.style.y);s++){let base=s*66u;if(shapes[base+2u].z==1.&&shapes[base+3u].z==0.&&inside(s,uv)){let grain=fbm(vec3<f32>(uv*60.,u.view.z*.3));let cracks=pow(max(0.,1.-abs(grain-.5)*8.),7.);col+=tint*cracks*.6;}}
  if((u.style.x==10.||m.material.w>.5)&&!wall){
   let d=density(uv);let coverage=smoothstep(.055,.14,d);let e=vec2<f32>(1./256.,1./144.);
   let grad=vec2<f32>(density(uv+vec2<f32>(e.x,0.))-density(uv-vec2<f32>(e.x,0.)),density(uv+vec2<f32>(0.,e.y))-density(uv-vec2<f32>(0.,e.y)));
