@@ -4091,27 +4091,6 @@
       "enabled": true
     },
     {
-      "file": "AnotherGridThingy.fs",
-      "tier": "demo",
-      "category": "Uncategorized",
-      "tags": [],
-      "defaults": {
-        "grid_size": [
-          0.57,
-          1
-        ],
-        "bright": 0.212,
-        "glow_size": 20,
-        "rate": 0.74,
-        "rndseed": [
-          0,
-          0.29
-        ]
-      },
-      "featured": false,
-      "enabled": true
-    },
-    {
       "file": "gpt.fs",
       "tier": "demo",
       "category": "Uncategorized",
@@ -4119,21 +4098,6 @@
       "defaults": {},
       "featured": false,
       "enabled": true
-    },
-    {
-      "file": "grigM_gs61327.fs",
-      "tier": "demo",
-      "category": "Uncategorized",
-      "tags": [],
-      "defaults": {
-        "speed": 1.44,
-        "r_par": 18.25,
-        "zoom": 0.97,
-        "par_2": 0.01
-      },
-      "featured": false,
-      "enabled": true,
-      "defaultLoad": true
     },
     {
       "file": "InfiniteGrid.fs",
@@ -4180,15 +4144,6 @@
       "featured": false,
       "enabled": true,
       "defaultLoad": true
-    },
-    {
-      "file": "Untitled Shader.fs",
-      "tier": "demo",
-      "category": "Uncategorized",
-      "tags": [],
-      "defaults": {},
-      "featured": false,
-      "enabled": true
     },
     {
       "file": "AstralJellyfish.fs",

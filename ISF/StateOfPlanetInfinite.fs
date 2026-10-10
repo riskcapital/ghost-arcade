@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Converted from Three.js by Claude",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "State of the Planet - Infinite flythrough with particles, tendrils, and orbs",
     "ISFVSN": "2.0",
     "CATEGORIES": ["Generator"],

@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "ChatGPT",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Fluid Melt Geometry in Z-space — 3D noise warp + kaleidoscopic geometry melting over time (fixed swizzle)",
     "CATEGORIES": [ "generator" ],
     "INPUTS": [

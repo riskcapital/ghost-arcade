@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Pixar-Inspired 3D Video Waves: Turbulent Ocean Surge - Chaotic waves with pronounced z-space, surging toward and away from the viewer",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],

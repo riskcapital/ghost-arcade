@@ -1,5 +1,5 @@
 /*{
-    "CREDIT":       "ChatGPT",
+    "CREDIT":       "Ghost Arcade",
     "DESCRIPTION":  "Data Tapestry — fluid, melting particle network connected by lines",
     "ISFVSN":       "2.0",
     "CATEGORIES":   [ "generator" ],
