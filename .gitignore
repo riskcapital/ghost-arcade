@@ -9,13 +9,25 @@ build-resources/ffmpeg/
 .DS_Store
 Thumbs.db
 
-# Tauri build artifacts
-src-tauri/target/
+# Native renderer build artifacts
 native-renderer/target/
 
-# Electron native addon build artifacts
-electron/native/build/
-electron/native/node_modules/
+# Electron native addon build artifacts (no trailing slash: these can be symlinks)
+electron/native/build
+electron/native/node_modules
+
+# Local tooling settings, scratch work and review notes
+.claude/
+scratchpad/
+reports/
+docs/reviews/
+docs/*HANDOFF*
+docs/SESSION-PROGRESS-*
+/stage3dhandoff.md
+/MOBILE_PROGRESS.md
+/MOBILE_SUBMISSION.md
+/MAC_TESTING.md
+/ghost-pilot-vision.md
 
 # Environment files
 .env

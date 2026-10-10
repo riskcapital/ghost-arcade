@@ -4,7 +4,7 @@
 [![Build](https://img.shields.io/badge/build-Vite%20%2B%20Electron-orange)](package.json)
 [![Made with Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 
-**Ghost Arcade** is an open-source projection-mapping & VJ tool. Real-time GLSL effects, WebGPU acceleration, MIDI control, mobile companion, and a conventional mixer pipeline — all in one app.
+**Ghost Arcade** is an open-source projection-mapping & VJ tool. Real-time GLSL effects, WebGPU acceleration, MIDI control, mobile companion, and a dual-deck mixer pipeline — all in one app.
 
 It's a single product, free, and fully open source under AGPL-3.0. There are no Pro tiers, no paywalls, no watermarks.
 

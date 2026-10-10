@@ -8,7 +8,7 @@
  *   node scripts/phone-scan-e2e.mjs --profile <GA_USER_DATA_DIR> --ply <room.ply> \
  *        [--ws-port 19411] [--cdp 9284] [--url localhost:1474] [--out <dir>]
  *
- * Start the app first (see docs/reviews/2026-10-08-claude/AGENT_RULES.md):
+ * Start the app first:
  *   GA_USER_DATA_DIR=<profile> VITE_DEV_SERVER_URL=http://localhost:<vite> WS_PORT=19411 HTTP_PORT=19412 \
  *     GA_REMOTE_BIND_HOST=127.0.0.1 npx electron . --remote-debugging-port=9284
  * Use a new, empty profile folder for each run: the script expects the welcome card or an empty project.
