@@ -79,8 +79,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'inspect_video_import',
   'open_project_dialog',
   'download_demo_zip', 'read_project_file',
-  // Update installer download + launch
-  'open_external_url', 'download_update_installer', 'launch_update_installer',
+  'open_external_url',
   // Texture sharing info (Spout/Syphon)
   'texture_share_info',
   // Output window controls
@@ -198,7 +197,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress'];
+    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);
