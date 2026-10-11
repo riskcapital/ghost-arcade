@@ -3649,6 +3649,43 @@
     dragOverBlockIndex = null;
   }
 
+  // ---- Fill a row by dragging a clip's corner ----
+  // Like a spreadsheet's fill handle: drag either bottom corner of a clip
+  // sideways and every column the drag passes gets that clip.
+  let fillDrag: { layer: number; column: number; bank: VJDeck; to: number } | null = null;
+  function handleFillPointerDown(e: PointerEvent, layer: number, column: number, bank: VJDeck) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    fillDrag = { layer, column, bank, to: column };
+    // Followed on the window so the drag keeps working off the handle.
+    window.addEventListener('pointermove', handleFillPointerMove);
+    window.addEventListener('pointerup', handleFillPointerUp, { once: true });
+    window.addEventListener('pointercancel', handleFillPointerUp, { once: true });
+  }
+  function handleFillPointerMove(e: PointerEvent) {
+    if (!fillDrag) return;
+    // Any cell in the pointer's column counts, so the drag need not stay on the row.
+    const cell = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest<HTMLElement>('.clip-cell');
+    if (!cell || cell.dataset.bank !== fillDrag.bank) return;
+    const column = Number(cell.dataset.column);
+    if (Number.isInteger(column) && column !== fillDrag.to) fillDrag = { ...fillDrag, to: column };
+  }
+  function handleFillPointerUp(e: PointerEvent) {
+    const drag = fillDrag;
+    fillDrag = null;
+    window.removeEventListener('pointermove', handleFillPointerMove);
+    window.removeEventListener('pointerup', handleFillPointerUp);
+    window.removeEventListener('pointercancel', handleFillPointerUp);
+    if (!drag || e.type === 'pointercancel' || drag.to === drag.column) return;
+    const filled = vjClipLauncher.fillClipAcross(drag.layer, drag.column, drag.to, drag.bank);
+    if (!filled) showToast('Those cells are locked while their clip is playing.', 'warning');
+  }
+  function inFillRange(layer: number, column: number, bank: VJDeck, drag: typeof fillDrag): boolean {
+    if (!drag || drag.layer !== layer || drag.bank !== bank || column === drag.column) return false;
+    return column >= Math.min(drag.column, drag.to) && column <= Math.max(drag.column, drag.to);
+  }
+
   // ---- Clips whose file has gone ----
   // Files get moved, renamed or unplugged while a show is open. Every few
   // seconds the deck asks which of its clip files are still there, marks the
@@ -5931,6 +5968,10 @@
                 <div
                   class="clip-cell"
                   class:file-missing={isFileMissing}
+                  class:fill-target={inFillRange(layerIdx, colIdx, bank, fillDrag)}
+                  class:fill-source={fillDrag?.layer === layerIdx && fillDrag?.column === colIdx && fillDrag?.bank === bank}
+                  data-column={colIdx}
+                  data-bank={bank}
                   class:has-clip={clip != null}
                   class:active={isActive || isPresetActive}
                   class:queued={isQueued}
@@ -5943,7 +5984,7 @@
                   onpointerup={(e) => clip && isClipFirable && handleCellPointerUp(e, layerIdx, colIdx, bank)}
                   onpointercancel={handleCellPointerCancel}
                   onkeydown={(e) => clip && isClipFirable && handleCellKeyDown(e, layerIdx, colIdx, bank)}
-                  ondragstart={(e) => clip && handleClipCellDragStart(e, layerIdx, colIdx, bank)}
+                  ondragstart={(e) => { if (fillDrag) { e.preventDefault(); return; } if (clip) handleClipCellDragStart(e, layerIdx, colIdx, bank); }}
                   ondragend={handleDragEnd}
                   ondragenter={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
                   ondragover={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
@@ -5975,6 +6016,16 @@
                           onclick={(e) => { e.stopPropagation(); cellContextMenu = { x: e.clientX, y: e.clientY, layer: layerIdx, column: colIdx, bank }; }}
                         >?</button>
                       {/if}
+                      {#each ['left', 'right'] as side}
+                        <span
+                          class="fill-handle {side}"
+                          draggable="false"
+                          title="Drag sideways to fill the row with this clip"
+                          onpointerdown={(e) => handleFillPointerDown(e, layerIdx, colIdx, bank)}
+                          onclick={(e) => e.stopPropagation()}
+                          ondragstart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        ></span>
+                      {/each}
                       <button aria-label="Remove clip from this slot" class="clear-btn" onclick={(e) => handleClearClip(layerIdx, colIdx, e, bank)}>×</button>
                     </div>
                   {:else}
@@ -10097,6 +10148,29 @@
   .layer-grip { top: 2px; left: 2px; opacity: 0.75; }
   .layer-number { bottom: 2px; left: 2px; font-weight: 600; }
   .layer-live-preview:hover .layer-grip { opacity: 1; background: var(--accent-primary, #BB86FC); color: #000; }
+
+  /* Corner handles for filling a row with a clip. */
+  .fill-handle {
+    position: absolute;
+    bottom: 0;
+    width: 12px;
+    height: 12px;
+    z-index: 4;
+    cursor: ew-resize;
+    opacity: 0;
+    background: var(--accent-primary, #BB86FC);
+    touch-action: none;
+  }
+  .fill-handle.left { left: 0; border-top-right-radius: 8px; }
+  .fill-handle.right { right: 0; border-top-left-radius: 8px; }
+  .clip-cell:hover .fill-handle,
+  .clip-cell.fill-source .fill-handle { opacity: 0.9; }
+  .clip-cell.fill-source { border-color: var(--accent-primary, #BB86FC); }
+  .clip-cell.fill-target {
+    border-color: var(--accent-primary, #BB86FC);
+    box-shadow: inset 0 0 0 2px var(--accent-primary, #BB86FC);
+    background: color-mix(in srgb, var(--accent-primary, #BB86FC) 18%, transparent);
+  }
 
   /* A clip whose file is not on disk. */
   .clip-cell.file-missing {

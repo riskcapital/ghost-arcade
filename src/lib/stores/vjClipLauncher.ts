@@ -1862,6 +1862,12 @@ function createVJClipLauncherStore() {
           touched.add(layerIndex);
           holds.delete(rowKey(deck, layerIndex));
           const clip = targetGrid[layerIndex]?.[columnIndex];
+          // The same clip filled across columns (a background under a stack)
+          // keeps playing through a column change instead of starting over.
+          // Firing the column it is already on still restarts it.
+          if (clip && layerState.activeClip?.id === clip.id && layerState.activeColumn !== null && layerState.activeColumn !== columnIndex) {
+            return { ...layerState, activeColumn: columnIndex };
+          }
           if (clip) {
             let triggeredClip = { ...clip, _launchGeneration: ++launchGeneration };
             if (clip.type === 'video') {
@@ -3210,6 +3216,29 @@ function createVJClipLauncherStore() {
           blocks: [...state.blocks, newBlock],
         };
       });
+    },
+
+    /**
+     * Fill a row with one clip: the clip in `fromColumn` is put in every
+     * column up to and including `toColumn`, replacing what was there. The
+     * copies are the same clip, so a column trigger carries it across without
+     * a restart. A cell whose clip is playing on a locked row is left alone.
+     * Returns how many cells were filled.
+     */
+    fillClipAcross(layerIndex: number, fromColumn: number, toColumn: number, deck: VJDeck = 'A'): number {
+      const state = get({ subscribe });
+      const clip = pickGrid(state, deck)[layerIndex]?.[fromColumn];
+      if (!clip) return 0;
+      const last = Math.max(0, Math.min(state.numColumns - 1, toColumn));
+      const step = last >= fromColumn ? 1 : -1;
+      let filled = 0;
+      for (let column = fromColumn + step; step > 0 ? column <= last : column >= last; column += step) {
+        const before = pickGrid(get({ subscribe }), deck)[layerIndex]?.[column];
+        if (before?.id === clip.id) continue;
+        this.setClip(layerIndex, column, { ...clip }, deck);
+        if (pickGrid(get({ subscribe }), deck)[layerIndex]?.[column]?.id === clip.id) filled += 1;
+      }
+      return filled;
     },
 
     /**
