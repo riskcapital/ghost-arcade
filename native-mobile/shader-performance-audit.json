@@ -1,7 +1,319 @@
 {
-  "method": "Static code cost: high/extreme excluded, comments ignored",
-  "retained": 314,
+  "method": "Static code cost: high/extreme excluded, comments ignored. Measured GPU cost: 5 ms and over excluded, 2 ms and over drawn smaller.",
+  "retained": 280,
   "budgeted": [
+    {
+      "path": "ISF/11_RadialShards.fs",
+      "level": "measured",
+      "score": 2.38,
+      "hints": [
+        "2.38 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/16_AtomicOrbital.fs",
+      "level": "measured",
+      "score": 3.07,
+      "hints": [
+        "3.07 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/23_StarCluster.fs",
+      "level": "measured",
+      "score": 2.78,
+      "hints": [
+        "2.78 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/36_ConstellationMap.fs",
+      "level": "measured",
+      "score": 4.23,
+      "hints": [
+        "4.23 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/37_TorusKnot.fs",
+      "level": "measured",
+      "score": 2.56,
+      "hints": [
+        "2.56 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/44_Oscilloscope.fs",
+      "level": "measured",
+      "score": 4.37,
+      "hints": [
+        "4.37 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/48_PlasmaContainment.fs",
+      "level": "measured",
+      "score": 2.6,
+      "hints": [
+        "2.6 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/54_ShatteredLattice.fs",
+      "level": "measured",
+      "score": 2.67,
+      "hints": [
+        "2.67 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/62_HypercubeTesseract.fs",
+      "level": "measured",
+      "score": 2.76,
+      "hints": [
+        "2.76 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/70_LiquidMetal.fs",
+      "level": "measured",
+      "score": 2,
+      "hints": [
+        "2 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/78_PlasmaVortex.fs",
+      "level": "measured",
+      "score": 4.9,
+      "hints": [
+        "4.9 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/AR-DisplacementSphere.fs",
+      "level": "measured",
+      "score": 2.26,
+      "hints": [
+        "2.26 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/AR-FrequencyTerrain.fs",
+      "level": "measured",
+      "score": 4.92,
+      "hints": [
+        "4.92 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/AR-SmokeTendrils.fs",
+      "level": "measured",
+      "score": 2.15,
+      "hints": [
+        "2.15 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/AR-WaveletDecomp.fs",
+      "level": "measured",
+      "score": 2.28,
+      "hints": [
+        "2.28 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/AstralCrystal.fs",
+      "level": "measured",
+      "score": 2.39,
+      "hints": [
+        "2.39 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/DM-DNAHelix.fs",
+      "level": "measured",
+      "score": 2.06,
+      "hints": [
+        "2.06 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/DM-FireParticles.fs",
+      "level": "measured",
+      "score": 2.06,
+      "hints": [
+        "2.06 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/EmberCloud.fs",
+      "level": "measured",
+      "score": 4.78,
+      "hints": [
+        "4.78 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/Featured-aurora.fs",
+      "level": "measured",
+      "score": 4.67,
+      "hints": [
+        "4.67 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/Featured-chrysalis.fs",
+      "level": "measured",
+      "score": 3.41,
+      "hints": [
+        "3.41 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/Featured-murmur.fs",
+      "level": "measured",
+      "score": 3.54,
+      "hints": [
+        "3.54 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/Featured-prism.fs",
+      "level": "measured",
+      "score": 2.09,
+      "hints": [
+        "2.09 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/Featured-quantumchamber.fs",
+      "level": "measured",
+      "score": 11.7,
+      "hints": [
+        "11.7 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.5,
+        "detail": 0.7
+      }
+    },
+    {
+      "path": "ISF/Featured-sentinels.fs",
+      "level": "measured",
+      "score": 16.06,
+      "hints": [
+        "16.06 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.4,
+        "detail": 0.7
+      }
+    },
+    {
+      "path": "ISF/Featured-tide.fs",
+      "level": "measured",
+      "score": 10.78,
+      "hints": [
+        "10.78 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.5,
+        "detail": 0.7
+      }
+    },
     {
       "path": "ISF/GA-GhostFX.fs",
       "level": "extreme",
@@ -16,9 +328,249 @@
         "scale": 0.6,
         "detail": 0.7
       }
+    },
+    {
+      "path": "ISF/LiquidDepth.fs",
+      "level": "measured",
+      "score": 3.1,
+      "hints": [
+        "3.1 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/MetalParticles.fs",
+      "level": "measured",
+      "score": 4.48,
+      "hints": [
+        "4.48 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/ParticleSwarm.fs",
+      "level": "measured",
+      "score": 2.95,
+      "hints": [
+        "2.95 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/SM-AsymmetricLightning.fs",
+      "level": "measured",
+      "score": 2.39,
+      "hints": [
+        "2.39 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/SM-Fireflies.fs",
+      "level": "measured",
+      "score": 2.67,
+      "hints": [
+        "2.67 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/SM-MagneticFilings.fs",
+      "level": "measured",
+      "score": 2.19,
+      "hints": [
+        "2.19 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/SM-ParticleNodes.fs",
+      "level": "measured",
+      "score": 4.81,
+      "hints": [
+        "4.81 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/SM-SmokeChamber.fs",
+      "level": "measured",
+      "score": 2.09,
+      "hints": [
+        "2.09 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/SM-SpiderWeb.fs",
+      "level": "measured",
+      "score": 2.31,
+      "hints": [
+        "2.31 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/SacredGeometry.fs",
+      "level": "measured",
+      "score": 3.18,
+      "hints": [
+        "3.18 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/cube shaders/3D_12_PlasmaSphere.fs",
+      "level": "measured",
+      "score": 4.31,
+      "hints": [
+        "4.31 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/cube shaders/ROOM_03_LavaLampDepth.fs",
+      "level": "measured",
+      "score": 2.43,
+      "hints": [
+        "2.43 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/cube shaders/ROOM_04_FireflyGarden.fs",
+      "level": "measured",
+      "score": 2.48,
+      "hints": [
+        "2.48 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/cube shaders/ROOM_08_ElectricTendrils.fs",
+      "level": "measured",
+      "score": 4.98,
+      "hints": [
+        "4.98 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/cube shaders/ROOM_09_LiquidChrome.fs",
+      "level": "measured",
+      "score": 4.25,
+      "hints": [
+        "4.25 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/cube shaders/ROOM_10_JellyfishFloat.fs",
+      "level": "measured",
+      "score": 2.42,
+      "hints": [
+        "2.42 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/cube shaders/ROOM_17_SporeCloud.fs",
+      "level": "measured",
+      "score": 3.7,
+      "hints": [
+        "3.7 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/gpt.fs",
+      "level": "measured",
+      "score": 3.48,
+      "hints": [
+        "3.48 ms per 720p frame on the reference GPU"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 0.85
+      }
     }
   ],
   "excluded": [
+    {
+      "path": "ISF/15_NeuralNetwork.fs",
+      "level": "measured",
+      "score": 8.19,
+      "hints": [
+        "8.19 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/39_TensorField.fs",
+      "level": "measured",
+      "score": 56.48,
+      "hints": [
+        "56.48 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/42_GyroscopicRings.fs",
+      "level": "measured",
+      "score": 8.49,
+      "hints": [
+        "8.49 ms per 720p frame on the reference GPU"
+      ]
+    },
     {
       "path": "ISF/51_SacredGeometryCathedral.fs",
       "level": "high",
@@ -39,6 +591,54 @@
       ]
     },
     {
+      "path": "ISF/56_ConnectedCubes.fs",
+      "level": "measured",
+      "score": 22.13,
+      "hints": [
+        "22.13 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/61_SingularityCollapse.fs",
+      "level": "measured",
+      "score": 18.63,
+      "hints": [
+        "18.63 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/67_ParticleSupernova.fs",
+      "level": "measured",
+      "score": 18.73,
+      "hints": [
+        "18.73 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/71_CosmicSpine.fs",
+      "level": "measured",
+      "score": 121.41,
+      "hints": [
+        "121.41 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/72_ShatteredReality.fs",
+      "level": "measured",
+      "score": 28.43,
+      "hints": [
+        "28.43 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/AR-Ferrofluid.fs",
+      "level": "measured",
+      "score": 11.14,
+      "hints": [
+        "11.14 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
       "path": "ISF/AR-GeodesicBloom.fs",
       "level": "high",
       "score": 37,
@@ -46,6 +646,14 @@
         "large shader source",
         "raymarch/long-step loop pattern",
         "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/AR-Lissajous.fs",
+      "level": "measured",
+      "score": 10.78,
+      "hints": [
+        "10.78 ms per 720p frame on the reference GPU"
       ]
     },
     {
@@ -59,6 +667,14 @@
       ]
     },
     {
+      "path": "ISF/AR-StrangeAttractor.fs",
+      "level": "measured",
+      "score": 11.85,
+      "hints": [
+        "11.85 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
       "path": "ISF/AR-WaveformHelix.fs",
       "level": "high",
       "score": 37,
@@ -66,6 +682,78 @@
         "large shader source",
         "raymarch/long-step loop pattern",
         "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/AbyssalHelix.fs",
+      "level": "measured",
+      "score": 60.26,
+      "hints": [
+        "60.26 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/AstralJellyfish.fs",
+      "level": "measured",
+      "score": 14.49,
+      "hints": [
+        "14.49 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/DM-NodeNetwork.fs",
+      "level": "measured",
+      "score": 18.38,
+      "hints": [
+        "18.38 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/DM-ParticleVortex.fs",
+      "level": "measured",
+      "score": 24.84,
+      "hints": [
+        "24.84 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/DM-Spirograph.fs",
+      "level": "measured",
+      "score": 39.83,
+      "hints": [
+        "39.83 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/DM-Starfield.fs",
+      "level": "measured",
+      "score": 14.06,
+      "hints": [
+        "14.06 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/DeepMetalBlobs.fs",
+      "level": "measured",
+      "score": 12.35,
+      "hints": [
+        "12.35 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/DimensionalRift.fs",
+      "level": "measured",
+      "score": 6.85,
+      "hints": [
+        "6.85 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/FireEmber.fs",
+      "level": "measured",
+      "score": 5.66,
+      "hints": [
+        "5.66 ms per 720p frame on the reference GPU"
       ]
     },
     {
@@ -78,11 +766,35 @@
       ]
     },
     {
+      "path": "ISF/LeWittPyramid.fs",
+      "level": "measured",
+      "score": 7.32,
+      "hints": [
+        "7.32 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
       "path": "ISF/MirrorRealm.fs",
       "level": "high",
       "score": 26,
       "hints": [
         "large shader source"
+      ]
+    },
+    {
+      "path": "ISF/NestedCubes.fs",
+      "level": "measured",
+      "score": 8.21,
+      "hints": [
+        "8.21 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/OrganicMetal.fs",
+      "level": "measured",
+      "score": 8.69,
+      "hints": [
+        "8.69 ms per 720p frame on the reference GPU"
       ]
     },
     {
@@ -92,6 +804,14 @@
       "hints": [
         "large shader source",
         "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/ParticleField.fs",
+      "level": "measured",
+      "score": 8.91,
+      "hints": [
+        "8.91 ms per 720p frame on the reference GPU"
       ]
     },
     {
@@ -119,11 +839,35 @@
       ]
     },
     {
+      "path": "ISF/SM-PongArena.fs",
+      "level": "measured",
+      "score": 7.71,
+      "hints": [
+        "7.71 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
       "path": "ISF/SM-RicochetLaser.fs",
       "level": "high",
       "score": 26,
       "hints": [
         "large shader source"
+      ]
+    },
+    {
+      "path": "ISF/SM-SwarmIntelligence.fs",
+      "level": "measured",
+      "score": 48.21,
+      "hints": [
+        "48.21 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/SM-VineCrawl.fs",
+      "level": "measured",
+      "score": 5.48,
+      "hints": [
+        "5.48 ms per 720p frame on the reference GPU"
       ]
     },
     {
@@ -136,6 +880,14 @@
       ]
     },
     {
+      "path": "ISF/StellarNursery.fs",
+      "level": "measured",
+      "score": 13.6,
+      "hints": [
+        "13.6 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
       "path": "ISF/ThreeBody.fs",
       "level": "extreme",
       "score": 54,
@@ -144,6 +896,14 @@
         "heavy branching",
         "raymarch/long-step loop pattern",
         "heavy transcendental math"
+      ]
+    },
+    {
+      "path": "ISF/VoronoiTerrainFlyover.fs",
+      "level": "measured",
+      "score": 5.75,
+      "hints": [
+        "5.75 ms per 720p frame on the reference GPU"
       ]
     },
     {
@@ -221,12 +981,52 @@
       ]
     },
     {
+      "path": "ISF/cube shaders/3D_10_ShatteredCube.fs",
+      "level": "measured",
+      "score": 26.97,
+      "hints": [
+        "26.97 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
       "path": "ISF/cube shaders/3D_11_InfiniteHall.fs",
       "level": "high",
       "score": 33,
       "hints": [
         "large shader source",
         "raymarch/long-step loop pattern"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_14_NebulaCloud.fs",
+      "level": "measured",
+      "score": 41.16,
+      "hints": [
+        "41.16 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_17_BubbleMass.fs",
+      "level": "measured",
+      "score": 38.2,
+      "hints": [
+        "38.2 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_19_AbstractPillars.fs",
+      "level": "measured",
+      "score": 15,
+      "hints": [
+        "15 ms per 720p frame on the reference GPU"
+      ]
+    },
+    {
+      "path": "ISF/cube shaders/3D_20_MoltenCore.fs",
+      "level": "measured",
+      "score": 5.04,
+      "hints": [
+        "5.04 ms per 720p frame on the reference GPU"
       ]
     },
     {
