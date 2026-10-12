@@ -1293,6 +1293,7 @@ const REMOTE_HTTP_PORT = remotePort(process.env.HTTP_PORT, 9002);
 // token that persists and travels over venue Wi-Fi in a QR code cannot keep
 // that promise. The two share the checking code instead.
 const { createPhoneScanStore } = require('./phone-scan-store.cjs');
+const mediaLocate = require('./media-locate.cjs');
 const {
   generatePairingToken,
   loadOrCreatePairingToken,
@@ -2679,6 +2680,21 @@ function registerIpcHandlers() {
       }
     });
   }
+
+  // --- Clip files that have moved ---
+  // Which of these media files are still on disk.
+  ipcMain.handle('media_files_status', async (_, args) => mediaLocate.mediaFilesStatus(args?.paths));
+  // Ask for a folder and look inside it for files with these names.
+  ipcMain.handle('media_find_in_folder', async (_, args) => {
+    const win = mainWindow || BrowserWindow.getFocusedWindow();
+    if (!win) return { canceled: true, dir: null, found: {} };
+    const result = await dialog.showOpenDialog(win, {
+      title: typeof args?.title === 'string' ? args.title.slice(0, 120) : 'Search a folder for missing media',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true, dir: null, found: {} };
+    return { canceled: false, dir: result.filePaths[0], found: await mediaLocate.findMediaInFolder(result.filePaths[0], args?.names) };
+  });
 
   // --- LAN remote pairing ---
   // The editor shows the token beside the Connect Mobile QR code, puts it in

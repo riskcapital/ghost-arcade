@@ -3,6 +3,8 @@
 // Works with shaders and videos directly (not compositions)
 
 import { clipAudio, clipAudioVoices } from '../audio/clipAudio';
+import { clipFilePath } from '../vj/clipFiles';
+import { pathToFileUrl } from '../storage/assetRegistry';
 import { writable, derived, get } from 'svelte/store';
 import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, IntegratedEffectSource, SplatContent, Model3DContent, GPULayerContent, TextContent, ISFInputDef } from '../types';
 import { createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
@@ -1361,10 +1363,17 @@ function createVJClipLauncherStore() {
       // rewound and moving before the column swap reaches subscribers.
       const before = get({ subscribe });
       const beforeGrid = pickGrid(before, deck);
+      // The same clip filled across columns (a background under a stack)
+      // keeps playing through a column change instead of starting over.
+      // Firing the column it is already on still restarts it.
+      const carries = (layerIndex: number, clip: VJClip | null | undefined) => {
+        const row = pickLayerStates(get({ subscribe }), deck)[layerIndex];
+        return !!clip && row?.activeClip?.id === clip.id && row.activeColumn !== null && row.activeColumn !== columnIndex;
+      };
       const videosToArm: VJClip[] = [];
       for (let layerIndex = 0; layerIndex < beforeGrid.length; layerIndex++) {
         const clip = beforeGrid[layerIndex]?.[columnIndex];
-        if (clip?.type !== 'video') continue;
+        if (clip?.type !== 'video' || carries(layerIndex, clip)) continue;
         const videoEl = ensureClipVideoElement(clip);
         if (videoEl && !isVideoArmedAtTrimStart(clip, videoEl)) videosToArm.push(clip);
       }
@@ -1376,7 +1385,7 @@ function createVJClipLauncherStore() {
       }
       for (let layerIndex = 0; layerIndex < beforeGrid.length; layerIndex++) {
         const clip = beforeGrid[layerIndex]?.[columnIndex];
-        if (clip?.type === 'video') prepareVideoClipForTrigger(clip);
+        if (clip?.type === 'video' && !carries(layerIndex, clip)) prepareVideoClipForTrigger(clip);
       }
 
       update(state => {
@@ -1384,6 +1393,9 @@ function createVJClipLauncherStore() {
         const targetLayerStates = pickLayerStates(state, deck);
         const newLayerStates = targetLayerStates.map((layerState, layerIndex) => {
           const clip = targetGrid[layerIndex]?.[columnIndex];
+          if (clip && layerState.activeClip?.id === clip.id && layerState.activeColumn !== null && layerState.activeColumn !== columnIndex) {
+            return { ...layerState, activeColumn: columnIndex };
+          }
           if (clip) {
             if (clip.type === 'video') {
               ensureClipVideoElement(clip);
@@ -1979,6 +1991,85 @@ function createVJClipLauncherStore() {
           e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e
         )
       }));
+    },
+
+    /**
+     * Fill a row with one clip: the clip in `fromColumn` is put in every
+     * column up to and including `toColumn`, replacing what was there. The
+     * copies are the same clip, so a column trigger carries it across without
+     * a restart. Returns how many cells were filled.
+     */
+    fillClipAcross(layerIndex: number, fromColumn: number, toColumn: number, deck: VJDeck = 'A'): number {
+      const state = get({ subscribe });
+      const clip = pickGrid(state, deck)[layerIndex]?.[fromColumn];
+      if (!clip) return 0;
+      const last = Math.max(0, Math.min(state.numColumns - 1, toColumn));
+      const step = last >= fromColumn ? 1 : -1;
+      let filled = 0;
+      for (let column = fromColumn + step; step > 0 ? column <= last : column >= last; column += step) {
+        if (pickGrid(get({ subscribe }), deck)[layerIndex]?.[column]?.id === clip.id) continue;
+        this.setClip(layerIndex, column, { ...clip }, deck);
+        if (pickGrid(get({ subscribe }), deck)[layerIndex]?.[column]?.id === clip.id) filled += 1;
+      }
+      return filled;
+    },
+
+    /**
+     * Point clips at files that moved. `moves` maps each old path to the new
+     * one. Every clip using an old path, in either deck and in every block,
+     * becomes a new clip on the new file; one that is playing keeps playing
+     * from the new file. Returns how many clips changed.
+     */
+    relinkClipFiles(moves: Record<string, string>): number {
+      const relinked = new Map<string, VJClip>();
+      const remap = (clip: VJClip | null): VJClip | null => {
+        if (!clip) return clip;
+        const known = relinked.get(clip.id);
+        if (known) return known;
+        const from = clipFilePath(clip);
+        const to = from ? moves[from] : undefined;
+        if (!to || to === from) return clip;
+        const { videoElement: _element, videoTexture: _texture, ...rest } = clip as VJClip & { videoTexture?: unknown };
+        const next: VJClip = {
+          ...rest,
+          id: generateUUID(),
+          src: pathToFileUrl(to),
+          _assetRef: { ...clip._assetRef, kind: 'local-file', originalPath: to, projectPath: undefined },
+        };
+        relinked.set(clip.id, next);
+        return next;
+      };
+      // The live grids go through setClip, which builds the new file's video
+      // element and releases the old clip's.
+      for (const deck of ['A', 'B'] as VJDeck[]) {
+        pickGrid(get({ subscribe }), deck).forEach((row, layerIndex) => row.forEach((clip, columnIndex) => {
+          const next = remap(clip);
+          if (next && next !== clip) this.setClip(layerIndex, columnIndex, next, deck);
+        }));
+      }
+      const remapGrid = (grid: (VJClip | null)[][]) => grid.map(row => row.map(remap));
+      const live = get({ subscribe });
+      const remapLive = (states: VJLayerState[], grid: (VJClip | null)[][]) => states.map(layer => {
+        if (!layer.activeClip || !relinked.has(layer.activeClip.id)) return layer;
+        // Take the clip from the grid, where setClip gave it its video element.
+        const id = relinked.get(layer.activeClip.id)!.id;
+        const placed = grid.flat().find(c => c?.id === id) ?? relinked.get(layer.activeClip.id)!;
+        if (placed.type === 'video') prepareVideoClipForTrigger(placed);
+        return { ...layer, activeClip: placed };
+      });
+      if (!relinked.size) return 0;
+      update(state => ({
+        ...state,
+        blocks: state.blocks.map(block => ({
+          ...block,
+          clipGrid: remapGrid(block.clipGrid),
+          ...(block.bankBClipGrid ? { bankBClipGrid: remapGrid(block.bankBClipGrid) } : {}),
+        })),
+        layerStates: remapLive(state.layerStates, state.clipGrid),
+        bankBLayerStates: remapLive(state.bankBLayerStates, state.bankBClipGrid),
+      }));
+      void live;
+      return relinked.size;
     },
 
     /**

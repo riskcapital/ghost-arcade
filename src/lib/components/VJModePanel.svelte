@@ -47,6 +47,8 @@
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { showLoading } from '../stores/loading';
   import { showToast } from '../stores/errorToast';
+  import { missingClipFiles, checkClipFiles, searchFolderForFiles, chooseReplacementFile } from '../stores/missingMedia';
+  import { clipFilePath, clipFilePaths, fileNameOf, matchFoundFiles } from '../vj/clipFiles';
   import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
   import SynthVision from './SynthVision.svelte';
   import VJAudioBar from './VJAudioBar.svelte';
@@ -2404,6 +2406,8 @@
 
   function handleCellDragOver(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
+    // A row is being moved: the whole row is the drop target, cells included.
+    if (draggedLayerIndex !== null) return;
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = e.dataTransfer.files.length > 0 ? 'copy' : (dragSourceCell ? 'move' : 'copy');
     }
@@ -2609,6 +2613,7 @@
 
   function handleCellDrop(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
+    if (draggedLayerIndex !== null) return; // handled by the row
     e.stopPropagation();
     dragOverCell = null;
 
@@ -3125,12 +3130,117 @@
     dragOverBlockIndex = null;
   }
 
+  // ---- Fill a row by dragging a clip's corner ----
+  // Like a spreadsheet's fill handle: drag either bottom corner of a clip
+  // sideways and every column the drag passes gets that clip.
+  let fillDrag: { layer: number; column: number; bank: VJDeck; to: number } | null = null;
+  function handleFillPointerDown(e: PointerEvent, layer: number, column: number, bank: VJDeck) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    fillDrag = { layer, column, bank, to: column };
+    // Followed on the window so the drag keeps working off the handle.
+    window.addEventListener('pointermove', handleFillPointerMove);
+    window.addEventListener('pointerup', handleFillPointerUp, { once: true });
+    window.addEventListener('pointercancel', handleFillPointerUp, { once: true });
+  }
+  function handleFillPointerMove(e: PointerEvent) {
+    if (!fillDrag) return;
+    // Any cell in the pointer's column counts, so the drag need not stay on the row.
+    const cell = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest<HTMLElement>('.clip-cell');
+    if (!cell || cell.dataset.bank !== fillDrag.bank) return;
+    const column = Number(cell.dataset.column);
+    if (Number.isInteger(column) && column !== fillDrag.to) fillDrag = { ...fillDrag, to: column };
+  }
+  function handleFillPointerUp(e: PointerEvent) {
+    const drag = fillDrag;
+    fillDrag = null;
+    window.removeEventListener('pointermove', handleFillPointerMove);
+    window.removeEventListener('pointerup', handleFillPointerUp);
+    window.removeEventListener('pointercancel', handleFillPointerUp);
+    if (!drag || e.type === 'pointercancel' || drag.to === drag.column) return;
+    vjClipLauncher.fillClipAcross(drag.layer, drag.column, drag.to, drag.bank);
+  }
+  function inFillRange(layer: number, column: number, bank: VJDeck, drag: typeof fillDrag): boolean {
+    if (!drag || drag.layer !== layer || drag.bank !== bank || column === drag.column) return false;
+    return column >= Math.min(drag.column, drag.to) && column <= Math.max(drag.column, drag.to);
+  }
+
+  // ---- Clips whose file has gone ----
+  // Files get moved, renamed or unplugged while a show is open. Every few
+  // seconds the deck asks which of its clip files are still there, marks the
+  // clips that lost theirs and clears the mark when the file is back.
+  const MISSING_FILE_CHECK_MS = 4000;
+  let locatingFiles = false;
+  const deckClipFiles = () => {
+    const state = get(vjClipLauncher);
+    return clipFilePaths([state.clipGrid, state.bankBClipGrid]);
+  };
+  const refreshMissingFiles = () => checkClipFiles(deckClipFiles());
+  onMount(() => {
+    void refreshMissingFiles();
+    const timer = setInterval(() => void refreshMissingFiles(), MISSING_FILE_CHECK_MS);
+    return () => clearInterval(timer);
+  });
+  function clipFileMissing(clip: VJClip | null | undefined, missing: Set<string>): boolean {
+    if (!clip || !missing.size) return false;
+    const filePath = clipFilePath(clip);
+    return !!filePath && missing.has(filePath);
+  }
+  $: missingClipCount = $missingClipFiles.size === 0 ? 0
+    : [$vjClipLauncher.clipGrid, $vjClipLauncher.bankBClipGrid]
+        .reduce((n, grid) => n + grid.reduce((m, row) => m + row.filter(c => clipFileMissing(c, $missingClipFiles)).length, 0), 0);
+
+  /** Pick a folder; every missing clip whose file name is in it is relinked. */
+  async function searchFolderForMissingClips() {
+    if (locatingFiles) return;
+    locatingFiles = true;
+    cellContextMenu = null;
+    try {
+      const missing = [...await refreshMissingFiles()];
+      if (!missing.length) { showToast('Every clip file is in place.', 'info'); return; }
+      const result = await searchFolderForFiles(missing.map(fileNameOf));
+      if (result.canceled) return;
+      const moves = matchFoundFiles(missing, result.found);
+      const found = Object.keys(moves).length;
+      if (!found) { showToast('None of the missing files are in that folder.', 'warning'); return; }
+      const clips = vjClipLauncher.relinkClipFiles(moves);
+      const left = (await refreshMissingFiles()).size;
+      showToast(`Found ${found} file${found === 1 ? '' : 's'} and relinked ${clips} clip${clips === 1 ? '' : 's'}.${left ? ` ${left} still missing.` : ''} Save the project to keep this.`, left ? 'warning' : 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not search that folder.', 'error');
+    } finally {
+      locatingFiles = false;
+    }
+  }
+  /** Pick the replacement for one clip's file. Other clips on that file follow. */
+  async function chooseFileForClip(clip: VJClip | null | undefined) {
+    const from = clipFilePath(clip);
+    cellContextMenu = null;
+    if (!clip || !from || locatingFiles) return;
+    locatingFiles = true;
+    try {
+      const to = await chooseReplacementFile(fileNameOf(from));
+      if (!to) return;
+      const clips = vjClipLauncher.relinkClipFiles({ [from]: to });
+      await refreshMissingFiles();
+      showToast(`Relinked ${clips} clip${clips === 1 ? '' : 's'} to ${fileNameOf(to)}. Save the project to keep this.`, 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not use that file.', 'error');
+    } finally {
+      locatingFiles = false;
+    }
+  }
+
   // Layer drag handlers for reordering
   function handleLayerDragStart(layerIndex: number, e: DragEvent) {
     draggedLayerIndex = layerIndex;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', layerIndex.toString());
+      // Show the whole row moving, not just the handle.
+      const row = (e.currentTarget as HTMLElement | null)?.closest('.layer-row');
+      try { if (row) e.dataTransfer.setDragImage(row, 20, 20); } catch { /* the default drag image is fine */ }
     }
   }
 
@@ -3141,8 +3251,9 @@
 
   function handleLayerDragOver(layerIndex: number, e: DragEvent) {
     e.preventDefault();
-    if (draggedLayerIndex !== null && draggedLayerIndex !== layerIndex) {
-      dragOverLayerIndex = layerIndex;
+    if (draggedLayerIndex !== null) {
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      dragOverLayerIndex = draggedLayerIndex !== layerIndex ? layerIndex : null;
     }
   }
 
@@ -4948,7 +5059,8 @@
               class="layer-row"
               class:selected={isSelectedDeck && selectedLayerIndex === layerIdx}
               class:dragging={draggedLayerIndex === layerIdx}
-              class:drag-over={dragOverLayerIndex === layerIdx}
+              class:drag-over={dragOverLayerIndex === layerIdx && draggedLayerIndex !== null && draggedLayerIndex > layerIdx}
+              class:drag-over-below={dragOverLayerIndex === layerIdx && draggedLayerIndex !== null && draggedLayerIndex < layerIdx}
               ondragover={(e) => handleLayerDragOver(layerIdx, e)}
               ondragleave={handleLayerDragLeave}
               ondrop={(e) => handleLayerDrop(layerIdx, e, bank)}
@@ -4958,8 +5070,10 @@
                 draggable="true"
                 ondragstart={(e) => handleLayerDragStart(layerIdx, e)}
                 ondragend={handleLayerDragEnd}
-                title="Drag to reorder layer"
+                title="Drag to move layer {layerIdx + 1} up or down"
               >
+                <span class="layer-grip" aria-hidden="true">⠿</span>
+                <span class="layer-number" aria-hidden="true">{layerIdx + 1}</span>
                 {#if activeClip}
                   {#if activeClip.thumbnail}
                     <img src={activeClip.thumbnail} alt={activeClip.name} class="live-preview-thumb" />
@@ -5051,8 +5165,14 @@
                 {@const isPresetActive = clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
                 {@const isQueued = $vjClipLauncher.pendingTriggers.some(p => p.layerIndex === layerIdx && p.columnIndex === colIdx && p.bank === bank)}
                 {@const isClipFirable = clip == null || (clip.type === 'preset' ? $vjClipLauncher.mapMode : !$vjClipLauncher.mapMode)}
+                {@const isFileMissing = clipFileMissing(clip, $missingClipFiles)}
                 <div
                   class="clip-cell"
+                  class:file-missing={isFileMissing}
+                  class:fill-target={inFillRange(layerIdx, colIdx, bank, fillDrag)}
+                  class:fill-source={fillDrag?.layer === layerIdx && fillDrag?.column === colIdx && fillDrag?.bank === bank}
+                  data-column={colIdx}
+                  data-bank={bank}
                   class:has-clip={clip != null}
                   class:active={isActive || isPresetActive}
                   class:queued={isQueued}
@@ -5065,7 +5185,7 @@
                   onpointerup={(e) => clip && isClipFirable && handleCellPointerUp(e, layerIdx, colIdx, bank)}
                   onpointercancel={handleCellPointerCancel}
                   onkeydown={(e) => clip && isClipFirable && handleCellKeyDown(e, layerIdx, colIdx, bank)}
-                  ondragstart={(e) => clip && handleClipCellDragStart(e, layerIdx, colIdx, bank)}
+                  ondragstart={(e) => { if (fillDrag) { e.preventDefault(); return; } if (clip) handleClipCellDragStart(e, layerIdx, colIdx, bank); }}
                   ondragend={handleDragEnd}
                   ondragenter={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
                   ondragover={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
@@ -5088,6 +5208,24 @@
                         </div>
                       {/if}
                       <span class="clip-name">{clip.name}</span>
+                      {#if isFileMissing}
+                        <button
+                          class="missing-badge"
+                          aria-label="File not found for {clip.name}. Locate it."
+                          title={`File not found:\n${clipFilePath(clip)}\nClick to locate it.`}
+                          onpointerdown={(e) => e.stopPropagation()}
+                          onclick={(e) => { e.stopPropagation(); cellContextMenu = { x: e.clientX, y: e.clientY, layer: layerIdx, column: colIdx, bank }; }}
+                        >?</button>
+                      {/if}
+                      {#each ['left', 'right'] as side}
+                        <span
+                          class="fill-handle {side}"
+                          draggable="false"
+                          title="Drag sideways to fill the row with this clip"
+                          onpointerdown={(e) => handleFillPointerDown(e, layerIdx, colIdx, bank)}
+                          onclick={(e) => e.stopPropagation()}
+                        ></span>
+                      {/each}
                       <button
                         class="clear-btn"
                         onclick={(e) => handleClearClip(layerIdx, colIdx, e, bank)}
@@ -5104,6 +5242,15 @@
             </div>
           {/each}
         {/snippet}
+
+        {#if missingClipCount > 0}
+          <div class="missing-files-bar" role="status">
+            <span class="missing-files-mark" aria-hidden="true">?</span>
+            <span class="missing-files-text">{missingClipCount} clip{missingClipCount === 1 ? '' : 's'} can't find {missingClipCount === 1 ? 'its' : 'their'} file. Moved or renamed?</span>
+            <button disabled={locatingFiles} onclick={searchFolderForMissingClips}>Search a folder…</button>
+            <button disabled={locatingFiles} onclick={() => void refreshMissingFiles()}>Check again</button>
+          </div>
+        {/if}
 
         <!-- Render single deck or dual decks based on crossfader state -->
         {#if $vjClipLauncher.crossfaderEnabled}
@@ -5269,6 +5416,12 @@
         {@const ctxClip = deckGrid(cellContextMenu.bank)[cellContextMenu.layer]?.[cellContextMenu.column]}
         <div class="ctx-backdrop" onclick={closeCellContextMenu}></div>
         <div class="ctx-menu" style="left:{cellContextMenu.x}px;top:{cellContextMenu.y}px">
+          {#if clipFileMissing(ctxClip, $missingClipFiles)}
+            <div class="ctx-item ctx-disabled ctx-note" title={clipFilePath(ctxClip) ?? ''}>File not found</div>
+            <button class="ctx-item" disabled={locatingFiles} onclick={searchFolderForMissingClips}>Search a folder…</button>
+            <button class="ctx-item" disabled={locatingFiles} onclick={() => chooseFileForClip(ctxClip)}>Choose file…</button>
+            <button class="ctx-item" onclick={() => { cellContextMenu = null; void refreshMissingFiles(); }}>Check again</button>
+          {/if}
           {#if ctxClip}
             <button class="ctx-item" onclick={openClipPreview}>Edit / Preview</button>
             <button class="ctx-item" onclick={copyClipToClipboard}>Copy</button>
@@ -8771,6 +8924,117 @@
     opacity: 0.5;
     background: var(--bg-primary, #0d0d10);
   }
+
+  /* Moving a row down: it lands after the row under the pointer. */
+  .layer-row.drag-over-below {
+    border-bottom: 2px solid var(--accent-primary, #BB86FC);
+    margin-bottom: -2px;
+  }
+  .layer-grip,
+  .layer-number {
+    position: absolute;
+    z-index: 2;
+    font-size: 10px;
+    line-height: 1;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 3px;
+    padding: 2px 3px;
+    pointer-events: none;
+  }
+  .layer-grip { top: 2px; left: 2px; opacity: 0.75; }
+  .layer-number { bottom: 2px; left: 2px; font-weight: 600; }
+  .layer-live-preview:hover .layer-grip { opacity: 1; background: var(--accent-primary, #BB86FC); color: #000; }
+
+  /* Corner handles for filling a row with a clip. */
+  .fill-handle {
+    position: absolute;
+    bottom: 0;
+    width: 12px;
+    height: 12px;
+    z-index: 4;
+    cursor: ew-resize;
+    opacity: 0;
+    background: var(--accent-primary, #BB86FC);
+    touch-action: none;
+  }
+  .fill-handle.left { left: 0; border-top-right-radius: 8px; }
+  .fill-handle.right { right: 0; border-top-left-radius: 8px; }
+  .clip-cell:hover .fill-handle,
+  .clip-cell.fill-source .fill-handle { opacity: 0.9; }
+  .clip-cell.fill-source { border-color: var(--accent-primary, #BB86FC); }
+  .clip-cell.fill-target {
+    border-color: var(--accent-primary, #BB86FC);
+    box-shadow: inset 0 0 0 2px var(--accent-primary, #BB86FC);
+    background: color-mix(in srgb, var(--accent-primary, #BB86FC) 18%, transparent);
+  }
+
+  /* A clip whose file is not on disk. */
+  .clip-cell.file-missing {
+    border-color: #ffb454;
+    border-style: dashed;
+  }
+  .clip-cell.file-missing .clip-thumb,
+  .clip-cell.file-missing .clip-placeholder {
+    opacity: 0.3;
+    filter: grayscale(1);
+  }
+  .missing-badge {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -60%);
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 2px solid #1a1206;
+    background: #ffb454;
+    color: #1a1206;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    z-index: 3;
+  }
+  .missing-badge:hover { background: #ffd08a; }
+  .missing-files-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 6px;
+    padding: 6px 8px;
+    border: 1px solid #ffb454;
+    border-radius: 6px;
+    background: rgba(255, 180, 84, 0.1);
+    color: #ffd9a3;
+    font-size: 12px;
+  }
+  .missing-files-mark {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ffb454;
+    color: #1a1206;
+    font-weight: 700;
+    text-align: center;
+    line-height: 18px;
+  }
+  .missing-files-text { flex: 1; min-width: 0; }
+  .missing-files-bar button {
+    flex: 0 0 auto;
+    border: 1px solid #ffb454;
+    background: transparent;
+    color: inherit;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .missing-files-bar button:hover:not(:disabled) { background: rgba(255, 180, 84, 0.2); }
+  .missing-files-bar button:disabled { opacity: 0.5; cursor: default; }
+  .ctx-note { font-size: 11px; color: #ffb454; }
 
   .layer-row.drag-over {
     border-top: 2px solid var(--accent-primary, #BB86FC);
