@@ -206,10 +206,11 @@
   // The row's playing clip changed. If it is now Performer's cell, the cell
   // was just fired from the deck: give it this panel's picture, treat that as
   // the first interaction (no title card over a live output), and resume.
-  $: if ((performerActiveClip?.id ?? '') !== lastActiveClipId) {
+  // Waits for the panel's canvas: before it exists there is nothing to hand the cell.
+  $: if (outputCanvas && (performerActiveClip?.id ?? '') !== lastActiveClipId) {
     const cameFrom = lastActiveClipId;
     lastActiveClipId = performerActiveClip?.id ?? '';
-    if (performerActiveClip?.type === 'synthvision' && performerActiveClip.id !== svClipId && outputCanvas) {
+    if (performerActiveClip?.type === 'synthvision' && performerActiveClip.id !== svClipId) {
       if (state?.showSplash) dismissSplash();
       ensureSVClipActive();
       if (lastLaunchedClip && cameFrom !== lastLaunchedClip.id) {
@@ -2133,8 +2134,16 @@ void main() {
   function initThree() {
     if (!threeCanvas) return;
     renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x000000, 0);
+    // One buffer pixel per output pixel. The canvas is already the size of the
+    // output; at a display's 2x ratio every line and point was drawn half as
+    // wide for the picture it ends up in, which read as faint, and cost four
+    // times the fill.
+    renderer.setPixelRatio(1);
+    // Opaque black, not transparent. Point and line worlds blend additively,
+    // which adds colour but leaves a transparent buffer's alpha at zero, and
+    // the compositor then treats those pixels as empty: whole worlds drew
+    // nothing. The 3D layer is added onto the picture, so black costs nothing.
+    renderer.setClearColor(0x000000, 1);
 
     // ACES Filmic tone-mapping — applied by OutputPass at the very
     // end of the chain. Gives HDR-feel colour depth on what was
@@ -2269,7 +2278,7 @@ void main() {
         bg.setAttribute('size', new T.BufferAttribute(sz, 1));
         const mat = new T.ShaderMaterial({
           uniforms: { uP: { value: 0 } },
-          vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/70.,.02,1.);gl_PointSize=size*(1.+uP*1.5)*(200./dl);gl_Position=projectionMatrix*mv;}`,
+          vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/70.,.02,1.);gl_PointSize=size*(1.+uP*1.5)*(820./dl);gl_Position=projectionMatrix*mv;}`,
           fragmentShader: `varying vec3 vc;varying float va;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;gl_FragColor=vec4(vc*(1.+.2*smoothstep(.5,.0,d)),smoothstep(.5,.05,d)*va);}`,
           transparent: true, blending: getBlend(), depthWrite: false, vertexColors: true
         });
@@ -2372,7 +2381,7 @@ void main() {
         bg.setAttribute('size', new T.BufferAttribute(sz, 1));
         const mat = new T.ShaderMaterial({
           uniforms: { uP: { value: 0 } },
-          vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/60.,.05,1.);gl_PointSize=size*(1.5+uP)*(180./dl);gl_Position=projectionMatrix*mv;}`,
+          vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/60.,.05,1.);gl_PointSize=size*(1.5+uP)*(740./dl);gl_Position=projectionMatrix*mv;}`,
           fragmentShader: `varying vec3 vc;varying float va;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;float a=smoothstep(.5,.1,d)*va;gl_FragColor=vec4(vc*(1.+.5*smoothstep(.3,.0,d)),a);}`,
           transparent: true, blending: getBlend(), depthWrite: false, vertexColors: true
         });
@@ -2410,7 +2419,7 @@ void main() {
         bg.setAttribute('size', new T.BufferAttribute(sz, 1));
         const mat = new T.ShaderMaterial({
           uniforms: { uP: { value: 0 } },
-          vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/80.,.02,1.);gl_PointSize=size*(1.+uP)*(160./dl);gl_Position=projectionMatrix*mv;}`,
+          vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/80.,.02,1.);gl_PointSize=size*(1.+uP)*(660./dl);gl_Position=projectionMatrix*mv;}`,
           fragmentShader: `varying vec3 vc;varying float va;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;gl_FragColor=vec4(vc,smoothstep(.5,.05,d)*va);}`,
           transparent: true, blending: getBlend(), depthWrite: false, vertexColors: true
         });
@@ -2515,7 +2524,7 @@ void main() {
         bg.setAttribute('size', new T.BufferAttribute(sz, 1));
         const mat = new T.ShaderMaterial({
           uniforms: { uP: { value: 0 } },
-          vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/70.,.02,1.);gl_PointSize=size*(1.+uP)*(180./dl);gl_Position=projectionMatrix*mv;}`,
+          vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/70.,.02,1.);gl_PointSize=size*(1.+uP)*(740./dl);gl_Position=projectionMatrix*mv;}`,
           fragmentShader: `varying vec3 vc;varying float va;void main(){float d=length(gl_PointCoord-.5);if(d>.45)discard;float tri=max(0.,1.-abs(gl_PointCoord.x-.5)*4.)*step(gl_PointCoord.y,.7);gl_FragColor=vec4(vc*(1.+tri*.3),smoothstep(.45,.05,d)*va);}`,
           transparent: true, blending: getBlend(), depthWrite: false, vertexColors: true
         });
@@ -2694,7 +2703,11 @@ void main() {
           // low → only outer leaves visible; high → full density.
           // wGlow controls baseline opacity headroom.
           const depthGate = Math.max(0, 1 - (m.userData.hu - wDepth * .9));
-          (m as any).material.opacity = (0.35 + wGlow * 0.7) * depthGate;
+          // Kept low: the boxes add onto each other, and at the old .35 to
+          // .75 a few hundred of them summed to a featureless white mass.
+          // At this level the overlaps build up in steps, so the cube
+          // structure shows.
+          (m as any).material.opacity = (0.035 + wGlow * 0.14) * depthGate;
         });
         break;
       }
@@ -3438,6 +3451,38 @@ void main() {
     compCtx.stroke();
   }
 
+  /**
+   * How each world is finished so it reads on a projector. Worlds made of
+   * single-pixel lines or small points carry little light: they are widened,
+   * given a halo and a little more exposure. Worlds built from hundreds of
+   * overlapping translucent solids add up to white on their own, so they get
+   * less exposure and nothing extra, which keeps their structure visible.
+   */
+  type WorldLook = { widen: boolean; halo: number; exposure: number };
+  const THIN_WORLD: WorldLook = { widen: true, halo: 0.9, exposure: 1.15 };
+  const WIRE_WORLD: WorldLook = { widen: true, halo: 0.4, exposure: 1.0 };
+  const DENSE_WORLD: WorldLook = { widen: false, halo: 0, exposure: 0.5 };
+  // PARTICLES, CUBES, FRACTAL, TERRAIN, NODES, FLUID, CRYSTAL, VORTEX, STARFIELD, ORGANISM, AURORA, DNA, SWARM, RINGS
+  const WORLD_LOOKS: WorldLook[] = [
+    THIN_WORLD, WIRE_WORLD, DENSE_WORLD, WIRE_WORLD, { ...WIRE_WORLD, exposure: 0.75 }, THIN_WORLD, DENSE_WORLD,
+    THIN_WORLD, THIN_WORLD, WIRE_WORLD, THIN_WORLD, THIN_WORLD, THIN_WORLD, DENSE_WORLD,
+  ];
+  const worldLook = (index: number): WorldLook => WORLD_LOOKS[index] ?? WIRE_WORLD;
+
+  let worldLayerCanvas: HTMLCanvasElement | null = null;
+  /** The 3D layer with thin lines and points widened (see the compositing step). */
+  function widenedWorldLayer(w: number, h: number): HTMLCanvasElement {
+    if (!worldLayerCanvas) worldLayerCanvas = document.createElement('canvas');
+    if (worldLayerCanvas.width !== w || worldLayerCanvas.height !== h) { worldLayerCanvas.width = w; worldLayerCanvas.height = h; }
+    const ctx = worldLayerCanvas.getContext('2d')!;
+    ctx.globalCompositeOperation = 'copy';
+    ctx.drawImage(threeCanvas, 0, 0, w, h);
+    ctx.globalCompositeOperation = 'lighten';
+    const d = 1.5;
+    for (const [dx, dy] of [[d, 0], [-d, 0], [0, d], [0, -d]]) ctx.drawImage(threeCanvas, dx, dy, w, h);
+    return worldLayerCanvas;
+  }
+
   function dismissSplash() {
     synthVisionStore.update(s => ({ ...s, showSplash: false }));
   }
@@ -3637,6 +3682,7 @@ void main() {
     // post chain (bloom + ACES tone map) when composer is up;
     // falls back to direct render if anything in initThree failed.
     if (worldsEnabled && renderer && scene && camera) {
+      renderer.toneMappingExposure = worldLook(currentWorldIdx).exposure;
       if (composer) {
         composer.render();
       } else {
@@ -3693,8 +3739,17 @@ void main() {
       compCtx.drawImage(shaderCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
       // Use additive blending for 3D layer (skip if worlds disabled)
       if (worldsEnabled) {
+        // Thin worlds are widened and given a halo so they read from across a
+        // room; dense ones are left as drawn (see WORLD_LOOKS).
+        const look = worldLook(currentWorldIdx);
+        const layer = look.widen ? widenedWorldLayer(outputCanvas.width, outputCanvas.height) : threeCanvas;
         compCtx.globalCompositeOperation = 'lighter';
-        compCtx.drawImage(threeCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+        compCtx.drawImage(layer, 0, 0, outputCanvas.width, outputCanvas.height);
+        if (look.halo > 0) {
+          compCtx.filter = `blur(4px) brightness(${look.halo})`;
+          compCtx.drawImage(layer, 0, 0, outputCanvas.width, outputCanvas.height);
+          compCtx.filter = 'none';
+        }
         compCtx.globalCompositeOperation = 'source-over';
       }
 
@@ -3956,7 +4011,7 @@ void main() {
 
   /** Performer's own picture as a clip. It is launched onto the row, never stored in a cell. */
   function performerPictureClip(): VJClip {
-    return { id: svClipId, type: 'synthvision', name: 'Performer', src: 'performer', synthVisionCanvas: outputCanvas, _performerOwned: true };
+    return { id: svClipId, type: 'synthvision', name: 'Performer', src: '', synthVisionCanvas: outputCanvas, _performerOwned: true };
   }
 
   /** Make sure Performer's picture is what its row is playing. The cell the

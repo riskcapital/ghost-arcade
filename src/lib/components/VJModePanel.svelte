@@ -2499,7 +2499,9 @@
     if (payload.type === 'synthvision') {
       // Performer clip: firing the cell opens the keyboard overlay bound to
       // that row. Its effects live on the clip, not on the row.
-      return { id: generateUUID(), type: 'synthvision', name: payload.name || 'Performer', src: 'performer', effects: [] };
+      // Its src is empty: that is how the renderer tells Performer's canvas
+      // from a three.js page.
+      return { id: generateUUID(), type: 'synthvision', name: payload.name || 'Performer', src: '', effects: [] };
     }
     if (payload.type === 'gpu') {
       const gpuLayerContent = createDefaultGPULayerContent();
@@ -2800,7 +2802,7 @@
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
     } else if (draggedClip.type === 'synthvision') {
       // Performer goes in a cell like any other plugin; firing it opens the overlay.
-      vjClipLauncher.setClip(layerIndex, columnIndex, { id: generateUUID(), type: 'synthvision', name: 'Performer', src: 'performer', effects: [] }, bank);
+      vjClipLauncher.setClip(layerIndex, columnIndex, { id: generateUUID(), type: 'synthvision', name: 'Performer', src: '', effects: [] }, bank);
     } else if (draggedClip.type === 'gpu') {
       const gpuLayerContent = createDefaultGPULayerContent();
       const shaderDef = getShaderDef(gpuLayerContent.shaderId);
@@ -3525,7 +3527,8 @@
              "STOP ALL" pill ate ~110px of header real estate; this icon
              button is 32px and uses the same visual vocabulary so users
              trained on mapping mode recognize it immediately. -->
-        <button class="kill-output-btn" onclick={handleStopAll}
+        <button class="kill-output-btn" class:engaged={$vjClipLauncher.stoppedAll} onclick={handleStopAll}
+          aria-pressed={$vjClipLauncher.stoppedAll}
           data-midi-path="vj:stopall"
           data-midi-label="Stop All"
           data-midi-mode="toggle"
@@ -6585,6 +6588,20 @@
     color: #ff5555;
     cursor: pointer;
     transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+  }
+  /* Everything is stopped: the button pulses until a clip is fired again. */
+  .kill-output-btn.engaged {
+    background: rgba(255, 51, 51, 0.85);
+    border-color: #ff5a5a;
+    color: #fff;
+    animation: kill-output-pulse 1s ease-in-out infinite;
+  }
+  @keyframes kill-output-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 51, 51, 0.7); opacity: 1; }
+    50% { box-shadow: 0 0 0 6px rgba(255, 51, 51, 0); opacity: 0.6; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .kill-output-btn.engaged { animation: none; }
   }
   .kill-output-btn:hover {
     background: rgba(255, 51, 51, 0.25);
