@@ -321,6 +321,11 @@ impl ClipAudio {
         }}; }
         let output = match config.sample_format() {
             cpal::SampleFormat::F32 => stream!(f32), cpal::SampleFormat::I16 => stream!(i16), cpal::SampleFormat::U16 => stream!(u16),
+            // Interfaces that present 24 or 32 bit integer output (common on
+            // Windows with a dedicated sound card) used to get no stream at all.
+            cpal::SampleFormat::I32 => stream!(i32), cpal::SampleFormat::I24 => stream!(cpal::I24), cpal::SampleFormat::I8 => stream!(i8),
+            cpal::SampleFormat::I64 => stream!(i64), cpal::SampleFormat::U8 => stream!(u8), cpal::SampleFormat::U32 => stream!(u32),
+            cpal::SampleFormat::U64 => stream!(u64), cpal::SampleFormat::F64 => stream!(f64),
             format => return Err(format!("Unsupported audio output format: {format:?}")),
         }.map_err(|e| e.to_string())?;
         self.spawn_mixer();
@@ -547,6 +552,18 @@ impl Drop for ClipAudio {
         assert_eq!(transport_time(6.5, 2.0, 6.0, true, true), Some(5.5));
         assert_eq!(transport_time(6.5, 2.0, 6.0, false, false), None);
         assert_eq!(balance(0.0), (1.0, 1.0)); assert_eq!(balance(1.0), (0.0, 1.0));
+    }
+    #[test] fn output_is_written_for_integer_devices_too() {
+        // A 32 bit integer device gets full-scale samples, not silence.
+        let (ring, tap, under) = (Ring::new(), Tap::new(), AtomicU64::new(0));
+        ring.push(0.5, -0.5);
+        let mut wide = [0_i32; 2];
+        render_output(&mut wide, 2, &ring, &tap, &mut TapResampler::default(), 48000, &under);
+        assert!((wide[0] as f64 / i32::MAX as f64 - 0.5).abs() < 1e-3 && (wide[1] as f64 / i32::MAX as f64 + 0.5).abs() < 1e-3);
+        ring.push(1.0, 0.0);
+        let mut bytes = [0_u8; 2];
+        render_output(&mut bytes, 2, &ring, &tap, &mut TapResampler::default(), 48000, &under);
+        assert!(bytes[0] >= 254 && (bytes[1] as i32 - 128).abs() <= 1);
     }
     #[test] fn ring_is_ordered_and_nonblocking() {
         let ring = Ring::new(); assert_eq!(ring.pop(), None);
