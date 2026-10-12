@@ -17,13 +17,13 @@
 <div class="welcome-overlay">
   <div class="welcome-panel">
     <div class="welcome-logo">
-      <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="logo-img" />
+      <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="logo-img" />
     </div>
     <h1 class="welcome-title">Welcome to Ghost Arcade</h1>
     <p class="welcome-subtitle">Open-source projection mapping &amp; VJ software</p>
 
     <div class="welcome-actions">
-      <button class="welcome-btn primary" onclick={getStarted}>
+      <button class="welcome-btn primary primary-btn" onclick={getStarted}>
         Get started
       </button>
       <button class="welcome-btn outline" onclick={openGitHub}>
@@ -103,9 +103,8 @@
     transition: all 0.15s;
   }
 
+  /* Colours come from the theme's primary button (studio-skin.css). */
   .welcome-btn.primary {
-    background: linear-gradient(135deg, #e74c6f, #c2185b);
-    color: #fff;
     border: none;
   }
 

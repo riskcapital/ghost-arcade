@@ -7511,6 +7511,10 @@
   }
 
   /* 1: tighter spacing. */
+  /* While fitToolbar measures the bar at full size, nothing animates. */
+  .toolbar:global(.tb-measuring) :global(*) {
+    transition: none !important;
+  }
   .toolbar:global(.tb-compact-1) {
     padding: 0 10px !important;
     gap: 6px !important;
