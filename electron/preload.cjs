@@ -162,7 +162,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       // webUtils.getPathForFile is the official Electron 32+ replacement
       // for File.path. It accepts a Web File object and returns the
       // absolute path on disk. Throws if not a real File from the OS.
-      return webUtils.getPathForFile(file) || '';
+      const filePath = webUtils.getPathForFile(file) || '';
+      // Tell the main process the user handed this file over, so it can be
+      // read back through ghost-asset:// and a picked project can be saved.
+      if (filePath) {
+        try { ipcRenderer.sendSync('path_grant_picked_file', filePath); } catch { /* the path is still valid */ }
+      }
+      return filePath;
     } catch {
       return '';
     }
@@ -276,6 +282,22 @@ contextBridge.exposeInMainWorld('ghostMCP', {
   respond: ({ callId, result, error }) =>
     ipcRenderer.send('mcp-tool-result', { callId, result, error }),
 });
+
+// After an update from a version that kept no file grants, hand the media
+// paths that version remembered (autosave, saved decks) to the main process
+// once, before the page asks for any of them. Main ignores this on every
+// later launch and from any window but the editor.
+try {
+  const isHelperWindow = typeof window !== 'undefined' && /[?&]mode=/.test(window.location.search);
+  if (!isHelperWindow && typeof localStorage !== 'undefined') {
+    const items = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const value = localStorage.getItem(localStorage.key(i));
+      if (value && (value[0] === '{' || value[0] === '[')) items.push(value);
+    }
+    if (items.length) ipcRenderer.sendSync('path_grant_restore', items);
+  }
+} catch { /* storage not ready: media can be relinked from the deck */ }
 
 // Art-Net / sACN DMX input. Off until start() is called.
 contextBridge.exposeInMainWorld('ghostDMX', {

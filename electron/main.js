@@ -48,6 +48,19 @@ const { createPjlinkClient } = require('./pjlink.cjs');
 const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
 const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
 const pjlinkClient = createPjlinkClient({ credentials: pjlinkCredentials });
+// The disk paths the renderer may write, copy to, or read back through
+// ghost-asset:// (see electron/path-grants.cjs).
+const pathGrantsStorePath = path.join(app.getPath('userData'), 'path-grants.json');
+// No store yet means a first launch or an update from a version without
+// grants. Paths the previous version remembered (the autosave, the media
+// library) may be handed over once; see path_grant_restore.
+let pathGrantsFirstRun = !fs.existsSync(pathGrantsStorePath);
+const pathGrants = require('./path-grants.cjs').createPathGrants({
+  assetDirs: [path.join(app.getPath('userData'), 'project-assets')],
+  storePath: pathGrantsStorePath,
+});
+const PATH_NOT_ALLOWED = { success: false, code: 'path-not-allowed', error: 'That location was not chosen in a file dialog, so the app will not write there.' };
+app.on('will-quit', () => pathGrants.flush());
 
 // ─── MCP server (AI clients operating the app) ──────────────────────
 // The protocol and its auth live in mcp-server.cjs. This is lifecycle plus
@@ -2833,8 +2846,39 @@ function registerIpcHandlers() {
 
   // --- Clip files that have moved ---
   // Which of these media files are still on disk.
-  ipcMain.handle('media_files_status', async (_, args) => mediaLocate.mediaFilesStatus(args?.paths));
-  // Ask for a folder and look inside it for files with these names.
+  // Which of these media files are still on disk. Only paths the renderer
+  // may already read are answered, so this cannot be used to probe the disk.
+  ipcMain.handle('media_files_status', async (_, args) => {
+    const paths = (Array.isArray(args?.paths) ? args.paths : []).filter((p) => pathGrants.canRead(p));
+    return mediaLocate.mediaFilesStatus(paths);
+  });
+  // A path from preload's getPathForFile (a file the user picked or dropped).
+  // Not in the renderer's command allowlist: page content cannot send it.
+  // Synchronous so the grant exists before the page asks ghost-asset:// for it.
+  ipcMain.on('path_grant_picked_file', (event, filePath) => {
+    try { pathGrants.registerPickedFile(filePath); } catch { /* not a usable path */ }
+    event.returnValue = true;
+  });
+  // One-time hand-over after an update from a version without grants: the
+  // media that version's autosave and saved decks refer to stays readable.
+  // Media file types only, the editor window only, and only on the first
+  // launch that has no grant store yet.
+  ipcMain.on('path_grant_restore', (event, items) => {
+    let restored = 0;
+    try {
+      if (pathGrantsFirstRun && event.sender === mainWindow?.webContents) {
+        pathGrantsFirstRun = false;
+        for (const item of Array.isArray(items) ? items.slice(0, 256) : []) {
+          if (typeof item !== 'string') continue;
+          try { restored += pathGrants.registerProjectData(JSON.parse(item)); } catch { /* not project data */ }
+        }
+        pathGrants.flush();
+      }
+    } catch { /* the app still starts; media can be relinked */ }
+    event.returnValue = restored;
+  });
+  // Ask for a folder and look inside it for files with these names. The
+  // files found become readable; the folder itself does not.
   ipcMain.handle('media_find_in_folder', async (_, args) => {
     const win = mainWindow || BrowserWindow.getFocusedWindow();
     if (!win) return { canceled: true, dir: null, found: {} };
@@ -2843,7 +2887,9 @@ function registerIpcHandlers() {
       properties: ['openDirectory'],
     });
     if (result.canceled || !result.filePaths[0]) return { canceled: true, dir: null, found: {} };
-    return { canceled: false, dir: result.filePaths[0], found: await mediaLocate.findMediaInFolder(result.filePaths[0], args?.names) };
+    const found = await mediaLocate.findMediaInFolder(result.filePaths[0], args?.names);
+    for (const file of Object.values(found)) pathGrants.registerPickedFile(file);
+    return { canceled: false, dir: result.filePaths[0], found };
   });
 
   // --- LAN remote pairing ---
@@ -4080,6 +4126,7 @@ function registerIpcHandlers() {
             { name: 'All Files', extensions: ['*'] },
           ],
     });
+    if (!result.canceled && result.filePath) pathGrants.allowWriteFile(result.filePath);
     return { canceled: result.canceled, filePath: result.filePath || null };
   });
 
@@ -4101,6 +4148,7 @@ function registerIpcHandlers() {
           ],
     });
     if (result.canceled || !result.filePaths[0]) return { canceled: true, filePath: null };
+    pathGrants.registerPickedFile(result.filePaths[0]);
     return { canceled: false, filePath: result.filePaths[0] };
   });
 
@@ -4116,6 +4164,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
       fs.writeFileSync(normalized, content, 'utf8');
       return { success: true };
     } catch (err) {
@@ -4476,6 +4525,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const dirPath = result.filePaths[0];
+    pathGrants.allowWriteDir(dirPath);
     const dirName = path.basename(dirPath);
     return { path: dirPath, name: dirName };
   });
@@ -4748,6 +4798,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const filePath = result.filePaths[0];
+    pathGrants.allowRead(filePath);
     const stat = fs.statSync(filePath);
     const base = sanitizeOutputBase(path.basename(filePath));
     return {
@@ -4765,6 +4816,7 @@ function registerIpcHandlers() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const sequence = listImageSequenceFrames(result.filePaths[0]);
+    pathGrants.allowReadDir(sequence.folder);
     const base = sanitizeOutputBase(path.basename(sequence.folder), 'image-sequence');
     return {
       path: sequence.folder,
@@ -4788,7 +4840,9 @@ function registerIpcHandlers() {
       ],
     });
     if (result.canceled || !result.filePath) return null;
-    return { path: result.filePath.toLowerCase().endsWith('.mp4') ? result.filePath : `${result.filePath}.mp4` };
+    const chosen = result.filePath.toLowerCase().endsWith('.mp4') ? result.filePath : `${result.filePath}.mp4`;
+    pathGrants.allowWriteFile(chosen);
+    return { path: chosen };
   });
 
   ipcMain.handle('video_converter_reveal_path', async (_, args = {}) => {
@@ -4928,6 +4982,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
       const buf = Buffer.from(base64Data, 'base64');
       if (buf.length === 0 && base64Data.length > 0) {
         return { success: false, error: 'base64 decode produced empty buffer (invalid encoding)' };
@@ -4952,6 +5007,7 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
       }
+      if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
 
       let buffer;
       if (Buffer.isBuffer(bytes)) {
@@ -4996,6 +5052,10 @@ function registerIpcHandlers() {
       if (!path.isAbsolute(normDest) || normDest.includes('..')) {
         return { success: false, error: 'destPath must be absolute (no traversal)' };
       }
+      if (!pathGrants.canRead(normSrc)) {
+        return { success: false, code: 'path-not-allowed', error: 'The source file is not one the app was given.' };
+      }
+      if (!pathGrants.canWrite(normDest)) return PATH_NOT_ALLOWED;
       // Same-file no-op — common when the project sits in the same dir as the
       // original media (Save in place to a project folder of curated assets).
       try {
@@ -5030,6 +5090,8 @@ function registerIpcHandlers() {
       throw new Error('File not found');
     }
     const content = fs.readFileSync(filePath, 'utf-8');
+    // Save writes back to this file, and its media loads through ghost-asset://.
+    pathGrants.registerProjectFile(filePath, content);
     return { content, dir: path.dirname(filePath) };
   });
 
@@ -5903,6 +5965,9 @@ app.whenReady().then(async () => {
       const normalized = path.normalize(p);
       if (!path.isAbsolute(normalized) || normalized.includes('..')) {
         return addCorsHeaders(new Response('Bad path', { status: 400 }));
+      }
+      if (!pathGrants.canRead(normalized)) {
+        return addCorsHeaders(new Response('Forbidden', { status: 403 }));
       }
       if (!fs.existsSync(normalized)) {
         return addCorsHeaders(new Response('Not found', { status: 404 }));
