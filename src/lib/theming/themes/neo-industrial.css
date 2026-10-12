@@ -1,0 +1,110 @@
+/* Neo Industrial — opt-in chrome only. No canvas filters, animated grain,
+   blend changes, global opacity, fixed dimensions or pointer overlays. */
+html[data-theme="neo-industrial"] {
+  color-scheme: dark;
+  /* The shared skin has both numbered token spellings. */
+  --ga-ink-0: var(--ga-ink0);
+  --ga-ink-1: var(--ga-ink1);
+  --ga-ink-2: var(--ga-ink2);
+  --ga-ink-3: var(--ga-ink3);
+  --ga-line-2: var(--ga-line2);
+  --ga-line-3: var(--ga-line3);
+  --ga-selection-bg: #38271c;
+  --ga-selection-line: #b5683a;
+  --ga-selection-ink: #ffd8ba;
+  --ga-focus: #ffb17f;
+  --ga-font-ui-weight: 450;
+  --ga-font-ui-weight-strong: 650;
+}
+
+html[data-theme="neo-industrial"] body {
+  --ga-slider-fill: #4565dc;
+  --ga-slider-glow: transparent;
+}
+
+html[data-theme="neo-industrial"] :is(.toolbar, .vj-header) {
+  background: var(--ga-bar) !important;
+  border-bottom: 1px solid var(--ga-line3) !important;
+  box-shadow: inset 0 2px 0 #e78648 !important;
+}
+
+html[data-theme="neo-industrial"] :is(.layer-panel, .media-library, .effects-panel-vj, .right-panel-vj, .settings-panel, .settings-sidebar, .shader-params-panel, .effects-panel-content) {
+  background: var(--ga-panel) !important;
+  border-color: var(--ga-line2) !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="neo-industrial"] :is(.panel-header, .library-header, .shader-params-panel-header, .effects-header) {
+  background: var(--ga-bar) !important;
+  border-bottom: 1px solid var(--ga-line2) !important;
+  /* Quiet engraved rule; decoration stays inside header chrome. */
+  box-shadow: inset 3px 0 0 #75806e !important;
+}
+
+html[data-theme="neo-industrial"] :is(.panel-header h3, .library-title, .shader-params-panel-header, .effects-header h3, .property-section-title, .section-title, .eyebrow) {
+  font-family: var(--ga-font-mono) !important;
+  font-size: var(--ga-type-caption, 11px) !important;
+  font-weight: 600 !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase;
+  color: var(--ga-ink1) !important;
+  text-shadow: none !important;
+}
+
+html[data-theme="neo-industrial"] :is(.layer-item, .effect-item, .effect-card, .shader-params-panel, .media-properties, .block-tab, .layer-controls) {
+  border-radius: 3px !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="neo-industrial"] :is(.layer-item.selected, .layer-item.active, .layer-item.multi-selected) {
+  background: #2b2e26 !important;
+  border-color: #b5683a !important;
+}
+html[data-theme="neo-industrial"] :is(.layer-item.selected, .layer-item.active, .layer-item.multi-selected)::before {
+  background: #ff975a !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="neo-industrial"] :is(.fx-tab, .library-tab, .sidebar-section, .block-tab, .stage-scope-toggle) {
+  border-radius: 2px !important;
+  font-weight: 600 !important;
+  text-shadow: none !important;
+}
+html[data-theme="neo-industrial"] :is(.fx-tab.active, .library-tab.active, .sidebar-section.active, .block-tab.active, .stage-scope-toggle.active) {
+  color: #ffd8ba !important;
+  background: #38271c !important;
+  border-color: #b5683a !important;
+  box-shadow: inset 0 -2px 0 #ff975a !important;
+}
+
+/* Primary action is solid and legible, never a flashing hazard stripe.
+   Record, blackout, mute and live-state buttons keep their semantic styles. */
+html[data-theme="neo-industrial"] :is(.vj-btn, .primary-btn, .btn-save, .apply-stage-btn, .library-load-btn) {
+  background: #ff975a !important;
+  color: #171b15 !important;
+  border-color: #ffb17f !important;
+  border-radius: 2px !important;
+  text-shadow: none !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="neo-industrial"] :is(.gpu-indicator, .status-bar, .statusbar) {
+  font-family: var(--ga-font-mono) !important;
+  color: var(--ga-ink1) !important;
+  background: var(--ga-bar) !important;
+  text-shadow: none !important;
+}
+html[data-theme="neo-industrial"] :is(button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid #ffb17f !important;
+  outline-offset: 2px;
+}
+
+html[data-theme="neo-industrial"] :is(.theme-template-card, .theme-preview, .theme-panel, .theme-card) {
+  border-radius: 3px !important;
+}
+html[data-theme="neo-industrial"] .theme-template-card.active {
+  border-color: #ff975a !important;
+}
+html[data-theme="neo-industrial"] .theme-card i {
+  box-shadow: none !important;
+}

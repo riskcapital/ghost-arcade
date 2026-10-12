@@ -1,0 +1,46 @@
+/* The one blue. Every blue in the mobile app is a step of the desktop's deep blue (--ga-blue,
+   the Arcade theme's `blue`, the same value as `icon`): lighter steps are mixed with white, darker
+   with black, the muted steps with a neutral grey for quiet borders and panels, and the -a steps
+   are see-through. The plain values are the same mixes worked out for #5278ff, for iOS 16.0 and
+   16.1 where color-mix() does not exist; everywhere else the steps follow the token. */
+:root {
+  --ga-blue-100: #d4ddff;
+  --ga-blue-200: #a8bcff;
+  --ga-blue-300: #7d9aff;
+  --ga-blue-400: #5278ff;
+  --ga-blue-500: #4260cc;
+  --ga-blue-600: #314899;
+  --ga-blue-700: #213066;
+  --ga-blue-800: #141e40;
+  --ga-blue-900: #0a0e1f;
+  --ga-blue-mute-300: #818ebd;
+  --ga-blue-mute-600: #404a6b;
+  --ga-blue-mute-800: #1e2336;
+  --ga-blue-a70: rgba(82, 120, 255, 0.7);
+  --ga-blue-a45: rgba(82, 120, 255, 0.45);
+  --ga-blue-a28: rgba(82, 120, 255, 0.28);
+  --ga-blue-a16: rgba(82, 120, 255, 0.16);
+  --ga-blue-a08: rgba(82, 120, 255, 0.08);
+}
+@supports (color: color-mix(in srgb, red, blue)) {
+  :root {
+    --ga-blue-100: color-mix(in srgb, var(--ga-blue, #5278ff) 25%, white);
+    --ga-blue-200: color-mix(in srgb, var(--ga-blue, #5278ff) 50%, white);
+    --ga-blue-300: color-mix(in srgb, var(--ga-blue, #5278ff) 75%, white);
+    --ga-blue-400: var(--ga-blue, #5278ff);
+    --ga-blue-500: color-mix(in srgb, var(--ga-blue, #5278ff) 80%, black);
+    --ga-blue-600: color-mix(in srgb, var(--ga-blue, #5278ff) 60%, black);
+    --ga-blue-700: color-mix(in srgb, var(--ga-blue, #5278ff) 40%, black);
+    --ga-blue-800: color-mix(in srgb, var(--ga-blue, #5278ff) 25%, black);
+    --ga-blue-900: color-mix(in srgb, var(--ga-blue, #5278ff) 12%, black);
+    --ga-blue-mute-300: color-mix(in srgb, var(--ga-blue, #5278ff) 35%, #9a9a9a);
+    --ga-blue-mute-600: color-mix(in srgb, var(--ga-blue, #5278ff) 25%, #3a3a3a);
+    --ga-blue-mute-800: color-mix(in srgb, var(--ga-blue, #5278ff) 14%, #151515);
+    --ga-blue-a70: color-mix(in srgb, var(--ga-blue, #5278ff) 70%, transparent);
+    --ga-blue-a45: color-mix(in srgb, var(--ga-blue, #5278ff) 45%, transparent);
+    --ga-blue-a28: color-mix(in srgb, var(--ga-blue, #5278ff) 28%, transparent);
+    --ga-blue-a16: color-mix(in srgb, var(--ga-blue, #5278ff) 16%, transparent);
+    --ga-blue-a08: color-mix(in srgb, var(--ga-blue, #5278ff) 8%, transparent);
+  }
+}
+

@@ -84,10 +84,10 @@ export const ARCADE_THEME: Theme = {
 html[data-theme="arcade"] .vj-btn {
   background: var(--ga-accent-gradient) !important;
   border-color: rgba(214,228,240,.65) !important;
-  color: #16202b !important;
+  color: var(--ga-blue-mute-800) !important;
 }
 html[data-theme="arcade"] input[type="checkbox"]:checked {
-  background: var(--ga-selection-line, #3d59b8) !important;
+  background: var(--ga-selection-line, var(--ga-blue-500)) !important;
 }
 html[data-theme="arcade"] .toggle input:checked + .toggle-slider::before {
   background: var(--ga-accent-gradient) !important;

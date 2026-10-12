@@ -4,8 +4,9 @@
 import type { Theme } from '../types';
 import { STUDIO_THEME } from './studio';
 import { ARCADE_THEME } from './arcade';
+import { NEO_INDUSTRIAL_THEME } from './neo-industrial';
 
-export const THEMES: Theme[] = [STUDIO_THEME, ARCADE_THEME];
+export const THEMES: Theme[] = [STUDIO_THEME, ARCADE_THEME, NEO_INDUSTRIAL_THEME];
 
 export const DEFAULT_THEME_ID = 'arcade';
 
