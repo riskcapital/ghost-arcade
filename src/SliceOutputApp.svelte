@@ -22,6 +22,25 @@
    *   stays zero-copy and shader-correct.
    */
   import { onMount, onDestroy, tick } from 'svelte';
+  import { drawStripeFrame, followScreenPatterns } from './lib/output/screenPatterns';
+
+  // Auto-map: while a paired phone photographs this projector, the editor
+  // asks for a stripe frame here in place of the picture.
+  let patternCanvas: HTMLCanvasElement;
+  let patternFrame: number | null = null;
+  let stopPatterns = () => {};
+  const screenPixels = () => ({
+    width: Math.max(1, Math.round(window.innerWidth * (window.devicePixelRatio || 1))),
+    height: Math.max(1, Math.round(window.innerHeight * (window.devicePixelRatio || 1))),
+  });
+  function showPattern(frame: number | null) {
+    patternFrame = frame;
+    if (frame === null || !patternCanvas) return;
+    const { width, height } = screenPixels();
+    if (patternCanvas.width !== width || patternCanvas.height !== height) { patternCanvas.width = width; patternCanvas.height = height; }
+    const ctx = patternCanvas.getContext('2d');
+    if (ctx) drawStripeFrame(ctx, width, height, frame);
+  }
   import Canvas from './lib/components/Canvas.svelte';
   import { initStateBroadcast, destroyStateBroadcast } from './lib/sync/stateBroadcast';
   import { initLicense } from './lib/stores/license';
@@ -768,6 +787,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // so we can return the cleanup right away.
   onMount(() => {
     console.log('[SliceOutput] slice window mounted, sliceId=', sliceId);
+    stopPatterns = followScreenPatterns(sliceId, screenPixels, showPattern);
 
     const splash = document.getElementById('splash');
     if (splash) {
@@ -832,6 +852,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   });
 
   onDestroy(() => {
+    stopPatterns();
     cancelAnimationFrame(rafId);
     disposeMasterWarpOutput();
     destroyStateBroadcast();
@@ -877,6 +898,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     </div>
   {/if}
   <canvas class="slice-present" bind:this={presentCanvas}></canvas>
+  <canvas class="slice-pattern" class:showing={patternFrame !== null} bind:this={patternCanvas}></canvas>
 </div>
 
 <style>
@@ -934,6 +956,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     height: 1080px !important;
     aspect-ratio: unset !important;
   }
+  /* Auto-map stripes, pixel for pixel over the picture. */
+  .slice-pattern {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: none;
+    z-index: 5;
+    image-rendering: pixelated;
+  }
+  .slice-pattern.showing { display: block; }
+
   .slice-present {
     position: fixed;
     inset: 0;

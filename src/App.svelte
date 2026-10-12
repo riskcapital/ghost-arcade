@@ -12,6 +12,8 @@
   } from './lib/remote/remotePairing';
   import { mobileConnectionUrl } from './lib/remote/mobileConnectionUrl';
   import PhoneScanInbox from './lib/components/PhoneScanInbox.svelte';
+  import { openScreenOutputs, setScreenPatternFrames, watchScreenOutputs } from './lib/output/screenPatterns';
+  import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
   import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
   import { handlePhoneScanMessage, loadPhoneScanLibrary, phoneScanCapability } from './lib/stores/phoneScans';
   import { readMobileCalibration } from './lib/output/mobileCalibrationImport';
@@ -473,6 +475,7 @@
 
   // Auto-save cleanup
   onDestroy(() => {
+    stopScreenOutputWatch();
     if (autosaveInterval) {
       clearInterval(autosaveInterval);
       autosaveInterval = null;
@@ -963,6 +966,7 @@
     let retryInterval: ReturnType<typeof setInterval> | null = null;
     if (!isMobile) {
       void loadPhoneScanLibrary();
+      stopScreenOutputWatch = watchScreenOutputs((id) => get(settings).output.slices.find((s) => s.id === id)?.name ?? 'Screen');
       const autoConnect = async () => {
         // The server refuses anyone without the pairing token, this window included.
         await loadRemotePairing();
@@ -2419,6 +2423,7 @@
   };
   let studioFeedLabel = 'Phone Camera';
   // What the phone last sent for mapping, and whether its panel is open.
+  let stopScreenOutputWatch = () => {};
   let pendingPhoneCalibration = '';
   let showPhoneCalibration = false;
 
@@ -2869,6 +2874,27 @@
       case 'studio_capabilities_request':
         sendPhoneVisionSignal({ type: 'studio_capabilities', version: 1, visualFeeds: true, metricDepth: false, nativeInteractive: false, scanTransfer: phoneScanCapability() });
         break;
+
+      // A paired phone is photographing stripe frames to map a projector. It
+      // names one open Screen and a frame; every other open Screen goes black
+      // so only that projector lights the wall.
+      case 'studio_automap_request': {
+        const requestId = msg.requestId, seq = msg.seq;
+        const open = openScreenOutputs();
+        if (msg.op === 'screens') {
+          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, screens: open, cells: STRIPE_CELLS });
+        } else if (msg.op === 'show' && open.some((s) => s.id === msg.screenId) && Number.isInteger(msg.frame) && (msg.frame as number) >= 0 && (msg.frame as number) < 500) {
+          setScreenPatternFrames(Object.fromEntries(open.map((s) => [s.id, s.id === msg.screenId ? (msg.frame as number) : STRIPE_BLACK])));
+          // Answer once the projector has had time to show it.
+          setTimeout(() => sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, shown: true }), 150);
+        } else if (msg.op === 'end') {
+          setScreenPatternFrames(null);
+          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, done: true });
+        } else if (msg.op !== 'camera_ready' && msg.op !== 'camera_gone' && msg.op !== 'frame') {
+          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, error: open.length ? 'That Screen is not open on a display.' : 'No Screen is open on a display. Use Open on display first.' });
+        }
+        break;
+      }
 
       // Surfaces the phone measured, or a calibration it exported.
       case 'studio_calibration_offer': {
