@@ -13,6 +13,8 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Allowed IPC commands — restrict renderer to known-safe operations
 const ALLOWED_IPC_COMMANDS = new Set([
+  // Scans sent from a paired phone (electron/phone-scan-store.cjs)
+  'phone_scan_begin', 'phone_scan_write', 'phone_scan_finish', 'phone_scan_abort', 'phone_scan_list',
   // Spout
   'spout_is_available', 'spout_list_senders', 'spout_start_sender', 'spout_stop_sender',
   'spout_send_frame', 'spout_send_image', 'spout_get_status',

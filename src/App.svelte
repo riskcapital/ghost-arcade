@@ -11,6 +11,10 @@
     withPairingToken,
   } from './lib/remote/remotePairing';
   import { mobileConnectionUrl } from './lib/remote/mobileConnectionUrl';
+  import PhoneScanInbox from './lib/components/PhoneScanInbox.svelte';
+  import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
+  import { handlePhoneScanMessage, loadPhoneScanLibrary, phoneScanCapability } from './lib/stores/phoneScans';
+  import { readMobileCalibration } from './lib/output/mobileCalibrationImport';
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
@@ -958,6 +962,7 @@
     let autoConnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let retryInterval: ReturnType<typeof setInterval> | null = null;
     if (!isMobile) {
+      void loadPhoneScanLibrary();
       const autoConnect = async () => {
         // The server refuses anyone without the pairing token, this window included.
         await loadRemotePairing();
@@ -2413,6 +2418,9 @@
     contours: 'Mobile Depth Contours', points: 'Mobile Point Cloud', interactive: 'Interactive Studio',
   };
   let studioFeedLabel = 'Phone Camera';
+  // What the phone last sent for mapping, and whether its panel is open.
+  let pendingPhoneCalibration = '';
+  let showPhoneCalibration = false;
 
   function sendPhoneVisionStatus(status: string, detail: Record<string, unknown> = {}) {
     const payload = {
@@ -2859,7 +2867,33 @@
       // line of the app receives visual feeds as video; it has no built-in
       // Interactive layer, so the phone renders and streams that itself.
       case 'studio_capabilities_request':
-        sendPhoneVisionSignal({ type: 'studio_capabilities', version: 1, visualFeeds: true, metricDepth: false, nativeInteractive: false });
+        sendPhoneVisionSignal({ type: 'studio_capabilities', version: 1, visualFeeds: true, metricDepth: false, nativeInteractive: false, scanTransfer: phoneScanCapability() });
+        break;
+
+      // Surfaces the phone measured, or a calibration it exported.
+      case 'studio_calibration_offer': {
+        try {
+          if (typeof msg.json !== 'string' || msg.json.length > 8_000_000) throw Error('Invalid calibration size.');
+          // Surfaces measured by the stripe scan stand on their own: accept
+          // them even if the older whole-photo part of the package is unusable.
+          let scanned = false;
+          try { const list = JSON.parse(msg.json).mappedSurfaces; scanned = Array.isArray(list) && list.length > 0; } catch {}
+          if (!scanned) readMobileCalibration(msg.json);
+          pendingPhoneCalibration = msg.json;
+          // Show what arrived instead of leaving it behind a closed panel.
+          showPhoneCalibration = true;
+          sendPhoneVisionSignal({ type: 'studio_calibration_status', requestId: msg.requestId, accepted: true });
+        } catch (error) {
+          sendPhoneVisionSignal({ type: 'studio_calibration_status', requestId: msg.requestId, accepted: false, error: error instanceof Error ? error.message : 'Invalid calibration.' });
+        }
+        break;
+      }
+
+      // A saved scan sent from a paired phone, in chunks (stores/phoneScans.ts).
+      case 'studio_scan_offer':
+      case 'studio_scan_chunk':
+      case 'studio_scan_abort':
+        handlePhoneScanMessage(msg, sendPhoneVisionSignal);
         break;
 
       case 'phone_camera_offer': {
@@ -5886,6 +5920,10 @@
                 </div>
               {/if}
 
+              <button class="phone-calibration-open" onclick={() => { showPhoneCalibration = true; showMobileInfo = false; }}>
+                Phone mapping and calibration…
+              </button>
+
               <!-- Network Selection -->
               {#if localIPs.length > 1}
                 <div class="ip-selector">
@@ -7094,6 +7132,15 @@
 <!-- Global loading overlay (blocks interaction during heavy operations) -->
 <LoadingOverlay />
 <ToastContainer />
+<PhoneScanInbox />
+{#if showPhoneCalibration}
+  <div class="phone-calibration-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) showPhoneCalibration = false; }}>
+    <div class="phone-calibration-modal" role="dialog" aria-modal="true" aria-label="Phone mapping and calibration">
+      <button class="phone-calibration-close" onclick={() => (showPhoneCalibration = false)} aria-label="Close">×</button>
+      <DesktopCalibrationImport incoming={pendingPhoneCalibration} />
+    </div>
+  </div>
+{/if}
 
 <!-- Director AI Agent (disabled for this release) -->
 
@@ -9694,4 +9741,48 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
+
+  .phone-calibration-open {
+    width: 100%;
+    margin: 8px 0;
+    padding: 8px 10px;
+    border: 1px solid var(--ga-line-3, rgba(255, 255, 255, 0.2));
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .phone-calibration-open:hover { background: rgba(255, 255, 255, 0.06); }
+  .phone-calibration-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    background: rgba(0, 0, 0, 0.72);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .phone-calibration-modal {
+    position: relative;
+    width: min(1040px, 94vw);
+    max-height: 90vh;
+    overflow: auto;
+    background: var(--ga-bg-1, #14171c);
+    border: 1px solid var(--ga-line-3, rgba(255, 255, 255, 0.2));
+    border-radius: 12px;
+  }
+  .phone-calibration-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    z-index: 1;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    color: inherit;
+    font-size: 20px;
+    cursor: pointer;
+  }
 </style>
