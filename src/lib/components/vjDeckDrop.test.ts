@@ -8,7 +8,7 @@ const handler = ts.transpile(panel.slice(panel.indexOf('  function handleCellDro
 const shader = { id: 'StarDrift', name: 'StarDrift', src: 'StarDrift.fs', thumbnail: 'StarDrift.jpg', shaderCode: 'void main() { /* animated */ }', values: { speed: 2 } };
 function harness(draggedClip: any = null, tray: any = null) {
   const setClip = vi.fn(), importFiles = vi.fn();
-  const context: any = { draggedClip, dragSourceCell: null, dragOverCell: null,
+  const context: any = { draggedClip, dragSourceCell: null, dragOverCell: null, draggedLayerIndex: null,
     isLockedPlayingCell: () => false, importDroppedFilesToDeck: importFiles,
     mediaTrayPayloadFromDataTransfer: () => tray,
     createVJClipFromMediaTrayPayload: (payload: any) => ({ ...payload, id: 'new' }),

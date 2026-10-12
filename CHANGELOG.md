@@ -1,3 +1,7 @@
+# Ghost Arcade 2.0.19 — October 12, 2026
+
+Clips added in the current session play their sound; more audio output formats; missing clip files are marked and can be relinked; drag to fill a row with a clip and to reorder rows; each Interactive object has its own look. See [release notes](docs/releases/v2.0.19.md).
+
 # Ghost Arcade 2.0.18 — October 9, 2026
 
 Kinetic text with tiling, a long-text reader and audio reaction; painting studio with shape layers, Paint Drip and Ink Flow; HandFX body and face modes; Flux from a paired phone; MIDI library control and mapping files; tighter file and network access. See [release notes](docs/releases/v2.0.18.md).
