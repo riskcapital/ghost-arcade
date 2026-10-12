@@ -5561,7 +5561,7 @@ void main() {
     height: 100%;
     background: var(--sv-bg);
     color: #fff;
-    font-family: 'IBM Plex Mono', 'Consolas', monospace;
+    font-family: 'Geist Mono', 'Consolas', monospace;
     user-select: none;
     overflow: hidden;
   }
@@ -6639,8 +6639,13 @@ void main() {
   /* Camera Blend & Opacity Controls */
   .sv-cam-blend-row {
     display: flex;
-    gap: 12px;
-    margin-bottom: 8px;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    background: rgba(0,0,0,.25);
+    padding: 6px 8px;
+    border-radius: 5px;
   }
   .sv-cam-blend {
     display: flex;
@@ -6653,25 +6658,23 @@ void main() {
     width: 40px;
   }
   .sv-cam-blend-btn {
-    width: 20px;
-    height: 20px;
-    background: rgba(255,255,255,.04);
+    width: 22px;
+    height: 22px;
+    background: rgba(255,255,255,.05);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
-    font-size: 11px;
+    color: rgba(255,255,255,.6);
+    font-size: 13px;
     cursor: pointer;
-    transition: all .1s;
+    border-radius: 3px;
+    flex-shrink: 0;
   }
-  .sv-cam-blend-btn:hover {
-    background: rgba(255,255,255,.08);
-    color: #fff;
-  }
+  .sv-cam-blend-btn:hover { background: rgba(255,255,255,.1); }
   .sv-cam-blend-val {
+    flex: 1;
+    text-align: center;
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
     color: var(--sv-g);
-    min-width: 55px;
-    text-align: center;
   }
   .sv-cam-opacity {
     display: flex;
@@ -6699,10 +6702,8 @@ void main() {
   }
   .sv-cam-opacity-val {
     font-family: 'Orbitron', sans-serif;
-    font-size: 10px;
+    font-size: 13px;
     color: var(--sv-g);
-    min-width: 30px;
-    text-align: right;
   }
 
   /* RIGHT COLUMN: Dials + Actions */
@@ -7295,12 +7296,12 @@ void main() {
     display: block;
   }
   .sv-edit-item-thumb.shader {
-    background: linear-gradient(135deg, #3a2a4a, #2a2a3a);
+    background: linear-gradient(135deg, #3a2a4a, var(--ga-blue-mute-800));
     color: #a080c0;
   }
   .sv-edit-item-thumb.video {
-    background: linear-gradient(135deg, #2a3a4a, #2a2a3a);
-    color: #80a0c0;
+    background: linear-gradient(135deg, var(--ga-blue-mute-800), var(--ga-blue-mute-800));
+    color: var(--ga-blue-mute-300);
   }
   .sv-edit-item-thumb.image {
     background: linear-gradient(135deg, #3a4a2a, #2a3a2a);
@@ -7458,16 +7459,16 @@ void main() {
     line-height: 1;
   }
   .sv-scope-toggle.global {
-    border-color: rgba(100,200,255,0.4);
-    background: rgba(100,200,255,0.1);
+    border-color: var(--ga-blue-a45);
+    background: var(--ga-blue-a08);
   }
   .sv-preset-scope {
     font-size: 10px;
     font-weight: bold;
-    color: rgba(100,200,255,0.8);
+    color: color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
     margin-right: 3px;
   }
   .global-preset {
-    border-color: rgba(100,200,255,0.3) !important;
+    border-color: var(--ga-blue-a28) !important;
   }
 </style>
