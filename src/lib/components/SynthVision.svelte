@@ -197,6 +197,28 @@
     const same = (clip.effects ?? []).length === effects.length && (clip.effects ?? []).every((e, i) => e === effects[i]);
     if (!same) vjClipLauncher.setActiveClipEffects(assignedVJLayer, effects);
   }
+  /** The last media clip Performer put on its row. Firing Performer's cell
+   *  again puts it straight back, so returning to Performer resumes what it
+   *  was playing instead of coming back empty. Cleared when Performer goes
+   *  back to its own picture (a shader or a world). */
+  let lastLaunchedClip: VJClip | null = null;
+  let lastActiveClipId = '';
+  // The row's playing clip changed. If it is now Performer's cell, the cell
+  // was just fired from the deck: give it this panel's picture, treat that as
+  // the first interaction (no title card over a live output), and resume.
+  $: if ((performerActiveClip?.id ?? '') !== lastActiveClipId) {
+    const cameFrom = lastActiveClipId;
+    lastActiveClipId = performerActiveClip?.id ?? '';
+    if (performerActiveClip?.type === 'synthvision' && performerActiveClip.id !== svClipId && outputCanvas) {
+      if (state?.showSplash) dismissSplash();
+      ensureSVClipActive();
+      if (lastLaunchedClip && cameFrom !== lastLaunchedClip.id) {
+        const resume = lastLaunchedClip;
+        if (resume.type === 'video' && resume.videoElement?.paused) resume.videoElement.play().catch(() => {});
+        vjClipLauncher.launchTransientClip(assignedVJLayer, resume);
+      }
+    }
+  }
   // Re-stamp when the chain changes or Performer moves to another clip.
   $: if ($synthVisionStore.performerEffects && performerOwnsLayer && performerActiveClip?.id) syncPerformerEffectsToClip();
 
@@ -3833,6 +3855,8 @@ void main() {
         };
       }
     }
+    // A shader plays inside Performer's own picture, so that is what resumes.
+    lastLaunchedClip = null;
     // Force re-creation of ISF instance so any edits to the library's shader
     // code are always picked up (both for click and keyboard launches).
     isfShaderCode_internal = '';
@@ -3983,6 +4007,7 @@ void main() {
         videoElement: video,
         _performerOwned: true,
       };
+      lastLaunchedClip = clip;
       vjClipLauncher.launchTransientClip(layerIdx, clip);
     } else if (assignment.mediaType === 'image') {
       const clip: VJClip = {
@@ -3993,6 +4018,7 @@ void main() {
         thumbnail: assignment.mediaThumbnail || assignment.mediaSrc,
         _performerOwned: true,
       };
+      lastLaunchedClip = clip;
       vjClipLauncher.launchTransientClip(layerIdx, clip);
     }
   }
