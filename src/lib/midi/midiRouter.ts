@@ -520,6 +520,17 @@ class MidiRouter {
       return;
     }
 
+    // Layer groups: vj:group:<id>:level and vj:group:<id>:column:<index>
+    if (layerPart === 'group') {
+      const groupId = decodeURIComponent(parts[2] ?? '');
+      if (parts[3] === 'level') vjClipLauncher.updateGroup(groupId, { opacity: Math.max(0, Math.min(1, value)) });
+      else if (parts[3] === 'column' && value > 0) {
+        const colIdx = parseInt(parts[4], 10);
+        if (!isNaN(colIdx)) vjClipLauncher.triggerColumn(colIdx, bank, groupId);
+      }
+      return;
+    }
+
     // VJ Column triggering: vj:column:<index>  → fires on the chosen bank
     if (layerPart === 'column') {
       const colIdx = parseInt(parts[2], 10);

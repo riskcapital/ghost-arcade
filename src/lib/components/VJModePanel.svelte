@@ -1,6 +1,7 @@
 <script lang="ts">
   import MacroAssignmentControl from './MacroAssignmentControl.svelte';
   import VJLayerSettings from './VJLayerSettings.svelte';
+  import VJGroups from './VJGroups.svelte';
   import EffectChainPresets from './EffectChainPresets.svelte';
   // VJ Mode Panel - Layers/Columns Grid
   // Uses vjClipLauncher store for state management
@@ -3699,6 +3700,7 @@
              1/4..4bar = beat-aligned launches anchored to detected beats
              (or virtual clock at current BPM if audio is off). Beginners
              leave this OFF; pros snap to bar boundaries for tight drops. -->
+        <VJGroups />
         <div class="header-quant" title="Launch quantize — clips fire on the next beat boundary instead of instantly">
           <span class="header-quant-label">QUANT</span>
           <select

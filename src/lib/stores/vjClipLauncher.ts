@@ -13,6 +13,7 @@ import { hasDecodedVideoFrame } from '../renderer/videoReadiness';
 import { keyframeTimeline } from './keyframeTimeline';
 import { parseISF } from '../isf/parser';
 import { vjLayerSequencer } from './vjLayerSequencer';
+import { normalizeVJGroups, removeVJGroupRow, type VJGroup } from './vjGroups';
 import { normalizeCuePoints, validCueIndex, VJ_CUE_POINT_COUNT } from './vjCuePoints';
 import { VJAutopilotClock, normalizeAutopilot, type VJAutopilot, type AutopilotSample } from './vjAutopilot';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
@@ -333,6 +334,8 @@ export interface VJClipLauncherState {
   // times — useful for re-arming during a build-up). Click-the-queued-
   // clip-again behaves as "cancel the queued trigger".
   pendingTriggers: PendingTrigger[];
+  /** Named ranges of adjacent rows with their own level and column launches. */
+  groups?: VJGroup[];
 }
 
 // UUID generator with fallback for insecure contexts (mobile HTTP)
@@ -1361,7 +1364,11 @@ function createVJClipLauncherStore() {
     },
 
     // Trigger an entire column on the given deck (all layers at once)
-    triggerColumn(columnIndex: number, deck: VJDeck = 'A') {
+    triggerColumn(columnIndex: number, deck: VJDeck = 'A', groupId?: string) {
+      // A group launch only touches the rows in that group.
+      const group = groupId ? get({ subscribe }).groups?.find(g => g.id === groupId) : undefined;
+      if (groupId && !group) return;
+      const member = (layerIndex: number) => !group || (layerIndex >= group.first && layerIndex <= group.last);
       let didTrigger = false;
       const incomingVideos: VJClip[] = [];
       const outgoingVideos: VJClip[] = [];
@@ -1380,25 +1387,26 @@ function createVJClipLauncherStore() {
       const videosToArm: VJClip[] = [];
       for (let layerIndex = 0; layerIndex < beforeGrid.length; layerIndex++) {
         const clip = beforeGrid[layerIndex]?.[columnIndex];
-        if (clip?.type !== 'video' || carries(layerIndex, clip)) continue;
+        if (!member(layerIndex) || clip?.type !== 'video' || carries(layerIndex, clip)) continue;
         const videoEl = ensureClipVideoElement(clip);
         if (videoEl && !isVideoArmedAtTrimStart(clip, videoEl)) videosToArm.push(clip);
       }
       if (videosToArm.length > 0) {
         void Promise.all(videosToArm.map((clip) => armVideoClipForTrigger(clip)))
-          .then(() => vjClipLauncher.triggerColumn(columnIndex, deck))
+          .then(() => vjClipLauncher.triggerColumn(columnIndex, deck, groupId))
           .catch((error) => console.warn('[vjClipLauncher] column trigger held; video is not ready:', error));
         return;
       }
       for (let layerIndex = 0; layerIndex < beforeGrid.length; layerIndex++) {
         const clip = beforeGrid[layerIndex]?.[columnIndex];
-        if (clip?.type === 'video' && !carries(layerIndex, clip)) prepareVideoClipForTrigger(clip);
+        if (member(layerIndex) && clip?.type === 'video' && !carries(layerIndex, clip)) prepareVideoClipForTrigger(clip);
       }
 
       update(state => {
         const targetGrid = pickGrid(state, deck);
         const targetLayerStates = pickLayerStates(state, deck);
         const newLayerStates = targetLayerStates.map((layerState, layerIndex) => {
+          if (!member(layerIndex)) return layerState;
           const clip = targetGrid[layerIndex]?.[columnIndex];
           if (clip && layerState.activeClip?.id === clip.id && layerState.activeColumn !== null && layerState.activeColumn !== columnIndex) {
             return { ...layerState, activeColumn: columnIndex };
@@ -2666,8 +2674,21 @@ function createVJClipLauncherStore() {
           layerStates: newLayerStates,
           bankBClipGrid: newBankBClipGrid,
           bankBLayerStates: newBankBLayerStates,
+          groups: removeVJGroupRow(state.groups ?? [], removeIdx, newNumLayers),
         };
       });
+    },
+
+    addGroup(first: number, last: number) {
+      const id = `group-${generateUUID()}`;
+      update(state => ({ ...state, groups: normalizeVJGroups([...(state.groups ?? []),
+        { id, name: `Group ${(state.groups?.length ?? 0) + 1}`, first, last, opacity: 1, blendMode: 'normal', effects: [] }], state.numLayers) }));
+    },
+    updateGroup(id: string, patch: Partial<Pick<VJGroup, 'name' | 'opacity'>>) {
+      update(state => ({ ...state, groups: normalizeVJGroups((state.groups ?? []).map(g => g.id === id ? { ...g, ...patch } : g), state.numLayers) }));
+    },
+    removeGroup(id: string) {
+      update(state => ({ ...state, groups: (state.groups ?? []).filter(g => g.id !== id) }));
     },
 
     // Add a new column to BOTH banks across ALL blocks.
@@ -3022,7 +3043,8 @@ export const vjOutputLayers = derived(
       const sequenceOpacity = $vjLayerSequencer.isPlaying
         ? (sequenceOverrides[vjLayerIndex] ?? 1)
         : 1;
-      const vjLayerOpacity = activeLayer.opacity * sequenceOpacity * $vjClipLauncher.masterOpacity;
+      const groupLevel = ($vjClipLauncher.groups ?? []).find(g => vjLayerIndex >= g.first && vjLayerIndex <= g.last)?.opacity ?? 1;
+      const vjLayerOpacity = activeLayer.opacity * sequenceOpacity * groupLevel * $vjClipLauncher.masterOpacity;
       if (clip.type === 'video') {
         ensureClipVideoElement(clip);
       }

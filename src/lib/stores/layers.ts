@@ -27,6 +27,7 @@ import { oscStore } from '../osc/oscStore';
 import { dmxStore } from '../dmx/dmxStore';
 import { normalizeAutopilot } from './vjAutopilot';
 import { normalizeCuePoints } from './vjCuePoints';
+import { normalizeVJGroups } from './vjGroups';
 import { createDefaultPixelMapConfig, normalizePixelMapConfig } from '../pixelmap/fixtures';
 import type { PixelMapConfig, PixelMapFixture } from '../types';
 import { showTimeline, setShowCompositionLoader } from './showTimeline';
@@ -4781,6 +4782,7 @@ void main() {
         // layerStates. Only the clip grid lives inside the block.
         bankBLayerStates: (currentVjClipLauncher.bankBLayerStates || []).map(exportLayerState),
         // Crossfader state — preserved so the user re-opens to the same mix.
+        groups: currentVjClipLauncher.groups ?? [],
         crossfaderEnabled: !!currentVjClipLauncher.crossfaderEnabled,
         crossfaderValue: currentVjClipLauncher.crossfaderValue ?? 0,
         crossfaderTransition: currentVjClipLauncher.crossfaderTransition || 'dissolve',
@@ -5588,6 +5590,7 @@ void main() {
             stagePresetId: vjcl.stagePresetId || null,
             mapMode: false, // Never import as map mode active
             stoppedAll: false,
+            groups: normalizeVJGroups(vjcl.groups, importNumLayers),
             crossfaderEnabled: importedXfadeEnabled,
             crossfaderValue: importedXfadeValue,
             crossfaderTransition: importedXfadeTransition as any,
