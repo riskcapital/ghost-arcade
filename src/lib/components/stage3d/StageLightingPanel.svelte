@@ -405,7 +405,7 @@
   }
   .val {
     text-align: right;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-size: 11px;
     color: #4af2ff;
   }

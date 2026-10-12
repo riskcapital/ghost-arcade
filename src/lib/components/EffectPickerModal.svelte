@@ -606,6 +606,17 @@
     border-color: #BB86FC;
   }
 
+  .effect-row.native-unavailable {
+    opacity: 0.38;
+    cursor: not-allowed;
+    filter: grayscale(0.75);
+  }
+
+  .effect-row.native-unavailable:hover {
+    background: transparent;
+    border-color: transparent;
+  }
+
   .row-thumb {
     width: 36px;
     height: 36px;
@@ -635,6 +646,23 @@
 
   .effect-row.selected .row-name {
     color: #BB86FC;
+  }
+
+  .pending-badge {
+    display: inline-block;
+    margin-left: 5px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    vertical-align: middle;
+  }
+
+  .pending-badge {
+    background: rgba(148, 163, 184, 0.11);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    color: #94a3b8;
   }
 
   .row-desc {

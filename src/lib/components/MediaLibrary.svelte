@@ -842,7 +842,7 @@
     border: none;
     color: var(--ga-ink-2, #5e6571);
     padding: 9px 2px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', monospace);
     font-size: 10px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -857,7 +857,7 @@
 
   .tab.active {
     color: var(--ga-ink-0, #eef0f4);
-    border-bottom-color: var(--ga-blue, #5b8def);
+    border-bottom-color: var(--ga-blue, #5278ff);
   }
 
   .library-drop-zone {
@@ -1023,7 +1023,7 @@
   }
 
   .btn-ai-generate:hover {
-    background: rgba(155, 135, 245, 0.18);
+    background: var(--ga-blue-a16);
   }
 
   .btn-ai-video {
@@ -1033,10 +1033,10 @@
     gap: 7px;
     height: 38px;
     padding: 0;
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    border: 1px solid var(--ga-blue-line, var(--ga-blue-a08));
     border-radius: var(--ga-r-soft, 7px);
-    color: var(--ga-blue, #5b8def);
+    color: var(--ga-blue, #5278ff);
     font-size: 14px;
     font-weight: 700;
     cursor: pointer;
@@ -1044,7 +1044,7 @@
   }
 
   .btn-ai-video:hover {
-    background: rgba(91, 141, 239, 0.18);
+    background: var(--ga-blue-a16);
   }
 
   /* Bottom footer: side-by-side Add (violet solid) + Library (ghost). */
@@ -1067,7 +1067,7 @@
     background: var(--ga-violet, #9b87f5);
     border: none;
     border-radius: var(--ga-r-soft, 7px);
-    color: #160f2e;
+    color: var(--ga-blue-800);
     font-size: 14px;
     font-weight: 700;
     cursor: pointer;
@@ -1249,7 +1249,7 @@
     align-items: center;
     gap: 12px;
     padding: 12px;
-    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    background: linear-gradient(135deg, var(--ga-blue-mute-800), var(--ga-blue-800));
     border: 1px solid #333;
     border-radius: 8px;
     cursor: grab;
@@ -1264,7 +1264,7 @@
 
   .plugin-card.running {
     border-color: #4ade80;
-    background: linear-gradient(135deg, #1a2e1a, #16213e);
+    background: linear-gradient(135deg, #1a2e1a, var(--ga-blue-800));
   }
 
   .plugin-icon {
@@ -1279,8 +1279,8 @@
   }
 
   .plugin-icon.fluid {
-    color: #60a5fa;
-    background: linear-gradient(135deg, rgba(96, 165, 250, 0.2), rgba(96, 165, 250, 0.05));
+    color: var(--ga-blue-300);
+    background: linear-gradient(135deg, var(--ga-blue-a16), var(--ga-blue-a08));
   }
 
   .plugin-icon.particles {

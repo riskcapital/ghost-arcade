@@ -718,12 +718,12 @@
   }
 
   .power-toggle input:checked + span {
-    background: rgba(76, 209, 255, 0.34);
+    background: var(--ga-blue-a28);
   }
 
   .power-toggle input:checked + span::after {
     transform: translateX(12px);
-    background: #4cd1ff;
+    background: var(--ga-blue-300);
   }
 
   .controller-state {
@@ -794,8 +794,8 @@
   }
 
   .panel-tabs button.active {
-    color: #4cd1ff;
-    border-bottom-color: #4cd1ff;
+    color: var(--ga-blue-300);
+    border-bottom-color: var(--ga-blue-300);
   }
 
   .panel-body {
@@ -822,9 +822,9 @@
 
   .mode-row button.active,
   .test-patterns button.active {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
-    background: rgba(76, 209, 255, 0.08);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
 
   .map-options {
@@ -868,7 +868,7 @@
   }
 
   .check-option input {
-    accent-color: #4cd1ff;
+    accent-color: var(--ga-blue-300);
   }
 
   .map-canvas {
@@ -903,8 +903,8 @@
   }
 
   .tool-row button:hover {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
   }
 
   .subsection-title {
@@ -939,14 +939,14 @@
 
   .range-grid b,
   .wide-range b {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-weight: 500;
   }
 
   input[type='range'] {
     width: 100%;
-    accent-color: #4cd1ff;
+    accent-color: var(--ga-blue-300);
   }
 
   .wide-range {
@@ -1067,7 +1067,7 @@
   }
 
   .color-arrow {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
   }
 
   .sampling-select {
@@ -1087,7 +1087,7 @@
 
   .color-panel .red input { accent-color: #ff6b6b; }
   .color-panel .green input { accent-color: #4ade80; }
-  .color-panel .blue input { accent-color: #60a5fa; }
+  .color-panel .blue input { accent-color: var(--ga-blue-300); }
 
   .test-color {
     display: flex;

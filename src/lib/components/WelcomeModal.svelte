@@ -52,7 +52,7 @@
   }
 
   .welcome-panel {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    background: linear-gradient(135deg, var(--ga-blue-mute-800) 0%, var(--ga-blue-800) 100%);
     border: 1px solid #333;
     border-radius: 16px;
     padding: 40px 36px 32px;

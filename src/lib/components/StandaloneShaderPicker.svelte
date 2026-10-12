@@ -191,7 +191,7 @@
      haven't been rendered to a thumbnail yet (first launch warmup). */
   .cat-audio  { background: linear-gradient(135deg, #FF6E6E, #BB86FC); }
   .cat-room   { background: linear-gradient(135deg, #34284A, #FF8577); }
-  .cat-fluid  { background: linear-gradient(135deg, #1A5C8E, #69F0AE); }
+  .cat-fluid  { background: linear-gradient(135deg, var(--ga-blue-mute-600), #69F0AE); }
   .cat-pattern{ background: linear-gradient(135deg, #2A2A30, #BB86FC); }
   .cat-kinetic{ background: linear-gradient(135deg, #FF8577, #FFC857); }
   .picker-letter { opacity: 0.95; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }

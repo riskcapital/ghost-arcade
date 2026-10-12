@@ -455,10 +455,10 @@
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
-    background: rgba(126,200,227,0.1);
-    border: 1px solid rgba(126,200,227,0.25);
+    background: color-mix(in srgb, var(--ga-blue-200) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-blue-200) 25%, transparent);
     border-radius: 4px;
-    color: #7EC8E3;
+    color: var(--ga-blue-200);
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -466,8 +466,8 @@
     transition: all 0.15s;
   }
   .sl-find-latest:hover:not(:disabled) {
-    background: rgba(126,200,227,0.18);
-    border-color: rgba(126,200,227,0.5);
+    background: color-mix(in srgb, var(--ga-blue-200) 18%, transparent);
+    border-color: color-mix(in srgb, var(--ga-blue-200) 50%, transparent);
   }
   .sl-find-latest:disabled { opacity: 0.6; cursor: not-allowed; }
   .spin { animation: sl-spin 1s linear infinite; }
@@ -484,9 +484,9 @@
 
   .sl-sync-banner {
     padding: 8px 20px;
-    background: rgba(126,200,227,0.08);
-    border-bottom: 1px solid rgba(126,200,227,0.15);
-    color: #7EC8E3;
+    background: color-mix(in srgb, var(--ga-blue-200) 8%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--ga-blue-200) 15%, transparent);
+    color: var(--ga-blue-200);
     font-size: 13px;
   }
 
@@ -519,15 +519,15 @@
     gap: 4px;
   }
   .sl-source-btn {
-    background: rgba(126,200,227,0.04);
-    border-color: rgba(126,200,227,0.12);
-    color: #7EC8E3;
+    background: color-mix(in srgb, var(--ga-blue-200) 4%, transparent);
+    border-color: color-mix(in srgb, var(--ga-blue-200) 12%, transparent);
+    color: var(--ga-blue-200);
     font-weight: 600;
   }
   .sl-source-btn.active {
-    background: rgba(126,200,227,0.18);
-    border-color: rgba(126,200,227,0.4);
-    color: #b3dff0;
+    background: color-mix(in srgb, var(--ga-blue-200) 18%, transparent);
+    border-color: color-mix(in srgb, var(--ga-blue-200) 40%, transparent);
+    color: var(--ga-blue-100);
   }
 
   .sl-categories {
@@ -587,7 +587,7 @@
   .sl-card-thumb {
     width: 100%;
     aspect-ratio: 16/9;
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    background: linear-gradient(135deg, var(--ga-blue-mute-800) 0%, var(--ga-blue-800) 50%, var(--ga-blue-700) 100%);
     overflow: hidden;
     position: relative;
   }

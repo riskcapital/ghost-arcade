@@ -91,7 +91,7 @@
 
   .update-modal {
     background: var(--bg-tertiary, #14141a);
-    border: 1px solid rgba(126, 200, 227, 0.18);
+    border: 1px solid color-mix(in srgb, var(--ga-blue-200) 18%, transparent);
     border-radius: 8px;
     width: 100%;
     max-width: 640px;
@@ -115,7 +115,7 @@
     font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: #7EC8E3;
+    color: var(--ga-blue-200);
     margin-bottom: 4px;
   }
 
@@ -193,8 +193,8 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #FF8577, #7EC8E3);
-    box-shadow: 0 0 12px rgba(126, 200, 227, 0.45);
+    background: linear-gradient(135deg, #FF8577, var(--ga-blue-200));
+    box-shadow: 0 0 12px color-mix(in srgb, var(--ga-blue-200) 45%, transparent);
   }
 
   .update-page-copy,
@@ -222,7 +222,7 @@
     appearance: none;
     background: transparent;
     border: none;
-    color: #7EC8E3;
+    color: var(--ga-blue-200);
     font-size: 13px;
     text-decoration: none;
     margin-right: auto;
@@ -248,7 +248,7 @@
 
   .update-primary {
     padding: 8px 18px;
-    background: linear-gradient(90deg, #FF8577, #7EC8E3);
+    background: linear-gradient(90deg, #FF8577, var(--ga-blue-200));
     border: none;
     border-radius: 4px;
     color: #0a0a0a;

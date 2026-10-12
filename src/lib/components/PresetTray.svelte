@@ -615,12 +615,12 @@
 
   .tray-toggle:hover {
     border-color: #BB86FC;
-    box-shadow: 0 4px 30px rgba(0, 170, 255, 0.2);
+    box-shadow: 0 4px 30px var(--ga-blue-a16);
   }
 
   .tray-toggle.open {
     border-color: #BB86FC;
-    background: linear-gradient(135deg, #1a2530, #253040);
+    background: linear-gradient(135deg, var(--ga-blue-mute-800), var(--ga-blue-mute-800));
   }
 
   .toggle-icon {
@@ -641,6 +641,33 @@
     font-size: 11px;
     font-weight: 700;
   }
+
+  .tray-toggle.vj-drag {
+    z-index: 1205;
+    bottom: 10px;
+    left: 14px;
+    transform: none;
+  }
+  .preset-tray.vj-drag {
+    z-index: 1204;
+    bottom: 0;
+    height: 172px;
+    border-top: 1px solid var(--ga-coral-line, rgba(206,222,236,.45));
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.55);
+  }
+  .tray-minimize-btn {
+    background: var(--bg-tertiary, #14141a);
+    border: 1px solid #2a2a30;
+    color: var(--text-primary, #ddd);
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .tray-minimize-btn:hover { border-color: var(--ga-coral, #ff6f5e); }
+  .preset-tray.vj-drag .preset-item { cursor: grab; }
+  .preset-tray.vj-drag .preset-item:active { cursor: grabbing; }
 
   .preset-tray {
     position: fixed;
@@ -780,7 +807,7 @@
   .ap-bpm {
     font-size: 11px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .ap-progress {
     width: 60px;
@@ -833,7 +860,7 @@
   }
 
   .save-btn:hover {
-    background: #00ccff;
+    background: var(--ga-blue-300);
   }
 
   /* "Update current preset" — visually paired with .save-btn but with
@@ -973,7 +1000,7 @@
     font-size: 12px;
     font-weight: 600;
     color: #ff4444;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   /* Preset list */
@@ -1027,12 +1054,12 @@
 
   .preset-item.active {
     border-color: #BB86FC;
-    box-shadow: 0 0 12px rgba(0, 170, 255, 0.3);
+    box-shadow: 0 0 12px var(--ga-blue-a28);
   }
 
   .preset-item.dragover {
-    border-color: #7EC8E3;
-    box-shadow: 0 0 0 1px rgba(126, 200, 227, 0.7), 0 0 14px rgba(126, 200, 227, 0.26);
+    border-color: var(--ga-blue-200);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ga-blue-200) 70%, transparent), 0 0 14px color-mix(in srgb, var(--ga-blue-200) 26%, transparent);
     transform: translateY(-2px);
   }
 

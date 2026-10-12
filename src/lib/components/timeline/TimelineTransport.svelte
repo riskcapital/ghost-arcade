@@ -89,7 +89,7 @@
     padding: 0;
   }
   .transport-btn:hover { color: #fff; border-color: rgba(255,255,255,0.2); }
-  .transport-btn.active { color: #FF6B6B; border-color: rgba(255,107,107,0.4); }
+  .transport-btn.active { color: var(--ga-coral, #ff6f5e); border-color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 40%, transparent); }
   .time-display {
     font-family: var(--font-jetbrains), monospace;
     font-size: 13px;

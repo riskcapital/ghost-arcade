@@ -242,12 +242,16 @@
 
   .snap-grid {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
+    grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 4px;
     margin-top: 6px;
     width: 290px;
+    box-sizing: border-box;
+    max-width: calc(100vw - 32px);
   }
   .snap-bank.inline .snap-grid {
+    /* Eight 32px pads, seven 4px gaps, padding and border. */
+    width: 302px;
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
@@ -261,6 +265,7 @@
   }
 
   .snap-cell-wrap {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -269,7 +274,11 @@
 
   .snap-cell {
     position: relative;
-    width: 32px;
+    width: 100%;
+    max-width: 32px;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0;
     height: 32px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -281,7 +290,7 @@
     justify-content: center;
     font-size: 11px;
     font-weight: 700;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
   }
   .snap-cell:hover {
@@ -326,7 +335,10 @@
   }
 
   .snap-rename {
-    width: 32px;
+    width: 100%;
+    max-width: 32px;
+    min-width: 0;
+    box-sizing: border-box;
     background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: #fff;

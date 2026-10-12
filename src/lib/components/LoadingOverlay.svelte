@@ -56,7 +56,7 @@
   .loading-text {
     color: var(--text-primary, #ccc);
     font-size: 14px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     letter-spacing: 0.05em;
   }
 
@@ -64,19 +64,19 @@
   .progress-value {
     color: var(--text-secondary, #8b93a1);
     font-size: 12px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .progress-track {
     width: min(320px, 70vw);
     height: 4px;
     overflow: hidden;
-    background: #232833;
+    background: var(--ga-blue-mute-800);
   }
 
   .progress-fill {
     height: 100%;
-    background: #67e8f9;
+    background: var(--ga-blue-300);
     transition: width 90ms linear;
   }
 

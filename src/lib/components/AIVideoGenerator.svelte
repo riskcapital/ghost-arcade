@@ -840,7 +840,7 @@
   }
   .status.done { color: #0f0; }
   .elapsed {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: var(--text-muted, #888);
   }
 

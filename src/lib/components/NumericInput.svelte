@@ -161,7 +161,7 @@
   .ni-display {
     background: transparent;
     border: 1px dashed transparent;
-    color: #67e8f9;
+    color: var(--ga-blue-300);
     font: inherit;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
@@ -171,12 +171,12 @@
     transition: background 0.08s, border-color 0.08s;
   }
   .ni-display:hover {
-    background: rgba(103, 232, 249, 0.08);
-    border-color: rgba(103, 232, 249, 0.35);
+    background: var(--ga-blue-a08);
+    border-color: var(--ga-blue-a28);
   }
   .ni-edit {
     background: #0f1219;
-    border: 1px solid #67e8f9;
+    border: 1px solid var(--ga-blue-300);
     color: #e0e7ef;
     font: inherit;
     font-weight: 500;
@@ -187,5 +187,5 @@
     text-align: right;
     outline: none;
   }
-  input[type="range"] { width: 100%; accent-color: #67e8f9; }
+  input[type="range"] { width: 100%; accent-color: var(--ga-blue-300); }
 </style>

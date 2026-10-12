@@ -319,7 +319,7 @@
     font-size: 12px;
     color: var(--text-muted, #888);
     margin-bottom: 6px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .preview-meta strong {
     color: var(--text-primary, #ddd);

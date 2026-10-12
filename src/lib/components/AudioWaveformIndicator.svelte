@@ -94,7 +94,7 @@
 
 <style>
   .awi {
-    display: inline-block;
+    display: block;
     vertical-align: middle;
     background: var(--ga-slot, #050607);
     /* Visually framed but quiet — sits between the icons without
