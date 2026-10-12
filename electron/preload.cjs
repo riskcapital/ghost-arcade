@@ -168,6 +168,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 // reflects "is the addon loadable AND the NDI runtime initialized?".
 // On machines without NDI, every send returns { ok: false } and the
 // app continues with Spout / Syphon as the only output transports.
+// LAN remote pairing. info() → { token, wsPort, httpPort }; reset() issues a
+// new token, which disconnects and unpairs every phone, and returns the same.
+contextBridge.exposeInMainWorld('ghostRemote', {
+  info: () => ipcRenderer.invoke('remote_pairing_info'),
+  reset: () => ipcRenderer.invoke('remote_pairing_reset'),
+});
+
 contextBridge.exposeInMainWorld('ghostNDI', {
   available: () => ipcRenderer.invoke('ndi_available'),
   // Sender API

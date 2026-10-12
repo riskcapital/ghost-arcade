@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { localServerFetch } from '../remote/remotePairing';
   import { get } from 'svelte/store';
   import {
     RenderEngine,
@@ -2518,8 +2519,8 @@
                           sliceSendInFlight.delete(slice.id);
                         });
                     } else {
-                      fetch(
-                        `http://127.0.0.1:9002/spout/send?width=${sw}&height=${sh}&sender=${encodeURIComponent(senderName)}`,
+                      localServerFetch(
+                        `/spout/send?width=${sw}&height=${sh}&sender=${encodeURIComponent(senderName)}`,
                         {
                           method: 'POST',
                           // BodyInit doesn't include the Uint8Array<ArrayBufferLike>
@@ -2558,7 +2559,7 @@
                       });
                   } else {
                     // Tauri / browser: HTTP binary POST to sidecar on port 9002
-                    fetch(`http://127.0.0.1:9002/spout/send?width=${w}&height=${h}`, {
+                    localServerFetch(`/spout/send?width=${w}&height=${h}`, {
                       method: 'POST',
                       body: spoutSendPixels as BodyInit,
                     })
@@ -4026,7 +4027,7 @@
 
                 httpRecvInFlight = true;
                 try {
-                  const resp = await fetch(`http://127.0.0.1:9002/spout/receive/${encodeURIComponent(senderName)}`);
+                  const resp = await localServerFetch(`/spout/receive/${encodeURIComponent(senderName)}`);
                   if (resp.status === 204 || !resp.ok) {
                     // No frame available yet
                     httpRecvInFlight = false;

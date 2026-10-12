@@ -1,5 +1,15 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
+  import {
+    PAIRING_QUERY_PARAM,
+    cleanPairingCode,
+    formatPairingCode,
+    recallPairingToken,
+    rememberPairingToken,
+    withPairingToken,
+  } from '../remote/remotePairing';
+  /** The code shown beside the Connect Mobile QR in Ghost Arcade. */
+  let pairingCode = '';
   import { createDefaultLayerShape } from '../types';
   import type { Project, Point2D, WarpCorners, BlendMode, Effect, EffectType, EffectParams, LayerShape, LayerShapeParams, LayerShapeType } from '../types';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
@@ -1312,6 +1322,17 @@
       serverUrl = `ws://${hostname}:9001`;
     }
 
+    // A scanned QR link carries the pairing code. Keep it, then take it back
+    // out of the address bar so it is not left on screen or in a bookmark.
+    const pageParams = new URLSearchParams(window.location.search);
+    const linkedCode = cleanPairingCode(pageParams.get(PAIRING_QUERY_PARAM) ?? '');
+    if (linkedCode && rememberPairingToken(linkedCode)) {
+      pageParams.delete(PAIRING_QUERY_PARAM);
+      const query = pageParams.toString();
+      history.replaceState(history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+    }
+    pairingCode = formatPairingCode(linkedCode || recallPairingToken());
+
     updateViewportSize();
     window.addEventListener('resize', updateViewportSize);
 
@@ -1342,6 +1363,13 @@
   }
 
   function connect() {
+    // The server refuses a device without one, and this says why up front.
+    const pairingToken = cleanPairingCode(pairingCode);
+    if (!pairingToken) {
+      error = 'Enter the pairing code shown in Ghost Arcade, or scan its QR code.';
+      return;
+    }
+
     if (ws) {
       ws.close();
     }
@@ -1365,7 +1393,7 @@
     let socket: WebSocket;
 
     try {
-      socket = new WebSocket(targetUrl);
+      socket = new WebSocket(withPairingToken(targetUrl, pairingToken));
     } catch (err) {
       error = 'Invalid URL format. Use format: ws://IP_ADDRESS:9001';
       connecting = false;
@@ -1379,7 +1407,7 @@
       if (!connected && socket.readyState !== WebSocket.OPEN) {
         socket.close();
         connecting = false;
-        error = `Could not reach server at ${targetUrl}. Check that the desktop app is running and both devices are on the same network.`;
+        error = `Could not reach server at ${targetUrl}. Check the pairing code, that the desktop app is running and that both devices are on the same network.`;
       }
     }, 6000);
 
@@ -1400,6 +1428,8 @@
         connectTimeout = null;
       }
       try { localStorage.setItem('ghost-arcade_server_url', targetUrl); } catch { /* private browsing */ }
+      // Accepted, so keep the code: reloads and reconnects need no new scan.
+      rememberPairingToken(pairingToken);
       // Request initial sync
       socket.send(JSON.stringify({ type: 'sync_request' }));
       // Retry sync_request after delays in case desktop hasn't sent state yet
@@ -3103,6 +3133,15 @@
       {/if}
 
       <div class="connect-form">
+        <input
+          type="text"
+          bind:value={pairingCode}
+          placeholder="Pairing code"
+          aria-label="Pairing code shown in Ghost Arcade"
+          autocapitalize="characters"
+          autocomplete="off"
+          spellcheck="false"
+        />
         <input
           type="text"
           bind:value={serverUrl}

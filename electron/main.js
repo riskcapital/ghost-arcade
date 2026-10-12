@@ -1271,6 +1271,81 @@ let atlasSendFailCount = 0;
 // Sidecar: Rust WS/HTTP/Spout backend
 // ============================================================
 
+// The LAN remote's ports. Development builds can move them with WS_PORT /
+// HTTP_PORT so a second copy runs beside another without the stale-port sweep
+// in startNodeServer() killing the other copy's server. Packaged builds ignore
+// the variables: WS_PORT is a generic name, and a stray one would point that
+// sweep at somebody else's process.
+function remotePort(value, fallback) {
+  const port = Number(value);
+  return !app.isPackaged && Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback;
+}
+const REMOTE_WS_PORT = remotePort(process.env.WS_PORT, 9001);
+const REMOTE_HTTP_PORT = remotePort(process.env.HTTP_PORT, 9002);
+
+// ─── LAN remote pairing ─────────────────────────────────────────────
+// The token a phone must present to the remote's WebSocket and HTTP servers
+// (server/pairing.cjs). One per install, kept in userData beside the rest of
+// the app's state, so a paired phone still connects after a restart.
+//
+// Deliberately not the MCP token. That one is issued fresh each time MCP is
+// switched on, and Settings promises that toggling it revokes a client; a
+// token that persists and travels over venue Wi-Fi in a QR code cannot keep
+// that promise. The two share the checking code instead.
+const {
+  generatePairingToken,
+  loadOrCreatePairingToken,
+  writePairingToken,
+} = require('../server/pairing.cjs');
+
+let remotePairingToken = null;
+// What makes the editor the host on the remote's servers. Never leaves this
+// machine: not in the QR link, not on disk, new on every launch.
+const remoteDesktopCredential = require('crypto').randomBytes(32).toString('hex');
+
+function remotePairingFile() {
+  return path.join(app.getPath('userData'), 'remote-pairing.json');
+}
+
+function getRemotePairingToken() {
+  if (remotePairingToken) return remotePairingToken;
+  try {
+    remotePairingToken = loadOrCreatePairingToken(remotePairingFile());
+  } catch (err) {
+    // An unwritable profile should not leave the remote dead. A token for this
+    // session still pairs; phones just scan again after a restart.
+    console.error('[Main] Could not save the remote pairing token:', err?.message || err);
+    remotePairingToken = generatePairingToken();
+  }
+  return remotePairingToken;
+}
+
+function remotePairingInfo({ host = true } = {}) {
+  const info = { token: getRemotePairingToken(), wsPort: REMOTE_WS_PORT, httpPort: REMOTE_HTTP_PORT };
+  return host ? { ...info, desktopCredential: remoteDesktopCredential } : info;
+}
+
+/** New token, which unpairs every phone, the ones connected right now too. */
+async function resetRemotePairing() {
+  const token = generatePairingToken();
+  // Do not claim revocation if the old on-disk token would return at restart.
+  writePairingToken(remotePairingFile(), token);
+  remotePairingToken = token;
+  if (embeddedServerModule?.setPairingToken) {
+    embeddedServerModule.setPairingToken(token);
+  } else if (sidecarProcess) {
+    // The fallback child got its token in its environment at spawn, so a new
+    // token means a new child. Killing the old one drops its connections.
+    const oldChild = sidecarProcess;
+    const exited = new Promise(resolve => oldChild.once('exit', resolve));
+    killChildProcess(oldChild, 'server sidecar');
+    sidecarProcess = null;
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))]);
+    await startNodeServer();
+  }
+  return remotePairingInfo();
+}
+
 async function startNodeServer() {
   // Start the Node.js WS/HTTP server (server/ws-server.js)
   const serverPath = path.join(__dirname, '..', 'server', 'ws-server.js');
@@ -1279,29 +1354,14 @@ async function startNodeServer() {
     return;
   }
 
-  // Kill any stale process on port 9001 before starting
-  try {
-    if (process.platform === 'win32') {
-      execSync('for /f "tokens=5" %a in (\'netstat -ano ^| findstr :9001 ^| findstr LISTENING\') do taskkill /F /PID %a', {
-        shell: 'cmd.exe', stdio: 'ignore', timeout: 5000
-      });
-    } else {
-      // macOS / Linux: use lsof to find and kill process on port 9001
-      execSync("lsof -ti:9001 | xargs kill -9 2>/dev/null || true", {
-        stdio: 'ignore', timeout: 5000
-      });
-    }
-    // Small delay to let the port release
-    await new Promise(r => setTimeout(r, 500));
-  } catch {
-    // No process on the port — good
-  }
+  // A busy port may belong to another live show. Never kill an unrelated
+  // listener; report startup failure and leave the existing process alone.
 
   console.log('[Main] Starting Node.js server:', serverPath);
 
   // Set env vars the server expects
-  process.env.WS_PORT = '9001';
-  process.env.HTTP_PORT = '9002';
+  process.env.WS_PORT = String(REMOTE_WS_PORT);
+  process.env.HTTP_PORT = String(REMOTE_HTTP_PORT);
 
   // Import the server module in-process — it auto-starts on import.
   // On Windows, dynamic import() needs a file:// URL, not a raw path.
@@ -1309,27 +1369,62 @@ async function startNodeServer() {
     const serverUrl = new URL(`file:///${serverPath.replace(/\\/g, '/')}`).href;
     console.log('[Main] Importing server from:', serverUrl);
     embeddedServerModule = await import(serverUrl);
+    await embeddedServerModule.listening;
     console.log('[Main] Server module loaded in-process');
   } catch (e) {
     console.error('[Main] Failed to load server in-process:', e.message);
+    if (embeddedServerModule) {
+      embeddedServerModule.shutdownServer?.({ force: true });
+      embeddedServerModule = null;
+      return; // A bind failure is not fixed by starting another process.
+    }
     // Fallback: spawn with ELECTRON_RUN_AS_NODE
     console.log('[Main] Trying ELECTRON_RUN_AS_NODE spawn fallback...');
     try {
-      sidecarProcess = spawn(process.execPath, [serverPath], {
-        stdio: ['ignore', 'pipe', 'pipe'],
+      const child = spawn(process.execPath, [serverPath], {
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         cwd: path.join(__dirname, '..'),
-        env: { ...process.env, WS_PORT: '9001', HTTP_PORT: '9002', ELECTRON_RUN_AS_NODE: '1' },
+        // The token goes in this child's environment only, never main's own
+        // process.env, which every other child would inherit.
+        env: {
+          ...process.env,
+          WS_PORT: String(REMOTE_WS_PORT),
+          HTTP_PORT: String(REMOTE_HTTP_PORT),
+          GA_PAIRING_TOKEN: getRemotePairingToken(),
+          GA_DESKTOP_CREDENTIAL: remoteDesktopCredential,
+          ELECTRON_RUN_AS_NODE: '1',
+        },
         windowsHide: true,
         shell: false,
       });
-      sidecarProcess.stdout?.on('data', (d) => console.log(`[Server] ${d.toString().trim()}`));
-      sidecarProcess.stderr?.on('data', (d) => console.error(`[Server] ${d.toString().trim()}`));
-      sidecarProcess.on('exit', (code) => { console.log(`[Main] Server exited ${code}`); sidecarProcess = null; });
-      sidecarProcess.on('error', (err) => { console.error(`[Main] Server spawn error: ${err.message}`); });
+      sidecarProcess = child;
+      child.stdout?.on('data', (d) => console.log(`[Server] ${d.toString().trim()}`));
+      child.stderr?.on('data', (d) => console.error(`[Server] ${d.toString().trim()}`));
+      // A pairing reset replaces the child, and the old one's exit arrives
+      // after its replacement is already running.
+      child.on('exit', (code) => {
+        console.log(`[Main] Server exited ${code}`);
+        if (sidecarProcess === child) sidecarProcess = null;
+      });
+      child.on('error', (err) => { console.error(`[Main] Server spawn error: ${err.message}`); });
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => finish(new Error('Remote server startup timed out')), 10000);
+        const onMessage = message => { if (message?.type === 'remote-server-ready') finish(); };
+        const onExit = () => finish(new Error('Remote server exited before listening'));
+        const finish = error => {
+          clearTimeout(timeout); child.off('message', onMessage); child.off('exit', onExit); child.off('error', finish);
+          if (error) { killChildProcess(child, 'failed remote server'); reject(error); } else resolve();
+        };
+        child.on('message', onMessage); child.once('exit', onExit); child.once('error', finish);
+      });
     } catch (e2) {
       console.error('[Main] Server spawn fallback also failed:', e2.message);
     }
   }
+
+  // The in-process server refuses every connection until it has the token.
+  embeddedServerModule?.setDesktopCredential?.(remoteDesktopCredential);
+  embeddedServerModule?.setPairingToken?.(getRemotePairingToken());
 }
 
 function stopServer() {
@@ -2558,6 +2653,14 @@ function startOSC(port, win) {
 
 function registerIpcHandlers() {
   // --- Diagnostics ---
+  // --- LAN remote pairing ---
+  // The editor shows the token beside the Connect Mobile QR code, puts it in
+  // the QR link, and presents it on its own connection to the server.
+  // Only the editor is the host. Output and Screen windows still get the token
+  // for their own reads, but not the host credential.
+  ipcMain.handle('remote_pairing_info', (event) => remotePairingInfo({ host: event.sender === mainWindow?.webContents }));
+  ipcMain.handle('remote_pairing_reset', (event) => event.sender === mainWindow?.webContents ? resetRemotePairing() : null);
+
   ipcMain.handle('ping', () => {
     console.log('[IPC] ping received from renderer!');
     return 'pong';

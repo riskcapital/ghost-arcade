@@ -1,6 +1,16 @@
 <script lang="ts">
   import { screenSetups } from './lib/stores/screenSetups';
   import { onMount, onDestroy } from 'svelte';
+  import {
+    DEFAULT_REMOTE_HTTP_PORT,
+    DEFAULT_REMOTE_WS_PORT,
+    formatPairingCode,
+    getRemotePairingInfo,
+    localServerFetch,
+    resetRemotePairing,
+    withPairingToken,
+  } from './lib/remote/remotePairing';
+  import { mobileConnectionUrl } from './lib/remote/mobileConnectionUrl';
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
@@ -948,7 +958,9 @@
     let autoConnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let retryInterval: ReturnType<typeof setInterval> | null = null;
     if (!isMobile) {
-      const autoConnect = () => {
+      const autoConnect = async () => {
+        // The server refuses anyone without the pairing token, this window included.
+        await loadRemotePairing();
         if (!ws || ws.readyState === WebSocket.CLOSED) {
           connectToServer();
         }
@@ -1883,8 +1895,22 @@
   let wsServerReady = false;   // Desktop is connected to WS server (can show QR)
   let mobileConnected = false; // At least one mobile client is connected
   let clientCount = 0;
-  let wsPort = 9001;
-  let httpPort = 9002; // HTTP info server port
+  let wsPort = DEFAULT_REMOTE_WS_PORT;
+  let httpPort = DEFAULT_REMOTE_HTTP_PORT; // HTTP info server port
+  // Every device on the remote's servers presents this, the desktop included.
+  let pairingToken = '';
+  let desktopCredential = '';
+
+  // Token and ports for the LAN remote, from main. Outside the desktop app
+  // there are none and the defaults stand.
+  async function loadRemotePairing() {
+    const info = await getRemotePairingInfo();
+    if (!info) return;
+    pairingToken = info.token;
+    desktopCredential = info.desktopCredential || '';
+    wsPort = info.wsPort;
+    httpPort = info.httpPort;
+  }
   const LP_LIVE_PREVIEW_SYNC_INTERVAL_MS = 50;
   const LP_LIVE_PREVIEW_MAX_POINTS = 300;
 
@@ -2732,7 +2758,7 @@
 
   function connectToServer() {
     connectionError = '';
-    const url = `ws://127.0.0.1:${wsPort}`;
+    const url = withPairingToken(`ws://127.0.0.1:${wsPort}`, pairingToken);
 
     if (ws) {
       ws.onopen = null;
@@ -2759,7 +2785,7 @@
       wsServerReady = true;
       connectionError = '';
       // Register as desktop client — mobileConnected will be set by client_count messages
-      ws?.send(JSON.stringify({ type: 'register_desktop' }));
+      ws?.send(JSON.stringify({ type: 'register_desktop', credential: desktopCredential }));
       // Send initial state
       syncState();
     };
@@ -3920,7 +3946,7 @@
     // Method 1: Ask the WebSocket server for IPs (most reliable)
     // The server uses Node's os.networkInterfaces() which is accurate
     try {
-      const response = await fetch(`http://localhost:${httpPort}/info`, {
+      const response = await localServerFetch('/info', {
         signal: AbortSignal.timeout(2000)
       });
       if (response.ok) {
@@ -3988,16 +4014,44 @@
 
   function getMobileUrl(ip?: string) {
     const host = ip || selectedIP || localIPs[0] || window.location.hostname;
-    // In production: serve from the HTTP server on port 9002 (accessible over LAN)
-    // In dev: use Vite dev server on port 1420
-    const isDev = window.location.protocol !== 'file:' && window.location.port === '1420';
-    const port = isDev ? 1420 : 9002;
-    return `http://${host}:${port}/#/mobile`;
+    // In production: serve from the remote's HTTP server (accessible over LAN)
+    // In dev: use the Vite dev server this window was loaded from
+    const isDev = window.location.protocol !== 'file:' && !!window.location.port;
+    const port = isDev ? window.location.port : httpPort;
+    return mobileConnectionUrl(host, port, pairingToken, wsPort);
   }
 
   function getWebSocketUrl(ip?: string) {
     const host = ip || selectedIP || localIPs[0] || window.location.hostname;
-    return `ws://${host}:9001`;
+    if (!host) return '';
+    const authority = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    return `ws://${authority}:${wsPort}`;
+  }
+
+  // Reset asks first: it disconnects every phone, mid-set if that is when
+  // someone presses it.
+  let confirmingPairingReset = false;
+  let pairingResetBusy = false;
+
+  async function confirmPairingReset() {
+    pairingResetBusy = true;
+    try {
+      const info = await resetRemotePairing();
+      if (info) {
+        pairingToken = info.token;
+        desktopCredential = info.desktopCredential || '';
+        // The server dropped every connection made with the old token, this
+        // window's included, so come back with the new one.
+        connectToServer();
+        await generateQRCode();
+      }
+    } catch (err) {
+      console.error('[Remote] Pairing reset failed:', err);
+      connectionError = 'Pairing could not be reset. The existing code is still active.';
+    } finally {
+      pairingResetBusy = false;
+      confirmingPairingReset = false;
+    }
   }
 
   // Generate QR code for the mobile URL
@@ -5736,7 +5790,9 @@
             title={mobileConnected ? `Mobile: ${clientCount - 1} connected` : 'Connect Mobile'}
             onclick={async () => {
               showMobileInfo = !showMobileInfo;
+              confirmingPairingReset = false;
               if (showMobileInfo) {
+                await loadRemotePairing();
                 await fetchLocalIPs();
                 await generateQRCode();
                 if (!wsServerReady && !ws) {
@@ -5778,6 +5834,30 @@
                 <div class="qr-container">
                   <img src={qrCodeDataUrl} alt="QR Code for mobile connection" class="qr-code" />
                   <p class="qr-hint">Scan with your phone/iPad camera</p>
+                  {#if pairingToken}
+                    <!-- The QR link carries this already; it is shown for devices
+                         that cannot scan, such as the native app. -->
+                    <div class="pairing-code">
+                      <span class="pairing-code-label">Pairing code</span>
+                      <code class="pairing-code-value">{formatPairingCode(pairingToken)}</code>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+
+              {#if pairingToken}
+                <div class="pairing-reset">
+                  {#if confirmingPairingReset}
+                    <p>Every paired phone and tablet disconnects and has to scan the new code to connect again.</p>
+                    <div class="pairing-reset-actions">
+                      <button onclick={() => (confirmingPairingReset = false)} disabled={pairingResetBusy}>Cancel</button>
+                      <button class="pairing-reset-confirm" onclick={confirmPairingReset} disabled={pairingResetBusy}>
+                        Reset pairing
+                      </button>
+                    </div>
+                  {:else}
+                    <button onclick={() => (confirmingPairingReset = true)}>Reset pairing...</button>
+                  {/if}
                 </div>
               {/if}
 
@@ -8386,6 +8466,58 @@
     width: 200px;
     height: 200px;
     border-radius: 6px;
+  }
+
+  .pairing-code {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-top: 12px;
+  }
+
+  .pairing-code-label {
+    font-size: 11px;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .pairing-code-value {
+    font-size: 17px;
+    letter-spacing: 0.08em;
+    color: var(--accent-primary);
+    background: transparent;
+    padding: 0;
+    user-select: all;
+  }
+
+  .pairing-reset {
+    margin-bottom: 12px;
+  }
+
+  .pairing-reset p {
+    font-size: 12px;
+    color: #999;
+    margin: 0 0 8px;
+  }
+
+  .pairing-reset button {
+    margin-top: 0;
+  }
+
+  .pairing-reset-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .mobile-info-popup .pairing-reset-confirm {
+    background: rgba(255, 68, 68, 0.18);
+    color: #FF8888;
+  }
+
+  .mobile-info-popup .pairing-reset-confirm:hover {
+    background: rgba(255, 68, 68, 0.28);
   }
 
   .qr-hint {
