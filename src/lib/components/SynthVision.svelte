@@ -3920,21 +3920,35 @@ void main() {
   }
 
   // ─── Random All: ISF Params + Layer Effects ─────────────────────────
-  function randomizeAll() {
-    // 1. Randomize ISF shader params (if ISF active)
+  // ─── Scramble (Tab) ─────────────────────────────────────────────────
+  // Scrambles the dials of the shader that is running and of Performer's
+  // effects. It does not pick a different shader or world: whatever is on
+  // screen stays on screen and only its settings move.
+  function scrambleRunning() {
+    // 1. The running shader's parameters, of every kind.
     if (isfActive && isfShaderInstance) {
       const inputs = isfShaderInstance.metadata?.INPUTS || [];
       for (const input of inputs) {
         if (input.NAME.startsWith('sv')) continue; // skip bridge params
+        let value: number | boolean | number[] | null = null;
         if (input.TYPE === 'float') {
           const min = (input.MIN as number) ?? 0;
           const max = (input.MAX as number) ?? 1;
-          setISFInputValue(isfShaderInstance, input.NAME, min + Math.random() * (max - min));
-        } else if (input.TYPE === 'long' && input.VALUES) {
-          const idx = Math.floor(Math.random() * input.VALUES.length);
-          setISFInputValue(isfShaderInstance, input.NAME, input.VALUES[idx]);
+          value = min + Math.random() * (max - min);
+        } else if (input.TYPE === 'long' && input.VALUES?.length) {
+          value = input.VALUES[Math.floor(Math.random() * input.VALUES.length)] as number;
+        } else if (input.TYPE === 'bool') {
+          value = Math.random() < 0.5;
+        } else if (input.TYPE === 'color') {
+          value = [Math.random(), Math.random(), Math.random(), 1];
+        } else if (input.TYPE === 'point2D') {
+          value = [Math.random(), Math.random()];
         }
+        if (value !== null) setISFInputValue(isfShaderInstance, input.NAME, value as any);
       }
+    } else {
+      // No shader clip running: the built-in shader's own dials.
+      synthVisionStore.scrambleShaderParams();
     }
 
     // 2. Randomize layer effects params
@@ -3961,7 +3975,11 @@ void main() {
       }
     }
 
-    // 3. Still do world/shader cycling via the store
+  }
+
+  /** The RANDOM button: scramble, and also pick a new shader, world, style and space. */
+  function randomizeAll() {
+    scrambleRunning();
     synthVisionStore.doFullRandom();
   }
 
@@ -4339,7 +4357,7 @@ void main() {
     if (e.repeat) return;
 
     // Tab = full random (shader, world, style, space, params, effects)
-    if (code === 'Tab') { e.preventDefault(); randomizeAll(); return; }
+    if (code === 'Tab') { e.preventDefault(); scrambleRunning(); return; }
 
     // Arrow left/right = crossfade nudge
     if (code === 'ArrowLeft') { e.preventDefault(); synthVisionStore.nudgeXfade(-.05); return; }

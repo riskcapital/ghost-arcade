@@ -683,6 +683,14 @@ function createSynthVisionStore() {
       return { ...s, layers: newLayers, worldParams: newWorldParams };
     }),
 
+    /** Scramble the built-in shader's own dials. The shader, world, style
+     *  and space that are running stay as they are. */
+    scrambleShaderParams: () => update(s => {
+      const layer = { ...s.layers[s.focus], p: { ...s.layers[s.focus].p } };
+      for (const param of SV_PARAMS) (layer.p as any)[param.k] = Math.random();
+      return { ...s, layers: { ...s.layers, [s.focus]: layer } };
+    }),
+
     // Reset
     reset: () => set(createDefaultState()),
 
