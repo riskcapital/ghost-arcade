@@ -73,7 +73,33 @@ export function registerSnapshotRecaller(recaller: (index: number) => void) {
   _snapshotRecaller = recaller;
 }
 
+/**
+ * Late-bound cue list control for `show:go`, `show:back`, `show:stop`,
+ * `show:reset` and `show:cue:<index>`. Registered by the show-control
+ * runtime so the router does not import the cue engine. Fires on the rising
+ * edge only (value > 0), like a pad.
+ */
+export type ShowControlAction = 'go' | 'back' | 'stop' | 'reset' | { cue: number };
+let _showControl: ((action: ShowControlAction) => void) | null = null;
+export function registerShowControl(handler: ((action: ShowControlAction) => void) | null) {
+  _showControl = handler;
+}
+
 class MidiRouter {
+  /** Let go of anything an input was holding. This line of the app has no
+   *  held triggers, so there is nothing to release; callers share the API. */
+  public releaseInputs(_prefix: string) {}
+
+  private dispatchShow(parts: string[], value: number) {
+    if (!(value > 0) || !_showControl) return;
+    const action = parts[1];
+    if (action === 'go' || action === 'back' || action === 'stop' || action === 'reset') {
+      _showControl(action);
+    } else if (action === 'cue' && /^\d+$/.test(parts[2] ?? '')) {
+      _showControl({ cue: Number(parts[2]) });
+    }
+  }
+
   routeMessage(channel: number, type: MidiMessageType, number: number, value: number) {
     const key = `${type}:${number}`;
     const mappings = lookupMap.get(key);
@@ -149,7 +175,7 @@ class MidiRouter {
    * `discreteValues` lets callers target the discrete-cycle params
    * (e.g. crossfader transition, blend mode) with named values.
    */
-  public dispatchPath(path: string, value: number, opts: { discreteValues?: string[] } = {}) {
+  public dispatchPath(path: string, value: number, opts: { discreteValues?: string[]; inputId?: string } = {}) {
     const mapping: MidiMapping = {
       id: '__macro__',
       channel: -1,
@@ -179,6 +205,9 @@ class MidiRouter {
       switch (scope) {
         case 'map':
           this.dispatchMapping(parts, value, mapping);
+          break;
+        case 'show':
+          this.dispatchShow(parts, value);
           break;
         case 'vj':
           // Bank A is the canonical deck — most controllers use this scope.

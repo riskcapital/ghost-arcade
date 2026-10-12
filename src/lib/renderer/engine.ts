@@ -192,6 +192,7 @@ export class RenderEngine {
   private transitionProgress: number = 1; // 1 = no transition active
   private transitionStartTime: number = 0;
   private transitionDuration: number = 0;
+  private drivenTransition: { key: string; style: 'dissolve' | 'dipToBlack' | 'additive'; progress: number; hasSnapshot: boolean } | null = null;
 
   // ── VJ A/B crossfader state ──────────────────────────────────────────
   // When active, the layer render plan is partitioned by Layer.bank into
@@ -1904,7 +1905,9 @@ export class RenderEngine {
     this.updateDeckMonitorFrames();
 
     // Render final composite to screen
-    if (this.transitionProgress < 1) {
+    if (this.drivenTransition && this.transitionProgress >= 1 && this.applyDrivenTransition()) {
+      // Show-timeline transition: drawn above, progress comes from show time.
+    } else if (this.transitionProgress < 1) {
       // Transition active: blend snapshot with live composite
       this.applyTransition();
     } else {
@@ -3046,6 +3049,87 @@ export class RenderEngine {
     return this.transitionProgress < 1;
   }
 
+  private ensureTransitionResources(): void {
+    if (this.transitionTarget) return;
+    this.transitionTarget = this.createRenderTarget();
+    this.transitionScene = new THREE.Scene();
+    this.transitionMaterial = new THREE.ShaderMaterial({
+      vertexShader: passthroughVertexShader,
+      fragmentShader: TRANSITION_FRAGMENT_SHADER,
+      uniforms: {
+        uSnapshot: { value: null },
+        uLive: { value: null },
+        uProgress: { value: 0.0 },
+        uType: { value: 0 },
+        uTime: { value: 0.0 },
+      },
+      depthTest: false,
+      depthWrite: false,
+    });
+    const geom = new THREE.PlaneGeometry(2, 2);
+    this.transitionQuad = new THREE.Mesh(geom, this.transitionMaterial);
+    this.transitionScene.add(this.transitionQuad);
+  }
+
+  /**
+   * Show-timeline transition, driven by show time instead of a wall clock so
+   * a scrub and a playing transport land on the same frame.
+   *
+   * The timeline centres the window on the clip boundary and swaps the
+   * composition at progress 0.5. Only one composition is ever loaded here, so
+   * the outgoing picture is frozen at the swap and blended into the incoming
+   * one over the second half. Dip to black needs no snapshot and uses the
+   * whole window.
+   */
+  public driveTransition(
+    state: { key: string; style: 'dissolve' | 'dipToBlack' | 'additive'; progress: number } | null,
+  ): void {
+    if (!state) {
+      this.drivenTransition = null;
+      return;
+    }
+    const prev = this.drivenTransition;
+    const sameRun = !!prev && prev.key === state.key;
+    const progress = Math.max(0, Math.min(1, state.progress));
+    let hasSnapshot = sameRun ? prev!.hasSnapshot : false;
+    if (progress < 0.5) {
+      hasSnapshot = false;
+    } else if (sameRun && prev!.progress < 0.5 && state.style !== 'dipToBlack') {
+      // Crossing the swap: the composite still holds the outgoing picture.
+      this.ensureTransitionResources();
+      this.transitionTarget!.setSize(this.width, this.height);
+      this._copyMaterial.map = this.compositeTarget.texture;
+      this.renderer.setRenderTarget(this.transitionTarget);
+      this.renderer.render(this._copyScene, this.camera);
+      this.renderer.setRenderTarget(null);
+      hasSnapshot = true;
+    }
+    this.drivenTransition = { key: state.key, style: state.style, progress, hasSnapshot };
+  }
+
+  /** Returns false when there is nothing to blend and the normal output
+   *  path should draw the frame. */
+  private applyDrivenTransition(): boolean {
+    const driven = this.drivenTransition;
+    if (!driven) return false;
+    const dip = driven.style === 'dipToBlack';
+    if (!dip && !driven.hasSnapshot) return false;
+    this.ensureTransitionResources();
+    const uniforms = this.transitionMaterial!.uniforms;
+    uniforms.uSnapshot.value = this.transitionTarget!.texture;
+    uniforms.uLive.value = this.compositeTarget.texture;
+    uniforms.uType.value = dip ? 11 : driven.style === 'additive' ? 12 : 13;
+    uniforms.uProgress.value = dip ? driven.progress : (driven.progress - 0.5) * 2;
+    uniforms.uTime.value = 0;
+
+    this.renderer.setRenderTarget(this.tempTarget);
+    this.renderer.render(this.transitionScene!, this.camera);
+    this.renderer.setRenderTarget(null);
+    (this.outputQuad.material as THREE.ShaderMaterial).uniforms.uTexture.value = this.tempTarget.texture;
+    this.renderer.render(this.outputScene, this.camera);
+    return true;
+  }
+
   // ── VJ A/B crossfader API ──────────────────────────────────────────
   /**
    * Configure the crossfader for this frame. Called once per rAF tick from
@@ -3540,6 +3624,22 @@ const TRANSITION_FRAGMENT_SHADER = `
       // Hide snapshot once column has melted past the bottom
       float snapAlpha = (1.0 - smoothstep(0.7, 1.0, meltAmount));
       col = vec4(mix(live.rgb, dripSnap.rgb, snapAlpha), 1.0);
+    }
+
+    // Show-timeline styles, driven by show time.
+    if (uType == 11) {
+      // Dip to black: outgoing fades out, incoming fades up.
+      col = vec4(live.rgb * abs(uProgress * 2.0 - 1.0), live.a);
+    }
+    else if (uType == 12) {
+      // Additive: both pictures at full strength through the middle.
+      float wOut = clamp((1.0 - uProgress) * 2.0, 0.0, 1.0);
+      float wIn = clamp(uProgress * 2.0, 0.0, 1.0);
+      col = vec4(min(snap.rgb * wOut + live.rgb * wIn, vec3(1.0)), max(snap.a, live.a));
+    }
+    else if (uType == 13) {
+      float e = uProgress * uProgress * (3.0 - 2.0 * uProgress);
+      col = mix(snap, live, e);
     }
 
     gl_FragColor = col;

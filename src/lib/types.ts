@@ -4781,8 +4781,113 @@ export interface TimelineClip {
   compositionId: string;
   startTime: number;     // Start time in seconds
   duration: number;      // Duration in seconds
-  transitionIn?: 'cut' | 'fade' | 'crossfade';   // Transition type
+  transitionIn?: ClipTransitionIn;   // Transition style at this clip's start
   transitionDuration?: number; // Duration of transition in seconds
+}
+
+/**
+ * How one composition hands over to the next.
+ *
+ * The mechanism is a two-stack per-layer opacity crossfade (see
+ * `renderer/compositionTransitionLayers.ts`): during a transition BOTH
+ * compositions' layers are resident in the scene at once and the core
+ * composites them with time-varying opacity. Only envelopes that per-layer
+ * alpha (plus a blend-mode override) can express are listed here, because
+ * every entry in this union has to look different on screen — a menu of
+ * eleven names that all resolve to the same dissolve is worse than three
+ * that do what they say.
+ *
+ * Anything spatial (wipes, iris, voxelize…) would need the two composites
+ * rendered into separate frames and mixed by a shader; the core has no
+ * "composite this subset of scene layers into a source frame" pass, so
+ * those live on in `TransitionStyle` for project-file compatibility only
+ * and resolve to 'dissolve'.
+ */
+export type CompositionTransitionStyle =
+  | 'dissolve'    // Constant-power crossfade — both stacks visible at once
+  | 'dipToBlack'  // Outgoing falls to nothing by the midpoint, incoming rises after
+  | 'additive';   // Incoming blooms in over the outgoing with an additive blend
+
+/**
+ * LEGACY preset-player transition styles — the WebGL `renderer/engine.ts`
+ * snapshot-crossfade shader registry, which `TransitionType` still aliases.
+ *
+ * This build runs `NATIVE_ENGINE_ONLY`, where `getEngine()` returns null and
+ * none of these shaders ever run. They are kept as a type so project files
+ * and localStorage settings written by older builds still parse; the show
+ * timeline and preset tray both funnel them through
+ * `resolveTransitionStyle()`, which maps every one of them onto the nearest
+ * `CompositionTransitionStyle`.
+ */
+
+export type TransitionStyle =
+  | 'dissolve'
+  | 'wipeUp'
+  | 'wipeDown'
+  | 'wipeLeft'
+  | 'wipeRight'
+  | 'wave'
+  | 'iris'
+  | 'voxelize'
+  | 'warp'
+  | 'explode'
+  | 'pixelMelt';
+
+/**
+ * What happens at the junction on a clip's LEFT edge.
+ *
+ * 'cut' is a hard swap. 'fade' / 'crossfade' are the ORIGINAL VJ-timeline
+ * values and the `TransitionStyle` members are the legacy WebGL shader
+ * names; all of them still parse out of old project files and all of them
+ * resolve through `resolveTransitionStyle()` onto a
+ * `CompositionTransitionStyle`, which is what the native renderer runs.
+ */
+export type ClipTransitionIn =
+  | 'cut'
+  | 'fade'
+  | 'crossfade'
+  | CompositionTransitionStyle
+  | TransitionStyle;
+
+// Timeline clip - A composition in the timeline with duration
+
+/** One audio file placed on the show timeline. */
+export interface ShowAudioTrack {
+  id: string;
+  /** Display name — the source filename by default. */
+  name: string;
+  /** Runtime URL (blob: / ghost-asset: / data:). Session-scoped: blanked
+   *  at save whenever `assetRef` can reproduce it on load. */
+  url: string;
+  /** Durable identity of the source file. */
+  assetRef?: import('./storage/assetRegistry').AssetRef;
+  /** Where the track starts on the show timeline, seconds. */
+  startTime: number;
+  /** How much of the show timeline the track occupies, seconds. */
+  duration: number;
+  /** In-point inside the source file, seconds. */
+  offset: number;
+  /** Full decoded length of the source, seconds. 0 = not measured yet. */
+  sourceDuration: number;
+  /** 0..1 per-track level, applied on the clip audio bus. */
+  volume: number;
+  muted: boolean;
+  /** Audio lane row index. Tracks on different lanes may overlap in time
+   *  (that is the point — layering); tracks on the same lane may not. */
+  lane: number;
+  /** Coarse peak envelope for the waveform, 0..255, ~512 buckets over the
+   *  whole source. Persisted so reopening a project doesn't have to decode
+   *  every track again. */
+  peaks?: number[];
+}
+
+/** A mapping preset (Composition) block on the show timeline's preset lane.
+ *  Extends the original VJ-mode TimelineClip shape so the two data models
+ *  stay interchangeable. */
+export interface ShowPresetClip extends TimelineClip {
+  /** Composition name captured when the clip was created, so a clip whose
+   *  composition was later deleted still reads as something in the UI. */
+  label?: string;
 }
 
 // Timeline configuration

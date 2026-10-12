@@ -27,6 +27,52 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const { parseOSCPacket, encodeOSCMessage } = require('./osc-parser.cjs');
+import os from 'os';
+import { safeStorage } from 'electron';
+
+// Start-at-boot / show mode (electron/show-startup.cjs). The session query is
+// synchronous: the renderer needs to know whether to suppress its first-run
+// prompts before its first frame.
+const { createShowStartup } = require('./show-startup.cjs');
+const showStartup = createShowStartup({ app });
+ipcMain.on('show_startup_session', (event) => {
+  try { event.returnValue = showStartup.get(); } catch { event.returnValue = null; }
+});
+ipcMain.handle('show_startup_get', () => showStartup.get());
+ipcMain.handle('show_startup_set', (_, patch) => showStartup.set(patch));
+
+// PJLink passwords live here, encrypted with safeStorage, never in project
+// files and never sent back to the renderer (electron/pjlink-credentials.cjs).
+const { createPjlinkClient } = require('./pjlink.cjs');
+const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
+const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
+const pjlinkClient = createPjlinkClient({ credentials: pjlinkCredentials });
+
+// Art-Net / sACN pixel mapping. One socket for every fixture and node.
+const { createPixelMapOutput } = require('./pixelmap-output.cjs');
+const pixelMapOutput = createPixelMapOutput({ dgram });
+// Art-Net / sACN DMX input. Off until the renderer starts it (opt-in).
+const { createDmxInput } = require('./dmx-input.cjs');
+const dmxInput = createDmxInput({
+  dgram,
+  onChanges: (batch) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('dmx-input-changes', batch);
+  },
+  onStatus: (status) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('dmx-input-status', status);
+  },
+  // Pixel-map output to a node on this machine, or broadcast, would
+  // otherwise come straight back in as desk input.
+  listInterfaces: () => Object.entries(os.networkInterfaces()).flatMap(([name, list]) => (list || [])
+    .filter(item => item.family === 'IPv4' || item.family === 4)
+    .map(item => ({ name, address: item.address }))),
+  isOwnPacket: (rinfo) => {
+    const port = pixelMapOutput.localPort();
+    if (!port || rinfo?.port !== port) return false;
+    if (rinfo.address === '127.0.0.1') return true;
+    return Object.values(os.networkInterfaces()).some(list => (list || []).some(item => item.address === rinfo.address));
+  },
+});
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
 // Must be set before app.whenReady() — affects the GPU process.
@@ -2798,6 +2844,38 @@ function registerIpcHandlers() {
     }
     return { ok: true };
   });
+
+  ipcMain.handle('pixelmap_send_frame', async (_, frame) => pixelMapOutput.sendFrame(frame));
+  ipcMain.handle('pixelmap_stop', async () => pixelMapOutput.stop());
+  ipcMain.handle('pixelmap_get_stats', async () => pixelMapOutput.stats());
+
+  // --- Art-Net / sACN DMX input ---
+  ipcMain.handle('dmx_input_start', async (_, config) => dmxInput.start(config));
+  ipcMain.handle('dmx_input_stop', async () => dmxInput.stop());
+  ipcMain.handle('dmx_input_update', async (_, patch) => dmxInput.update(patch));
+  ipcMain.handle('dmx_input_status', async () => dmxInput.status());
+  ipcMain.handle('dmx_input_resync', async () => dmxInput.resync());
+  ipcMain.handle('dmx_input_snapshot', async (_, target) => dmxInput.snapshot(target));
+
+  // --- PJLink projector control (class 1, TCP 4352) ---
+  // Actions are a fixed vocabulary; the client builds and validates the wire
+  // commands. The password comes from the credential store by projector id.
+  ipcMain.handle('pjlink_command', async (_, { projectorId, host, port, action, input, timeoutMs } = {}) => {
+    if (typeof host !== 'string' || !host.trim()) return { ok: false, error: 'no host', responses: [] };
+    return pjlinkClient.run({
+      projectorId: typeof projectorId === 'string' ? projectorId : '',
+      host: host.trim(),
+      port: Number(port) || 4352,
+      action,
+      input,
+      timeoutMs: Math.max(500, Math.min(15000, Number(timeoutMs) || 5000)),
+    });
+  });
+  ipcMain.handle('pjlink_set_password', async (_, { projectorId, password } = {}) => {
+    const { ok, persisted, error } = pjlinkCredentials.set(projectorId, password);
+    return { ok, persisted, ...(error ? { error } : {}) };
+  });
+  ipcMain.handle('pjlink_has_password', async (_, { projectorId } = {}) => pjlinkCredentials.has(projectorId));
 
   // --- OSC ---
   ipcMain.handle('osc_start', async (_, { port }) => {
@@ -5892,6 +5970,8 @@ function cleanupAndQuit() {
   runCleanupStep('destroyNdiReceivers', destroyNdiReceivers);
   runCleanupStep('shutdownLink', shutdownLink);
   runCleanupStep('stopOSC', stopOSC);
+  runCleanupStep('stopDmxInput', () => dmxInput.stop());
+  runCleanupStep('stopPixelMap', () => pixelMapOutput.stop());
   runCleanupStep('stopServer', stopServer);
   runCleanupStep('closeAllWledSockets', closeAllWledSockets);
   runCleanupStep('killPluginProcesses', killPluginProcesses);

@@ -142,6 +142,19 @@
   // main App chunk — it's only needed when the mobile-connect panel opens.
   import { midiManager } from './lib/midi/midiManager';
   import { oscStore } from './lib/osc/oscStore';
+  import { dmxStore } from './lib/dmx/dmxStore';
+  import ShowTimeline from './lib/components/ShowTimeline.svelte';
+  import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
+  import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
+  import { hydrateShowControl } from './lib/show/showControlPersistence';
+  import { cueList } from './lib/show/cueList';
+  import {
+    installPromptSuppression,
+    isShowModeLaunch,
+    launchConfig,
+    promptsSuppressed,
+    runShowModeLaunch,
+  } from './lib/show/showStartup';
   import { midiStore } from './lib/midi/midiStore';
   import { keyboardStore } from './lib/keyboard/keyboardStore';
   import { synthVisionStore, sessionClipCache, isfShaderCache } from './lib/stores/synthVision';
@@ -494,6 +507,7 @@
     viewportEl?.removeEventListener('wheel', handleViewportWheel);
     destroyPhoneVisionSession(true);
     oscStore.destroy();
+    dmxStore.destroy();
   });
 
   // Recovery modal actions
@@ -742,7 +756,24 @@
     // read/write surface; no behaviour depends on it.
     // The VJ deck and Performer are here for the same reason: a check driven
     // from outside has to read the same stores the panels write.
-    try { (window as any).__ghostArcade = { project, settings, vjClipLauncher, synthVisionStore }; } catch { /* sealed */ }
+    try { (window as any).__ghostArcade = { project, settings, vjClipLauncher, synthVisionStore, showTimeline, cueList, dmxStore, getEngine: () => canvasComponent?.getEngine() ?? null }; } catch { /* sealed */ }
+
+    // Show control: cue list executor, show:* control paths, timeline
+    // markers, timecode chase, the scheduler and projector polling.
+    const stopShowControl = installShowControl();
+    showRuntimeHooks.ensureOutputs = ensureOutputsFullscreen;
+    // Show mode (start at boot): nothing modal may stand between a machine
+    // booting in an empty room and the show starting.
+    const restorePrompts = promptsSuppressed()
+      ? installPromptSuppression((message) => console.warn('[ShowMode]', message))
+      : () => {};
+    // Show timeline transitions. The timeline resolves progress from show
+    // time; the engine blends the outgoing picture into the incoming one.
+    setShowTransitionSink((transition) => {
+      canvasComponent?.getEngine()?.driveTransition(transition
+        ? { key: `${transition.fromCompositionId}>${transition.toCompositionId}`, style: transition.style, progress: transition.progress }
+        : null);
+    });
     const bridgeTimeouts = new Set<ReturnType<typeof setTimeout>>();
     const scheduleBridgeTimeout = (fn: () => void, delay: number) => {
       const id = setTimeout(() => {
@@ -893,13 +924,13 @@
     // No license check in the OSS build — go straight to first-run UX.
     initLicense().then(() => {
       const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
-      if (!welcomeSeen) {
+      if (!welcomeSeen && !promptsSuppressed()) {
         showWelcome = true;
       }
     });
 
     // Check for app updates (compares against latest GitHub release)
-    startUpdateChecker();
+    if (!promptsSuppressed()) startUpdateChecker();
 
     // Start the per-param Auto playhead engine. Walks every layer's
     // paramAuto / shaderValueAuto each frame and writes resolved
@@ -967,6 +998,8 @@
       if (ok) console.log('[MIDI] Ready — devices detected');
     });
     void oscStore.initialize();
+    // DMX input comes back only if it was switched on on this machine.
+    void dmxStore.initialize();
 
     // Rejoin the Ableton Link session if the user had it enabled last
     // run (no-op otherwise; lazy — doesn't load the native addon until
@@ -1024,10 +1057,26 @@
 
     // --- Crash recovery: check for auto-saved project ---
     const savedAutosave = localStorage.getItem('ghostarcade-autosave');
-    if (savedAutosave) {
+    if (savedAutosave && !promptsSuppressed()) {
       const ts = localStorage.getItem('ghostarcade-autosave-timestamp');
       recoveryTimestamp = ts ? new Date(parseInt(ts, 10)).toLocaleString() : 'unknown time';
       showRecoveryModal = true;
+    }
+
+    // --- Show mode: open the show project, the outputs, and start ---
+    if (isShowModeLaunch()) {
+      const config = launchConfig();
+      if (config) {
+        scheduleBridgeTimeout(() => {
+          void runShowModeLaunch(config, {
+            openProject: (path) => openProjectAtPath(path),
+            openOutputs: ensureOutputsFullscreen,
+            go: () => cueList.go(),
+            playTimeline: () => showTimeline.play(),
+            log: (message) => console.log('[ShowMode]', message),
+          });
+        }, 1500);
+      }
     }
 
     // --- Auto-save interval: every 30 seconds ---
@@ -1331,6 +1380,10 @@
 
     return () => {
       appMounted = false;
+      stopShowControl();
+      showRuntimeHooks.ensureOutputs = null;
+      restorePrompts();
+      setShowTransitionSink(null);
       unsubscribeSettings();
       for (const id of bridgeTimeouts) clearTimeout(id);
       bridgeTimeouts.clear();
@@ -3977,6 +4030,30 @@
     }
   }
 
+  /** Open the outputs fullscreen unless they already are (show mode and
+   *  scheduled starts). */
+  async function ensureOutputsFullscreen(): Promise<void> {
+    if (outputIsOpen && outputMode === 'fullscreen') return;
+    await toggleFullscreen();
+  }
+
+  /** Open a project file from disk without a dialog (show mode). */
+  async function openProjectAtPath(path: string): Promise<boolean> {
+    const { invoke } = await import('$lib/bridge');
+    const result = await invoke<{ content: string; dir: string }>('read_project_file', { path });
+    try { synthVisionStore.reset(); } catch {}
+    try { sessionClipCache.clear(); } catch {}
+    try { isfShaderCache.clear(); } catch {}
+    try { modulationStore.clearAll(); } catch {}
+    const success = project.importProjectJSON(result.content, result.dir);
+    if (success) {
+      currentFileHandle = null;
+      currentProjectPath = path;
+      markAsSaved();
+    }
+    return success;
+  }
+
   async function toggleFullscreen() {
     const status = outputWindow ? await outputWindow.getStatus() : null;
     if (outputMode === 'fullscreen' || (status?.exists && status.isExternal)) {
@@ -4567,6 +4644,12 @@
     macros.reset();
     // Same for snapshots — fresh project, empty 16-slot bank.
     snapshots.reset();
+    // DMX input bindings belong to the project; the listener stays as set.
+    dmxStore.reset();
+    // A new project must not inherit the last one's cue list, timecode
+    // chase, schedule or projectors.
+    hydrateShowControl(null);
+    showTimeline.hydrate(null);
     currentFileHandle = null; // Clear file handle for new project
     // Also clear the Electron path so Save doesn't accidentally overwrite
     // the previously-loaded .gha with a fresh empty project.
@@ -6843,6 +6926,9 @@
     <!-- Keyframe Timeline (slide-up panel) -->
     <KeyframeTimeline />
 
+    <!-- Show Timeline (slide-up panel): audio tracks, preset arrangement, cue list -->
+    <ShowTimeline />
+
     <!-- Bottom dock pills (Presets / Sequencer / Keyframes) — coral-active. -->
     <BottomDock
       presetsOpen={presetTrayOpen}
@@ -7035,6 +7121,19 @@
           <path class="ga-neon-stroke ga-neon-thin" d="M2.8 21.2h18.4"/>
         </svg>
         Keyframes
+      </button>
+      <button
+        class="status-pill"
+        class:on={$showTimeline.isOpen}
+        onclick={() => showTimeline.toggleOpen()}
+        title="Show Timeline: audio tracks, preset arrangement and the cue list"
+      >
+        <svg class="status-pill-icon show-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+          <path class="ga-neon-fill" d="M2.8 4.4h8v5.2h-8zM13.2 4.4h8v5.2h-8z"/>
+          <path class="ga-neon-stroke" d="M2.8 4.4h8v5.2h-8zM13.2 4.4h8v5.2h-8z"/>
+          <path class="ga-neon-stroke ga-neon-thin" d="M2.8 16.4h2.4l1.4-3.4 1.8 7 1.6-5 1.2 3.2h2.2l1.3-3 1.5 5.4 1.4-4.2h2.2"/>
+        </svg>
+        Show
       </button>
 
       <span class="spacer"></span>

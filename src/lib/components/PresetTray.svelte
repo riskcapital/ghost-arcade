@@ -174,6 +174,18 @@
   // Load a preset with optional transition.
   // When a transition is active, suppress the "Loading Composition..." overlay —
   // the transition itself provides visual feedback and the white text just covers it.
+  // Cue list "recall preset": load it with the tray's transition.
+  onMount(() => {
+    const cueHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { compositionId?: string; handled?: boolean } | undefined;
+      if (!detail?.compositionId) return;
+      detail.handled = true;
+      loadPreset(detail.compositionId);
+    };
+    window.addEventListener('show-recall-preset', cueHandler);
+    return () => window.removeEventListener('show-recall-preset', cueHandler);
+  });
+
   function loadPreset(compId: string) {
     const useTransition = transitionEnabled && transitionDuration > 0 && !!onBeforeLoad;
     if (!useTransition) showLoading('Loading Composition...');

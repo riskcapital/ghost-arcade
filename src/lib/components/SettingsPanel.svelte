@@ -64,6 +64,8 @@
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
+  import DmxInputPanel from './DmxInputPanel.svelte';
+  import ShowControlSettings from './show/ShowControlSettings.svelte';
   let keyboardAddOpen = false;
   let keyboardAddPath = '';
   let keyboardAddMode: KeyActionMode = 'momentary';
@@ -314,7 +316,8 @@
     | 'output:display'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
-    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:mediapipe'
+    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:dmxinput' | 'integrations:mediapipe'
+    | 'show:timecode' | 'show:schedule' | 'show:startup' | 'show:projectors'
     | 'ai';
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
   interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
@@ -342,7 +345,16 @@
       { id: 'integrations:osc', label: 'OSC' },
       { id: 'integrations:keyboard', label: 'Keyboard' },
       { id: 'integrations:wled', label: 'WLED' },
+      { id: 'integrations:dmxinput', label: 'DMX Input' },
       { id: 'integrations:mediapipe', label: 'MediaPipe' },
+    ]},
+    // Unattended shows: timecode chase, the schedule, start at boot and
+    // PJLink projectors. The cue list itself lives beside the Show timeline.
+    { id: 'show', label: 'Show Control', sections: [
+      { id: 'show:timecode', label: 'Timecode' },
+      { id: 'show:schedule', label: 'Schedule' },
+      { id: 'show:startup', label: 'Start at Boot' },
+      { id: 'show:projectors', label: 'Projectors' },
     ]},
     { id: 'ai', label: 'AI', sections: [
       { id: 'ai', label: 'AI' },
@@ -362,6 +374,11 @@
     keyboard: 'integrations:keyboard',
     wled: 'integrations:wled',
     mediapipe: 'integrations:mediapipe',
+    dmxinput: 'integrations:dmxinput',
+    timecode: 'show:timecode',
+    schedule: 'show:schedule',
+    startup: 'show:startup',
+    projectors: 'show:projectors',
     ai: 'ai',
   };
 
@@ -2466,6 +2483,51 @@
         </section>
         {/if}
         <!-- AI Settings Section -->
+        {#if selectedSection === 'integrations:dmxinput'}
+        <section class="settings-section">
+          <h3>Art-Net and sACN DMX Input</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Let a lighting desk drive the show. Ghost Arcade listens for Art-Net (UDP 6454) and sACN (UDP 5568) and binds desk channels to layer opacity, effect parameters, macros, the crossfader, and clip or column triggers. Faders can be 8-bit or 16-bit (coarse and fine), buttons fire on a threshold with hysteresis, and every binding has its own range and invert. Bindings save with the project; the on switch and network settings stay with this machine. Off by default.
+          </p>
+          <DmxInputPanel />
+        </section>
+        {/if}
+        {#if selectedSection === 'show:timecode'}
+        <section class="settings-section">
+          <h3>Timecode</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Chase SMPTE timecode from LTC on an audio input or MTC over MIDI. The show timeline follows it and its markers fire their cues; cues with a timecode fire as it passes. Saved with the project.
+          </p>
+          <ShowControlSettings section="timecode" />
+        </section>
+        {/if}
+        {#if selectedSection === 'show:schedule'}
+        <section class="settings-section">
+          <h3>Schedule</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Daily or weekly show times with date exceptions. The scheduler fires a cue at each start, stops the cue list at each stop, and can power the projectors. Saved with the project.
+          </p>
+          <ShowControlSettings section="schedule" />
+        </section>
+        {/if}
+        {#if selectedSection === 'show:startup'}
+        <section class="settings-section">
+          <h3>Start at Boot</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            For installs: start with the computer, open a show and run it without anyone at the machine. These settings belong to this computer, not the project.
+          </p>
+          <ShowControlSettings section="startup" />
+        </section>
+        {/if}
+        {#if selectedSection === 'show:projectors'}
+        <section class="settings-section">
+          <h3>Projectors</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            PJLink (class 1, TCP 4352) power, shutter and input control with password authentication, and status polling. Cues and the scheduler can command these. Saved with the project.
+          </p>
+          <ShowControlSettings section="projectors" />
+        </section>
+        {/if}
         {#if selectedSection === 'ai'}
         <section class="settings-section">
           <h3>AI</h3>

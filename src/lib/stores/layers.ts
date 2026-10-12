@@ -24,6 +24,9 @@ import { stage3dScene } from '../stage3d/store';
 // per-effect reset button in LayerPanel.
 import { getDefaultEffectParams } from '../renderer/effects';
 import { oscStore } from '../osc/oscStore';
+import { dmxStore } from '../dmx/dmxStore';
+import { showTimeline, setShowCompositionLoader } from './showTimeline';
+import { serializeShowControl, hydrateShowControl } from '../show/showControlPersistence';
 import { keyboardStore } from '../keyboard/keyboardStore';
 import { mediaPipeBus } from '../mediapipe/mediaPipeBus';
 import { geoDeckStore } from './geoDeck';
@@ -4024,7 +4027,7 @@ void main() {
     /**
      * Load a composition into the main layers (for editing/preview)
      */
-    loadComposition(compositionId: string) {
+    loadComposition(compositionId: string, _options?: { restoreTransports?: boolean; recordHistory?: boolean }) {
       // First get the composition to access Performer data
       const currentProject = get({ subscribe });
       if (!currentProject.vjMode) return;
@@ -4830,6 +4833,9 @@ void main() {
         keyframeTimelines: keyframeTimeline.exportAll(),
         // Include macro knobs (8 user-assignable knobs with destinations)
         macros: macros.serialize(),
+        // DMX input bindings, universe filter and merge rule. The on/off
+        // switch and bind address are machine settings and stay out.
+        dmxInput: dmxStore.serialize(),
         // Include OSC config (port + bindings). The listener is
         // restarted on project load if the saved state was enabled.
         osc: oscStore.serialize(),
@@ -4864,7 +4870,10 @@ void main() {
      * Used for auto-save and real-time sync (no binary embedding).
      */
     exportProjectJSON(): string {
-      const exportData = this.exportProject();
+      const exportData = this.exportProject() as any;
+      // Save-only sections (autosave and recovery), kept off the sync relay.
+      try { exportData.project.showTimeline = showTimeline.serialize(); } catch { /* keep saving */ }
+      try { exportData.project.showControl = serializeShowControl(); } catch { /* keep saving */ }
       return JSON.stringify(exportData, null, 2);
     },
 
@@ -4907,6 +4916,11 @@ void main() {
       } catch (err) {
         console.warn('[Store] exportProjectForSave: 3D scene snapshot failed', err);
       }
+      // Save-only: the show timeline carries audio AssetRefs and a whole
+      // arrangement, and the cue list, timecode, schedule and projectors
+      // do not belong on the per-tick sync relay either.
+      try { syncExport.project.showTimeline = showTimeline.serialize(); } catch { /* keep saving */ }
+      try { syncExport.project.showControl = serializeShowControl(); } catch { /* keep saving */ }
       return syncExport;
     },
 
@@ -5556,6 +5570,11 @@ void main() {
 
         // Import macros (8 knobs + destinations). Backward-compat tolerant:
         // older saves without `macros` get fresh defaults via reset().
+        if ((parsed as any).dmxInput) {
+          dmxStore.hydrate((parsed as any).dmxInput);
+        } else {
+          dmxStore.reset();
+        }
         if ((parsed as any).macros) {
           macros.hydrate((parsed as any).macros);
         } else {
@@ -5706,6 +5725,24 @@ void main() {
         selectedLayerIdsState.set(importedProject.selectedLayerId ? [importedProject.selectedLayerId] : []);
         const importedStage3d = (proj as any).stage3d;
         const incomingSyncedStage3d = (parsed as any).stage3dScene;
+        // Restore a saved section, clear on a save-shaped payload without
+        // one, and leave the running show alone on a live state-sync payload
+        // (which never carries the save-only sections).
+        const saveShaped = 'stage3d' in (proj as any) || 'showTimeline' in (proj as any) || 'showControl' in (proj as any);
+        try {
+          const importedShow = (proj as any).showTimeline;
+          if (importedShow && typeof importedShow === 'object') showTimeline.hydrate(importedShow, projectDir);
+          else if (saveShaped) showTimeline.hydrate(null);
+        } catch (err) {
+          console.warn('[Store] importProject: show timeline restore failed', err);
+        }
+        try {
+          const importedShowControl = (proj as any).showControl;
+          if (importedShowControl && typeof importedShowControl === 'object') hydrateShowControl(importedShowControl);
+          else if (saveShaped) hydrateShowControl(null);
+        } catch (err) {
+          console.warn('[Store] importProject: show control restore failed', err);
+        }
         queueMicrotask(() => {
           try {
             if (importedStage3d?.schemaVersion === 1 && Array.isArray(importedStage3d.nodes)) {
@@ -6161,4 +6198,10 @@ registerMacroAssignmentWriter((target, value) => {
   } else if (target.scope === 'vj-clip') {
     vjClipLauncher.updateClipEffectParamsById(target.clipId, target.effectId, patch, target.bank);
   }
+});
+
+// The show timeline fires presets through this loader so it does not have to
+// import the project store.
+setShowCompositionLoader((compositionId, options) => {
+  project.loadComposition(compositionId, { restoreTransports: options.restoreTransports, recordHistory: false });
 });

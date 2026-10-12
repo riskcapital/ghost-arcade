@@ -15,6 +15,9 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const ALLOWED_IPC_COMMANDS = new Set([
   // Scans sent from a paired phone (electron/phone-scan-store.cjs)
   'media_files_status', 'media_find_in_folder',
+  'pjlink_command', 'pjlink_set_password', 'pjlink_has_password',
+  'show_startup_get', 'show_startup_set',
+  'pixelmap_send_frame', 'pixelmap_stop', 'pixelmap_get_stats',
   'phone_scan_begin', 'phone_scan_write', 'phone_scan_finish', 'phone_scan_abort', 'phone_scan_list',
   // Spout
   'spout_is_available', 'spout_list_senders', 'spout_start_sender', 'spout_stop_sender',
@@ -247,6 +250,36 @@ contextBridge.exposeInMainWorld('electronOSR', {
 // designed. Main process configures the resulting BrowserWindow via
 // setWindowOpenHandler. See outputSharedTexturePresenter.ts and
 // OutputSharedTextureDisplayApp.svelte for the renderer-side glue.)
+
+// Art-Net / sACN DMX input. Off until start() is called.
+contextBridge.exposeInMainWorld('ghostDMX', {
+  start: (config) => ipcRenderer.invoke('dmx_input_start', config || {}),
+  stop: () => ipcRenderer.invoke('dmx_input_stop'),
+  update: (patch) => ipcRenderer.invoke('dmx_input_update', patch || {}),
+  status: () => ipcRenderer.invoke('dmx_input_status'),
+  resync: () => ipcRenderer.invoke('dmx_input_resync'),
+  snapshot: (target) => ipcRenderer.invoke('dmx_input_snapshot', target || {}),
+  onChanges: (cb) => {
+    const handler = (_e, batch) => { try { cb(batch); } catch (err) { console.warn('[DMX in] renderer handler', err); } };
+    ipcRenderer.on('dmx-input-changes', handler);
+    return () => ipcRenderer.removeListener('dmx-input-changes', handler);
+  },
+  onStatus: (cb) => {
+    const handler = (_e, status) => { try { cb(status); } catch (err) { console.warn('[DMX in] renderer status handler', err); } };
+    ipcRenderer.on('dmx-input-status', handler);
+    return () => ipcRenderer.removeListener('dmx-input-status', handler);
+  },
+});
+
+// Show mode for THIS launch, read synchronously so the renderer can skip
+// its first-run prompts before it draws anything. Main-window only.
+try {
+  const isHelperWindow = typeof window !== 'undefined' && /[?&]mode=/.test(window.location.search);
+  const startup = isHelperWindow ? null : ipcRenderer.sendSync('show_startup_session');
+  contextBridge.exposeInMainWorld('ghostShowStartup', { session: startup || null });
+} catch {
+  contextBridge.exposeInMainWorld('ghostShowStartup', { session: null });
+}
 
 // Also set a detection flag (replaces __TAURI_INTERNALS__)
 contextBridge.exposeInMainWorld('__ELECTRON__', true);

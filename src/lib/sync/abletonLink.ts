@@ -112,6 +112,15 @@ function createAbletonLinkStore() {
 
     /** Beat phase 0..quantum extrapolated to "now" from the last poll —
      *  frame-accurate between 4 Hz polls for visual phase consumers. */
+    /** Session beat extrapolated to now. Without a running beat count from
+     *  the session, the phase within the bar stands in for it. */
+    beatNow(): number {
+      if (!anchor) return 0;
+      const elapsed = (performance.now() - anchor.atMs) / 1000;
+      const base = Number((anchor as { beat?: number }).beat ?? anchor.phase);
+      return base + elapsed * (anchor.tempo / 60);
+    },
+
     phaseNow(): number {
       if (!anchor) return 0;
       const elapsed = (performance.now() - anchor.atMs) / 1000;

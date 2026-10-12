@@ -92,7 +92,7 @@ export class AudioAnalyzer {
   // to the dead device, the analyser flatlines, and BPM silently drifts to 0 —
   // a VJ's beat sync goes dead mid-set. We capture the source type so we can
   // re-run startMicrophone() / startSystemAudio() with the same intent.
-  private lastSourceType: 'microphone' | 'system' | 'mediaElement' | null = null;
+  private lastSourceType: 'microphone' | 'system' | 'mediaElement' | 'clips' | null = null;
   private lastMediaElement: HTMLAudioElement | HTMLVideoElement | null = null;
   private lastMicDeviceId: string | null = null;
   private deviceChangeHandler: (() => void) | null = null;
@@ -134,6 +134,10 @@ export class AudioAnalyzer {
   // Animation frame
   private animFrameId: number | null = null;
   private isRunning = false;
+
+  /** > 0 while an offline render is substituting its own frames. Reference
+   *  counted; see beginAnalysisHold(). */
+  private analysisHoldDepth = 0;
 
   // Callback for each analysis frame
   private onAnalysis: ((analysis: AudioAnalysis) => void) | null = null;
@@ -187,11 +191,52 @@ export class AudioAnalyzer {
       this.lastSourceType = 'microphone';
       this.lastMicDeviceId = deviceId ?? null;
       this._installHotplugHandlers();
+      this._notifyGraphChange();
       this.tick();
     } catch (err) {
       console.error('Failed to start microphone:', err);
       throw err;
     }
+  }
+
+  /**
+   * Follow the app's own clip audio: build an analyser with no input of its
+   * own for the clip bus (MIX layers, show timeline tracks) and the native
+   * clip mix feed to connect into. Only when no live input is running — a
+   * live input always wins (see acceptsClipAudio). Nothing is connected to
+   * the speakers here; the clip paths keep their own output.
+   */
+  startClipFollow(): void {
+    if (this.isRunning) return;
+    this.audioContext = this.getOrCreateAudioContext();
+    this.analyserNode = this.audioContext.createAnalyser();
+    this.analyserNode.fftSize = this.fftSize;
+    this.analyserNode.smoothingTimeConstant = 0.8;
+    this.analyserNode.minDecibels = -90;
+    this.analyserNode.maxDecibels = -10;
+    const bufferLength = this.analyserNode.frequencyBinCount;
+    this.fftData = new Float32Array(bufferLength);
+    this.waveformData = new Float32Array(bufferLength);
+    this.resetState();
+    this.isRunning = true;
+    this.lastSourceType = 'clips';
+    this._notifyGraphChange();
+    this.tick();
+  }
+
+  /** True while the analyser is following clip audio (no live input). */
+  isFollowingClips(): boolean {
+    return this.isRunning && this.lastSourceType === 'clips';
+  }
+
+  /**
+   * The analyser clip audio should connect into, or null. A live input
+   * (mic, system capture, audio-file player) is authoritative: a mic or a
+   * system loopback already hears the clips through the room or the system
+   * mix, so summing the clip signal in as well would count it twice.
+   */
+  clipAudioAnalyserNode(): AnalyserNode | null {
+    return this.isFollowingClips() ? this.analyserNode : null;
   }
 
   /** Start analyzing audio from a media element (e.g., <audio> tag) */
@@ -220,6 +265,7 @@ export class AudioAnalyzer {
       this.lastSourceType = 'mediaElement';
       this.lastMediaElement = element;
       this._installHotplugHandlers();
+      this._notifyGraphChange();
       this.tick();
     } catch (err) {
       console.error('Failed to start media element analysis:', err);
@@ -281,6 +327,7 @@ export class AudioAnalyzer {
       this.isRunning = true;
       this.lastSourceType = 'system';
       this._installHotplugHandlers();
+      this._notifyGraphChange();
       this.tick();
     } catch (err) {
       console.error('Failed to start system audio:', err);
@@ -377,6 +424,53 @@ export class AudioAnalyzer {
     // once at boot and need it to outlive any single source. The context
     // is only closed on full app teardown via closeAudioContext().
     this.analyserNode = null;
+    this._notifyGraphChange();
+  }
+
+  // ── Graph-change notification ────────────────────────────────────────────
+  // The analyser node is torn down and rebuilt on every start/stop AND on
+  // `_recoverAudioPipeline()` (devicechange / context statechange — e.g.
+  // plugging in headphones does a full stop + 300 ms + restart). Downstream
+  // graphs built on the shared context (the clip audio bus) hold a reference
+  // to whatever analyser was current and would go dead after a rebuild, so
+  // they subscribe here and re-tap. Deliberately a plain callback registry
+  // rather than an import of the consumer: the dependency stays one-way
+  // (clipAudioBus → analyzer), with no module cycle.
+
+  private graphChangeListeners = new Set<() => void>();
+
+  /** Subscribe to analyser-graph rebuilds. Returns an unsubscribe fn. */
+  onGraphChange(listener: () => void): () => void {
+    this.graphChangeListeners.add(listener);
+    return () => { this.graphChangeListeners.delete(listener); };
+  }
+
+  private _notifyGraphChange(): void {
+    for (const listener of this.graphChangeListeners) {
+      try { listener(); } catch (err) {
+        console.warn('[AudioAnalyzer] Graph-change listener failed:', err);
+      }
+    }
+  }
+
+  /** The live analyser node, or null when no source is running. Consumers
+   *  may `connect()` INTO it to have their signal drive audio reactivity. */
+  getAnalyserNode(): AnalyserNode | null {
+    return this.analyserNode;
+  }
+
+  /**
+   * True when the analyser node is itself wired to `ctx.destination`.
+   *
+   * AnalyserNode is a pass-through, so anything connected into it is also
+   * heard. Only the media-element branch connects it to the destination (the
+   * mic/system branches deliberately do not, to avoid a feedback loop).
+   * Consumers that tap the analyser AND hold their own edge to the speakers
+   * must drop one of the two paths when this is true, or they play twice at
+   * double amplitude.
+   */
+  analyserFeedsDestination(): boolean {
+    return this.isRunning && this.lastSourceType === 'mediaElement' && this.analyserNode !== null;
   }
 
   /**
@@ -416,9 +510,40 @@ export class AudioAnalyzer {
     this.smoothing = Math.max(0, Math.min(1, value));
   }
 
+  /** Current smoothing factor — offline renders mirror it onto their own
+   *  analyzer instance so exported bands match what the user hears. */
+  getSmoothing(): number {
+    return this.smoothing;
+  }
+
   /** Check if analyzer is currently running */
   get running(): boolean {
     return this.isRunning;
+  }
+
+  /** The media element currently being analysed, if the source is a file.
+   *  The offline render needs it to find (and decode) the underlying
+   *  audio so it can analyse at virtual time instead of wall time. */
+  getMediaElement(): HTMLAudioElement | HTMLVideoElement | null {
+    return this.lastSourceType === 'mediaElement' ? this.lastMediaElement : null;
+  }
+
+  /**
+   * Suspend live analysis without tearing down the audio graph.
+   *
+   * An offline render that can virtualize its audio source (file input)
+   * computes each frame's spectrum from the decoded file at the export's
+   * virtual time. While that runs, the live RAF must not keep overwriting
+   * the store with wall-clock frames — and its beat/BPM/onset state must
+   * come out of the export exactly as it went in. Reference counted;
+   * always paired with endAnalysisHold() in a finally.
+   */
+  beginAnalysisHold(): void {
+    this.analysisHoldDepth += 1;
+  }
+
+  endAnalysisHold(): void {
+    this.analysisHoldDepth = Math.max(0, this.analysisHoldDepth - 1);
   }
 
   /**
@@ -491,11 +616,26 @@ export class AudioAnalyzer {
   private tick = (): void => {
     if (!this.isRunning || !this.analyserNode) return;
 
+    // An offline render substitutes its own frames (decoded from the
+    // source file at the export's virtual time) for the duration of the
+    // capture. Keep the RAF alive so live analysis resumes instantly, but
+    // don't advance any of the stateful detectors from wall-clock audio —
+    // that state has to survive the export untouched.
+    if (this.analysisHoldDepth > 0) {
+      this.animFrameId = requestAnimationFrame(this.tick);
+      return;
+    }
+
     // Get frequency and time-domain data
     this.analyserNode.getFloatFrequencyData(this.fftData);
     this.analyserNode.getFloatTimeDomainData(this.waveformData);
 
-    const analysis = this.analyze();
+    const analysis = this.analyzeBuffers(
+      this.fftData,
+      this.waveformData,
+      this.audioContext!.sampleRate,
+      performance.now(),
+    );
 
     if (this.onAnalysis) {
       this.onAnalysis(analysis);
@@ -504,14 +644,31 @@ export class AudioAnalyzer {
     this.animFrameId = requestAnimationFrame(this.tick);
   };
 
-  private analyze(): AudioAnalysis {
-    const now = performance.now();
-    const nyquist = this.audioContext!.sampleRate / 2;
-    const binCount = this.fftData.length;
+  /**
+   * Run the full analysis pipeline over an explicit pair of buffers at an
+   * explicit clock reading.
+   *
+   * The live `tick()` feeds this the AnalyserNode's output at
+   * `performance.now()`. The offline render path feeds a *second*
+   * AudioAnalyzer instance FFT frames it computed from the decoded source
+   * file at the export's virtual time — same band extraction, beat
+   * detection, BPM estimation, onset thresholds and refractory windows,
+   * just driven by a virtual clock. Every detector in here is stateful, so
+   * each timeline needs its own instance.
+   */
+  analyzeBuffers(
+    fftData: Float32Array,
+    waveformData: Float32Array,
+    sampleRate: number,
+    nowMs: number,
+  ): AudioAnalysis {
+    const now = nowMs;
+    const nyquist = sampleRate / 2;
+    const binCount = fftData.length;
     const binWidth = nyquist / binCount;
 
     // Extract frequency bands
-    const rawBands = this.extractBands(binWidth, binCount);
+    const rawBands = this.extractBands(fftData, binWidth, binCount);
 
     // Smooth bands. `high` is preserved as a synthetic mix of treble + air
     // for backward-compat with shaders / modulation maps that target the
@@ -531,10 +688,10 @@ export class AudioAnalyzer {
 
     // Calculate amplitude (RMS of waveform)
     let sumSq = 0;
-    for (let i = 0; i < this.waveformData.length; i++) {
-      sumSq += this.waveformData[i] * this.waveformData[i];
+    for (let i = 0; i < waveformData.length; i++) {
+      sumSq += waveformData[i] * waveformData[i];
     }
-    const rms = Math.sqrt(sumSq / this.waveformData.length);
+    const rms = Math.sqrt(sumSq / Math.max(1, waveformData.length));
 
     // Normalize amplitude (waveform is -1 to 1, rms of 0.5 is quite loud)
     const rawAmplitude = Math.min(1, rms * 2);
@@ -590,13 +747,13 @@ export class AudioAnalyzer {
     // Spectral centroid: weighted average of frequency bins normalized to 0-1
     let weightedSum = 0;
     let magnitudeSum = 0;
-    for (let i = 0; i < this.fftData.length; i++) {
-      const magnitude = Math.max(0, (this.fftData[i] + 90) / 80);
+    for (let i = 0; i < fftData.length; i++) {
+      const magnitude = Math.max(0, (fftData[i] + 90) / 80);
       weightedSum += i * magnitude;
       magnitudeSum += magnitude;
     }
     const spectralCentroid = magnitudeSum > 0
-      ? (weightedSum / magnitudeSum) / this.fftData.length
+      ? (weightedSum / magnitudeSum) / Math.max(1, fftData.length)
       : 0;
 
     // ===== Kick / snare onset detection =====
@@ -638,8 +795,8 @@ export class AudioAnalyzer {
     }
 
     return {
-      fftData: this.fftData,
-      waveformData: this.waveformData,
+      fftData: fftData as Float32Array<ArrayBuffer>,
+      waveformData: waveformData as Float32Array<ArrayBuffer>,
       bands: { ...this.smoothedBands },
       amplitude: this.smoothedAmplitude,
       peak: this.peakLevel,
@@ -665,7 +822,7 @@ export class AudioAnalyzer {
     };
   }
 
-  private extractBands(binWidth: number, binCount: number): AudioBands {
+  private extractBands(fftData: Float32Array, binWidth: number, binCount: number): AudioBands {
     // Map frequency ranges to bin indices
     const getBinRange = (lowHz: number, highHz: number): [number, number] => {
       const lowBin = Math.max(0, Math.floor(lowHz / binWidth));
@@ -682,7 +839,7 @@ export class AudioAnalyzer {
       for (let i = lo; i <= hi; i++) {
         // fftData is in dB, typically -90 to -10
         // Normalize: -90 -> 0, -10 -> 1
-        const normalized = (this.fftData[i] + 90) / 80;
+        const normalized = (fftData[i] + 90) / 80;
         sum += Math.max(0, Math.min(1, normalized));
       }
       return sum / (hi - lo + 1);
