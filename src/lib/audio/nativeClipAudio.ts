@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import type { VJClip, VJClipLauncherState } from '../stores/vjClipLauncher';
 import { vjClipTransitionKey, type VJClipTransition } from '../stores/vjClipTransitions';
+import { resolveAssetRefForRuntime } from '../storage/assetRegistry';
 export const nativeAudioMaster = writable({ volume: 1, muted: false });
 /** True while the core's clip mix has at least one voice above zero gain —
  *  the audio analyser follows that mix when no live input is running. */
@@ -21,6 +22,12 @@ export interface NativeClipAudioVoice {
 const audible = (clip: VJClip | null | undefined): clip is VJClip =>
   !!clip && clip.type === 'video' && clip.audioPlayback !== false && !clip.src.startsWith('live://');
 
+/** The file the core reads a clip's sound from: the same location its picture is read from. */
+export function clipAudioSourceUri(clip: Pick<VJClip, 'src' | '_assetRef'>): string {
+  const src = String(clip.src ?? '');
+  return resolveAssetRefForRuntime(clip._assetRef, undefined, src) ?? src;
+}
+
 /** Independent layer audio faders; visual opacity does not change sound.
  *  During a clip transition the core fades the outgoing clip out and the
  *  incoming clip in (equal power) over the transition's duration. */
@@ -28,7 +35,13 @@ export function nativeClipAudioMix(state: VJClipLauncherState, master = { volume
   transitions: ReadonlyMap<string, ClipTransitionAudio> = new Map()) {
   const voices: NativeClipAudioVoice[] = [];
   const sources: string[] = [];
-  const add = (src: string) => { if (src && !src.startsWith('live://') && !sources.includes(src)) sources.push(src); };
+  // The core decodes files. A clip dropped or picked in this session plays
+  // from a blob: URL, so name the file the same way the picture does (through
+  // its asset reference); the core matches a voice to its sound by that name.
+  const add = (clip: VJClip) => {
+    const src = clipAudioSourceUri(clip);
+    if (src && !src.startsWith('live://') && !sources.includes(src)) sources.push(src);
+  };
   for (const deck of ['A', 'B'] as const) {
     if (deck === 'B' && !state.crossfaderEnabled) continue;
     const rows = deck === 'B' ? state.bankBLayerStates : state.layerStates;
@@ -40,9 +53,9 @@ export function nativeClipAudioMix(state: VJClipLauncherState, master = { volume
       const fade = transitions.get(key);
       const clip = audible(row.activeClip) ? row.activeClip : null;
       const outgoing = fade && audible(fade.outgoingClip) && fade.outgoingClip.id !== clip?.id ? fade.outgoingClip : null;
-      if (clip) add(clip.src);
+      if (clip) add(clip);
       // The outgoing clip may have left the grid; keep its decoded audio.
-      if (outgoing) add(outgoing.src);
+      if (outgoing) add(outgoing);
       if (!state.isOpen || !state.isLive || state.stoppedAll) return;
       const rowMuted = master.muted || row.mute || (solo && !row.solo);
       const voice = (source: VJClip, role: 'in' | 'out' | null): NativeClipAudioVoice => ({
@@ -58,7 +71,7 @@ export function nativeClipAudioMix(state: VJClipLauncherState, master = { volume
     });
   }
   for (const grid of [state.clipGrid, ...(state.crossfaderEnabled ? [state.bankBClipGrid] : [])]) {
-    for (const row of grid) for (const clip of row) if (clip?.type === 'video' && clip.audioPlayback !== false) add(clip.src);
+    for (const row of grid) for (const clip of row) if (clip?.type === 'video' && clip.audioPlayback !== false) add(clip);
   }
   return { type: 'set_clip_audio_mix' as const, voices, sources: sources.slice(0, 64) };
 }

@@ -11,7 +11,17 @@ describe('Native clip audio routing', () => {
   it('enables sound by default and prepares idle clips without playing them', () => {
     const mix = nativeClipAudioMix(state());
     expect(mix.voices).toEqual([{ id: 'A:0:a', source_id: 'a', gain: 1, pan: 0 }]);
-    expect(mix.sources).toEqual(['/clips/a.mov', '/clips/c.mov']);
+    // Named as the picture path names them, so the core can pair sound with picture.
+    expect(mix.sources).toEqual(['file:///clips/a.mov', 'file:///clips/c.mov']);
+  });
+  it('prepares a clip dropped in this session from its file, not its blob: URL', () => {
+    // A dropped or picked file plays from a blob: URL the core cannot read;
+    // where it came from is in its asset reference. Before, it got no sound.
+    const dropped = clip('a', { src: 'blob:file:///1f0c', _assetRef: { kind: 'local-file', originalPath: 'C:\\Clips\\Amen Break.mp4', name: 'Amen Break.mp4' } });
+    const mix = nativeClipAudioMix(state({ layerStates: [{ activeClip: dropped }], clipGrid: [[dropped]] }));
+    expect(mix.sources).toEqual(['file:///C:/Clips/Amen%20Break.mp4']);
+    expect(mix.sources.some((source) => source.startsWith('blob:'))).toBe(false);
+    expect(mix.voices).toHaveLength(1);
   });
   it('honors saved opt-outs, mute and solo independently of visual opacity', () => {
     const mix = nativeClipAudioMix(state({ layerStates: [
@@ -44,7 +54,7 @@ describe('Native clip audio routing', () => {
       { id: 'A:0:old', source_id: 'old', gain: .5, pan: 0, row: 'A:0', transition: { role: 'out', token: 7, duration: 2, running: true } },
     ]);
     // The outgoing clip may have left the grid; its decoded audio is kept.
-    expect(mix.sources).toContain('/clips/old.mov');
+    expect(mix.sources).toContain('file:///clips/old.mov');
   });
   it('holds both levels until the picture starts, and holds a queued launch on its outgoing clip', () => {
     const waiting = nativeClipAudioMix(state(), undefined, fades([['A:0', { token: 3, duration: 1, startedAtMs: null, incomingClipId: 'a', outgoingClip: clip('old') }]]));
