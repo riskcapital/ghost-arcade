@@ -54,6 +54,7 @@
   import ClipAudioMasterControl from './ClipAudioMasterControl.svelte';
   import AudioMeterPanel from './AudioMeterPanel.svelte';
   import MacroKnobBar from './MacroKnobBar.svelte';
+  import { fitToolbar } from '../utils/toolbarFit';
   import SnapshotBank from './SnapshotBank.svelte';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   // VJAudioBar import retained for fallback / type compatibility but the
@@ -98,9 +99,9 @@
     name: string;
     description: string;
     tier: string;
-    clipType: 'effect' | 'splat' | 'model3d' | 'gpu' | 'text';
+    clipType: 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'synthvision';
     effectType?: IntegratedEffectType;
-    inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text';
+    inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text' | 'synthvision';
   };
 
   const vjPluginCards: VJPluginCard[] = [
@@ -114,12 +115,15 @@
       clipType: 'effect',
       effectType: p.effectType,
     })),
+    { id: 'performer', name: 'Performer', description: 'Keyboard-launched worlds, shaders and clips', tier: 'free', clipType: 'synthvision', inlineIcon: 'synthvision' },
     { id: 'pointcloud', name: 'Point Cloud', description: 'PLY point cloud / splat', tier: 'free', clipType: 'splat', inlineIcon: 'splat' },
     { id: 'model3d', name: '3D Model', description: 'GLTF/OBJ/FBX models', tier: 'free', clipType: 'model3d', inlineIcon: 'model3d' },
   ];
 
   // Performer panel state
   let showPerformer = false;
+  /** Deck row of the Performer cell that was last fired. */
+  let performerHostLayer = 0;
   let performerStarted = false; // Once started, keeps running in background
 
   // Media tray collapse state
@@ -824,7 +828,7 @@
   }
 
   type VJDragPayload = {
-    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset' | 'live-source';
+    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset' | 'live-source' | 'synthvision';
     id: string;
     spoutName?: string;
     pluginName?: string;
@@ -867,10 +871,10 @@
   };
 
   type MediaTrayCreatorPayload = {
-    id: 'gpu-shader' | 'text-creator';
-    type: 'gpu' | 'text';
+    id: 'gpu-shader' | 'text-creator' | 'performer';
+    type: 'gpu' | 'text' | 'synthvision';
     name: string;
-    src: 'gpu-layer' | 'text-layer';
+    src: 'gpu-layer' | 'text-layer' | 'performer';
   };
 
   type MediaTrayDropPayload = MediaTrayMediaPayload | MediaTrayLiveSourcePayload | MediaTrayPluginPayload | MediaTrayCreatorPayload;
@@ -2492,6 +2496,11 @@
   }
 
   function createVJClipFromMediaTrayPayload(payload: MediaTrayDropPayload): VJClip | null {
+    if (payload.type === 'synthvision') {
+      // Performer clip: firing the cell opens the keyboard overlay bound to
+      // that row. Its effects live on the clip, not on the row.
+      return { id: generateUUID(), type: 'synthvision', name: payload.name || 'Performer', src: 'performer', effects: [] };
+    }
     if (payload.type === 'gpu') {
       const gpuLayerContent = createDefaultGPULayerContent();
       const shaderDef = getShaderDef(gpuLayerContent.shaderId);
@@ -2789,6 +2798,9 @@
         },
       };
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+    } else if (draggedClip.type === 'synthvision') {
+      // Performer goes in a cell like any other plugin; firing it opens the overlay.
+      vjClipLauncher.setClip(layerIndex, columnIndex, { id: generateUUID(), type: 'synthvision', name: 'Performer', src: 'performer', effects: [] }, bank);
     } else if (draggedClip.type === 'gpu') {
       const gpuLayerContent = createDefaultGPULayerContent();
       const shaderDef = getShaderDef(gpuLayerContent.shaderId);
@@ -2880,6 +2892,16 @@
     selectedLayerIndex = layerIndex;
     showShaderParams = true;
     if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+
+    // Firing a Performer clip opens the keyboard overlay bound to the row the
+    // clip sits on. That binding keeps its worlds, clips and effects on this
+    // row instead of a separately chosen one.
+    const firedClip = (bank === 'B' ? $vjClipLauncher.bankBClipGrid : $vjClipLauncher.clipGrid)[layerIndex]?.[columnIndex];
+    if (firedClip?.type === 'synthvision') {
+      performerHostLayer = layerIndex;
+      performerStarted = true;
+      showPerformer = true;
+    }
   }
 
   function isCellControlTarget(target: EventTarget | null): boolean {
@@ -3455,7 +3477,7 @@
 {#if $vjClipLauncher.isOpen}
   <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen}>
     <!-- Header -->
-    <div class="vj-header">
+    <div class="vj-header" use:fitToolbar>
       <div class="header-left">
         <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="vj-logo" />
         <!-- File Menu -->
@@ -3629,31 +3651,6 @@
             <span class="ab-toggle-glyph">A/B</span>
           </button>
         {/if}
-
-        <!-- Performer atom — opens the SynthVision keyboard launcher overlay.
-             Compact icon takes the place of the old "PERFORMER" pill that
-             previously lived in header-center. Atom glyph reads as
-             "performance / nucleus" without needing a text label. Three
-             colored states:
-               • idle      → translucent purple outline
-               • active    → solid purple glow (overlay open)
-               • running   → green pulse (started but minimized) -->
-        <button class="performer-atom-btn"
-          class:active={showPerformer}
-          class:running={performerStarted && !showPerformer}
-          onclick={() => { showPerformer = !showPerformer; if (showPerformer && !performerStarted) { performerStarted = true; } }}
-          title={showPerformer ? 'Close Performer' : (performerStarted ? 'Show Performer (running)' : 'Open Performer (keyboard launcher)')}
-          aria-label="Toggle Performer"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-            <!-- nucleus -->
-            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-            <!-- three orbital ellipses at 60° offsets -->
-            <ellipse cx="12" cy="12" rx="10" ry="4"/>
-            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/>
-            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/>
-          </svg>
-        </button>
 
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open 3D Stage (no need to minimize VJ)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -5604,6 +5601,13 @@
                         <circle cx="12" cy="12" r="9"/>
                         <path d="M3 12h18M12 3c3 3 4 6 4 9s-1 6-4 9c-3-3-4-6-4-9s1-6 4-9Z"/>
                       </svg>
+                    {:else if plugin.inlineIcon === 'synthvision'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+                        <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                        <ellipse cx="12" cy="12" rx="10" ry="4"/>
+                        <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/>
+                        <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/>
+                      </svg>
                     {:else if plugin.inlineIcon === 'text'}
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                         <path d="M4 5h16M12 5v14M8 19h8"/>
@@ -5847,7 +5851,7 @@
     >
       <div class="resize-grip"></div>
     </div>
-    <SynthVision onClose={() => showPerformer = false} visible={showPerformer} />
+    <SynthVision onClose={() => showPerformer = false} visible={showPerformer} hostLayer={performerHostLayer} />
   </div>
 {/if}
 
@@ -6805,20 +6809,13 @@
     }
   }
 
-  @media (max-width: 1800px) {
-    .vj-header {
-      flex-wrap: wrap;
-      align-content: center;
-      row-gap: 3px;
-      min-height: calc(var(--vj-header-h) + 38px);
-    }
-
-    .header-macros {
-      order: 10;
-      flex: 1 0 100%;
-      max-width: none;
-      justify-content: center;
-    }
+  /* The bar stays on one line at every width: fitToolbar scales it down to
+     fit instead of letting it wrap onto a second row. */
+  .vj-header {
+    flex-wrap: nowrap;
+  }
+  .vj-header:global(.tb-measuring) :global(*) {
+    transition: none !important;
   }
 
   /* Main Layout */

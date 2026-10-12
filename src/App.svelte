@@ -729,7 +729,9 @@
     // loop uses (a dynamic `import('/src/...')` over CDP can resolve to a
     // separate module record after a Vite dep re-optimization). Harmless
     // read/write surface; no behaviour depends on it.
-    try { (window as any).__ghostArcade = { project, settings }; } catch { /* sealed */ }
+    // The VJ deck and Performer are here for the same reason: a check driven
+    // from outside has to read the same stores the panels write.
+    try { (window as any).__ghostArcade = { project, settings, vjClipLauncher, synthVisionStore }; } catch { /* sealed */ }
     const bridgeTimeouts = new Set<ReturnType<typeof setTimeout>>();
     const scheduleBridgeTimeout = (fn: () => void, delay: number) => {
       const id = setTimeout(() => {

@@ -1,5 +1,6 @@
 // Performer Store - Visual Synthesizer State Management
 import { writable, get } from 'svelte/store';
+import type { Effect } from '../types';
 
 // 36 SYNTH SHADERS - Full keyboard layout (1-0, Q-P, A-L, Z-M)
 // These match the inline GLSL shaders in SynthVision.svelte
@@ -203,6 +204,9 @@ export const SV_REACTIVITY_MODES: { id: SVReactivityMode; label: string; descrip
 export interface SVState {
   active: boolean;         // is synth vision open/running
   assignedLayer: number | null;  // VJ layer index it's assigned to
+  /** Performer's own effect chain. It is stamped onto whichever clip Performer
+   *  is driving, so it never lands on the deck row it shares with other clips. */
+  performerEffects: Effect[];
   layers: { a: SVLayer; b: SVLayer };
   focus: 'a' | 'b';
   xfade: number;           // 0=full A, 1=full B
@@ -294,6 +298,7 @@ function createDefaultState(): SVState {
   return {
     active: false,
     assignedLayer: null,
+    performerEffects: [],
     layers: { a: defaultLayer(0, 0), b: defaultLayer(1, 1) },
     focus: 'a',
     xfade: 0,
@@ -374,6 +379,26 @@ function createSynthVisionStore() {
     deactivate: () => update(s => ({ ...s, active: false })),
 
     setAssignedLayer: (layerIdx: number | null) => update(s => ({ ...s, assignedLayer: layerIdx })),
+
+    // ── Performer-owned effect chain ────────────────────────────────
+    addPerformerEffect: (effect: Effect) =>
+      update(s => ({ ...s, performerEffects: [...s.performerEffects, effect] })),
+    removePerformerEffect: (effectId: string) =>
+      update(s => ({ ...s, performerEffects: s.performerEffects.filter(e => e.id !== effectId) })),
+    togglePerformerEffect: (effectId: string) =>
+      update(s => ({
+        ...s,
+        performerEffects: s.performerEffects.map(e =>
+          e.id === effectId ? { ...e, enabled: !e.enabled } : e
+        ),
+      })),
+    updatePerformerEffectParams: (effectId: string, params: Record<string, any>) =>
+      update(s => ({
+        ...s,
+        performerEffects: s.performerEffects.map(e =>
+          e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e
+        ),
+      })),
 
     // Focus
     setFocus: (f: 'a' | 'b') => update(s => ({ ...s, focus: f })),

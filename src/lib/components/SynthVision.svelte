@@ -21,6 +21,7 @@
   } from '../stores/geoDeck';
   import { evaluateGeoDeck, type GeoEngineRuntime } from '../geo/engine';
   import { vjClipLauncher, type VJClip } from '../stores/vjClipLauncher';
+  import { get as svGet } from 'svelte/store';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { project, svKeyboardPresets } from '../stores/layers';
   import { globalSVKeyboardPresets } from '../stores/globalPresets';
@@ -46,6 +47,10 @@
 
   export let onClose: () => void = () => {};
   export let visible: boolean = true;
+  /** Deck row whose cell hosts the Performer clip. Performer is dragged into
+   *  the grid like any other plugin, so the row is decided by where it was
+   *  dropped and fired, not picked inside this panel. */
+  export let hostLayer: number = 0;
 
   // Save clips to session cache and close — clips persist across VJ mode toggles
   function handleClose() {
@@ -175,9 +180,25 @@
     }
   }
 
-  // ─── Layer Effects Management ─────────────────────────
-  // Reactive: current layer effects on the SynthVision VJ layer
-  $: svLayerEffects = $vjClipLauncher.layerStates[assignedVJLayer]?.effects ?? [];
+  // ─── Performer Effects Management ─────────────────────────
+  // Performer owns this chain (synthVisionStore.performerEffects). It does not
+  // live on the deck row, which is shared with ordinary clips. It is stamped
+  // onto whichever clip Performer is driving, and only while Performer is the
+  // one playing on that row, so it travels with the plugin.
+  $: svLayerEffects = $synthVisionStore.performerEffects;
+  $: performerActiveClip = $vjClipLauncher.layerStates[assignedVJLayer]?.activeClip ?? null;
+  /** The row is playing Performer's own cell or something Performer launched. */
+  $: performerOwnsLayer = performerActiveClip?.type === 'synthvision' || performerActiveClip?._performerOwned === true;
+
+  function syncPerformerEffectsToClip() {
+    const clip = svGet(vjClipLauncher).layerStates[assignedVJLayer]?.activeClip;
+    if (!clip || !(clip.type === 'synthvision' || clip._performerOwned)) return;
+    const effects = svGet(synthVisionStore).performerEffects;
+    const same = (clip.effects ?? []).length === effects.length && (clip.effects ?? []).every((e, i) => e === effects[i]);
+    if (!same) vjClipLauncher.setActiveClipEffects(assignedVJLayer, effects);
+  }
+  // Re-stamp when the chain changes or Performer moves to another clip.
+  $: if ($synthVisionStore.performerEffects && performerOwnsLayer && performerActiveClip?.id) syncPerformerEffectsToClip();
 
   function handleEffectPickerAdd(types: EffectType[]) {
     for (const type of types) {
@@ -187,22 +208,22 @@
         enabled: true,
         params: getRendererDefaultEffectParams(type),
       };
-      vjClipLauncher.addLayerEffect(assignedVJLayer, newEffect);
+      synthVisionStore.addPerformerEffect(newEffect);
     }
     showEffectPicker = false;
   }
 
   function toggleSvEffect(effectId: string) {
-    vjClipLauncher.toggleLayerEffect(assignedVJLayer, effectId);
+    synthVisionStore.togglePerformerEffect(effectId);
   }
 
   function deleteSvEffect(effectId: string) {
-    vjClipLauncher.removeLayerEffect(assignedVJLayer, effectId);
+    synthVisionStore.removePerformerEffect(effectId);
     expandedEffectId = null;
   }
 
   function updateSvEffectParam(effectId: string, paramName: string, value: number | boolean) {
-    vjClipLauncher.updateLayerEffectParams(assignedVJLayer, effectId, { [paramName]: value });
+    synthVisionStore.updatePerformerEffectParams(effectId, { [paramName]: value });
   }
 
   // Shader param modulation — thin wrapper for getter, shared setters from modulation.ts
@@ -233,7 +254,9 @@
   let threeCanvas: HTMLCanvasElement;
 
   // VJ Layer assignment
-  let assignedVJLayer: number = 0; // 0-3 for layers 1-4
+  let assignedVJLayer: number = 0; // the deck row Performer plays on
+  // Follow the cell Performer was fired from.
+  $: if (hostLayer !== assignedVJLayer && outputCanvas) assignToVJLayer(hostLayer);
   let svClipId = `synthvision-${Date.now()}`;
 
   // WebGL2 context for 2D shaders
@@ -3836,7 +3859,7 @@ void main() {
     }
 
     // 2. Randomize layer effects params
-    const effects = $vjClipLauncher.layerStates[assignedVJLayer]?.effects ?? [];
+    const effects = svGet(synthVisionStore).performerEffects;
     for (const effect of effects) {
       const defs = EFFECT_PARAM_DEFS[effect.type] || [];
       const patch: Record<string, number> = {};
@@ -3855,7 +3878,7 @@ void main() {
         }
       }
       if (Object.keys(patch).length > 0) {
-        vjClipLauncher.updateLayerEffectParams(assignedVJLayer, effect.id, patch);
+        synthVisionStore.updatePerformerEffectParams(effect.id, patch);
       }
     }
 
@@ -3907,21 +3930,25 @@ void main() {
     }
   }
 
-  /** Ensure the synthvision clip is active on the VJ layer (re-triggers after STOP ALL) */
+  /** Performer's own picture as a clip. It is launched onto the row, never stored in a cell. */
+  function performerPictureClip(): VJClip {
+    return { id: svClipId, type: 'synthvision', name: 'Performer', src: 'performer', synthVisionCanvas: outputCanvas, _performerOwned: true };
+  }
+
+  /** Make sure Performer's picture is what its row is playing. The cell the
+   *  operator dropped carries no picture of its own, so it is given this
+   *  panel's canvas; anything else on the row is replaced by a launch that
+   *  leaves the deck's cells alone. */
   function ensureSVClipActive() {
-    const layerState = $vjClipLauncher.layerStates[assignedVJLayer];
-    if (!layerState?.activeClip || layerState.activeClip.id !== svClipId) {
-      // SynthVision clip was cleared (e.g. by STOP ALL) — re-set and re-trigger it
-      const svClip: VJClip = {
-        id: svClipId,
-        type: 'synthvision',
-        name: 'PERFORMER',
-        src: '',
-        synthVisionCanvas: outputCanvas
-      };
-      vjClipLauncher.setClip(assignedVJLayer, 0, svClip);
-      vjClipLauncher.triggerClip(assignedVJLayer, 0);
+    if (!outputCanvas) return;
+    const active = svGet(vjClipLauncher).layerStates[assignedVJLayer]?.activeClip;
+    if (active?.type === 'synthvision') {
+      if (active.synthVisionCanvas !== outputCanvas) {
+        vjClipLauncher.updateActiveClipInPlace(assignedVJLayer, 'A', (clip) => ({ ...clip, synthVisionCanvas: outputCanvas }));
+      }
+      return;
     }
+    vjClipLauncher.launchTransientClip(assignedVJLayer, performerPictureClip());
   }
 
   function applyMediaClip(assignment: ClipAssignment) {
@@ -3954,9 +3981,9 @@ void main() {
         src: assignment.mediaSrc,
         thumbnail: assignment.mediaThumbnail || libraryItem?.thumbnail,
         videoElement: video,
+        _performerOwned: true,
       };
-      vjClipLauncher.setClip(layerIdx, 0, clip);
-      vjClipLauncher.triggerClip(layerIdx, 0);
+      vjClipLauncher.launchTransientClip(layerIdx, clip);
     } else if (assignment.mediaType === 'image') {
       const clip: VJClip = {
         id: clipId,
@@ -3964,9 +3991,9 @@ void main() {
         name: assignment.mediaName || 'Image Clip',
         src: assignment.mediaSrc,
         thumbnail: assignment.mediaThumbnail || assignment.mediaSrc,
+        _performerOwned: true,
       };
-      vjClipLauncher.setClip(layerIdx, 0, clip);
-      vjClipLauncher.triggerClip(layerIdx, 0);
+      vjClipLauncher.launchTransientClip(layerIdx, clip);
     }
   }
 
@@ -4344,34 +4371,19 @@ void main() {
   // ================================================================
   //  VJ Layer Assignment
   // ================================================================
+  /** Bind Performer to a deck row and put its picture there. */
   function assignToVJLayer(layerIdx: number) {
     if (!outputCanvas) { console.error('[SV] assignToVJLayer: outputCanvas is null!'); return; }
-    console.log('[SV] assignToVJLayer:', layerIdx, 'canvas:', outputCanvas.width, 'x', outputCanvas.height, 'clipId:', svClipId);
     assignedVJLayer = layerIdx;
-
-    // Create Performer clip for VJ layer
-    const svClip: VJClip = {
-      id: svClipId,
-      type: 'synthvision',
-      name: 'PERFORMER',
-      src: '',
-      synthVisionCanvas: outputCanvas
-    };
-
-    // Set clip in first column of the target layer and trigger it
-    vjClipLauncher.setClip(layerIdx, 0, svClip);
-    vjClipLauncher.triggerClip(layerIdx, 0);
-
-    // Update store
     synthVisionStore.setAssignedLayer(layerIdx);
-    console.log('[SV] assignToVJLayer complete, activeClip:', $vjClipLauncher.layerStates[layerIdx]?.activeClip?.id);
+    ensureSVClipActive();
   }
 
+  /** Let go of the row. Cells on the deck belong to the operator and stay. */
   function unassignFromVJLayer() {
-    if (assignedVJLayer !== null) {
-      vjClipLauncher.clearClip(assignedVJLayer, 0);
-      synthVisionStore.setAssignedLayer(null);
-    }
+    const active = svGet(vjClipLauncher).layerStates[assignedVJLayer]?.activeClip;
+    if (active && (active.id === svClipId || active._performerOwned)) vjClipLauncher.stopLayer(assignedVJLayer);
+    synthVisionStore.setAssignedLayer(null);
   }
 
   // ================================================================
@@ -4464,8 +4476,8 @@ void main() {
     compCtx = outputCanvas.getContext('2d', { alpha: false });
 
     // Assign to restored VJ layer (or default layer 0) — defer to ensure canvas is bound
-    const targetVJLayer = restoredVJLayer;
-    setTimeout(() => assignToVJLayer(targetVJLayer), 100);
+    // The row comes from the cell Performer was fired from.
+    setTimeout(() => assignToVJLayer(hostLayer), 100);
 
     // Load ISF shader library — use module-level cache if available
     // Keep loading indicator visible until shader library is ready
@@ -4771,14 +4783,6 @@ void main() {
     <div class="sv-logo">PERFORMER</div>
     <div class="sv-deck-tabs">
       <button class="sv-deck-tab active" title="Shader clip instrument">SHADER MODE</button>
-    </div>
-
-    <!-- VJ Layer Assignment -->
-    <div class="sv-vj-assign">
-      <span class="sv-vj-lbl">VJ LAYER</span>
-      {#each Array($vjClipLauncher.numLayers) as _, i}
-        <button class="sv-vj-btn" class:on={assignedVJLayer === i} on:click={() => assignToVJLayer(i)}>{i + 1}</button>
-      {/each}
     </div>
 
     <!-- BPM Section -->

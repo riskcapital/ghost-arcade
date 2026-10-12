@@ -129,6 +129,15 @@
     <circle cx="12" cy="11" r="0.75" fill="currentColor"/>
   </svg>
 
+{:else if resolvedId === 'performer'}
+  <!-- Performer: keyboard-launched orbits around a nucleus. -->
+  <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="1.6" fill="currentColor"/>
+    <ellipse cx="12" cy="12" rx="9.2" ry="3.6" stroke="currentColor" stroke-width="1.25"/>
+    <ellipse cx="12" cy="12" rx="9.2" ry="3.6" stroke="currentColor" stroke-width="1.25" opacity="0.72" transform="rotate(60 12 12)"/>
+    <ellipse cx="12" cy="12" rx="9.2" ry="3.6" stroke="currentColor" stroke-width="1.25" opacity="0.52" transform="rotate(120 12 12)"/>
+  </svg>
+
 {:else if resolvedId === 'text-creator'}
   <!-- Text Creator: type baseline with editable transform handles. -->
   <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">

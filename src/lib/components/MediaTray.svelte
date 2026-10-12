@@ -99,10 +99,10 @@
   };
 
   type VJTrayCreatorPayload = {
-    id: 'gpu-shader' | 'text-creator';
-    type: 'gpu' | 'text';
+    id: 'gpu-shader' | 'text-creator' | 'performer';
+    type: 'gpu' | 'text' | 'synthvision';
     name: string;
-    src: 'gpu-layer' | 'text-layer';
+    src: 'gpu-layer' | 'text-layer' | 'performer';
   };
 
   type VJTrayMediaPayload = {
@@ -258,7 +258,8 @@
     };
   }
 
-  function vjCreatorPayload(type: 'gpu' | 'text'): VJTrayCreatorPayload {
+  function vjCreatorPayload(type: 'gpu' | 'text' | 'synthvision'): VJTrayCreatorPayload {
+    if (type === 'synthvision') return { id: 'performer', type: 'synthvision', name: 'Performer', src: 'performer' };
     return type === 'gpu'
       ? { id: 'gpu-shader', type: 'gpu', name: 'GPU Shader', src: 'gpu-layer' }
       : { id: 'text-creator', type: 'text', name: 'Text Creator', src: 'text-layer' };
@@ -680,7 +681,7 @@
     onVJAddPayload?.(vjPluginPayload(plugin));
   }
 
-  function addCreatorToVJDeck(type: 'gpu' | 'text') {
+  function addCreatorToVJDeck(type: 'gpu' | 'text' | 'synthvision') {
     if (!vjMode) return;
     onVJAddPayload?.(vjCreatorPayload(type));
   }
@@ -729,7 +730,7 @@
     e.dataTransfer.setData('text/plain', plugin.id);
   }
 
-  function onCreatorCardDragStart(type: 'gpu' | 'text', e: DragEvent) {
+  function onCreatorCardDragStart(type: 'gpu' | 'text' | 'synthvision', e: DragEvent) {
     if (!vjMode || !e.dataTransfer) return;
     const payload = vjCreatorPayload(type);
     (window as any).__ghostVJMediaTrayDragPayload = payload;
@@ -4109,6 +4110,23 @@
               <div class="plugin-info">
                 <span class="plugin-name">Text Creator</span>
                 <span class="plugin-desc">Animated typography with transforms and depth</span>
+                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+              </div>
+            </button>
+            <button
+              class="plugin-card creator-card"
+              onclick={() => addCreatorToVJDeck('synthvision')}
+              draggable="true"
+              ondragstart={(e) => onCreatorCardDragStart('synthvision', e)}
+              ondragend={clearVJMediaTrayDragPayload}
+              title="Add Performer to VJ deck"
+            >
+              <div class="plugin-preview creator-icon">
+                <PluginIcon pluginId="performer" size={34} />
+              </div>
+              <div class="plugin-info">
+                <span class="plugin-name">Performer</span>
+                <span class="plugin-desc">Keyboard-launched worlds, shaders and clips</span>
                 <span class="plugin-tier creator-tier">VJ CONTENT</span>
               </div>
             </button>

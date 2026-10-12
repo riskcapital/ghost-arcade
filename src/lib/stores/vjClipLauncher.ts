@@ -139,6 +139,9 @@ export interface VJClip {
   jsAnimation?: JSAnimationSource;
   // For Performer - offscreen canvas
   synthVisionCanvas?: HTMLCanvasElement;
+  /** A clip Performer put on a row itself (a world, shader or media it
+   *  launched). It is never stored in a deck cell. */
+  _performerOwned?: boolean;
   // For Spout sources (FluidGen, Particles3D plugins) - legacy
   spoutSource?: string;
   // For NDI sources routed through the live-source receiver path
@@ -1976,6 +1979,49 @@ function createVJClipLauncherStore() {
           e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e
         )
       }));
+    },
+
+    /**
+     * Put a clip on a row without storing it in a cell. Performer launches its
+     * worlds, shaders and media this way, so it never overwrites what the
+     * operator placed on the deck.
+     */
+    launchTransientClip(layerIndex: number, clip: VJClip, deck: VJDeck = 'A') {
+      if (clip.type === 'video') prepareVideoClipForTrigger(clip);
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const currentLayer = targetLayerStates[layerIndex];
+        if (!currentLayer) return state;
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...currentLayer, activeColumn: null, activeClip: clip };
+        return { ...withDeck(state, deck, newLayerStates), stoppedAll: false };
+      });
+    },
+
+    /** Change the clip playing on a row, and any cell holding that same clip. */
+    updateActiveClipInPlace(layerIndex: number, deck: VJDeck, mutate: (clip: VJClip) => VJClip) {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const targetGrid = pickGrid(state, deck);
+        const activeClip = targetLayerStates[layerIndex]?.activeClip;
+        if (!activeClip) return state;
+        const newClip = mutate(activeClip);
+        if (newClip === activeClip) return state;
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+        const newGrid = targetGrid.map(row => [...row]);
+        for (let col = 0; col < state.numColumns; col++) {
+          const gridClip = newGrid[layerIndex]?.[col];
+          if (gridClip && gridClip.id === activeClip.id) newGrid[layerIndex][col] = newClip;
+        }
+        return withDeck(state, deck, newLayerStates, newGrid);
+      });
+    },
+
+    /** Replace the playing clip's effect chain. Performer stamps its own chain
+     *  onto the clip it drives, so the effects travel with it. */
+    setActiveClipEffects(layerIndex: number, effects: Effect[], deck: VJDeck = 'A') {
+      this.updateActiveClipInPlace(layerIndex, deck, (clip) => ({ ...clip, effects: [...effects] }));
     },
 
     // ========== Clip Effects ==========
