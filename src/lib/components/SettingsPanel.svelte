@@ -111,6 +111,7 @@
   // Multi-Output / per-slice config (createDefaultSlice, maxOutputSlices,
   // OutputCanvasPreview) moved to the Screens tab — see ScreenPanel.svelte.
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
+  import { interfaceScale } from '../stores/interfaceScale';
   import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
   import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
 
@@ -663,6 +664,19 @@
         {#if selectedSection === 'app:appearance'}
         <section class="settings-section">
           <h3>Appearance</h3>
+          {#if isDesktopApp}
+          <div class="setting-row">
+            <div class="setting-label">
+              <label class="label-text" for="interface-scale">Interface size</label>
+              <span class="label-hint">Resize controls and text for your display. Projector output resolution stays unchanged.</span>
+            </div>
+            <select id="interface-scale" value={$interfaceScale} onchange={e => interfaceScale.set(Number(e.currentTarget.value))}>
+              {#each [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2] as scale}
+                <option value={scale}>{Math.round(scale * 100)}%{scale === 1 ? ' · Default' : ''}</option>
+              {/each}
+            </select>
+          </div>
+          {/if}
           <div class="setting-row"><label class="setting-label" for="context-help-enabled"><span class="label-text">Control tooltips</span><span class="label-hint">Explanations and documentation links. Press F1 on a focused control to open help.</span></label><input id="context-help-enabled" type="checkbox" bind:checked={$tooltipsEnabled} /></div>
 
           <!-- Theme Templates — a complete style overhaul (fonts,

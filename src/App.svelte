@@ -12,6 +12,8 @@
   } from './lib/remote/remotePairing';
   import { mobileConnectionUrl } from './lib/remote/mobileConnectionUrl';
   import PhoneScanInbox from './lib/components/PhoneScanInbox.svelte';
+  import ProjectMediaModal from './lib/components/ProjectMediaModal.svelte';
+  import { startInterfaceScale } from './lib/stores/interfaceScale';
   import { openScreenOutputs, setScreenPatternFrames, watchScreenOutputs } from './lib/output/screenPatterns';
   import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
   import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
@@ -409,6 +411,14 @@
 
   // Keyboard shortcut help overlay
   let showShortcutHelp = false;
+  // Project Media: check local media, locate missing files, collect a portable copy.
+  let showProjectMedia = false;
+  function applyMediaRelinks(json: string) {
+    const sep = currentProjectPath?.includes('\\') ? '\\' : '/';
+    const dir = currentProjectPath?.substring(0, currentProjectPath.lastIndexOf(sep) + 1);
+    vjClipLauncher.stopAll();
+    if (!project.importProjectJSON(json, dir)) throw new Error('Could not reload the relinked project.');
+  }
 
   // App version baked in at build time from package.json (see vite.config.ts).
   // Auto-tracks the actual shipped version so the footer pill never
@@ -476,6 +486,7 @@
   // Auto-save cleanup
   onDestroy(() => {
     stopScreenOutputWatch();
+    stopInterfaceScale();
     if (autosaveInterval) {
       clearInterval(autosaveInterval);
       autosaveInterval = null;
@@ -968,6 +979,7 @@
     let retryInterval: ReturnType<typeof setInterval> | null = null;
     if (!isMobile) {
       void loadPhoneScanLibrary();
+      stopInterfaceScale = startInterfaceScale();
       stopScreenOutputWatch = watchScreenOutputs((id) => get(settings).output.slices.find((s) => s.id === id)?.name ?? 'Screen');
       const autoConnect = async () => {
         // The server refuses anyone without the pairing token, this window included.
@@ -2426,6 +2438,7 @@
   let studioFeedLabel = 'Phone Camera';
   // What the phone last sent for mapping, and whether its panel is open.
   let stopScreenOutputWatch = () => {};
+  let stopInterfaceScale = () => {};
   let pendingPhoneCalibration = '';
   let showPhoneCalibration = false;
 
@@ -5629,6 +5642,11 @@
                 </span>
                 <span class="menu-label">Video Converter...</span>
               </button>
+              {#if isDesktopApp}
+                <button class="menu-item" onclick={() => { fileMenuOpen = false; showProjectMedia = true; }}>
+                  <span class="menu-icon">▣</span><span class="menu-label">Project Media...</span>
+                </button>
+              {/if}
               <div class="menu-separator"></div>
               <button class="menu-item" onclick={importPresetsFromFile}>
                 <span class="menu-icon">
@@ -7051,6 +7069,10 @@
 
 <!-- Keyboard Shortcut Help Overlay -->
 <ShortcutsOverlay visible={showShortcutHelp} onClose={() => showShortcutHelp = false} />
+{#if showProjectMedia}
+  <ProjectMediaModal projectPath={currentProjectPath} exportProject={() => project.exportProjectJSONForSave()}
+    applyProject={applyMediaRelinks} onClose={() => showProjectMedia = false} />
+{/if}
 
 <!-- Safe Mode in-app confirm popover (replaces window.confirm) -->
 <ConfirmPopover />

@@ -35,7 +35,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // operator had no visible signal that zero-copy was off.
   'spout_osr_ready', 'spout_osr_resize',
   // Display/window
-  'get_displays', 'get_output_display_info',
+  'get_displays', 'get_output_display_info', 'set_interface_scale',
+  'project_media_scan', 'project_media_relink', 'project_media_collect',
   'create_output_window', 'configure_next_output_window',
   'close_output_window', 'move_output_window',
   'resize_output_window', 'show_main_window',

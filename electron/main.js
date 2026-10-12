@@ -2681,6 +2681,39 @@ function registerIpcHandlers() {
     });
   }
 
+  // --- Interface size ---
+  ipcMain.handle('set_interface_scale', (event, { scale } = {}) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+      throw new Error('Interface scale is only available in the main editor');
+    }
+    const value = Number(scale);
+    if (!Number.isFinite(value) || value < 0.75 || value > 2) throw new Error('Invalid interface scale');
+    mainWindow.webContents.setZoomFactor(value);
+    return { scale: value };
+  });
+
+  // --- Project media: check, relink, collect ---
+  const projectMedia = require('./project-media.cjs');
+  const mediaRequest = args => {
+    if (typeof args?.json !== 'string') throw new Error('Project data is required.');
+    const data = JSON.parse(args.json);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid project data.');
+    const dir = args.projectPath ? path.dirname(assertAbsolutePath(args.projectPath, 'project path')) : undefined;
+    return { data, dir };
+  };
+  ipcMain.handle('project_media_scan', async (_, args) => {
+    const { data, dir } = mediaRequest(args);
+    return projectMedia.scanProjectMedia(data, dir);
+  });
+  ipcMain.handle('project_media_relink', async (_, args) => {
+    const { data, dir } = mediaRequest(args);
+    return JSON.stringify(await projectMedia.relinkProjectMedia(data, dir, args.id, args.replacementPath));
+  });
+  ipcMain.handle('project_media_collect', async (_, args) => {
+    const { data, dir } = mediaRequest(args);
+    return projectMedia.collectProjectMedia(data, dir, assertAbsolutePath(args.outputPath, 'output path'));
+  });
+
   // --- Clip files that have moved ---
   // Which of these media files are still on disk.
   ipcMain.handle('media_files_status', async (_, args) => mediaLocate.mediaFilesStatus(args?.paths));
