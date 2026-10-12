@@ -511,7 +511,7 @@
     min-width: 44px;
     background: transparent;
     border: 1px dashed transparent;
-    color: #67e8f9;
+    color: var(--ga-blue-300);
     font: inherit;
     font-size: 12px;
     font-weight: 500;
@@ -522,14 +522,14 @@
     text-align: right;
   }
   .epr-value:hover {
-    background: rgba(103, 232, 249, 0.08);
-    border-color: rgba(103, 232, 249, 0.35);
+    background: var(--ga-blue-a08);
+    border-color: var(--ga-blue-a28);
   }
   .epr-edit {
     flex: 0 0 auto;
     width: 56px;
     background: #0f1219;
-    border: 1px solid #67e8f9;
+    border: 1px solid var(--ga-blue-300);
     color: #e0e7ef;
     font: inherit;
     font-size: 12px;
@@ -552,7 +552,7 @@
   }
   .epr-slider {
     width: 100%;
-    accent-color: #67e8f9;
+    accent-color: var(--ga-blue-300);
   }
   .epr.modulated .epr-slider {
     accent-color: #ff00ff;

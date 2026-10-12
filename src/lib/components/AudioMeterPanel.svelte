@@ -289,7 +289,7 @@
     accent-color: #BB86FC;
   }
   .amp-row-value {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 13px;
     color: #BB86FC;
     text-align: right;
@@ -366,7 +366,7 @@
   .amp-band-lomid    { background: #eab308; }
   .amp-band-mid      { background: #22c55e; }
   .amp-band-himid    { background: #14b8a6; }
-  .amp-band-treble   { background: #3b82f6; }
+  .amp-band-treble   { background: var(--ga-blue-400); }
   .amp-band-air      { background: #8b5cf6; }
   .amp-band-presence { background: #ec4899; }
 
@@ -395,7 +395,7 @@
     box-shadow: 0 0 8px #f97316aa;
   }
   .amp-ks-dot.amp-snare.flash {
-    background: #3b82f6;
-    box-shadow: 0 0 8px #3b82f6aa;
+    background: var(--ga-blue-400);
+    box-shadow: 0 0 8px var(--ga-blue-a70);
   }
 </style>

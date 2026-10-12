@@ -494,6 +494,7 @@
 
   .effect-title {
     flex: 1;
+    min-width: 0;
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
@@ -503,13 +504,14 @@
     padding: 2px 0;
     display: flex;
     justify-content: space-between;
+    gap: 4px;
   }
   .effect-title:hover { color: #fff; }
 
   .expand-icon { color: #666; font-size: 15px; }
 
   .blend-select {
-    width: 75px;
+    width: 96px;
     background: #333;
     color: var(--text-primary, #ccc);
     border: 1px solid #444;
@@ -519,7 +521,8 @@
   }
 
   .opacity-slider {
-    width: 40px;
+    flex: 1;
+    min-width: 40px;
     accent-color: #ff9800;
   }
 
@@ -540,7 +543,7 @@
   }
 
   .subsection {
-    margin-bottom: 8px;
+    margin: 8px 0;
   }
 
   .subsection-label {
@@ -584,6 +587,7 @@
 
   .control-row select {
     flex: 1;
+    min-width: 0;
     background: #222;
     color: var(--text-primary, #ccc);
     border: 1px solid #444;
@@ -592,13 +596,7 @@
     font-size: 11px;
   }
 
-  .control-value {
-    width: 38px;
-    text-align: right;
-    font-size: 10px;
-    color: #555;
-    flex-shrink: 0;
-  }
+  .control-value { width: 44px; text-align: right; font-size: 10px; color: #777; }
 
   .btn-add-effect {
     display: block;

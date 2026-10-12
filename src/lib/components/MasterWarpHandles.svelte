@@ -452,7 +452,7 @@
   .move-handle:hover { background: rgba(240, 163, 94, 0.2); }
   .move-handle.dragging { cursor: grabbing; background: rgba(255, 255, 0, 0.2); border-color: #ffff00; color: #ffff00; }
 
-  .mesh-handle { cursor: grab; }
+  .mesh-handle { cursor: grab; z-index: 56; }
   .mesh-handle.corner {
     width: 16px; height: 16px; margin-left: -8px; margin-top: -8px;
     background: #f0a35e; border: 2px solid #fff; border-radius: 50%;

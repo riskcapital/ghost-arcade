@@ -303,8 +303,8 @@
   }
 
   .midi-indicator.learning {
-    border-color: #00e5ff;
-    background: rgba(0, 229, 255, 0.15);
+    border-color: var(--ga-blue-300);
+    background: var(--ga-blue-a16);
     animation: midi-pulse 0.8s ease-in-out infinite alternate;
   }
 
@@ -332,9 +332,9 @@
   .midi-learn-label {
     font-size: 10px;
     font-weight: 700;
-    color: #00e5ff;
+    color: var(--ga-blue-300);
     letter-spacing: 1px;
-    text-shadow: 0 0 6px rgba(0, 229, 255, 0.8);
+    text-shadow: 0 0 6px color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
     pointer-events: none;
   }
 
@@ -344,7 +344,7 @@
     left: 0;
     right: 0;
     height: 28px;
-    background: rgba(20, 20, 40, 0.95);
+    background: var(--ga-blue-900);
     border-top: 2px solid #bb86fc;
     display: flex;
     align-items: center;
@@ -365,7 +365,7 @@
   }
 
   .midi-learn-status {
-    color: #00e5ff;
+    color: var(--ga-blue-300);
     flex: 1;
   }
   .midi-learn-status strong {
@@ -381,7 +381,7 @@
   .midi-last-msg {
     color: #666;
     font-size: 11px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .midi-map-count {

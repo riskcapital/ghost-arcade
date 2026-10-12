@@ -317,7 +317,7 @@
     margin: 0;
     font-size: 15px;
     letter-spacing: 2px;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-weight: 600;
   }
   .close-btn {
@@ -366,7 +366,7 @@
   }
   .field input:focus,
   .field select:focus {
-    border-color: #4cd1ff;
+    border-color: var(--ga-blue-300);
     outline: none;
   }
   .row { display: flex; gap: 10px; }
@@ -391,21 +391,21 @@
   }
   .preset-btn:hover {
     background: #1c1c22;
-    border-color: #4cd1ff;
+    border-color: var(--ga-blue-300);
     color: #fff;
   }
   .preset-btn.active {
-    background: rgba(76, 209, 255, 0.12);
-    border-color: #4cd1ff;
-    color: #4cd1ff;
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
   }
   .preset-label { font-size: 12px; font-weight: 500; }
-  .preset-dims { font-size: 11px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); color: #666; }
-  .preset-btn.active .preset-dims { color: #4cd1ff; }
+  .preset-dims { font-size: 11px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); color: #666; }
+  .preset-btn.active .preset-dims { color: var(--ga-blue-300); }
 
   .summary {
-    background: rgba(76, 209, 255, 0.05);
-    border-left: 2px solid rgba(76, 209, 255, 0.4);
+    background: var(--ga-blue-a08);
+    border-left: 2px solid var(--ga-blue-a45);
     padding: 8px 12px;
     border-radius: 0 4px 4px 0;
     font-size: 12px;
@@ -413,7 +413,7 @@
     line-height: 1.5;
     margin-bottom: 14px;
   }
-  .summary strong { color: #4cd1ff; }
+  .summary strong { color: var(--ga-blue-300); }
 
   .actions {
     display: flex;
@@ -430,12 +430,12 @@
     cursor: pointer;
   }
   .btn-primary {
-    background: linear-gradient(135deg, #4cd1ff, #6f5cff);
+    background: linear-gradient(135deg, var(--ga-blue-300), var(--ga-blue-400));
     color: #fff;
     border: none;
   }
   .btn-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #80dfff, #8a7aff);
+    background: linear-gradient(135deg, var(--ga-blue-200), var(--ga-blue-400));
   }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-secondary {
@@ -444,14 +444,14 @@
     color: var(--text-secondary, #aaa);
   }
   .btn-secondary:hover {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
   }
 
   /* Progress + states */
   .progress .phase {
     font-size: 14px;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     margin-bottom: 8px;
     font-weight: 500;
     letter-spacing: 0.3px;
@@ -465,7 +465,7 @@
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #4cd1ff, #6f5cff);
+    background: linear-gradient(90deg, var(--ga-blue-300), var(--ga-blue-400));
     transition: width 0.15s ease-out;
   }
   .progress-meta {
@@ -473,7 +473,7 @@
     justify-content: space-between;
     margin-top: 6px;
     font-size: 12px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: var(--text-muted, #888);
   }
   .success { text-align: center; }
@@ -488,7 +488,7 @@
     margin: 6px auto 12px;
   }
   .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 17px; }
-  .success-meta { color: var(--text-muted, #888); font-size: 12px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); margin: 0 0 12px; }
+  .success-meta { color: var(--text-muted, #888); font-size: 12px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); margin: 0 0 12px; }
   .preview {
     width: 100%;
     max-height: 280px;
@@ -511,5 +511,5 @@
     font-weight: 700;
   }
   .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 17px; }
-  .error-msg { color: #ff8888; font-size: 13px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); word-break: break-word; }
+  .error-msg { color: #ff8888; font-size: 13px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); word-break: break-word; }
 </style>

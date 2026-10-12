@@ -147,7 +147,7 @@
   .pj-fields { display: flex; gap: 10px; flex-wrap: wrap; }
   .pj-fields label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
   .pj-port { width: 72px; }
-  .pj-fields { align-items: center; }
+  .pj-fields { display: flex; gap: 10px; flex-wrap: wrap; }
   .pj-clear {
     font-size: 11px;
     padding: 3px 8px;

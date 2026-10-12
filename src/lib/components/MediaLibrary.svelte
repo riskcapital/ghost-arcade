@@ -807,12 +807,9 @@
   }
 
   .library-header h3 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    font-weight: 800;
+    font-size: 19px;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .toggle-icon {

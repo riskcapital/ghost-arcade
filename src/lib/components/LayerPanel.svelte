@@ -2990,6 +2990,7 @@
   }
 
   .properties-effects-content {
+    min-height: 0;
     flex: 1;
     overflow-y: auto;
     padding: 13px 14px;
@@ -3052,7 +3053,7 @@
   }
 
   .mapping-composition-row.enabled {
-    background: rgba(55, 178, 227, 0.07);
+    background: var(--ga-blue-a08);
   }
 
   .mapping-composition-toggle {
@@ -3070,7 +3071,7 @@
   .mapping-composition-toggle input {
     width: 15px;
     height: 15px;
-    accent-color: var(--ga-blue, #37b2e3);
+    accent-color: var(--ga-blue, #5278ff);
   }
 
   .composition-edit-btn,
@@ -3093,7 +3094,7 @@
   .composition-edit-btn:hover,
   .composition-mini-btn:hover:not(:disabled),
   .mapping-stage-live:hover {
-    border-color: rgba(55, 178, 227, 0.45);
+    border-color: var(--ga-blue-a45);
     color: #fff;
   }
 
@@ -3110,12 +3111,17 @@
 
   .composition-mini-btn.active,
   .mapping-stage-live.active {
-    background: rgba(55, 178, 227, 0.18);
-    border-color: rgba(55, 178, 227, 0.58);
-    color: #63d6ff;
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-a70);
+    color: var(--ga-blue-300);
   }
 
   .mapping-composition-panel {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     padding: 8px;
     background: rgba(7, 11, 16, 0.72);
@@ -3140,8 +3146,8 @@
 
   .composition-tabs button.active {
     color: #e9fbff;
-    border-color: rgba(55, 178, 227, 0.55);
-    background: rgba(55, 178, 227, 0.14);
+    border-color: var(--ga-blue-a45);
+    background: var(--ga-blue-a16);
   }
 
   .composition-section-header,
@@ -3180,7 +3186,7 @@
   }
 
   .composition-effect-item.live {
-    border-color: rgba(55, 178, 227, 0.5);
+    border-color: var(--ga-blue-a45);
   }
 
   .composition-effect-header {
@@ -3291,8 +3297,8 @@
   }
 
   .mapping-stage-effects .effect-item.live {
-    background: rgba(76, 209, 255, 0.04);
-    border-left: 2px solid #4cd1ff;
+    background: color-mix(in srgb, var(--ga-blue-400) 4%, transparent);
+    border-left: 2px solid var(--ga-blue-300);
   }
 
   .mapping-stage-effects .effect-header {
@@ -3324,7 +3330,7 @@
   }
 
   .stage-fx-icon {
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     flex: 0 0 auto;
   }
 
@@ -3344,15 +3350,15 @@
   }
 
   .effect-live-radio:hover {
-    border-color: #4cd1ff;
+    border-color: var(--ga-blue-300);
     color: var(--text-secondary, #aaa);
   }
 
   .effect-live-radio.active {
-    color: #4cd1ff;
-    border-color: #4cd1ff;
-    background: rgba(76, 209, 255, 0.12);
-    box-shadow: 0 0 8px rgba(76, 209, 255, 0.35);
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-300);
+    background: var(--ga-blue-a16);
+    box-shadow: 0 0 8px var(--ga-blue-a28);
   }
 
   .stage-effect-hold-button {
@@ -3448,8 +3454,8 @@
   }
 
   .effect-cycle-toggle.included {
-    color: #4cd1ff;
-    border-color: rgba(76, 209, 255, 0.35);
+    color: var(--ga-blue-300);
+    border-color: var(--ga-blue-a28);
   }
 
   .btn-add {
@@ -3468,7 +3474,7 @@
   }
 
   .btn-add:hover {
-    background: rgba(155, 135, 245, 0.18);
+    background: var(--ga-blue-a16);
   }
 
   .layer-list {
@@ -3515,8 +3521,8 @@
   }
 
   .layer-item.multi-selected {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    border: 1px solid var(--ga-blue-line, var(--ga-blue-a08));
   }
 
   .layer-item.dragging {
@@ -3646,7 +3652,7 @@
   .property-value {
     font-size: 13px;
     color: var(--text-secondary, #aaa);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .grouped-child-note {
     font-size: 12px;
@@ -3913,6 +3919,7 @@
 
   .vt-transport {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 4px;
     margin-bottom: 8px;
@@ -3943,7 +3950,7 @@
   .vt-time {
     font-size: 12px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     margin-left: 4px;
     flex: 1;
     white-space: nowrap;
@@ -4098,7 +4105,7 @@
   .btn-small:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
   .btn-small:disabled { opacity: 0.45; cursor: not-allowed; }
   .source-crop-row .btn-small { min-height: 26px; }
-  .source-crop-edit { color: var(--ga-ink-0, #eef0f4); border-color: rgba(76, 209, 255, 0.35); }
+  .source-crop-edit { color: var(--ga-ink-0, #eef0f4); border-color: var(--ga-blue-a28); }
   .source-crop-reset { color: var(--ga-ink-1, #9aa0ac); }
   .source-crop-value { color: var(--ga-ink-2, #5e6571); }
 
@@ -4148,6 +4155,8 @@
 
   .vj-source-select {
     flex: 1;
+    min-width: 0;
+    max-width: 100%;
     background: var(--bg-tertiary, #1a1a1e);
     color: var(--text-primary, #eee);
     border: 1px solid #555;
@@ -4434,14 +4443,14 @@
   }
 
   .shape-icon-btn:hover {
-    border-color: #67E8F9;
+    border-color: var(--ga-blue-300);
     color: #d6faff;
   }
 
   .shape-icon-btn.active {
-    border-color: #67E8F9;
-    color: #67E8F9;
-    background: rgba(103, 232, 249, 0.08);
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
 
   .shape-mask-section .property-row select {
@@ -4609,7 +4618,7 @@
   .effect-reset {
     background: none;
     border: none;
-    color: #7ec8e3;
+    color: var(--ga-blue-200);
     font-size: 15px;
     line-height: 1;
     cursor: pointer;
@@ -4786,7 +4795,7 @@
 
   /* Lines layer thumbnail */
   .layer-thumbnail.lines {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    background: linear-gradient(135deg, var(--ga-blue-mute-800) 0%, var(--ga-blue-800) 100%);
     border: 1px solid #00ffc844;
   }
 
@@ -5118,4 +5127,7 @@
     width: 14px;
     height: 14px;
   }
+
+  .layers-section > .panel-header, .mapping-composition-row { flex-shrink: 0; }
+  .vt-btn:disabled { opacity: 0.4; cursor: wait; }
 </style>

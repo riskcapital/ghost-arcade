@@ -1088,8 +1088,8 @@
     background: linear-gradient(180deg, rgba(97, 214, 164, 0.075), rgba(255,255,255,0.02));
   }
   .toolbar-cluster.edit-actions {
-    border-color: rgba(91, 141, 239, 0.20);
-    background: linear-gradient(180deg, rgba(91, 141, 239, 0.065), rgba(255,255,255,0.02));
+    border-color: var(--ga-blue-a16);
+    background: linear-gradient(180deg, var(--ga-blue-a08), rgba(255,255,255,0.02));
   }
   .toolbar-cluster.view-actions {
     border-color: rgba(255,255,255,0.09);
@@ -1374,5 +1374,10 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     box-shadow: 0 10px 28px rgba(0,0,0,0.34);
+  }
+
+  .wide-btn.on {
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-a45);
   }
 </style>

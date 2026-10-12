@@ -830,7 +830,7 @@
     z-index: 1000;
     overflow: hidden;
     color: #e9edf4;
-    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
   .stage3d-root.external { background: transparent; pointer-events: none; }
   .stage3d-root.external :global(button),
@@ -844,7 +844,7 @@
   .stage3d-root.external .toast { pointer-events: auto; }
   .reel-host { position: absolute; inset: 0; pointer-events: none; z-index: 25; }
   .reel-host :global(.reel-panel) { pointer-events: auto; }
-  .tbtn.reel-on { background: #3b2a63; border-color: #5b46a3; }
+  .tbtn.reel-on { background: #3b2a63; border-color: var(--ga-blue-600); }
   .viewport-fallback {
     position: absolute;
     inset: 0;
@@ -877,7 +877,7 @@
     background: rgba(20, 22, 30, 0.85);
     color: #fff; font-size: 21px; cursor: pointer;
   }
-  .icon-btn:hover { background: rgba(40, 44, 56, 0.95); }
+  .icon-btn:hover { background: var(--ga-blue-mute-800); }
   .seg {
     display: flex; gap: 2px;
     background: rgba(255, 255, 255, 0.04);
@@ -982,7 +982,7 @@
     background: rgba(255, 68, 91, 0.18);
     border-color: rgba(255, 68, 91, 0.72);
     color: #ff8d9b;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-variant-numeric: tabular-nums;
   }
   .rec-btn.recording:hover {
@@ -1019,7 +1019,7 @@
   }
   .spacer { flex: 1 1 0; min-width: 0; }
   .dim-label {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-size: 11px;
     color: #8a93a3;
     letter-spacing: 0.1em;
@@ -1148,7 +1148,7 @@
   .scenery-inspect { display: flex; flex-direction: column; gap: 8px; }
   .scenery-title { font-size: 16px; font-weight: 600; color: #e9edf4; }
   .scenery-sub {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
     color: #4af2ff;
   }
@@ -1262,7 +1262,7 @@
   }
   .hud b { color: #e9edf4; font-weight: 600; }
   .kbd {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     background: rgba(255, 255, 255, 0.07);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 5px;

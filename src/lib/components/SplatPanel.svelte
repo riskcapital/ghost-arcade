@@ -2366,7 +2366,7 @@
     text-align: right;
     color: var(--accent-primary, #bb86fc);
     font-size: 11px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .property-row.checkbox label {
@@ -2424,7 +2424,7 @@
     flex-wrap: wrap;
     gap: 6px 12px;
     color: var(--text-secondary, #98a0ad);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
   }
 

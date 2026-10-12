@@ -566,7 +566,7 @@
   }
   .section-count {
     color: #555;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .preview-host {
     margin-bottom: 8px;
@@ -634,7 +634,7 @@
   .row-target {
     font-size: 11px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     background: rgba(255, 255, 255, 0.04);
     padding: 1px 4px;
     border-radius: 2px;
@@ -694,10 +694,10 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
     color: var(--text-primary, #ddd);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
   }
-  .dim-x { color: #666; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
+  .dim-x { color: #666; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .mini-btn {
     flex: 1;
     padding: 3px 8px;
@@ -761,8 +761,8 @@
     color: #f0a35e;
   }
   .dome-dot {
-    background: #79d6ff;
-    box-shadow: 0 0 5px rgba(121, 214, 255, 0.8);
+    background: var(--ga-blue-300);
+    box-shadow: 0 0 5px color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
   }
   .dome-presets {
     display: flex;
@@ -783,8 +783,8 @@
     cursor: pointer;
   }
   .dome-chip:hover {
-    background: rgba(121, 214, 255, 0.12);
-    border-color: rgba(121, 214, 255, 0.32);
+    background: var(--ga-blue-a16);
+    border-color: var(--ga-blue-a28);
     color: #cdefff;
   }
   .dome-field,
@@ -822,13 +822,13 @@
     appearance: none;
     background: var(--bg-primary, #050507);
     border-radius: 999px;
-    accent-color: #79d6ff;
+    accent-color: var(--ga-blue-300);
     cursor: pointer;
   }
   .dome-row input[type="range"]::-webkit-slider-runnable-track {
     height: 4px;
     border-radius: 999px;
-    background: linear-gradient(90deg, rgba(121, 214, 255, 0.9), rgba(187, 134, 252, 0.55));
+    background: linear-gradient(90deg, color-mix(in srgb, var(--ga-blue-300) 90%, transparent), rgba(187, 134, 252, 0.55));
   }
   .dome-row input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -838,11 +838,11 @@
     border-radius: 50%;
     border: 2px solid #111114;
     background: #cdefff;
-    box-shadow: 0 0 0 1px rgba(121, 214, 255, 0.55);
+    box-shadow: 0 0 0 1px var(--ga-blue-a45);
   }
   .dome-row em {
     color: #8f8998;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     font-style: normal;
     text-align: right;

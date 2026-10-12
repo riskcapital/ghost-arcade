@@ -660,9 +660,14 @@
   }
 
   .pending-badge {
-    background: rgba(148, 163, 184, 0.11);
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    color: #94a3b8;
+    display: inline-block;
+    margin-left: 5px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    vertical-align: middle;
   }
 
   .row-desc {

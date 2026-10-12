@@ -541,7 +541,7 @@
 
   /* Edge handles — same as WarpHandles edge-handle. */
   .edge-handle {
-    background: #00aaff;
+    background: var(--ga-blue-300);
     border: 2px solid #fff;
     border-radius: 3px;
     cursor: move;
@@ -550,7 +550,7 @@
   .edge-handle.edge-bottom { width: 40px; height: 12px; margin-left: -20px; margin-top: -6px; }
   .edge-handle.edge-left,
   .edge-handle.edge-right { width: 12px; height: 40px; margin-left: -6px; margin-top: -20px; }
-  .edge-handle:hover { background: #00ccff; transform: scale(1.1); }
+  .edge-handle:hover { background: var(--ga-blue-300); transform: scale(1.1); }
   .edge-handle.dragging { background: #ffff00; transform: scale(1.15); }
 
   /* Move handle — same as WarpHandles move-handle. */
@@ -577,7 +577,7 @@
   }
 
   /* Mesh handles — same as MeshWarpHandles. */
-  .mesh-handle { cursor: grab; }
+  .mesh-handle { cursor: grab; z-index: 51; }
   .mesh-handle.corner {
     width: 16px; height: 16px;
     margin-left: -8px; margin-top: -8px;
@@ -624,4 +624,8 @@
   }
   .corner-handle:hover .handle-label { opacity: 1; }
 
+  .mesh-handle.selected {
+    background: #00ff88;
+    box-shadow: 0 0 10px #00ff88;
+  }
 </style>

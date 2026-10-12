@@ -412,7 +412,7 @@
     margin: 0;
     font-size: 15px;
     letter-spacing: 2px;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     font-weight: 600;
   }
   .modal-head p {
@@ -458,8 +458,8 @@
   }
   .mode-tabs button.active {
     color: #fff;
-    border-color: rgba(76, 209, 255, 0.65);
-    background: rgba(76, 209, 255, 0.12);
+    border-color: var(--ga-blue-a70);
+    background: var(--ga-blue-a16);
   }
   .drop-zone {
     width: 100%;
@@ -479,8 +479,8 @@
   }
   .drop-zone:hover:not(:disabled),
   .drop-zone.dragging {
-    border-color: #4cd1ff;
-    background: rgba(76, 209, 255, 0.08);
+    border-color: var(--ga-blue-300);
+    background: var(--ga-blue-a08);
   }
   .drop-zone:disabled { cursor: not-allowed; opacity: 0.55; }
   .sequence-zone {
@@ -527,7 +527,7 @@
     gap: 10px;
     align-items: stretch;
     padding: 10px;
-    border: 1px solid #242831;
+    border: 1px solid var(--ga-blue-mute-800);
     background: #0d1015;
     border-radius: 6px;
   }
@@ -548,8 +548,8 @@
     overflow-wrap: anywhere;
   }
   .summary {
-    background: rgba(76, 209, 255, 0.05);
-    border-left: 2px solid rgba(76, 209, 255, 0.4);
+    background: var(--ga-blue-a08);
+    border-left: 2px solid var(--ga-blue-a45);
     padding: 8px 12px;
     border-radius: 0 4px 4px 0;
     font-size: 12px;
@@ -557,13 +557,13 @@
     line-height: 1.5;
     margin: 14px 0;
   }
-  .summary strong { color: #4cd1ff; }
+  .summary strong { color: var(--ga-blue-300); }
   .progress-block {
     margin-top: 14px;
   }
   .phase {
     font-size: 14px;
-    color: #4cd1ff;
+    color: var(--ga-blue-300);
     margin-bottom: 8px;
     font-weight: 500;
   }
@@ -576,7 +576,7 @@
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #4cd1ff, #49df93);
+    background: linear-gradient(90deg, var(--ga-blue-300), #49df93);
     transition: width 0.15s ease-out;
   }
   .progress-meta {
@@ -584,7 +584,7 @@
     justify-content: space-between;
     margin-top: 6px;
     font-size: 12px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: var(--text-muted, #888);
   }
   .error-box,
@@ -604,9 +604,9 @@
     color: #ff9b9b;
   }
   .notice-box {
-    background: rgba(76, 209, 255, 0.08);
-    border: 1px solid rgba(76, 209, 255, 0.28);
-    color: #9de7ff;
+    background: var(--ga-blue-a08);
+    border: 1px solid var(--ga-blue-a28);
+    color: var(--ga-blue-100);
   }
   .success-box {
     background: rgba(76, 222, 128, 0.10);
@@ -642,7 +642,7 @@
     white-space: nowrap;
   }
   .btn-primary {
-    background: linear-gradient(135deg, #4cd1ff, #49df93);
+    background: linear-gradient(135deg, var(--ga-blue-300), #49df93);
     color: #071015;
     border: none;
   }
@@ -667,8 +667,8 @@
     color: var(--text-secondary, #aaa);
   }
   .btn-secondary:hover:not(:disabled) {
-    border-color: #4cd1ff;
-    color: #4cd1ff;
+    border-color: var(--ga-blue-300);
+    color: var(--ga-blue-300);
   }
   .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

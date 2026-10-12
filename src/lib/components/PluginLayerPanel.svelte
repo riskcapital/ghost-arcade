@@ -236,6 +236,10 @@
   }
 
   .plugin-panel {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -247,8 +251,8 @@
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    background: linear-gradient(90deg, #111118, #16162a);
-    border-bottom: 1px solid #2a2a3a;
+    background: linear-gradient(90deg, #111118, var(--ga-blue-900));
+    border-bottom: 1px solid var(--ga-blue-mute-800);
   }
 
   .header-icon {
@@ -256,6 +260,7 @@
   }
 
   .header-text {
+    min-width: 0;
     display: flex;
     flex-direction: column;
   }
@@ -323,6 +328,8 @@
   }
 
   .control-row {
+    min-width: 0;
+    box-sizing: border-box;
     padding: 5px 8px;
     border-radius: 4px;
   }
@@ -349,7 +356,9 @@
 
   .sel-btn {
     flex: 1;
-    min-width: 40px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
     padding: 4px 6px;
     background: var(--bg-tertiary, #1a1a22);
     border: 1px solid #333;
@@ -361,7 +370,7 @@
   }
 
   .sel-btn:hover {
-    background: #2a2a38;
+    background: var(--ga-blue-mute-800);
     color: var(--text-primary, #ddd);
   }
 
@@ -416,9 +425,11 @@
 
   .slider-row input[type="range"] {
     flex: 1;
-    height: 3px;
+    min-width: 0;
+    width: 0;
+    height: 18px;
     -webkit-appearance: none;
-    background: #2a2a38;
+    background: var(--ga-blue-mute-800);
     border-radius: 2px;
     cursor: pointer;
   }
@@ -438,6 +449,8 @@
     color: #666;
     min-width: 36px;
     text-align: right;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
+
+  .control-row select { box-sizing: border-box; min-width: 0; max-width: 100%; text-overflow: ellipsis; width: 100%; min-height: 34px; padding: 6px 9px; color: #e1edff; background: var(--ga-blue-900); border: 1px solid var(--ga-blue-mute-600); border-radius: 7px; font: inherit; font-size: 12px; }
 </style>

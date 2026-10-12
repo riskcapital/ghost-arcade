@@ -75,7 +75,7 @@
   .shortcut-overlay {
     position: relative;
     background: #15151a;
-    border: 1px solid rgba(187, 134, 252, 0.4);
+    border: 1px solid color-mix(in srgb, var(--ga-blue-500) 50%, transparent);
     border-radius: 10px;
     padding: 24px 28px;
     max-width: 760px;
@@ -84,7 +84,7 @@
     overflow-y: auto;
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04);
     color: var(--text-primary, #ddd);
-    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     cursor: default;
   }
   .shortcut-overlay-close {
@@ -109,7 +109,7 @@
     margin: 0 0 18px;
     font-size: 19px;
     font-weight: 600;
-    color: #BB86FC;
+    color: var(--ga-blue-200);
   }
   .shortcut-columns {
     display: grid;
@@ -120,7 +120,7 @@
     margin: 0 0 8px;
     font-size: 12px;
     font-weight: 600;
-    color: #BB86FC;
+    color: var(--ga-blue-200);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
@@ -139,7 +139,7 @@
     background: #2a2a30;
     border: 1px solid #444;
     border-radius: 3px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     color: var(--text-primary, #e0e0e0);
     min-width: 18px;

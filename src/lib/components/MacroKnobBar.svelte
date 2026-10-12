@@ -829,7 +829,7 @@
   }
   .macro-fx-param-value {
     font-size: 13px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: #BB86FC;
     text-align: right;
     user-select: none;
@@ -1006,7 +1006,7 @@
     white-space: nowrap;
   }
   .macro-dest-path {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     color: #666;
     overflow: hidden;
@@ -1031,7 +1031,7 @@
     font-size: 13px;
     padding: 2px 4px;
     border-radius: 3px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .macro-dest-remove {
     background: none;
@@ -1116,7 +1116,7 @@
 
   :global(html[data-theme="arcade"]) .macro-name {
     color: rgba(238, 240, 244, 0.50);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     letter-spacing: 0.04em;
   }
 
@@ -1171,6 +1171,6 @@
   .macro-assignment > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 5px; }
   .macro-assignment-range { display: flex; align-items: center; gap: 6px; }
   .macro-assignment-range label { display: flex; align-items: center; gap: 4px; }
-  .macro-assignment-range input { width: 65px; min-width: 0; padding: 4px; border-radius: 5px; background: #11151c; color: #dce6fa; border: 1px solid #344467; }
-  .macro-assignment-range button { border: 1px solid #344467; border-radius: 5px; background: #172747; color: #dce6fa; cursor: pointer; }
+  .macro-assignment-range input { width: 65px; min-width: 0; padding: 4px; border-radius: 5px; background: #11151c; color: #dce6fa; border: 1px solid var(--ga-blue-mute-600); }
+  .macro-assignment-range button { border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; background: var(--ga-blue-800); color: #dce6fa; cursor: pointer; }
 </style>

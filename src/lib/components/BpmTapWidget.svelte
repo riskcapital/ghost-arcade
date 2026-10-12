@@ -118,13 +118,13 @@
 
   .bpm-tap-btn:active {
     background: var(--ga-violet, #9b87f5);
-    color: #160f2e;
+    color: var(--ga-blue-800);
   }
 
   .bpm-input { width: 48px; min-width: 0; height: 26px; box-sizing: border-box; padding: 2px 3px; border: 1px solid var(--ga-line-2, #34363c); border-radius: 4px; background: #090b0f; color: var(--ga-selection-ink, #e0e8ff); font: inherit; text-align: right; appearance: textfield; }
   .bpm-input[aria-invalid="true"] { border-color: #c88d74; }
-  .tempo-error { position: absolute; top: calc(100% + 6px); right: 0; width: 220px; padding: 8px 10px; border: 1px solid #725447; border-radius: 6px; background: #191b22; color: #e0b29d; font-size: 11px; line-height: 1.4; z-index: 30; pointer-events: none; }
-  .bpm-input:focus { outline: 1px solid var(--ga-focus, #7996ff); }
+  .tempo-error { position: absolute; top: calc(100% + 6px); right: 0; width: 220px; padding: 8px 10px; border: 1px solid #725447; border-radius: 6px; background: var(--ga-blue-mute-800); color: #e0b29d; font-size: 11px; line-height: 1.4; z-index: 30; pointer-events: none; }
+  .bpm-input:focus { outline: 1px solid var(--ga-focus, var(--ga-blue-300)); }
   .bpm-readout {
     display: inline-flex; align-items: center; gap: 4px;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
@@ -141,30 +141,29 @@
 
   .bpm-auto-btn {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    flex: 0 0 108px;
-    width: 108px;
+    flex: 0 0 auto;
     height: 32px;
     box-sizing: border-box;
-    padding: 2px 6px;
-    gap: 2px;
+    padding: 0 10px;
+    gap: 7px;
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: 5px;
     background: transparent;
     color: var(--ga-ink-2, #5e6571);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.5px;
+    white-space: nowrap;
     cursor: pointer;
   }
 
   .auto-label { font-size: 11px; line-height: 12px; }
-  .auto-status { font-family: var(--ga-font-sans, inherit); font-size: 10px; line-height: 11px; font-weight: 500; letter-spacing: 0; white-space: nowrap; }
-  .bpm-auto-btn.active { background: var(--ga-selection-bg, #182b59); border-color: var(--ga-focus, #5274cc); color: var(--ga-selection-ink, #e0e8ff); }
-  .bpm-auto-btn:focus-visible { outline: 2px solid var(--ga-focus, #7996ff); outline-offset: 2px; }
+  .auto-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .bpm-auto-btn.active { color: var(--ga-ink-0, #e6ebf5); }
+  .bpm-auto-btn:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
   .bpm-auto-btn:hover {
     color: var(--ga-selection-ink, #e0e8ff);
     border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));

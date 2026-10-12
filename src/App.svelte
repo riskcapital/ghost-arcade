@@ -5932,8 +5932,8 @@
             Stop Rec
           </button>
         {:else}
-          <button class="rec-btn" onclick={startRecording} title="Record Output (with audio if active)">
-            ● REC
+          <button class="rec-btn" onclick={startRecording} aria-label="Record output" title="Record Output (with audio if active)">
+            ●
           </button>
         {/if}
 
@@ -7321,7 +7321,7 @@
     --ga-statusbar-height: 26px;
     --ga-bottom-dock-height: 48px;
     --ga-bottom-rail-offset: calc(var(--ga-statusbar-height) + var(--ga-bottom-dock-height));
-    --ga-slider-fill: color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent);
+    --ga-slider-fill: color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent);
   }
 
   :global(*) {
@@ -7507,7 +7507,7 @@
       ),
       linear-gradient(
         90deg,
-        var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) 0 var(--ga-range-progress),
+        var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent)) 0 var(--ga-range-progress),
         transparent var(--ga-range-progress) 100%
       ),
       var(--ga-slot, #050607);
@@ -7570,7 +7570,7 @@
   }
   :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-moz-range-progress) {
     height: 12px;
-    background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent));
+    background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5278ff) 42%, transparent));
     border-radius: 8px 0 0 8px;
   }
   :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-moz-range-thumb) {
@@ -7702,6 +7702,7 @@
     height: 28px;
     width: auto;
     margin-right: 12px;
+    border-radius: 6px;
   }
 
   .version {
@@ -7729,7 +7730,7 @@
   .gpu-warning-body strong { color: #fef3c7; }
   .gpu-warning-detail { color: #fde68a; opacity: 0.9; }
   .gpu-warning-detail code {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     background: rgba(0, 0, 0, 0.25);
     padding: 1px 5px;
@@ -7979,6 +7980,7 @@
     position: relative;
     flex: 1;
     justify-content: center;
+    min-width: 0;
   }
 
   .output-btn {
@@ -8031,9 +8033,9 @@
 
 	  .stage-sim-btn:hover,
 	  .stage-sim-btn.active {
-	    background: rgba(91, 141, 239, 0.10);
-	    border-color: rgba(91, 141, 239, 0.40);
-	    color: #8fb9ff;
+	    background: var(--ga-blue-a08);
+	    border-color: var(--ga-blue-a45);
+	    color: var(--ga-blue-200);
 	  }
 
 	  .map-sim-btn:hover,
@@ -8274,15 +8276,15 @@
   }
 
   .freeze-btn.active {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    border-color: var(--ga-blue-line, rgba(91, 141, 239, 0.38));
-    color: var(--ga-blue, #5b8def);
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    border-color: var(--ga-blue-line, var(--ga-blue-a08));
+    color: var(--ga-blue, #5278ff);
     box-shadow: none;
   }
 
   .freeze-btn.active:hover {
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
-    color: var(--ga-blue, #5b8def);
+    background: var(--ga-blue-soft, var(--ga-blue-a28));
+    color: var(--ga-blue, #5278ff);
   }
 
   /* Blackout button */
@@ -8574,9 +8576,9 @@
 	  }
 
 	  .stage-btn.active {
-	    background: rgba(91, 141, 239, 0.10);
-	    border-color: rgba(91, 141, 239, 0.38);
-	    color: #8fb9ff;
+	    background: var(--ga-blue-a08);
+	    border-color: var(--ga-blue-a45);
+	    color: var(--ga-blue-200);
 	  }
 
 	  .stage-edit-icon {
@@ -9066,8 +9068,8 @@
   }
 
   .grid-toggle-btn.active {
-    background: rgba(0, 204, 255, 0.15);
-    color: #00ccff;
+    background: var(--ga-blue-a16);
+    color: var(--ga-blue-300);
   }
 
   .snap-toggle-btn.active {
@@ -9165,20 +9167,20 @@
   }
   .status-pill:hover {
     color: var(--ga-ink-0, #eef0f4);
-    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
-    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4)) !important;
+    background: rgba(206, 222, 236, 0.10);
+    border-color: rgba(206, 222, 236, 0.42) !important;
   }
   .status-pill.on {
-    color: #23110c;
-    background: var(--ga-coral, #ff6f5e);
-    border-color: var(--ga-coral, #ff6f5e) !important;
-    box-shadow: 0 0 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 30%, transparent);
+    color: var(--ga-blue-mute-800);
+    background: linear-gradient(180deg, #f4f9fd, #cfdde9);
+    border-color: rgba(214, 228, 240, 0.72) !important;
+    box-shadow: 0 0 12px rgba(176, 200, 222, 0.32);
   }
-  .status-pill.on:hover { filter: brightness(1.06); }
+  .status-pill.on:hover { filter: brightness(1.04); }
   .status-pill-icon {
     flex: none;
-    color: var(--ga-neon-green, #39ff14);
-    filter: drop-shadow(0 0 5px rgba(57, 255, 20, .62)) drop-shadow(0 0 12px rgba(57, 255, 20, .24));
+    color: var(--ga-ink-1, #9aa0ac);
+    filter: none;
   }
   .status-pill-icon .ga-neon-stroke {
     fill: none;
@@ -9196,8 +9198,8 @@
     opacity: 0.18;
   }
   .status-pill.on .status-pill-icon {
-    color: var(--ga-neon-green, #39ff14);
-    filter: drop-shadow(0 0 7px rgba(57, 255, 20, .75)) drop-shadow(0 0 14px rgba(57, 255, 20, .34));
+    color: var(--ga-blue-mute-800);
+    filter: none;
   }
   .map-tool-pill {
     margin-right: 2px;
@@ -9943,5 +9945,34 @@
     color: inherit;
     font-size: 20px;
     cursor: pointer;
+  }
+
+  .toolbar:global(.tb-compact-1) :is(.output-btn, .connection-btn, .file-menu-btn) {
+    padding: 0 9px !important;
+  }
+  .gpu-indicator.native {
+    color: var(--ga-neon-cyan, #5ce1e6);
+    background: rgba(92, 225, 230, 0.08);
+    border-color: rgba(92, 225, 230, 0.32);
+  }
+  .gpu-indicator.native .gpu-dot {
+    background: currentColor;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .toolbar .toolbar-center {
+    margin: 0 10px;
+  }
+  .toolbar .toolbar-center > :is(button, .output-btn, .sim-launch-btn) {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .toolbar :is(.toolbar-left, .toolbar-center, .toolbar-right) > * {
+    flex-shrink: 0;
+  }
+  .toolbar :is(button, .tb-label, .tb-long) {
+    white-space: nowrap;
+  }
+  :global(.preset-tray), :global(.seq-tray), :global(.kf-tray), :global(.show-tray) {
+    bottom: 30px !important;
   }
 </style>

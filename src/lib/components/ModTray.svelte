@@ -369,6 +369,9 @@
 
 <style>
   .mt {
+    box-sizing: border-box;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     position: fixed;
     z-index: 4000;
     background: var(--bg-tertiary, #17171b);
@@ -575,4 +578,14 @@
   .mt-mode button.active { background: rgba(92, 225, 230, 0.18); color: #5ce1e6; }
   .mt-auto .mt-row input[type='range'] { accent-color: #5ce1e6; }
   .mt-auto .mt-row-val { color: #5ce1e6; }
+
+  .mt button:focus-visible, .mt input:focus-visible { outline: 2px solid var(--ga-blue-200); outline-offset: 2px; }
+  .mt.compact { gap: 12px; padding: 14px; font-size: 13px; border-radius: 12px; }
+  .mt.compact button, .mt.compact select, .mt.compact input[type='number'] { min-height: 44px; }
+  .mt.compact .mt-close, .mt.compact .mt-play { width: 44px; height: 44px; min-width: 44px; }
+  .mt.compact .mt-cats button, .mt.compact .mt-cell, .mt.compact .mt-mode button { font-size: 12px; }
+  .mt.compact .mt-row input[type='range'] { height: 48px; touch-action: none; }
+  .mt.compact .mt-check { min-height: 44px; font-size: 13px; }
+  .mt.compact .mt-check input { width: 24px; height: 24px; }
+  .mt.compact .mt-section-label, .mt.compact .mt-hint, .mt.compact .mt-row-label { color: var(--text-secondary, #b8bbc5); }
 </style>

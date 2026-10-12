@@ -1111,7 +1111,7 @@
   .sc label {
     font-size: 12px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
+  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
   .sc select {
     background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
     padding: 4px 8px; border-radius: 4px; font-size: 12px;
