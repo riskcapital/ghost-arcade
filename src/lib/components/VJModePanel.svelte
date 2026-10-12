@@ -51,6 +51,7 @@
   import SynthVision from './SynthVision.svelte';
   import VJAudioBar from './VJAudioBar.svelte';
   import AudioInputPicker from './AudioInputPicker.svelte';
+  import ClipAudioMasterControl from './ClipAudioMasterControl.svelte';
   import AudioMeterPanel from './AudioMeterPanel.svelte';
   import MacroKnobBar from './MacroKnobBar.svelte';
   import SnapshotBank from './SnapshotBank.svelte';
@@ -3546,6 +3547,8 @@
              mapping/Performer. Moved out of the right-cluster so the mic
              lives next to the analyzer (input → output). -->
         <AudioInputPicker />
+        <!-- How loud the clips play; appears while one is playing with sound. -->
+        <ClipAudioMasterControl />
 
         <!-- Launch quantization selector. OFF = instant trigger (default).
              1/4..4bar = beat-aligned launches anchored to detected beats
@@ -4677,6 +4680,45 @@
                        contentFit fields. Each input writes immediately via
                        vjClipLauncher.updateActiveClipVideoProps so the change
                        is visible on the next frame. -->
+                  {#if vClip.type === 'video' && !vClip.src.startsWith('live://')}
+                  <!-- Sound: this clip's own level, pan and mute. Row mute/solo,
+                       the crossfader and the master level apply on top. -->
+                  <div class="vt-transform">
+                    <div class="vt-section-title">Sound</div>
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Volume</span>
+                      <input type="range" min="0" max="1" step="0.01" value={vClip.audioVolume ?? 1}
+                        aria-label="Clip volume"
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioVolume: +e.currentTarget.value }, paramDeck)}
+                        data-midi-path="vj:{selectedLayerIndex}:video:audioVolume" data-midi-label="{vClip.name} Volume" data-midi-min="0" data-midi-max="1" />
+                      <span class="vt-tf-num">{Math.round((vClip.audioVolume ?? 1) * 100)}%</span>
+                    </label>
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Pan</span>
+                      <input type="range" min="-1" max="1" step="0.01" value={vClip.audioPan ?? 0}
+                        aria-label="Clip pan"
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioPan: +e.currentTarget.value }, paramDeck)}
+                        ondblclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioPan: 0 }, paramDeck)}
+                        data-midi-path="vj:{selectedLayerIndex}:video:audioPan" data-midi-label="{vClip.name} Pan" data-midi-min="-1" data-midi-max="1" />
+                      <span class="vt-tf-num">{Math.abs(vClip.audioPan ?? 0) < 0.01 ? 'C' : `${Math.round(Math.abs(vClip.audioPan ?? 0) * 100)}${(vClip.audioPan ?? 0) < 0 ? 'L' : 'R'}`}</span>
+                    </label>
+                    <label class="vt-tf-row vt-tf-toggle-row">
+                      <span class="vt-tf-label">Mute</span>
+                      <button
+                        class="vt-toggle-btn"
+                        class:active={vClip.audioMuted === true}
+                        onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioMuted: vClip.audioMuted !== true }, paramDeck)}
+                        title="Silence this clip without losing its volume"
+                        data-midi-path="vj:{selectedLayerIndex}:video:audioMute"
+                        data-midi-label="{vClip.name} Mute"
+                        data-midi-discrete="true"
+                      >
+                        {vClip.audioMuted === true ? 'Muted' : 'Off'}
+                      </button>
+                    </label>
+                  </div>
+                  {/if}
+
                   <div class="vt-transform">
                     <div class="vt-section-title">Transform</div>
 

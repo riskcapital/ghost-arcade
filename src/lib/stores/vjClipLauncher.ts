@@ -2,6 +2,7 @@
 // Manages the clip grid state for the VJ clip launcher workflow
 // Works with shaders and videos directly (not compositions)
 
+import { clipAudio, clipAudioVoices } from '../audio/clipAudio';
 import { writable, derived, get } from 'svelte/store';
 import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, IntegratedEffectSource, SplatContent, Model3DContent, GPULayerContent, TextContent, ISFInputDef } from '../types';
 import { createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
@@ -93,6 +94,12 @@ export interface VJClip {
   /** Live play/pause flag. Toggle from the VJ video-controls panel.
    *  Default true (clip auto-plays on first trigger, same as today). */
   isPlaying?: boolean;
+  /** Sound for this clip (audio/clipAudio.ts). Volume 0..1, default 1. */
+  audioVolume?: number;
+  /** -1 (left) to 1 (right), default 0. */
+  audioPan?: number;
+  /** Silences the clip without losing its volume. */
+  audioMuted?: boolean;
 
   // ── Per-clip transform (applied at composite time) ──
   // These let the user fit a video into a layer's quad with full
@@ -167,7 +174,7 @@ export interface VJBlock {
 
 type VJTransformableClip = VJClip & { type: 'video' | 'image' };
 type VJTransformProps = Pick<VJTransformableClip, 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>;
-type VJVideoPlaybackProps = Pick<VJClip, 'playbackMode' | 'playbackRate' | 'playbackSyncBeats' | 'trimStart' | 'trimEnd' | 'isPlaying'>;
+type VJVideoPlaybackProps = Pick<VJClip, 'playbackMode' | 'playbackRate' | 'playbackSyncBeats' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'audioVolume' | 'audioPan' | 'audioMuted'>;
 
 // VJ Layer state (per layer). Bank A and Bank B each get their own parallel
 // VJLayerState array — see `layerStates` (Bank A) and `bankBLayerStates`
@@ -1801,7 +1808,7 @@ function createVJClipLauncherStore() {
           if (key in updates) (allowedUpdates as any)[key] = (updates as any)[key];
         }
         if (activeClip.type === 'video') {
-          const playbackKeys: (keyof VJVideoPlaybackProps)[] = ['playbackMode', 'playbackRate', 'playbackSyncBeats', 'trimStart', 'trimEnd', 'isPlaying'];
+          const playbackKeys: (keyof VJVideoPlaybackProps)[] = ['playbackMode', 'playbackRate', 'playbackSyncBeats', 'trimStart', 'trimEnd', 'isPlaying', 'audioVolume', 'audioPan', 'audioMuted'];
           for (const key of playbackKeys) {
             if (key in updates) (allowedUpdates as any)[key] = (updates as any)[key];
           }
@@ -2637,6 +2644,11 @@ function createVJClipLauncherStore() {
 }
 
 export const vjClipLauncher = createVJClipLauncherStore();
+
+// Clip sound follows the deck: whatever is playing on a row is what is heard.
+if (typeof window !== 'undefined') {
+  vjClipLauncher.subscribe((state) => clipAudio.apply(clipAudioVoices(state)));
+}
 
 // Derived store: Get the active clip for each layer.
 //
