@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { macros } from '../stores/macros';
+  import MacroAssignmentControl from './MacroAssignmentControl.svelte';
+
+  import { numericExpression } from '../utils/numericExpression';
   /**
    * EffectParamRow — every effect parameter renders as a three-row
    * block matching the shader-param UI:
@@ -98,6 +102,7 @@
   let editing = false;
   let editEl: HTMLInputElement | null = null;
   let editBuffer = '';
+  let editError = '';
 
   function decimalsFromStep(s: number): number {
     if (s >= 1) return 0;
@@ -109,18 +114,27 @@
   $: shown = displayValue ? displayValue(value) : value.toFixed(decimalsFromStep(step));
 
   async function startEdit() {
+    editError = "";
     editBuffer = String(value);
     editing = true;
     await tick();
     editEl?.focus();
     editEl?.select();
   }
-  function commit() {
-    const parsed = parseFloat(editBuffer);
-    if (!Number.isNaN(parsed)) onChange(Math.max(min, Math.min(max, parsed)));
+  function commit(blurred = false) {
+    if (!editing) return;
+    const parsed = numericExpression(editBuffer);
+    if (parsed === null) {
+      editError = 'Use numbers, +, −, *, / and parentheses. Value unchanged.';
+      if (blurred) editing = false;
+      return;
+    }
+    const clamped = Math.max(min, Math.min(max, parsed));
     editing = false;
+    editError = '';
+    onChange(clamped);
   }
-  function cancel() { editing = false; }
+  function cancel() { editing = false; editError = ''; }
   function onEditKey(e: KeyboardEvent) {
     if (e.key === 'Enter') { e.preventDefault(); commit(); }
     else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
@@ -216,6 +230,10 @@
     }
   }
   function setSource(source: ModSource) {
+    if (source !== 'manual' && effectKind === 'fx') {
+      if (target === 'vj') macros.unassignParameter({ scope: 'vj-layer', bank: vjBank, effectId, param: paramName });
+      else if (currentMappingLayer) macros.unassignParameter({ scope: 'mapping-layer', layerId: currentMappingLayer.id, effectId, param: paramName });
+    }
     if (source === 'auto') {
       // Switching TO auto. Clear any audio modulation (mutually
       // exclusive) and seed a fresh AutoConfig spanning the param's
@@ -310,6 +328,9 @@
   {:else}
     <!-- Row 1: label · source dropdown · value -->
     <div class="epr-head">
+      {#if effectKind === 'fx' && (target === 'vj' || currentMappingLayer)}
+        <MacroAssignmentControl target={target === 'vj' ? { scope: 'vj-layer', bank: vjBank, effectId, param: paramName } : { scope: 'mapping-layer', layerId: currentMappingLayer!.id, effectId, param: paramName }} label={`${currentEffect?.type ?? 'Effect'} · ${label}`} {min} {max} beforeAssign={() => setSource('manual')} />
+      {/if}
       <span class="epr-label" title={label}>{label}</span>
       <button
         bind:this={chipEl}
@@ -326,16 +347,18 @@
           bind:value={editBuffer}
           class="epr-edit"
           type="text"
-          inputmode="decimal"
-          onblur={commit}
+          inputmode="text"
+          onblur={() => commit(true)} aria-invalid={!!editError} aria-label={`${label}: number or arithmetic expression`} title={editError || 'Number or expression, e.g. 120/2'} oninput={() => editError = ''}
           onkeydown={onEditKey}
         />
       {:else}
-        <button type="button" class="epr-value" title="Click to type a precise value" onclick={startEdit} ondblclick={startEdit}>
+        <button type="button" class="epr-value" title="Type a number or expression, e.g. 120/2" onclick={startEdit} ondblclick={startEdit}>
           {shown}
         </button>
       {/if}
     </div>
+
+    {#if editError}<span class="expression-error" role="status">{editError}</span>{/if}
 
     <!-- Row 2: the actual param slider (+ optional Auto-mode slippers
          overlaid on the same track when source='auto'). -->
@@ -402,6 +425,8 @@
 </div>
 
 <style>
+  .expression-error { font-size: 11px; line-height: 1.4; color: #e0b29d; }
+  input[aria-invalid="true"] { border-color: #c88d74; }
   .epr {
     display: flex;
     flex-direction: column;

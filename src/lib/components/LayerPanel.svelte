@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MacroAssignmentControl from './MacroAssignmentControl.svelte';
+  import EffectChainPresets from './EffectChainPresets.svelte';
   import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers } from '../stores/layers';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // import AutoMapPanel from './AutoMapPanel.svelte';
@@ -910,6 +912,7 @@
             >+ Add</button>
           </div>
 
+          <EffectChainPresets effects={mappingComposition.effects} onApply={effects => project.replaceMappingCompositionEffects(effects)} />
           {#if mappingComposition.effects.length > 0}
             <div class="composition-effect-list">
               {#each mappingComposition.effects as effect, index (effect.id)}
@@ -1027,7 +1030,8 @@
                               {:else}
                                 <div class="param-row">
                                   <span class="param-label">{meta.label}</span>
-                                  <input
+                                  <MacroAssignmentControl target={{ scope: 'mapping-composition', effectId: effect.id, param: paramKey }} label={effect.type + ' · ' + meta.label} min={meta.min as number} max={meta.max as number} />
+<input
                                     type="range"
                                     min={meta.min as number}
                                     max={meta.max as number}
@@ -1045,7 +1049,8 @@
                             {#each getNumericEffectParams(effect.type) as paramKey}
                               <div class="param-row">
                                 <span class="param-label">{paramKey}</span>
-                                <input
+                                <MacroAssignmentControl target={{ scope: 'mapping-composition', effectId: effect.id, param: paramKey }} label={effect.type + ' · ' + paramKey} min={0} max={1} />
+<input
                                   type="range"
                                   min="0"
                                   max="1"
@@ -2626,6 +2631,7 @@
               >+ Add Effect</button>
             </div>
 
+            <EffectChainPresets effects={layer.effects} onApply={effects => project.replaceLayerEffects(layer.id, effects)} />
             <!-- Effect List -->
             {#if layer.effects.length > 0}
               <div class="effect-list">

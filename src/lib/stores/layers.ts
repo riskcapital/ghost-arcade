@@ -2514,6 +2514,15 @@ void main() {
     },
 
     // Effect management
+    replaceLayerEffects(layerId: string, effects: Effect[]) {
+      update(p => ({ ...p, layers: p.layers.map(l => l.id === layerId ? { ...l, effects } : l) }));
+      recordDiscreteAction();
+    },
+    replaceMappingCompositionEffects(effects: Effect[]) {
+      update(p => ({ ...p, mappingComposition: { ...normalizeMappingCompositionState(p.mappingComposition), effects } }));
+      recordDiscreteAction();
+    },
+
     addEffect(layerId: string, effectType: EffectType, params?: EffectParams) {
       update((project) => ({
         ...project,
@@ -6126,3 +6135,24 @@ registerMappingLayerCallbacks(
     return typeof value === 'number' ? value : undefined;
   },
 );
+
+// Registered after both stores exist; macros remain independent of project initialization.
+import { registerMacroAssignmentWriter } from './macroAssignments';
+registerMacroAssignmentWriter((target, value) => {
+  const patch = { [target.param]: value };
+  if (target.scope === 'mapping-layer') {
+    const effect = get(project).layers.find(layer => layer.id === target.layerId)?.effects?.find(e => e.id === target.effectId);
+    if (effect) project.updateEffectParams(target.layerId, target.effectId, patch);
+  } else if (target.scope === 'mapping-composition') {
+    if (get(project).mappingComposition?.effects.some(e => e.id === target.effectId)) project.updateMappingCompositionEffectParams(target.effectId, patch);
+  } else if (target.scope === 'vj-composition') {
+    if (get(vjClipLauncher).compositionEffects.some(e => e.id === target.effectId)) vjClipLauncher.updateCompositionEffectParams(target.effectId, patch);
+  } else if (target.scope === 'vj-layer') {
+    const state = get(vjClipLauncher);
+    const rows = target.bank === 'B' ? state.bankBLayerStates : state.layerStates;
+    const index = rows.findIndex(row => row.effects?.some(e => e.id === target.effectId));
+    if (index >= 0) vjClipLauncher.updateLayerEffectParams(index, target.effectId, patch, target.bank);
+  } else if (target.scope === 'vj-clip') {
+    vjClipLauncher.updateClipEffectParamsById(target.clipId, target.effectId, patch, target.bank);
+  }
+});

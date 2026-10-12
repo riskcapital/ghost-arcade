@@ -23,7 +23,9 @@ const TRIGGER_PATHS = new Set([
 export function inferOscBindingMode(path: string): OscBindingMode {
   if (
     TRIGGER_PATHS.has(path)
+    || /^vj:tempo:(nudge-up|nudge-down|resync)$/.test(path)
     || path.includes(':trigger:')
+    || /:video:cue(?:-set|-clear)?:[0-7]$/.test(path)
     || path.startsWith('vj:column:')
     || path.startsWith('vj-b:column:')
     || path.startsWith('vj:block:')
@@ -97,6 +99,9 @@ function clipBinding(
 export function createVjOscTemplateBindings(
   layerCount = 4,
   columnCount = 8,
+  blockCount = 8,
+  snapshotCount = 16,
+  mappingPresetCount = 8,
 ): OscBindingSpec[] {
   const bindings: OscBindingSpec[] = [];
 
@@ -107,6 +112,37 @@ export function createVjOscTemplateBindings(
     for (let layer = 0; layer < layerCount; layer += 1) {
       for (let column = 0; column < columnCount; column += 1) {
         bindings.push(clipBinding(bank, layer, column));
+      }
+    }
+
+    // Per-layer mixer and transport. The router has always understood these;
+    // the template only ever emitted clip and column triggers, so anyone who
+    // wanted a fader had to hand-write the path string. Everything here is
+    // addressable without knowing what is loaded in the layer — shader, splat
+    // and plugin params are not, which is why they stay out.
+    for (let layer = 0; layer < layerCount; layer += 1) {
+      const label = `Deck ${bankLabel} L${layer + 1}`;
+      const layerControls: Array<[string, string, string, OscBindingMode]> = [
+        ['opacity', 'opacity', `${label} opacity`, 'continuous'],
+        ['blend', 'blend', `${label} blend mode`, 'continuous'],
+        ['solo', 'solo', `${label} solo`, 'trigger'],
+        ['mute', 'mute', `${label} mute`, 'trigger'],
+        ['video/play', 'video:play', `${label} play / pause`, 'trigger'],
+        ['video/restart', 'video:restart', `${label} restart`, 'trigger'],
+        // Continuous: this is the one an external timeline drives.
+        ['video/position', 'video:position', `${label} playhead`, 'continuous'],
+      ];
+      for (const [suffix, pathSuffix, controlLabel, mode] of layerControls) {
+        bindings.push({
+          address: `/ghost/vj/${bank}/layer/${layer + 1}/${suffix}`,
+          argIndex: 0,
+          path: `${prefix}:${layer}:${pathSuffix}`,
+          sourceMin: 0,
+          sourceMax: 1,
+          invert: false,
+          label: controlLabel,
+          mode,
+        });
       }
     }
 
@@ -124,7 +160,84 @@ export function createVjOscTemplateBindings(
     }
   }
 
+  // Blocks and snapshots: whole-look recall, the thing a performer reaches for
+  // between sections. Both were already routed and neither was ever generated,
+  // so they could only be used by hand-writing the path.
+  for (let block = 0; block < blockCount; block += 1) {
+    bindings.push({
+      address: `/ghost/vj/block/${block + 1}`,
+      argIndex: 0,
+      path: `vj:block:${block}`,
+      sourceMin: 0,
+      sourceMax: 1,
+      invert: false,
+      label: `Block ${block + 1}`,
+      mode: 'trigger',
+    });
+  }
+
+  // Snapshots are 1-based in the router (1..16), unlike everything else here.
+  for (let snapshot = 1; snapshot <= snapshotCount; snapshot += 1) {
+    bindings.push({
+      address: `/ghost/vj/snapshot/${snapshot}`,
+      argIndex: 0,
+      path: `vj:snapshot:${snapshot}`,
+      sourceMin: 0,
+      sourceMax: 1,
+      invert: false,
+      label: `Snapshot ${snapshot}`,
+      mode: 'trigger',
+    });
+  }
+
+  // Mapping mode. Projection mapping is half the product and had no template at
+  // all — presets recall a whole mapping, and the media transport is the same
+  // surface VJ clips expose, aimed at the selected layer.
+  for (let preset = 0; preset < mappingPresetCount; preset += 1) {
+    bindings.push({
+      address: `/ghost/map/preset/${preset + 1}`,
+      argIndex: 0,
+      path: `map:preset:${preset}`,
+      sourceMin: 0,
+      sourceMax: 1,
+      invert: false,
+      label: `Mapping preset ${preset + 1}`,
+      mode: 'trigger',
+    });
+  }
+
+  const mappingControls: Array<[string, string, string, OscBindingMode]> = [
+    ['layer/opacity', 'layer:opacity', 'Mapping layer opacity', 'continuous'],
+    ['media/play', 'media:play', 'Mapping media play / pause', 'trigger'],
+    ['media/restart', 'media:restart', 'Mapping media restart', 'trigger'],
+    ['media/position', 'media:position', 'Mapping media playhead', 'continuous'],
+  ];
+  for (const [suffix, pathSuffix, label, mode] of mappingControls) {
+    bindings.push({
+      address: `/ghost/map/${suffix}`,
+      argIndex: 0,
+      path: `map:${pathSuffix}`,
+      sourceMin: 0,
+      sourceMax: 1,
+      invert: false,
+      label,
+      mode,
+    });
+  }
+
   bindings.push(
+    {
+      // Master tempo from a DAW or timeline source. Not 0..1: this carries a
+      // BPM, so the range is set wide enough to pass one through untouched.
+      address: '/ghost/vj/tempo',
+      argIndex: 0,
+      path: 'vj:tempo',
+      sourceMin: 0,
+      sourceMax: 300,
+      invert: false,
+      label: 'Master tempo (BPM)',
+      mode: 'continuous',
+    },
     {
       address: '/ghost/vj/stop',
       argIndex: 0,

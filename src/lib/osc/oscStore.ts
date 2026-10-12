@@ -29,6 +29,8 @@ import {
   type OscBindingSpec,
 } from './oscBindings';
 import { normalizeControlPath, validateControlPath } from '../control/controlPaths';
+import { collectOscFeedback, OSC_OUTPUT_POLL_MS } from './oscOutput';
+import { vjClipLauncher } from '../stores/vjClipLauncher';
 
 const OSC_RUNTIME_KEY = 'ghost-arcade:osc-runtime';
 
@@ -65,6 +67,12 @@ export interface OscState {
   /** When set, the next incoming message's address is bound to this
    *  param path instead of being dispatched normally. */
   learnTarget: { path: string; label?: string } | null;
+  /** Send app state back to the control surface. Off by default: it puts
+   *  traffic on the network, and a wrong address is confusing rather than
+   *  harmless once a surface starts acting on what it hears. */
+  outputEnabled: boolean;
+  outputHost: string;
+  outputPort: number;
 }
 
 const INITIAL_STATE: OscState = {
@@ -75,7 +83,45 @@ const INITIAL_STATE: OscState = {
   bindings: [],
   lastMessage: null,
   learnTarget: null,
+  outputEnabled: false,
+  // Loopback by default: the common setup is a surface app on the same
+  // machine, and it is the only default that cannot put traffic on someone
+  // else's network by accident.
+  outputHost: '127.0.0.1',
+  outputPort: 9000,
 };
+
+/**
+ * Clean up bindings coming back from a saved project before they reach the
+ * store.
+ *
+ * hydrate used to trust saved bindings as-is. Two things could go wrong. A
+ * binding with no `path` made normalizeControlPath call `.trim()` on
+ * undefined, which threw inside importProject and failed the whole project
+ * load, taking every layer with it over one malformed OSC row. And missing or
+ * repeated ids were passed straight through to a keyed each block, which in
+ * a release build silently reuses the wrong row. Neither can come from this
+ * app's own saves, which always write ids and paths, but a project is a file
+ * and files get edited, merged and imported.
+ */
+function sanitizeHydratedBindings(raw: unknown): OscBinding[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: OscBinding[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const binding = entry as Partial<OscBinding>;
+    let id = typeof binding.id === 'string' ? binding.id.trim() : '';
+    if (!id || seen.has(id)) id = generateUUID();
+    seen.add(id);
+    out.push({
+      ...(binding as OscBinding),
+      id,
+      path: normalizeControlPath(typeof binding.path === 'string' ? binding.path : ''),
+    });
+  }
+  return out;
+}
 
 function createOscStore() {
   const { subscribe, update, set } = writable<OscState>({ ...INITIAL_STATE });
@@ -86,6 +132,29 @@ function createOscStore() {
   let messageUnsub: (() => void) | null = null;
   let statusUnsub: (() => void) | null = null;
   let initialized = false;
+  let outputTimer: number | null = null;
+  /** What the surface has already been told, keyed by address. */
+  const lastSentValues = new Map<string, number>();
+
+  let outputBusy = false;
+  let outputGeneration = 0;
+  async function flushOutput() {
+    const state = get({ subscribe });
+    const api = typeof window === 'undefined' ? null : (window as any).ghostOSC;
+    if (outputBusy || !state.outputEnabled || !api?.send) return;
+    const generation = outputGeneration;
+    const nextValues = new Map(lastSentValues);
+    const messages = collectOscFeedback(state.bindings, nextValues);
+    if (!messages.length) return;
+    outputBusy = true;
+    try {
+      const result = await api.send({ host: state.outputHost, port: state.outputPort, messages });
+      if (result?.ok && generation === outputGeneration) {
+        lastSentValues.clear(); nextValues.forEach((value, key) => lastSentValues.set(key, value));
+      }
+    } catch { /* Retry unacknowledged changes on a later poll. */ }
+    finally { outputBusy = false; }
+  }
 
   function persistRuntime() {
     if (typeof localStorage === 'undefined') return;
@@ -94,6 +163,9 @@ function createOscStore() {
       localStorage.setItem(OSC_RUNTIME_KEY, JSON.stringify({
         enabled: state.enabled,
         port: state.port,
+        outputEnabled: state.outputEnabled,
+        outputHost: state.outputHost,
+        outputPort: state.outputPort,
       }));
     } catch {
       // Project persistence still carries the OSC configuration. A
@@ -149,6 +221,7 @@ function createOscStore() {
   }
 
   async function stopListener() {
+
     const api = (window as any).ghostOSC;
     if (api) await api.stop();
     update(s => ({ ...s, listening: false }));
@@ -215,11 +288,16 @@ function createOscStore() {
             ...s,
             enabled: typeof saved.enabled === 'boolean' ? saved.enabled : s.enabled,
             port: Number.isInteger(saved.port) ? saved.port : s.port,
+            outputEnabled: typeof saved.outputEnabled === 'boolean' ? saved.outputEnabled : s.outputEnabled,
+            outputHost: typeof saved.outputHost === 'string' && saved.outputHost ? saved.outputHost : s.outputHost,
+            outputPort: Number.isInteger(saved.outputPort) ? saved.outputPort : s.outputPort,
           }));
         }
       } catch {
         // Ignore malformed legacy runtime state.
       }
+
+      if (get({ subscribe }).outputEnabled) this.startOutput();
 
       const state = get({ subscribe });
       const status = await api.status();
@@ -278,8 +356,21 @@ function createOscStore() {
       const path = normalizeControlPath(binding.path);
       update(s => ({ ...s, bindings: [...s.bindings, { id: generateUUID(), ...binding, path }] }));
     },
-    installVjTemplate(layerCount = 4, columnCount = 8) {
-      const template = createVjOscTemplateBindings(layerCount, columnCount);
+    /**
+     * Install the VJ template for the deck the user actually has.
+     *
+     * The size used to be pinned at 4x8. Decks are resizable at runtime
+     * (addLayer / addColumn), so anyone who grew theirs got bindings for the
+     * first four layers and first eight columns and nothing for the rest —
+     * including no column trigger past column 8, which reads as "column
+     * launch does not work" rather than "the template stopped early".
+     */
+    installVjTemplate(layerCount?: number, columnCount?: number) {
+      const deck = get(vjClipLauncher);
+      const template = createVjOscTemplateBindings(
+        layerCount ?? deck.numLayers,
+        columnCount ?? deck.numColumns,
+      );
       update(s => {
         const existing = new Set(s.bindings.map(b => `${b.address}\n${b.path}`));
         const additions = template
@@ -291,6 +382,7 @@ function createOscStore() {
       });
     },
     updateBinding(id: string, patch: Partial<OscBinding>) {
+      ++outputGeneration; lastSentValues.clear();
       if (typeof patch.path === 'string') patch = { ...patch, path: normalizeControlPath(patch.path) };
       update(s => ({
         ...s,
@@ -304,23 +396,63 @@ function createOscStore() {
     /** Wholesale replace — used by importProject + reset() to keep the
      *  store in sync with the loaded project. */
     hydrate(state: Partial<OscState>) {
+      this.stopOutput();
       update(s => ({
         ...INITIAL_STATE,
         ...state,
-        bindings: (state.bindings ?? []).map(binding => ({
-          ...binding,
-          path: normalizeControlPath(binding.path),
-        })),
+        bindings: sanitizeHydratedBindings(state.bindings),
         // Always reset transient runtime fields on hydrate.
         listening: false,
         lastError: null,
         lastMessage: null,
         learnTarget: null,
       }));
+      if (state.outputEnabled) this.startOutput();
       // If the imported project had OSC enabled, kick the listener.
       if (state.enabled) {
         void startListener(state.port ?? 8000);
+      } else {
+        void stopListener();
       }
+    },
+
+    /**
+     * Start mirroring state to the surface.
+     *
+     * Polled rather than subscribed: the values worth sending come from
+     * several stores and from a playhead that advances on its own with no
+     * event to subscribe to. One 20Hz diff covers all of it, and sends
+     * nothing when nothing moved.
+     */
+    startOutput() {
+      if (outputTimer !== null) return;
+      lastSentValues.clear();
+      outputTimer = setInterval(() => { void flushOutput(); }, OSC_OUTPUT_POLL_MS) as unknown as number;
+    },
+
+    stopOutput() {
+      if (outputTimer !== null) { clearInterval(outputTimer); outputTimer = null; }
+      ++outputGeneration; lastSentValues.clear();
+      try { (window as any).ghostOSC?.stopSending?.(); } catch { /* bridge may be gone */ }
+    },
+
+    setOutputEnabled(enabled: boolean) {
+      update(s => ({ ...s, outputEnabled: enabled }));
+      if (enabled) this.startOutput(); else this.stopOutput();
+      persistRuntime();
+    },
+
+    setOutputTarget(host: string, port: number) {
+      const nextPort = Number(port);
+      update(s => ({
+        ...s,
+        outputHost: (host || '').trim() || '127.0.0.1',
+        outputPort: Number.isInteger(nextPort) && nextPort > 0 && nextPort < 65536 ? nextPort : s.outputPort,
+      }));
+      // Retarget means the new surface knows nothing yet, so drop the record
+      // of what was sent and let the next tick resend everything.
+      ++outputGeneration; lastSentValues.clear();
+      persistRuntime();
     },
 
     /** Serialize the persistent subset (no transient runtime fields)
@@ -331,16 +463,22 @@ function createOscStore() {
         enabled: s.enabled,
         port: s.port,
         bindings: s.bindings,
+        outputEnabled: s.outputEnabled,
+        outputHost: s.outputHost,
+        outputPort: s.outputPort,
       };
     },
 
     reset() {
       void stopListener();
+      this.stopOutput();
       set({ ...INITIAL_STATE });
       persistRuntime();
     },
 
     destroy() {
+
+      this.stopOutput();
       if (messageUnsub) { messageUnsub(); messageUnsub = null; }
       if (statusUnsub) { statusUnsub(); statusUnsub = null; }
       initialized = false;

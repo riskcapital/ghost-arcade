@@ -866,6 +866,41 @@ export function getFileExtension(formatId: string): string {
 }
 
 // Default settings
+export const OUTPUT_STAGE_KEYS = [
+  'slices',
+  'masterCanvasWidth',
+  'masterCanvasHeight',
+  'masterWarp',
+  'blackout',
+  'testPattern',
+  'domeEnabled',
+  'domeMode',
+  'domeFOV',
+  'domeRotation',
+  'domeTilt',
+  'domeOffsetX',
+  'domeOffsetY',
+  'domeCurvature',
+  'domeTruncation',
+  'outputRotation',
+  'outputCropX',
+  'outputCropY',
+  'outputCropWidth',
+  'outputCropHeight',
+  'edgeBlendLeft',
+  'edgeBlendRight',
+  'edgeBlendTop',
+  'edgeBlendBottom',
+  'edgeBlendGamma',
+  'brightness',
+  'contrast',
+  'gamma',
+] as const satisfies readonly (keyof OutputSettings)[];
+
+/** A saved output stage. Partial because a setup saved by an older build
+ *  will not carry settings added since. */
+export type OutputStageSnapshot = Partial<Record<(typeof OUTPUT_STAGE_KEYS)[number], unknown>>;
+
 function createDefaultSettings(): AppSettings {
   // Find best supported format
   const supported = getSupportedFormats().filter(f => f.supported);
@@ -1623,6 +1658,65 @@ function createSettingsStore() {
     },
 
     // Dome projection settings
+    captureOutputStage(): OutputStageSnapshot {
+      const out = get({ subscribe }).output as unknown as Record<string, unknown>;
+      const snapshot: Record<string, unknown> = {};
+      for (const key of OUTPUT_STAGE_KEYS) snapshot[key] = out[key];
+      return structuredClone(snapshot) as OutputStageSnapshot;
+    },
+
+    /** Apply a snapshot taken by captureOutputStage. */
+    applyOutputStage(snapshot: OutputStageSnapshot) {
+      update(s => {
+        const output = { ...s.output } as unknown as Record<string, unknown>;
+        for (const key of OUTPUT_STAGE_KEYS) {
+          // Only keys the snapshot actually carries, so a setup saved before a
+          // new setting existed leaves that setting alone rather than
+          // blanking it to undefined.
+          if (key in snapshot) output[key] = structuredClone((snapshot as any)[key]);
+        }
+        const next = { ...s, output } as unknown as AppSettings;
+        saveSettings(next);
+        return next;
+      });
+    },
+
+    /**
+     * Reset the output stage for a brand-new project.
+     *
+     * Output settings live in global localStorage, not the project, so
+     * everything the last session set up stays on: a user hit dome projection
+     * that had latched from an earlier session and could not tell what was
+     * transforming their output. Screens are worse than confusing — the
+     * project saves outputSlices and restores them on load, so a NEW project
+     * (which has none) simply inherited the previous project's screens.
+     *
+     * A saved default setup wins over the factory defaults. A permanent
+     * install — a dome, a projector wall — has a rig that is a property of the
+     * room, not of any one project, and should not be dismantled every time
+     * someone starts fresh.
+     *
+     * Machine wiring is untouched either way: display assignments, output
+     * window state, resolution, Spout sender name, cursor preferences. Those
+     * are how the computer is plugged in, not decisions a project made.
+     */
+    resetOutputStageForNewProject(defaultSetup?: OutputStageSnapshot | null) {
+      // Taken from the defaults factory rather than restated, so a new output
+      // setting cannot be added there and silently miss this reset.
+      const defaults = createDefaultSettings().output as unknown as Record<string, unknown>;
+      update(s => {
+        const output = { ...s.output } as unknown as Record<string, unknown>;
+        for (const key of OUTPUT_STAGE_KEYS) {
+          output[key] = structuredClone(
+            defaultSetup && key in defaultSetup ? (defaultSetup as any)[key] : defaults[key],
+          );
+        }
+        const next = { ...s, output } as unknown as AppSettings;
+        saveSettings(next);
+        return next;
+      });
+    },
+
     setDomeEnabled(enabled: boolean) {
       update(s => {
         const newSettings = { ...s, output: { ...s.output, domeEnabled: enabled } };

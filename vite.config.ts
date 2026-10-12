@@ -54,6 +54,7 @@ function threejsBundlesPlugin(): Plugin {
 }
 
 export default defineConfig({
+  cacheDir: '.vite-legacy-cache',
   plugins: [svelte(), threejsBundlesPlugin()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),

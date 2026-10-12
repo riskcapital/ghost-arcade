@@ -12,6 +12,7 @@
    * separate component) so users can turn audio on without this widget
    * cluttering the header beforehand.
    */
+  export let alwaysShow = false;
   import { audioStore } from '../stores/audio';
   import BpmTapWidget from './BpmTapWidget.svelte';
 
@@ -56,11 +57,11 @@
 
 <svelte:window onclick={handleWindowClick} onresize={() => showEq && positionPopover()} />
 
-{#if $audioStore.isActive}
+{#if alwaysShow || $audioStore.isActive}
   <div class="amp-strip" bind:this={anchorEl}>
     <!-- FFT bars — clickable to open the EQ popover -->
     <button class="amp-fft-btn" onclick={toggleEq}
-      class:open={showEq}
+      class:open={showEq} disabled={!$audioStore.isActive}
       title="Audio input tweaks — click to open EQ / sensitivity / smoothing">
       <div class="amp-bars">
         <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.sub * 100)}%"></div>
@@ -80,15 +81,15 @@
     </button>
 
     <!-- Beat indicator — generic energy-based beat -->
-    <div class="amp-beat" class:flash={$audioStore.beat.isBeat} title="Beat detector"></div>
+    <div class="amp-beat" class:flash={$audioStore.isActive && $audioStore.beat.isBeat} title="Beat detector"></div>
 
     <!-- Kick + snare onset dots — pulse on band-specific hits.
          Color-coded so users can see them firing independently of the
          generic beat dot. Useful when tuning kick/snare modulation routes. -->
     {#if $audioStore.kickSnare}
       <div class="amp-ks">
-        <div class="amp-ks-dot amp-kick" class:flash={$audioStore.kickSnare.isKick} title="Kick onset (sub+bass)"></div>
-        <div class="amp-ks-dot amp-snare" class:flash={$audioStore.kickSnare.isSnare} title="Snare onset (lowMid+highMid)"></div>
+        <div class="amp-ks-dot amp-kick" class:flash={$audioStore.isActive && $audioStore.kickSnare.isKick} title="Kick onset (sub+bass)"></div>
+        <div class="amp-ks-dot amp-snare" class:flash={$audioStore.isActive && $audioStore.kickSnare.isSnare} title="Snare onset (lowMid+highMid)"></div>
       </div>
     {/if}
 
@@ -100,7 +101,7 @@
     {/if}
 
     <!-- Expandable EQ / input-tweaks popover -->
-    {#if showEq}
+    {#if showEq && $audioStore.isActive}
       <div class="amp-popover" bind:this={popoverEl} style="top:{popTop}px; left:{popLeft}px">
         <div class="amp-popover-title">AUDIO INPUT TWEAKS</div>
 
@@ -167,6 +168,7 @@
 {/if}
 
 <style>
+  .amp-fft-btn:disabled { opacity: .45; cursor: default; }
   .amp-strip {
     position: relative;
     display: inline-flex;

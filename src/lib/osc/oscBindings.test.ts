@@ -41,13 +41,27 @@ describe('OSC binding values', () => {
     expect(inferOscBindingMode('vj-b:column:2')).toBe('trigger');
     expect(inferOscBindingMode('vj:stopall')).toBe('trigger');
     expect(inferOscBindingMode('vj:master:opacity')).toBe('continuous');
+    expect(inferOscBindingMode('vj:0:video:cue:0')).toBe('trigger');
+    expect(inferOscBindingMode('vj-b:1:video:cue-clear:7')).toBe('trigger');
   });
 });
 
 describe('VJ OSC template', () => {
   it('builds unique A/B clip routes with friendly one-based addresses', () => {
     const bindings = createVjOscTemplateBindings(2, 3);
-    expect(bindings).toHaveLength(2 * 2 * 3 + 2 * 3 + 3);
+    const DECKS = 2;
+    const LAYER_CONTROLS = 7;   // opacity, blend, solo, mute, play, restart, position
+    const GLOBALS = 4;          // stop, master, crossfader, tempo
+    const BLOCKS = 8;
+    const SNAPSHOTS = 16;
+    const MAPPING = 8 + 4;      // presets + layer opacity / media transport
+    expect(bindings).toHaveLength(
+      DECKS * 2 * 3            // clip triggers
+      + DECKS * 3              // column triggers
+      + DECKS * 2 * LAYER_CONTROLS
+      + BLOCKS + SNAPSHOTS + MAPPING
+      + GLOBALS,
+    );
     expect(new Set(bindings.map(b => b.address)).size).toBe(bindings.length);
     expect(bindings).toContainEqual(expect.objectContaining({
       address: '/ghost/vj/a/layer/1/clip/1',

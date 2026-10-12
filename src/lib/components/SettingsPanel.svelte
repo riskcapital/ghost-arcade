@@ -1,4 +1,12 @@
 <script lang="ts">
+  import ControllerLightsSettings from './ControllerLightsSettings.svelte';
+  import { groupMappingsByControl, groupMatchesMessage, describeTarget, type MidiControlGroup } from '../midi/midiMappingView';
+  let confirmClearMidiMappings = false;
+  $: midiMappingGroups = groupMappingsByControl($midiStore.mappings);
+  function clearMidiControl(group: MidiControlGroup) { group.mappings.forEach(m => midiStore.removeMappingById(m.id)); }
+  $: if ((!isOpen || selectedSection !== 'integrations:midi') && $midiStore.identifyMode) midiStore.setIdentifyMode(false);
+
+  import { tooltipsEnabled } from '../help/preferences';
   import { onMount, onDestroy } from 'svelte';
   import { settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
   // Theme template registry — full visual style swap (fonts + surfaces
@@ -405,6 +413,7 @@
     window.addEventListener('close-settings', handleCloseRequest);
   });
   onDestroy(() => {
+    midiStore.setIdentifyMode(false);
     if (typeof window === 'undefined') return;
     window.removeEventListener('close-settings', handleCloseRequest);
   });
@@ -654,6 +663,7 @@
         {#if selectedSection === 'app:appearance'}
         <section class="settings-section">
           <h3>Appearance</h3>
+          <div class="setting-row"><label class="setting-label" for="context-help-enabled"><span class="label-text">Control tooltips</span><span class="label-hint">Explanations and documentation links. Press F1 on a focused control to open help.</span></label><input id="context-help-enabled" type="checkbox" bind:checked={$tooltipsEnabled} /></div>
 
           <!-- Theme Templates — a complete style overhaul (fonts,
                surfaces, accents, corner system) vs just an accent
@@ -1659,6 +1669,131 @@
               </p>
             </div>
 
+            <!-- Mappings table.
+                 Reported by a user: they had learned a pad onto a parameter
+                 inside a pre-made effect and could not unlearn it without
+                 finding that exact effect and parameter again, and there was
+                 nowhere in the app that listed what was mapped. midiStore has
+                 held removeMappingById and clearAllMappings the whole time;
+                 nothing ever rendered the array.
+
+                 Grouped by control, not by parameter, because that is the
+                 question being asked. A parameter holds one mapping, a pad can
+                 hold many, so "what is this pad doing" is a group and
+                 "unlearn it" is one button. -->
+            <h3 style="margin-top: 18px;">Mappings ({$midiStore.mappings.length})</h3>
+            <p class="settings-hint" style="margin-bottom: 10px;">
+              Everything you have learned, grouped by the pad, key or knob it sits
+              on. Removing a mapping here is the same as clearing it from the
+              parameter itself. Mappings are saved for this machine, not inside the
+              project, so they follow you between projects.
+            </p>
+
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Find a control</span>
+                <span class="label-hint">
+                  Press a pad, key or knob and its mappings are highlighted below.
+                  Nothing is triggered while this is on, so it is safe to press the
+                  one you want to get rid of.
+                </span>
+              </div>
+              <button
+                class="secondary-btn midi-learn-btn"
+                class:active={$midiStore.identifyMode}
+                disabled={$midiStore.mappings.length === 0 || midiDevices.length === 0}
+                onclick={() => midiStore.setIdentifyMode(!$midiStore.identifyMode)}
+              >
+                {$midiStore.identifyMode ? 'Stop finding' : 'Find a control'}
+              </button>
+            </div>
+
+            {#if $midiStore.identifyMode}
+              <div class="mm-identify">
+                <span class="mm-identify-pulse"></span>
+                {#if $midiStore.lastMessage}
+                  Heard <strong>{$midiStore.lastMessage.type === 'note'
+                    ? `Note ${$midiStore.lastMessage.number}`
+                    : $midiStore.lastMessage.type === 'cc'
+                      ? `CC ${$midiStore.lastMessage.number}`
+                      : 'Pitch bend'}</strong>
+                  on channel {$midiStore.lastMessage.channel + 1}
+                {:else}
+                  Waiting for a control. Routing is paused.
+                {/if}
+              </div>
+            {/if}
+
+            {#if $midiStore.mappings.length === 0}
+              <div class="osc-empty">
+                Nothing mapped yet. Turn on MIDI Learn above, click a control in the
+                app, then move something on your controller.
+              </div>
+            {:else}
+              <div class="mm-groups">
+                {#each midiMappingGroups as group (group.key)}
+                  <div
+                    class="mm-group"
+                    class:found={$midiStore.identifyMode && groupMatchesMessage(group, $midiStore.lastMessage)}
+                  >
+                    <div class="mm-group-head">
+                      <span class="mm-control">{group.controlLabel}</span>
+                      <span class="mm-channel">{group.channelLabel}</span>
+                      <span class="mm-count">
+                        {group.mappings.length} mapping{group.mappings.length === 1 ? '' : 's'}
+                      </span>
+                      <button
+                        class="mm-clear"
+                        onclick={() => clearMidiControl(group)}
+                        title="Remove every mapping on this control"
+                      >Clear control</button>
+                    </div>
+
+                    {#each group.mappings as m (m.id)}
+                      {@const target = describeTarget(m.path, m.label, $project)}
+                      <div class="mm-row" class:orphan={target.orphaned}>
+                        <span class="mm-target">
+                          {#if target.context}<span class="mm-context">{target.context}</span>{/if}
+                          <span class="mm-label">{target.label}</span>
+                          {#if target.orphaned}
+                            <span
+                              class="mm-orphan"
+                              title="This effect is not in the project that is open. The mapping still holds the control."
+                            >not in this project</span>
+                          {/if}
+                        </span>
+                        <span class="mm-mode">{m.mode}</span>
+                        <button
+                          class="mm-del"
+                          onclick={() => midiStore.removeMappingById(m.id)}
+                          title="Remove this mapping"
+                        >×</button>
+                      </div>
+                    {/each}
+                  </div>
+                {/each}
+              </div>
+
+              <div class="osc-add-row">
+                {#if confirmClearMidiMappings}
+                  <span class="settings-hint" style="margin: 0;">
+                    Remove all {$midiStore.mappings.length}?
+                  </span>
+                  <button
+                    class="osc-add-btn"
+                    onclick={() => { midiStore.clearAllMappings(); confirmClearMidiMappings = false; }}
+                  >Yes, clear everything</button>
+                  <button class="osc-add-btn" onclick={() => confirmClearMidiMappings = false}>Cancel</button>
+                {:else}
+                  <button class="osc-add-btn" onclick={() => confirmClearMidiMappings = true}>
+                    Clear all mappings
+                  </button>
+                {/if}
+              </div>
+            {/if}
+
+            <ControllerLightsSettings />
+
             <!-- MIDI Clock — sync to / from external transport -->
             <h3 style="margin-top: 18px;">MIDI Clock</h3>
 
@@ -1813,6 +1948,55 @@
               onchange={(e) => oscStore.setPort(parseInt((e.target as HTMLInputElement).value) || 8000)}
             />
           </div>
+
+          <!-- Output / feedback. Receive-only OSC leaves a surface guessing:
+               a fader moved in the app never reaches the hardware. Sending
+               state back is what makes a layout track the app. -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Send feedback</span>
+              <span class="label-hint">
+                Mirror app state back to your controller, so faders follow and clip
+                buttons light when their clip is live. Uses the bindings below:
+                whatever address you map, we answer on.
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$oscStore.outputEnabled}
+                onchange={(e) => oscStore.setOutputEnabled((e.target as HTMLInputElement).checked)}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          {#if $oscStore.outputEnabled}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Send to</span>
+                <span class="label-hint">
+                  Host and port your controller listens on. 127.0.0.1 for an app on
+                  this machine; use the tablet's IP for TouchOSC over Wi-Fi.
+                </span>
+              </div>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <input
+                  type="text"
+                  class="port-input"
+                  style="width: 120px;"
+                  value={$oscStore.outputHost}
+                  onchange={(e) => oscStore.setOutputTarget((e.target as HTMLInputElement).value, $oscStore.outputPort)}
+                />
+                <input
+                  type="number" min="1" max="65535" step="1"
+                  class="port-input"
+                  value={$oscStore.outputPort}
+                  onchange={(e) => oscStore.setOutputTarget($oscStore.outputHost, parseInt((e.target as HTMLInputElement).value) || 9000)}
+                />
+              </div>
+            </div>
+          {/if}
 
           <!-- Live status row — listening dot + error string. -->
           <div class="setting-row">
@@ -3928,4 +4112,149 @@
   .gpu-restart-text strong {
     color: #fbbf24;
   }
+  .mm-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .mm-group {
+    border: 1px solid var(--border-subtle, #2a2a2a);
+    border-radius: 4px;
+    overflow: hidden;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  /* The control the user just pressed while finding. */
+  .mm-group.found {
+    border-color: #BB86FC;
+    box-shadow: 0 0 0 1px #BB86FC55;
+  }
+
+  .mm-group-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    background: var(--bg-elevated, #1a1a1a);
+  }
+
+  .mm-control {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 12px;
+    color: var(--text-primary, #ddd);
+    font-weight: 600;
+  }
+
+  .mm-channel,
+  .mm-count {
+    font-size: 11px;
+    color: var(--text-muted, #888);
+  }
+
+  .mm-count {
+    margin-left: auto;
+  }
+
+  .mm-clear,
+  .mm-del {
+    background: none;
+    border: 1px solid var(--border-subtle, #2a2a2a);
+    color: var(--text-muted, #888);
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 3px 8px;
+  }
+
+  .mm-clear:hover,
+  .mm-del:hover {
+    color: #ff6b6b;
+    border-color: #ff6b6b55;
+  }
+
+  .mm-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-top: 1px solid var(--border-subtle, #2a2a2a);
+    font-size: 12px;
+  }
+
+  .mm-target {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .mm-context {
+    color: var(--text-muted, #888);
+  }
+
+  .mm-context::after {
+    content: ' ·';
+  }
+
+  .mm-label {
+    color: var(--text-primary, #ddd);
+  }
+
+  /* The mapping points at an effect that is not in the open project. It
+     still holds the control, which is exactly why it is worth showing. */
+  .mm-orphan {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #e0a458;
+    border: 1px solid #e0a45844;
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  .mm-mode {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted, #888);
+  }
+
+  .mm-del {
+    font-size: 14px;
+    line-height: 1;
+    padding: 1px 7px;
+  }
+
+  /* Routing is paused while this is up, so it says so. */
+  .mm-identify {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    border: 1px solid #BB86FC44;
+    border-radius: 4px;
+    background: #BB86FC11;
+    font-size: 12px;
+    color: var(--text-primary, #ddd);
+  }
+
+  .mm-identify-pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #BB86FC;
+    animation: mm-pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes mm-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+  }
+
+
 </style>

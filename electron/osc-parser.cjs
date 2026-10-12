@@ -151,4 +151,51 @@ function parseOSCPacket(buf) {
   return out;
 }
 
-module.exports = { parseOSCPacket };
+// ─── Encoding (outbound feedback) ───────────────────────────
+//
+// Controllers that only receive are fire-and-forget: a fader moved in the
+// app never reaches the surface, so the two drift apart. Sending state back
+// is what lets a TouchOSC or Lemur layout track the app — faders follow,
+// clip buttons light when their clip is live.
+//
+// We emit float32 for everything numeric. Every surface worth supporting
+// reads 'f', and mixing int/float per value would make a layout's parsing
+// depend on whether a number happened to be whole.
+
+/** Write a null-terminated, 4-byte-aligned OSC string. */
+function writeString(value) {
+  const raw = Buffer.from(String(value), 'utf8');
+  const out = Buffer.alloc(padded(raw.length + 1));  // alloc zero-fills, so the
+  raw.copy(out);                                     // terminator and padding are free
+  return out;
+}
+
+/**
+ * Encode one OSC message. `args` are numbers (sent as float32) or strings.
+ * Returns a Buffer ready for dgram.send, or null if the address is unusable.
+ */
+function encodeOSCMessage(address, args = []) {
+  if (typeof address !== 'string' || !address.startsWith('/')) return null;
+
+  const list = Array.isArray(args) ? args : [args];
+  let tags = ',';
+  const chunks = [];
+  for (const arg of list) {
+    if (typeof arg === 'string') {
+      tags += 's';
+      chunks.push(writeString(arg));
+    } else {
+      const num = Number(arg);
+      // A NaN on the wire is worse than a zero: surfaces tend to render it as
+      // a jumped fader rather than ignore it.
+      const buf = Buffer.alloc(4);
+      buf.writeFloatBE(Number.isFinite(num) ? num : 0, 0);
+      tags += 'f';
+      chunks.push(buf);
+    }
+  }
+
+  return Buffer.concat([writeString(address), writeString(tags), ...chunks]);
+}
+
+module.exports = { parseOSCPacket, encodeOSCMessage };

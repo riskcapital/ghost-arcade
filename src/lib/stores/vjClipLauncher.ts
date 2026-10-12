@@ -1541,6 +1541,28 @@ function createVJClipLauncherStore() {
     },
 
     // Add effect to layer on the given deck
+    replaceEffectChain(scope: 'composition' | 'layer' | 'clip', layerIndex: number, effects: Effect[], deck: VJDeck = 'A') {
+      update(state => {
+        if (scope === 'composition') return { ...state, compositionEffects: effects };
+        const rows = [...pickLayerStates(state, deck)];
+        if (!rows[layerIndex]) return state;
+        if (scope === 'layer') {
+          rows[layerIndex] = { ...rows[layerIndex], effects };
+          return withDeck(state, deck, rows);
+        }
+        const active = rows[layerIndex].activeClip;
+        if (!active) return state;
+        const replace = (clip: VJClip | null) => clip?.id === active.id ? { ...clip, effects } : clip;
+        const mapGrid = (grid: (VJClip | null)[][]) => grid.map(row => row.map(replace));
+        const grid = mapGrid(pickGrid(state, deck));
+        rows[layerIndex] = { ...rows[layerIndex], activeClip: replace(active) };
+        const blocks = state.blocks.map(block => deck === 'A'
+          ? { ...block, clipGrid: mapGrid(block.clipGrid) }
+          : { ...block, bankBClipGrid: block.bankBClipGrid ? mapGrid(block.bankBClipGrid) : undefined });
+        return { ...withDeck(state, deck, rows, grid), blocks };
+      });
+    },
+
     addLayerEffect(layerIndex: number, effect: Effect, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
@@ -2127,6 +2149,25 @@ function createVJClipLauncherStore() {
           layerStates: mapStates(state.layerStates),
           bankBLayerStates: mapStates(state.bankBLayerStates),
         };
+      });
+    },
+
+    updateClipEffectParamsById(clipId: string, effectId: string, params: Record<string, number>, deck: VJDeck) {
+      update(state => {
+        let changed = false;
+        const apply = (clip: VJClip | null): VJClip | null => {
+          if (!clip || clip.id !== clipId || !clip.effects?.some(e => e.id === effectId)) return clip;
+          changed = true;
+          return { ...clip, effects: clip.effects.map(e => e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e) };
+        };
+        const grid = (rows: (VJClip | null)[][]) => rows.map(row => row.map(apply));
+        const states = pickLayerStates(state, deck).map(row => ({ ...row, activeClip: apply(row.activeClip) }));
+        const nextGrid = grid(pickGrid(state, deck));
+        const blocks = state.blocks.map(block => deck === 'A'
+          ? { ...block, clipGrid: grid(block.clipGrid) }
+          : { ...block, bankBClipGrid: block.bankBClipGrid ? grid(block.bankBClipGrid) : undefined });
+        if (!changed) return state;
+        return { ...withDeck(state, deck, states, nextGrid), blocks };
       });
     },
 

@@ -9,7 +9,7 @@
 {#if visible}
   <div class="shortcut-overlay-backdrop" onclick={onClose}>
     <div class="shortcut-overlay" onclick={(e) => e.stopPropagation()}>
-      <button class="shortcut-overlay-close" onclick={onClose}>&times;</button>
+      <button aria-label="Close keyboard shortcuts" class="shortcut-overlay-close" onclick={onClose}>&times;</button>
       <h2 class="shortcut-overlay-title">Keyboard Shortcuts</h2>
       <div class="shortcut-columns">
         <div class="shortcut-section">
@@ -30,7 +30,10 @@
           <div class="shortcut-row"><kbd>{isMac ? 'Fn+Delete' : 'Backspace'}</kbd><span>Remove layer</span></div>
         </div>
         <div class="shortcut-section">
-          <h3>View</h3>
+          <h3>Control &amp; View</h3>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>M</kbd><span>Toggle MIDI Learn</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>,</kbd><span>Settings</span></div>
+          <div class="shortcut-row"><kbd>F1</kbd><span>Help for the focused control</span></div>
           <div class="shortcut-row"><kbd>Space</kbd><span>Hold to pan viewport</span></div>
           <div class="shortcut-row"><kbd>Esc</kbd><span>Exit drawing / edit mode</span></div>
           <div class="shortcut-row"><kbd>?</kbd><span>Toggle this help</span></div>

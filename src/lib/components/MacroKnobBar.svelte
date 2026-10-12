@@ -1,4 +1,14 @@
 <script lang="ts">
+  import { findMacroTargetEffect, type MacroAssignment } from '../stores/macroAssignments';
+  import { project } from '../stores/layers';
+  import { vjClipLauncher } from '../stores/vjClipLauncher';
+  function setAssignmentRange(macroId: string, assignment: MacroAssignment, field: 'from' | 'to', event: Event) {
+    const input = event.target as HTMLInputElement;
+    const value = Number(input.value);
+    if (!input.value.trim() || !Number.isFinite(value)) { input.value = String(assignment[field]); return; }
+    macros.assignParameter(macroId, { ...assignment, [field]: value });
+  }
+
   /**
    * MacroKnobBar — 8 macro knobs in a single horizontal row.
    *
@@ -244,6 +254,26 @@
           title="Knob color"
         />
         <button class="macro-popover-close" onclick={closePopover} title="Close">×</button>
+      </div>
+
+      <div class="macro-popover-section">
+        <div class="macro-popover-section-title">PARAMETER ASSIGNMENTS</div>
+        {#if !m.assignments?.length}
+          <div class="macro-assignment-hint">Choose this macro beside an effect parameter to connect it.</div>
+        {/if}
+        {#each m.assignments ?? [] as assignment}
+          {@const available = !!findMacroTargetEffect(assignment.target, $project, $vjClipLauncher)}
+          <div class="macro-assignment" class:unavailable={!available}>
+            <span title={assignment.label}>{assignment.label}</span>
+            {#if !available}<div class="macro-assignment-missing">Target unavailable — assignment retained</div>{/if}
+            <div class="macro-assignment-range">
+              <label>Start <input type="number" aria-label={`${assignment.label} start`} min={assignment.min} max={assignment.max} step="any" value={assignment.from} onchange={(e) => setAssignmentRange(m.id, assignment, 'from', e)} /></label>
+              <label>End <input type="number" aria-label={`${assignment.label} end`} min={assignment.min} max={assignment.max} step="any" value={assignment.to} onchange={(e) => setAssignmentRange(m.id, assignment, 'to', e)} /></label>
+              <button title="Invert range" onclick={() => macros.assignParameter(m.id, { ...assignment, from: assignment.to, to: assignment.from })}>⇄</button>
+              <button title="Remove assignment" onclick={() => macros.unassignParameter(assignment.target)}>×</button>
+            </div>
+          </div>
+        {/each}
       </div>
 
       <!-- Beat-pulse: auto-cycle the macro value at a beat division.
@@ -1134,4 +1164,13 @@
   :global(html[data-theme="arcade"]) .macro-opacity-slider::-moz-range-thumb {
     background: var(--ga-coral, #ff6f5e);
   }
+  .macro-assignment-missing { color: #dcb67c; font-size: 10px; margin-bottom: 5px; }
+  .macro-assignment.unavailable { border-left: 2px solid #806437; padding-left: 6px; }
+  .macro-assignment-hint { font-size: 11px; color: #a4aab5; }
+  .macro-assignment { padding: 7px 0; font-size: 11px; }
+  .macro-assignment > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 5px; }
+  .macro-assignment-range { display: flex; align-items: center; gap: 6px; }
+  .macro-assignment-range label { display: flex; align-items: center; gap: 4px; }
+  .macro-assignment-range input { width: 65px; min-width: 0; padding: 4px; border-radius: 5px; background: #11151c; color: #dce6fa; border: 1px solid #344467; }
+  .macro-assignment-range button { border: 1px solid #344467; border-radius: 5px; background: #172747; color: #dce6fa; cursor: pointer; }
 </style>

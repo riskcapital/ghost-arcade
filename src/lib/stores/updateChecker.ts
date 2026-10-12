@@ -4,9 +4,9 @@
  */
 
 import { writable } from 'svelte/store';
-import { CHANGELOG_PAGE_URL, DOWNLOAD_PAGE_URL, releaseNotesForVersion } from '../releaseNotes';
+import { releaseNotesForVersion } from '../releaseNotes';
+import { fetchCompatibilityRelease, compatibilityReleaseUrl, COMPATIBILITY_RELEASES_URL } from '../utils/compatibilityReleases';
 
-const RELEASES_API = 'https://api.github.com/repos/riskcapital/ghost-arcade-releases/releases/latest';
 const CURRENT_VERSION = __APP_VERSION__;
 const CHECK_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -35,8 +35,8 @@ export const updateInfo = writable<UpdateInfo>({
   releaseNotes: '',
   releaseTitle: '',
   releaseHighlights: [],
-  downloadPageUrl: DOWNLOAD_PAGE_URL,
-  changelogUrl: CHANGELOG_PAGE_URL,
+  downloadPageUrl: COMPATIBILITY_RELEASES_URL,
+  changelogUrl: COMPATIBILITY_RELEASES_URL,
   downloadUrls: {},
 });
 
@@ -54,12 +54,7 @@ function compareVersions(a: string, b: string): number {
 
 export async function checkForUpdates(): Promise<void> {
   try {
-    const res = await fetch(RELEASES_API, {
-      headers: { 'Accept': 'application/vnd.github.v3+json' },
-    });
-    if (!res.ok) return;
-
-    const data = await res.json();
+    const data = await fetchCompatibilityRelease();
     const latestTag = data.tag_name || '';
     const latestVersion = latestTag.replace(/^v/, '');
 
@@ -80,12 +75,12 @@ export async function checkForUpdates(): Promise<void> {
       available: isNewer,
       currentVersion: CURRENT_VERSION,
       latestVersion,
-      releaseUrl: DOWNLOAD_PAGE_URL,
+      releaseUrl: compatibilityReleaseUrl(data),
       releaseNotes: notes.highlights.join('\n'),
       releaseTitle: notes.title,
       releaseHighlights: notes.highlights,
-      downloadPageUrl: DOWNLOAD_PAGE_URL,
-      changelogUrl: CHANGELOG_PAGE_URL,
+      downloadPageUrl: compatibilityReleaseUrl(data),
+      changelogUrl: compatibilityReleaseUrl(data),
       downloadUrls: {},
     });
 

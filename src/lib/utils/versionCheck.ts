@@ -11,11 +11,10 @@
  * "Check now" from Settings bypasses the rate limit.
  */
 
-import { DOWNLOAD_PAGE_URL } from '../releaseNotes';
+import { fetchCompatibilityRelease, compatibilityReleaseUrl } from './compatibilityReleases';
 
-const REPO = 'riskcapital/ghost-arcade-releases';
-const LAST_CHECK_KEY = 'ghostarcade-last-version-check';
-const LAST_RESULT_KEY = 'ghostarcade-last-version-result';
+const LAST_CHECK_KEY = 'ghostarcade-compatibility-version-check';
+const LAST_RESULT_KEY = 'ghostarcade-compatibility-version-result';
 /** 24 h between automatic checks. Manual check overrides this. */
 const AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -139,20 +138,8 @@ function recentlyChecked(): boolean {
  * use `checkForUpdate({ force: false })` to honor the local rate limit.
  */
 async function fetchLatestTag(): Promise<{ tag: string; url: string } | null> {
-  // The unauthenticated GitHub API allows 60 req/hr/IP — plenty for a
-  // once-per-day check across an install base.
-  const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-    headers: { Accept: 'application/vnd.github+json' },
-  });
-  if (!res.ok) {
-    throw new Error(`GitHub API ${res.status}`);
-  }
-  const json = await res.json();
-  if (!json?.tag_name) return null;
-  return {
-    tag: json.tag_name as string,
-    url: DOWNLOAD_PAGE_URL,
-  };
+  const release = await fetchCompatibilityRelease();
+  return { tag: release.tag_name, url: compatibilityReleaseUrl(release) };
 }
 
 /**

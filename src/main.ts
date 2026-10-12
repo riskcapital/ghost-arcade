@@ -196,6 +196,9 @@ async function init() {
     });
   } else {
     // Normal mode: full UI
+    const { installContextHelp } = await import('./lib/help/contextHelp');
+    const removeHelp = installContextHelp();
+    window.addEventListener('beforeunload', removeHelp, { once: true });
     const { default: App } = await import('./App.svelte');
     mount(App, {
       target: document.getElementById('app')!,

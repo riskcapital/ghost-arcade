@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MacroAssignmentControl from './MacroAssignmentControl.svelte';
+  import EffectChainPresets from './EffectChainPresets.svelte';
   // VJ Mode Panel - Layers/Columns Grid
   // Uses vjClipLauncher store for state management
 
@@ -3454,7 +3456,7 @@
     <!-- Header -->
     <div class="vj-header">
       <div class="header-left">
-        <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="vj-logo" />
+        <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="vj-logo" />
         <!-- File Menu -->
         <div class="vj-file-menu-container">
           <button class="vj-file-menu-btn" class:active={vjFileMenuOpen} onclick={() => vjFileMenuOpen = !vjFileMenuOpen}>
@@ -3537,7 +3539,7 @@
            Mic (AudioInputPicker) sits immediately after the meter so the
            audio cluster reads as one logical group. -->
       <div class="header-meter">
-        <AudioMeterPanel />
+        <AudioMeterPanel alwaysShow />
 
         <!-- Audio input picker — same component + same location as mapping
              mode. State flows through audioStore so toggling here also flips
@@ -3754,7 +3756,7 @@
       </div>
     {/if}
 
-    <!-- (Audio strip merged into the header above as <AudioMeterPanel /> +
+    <!-- (Audio strip merged into the header above as <AudioMeterPanel alwaysShow /> +
          <AudioInputPicker />. Single source of truth — no second tap/tempo,
          no duplicate FFT bars, no two ways to switch audio source.) -->
 
@@ -3865,7 +3867,8 @@
                 </div>
 
                 <div class="effects-section">
-                  <div class="effects-list">
+                  <EffectChainPresets effects={currentEffects} onApply={effects => vjClipLauncher.replaceEffectChain(effectsTab as 'composition' | 'layer' | 'clip', selectedLayerIndex ?? 0, effects, paramDeck)} />
+                <div class="effects-list">
                     {#each effects as eff (eff.id)}
                       {@const def = getEffectDef(eff.type)}
                       {@const isLive = activeId === eff.id}
@@ -4102,6 +4105,7 @@
                                   {@const val = (effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                   <div class="param-row">
                                     <span class="param-name">{meta.label}</span>
+                                    <MacroAssignmentControl target={effectsTab === 'composition' ? { scope: 'vj-composition', effectId: effect.id, param: paramKey } : (paramDeck === 'B' ? $vjClipLauncher.bankBLayerStates : $vjClipLauncher.layerStates)[selectedLayerIndex ?? 0]?.activeClip ? { scope: 'vj-clip', bank: paramDeck, clipId: (paramDeck === 'B' ? $vjClipLauncher.bankBLayerStates : $vjClipLauncher.layerStates)[selectedLayerIndex ?? 0].activeClip!.id, effectId: effect.id, param: paramKey } : null} label={effect.type + ' · ' + meta.label} min={meta.min as number} max={meta.max as number} />
                                     <input type="range" min={meta.min as number} max={meta.max as number} step={meta.step as number} value={val}
                                       oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value))}
                                       data-midi-path="vj:fx:{effect.id}:{paramKey}"
@@ -4138,6 +4142,7 @@
                                   {@const val = (effect.params as Record<string, number>)[paramKey] ?? 0.5}
                                   <div class="param-row">
                                     <span class="param-name">{paramKey}</span>
+                                    <MacroAssignmentControl target={effectsTab === 'composition' ? { scope: 'vj-composition', effectId: effect.id, param: paramKey } : (paramDeck === 'B' ? $vjClipLauncher.bankBLayerStates : $vjClipLauncher.layerStates)[selectedLayerIndex ?? 0]?.activeClip ? { scope: 'vj-clip', bank: paramDeck, clipId: (paramDeck === 'B' ? $vjClipLauncher.bankBLayerStates : $vjClipLauncher.layerStates)[selectedLayerIndex ?? 0].activeClip!.id, effectId: effect.id, param: paramKey } : null} label={effect.type + ' · ' + paramKey} min={0} max={1} />
                                     <input type="range" min="0" max="1" step="0.01" value={val}
                                       oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value))} />
                                     <span class="param-value">{(val * 100).toFixed(0)}%</span>
@@ -6758,7 +6763,7 @@
     }
   }
 
-  @media (max-width: 1180px) {
+  @media (max-width: 1800px) {
     .vj-header {
       flex-wrap: wrap;
       align-content: center;

@@ -200,6 +200,8 @@ contextBridge.exposeInMainWorld('ghostOSC', {
   start: ({ port } = {}) => ipcRenderer.invoke('osc_start', { port }),
   stop: () => ipcRenderer.invoke('osc_stop'),
   status: () => ipcRenderer.invoke('osc_status'),
+  send: ({ host, port, messages } = {}) => ipcRenderer.invoke('osc_send', { host, port, messages }),
+  stopSending: () => ipcRenderer.invoke('osc_send_stop'),
   onMessage: (cb) => {
     const handler = (_e, msgs) => { try { cb(msgs); } catch (err) { console.warn('[OSC] renderer handler', err); } };
     ipcRenderer.on('osc-msg', handler);

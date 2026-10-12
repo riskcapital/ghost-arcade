@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ScreenSetupLibrary from './ScreenSetupLibrary.svelte';
   /**
    * ScreenPanel — left-sidebar panel for managing output Screens.
    * A single continuous scroll surface for the screen list, global output
@@ -360,6 +361,8 @@
     <div class="add-row">
       <button class="add-btn" onclick={add} disabled={$screens.length >= $maxOutputSlices}>+ Add Screen</button>
     </div>
+
+    <ScreenSetupLibrary />
 
     <!-- Master-canvas controls. Tucked between the list and inspector
          so they're discoverable when working on the rig as a whole

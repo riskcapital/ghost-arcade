@@ -1,5 +1,5 @@
 // Studio — the v10 reference design. Cool near-black depth ladder,
-// matte/restrained accent palette, Space Grotesk + IBM Plex Mono.
+// matte/restrained accent palette, Geist + Geist Mono.
 // This is the default theme.
 
 import type { Theme } from '../types';
@@ -9,9 +9,9 @@ export const STUDIO_THEME: Theme = {
   name: 'Studio Coral',
   description: 'Cool near-black, soft restrained accents — the default Ghost Arcade look.',
   tokens: {
-    fontUi:      "'Space Grotesk', system-ui, sans-serif",
-    fontDisplay: "'Space Grotesk', system-ui, sans-serif",
-    fontMono:    "'IBM Plex Mono', ui-monospace, monospace",
+    fontUi:      "'Satoshi', system-ui, sans-serif",
+    fontDisplay: "'Satoshi', system-ui, sans-serif",
+    fontMono:    "'Geist Mono', ui-monospace, monospace",
 
     void:  '#070809',
     bar:   '#0e1014',
@@ -30,9 +30,9 @@ export const STUDIO_THEME: Theme = {
     ink2: '#5e6571',
     ink3: '#3a404a',
 
-    rHard: '2px',
-    rSoft: '7px',
-    rTile: '9px',
+    rHard: '5px',
+    rSoft: '8px',
+    rTile: '7px',
     rPill: '999px',
 
     violet:     '#ff7a66',
@@ -48,6 +48,9 @@ export const STUDIO_THEME: Theme = {
     cyan:       '#2dd4d4',
     pink:       '#f472b6',
     rec:        '#ff4438',
+    // Icon tint — see arcade.ts. Kept identical so the accent reads the
+    // same across themes; split them if the palettes ever diverge.
+    icon:       '#5278ff',
 
     metalHi:   'rgba(255,255,255,.06)',
     coralGlow: 'rgba(255,114,95,.42)',

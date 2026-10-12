@@ -105,6 +105,7 @@ function createDefaultState(): MidiStoreState {
     selectedOutputId: loadSelectedOutput(),
     mappings: loadMappings(),
     editMode: false,
+    identifyMode: false,
     learn: createDefaultLearn(),
     lastMessage: null,
     clockInEnabled: loadClockInEnabled(),
@@ -170,6 +171,16 @@ function createMidiStore() {
       ...s,
       editMode: on,
       learn: on ? s.learn : createDefaultLearn(),
+    })),
+
+    /** Identify mode for the mappings table. Mutually exclusive with edit
+     *  mode: both suppress routing, and having two of them on at once would
+     *  make it unclear which one turning off restores control. */
+    setIdentifyMode: (on: boolean) => update(s => ({
+      ...s,
+      identifyMode: on,
+      editMode: on ? false : s.editMode,
+      learn: on ? createDefaultLearn() : s.learn,
     })),
 
     // Start learning for a specific control

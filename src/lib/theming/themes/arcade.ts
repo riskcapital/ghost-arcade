@@ -1,17 +1,18 @@
-// Arcade — retro faceplate. Warm-toned depths, same Space Grotesk +
-// IBM Plex Mono type system, coral-on-black marquee accents.
+// Arcade — retro faceplate. Warm-toned depths, same Geist +
+// Geist Mono type system, ghost-chrome marquee accents: ghostly
+// white with a metallic light blue-grey gradient.
 
 import type { Theme } from '../types';
 
 export const ARCADE_THEME: Theme = {
   id: 'arcade',
   name: 'Arcade',
-  description: 'Retro arcade faceplate — warm depths, LED segment numerals, coral marquee.',
+  description: 'Retro arcade faceplate — warm depths, LED segment numerals, ghost-chrome marquee.',
   tokens: {
-    fontUi:      "'Space Grotesk', system-ui, sans-serif",
-    fontDisplay: "'Space Grotesk', system-ui, sans-serif",
-    fontMono:    "'IBM Plex Mono', ui-monospace, monospace",
-    fontLed:     "'IBM Plex Mono', ui-monospace, monospace",
+    fontUi:      "'Satoshi', system-ui, sans-serif",
+    fontDisplay: "'Satoshi', system-ui, sans-serif",
+    fontMono:    "'Geist Mono', ui-monospace, monospace",
+    fontLed:     "'Geist Mono', ui-monospace, monospace",
 
     void:  '#0a0908',
     bar:   '#100f0d',
@@ -26,45 +27,77 @@ export const ARCADE_THEME: Theme = {
     line3: 'rgba(245,236,222,.24)',
 
     ink0: '#f2ede4',
-    ink1: '#998f81',
-    ink2: '#5e564a',
+    ink1: '#ada9a2',
+    ink2: '#89857e',
     ink3: '#39342c',
 
-    rHard: '3px',
-    rSoft: '3px',
-    rTile: '3px',
+    rHard: '5px',
+    rSoft: '8px',
+    rTile: '7px',
     rPill: '3px',
 
-    // Arcade pushes coral as the only "live" accent — violet/blue/etc.
-    // map onto coral or muted blue so the marquee reads warm.
-    violet:     '#ff6f5e',
-    violetSoft: 'rgba(255,111,94,.13)',
-    violetLine: 'rgba(255,111,94,.50)',
+    // Ghost chrome is the single "live" accent — a ghostly white core
+    // with metallic light blue-grey support. violet/pink map onto it
+    // so every accent surface reads as the same cold marquee metal.
+    violet:     '#e7eef5',
+    violetSoft: 'rgba(206,222,236,.12)',
+    violetLine: 'rgba(206,222,236,.45)',
     blue:       '#5278ff',
     blueSoft:   'rgba(82,120,255,.28)',
     blueLine:   'rgba(82,120,255,.10)',
-    coral:      '#ff6f5e',
-    coralSoft:  'rgba(255,111,94,.13)',
-    coralLine:  'rgba(255,111,94,.50)',
+    coral:      '#e7eef5',
+    coralSoft:  'rgba(206,222,236,.12)',
+    coralLine:  'rgba(206,222,236,.45)',
     green:      '#46d18a',
-    cyan:       '#5278ff',
-    pink:       '#ff6f5e',
+    cyan:       '#9fb6c9',
+    pink:       '#e7eef5',
     rec:        '#ff3b30',
+    // Icon tint — the cyan already used for the empty-state call to
+    // action; promoting it to every icon gives the chrome one cold
+    // accent instead of a wall of grey glyphs.
+    icon:       '#5278ff',
 
     metalHi:   'rgba(255,255,255,.16)',
-    coralGlow: 'rgba(255,111,94,.50)',
+    coralGlow: 'rgba(176,200,222,.45)',
   },
   // Bridge — only the depth ladder + ink so the Accent scheme picker
   // still owns the accent colours. The warm Arcade ladder reads great
-  // with any of the existing accents (Midnight Coral, Cyberpunk, etc.).
+  // with any of the existing accents.
   legacyVars: {
     '--bg-primary':       '#0a0908',
     '--bg-secondary':     '#100f0d',
     '--bg-tertiary':      '#16140f',
     '--bg-overlay':       'rgba(10,9,8,.88)',
     '--text-primary':     '#f2ede4',
-    '--text-secondary':   '#998f81',
-    '--text-muted':       '#5e564a',
+    '--text-secondary':   '#ada9a2',
+    '--text-muted':       '#89857e',
     '--border-secondary': 'rgba(245,236,222,.13)',
   },
+  // Metallic gradient pass — solid accent FILLS pick up the chrome
+  // gradient (a flat CSS color var can't hold a gradient, so the
+  // handful of filled controls get it here). Text/line accents stay
+  // the solid ghost white from the tokens above.
+  extraCss: `
+[data-theme="arcade"] {
+  --ga-accent-gradient: linear-gradient(135deg, #f6fafd 0%, #cfdde9 42%, #92aabf 100%);
+}
+html[data-theme="arcade"] .vj-btn {
+  background: var(--ga-accent-gradient) !important;
+  border-color: rgba(214,228,240,.65) !important;
+  color: #16202b !important;
+}
+html[data-theme="arcade"] input[type="checkbox"]:checked {
+  background: var(--ga-selection-line, #3d59b8) !important;
+}
+html[data-theme="arcade"] .toggle input:checked + .toggle-slider::before {
+  background: var(--ga-accent-gradient) !important;
+}
+html[data-theme="arcade"] .paint-sheet-handle {
+  background: var(--ga-accent-gradient) !important;
+}
+html[data-theme="arcade"] .layer-item.selected::before,
+html[data-theme="arcade"] .layer-item.active::before {
+  background: var(--ga-accent-gradient) !important;
+}
+`,
 };

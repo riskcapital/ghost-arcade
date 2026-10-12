@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { screenSetups } from './lib/stores/screenSetups';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
@@ -4400,6 +4401,7 @@
   }
   function newProjectConfirm() {
     showNewProjectModal = false;
+    settings.resetOutputStageForNewProject(screenSetups.defaultSnapshot());
     project.newProject('Untitled Project');
     vjClipLauncher.reset();
     synthVisionStore.reset();
@@ -5371,7 +5373,7 @@
     <!-- Header / Toolbar -->
     <header class="toolbar" use:fitToolbar>
       <div class="toolbar-left">
-        <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="header-logo" />
+        <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="header-logo" />
         {#if gpuInfo}
           <span
             class="gpu-indicator"
@@ -5660,9 +5662,8 @@
              in one mode is reflected in every other mode. -->
         <AudioInputPicker />
 
-        <!-- TAP tempo + BPM readout. Auto-hides when audio is off so the
-             top bar stays clean for users who never use audio reactivity. -->
-        <BpmTapWidget />
+        <!-- Tempo stays available for manual performance without an audio input. -->
+        <BpmTapWidget alwaysShow />
 
         <!-- Screenshot Button -->
         <button class="screenshot-btn" onclick={takeScreenshot} title="Take Screenshot">

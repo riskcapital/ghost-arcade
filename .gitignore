@@ -90,3 +90,6 @@ native-mobile/android/app/release/
 ghost-arcade-release.keystore
 android/keystore.properties
 native-mobile/android/keystore.properties
+
+# Isolated legacy development cache (keep shared dependencies read-only).
+.vite-legacy-cache/
