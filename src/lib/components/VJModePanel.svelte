@@ -460,6 +460,14 @@
   let vjTimelineEl: HTMLDivElement | null = null;
   let vjVideoTickFrame: number | null = null;
 
+  function vjPressCue(event: MouseEvent, cueIndex: number) {
+    if (selectedLayerIndex === null) return;
+    const clip = selectedLayerState?.activeClip;
+    if (!clip || clip.type !== 'video' || !clip.videoElement) return;
+    if (event.shiftKey) vjClipLauncher.setActiveClipCuePoint(selectedLayerIndex, cueIndex, clip.videoElement.currentTime, paramDeck);
+    else vjClipLauncher.pressCuePoint(selectedLayerIndex, cueIndex, paramDeck);
+  }
+
   function vjFormatTime(seconds: number): string {
     if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
     const m = Math.floor(seconds / 60);
@@ -4767,6 +4775,29 @@
                       tabindex="0"
                       aria-label="Trim end"
                     ></div>
+                  </div>
+
+                  <div class="vt-cues" aria-label="Video cue points">
+                    <div class="vt-cues-label">CUE POINTS</div>
+                    <div class="vt-cue-pads">
+                      {#each Array.from({ length: 8 }, (_, index) => index) as cueIndex}
+                        {@const cueTime = vClip.cuePoints?.[cueIndex]}
+                        <div class="vt-cue-slot">
+                          <button class="vt-cue-pad" class:saved={cueTime != null}
+                            aria-label={cueTime == null ? `Set cue ${cueIndex + 1}` : `Jump to cue ${cueIndex + 1}, ${vjFormatTime(cueTime)}`}
+                            title={cueTime == null ? 'Save current position' : `${vjFormatTime(cueTime)}. Shift-click to replace`}
+                            disabled={vjVideoDuration <= 0}
+                            onclick={(event) => vjPressCue(event, cueIndex)}
+                            data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:cue:{cueIndex}"
+                            data-midi-label="{vClip.name} Cue {cueIndex + 1}"
+                            data-midi-mode="toggle" data-midi-min="0" data-midi-max="1">{cueIndex + 1}</button>
+                          <button class="vt-cue-clear" aria-label="Clear cue {cueIndex + 1}" title="Clear cue {cueIndex + 1}"
+                            disabled={cueTime == null}
+                            onclick={() => vjClipLauncher.setActiveClipCuePoint(selectedLayerIndex!, cueIndex, null, paramDeck)}>×</button>
+                        </div>
+                      {/each}
+                    </div>
+                    <p>Empty pad: save position. Saved pad: jump. Shift-click: replace.</p>
                   </div>
 
                   <!-- Mode buttons row -->
@@ -10552,6 +10583,16 @@
     overflow: visible;
     user-select: none;
   }
+  .vt-cues { margin: 8px 0; }
+  .vt-cues-label { font-size: 10px; color: #aaa; margin-bottom: 5px; }
+  .vt-cue-pads { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; }
+  .vt-cue-slot { display: flex; flex-direction: column; gap: 2px; }
+  .vt-cue-pad { min-width: 0; padding: 7px 0; border: 1px solid #555; border-radius: 4px; background: #252525; color: #ccc; cursor: pointer; }
+  .vt-cue-pad.saved { background: #153b38; border-color: #40baa7; color: #c9fff3; }
+  .vt-cue-clear { padding: 0; border: none; background: transparent; color: #aaa; cursor: pointer; }
+  .vt-cue-clear:disabled { opacity: 0.2; cursor: default; }
+  .vt-cues p { margin: 4px 0; color: #999; font-size: 10px; }
+
   .vt-trim-outside-left,
   .vt-trim-outside-right {
     position: absolute;

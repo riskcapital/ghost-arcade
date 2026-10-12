@@ -13,6 +13,7 @@ import { hasDecodedVideoFrame } from '../renderer/videoReadiness';
 import { keyframeTimeline } from './keyframeTimeline';
 import { parseISF } from '../isf/parser';
 import { vjLayerSequencer } from './vjLayerSequencer';
+import { normalizeCuePoints, validCueIndex, VJ_CUE_POINT_COUNT } from './vjCuePoints';
 import { VJAutopilotClock, normalizeAutopilot, type VJAutopilot, type AutopilotSample } from './vjAutopilot';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 
@@ -94,6 +95,8 @@ export interface VJClip {
   trimStart?: number;
   /** 0..1. Default 1 (end of source). */
   trimEnd?: number;
+  /** Up to eight saved positions in media seconds. */
+  cuePoints?: (number | null)[];
   /** Live play/pause flag. Toggle from the VJ video-controls panel.
    *  Default true (clip auto-plays on first trigger, same as today). */
   isPlaying?: boolean;
@@ -2108,6 +2111,38 @@ function createVJClipLauncherStore() {
         newLayerStates[layerIndex] = { ...currentLayer, activeColumn: null, activeClip: clip };
         return { ...withDeck(state, deck, newLayerStates), stoppedAll: false };
       });
+    },
+
+    /** Save (or clear, with null) one of a playing video's eight cue points. */
+    setActiveClipCuePoint(layerIndex: number, cueIndex: number, seconds: number | null, deck: VJDeck = 'A'): boolean {
+      if (!validCueIndex(cueIndex) || (seconds !== null && (!Number.isFinite(seconds) || seconds < 0))) return false;
+      const clip = pickLayerStates(get({ subscribe }), deck)[layerIndex]?.activeClip;
+      if (!clip || clip.type !== 'video' || clip.src.startsWith('live://')) return false;
+      const points = normalizeCuePoints(clip.cuePoints) ?? Array<number | null>(VJ_CUE_POINT_COUNT).fill(null);
+      const duration = clip.videoElement && Number.isFinite(clip.videoElement.duration) ? clip.videoElement.duration : Infinity;
+      points[cueIndex] = seconds === null ? null : Math.min(seconds, duration);
+      this.updateActiveClipInPlace(layerIndex, deck, current => ({ ...current, cuePoints: normalizeCuePoints(points) }));
+      return true;
+    },
+
+    jumpToCuePoint(layerIndex: number, cueIndex: number, deck: VJDeck = 'A'): boolean {
+      if (!validCueIndex(cueIndex)) return false;
+      const clip = pickLayerStates(get({ subscribe }), deck)[layerIndex]?.activeClip;
+      const time = normalizeCuePoints(clip?.cuePoints)?.[cueIndex];
+      const video = clip?.type === 'video' ? clip.videoElement : undefined;
+      if (!clip || !video || time == null || !Number.isFinite(video.duration)) return false;
+      video.currentTime = Math.min(time, video.duration);
+      return true;
+    },
+
+    /** An empty pad saves the playhead; a saved pad jumps to it. */
+    pressCuePoint(layerIndex: number, cueIndex: number, deck: VJDeck = 'A'): 'set' | 'jumped' | null {
+      if (!validCueIndex(cueIndex)) return null;
+      const clip = pickLayerStates(get({ subscribe }), deck)[layerIndex]?.activeClip;
+      const video = clip?.type === 'video' ? clip.videoElement : undefined;
+      if (!clip || !video || !Number.isFinite(video.duration)) return null;
+      if (normalizeCuePoints(clip.cuePoints)?.[cueIndex] != null) return this.jumpToCuePoint(layerIndex, cueIndex, deck) ? 'jumped' : null;
+      return this.setActiveClipCuePoint(layerIndex, cueIndex, video.currentTime, deck) ? 'set' : null;
     },
 
     /** Change the clip playing on a row, and any cell holding that same clip. */

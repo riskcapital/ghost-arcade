@@ -708,6 +708,14 @@ class MidiRouter {
         const trimEnd = Math.max(trimStart, Math.min(1, clip.trimEnd ?? 1));
         const startTime = Number.isFinite(video.duration) ? video.duration * trimStart : 0;
 
+        if (action === 'cue' || action === 'cue-set' || action === 'cue-clear') {
+          if (value <= 0 || !/^[0-7]$/.test(parts[4] ?? '')) break;
+          const cueIndex = Number(parts[4]);
+          if (action === 'cue') vjClipLauncher.pressCuePoint(layerIndex, cueIndex, bank);
+          else vjClipLauncher.setActiveClipCuePoint(layerIndex, cueIndex, action === 'cue-clear' ? null : video.currentTime, bank);
+          break;
+        }
+
         if (action === 'play' && value > 0) {
           const shouldPlay = video.paused || clip.isPlaying === false;
           vjClipLauncher.updateActiveClipVideoProps(layerIndex, { isPlaying: shouldPlay }, bank);

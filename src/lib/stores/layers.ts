@@ -26,6 +26,7 @@ import { getDefaultEffectParams } from '../renderer/effects';
 import { oscStore } from '../osc/oscStore';
 import { dmxStore } from '../dmx/dmxStore';
 import { normalizeAutopilot } from './vjAutopilot';
+import { normalizeCuePoints } from './vjCuePoints';
 import { createDefaultPixelMapConfig, normalizePixelMapConfig } from '../pixelmap/fixtures';
 import type { PixelMapConfig, PixelMapFixture } from '../types';
 import { showTimeline, setShowCompositionLoader } from './showTimeline';
@@ -4720,6 +4721,7 @@ void main() {
           playbackRate: clip.playbackRate,
           trimStart: clip.trimStart,
           trimEnd: clip.trimEnd,
+          cuePoints: normalizeCuePoints(clip.cuePoints),
           isPlaying: clip.isPlaying,
           audioVolume: clip.audioVolume,
           audioPan: clip.audioPan,
@@ -5391,6 +5393,7 @@ void main() {
               playbackRate: clip.playbackRate ?? 1,
               trimStart: clip.trimStart ?? 0,
               trimEnd: clip.trimEnd ?? 1,
+              cuePoints: normalizeCuePoints(clip.cuePoints),
               isPlaying: clip.isPlaying ?? true,
               ...(Number.isFinite(clip.audioVolume) ? { audioVolume: Math.max(0, Math.min(1, clip.audioVolume)) } : {}),
               ...(Number.isFinite(clip.audioPan) ? { audioPan: Math.max(-1, Math.min(1, clip.audioPan)) } : {}),
