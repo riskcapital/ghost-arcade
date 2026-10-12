@@ -153,7 +153,7 @@
   });
 </script>
 
-<div class="led-fx-panel">
+<div data-help-page="settings" class="led-fx-panel">
   <header class="panel-heading">
     <div>
       <strong>LED FX</strong>
@@ -328,6 +328,9 @@
                   {#each controller.ranges ?? [] as range (range.id)}
                     <option value={`range:${controller.id}:${range.id}`}>Range · {controller.name} / {range.name}</option>
                   {/each}
+                {/each}
+                {#each $project.pixelMap?.fixtures ?? [] as fixture (fixture.id)}
+                  <option value={`controller:${fixture.id}`}>Fixture · {fixture.name}</option>
                 {/each}
               </select>
             </label>

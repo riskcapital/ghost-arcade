@@ -5028,6 +5028,8 @@ export interface Project {
   wledControllers?: WLEDController[];
   /** Cross-controller fixture groups used by LED performance effects. */
   wledGroups?: WLEDGroup[];
+  /** Art-Net / sACN fixtures and output settings. */
+  pixelMap?: PixelMapConfig;
   /** Project-scoped LED performance effects shown in VJ mode. */
   wledEffects?: WLEDEffect[];
   wledEffectAutomation?: WLEDEffectAutomation;
@@ -6172,3 +6174,58 @@ export function getShapeVertices(shape: LayerShape): Point2D[] {
 
   return pts;
 }
+
+// ═══════════════════════════════════════════════════
+// Art-Net / sACN pixel mapping
+// ═══════════════════════════════════════════════════
+
+export type PixelMapProtocol = 'artnet' | 'sacn';
+export type PixelMapFixtureType = 'strip' | 'matrix' | 'custom';
+/** Channel order on the wire. W is derived as min(R, G, B). */
+export type PixelMapColorOrder =
+  | 'RGB' | 'RBG' | 'GRB' | 'GBR' | 'BRG' | 'BGR'
+  | 'RGBW' | 'GRBW' | 'BRGW' | 'RBGW' | 'WRGB';
+/** Art-Net: unicast to a node or broadcast. sACN: multicast group or unicast. */
+export type PixelMapDelivery = 'unicast' | 'broadcast' | 'multicast';
+
+export interface PixelMapFixture {
+  id: string;
+  name: string;
+  enabled: boolean;
+  type: PixelMapFixtureType;
+  pixelCount: number;
+  colorOrder: PixelMapColorOrder;
+  protocol: PixelMapProtocol;
+  delivery: PixelMapDelivery;
+  /** Node IPv4 address, or the broadcast address for Art-Net broadcast.
+   *  Unused for sACN multicast. */
+  address: string;
+  /** First universe. Art-Net 0-32767, sACN 1-63999. */
+  universe: number;
+  /** First DMX channel, 1-512. Pixels never straddle a universe. */
+  channel: number;
+  /** Region and layout of the composition this fixture samples. The layout
+   *  mode follows `type`. */
+  mapping: WLEDMappingConfig;
+  brightness?: number;
+  gamma?: number;
+  calibration?: WLEDColorCalibration;
+  samplingMode?: WLEDColorSamplingMode;
+  testPattern?: WLEDTestPattern;
+  testColor?: string;
+}
+
+export interface PixelMapConfig {
+  /** Master output switch for every fixture. */
+  enabled: boolean;
+  /** Frames per second, 1-60. */
+  fps: number;
+  /** Send ArtSync after each Art-Net frame so nodes latch together. */
+  artSync: boolean;
+  sacnPriority: number;
+  sacnSourceName: string;
+  /** Stable sACN component identifier (UUID) for this project. */
+  sacnCid: string;
+  fixtures: PixelMapFixture[];
+}
+

@@ -109,6 +109,7 @@
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
+  import { startPixelMapOutput, tapPixelMapFrame } from '$lib/pixelmap/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
   import {
@@ -160,6 +161,7 @@
   const isElectron = typeof window !== 'undefined' && !!(window as any).__ELECTRON__;
   let spoutOutputActive = false;
   let spoutSendInFlight = false; // prevent overlapping sends
+  let stopPixelMapOutput: (() => void) | null = null;
   let spoutSendPixels: Uint8Array | null = null; // pre-allocated readPixels buffer
   let spoutSendW = 0;
   let spoutSendH = 0;
@@ -1291,6 +1293,9 @@
     // The per-frame tap+send happens via tickWLEDSenders() from
     // inside the animate loop.
     startWLEDSenders(canvas, isOutputMode ? 'output' : isOsrMode ? 'osr' : 'editor');
+    // Art-Net / sACN fixtures are driven from the editor window only, so an
+    // output window never sends a second copy of every universe.
+    if (!isOutputMode && !isOsrMode) stopPixelMapOutput = startPixelMapOutput();
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
@@ -2621,6 +2626,7 @@
         // configured LED controllers. Cheap (32-490 byte readback +
         // UDP send to main process); throttled to ~60Hz per controller.
         tickWLEDSenders(canvas);
+        if (stopPixelMapOutput) tapPixelMapFrame(canvas);
 
         _consecutiveFrameErrors = 0; // successful frame — reset the error streak
       } catch (err) {
@@ -2978,6 +2984,8 @@
   onDestroy(() => {
     cancelAnimationFrame(animationId);
     if (canvas) stopWLEDSenders(canvas);
+    stopPixelMapOutput?.();
+    stopPixelMapOutput = null;
     engine?.dispose();
 
     // S4 pilot teardown — unsubscribe from the settings reactive and

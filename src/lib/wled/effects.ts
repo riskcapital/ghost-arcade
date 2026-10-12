@@ -1,4 +1,5 @@
 import type {
+  PixelMapFixture,
   WLEDController,
   WLEDEffect,
   WLEDEffectAutomation,
@@ -198,6 +199,28 @@ interface TargetSpan {
   count: number;
 }
 
+/**
+ * What LED FX need to know about an output: an id that effect targets and
+ * group members refer to, a pixel count, and optional named ranges. A WLED
+ * controller is one; a pixel-map fixture becomes one through
+ * fixtureLEDTarget, so groups, targets and every pattern work the same on
+ * Art-Net and sACN fixtures.
+ */
+export type LEDEffectOutput = Pick<WLEDController, 'id' | 'ledCount' | 'ranges'>;
+
+/** A pixel-map fixture as an LED FX output. `pixelCount` is the mapped pixel count. */
+export function fixtureLEDTarget(fixture: Pick<PixelMapFixture, 'id'>, pixelCount: number): LEDEffectOutput {
+  return { id: fixture.id, ledCount: Math.max(1, Math.floor(pixelCount)), ranges: [] };
+}
+
+/** BPM for beat-synced LED FX: the manual BPM when set, else the detected one, else 120. */
+export function ledEffectBpm(audio: { manualBPM?: number | null; bpm?: number | null } | null | undefined): number {
+  const manual = audio?.manualBPM ?? 0;
+  if (manual > 0) return manual;
+  const detected = audio?.bpm ?? 0;
+  return detected > 0 ? detected : 120;
+}
+
 function clamp(value: number, min = 0, max = 1): number {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, value));
@@ -336,7 +359,7 @@ function extractPalette(buffer: Uint8Array): Array<[number, number, number]> {
     .map(bin => [bin.r / bin.weight, bin.g / bin.weight, bin.b / bin.weight] as [number, number, number]);
 }
 
-function targetSpans(controller: WLEDController, effect: WLEDEffect, groups: WLEDGroup[]): TargetSpan[] {
+function targetSpans(controller: LEDEffectOutput, effect: WLEDEffect, groups: WLEDGroup[]): TargetSpan[] {
   const total = Math.max(1, Math.floor(controller.ledCount));
   const whole = [{ start: 0, count: total }];
   if (effect.target.mode === 'all') return whole;
@@ -558,11 +581,11 @@ function blendPixel(
   return mixColor(base, effectColor.map(channel => channel * mask) as [number, number, number], amount);
 }
 
-/** Apply all active and automated LED FX in project order to one controller. */
+/** Apply all active and automated LED FX in project order to one controller or fixture. */
 export function applyWLEDEffects(
   source: Uint8Array,
   output: Uint8Array,
-  controller: WLEDController,
+  controller: LEDEffectOutput,
   groups: WLEDGroup[],
   effects: WLEDEffect[],
   automation: WLEDEffectAutomation | undefined,

@@ -1,0 +1,336 @@
+/**
+ * Art-Net / sACN pixel-mapping runtime.
+ *
+ * A timer at the project's configured rate (default 40fps, max 60) samples
+ * every enabled fixture from the latest tap of the output canvas, packs
+ * the pixels into DMX universes (fixtures.ts) and ships one frame per tick
+ * to the main process (electron/pixelmap-output.cjs), which owns the UDP
+ * socket, sequence numbers, rate cap and drop counters.
+ *
+ * The render loop hands its canvas to tapPixelMapFrame() once per frame; the
+ * tap is throttled to the output rate and copies a small image, top row
+ * first, so nothing here reads back from the GPU on its own clock.
+ *
+ * - One frame in flight at a time. A tick that finds the previous IPC call
+ *   unresolved is skipped and counted, so an unreachable node or a busy main
+ *   process can never build a queue.
+ * - Output stops cleanly: disabling, blackout (the lighting blackout or the
+ *   global output blackout) and teardown call pixelmap_stop, which sends one
+ *   black frame to every universe and terminates sACN streams.
+ * - Test patterns (solid, chase, LED order) run without a composite frame.
+ * - LED FX (project.wledEffects) run on fixtures exactly as on WLED
+ *   controllers: a fixture is a valid effect target and LED group member,
+ *   and beat-synced effects follow the manual or detected BPM. Effects run
+ *   over black until the first composite frame arrives.
+ */
+import { writable } from 'svelte/store';
+import { project } from '../stores/layers';
+import { settings } from '../stores/settings';
+import { audioStore } from '../stores/audio';
+import { invoke } from '../bridge';
+import type {
+  PixelMapConfig,
+  PixelMapFixture,
+  WLEDEffect,
+  WLEDEffectAutomation,
+  WLEDGroup,
+  WLEDNormalizedPoint,
+} from '../types';
+import { calibrateWLEDPixels, fillWLEDTestPattern, sampleWLEDSourcePixels } from '../wled/mapping';
+import { applyWLEDEffects, fixtureLEDTarget, ledEffectBpm } from '../wled/effects';
+import {
+  buildPixelMapFrame,
+  fixtureIssues,
+  normalizePixelMapConfig,
+  resolveFixtureMapping,
+} from './fixtures';
+
+export interface PixelMapStats {
+  framesSent: number;
+  packetsSent: number;
+  framesDropped: number;
+  droppedBusy: number;
+  droppedRate: number;
+  sendErrors: number;
+  lastError: string | null;
+  fps: number;
+  universes: number;
+  sending: boolean;
+  /** Ticks skipped in the renderer because the previous frame was still in flight. */
+  skippedInFlight: number;
+}
+
+export const pixelMapStats = writable<PixelMapStats | null>(null);
+/** Lighting blackout. Session-only on purpose: a saved blackout would
+ *  reopen a show dark with nothing on screen saying why. */
+export const pixelMapBlackout = writable(false);
+
+interface FixtureState {
+  signature: string;
+  points: WLEDNormalizedPoint[];
+  sampleRadius: number;
+  source: Uint8Array;
+  effect: Uint8Array;
+  rgb: Uint8Array;
+  previous: Uint8Array;
+}
+
+const MIRROR_MAX_DIM = 384;
+const STATS_INTERVAL_MS = 250;
+
+let running = false;
+let rawConfig: PixelMapConfig | undefined;
+let config: PixelMapConfig | null = null;
+let lightingBlackout = false;
+let ledGroups: WLEDGroup[] = [];
+let ledEffects: WLEDEffect[] = [];
+let ledAutomation: WLEDEffectAutomation | undefined;
+let ledBpm = 120;
+let outputBlackout = false;
+let timer: ReturnType<typeof setInterval> | null = null;
+let timerFps = 0;
+let captureWanted = false;
+let lastCaptureAt = -Infinity;
+let tapCanvas: HTMLCanvasElement | null = null;
+let tapContext: CanvasRenderingContext2D | null = null;
+let latestFrame: ImageData | null = null;
+let inFlight = false;
+let sending = false;
+let skippedInFlight = 0;
+let lastStatsAt = 0;
+let lastErrorLogAt = 0;
+let unsubscribers: Array<() => void> = [];
+const fixtureStates = new Map<string, FixtureState>();
+
+function readyFixtures(): PixelMapFixture[] {
+  return (config?.fixtures ?? []).filter(fixture => fixture.enabled && fixtureIssues(fixture).length === 0);
+}
+
+function outputWanted(): boolean {
+  return running && !!config?.enabled && !lightingBlackout && !outputBlackout && readyFixtures().length > 0;
+}
+
+function contentWanted(): boolean {
+  return outputWanted() && readyFixtures().some(fixture => (fixture.testPattern ?? 'off') === 'off');
+}
+
+function publishStats(result: Partial<PixelMapStats> | undefined, force = false) {
+  const now = performance.now();
+  if (!force && now - lastStatsAt < STATS_INTERVAL_MS) return;
+  lastStatsAt = now;
+  pixelMapStats.set({
+    framesSent: result?.framesSent ?? 0,
+    packetsSent: result?.packetsSent ?? 0,
+    framesDropped: result?.framesDropped ?? 0,
+    droppedBusy: result?.droppedBusy ?? 0,
+    droppedRate: result?.droppedRate ?? 0,
+    sendErrors: result?.sendErrors ?? 0,
+    lastError: result?.lastError ?? null,
+    fps: result?.fps ?? 0,
+    universes: result?.universes ?? 0,
+    sending: result?.sending ?? false,
+    skippedInFlight,
+  });
+}
+
+function stopSending() {
+  if (!sending) return;
+  sending = false;
+  invoke('pixelmap_stop', {})
+    .then((result: { stats?: Partial<PixelMapStats> } | undefined) => publishStats(result?.stats, true))
+    .catch(() => { /* main process gone; nothing left to stop */ });
+}
+
+function releaseMirror() {
+  captureWanted = false;
+  lastCaptureAt = -Infinity;
+  latestFrame = null;
+}
+
+/**
+ * Called from the render loop right after a frame is drawn. Copies a small
+ * image of the canvas when a fixture needs picture content, no more often
+ * than the output rate.
+ */
+export function tapPixelMapFrame(source: HTMLCanvasElement): void {
+  if (!captureWanted || source.width < 1 || source.height < 1) return;
+  const now = performance.now();
+  const interval = 1000 / (config?.fps ?? 40);
+  if (now - lastCaptureAt < interval - 2) return;
+  lastCaptureAt = now;
+  if (!tapCanvas) {
+    tapCanvas = document.createElement('canvas');
+    tapContext = tapCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  if (!tapCanvas || !tapContext) return;
+  const scale = Math.min(1, MIRROR_MAX_DIM / Math.max(source.width, source.height));
+  const width = Math.max(1, Math.round(source.width * scale));
+  const height = Math.max(1, Math.round(source.height * scale));
+  if (tapCanvas.width !== width) tapCanvas.width = width;
+  if (tapCanvas.height !== height) tapCanvas.height = height;
+  tapContext.drawImage(source, 0, 0, width, height);
+  latestFrame = tapContext.getImageData(0, 0, width, height);
+}
+
+/** Start, re-time or stop the timer and the snapshot mirror to match the config. */
+function reconcile() {
+  const wanted = outputWanted();
+  const fps = config?.fps ?? 40;
+  if (wanted && (!timer || timerFps !== fps)) {
+    if (timer) clearInterval(timer);
+    timerFps = fps;
+    timer = setInterval(tick, Math.round(1000 / fps));
+  } else if (!wanted && timer) {
+    clearInterval(timer);
+    timer = null;
+    timerFps = 0;
+  }
+  if (!wanted) stopSending();
+
+  if (contentWanted()) captureWanted = true;
+  else releaseMirror();
+
+  const live = new Set((config?.fixtures ?? []).map(fixture => fixture.id));
+  for (const id of fixtureStates.keys()) if (!live.has(id)) fixtureStates.delete(id);
+}
+
+function captureMirror(): ImageData | null {
+  return latestFrame;
+}
+
+function ensureFixtureState(fixture: PixelMapFixture, aspect: number): FixtureState {
+  const signature = JSON.stringify([fixture.type, fixture.pixelCount, fixture.mapping, aspect.toFixed(4)]);
+  let state = fixtureStates.get(fixture.id);
+  if (state && state.signature === signature) return state;
+  const mapping = resolveFixtureMapping(fixture, aspect);
+  const length = mapping.points.length * 3;
+  const sameLength = state?.rgb.length === length;
+  state = {
+    signature,
+    points: mapping.points,
+    sampleRadius: mapping.sampleRadius,
+    source: sameLength ? state!.source : new Uint8Array(length),
+    effect: sameLength ? state!.effect : new Uint8Array(length),
+    rgb: sameLength ? state!.rgb : new Uint8Array(length),
+    previous: sameLength ? state!.previous : new Uint8Array(length),
+  };
+  fixtureStates.set(fixture.id, state);
+  return state;
+}
+
+/** Latest pixels sent for a fixture (RGB, physical order), for previews. */
+export function getPixelMapFixturePixels(fixtureId: string): Uint8Array | undefined {
+  return sending ? fixtureStates.get(fixtureId)?.rgb : undefined;
+}
+
+function tick() {
+  if (!outputWanted() || !config) return;
+  if (inFlight) {
+    skippedInFlight += 1;
+    return;
+  }
+  const now = performance.now();
+  const frame = contentWanted() ? captureMirror() : null;
+  const aspect = frame && frame.height > 0 ? frame.width / frame.height : 16 / 9;
+  const pixels = new Map<string, Uint8Array>();
+  for (const fixture of readyFixtures()) {
+    const state = ensureFixtureState(fixture, aspect);
+    const options = { brightness: fixture.brightness, gamma: fixture.gamma, calibration: fixture.calibration };
+    const pattern = fixture.testPattern ?? 'off';
+    if (pattern !== 'off') {
+      fillWLEDTestPattern(pattern, fixture.testColor, now, state.rgb, options, state.previous);
+    } else {
+      if (frame) {
+        sampleWLEDSourcePixels(frame.data, frame.width, frame.height, state.points, state.sampleRadius, state.source, fixture.samplingMode ?? 'average');
+      } else {
+        state.source.fill(0);
+      }
+      applyWLEDEffects(
+        state.source,
+        state.effect,
+        fixtureLEDTarget(fixture, state.points.length),
+        ledGroups,
+        ledEffects,
+        ledAutomation,
+        now,
+        ledBpm,
+      );
+      calibrateWLEDPixels(state.effect, state.rgb, options, state.previous);
+    }
+    state.previous.set(state.rgb);
+    pixels.set(fixture.id, state.rgb);
+  }
+
+  const packed = buildPixelMapFrame(config, pixels);
+  inFlight = true;
+  sending = true;
+  invoke('pixelmap_send_frame', packed)
+    .then((result: { ok?: boolean; error?: string; stats?: Partial<PixelMapStats> } | undefined) => {
+      inFlight = false;
+      publishStats(result?.stats);
+      if (result && result.ok === false && now - lastErrorLogAt > 5000) {
+        lastErrorLogAt = now;
+        console.warn('[PixelMap] send failed:', result.error);
+      }
+    })
+    .catch(() => { inFlight = false; });
+}
+
+let holders = 0;
+
+/** Run pixel-mapping output from the native composite. Returns teardown.
+ *  Ref-counted: output keeps running until every caller has torn down. */
+export function startPixelMapOutput(): () => void {
+  holders += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    holders = Math.max(0, holders - 1);
+    if (holders === 0) shutdown();
+  };
+  if (running) return release;
+  running = true;
+  unsubscribers = [
+    project.subscribe(current => {
+      ledGroups = current.wledGroups ?? [];
+      ledEffects = current.wledEffects ?? [];
+      ledAutomation = current.wledEffectAutomation;
+      if (current.pixelMap === rawConfig) return;
+      rawConfig = current.pixelMap;
+      config = rawConfig ? normalizePixelMapConfig(rawConfig) : null;
+      reconcile();
+    }),
+    settings.subscribe(current => {
+      const next = current.output?.blackout === true;
+      if (next === outputBlackout) return;
+      outputBlackout = next;
+      reconcile();
+    }),
+    audioStore.subscribe(state => { ledBpm = ledEffectBpm(state); }),
+    pixelMapBlackout.subscribe(value => {
+      if (value === lightingBlackout) return;
+      lightingBlackout = value;
+      reconcile();
+    }),
+  ];
+  return release;
+}
+
+function shutdown() {
+  if (!running) return;
+  running = false;
+  for (const unsubscribe of unsubscribers) unsubscribe();
+  unsubscribers = [];
+  reconcile();
+  releaseMirror();
+  fixtureStates.clear();
+  rawConfig = undefined;
+  config = null;
+  ledGroups = [];
+  ledEffects = [];
+  ledAutomation = undefined;
+  inFlight = false;
+  tapCanvas = null;
+  tapContext = null;
+}

@@ -65,6 +65,7 @@
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
   import DmxInputPanel from './DmxInputPanel.svelte';
+  import PixelMapPanel from './PixelMapPanel.svelte';
   import ShowControlSettings from './show/ShowControlSettings.svelte';
   let keyboardAddOpen = false;
   let keyboardAddPath = '';
@@ -316,7 +317,7 @@
     | 'output:display'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
-    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:dmxinput' | 'integrations:mediapipe'
+    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:pixelmap' | 'integrations:dmxinput' | 'integrations:mediapipe'
     | 'show:timecode' | 'show:schedule' | 'show:startup' | 'show:projectors'
     | 'ai';
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
@@ -345,6 +346,7 @@
       { id: 'integrations:osc', label: 'OSC' },
       { id: 'integrations:keyboard', label: 'Keyboard' },
       { id: 'integrations:wled', label: 'WLED' },
+      { id: 'integrations:pixelmap', label: 'Pixel Mapping' },
       { id: 'integrations:dmxinput', label: 'DMX Input' },
       { id: 'integrations:mediapipe', label: 'MediaPipe' },
     ]},
@@ -374,6 +376,7 @@
     keyboard: 'integrations:keyboard',
     wled: 'integrations:wled',
     mediapipe: 'integrations:mediapipe',
+    pixelmap: 'integrations:pixelmap',
     dmxinput: 'integrations:dmxinput',
     timecode: 'show:timecode',
     schedule: 'show:schedule',
@@ -2483,6 +2486,16 @@
         </section>
         {/if}
         <!-- AI Settings Section -->
+        {#if selectedSection === 'integrations:pixelmap'}
+        <section class="settings-section">
+          <h3>Art-Net and sACN Pixel Mapping</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Drive LED fixtures on Art-Net or sACN (E1.31) nodes from the final composite. Each fixture samples a region of the image, like a WLED controller, and is patched across universes automatically: 170 RGB or 128 RGBW pixels per universe, never splitting a pixel. Output runs at the frame rate you set, up to 60 fps. Turning output off, blackout, or disabling a fixture sends one black frame and then stops; sACN streams are terminated cleanly. LED FX from VJ mode (chase, strobe and the rest) run on fixtures too: target a fixture directly, or add it to an LED group below.
+          </p>
+          <PixelMapPanel />
+          <WLEDGroupsPanel />
+        </section>
+        {/if}
         {#if selectedSection === 'integrations:dmxinput'}
         <section class="settings-section">
           <h3>Art-Net and sACN DMX Input</h3>

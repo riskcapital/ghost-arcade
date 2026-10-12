@@ -34,8 +34,9 @@ function clamp(value: number, min = 0, max = 1): number {
   return Math.max(min, Math.min(max, value));
 }
 
-export function sanitizeWLEDCount(ledCount: number): number {
-  return Math.max(1, Math.min(MAX_LED_COUNT, Math.floor(ledCount) || 1));
+/** `maxCount` lets Art-Net / sACN fixtures reuse the layouts past WLED's 490. */
+export function sanitizeWLEDCount(ledCount: number, maxCount = MAX_LED_COUNT): number {
+  return Math.max(1, Math.min(maxCount, Math.floor(ledCount) || 1));
 }
 
 export function createDefaultWLEDMapping(): WLEDMappingConfig {
@@ -100,9 +101,10 @@ function gridPoints(
 export function buildWLEDBasePoints(
   ledCount: number,
   mapping: Partial<WLEDMappingConfig> | undefined,
-  sourceAspect = 16 / 9
+  sourceAspect = 16 / 9,
+  maxCount = MAX_LED_COUNT
 ): WLEDNormalizedPoint[] {
-  const count = sanitizeWLEDCount(ledCount);
+  const count = sanitizeWLEDCount(ledCount, maxCount);
   const mode = mapping?.mode ?? 'auto-grid';
   const axis = mapping?.axis ?? 'horizontal';
 
@@ -117,7 +119,7 @@ export function buildWLEDBasePoints(
   }
 
   if (mode === 'custom') {
-    const fallbackGrid = computeWLEDSamplingGrid(count, sourceAspect);
+    const fallbackGrid = computeWLEDSamplingGrid(count, sourceAspect, maxCount);
     const fallback = gridPoints(count, fallbackGrid.columns, 'horizontal', false);
     return Array.from({ length: count }, (_, index) =>
       sanitizePoint(mapping?.points?.[index] ?? fallback[index])
@@ -126,20 +128,21 @@ export function buildWLEDBasePoints(
 
   const columns = mode === 'matrix'
     ? Math.max(1, Math.min(count, Math.floor(mapping?.columns ?? 8) || 1))
-    : computeWLEDSamplingGrid(count, sourceAspect).columns;
+    : computeWLEDSamplingGrid(count, sourceAspect, maxCount).columns;
   return gridPoints(count, columns, axis, mapping?.serpentine ?? false);
 }
 
 export function resolveWLEDMapping(
   ledCount: number,
   mapping: Partial<WLEDMappingConfig> | undefined,
-  sourceAspect = 16 / 9
+  sourceAspect = 16 / 9,
+  maxCount = MAX_LED_COUNT
 ): ResolvedWLEDMapping {
-  const count = sanitizeWLEDCount(ledCount);
+  const count = sanitizeWLEDCount(ledCount, maxCount);
   const mode = mapping?.mode ?? 'auto-grid';
   const axis = mapping?.axis ?? 'horizontal';
   const region = resolveWLEDSourceRegion(mapping?.sourceRegion);
-  let points = buildWLEDBasePoints(count, mapping, sourceAspect);
+  let points = buildWLEDBasePoints(count, mapping, sourceAspect, maxCount);
 
   if (mapping?.flipX) points = points.map(point => ({ ...point, x: 1 - point.x }));
   if (mapping?.flipY) points = points.map(point => ({ ...point, y: 1 - point.y }));

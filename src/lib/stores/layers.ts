@@ -25,6 +25,8 @@ import { stage3dScene } from '../stage3d/store';
 import { getDefaultEffectParams } from '../renderer/effects';
 import { oscStore } from '../osc/oscStore';
 import { dmxStore } from '../dmx/dmxStore';
+import { createDefaultPixelMapConfig, normalizePixelMapConfig } from '../pixelmap/fixtures';
+import type { PixelMapConfig, PixelMapFixture } from '../types';
 import { showTimeline, setShowCompositionLoader } from './showTimeline';
 import { serializeShowControl, hydrateShowControl } from '../show/showControlPersistence';
 import { keyboardStore } from '../keyboard/keyboardStore';
@@ -3169,6 +3171,48 @@ void main() {
         ),
       }));
     },
+    // ========== Art-Net / sACN pixel mapping ==========
+    updatePixelMap(fields: Partial<PixelMapConfig>) {
+      update((project) => ({
+        ...project,
+        pixelMap: {
+          ...(project.pixelMap ?? createDefaultPixelMapConfig()),
+          ...fields,
+        },
+      }));
+    },
+    addPixelMapFixture(fixture: PixelMapFixture) {
+      update((project) => {
+        const pixelMap = project.pixelMap ?? createDefaultPixelMapConfig();
+        return { ...project, pixelMap: { ...pixelMap, fixtures: [...pixelMap.fixtures, fixture] } };
+      });
+    },
+    updatePixelMapFixture(fixtureId: string, fields: Partial<PixelMapFixture>) {
+      update((project) => {
+        if (!project.pixelMap) return project;
+        return {
+          ...project,
+          pixelMap: {
+            ...project.pixelMap,
+            fixtures: project.pixelMap.fixtures.map(fixture =>
+              fixture.id === fixtureId ? { ...fixture, ...fields, id: fixtureId } : fixture
+            ),
+          },
+        };
+      });
+    },
+    removePixelMapFixture(fixtureId: string) {
+      update((project) => {
+        if (!project.pixelMap) return project;
+        return {
+          ...project,
+          pixelMap: {
+            ...project.pixelMap,
+            fixtures: project.pixelMap.fixtures.filter(fixture => fixture.id !== fixtureId),
+          },
+        };
+      });
+    },
     addWLEDGroup(group: WLEDGroup) {
       update((project) => ({
         ...project,
@@ -4811,6 +4855,7 @@ void main() {
           // runtime refs to strip.
           surfaces: currentProject.surfaces || [],
           activeSurfaceId: currentProject.activeSurfaceId ?? null,
+          ...(currentProject.pixelMap ? { pixelMap: currentProject.pixelMap } : {}),
           // Multi-output slices snapshot — saved with the project so
           // the operator's projector / display layout survives a
           // reload. Read live from $settings.output because that's
@@ -5719,6 +5764,7 @@ void main() {
           svKeyboardPresets: (proj as any).svKeyboardPresets || [],
           surfaces: (proj as any).surfaces || [],
           activeSurfaceId: (proj as any).activeSurfaceId ?? null,
+          ...((proj as any).pixelMap ? { pixelMap: normalizePixelMapConfig((proj as any).pixelMap) } : {}),
         };
 
         set(importedProject);
