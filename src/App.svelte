@@ -2101,6 +2101,17 @@
   ) {
     destroyPhoneVisionSession(false);
     phoneVisionSessionId = sessionId;
+    // A feed from the phone app's Studio says what it is; a plain camera does not.
+    const feed = detail.studioFeed as any;
+    studioFeedLabel = 'Phone Camera';
+    if (feed) {
+      if (feed.schema !== 'ghost-mobile-feed' || feed.version !== 1 || !Object.hasOwn(STUDIO_FEED_LABELS, feed.kind) || feed.metricDepth !== false || feed.content !== 'visual-rgba') {
+        sendPhoneVisionStatus('failed', { error: 'Unsupported Studio feed.' });
+        phoneVisionSessionId = null;
+        return;
+      }
+      studioFeedLabel = STUDIO_FEED_LABELS[feed.kind];
+    }
     const facingMode = phoneVisionFacingMode(detail);
     const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
       ? {
@@ -2396,6 +2407,13 @@
     ws.send(JSON.stringify(payload));
   }
 
+  // What a visual feed from the phone app's Studio is called in the media library.
+  const STUDIO_FEED_LABELS: Record<string, string> = {
+    rear: 'Mobile Rear Camera', front: 'Mobile Selfie', dual: 'Mobile Dual Camera', depth: 'Mobile Depth Map',
+    contours: 'Mobile Depth Contours', points: 'Mobile Point Cloud', interactive: 'Interactive Studio',
+  };
+  let studioFeedLabel = 'Phone Camera';
+
   function sendPhoneVisionStatus(status: string, detail: Record<string, unknown> = {}) {
     const payload = {
       type: 'phone_vision_status',
@@ -2450,7 +2468,7 @@
     const existing = get(mediaLibrary).find(item => item.id === PHONE_CAMERA_MEDIA_ID);
     const mediaItem = {
       id: PHONE_CAMERA_MEDIA_ID,
-      name: 'Phone Camera',
+      name: studioFeedLabel,
       src: phoneVisionMediaSrc(sessionId),
       type: 'video' as const,
       videoElement: video,
@@ -2462,10 +2480,10 @@
       ...state,
       status: 'live',
       sessionId,
-      label: 'Phone Camera',
+      label: studioFeedLabel,
       error: '',
     }));
-    sendPhoneVisionStatus('live');
+    sendPhoneVisionStatus('live', { sourceReady: true, label: studioFeedLabel });
   }
 
   function phoneCameraMediaSource(emitError = true): MediaSource | null {
@@ -2835,6 +2853,13 @@
         // reflects reality from the moment it mounts (rather than waiting
         // for the user to toggle it for the first time).
         syncOutputFreeze(get(outputFrozen));
+        break;
+
+      // The phone app asks what this desktop can take from its Studio. This
+      // line of the app receives visual feeds as video; it has no built-in
+      // Interactive layer, so the phone renders and streams that itself.
+      case 'studio_capabilities_request':
+        sendPhoneVisionSignal({ type: 'studio_capabilities', version: 1, visualFeeds: true, metricDepth: false, nativeInteractive: false });
         break;
 
       case 'phone_camera_offer': {
