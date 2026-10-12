@@ -665,6 +665,9 @@ class MidiRouter {
       case 'mute':
         if (value > 0) vjClipLauncher.toggleLayerMute(layerIndex, bank);
         break;
+      case 'autopilot':
+        if (value > 0) vjClipLauncher.toggleLayerAutopilot(layerIndex, bank);
+        break;
       case 'shader': {
         // parts: ['vj', '0', 'shader', 'speed']
         const shaderParam = parts[3];

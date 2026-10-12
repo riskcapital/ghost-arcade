@@ -25,6 +25,7 @@ import { stage3dScene } from '../stage3d/store';
 import { getDefaultEffectParams } from '../renderer/effects';
 import { oscStore } from '../osc/oscStore';
 import { dmxStore } from '../dmx/dmxStore';
+import { normalizeAutopilot } from './vjAutopilot';
 import { createDefaultPixelMapConfig, normalizePixelMapConfig } from '../pixelmap/fixtures';
 import type { PixelMapConfig, PixelMapFixture } from '../types';
 import { showTimeline, setShowCompositionLoader } from './showTimeline';
@@ -4749,6 +4750,8 @@ void main() {
         blendMode: ls.blendMode,
         solo: ls.solo,
         mute: ls.mute,
+        autopilot: normalizeAutopilot(ls.autopilot),
+        autopilotPaused: ls.autopilotPaused === true,
         activeColumn: ls.activeColumn,
         activeClip: exportClip(ls.activeClip),
         effects: ls.effects,
@@ -5447,6 +5450,8 @@ void main() {
             blendMode: ls.blendMode || 'normal',
             solo: ls.solo || false,
             mute: ls.mute || false,
+            autopilot: normalizeAutopilot(ls.autopilot),
+            autopilotPaused: ls.autopilotPaused === true,
             activeColumn: ls.activeColumn ?? null,
             activeClip: importClip(ls.activeClip),
             effects: ls.effects || [],
@@ -5512,6 +5517,8 @@ void main() {
               blendMode: ls.blendMode || 'normal',
               solo: ls.solo || false,
               mute: ls.mute || false,
+              autopilot: normalizeAutopilot(ls.autopilot),
+              autopilotPaused: ls.autopilotPaused === true,
               activeColumn: ls.activeColumn ?? null,
               activeClip: importClip(ls.activeClip),
               effects: ls.effects || [],

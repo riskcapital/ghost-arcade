@@ -13,6 +13,7 @@ import { hasDecodedVideoFrame } from '../renderer/videoReadiness';
 import { keyframeTimeline } from './keyframeTimeline';
 import { parseISF } from '../isf/parser';
 import { vjLayerSequencer } from './vjLayerSequencer';
+import { VJAutopilotClock, normalizeAutopilot, type VJAutopilot, type AutopilotSample } from './vjAutopilot';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 
 // Cache parsed ISF shader inputs per shader code to avoid re-parsing every
@@ -193,6 +194,9 @@ export interface VJLayerState {
   activeColumn: number | null; // Which column is currently active (null = none) - used for visual indication in current block
   activeClip: VJClip | null; // The actual clip playing on this layer (persists across block switches)
   effects: Effect[];
+  /** Advance this row on its own after a number of beats or video loops. */
+  autopilot?: VJAutopilot;
+  autopilotPaused?: boolean;
 }
 
 // Convenience: a deck identifier. Bank A is the default deck and is always
@@ -1508,6 +1512,23 @@ function createVJClipLauncherStore() {
     },
 
     // Set layer opacity for the given deck
+    toggleLayerAutopilot(layerIndex: number, deck: VJDeck = 'A') {
+      update(state => {
+        const rows = pickLayerStates(state, deck).map((row, index) => index === layerIndex
+          ? { ...row, autopilot: row.autopilot ?? { target: 'next' as const, unit: 'beats' as const, count: 4 },
+              autopilotPaused: row.autopilot ? !row.autopilotPaused : false } : row);
+        return withDeck(state, deck, rows);
+      });
+    },
+
+    setLayerAutopilot(layerIndex: number, value: VJAutopilot | undefined, deck: VJDeck = 'A') {
+      update(state => {
+        const rows = pickLayerStates(state, deck).map((row, index) => index === layerIndex
+          ? { ...row, autopilot: normalizeAutopilot(value), autopilotPaused: false } : row);
+        return withDeck(state, deck, rows);
+      });
+    },
+
     setLayerOpacity(layerIndex: number, opacity: number, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
@@ -2781,6 +2802,90 @@ function createVJClipLauncherStore() {
 }
 
 export const vjClipLauncher = createVJClipLauncherStore();
+
+// ─── Autopilot ───────────────────────────────────────────────────────────
+// One scheduler for both decks; dormant when no row is following.
+const autopilotClock = new VJAutopilotClock();
+let autopilotFrame: number | null = null;
+function autopilotTempo(): number {
+  const audio = getStore(audioStore) as { manualBPM?: number; bpm?: number };
+  return (audio.manualBPM ?? 0) > 0 ? audio.manualBPM! : (audio.bpm ?? 0) > 0 ? audio.bpm! : 120;
+}
+function autopilotSamples(state: VJClipLauncherState): AutopilotSample[] {
+  // Output and helper windows mirror the deck; they must never become
+  // another show clock.
+  if (typeof window !== 'undefined' && new URLSearchParams(window.location?.search ?? '').has('mode')) return [];
+  if (!state.isLive || !state.isOpen || state.stoppedAll) return [];
+  const bpm = autopilotTempo();
+  const samples: AutopilotSample[] = [];
+  for (const deck of ['A', 'B'] as const) {
+    if (deck === 'B' && !state.crossfaderEnabled) continue;
+    pickLayerStates(state, deck).forEach((row, index) => {
+      const clip = row.activeClip;
+      const config = normalizeAutopilot(row.autopilot);
+      if (!clip || !config || row.autopilotPaused) return;
+      // Presets only fire in MAP, where rows may mix presets and clips.
+      const ids = (pickGrid(state, deck)[index] ?? []).map(cell =>
+        cell && (state.mapMode || cell.type !== 'preset') ? cell.id : null);
+      const current = ids.indexOf(clip.id);
+      // Don't jump from a clip left over from another block into unrelated content.
+      if (current < 0) return;
+      const pending = state.pendingTriggers.some(p => p.bank === deck && p.layerIndex === index);
+      const video = clip.type === 'video' ? clip.videoElement : undefined;
+      const duration = video && Number.isFinite(video.duration) ? video.duration : 0;
+      const trimStart = clip.trimStart ?? 0;
+      const trimEnd = clip.trimEnd ?? 1;
+      const span = Math.max(0, trimEnd - trimStart);
+      samples.push({
+        key: `${deck}:${index}`,
+        scope: `${state.activeBlockId}:${deck}:${index}`,
+        token: `${state.activeBlockId}:${JSON.stringify([clip.id, config, trimStart, trimEnd])}`,
+        config, ids, current,
+        running: !pending,
+        bpm,
+        rate: clip.playbackRate ?? 1,
+        rangeSeconds: duration * span,
+        initialLoopProgress: video && duration > 0 && span > 0
+          ? Math.max(0, Math.min(1, (video.currentTime / duration - trimStart) / span))
+          : 0,
+        video: !!video && duration > 0,
+        once: clip.playbackMode === 'once',
+      });
+    });
+  }
+  return samples;
+}
+function scheduleAutopilot() {
+  if (autopilotFrame !== null || !autopilotClock.active || typeof requestAnimationFrame === 'undefined') return;
+  autopilotFrame = requestAnimationFrame(() => {
+    autopilotFrame = null;
+    autopilotClock.sync(autopilotSamples(get(vjClipLauncher)), performance.now());
+    for (const action of autopilotClock.takeDue()) {
+      const current = autopilotSamples(get(vjClipLauncher)).find(s => s.key === action.key);
+      if (!current?.running || current.token !== action.token) continue;
+      const [deck, row] = action.key.split(':');
+      vjClipLauncher.triggerClip(Number(row), action.column, deck as VJDeck);
+    }
+    scheduleAutopilot();
+  });
+}
+function syncAutopilot() {
+  autopilotClock.sync(autopilotSamples(get(vjClipLauncher)), performance.now());
+  if (!autopilotClock.active && autopilotFrame !== null && typeof cancelAnimationFrame !== 'undefined') {
+    cancelAnimationFrame(autopilotFrame);
+    autopilotFrame = null;
+  }
+  scheduleAutopilot();
+}
+vjClipLauncher.subscribe(syncAutopilot);
+// Settle the interval at the old tempo before following a new one.
+let autopilotLastBpm = 0;
+audioStore.subscribe(() => {
+  const bpm = autopilotTempo();
+  if (bpm === autopilotLastBpm) return;
+  autopilotLastBpm = bpm;
+  syncAutopilot();
+});
 
 // Clip sound follows the deck: whatever is playing on a row is what is heard.
 if (typeof window !== 'undefined') {

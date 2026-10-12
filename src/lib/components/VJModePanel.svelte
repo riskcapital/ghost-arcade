@@ -1,5 +1,6 @@
 <script lang="ts">
   import MacroAssignmentControl from './MacroAssignmentControl.svelte';
+  import VJLayerSettings from './VJLayerSettings.svelte';
   import EffectChainPresets from './EffectChainPresets.svelte';
   // VJ Mode Panel - Layers/Columns Grid
   // Uses vjClipLauncher store for state management
@@ -5123,6 +5124,7 @@
                       onclick={(e) => { e.stopPropagation(); handleStopLayer(layerIdx, bank); }}
                       title="Stop layer (Deck {bank})"
                     >■</button>
+                    <VJLayerSettings layer={states[layerIdx]} index={layerIdx} deck={bank} columns={$vjClipLauncher.numColumns} />
                   </div>
                 </div>
                 <input
