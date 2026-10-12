@@ -65,6 +65,7 @@
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
   import DmxInputPanel from './DmxInputPanel.svelte';
+  import { mcpStore } from '../mcp/mcpStore';
   import PixelMapPanel from './PixelMapPanel.svelte';
   import ShowControlSettings from './show/ShowControlSettings.svelte';
   let keyboardAddOpen = false;
@@ -2086,6 +2087,340 @@
               </p>
               <code>/ghost/vj/a/layer/1/clip/1</code>
               <span>→ Deck A, layer 1, clip 1</span>
+            </div>
+            <button class="osc-add-btn template" onclick={() => oscStore.installVjTemplate()}>
+              Install template
+            </button>
+          </div>
+
+          <h4 style="margin-top: 14px;">Bindings ({$oscStore.bindings.length})</h4>
+          <p class="settings-hint" style="margin-bottom: 8px;">
+            Each row maps an OSC address to a param path (the same path strings the MIDI router uses, e.g. <code>vj:0:opacity</code>). Trigger bindings accept numeric/boolean values, argument-less messages, and OSC Impulse.
+          </p>
+
+          {#if $oscStore.bindings.length === 0}
+            <div class="osc-empty">
+              No bindings yet. Add one manually, or click <strong>+ Learn</strong>, type a target path, and send an OSC message from your controller.
+            </div>
+          {:else}
+            <div class="osc-bindings">
+              <div class="osc-binding-head">
+                <span>OSC Address</span>
+                <span>Param Path</span>
+                <span>Mode</span>
+                <span>Min</span>
+                <span>Max</span>
+                <span>Inv</span>
+                <span></span>
+              </div>
+              {#each $oscStore.bindings as b (b.id)}
+                <div class="osc-binding-row">
+                  <input
+                    type="text"
+                    value={b.address}
+                    onchange={(e) => oscStore.updateBinding(b.id, { address: (e.target as HTMLInputElement).value })}
+                    placeholder="/path/to/control"
+                  />
+                  <input
+                    type="text"
+                    value={b.path}
+                    onchange={(e) => oscStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
+                    placeholder="vj:0:opacity"
+                    class:invalid-path={!validateControlPath(b.path).valid}
+                    aria-invalid={!validateControlPath(b.path).valid}
+                    title={validateControlPath(b.path).reason ?? `Valid path: ${normalizeControlPath(b.path)}`}
+                  />
+                  <select
+                    value={b.mode ?? 'auto'}
+                    onchange={(e) => {
+                      const value = (e.target as HTMLSelectElement).value;
+                      oscStore.updateBinding(b.id, {
+                        mode: value === 'auto' ? undefined : value as 'continuous' | 'trigger',
+                      });
+                    }}
+                    title="Auto infers button-style paths; use Trigger for OSC bang/Impulse messages"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="continuous">Control</option>
+                    <option value="trigger">Trigger</option>
+                  </select>
+                  <input
+                    type="number" step="any"
+                    value={b.sourceMin}
+                    onchange={(e) => oscStore.updateBinding(b.id, { sourceMin: parseFloat((e.target as HTMLInputElement).value) })}
+                  />
+                  <input
+                    type="number" step="any"
+                    value={b.sourceMax}
+                    onchange={(e) => oscStore.updateBinding(b.id, { sourceMax: parseFloat((e.target as HTMLInputElement).value) })}
+                  />
+                  <label class="osc-inv">
+                    <input
+                      type="checkbox"
+                      checked={b.invert}
+                      onchange={(e) => oscStore.updateBinding(b.id, { invert: (e.target as HTMLInputElement).checked })}
+                    />
+                  </label>
+                  <button
+                    class="osc-binding-del"
+                    onclick={() => oscStore.removeBinding(b.id)}
+                    title="Remove binding"
+                  >×</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <div class="osc-add-row">
+            <button
+              class="osc-add-btn"
+              onclick={() => oscStore.addBinding({ address: '/ghost/vj/master', argIndex: 0, path: 'vj:master:opacity', sourceMin: 0, sourceMax: 1, invert: false, mode: 'continuous' })}
+            >+ Add binding</button>
+            <button
+              class="osc-add-btn learn"
+              class:active={oscLearnOpen}
+              onclick={beginOscLearn}
+              title="Wait for the next OSC message and bind it to a param path"
+            >+ Learn binding</button>
+          </div>
+
+          {#if oscLearnOpen}
+            <div class="osc-learn-form">
+              <label for="osc-learn-path">Target parameter</label>
+              <div class="osc-learn-controls">
+                <input
+                  id="osc-learn-path"
+                  type="text"
+                  list="osc-path-examples"
+                  bind:value={oscLearnPath}
+                  class:invalid-path={!validateControlPath(oscLearnPath).valid}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') confirmOscLearn();
+                    if (e.key === 'Escape') oscLearnOpen = false;
+                  }}
+                />
+                <button class="osc-add-btn learn" disabled={!validateControlPath(oscLearnPath).valid} onclick={confirmOscLearn}>
+                  Listen
+                </button>
+                <button class="osc-add-btn" onclick={() => oscLearnOpen = false}>Cancel</button>
+              </div>
+              {#if validateControlPath(oscLearnPath).valid}
+                <span class="osc-path-valid">Routes to <code>{normalizeControlPath(oscLearnPath)}</code></span>
+              {:else}
+                <span class="osc-path-error">{validateControlPath(oscLearnPath).reason}</span>
+              {/if}
+              <datalist id="osc-path-examples">
+                {#each CONTROL_PATH_EXAMPLES as example}
+                  <option value={example.path}>{example.label}</option>
+                {/each}
+              </datalist>
+            </div>
+          {/if}
+
+          <details class="osc-path-reference">
+            <summary>Parameter path reference</summary>
+            <div class="osc-path-grid">
+              {#each CONTROL_PATH_EXAMPLES as example}
+                <button type="button" onclick={() => { oscLearnPath = example.path; oscLearnOpen = true; }}>
+                  <code>{example.path}</code>
+                  <span>{example.label}</span>
+                </button>
+              {/each}
+            </div>
+            <p>Legacy paths such as <code>vj:layer:0:opacity</code> are accepted and normalized automatically.</p>
+          </details>
+          <!-- MCP. Off by default and never auto-enabled: this is an open
+               port that can black out the output mid-show, so switching it on
+               should be a decision, not a convenience. -->
+          <div class="setting-row" style="margin-top: 14px;">
+            <div class="setting-label">
+              <span class="label-text">AI control (MCP)</span>
+              <span class="label-hint">
+                Let an AI client such as Claude Desktop operate Ghost Arcade: fire
+                clips, move faders, launch columns, and look at the output to check
+                the result. Listens on this machine only, and every request needs
+                the token below.
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$mcpStore.enabled}
+                onchange={(e) => mcpStore.setEnabled((e.target as HTMLInputElement).checked)}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          {#if $mcpStore.enabled}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Port</span>
+                <span class="label-hint">Bound to 127.0.0.1. Nothing outside this machine can reach it.</span>
+              </div>
+              <input
+                type="number" min="1" max="65535" step="1"
+                class="port-input"
+                value={$mcpStore.port}
+                onchange={(e) => mcpStore.setPort(parseInt((e.target as HTMLInputElement).value) || 7420)}
+              />
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Status</span>
+                <span class="label-hint">
+                  {#if $mcpStore.running}
+                    <span class="osc-status-dot listening"></span>
+                    Serving on http://127.0.0.1:{$mcpStore.port}/
+                  {:else if $mcpStore.lastError}
+                    <span class="osc-status-dot error"></span>
+                    {$mcpStore.lastError}
+                  {:else}
+                    <span class="osc-status-dot idle"></span>
+                    Not running
+                  {/if}
+                </span>
+              </div>
+            </div>
+
+            {#if $mcpStore.running && $mcpStore.token}
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="label-text">Token</span>
+                  <span class="label-hint">
+                    Send as <code>Authorization: Bearer &lt;token&gt;</code>. A new one is
+                    issued each time this is switched on, so toggling it off and back
+                    on revokes whatever a client is holding.
+                  </span>
+                </div>
+                <button
+                  class="osc-add-btn"
+                  onclick={() => navigator.clipboard?.writeText($mcpStore.token ?? '')}
+                >Copy token</button>
+              </div>
+            {/if}
+
+            {#if $mcpStore.recentCalls.length > 0}
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="label-text">Recent calls</span>
+                  <span class="label-hint">
+                    {#each $mcpStore.recentCalls.slice(0, 5) as call (call.seq)}
+                      <span class="mcp-call" class:failed={!call.ok}>{call.name}</span>
+                    {/each}
+                  </span>
+                </div>
+              </div>
+            {/if}
+          {/if}
+
+          <!-- Output / feedback. Receive-only OSC leaves a surface guessing:
+               a fader moved in the app never reaches the hardware. Sending
+               state back is what makes a layout track the app. -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Send feedback</span>
+              <span class="label-hint">
+                Mirror app state back to your controller, so faders follow and clip
+                buttons light when their clip is live. Uses the bindings below:
+                whatever address you map, we answer on.
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$oscStore.outputEnabled}
+                onchange={(e) => oscStore.setOutputEnabled((e.target as HTMLInputElement).checked)}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          {#if $oscStore.outputEnabled}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Send to</span>
+                <span class="label-hint">
+                  Host and port your controller listens on. 127.0.0.1 for an app on
+                  this machine; use the tablet's IP for TouchOSC over Wi-Fi.
+                </span>
+              </div>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <input
+                  type="text"
+                  class="port-input"
+                  style="width: 120px;"
+                  value={$oscStore.outputHost}
+                  onchange={(e) => oscStore.setOutputTarget((e.target as HTMLInputElement).value, $oscStore.outputPort)}
+                />
+                <input
+                  type="number" min="1" max="65535" step="1"
+                  class="port-input"
+                  value={$oscStore.outputPort}
+                  onchange={(e) => oscStore.setOutputTarget($oscStore.outputHost, parseInt((e.target as HTMLInputElement).value) || 9000)}
+                />
+              </div>
+            </div>
+          {/if}
+
+          <!-- Live status row — listening dot + error string. -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Status</span>
+              <span class="label-hint">
+                {#if $oscStore.listening}
+                  <span class="osc-status-dot listening" title="Listening"></span>
+                  Listening on UDP {$oscStore.port}
+                {:else if $oscStore.lastError}
+                  <span class="osc-status-dot error" title="Error"></span>
+                  {$oscStore.lastError}
+                {:else}
+                  <span class="osc-status-dot idle"></span>
+                  Not listening
+                {/if}
+              </span>
+            </div>
+          </div>
+
+          {#if $oscStore.lastMessage}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Last message</span>
+                <span class="label-hint">
+                  <code class="osc-last">{$oscStore.lastMessage.address}</code>
+                  <span style="color: var(--text-muted, #888);"> · args: </span>
+                  <code class="osc-last">{JSON.stringify($oscStore.lastMessage.args)}</code>
+                  <span style="color: #555;"> · from {$oscStore.lastMessage.from}</span>
+                </span>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Learn state — when the user is mid-learn, show the
+               pending target + a cancel button. The next OSC message
+               will be bound to that path automatically. -->
+          {#if $oscStore.learnTarget}
+            <div class="osc-learn-banner">
+              <span class="osc-learn-pulse"></span>
+              <span>Listening for OSC message to bind <strong>{$oscStore.learnTarget.label ?? $oscStore.learnTarget.path}</strong> …</span>
+              <button class="osc-learn-cancel" onclick={() => oscStore.cancelLearn()}>Cancel</button>
+            </div>
+          {/if}
+
+          <div class="osc-template">
+            <div>
+              <strong>VJ / Pro DJ Link OSC template</strong>
+              <p>
+                Installs A/B clip and column triggers sized to your current deck,
+                plus master, stop-all, and crossfader controls. Send from Beat Link
+                Trigger, Open Beat Control, a DAW, or any OSC controller. Re-run it
+                after adding layers or columns to cover the new cells.
+              </p>
+              <code>/ghost/vj/a/layer/1/clip/1</code>
+              <span>→ Deck A, layer 1, clip 1</span>
+              <code>/ghost/vj/a/column/1</code>
+              <span>→ Deck A, fires column 1 across every layer at once</span>
             </div>
             <button class="osc-add-btn template" onclick={() => oscStore.installVjTemplate()}>
               Install template

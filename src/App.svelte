@@ -143,6 +143,8 @@
   import { midiManager } from './lib/midi/midiManager';
   import { oscStore } from './lib/osc/oscStore';
   import { dmxStore } from './lib/dmx/dmxStore';
+  import { mcpStore } from './lib/mcp/mcpStore';
+  import { setMcpFrameSource } from './lib/mcp/mcpTools';
   import ShowTimeline from './lib/components/ShowTimeline.svelte';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
@@ -1000,6 +1002,10 @@
     void oscStore.initialize();
     // DMX input comes back only if it was switched on on this machine.
     void dmxStore.initialize();
+    // Restores the AI control server if it was enabled last session, and
+    // attaches the tool bridge either way.
+    setMcpFrameSource(() => canvasComponent?.getCanvas?.() ?? null);
+    void mcpStore.initialize();
 
     // Rejoin the Ableton Link session if the user had it enabled last
     // run (no-op otherwise; lazy — doesn't load the native addon until
