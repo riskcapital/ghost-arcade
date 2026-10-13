@@ -515,6 +515,114 @@
       "enabled": true
     },
     {
+      "file": "STAGE-BeamRig.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "beams",
+        "moving heads",
+        "haze",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-ColourWash.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "wash",
+        "par",
+        "colour",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-LightCurtain.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "beams",
+        "curtain",
+        "acl",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-GoboSpots.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "gobo",
+        "spots",
+        "prism",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-Blinders.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "blinders",
+        "lamps",
+        "matrix",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-LiquidSky.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "laser",
+        "liquid sky",
+        "haze",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "crystal-dimension.fs",
       "tier": "demo",
       "category": "Generator",
