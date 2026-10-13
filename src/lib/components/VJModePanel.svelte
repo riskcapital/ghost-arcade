@@ -23,7 +23,7 @@
   import { get } from 'svelte/store';
   import { prepareVideoImport } from '../video/videoImport';
   import { mediaLibrary, type MediaItem } from '../stores/media';
-  import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
+  import { vjClipLauncher, MAX_VJ_COLUMNS, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
@@ -1559,9 +1559,10 @@
   }
 
   function placeMediaTrayPayloadOnLayer(payload: MediaTrayDropPayload, layerIndex: number, bank: VJDeck): boolean {
-    const column = findNextEmptyVJColumn(layerIndex, bank);
+    // A full row grows a column rather than refusing the drop.
+    const column = findNextEmptyVJColumn(layerIndex, bank) ?? nextRowColumn(layerIndex, -1, bank);
     if (column === null) {
-      showToast('No empty slot on that VJ layer.', 'warning');
+      showToast('That VJ layer has no more columns.', 'warning');
       return true;
     }
 
@@ -3018,30 +3019,39 @@
     };
   }
 
+  /**
+   * The next column on a row for a clip dropped as part of a batch: the first
+   * empty column to the right of `after`, else an empty one to its left, else
+   * a new column on the end. Null only when the deck is at its column limit.
+   */
+  function nextRowColumn(layerIndex: number, after: number, bank: VJDeck): number | null {
+    const state = get(vjClipLauncher);
+    const row = (bank === 'B' ? state.bankBClipGrid : state.clipGrid)[layerIndex] ?? [];
+    for (let column = after + 1; column < state.numColumns; column++) if (!row[column]) return column;
+    for (let column = 0; column < after; column++) if (!row[column]) return column;
+    if (state.numColumns >= MAX_VJ_COLUMNS) return null;
+    vjClipLauncher.addColumn();
+    return state.numColumns;
+  }
+
   // Finder / Explorer files can go straight to the performance deck. The
-  // target cell receives the first supported file; additional files fill
-  // empty cells in deck order. Every file also enters the Media Library.
+  // target cell receives the first supported file and the rest fill along
+  // the same row, adding columns when the row runs out. A batch never spills
+  // onto another layer. Every file also enters the Media Library.
   // (Async because the native import path awaits video loadeddata before
   // the clip element is deck-ready.)
   async function importDroppedFilesToDeck(files: File[], layerIndex: number, columnIndex: number, bank: VJDeck) {
-    const grid = deckGrid(bank);
-    const targets = [
-      { layer: layerIndex, column: columnIndex },
-      ...layerIndices.flatMap((layer) => columnIndices.map((column) => ({ layer, column })))
-        .filter(({ layer, column }) =>
-          !(layer === layerIndex && column === columnIndex) && !grid[layer]?.[column]
-        ),
-    ];
     let placed = 0;
+    let column: number | null = columnIndex;
     for (const file of files) {
       const item = await vjAddMediaFile(file);
       if (!item) continue;
-      const target = targets[placed];
-      if (!target) {
-        showToast('Media imported, but there are no more empty VJ deck slots.', 'warning');
+      if (placed > 0) column = nextRowColumn(layerIndex, column ?? columnIndex, bank);
+      if (column === null) {
+        showToast('Media imported, but that layer has no more columns.', 'warning');
         break;
       }
-      vjClipLauncher.setClip(target.layer, target.column, createVJClipFromMediaItem(item), bank);
+      vjClipLauncher.setClip(layerIndex, column, createVJClipFromMediaItem(item), bank);
       placed += 1;
     }
     if (placed > 0) {
@@ -3788,6 +3798,17 @@
     if (payload) {
       placeMediaTrayPayloadOnLayer(payload, layerIndex, bank);
       draggedLayerIndex = null;
+      dragOverLayerIndex = null;
+      return;
+    }
+
+    // Files dropped on the row itself, not on a cell: start at its first
+    // empty column and fill along it.
+    const rowFiles = Array.from(e.dataTransfer?.files ?? []);
+    if (rowFiles.length > 0 && draggedLayerIndex === null) {
+      const start = findNextEmptyVJColumn(layerIndex, bank) ?? nextRowColumn(layerIndex, -1, bank);
+      if (start !== null) void importDroppedFilesToDeck(rowFiles, layerIndex, start, bank);
+      else showToast('That VJ layer has no more columns.', 'warning');
       dragOverLayerIndex = null;
       return;
     }

@@ -4238,6 +4238,10 @@ struct App {
     link_clock: Option<(f64, f64, Instant)>,
     link_phase_anchors: HashMap<String, Value>,
     deferred_source_releases: HashSet<String>,
+    /// Sources that lost a layer during the command batch being applied.
+    /// A row reorder rebinds every row in one batch, so a source can be
+    /// without a layer for a moment before a later command gives it one.
+    batch_orphan_candidates: Option<Vec<String>>,
     native_video_decode_pending: HashSet<String>,
     native_video_decode_failed: HashSet<String>,
     native_video_streams: HashMap<String, NativeVideoStreamState>,
@@ -4607,6 +4611,7 @@ impl App {
             link_clock: None,
             link_phase_anchors: HashMap::new(),
             deferred_source_releases: HashSet::new(),
+            batch_orphan_candidates: None,
             native_video_decode_pending: HashSet::new(),
             native_video_decode_failed: HashSet::new(),
             native_video_streams: HashMap::new(),
@@ -6827,6 +6832,10 @@ impl App {
             self.stats.queued_commands_after_drain = 0;
         }
 
+        let owns_orphan_batch = self.batch_orphan_candidates.is_none();
+        if owns_orphan_batch {
+            self.batch_orphan_candidates = Some(Vec::new());
+        }
         for command in commands {
             let command_type = command
                 .get("type")
@@ -7013,6 +7022,11 @@ impl App {
                 }
             }
             applied = applied.saturating_add(1);
+        }
+        if owns_orphan_batch {
+            for source_id in self.batch_orphan_candidates.take().unwrap_or_default() {
+                self.release_media_source_if_orphaned(&source_id);
+            }
         }
         self.stats.commands_applied = self.stats.commands_applied.saturating_add(applied);
         self.stats.commands_dropped = self.stats.commands_dropped.saturating_add(dropped);
@@ -15647,10 +15661,10 @@ impl App {
         if let Some(previous) = previous_source_id
             && new_source_id.as_deref() != Some(previous.as_str())
         {
-            self.release_media_source_if_orphaned(&previous);
+            self.release_replaced_media_source(previous);
         }
         if let Some(previous) = previous_effect_input {
-            self.release_media_source_if_orphaned(&previous);
+            self.release_replaced_media_source(previous);
         }
         if effective_source_type == "image" {
             if let (Some(source_id), Some(uri)) = (source_id_for_decode, uri_for_decode.as_deref())
@@ -15759,6 +15773,16 @@ impl App {
     fn release_source_frame_slot(&mut self, source_id: &str) {
         if let Some(slot) = self.source_frame_slots.remove(source_id) {
             if let Some(renderer) = &self.renderer { renderer.hap_converter.release(slot); }
+        }
+    }
+
+    /// Release a source a layer just let go of. Inside a command batch the
+    /// check waits for the end of the batch, where a later bind may have
+    /// given the source a new layer.
+    fn release_replaced_media_source(&mut self, source_id: String) {
+        match self.batch_orphan_candidates.as_mut() {
+            Some(candidates) => candidates.push(source_id),
+            None => self.release_media_source_if_orphaned(&source_id),
         }
     }
 
