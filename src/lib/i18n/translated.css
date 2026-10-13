@@ -1,0 +1,36 @@
+/* Room for longer words when the interface is not in English. */
+html:not([lang='en']) .btn-add,
+html:not([lang='en']) .status-pill,
+html:not([lang='en']) .toolbar button {
+  white-space: nowrap;
+}
+html:not([lang='en']) .add-layer-wrapper .btn-add {
+  padding-left: 10px;
+  padding-right: 10px;
+  font-size: 0.92em;
+}
+html:not([lang='en']) .property-row > label,
+html:not([lang='en']) .setting-row .label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html:not([lang='en']) .property-row > label {
+  white-space: nowrap;
+}
+html:not([lang='en']) .left-tab,
+html:not([lang='en']) .browse-library-btn,
+html:not([lang='en']) .add-files-btn {
+  white-space: nowrap;
+}
+html:not([lang='en']) .left-tab {
+  padding-left: 8px;
+  padding-right: 8px;
+  gap: 5px;
+  font-size: 0.86em;
+}
+html:not([lang='en']) .browse-library-btn {
+  font-size: 0.82em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

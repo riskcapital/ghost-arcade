@@ -432,6 +432,7 @@
   import { startAutoEngine, stopAutoEngine } from './lib/audio/autoEngine';
   import { linesStore, linesDrawingModeForTool } from './lib/stores/lines';
   import { startInterfaceScale } from './lib/stores/interfaceScale';
+  import { startTranslation } from './lib/i18n';
   import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
   import { mediaTrayShaders } from './lib/stores/mediaTrayShaders';
   import {
@@ -1594,6 +1595,7 @@
   onMount(() => {
     let appMounted = true;
     const stopInterfaceScale = startInterfaceScale();
+    const stopTranslation = startTranslation();
     // Scans received from a phone in earlier sessions (Media Library, Scan tab).
     void loadPhoneScanLibrary();
     // Sim windows report where they settle so the assignment follows a drag.
@@ -2311,6 +2313,7 @@
       showRuntimeHooks.ensureOutputs = null;
       restorePrompts();
       stopInterfaceScale();
+      stopTranslation();
       setShowTransitionSink(null);
       compositionTransition.clear();
       unsubscribeSettings();

@@ -1,5 +1,7 @@
 <script lang="ts">
   import NdiOutputSettings from './NdiOutputSettings.svelte';
+  import { uiLanguage, UI_LANGUAGES } from '../i18n';
+  import { isMac } from '$lib/bridge';
   import { interfaceScale } from '../stores/interfaceScale';
   import { onMount, onDestroy } from 'svelte';
   import { tooltipsEnabled } from '../help/preferences';
@@ -799,6 +801,17 @@
         {#if selectedSection === 'app:appearance'}
         <section class="settings-section">
           <h3>Appearance</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <label class="label-text" for="ui-language">Language</label>
+              <span class="label-hint">The language of menus, buttons and help. {isMac ? 'Cmd' : 'Ctrl'}+Shift+E always returns to English.</span>
+            </div>
+            <select id="ui-language" translate="no" value={$uiLanguage} onchange={e => uiLanguage.set(e.currentTarget.value)}>
+              {#each UI_LANGUAGES as language}
+                <option value={language.code}>{language.name}{language.beta ? ' · beta' : ''}</option>
+              {/each}
+            </select>
+          </div>
           {#if isDesktopApp}
           <div class="setting-row">
             <div class="setting-label">

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { isMac } from '$lib/bridge';
+  import { uiLanguage, resetLanguageToEnglish } from '$lib/i18n';
   export let visible = false;
   export let onClose: () => void;
 
@@ -11,6 +12,12 @@
     <div class="shortcut-overlay" onclick={(e) => e.stopPropagation()}>
       <button aria-label="Close keyboard shortcuts" class="shortcut-overlay-close" onclick={onClose}>&times;</button>
       <h2 class="shortcut-overlay-title">Keyboard Shortcuts</h2>
+      {#if $uiLanguage !== 'en'}
+        <!-- Always in English, so it can be found from any language. -->
+        <button class="shortcut-english-btn" translate="no" onclick={resetLanguageToEnglish}>
+          Switch to English <span>({mod}+Shift+E)</span>
+        </button>
+      {/if}
       <div class="shortcut-columns">
         <div class="shortcut-section">
           <h3>General</h3>
@@ -36,6 +43,7 @@
           <div class="shortcut-row"><kbd>Space</kbd><span>Hold + drag to pan (show tray closed)</span></div>
           <div class="shortcut-row"><kbd>Esc</kbd><span>Exit drawing, MIDI / keyboard edit, or help</span></div>
           <div class="shortcut-row"><kbd>?</kbd><span>Toggle this help</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd><span>Interface language back to English</span></div>
         </div>
         <div class="shortcut-section">
           <h3>Show Timeline</h3>
@@ -58,6 +66,12 @@
 {/if}
 
 <style>
+  .shortcut-english-btn {
+    display: inline-flex; gap: 8px; align-items: center; margin: 0 0 14px;
+    padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;
+    color: #fff; background: var(--ga-blue-700, #2443b8); border: 1px solid var(--ga-blue-400, #6f8dff);
+  }
+  .shortcut-english-btn span { font-weight: 400; opacity: 0.8; }
   /* Bug fix (Mar 2026): the component had NO style block at all, so
      `?` button "did nothing" — the overlay rendered but was invisible
      (unpositioned divs at the document end). Adding proper modal
