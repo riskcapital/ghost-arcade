@@ -5839,8 +5839,15 @@
 
           <!-- Column headers (per-deck — column triggers fire only on this deck) -->
           <div class="column-headers">
-            <div class="live-preview-header">LIVE</div>
-            <div class="layer-controls-header"></div>
+            {#if $vjClipLauncher.crossfaderEnabled}
+              <div class="deck-corner-header">
+                <span class="deck-label">DECK {bank}</span>
+                <span class="deck-corner-live">LIVE</span>
+              </div>
+            {:else}
+              <div class="live-preview-header">LIVE</div>
+              <div class="layer-controls-header"></div>
+            {/if}
             {#each columnIndices as colIdx (colIdx)}
               {@const columnQueued = $vjClipLauncher.pendingTriggers.some(p => p.kind === 'column' && p.columnIndex === colIdx && p.bank === bank)}
               <button
@@ -6071,7 +6078,6 @@
         {#if $vjClipLauncher.crossfaderEnabled}
           <div class="dual-decks">
             <div class="deck-wrapper deck-a" class:focused={$vjClipLauncher.selectedDeck === 'A'}>
-              <div class="deck-label">DECK A</div>
               {@render deckUI('A')}
             </div>
 
@@ -6217,7 +6223,6 @@
             </div>
 
             <div class="deck-wrapper deck-b" class:focused={$vjClipLauncher.selectedDeck === 'B'}>
-              <div class="deck-label">DECK B</div>
               {@render deckUI('B')}
             </div>
           </div>
@@ -7045,11 +7050,39 @@
     font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--text-muted, #888);
-    margin-bottom: 6px;
     padding: 2px 6px;
-    align-self: flex-start;
     border-radius: 3px;
     background: rgba(255, 255, 255, 0.04);
+  }
+  /* Deck name and LIVE share the pinned corner above the layer controls. */
+  .deck-corner-header {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    flex: 0 0 210px;
+    width: 210px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--vj-deck-bg);
+    box-shadow: 0 0 0 4px var(--vj-deck-bg), -12px 0 0 4px var(--vj-deck-bg);
+  }
+  .grid-section.reversed .deck-corner-header {
+    left: auto;
+    right: 0;
+  }
+  .deck-corner-live {
+    font-size: 10px;
+    font-weight: 600;
+    color: #666;
+  }
+  /* The header fills the wrapper's top padding so rows scrolling up
+     cannot show above it. */
+  .deck-wrapper .column-headers {
+    top: -8px;
+    margin-top: -8px;
+    padding-top: 8px;
   }
   .deck-wrapper.deck-a .deck-label { color: var(--ga-blue-200); }
   .deck-wrapper.deck-b .deck-label { color: #FF8577; }
@@ -9183,7 +9216,7 @@
     margin-bottom: 8px;
     position: sticky;
     top: 0;
-    background: #0e0e0e;
+    background: var(--vj-deck-bg, #0e0e0e);
     z-index: 10;
     padding-bottom: 8px;
     min-width: 100%;
