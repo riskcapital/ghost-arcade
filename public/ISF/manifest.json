@@ -766,6 +766,204 @@
       "enabled": true
     },
     {
+      "file": "PSY-OilWheel.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "oil wheel",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-AcidFlow.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "acid flow",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-TieDye.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "tie-dye",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-Chrysanthemum.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "chrysanthemum",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-FormConstants.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "form constants",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-OilSlick.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "oil slick",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "HAUNT-Apparition.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "apparition",
+        "halloween",
+        "haunting",
+        "dark",
+        "audio",
+        "haunt-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "HAUNT-Rorschach.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "rorschach",
+        "halloween",
+        "haunting",
+        "dark",
+        "audio",
+        "haunt-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "HAUNT-Vigil.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "vigil",
+        "halloween",
+        "haunting",
+        "dark",
+        "audio",
+        "haunt-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "HAUNT-MoonlitHall.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "moonlit hall",
+        "halloween",
+        "haunting",
+        "dark",
+        "audio",
+        "haunt-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "HAUNT-Web.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "web",
+        "halloween",
+        "haunting",
+        "dark",
+        "audio",
+        "haunt-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "HAUNT-Thicket.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "thicket",
+        "halloween",
+        "haunting",
+        "dark",
+        "audio",
+        "haunt-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "crystal-dimension.fs",
       "tier": "demo",
       "category": "Generator",
