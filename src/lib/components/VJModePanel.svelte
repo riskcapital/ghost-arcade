@@ -6222,7 +6222,9 @@
             </div>
           </div>
         {:else}
-          {@render deckUI('A')}
+          <div class="deck-scroll">
+            {@render deckUI('A')}
+          </div>
         {/if}
       </div>
 
@@ -7299,6 +7301,7 @@
   .deck-wrapper {
     overflow: auto;
     position: relative;       /* anchor for the .scroll-hint arrow below */
+    --vj-deck-bg: #0c0c10;
   }
 
   /* Lock cell + column-trigger widths inside dual-deck mode so the two
@@ -9094,9 +9097,84 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: auto;
+    /* The block tabs and deck toolbar stay put; only the deck scrolls. */
+    overflow: hidden;
+    min-height: 0;
     background: #0e0e0e;
     padding: 12px;
+    --vj-deck-bg: #0e0e0e;
+  }
+
+  .deck-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+  /* Rows span every column so the pinned controls hold for the whole
+     sideways scroll. */
+  .deck-scroll .column-headers,
+  .deck-scroll .layer-row {
+    width: max-content;
+    min-width: 100%;
+  }
+  /* One shared base width keeps the column buttons lined up with the
+     cells whether the columns fit or overflow. */
+  .deck-scroll .column-trigger,
+  .deck-scroll .clip-cell {
+    flex: 1 1 76px;
+    width: 76px;
+  }
+
+  /* Layer preview + controls stay pinned while columns scroll sideways and
+     travel with their row on a vertical scroll. */
+  .layer-row .layer-live-preview,
+  .live-preview-header {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+  }
+  .layer-controls,
+  .layer-controls-header {
+    position: sticky;
+    left: 60px;
+    z-index: 4;
+  }
+  .live-preview-header,
+  .layer-controls-header {
+    background: var(--vj-deck-bg);
+  }
+  .live-preview-header,
+  .layer-controls-header {
+    box-shadow: 0 0 0 4px var(--vj-deck-bg), -12px 0 0 4px var(--vj-deck-bg);
+  }
+  /* Full-height backing behind the pinned preview so cells never show
+     through under the thumbnail or in the gap beside the controls. */
+  .layer-row::before {
+    content: '';
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    flex: 0 0 60px;
+    margin-right: -64px;
+    background: var(--vj-deck-bg);
+    box-shadow: -12px 0 0 var(--vj-deck-bg);
+  }
+  .grid-section.reversed .layer-row::before {
+    left: auto;
+    right: 0;
+    margin-right: 0;
+    margin-left: -64px;
+    box-shadow: 12px 0 0 var(--vj-deck-bg);
+  }
+  .grid-section.reversed .layer-live-preview,
+  .grid-section.reversed .live-preview-header {
+    left: auto;
+    right: 0;
+  }
+  .grid-section.reversed .layer-controls,
+  .grid-section.reversed .layer-controls-header {
+    left: auto;
+    right: 60px;
   }
 
   .column-headers {
@@ -9866,23 +9944,27 @@
 
   /* Scrollbar */
   .media-list::-webkit-scrollbar,
-  .grid-section::-webkit-scrollbar {
+  .grid-section::-webkit-scrollbar,
+  .deck-scroll::-webkit-scrollbar {
     width: 6px;
   }
 
   .media-list::-webkit-scrollbar-track,
-  .grid-section::-webkit-scrollbar-track {
+  .grid-section::-webkit-scrollbar-track,
+  .deck-scroll::-webkit-scrollbar-track {
     background: #141414;
   }
 
   .media-list::-webkit-scrollbar-thumb,
-  .grid-section::-webkit-scrollbar-thumb {
+  .grid-section::-webkit-scrollbar-thumb,
+  .deck-scroll::-webkit-scrollbar-thumb {
     background: #333;
     border-radius: 3px;
   }
 
   .media-list::-webkit-scrollbar-thumb:hover,
-  .grid-section::-webkit-scrollbar-thumb:hover {
+  .grid-section::-webkit-scrollbar-thumb:hover,
+  .deck-scroll::-webkit-scrollbar-thumb:hover {
     background: #444;
   }
 
