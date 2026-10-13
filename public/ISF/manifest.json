@@ -425,6 +425,96 @@
       "enabled": true
     },
     {
+      "file": "GA2-CircleLimit.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "hyperbolic",
+        "tiling",
+        "poincare",
+        "escher",
+        "inlay",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Eclipse.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "eclipse",
+        "corona",
+        "sun",
+        "diamond ring",
+        "astronomy",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-ColouredShadows.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "shadows",
+        "light",
+        "rgb",
+        "columns",
+        "architecture",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Lightbox.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "paper cut",
+        "lightbox",
+        "landscape",
+        "layers",
+        "silhouette",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-PhasePortrait.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "complex",
+        "phase portrait",
+        "conformal",
+        "checkerboard",
+        "mathematics",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "crystal-dimension.fs",
       "tier": "demo",
       "category": "Generator",
