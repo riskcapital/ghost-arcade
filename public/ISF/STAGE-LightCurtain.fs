@@ -144,8 +144,8 @@ void main() {
     float across = (fract(cell) - 0.5) * 2.0;           /* -1 .. 1 across one beam's slot */
 
     /* Beam profile. Width is held in screen terms by dividing out the stretch. */
-    float half = clamp(beamWidth * 0.95 / max(stretch, 0.3), 0.02, 0.98);
-    float x = abs(across) / half;
+    float slotHalf = clamp(beamWidth * 0.95 / max(stretch, 0.3), 0.02, 0.98);
+    float x = abs(across) / slotHalf;
     float body = 1.0 - smoothstep(mix(0.2, 0.9, edge), 1.0, x);
     float core = exp(-x * x * 4.5);
     float profile = mix(core, body * 0.75 + core * 0.45, edge);

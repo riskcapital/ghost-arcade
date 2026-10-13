@@ -108,27 +108,27 @@ vec3 hueRotate(vec3 c, float turns) {
 /* Where column i stands. */
 vec2 columnAt(int i, int n, int mode, float spreadR, float rot) {
     float fi = float(i);
-    float fn = float(n);
+    float total = float(n);
     vec2 p;
     if (mode == 1) {            /* two counter-turning rings */
-        float inner = floor(fn * 0.4);
+        float inner = floor(total * 0.4);
         if (fi < inner) {
             float a = TAU * fi / max(inner, 1.0) - rot * 1.6;
             p = 0.48 * spreadR * vec2(cos(a), sin(a));
         } else {
-            float a = TAU * (fi - inner) / max(fn - inner, 1.0) + rot;
+            float a = TAU * (fi - inner) / max(total - inner, 1.0) + rot;
             p = spreadR * vec2(cos(a), sin(a));
         }
     } else if (mode == 2) {     /* sunflower spiral */
         float a = fi * GOLDEN + rot;
-        p = spreadR * 1.15 * sqrt((fi + 0.5) / fn) * vec2(cos(a), sin(a));
+        p = spreadR * 1.15 * sqrt((fi + 0.5) / total) * vec2(cos(a), sin(a));
     } else if (mode == 3) {     /* square grid, turned as a whole */
-        float side = ceil(sqrt(fn));
+        float side = ceil(sqrt(total));
         vec2 g = vec2(mod(fi, side), floor(fi / side)) - 0.5 * (side - 1.0);
         g *= 2.0 * spreadR / max(side - 1.0, 1.0);
         p = mat2(cos(rot), -sin(rot), sin(rot), cos(rot)) * g;
     } else {                    /* single ring */
-        float a = TAU * fi / fn + rot;
+        float a = TAU * fi / total + rot;
         p = spreadR * vec2(cos(a), sin(a));
     }
     return p;

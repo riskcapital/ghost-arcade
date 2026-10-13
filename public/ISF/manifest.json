@@ -515,6 +515,96 @@
       "enabled": true
     },
     {
+      "file": "GA2-SoftCells.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "soft cells",
+        "tiling",
+        "cushion",
+        "organic",
+        "2024",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Kakeya.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "kakeya",
+        "needle",
+        "perron tree",
+        "besicovitch",
+        "geometry",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-CapSet.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "cap set",
+        "set game",
+        "combinatorics",
+        "grid",
+        "funsearch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Murmuration.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "murmuration",
+        "elliptic curves",
+        "flock",
+        "points",
+        "number theory",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-MovingSofa.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "moving sofa",
+        "gerver",
+        "corridor",
+        "geometry",
+        "kinetic",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "STAGE-BeamRig.fs",
       "tier": "demo",
       "category": "Generator",
