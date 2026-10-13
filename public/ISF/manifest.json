@@ -713,6 +713,59 @@
       "enabled": true
     },
     {
+      "file": "STAGE-Followspot.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "followspot",
+        "spot",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-Strobe.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "strobe",
+        "flash",
+        "lightning",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-MirrorBall.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "mirror ball",
+        "disco",
+        "flecks",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "crystal-dimension.fs",
       "tier": "demo",
       "category": "Generator",
