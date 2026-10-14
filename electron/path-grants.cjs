@@ -148,8 +148,11 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
     if (typeof value !== 'string' || !value || value.length > 4096) return null;
     let candidate = value;
     try {
-      if (/^ghost-asset:\/\/localhost\//i.test(candidate)) candidate = fileURLToPath(candidate.replace(/^ghost-asset:\/\/localhost/i, 'file://'));
-      else if (/^file:/i.test(candidate)) candidate = fileURLToPath(candidate);
+      // Read the URL by the rules of the platform the grants are for, not
+      // whichever one this process happens to run on.
+      const urlRules = { windows: platform === 'win32' };
+      if (/^ghost-asset:\/\/localhost\//i.test(candidate)) candidate = fileURLToPath(candidate.replace(/^ghost-asset:\/\/localhost/i, 'file://'), urlRules);
+      else if (/^file:/i.test(candidate)) candidate = fileURLToPath(candidate, urlRules);
       else if (/^[a-z][a-z0-9+.-]+:/i.test(candidate) && !/^[a-z]:[\\/]/i.test(candidate)) return null;
     } catch { return null; }
     if (!pathApi.isAbsolute(candidate)) {

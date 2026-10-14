@@ -18,10 +18,11 @@ import { join } from 'node:path';
  * properties that make it safe rather than the drawing itself.
  */
 
+// LF, whatever the checkout's line endings: the patterns below span lines.
 const canvasSource = readFileSync(
   join(process.cwd(), 'src', 'lib', 'components', 'Canvas.svelte'),
   'utf8',
-);
+).replace(/\r\n/g, '\n');
 
 function fallbackBlock(): string {
   const start = canvasSource.indexOf('async function ensureEditorPreviewFallback');
