@@ -17,6 +17,8 @@ export interface NativeRendererRuntimeState {
   running: boolean;
   backendReady: boolean;
   adapterName: string | null;
+  /** The core is drawing on a software rasterizer, not a GPU. */
+  adapterIsSoftware: boolean;
   backend: string | null;
   driverMode: NativeRendererDriverMode;
   outputDriverReady: boolean;
@@ -89,6 +91,7 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   running: false,
   backendReady: false,
   adapterName: null,
+  adapterIsSoftware: false,
   backend: null,
   driverMode: 'offline',
   outputDriverReady: false,
@@ -496,6 +499,7 @@ export function deriveNativeRendererRuntimeState(
     running: !!status?.running,
     backendReady: !!status?.backend_ready,
     adapterName: status?.adapter_name ?? null,
+    adapterIsSoftware: !!status?.adapter_is_software,
     backend: status?.backend ?? capabilities?.backend ?? null,
     driverMode: mode,
     outputDriverReady: readinessModeOk(readiness, 'output_driver'),

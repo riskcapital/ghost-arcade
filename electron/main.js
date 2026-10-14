@@ -56,6 +56,11 @@ ipcMain.on('show_startup_session', (event) => {
 ipcMain.handle('show_startup_get', () => showStartup.get());
 ipcMain.handle('show_startup_set', (_, patch) => showStartup.set(patch));
 
+// Linux: what the machine offers the render core (electron/linux-gpu-setup.cjs),
+// read when the core has fallen back to software so the user can be told why.
+const { collectLinuxGpuSetup } = require('./linux-gpu-setup.cjs');
+ipcMain.handle('linux_gpu_setup', () => (process.platform === 'linux' ? collectLinuxGpuSetup(app) : null));
+
 // PJLink passwords live here, encrypted with safeStorage, never in project
 // files and never sent back to the renderer (electron/pjlink-credentials.cjs).
 const { createPjlinkClient } = require('./pjlink.cjs');

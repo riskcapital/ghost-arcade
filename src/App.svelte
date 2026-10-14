@@ -448,7 +448,8 @@
   } from './lib/stores/nativeRenderer';
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
-  import { invoke, isMac, isDesktopApp, openExternalUrl } from './lib/bridge';
+  import { invoke, isMac, isLinux, isDesktopApp, openExternalUrl } from './lib/bridge';
+  import LinuxGpuNotice from './lib/components/LinuxGpuNotice.svelte';
   import {
     DEFAULT_REMOTE_HTTP_PORT,
     DEFAULT_REMOTE_WS_PORT,
@@ -886,6 +887,10 @@
   // GPU info state (populated after engine init)
   let gpuInfo: { renderer: string; vendor: string; isIntegrated: boolean } | null = null;
   // Persisted "user has seen the integrated-GPU warning" flag.
+  // Linux with the render core on a software rasterizer: check the machine
+  // once per launch and say what to do (LinuxGpuNotice).
+  let linuxGpuNoticeDone = false;
+  $: showLinuxGpuNotice = isDesktopApp && isLinux && !linuxGpuNoticeDone && $nativeRendererRuntime.adapterIsSoftware;
   const INTEGRATED_GPU_BANNER_DISMISSED_KEY = 'ga.integratedGpuBannerDismissed';
   let showIntegratedGpuBanner = false;
   function dismissIntegratedGpuBanner(persist: boolean) {
@@ -6653,6 +6658,10 @@
           <button class="gpu-warning-dismiss" onclick={() => dismissIntegratedGpuBanner(true)} title="Never show this again">Don't show again</button>
         </div>
       </div>
+    {/if}
+
+    {#if showLinuxGpuNotice}
+      <LinuxGpuNotice adapterName={$nativeRendererRuntime.adapterName} onClose={() => (linuxGpuNoticeDone = true)} />
     {/if}
 
     <!-- Header / Toolbar -->

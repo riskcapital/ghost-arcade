@@ -170,6 +170,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'pjlink_command', 'pjlink_set_password', 'pjlink_has_password',
   // Start at boot / show mode (launch at login, startup project, prompts)
   'show_startup_get', 'show_startup_set',
+  // Linux GPU check when the render core runs in software
+  'linux_gpu_setup',
   // Ableton Link — LAN tempo/beat sync (session lives in main; the
   // renderer polls state and bridges tempo into the master BPM).
   'link_enable', 'link_disable', 'link_set_tempo', 'link_get_state',

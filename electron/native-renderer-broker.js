@@ -2895,6 +2895,11 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     backend,
     backend_ready: !!status.backend_ready,
     adapter_name: status.adapter_name ?? previous.adapter_name ?? null,
+    // The core's own verdict, else the adapter's name (a core that predates
+    // the flag): the renderer tells the user when no GPU is doing the work.
+    adapter_is_software: typeof status.adapter_is_software === 'boolean'
+      ? status.adapter_is_software
+      : SOFTWARE_ADAPTER_NAME.test(String(status.adapter_name ?? previous.adapter_name ?? '')),
     native_caps: normalizeNativeCaps(status.native_caps, previous.native_caps),
     native_quality: normalizeNativeQuality(status.native_quality, previous.native_quality),
     source_preview_size: Number(status.source_preview_size ?? previous.source_preview_size ?? 256),
