@@ -169,6 +169,13 @@ const ALLOW_CPU_TEXTURE_SHARE_FALLBACK =
   process.env.GA_ALLOW_CPU_TEXTURE_SHARE_FALLBACK === '1';
 const OSR_PAINT_FPS = Math.max(1, Math.min(240, Number(process.env.GA_OSR_PAINT_FPS || 60) || 60));
 app.commandLine.appendSwitch('force_high_performance_gpu');
+// Linux: Chromium refuses WebGL outright on a driver it has blocklisted
+// (virtual machines, software GL, some older integrated chips), and every
+// preview and output is then black. Rendering on such a driver beats
+// rendering nothing.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('ignore-gpu-blocklist');
+}
 // Keep rendering when a window is fully covered by another window.
 // Chromium's native-occlusion tracker pauses BeginFrames for occluded
 // windows EVEN WITH backgroundThrottling:false — which froze rAF in the
