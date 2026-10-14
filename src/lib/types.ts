@@ -2745,11 +2745,51 @@ export interface EdgeEffect {
    *  or top-level `opacity`). Same role as Effect.paramAuto — see
    *  AutoConfig above. */
   paramAuto?: Record<string, AutoConfig>;
+  /** Radial effects, rotation and origami turn about this point (layer UV,
+   *  y up) instead of the outline's centroid. */
+  customCenter?: boolean;
+  centerX?: number;
+  centerY?: number;
+  /** Group chase: delay this effect by the layer's place in its group so
+   *  it travels across the map. `chaseSpread` is the delay in seconds
+   *  between the first and the last layer. */
+  chaseMode?: 'none' | 'order' | 'leftToRight' | 'radial';
+  chaseSpread?: number;
+  /** Beat reaction, evaluated every frame against the launch clock and the
+   *  audio levels. Looks use it to sync a stack to the beat. */
+  react?: EdgeEffectReact;
+}
+
+/** How an edge effect answers the beat. `pulse` dims between hits, `boost`
+ *  flares brighter on them, `step` lights one member of the group per beat
+ *  (in the effect's chase order), `strobe` flashes hard on the hit. The
+ *  beat source runs on the launch clock (tapped, typed, detected or Link
+ *  tempo); audio sources fall back to that clock while no audio is live. */
+export interface EdgeEffectReact {
+  mode: 'none' | 'pulse' | 'boost' | 'step' | 'strobe';
+  source: 'beat' | 'kick' | 'snare' | 'bass' | 'level' | 'treble';
+  /** 0..1 depth of the reaction. */
+  amount: number;
+  /** Flash decay speed, 1 = a quarter-beat tail. */
+  decay?: number;
+  /** Beats between neighbours in the group chase (beat source only). */
+  chaseBeats?: number;
+  /** Hue turns added each beat (colour cycling), e.g. 0.25 = four colours. */
+  hueStep?: number;
 }
 
 export interface EdgeEffectsConfig {
   enabled: boolean;
   effects: EdgeEffect[];
+  /** Rounds every corner of the outline the stack is drawn on (output px). */
+  cornerRadius?: number;
+  /** Set when the stack was applied from the Looks gallery. */
+  look?: EdgeLookRef;
+}
+
+export interface EdgeLookRef {
+  id: string;
+  paletteId: string;
 }
 
 export const VJ_MIX_SOURCE_INDEX = -1;

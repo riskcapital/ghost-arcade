@@ -241,7 +241,7 @@
                   {#if 'width' in effect.stroke}
                     <EffectParamRow label="Width" min={1} max={20} step={0.5}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.width" effectKind="edge"
-                      value={effect.stroke.width}
+                      value={Number(effect.stroke.width)}
                       displayValue={(v) => v.toFixed(1)}
                       onChange={(v) => updateStroke(effect.id, { width: v })} />
                   {/if}

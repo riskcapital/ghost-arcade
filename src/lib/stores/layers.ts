@@ -2,6 +2,8 @@ import { writable, derived, get } from 'svelte/store';
 import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MeshPointTangents, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
+import { buildLookEffects, lookPalette } from '../looks/edgeLooks';
+import { edgeLook } from '../looks/edgeLookCatalog';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
 import { disposeJSAnimationContext } from '../renderer/js-animation';
@@ -1780,6 +1782,47 @@ void main() {
     // ============================================================================
     // EDGE EFFECTS METHODS (drawing-style effects on media layer shape edges)
     // ============================================================================
+
+    /** Dress every layer in `layerIds` with a one-click Look, as one undo
+     *  step. The Look replaces the whole stack, so re-picking (or picking
+     *  another palette) swaps rather than piles on. Each layer gets its own
+     *  effects with fresh ids. Returns how many layers changed. */
+    applyLook(layerIds: readonly string[], lookId: string, paletteId?: string): number {
+      const look = edgeLook(lookId);
+      const targets = new Set(layerIds);
+      if (!look || !targets.size) return 0;
+      const palette = lookPalette(paletteId ?? look.palette).id;
+      let changed = 0;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (!targets.has(layer.id)) return layer;
+          changed += 1;
+          const config: EdgeEffectsConfig = { enabled: true, effects: buildLookEffects(look, palette), look: { id: look.id, paletteId: palette } };
+          if (look.cornerRadius) config.cornerRadius = look.cornerRadius;
+          return { ...layer, edgeEffects: config };
+        }),
+      }));
+      if (changed) recordDiscreteAction();
+      return changed;
+    },
+
+    /** Take a Look off: layers in `layerIds` whose stack came from a Look
+     *  lose it (hand-built stacks are left alone). One undo step. */
+    clearLook(layerIds: readonly string[]): number {
+      const targets = new Set(layerIds);
+      let changed = 0;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (!targets.has(layer.id) || !layer.edgeEffects?.look) return layer;
+          changed += 1;
+          return { ...layer, edgeEffects: null };
+        }),
+      }));
+      if (changed) recordDiscreteAction();
+      return changed;
+    },
 
     enableEdgeEffects(layerId: string) {
       update((project) => ({

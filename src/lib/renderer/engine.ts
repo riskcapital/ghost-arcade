@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent, MaskConfig, LayerShapeType, Point2D, ContentFitMode, EdgeEffect, GroupConfig } from '../types';
 import { GpuEffectRunner, isGpuEffect } from './gpuEffectRunner';
 import { getShapeVertices } from '../types';
+import { EdgeEffectPass, needsEdgeEngine } from './edgeEffectPass';
 import { evaluateMeshGrid, meshGridHasTangents } from '../utils/meshWarp';
 
 // ── Group rendering types ──────────────────────────────────────────────────
@@ -156,6 +157,9 @@ export class RenderEngine {
   private drawingRendererRef: any = null;      // LinesRenderer (legacy, for line strokes)
   private shapeRendererRef: any = null;        // DrawingRenderer (fills, animations, strokes)
   private edgeEffectTarget: THREE.WebGLRenderTarget | null = null;
+  /** Edge stacks the drawing renderer cannot draw (Looks among them). */
+  private edgeEffectPass: EdgeEffectPass | null = null;
+  private edgeEngineTarget: THREE.WebGLRenderTarget | null = null;
 
   // Group layer render targets (lazy-allocated per group ID)
   private groupTargets: Map<string, THREE.WebGLRenderTarget> = new Map();
@@ -1756,6 +1760,7 @@ export class RenderEngine {
      *  the composite. */
     macroBundles?: { id: string; value: number; effects: Effect[] }[],
   ): void {
+    this.edgeEffectPass?.beginFrame(layers);
     // Build render plan — partitions layers into standalone and group units
     const renderPlan = this.buildRenderPlan(layers);
     // Reverse so top-of-list renders last (on top)
@@ -2708,6 +2713,9 @@ export class RenderEngine {
     sourceTexture: THREE.Texture,
     layer: Layer
   ): THREE.Texture {
+    if (needsEdgeEngine(layer.edgeEffects)) {
+      return this.renderLayerEdgeEngine(sourceTexture, layer);
+    }
     const renderer = this.shapeRendererRef || this.drawingRendererRef;
     if (!layer.edgeEffects?.enabled || layer.edgeEffects.effects.length === 0 || !renderer) {
       return sourceTexture;
@@ -2879,6 +2887,20 @@ export class RenderEngine {
     return currentTexture;
   }
 
+  /** A layer's edge stack on the full evaluator (see edgeEffectPass.ts). */
+  private renderLayerEdgeEngine(sourceTexture: THREE.Texture, layer: Layer): THREE.Texture {
+    if (!this.edgeEffectPass) this.edgeEffectPass = new EdgeEffectPass();
+    const w = Math.min(this.width, this.maxTextureSize);
+    const h = Math.min(this.height, this.maxTextureSize);
+    if (!this.edgeEngineTarget) {
+      this.edgeEngineTarget = this.createRenderTarget();
+    } else if (this.edgeEngineTarget.width !== w || this.edgeEngineTarget.height !== h) {
+      this.edgeEngineTarget.setSize(w, h);
+    }
+    const drawn = this.edgeEffectPass.render(this.renderer, sourceTexture, this.edgeEngineTarget, layer);
+    return drawn ? this.edgeEngineTarget.texture : sourceTexture;
+  }
+
   public getCompositeTexture(): THREE.Texture {
     return this.compositeTarget.texture;
   }
@@ -2918,6 +2940,10 @@ export class RenderEngine {
     this.temporalMagnificationRunner.dispose();
     this.vjMixTarget?.dispose();
     this.vjMixTarget = null;
+    this.edgeEffectPass?.dispose();
+    this.edgeEffectPass = null;
+    this.edgeEngineTarget?.dispose();
+    this.edgeEngineTarget = null;
     this.feedbackCopyMaterial?.dispose();
     this.feedbackCopyMaterial = null;
     this.blackTexture?.dispose();

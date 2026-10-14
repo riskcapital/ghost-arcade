@@ -23,6 +23,9 @@
   import { createAssetRefFromFile } from '../storage/assetRegistry';
   import { maskEditingLayerId } from '../stores/maskEditing';
   import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
+  import LooksGallery from './LooksGallery.svelte';
+  import LooksIcon from './LooksIcon.svelte';
+  import { isLookTarget } from '../looks/edgeLooks';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -53,6 +56,9 @@
 
   // Layer type dropdown state
   let showAddLayerMenu = false;
+  let showLooks = false;
+  // Invite a first Look once there are shapes and none wears an edge stack yet.
+  $: looksInvite = !showLooks && $project.layers.some(isLookTarget) && !$project.layers.some((layer) => layer.edgeEffects?.effects?.length);
   let addMenuPos = { top: 0, left: 0 };
   let showSourceCropModal = false;
   $: sourceCropLayer = showSourceCropModal ? $selectedLayer : null;
@@ -723,6 +729,12 @@
   <div class="layers-section">
     <div class="panel-header">
       <h3>Layers</h3>
+      <button class="btn-add btn-looks" class:invite={looksInvite} class:active={showLooks} type="button"
+        title="One-click beat-synced looks for your shapes" aria-expanded={showLooks}
+        onclick={() => { showLooks = !showLooks; showAddLayerMenu = false; }}>
+        <LooksIcon /> Looks
+      </button>
+      {#if showLooks}<LooksGallery onClose={() => (showLooks = false)} />{/if}
       <div class="add-layer-wrapper">
         <button class="btn-add" onclick={(e) => {
           showAddLayerMenu = !showAddLayerMenu;
@@ -3469,6 +3481,19 @@
   .effect-cycle-toggle.included {
     color: var(--ga-blue-300);
     border-color: var(--ga-blue-a28);
+  }
+
+  /* Looks shares the Add Layer button's look (class btn-add, so every
+     skin rule applies to both); only its mark takes the action accent. */
+  .btn-looks {
+    margin-left: auto;
+    margin-right: 6px;
+  }
+  .btn-looks :global(.looks-icon) { color: var(--ga-icon, #5278ff); }
+  .btn-looks.invite { animation: looks-invite 1.6s ease-in-out infinite; }
+  @keyframes looks-invite {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ga-blue-400) 0%, transparent); }
+    50% { box-shadow: 0 0 0 3px var(--ga-blue-a28); }
   }
 
   .btn-add {
