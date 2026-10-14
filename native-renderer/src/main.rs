@@ -1692,12 +1692,15 @@ impl Drop for NativeOutputExport {
 }
 
 /// One deck confidence monitor: the bank composite renders into
-/// `render_view` (pipeline format) and blits into the shared-texture
-/// `export` the presenter imports zero-copy.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+/// `render_view` (pipeline format). On macOS and Windows it then blits into
+/// the shared-texture `export` the presenter imports zero-copy. Linux has no
+/// shared-texture path, so there the panel reads `render_texture` back.
 struct DeckMonitorTarget {
-    _render_texture: wgpu::Texture,
+    render_texture: wgpu::Texture,
     render_view: wgpu::TextureView,
+    width: u32,
+    height: u32,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     export: NativeOutputExport,
 }
 
@@ -3951,10 +3954,9 @@ struct RenderState {
     native_recorder: Option<mac_video_recorder::MacVideoRecorder>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     native_recorder_error: Option<String>,
-    /// Deck confidence monitors: two small shared-texture targets (bank A,
-    /// bank B) the VJ panel presents beside Program. Created lazily on the
-    /// first frame that carries deck-monitor-tagged layers.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    /// Deck confidence monitors: two small targets (bank A, bank B) the VJ
+    /// panel shows beside Program. Created lazily on the first frame that
+    /// carries deck-monitor-tagged layers.
     deck_monitor_targets: Option<[DeckMonitorTarget; 2]>,
     /// Per-slice display targets, keyed by the editor's slice id.
     slice_targets: HashMap<String, SliceOutputTarget>,
@@ -4165,7 +4167,6 @@ struct App {
     pending_render_retry: bool,
     /// The last frame drew at least one deck-tagged layer into a confidence
     /// monitor. Buys exactly one clearing monitor pass when both banks empty.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     deck_monitors_lit: bool,
     output_window_attached: bool,
     editor_parent_window_handle_hex: Option<String>,
@@ -4553,7 +4554,6 @@ impl App {
             vram_budget_mb: 4096,
             auto_present_requested: false,
             pending_render_retry: false,
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
             deck_monitors_lit: false,
             output_window_attached: false,
             editor_parent_window_handle_hex: None,
@@ -5706,6 +5706,11 @@ impl App {
         if matches!(req.method.as_str(), "frame_snapshot" | "get_frame_snapshot")
             && (req.params.get("source_id").is_some() || req.params.get("layer_id").is_some()) {
             if let Err(error) = self.start_source_preview(&req) { if req.id != 0 { self.send_error(req.id, error); } }
+            return;
+        }
+        if matches!(req.method.as_str(), "frame_snapshot" | "get_frame_snapshot")
+            && req.params.get("deck_monitor").is_some() {
+            if let Err(error) = self.start_deck_monitor_preview(&req) { if req.id != 0 { self.send_error(req.id, error); } }
             return;
         }
         if matches!(req.method.as_str(), "frame_snapshot" | "get_frame_snapshot")
@@ -12162,9 +12167,7 @@ impl App {
         let frame_index = self.native_frame_index();
         self.sync_paint_masks_to_gpu();
         let gpu_layers = self.gpu_layer_data();
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let deck_monitor_a = self.deck_monitor_layer_data(0);
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let deck_monitor_b = self.deck_monitor_layer_data(1);
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         let record_target = self.record_target.as_ref().map(|spec| {
@@ -12212,11 +12215,8 @@ impl App {
         let post_effects = self.composite_effect_slots();
         let output_stage = self.output_stage;
         let slice_specs = self.slice_outputs.clone();
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let deck_monitors_have_content = !deck_monitor_a.is_empty() || !deck_monitor_b.is_empty();
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let deck_monitors_were_lit = self.deck_monitors_lit;
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let mut deck_monitors_rendered = false;
         if self.renderer.is_none() {
             // Renderer not created yet; keep the retry armed so the frame
@@ -12290,9 +12290,8 @@ impl App {
         //
         // Both banks going empty is exactly when the monitors MUST still be
         // drawn once: skipping the pass leaves the deleted clip's last frame
-        // resident in the monitors' own shared textures. `deck_monitors_lit`
-        // buys that one clearing pass and then lets the monitors idle again.
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        // resident in the monitors' own textures. `deck_monitors_lit` buys
+        // that one clearing pass and then lets the monitors idle again.
         if render_result.is_ok() && (deck_monitors_have_content || deck_monitors_were_lit) {
             let monitor_width: u32 = 480;
             let monitor_height: u32 = ((u64::from(monitor_width)
@@ -12572,7 +12571,6 @@ impl App {
                 renderer.last_frame_error = Some(err);
             }
         }
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
         if deck_monitors_rendered {
             self.deck_monitors_lit = deck_monitors_have_content;
         }
@@ -12709,6 +12707,50 @@ impl App {
                 let mut value = frame.to_json(include_pixels);
                 value["frame_index"] = json!(frame_index);
                 value["render_source"] = json!("core-output-mirror");
+                value
+            });
+            drop(_permit);
+            if id != 0 {
+                let reply = match result { Ok(result) => json!({"id":id,"ok":true,"result":result}),
+                    Err(error) => json!({"id":id,"ok":false,"error":error}) };
+                let _ = response_tx.send(reply.to_string());
+            }
+        });
+        Ok(())
+    }
+
+    /// A deck confidence monitor read back for a panel with no presenter to
+    /// show it (`deck_monitor`: "a" or "b"). Like the composite preview it
+    /// reads what the last frame drew and maps the buffer off the event loop.
+    fn start_deck_monitor_preview(&mut self, req: &RpcRequest) -> Result<(), String> {
+        let bank = match string_at(&req.params, &["deck_monitor"]).as_deref() {
+            Some("a") | Some("A") => 0,
+            Some("b") | Some("B") => 1,
+            _ => return Err("deck_monitor must be \"a\" or \"b\"".to_string()),
+        };
+        let busy = &LIVE_DECK_PREVIEW_BUSY[bank];
+        if busy.swap(true, Ordering::AcqRel) {
+            return Err("deck monitor preview busy; drop this preview frame".to_string());
+        }
+        let permit = LiveCapturePermit(busy);
+        let include_pixels = bool_at(&req.params, &["include_pixels"]).unwrap_or(false);
+        let renderer = self.renderer.as_ref().ok_or("native renderer unavailable")?;
+        // No deck has drawn since the core started: answer with no pixels
+        // rather than an error, so a panel polling an empty deck stays quiet.
+        let Some(pending) = renderer.prepare_deck_monitor_readback(bank)? else {
+            self.send_ok(req.id, json!({
+                "render_source": "core-deck-monitor",
+                "includes_pixels": false,
+            }));
+            return Ok(());
+        };
+        let response_tx = self.response_tx.clone();
+        let id = req.id;
+        thread::spawn(move || {
+            let _permit = permit;
+            let result = pending.finish().map(|frame| {
+                let mut value = frame.to_json(include_pixels);
+                value["render_source"] = json!("core-deck-monitor");
                 value
             });
             drop(_permit);
@@ -20113,7 +20155,6 @@ impl RenderState {
             native_recorder: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_recorder_error: None,
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
             deck_monitor_targets: None,
             slice_targets: HashMap::new(),
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -20698,15 +20739,15 @@ impl RenderState {
         })
     }
 
-    /// Lazily (re)create the two deck-monitor targets. Returns false when the
-    /// platform cannot export shared textures (monitor presentation is then
-    /// simply unavailable — never an error path for the main render).
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    /// Lazily (re)create the two deck-monitor targets. Returns false when a
+    /// shared-texture export cannot be made where the platform has one
+    /// (monitor presentation is then simply unavailable — never an error
+    /// path for the main render).
     fn ensure_deck_monitor_targets(&mut self, width: u32, height: u32) -> bool {
         let width = width.clamp(16, 1024);
         let height = height.clamp(16, 1024);
         if let Some(targets) = self.deck_monitor_targets.as_ref() {
-            if targets[0].export.width == width && targets[0].export.height == height {
+            if targets[0].width == width && targets[0].height == height {
                 return true;
             }
         }
@@ -20723,6 +20764,7 @@ impl RenderState {
                 self.config.format,
                 label,
             );
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             let export = match Self::create_output_export_target(
                 &self.device,
                 width,
@@ -20737,8 +20779,11 @@ impl RenderState {
                 }
             };
             created.push(DeckMonitorTarget {
-                _render_texture: render_texture,
+                render_texture,
                 render_view,
+                width,
+                height,
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 export,
             });
         }
@@ -20750,9 +20795,8 @@ impl RenderState {
 
     /// Render both deck confidence monitors. Each is one small fullscreen
     /// composite pass over the bank's tagged layers — it samples the same
-    /// source frames the program mix uses (no extra source render, decode,
-    /// or CPU readback) and blits into the bank's shared-texture export.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    /// source frames the program mix uses (no extra source render or decode)
+    /// and, where there is one, blits into the bank's shared-texture export.
     #[allow(clippy::too_many_arguments)]
     fn render_deck_monitors(
         &mut self,
@@ -20803,6 +20847,7 @@ impl RenderState {
                     "Ghost Deck Monitor Pass",
                     None,
                 );
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 target.export.blitter.copy(
                     &self.device,
                     &mut encoder,
@@ -20812,12 +20857,25 @@ impl RenderState {
             }
             self.queue.submit(Some(encoder.finish()));
         }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(targets) = self.deck_monitor_targets.as_mut() {
             for target in targets.iter_mut() {
                 target.export.frame = target.export.frame.saturating_add(1);
             }
         }
         true
+    }
+
+    /// Queue a readback of one deck monitor (0 = bank A, 1 = bank B) for a
+    /// panel that cannot import its shared texture. Returns as soon as the
+    /// copy is queued; `finish()` waits for it. `None` until the monitors
+    /// have been drawn once.
+    fn prepare_deck_monitor_readback(&self, bank: usize) -> Result<Option<PendingFrameReadback>, String> {
+        let Some(target) = self.deck_monitor_targets.as_ref().and_then(|targets| targets.get(bank)) else {
+            return Ok(None);
+        };
+        prepare_texture_readback(&self.device, &self.queue, &target.render_texture,
+            self.config.format, target.width, target.height, "Ghost Deck Monitor Preview").map(Some)
     }
 
     /// Create (or resize) the recording target and its shared-texture export.
@@ -31542,6 +31600,11 @@ static LIVE_FRAME_STREAM: Mutex<Option<(u16, String, std::net::TcpStream)>> = Mu
 static LIVE_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_DIAGNOSTIC_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_PREVIEW_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// One in-flight readback per deck monitor (bank A, bank B).
+static LIVE_DECK_PREVIEW_BUSY: [std::sync::atomic::AtomicBool; 2] = [
+    std::sync::atomic::AtomicBool::new(false),
+    std::sync::atomic::AtomicBool::new(false),
+];
 struct LiveCapturePermit(&'static std::sync::atomic::AtomicBool);
 impl Drop for LiveCapturePermit {
     fn drop(&mut self) { self.0.store(false, Ordering::Release); }

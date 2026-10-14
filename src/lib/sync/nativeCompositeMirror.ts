@@ -41,15 +41,29 @@ let failureStreak = 0;
 let scratch: ImageData | null = null;
 const frameListeners = new Set<() => void>();
 
-function decodeSnapshotInto(snap: {
+/** The pixel payload of a core frame snapshot. */
+export interface SnapshotPixels {
   rgba_b64?: string;
   width?: number;
   height?: number;
   format?: string;
   bytes_per_row?: number;
   padded_bytes_per_row?: number;
-}): boolean {
-  if (!snap?.rgba_b64 || !snap.width || !snap.height || !mirrorCanvas || !mirrorCtx) return false;
+}
+
+/**
+ * Draw a core snapshot into `canvas`, resizing it to the snapshot. `scratch`
+ * is the ImageData from the previous call (or null); the one used is
+ * returned so a pump allocates only when the size changes. Returns null when
+ * the snapshot carries no pixels.
+ */
+export function drawSnapshotToCanvas(
+  snap: SnapshotPixels | null | undefined,
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  scratch: ImageData | null,
+): ImageData | null {
+  if (!snap?.rgba_b64 || !snap.width || !snap.height) return null;
   // A 1024px mirror frame is ~4MB of base64, and the obvious
   // atob-then-charCodeAt-per-byte decode showed up in a live profile at 13%
   // of renderer samples with another 6% in atob itself. Uint8Array.fromBase64
@@ -68,14 +82,15 @@ function decodeSnapshotInto(snap: {
   }
   const w = snap.width;
   const h = snap.height;
-  const stride = snap.padded_bytes_per_row || snap.bytes_per_row || w * 4;
+  // The core sends rows already stripped of GPU padding, so the padded
+  // stride only describes the copy it made, not these bytes.
+  const stride = snap.bytes_per_row || w * 4;
+  if (bytes.length < stride * (h - 1) + w * 4) return null;
   const bgra = /bgra/i.test(String(snap.format ?? ''));
-  if (mirrorCanvas.width !== w) mirrorCanvas.width = w;
-  if (mirrorCanvas.height !== h) mirrorCanvas.height = h;
-  if (!scratch || scratch.width !== w || scratch.height !== h) {
-    scratch = new ImageData(w, h);
-  }
-  const out = scratch.data;
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
+  const image = scratch && scratch.width === w && scratch.height === h ? scratch : new ImageData(w, h);
+  const out = image.data;
   for (let y = 0; y < h; y++) {
     const src = y * stride;
     const dst = y * w * 4;
@@ -88,7 +103,15 @@ function decodeSnapshotInto(snap: {
       out[di + 3] = 255;
     }
   }
-  mirrorCtx.putImageData(scratch, 0, 0);
+  ctx.putImageData(image, 0, 0);
+  return image;
+}
+
+function decodeSnapshotInto(snap: SnapshotPixels): boolean {
+  if (!mirrorCanvas || !mirrorCtx) return false;
+  const image = drawSnapshotToCanvas(snap, mirrorCanvas, mirrorCtx, scratch);
+  if (!image) return false;
+  scratch = image;
   return true;
 }
 

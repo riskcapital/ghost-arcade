@@ -21,6 +21,7 @@
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { acquireNativeCompositeMirror, type CompositeMirrorHandle } from '../sync/nativeCompositeMirror';
+  import { startNativeDeckMonitorMirror, type DeckMonitorMirrorHandle } from '../sync/nativeDeckMonitorMirror';
   import { getNativeRendererCapabilities } from '$lib/api/native-renderer';
   import { get } from 'svelte/store';
   import { prepareVideoImport } from '../video/videoImport';
@@ -561,9 +562,23 @@
     return active;
   })();
 
-  $: deckMonitorsVisible = nativePreviewActive
+  $: deckMonitorsVisible = nativeEngineActive
     && $vjClipLauncher.isOpen
     && $vjClipLauncher.crossfaderEnabled;
+
+  // With no presenter to import the monitors' shared textures, the panel
+  // reads each deck back from the core into a canvas of its own.
+  let deckMonitorACanvas: HTMLCanvasElement | null = null;
+  let deckMonitorBCanvas: HTMLCanvasElement | null = null;
+  let deckMonitorMirror: DeckMonitorMirrorHandle | null = null;
+  $: deckMonitorMirrorWanted = nativePresenterUnsupported && deckMonitorsVisible
+    && !!deckMonitorACanvas && !!deckMonitorBCanvas;
+  $: if (deckMonitorMirrorWanted && !deckMonitorMirror && deckMonitorACanvas && deckMonitorBCanvas) {
+    deckMonitorMirror = startNativeDeckMonitorMirror({ a: deckMonitorACanvas, b: deckMonitorBCanvas });
+  } else if (!deckMonitorMirrorWanted && deckMonitorMirror) {
+    deckMonitorMirror.release();
+    deckMonitorMirror = null;
+  }
 
   function deckMonitorRect(el: HTMLElement) {
     const rect = el.getBoundingClientRect();
@@ -1075,6 +1090,8 @@
     vjClipLauncher.releaseInputs('panel:');
     previewMirror?.release();
     previewMirror = null;
+    deckMonitorMirror?.release();
+    deckMonitorMirror = null;
     if (deckMonitorTimer) {
       clearInterval(deckMonitorTimer);
       deckMonitorTimer = null;
@@ -5001,6 +5018,9 @@
                   class:deck-live={$vjClipLauncher.crossfaderValue < 0.5}
                   bind:this={deckMonitorAEl}
                 >
+                  {#if nativePresenterUnsupported}
+                    <canvas class="deck-preview-canvas" bind:this={deckMonitorACanvas}></canvas>
+                  {/if}
                   <div class="deck-preview-label">
                     <strong>A</strong>
                     <span>DECK A</span>
@@ -5011,6 +5031,9 @@
                   class:deck-live={$vjClipLauncher.crossfaderValue >= 0.5}
                   bind:this={deckMonitorBEl}
                 >
+                  {#if nativePresenterUnsupported}
+                    <canvas class="deck-preview-canvas" bind:this={deckMonitorBCanvas}></canvas>
+                  {/if}
                   <div class="deck-preview-label">
                     <strong>B</strong>
                     <span>DECK B</span>
@@ -8676,6 +8699,14 @@
     border-radius: 3px;
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.75);
     transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  .deck-preview-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
 
   .deck-preview-container.deck-live {
