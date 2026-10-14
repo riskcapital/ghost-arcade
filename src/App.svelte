@@ -22,6 +22,7 @@
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
+  import { probeWebGPU } from './lib/renderer/webgpuCapability';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
   // Feature tour removed at user request — was an interactive multi-step
@@ -255,7 +256,13 @@
   let webgpuBridgeComponent: WebGPUCanvas | null = null;
   let lastReactiveBridgeSource: HTMLCanvasElement | null = null;
   let lastReactiveBridge: WebGPUCanvas | null = null;
-  $: if ($settings.experimental?.editorWebGPU && !showStage3D && canvasComponent && webgpuBridgeComponent) {
+  // The bridge presents through WebGPU. Where there is no adapter (many
+  // Linux drivers, software GL, virtual machines) the editor keeps the
+  // WebGL presenter instead of a black canvas under an error card.
+  let webgpuEditorAvailable = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
+  void probeWebGPU().then((ok) => { webgpuEditorAvailable = ok; });
+  $: editorWebGPU = !!$settings.experimental?.editorWebGPU && webgpuEditorAvailable;
+  $: if (editorWebGPU && !showStage3D && canvasComponent && webgpuBridgeComponent) {
     const source = canvasComponent.getCanvas?.();
     if (source && (source !== lastReactiveBridgeSource || webgpuBridgeComponent !== lastReactiveBridge)) {
       webgpuBridgeComponent.setSourceCanvas(source);
@@ -806,7 +813,7 @@
     let _lastWiredBridge: WebGPUCanvas | null = null;
     const unsubscribeSettings = settings.subscribe((s) => {
       if (!appMounted) return;
-      if (!s.experimental?.editorWebGPU) return;
+      if (!s.experimental?.editorWebGPU || !webgpuEditorAvailable) return;
       // Idempotent — only re-wire when the canvas or bridge instance
       // actually changes (component remount). Otherwise every settings
       // emit (every corner-drag frame) re-pushes the same canvas and
@@ -6159,7 +6166,7 @@
 
           See docs/WEBGPU_MIGRATION.md for the full roadmap.
         -->
-        {#if $settings.experimental?.editorWebGPU && !showStage3D}
+        {#if editorWebGPU && !showStage3D}
           <Canvas bind:this={canvasComponent} bridgeMode={true} stage3DOutput={showStage3D} />
           <WebGPUCanvas bind:this={webgpuBridgeComponent} />
         {:else}
