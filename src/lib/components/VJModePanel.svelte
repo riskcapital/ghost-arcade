@@ -20,6 +20,8 @@
   import { isMac, isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
+  import { acquireNativeCompositeMirror, type CompositeMirrorHandle } from '../sync/nativeCompositeMirror';
+  import { getNativeRendererCapabilities } from '$lib/api/native-renderer';
   import { get } from 'svelte/store';
   import { prepareVideoImport } from '../video/videoImport';
   import { mediaLibrary, type MediaItem } from '../stores/media';
@@ -480,9 +482,44 @@
   let previewCanvas: HTMLCanvasElement;
   let previewContainerEl: HTMLDivElement | null = null;
   // Full-native mode: the render core's output is shown by repositioning the
-  // AppKit presenter underlay into our preview box (registered below) — the
-  // 2D canvas blit only exists for the legacy browser renderer.
-  const nativePreviewActive = isDesktopApp && NATIVE_ENGINE_ONLY;
+  // native presenter underlay into our preview box (registered below).
+  const nativeEngineActive = isDesktopApp && NATIVE_ENGINE_ONLY;
+  // Where the core cannot export a shared texture (Linux) there is no
+  // presenter to show through the box, and a transparent box is just an
+  // empty one. The panel keeps its own canvas there and draws the core's
+  // composite into it from the shared mirror, as the editor canvas does.
+  let nativePresenterUnsupported = false;
+  $: nativePreviewActive = nativeEngineActive && !nativePresenterUnsupported;
+  $: mirrorPreviewWanted = nativeEngineActive && nativePresenterUnsupported
+    && $vjClipLauncher.isOpen && !$vjStageEdit;
+  let previewMirror: CompositeMirrorHandle | null = null;
+  $: if (mirrorPreviewWanted && !previewMirror) {
+    previewMirror = acquireNativeCompositeMirror({ maxDim: 1024, fps: 30 });
+  } else if (!mirrorPreviewWanted && previewMirror) {
+    previewMirror.release();
+    previewMirror = null;
+  }
+  onMount(() => {
+    if (!nativeEngineActive) return;
+    // The capability report only exists once the core is up; ask until it
+    // answers. The answer cannot change afterwards.
+    let cancelled = false;
+    const ask = async () => {
+      while (!cancelled) {
+        try {
+          const caps = await getNativeRendererCapabilities() as any;
+          const platform = caps?.output_shared_texture_export?.platform;
+          if (platform) {
+            nativePresenterUnsupported = platform === 'unsupported';
+            return;
+          }
+        } catch { /* core still starting */ }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    };
+    void ask();
+    return () => { cancelled = true; };
+  });
   $: if (nativePreviewActive) {
     if ($vjClipLauncher.isOpen && !$vjStageEdit && previewContainerEl) {
       nativePreviewHostEl.set(previewContainerEl);
@@ -975,6 +1012,10 @@
       _lastPreviewFrameTime = now;
 
       if (nativePreviewActive) return;
+      if (previewMirror) {
+        drawMirrorPreview(previewMirror.canvas);
+        return;
+      }
       const mainCanvas = getMainCanvas();
       if (!previewCanvas || !mainCanvas || !previewCtx) return;
       const srcW = mainCanvas.width;
@@ -992,6 +1033,25 @@
       previewCtx.drawImage(mainCanvas, 0, 0, dstW, dstH);
     }
     previewAnimationFrame = requestAnimationFrame(updatePreview);
+  }
+
+  /** Draw the mirrored composite into the preview box, letterboxed: this is
+   *  what the operator judges framing from, so its aspect has to hold. */
+  function drawMirrorPreview(source: HTMLCanvasElement) {
+    if (!previewCanvas || !previewCtx || !source.width || !source.height) return;
+    const box = previewCanvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(box.width * ratio));
+    const height = Math.max(1, Math.round(box.height * ratio));
+    if (previewCanvas.width !== width || previewCanvas.height !== height) {
+      previewCanvas.width = width;
+      previewCanvas.height = height;
+    }
+    const scale = Math.min(width / source.width, height / source.height);
+    const w = Math.round(source.width * scale);
+    const h = Math.round(source.height * scale);
+    previewCtx.clearRect(0, 0, width, height);
+    previewCtx.drawImage(source, Math.round((width - w) / 2), Math.round((height - h) / 2), w, h);
   }
 
   // Stop preview loop when VJ mode closes
@@ -1013,6 +1073,8 @@
   // Cleanup on destroy
   onDestroy(() => {
     vjClipLauncher.releaseInputs('panel:');
+    previewMirror?.release();
+    previewMirror = null;
     if (deckMonitorTimer) {
       clearInterval(deckMonitorTimer);
       deckMonitorTimer = null;
@@ -4296,7 +4358,7 @@
             ● REC
           </button>
         {/if}
-        {#if nativePreviewActive}
+        {#if nativeEngineActive}
           <RecordingSourcePicker disabled={vjIsRecording} compact />
         {/if}
         </div>
