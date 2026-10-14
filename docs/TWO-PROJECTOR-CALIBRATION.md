@@ -1,0 +1,39 @@
+# One backdrop, two projectors
+
+This workflow is for two projectors showing one continuous composition on a flat backdrop, including portrait projectors mounted at oblique angles. The projector outputs keep their calibration when VJ clips change. These controls came from 2.0.15 and are backported to the 1.9 renderer, where they run in the Screen windows' WebGPU pass and in the WebGL pass that feeds Spout, Syphon and NDI senders.
+
+## Three separate jobs
+
+- **Source slice** selects which part of the full composition a projector receives. Adjacent projectors need overlapping source regions, not two independently stretched copies of a clip.
+- **Projector calibration** places that source region on the real backdrop. Its four destination corners use a perspective transform, so straight lines on a flat surface remain straight. This is separate from the older Slice Corner pin/Mesh controls, which select a distorted source region.
+- **Shared overlap blend** fades both outputs in the same composition coordinates. Left and right boundary positions can differ at the top and bottom, producing an angled or widening overlap. The two weights sum to one in linear light. This is not an automatic scan or a replacement for physically aligning the images.
+
+## Set up
+
+1. Connect the projectors as **extended displays**, not mirrored displays. Set each display to the actual orientation/resolution (for example 1080 × 1920). Use the Screen rotation control only if the image still needs rotating.
+2. Set the composition aspect ratio to the full backdrop's intended picture. Two portrait projectors do not automatically mean a 2160 × 1920 composition: physical overlap reduces the combined width.
+3. Put one full-width alignment image in the composition. A numbered grid with circles and diagonals is useful. Keep creative effects and layer feathering off during calibration. Do not split the content into two VJ layers.
+4. Create two **Screens**, route one to each projector display, and open both output windows. Both outputs sample the same composition.
+5. In the first screen's **Projector calibration → Shared overlap blend**, enable **Angled two-projector overlap**. Choose which side this projector covers and select the other screen.
+6. Enter the overlap boundaries as percentages of the **whole composition**. Example: left boundary 46% at the top and 40% at the bottom; right boundary 54% at the top and 60% at the bottom. This describes a band widening toward the bottom. These are starting values, not universal projector settings.
+7. Click **Pair blend & set overlapping crops**. This creates complementary fades and source crops covering the band. It sets both source slices to Rectangle and clears the older rectangular edge fades. It preserves existing projector destination corners. Pairing is undoable. If you change band boundaries later, pair again to copy them and update both crops.
+8. On each screen, enable **Correct output geometry**. Drag the four corners in the small projector editor, or type X/Y percentages for fine adjustment, while watching the real backdrop. Align the same numbered grid details in the overlap. The values describe positions in that projector's raster, not source-crop coordinates. Outside the corrected quad is black.
+9. Adjust the band boundaries so the fade remains inside the region that **both** projectors physically cover. Re-pair and refine geometry if the source crops change. A doubled grid line means geometry is still misaligned; increasing feather width cannot fix it.
+10. Match each projector's brightness, contrast and gamma. Test white, mid-gray, dark-gray and black fields. Use black-level compensation where needed. Save the project and/or Screen Setup once calibrated.
+
+## Perform
+
+Switch full-width images, videos or shaders in VJ mode. Keep the composition dimensions and Screen calibration unchanged. Apply Stretch/Fill/Contain once to the content's placement within the composition; do not use it to independently resize the two projector halves. For a theatre backdrop, output the same composition to both Screens throughout the show.
+
+## Limits and troubleshooting
+
+- Physical projector black levels add together. Software cannot subtract that light; a dark-scene seam may need black-level matching, projector settings or optical treatment.
+- This tool currently pairs **two horizontally adjacent outputs** with a straight boundary on each side of the band. Arbitrary multi-projector intersections and curved-surface calibration require more than this paired workflow.
+- Corner correction assumes a flat surface. Existing mesh/source-warp tools remain available, but this new destination calibration is a four-point perspective correction.
+- Crossing or collapsing projector corners blacks out that screen rather than rendering an invalid transform. Use Reset projector corners to recover.
+- Disable legacy Edge Blend ramps on the shared seam; combining them with the paired blend darkens the overlap twice. The pairing button clears these ramps automatically.
+- No physical two-projector acceptance test has been performed yet. On 1.9, GPU checks of both Screen passes verify perspective corner mapping, black outside the corrected quad and for crossed corners, and complementary angled-overlap fades that sum to one. Final brightness/colour matching must be checked on the actual venue rig.
+
+## Screen masks
+
+Each Screen can also carry polygon masks (**Screen inspector → Masks**). Click **Add mask**, then click on the editor canvas to place points; Enter, Escape, a right-click or clicking the first point closes the shape. Double-click a point to curve its edges. Masks keep the inside of their shape (Invert cuts a hole instead) and can be feathered. They are stored in the Screen's own content space, so they stay on the surface when the Screen is calibrated or re-cropped.

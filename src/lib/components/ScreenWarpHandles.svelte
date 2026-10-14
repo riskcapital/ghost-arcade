@@ -28,15 +28,33 @@
    * thinks about the projector image — top is up). The editor canvas
    * `containerHeight` runs top→bottom, so `pixelY = nY * height` with
    * no flip. Output-warp geometry uses projector-unit-quad 0..1.
+   *
+   * Masks: each screen's masks are stored in the screen's own content
+   * space and cut from the projector's frame after crop + warp. They are
+   * drawn here through the same forward map the core samples with
+   * (screenMaskGeometry), so the shaded region on the canvas is what the
+   * projector loses. The selected mask gets vertex handles, edge "+"
+   * handles to insert a vertex, and a click-to-place mode that appends
+   * vertices while `screenMaskPlacing` is on. Curved edges work like layer
+   * custom shapes: double-click a vertex to toggle corner / curve, drag a
+   * round curve handle to bend (its partner mirrors unless Alt is held).
    */
   import { onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
-  import type { OutputSlice } from '../stores/settings';
-  import type { WarpCorners, MeshWarpGrid } from '../types';
+  import type { OutputSlice, ScreenMask } from '../stores/settings';
   import { project } from '../stores/layers';
-  import { settings } from '../stores/settings';
-  import { screens, selectedScreenId, screenActions } from '../stores/screens';
+  import { settings, screenMaskIsActive } from '../stores/settings';
+  import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { screens, selectedScreenId, screenActions, selectedScreenMaskId, screenMaskPlacing, screenMaskPointPress, screenMaskCanvasPress, screenMaskEdgeMidpoint } from '../stores/screens';
+  import {
+    canvasToScreenContent,
+    screenContentToCanvas,
+    screenMaskAlpha,
+    screenMaskCanvasOutline,
+    screenMaskCanvasPoints,
+    screenOutlineCanvasPoints,
+  } from '../stores/screenMaskGeometry';
 
   interface Props {
     containerWidth: number;
@@ -56,7 +74,9 @@
     | { kind: 'corner'; corner: keyof WarpCorners }
     | { kind: 'corners-move' }
     | { kind: 'mesh'; row: number; col: number }
-    | { kind: 'mesh-move' };
+    | { kind: 'mesh-move' }
+    | { kind: 'mask-point'; maskId: string; index: number }
+    | { kind: 'mask-cp'; maskId: string; index: number; which: 'cpIn' | 'cpOut' };
 
   let drag: {
     sliceId: string;
@@ -207,7 +227,14 @@
         dx = step.x;
         break;
       case 'Escape':
-        cancelDrag();
+      case 'Enter':
+        // Ends vertex placing first; a second Escape still cancels a drag.
+        if (get(screenMaskPlacing)) {
+          e.preventDefault();
+          screenMaskPlacing.set(false);
+          return;
+        }
+        if (e.key === 'Escape') cancelDrag();
         return;
       default:
         return;
@@ -326,8 +353,150 @@
         row.map(pt => ({ x: pt.x + dxN, y: pt.y + dyN }))
       );
       screenActions.update(id, { meshGrid: { rows: init.meshGrid.rows, cols: init.meshGrid.cols, points } });
+    } else if (k.kind === 'mask-point') {
+      // Drag in canvas space, store in the screen's content space, so the
+      // vertex tracks the cursor on a corner-pinned or mesh-warped screen.
+      // Masks are rebuilt on every edit, never mutated, so the snapshot's
+      // vertex is still the pre-drag position.
+      const p0 = init.masks?.find(m => m.id === k.maskId)?.points[k.index];
+      if (!p0) return;
+      const start = screenContentToCanvas(init, p0);
+      const content = canvasToScreenContent(init, { x: start.x + dxN, y: start.y + dyN });
+      if (content) screenActions.updateMaskPoint(id, k.maskId, k.index, content);
+    } else if (k.kind === 'mask-cp') {
+      // Same canvas-to-content trip for a curve handle. Its partner
+      // mirrors through the vertex unless Alt is held, as on layer shapes.
+      // Off the screen the inverse continues the warp outward, so the
+      // handle keeps following the cursor there.
+      const p0 = init.masks?.find(m => m.id === k.maskId)?.points[k.index];
+      const h0 = p0?.[k.which];
+      if (!p0 || !h0) return;
+      const start = screenContentToCanvas(init, h0);
+      const content = canvasToScreenContent(init, { x: start.x + dxN, y: start.y + dyN });
+      if (!content) return;
+      const mirror = e.altKey ? undefined : { x: 2 * p0.x - content.x, y: 2 * p0.y - content.y };
+      screenActions.setMaskPointHandles(id, k.maskId, k.index, k.which === 'cpIn'
+        ? { cpIn: content, cpOut: mirror }
+        : { cpOut: content, cpIn: mirror });
     }
   }
+
+  // ─── Masks ─────────────────────────────────────────────────────────
+  function selectedMaskOf(s: OutputSlice): ScreenMask | null {
+    return s.masks?.find(m => m.id === $selectedScreenMaskId) ?? null;
+  }
+
+  function startMaskPointDrag(e: MouseEvent, s: OutputSlice, maskId: string, index: number) {
+    const pointCount = (s.masks ?? []).find(m => m.id === maskId)?.points.length ?? 0;
+    const action = screenMaskPointPress(e, get(screenMaskPlacing), index, pointCount);
+    if (action === 'drag') {
+      startDrag(e, s.id, { kind: 'mask-point', maskId, index });
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === 'close') screenMaskPlacing.set(false);
+    else screenActions.removeMaskPoint(s.id, maskId, index);
+  }
+
+  /** Click on an edge's "+" handle: insert a vertex halfway along the
+   *  edge (in content space, so it lands on the edge the operator sees; a
+   *  curved edge is split without changing its shape). */
+  function insertMaskPoint(e: MouseEvent, s: OutputSlice, mask: ScreenMask, index: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    screenActions.insertMaskPointOnEdge(s.id, mask.id, index);
+  }
+
+  /** Double-click a vertex: toggle it between a corner and a curve. */
+  function toggleMaskPointCurve(e: MouseEvent, s: OutputSlice, mask: ScreenMask, index: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (get(screenMaskPlacing)) return;
+    screenActions.toggleMaskPointCurve(s.id, mask.id, index);
+  }
+
+  /** Placing mode: every click on the canvas appends a vertex. Clicks
+   *  outside the screen clamp to its edge, which is where the core would
+   *  cut anyway. */
+  function placeMaskPoint(e: MouseEvent) {
+    const s = $screens.find(sc => sc.id === $selectedScreenId);
+    const mask = s ? selectedMaskOf(s) : null;
+    if (!s || !mask || !containerEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const action = screenMaskCanvasPress(e.button);
+    if (action === 'close') screenMaskPlacing.set(false);
+    if (action !== 'add') return;
+    const r = containerEl.getBoundingClientRect();
+    const canvasPoint = {
+      x: (e.clientX - r.left) / Math.max(1, r.width),
+      y: (e.clientY - r.top) / Math.max(1, r.height),
+    };
+    const content = canvasToScreenContent(s, canvasPoint);
+    if (!content) return;
+    screenActions.addMaskPoint(s.id, mask.id, content);
+  }
+
+  function polyPath(points: Point2D[]): string {
+    return points.map(p => `${px(p.x)},${py(p.y)}`).join(' ');
+  }
+
+  // Shading of what each screen's masks remove. Evaluated per pixel with
+  // the same maths the core cuts with (screenMaskAlpha), through the same
+  // crop / warp map, so the dimmed region on the canvas is what the
+  // projector loses, feather included. Drawn at reduced resolution and
+  // only inside screens that have a usable mask.
+  let maskCanvas: HTMLCanvasElement | null = $state(null);
+  const MASK_SHADE_MAX_DIM = 480;
+  let maskShadeFrame = 0;
+
+  function drawMaskShade() {
+    maskShadeFrame = 0;
+    const canvas = maskCanvas;
+    if (!canvas) return;
+    const scale = Math.min(1, MASK_SHADE_MAX_DIM / Math.max(1, containerWidth, containerHeight));
+    const w = Math.max(1, Math.round(containerWidth * scale));
+    const h = Math.max(1, Math.round(containerHeight * scale));
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, w, h);
+    const masked = $screens.filter(s => s.enabled && (s.masks ?? []).some(screenMaskIsActive));
+    if (masked.length === 0) return;
+    const image = ctx.createImageData(w, h);
+    const data = image.data;
+    for (const s of masked) {
+      const outline = screenOutlineCanvasPoints(s);
+      const xs = outline.map(p => p.x), ys = outline.map(p => p.y);
+      const x0 = Math.max(0, Math.floor(Math.min(...xs) * w)), x1 = Math.min(w - 1, Math.ceil(Math.max(...xs) * w));
+      const y0 = Math.max(0, Math.floor(Math.min(...ys) * h)), y1 = Math.min(h - 1, Math.ceil(Math.max(...ys) * h));
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          // Only the screen's own pixels shade, so skip the solve past it.
+          const uv = canvasToScreenContent(s, { x: (x + 0.5) / w, y: (y + 0.5) / h }, { extrapolate: false });
+          if (!uv || uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) continue;
+          const removed = 1 - screenMaskAlpha(s.masks, uv);
+          const o = (y * w + x) * 4 + 3;
+          // Overlapping screens: keep the darker of the two shades.
+          data[o] = Math.max(data[o], Math.round(removed * 255));
+        }
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+
+  $effect(() => {
+    // Track everything the shade depends on, then redraw once per frame.
+    void $screens; void containerWidth; void containerHeight; void maskCanvas;
+    if (typeof requestAnimationFrame === 'undefined' || maskShadeFrame) return;
+    maskShadeFrame = requestAnimationFrame(drawMaskShade);
+  });
+
+  onDestroy(() => {
+    if (maskShadeFrame) cancelAnimationFrame(maskShadeFrame);
+  });
 
   // ─── Pixel helpers ─────────────────────────────────────────────────
   function px(nx: number): number { return nx * containerWidth; }
@@ -363,6 +532,10 @@
   bind:this={containerEl}
   style="width: {containerWidth}px; height: {containerHeight}px;"
 >
+  <!-- What each screen's masks cut away, shaded the way the projector
+       loses it (black, feathered). Under every outline and handle. -->
+  <canvas class="mask-shade" bind:this={maskCanvas} style="width: {containerWidth}px; height: {containerHeight}px;"></canvas>
+
   <!-- Outlines + mesh grid lines for ALL screens. -->
   <svg class="lines-overlay" width={containerWidth} height={containerHeight}>
     {#each $screens as s (s.id)}
@@ -398,8 +571,95 @@
       {:else if mode === 'mesh' && s.meshGrid}
         <text x={px(s.meshGrid.points[0][0].x) + 6} y={py(s.meshGrid.points[0][0].y) + 14} fill={stroke} font-size="13" font-family="IBM Plex Mono, ui-monospace, monospace" paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">{s.name}</text>
       {/if}
+      <!-- Mask outlines, drawn through the screen's warp. The mask being
+           edited is solid; the rest of the selected screen's masks are
+           dashed; other screens' masks are faint. Disabled masks are
+           dotted so they can still be found. -->
+      {#each s.masks ?? [] as m (m.id)}
+        {#if m.points.length >= 2}
+          {@const editing = isSel && $selectedScreenMaskId === m.id}
+          {@const open = m.points.length < 3 || (editing && $screenMaskPlacing)}
+          {@const pts = polyPath(open ? screenMaskCanvasPoints(s, m) : screenMaskCanvasOutline(s, m))}
+          {@const mstroke = editing ? '#4dd8ff' : isSel ? 'rgba(77, 216, 255, 0.7)' : 'rgba(77, 216, 255, 0.3)'}
+          {@const mdash = m.enabled ? (editing ? 'none' : '6 4') : '2 4'}
+          {#if !open}
+            <polygon points={pts} fill="none" stroke={mstroke} stroke-width={editing ? 2 : 1} stroke-dasharray={mdash} />
+          {:else}
+            <polyline points={pts} fill="none" stroke={mstroke} stroke-width={editing ? 2 : 1} stroke-dasharray={mdash} />
+          {/if}
+        {/if}
+      {/each}
     {/each}
   </svg>
+
+  {#if $screenMaskPlacing && $selectedScreenMaskId}
+    <!-- Click-to-place layer: sits over the screen handles (so a click
+         never grabs the move handle by accident) and under the vertex
+         handles (so placed vertices can still be dragged). -->
+    <div class="mask-place-layer" role="presentation" onmousedown={placeMaskPoint}
+      oncontextmenu={(e) => e.preventDefault()}></div>
+  {/if}
+
+  {#each $screens as s (s.id)}
+    {#if $selectedScreenId === s.id}
+      {@const mask = selectedMaskOf(s)}
+      {#if mask}
+        {@const canvasPts = screenMaskCanvasPoints(s, mask)}
+        {#if !$screenMaskPlacing && mask.points.length >= 2}
+          <!-- Edge "+" handles insert a vertex midway along that edge. -->
+          {#each mask.points as _p, i}
+            {#if i < mask.points.length - 1 || mask.points.length >= 3}
+              {@const mid = screenContentToCanvas(s, screenMaskEdgeMidpoint(mask.points, i))}
+              <div class="handle mask-insert-handle" style="left:{px(mid.x)}px; top:{py(mid.y)}px;"
+                role="button" tabindex="-1" title="Add a point here"
+                onmousedown={(e) => insertMaskPoint(e, s, mask, i)}>+</div>
+            {/if}
+          {/each}
+          <!-- Curve handles: an arm from each curved vertex to its round
+               handle. Drag to bend; the partner mirrors unless Alt is held. -->
+          <svg class="lines-overlay mask-cp-arms" width={containerWidth} height={containerHeight}>
+            {#each mask.points as p, i}
+              {@const v = screenContentToCanvas(s, p)}
+              {#each (['cpIn', 'cpOut'] as const) as which}
+                {@const h = p[which]}
+                {#if h}
+                  {@const hc = screenContentToCanvas(s, h)}
+                  <line x1={px(v.x)} y1={py(v.y)} x2={px(hc.x)} y2={py(hc.y)} stroke="#4dd8ff" stroke-width="1" stroke-opacity="0.8" />
+                {/if}
+              {/each}
+            {/each}
+          </svg>
+          {#each mask.points as p, i}
+            {#each (['cpIn', 'cpOut'] as const) as which}
+              {@const h = p[which]}
+              {#if h}
+                {@const hc = screenContentToCanvas(s, h)}
+                <div class="handle mask-cp-handle"
+                  class:dragging={drag?.kind.kind === 'mask-cp' && drag.kind.maskId === mask.id && drag.kind.index === i && drag.kind.which === which}
+                  style="left:{px(hc.x)}px; top:{py(hc.y)}px;"
+                  role="button" tabindex="-1"
+                  title="Drag to bend. Alt-drag to move this handle on its own."
+                  aria-label="{which === 'cpIn' ? 'Curve handle into' : 'Curve handle out of'} mask point {i + 1}"
+                  onmousedown={(e) => startDrag(e, s.id, { kind: 'mask-cp', maskId: mask.id, index: i, which })}></div>
+              {/if}
+            {/each}
+          {/each}
+        {/if}
+        {#each canvasPts as cp, i}
+          {@const closable = $screenMaskPlacing && i === 0 && canvasPts.length >= 3}
+          <div class="handle mask-point-handle" class:first={i === 0} class:closable
+            class:dragging={drag?.kind.kind === 'mask-point' && drag?.kind.maskId === mask.id && drag?.kind.index === i}
+            style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
+            role="button" tabindex="-1"
+            class:curved={!!(mask.points[i]?.cpIn || mask.points[i]?.cpOut)}
+            title={closable ? 'Click to close the mask' : $screenMaskPlacing ? 'Drag to move. Right-click to close the mask.' : 'Drag to move. Double-click for a curve or a corner. Right-click or Alt-click to remove.'}
+            oncontextmenu={(e) => e.preventDefault()}
+            ondblclick={(e) => toggleMaskPointCurve(e, s, mask, i)}
+            onmousedown={(e) => startMaskPointDrag(e, s, mask.id, i)}></div>
+        {/each}
+      {/if}
+    {/if}
+  {/each}
 
   <!-- Selected-screen handles (HTML divs positioned absolutely). -->
   {#each $screens as s (s.id)}
@@ -515,6 +775,65 @@
     left: 0;
     pointer-events: none;
   }
+  .mask-shade {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+  }
+  .mask-place-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: auto;
+    cursor: crosshair;
+    z-index: 60;
+  }
+
+  /* Mask vertices sit above the placing layer so they stay draggable. */
+  .handle.mask-point-handle {
+    width: 12px; height: 12px;
+    margin-left: -6px; margin-top: -6px;
+    background: #4dd8ff;
+    border: 2px solid #fff;
+    border-radius: 2px;
+    cursor: grab;
+    z-index: 70;
+  }
+  .mask-point-handle.first { background: #ffffff; border-color: #4dd8ff; }
+  /* While placing, the first vertex closes the shape: ring it so it reads
+     as a target, like a pen tool's start point. */
+  .mask-point-handle.first.closable { cursor: pointer; box-shadow: 0 0 0 4px rgba(77, 216, 255, 0.45); }
+  .mask-point-handle.first.closable:hover { transform: scale(1.5); }
+  .mask-point-handle:hover { transform: scale(1.25); }
+  .mask-point-handle.dragging { cursor: grabbing; transform: scale(1.35); background: #ffff00; }
+  .handle.mask-insert-handle {
+    width: 14px; height: 14px;
+    margin-left: -7px; margin-top: -7px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(77, 216, 255, 0.8);
+    color: #4dd8ff;
+    font-size: 12px;
+    line-height: 12px;
+    text-align: center;
+    cursor: copy;
+    opacity: 0.55;
+    z-index: 70;
+  }
+  .mask-insert-handle:hover { opacity: 1; transform: scale(1.2); }
+  /* A curved vertex reads as round, like a pen tool's smooth point. */
+  .mask-point-handle.curved { border-radius: 50%; }
+  .handle.mask-cp-handle {
+    width: 9px; height: 9px;
+    margin-left: -5px; margin-top: -5px;
+    border-radius: 50%;
+    background: #0b1720;
+    border: 2px solid #4dd8ff;
+    cursor: grab;
+    z-index: 70;
+  }
+  .mask-cp-handle:hover { transform: scale(1.3); }
+  .mask-cp-handle.dragging { cursor: grabbing; background: #ffff00; transform: scale(1.4); }
 
   .handle {
     position: absolute;
