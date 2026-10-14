@@ -148,9 +148,9 @@ async function outputFrame(): Promise<McpToolResult> {
   const binary = atob(encoded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  // The readback is row-padded for GPU alignment, so copy row by row rather than
-  // assuming a width*4 stride. Assuming it shears the image.
-  const stride = snapshot.padded_bytes_per_row || width * 4;
+  // The core strips the GPU row padding before sending, so rows sit at
+  // bytes_per_row. Reading them at padded_bytes_per_row shears the image.
+  const stride = snapshot.bytes_per_row || width * 4;
   // The output export is bgra8unorm. Handing BGRA to putImageData swaps red and
   // blue, which is the worst kind of wrong here: the image looks fine, so a
   // model reasoning about colour is confidently misled rather than blocked.

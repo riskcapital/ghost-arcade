@@ -1391,7 +1391,8 @@
       for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
       const w = snap.width;
       const h = snap.height;
-      const stride = snap.padded_bytes_per_row || snap.bytes_per_row || w * 4;
+      // Rows arrive packed; padded_bytes_per_row describes the GPU copy.
+      const stride = snap.bytes_per_row || w * 4;
       const bgra = /bgra/i.test(String(snap.format ?? ''));
       const img = new ImageData(w, h);
       for (let y = 0; y < h; y++) {

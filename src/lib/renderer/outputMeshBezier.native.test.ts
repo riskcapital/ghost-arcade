@@ -107,7 +107,7 @@ type Frame = { bytes: Buffer; stride: number; red: number };
 function frameOf(snapshot: any): Frame {
   return {
     bytes: Buffer.from(snapshot.rgba_b64, 'base64'),
-    stride: Number(snapshot.padded_bytes_per_row ?? snapshot.bytes_per_row ?? Number(snapshot.width) * 4),
+    stride: Number(snapshot.bytes_per_row ?? Number(snapshot.width) * 4),
     red: String(snapshot.format).toLowerCase().startsWith('bgra') ? 2 : 0,
   };
 }
