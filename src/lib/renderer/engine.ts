@@ -3,6 +3,7 @@ import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent,
 import { GpuEffectRunner, isGpuEffect } from './gpuEffectRunner';
 import { getShapeVertices } from '../types';
 import { EdgeEffectPass, needsEdgeEngine } from './edgeEffectPass';
+import { normalizeEdgeEffectStyle, renderedEdgeEffects } from '../drawing/edgeEffects';
 import { evaluateMeshGrid, meshGridHasTangents } from '../utils/meshWarp';
 
 // ── Group rendering types ──────────────────────────────────────────────────
@@ -2784,10 +2785,11 @@ export class RenderEngine {
     let currentTexture = sourceTexture;
     const useDrawingRenderer = !!this.shapeRendererRef;
 
-    for (const effect of layer.edgeEffects.effects) {
-      if (!effect.enabled) continue;
-
+    for (const effect of renderedEdgeEffects(layer.edgeEffects)) {
       let element: any;
+      // The panel stores some parameters under the catalog's names; the
+      // shared resolver maps them to what the drawing renderer reads.
+      const style = normalizeEdgeEffectStyle(effect);
 
       if (useDrawingRenderer) {
         // Use DrawingRenderer — full fill, animation, and stroke support
@@ -2807,9 +2809,9 @@ export class RenderEngine {
             closed: true,
             cornerStyle: 'sharp',
           } as PointClickLineShape,
-          fill: effect.fill,
-          stroke: effect.stroke,
-          animation: effect.animation,
+          fill: style.fill,
+          stroke: style.stroke,
+          animation: style.animation,
           warpCorners: createDefaultShapeWarp(),
           warpEnabled: false,
           meshWarp: createDefaultShapeMesh(),
@@ -2836,7 +2838,7 @@ export class RenderEngine {
             closed: true,
             cornerStyle: 'sharp',
           },
-          stroke: effect.stroke as any,
+          stroke: style.stroke as any,
           drawAnimation: { enabled: false, drawProgress: 1, drawSpeed: 1, trailLength: 0, loopMode: 'once', reverse: false, easing: 'linear' },
           warpCorners: createDefaultShapeWarp(),
           warpEnabled: false,

@@ -58,7 +58,20 @@ import { restoreVideoSourceElement } from '../media/videoSourceRestore';
 // stroke-by-stroke as expected.
 let _onDiscreteAction: (() => void) | null = null;
 export function setHistoryCallback(fn: () => void) { _onDiscreteAction = fn; }
-function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteAction(); }
+export function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteAction(); }
+
+// Continuous edits (sliders, colour pickers) arrive as a burst of updates
+// with no "done" signal at the call site: coalesce the burst into one undo
+// step ~600 ms after the last change.
+const HISTORY_DEBOUNCE_MS = 600;
+let _historySnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+export function scheduleHistorySnapshot() {
+  if (_historySnapshotTimer) clearTimeout(_historySnapshotTimer);
+  _historySnapshotTimer = setTimeout(() => {
+    _historySnapshotTimer = null;
+    recordDiscreteAction();
+  }, HISTORY_DEBOUNCE_MS);
+}
 const selectedLayerIdsState = writable<string[]>([]);
 
 function cleanMediaSourceName(source: MediaSource): string {
@@ -1896,6 +1909,39 @@ void main() {
           };
         }),
       }));
+    },
+
+    /** Move an edge effect up (-1) or down (+1) its layer's stack. */
+    moveEdgeEffect(layerId: string, effectId: string, delta: number) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.edgeEffects) return layer;
+          const effects = [...layer.edgeEffects.effects];
+          const from = effects.findIndex((e) => e.id === effectId);
+          const to = from + delta;
+          if (from < 0 || to < 0 || to >= effects.length) return layer;
+          const [moved] = effects.splice(from, 1);
+          effects.splice(to, 0, moved);
+          return { ...layer, edgeEffects: { ...layer.edgeEffects, effects } };
+        }),
+      }));
+      recordDiscreteAction();
+    },
+
+    /** Round every corner of the outline the layer's edge effects trace. */
+    setEdgeEffectsCornerRadius(layerId: string, radius: number) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.edgeEffects) return layer;
+          const next: EdgeEffectsConfig = { ...layer.edgeEffects };
+          if (radius > 0) next.cornerRadius = radius;
+          else delete next.cornerRadius;
+          return { ...layer, edgeEffects: next };
+        }),
+      }));
+      scheduleHistorySnapshot();
     },
 
     toggleEdgeEffectsEnabled(layerId: string) {
