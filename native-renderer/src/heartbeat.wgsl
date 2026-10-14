@@ -2068,17 +2068,21 @@ fn native_regular_polygon_distance(p: vec2<f32>, r: f32, n: f32) -> f32 {
   return q.x - r;
 }
 
+/// Star with n tips of radius r pointing up (+y) and valleys of radius
+/// inner_r between them: the exact signed distance to that outline, so the
+/// mask and the edge outline (layerShapeCorners in types.ts) are one shape.
 fn native_star_distance(p0: vec2<f32>, r: f32, inner_r: f32, n: f32) -> f32 {
-  let an = 3.14159265359 / max(n, 3.0);
-  let en = 3.14159265359 / (max(n, 3.0) * 2.0);
-  let acs = vec2<f32>(cos(an), sin(an));
-  let ecs = vec2<f32>(cos(en), sin(en));
-  let a = atan2(p0.y, p0.x);
-  let bn = (a - floor(a / (2.0 * an)) * (2.0 * an)) - an;
-  var p = length(p0) * vec2<f32>(cos(bn), abs(sin(bn)));
-  p = p - r * acs;
-  p = p + ecs * clamp(-dot(p, ecs), 0.0, r * acs.y / ecs.y);
-  return length(p) * sign(p.x);
+  let an = 3.14159265359 / max(round(n), 3.0);
+  // Angle from +y folded into one tip's half-sector: tip at 0, valley at an.
+  let a = atan2(p0.x, p0.y) + an;
+  let bn = abs((a - floor(a / (2.0 * an)) * (2.0 * an)) - an);
+  let q = length(p0) * vec2<f32>(sin(bn), cos(bn));
+  let tip = vec2<f32>(0.0, r);
+  let e = inner_r * vec2<f32>(sin(an), cos(an)) - tip;
+  let w = q - tip;
+  let d = w - e * clamp(dot(w, e) / dot(e, e), 0.0, 1.0);
+  // The centre's side of the tip-to-valley edge is inside.
+  return length(d) * select(1.0, -1.0, e.x * w.y - e.y * w.x < 0.0);
 }
 
 fn native_ellipse_distance(p: vec2<f32>, r: vec2<f32>) -> f32 {
@@ -2154,10 +2158,13 @@ fn native_shape_signed_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
   let rotation = layers[layer_index].shape.z;
   let scale = max(layers[layer_index].shape.w, 0.0001);
   let extra = layers[layer_index].shape2;
-  var centered = rotate2d((eval_uv - vec2<f32>(0.5)) / scale, -rotation);
   // Compositor local UV runs y-down; the WebGL shape shader (the visual
-  // reference) runs y-up. Mirror so orientation matches the editor overlay.
+  // reference) runs y-up. Mirror first, then rotate, so both the shape's
+  // orientation and its direction of rotation match the editor and the
+  // edge outline (layerShapeCorners).
+  var centered = (eval_uv - vec2<f32>(0.5)) / scale;
   centered.y = -centered.y;
+  centered = rotate2d(centered, -rotation);
   if (shape_type == 1) {
     return max(length(centered) - max(extra.x, 0.01) * 0.5, quad_clip);
   }

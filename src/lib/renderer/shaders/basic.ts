@@ -2112,6 +2112,10 @@ export const layerShapeMaskShader = /* glsl */ `
   uniform int uControlPointCount;
   uniform vec2 uControlPoints[5];
   uniform int uInvert;
+  // The layer's corners in canvas UV (y up): TL, TR, BL, BR. This pass runs
+  // on the layer already placed on the canvas, so each pixel is taken back
+  // into layer UV before the shape is evaluated.
+  uniform vec2 uCorners[4];
   varying vec2 vUv;
 
   #define PI 3.14159265359
@@ -2223,59 +2227,41 @@ export const layerShapeMaskShader = /* glsl */ `
   }
 
   // Distance to star shape
-  float sdStar(vec2 p, float r, float innerR, int n) {
+  // Star with n tips of radius r pointing up (+y) and valleys of radius ri
+  // between them: the exact signed distance to that outline, so the mask
+  // and the edge outline (layerShapeCorners in types.ts) are one shape.
+  float sdStar(vec2 p, float r, float ri, int n) {
     float an = PI / float(n);
-    float en = PI / float(n * 2);
-    vec2 acs = vec2(cos(an), sin(an));
-    vec2 ecs = vec2(cos(en), sin(en));
-
-    float bn = mod(atan(p.y, p.x), 2.0 * an) - an;
-    p = length(p) * vec2(cos(bn), abs(sin(bn)));
-
-    p -= r * acs;
-    p += ecs * clamp(-dot(p, ecs), 0.0, r * acs.y / ecs.y);
-    return length(p) * sign(p.x);
+    // Angle from +y folded into one tip's half-sector: tip at 0, valley at an.
+    float a = atan(p.x, p.y);
+    float bn = abs(mod(a + an, 2.0 * an) - an);
+    vec2 q = length(p) * vec2(sin(bn), cos(bn));
+    vec2 tip = vec2(0.0, r);
+    vec2 e = ri * vec2(sin(an), cos(an)) - tip;
+    vec2 w = q - tip;
+    vec2 d = w - e * clamp(dot(w, e) / dot(e, e), 0.0, 1.0);
+    // The centre's side of the tip-to-valley edge is inside.
+    return length(d) * (e.x * w.y - e.y * w.x < 0.0 ? -1.0 : 1.0);
   }
 
   void main() {
-    vec2 sampleUv = vUv;
+    // The content was warped onto the canvas when it was drawn; this pass
+    // only cuts it to the shape, so it samples the canvas pixel as it is.
+    vec4 texColor = texture2D(uTexture, vUv);
+
+    // Canvas UV back to layer UV (y up) through the corner pin. inverseWarp
+    // measures v down from the top edge.
+    vec2 layerUv = inverseWarp(vUv, uCorners[0], uCorners[1], uCorners[2], uCorners[3]);
+    layerUv.y = 1.0 - layerUv.y;
 
     // Transform UV to centered coordinates (-0.5 to 0.5)
-    vec2 p = vUv - 0.5;
+    vec2 p = layerUv - 0.5;
 
     // Apply scale (zoom) - dividing makes shape larger (zoom in)
     p = p / uScale;
 
     // Apply rotation
     p = rotate(p, -uRotation);
-
-    // Shape-specific source UV warping for editable control points
-    if (uShapeType == 1 && uHasControlPoints == 1 && uControlPointCount >= 5) {
-      vec2 tl = uControlPoints[0];
-      vec2 tr = uControlPoints[1];
-      vec2 bl = uControlPoints[2];
-      vec2 br = uControlPoints[3];
-      vec2 center = uControlPoints[4];
-
-      sampleUv = inverseWarp(vUv, tl, tr, bl, br);
-      vec2 centerOffset = center - vec2(0.5);
-      float centerWeight = 1.0 - smoothstep(0.0, 0.5, length(vUv - vec2(0.5)));
-      sampleUv -= centerOffset * centerWeight * 0.6;
-    } else if (uShapeType == 3 && uHasControlPoints == 1 && uControlPointCount >= 3) {
-      vec2 a = uControlPoints[0];
-      vec2 b = uControlPoints[1];
-      vec2 c = uControlPoints[2];
-      vec3 bc = barycentric(vUv, a, b, c);
-      if (bc.x >= 0.0 && bc.y >= 0.0 && bc.z >= 0.0) {
-        vec2 d0 = vec2(0.5, 0.9);
-        vec2 d1 = vec2(0.1, 0.1);
-        vec2 d2 = vec2(0.9, 0.1);
-        sampleUv = d0 * bc.x + d1 * bc.y + d2 * bc.z;
-      }
-    }
-
-    sampleUv = clamp(sampleUv, 0.0, 1.0);
-    vec4 texColor = texture2D(uTexture, sampleUv);
 
     float dist = 0.0;
     float mask = 1.0;
@@ -2285,8 +2271,17 @@ export const layerShapeMaskShader = /* glsl */ `
       mask = 1.0;
     }
     else if (uShapeType == 1) {
-      // Circle
-      dist = sdCircle(p, uRadiusX * 0.5);
+      if (uHasControlPoints == 1 && uControlPointCount >= 5) {
+        // Circle warped by its four corner handles and centre, as the
+        // inline layer mask draws it.
+        vec2 circleUv = inverseWarp(layerUv, uControlPoints[0], uControlPoints[1], uControlPoints[2], uControlPoints[3]);
+        vec2 centerOffset = uControlPoints[4] - vec2(0.5);
+        float centerWeight = 1.0 - smoothstep(0.0, 0.5, length(layerUv - vec2(0.5)));
+        circleUv -= centerOffset * centerWeight * 0.6;
+        dist = length(circleUv - vec2(0.5)) - 0.5;
+      } else {
+        dist = sdCircle(p, uRadiusX * 0.5);
+      }
       mask = uFeather > 0.001 ? 1.0 - smoothstep(-uFeather, uFeather, dist) : (dist < 0.0 ? 1.0 : 0.0);
     }
     else if (uShapeType == 2) {
@@ -2300,9 +2295,11 @@ export const layerShapeMaskShader = /* glsl */ `
         vec2 a = uControlPoints[0];
         vec2 b = uControlPoints[1];
         vec2 c = uControlPoints[2];
-        dist = sdTriangleFromPoints(vUv, a, b, c);
+        dist = sdTriangleFromPoints(layerUv, a, b, c);
       } else {
-        dist = sdPolygon(p, 0.4, 3);
+        // The default triangle, point up: the corners the inline layer
+        // mask and the edge outline use (LAYER_TRIANGLE_POINTS).
+        dist = sdTriangleFromPoints(p + 0.5, vec2(0.5, 0.88), vec2(0.14, 0.14), vec2(0.86, 0.14));
       }
       mask = uFeather > 0.001 ? 1.0 - smoothstep(-uFeather, uFeather, dist) : (dist < 0.0 ? 1.0 : 0.0);
     }

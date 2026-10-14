@@ -19,6 +19,7 @@
 // pixels, so a 4 px stroke is 4 px wide on every edge of a perspective pin.
 
 import type { Layer, LayerShape, Point2D } from '../types';
+import { layerShapeCorners } from '../types';
 import { evaluateMeshGrid, layerRenderMeshGrid } from '../utils/meshWarp';
 
 export const EDGE_MAX_SEGMENTS = 512;
@@ -125,34 +126,16 @@ function layerOutlinePieces(shape: LayerShape | null | undefined): { pieces: UvP
       if (shape.controlPoints && shape.controlPoints.length === 3) {
         result = polygon(shape.controlPoints.map((p) => ({ x: p.x, y: p.y })));
       } else {
-        const r = 0.4 * scale;
-        result = polygon([0, 1, 2].map((i) => {
-          const angle = (i / 3) * Math.PI * 2 - Math.PI / 2 + rotation;
-          return { x: 0.5 + r * Math.cos(angle), y: 0.5 + r * Math.sin(angle) };
-        }));
+        result = polygon(layerShapeCorners(shape)!);
       }
       break;
     }
-    case 'polygon': {
-      const sides = Math.max(3, Math.round(shape.params.sides ?? 6));
-      const r = 0.4 * scale;
-      result = polygon(Array.from({ length: sides }, (_, i) => {
-        const angle = (i / sides) * Math.PI * 2 - Math.PI / 2 + rotation;
-        return { x: 0.5 + r * Math.cos(angle), y: 0.5 + r * Math.sin(angle) };
-      }));
+    case 'polygon':
+    case 'star':
+      // The corners the mask draws (layerShapeCorners), so the stack traces
+      // the visible shape.
+      result = polygon(layerShapeCorners(shape)!);
       break;
-    }
-    case 'star': {
-      const points = Math.max(3, Math.round(shape.params.sides ?? 5));
-      const outer = 0.4 * scale;
-      const inner = outer * (shape.params.innerRadius ?? 0.4);
-      result = polygon(Array.from({ length: points * 2 }, (_, i) => {
-        const angle = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2 + rotation;
-        const r = i % 2 === 0 ? outer : inner;
-        return { x: 0.5 + r * Math.cos(angle), y: 0.5 + r * Math.sin(angle) };
-      }));
-      break;
-    }
     case 'custom': {
       const pts = shape.params.customPoints;
       if (!pts || pts.length < 3) return null;
