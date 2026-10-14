@@ -2,7 +2,9 @@
  * Start-at-boot for unattended shows.
  *
  * Two independent switches, both off by default:
- *   launchAtLogin  register the app as a login item (app.setLoginItemSettings)
+ *   launchAtLogin  register the app as a login item: app.setLoginItemSettings
+ *                  on macOS and Windows, an XDG autostart entry on Linux,
+ *                  where Electron has no login item of its own
  *   showMode       on every launch: open `projectPath`, open the outputs
  *                  fullscreen, start the show, and suppress prompts
  *
@@ -21,6 +23,7 @@
 'use strict';
 
 const nodeFs = require('fs');
+const nodeOs = require('os');
 const nodePath = require('path');
 
 const AUTO_START = ['none', 'go', 'timeline'];
@@ -49,8 +52,58 @@ function normalizeConfig(raw) {
   };
 }
 
-function createShowStartup({ app, fs = nodeFs, path = nodePath, argv = process.argv, env = process.env } = {}) {
+/** An Exec argument quoted the way the desktop entry specification reads it. */
+function desktopExecQuote(value) {
+  return `"${String(value).replace(/(["`$\\])/g, '\\$1')}"`;
+}
+
+/**
+ * The Linux login item: a desktop entry in the user's autostart folder,
+ * which every freedesktop session starts at login. An AppImage is started
+ * through its own file (APPIMAGE), not the path it is mounted at for this
+ * run, which is gone by the next login.
+ */
+function createLinuxLoginItem({ fs, path, env, execPath, home }) {
+  const configDir = env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME)
+    ? env.XDG_CONFIG_HOME
+    : path.join(home, '.config');
+  const entry = path.join(configDir, 'autostart', 'ghost-arcade.desktop');
+  return {
+    entry,
+    enabled() {
+      try {
+        return !/^Hidden=true$/m.test(fs.readFileSync(entry, 'utf8'));
+      } catch {
+        return false;
+      }
+    },
+    set(enabled) {
+      if (!enabled) {
+        fs.rmSync(entry, { force: true });
+        return;
+      }
+      fs.mkdirSync(path.dirname(entry), { recursive: true });
+      fs.writeFileSync(entry, [
+        '[Desktop Entry]',
+        'Type=Application',
+        'Name=Ghost Arcade',
+        `Exec=${desktopExecQuote(env.APPIMAGE || execPath)}`,
+        'Terminal=false',
+        'X-GNOME-Autostart-enabled=true',
+        '',
+      ].join('\n'));
+    },
+  };
+}
+
+function createShowStartup({
+  app, fs = nodeFs, path = nodePath, argv = process.argv, env = process.env,
+  platform = process.platform, execPath = process.execPath, home = nodeOs.homedir(),
+} = {}) {
   const file = path.join(app.getPath('userData'), 'show-startup.json');
+  const linuxLoginItem = platform === 'linux'
+    ? createLinuxLoginItem({ fs, path, env, execPath, home })
+    : null;
   const mockLoginItem = !app.isPackaged && env.GA_REAL_LOGIN_ITEM !== '1';
   let simulatedLogin = false;
   let config = defaultConfig();
@@ -64,6 +117,7 @@ function createShowStartup({ app, fs = nodeFs, path = nodePath, argv = process.a
 
   function loginItemEnabled() {
     if (mockLoginItem) return simulatedLogin;
+    if (linuxLoginItem) return linuxLoginItem.enabled();
     try {
       return !!app.getLoginItemSettings().openAtLogin;
     } catch {
@@ -74,6 +128,10 @@ function createShowStartup({ app, fs = nodeFs, path = nodePath, argv = process.a
   function setLoginItem(enabled) {
     if (mockLoginItem) {
       simulatedLogin = !!enabled;
+      return;
+    }
+    if (linuxLoginItem) {
+      linuxLoginItem.set(!!enabled);
       return;
     }
     app.setLoginItemSettings({ openAtLogin: !!enabled });

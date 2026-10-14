@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runShowModeLaunch, installPromptSuppression, type ShowStartupConfig } from './showStartup';
@@ -36,7 +36,7 @@ function withDir<T>(fn: (dir: string) => T): T {
 describe('show startup config (main process)', () => {
   it('is all off by default and does not touch the login item to read it', () => withDir((dir) => {
     const app = fakeApp(true, dir);
-    const s = createShowStartup({ app, argv: [], env: {} });
+    const s = createShowStartup({ app, argv: [], env: {}, platform: 'darwin' });
     expect(s.get().config).toEqual(defaultConfig());
     expect(s.get().config.launchAtLogin).toBe(false);
     expect(s.get().config.showMode).toBe(false);
@@ -45,7 +45,7 @@ describe('show startup config (main process)', () => {
 
   it('packaged: the explicit toggle registers and removes the login item', () => withDir((dir) => {
     const app = fakeApp(true, dir);
-    const s = createShowStartup({ app, argv: [], env: {} });
+    const s = createShowStartup({ app, argv: [], env: {}, platform: 'darwin' });
     s.set({ showMode: true, projectPath: '/shows/lobby.gha' });
     expect(app.setLoginItemSettings).not.toHaveBeenCalled();
     const on = s.set({ launchAtLogin: true });
@@ -58,9 +58,25 @@ describe('show startup config (main process)', () => {
     });
   }));
 
+  it('Linux: the toggle writes and removes an autostart entry for the AppImage', () => withDir((dir) => {
+    const app = fakeApp(true, dir);
+    const env = { XDG_CONFIG_HOME: join(dir, 'config'), APPIMAGE: '/opt/Ghost Arcade/Ghost-Arcade.AppImage' };
+    const s = createShowStartup({ app, argv: [], env, platform: 'linux', execPath: '/tmp/.mount_Ghost/ghost-arcade', home: dir });
+    const entry = join(dir, 'config', 'autostart', 'ghost-arcade.desktop');
+    expect(s.get().loginItem.enabled).toBe(false);
+    const on = s.set({ launchAtLogin: true });
+    expect(on.loginItem).toEqual({ enabled: true, simulated: false });
+    expect(on.config.launchAtLogin).toBe(true);
+    expect(readFileSync(entry, 'utf8')).toContain('Exec="/opt/Ghost Arcade/Ghost-Arcade.AppImage"\n');
+    const off = s.set({ launchAtLogin: false });
+    expect(off.loginItem.enabled).toBe(false);
+    expect(existsSync(entry)).toBe(false);
+    expect(app.setLoginItemSettings).not.toHaveBeenCalled();
+  }));
+
   it('a development build only simulates the login item', () => withDir((dir) => {
     const app = fakeApp(false, dir);
-    const s = createShowStartup({ app, argv: [], env: {} });
+    const s = createShowStartup({ app, argv: [], env: {}, platform: 'darwin' });
     const info = s.set({ launchAtLogin: true });
     expect(app.setLoginItemSettings).not.toHaveBeenCalled();
     expect(info.loginItem).toEqual({ enabled: true, simulated: true });
@@ -69,17 +85,17 @@ describe('show startup config (main process)', () => {
 
   it('persists across launches and honours the --no-show-mode escape hatch', () => withDir((dir) => {
     const app = fakeApp(true, dir);
-    createShowStartup({ app, argv: [], env: {} }).set({ showMode: true, autoStart: 'timeline' });
-    const next = createShowStartup({ app, argv: [], env: {} }).get();
+    createShowStartup({ app, argv: [], env: {}, platform: 'darwin' }).set({ showMode: true, autoStart: 'timeline' });
+    const next = createShowStartup({ app, argv: [], env: {}, platform: 'darwin' }).get();
     expect(next.session).toEqual({ showMode: true, skipped: false });
     expect(next.config.autoStart).toBe('timeline');
-    const skipped = createShowStartup({ app, argv: ['electron', '.', '--no-show-mode'], env: {} }).get();
+    const skipped = createShowStartup({ app, argv: ['electron', '.', '--no-show-mode'], env: {}, platform: 'darwin' }).get();
     expect(skipped.session).toEqual({ showMode: false, skipped: true });
   }));
 
   it('ignores junk in the config file', () => withDir((dir) => {
     const app = fakeApp(true, dir);
-    const s = createShowStartup({ app, argv: [], env: {} });
+    const s = createShowStartup({ app, argv: [], env: {}, platform: 'darwin' });
     const info = s.set({ autoStart: 'explode', openOutputs: 'yes', projectPath: 42 });
     expect(info.config).toMatchObject({ autoStart: 'go', openOutputs: true, projectPath: '' });
   }));
