@@ -30,6 +30,7 @@ export const isElectron = typeof window !== 'undefined' && !!window.__ELECTRON__
 export const isDesktopApp = isElectron;
 export const isMac = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
 export const isWindows = typeof window !== 'undefined' && (!window.electronAPI || window.electronAPI?.platform === 'win32');
+export const isLinux = typeof window !== 'undefined' && window.electronAPI?.platform === 'linux';
 
 /** Returns "Syphon" on macOS, "Spout" on Windows */
 export function getTextureShareLabel(): string {

@@ -6,6 +6,7 @@ import type {
   RendererStatus,
 } from '$lib/api/native-renderer';
 import { NATIVE_EFFECT_COVERAGE } from '$lib/renderer/nativeEffectCoverage';
+import { isLinux } from '$lib/bridge';
 
 export type NativeRendererDriverMode =
   | 'offline'
@@ -273,9 +274,14 @@ function localMainDriverBlockers(options: {
     // WARP / software rasterizer: the compatibility fallback for machines
     // with no usable GPU. Everything renders, slowly — the operator needs
     // to know this is a degraded mode, not a broken install.
+    // On Linux the GPU is nearly always there and its Vulkan driver is not:
+    // say how to install it rather than which APIs other systems use.
     blockers.push(
       `SOFTWARE RENDERING — no usable GPU was found (adapter: ${status?.adapter_name ?? 'software'}). ` +
-      'Expect very low frame rates. Ghost Arcade is designed for a Metal (macOS) or Direct3D 12 (Windows) capable GPU.',
+      'Expect very low frame rates. ' +
+      (isLinux
+        ? 'Ghost Arcade draws through Vulkan: install the Vulkan driver for your GPU (AMD and Intel: sudo apt install mesa-vulkan-drivers; NVIDIA: the proprietary driver), check it with vulkaninfo --summary, then restart Ghost Arcade.'
+        : 'Ghost Arcade is designed for a Metal (macOS) or Direct3D 12 (Windows) capable GPU.'),
     );
   }
   if (!nativeGraphSourceFrames) blockers.push('native graph source-frame rendering is unavailable');
