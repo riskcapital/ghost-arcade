@@ -6035,6 +6035,63 @@ export function createDefaultEdgeEffect(): EdgeEffect {
  * Convert a parametric LayerShape to a custom polygon shape.
  * Computes polygon vertices that approximate the original shape.
  */
+/** The default triangle's corners (layer UV, y up), as every mask draws it. */
+export const LAYER_TRIANGLE_POINTS: readonly Point2D[] = [
+  { x: 0.5, y: 0.88 },
+  { x: 0.14, y: 0.14 },
+  { x: 0.86, y: 0.14 },
+];
+
+/**
+ * Corners of a triangle (without its own control points), polygon or star
+ * layer shape in layer UV (y up), exactly as the shape masks draw it: the
+ * WebGL shape shaders and the render core are the reference, so edge
+ * effects, shape conversion and handles trace the shape that is visible.
+ * Returns null for the other shape types.
+ *
+ * A mask evaluates p = rotate((uv - 0.5) / scale, -rotation), so a corner
+ * c of the unscaled, unrotated shape sits at 0.5 + rotate(c * scale, rotation).
+ *   triangle  LAYER_TRIANGLE_POINTS
+ *   polygon   a corner at 0 degrees, every 360 / sides, 0.4 from the centre
+ *             to each side (sdPolygon's apothem)
+ *   star      tips 0.4 from the centre pointing up, valleys between them
+ *             at innerRadius x 0.4
+ */
+export function layerShapeCorners(shape: LayerShape): Point2D[] | null {
+  const rotation = ((shape.params.rotation ?? 0) * Math.PI) / 180;
+  const scale = shape.params.scale ?? 1.0;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const place = (x: number, y: number): Point2D => ({
+    x: 0.5 + (x * cos - y * sin) * scale,
+    y: 0.5 + (x * sin + y * cos) * scale,
+  });
+  switch (shape.type) {
+    case 'triangle':
+      return LAYER_TRIANGLE_POINTS.map((p) => place(p.x - 0.5, p.y - 0.5));
+    case 'polygon': {
+      const sides = Math.max(3, Math.round(shape.params.sides ?? 6));
+      const radius = 0.4 / Math.cos(Math.PI / sides);
+      return Array.from({ length: sides }, (_, i) => {
+        const angle = (i / sides) * Math.PI * 2;
+        return place(radius * Math.cos(angle), radius * Math.sin(angle));
+      });
+    }
+    case 'star': {
+      const tips = Math.max(3, Math.round(shape.params.sides ?? 5));
+      const outer = 0.4;
+      const inner = outer * (shape.params.innerRadius ?? 0.4);
+      return Array.from({ length: tips * 2 }, (_, i) => {
+        const angle = Math.PI / 2 + (i / (tips * 2)) * Math.PI * 2;
+        const r = i % 2 === 0 ? outer : inner;
+        return place(r * Math.cos(angle), r * Math.sin(angle));
+      });
+    }
+    default:
+      return null;
+  }
+}
+
 export function convertShapeToCustom(shape: LayerShape): LayerShape {
   const points: Point2D[] = [];
   const rotation = ((shape.params.rotation ?? 0) * Math.PI) / 180;
@@ -6083,32 +6140,13 @@ export function convertShapeToCustom(shape: LayerShape): LayerShape {
       if (shape.controlPoints && shape.controlPoints.length === 3) {
         points.push(...shape.controlPoints);
       } else {
-        const r = 0.4 * scale;
-        for (let i = 0; i < 3; i++) {
-          const angle = (i / 3) * Math.PI * 2 - Math.PI / 2 + rotation;
-          points.push({ x: 0.5 + r * Math.cos(angle), y: 0.5 + r * Math.sin(angle) });
-        }
+        points.push(...layerShapeCorners(shape)!);
       }
       break;
     }
-    case 'polygon': {
-      const sides = shape.params.sides ?? 6;
-      const r = 0.4 * scale;
-      for (let i = 0; i < sides; i++) {
-        const angle = (i / sides) * Math.PI * 2 - Math.PI / 2 + rotation;
-        points.push({ x: 0.5 + r * Math.cos(angle), y: 0.5 + r * Math.sin(angle) });
-      }
-      break;
-    }
+    case 'polygon':
     case 'star': {
-      const starSides = shape.params.sides ?? 5;
-      const outerR = 0.4 * scale;
-      const innerR = outerR * (shape.params.innerRadius ?? 0.4);
-      for (let i = 0; i < starSides * 2; i++) {
-        const angle = (i / (starSides * 2)) * Math.PI * 2 - Math.PI / 2 + rotation;
-        const r = i % 2 === 0 ? outerR : innerR;
-        points.push({ x: 0.5 + r * Math.cos(angle), y: 0.5 + r * Math.sin(angle) });
-      }
+      points.push(...layerShapeCorners(shape)!);
       break;
     }
     case 'custom': {

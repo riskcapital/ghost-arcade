@@ -1408,6 +1408,12 @@ export class RenderEngine {
             new THREE.Vector2(0.8, 0.2),
             new THREE.Vector2(0.5, 0.5),
           ] },
+          uCorners: { value: [
+            new THREE.Vector2(0, 1),
+            new THREE.Vector2(1, 1),
+            new THREE.Vector2(0, 0),
+            new THREE.Vector2(1, 0),
+          ] },
         },
         transparent: true,
         depthTest: false,
@@ -1444,6 +1450,12 @@ export class RenderEngine {
     mat.uniforms.uInvert.value = params.invert ? 1 : 0;
     mat.uniforms.uHasControlPoints.value = 0;
     mat.uniforms.uControlPointCount.value = 0;
+    const corners = mat.uniforms.uCorners.value as THREE.Vector2[];
+    const c = layer.corners;
+    corners[0].set(c.topLeft.x, c.topLeft.y);
+    corners[1].set(c.topRight.x, c.topRight.y);
+    corners[2].set(c.bottomLeft.x, c.bottomLeft.y);
+    corners[3].set(c.bottomRight.x, c.bottomRight.y);
 
     const cps = layer.layerShape.controlPoints;
     if (
