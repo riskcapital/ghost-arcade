@@ -47,10 +47,29 @@ export interface WarpCorners {
   bottomRight: Point2D;
 }
 
+/** Bezier tangent handles on one mesh point, as offsets from the point in
+ *  mesh-local coordinates. `right` and `down` point toward the next column
+ *  and next row. `left` and `up` are only stored once the user unlinks
+ *  them (Alt-drag); while absent they mirror `right` / `down`. A side with
+ *  no tangent at all keeps its edge straight. */
+export interface MeshPointTangents {
+  right?: Point2D;
+  down?: Point2D;
+  left?: Point2D;
+  up?: Point2D;
+}
+
 export interface MeshWarpGrid {
   rows: number;
   cols: number;
   points: Point2D[][]; // [row][col]
+  /** Bezier warp: cell edges are cubic curves shaped by the point tangents.
+   *  Off (or absent, as in every project saved before it existed) keeps the
+   *  straight-edged cells. Tangents are kept while it is off. */
+  bezier?: boolean;
+  /** Per-point tangent handles, [row][col], sparse: a missing entry is a
+   *  point with straight edges. */
+  tangents?: (MeshPointTangents | null | undefined)[][];
 }
 
 export type WarpMode = 'corners' | 'mesh' | 'edge' | 'none';

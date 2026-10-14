@@ -83,6 +83,7 @@
   // notes.
   import { WebGPUFlythrough } from '$lib/renderer/webgpuFlythrough';
   import { ensureWebGPUDevice } from '$lib/renderer/webgpuShared';
+  import { MESH_PATCH_WGSL, packMeshTangents } from '$lib/output/meshPatchShaders';
   // Zero-copy WebGL→WebGPU primitive. Wraps `new VideoFrame()` +
   // `device.importExternalTexture()` in a try/finally so the
   // GpuMemoryBuffer underlying the frame is always released — a
@@ -353,17 +354,40 @@
 // WITHIN the corner quad — same forward model as the WebGL blendRenderer.
 const MAXM: u32 = 16u;           // max mesh points per side (16×16 cap)
 // All-vec4 layout to avoid vec2 std140 alignment traps. JS packs to match:
-//   cfg  = (mode, rows, cols, pad)  [u32×4]   (was "meta" — WGSL reserved word)
+//   cfg  = (mode, rows, cols, bezier)  [u32×4] (was "meta" — WGSL reserved word)
 //   c0   = (tl.x, tl.y, tr.x, tr.y)
 //   c1   = (bl.x, bl.y, br.x, br.y)
 //   mesh = 128 × vec4 = 256 xy pairs (row-major; pair idx = ri*cols+ci)
+//   tan  = 512 × vec4: per point (right.xy, down.xy), (left.xy, up.xy),
+//          resolved Bezier tangents, read only while cfg.w is 1
 struct Warp {
   cfg: vec4<u32>,
   c0: vec4<f32>,
   c1: vec4<f32>,
   mesh: array<vec4<f32>, 128>,
+  tan: array<vec4<f32>, 512>,
 };
 @group(0) @binding(2) var<uniform> uWarp: Warp;
+${MESH_PATCH_WGSL}
+
+fn warpTan(idx: u32, which: u32) -> vec4<f32> {
+  return uWarp.tan[min(idx * 2u + which, 511u)];
+}
+
+/// One cell of a Bezier Master Warp mesh as a Coons patch.
+fn warpPatch(ri: u32, ci: u32, cols: u32) -> MeshPatch {
+  let ia = ri * cols + ci;
+  let ib = ia + 1u;
+  let id = ia + cols;
+  let ic = id + 1u;
+  return mp_build(
+    meshPt(ia), meshPt(ib), meshPt(ic), meshPt(id),
+    warpTan(ia, 0u).xy, warpTan(ia, 0u).zw,
+    warpTan(ib, 1u).xy, warpTan(ib, 0u).zw,
+    warpTan(ic, 1u).xy, warpTan(ic, 1u).zw,
+    warpTan(id, 0u).xy, warpTan(id, 1u).zw,
+  );
+}
 // Dome reprojection. mode: 0 = angular/equidistant fisheye,
 // 1 = stereographic, 2 = orthographic, 3 = equirectangular panorama.
 struct Dome {
@@ -571,6 +595,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       for (var ci: u32 = 0u; ci < MAXM - 1u; ci = ci + 1u) {
         if (ci >= cols - 1u) { break; }
         if (found) { continue; }
+        if (uWarp.cfg.w == 1u) {
+          // Bezier cell: the points are destinations, so invert the
+          // Coons patch (bounds reject, then Newton).
+          let cell = warpPatch(ri, ci, cols);
+          if (!mp_contains_bounds(cell, q)) { continue; }
+          let hit = mp_uv(q, cell);
+          if (hit.x > 0.5) {
+            src = vec2<f32>((f32(ci) + hit.y) / f32(cols - 1u), (f32(ri) + hit.z) / f32(rows - 1u));
+            found = true;
+          }
+          continue;
+        }
         let a = meshPt(ri * cols + ci);
         let b = meshPt(ri * cols + ci + 1u);
         let c = meshPt((ri + 1u) * cols + ci + 1u);
@@ -691,8 +727,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         ],
       });
-      // Master-warp uniform: meta(16B) + c0/c1(32B) + mesh(128×16=2048B).
-      const warpBytes = 16 + 32 + 128 * 16; // = 2096
+      // Master-warp uniform: meta(16B) + c0/c1(32B) + mesh(128×16=2048B)
+      // + Bezier tangents (512×16=8192B).
+      const warpBytes = 16 + 32 + 128 * 16 + 512 * 16; // = 10288
       warpStaging = new ArrayBuffer(warpBytes);
       warpU32 = new Uint32Array(warpStaging);
       warpF32 = new Float32Array(warpStaging);
@@ -787,7 +824,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     warpU32[0] = active ? 1 : 0;
     warpU32[1] = useMesh ? g!.rows : 0;
     warpU32[2] = useMesh ? g!.cols : 0;
-    warpU32[3] = 0;
+    // Bezier tangents after the mesh (f32 index 12 + 128*4); cfg.w turns
+    // the patch path on only when a cell is actually curved.
+    warpU32[3] = useMesh && packMeshTangents(g, warpF32, 12 + 128 * 4, 256) ? 1 : 0;
     // corners — f32 starting at byte 16 → index 4
     warpF32[4] = c.topLeft?.x ?? c.tl?.[0] ?? 0; warpF32[5] = c.topLeft?.y ?? c.tl?.[1] ?? 0;
     warpF32[6] = c.topRight?.x ?? c.tr?.[0] ?? 1; warpF32[7] = c.topRight?.y ?? c.tr?.[1] ?? 0;
