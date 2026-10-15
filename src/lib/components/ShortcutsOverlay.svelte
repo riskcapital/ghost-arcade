@@ -3,6 +3,8 @@
   import { uiLanguage, resetLanguageToEnglish } from '$lib/i18n';
   export let visible = false;
   export let onClose: () => void;
+  export let onTour: () => void = () => {};
+  export let onTemplates: () => void = () => {};
 
   const mod = isMac ? 'Cmd' : 'Ctrl';
 </script>
@@ -18,6 +20,10 @@
           Switch to English <span>({mod}+Shift+E)</span>
         </button>
       {/if}
+      <div class="shortcut-start">
+        <button class="shortcut-start-btn" onclick={onTour}>Take the tour</button>
+        <button class="shortcut-start-btn" onclick={onTemplates}>Start from a template</button>
+      </div>
       <div class="shortcut-columns">
         <div class="shortcut-section">
           <h3>General</h3>
@@ -66,6 +72,22 @@
 {/if}
 
 <style>
+  .shortcut-start {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 14px;
+  }
+  .shortcut-start-btn {
+    font: inherit;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 7px;
+    border: 1px solid #3a3f4a;
+    background: #1d2a40;
+    color: #dfe3ea;
+    cursor: pointer;
+  }
+  .shortcut-start-btn:hover { border-color: #5a6274; }
   .shortcut-english-btn {
     display: inline-flex; gap: 8px; align-items: center; margin: 0 0 14px;
     padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;

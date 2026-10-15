@@ -9,10 +9,12 @@
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import ClipAudioMasterControl from './lib/components/ClipAudioMasterControl.svelte';
   import AudioMeterPanel from './lib/components/AudioMeterPanel.svelte';
-  // Feature tour removed at user request — was an interactive multi-step
-  // overlay shown on first launch, but disrupted the experience for users
-  // already familiar with VJ software. The OnboardingTour.svelte and
-  // onboarding store files remain on disk but are no longer mounted.
+  // The guided tour and starter templates are offered from the welcome
+  // screen and the "?" overlay, never opened by themselves: an earlier tour
+  // that popped up on first launch got in the way of experienced users.
+  import GuidedTour from './lib/components/GuidedTour.svelte';
+  import TemplatePicker from './lib/components/TemplatePicker.svelte';
+  import { onboarding } from './lib/stores/onboarding';
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
@@ -1857,6 +1859,9 @@
     // openStage3D() that the toolbar button hits.
     const handleOpenStage3D = () => { openStage3D(); };
     window.addEventListener('open-stage3d', handleOpenStage3D);
+    // The guided tour's "Open the output window" step.
+    const handleTourOpenOutput = () => { if (!outputIsOpen) void openOutputWindow(); };
+    window.addEventListener('ga-open-output-window', handleTourOpenOutput);
 
     // Load saved AI shaders from server
     loadShadersFromServer().catch(e => {
@@ -2337,6 +2342,7 @@
       window.removeEventListener('hashchange', handleHashChange);
       window.removeEventListener('open-settings', handleOpenSettings);
       window.removeEventListener('open-stage3d', handleOpenStage3D);
+      window.removeEventListener('ga-open-output-window', handleTourOpenOutput);
       if (autoConnectTimeout) {
         clearTimeout(autoConnectTimeout);
         autoConnectTimeout = null;
@@ -5611,7 +5617,12 @@
   }
   function newProjectConfirm() {
     showNewProjectModal = false;
-    project.newProject('Untitled Project');
+    startFreshProject('Untitled Project');
+  }
+  /** Clear everything a project owns, as File → New does. Templates call
+   *  this before building their own deck. */
+  function startFreshProject(name: string) {
+    project.newProject(name);
     vjClipLauncher.reset();
     synthVisionStore.reset();
     mediaLibrary.reset();
@@ -6720,6 +6731,17 @@
                 </span>
                 <span class="menu-label">New</span>
                 <span class="menu-shortcut">Ctrl+N</span>
+              </button>
+              <button class="menu-item" onclick={() => { fileMenuOpen = false; onboarding.openTemplates(); }}>
+                <span class="menu-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                  </svg>
+                </span>
+                <span class="menu-label">New from Template...</span>
               </button>
               <button class="menu-item" onclick={loadComposition}>
                 <span class="menu-icon">
@@ -8218,13 +8240,23 @@
 
     <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
     {#if showWelcome}
-      <WelcomeModal onClose={() => {
-        showWelcome = false;
-        localStorage.setItem('ghostarcade-welcome-seen', 'true');
-      }} />
+      <WelcomeModal
+        onClose={() => {
+          showWelcome = false;
+          localStorage.setItem('ghostarcade-welcome-seen', 'true');
+        }}
+        onTour={() => onboarding.startTour()}
+        onTemplates={() => onboarding.openTemplates()}
+        onOpenProject={loadComposition}
+      />
     {/if}
 
-    <!-- (Feature tour removed by request — see import comment.) -->
+    <TemplatePicker {hasUnsavedChanges} startFresh={(name) => {
+      startFreshProject(name);
+      // A template is a fresh start; saving it is the user's choice.
+      markAsSaved();
+    }} />
+    <GuidedTour />
 
     <!-- Update available modal — shown when user clicks the Settings update
          banner. Handles download + install + auto-quit so the user never
@@ -8424,7 +8456,9 @@
 {/if}
 
 <!-- Keyboard Shortcut Help Overlay -->
-<ShortcutsOverlay visible={showShortcutHelp} onClose={() => showShortcutHelp = false} />
+<ShortcutsOverlay visible={showShortcutHelp} onClose={() => showShortcutHelp = false}
+  onTour={() => { showShortcutHelp = false; onboarding.startTour(); }}
+  onTemplates={() => { showShortcutHelp = false; onboarding.openTemplates(); }} />
 
 <!-- Safe Mode in-app confirm popover (replaces window.confirm) -->
 <ConfirmPopover />

@@ -1,16 +1,17 @@
 <script lang="ts">
-  // Welcome modal — first-launch greeter for the open-source build.
-  // No license activation, no purchase upsell, no demo/watermark fork.
-  // Just a friendly hello + a "Get started" button.
+  // Welcome screen — first launch only. Offers the guided tour and the
+  // starter templates but never starts either by itself: people who already
+  // know VJ software go straight to a blank or saved project.
 
   export let onClose: () => void = () => {};
+  export let onTour: () => void = () => {};
+  export let onTemplates: () => void = () => {};
+  export let onOpenProject: () => void = () => {};
 
-  function getStarted() {
+  function choose(next: () => void) {
     localStorage.setItem('ghostarcade-welcome-seen', 'true');
     onClose();
-  }
-  function openGitHub() {
-    window.open('https://github.com/riskcapital/ghost-arcade', '_blank', 'noopener');
+    next();
   }
 </script>
 
@@ -20,21 +21,29 @@
       <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="logo-img" />
     </div>
     <h1 class="welcome-title">Welcome to Ghost Arcade</h1>
-    <p class="welcome-subtitle">Open-source projection mapping &amp; VJ software</p>
+    <p class="welcome-subtitle">How would you like to start?</p>
 
-    <div class="welcome-actions">
-      <button class="welcome-btn primary" onclick={getStarted}>
-        Get started
+    <div class="welcome-choices">
+      <button class="welcome-choice primary" onclick={() => choose(onTour)}>
+        <span class="choice-title">Show me around</span>
+        <span class="choice-detail">A two-minute hands-on tour of playing visuals</span>
       </button>
-      <button class="welcome-btn outline" onclick={openGitHub}>
-        View on GitHub
+      <button class="welcome-choice" onclick={() => choose(onTemplates)}>
+        <span class="choice-title">Start from a template</span>
+        <span class="choice-detail">A deck already set up for a band, a club night, a light show or mapping</span>
+      </button>
+      <button class="welcome-choice" onclick={() => choose(onOpenProject)}>
+        <span class="choice-title">Open a project</span>
+        <span class="choice-detail">Carry on with a saved show</span>
+      </button>
+      <button class="welcome-choice" onclick={() => choose(() => {})}>
+        <span class="choice-title">Blank project</span>
+        <span class="choice-detail">Straight in, nothing set up</span>
       </button>
     </div>
 
     <p class="welcome-hint">
-      Free, AGPL-3.0. Every effect, layer type, and output is unlocked — no
-      tiers, no watermarks, no signup. Pair your phone via the QR-code button
-      in the toolbar.
+      The tour and templates are always under the ? button.
     </p>
   </div>
 </div>
@@ -60,6 +69,36 @@
     text-align: center;
     box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
   }
+
+  .welcome-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 20px 0 16px;
+  }
+  .welcome-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    padding: 11px 14px;
+    text-align: left;
+    font: inherit;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary, #e0e0e0);
+    cursor: pointer;
+  }
+  .welcome-choice:hover { border-color: rgba(255, 255, 255, 0.35); }
+  .welcome-choice.primary {
+    background: var(--ga-blue-200, #9ec5ff);
+    border-color: var(--ga-blue-200, #9ec5ff);
+    color: #0b1220;
+  }
+  .choice-title { font-weight: 700; font-size: 14px; }
+  .choice-detail { font-size: 12px; opacity: 0.8; }
 
   .welcome-logo {
     margin-bottom: 16px;
@@ -87,83 +126,11 @@
     margin: 0 0 28px 0;
   }
 
-  .welcome-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 20px;
-  }
-
-  .welcome-btn {
-    padding: 12px 20px;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .welcome-btn.primary {
-    background: linear-gradient(135deg, #e74c6f, #c2185b);
-    color: #fff;
-    border: none;
-  }
-
-  .welcome-btn.primary:hover:not(:disabled) {
-    filter: brightness(1.1);
-    transform: translateY(-1px);
-  }
-
-  .welcome-btn.primary:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .welcome-btn.secondary {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-primary, #e0e0e0);
-    border: 1px solid #444;
-  }
-
-  .welcome-btn.secondary:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: #666;
-  }
-
-  .welcome-btn.outline {
-    background: transparent;
-    color: #999;
-    border: 1px solid #333;
-  }
-
-  .welcome-btn.outline:hover {
-    color: var(--text-primary, #ccc);
-    border-color: #555;
-  }
-
   .welcome-hint {
     font-size: 12px;
     color: #555;
     line-height: 1.6;
     margin: 0;
-  }
-
-  /* Activate mode */
-  .activate-title {
-    font-size: 19px;
-    font-weight: 600;
-    color: var(--text-primary, #e0e0e0);
-    margin: 0 0 6px 0;
-  }
-
-  .activate-desc {
-    font-size: 14px;
-    color: var(--text-muted, #888);
-    margin: 0 0 20px 0;
-  }
-
-  .activate-form {
-    margin-bottom: 16px;
   }
 
   .key-input {
@@ -193,15 +160,5 @@
     color: #ef4444;
     font-size: 13px;
     margin: 8px 0 0 0;
-  }
-
-  .activate-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: center;
-  }
-
-  .activate-actions .welcome-btn {
-    flex: 1;
   }
 </style>
