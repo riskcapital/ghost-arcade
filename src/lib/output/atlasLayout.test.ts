@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { packAtlas, sliceOutputSize, isAtlasSenderSlice, atlasLayoutSignature } from './atlasLayout';
+import { packAtlas, sliceOutputSize, isAtlasSenderSlice, atlasLayoutSignature, coreAtlasLayout } from './atlasLayout';
 import type { OutputSlice } from '../stores/settings';
 
 function slice(over: Partial<OutputSlice>): OutputSlice {
@@ -78,5 +78,26 @@ describe('packAtlas', () => {
     expect(atlasLayoutSignature(l1)).toBe(atlasLayoutSignature(l2));
     const l3 = packAtlas([slice({ id: 'a', spoutName: 'A', cropW: 0.75 })], 1920, 1080);
     expect(atlasLayoutSignature(l3)).not.toBe(atlasLayoutSignature(l1));
+  });
+});
+
+describe('coreAtlasLayout', () => {
+  it('sends normalized crops for enabled texture-share senders only', () => {
+    const layout = coreAtlasLayout([
+      slice({ id: 'a', spoutName: 'A', cropX: 0, cropW: 0.5 }),
+      slice({ id: 'b', spoutName: 'B', cropX: 0.5, cropW: 0.5, outputType: 'syphon' }),
+      slice({ id: 'c', spoutName: 'C', enabled: false }),
+      slice({ id: 'd', spoutName: 'D', outputType: 'ndi' as any }),
+    ]);
+    expect(layout.source).toBe('core');
+    expect(layout.tiles.map(t => [t.senderName, t.nx, t.ny, t.nw, t.nh])).toEqual([
+      ['A', 0, 0, 0.5, 1],
+      ['B', 0.5, 0, 0.5, 1],
+    ]);
+  });
+  it('clamps crops that run off the composite', () => {
+    const [t] = coreAtlasLayout([slice({ cropX: 0.8, cropW: 0.5 })]).tiles;
+    expect(t.nx).toBe(0.8);
+    expect(t.nw).toBeCloseTo(0.2);
   });
 });

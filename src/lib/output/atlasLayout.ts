@@ -118,3 +118,39 @@ export function atlasLayoutSignature(layout: AtlasLayout): string {
   return `${layout.atlasW}x${layout.atlasH}|` +
     layout.tiles.map(t => `${t.sliceId}:${t.senderName}:${t.outputType}:${t.x},${t.y},${t.w},${t.h}`).join('|');
 }
+
+export interface CoreAtlasTile {
+  sliceId: string;
+  senderName: string;
+  outputType: 'spout' | 'syphon';
+  /** Normalized crop of the composite (0-1, top-left origin). */
+  nx: number;
+  ny: number;
+  nw: number;
+  nh: number;
+}
+
+/**
+ * Sender layout when the render core is primary: main crops each sender
+ * straight from the core's output texture, so tiles are the slices'
+ * normalized crop rects rather than packed atlas positions. Rotation,
+ * warp, colour and edge blend are not applied on this path.
+ */
+export function coreAtlasLayout(slices: OutputSlice[]): { source: 'core'; tiles: CoreAtlasTile[] } {
+  const clamp = (v: number) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+  const tiles: CoreAtlasTile[] = [];
+  for (const slice of slices.filter(isAtlasSenderSlice)) {
+    const nx = clamp(slice.cropX ?? 0);
+    const ny = clamp(slice.cropY ?? 0);
+    const nw = clamp(slice.cropW ?? 1);
+    const nh = clamp(slice.cropH ?? 1);
+    if (nw <= 0 || nh <= 0) continue;
+    tiles.push({
+      sliceId: slice.id,
+      senderName: slice.spoutName,
+      outputType: (slice.outputType ?? 'spout') as 'spout' | 'syphon',
+      nx, ny, nw: Math.min(nw, 1 - nx), nh: Math.min(nh, 1 - ny),
+    });
+  }
+  return { source: 'core', tiles };
+}

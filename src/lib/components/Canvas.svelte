@@ -53,7 +53,7 @@
   import { layerRenderMeshGrid } from '../utils/meshWarp';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixelsAsync, pruneSliceReadbackStates, isBlendRendererAvailable } from '../output/blendRenderer';
-  import { isAtlasSenderSlice } from '../output/atlasLayout';
+  import { isAtlasSenderSlice, coreAtlasLayout } from '../output/atlasLayout';
   import type { FluidSimulation, FluidMode } from '../effects/fluidSimulation';
   import type { ParticleSystem3D } from '../effects/particleSystem3D';
   // Heavy renderer classes (three/addons GLTF/FBX/OBJ loaders, post-processing,
@@ -317,7 +317,8 @@
   // working unchanged.
   let atlasFanoutActive = false;
   let atlasStartInFlight = false;
-  let lastAtlasWantOn: boolean | null = null;
+  let lastAtlasWantOn: 'off' | 'core' | 'osr' | null = null;
+  let atlasFromCore = false;
   let stopAtlasStatusListener: (() => void) | null = null;
 
   // Spout receive state for plugin layers — uses WebSocket binary push for zero-copy frames
@@ -2670,7 +2671,9 @@
           spoutZeroCopyFailed = true;
           spoutOutputActive = false;
           console.warn('[Canvas] OSR zero-copy unavailable (reason:', status.reason, ') — CPU sendImage fallback is disabled');
-          if (!wasAlreadyFailed) {
+          if (!wasAlreadyFailed && status.reason === 'core-output-unavailable') {
+            showToast(`${getTextureShareLabel()} output stopped: the render core's output texture is unavailable.`, 'error');
+          } else if (!wasAlreadyFailed) {
             showToast(`${getTextureShareLabel()} zero-copy unavailable; CPU fallback is disabled.`, 'error');
           }
         } else {
@@ -3843,13 +3846,20 @@
   // ≥1 enabled Spout/Syphon sender slice starts the atlas, zero stops
   // it. Independent of the master spoutEnabled toggle (that's the
   // full-frame sender; slices are their own named senders).
+  //
+  // With the render core primary, the senders crop straight from the
+  // core's output texture (source: 'core') and main creates no
+  // slice-atlas window — that window re-rendered the whole project in the
+  // browser just to feed the senders. The editor sends the crop layout.
+  $: atlasFromCore = nativePrimary && !isOutputMode && !isOsrMode;
   $: if (isElectron && !isOsrMode && !isOutputMode && !atlasStartInFlight) {
     const wantOn = ($settings?.output?.slices ?? []).some(isAtlasSenderSlice);
-    if (wantOn !== lastAtlasWantOn) {
-      lastAtlasWantOn = wantOn;
+    const wantKey = wantOn ? (atlasFromCore ? 'core' : 'osr') : 'off';
+    if (wantKey !== lastAtlasWantOn) {
+      lastAtlasWantOn = wantKey;
       atlasStartInFlight = true;
       if (wantOn) {
-        invoke('texshare_start_atlas')
+        invoke('texshare_start_atlas', { source: atlasFromCore ? 'core' : 'osr' })
           .then((ok: any) => { atlasFanoutActive = !!ok; })
           .catch(() => { atlasFanoutActive = false; })
           .finally(() => { atlasStartInFlight = false; });
@@ -3859,6 +3869,18 @@
           .finally(() => { atlasFanoutActive = false; atlasStartInFlight = false; });
       }
     }
+  }
+
+  let lastCoreAtlasSig = '';
+  $: if (isElectron && atlasFromCore && !isOsrMode && !isOutputMode) {
+    const layout = coreAtlasLayout($settings?.output?.slices ?? []);
+    const sig = JSON.stringify(layout.tiles);
+    if (sig !== lastCoreAtlasSig) {
+      lastCoreAtlasSig = sig;
+      invoke('texshare_atlas_layout', layout).catch(() => {});
+    }
+  } else {
+    lastCoreAtlasSig = '';
   }
 
   // Reactive Spout output: start/stop sender when spoutEnabled changes.
@@ -3900,6 +3922,7 @@
       name: s?.spoutName || 'ghostArcade',
       width: spoutW,
       height: spoutH,
+      corePrimary: nativePrimaryActive(),
     }).then((result: any) => {
       if (!result?.success) {
         throw new Error(result?.error || `${getTextureShareLabel()} sender failed`);

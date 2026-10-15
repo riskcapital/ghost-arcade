@@ -2141,6 +2141,20 @@ let atlasFrameCount = 0;
 let atlasLastLogTime = 0;
 let atlasPaintDiagCount = 0;
 let atlasSendFailCount = 0;
+// Core-fed atlas: when the render core is primary, the senders crop
+// straight from the core's exported output texture and no slice-atlas
+// window (a second, browser-side render of the project) is created.
+let atlasCoreSource = false;
+let atlasCoreLayout = null;   // last normalized layout from the editor
+// True when the editor started the master sender with the render core as
+// the primary renderer. The OSR fallback window would then re-render the
+// whole project in the browser, so it is refused and reported instead.
+let spoutSendCorePrimary = false;
+let atlasCorePump = null;
+let atlasCoreInFlight = false;
+let atlasCoreLastFrame = 0;
+let atlasCoreConfiguredSig = '';
+let atlasCoreFailCount = 0;
 
 // ============================================================
 // Sidecar: Rust WS/HTTP/Spout backend
@@ -4005,7 +4019,7 @@ function createSpoutSender(name, width, height, { startOsr = true } = {}) {
       // to start (e.g. Chromium didn't grant a shared texture), the watchdog
       // falls back to the CPU send pump transparently.
       try {
-        createSpoutOsrWindow(width, height);
+        createSpoutOsrFallback(width, height, 'native-output-not-ready');
       } catch (err) {
         console.error(`[${textureShareLabel}] OSR window creation failed, using CPU path:`, err.message);
       }
@@ -4089,6 +4103,22 @@ function getOsrSharedTextureHandle(textureInfo) {
  * compositor. We pass these directly to SpoutDX::SendTexture — pure
  * GPU VRAM, no CPU involvement, <1ms per frame.
  */
+// OSR fallback for the master sender. Under the render core this is a
+// second full render of the project; report the failure instead.
+function createSpoutOsrFallback(width, height, reason) {
+  if (spoutSendCorePrimary) {
+    console.error(`[${textureShareLabel} Native] core output texture unavailable (${reason}); not starting a browser re-render of the project`);
+    // At start-up the promotion timer keeps waiting for the core's first
+    // frame; only a real failure is surfaced to the editor.
+    if (reason !== 'native-output-not-ready') {
+      notifyMainWindowOsrStatus(false, 'core-output-unavailable');
+    }
+    return false;
+  }
+  createSpoutOsrWindow(width, height);
+  return true;
+}
+
 function createSpoutOsrWindow(width, height) {
   if (spoutOsrWindow || osrCreating) {
     console.log(`[${textureShareLabel} OSR] Window already exists or creating`);
@@ -4604,7 +4634,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
           console.warn(`[${textureShareLabel} Native] falling back to OSR texture share after repeated native output failures`);
           stopNativeOutputTextureSharePump(isMac ? 'native-iosurface-failed' : 'native-dxgi-failed');
           if (spoutSendActive && spoutOutput && !spoutOsrWindow) {
-            createSpoutOsrWindow(spoutSendW, spoutSendH);
+            createSpoutOsrFallback(spoutSendW, spoutSendH, isMac ? 'native-iosurface-failed' : 'native-dxgi-failed');
             startNativeOutputTextureSharePromotion(isMac ? 'native-iosurface-failed' : 'native-dxgi-failed');
           }
         }
@@ -4782,8 +4812,109 @@ function configureAtlasSenders(layout) {
   }
 }
 
-function startAtlasOutput() {
-  if (atlasState.active) return true;
+// Pixel regions for the core-fed atlas: the editor sends each sender
+// slice as a normalized crop of the composite, scaled here to whatever
+// size the core's output texture currently is.
+function coreAtlasRegions(layout, texW, texH) {
+  const tiles = Array.isArray(layout?.tiles) ? layout.tiles : [];
+  const regions = [];
+  for (const t of tiles) {
+    if (!t || !t.senderName) continue;
+    const x0 = Math.max(0, Math.min(texW, Math.round(Number(t.nx) * texW)));
+    const y0 = Math.max(0, Math.min(texH, Math.round(Number(t.ny) * texH)));
+    const x1 = Math.max(0, Math.min(texW, Math.round((Number(t.nx) + Number(t.nw)) * texW)));
+    const y1 = Math.max(0, Math.min(texH, Math.round((Number(t.ny) + Number(t.nh)) * texH)));
+    if (!(x1 > x0 && y1 > y0)) continue;
+    regions.push({ name: String(t.senderName), x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+  }
+  return regions;
+}
+
+function stopAtlasCorePump() {
+  if (atlasCorePump) {
+    clearInterval(atlasCorePump);
+    atlasCorePump = null;
+  }
+  atlasCoreInFlight = false;
+  atlasCoreLastFrame = 0;
+  atlasCoreConfiguredSig = '';
+}
+
+function coreAtlasHandleBuffer(texture) {
+  if (isMac) {
+    // SyphonAtlasOutput resolves a 4-byte buffer with IOSurfaceLookup.
+    const id = Number(texture?.handle);
+    if (!Number.isFinite(id) || id <= 0) return null;
+    const buf = Buffer.alloc(4);
+    buf.writeUInt32LE(id >>> 0, 0);
+    return buf;
+  }
+  // SpoutAtlasOutput opens a shareable DXGI handle; a process-local or
+  // name-only texture cannot be opened from here.
+  return nativeOutputTextureHandleBuffer(texture);
+}
+
+function startAtlasCorePump() {
+  stopAtlasCorePump();
+  const intervalMs = Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
+  const tick = async () => {
+    if (!atlasState.active || !atlasCoreSource || !atlasOutput || atlasCoreInFlight) return;
+    atlasCoreInFlight = true;
+    try {
+      const texture = await getNativeOutputSharedTextureMetadata();
+      if (!atlasState.active || !atlasOutput) return;
+      if (!isPublishableNativeOutputTexture(texture)) return;
+      const frameId = Math.max(0, Math.floor(Number(texture.frame ?? 0)));
+      const texW = Number(texture.width);
+      const texH = Number(texture.height);
+      const regions = coreAtlasRegions(atlasCoreLayout, texW, texH);
+      const sig = `${texW}x${texH}|${regions.map(r => `${r.name}:${r.x},${r.y},${r.w},${r.h}`).join('|')}`;
+      if (sig !== atlasCoreConfiguredSig) {
+        atlasCoreConfiguredSig = sig;
+        atlasCoreLastFrame = 0;
+        try { atlasOutput.configure(regions); } catch (err) {
+          console.error('[Atlas Core] configure failed:', err?.message || err);
+        }
+        console.log(`[Atlas Core] ${regions.length} sender(s) cropping the core output ${texW}x${texH}`);
+      }
+      if (!regions.length || frameId === atlasCoreLastFrame) return;
+      const handle = coreAtlasHandleBuffer(texture);
+      if (!handle) {
+        if (atlasCoreFailCount++ < 3) {
+          console.warn(`[Atlas Core] core output texture has no shareable handle (${texture.platform}, ${texture.handle_scope ?? texture.handleScope ?? 'unknown scope'})`);
+        }
+        return;
+      }
+      const sent = atlasOutput.sendAtlas(handle);
+      if (sent > 0) {
+        atlasCoreLastFrame = frameId;
+        atlasCoreFailCount = 0;
+        atlasFrameCount++;
+        const now = Date.now();
+        if (now - atlasLastLogTime > 5000) {
+          const fps = atlasFrameCount / ((now - atlasLastLogTime) / 1000);
+          console.log(`[Atlas Core] sendAtlas → ${sent} sender(s) @ ${fps.toFixed(1)} fps`);
+          atlasFrameCount = 0;
+          atlasLastLogTime = now;
+        }
+      } else if (atlasCoreFailCount++ < 5) {
+        console.warn('[Atlas Core] sendAtlas fed 0 senders');
+      }
+    } catch (err) {
+      if (atlasCoreFailCount++ < 5) console.error('[Atlas Core] pump error:', err?.message || err);
+    } finally {
+      atlasCoreInFlight = false;
+    }
+  };
+  atlasCorePump = setInterval(() => { void tick(); }, intervalMs);
+  void tick();
+  console.log(`[Atlas Core] pump started @ ${OSR_PAINT_FPS} fps`);
+}
+
+function startAtlasOutput(options = {}) {
+  const wantCore = options?.source === 'core';
+  if (atlasState.active && atlasCoreSource === wantCore) return true;
+  if (atlasState.active) stopAtlasOutput('source-changed');
   if (atlasOsrCreating) return false;
 
   const addon = loadSpoutAddon();
@@ -4807,6 +4938,21 @@ function startAtlasOutput() {
     atlasOutput = null;
     return false;
   }
+
+  if (wantCore) {
+    // The core already composites the project: crop the senders from its
+    // output texture. The layout arrives from the editor (normalized).
+    atlasCoreSource = true;
+    atlasState.active = true;
+    atlasFrameCount = 0;
+    atlasLastLogTime = Date.now();
+    atlasCoreFailCount = 0;
+    startAtlasCorePump();
+    notifyMainWindowAtlasStatus(true, 'started-core');
+    console.log('[Atlas] Fan-out started from the render core output');
+    return true;
+  }
+  atlasCoreSource = false;
 
   // The slice-atlas window publishes its real layout once it boots; start
   // with the last known layout (editor may have sent one already) or a
@@ -4836,6 +4982,8 @@ function startAtlasOutput() {
 function stopAtlasOutput(reason = 'stopped') {
   const wasActive = atlasState.active;
   atlasState.active = false;
+  stopAtlasCorePump();
+  atlasCoreSource = false;
   destroyAtlasOsrWindow();
   if (atlasOutput) {
     try { atlasOutput.release(); } catch {}
@@ -5875,8 +6023,9 @@ function registerIpcHandlers() {
     return listSpoutSenders();
   });
 
-  ipcMain.handle('spout_start_sender', async (_, { name, width, height }) => {
+  ipcMain.handle('spout_start_sender', async (_, { name, width, height, corePrimary }) => {
     const requestedName = name || 'ghostArcade';
+    spoutSendCorePrimary = !!corePrimary;
 
     // If sender is already active or being created, return existing state
     if ((spoutSendActive && spoutOutput) || spoutSendCreating) {
@@ -5903,7 +6052,7 @@ function registerIpcHandlers() {
       const nativePumpStarted = startNativeOutputTextureSharePump(nativeOutputShare.texture);
       if (!nativePumpStarted) {
         console.warn(`[${textureShareLabel} Native] native output pump could not start; falling back to OSR texture share`);
-        createSpoutOsrWindow(targetWidth, targetHeight);
+        createSpoutOsrFallback(targetWidth, targetHeight, 'native-pump-start-failed');
         startNativeOutputTextureSharePromotion('native-pump-start-failed');
       }
     } else if (nativeOutputShare.reason) {
@@ -6113,7 +6262,9 @@ function registerIpcHandlers() {
       receiver_texture_info_supported: getReceiverTextureInfoSupport(spoutAddon),
       receivers: [],
       atlas_active: atlasState.active,
-      atlas_sender_count: atlasState.layout?.tiles?.length ?? 0,
+      atlas_sender_count: (atlasCoreSource ? atlasCoreLayout : atlasState.layout)?.tiles?.length ?? 0,
+      atlas_source: atlasState.active ? (atlasCoreSource ? 'core' : 'osr') : null,
+      atlas_osr_window: !!(atlasOsrWindow && !atlasOsrWindow.isDestroyed()),
     };
   });
 
@@ -6122,6 +6273,16 @@ function registerIpcHandlers() {
   // it changes: (re)configure the per-name native senders and resize the
   // atlas OSR window to the new atlas dimensions.
   ipcMain.handle('texshare_atlas_layout', (_, layout) => {
+    if (layout?.source === 'core') {
+      // The editor's normalized crops for the core-fed senders. Kept apart
+      // from the slice-atlas window's packed layout so neither clobbers
+      // the other when the source switches.
+      atlasCoreLayout = layout;
+      atlasCoreConfiguredSig = '';
+      const n = layout.tiles?.length ?? 0;
+      console.log(`[Atlas Core] layout: ${n} sender slice(s)`);
+      return { ok: true };
+    }
     atlasState.layout = layout && typeof layout === 'object' ? layout : null;
     const n = atlasState.layout?.tiles?.length ?? 0;
     if (n !== atlasState.lastLoggedCount) {
@@ -6129,7 +6290,7 @@ function registerIpcHandlers() {
       console.log(`[Atlas] layout: ${n} sender tile(s), atlas ${layout?.atlasW || 0}x${layout?.atlasH || 0}${layout?.overflow ? ' (OVERFLOW)' : ''}`);
     }
 
-    if (atlasOutput) {
+    if (atlasOutput && !atlasCoreSource) {
       configureAtlasSenders(atlasState.layout);
     }
     if (atlasOsrWindow && !atlasOsrWindow.isDestroyed() && n > 0) {
@@ -6153,8 +6314,8 @@ function registerIpcHandlers() {
 
   // Editor lifecycle: start/stop the atlas fan-out from the sender-slice
   // set in Canvas.svelte (≥1 Spout/Syphon sender slice → start).
-  ipcMain.handle('texshare_start_atlas', () => {
-    return startAtlasOutput();
+  ipcMain.handle('texshare_start_atlas', (_, args) => {
+    return startAtlasOutput(args && typeof args === 'object' ? args : {});
   });
 
   ipcMain.handle('texshare_stop_atlas', () => {
@@ -8796,7 +8957,7 @@ function createMainWindow() {
       destroySpoutOsrWindow();
       setTimeout(() => {
         if (spoutSendActive) {
-          createSpoutOsrWindow(spoutSendW, spoutSendH);
+          createSpoutOsrFallback(spoutSendW, spoutSendH, 'main-window-reloaded');
         }
       }, 3000);
     }
