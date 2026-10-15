@@ -3620,7 +3620,7 @@ function stageTintSignature(layer: Layer): string {
 function colorSignature(layer: Layer): string {
   const rgba = layerRgba(layer);
   if (!rgba) return 'none';
-  return `${rgba[0].toFixed(4)}:${rgba[1].toFixed(4)}:${rgba[2].toFixed(4)}:${rgba[3].toFixed(4)}`;
+  return `${sigNum(rgba[0])}:${sigNum(rgba[1])}:${sigNum(rgba[2])}:${sigNum(rgba[3])}`;
 }
 
 function geometrySignature(layer: Layer): string {
@@ -3631,19 +3631,19 @@ function geometrySignature(layer: Layer): string {
     c.topRight.x, c.topRight.y,
     c.bottomRight.x, c.bottomRight.y,
     c.bottomLeft.x, c.bottomLeft.y,
-  ].map((v) => Number.isFinite(v) ? v.toFixed(5) : 'nan').join(':');
+  ].map(sigNum).join(':');
   const grid = layerRenderMeshGrid(layer);
   if (!grid) return `corners:${corners}`;
   const points = grid.points
     .flatMap((row) => row.flatMap((point) => [point.x, point.y]))
-    .map((value) => Number.isFinite(value) ? value.toFixed(5) : 'nan')
+    .map(sigNum)
     .join(':');
   // Bezier tangents change the surface without moving a point.
   const tangents = meshGridHasTangents(grid)
     ? ':' + grid.points.flatMap((row, r) => row.flatMap((_, c) => {
       const t = resolveMeshTangents(grid, r, c);
       return [t.right.x, t.right.y, t.down.x, t.down.y, t.left.x, t.left.y, t.up.x, t.up.y];
-    })).map((value) => Number.isFinite(value) ? value.toFixed(5) : 'nan').join(':')
+    })).map(sigNum).join(':')
     : '';
   return `mesh:${corners}:${grid.rows}x${grid.cols}:${points}${tangents}`;
 }
@@ -3654,8 +3654,18 @@ function contentFitCode(value: Layer['contentFit']): number {
   return 0;
 }
 
+const QUANTIZE_SCALES = [1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8];
+
+// Runs for every value of every layer on every flush. Round-and-divide gives
+// the same double as parsing toFixed's string, at a fraction of the cost.
 function quantizeNative(value: number, digits = 5): number {
-  return Number((Number.isFinite(value) ? value : 0).toFixed(digits));
+  const scale = QUANTIZE_SCALES[digits] ?? 10 ** digits;
+  return Math.round((Number.isFinite(value) ? value : 0) * scale) / scale;
+}
+
+/** Change-detection key for a number at 5 decimals; cheaper than toFixed. */
+function sigNum(value: number): string {
+  return Number.isFinite(value) ? String(Math.round(value * 1e5)) : 'nan';
 }
 
 function normalizedCropRegion(layer: Layer): { x: number; y: number; width: number; height: number } | null {
@@ -3916,7 +3926,7 @@ export function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
         shapeMeta,
         shapePoints,
         signature: [...payload, ...payload2, ...shapeMeta, ...shapePoints.flat()]
-          .map((value) => Number(value).toFixed(5)).join(':'),
+          .map((value) => sigNum(Number(value))).join(':'),
       };
     }
   }
@@ -3980,7 +3990,7 @@ export function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
     shapeMeta,
     shapePoints,
     signature: [...payload, ...payload2, ...shapeMeta, ...shapePoints.flat()]
-      .map((value, index) => Number(value).toFixed(index === 0 ? 0 : 5))
+      .map((value) => sigNum(Number(value)))
       .join(':'),
   };
 }
@@ -10059,7 +10069,8 @@ export class NativeRendererSync {
      * leak a few hundred bytes per capture-session restart; that is the better
      * trade during a show.
      */
-    const liveImageKeys = new Set(this.resolveNativeGroupLayers(layers).flatMap(layer =>
+    // `layers` was resolved at the top of this flush.
+    const liveImageKeys = new Set(layers.flatMap(layer =>
       layer.source ? [this.sourceCacheKey(layer.source.id, layer.source.src)] : []));
     this.previewImageElements.forEach((img, key) => {
       if (liveImageKeys.has(key)) return;
@@ -10587,7 +10598,7 @@ export class NativeRendererSync {
     return {
       uvTransform,
       uvFlags,
-      signature: `${uvTransform.map((v) => v.toFixed(5)).join(':')}|${uvFlags.map((v, i) => v.toFixed(i === 1 ? 5 : 0)).join(':')}`,
+      signature: `${uvTransform.map(sigNum).join(':')}|${uvFlags.map(sigNum).join(':')}`,
     };
   }
 
