@@ -76,7 +76,7 @@
     },
     {
       title: "You're ready",
-      body: 'Want a head start? A template opens a deck already filled for a band, a club night, a liquid light show, Halloween or projection mapping. You can come back to this tour from the ? button.',
+      body: 'Want a head start? A template opens a deck already filled for a band, a club night, a liquid light show or projection mapping. You can come back to this tour from the ? button.',
     },
   ];
 

@@ -47,14 +47,6 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     mode: 'vj',
   },
   {
-    id: 'halloween',
-    name: 'Halloween set',
-    audience: 'Haunted theme nights',
-    description: 'Apparitions, moonlit halls, webs and thickets — dark, slow and unsettling, not cartoon.',
-    cover: 'HAUNT-Apparition.fs',
-    mode: 'vj',
-  },
-  {
     id: 'mapping-starter',
     name: 'Projection mapping starter',
     audience: 'Mapping onto objects and walls',
@@ -94,17 +86,10 @@ const DECKS: Record<string, { A: string[][]; B?: string[][]; crossfader?: boolea
       ['GA2-DriftVeil', 'GA2-SoftCells'],
     ],
   },
-  halloween: {
-    A: [
-      ['HAUNT-Apparition', 'HAUNT-MoonlitHall', 'HAUNT-Vigil'],
-      ['HAUNT-Rorschach', 'HAUNT-Web', 'HAUNT-Thicket'],
-      ['GA2-Eclipse', 'STAGE-LightCurtain'],
-    ],
-  },
 };
 
 function shaderName(file: string): string {
-  const base = file.replace(/\.fs$/, '').replace(/^(STAGE|GA2|PSY|HAUNT|DM|Featured)-/, '');
+  const base = file.replace(/\.fs$/, '').replace(/^(STAGE|GA2|PSY|DM|Featured)-/, '');
   return base.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
 }
 
