@@ -107,6 +107,29 @@ export function drawSnapshotToCanvas(
   return image;
 }
 
+function base64Bytes(b64: string): Uint8Array {
+  const fromBase64 = (Uint8Array as unknown as { fromBase64?: (s: string) => Uint8Array }).fromBase64;
+  if (typeof fromBase64 === 'function') return fromBase64(b64);
+  const raw = atob(b64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+/** JPEG frames decode off the main thread and draw in one call. */
+async function decodeJpegInto(snap: { jpeg_b64?: string }): Promise<boolean> {
+  if (!mirrorCanvas || !mirrorCtx || !snap.jpeg_b64) return false;
+  const bitmap = await createImageBitmap(new Blob([base64Bytes(snap.jpeg_b64) as BlobPart], { type: 'image/jpeg' }));
+  try {
+    if (mirrorCanvas.width !== bitmap.width) mirrorCanvas.width = bitmap.width;
+    if (mirrorCanvas.height !== bitmap.height) mirrorCanvas.height = bitmap.height;
+    mirrorCtx.drawImage(bitmap, 0, 0);
+  } finally {
+    bitmap.close();
+  }
+  return true;
+}
+
 function decodeSnapshotInto(snap: SnapshotPixels): boolean {
   if (!mirrorCanvas || !mirrorCtx) return false;
   const image = drawSnapshotToCanvas(snap, mirrorCanvas, mirrorCtx, scratch);
@@ -119,12 +142,18 @@ async function pumpOnce(maxDim: number): Promise<void> {
   if (inFlight) return;
   inFlight = true;
   try {
+    // Large frames travel as JPEG: raw pixels at 30 fps were ~150 MB/s of
+    // base64 through the broker and slowed every window. Small ones (LED
+    // and pixel-map sampling) stay raw, since they need exact colours.
+    const useJpeg = maxDim > 512;
     const snap = await invoke('native_renderer_get_frame_snapshot', {
       include_pixels: true,
       max_dim: maxDim,
       live_output: true,
-    }) as Parameters<typeof decodeSnapshotInto>[0] | null;
-    if (snap && decodeSnapshotInto(snap)) {
+      ...(useJpeg ? { encoding: 'jpeg', quality: 82 } : {}),
+    }) as (Parameters<typeof decodeSnapshotInto>[0] & { jpeg_b64?: string }) | null;
+    const decoded = snap?.jpeg_b64 ? await decodeJpegInto(snap) : !!snap && decodeSnapshotInto(snap);
+    if (snap && decoded) {
       failureStreak = 0;
       // Lets a consumer that draws every animation frame skip re-uploading
       // a picture it already has (the pump runs slower than the display).

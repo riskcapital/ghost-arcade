@@ -139,7 +139,7 @@ export interface AutoMapResult {
 }
 
 /** The render core composites at most this many layers (MAX_SCENE_LAYERS). */
-const CORE_LAYER_LIMIT = 128;
+const CORE_LAYER_LIMIT = 1024;
 
 /**
  * Replace earlier auto-mapped layers with one surface per visible face.
@@ -151,7 +151,7 @@ export async function autoMapProjectionSim(
   options: { shaderFile?: string; minArea?: number; maxSurfaces?: number } = {},
 ): Promise<AutoMapResult> {
   const shaderFile = options.shaderFile;
-  const minArea = options.minArea ?? 0.00012;
+  const minArea = options.minArea ?? 0.00002;
   // Leave room for the layers the user made themselves.
   const ownLayers = get(project).layers.filter((layer) => (layer as any).autoMap !== AUTO_MAP_TAG).length;
   const budget = Math.max(0, Math.min(options.maxSurfaces ?? CORE_LAYER_LIMIT, CORE_LAYER_LIMIT - ownLayers));
@@ -209,21 +209,11 @@ export async function autoMapProjectionSim(
 
   // Keep the faces that cover the most of the picture, then stack those by
   // depth below.
-  // Each layer costs render time, so take the fewest faces that cover
-  // nearly all of what the projectors light (98%); the slivers left over are
-  // edges a viewer will not miss.
+  // Every visible face gets a surface; only past the core's layer limit are
+  // the smallest left out.
   candidates.sort((a, b) => b.area - a.area);
-  const totalArea = candidates.reduce((sum, c) => sum + c.area, 0);
-  let covered = 0;
-  let count = 0;
-  while (count < candidates.length && count < budget && covered < totalArea * 0.98) {
-    covered += candidates[count].area;
-    count++;
-  }
-  const chosen = candidates.slice(0, count);
-  const hitBudget = count === budget && covered < totalArea * 0.98;
-  const overBudget = hitBudget ? candidates.length - count : 0;
-  skipped += candidates.length - count - overBudget;
+  const chosen = candidates.slice(0, budget);
+  const overBudget = candidates.length - chosen.length;
 
   // Replace the previous run's layers, leave everything else alone.
   for (const layer of get(project).layers) {

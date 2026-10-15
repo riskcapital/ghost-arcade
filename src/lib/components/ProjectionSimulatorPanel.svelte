@@ -1135,6 +1135,7 @@
         worldToClient: (world: [number, number, number]) => renderer?.worldToClient(world) ?? null,
         scene: () => get(projectionSimScene),
         calibration: () => ({ calibratingId, calibrationPointId, calibrationCursor }),
+        setRenderScale: (scale: number) => renderer?.setRenderScale(scale),
       };
     }
 

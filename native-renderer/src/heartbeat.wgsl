@@ -3737,7 +3737,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   }
 
   // Bound must match MAX_SCENE_LAYERS in main.rs.
-  for (var i: i32 = 0; i < 128; i = i + 1) {
+  for (var i: i32 = 0; i < 1024; i = i + 1) {
     if (f32(i) >= u.layer_count) {
       break;
     }

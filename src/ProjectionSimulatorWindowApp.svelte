@@ -26,8 +26,10 @@
   let stopSceneSync: (() => void) | null = null;
   // Native desktop: project the composite mirror — the core's real output,
   // including live capture sources and native-only rendering that this
-  // window's local WebGL Canvas cannot reproduce. The local Canvas stays
-  // mounted as the fallback while the mirror has no frame yet.
+  // window's local WebGL Canvas cannot reproduce. With the mirror the local
+  // Canvas is not mounted at all: it rendered the whole project a second
+  // time behind the 3D view, every frame, and at a few dozen layers that
+  // starved the GPU for this window and the editor alike.
   const useNativeMirror = isDesktopApp && NATIVE_ENGINE_ONLY;
   let mirror: CompositeMirrorHandle | null = null;
 
@@ -87,9 +89,11 @@
 </script>
 
 <div class="projection-sim-window">
-  <div class="projection-sim-source" aria-hidden="true">
-    <Canvas bind:this={canvasComponent} />
-  </div>
+  {#if !useNativeMirror}
+    <div class="projection-sim-source" aria-hidden="true">
+      <Canvas bind:this={canvasComponent} />
+    </div>
+  {/if}
   <ProjectionSimulatorPanel
     {sourceCanvas}
     onClose={closeWindow}

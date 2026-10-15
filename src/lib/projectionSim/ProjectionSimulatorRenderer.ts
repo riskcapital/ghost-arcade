@@ -418,6 +418,8 @@ export class ProjectionSimulatorRenderer {
   private lastRenderedSlices: OutputSlice[] | null = null;
   private lastSourceSeq = -1;
   private lastBackground = '';
+  /** Fraction of the display resolution the view draws at (see adaptResolution). */
+  private renderScale = 1;
   private lastDepthHash = '';
   private lastShadowHash = '';
   private selectable = new Map<string, THREE.Object3D>();
@@ -879,6 +881,17 @@ export class ProjectionSimulatorRenderer {
     }
   }
 
+  setRenderScale(scale: number): void {
+    const next = Math.max(0.35, Math.min(1, scale));
+    if (Math.abs(next - this.renderScale) < 0.01) return;
+    this.renderScale = next;
+    this.resize(undefined, undefined, true);
+  }
+
+  getRenderScale(): number {
+    return this.renderScale;
+  }
+
   /** Ask for a redraw on the next frame (input, selection, view changes). */
   requestRender(): void {
     this.renderRequested = true;
@@ -970,7 +983,7 @@ export class ProjectionSimulatorRenderer {
     // Draw at the display's real resolution (capped at 2x) so projected
     // content and edges look as sharp as they will on the object; a
     // recording keeps the exact pixel size it asked for.
-    const pixelRatio = this.recordingMode ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+    const pixelRatio = this.recordingMode ? 1 : Math.min(window.devicePixelRatio || 1, 2) * this.renderScale;
     if (!force && size.x === targetW && size.y === targetH && this.renderer.getPixelRatio() === pixelRatio) return;
     this.renderRequested = true;
     this.renderer.setPixelRatio(pixelRatio);

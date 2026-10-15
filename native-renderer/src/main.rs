@@ -126,7 +126,9 @@ use winit::{
 // Layers the compositor draws. The composite loop in heartbeat.wgsl has the
 // same bound and stops at the live layer count, so only scenes that use the
 // extra slots pay for them (Map Sim auto-map builds one layer per face).
-const MAX_SCENE_LAYERS: usize = 128;
+// Each layer is tested against its cull bounds first, so a large count costs
+// little when most layers miss most pixels.
+const MAX_SCENE_LAYERS: usize = 1024;
 const MAX_LAYER_MESH_SIDE: usize = 16;
 const MAX_LAYER_MESH_POINTS: usize = MAX_LAYER_MESH_SIDE * MAX_LAYER_MESH_SIDE;
 const MAX_LAYER_MESH_VEC4S: usize = MAX_LAYER_MESH_POINTS / 2;
@@ -12760,6 +12762,12 @@ impl App {
         let permit = LiveCapturePermit(&LIVE_PREVIEW_BUSY);
         let max_dim = number_at(&req.params, &["max_dim"]).unwrap_or(512.0).round().clamp(16.0, 2048.0) as u32;
         let include_pixels = bool_at(&req.params, &["include_pixels"]).unwrap_or(false);
+        // `encoding: "jpeg"` sends a JPEG about a twentieth of the raw size.
+        // A live mirror at 30 fps moved ~150 MB/s of base64 through the
+        // broker and slowed every window; as JPEG it is a few MB/s.
+        let jpeg_quality = string_at(&req.params, &["encoding"])
+            .is_some_and(|value| value.eq_ignore_ascii_case("jpeg"))
+            .then(|| number_at(&req.params, &["quality"]).unwrap_or(80.0).clamp(30.0, 95.0) as u8);
         let renderer = self.renderer.as_mut().ok_or("native renderer unavailable")?;
         let pending = renderer.prepare_frame_snapshot_scaled(max_dim, true)?;
         let frame_index = renderer.creative_frame_index as u64;
@@ -12767,11 +12775,16 @@ impl App {
         let id = req.id;
         thread::spawn(move || {
             let _permit = permit;
-            let result = pending.finish().map(|frame| {
-                let mut value = frame.to_json(include_pixels);
+            let result = pending.finish().and_then(|frame| {
+                let mut value = match jpeg_quality.filter(|_| include_pixels) {
+                    Some(quality) => SourcePreviewRequest {
+                        width: None, height: None, max_dim, jpeg_quality: Some(quality), include_pixels: true,
+                    }.encode(&frame)?,
+                    None => frame.to_json(include_pixels),
+                };
                 value["frame_index"] = json!(frame_index);
                 value["render_source"] = json!("core-output-mirror");
-                value
+                Ok(value)
             });
             drop(_permit);
             if id != 0 {
@@ -31647,8 +31660,11 @@ impl SourcePreviewRequest {
         let Some(quality) = self.jpeg_quality.filter(|_| self.include_pixels) else {
             return Ok(frame.to_json(self.include_pixels));
         };
+        let bgra = matches!(frame.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
         let mut rgb = Vec::with_capacity(frame.pixels.len() / 4 * 3);
-        for px in frame.pixels.chunks_exact(4) { rgb.extend_from_slice(&px[..3]); }
+        for px in frame.pixels.chunks_exact(4) {
+            if bgra { rgb.extend_from_slice(&[px[2], px[1], px[0]]); } else { rgb.extend_from_slice(&px[..3]); }
+        }
         let mut jpeg = Vec::with_capacity(rgb.len() / 8);
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, quality)
             .encode(&rgb, frame.width, frame.height, image::ExtendedColorType::Rgb8)
