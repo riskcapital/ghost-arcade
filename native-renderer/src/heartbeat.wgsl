@@ -152,6 +152,9 @@ fn ghost_audio_pulse(phase: f32, width: f32) -> f32 {
 }
 
 struct LayerData {
+  // Conservative canvas-UV rectangle the layer can affect (see
+  // layer_cull_bounds in main.rs); tested first in the composite loop.
+  cull: vec4<f32>,
   p0: vec4<f32>,
   p1: vec4<f32>,
   color: vec4<f32>,
@@ -3739,6 +3742,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       break;
     }
     let layer_index = u32(i);
+    // One small read decides most layers: outside its reach, skip it before
+    // touching the rest of the record.
+    let cull = layers[layer_index].cull;
+    if (any(canvas_uv < cull.xy) || any(canvas_uv > cull.zw)) {
+      continue;
+    }
     if (layers[layer_index].info.x < 0.5) {
       continue;
     }

@@ -1323,6 +1323,12 @@ struct Uniforms {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct LayerGpu {
+    /// Conservative canvas-UV rectangle (min x, min y, max x, max y) outside
+    /// which the layer cannot change a pixel. Filled at upload by
+    /// `layer_cull_bounds`; the compositor tests it before anything else, so
+    /// a layer that misses a pixel costs one read instead of several reads
+    /// spread over its large record.
+    cull: [f32; 4],
     p0: [f32; 4],
     p1: [f32; 4],
     color: [f32; 4],
@@ -1370,6 +1376,60 @@ struct LayerGpu {
     /// the content alpha folded into `color`, so edge effects on a
     /// source-less layer are not dimmed with its placeholder.
     tint: [f32; 4],
+}
+
+/// See `LayerGpu::cull`. Mirrors the compositor's own reject in
+/// heartbeat.wgsl: hierarchy masks touch every pixel; hidden and fully
+/// transparent layers touch none; everything else is bounded by its quad
+/// (or a Bezier mesh's reach) plus the area its edge effects can glow into.
+fn layer_cull_bounds(layer: &LayerGpu) -> [f32; 4] {
+    const ALL: [f32; 4] = [-1.0e9, -1.0e9, 1.0e9, 1.0e9];
+    const NONE: [f32; 4] = [1.0e9, 1.0e9, -1.0e9, -1.0e9];
+    if layer.meta[0] < 0.5 {
+        return NONE;
+    }
+    let blend = layer.style[0];
+    if (25.5..26.5).contains(&blend) {
+        return ALL;
+    }
+    if layer.color[3] <= 0.001 {
+        return NONE;
+    }
+    let tl = [layer.p0[0], layer.p0[1]];
+    let tr = [layer.p0[2], layer.p0[3]];
+    let br = [layer.p1[0], layer.p1[1]];
+    let bl = [layer.p1[2], layer.p1[3]];
+    let mut corners = vec![tl, tr, br, bl];
+    if layer.fast_flags[1] == 1 {
+        // quad_reach_bounds: the mesh reach in quad-local UV, at least 0..1.
+        let reach = layer.mesh_bounds;
+        let lo = [reach[0].min(0.0), reach[1].min(0.0)];
+        let hi = [reach[2].max(1.0), reach[3].max(1.0)];
+        let at = |u: f32, v: f32| {
+            let top = [tl[0] + (tr[0] - tl[0]) * u, tl[1] + (tr[1] - tl[1]) * u];
+            let bottom = [bl[0] + (br[0] - bl[0]) * u, bl[1] + (br[1] - bl[1]) * u];
+            [top[0] + (bottom[0] - top[0]) * v, top[1] + (bottom[1] - top[1]) * v]
+        };
+        corners.extend([at(lo[0], lo[1]), at(hi[0], lo[1]), at(hi[0], hi[1]), at(lo[0], hi[1])]);
+    }
+    if corners.iter().any(|c| !c[0].is_finite() || !c[1].is_finite()) {
+        return ALL;
+    }
+    let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for c in &corners {
+        b[0] = b[0].min(c[0]);
+        b[1] = b[1].min(c[1]);
+        b[2] = b[2].max(c[0]);
+        b[3] = b[3].max(c[1]);
+    }
+    // Same padding as the shader's reject, doubled to stay conservative.
+    let pad = (b[2] - b[0]).max(b[3] - b[1]).max(1.0) * 0.002;
+    b = [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
+    if layer.edge_info[1] > 0.5 && layer.edge_info[0] > 2.5 {
+        let e = layer.edge_bounds;
+        b = [b[0].min(e[0]), b[1].min(e[1]), b[2].max(e[2]), b[3].max(e[3])];
+    }
+    b
 }
 
 #[repr(C)]
@@ -3282,6 +3342,7 @@ impl SceneLayer {
             && tl[1] == tr[1] && bl[1] == br[1] && tl[0] == bl[0] && tr[0] == br[0]
             && (br[0] - tl[0]).abs() > 0.000001 && (br[1] - tl[1]).abs() > 0.000001;
         LayerGpu {
+            cull: [0.0; 4],
             p0: [
                 self.corners[0][0],
                 self.corners[0][1],
@@ -24716,6 +24777,7 @@ impl RenderState {
             .zip(scene_layers.iter())
         {
             *slot = *layer;
+            slot.cull = layer_cull_bounds(layer);
         }
         for slot in &mut self.layer_upload_scratch[filled..upload_len] {
             *slot = LayerGpu::zeroed();
