@@ -26,7 +26,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     id: 'band-stage',
     name: 'Band on stage',
     audience: 'Projecting across a band',
-    description: 'Concert lighting looks — beams, gobos, washes, followspot, strobe and mirror ball — on a deck ready to play to the music.',
+    description: 'Concert lighting looks on a deck ready to play to the music: beams, gobos, washes, followspot, strobe and mirror ball.',
     cover: 'STAGE-BeamRig.fs',
     mode: 'vj',
   },
@@ -144,6 +144,23 @@ function region(x0: number, x1: number, y0: number, y1: number): WarpCorners {
     bottomLeft: { x: x0, y: y0 },
     bottomRight: { x: x1, y: y0 },
   } as WarpCorners;
+}
+
+/** Add one test-pattern surface for mapping (used by the guided tour). */
+export async function addMappingSurface(name = 'Surface 1'): Promise<boolean> {
+  const shader = await loadShader('DM-TestPattern');
+  const id = project.addLayer(name, 'media');
+  if (!id || !shader) return false;
+  project.setLayerSource(id, {
+    id: `DM-TestPattern-${id}`,
+    type: 'shader',
+    src: shader.src,
+    name: shaderName('DM-TestPattern'),
+    shaderCode: shader.code,
+    shaderValues: {},
+  } as any);
+  project.updateLayer(id, { corners: region(0.25, 0.75, 0.22, 0.78) });
+  return true;
 }
 
 async function buildMappingStarter(): Promise<void> {

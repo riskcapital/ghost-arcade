@@ -7,8 +7,12 @@
  */
 import { writable } from 'svelte/store';
 
+export type TourPath = 'vj' | 'mapping' | 'music';
+
 export interface OnboardingState {
   tourOpen: boolean;
+  /** null while the user is still choosing a path. */
+  tourPath: TourPath | null;
   tourStep: number;
   templatesOpen: boolean;
 }
@@ -16,14 +20,19 @@ export interface OnboardingState {
 function createOnboardingStore() {
   const { subscribe, update } = writable<OnboardingState>({
     tourOpen: false,
+    tourPath: null,
     tourStep: 0,
     templatesOpen: false,
   });
 
   return {
     subscribe,
-    startTour() {
-      update((s) => ({ ...s, tourOpen: true, tourStep: 0, templatesOpen: false }));
+    /** Open the tour; without a path it starts on the path chooser. */
+    startTour(path: TourPath | null = null) {
+      update((s) => ({ ...s, tourOpen: true, tourPath: path, tourStep: 0, templatesOpen: false }));
+    },
+    choosePath(path: TourPath | null) {
+      update((s) => ({ ...s, tourPath: path, tourStep: 0 }));
     },
     endTour() {
       update((s) => ({ ...s, tourOpen: false }));

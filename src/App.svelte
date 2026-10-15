@@ -1862,6 +1862,8 @@
     // The guided tour's "Open the output window" step.
     const handleTourOpenOutput = () => { if (!outputIsOpen) void openOutputWindow(); };
     window.addEventListener('ga-open-output-window', handleTourOpenOutput);
+    const handleTourCloseSettings = () => { showSettings = false; };
+    window.addEventListener('ga-close-settings', handleTourCloseSettings);
 
     // Load saved AI shaders from server
     loadShadersFromServer().catch(e => {
@@ -2343,6 +2345,7 @@
       window.removeEventListener('open-settings', handleOpenSettings);
       window.removeEventListener('open-stage3d', handleOpenStage3D);
       window.removeEventListener('ga-open-output-window', handleTourOpenOutput);
+      window.removeEventListener('ga-close-settings', handleTourCloseSettings);
       if (autoConnectTimeout) {
         clearTimeout(autoConnectTimeout);
         autoConnectTimeout = null;
