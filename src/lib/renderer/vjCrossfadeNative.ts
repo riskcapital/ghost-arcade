@@ -372,9 +372,11 @@ export function buildVJCrossfadeUniformUpdate(
   f[5] = VJ_CROSSFADE_BLEND_IDS[options.blendMode] ?? 0;
   f[6] = Math.max(0, Math.min(1, options.opacityA));
   f[7] = Math.max(0, Math.min(1, options.opacityB));
+  let initialB64: string | null = null;
   return {
     bufferId: `vjxfade:${options.outputSourceId}:uniform`,
-    initialB64: bufferToBase64(buffer),
+    // Sent only when the signature changes, so encoded on demand.
+    get initialB64() { return initialB64 ??= bufferToBase64(buffer); },
     // Time is core-owned and changes every frame, so it is intentionally not
     // part of the renderer-sync change signature.
     signature: [

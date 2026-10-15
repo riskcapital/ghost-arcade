@@ -196,12 +196,17 @@ export function buildVJClipTransitionUniformUpdate(options: VJClipTransitionGrap
   };
   writeBranch(options.branchA, 8);
   writeBranch(options.branchB, 32);
-  const initialB64 = bufferToBase64(values.buffer);
+  // This runs for every carrier on every flush, and the buffer is sent only
+  // when the signature changes, so the base64 is built on demand.
+  const time = values[3];
   values[3] = 0; // Core owns animation time; advancing it must not reinstall a graph.
+  const signature = new Uint32Array(values.buffer).join(',');
+  values[3] = time;
+  let initialB64: string | null = null;
   return {
     bufferId: `vjxfade:${options.outputSourceId}:uniform`,
-    initialB64,
-    signature: bufferToBase64(values.buffer),
+    get initialB64() { return initialB64 ??= bufferToBase64(values.buffer); },
+    signature,
   };
 }
 

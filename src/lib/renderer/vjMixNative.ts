@@ -329,9 +329,11 @@ export function buildVJMixUniformUpdate(options: VJMixUniformOptions): VJMixUnif
     f[3] = options.time;
     f[4] = blendCode;
     f[5] = index === 0 ? 1 : 0;
+    let encoded: string | null = null;
     buffers.push({
       bufferId: vjMixPassUniformBufferId(options.outputSourceId, index),
-      initialB64: bufferToBase64(buffer),
+      // Sent only when the signature changes, so encoded on demand.
+      get initialB64() { return encoded ??= bufferToBase64(buffer); },
     });
     // Time is core-owned and changes every frame, so it is intentionally
     // not part of the renderer-sync change signature.
