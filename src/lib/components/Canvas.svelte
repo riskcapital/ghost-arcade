@@ -156,6 +156,42 @@
    *  This keeps VJ content -> LED wall sampling in one WebGL context. */
   export let stage3DOutput = false;
   let stage3DRenderer: Stage3DRenderer | null = null;
+  // Native build: the core already composites the project, so Stage Sim's
+  // screens take the core's picture (the composite mirror) instead of this
+  // canvas re-rendering every layer in the browser just to feed them. That
+  // second render ran the whole project twice and slowed every window.
+  let stage3DMirror: import('$lib/sync/nativeCompositeMirror').CompositeMirrorHandle | null = null;
+  let stage3DMirrorTexture: THREE.CanvasTexture | null = null;
+  let stage3DMirrorSeq = -1;
+  let stage3DMirrorRequested = false;
+  function nativeStage3DMasterTexture(): THREE.Texture | null {
+    if (!isDesktopApp) return null;
+    if (!stage3DMirror) {
+      if (!stage3DMirrorRequested) {
+        stage3DMirrorRequested = true;
+        void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
+          stage3DMirror = acquireNativeCompositeMirror({ maxDim: 1280, fps: 30 });
+        });
+      }
+      return null;
+    }
+    const source = stage3DMirror.canvas;
+    if (source.width <= 16) return null;
+    if (!stage3DMirrorTexture || stage3DMirrorTexture.image !== source) {
+      stage3DMirrorTexture?.dispose();
+      stage3DMirrorTexture = new THREE.CanvasTexture(source);
+      stage3DMirrorTexture.colorSpace = THREE.SRGBColorSpace;
+      stage3DMirrorTexture.generateMipmaps = false;
+      stage3DMirrorTexture.minFilter = THREE.LinearFilter;
+      stage3DMirrorSeq = -1;
+    }
+    const seq = (source as any).__gaFrameSeq ?? 0;
+    if (seq !== stage3DMirrorSeq) {
+      stage3DMirrorSeq = seq;
+      stage3DMirrorTexture.needsUpdate = true;
+    }
+    return stage3DMirrorTexture;
+  }
 
   // Spout output state
   const isTauri = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__); // Backwards compat alias — works on both Tauri and Electron
@@ -3236,13 +3272,21 @@
             legacyRenderer.setClearColor(0x000000, 1);
             legacyRenderer.clear(true, true, true);
           } else {
-            engine.render(layersToRender, null, compEffects, macroBundles);
+            // A stage object showing one deck row needs that row's own
+            // texture, which only the local render makes; keep it then.
+            const wantsRowTexture = stage3DOutput && (get(stage3dScene).userElements ?? []).some((el: any) => {
+              const vjSource = el?.params?.vjSource;
+              return vjSource != null && vjSource !== 'solid' && vjSource !== 'master' && Number(vjSource) !== VJ_MIX_SOURCE_INDEX;
+            });
+            const nativeMaster = stage3DOutput && !wantsRowTexture ? nativeStage3DMasterTexture() : null;
+            // Until the core's first frame arrives, render locally as before.
+            if (!nativeMaster) engine.render(layersToRender, null, compEffects, macroBundles);
             if (stage3DOutput) {
               if (!stage3DRenderer) stage3DRenderer = new Stage3DRenderer(glCanvas);
               stage3DRenderer.render(
                 engine.getRenderer(),
                 get(stage3dScene),
-                engine.getCompositeTexture(),
+                nativeMaster ?? engine.getCompositeTexture(),
                 $settings?.output?.slices ?? [],
                 stage3DSourceLayers,
                 renderClockSeconds,
@@ -3685,6 +3729,10 @@
       canvas.removeEventListener('mouseenter', handleCanvasMouseEnter);
       stage3DRenderer?.dispose();
       stage3DRenderer = null;
+      stage3DMirror?.release();
+      stage3DMirror = null;
+      stage3DMirrorTexture?.dispose();
+      stage3DMirrorTexture = null;
     };
   });
 

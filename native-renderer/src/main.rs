@@ -4358,6 +4358,12 @@ struct App {
     /// instead of `render_clock_delta` directly.
     native_graph_step_delta_this_render: f32,
     isf_layer_bindings: HashMap<String, String>,
+    /// Shader outputs rendered this frame, by output source id, with the
+    /// frame they were rendered on. Layers bound to the same shader with the
+    /// same inputs (a group's children all take the group's shader) share
+    /// one render and one source-frame slot instead of taking a slot each,
+    /// which ran out at MAX_SOURCE_FRAME_SLOTS and left faces blank.
+    isf_frame_outputs: HashMap<String, (usize, u64)>,
     isf_uniforms: HashMap<String, IsfUniformState>,
     shader_registry: HashMap<String, ShaderRecord>,
     shader_sources: HashMap<String, Arc<str>>,
@@ -4702,6 +4708,7 @@ impl App {
             last_native_graph_step_clock: None,
             native_graph_step_delta_this_render: 1.0 / 60.0,
             isf_layer_bindings: HashMap::new(),
+            isf_frame_outputs: HashMap::new(),
             isf_uniforms: HashMap::new(),
             shader_registry: HashMap::new(),
             shader_sources: HashMap::new(),
@@ -15320,9 +15327,10 @@ impl App {
         if let Some(renderer) = self.renderer.as_mut() {
             let bindings = &self.isf_layer_bindings;
             let layers = &self.scene_layers;
-            renderer.retain_isf_pass_states(|layer_id| {
-                bindings.contains_key(layer_id)
-                    || layers.get(layer_id).is_some_and(|layer| layer.shader_id.is_some())
+            renderer.retain_isf_pass_states(|key| {
+                bindings.contains_key(key)
+                    || layers.get(key).is_some_and(|layer| layer.shader_id.is_some())
+                    || layers.values().any(|layer| layer.shader_source_id.as_deref() == Some(key))
             });
         }
         if self.isf_layer_bindings.is_empty() {
@@ -15347,6 +15355,8 @@ impl App {
                 state.seq = self.stats.gpu_frames_submitted;
             }
         }
+        let current_frame = self.native_frame_index();
+        self.isf_frame_outputs.retain(|_, (_, frame)| *frame == current_frame);
         let layer_ids = self.isf_layer_bindings.keys().cloned().collect::<Vec<_>>();
         for layer_id in layer_ids {
             self.apply_render_isf_to_layer(&json!({ "layer_id": layer_id }));
@@ -15437,16 +15447,36 @@ impl App {
         if let Some((source, source_kind, fragment_entry, source_hash, pipeline_key)) =
             native_shader
         {
-            let source_id = format!("native-shader:{layer_id}:{shader_id}:{source_hash:016x}");
+            let quality_scale_for_key = self
+                .scene_layers
+                .get(&layer_id)
+                .and_then(|layer| layer.render_quality)
+                .unwrap_or(self.native_quality.quality_scale);
+            // Same shader, same input picture, same quality: the output is
+            // identical, so it is rendered once per frame and shared.
+            let source_id = format!(
+                "native-shader:{shader_id}:{source_hash:016x}:{input_source_slot}:{:08x}",
+                quality_scale_for_key.to_bits()
+            );
             // Free the frame this layer drew before (another clip, an edited
             // shader) first, so the new render reuses a free slot instead of
             // displacing another layer's.
             self.release_layer_shader_output(&layer_id, Some(&source_id));
-            let slot = match self.assign_source_frame_slot(&source_id) {
-                Ok(slot) => slot,
-                Err(error) => { self.last_shader_error = Some(error); return; }
+            let frame_now = self.native_frame_index();
+            let already = self.isf_frame_outputs.get(&source_id)
+                .filter(|(slot, frame)| *frame == frame_now && self.source_frame_slots.get(&source_id) == Some(slot))
+                .map(|(slot, _)| *slot);
+            let slot = match already {
+                Some(slot) => slot,
+                None => match self.assign_source_frame_slot(&source_id) {
+                    Ok(slot) => slot,
+                    Err(error) => { self.last_shader_error = Some(error); return; }
+                },
             };
             shader_output_source_id = Some(source_id.clone());
+            if already.is_some() {
+                rendered_frame_slot = Some(slot);
+            } else {
             /* The quality tier finally reaches the renderer. quality_scale has
                been maintained and reported in status since this was written and
                never applied to anything, so every tier rendered identically.
@@ -15490,7 +15520,7 @@ impl App {
                     let result = if let Some((host, generation)) = pass_host.as_ref() {
                         let passes = host.plan.effective_passes();
                         let job = NativeIsfPassJob {
-                            state_key: &layer_id,
+                            state_key: &source_id,
                             generation: *generation,
                             passes: &passes,
                             targets: target_sizes,
@@ -15534,7 +15564,7 @@ impl App {
                     };
                     match result {
                         Ok(()) => {
-                            self.source_frames.insert(source_id, SourceFrame::full(seq));
+                            self.source_frames.insert(source_id.clone(), SourceFrame::full(seq));
                             self.stats.pipeline_cache_entries =
                                 renderer.native_shader_pipeline_count() as u64;
                             rendered_frame_slot = Some(slot);
@@ -15548,6 +15578,10 @@ impl App {
                 None => {
                     self.last_shader_error = Some("native renderer is not ready".to_string());
                 }
+            }
+            if let Some(slot) = rendered_frame_slot {
+                self.isf_frame_outputs.insert(source_id.clone(), (slot, frame_now));
+            }
             }
         } else {
             self.release_layer_shader_output(&layer_id, None);
