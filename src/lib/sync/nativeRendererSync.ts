@@ -793,7 +793,26 @@ function canonicalBlendMode(mode: string): string {
   return m || 'normal';
 }
 
+// Shader code and graph keys are hashed for every layer on every flush.
+// The same strings come back each frame, so long inputs are remembered
+// (Map lookups on a string reuse the engine's cached string hash).
+const longHashCache = new Map<string, string>();
+const LONG_HASH_MIN = 256;
+const LONG_HASH_LIMIT = 512;
+
 function hashString(input: string): string {
+  if (input.length >= LONG_HASH_MIN) {
+    const cached = longHashCache.get(input);
+    if (cached !== undefined) return cached;
+    const value = fnvHash(input);
+    if (longHashCache.size >= LONG_HASH_LIMIT) longHashCache.clear();
+    longHashCache.set(input, value);
+    return value;
+  }
+  return fnvHash(input);
+}
+
+function fnvHash(input: string): string {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < input.length; i++) {
     h ^= input.charCodeAt(i);

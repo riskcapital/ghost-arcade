@@ -164,8 +164,19 @@
   let stage3DMirrorTexture: THREE.CanvasTexture | null = null;
   let stage3DMirrorSeq = -1;
   let stage3DMirrorRequested = false;
+  let stage3DMirrorUsedAt = 0;
+  // Let go of the core picture feed once Stage Sim stops drawing, so a
+  // closed Stage view does not keep a 1280px/30fps readback running.
+  const stage3DMirrorIdle = setInterval(() => {
+    if (stage3DMirror && performance.now() - stage3DMirrorUsedAt > 2000) {
+      stage3DMirror.release();
+      stage3DMirror = null;
+      stage3DMirrorRequested = false;
+    }
+  }, 1000);
   function nativeStage3DMasterTexture(): THREE.Texture | null {
     if (!isDesktopApp) return null;
+    stage3DMirrorUsedAt = performance.now();
     if (!stage3DMirror) {
       if (!stage3DMirrorRequested) {
         stage3DMirrorRequested = true;
@@ -3729,6 +3740,7 @@
       canvas.removeEventListener('mouseenter', handleCanvasMouseEnter);
       stage3DRenderer?.dispose();
       stage3DRenderer = null;
+      clearInterval(stage3DMirrorIdle);
       stage3DMirror?.release();
       stage3DMirror = null;
       stage3DMirrorTexture?.dispose();

@@ -25,11 +25,21 @@
   let raf = 0;
   let mounted = false;
 
+  let ctx: CanvasRenderingContext2D | null = null;
+  let drewIdle = false;
+
   function draw() {
     if (!mounted || !canvas) return;
     raf = requestAnimationFrame(draw);
+    // With no audio input the meter is a flat line: draw it once and stop
+    // repainting until input comes back (and never while the window is
+    // hidden), instead of redrawing the same line 60 times a second.
+    if (document.hidden) return;
+    const inputOn = $audioStore.inputType !== 'none';
+    if (!inputOn && drewIdle) return;
+    drewIdle = !inputOn;
 
-    const ctx = canvas.getContext('2d');
+    ctx ??= canvas.getContext('2d');
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.width;   // backing-store px
@@ -76,6 +86,7 @@
     canvas.height = Math.round(H * dpr);
     canvas.style.width = `${W}px`;
     canvas.style.height = `${H}px`;
+    drewIdle = false;
   }
 
   $: if (mounted && canvas && (W || H)) resize();
