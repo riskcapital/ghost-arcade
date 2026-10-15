@@ -1628,6 +1628,10 @@
         // the same bindings and clip state the router writes.
         dmxStore,
         vjClipLauncher,
+        // First-run tour and templates, and the modulation links templates
+        // create, for CDP checks of those flows.
+        onboarding,
+        modulationStore,
         getEngine: () => canvasComponent?.getEngine() ?? null,
       };
     } catch { /* sealed */ }

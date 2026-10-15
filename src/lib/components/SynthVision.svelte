@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { buildPerformerStarterAssignments } from '$lib/onboarding/deckLibrary';
   import { onMount, onDestroy } from 'svelte';
   import * as THREE from 'three';
   import { WORLD_PALETTES, worldPaletteIndex } from '../performer/worldPalettes';
@@ -4604,6 +4605,17 @@ void main() {
       } catch (e) {
         console.warn('SynthVision: auto-load first preset failed:', e);
       }
+    } else {
+      // Nothing saved yet: open on a full starter keyboard (a style per
+      // row of keys) rather than an empty grid.
+      void buildPerformerStarterAssignments().then((assignments) => {
+        if (Object.keys(clipAssignments).length > 0) return; // user got there first
+        clipAssignments = assignments;
+        activePresetId = null;
+        clipsDirty = false;
+        sessionClipCache.save(clipAssignments, activePresetId, clipsDirty, assignedVJLayer);
+        if (state.showSplash) dismissSplash();
+      }).catch((e) => console.warn('SynthVision: starter keyboard failed:', e));
     }
 
     // Reset effects state to ensure clean start (blackout/whiteout should be 0)

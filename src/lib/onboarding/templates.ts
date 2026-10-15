@@ -9,6 +9,9 @@ import { generateUUID } from '../utils/uuid';
 import { project } from '../stores/layers';
 import { vjClipLauncher, type VJClip, type VJDeck } from '../stores/vjClipLauncher';
 import type { WarpCorners } from '../types';
+import { parseISF } from '../isf/parser';
+import { setParamModSource } from '../audio/modulation';
+import { STYLE_SETS, loadShaderCode, shaderDisplayName, shaderUrl, thumbnailFor } from './deckLibrary';
 
 export interface StarterTemplate {
   id: string;
@@ -26,7 +29,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     id: 'band-stage',
     name: 'Band on stage',
     audience: 'Projecting across a band',
-    description: 'Concert lighting looks on a deck ready to play to the music: beams, gobos, washes, followspot, strobe and mirror ball.',
+    description: 'Four blocks of concert lighting: beams and spots, washes and haze, backdrops and audio-reactive looks, with Performer on every block.',
     cover: 'STAGE-BeamRig.fs',
     mode: 'vj',
   },
@@ -34,7 +37,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     id: 'club-vj',
     name: 'Club VJ set',
     audience: 'DJ nights and parties',
-    description: 'Two decks of flagship visuals with the crossfader on and launches locked to the bar.',
+    description: 'Four blocks on two decks: flagship visuals, audio reactive, 3D rooms and glitch, with the crossfader on and launches locked to the bar.',
     cover: 'Featured-tide.fs',
     mode: 'vj',
   },
@@ -42,7 +45,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     id: 'psychedelic',
     name: 'Psychedelic night',
     audience: 'Liquid light shows',
-    description: 'Oil wheels, acid flows, tie-dye and form constants for a classic liquid light show.',
+    description: 'Four blocks for a liquid light show: oil and lava, mandalas, cosmic and audio-reactive looks, with Performer on every block.',
     cover: 'PSY-OilWheel.fs',
     mode: 'vj',
   },
@@ -56,37 +59,98 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
 ];
 
-/** Deck layouts: one row of shader files per deck row. */
-const DECKS: Record<string, { A: string[][]; B?: string[][]; crossfader?: boolean }> = {
+/** Deck layouts: each block is one style. Rows 1-3 are the style, row 4
+ *  borrows from a companion style, and the last cell of row 4 is the
+ *  Performer. */
+type BlockSpec = { name: string; style: string; companion: string };
+const DECKS: Record<string, { crossfader?: boolean; blocks: BlockSpec[] }> = {
   'band-stage': {
-    A: [
-      ['STAGE-BeamRig', 'STAGE-GoboSpots', 'STAGE-LightCurtain', 'STAGE-Followspot'],
-      ['STAGE-ColourWash', 'STAGE-LiquidSky', 'STAGE-Blinders'],
-      ['STAGE-Strobe', 'STAGE-MirrorBall'],
-      ['GA2-Eclipse', 'GA2-Lightbox', 'GA2-ColouredShadows'],
+    blocks: [
+      { name: 'Beams & Spots', style: 'beams', companion: 'washes' },
+      { name: 'Washes & Haze', style: 'washes', companion: 'beams' },
+      { name: 'Backdrops', style: 'backdrops', companion: 'audio' },
+      { name: 'Audio Reactive', style: 'audio', companion: 'beams' },
     ],
   },
   'club-vj': {
     crossfader: true,
-    A: [
-      ['Featured-tide', 'Featured-prism', 'Featured-pulse', 'Featured-aurora'],
-      ['GA2-Quasicrystal', 'GA2-HopfFibration', 'GA2-Apollonian', 'GA2-CircleLimit'],
-      ['STAGE-BeamRig', 'STAGE-Strobe'],
-    ],
-    B: [
-      ['Featured-lumenveil', 'Featured-crystallon', 'Featured-dispersion', 'Featured-drift'],
-      ['GA2-PhasePortrait', 'GA2-SoftCells', 'GA2-Murmuration', 'GA2-Kakeya'],
-      ['STAGE-GoboSpots', 'STAGE-MirrorBall'],
+    blocks: [
+      { name: 'Flagship', style: 'flagship', companion: 'audio' },
+      { name: 'Audio Reactive', style: 'audio', companion: 'flagship' },
+      { name: '3D Rooms', style: 'rooms', companion: 'geometric' },
+      { name: 'Geometric & Glitch', style: 'geometric', companion: 'rooms' },
     ],
   },
   psychedelic: {
-    A: [
-      ['PSY-OilWheel', 'PSY-OilSlick', 'PSY-AcidFlow'],
-      ['PSY-TieDye', 'PSY-Chrysanthemum', 'PSY-FormConstants'],
-      ['GA2-DriftVeil', 'GA2-SoftCells'],
+    blocks: [
+      { name: 'Liquid Light', style: 'liquid', companion: 'mandala' },
+      { name: 'Mandalas', style: 'mandala', companion: 'liquid' },
+      { name: 'Cosmic', style: 'cosmic', companion: 'audio' },
+      { name: 'Audio Reactive', style: 'audio', companion: 'liquid' },
     ],
   },
 };
+
+const DECK_ROWS = 4;
+const DECK_COLUMNS = 8;
+
+/** The cells of one block, row by row; null where the Performer goes. */
+function blockCells(spec: BlockSpec, offset = 0): Array<string | null> {
+  const rotate = (list: string[]) => list.slice(offset).concat(list.slice(0, offset));
+  const main = rotate(STYLE_SETS[spec.style] ?? []).slice(0, (DECK_ROWS - 1) * DECK_COLUMNS);
+  const extra = rotate(STYLE_SETS[spec.companion] ?? []).filter((n) => !main.includes(n)).slice(0, DECK_COLUMNS - 1);
+  return [...main, ...extra, null];
+}
+
+// Parameters that read as "how hard is it hitting" follow the bass; a
+// colour or hue control follows the mids. Speed and position are left
+// alone, since tying them to the music makes motion jitter.
+const BASS_PARAM = /glow|intens|bright|energy|pulse|flash|haze|strength|exposure|power|bloom/i;
+const MID_PARAM = /hue|colou?r(shift|offset|cycle)|spectrum/i;
+
+function makeAudioReactive(clip: VJClip, row: number, deck: VJDeck) {
+  if (!clip.shaderCode) return;
+  let inputs: any[] = [];
+  try { inputs = parseISF(clip.shaderCode).metadata.INPUTS ?? []; } catch { return; }
+  const floats = inputs.filter((i) => i.TYPE === 'float' && typeof i.MIN === 'number' && typeof i.MAX === 'number');
+  const bass = floats.find((i) => BASS_PARAM.test(i.NAME) || BASS_PARAM.test(i.LABEL ?? ''));
+  const mid = floats.find((i) => i !== bass && (MID_PARAM.test(i.NAME) || MID_PARAM.test(i.LABEL ?? '')));
+  for (const [input, source] of [[bass, 'bass'], [mid, 'mid']] as const) {
+    if (!input) continue;
+    const value = typeof input.DEFAULT === 'number' ? input.DEFAULT : (input.MIN + input.MAX) / 2;
+    setParamModSource(row, input.NAME, source, deck, 'vj', clip.id, { value, min: input.MIN, max: input.MAX });
+  }
+}
+
+async function shaderClip(name: string): Promise<VJClip | null> {
+  const [code, thumbnail] = await Promise.all([loadShaderCode(name), thumbnailFor(name)]);
+  if (!code) return null;
+  return {
+    id: generateUUID(),
+    type: 'shader',
+    name: shaderDisplayName(name),
+    src: shaderUrl(name),
+    thumbnail,
+    shaderCode: code,
+    shaderValues: {},
+  };
+}
+
+function performerClip(): VJClip {
+  return { id: generateUUID(), type: 'synthvision', name: 'Performer', src: 'performer', effects: [] } as VJClip;
+}
+
+async function fillBlock(spec: BlockSpec, deck: VJDeck, offset = 0): Promise<void> {
+  const cells = blockCells(spec, offset);
+  const clips = await Promise.all(cells.map((name) => (name ? shaderClip(name) : Promise.resolve(performerClip()))));
+  clips.forEach((clip, index) => {
+    if (!clip) return;
+    const row = Math.floor(index / DECK_COLUMNS);
+    const column = index % DECK_COLUMNS;
+    vjClipLauncher.setClip(row, column, clip, deck);
+    makeAudioReactive(clip, row, deck);
+  });
+}
 
 function shaderName(file: string): string {
   const base = file.replace(/\.fs$/, '').replace(/^(STAGE|GA2|PSY|DM|Featured)-/, '');
@@ -199,14 +263,26 @@ export async function applyStarterTemplate(id: string, startFresh: (name: string
     return true;
   }
   const layout = DECKS[id];
-  const rowsNeeded = Math.max(layout.A.length, layout.B?.length ?? 0);
-  const columnsNeeded = Math.max(...[...layout.A, ...(layout.B ?? [])].map((row) => row.length));
-  while (get(vjClipLauncher).numLayers < rowsNeeded) vjClipLauncher.addLayer();
-  while (get(vjClipLauncher).numColumns < columnsNeeded) vjClipLauncher.addColumn();
+  while (get(vjClipLauncher).numLayers < DECK_ROWS) vjClipLauncher.addLayer();
+  while (get(vjClipLauncher).numColumns < DECK_COLUMNS) vjClipLauncher.addColumn();
   vjClipLauncher.setCrossfaderEnabled(!!layout.crossfader);
-  if (layout.crossfader) vjClipLauncher.setQuantization('1bar');
-  await fillDeck(layout.A, 'A');
-  if (layout.B) await fillDeck(layout.B, 'B');
+  vjClipLauncher.setQuantization(layout.crossfader ? '1bar' : '1/4');
+  for (const [index, spec] of layout.blocks.entries()) {
+    const state = get(vjClipLauncher);
+    if (index === 0) {
+      vjClipLauncher.renameBlock(state.activeBlockId, spec.name);
+    } else {
+      vjClipLauncher.addBlock(spec.name);
+      const created = get(vjClipLauncher).blocks.at(-1);
+      if (created) vjClipLauncher.setActiveBlock(created.id);
+    }
+    await fillBlock(spec, 'A');
+    // Deck B gets the same style, starting further along the list, so the
+    // two decks never hold the same look side by side.
+    if (layout.crossfader) await fillBlock(spec, 'B', 12);
+  }
+  const first = get(vjClipLauncher).blocks[0];
+  if (first) vjClipLauncher.setActiveBlock(first.id);
   vjClipLauncher.setOpen(true);
   return true;
 }

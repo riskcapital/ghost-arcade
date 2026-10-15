@@ -228,7 +228,9 @@
   .welcome-title {
     margin: 0 0 14px;
     font-size: 40px;
-    line-height: 1.05;
+    line-height: 1.2;
+    /* Gradient text is clipped to the line box; leave room for the g. */
+    padding-bottom: 0.08em;
     font-weight: 750;
     letter-spacing: -0.02em;
     background: linear-gradient(180deg, #ffffff 0%, #c9d4ee 100%);
