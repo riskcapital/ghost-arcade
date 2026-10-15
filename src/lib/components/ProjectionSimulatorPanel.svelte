@@ -45,6 +45,7 @@
     type ProjectionSimVec3,
   } from '../projectionSim/types';
   import { PROJECTION_SIM_PRESETS, buildProjectionSimPreset } from '../projectionSim/presets';
+  import { requestAutoMap } from '../projectionSim/autoMap';
   import {
     snapProjectionSimObjectTransform,
     spaceProjectionSimObjectsEvenly,
@@ -70,6 +71,25 @@
   let nativeFullScreen = false;
   let removeNativeFullscreenListener: (() => void) | null = null;
   let selectedPresetId = PROJECTION_SIM_PRESETS[0]?.id ?? '';
+  let autoMapBusy = false;
+  let autoMapStatus = '';
+
+  /** One fitted surface layer per face the projectors can see. */
+  async function runAutoMap() {
+    if (autoMapBusy) return;
+    autoMapBusy = true;
+    autoMapStatus = '';
+    try {
+      const { surfaces, skipped } = await requestAutoMap(get(projectionSimScene));
+      autoMapStatus = surfaces === 0
+        ? 'Nothing to map: add an object and point an enabled projector at it.'
+        : `Mapped ${surfaces} surface${surfaces === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} too small to map` : ''}. Each is a layer you can now give its own content.`;
+    } catch (err) {
+      autoMapStatus = `Auto-map failed: ${err instanceof Error ? err.message : String(err)}`;
+    } finally {
+      autoMapBusy = false;
+    }
+  }
   let loadedPresetId = selectedPresetId;
   let editProjectors = false;
   let snapEnabled = true;
@@ -1295,6 +1315,12 @@
           </label>
           <p class="empty">{selectedPreset?.description}</p>
           <button class="wide-btn" onclick={() => applyPreset(selectedPresetId)}>Load Preset</button>
+          <button class="wide-btn auto-map-btn" disabled={autoMapBusy} onclick={runAutoMap}
+            title="Create a mapping layer for every face the projectors can see, already fitted to it">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8l9-4 9 4-9 4z" /><path d="M3 8v8l9 4 9-4V8" /><path d="M12 12v8" /></svg>
+            {autoMapBusy ? 'Mapping…' : 'Auto-map this model'}
+          </button>
+          {#if autoMapStatus}<p class="empty auto-map-status">{autoMapStatus}</p>{/if}
         </div>
       </section>
 
@@ -1679,6 +1705,23 @@
 </div>
 
 <style>
+  .auto-map-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    margin-top: 6px;
+  }
+  .auto-map-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .auto-map-status { margin-top: 6px; }
   .projection-sim-root {
     position: fixed;
     inset: 0;

@@ -15,6 +15,7 @@
   import GuidedTour from './lib/components/GuidedTour.svelte';
   import TemplatePicker from './lib/components/TemplatePicker.svelte';
   import { onboarding } from './lib/stores/onboarding';
+  import { startAutoMapHost } from './lib/projectionSim/autoMap';
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
@@ -1862,6 +1863,9 @@
     // The guided tour's "Open the output window" step.
     const handleTourOpenOutput = () => { if (!outputIsOpen) void openOutputWindow(); };
     window.addEventListener('ga-open-output-window', handleTourOpenOutput);
+    // Map Sim's Auto-map button works from the pop-out too; the layers
+    // belong to this window's project.
+    const stopAutoMapHost = startAutoMapHost();
     const handleTourCloseSettings = () => { showSettings = false; };
     window.addEventListener('ga-close-settings', handleTourCloseSettings);
 
@@ -2345,6 +2349,7 @@
       window.removeEventListener('open-settings', handleOpenSettings);
       window.removeEventListener('open-stage3d', handleOpenStage3D);
       window.removeEventListener('ga-open-output-window', handleTourOpenOutput);
+      stopAutoMapHost();
       window.removeEventListener('ga-close-settings', handleTourCloseSettings);
       if (autoConnectTimeout) {
         clearTimeout(autoConnectTimeout);
