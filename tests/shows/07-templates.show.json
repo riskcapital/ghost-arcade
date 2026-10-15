@@ -1,0 +1,81 @@
+{
+  "name": "Starter templates open full",
+  "description": "Each VJ template opens four full style blocks with Performer and puts a picture on the output; the mapping starter creates its surfaces.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "template.open",
+      "id": "band-stage",
+      "label": "Band on stage",
+      "expect": {
+        "deck.blocksFull": {
+          "blocks": 4,
+          "min": 32
+        }
+      }
+    },
+    {
+      "do": "deck.live",
+      "on": true
+    },
+    {
+      "do": "deck.triggerColumn",
+      "col": 0,
+      "wait": 3,
+      "expect": {
+        "output.notBlack": true,
+        "output.moving": true
+      }
+    },
+    {
+      "do": "template.open",
+      "id": "club-vj",
+      "label": "Club VJ set",
+      "expect": {
+        "deck.blocksFull": {
+          "blocks": 4,
+          "min": 32
+        }
+      }
+    },
+    {
+      "do": "deck.live",
+      "on": true
+    },
+    {
+      "do": "deck.triggerColumn",
+      "col": 0,
+      "wait": 3,
+      "expect": {
+        "output.notBlack": true
+      }
+    },
+    {
+      "do": "template.open",
+      "id": "psychedelic",
+      "label": "Psychedelic night",
+      "expect": {
+        "deck.blocksFull": {
+          "blocks": 4,
+          "min": 32
+        }
+      }
+    },
+    {
+      "do": "template.open",
+      "id": "mapping-starter",
+      "label": "Projection mapping starter",
+      "wait": 3,
+      "expect": {
+        "project.layers": {
+          "min": 3
+        },
+        "output.notBlack": true,
+        "noErrors": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "VJ deck: the stop button clears a row",
+  "description": "Stopping a row with its own stop button removes its picture, after a reorder too (it used to leave a frozen still).",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "deck.open" },
+    { "do": "deck.drop", "row": 0, "col": 0, "clip": "white.mov" },
+    { "do": "deck.drop", "row": 1, "col": 0, "clip": "red.mov" },
+    { "do": "deck.drop", "row": 2, "col": 0, "clip": "yellow.mp4" },
+    { "do": "deck.triggerColumn", "col": 0, "wait": 4 },
+    { "do": "deck.dragRow", "from": 0, "to": 2, "wait": 3 },
+    { "do": "deck.stopRow", "row": 0, "wait": 2.5, "label": "Stop the new top row", "expect": { "rows.match": { "rows": 3 }, "output.colour": { "is": "yellow" } } },
+    { "do": "deck.stopRow", "row": 1, "wait": 2.5, "label": "Stop the next", "expect": { "rows.match": { "rows": 3 }, "output.colour": { "is": "white" } } },
+    { "do": "deck.stopRow", "row": 2, "wait": 2.5, "label": "Stop the last", "expect": { "output.colour": { "is": "black" } } },
+    { "do": "deck.dragRow", "from": 2, "to": 0 }
+  ]
+}

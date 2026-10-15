@@ -19,6 +19,7 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
+    "show": "node scripts/show-runner/run.mjs",
     "dev:native-mobile": "vite --config vite.config.native-mobile.ts",
     "desktop": "concurrently \"npm run dev\" \"electron .\"",
     "desktop:app": "node scripts/dev-desktop-app.mjs",

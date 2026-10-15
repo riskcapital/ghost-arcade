@@ -1,0 +1,84 @@
+{
+  "name": "VJ deck: crossfading between decks A and B",
+  "description": "Split Deck A/B with a different colour on each deck; the crossfader ends show only one deck.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "deck.open"
+    },
+    {
+      "do": "deck.crossfader",
+      "on": true,
+      "wait": 2
+    },
+    {
+      "do": "deck.shader",
+      "row": 0,
+      "col": 0,
+      "shader": "DM-SolidColor",
+      "values": {
+        "baseColor": [
+          1,
+          0,
+          0,
+          1
+        ]
+      },
+      "deck": "A"
+    },
+    {
+      "do": "deck.shader",
+      "row": 0,
+      "col": 0,
+      "shader": "DM-SolidColor",
+      "values": {
+        "baseColor": [
+          0,
+          0,
+          1,
+          1
+        ]
+      },
+      "deck": "B"
+    },
+    {
+      "do": "deck.trigger",
+      "row": 0,
+      "col": 0,
+      "deck": "A"
+    },
+    {
+      "do": "deck.trigger",
+      "row": 0,
+      "col": 0,
+      "deck": "B",
+      "wait": 3
+    },
+    {
+      "do": "deck.crossfade",
+      "value": 0,
+      "wait": 2,
+      "label": "Crossfader on deck A",
+      "expect": {
+        "output.colour": {
+          "is": "red"
+        }
+      }
+    },
+    {
+      "do": "deck.crossfade",
+      "value": 1,
+      "wait": 2,
+      "label": "Crossfader on deck B",
+      "expect": {
+        "output.colour": {
+          "is": "blue"
+        },
+        "noErrors": true
+      }
+    }
+  ]
+}

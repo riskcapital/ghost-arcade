@@ -1,0 +1,16 @@
+{
+  "name": "VJ deck: top row wins, faders reveal rows below",
+  "description": "Three solid-colour videos on rows 1-3. The top row covers the rest at 100%; pulling faders down reveals the next row.",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "deck.open" },
+    { "do": "deck.drop", "row": 0, "col": 0, "clip": "white.mp4" },
+    { "do": "deck.drop", "row": 1, "col": 0, "clip": "red.mp4" },
+    { "do": "deck.drop", "row": 2, "col": 0, "clip": "yellow.mp4" },
+    { "do": "deck.triggerColumn", "col": 0, "wait": 4, "label": "Play column 1",
+      "expect": { "output.colour": { "is": "white" }, "rows.match": { "rows": 3 } } },
+    { "do": "deck.fader", "row": 0, "value": 0, "wait": 1.5, "label": "Top fader down", "expect": { "output.colour": { "is": "red" } } },
+    { "do": "deck.fader", "row": 1, "value": 0, "wait": 1.5, "label": "Second fader down", "expect": { "output.colour": { "is": "yellow" } } },
+    { "do": "deck.fader", "row": 0, "value": 1, "wait": 1.5, "label": "Top fader up", "expect": { "output.colour": { "is": "white" }, "noErrors": true } }
+  ]
+}

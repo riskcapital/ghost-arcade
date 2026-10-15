@@ -1,0 +1,77 @@
+{
+  "name": "VJ deck: several files fill along the row",
+  "description": "Dropping several files on a cell fills that row's free columns, then adds columns, instead of spilling onto the top row.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "deck.open"
+    },
+    {
+      "do": "deck.drop",
+      "row": 1,
+      "col": 5,
+      "clips": [
+        "blue.mp4",
+        "cyan.mp4",
+        "green.mp4",
+        "orange.mp4",
+        "magenta.mp4"
+      ],
+      "label": "Drop five files on row 2, column 6",
+      "expect": {
+        "deck.row": {
+          "row": 1,
+          "clips": [
+            "orange",
+            "magenta",
+            null,
+            null,
+            null,
+            "blue",
+            "cyan",
+            "green"
+          ]
+        }
+      }
+    },
+    {
+      "do": "deck.drop",
+      "row": 1,
+      "col": 0,
+      "clips": [
+        "white.mp4",
+        "red.mp4",
+        "yellow.mp4",
+        "blue.mp4",
+        "cyan.mp4",
+        "green.mp4",
+        "orange.mp4"
+      ],
+      "label": "Fill the row and overflow",
+      "expect": {
+        "deck.columns": {
+          "min": 11
+        },
+        "deck.row": {
+          "row": 1,
+          "clips": [
+            "white",
+            "magenta",
+            "red",
+            "yellow",
+            "blue",
+            "blue",
+            "cyan",
+            "green",
+            "cyan",
+            "green",
+            "orange"
+          ]
+        }
+      }
+    }
+  ]
+}

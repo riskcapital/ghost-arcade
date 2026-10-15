@@ -1,0 +1,16 @@
+{
+  "name": "VJ deck: dragging rows with videos playing",
+  "description": "Reordering rows while videos play must rebind every row to its clip (bug fixed in 7000a295: a row kept its old picture).",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "deck.open" },
+    { "do": "deck.drop", "row": 0, "col": 0, "clip": "white.mov" },
+    { "do": "deck.drop", "row": 1, "col": 0, "clip": "red.mov" },
+    { "do": "deck.drop", "row": 2, "col": 0, "clip": "yellow.mov" },
+    { "do": "deck.triggerColumn", "col": 0, "wait": 4, "expect": { "rows.match": { "rows": 3 } } },
+    { "do": "deck.dragRow", "from": 0, "to": 2, "wait": 3, "label": "Drag top row to the bottom", "expect": { "rows.match": { "rows": 3 }, "output.colour": { "is": "red" } } },
+    { "do": "deck.dragRow", "from": 2, "to": 0, "wait": 3, "label": "Drag it back", "expect": { "rows.match": { "rows": 3 }, "output.colour": { "is": "white" } } },
+    { "do": "deck.dragRow", "from": 0, "to": 1, "wait": 3, "label": "Swap the top two", "expect": { "rows.match": { "rows": 3 }, "output.colour": { "is": "red" } } },
+    { "do": "deck.dragRow", "from": 1, "to": 0, "wait": 3, "label": "Swap back", "expect": { "rows.match": { "rows": 3 }, "output.colour": { "is": "white" } } }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "Boot to a blank project",
+  "description": "The app starts, the welcome screen offers the four choices, Blank project leaves a black output and nothing logs an error.",
+  "steps": [
+    { "label": "Welcome screen is showing", "expect": { "text.contains": { "selector": ".welcome-title", "pattern": "Light up the room" } } },
+    { "do": "app.start", "choice": "blank", "wait": 2 },
+    { "label": "Output is black", "expect": { "output.colour": { "is": "black" }, "noErrors": true } },
+    { "label": "Idle performance", "expect": { "perf": { "seconds": 3, "minEditorFps": 50 } } }
+  ]
+}

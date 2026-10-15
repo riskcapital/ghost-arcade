@@ -1,0 +1,54 @@
+{
+  "name": "Grouped faces under one shader keep full coverage",
+  "description": "Grouping every auto-mapped face under one shared shader draws every face (it used to run out after 48).",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "mapsim.open"
+    },
+    {
+      "do": "mapsim.preset",
+      "id": "isam-cubes"
+    },
+    {
+      "do": "mapsim.automap"
+    },
+    {
+      "do": "mapsim.close"
+    },
+    {
+      "do": "project.groupAll",
+      "shader": "DM-TestBars",
+      "wait": 4,
+      "label": "Group every face under Test Bars",
+      "expect": {
+        "output.notBlack": {
+          "within": 15
+        },
+        "core.noShaderError": true
+      }
+    },
+    {
+      "label": "Grouped picture matches",
+      "expect": {
+        "snapshot": {
+          "name": "grouped-test-bars",
+          "maxDiff": 0.05
+        }
+      }
+    },
+    {
+      "label": "Frame rate",
+      "expect": {
+        "perf": {
+          "seconds": 3,
+          "minFps": 40
+        },
+        "noErrors": true
+      }
+    }
+  ]
+}

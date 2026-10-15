@@ -1,0 +1,162 @@
+{
+  "name": "Guided tour: every path highlights its controls",
+  "description": "Each tour path opens its panels and every step with a target finds it.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "tour.start",
+      "path": "vj",
+      "label": "VJ path: intro",
+      "expect": {
+        "tour.ring": {
+          "ring": false
+        }
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Media Library",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.action",
+      "label": "Add one for me"
+    },
+    {
+      "do": "tour.next",
+      "label": "Play a clip",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Preview",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Layers",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Effects",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Tempo",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.end"
+    },
+    {
+      "do": "tour.start",
+      "path": "mapping",
+      "label": "Mapping path"
+    },
+    {
+      "do": "tour.next",
+      "label": "Add a surface",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.action"
+    },
+    {
+      "do": "tour.next",
+      "label": "Fit it",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Content",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Fine-tune",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Screens",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.end"
+    },
+    {
+      "do": "tour.start",
+      "path": "music",
+      "label": "DAW path"
+    },
+    {
+      "do": "tour.next",
+      "label": "Audio input",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next"
+    },
+    {
+      "do": "tour.next",
+      "label": "Tempo",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "MIDI clock",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "Ableton Link",
+      "expect": {
+        "tour.ring": true
+      }
+    },
+    {
+      "do": "tour.next",
+      "label": "MIDI Learn",
+      "expect": {
+        "tour.ring": true,
+        "noErrors": true
+      }
+    },
+    {
+      "do": "tour.end"
+    }
+  ]
+}

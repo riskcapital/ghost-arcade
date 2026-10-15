@@ -1,0 +1,75 @@
+{
+  "name": "Map Sim: auto-map the demo models",
+  "description": "Auto-map maps every visible face of each demo model, and both windows keep their frame rate.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "mapsim.open"
+    },
+    {
+      "do": "mapsim.preset",
+      "id": "cube-pyramid"
+    },
+    {
+      "do": "mapsim.automap",
+      "label": "Cube pyramid",
+      "expect": {
+        "text.contains": {
+          "var": "automapStatus",
+          "pattern": "Mapped 1[0-9] surfaces"
+        }
+      }
+    },
+    {
+      "do": "mapsim.preset",
+      "id": "museum-facade"
+    },
+    {
+      "do": "mapsim.automap",
+      "label": "Museum facade",
+      "expect": {
+        "text.contains": {
+          "var": "automapStatus",
+          "pattern": "Mapped [5-9][0-9] surfaces"
+        }
+      }
+    },
+    {
+      "do": "mapsim.preset",
+      "id": "isam-cubes"
+    },
+    {
+      "do": "mapsim.automap",
+      "label": "Fragmented cube wall",
+      "expect": {
+        "text.contains": {
+          "var": "automapStatus",
+          "pattern": "Mapped [6-9][0-9] surfaces"
+        },
+        "project.layers": {
+          "min": 60
+        }
+      }
+    },
+    {
+      "label": "Frame rate with the cube wall mapped",
+      "expect": {
+        "perf": {
+          "seconds": 3,
+          "minEditorFps": 45,
+          "minFps": 40
+        },
+        "snapshot": {
+          "name": "cube-wall-mapped",
+          "maxDiff": 0.04
+        }
+      }
+    },
+    {
+      "do": "mapsim.close"
+    }
+  ]
+}
