@@ -132,9 +132,10 @@
     };
   }
 
-  // The tour lives in VJ mode; open it when the tour starts.
+  // The tour lives in VJ mode: open it when the tour starts and again on
+  // each step, in case something closed it in between.
+  $: if (open && index >= 0 && !get(vjClipLauncher).isOpen) vjClipLauncher.setOpen(true);
   $: if (open) {
-    if (!get(vjClipLauncher).isOpen) vjClipLauncher.setOpen(true);
     if (!timer) timer = setInterval(measure, 250);
     void tick().then(measure);
   } else if (timer) {
