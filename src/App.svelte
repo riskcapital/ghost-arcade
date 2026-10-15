@@ -893,7 +893,14 @@
   // Linux with the render core on a software rasterizer: check the machine
   // once per launch and say what to do (LinuxGpuNotice).
   let linuxGpuNoticeDone = false;
-  $: showLinuxGpuNotice = isDesktopApp && isLinux && !linuxGpuNoticeDone && $nativeRendererRuntime.adapterIsSoftware;
+  // The notice waits for the loading splash to finish fading, then comes
+  // before the welcome screen (which is held back until it closes).
+  let splashGone = false;
+  // Dev only: `window.dispatchEvent(new CustomEvent('ga-preview-linux-gpu-notice', { detail: setup }))`
+  // shows the notice with a sample setup on any OS.
+  let linuxGpuNoticePreview: import('$lib/linuxGpuSetup').LinuxGpuSetup | null = null;
+  $: showLinuxGpuNotice = splashGone && (!!linuxGpuNoticePreview
+    || (isDesktopApp && isLinux && !linuxGpuNoticeDone && $nativeRendererRuntime.adapterIsSoftware));
   const INTEGRATED_GPU_BANNER_DISMISSED_KEY = 'ga.integratedGpuBannerDismissed';
   let showIntegratedGpuBanner = false;
   function dismissIntegratedGpuBanner(persist: boolean) {
@@ -1843,7 +1850,14 @@
     const splash = document.getElementById('splash');
     if (splash) {
       splash.classList.add('hidden');
-      setTimeout(() => splash.remove(), 600);
+      setTimeout(() => { splash.remove(); splashGone = true; }, 600);
+    } else {
+      splashGone = true;
+    }
+    if (import.meta.env.DEV) {
+      window.addEventListener('ga-preview-linux-gpu-notice', (e) => {
+        linuxGpuNoticePreview = ((e as CustomEvent).detail ?? null) as typeof linuxGpuNoticePreview;
+      });
     }
 
     // Wire up history recording callback for the project store
@@ -6684,7 +6698,10 @@
     {/if}
 
     {#if showLinuxGpuNotice}
-      <LinuxGpuNotice adapterName={$nativeRendererRuntime.adapterName} onClose={() => (linuxGpuNoticeDone = true)} />
+      <LinuxGpuNotice
+        adapterName={linuxGpuNoticePreview ? 'llvmpipe (LLVM 15.0.7, 256 bits)' : $nativeRendererRuntime.adapterName}
+        previewSetup={linuxGpuNoticePreview}
+        onClose={() => { linuxGpuNoticeDone = true; linuxGpuNoticePreview = null; }} />
     {/if}
 
     <!-- Header / Toolbar -->
@@ -8251,7 +8268,7 @@
     {/if}
 
     <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
-    {#if showWelcome}
+    {#if showWelcome && splashGone && !showLinuxGpuNotice}
       <WelcomeModal
         onClose={() => {
           showWelcome = false;
