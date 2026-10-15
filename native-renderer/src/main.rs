@@ -123,7 +123,10 @@ use winit::{
     window::{Window, WindowAttributes, WindowId, WindowLevel},
 };
 
-const MAX_SCENE_LAYERS: usize = 64;
+// Layers the compositor draws. The composite loop in heartbeat.wgsl has the
+// same bound and stops at the live layer count, so only scenes that use the
+// extra slots pay for them (Map Sim auto-map builds one layer per face).
+const MAX_SCENE_LAYERS: usize = 128;
 const MAX_LAYER_MESH_SIDE: usize = 16;
 const MAX_LAYER_MESH_POINTS: usize = MAX_LAYER_MESH_SIDE * MAX_LAYER_MESH_SIDE;
 const MAX_LAYER_MESH_VEC4S: usize = MAX_LAYER_MESH_POINTS / 2;

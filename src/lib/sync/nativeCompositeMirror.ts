@@ -126,6 +126,9 @@ async function pumpOnce(maxDim: number): Promise<void> {
     }) as Parameters<typeof decodeSnapshotInto>[0] | null;
     if (snap && decodeSnapshotInto(snap)) {
       failureStreak = 0;
+      // Lets a consumer that draws every animation frame skip re-uploading
+      // a picture it already has (the pump runs slower than the display).
+      if (mirrorCanvas) (mirrorCanvas as any).__gaFrameSeq = ((mirrorCanvas as any).__gaFrameSeq ?? 0) + 1;
       for (const listener of frameListeners) {
         try { listener(); } catch (error) { console.warn('[CompositeMirror] consumer failed:', error); }
       }

@@ -22,6 +22,17 @@ export const AUTO_MAP_TAG = 'projection-sim-auto-map';
 
 type Face = { name: string; normal: THREE.Vector3; corners: THREE.Vector3[] };
 
+/** Flat colour per face: a hue per object, lit by which way the face
+ *  points, like a lit model. Colour layers cost almost nothing to render,
+ *  so a large model stays smooth, and the shading shows at a glance whether
+ *  every face landed on the right surface. */
+function faceColour(objectIndex: number, face: Face): { hue: number; saturation: number; lightness: number; alpha: number } {
+  const hue = Math.round((objectIndex * 137.508 + 205) % 360);
+  const up = face.normal.y;
+  const lightness = up > 0.5 ? 64 : up < -0.5 ? 26 : 34 + Math.abs(face.normal.z) * 16;
+  return { hue, saturation: 62, lightness: Math.round(lightness), alpha: 1 };
+}
+
 // Box faces in object-local space, corners ordered TL, TR, BR, BL as seen
 // from outside the face.
 const BOX_FACES: Array<{ name: string; normal: [number, number, number]; corners: Array<[number, number, number]> }> = [
@@ -50,7 +61,9 @@ function objectFaces(object: ProjectionSimObject): Face[] {
   const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
   const { size, faces } = primitiveBox(object);
   return BOX_FACES
-    .filter((face) => !faces || faces.includes(face.name))
+    // Undersides are never lit from a rigged projector in practice, and an
+    // edge-on one only throws a sliver of light onto the floor.
+    .filter((face) => face.name !== 'Bottom' && (!faces || faces.includes(face.name)))
     .map((face) => ({
       name: face.name,
       normal: new THREE.Vector3(...face.normal).applyMatrix3(normalMatrix).normalize(),
@@ -87,7 +100,7 @@ function faceVisible(
   const eye = new THREE.Vector3(...projector.position);
   const centre = face.corners.reduce((sum, c) => sum.add(c), new THREE.Vector3()).multiplyScalar(0.25);
   const toEye = eye.clone().sub(centre).normalize();
-  if (face.normal.dot(toEye) < 0.12) return false; // edge-on or facing away
+  if (face.normal.dot(toEye) < 0.2) return false; // edge-on or facing away
   // Sample the centre and points towards each corner: a face counts when
   // most of it is in the open, not just its middle.
   const samples = [centre, ...face.corners.map((c) => centre.clone().lerp(c, 0.7))];
@@ -101,7 +114,10 @@ function faceVisible(
     const hit = raycaster.intersectObjects(occluders, true)[0];
     if (!hit || hit.object.userData.objectId === objectId || hit.distance >= distance - 0.01) open++;
   }
-  return open >= 4;
+  // Any open sample counts: the faces are stacked nearest-on-top below, so
+  // the part of a face hidden behind a nearer object is covered by that
+  // object's own faces, exactly as on the real model.
+  return open >= 1;
 }
 
 function polygonArea(points: Array<[number, number]>): number {
@@ -117,7 +133,13 @@ function polygonArea(points: Array<[number, number]>): number {
 export interface AutoMapResult {
   surfaces: number;
   skipped: number;
+  /** Faces left out because the render core draws a fixed number of layers. */
+  overBudget: number;
+  budget: number;
 }
+
+/** The render core composites at most this many layers (MAX_SCENE_LAYERS). */
+const CORE_LAYER_LIMIT = 128;
 
 /**
  * Replace earlier auto-mapped layers with one surface per visible face.
@@ -128,21 +150,23 @@ export async function autoMapProjectionSim(
   scene: ProjectionSimScene,
   options: { shaderFile?: string; minArea?: number; maxSurfaces?: number } = {},
 ): Promise<AutoMapResult> {
-  const shaderFile = options.shaderFile ?? 'DM-GridMatrix.fs';
-  const minArea = options.minArea ?? 0.0015;
-  const maxSurfaces = options.maxSurfaces ?? 64;
+  const shaderFile = options.shaderFile;
+  const minArea = options.minArea ?? 0.00012;
+  // Leave room for the layers the user made themselves.
+  const ownLayers = get(project).layers.filter((layer) => (layer as any).autoMap !== AUTO_MAP_TAG).length;
+  const budget = Math.max(0, Math.min(options.maxSurfaces ?? CORE_LAYER_LIMIT, CORE_LAYER_LIMIT - ownLayers));
   const objects = scene.objects.filter((o) => o.visible && o.receiveProjection && o.type === 'primitive');
   const projectors = scene.projectors.filter((p) => p.enabled);
-  if (!objects.length || !projectors.length) return { surfaces: 0, skipped: 0 };
+  if (!objects.length || !projectors.length) return { surfaces: 0, skipped: 0, overBudget: 0, budget };
 
   const slices = get(settings).output?.slices ?? [];
   const occluders = buildOccluders(objects);
   const raycaster = new THREE.Raycaster();
-  type Candidate = { name: string; corners: WarpCorners; area: number };
+  type Candidate = { name: string; corners: WarpCorners; area: number; depth: number; colour: ReturnType<typeof faceColour> };
   const candidates: Candidate[] = [];
   let skipped = 0;
 
-  for (const object of objects) {
+  for (const [objectIndex, object] of objects.entries()) {
     for (const face of objectFaces(object)) {
       // Lay the face through the projector that sees it most squarely.
       let best: { projector: ProjectionSimProjector; facing: number } | null = null;
@@ -167,9 +191,12 @@ export async function autoMapProjectionSim(
       const area = polygonArea(points);
       if (area < minArea) { skipped++; continue; }
       const [tl, tr, br, bl] = points;
+      const centre = face.corners.reduce((sum, c) => sum.add(c), new THREE.Vector3()).multiplyScalar(0.25);
       candidates.push({
         name: `${object.name} · ${face.name}`,
         area,
+        depth: centre.distanceTo(new THREE.Vector3(...best.projector.position)),
+        colour: faceColour(objectIndex, face),
         corners: {
           topLeft: { x: tl[0], y: tl[1] },
           topRight: { x: tr[0], y: tr[1] },
@@ -180,35 +207,53 @@ export async function autoMapProjectionSim(
     }
   }
 
+  // Keep the faces that cover the most of the picture, then stack those by
+  // depth below.
+  // Each layer costs render time, so take the fewest faces that cover
+  // nearly all of what the projectors light (98%); the slivers left over are
+  // edges a viewer will not miss.
   candidates.sort((a, b) => b.area - a.area);
-  const chosen = candidates.slice(0, maxSurfaces);
-  skipped += candidates.length - chosen.length;
+  const totalArea = candidates.reduce((sum, c) => sum + c.area, 0);
+  let covered = 0;
+  let count = 0;
+  while (count < candidates.length && count < budget && covered < totalArea * 0.98) {
+    covered += candidates[count].area;
+    count++;
+  }
+  const chosen = candidates.slice(0, count);
+  const hitBudget = count === budget && covered < totalArea * 0.98;
+  const overBudget = hitBudget ? candidates.length - count : 0;
+  skipped += candidates.length - count - overBudget;
 
   // Replace the previous run's layers, leave everything else alone.
   for (const layer of get(project).layers) {
     if ((layer as any).autoMap === AUTO_MAP_TAG) project.removeLayer(layer.id);
   }
 
-  const src = `./ISF/${encodeURIComponent(shaderFile)}`;
-  const shaderCode = await fetch(src).then((r) => (r.ok ? r.text() : '')).catch(() => '');
-  // Smallest first, so the larger faces end up lower in the stack and the
-  // small details sit on top of them where they overlap.
-  for (const candidate of [...chosen].reverse()) {
-    const id = project.addLayer(candidate.name, 'media');
+  const src = shaderFile ? `./ISF/${encodeURIComponent(shaderFile)}` : '';
+  const shaderCode = shaderFile ? await fetch(src).then((r) => (r.ok ? r.text() : '')).catch(() => '') : '';
+  // Painter's order: the farthest face goes in first (bottom of the stack)
+  // and the nearest last (top), so wherever two faces overlap in the
+  // projector's image the one in front wins, as it does on the object.
+  const byDepth = [...chosen].sort((a, b) => b.depth - a.depth);
+  for (const candidate of byDepth) {
+    const id = project.addLayer(candidate.name, shaderFile ? 'media' : 'color');
     if (!id) continue;
-    if (shaderCode) {
+    if (!shaderFile) {
+      project.updateLayer(id, { colorContent: candidate.colour } as any);
+    } else if (shaderCode) {
       project.setLayerSource(id, {
         id: `${shaderFile}-${id}`,
         type: 'shader',
         src,
-        name: shaderFile.replace(/\.fs$/, '').replace(/^DM-/, ''),
+        name: shaderFile!.replace(/\.fs$/, '').replace(/^DM-/, ''),
         shaderCode,
         shaderValues: {},
       } as any);
     }
     project.updateLayer(id, { corners: candidate.corners, autoMap: AUTO_MAP_TAG } as any);
   }
-  return { surfaces: chosen.length, skipped };
+  return { surfaces: chosen.length, skipped, overBudget, budget };
 }
 
 // The Map Sim pop-out is its own window with its own copy of the stores;

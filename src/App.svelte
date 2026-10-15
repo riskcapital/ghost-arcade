@@ -843,7 +843,7 @@
   $: if (nativePrimaryRenderer && $workspace === 'projection-sim' && !projectionSimMirror) {
     void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
       if ($workspace === 'projection-sim' && !projectionSimMirror) {
-        projectionSimMirror = acquireNativeCompositeMirror({ maxDim: 640, fps: 20 });
+        projectionSimMirror = acquireNativeCompositeMirror({ maxDim: 960, fps: 24 });
       }
     });
   } else if ($workspace !== 'projection-sim' && projectionSimMirror) {

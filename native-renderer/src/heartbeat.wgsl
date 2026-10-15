@@ -3733,7 +3733,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     color += vec3<f32>(0.0, 0.7 + audio_treble * 0.2, 1.0) * grid_glow * vignette;
   }
 
-  for (var i: i32 = 0; i < 64; i = i + 1) {
+  // Bound must match MAX_SCENE_LAYERS in main.rs.
+  for (var i: i32 = 0; i < 128; i = i + 1) {
     if (f32(i) >= u.layer_count) {
       break;
     }

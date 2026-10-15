@@ -409,6 +409,15 @@ export class ProjectionSimulatorRenderer {
   private sourceTexture: THREE.CanvasTexture | null = null;
   private sourceCanvas: HTMLCanvasElement | null = null;
   private lastHash = '';
+  // Idle frames are skipped: nothing is drawn unless the content, the scene,
+  // the view or the selection changed. A still sim then costs nothing, and
+  // a playing one redraws only when a new content frame arrives.
+  private renderRequested = true;
+  private lastRenderAt = 0;
+  private lastRenderedScene: ProjectionSimScene | null = null;
+  private lastRenderedSlices: OutputSlice[] | null = null;
+  private lastSourceSeq = -1;
+  private lastBackground = '';
   private lastDepthHash = '';
   private lastShadowHash = '';
   private selectable = new Map<string, THREE.Object3D>();
@@ -468,12 +477,16 @@ export class ProjectionSimulatorRenderer {
     this.camera.position.set(9, 6, 11);
     this.camera.lookAt(0, 2, 0);
 
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'wheel'] as const) {
+      canvas.addEventListener(type, () => { this.renderRequested = true; }, { passive: true });
+    }
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.target.set(0, 2, 0);
 
     this.transformControls = new TransformControls(this.camera, canvas);
+    this.transformControls.addEventListener('change', () => { this.renderRequested = true; });
     this.transformControls.addEventListener('dragging-changed', (event: any) => {
       this.transformDragging = !!event.value;
       this.controls.enabled = !event.value;
@@ -531,17 +544,20 @@ export class ProjectionSimulatorRenderer {
   }
 
   setGizmoMode(mode: ProjectionSimGizmoMode): void {
+    this.renderRequested = true;
     this.currentGizmoMode = mode;
     this.transformControls.setMode(mode);
   }
 
   setPickProjectors(enabled: boolean): void {
+    this.renderRequested = true;
     this.pickProjectors = enabled;
   }
 
   /** In 'calibrate' mode a click on the model reports the exact surface
    *  point (optionally snapped to the nearest vertex) instead of selecting. */
   setPickMode(mode: 'select' | 'calibrate', onModelPick: ((pick: ProjectionSimModelPick) => void) | null = null): void {
+    this.renderRequested = true;
     this.pickMode = mode;
     this.onModelPick = mode === 'calibrate' ? onModelPick : null;
     if (mode === 'calibrate') {
@@ -551,11 +567,13 @@ export class ProjectionSimulatorRenderer {
   }
 
   setSnapToVertices(enabled: boolean): void {
+    this.renderRequested = true;
     this.snapToVertices = enabled;
   }
 
   /** Numbered spheres on the picked calibration points. */
   setCalibrationMarkers(markers: ProjectionSimCalibrationMarker[]): void {
+    this.renderRequested = true;
     const hash = JSON.stringify(markers);
     if (hash === this.calibrationMarkersHash) return;
     this.calibrationMarkersHash = hash;
@@ -674,6 +692,7 @@ export class ProjectionSimulatorRenderer {
   }
 
   setSelection(target: ProjectionSimSelection): void {
+    this.renderRequested = true;
     this.selected = target;
     if (target && !this.selectedTargets.includes(target)) this.selectedTargets = [target];
     if (!target) this.selectedTargets = [];
@@ -681,6 +700,7 @@ export class ProjectionSimulatorRenderer {
   }
 
   setSelections(targets: ProjectionSimSelection[]): void {
+    this.renderRequested = true;
     const next = [...new Set(targets.filter(Boolean) as NonNullable<ProjectionSimSelection>[])];
     this.selectedTargets = next;
     if (this.selected && !next.includes(this.selected)) this.selected = next[next.length - 1] ?? null;
@@ -803,6 +823,7 @@ export class ProjectionSimulatorRenderer {
   }
 
   frameCamera(): void {
+    this.renderRequested = true;
     this.controls.target.set(0, 2.3, 0);
     this.camera.position.set(9, 6, 11);
     this.camera.lookAt(this.controls.target);
@@ -810,6 +831,7 @@ export class ProjectionSimulatorRenderer {
   }
 
   topCamera(): void {
+    this.renderRequested = true;
     this.controls.target.set(0, 0, 0);
     this.camera.position.set(0.01, 18, 0.01);
     this.camera.lookAt(0, 0, 0);
@@ -857,10 +879,31 @@ export class ProjectionSimulatorRenderer {
     }
   }
 
+  /** Ask for a redraw on the next frame (input, selection, view changes). */
+  requestRender(): void {
+    this.renderRequested = true;
+  }
+
   render(sceneState: ProjectionSimScene, sourceCanvas: HTMLCanvasElement | null, outputSlices: OutputSlice[]): void {
     this.currentScene = sceneState;
     this.resize();
-    this.updateSourceTexture(sourceCanvas);
+    const contentChanged = this.updateSourceTexture(sourceCanvas);
+    const viewMoved = this.controls.update();
+    const now = performance.now();
+    const idle = !this.recordingMode
+      && !contentChanged
+      && !viewMoved
+      && !this.renderRequested
+      && !this.transformDragging
+      && !this.animationMixers.length
+      && sceneState === this.lastRenderedScene
+      && outputSlices === this.lastRenderedSlices
+      && now - this.lastRenderAt < 500;
+    if (idle) return;
+    this.renderRequested = false;
+    this.lastRenderAt = now;
+    this.lastRenderedScene = sceneState;
+    this.lastRenderedSlices = outputSlices;
 
     const hash = objectStructureHash(sceneState);
     if (hash !== this.lastHash) {
@@ -879,7 +922,6 @@ export class ProjectionSimulatorRenderer {
     this.updateProjectionUniforms();
     this.updateShadowDirtyState(sceneState, depthHash);
 
-    this.controls.update();
     this.renderMainScene();
   }
 
@@ -925,7 +967,13 @@ export class ProjectionSimulatorRenderer {
     const targetH = height ?? Math.max(1, Math.floor(this.canvas.clientHeight || 720));
     const size = new THREE.Vector2();
     this.renderer.getSize(size);
-    if (!force && size.x === targetW && size.y === targetH) return;
+    // Draw at the display's real resolution (capped at 2x) so projected
+    // content and edges look as sharp as they will on the object; a
+    // recording keeps the exact pixel size it asked for.
+    const pixelRatio = this.recordingMode ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+    if (!force && size.x === targetW && size.y === targetH && this.renderer.getPixelRatio() === pixelRatio) return;
+    this.renderRequested = true;
+    this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(targetW, targetH, false);
     this.camera.aspect = targetW / Math.max(1, targetH);
     this.applyViewInset(targetW, targetH);
@@ -935,6 +983,7 @@ export class ProjectionSimulatorRenderer {
   /** Recentre the orbit view on the area above a panel covering the bottom
    *  of the canvas (the calibration dock), so the model stays pickable. */
   setViewInsetBottom(pixels: number): void {
+    this.renderRequested = true;
     const next = Math.max(0, Math.round(pixels));
     if (next === this.viewInsetBottom) return;
     this.viewInsetBottom = next;
@@ -952,9 +1001,11 @@ export class ProjectionSimulatorRenderer {
     else this.camera.clearViewOffset();
   }
 
-  private updateSourceTexture(canvas: HTMLCanvasElement | null): void {
-    if (!canvas) return;
+  /** Upload the content picture; returns whether it changed. */
+  private updateSourceTexture(canvas: HTMLCanvasElement | null): boolean {
+    if (!canvas) return false;
     if (this.sourceCanvas !== canvas || !this.sourceTexture) {
+      this.lastSourceSeq = -1;
       this.sourceTexture?.dispose();
       this.sourceCanvas = canvas;
       this.sourceTexture = new THREE.CanvasTexture(canvas);
@@ -966,11 +1017,21 @@ export class ProjectionSimulatorRenderer {
       this.sourceTexture.generateMipmaps = false;
       this.sourceTexture.flipY = true;
     }
-    this.sourceTexture.needsUpdate = canvas.width > 0 && canvas.height > 0;
+    if (!(canvas.width > 0 && canvas.height > 0)) return false;
+    const seq = (canvas as any).__gaFrameSeq;
+    if (typeof seq === 'number') {
+      if (seq === this.lastSourceSeq) return false;
+      this.lastSourceSeq = seq;
+    }
+    this.sourceTexture.needsUpdate = true;
+    return true;
   }
 
   private syncCamera(sceneState: ProjectionSimScene): void {
-    this.scene.background = new THREE.Color(sceneState.environment.background);
+    if (sceneState.environment.background !== this.lastBackground) {
+      this.lastBackground = sceneState.environment.background;
+      this.scene.background = new THREE.Color(sceneState.environment.background);
+    }
     this.projectorShadowStrength = sceneState.environment.shadows
       ? THREE.MathUtils.clamp(sceneState.environment.shadowStrength ?? 1, 0, 1)
       : 0;
@@ -1184,7 +1245,7 @@ export class ProjectionSimulatorRenderer {
       if (hasFaces) {
         const receiver = { ...object, receiveProjection: true, castShadow: object.castShadow };
         const material = this.makeImportedProjectionMaterial(receiver, null);
-        if ((this.currentScene?.environment.surfaceStyle ?? 'light-gray') === 'original') {
+        if ((this.currentScene?.environment.surfaceStyle ?? 'dark-gray') === 'original') {
           material.vertexColors = true;
         }
         material.needsUpdate = true;

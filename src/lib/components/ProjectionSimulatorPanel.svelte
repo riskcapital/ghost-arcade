@@ -80,10 +80,16 @@
     autoMapBusy = true;
     autoMapStatus = '';
     try {
-      const { surfaces, skipped } = await requestAutoMap(get(projectionSimScene));
+      const { surfaces, skipped, overBudget, budget } = await requestAutoMap(get(projectionSimScene));
+      const notes = [
+        skipped ? `${skipped} too small to map` : '',
+        overBudget ? `${overBudget} smaller faces left out, since up to ${budget} more layers fit next to your own` : '',
+      ].filter(Boolean).join('; ');
       autoMapStatus = surfaces === 0
-        ? 'Nothing to map: add an object and point an enabled projector at it.'
-        : `Mapped ${surfaces} surface${surfaces === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} too small to map` : ''}. Each is a layer you can now give its own content.`;
+        ? (budget === 0
+          ? 'No room for more layers: the project already has as many as the renderer draws.'
+          : 'Nothing to map: add an object and point an enabled projector at it.')
+        : `Mapped ${surfaces} surface${surfaces === 1 ? '' : 's'}${notes ? ` (${notes})` : ''}. Each is a layer you can now give its own content.`;
     } catch (err) {
       autoMapStatus = `Auto-map failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
@@ -1374,7 +1380,7 @@
         </label>
         <label class="field">
           <span>Surface style</span>
-          <select value={$projectionSimScene.environment.surfaceStyle ?? 'light-gray'} onchange={(e) => projectionSimScene.setEnvironment({ surfaceStyle: (e.target as HTMLSelectElement).value as ProjectionSimScene['environment']['surfaceStyle'] })}>
+          <select value={$projectionSimScene.environment.surfaceStyle ?? 'dark-gray'} onchange={(e) => projectionSimScene.setEnvironment({ surfaceStyle: (e.target as HTMLSelectElement).value as ProjectionSimScene['environment']['surfaceStyle'] })}>
             <option value="light-gray">Light gray mapping surface</option>
             <option value="white">White mapping surface</option>
             <option value="dark-gray">Dark gray mapping surface</option>

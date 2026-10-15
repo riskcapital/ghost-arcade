@@ -144,7 +144,7 @@ export function createProjectionSimScene(name = 'Projection Simulator'): Project
       background: '#05070b',
       ambient: 0.22,
       roomExposure: 1.15,
-      surfaceStyle: 'light-gray',
+      surfaceStyle: 'dark-gray',
       floorColor: '#16181d',
       showFloorProjection: true,
       showGrid: true,

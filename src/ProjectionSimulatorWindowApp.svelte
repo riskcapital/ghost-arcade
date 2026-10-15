@@ -56,7 +56,7 @@
     initLicense().catch((e) => console.warn('[ProjectionSimWindow] License init:', e));
 
     if (useNativeMirror) {
-      mirror = acquireNativeCompositeMirror({ maxDim: 960, fps: 24 });
+      mirror = acquireNativeCompositeMirror({ maxDim: 1280, fps: 30 });
     }
     refreshSourceCanvas();
     requestAnimationFrame(refreshSourceCanvas);
