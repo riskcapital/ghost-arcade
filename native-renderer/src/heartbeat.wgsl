@@ -227,7 +227,9 @@ var paint_masks: texture_2d_array<f32>;
 const SOURCE_PREVIEW_SIZE: i32 = 256;
 const SOURCE_PREVIEW_PIXELS: i32 = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
 const MAX_SOURCE_PREVIEW_SLOTS: i32 = 16;
-const MAX_SOURCE_FRAME_SLOTS: i32 = 24;
+// Must match MAX_SOURCE_FRAME_SLOTS in main.rs. A smaller bound here clamped
+// every layer in a higher slot onto slot 23, so it drew another layer's picture.
+const MAX_SOURCE_FRAME_SLOTS: i32 = 48;
 const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
 const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 

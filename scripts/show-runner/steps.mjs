@@ -35,6 +35,8 @@ const ACTIONS = {
   async 'app.start'(ctx, s) {
     const index = { tour: 0, templates: 1, open: 2, blank: 3 }[s.choice ?? 'blank'];
     await ctx.eval(`(async () => {
+      // The welcome screen waits for the loading splash to fade out.
+      for (let i = 0; i < 50 && !document.querySelector('.welcome .choice'); i++) await new Promise((r) => setTimeout(r, 200));
       [...document.querySelectorAll('.close-modal-backdrop button')].find((b) => /Discard/.test(b.textContent))?.click();
       document.querySelectorAll('.welcome .choice')[${index}]?.click();
     })()`);
@@ -43,6 +45,10 @@ const ACTIONS = {
   async 'deck.open'(ctx, s) {
     await ctx.eval(`(() => { const L = __show.g().vjClipLauncher; L.setOpen(true); ${s.live === false ? '' : 'L.setLive(true);'} })()`);
     await sleep(1500);
+  },
+  async 'deck.rows'(ctx, s) {
+    await ctx.eval(`(() => { const L = __show.g().vjClipLauncher; while (__show.deck().numLayers < ${s.count}) L.addLayer(); })()`);
+    await sleep(1000);
   },
   async 'deck.live'(ctx, s) { await ctx.eval(`__show.g().vjClipLauncher.setLive(${s.on !== false})`); },
   async 'deck.drop'(ctx, s) {

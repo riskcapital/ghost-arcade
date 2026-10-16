@@ -1,0 +1,22 @@
+{
+  "name": "VJ deck: eight rows stack like four",
+  "description": "Eight solid-colour rows. Past about six rows the mix lands in a picture slot above 23; the output must still show the mix (top row first, then each row below as faders come down).",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "deck.open" },
+    { "do": "deck.rows", "count": 8 },
+    { "do": "deck.drop", "row": 0, "col": 0, "clip": "white.mp4" },
+    { "do": "deck.drop", "row": 1, "col": 0, "clip": "red.mp4" },
+    { "do": "deck.drop", "row": 2, "col": 0, "clip": "yellow.mp4" },
+    { "do": "deck.drop", "row": 3, "col": 0, "clip": "green.mp4" },
+    { "do": "deck.drop", "row": 4, "col": 0, "clip": "blue.mp4" },
+    { "do": "deck.drop", "row": 5, "col": 0, "clip": "cyan.mp4" },
+    { "do": "deck.drop", "row": 6, "col": 0, "clip": "magenta.mp4" },
+    { "do": "deck.drop", "row": 7, "col": 0, "clip": "orange.mp4" },
+    { "do": "deck.triggerColumn", "col": 0, "wait": 5, "label": "Play column 1",
+      "expect": { "output.colour": { "is": "white" }, "rows.match": { "rows": 8 } } },
+    { "do": "deck.fader", "row": 0, "value": 0, "wait": 1.5, "label": "Top fader down", "expect": { "output.colour": { "is": "red" } } },
+    { "do": "deck.fader", "row": 1, "value": 0, "wait": 1.5, "label": "Second fader down", "expect": { "output.colour": { "is": "yellow" } } },
+    { "do": "deck.fader", "row": 0, "value": 1, "wait": 1.5, "label": "Top fader up", "expect": { "output.colour": { "is": "white" }, "noErrors": true } }
+  ]
+}

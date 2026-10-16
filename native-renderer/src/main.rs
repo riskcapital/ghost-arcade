@@ -33346,6 +33346,19 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_slot_bounds_match_the_core() {
+        let wgsl = include_str!("heartbeat.wgsl");
+        let constant = |name: &str| -> usize {
+            let line = wgsl.lines().find(|line| line.starts_with(&format!("const {name}:")))
+                .unwrap_or_else(|| panic!("{name} in heartbeat.wgsl"));
+            line.split('=').nth(1).unwrap().trim().trim_end_matches(';').parse().unwrap()
+        };
+        assert_eq!(constant("MAX_SOURCE_FRAME_SLOTS"), MAX_SOURCE_FRAME_SLOTS);
+        assert_eq!(constant("MAX_SOURCE_PREVIEW_SLOTS"), MAX_SOURCE_PREVIEWS);
+        assert!(wgsl.contains(&format!("i < {MAX_SCENE_LAYERS};")), "composite loop bound must equal MAX_SCENE_LAYERS");
+    }
+
+    #[test]
     fn heartbeat_compositor_wgsl_validates_with_the_edge_effect_layout() {
         let module = naga::front::wgsl::parse_str(include_str!("heartbeat.wgsl"))
             .unwrap_or_else(|error| panic!("heartbeat.wgsl parse: {error}"));

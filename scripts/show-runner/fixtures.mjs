@@ -22,6 +22,8 @@ export function fixtureDir() {
 /** Path to a fixture clip, generating it the first time. Names:
  *  `<colour>.mp4`, `<colour>.mov` (HAP), `bars.mp4` (moving test bars). */
 export function fixture(name) {
+  // An absolute path is a clip of the user's own (real-world decks).
+  if (path.isAbsolute(name)) return name;
   const file = path.join(fixtureDir(), name);
   if (fs.existsSync(file)) return file;
   const ffmpeg = process.env.GA_FFMPEG_PATH || require('ffmpeg-static');
