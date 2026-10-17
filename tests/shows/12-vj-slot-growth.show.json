@@ -1,0 +1,227 @@
+{
+  "name": "VJ deck: 28 rows need more than the first 48 picture slots",
+  "description": "Two slots per row plus the mix passes past the 48 slots the core starts with. The store grows, every row still draws its own clip, and the output is the stack.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "deck.open"
+    },
+    {
+      "do": "deck.rows",
+      "count": 28
+    },
+    {
+      "do": "deck.drop",
+      "row": 0,
+      "col": 0,
+      "clip": "white.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 1,
+      "col": 0,
+      "clip": "red.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 2,
+      "col": 0,
+      "clip": "yellow.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 3,
+      "col": 0,
+      "clip": "green.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 4,
+      "col": 0,
+      "clip": "blue.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 5,
+      "col": 0,
+      "clip": "cyan.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 6,
+      "col": 0,
+      "clip": "magenta.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 7,
+      "col": 0,
+      "clip": "orange.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 8,
+      "col": 0,
+      "clip": "white.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 9,
+      "col": 0,
+      "clip": "red.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 10,
+      "col": 0,
+      "clip": "yellow.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 11,
+      "col": 0,
+      "clip": "green.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 12,
+      "col": 0,
+      "clip": "blue.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 13,
+      "col": 0,
+      "clip": "cyan.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 14,
+      "col": 0,
+      "clip": "magenta.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 15,
+      "col": 0,
+      "clip": "orange.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 16,
+      "col": 0,
+      "clip": "white.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 17,
+      "col": 0,
+      "clip": "red.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 18,
+      "col": 0,
+      "clip": "yellow.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 19,
+      "col": 0,
+      "clip": "green.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 20,
+      "col": 0,
+      "clip": "blue.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 21,
+      "col": 0,
+      "clip": "cyan.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 22,
+      "col": 0,
+      "clip": "magenta.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 23,
+      "col": 0,
+      "clip": "orange.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 24,
+      "col": 0,
+      "clip": "white.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 25,
+      "col": 0,
+      "clip": "red.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 26,
+      "col": 0,
+      "clip": "yellow.mp4"
+    },
+    {
+      "do": "deck.drop",
+      "row": 27,
+      "col": 0,
+      "clip": "green.mp4"
+    },
+    {
+      "do": "deck.triggerColumn",
+      "col": 0,
+      "wait": 6,
+      "label": "Play all 28 rows",
+      "expect": {
+        "output.colour": {
+          "is": "white",
+          "within": 5
+        },
+        "rows.match": {
+          "rows": 28,
+          "within": 5
+        },
+        "noErrors": true
+      }
+    },
+    {
+      "do": "deck.fader",
+      "row": 0,
+      "value": 0,
+      "wait": 1.5,
+      "label": "Top fader down",
+      "expect": {
+        "output.colour": {
+          "is": "red"
+        }
+      }
+    },
+    {
+      "do": "deck.fader",
+      "row": 0,
+      "value": 1,
+      "wait": 1.5,
+      "label": "Top fader up",
+      "expect": {
+        "output.colour": {
+          "is": "white"
+        },
+        "noErrors": true
+      }
+    }
+  ]
+}

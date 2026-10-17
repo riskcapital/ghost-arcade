@@ -2497,7 +2497,10 @@ async function main() {
     if (Number(status.source_frame_input_bytes_uploaded ?? 0) < sourceFrameBytes.length) {
       throw new Error(`native source-frame input bytes were not counted: ${JSON.stringify(status)}`);
     }
-    if (Number(status.source_frame_resampled_bytes_uploaded ?? 0) < Number(status.source_frame_bytes_uploaded ?? 0)) {
+    // The shared slot array resamples every still into its square slot; a
+    // per-source slot keeps the picture's own size, so nothing is resampled.
+    if (status.source_frame_store !== 'per-source'
+      && Number(status.source_frame_resampled_bytes_uploaded ?? 0) < Number(status.source_frame_bytes_uploaded ?? 0)) {
       throw new Error(`native source-frame resampled byte count regressed: ${JSON.stringify(status)}`);
     }
     if (Number(status.source_frame_rejected_uploads ?? 0) !== 0) {

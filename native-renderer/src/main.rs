@@ -34,6 +34,7 @@ mod paint_mask;
 mod particle_director;
 mod projector_view;
 mod shared_texture;
+mod source_frames;
 
 use std::{
     borrow::Cow,
@@ -110,6 +111,7 @@ use objc2_foundation::MainThreadMarker;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shared_texture::SharedTextureSourceFrameDescriptor;
+use source_frames::{SlotRef, SourceFrameMode, SourceFrameStore};
 use wgpu::util::{DeviceExt, TextureBlitter, TextureBlitterBuilder};
 #[cfg(not(target_os = "macos"))]
 use winit::window::Fullscreen;
@@ -152,10 +154,22 @@ const MAX_LAYER_EDGE_DIAGONALS: usize = 64;
 const MAX_SOURCE_PREVIEWS: usize = 16;
 const SOURCE_PREVIEW_SIZE: usize = 256;
 const SOURCE_PREVIEW_PIXELS: usize = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
-// Enough for eight rows retaining outgoing + incoming clips, clip carriers,
-// deck carriers, and bounded interruption snapshots. Source sizing still
-// accounts for all three stores against the explicit tier memory budget.
-const MAX_SOURCE_FRAME_SLOTS: usize = 48;
+// Picture slots allocated up front (source_frames.rs). The store grows past
+// this on demand: the shared array by doubling up to the device's layer limit
+// and the memory budget, per-source slots up to the compositor's binding array.
+const INITIAL_SOURCE_FRAME_SLOTS: usize = 48;
+/// Compositor binding-array length when each slot has its own texture: the
+/// per-source slot ceiling.
+const PER_SOURCE_SLOT_BINDINGS: usize = 1024;
+/// Longest edge a per-source picture is stored at.
+const PER_SOURCE_MAX_DIMENSION: u32 = 4096;
+/// Shader inputs (the layer's own input plus bound images) packed per draw
+/// into the shader-input array.
+const NATIVE_SHADER_INPUT_LAYERS: usize = 16;
+/// Features a per-source store needs: an array of textures, indexed by a
+/// value read from the layer records.
+const PER_SOURCE_SLOT_FEATURES: wgpu::Features = wgpu::Features::TEXTURE_BINDING_ARRAY
+    .union(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING);
 /// Ping-pong layers for the full-resolution composite used by composition FX.
 /// Two is all an effect chain needs: read one, write the other, swap.
 const COMPOSITE_FRAME_SLOTS: usize = 2;
@@ -169,10 +183,11 @@ const NATIVE_VIDEO_FRAME_CACHE_MAX_BYTES: usize = 192 * 1024 * 1024;
 const NATIVE_VIDEO_DECODE_MAX_IN_FLIGHT: usize = 2;
 const NATIVE_VIDEO_DECODE_PUMP_PER_TICK: usize = 1;
 const NATIVE_VIDEO_DECODE_PUMP_WINDOW_FRAMES: u32 = 12;
-// Admission is also constrained by the shared decoder byte budget. Sixteen
-// texture-codec streams need independent clocks even when hardware decoders
-// on a particular GPU reach their throughput limit sooner.
-const NATIVE_VIDEO_SESSION_MAX_PLAYING: usize = 16;
+// One playing decoder per deck row: a full deck (MAX_VJ_LAYERS in the app)
+// plays every row at once. Admission is also bounded by the shared decoder
+// byte budget, which is the real guard on memory; hardware decoders on a
+// particular GPU may reach their throughput limit sooner.
+const NATIVE_VIDEO_SESSION_MAX_PLAYING: usize = 32;
 // A full four-row/four-column grid needs sixteen preparations, in addition
 // to paused on-stage sources. The shared byte budget still bounds residency.
 const NATIVE_LIBRARY_SESSION_CAP: usize = 16;
@@ -335,8 +350,7 @@ var<uniform> u: Stage3DMeshUniforms;
 @group(0) @binding(1)
 var<storage, read> items: array<Stage3DMeshItem>;
 
-@group(0) @binding(2)
-var source_frames: texture_2d_array<f32>;
+//#SOURCE_FRAMES
 
 @group(0) @binding(3)
 var source_sampler: sampler;
@@ -603,8 +617,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let light_mul = mix(room_light, screen_boost, source_active);
   var rgb = in.color.rgb;
   if (in.material.x >= 0.5) {
-    let source_slot = i32(clamp(floor(in.material.x - 1.0 + 0.5), 0.0, 7.0));
-    let tex = textureSampleLevel(source_frames, source_sampler, in.uv, source_slot, 0.0);
+    let source_slot = clamp(i32(floor(in.material.x - 1.0 + 0.5)), 0, source_frame_count() - 1);
+    let tex = source_frame_sample(source_slot, source_sampler, in.uv);
     rgb = mix(rgb, tex.rgb, clamp(opacity, 0.0, 1.0));
     alpha = clamp(in.color.a * opacity * tex.a, 0.0, 1.0);
   }
@@ -930,6 +944,8 @@ struct CoreStatus {
     source_frame_mip_levels: u32,
     source_frames_active: u32,
     source_frame_slots: u32,
+    /// "shared-array" or "per-source" (source_frames.rs).
+    source_frame_store: String,
     isf_shader_bindings: u32,
     isf_uniform_sets: u32,
     /// Shaders routed through the pass-aware ISF host (PASSES or audio rows).
@@ -2400,7 +2416,7 @@ impl NativeShaderUniforms {
                 frame_index,
                 seed,
                 input_count,
-                input_source_slot.min(MAX_SOURCE_FRAME_SLOTS - 1) as f32,
+                input_source_slot.min(NATIVE_SHADER_INPUT_LAYERS - 1) as f32,
             ],
             date,
             audio0,
@@ -3931,10 +3947,18 @@ struct RenderState {
     /// buffer contents persist, and the compositor only reads slots below
     /// `layer_count`, so skipping is observationally identical.
     layer_upload_last: Vec<u8>,
-    source_frame_texture: wgpu::Texture,
-    source_frame_gpu_readiness: Vec<Arc<SourceFrameGpuReadiness>>,
-    native_graph_source_frame_sample_texture: wgpu::Texture,
+    /// Picture slots (source_frames.rs): one shared array, or a texture per slot.
+    slots: SourceFrameStore,
+    /// Compositor binding-array length (PerSource), the per-source slot ceiling.
+    source_frame_bindings: usize,
+    /// Store generation the compositor and Stage3D bind groups were built at.
+    source_frame_bind_generation: u64,
+    source_frame_gpu_readiness: std::cell::RefCell<Vec<Arc<SourceFrameGpuReadiness>>>,
+    /// Copies of pictures a graph pass samples while rendering into the same
+    /// texture (any slot in the shared array; its own slot when per-source).
+    graph_sample_scratch: std::cell::RefCell<Vec<SlotRef>>,
     source_frame_sampler: wgpu::Sampler,
+    /// Shader inputs packed per draw: layer k holds the k-th input.
     native_shader_input_texture: wgpu::Texture,
     source_frame_size: usize,
     source_frame_format: wgpu::TextureFormat,
@@ -3988,6 +4012,9 @@ struct RenderState {
     stage3d_mesh_uniform_buffer: wgpu::Buffer,
     stage3d_mesh_item_buffer: wgpu::Buffer,
     stage3d_mesh_bind_group: wgpu::BindGroup,
+    /// Group 1 of the compositor and Stage3D pipelines: the picture slots.
+    source_frames_bind_group_layout: wgpu::BindGroupLayout,
+    source_frames_bind_group: wgpu::BindGroup,
     stage3d_mesh_depth_texture: wgpu::Texture,
     stage3d_mesh_depth_view: wgpu::TextureView,
     _native_graph_source_depth_texture: wgpu::Texture,
@@ -4362,7 +4389,7 @@ struct App {
     /// frame they were rendered on. Layers bound to the same shader with the
     /// same inputs (a group's children all take the group's shader) share
     /// one render and one source-frame slot instead of taking a slot each,
-    /// which ran out at MAX_SOURCE_FRAME_SLOTS and left faces blank.
+    /// which ran out of slots and left faces blank.
     isf_frame_outputs: HashMap<String, (usize, u64)>,
     isf_uniforms: HashMap<String, IsfUniformState>,
     shader_registry: HashMap<String, ShaderRecord>,
@@ -4974,7 +5001,9 @@ impl App {
             "max_scene_layers": MAX_SCENE_LAYERS,
             "source_preview_size": SOURCE_PREVIEW_SIZE,
             "source_preview_slots": MAX_SOURCE_PREVIEWS,
-            "source_frame_slots": MAX_SOURCE_FRAME_SLOTS,
+            "source_frame_slots": self.source_frame_capacity(),
+            "source_frame_slot_ceiling": self.renderer.as_ref().map(|renderer| renderer.slots.max_capacity()).unwrap_or(INITIAL_SOURCE_FRAME_SLOTS),
+            "source_frame_store": self.renderer.as_ref().map(|renderer| renderer.slots.mode().label()).unwrap_or("none"),
             "source_frame_size": self.renderer.as_ref().map(|renderer| renderer.source_frame_size).unwrap_or(SOURCE_FRAME_SIZE_DEFAULT),
             "source_frame_mip_levels": self.renderer.as_ref().map(|renderer| renderer.source_frame_mip_levels).unwrap_or(1),
             "command_queue_capacity": self.command_queue_capacity,
@@ -5357,7 +5386,8 @@ impl App {
                 .map(|renderer| renderer.source_frame_mip_levels)
                 .unwrap_or(1),
             source_frames_active: self.source_frames.len().min(1024) as u32,
-            source_frame_slots: MAX_SOURCE_FRAME_SLOTS as u32,
+            source_frame_slots: self.source_frame_capacity().min(u32::MAX as usize) as u32,
+            source_frame_store: self.renderer.as_ref().map(|r| r.slots.mode().label()).unwrap_or("none").to_string(),
             isf_shader_bindings: self.isf_layer_bindings.len().min(1024) as u32,
             isf_uniform_sets: self.isf_uniforms.len().min(1024) as u32,
             isf_pass_host_shaders: self.shader_isf_hosts.len().min(u32::MAX as usize) as u32,
@@ -5652,6 +5682,10 @@ impl App {
                     "uv1": layer.uv1,
                     "source_id": layer.source_id,
                     "frame_slot": layer.frame_slot,
+                    // The stored picture's size: the slot edge in the shared
+                    // array, the picture's own size when per-source.
+                    "frame_size": layer.frame_slot.and_then(|slot| self.renderer.as_ref()
+                        .map(|renderer| { let stored = renderer.slots.slot(slot); [stored.width, stored.height] })),
                     "shader_frame_slot": layer.shader_frame_slot,
                     "source_kind": layer.source_kind,
                     "shader_rendered": layer.shader_rendered,
@@ -5706,7 +5740,9 @@ impl App {
             "slice_output_limit": MAX_SLICE_OUTPUTS,
             "slice_texture_budget_bytes": MAX_SLICE_TEXTURE_BYTES,
             "slice_texture_bytes": self.slice_outputs.iter().map(|s| s.width as u64 * s.height as u64 * 8).sum::<u64>(),
-            "source_array_texture_bytes": self.renderer.as_ref().map_or(0, |r| estimate_source_frame_texture_bytes(r.source_frame_size, if r.source_frame_format == wgpu::TextureFormat::Rgba16Float { 8 } else { 4 })),
+            "source_array_texture_bytes": self.renderer.as_ref().map_or(0, |r| r.slots.resident_bytes()),
+            "source_frame_slots": self.source_frame_capacity(),
+            "source_frame_store": self.renderer.as_ref().map(|r| r.slots.mode().label()).unwrap_or("none"),
             "decoded_video_cache_bytes": self.native_video_frame_cache_bytes,
             "graph_buffer_bytes": self.renderer.as_ref().map_or(0, |r| r.native_compute_graph_buffer_bytes()),
             "uniform_pool_bytes": self.renderer.as_ref().map_or(0, |r| r.frame_uniform_pool.iter().map(|b| b.byte_length).sum::<u64>()),
@@ -7369,7 +7405,7 @@ impl App {
                     // video safe to sample even before the CPU sees its GPU
                     // callback. Allocated/warming graph slots remain false.
                     let ready = slot.is_some_and(|slot| self.renderer.as_ref()
-                        .is_some_and(|renderer| renderer.source_frame_gpu_readiness[slot].submitted())
+                        .is_some_and(|renderer| renderer.slot_readiness(slot).submitted())
                         || earlier_jobs.iter().chain(self.pending_native_graph_jobs.iter())
                             .flat_map(|job| job.render_plans.iter()).any(|plan|
                             matches!(plan.target, NativeComputeGraphRenderTarget::SourceFrame { slot: writer, .. } if writer == slot)));
@@ -9446,11 +9482,16 @@ impl App {
             })
             .unwrap_or(true);
         reset |= particle_buffer_missing;
+        // The input picture's stored size: square in the shared array, its
+        // own size when it has a texture of its own.
         let source_frame_size = self
             .renderer
             .as_ref()
-            .map(|renderer| renderer.source_frame_size.max(1) as f32)
-            .unwrap_or_else(|| self.pending_width.max(self.pending_height).max(1) as f32);
+            .map(|renderer| {
+                let input = renderer.slots.slot(input_slot);
+                [input.width.max(1) as f32, input.height.max(1) as f32]
+            })
+            .unwrap_or_else(|| [self.pending_width.max(1) as f32, self.pending_height.max(1) as f32]);
         let director_params = normalize_particle_director_params(&graph_layer.params);
         let mut director_buffers = Vec::new();
         let mut director_passes = Vec::new();
@@ -14801,7 +14842,7 @@ impl App {
             if changed && let Some(renderer) = self.renderer.as_ref() {
                 for plan in &template.render_plans {
                     if let NativeComputeGraphRenderTarget::SourceFrame { slot, .. } = plan.target {
-                        renderer.source_frame_gpu_readiness[slot].invalidate();
+                        renderer.slot_readiness(slot).invalidate();
                     }
                 }
             }
@@ -15391,21 +15432,6 @@ impl App {
                 }
             })
             .unwrap_or_else(default_native_isf_params);
-        let mut image_input_slots: Vec<usize> = Vec::new();
-        if let Some(uniforms) = uniform_state.as_ref() {
-            for (offset, source_id) in &uniforms.image_sources {
-                let resolved = self.resolve_isf_image_source_slot(source_id);
-                if let Some(slot) = resolved
-                    && !image_input_slots.contains(&slot)
-                {
-                    image_input_slots.push(slot);
-                }
-                let slot_value = resolved.map(|slot| (slot + 1) as f32).unwrap_or(0.0);
-                if let Some(slot) = params.get_mut(*offset) {
-                    *slot = slot_value;
-                }
-            }
-        }
         let input_source_slot = self
             .scene_layers
             .get(&layer_id)
@@ -15417,13 +15443,35 @@ impl App {
                     .or(layer.frame_slot)
             })
             .unwrap_or(0);
+        // The shader reads its inputs from the shader-input array, packed in
+        // this order: its own input in layer 0, then each bound image. Image
+        // codes name those layers (1-based; 0 = none).
+        let mut image_input_slots: Vec<usize> = vec![input_source_slot];
+        if let Some(uniforms) = uniform_state.as_ref() {
+            for (offset, source_id) in &uniforms.image_sources {
+                let layer = self.resolve_isf_image_source_slot(source_id).and_then(|slot| {
+                    match image_input_slots.iter().position(|bound| *bound == slot) {
+                        Some(layer) => Some(layer),
+                        None if image_input_slots.len() < NATIVE_SHADER_INPUT_LAYERS => {
+                            image_input_slots.push(slot);
+                            Some(image_input_slots.len() - 1)
+                        }
+                        None => None,
+                    }
+                });
+                if let Some(value) = params.get_mut(*offset) {
+                    *value = layer.map(|layer| (layer + 1) as f32).unwrap_or(0.0);
+                }
+            }
+        }
         let shader_uniforms = NativeShaderUniforms::from_isf(
             &shader_id,
             uniform_state.as_ref(),
             self.pending_width,
             self.pending_height,
             params,
-            input_source_slot,
+            // Layer 0 of the packed shader inputs.
+            0,
         );
         let seq = uniform_state
             .as_ref()
@@ -15925,7 +15973,11 @@ impl App {
     /// after several swaps" with the layer stuck on PENDING.
     fn release_source_frame_slot(&mut self, source_id: &str) {
         if let Some(slot) = self.source_frame_slots.remove(source_id) {
-            if let Some(renderer) = &self.renderer { renderer.hap_converter.release(slot); }
+            if let Some(renderer) = &self.renderer {
+                renderer.hap_converter.release(slot);
+                // A per-source slot gives its texture back.
+                renderer.slots.release(slot);
+            }
         }
     }
 
@@ -15970,7 +16022,7 @@ impl App {
             .or_else(|| self.media_sources.get(&source_id).map(|state| state.seek_generation));
         let gpu_ready = self.renderer.as_ref().is_some_and(|renderer| {
             let _ = renderer.device.poll(wgpu::PollType::Poll);
-            slot.is_some_and(|slot| renderer.source_frame_gpu_readiness[slot].ready())
+            slot.is_some_and(|slot| renderer.slot_readiness(slot).ready())
         });
         let ready = frame.is_some() && gpu_ready
             && expected_generation.is_none_or(|expected| generation == Some(expected))
@@ -16000,7 +16052,7 @@ impl App {
             .or_else(|| media.map(|state| state.seek_generation));
         let gpu_ready = self.renderer.as_ref().is_some_and(|renderer| {
             let _ = renderer.device.poll(wgpu::PollType::Poll);
-            slot.is_some_and(|slot| renderer.source_frame_gpu_readiness[slot].ready())
+            slot.is_some_and(|slot| renderer.slot_readiness(slot).ready())
         });
         let ready = pending.is_none() && source_frame.is_some() && gpu_ready
             && expected_source.as_deref().is_none_or(|expected| actual_source == Some(expected))
@@ -16037,8 +16089,7 @@ impl App {
         } else {
             // A transition must never evict the incoming or outgoing live
             // picture to make room for its optional interruption snapshot.
-            let used = self.source_frame_slots.values().copied().collect::<HashSet<_>>();
-            let slot = (0..MAX_SOURCE_FRAME_SLOTS).find(|slot| !used.contains(slot))
+            let slot = self.free_source_frame_slot()
                 .ok_or_else(|| "no free GPU source slot for clip transition snapshot".to_string())?;
             self.source_frame_slots.insert(source_id.clone(), slot);
             self.clear_new_source_frame_slot(slot);
@@ -16269,7 +16320,7 @@ impl App {
         {
             // A completed frame from the previous seek is still a valid
             // held picture, but cannot satisfy readiness for the new seek.
-            renderer.source_frame_gpu_readiness[slot].invalidate();
+            renderer.slot_readiness(slot).invalidate();
         }
         if self.render_clock_mode == "live" && next_state.source_type == "video" {
             let (width, height) = self.native_video_decode_dimensions();
@@ -17096,10 +17147,15 @@ impl App {
     }
 
     fn native_video_decode_dimensions(&self) -> (usize, usize) {
+        // A shared slot caps the frame at its edge; a per-source slot holds
+        // the frame at its own size up to the per-source limit.
         let renderer_limit = self
             .renderer
             .as_ref()
-            .map(|renderer| renderer.source_frame_size)
+            .map(|renderer| match renderer.slots.mode() {
+                SourceFrameMode::Shared => renderer.source_frame_size,
+                SourceFrameMode::PerSource => renderer.slots.max_dimension() as usize,
+            })
             .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT);
         let target = if self.decode_use_output_resolution {
             self.pending_width.max(self.pending_height) as usize
@@ -18551,7 +18607,26 @@ impl App {
         // a larger frame still has to be resampled down or it would clip.
         let is_rect_placement =
             transport.ends_with("-rect") && width <= dst_size && height <= dst_size;
-        let (uploaded_bytes, source_rect) = if is_native_video || is_rect_placement {
+        let per_source = self.renderer.as_ref()
+            .is_some_and(|renderer| renderer.slots.mode() == SourceFrameMode::PerSource);
+        let (uploaded_bytes, source_rect) = if per_source {
+            // Each slot is its own texture: the picture keeps its size (up to
+            // the per-source limit) and fills the slot.
+            let renderer = self.renderer.as_ref().expect("per-source renderer");
+            let (fit_width, fit_height) = renderer.slots.fitted_size(width as u32, height as u32);
+            let (fit_width, fit_height) = (fit_width as usize, fit_height as usize);
+            let resampled;
+            let pixels = if (fit_width, fit_height) == (width, height) {
+                rgba
+            } else {
+                resampled = resample_frame_bytes(rgba, width, height, fit_width, fit_height);
+                resampled.as_slice()
+            };
+            let uploaded = renderer
+                .write_slot_pixels(slot, pixels, fit_width, fit_height, !is_native_video)
+                .unwrap_or(0);
+            (uploaded, [0.0, 0.0, 1.0, 1.0])
+        } else if is_native_video || is_rect_placement {
             let upload_width = width.min(dst_size);
             let upload_height = height.min(dst_size);
             let origin_x = (dst_size.saturating_sub(upload_width)) / 2;
@@ -18596,7 +18671,7 @@ impl App {
         self.stats.source_frame_resampled_bytes_uploaded = self
             .stats
             .source_frame_resampled_bytes_uploaded
-            .saturating_add(if is_native_video || is_rect_placement {
+            .saturating_add(if per_source || is_native_video || is_rect_placement {
                 0
             } else {
                 uploaded_bytes as u64
@@ -18883,9 +18958,7 @@ impl App {
         if let Some(slot) = self.source_frame_slots.get(source_id).copied() {
             return Ok(slot);
         }
-        let used: std::collections::HashSet<usize> =
-            self.source_frame_slots.values().copied().collect();
-        if let Some(slot) = (0..MAX_SOURCE_FRAME_SLOTS).find(|slot| !used.contains(slot)) {
+        if let Some(slot) = self.unused_source_frame_slot() {
             self.source_frame_slots.insert(source_id.to_string(), slot);
             self.clear_new_source_frame_slot(slot);
             return Ok(slot);
@@ -18910,7 +18983,35 @@ impl App {
             return Ok(slot);
         }
 
-        Err(format!("GPU source-frame capacity reached ({MAX_SOURCE_FRAME_SLOTS} slots); retaining existing live pictures"))
+        // Nothing to evict: add slots.
+        if let Some(slot) = self.free_source_frame_slot() {
+            self.source_frame_slots.insert(source_id.to_string(), slot);
+            self.clear_new_source_frame_slot(slot);
+            return Ok(slot);
+        }
+
+        Err(format!("GPU source-frame capacity reached ({} slots); retaining existing live pictures",
+            self.source_frame_capacity()))
+    }
+
+    fn source_frame_capacity(&self) -> usize {
+        self.renderer.as_ref().map(|renderer| renderer.slots.capacity()).unwrap_or(INITIAL_SOURCE_FRAME_SLOTS)
+    }
+
+    /// The lowest slot no source holds, within the current capacity.
+    fn unused_source_frame_slot(&self) -> Option<usize> {
+        let used: HashSet<usize> = self.source_frame_slots.values().copied().collect();
+        (0..self.source_frame_capacity()).find(|slot| !used.contains(slot))
+    }
+
+    /// An unused slot, growing the store when every slot is taken.
+    fn free_source_frame_slot(&mut self) -> Option<usize> {
+        if let Some(slot) = self.unused_source_frame_slot() {
+            return Some(slot);
+        }
+        let next = self.source_frame_capacity();
+        let renderer = self.renderer.as_ref()?;
+        renderer.ensure_slot_capacity(next).then_some(next)
     }
 
     fn apply_remove_layer(&mut self, command: &Value) {
@@ -19407,7 +19508,18 @@ impl RenderState {
             source_frame_quality_policy,
         );
         let source_frame_mip_levels = source_frame_mip_levels(source_frame_size);
-        let requested_features = adapter_features.intersection(native_optional_features());
+        let source_frame_bindings = PER_SOURCE_SLOT_BINDINGS
+            .min(adapter_limits.max_binding_array_elements_per_shader_stage as usize);
+        let source_frame_mode = choose_source_frame_mode(adapter_features, source_frame_bindings);
+        let mut requested_features = adapter_features.intersection(native_optional_features());
+        if source_frame_mode == SourceFrameMode::PerSource {
+            requested_features |= PER_SOURCE_SLOT_FEATURES;
+        }
+        eprintln!(
+            "[GhostRenderCore] picture slots: {} (slot edge {}, binding array {})",
+            source_frame_mode.label(), source_frame_size,
+            if source_frame_mode == SourceFrameMode::PerSource { source_frame_bindings } else { 0 }
+        );
         let native_caps = native_gpu_caps(
             &adapter_info,
             &adapter_limits,
@@ -19418,7 +19530,13 @@ impl RenderState {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Ghost Render Core Device"),
                 required_features: requested_features,
-                required_limits: wgpu::Limits::default(),
+                required_limits: wgpu::Limits {
+                    // The shared slot array grows toward the device's limit.
+                    max_texture_array_layers: adapter_limits.max_texture_array_layers,
+                    max_binding_array_elements_per_shader_stage:
+                        if source_frame_mode == SourceFrameMode::PerSource { source_frame_bindings as u32 } else { 0 },
+                    ..wgpu::Limits::default()
+                },
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
@@ -19470,7 +19588,9 @@ impl RenderState {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Ghost Render Core Heartbeat"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("heartbeat.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                heartbeat_wgsl(source_frame_mode, source_frame_bindings).into(),
+            ),
         });
         let native_shader_vertex_module =
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -19539,43 +19659,22 @@ impl RenderState {
             contents: bytemuck::cast_slice(&empty_previews),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
-        let source_frame_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Ghost Render Core Source Frames"),
-            size: wgpu::Extent3d {
-                width: source_frame_size as u32,
-                height: source_frame_size as u32,
-                depth_or_array_layers: MAX_SOURCE_FRAME_SLOTS as u32,
+        let source_frame_store = SourceFrameStore::new(
+            &device,
+            &queue,
+            source_frame_mode,
+            source_frame_format,
+            source_frame_size as u32,
+            source_frame_mip_levels,
+            INITIAL_SOURCE_FRAME_SLOTS,
+            match source_frame_mode {
+                SourceFrameMode::Shared => shared_source_frame_slot_ceiling(
+                    &adapter_limits, source_frame_size, source_frame_format, source_frame_quality_policy,
+                    adapter_features),
+                SourceFrameMode::PerSource => source_frame_bindings,
             },
-            mip_level_count: source_frame_mip_levels,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: source_frame_format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let source_frame_view = source_frame_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Ghost Render Core Source Frame View"),
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        let native_graph_source_frame_sample_texture =
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Ghost Native Graph Source Frame Sample Scratch"),
-                size: wgpu::Extent3d {
-                    width: source_frame_size as u32,
-                    height: source_frame_size as u32,
-                    depth_or_array_layers: MAX_SOURCE_FRAME_SLOTS as u32,
-                },
-                mip_level_count: source_frame_mip_levels,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: source_frame_format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
+            PER_SOURCE_MAX_DIMENSION.min(adapter_limits.max_texture_dimension_2d),
+        );
         let source_frame_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Ghost Render Core Source Frame Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -19633,6 +19732,15 @@ impl RenderState {
             format,
             "Ghost Render Core Snapshot Mirror",
         );
+        // Picture slots get a bind group of their own (group 1): a binding
+        // array may not share a group with uniform buffers.
+        let source_frames_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Ghost Render Core Source Frames Layout"),
+            entries: &[source_frames::source_frames_layout_entry(
+                source_frame_mode, 0, source_frame_bindings, wgpu::ShaderStages::FRAGMENT)],
+        });
+        let source_frames_bind_group = build_source_frames_bind_group(
+            &device, &source_frames_bind_group_layout, &source_frame_store, source_frame_bindings);
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Ghost Render Core Bind Group Layout"),
             entries: &[
@@ -19663,16 +19771,6 @@ impl RenderState {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
                     },
                     count: None,
                 },
@@ -19713,39 +19811,18 @@ impl RenderState {
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(1), rows_per_image: Some(1) },
             wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
         );
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Ghost Render Core Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: layer_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: source_preview_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&source_frame_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&source_frame_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&paint_mask_view),
-                },
-            ],
-        });
+        let bind_group = build_scene_bind_group(
+            &device,
+            &bind_group_layout,
+            &uniform_buffer,
+            &layer_buffer,
+            &source_preview_buffer,
+            &source_frame_sampler,
+            &paint_mask_view,
+        );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Ghost Render Core Pipeline Layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
+            bind_group_layouts: &[Some(&bind_group_layout), Some(&source_frames_bind_group_layout)],
             immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -19872,7 +19949,9 @@ impl RenderState {
 
         let stage3d_mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Ghost Render Core Stage3D Mesh"),
-            source: wgpu::ShaderSource::Wgsl(STAGE3D_MESH_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                stage3d_mesh_wgsl(source_frame_mode, source_frame_bindings).into(),
+            ),
         });
         let stage3d_mesh_uniform_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -19912,16 +19991,6 @@ impl RenderState {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
                         binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
@@ -19929,32 +19998,17 @@ impl RenderState {
                     },
                 ],
             });
-        let stage3d_mesh_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Ghost Render Core Stage3D Mesh Bind Group"),
-            layout: &stage3d_mesh_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: stage3d_mesh_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: stage3d_mesh_item_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&source_frame_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&source_frame_sampler),
-                },
-            ],
-        });
+        let stage3d_mesh_bind_group = build_stage3d_mesh_bind_group(
+            &device,
+            &stage3d_mesh_bind_group_layout,
+            &stage3d_mesh_uniform_buffer,
+            &stage3d_mesh_item_buffer,
+            &source_frame_sampler,
+        );
         let stage3d_mesh_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Ghost Render Core Stage3D Mesh Pipeline Layout"),
-                bind_group_layouts: &[Some(&stage3d_mesh_bind_group_layout)],
+                bind_group_layouts: &[Some(&stage3d_mesh_bind_group_layout), Some(&source_frames_bind_group_layout)],
                 immediate_size: 0,
             });
         let stage3d_mesh_pipeline =
@@ -20011,13 +20065,14 @@ impl RenderState {
             size: wgpu::Extent3d {
                 width: source_frame_size as u32,
                 height: source_frame_size as u32,
-                depth_or_array_layers: MAX_SOURCE_FRAME_SLOTS as u32,
+                depth_or_array_layers: NATIVE_SHADER_INPUT_LAYERS as u32,
             },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: source_frame_format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let native_shader_input_view =
@@ -20198,10 +20253,12 @@ impl RenderState {
             source_preview_buffer,
             layer_upload_scratch: vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS],
             layer_upload_last: Vec::new(),
-            source_frame_texture,
-            source_frame_gpu_readiness: (0..MAX_SOURCE_FRAME_SLOTS)
-                .map(|_| Arc::new(SourceFrameGpuReadiness::default())).collect(),
-            native_graph_source_frame_sample_texture,
+            source_frame_bind_generation: source_frame_store.generation(),
+            slots: source_frame_store,
+            source_frame_bindings,
+            source_frame_gpu_readiness: std::cell::RefCell::new((0..INITIAL_SOURCE_FRAME_SLOTS)
+                .map(|_| Arc::new(SourceFrameGpuReadiness::default())).collect()),
+            graph_sample_scratch: std::cell::RefCell::new(Vec::new()),
             source_frame_sampler,
             native_shader_input_texture,
             source_frame_size,
@@ -20246,6 +20303,8 @@ impl RenderState {
             stage3d_mesh_uniform_buffer,
             stage3d_mesh_item_buffer,
             stage3d_mesh_bind_group,
+            source_frames_bind_group_layout,
+            source_frames_bind_group,
             stage3d_mesh_depth_texture,
             stage3d_mesh_depth_view,
             _native_graph_source_depth_texture: native_graph_source_depth_texture,
@@ -22329,7 +22388,7 @@ impl RenderState {
                 &pass_plan.bindings,
                 &format!("pass `{}`", pass_plan.name),
                 &mut texture_views,
-                None,
+                &[],
             )?;
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!(
@@ -22614,7 +22673,7 @@ impl RenderState {
             &pass_plan.bindings,
             &pass_plan.name,
             &mut texture_views,
-            None,
+            &[],
         )?;
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&pass_plan.name),
@@ -22667,14 +22726,18 @@ impl RenderState {
                 ),
                 NativeComputeGraphRenderTarget::SourceFrame {
                     source_id, slot, ..
-                } => (
-                    self.source_frame_format,
-                    "source_frame",
-                    self.source_frame_size.max(1) as u32,
-                    self.source_frame_size.max(1) as u32,
-                    Some(source_id.clone()),
-                    Some((*slot).min(MAX_SOURCE_FRAME_SLOTS - 1)),
-                ),
+                } => {
+                    let (width, height) = self.generated_frame_size();
+                    let target = self.slots.ensure_generated(*slot, width, height);
+                    (
+                        self.source_frame_format,
+                        "source_frame",
+                        target.width,
+                        target.height,
+                        Some(source_id.clone()),
+                        Some(self.slots.clamp_slot(*slot)),
+                    )
+                }
                 // Full output resolution, and the swapchain's format so the
                 // finished chain can go straight back to the mirror.
                 NativeComputeGraphRenderTarget::CompositeFrame { .. } => (
@@ -22714,19 +22777,15 @@ impl RenderState {
                 pipeline_key
             ));
         };
-        let use_source_frame_sample_texture = self.prepare_source_frame_sample_for_render(
-            encoder,
-            render_plan,
-            source_slot.is_some(),
-        );
+        let target_slot = source_slot.map(|slot| self.slots.slot(slot));
+        let sample_overrides = self.prepare_graph_sample_copies(encoder, render_plan, target_slot.as_ref());
         let mut texture_views = Vec::new();
         let entries = self.compute_graph_bind_group_entries(
             transient_buffers,
             &render_plan.bindings,
             &render_plan.name,
             &mut texture_views,
-            use_source_frame_sample_texture
-                .then_some(&self.native_graph_source_frame_sample_texture),
+            &sample_overrides,
         )?;
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&render_plan.name),
@@ -22749,19 +22808,8 @@ impl RenderState {
                 },
             );
             &composite_target_view
-        } else if let Some(slot) = source_slot {
-            source_frame_target_view =
-                self.source_frame_texture
-                    .create_view(&wgpu::TextureViewDescriptor {
-                        label: Some("Ghost Native Compute Graph Source Frame View"),
-                        format: Some(self.source_frame_format),
-                        dimension: Some(wgpu::TextureViewDimension::D2),
-                        base_mip_level: 0,
-                        mip_level_count: Some(1),
-                        base_array_layer: slot as u32,
-                        array_layer_count: Some(1),
-                        ..Default::default()
-                    });
+        } else if let Some(target) = target_slot.as_ref() {
+            source_frame_target_view = target.target_view("Ghost Native Compute Graph Source Frame View", 0);
             &source_frame_target_view
         } else {
             &self.snapshot_view
@@ -22889,83 +22937,58 @@ impl RenderState {
         Ok(result)
     }
 
-    fn prepare_source_frame_sample_for_render(
+    /// A pass may not sample the texture it renders into. Any picture a
+    /// binding reads from that texture (every slot of the shared array, or
+    /// the pass's own slot when each slot has its own texture) is copied to
+    /// scratch first; the result names the copy per binding.
+    fn prepare_graph_sample_copies(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         render_plan: &NativeComputeGraphRenderPlan,
-        targets_source_frame: bool,
-    ) -> bool {
-        if !targets_source_frame
-            || !render_plan.bindings.iter().any(|binding| {
-                matches!(
-                    binding.kind,
-                    NativeComputeGraphBindingKind::SourceFrameTexture(_)
-                )
-            })
-        {
-            return false;
-        }
-
-        let copy_all_slots = render_plan.bindings.iter().any(|binding| {
-            matches!(
-                binding.kind,
-                NativeComputeGraphBindingKind::SourceFrameTexture(
-                    NativeComputeGraphTextureDimension::D2Array
-                )
-            )
-        });
-        let mut slots = render_plan
-            .bindings
-            .iter()
-            .filter_map(|binding| match binding.kind {
-                NativeComputeGraphBindingKind::SourceFrameTexture(
-                    NativeComputeGraphTextureDimension::D2,
-                ) => Some(
-                    binding
-                        .source_slot
-                        .unwrap_or(0)
-                        .min(MAX_SOURCE_FRAME_SLOTS - 1),
-                ),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        if copy_all_slots {
-            slots = (0..MAX_SOURCE_FRAME_SLOTS).collect();
-        } else {
-            slots.sort_unstable();
-            slots.dedup();
-        }
-        for mip_level in 0..self.source_frame_mip_levels {
-            let width = ((self.source_frame_size as u32) >> mip_level).max(1);
-            let height = ((self.source_frame_size as u32) >> mip_level).max(1);
-            for slot in slots.iter().copied() {
-                let origin = wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: slot as u32,
-                };
+        target: Option<&SlotRef>,
+    ) -> Vec<Option<SlotRef>> {
+        let mut overrides = vec![None; render_plan.bindings.len()];
+        let Some(target) = target else { return overrides };
+        let mut scratch = self.graph_sample_scratch.borrow_mut();
+        let mut used = 0usize;
+        for (index, binding) in render_plan.bindings.iter().enumerate() {
+            if !matches!(binding.kind, NativeComputeGraphBindingKind::SourceFrameTexture(
+                NativeComputeGraphTextureDimension::D2)) {
+                continue;
+            }
+            let source = self.slots.slot(binding.source_slot.unwrap_or(0));
+            if source.texture != target.texture {
+                continue;
+            }
+            let fits = |copy: &SlotRef| copy.width == source.width && copy.height == source.height
+                && copy.mips == source.mips;
+            if scratch.get(used).is_none_or(|copy| !fits(copy)) {
+                let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Ghost Native Graph Source Frame Sample Scratch"),
+                    size: wgpu::Extent3d { width: source.width, height: source.height, depth_or_array_layers: 1 },
+                    mip_level_count: source.mips,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.source_frame_format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let copy = SlotRef { texture, layer: 0, width: source.width, height: source.height, mips: source.mips };
+                if used < scratch.len() { scratch[used] = copy } else { scratch.push(copy) }
+            }
+            let copy = scratch[used].clone();
+            for mip_level in 0..source.mips {
+                let (width, height) = source.mip_size(mip_level);
                 encoder.copy_texture_to_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &self.source_frame_texture,
-                        mip_level,
-                        origin,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &self.native_graph_source_frame_sample_texture,
-                        mip_level,
-                        origin,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
+                    source.copy_info(mip_level),
+                    copy.copy_info(mip_level),
+                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
                 );
             }
+            overrides[index] = Some(copy);
+            used += 1;
         }
-        true
+        overrides
     }
 
     fn compute_graph_bind_group_entries<'a>(
@@ -22974,7 +22997,7 @@ impl RenderState {
         bindings: &'a [NativeComputeGraphBindingSpec],
         context: &str,
         texture_views: &'a mut Vec<wgpu::TextureView>,
-        source_frame_texture_override: Option<&'a wgpu::Texture>,
+        sample_overrides: &[Option<SlotRef>],
     ) -> Result<Vec<wgpu::BindGroupEntry<'a>>, String> {
         enum PreparedBinding<'a> {
             Buffer(&'a wgpu::Buffer),
@@ -22997,46 +23020,30 @@ impl RenderState {
                     prepared.push(PreparedBinding::Buffer(&buffer.buffer));
                 }
                 NativeComputeGraphBindingKind::SourceFrameTexture(dimension) => {
-                    let label = match dimension {
-                        NativeComputeGraphTextureDimension::D2 => {
-                            "Ghost Native Compute Graph Source Frame Texture View"
-                        }
+                    let binding_index = prepared.len();
+                    let view = match dimension {
+                        NativeComputeGraphTextureDimension::D2 => sample_overrides
+                            .get(binding_index)
+                            .cloned()
+                            .flatten()
+                            .unwrap_or_else(|| self.slots.slot(binding.source_slot.unwrap_or(0)))
+                            .sample_view("Ghost Native Compute Graph Source Frame Texture View"),
+                        // The whole shared array. A pass rendering into a
+                        // slot cannot also read the array it is part of, and
+                        // per-source slots have no array to bind.
                         NativeComputeGraphTextureDimension::D2Array => {
-                            "Ghost Native Compute Graph Source Frame Array View"
+                            if self.slots.mode() == SourceFrameMode::PerSource || !sample_overrides.is_empty()
+                                && sample_overrides.iter().any(Option::is_some)
+                            {
+                                return Err(format!(
+                                    "native compute graph {context}: a whole-array source binding is not available with {} picture slots",
+                                    self.slots.mode().label()
+                                ));
+                            }
+                            self.slots.shared_array_view().expect("shared source-frame array")
                         }
                     };
-                    let slot = binding
-                        .source_slot
-                        .unwrap_or(0)
-                        .min(MAX_SOURCE_FRAME_SLOTS - 1);
-                    let source_frame_texture =
-                        source_frame_texture_override.unwrap_or(&self.source_frame_texture);
-                    texture_views.push(source_frame_texture.create_view(
-                        &wgpu::TextureViewDescriptor {
-                            label: Some(label),
-                            format: Some(self.source_frame_format),
-                            dimension: Some(dimension.view_dimension()),
-                            base_mip_level: 0,
-                            mip_level_count: Some(self.source_frame_mip_levels),
-                            base_array_layer: if matches!(
-                                dimension,
-                                NativeComputeGraphTextureDimension::D2
-                            ) {
-                                slot as u32
-                            } else {
-                                0
-                            },
-                            array_layer_count: if matches!(
-                                dimension,
-                                NativeComputeGraphTextureDimension::D2
-                            ) {
-                                Some(1)
-                            } else {
-                                Some(MAX_SOURCE_FRAME_SLOTS as u32)
-                            },
-                            ..Default::default()
-                        },
-                    ));
+                    texture_views.push(view);
                     prepared.push(PreparedBinding::TextureView(texture_views.len() - 1));
                 }
                 NativeComputeGraphBindingKind::CompositeFrameTexture => {
@@ -23390,7 +23397,7 @@ impl RenderState {
         source: &str,
         fragment_entry: &str,
         uniforms: &NativeShaderUniforms,
-        image_input_slots: &[usize],
+        input_slots: &[usize],
         quality_scale: f32,
     ) -> Result<(), String> {
         self.ensure_native_shader_pipeline(cache_key, source_kind, source, fragment_entry)?;
@@ -23399,7 +23406,9 @@ impl RenderState {
             0,
             bytemuck::bytes_of(uniforms),
         );
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let full_size = self.source_frame_size as u32;
+        let output = self.slots.ensure_generated(slot, full_size, full_size);
+        let safe_slot = self.slots.clamp_slot(slot);
 
         /*
          * Quality tier. Below native, the shader draws into a smaller target
@@ -23415,7 +23424,7 @@ impl RenderState {
          * slot expects.
          */
         let scale = quality_scale.clamp(0.2, 1.0);
-        let full_size = self.source_frame_size as u32;
+        let full_size = output.width.min(output.height);
         let scaled_size = if scale >= 0.995 {
             full_size
         } else {
@@ -23423,18 +23432,7 @@ impl RenderState {
         };
         let use_scaled = scaled_size < full_size;
 
-        let slot_view = self
-            .source_frame_texture
-            .create_view(&wgpu::TextureViewDescriptor {
-                label: Some("Ghost Render Core Native Shader Source Frame View"),
-                format: Some(self.source_frame_format),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                base_array_layer: safe_slot as u32,
-                array_layer_count: Some(1),
-                ..Default::default()
-            });
+        let slot_view = output.target_view("Ghost Render Core Native Shader Source Frame View", 0);
         let scale_view = if use_scaled {
             Some(self.ensure_native_shader_scale_target(scaled_size))
         } else {
@@ -23446,49 +23444,7 @@ impl RenderState {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Ghost Render Core Native Shader Encoder"),
             });
-        let input_slot = uniforms.frame_seed_inputs[3]
-            .round()
-            .clamp(0.0, (MAX_SOURCE_FRAME_SLOTS - 1) as f32) as u32;
-        // The shader samples the SHADOW input array (it renders into the real
-        // one, so it cannot read it). Refresh the layer's own input slot plus
-        // every bound ISF image-input slot — anything not copied here samples
-        // stale/black shadow content.
-        let mut copy_slots = vec![input_slot];
-        for slot in image_input_slots {
-            let slot = (*slot).min(MAX_SOURCE_FRAME_SLOTS - 1) as u32;
-            if !copy_slots.contains(&slot) {
-                copy_slots.push(slot);
-            }
-        }
-        for copy_slot in copy_slots {
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.source_frame_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: copy_slot,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.native_shader_input_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: copy_slot,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: self.source_frame_size as u32,
-                    height: self.source_frame_size as u32,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
+        self.encode_native_shader_input_copies(&mut encoder, input_slots);
         {
             let Some(pipeline) = self.native_shader_pipelines.get(cache_key) else {
                 return Err("native shader pipeline was not cached".to_string());
@@ -23605,39 +23561,40 @@ impl RenderState {
         }
     }
 
+    /// Shader inputs are packed per draw: layer k of the shader-input array
+    /// holds `input_slots[k]` (the layer's own input first, then each bound
+    /// image), and the shader's image codes name those layers. A shader
+    /// renders into a slot, so it reads these copies rather than the slots.
     fn encode_native_shader_input_copies(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        input_slot: u32,
-        image_input_slots: &[usize],
+        input_slots: &[usize],
     ) {
-        let mut copy_slots = vec![input_slot];
-        for slot in image_input_slots {
-            let slot = (*slot).min(MAX_SOURCE_FRAME_SLOTS - 1) as u32;
-            if !copy_slots.contains(&slot) {
-                copy_slots.push(slot);
+        let edge = self.source_frame_size as u32;
+        for (layer, slot) in input_slots.iter().copied().take(NATIVE_SHADER_INPUT_LAYERS).enumerate() {
+            let source = self.slots.slot(slot);
+            if self.slots.mode() == SourceFrameMode::Shared {
+                encoder.copy_texture_to_texture(
+                    source.copy_info(0),
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.native_shader_input_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d { x: 0, y: 0, z: layer as u32 },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d { width: edge, height: edge, depth_or_array_layers: 1 },
+                );
+            } else {
+                let target = self.native_shader_input_texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Ghost Render Core Native Shader Input Layer"),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: layer as u32,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                });
+                let source_view = source.view("Ghost Render Core Native Shader Input Source", 0, 1);
+                self.source_frame_blitter.copy(&self.device, encoder, &source_view, &target);
             }
-        }
-        for copy_slot in copy_slots {
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.source_frame_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: copy_slot },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.native_shader_input_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: copy_slot },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: self.source_frame_size as u32,
-                    height: self.source_frame_size as u32,
-                    depth_or_array_layers: 1,
-                },
-            );
         }
     }
 
@@ -23677,7 +23634,7 @@ impl RenderState {
         fragment_entry: &str,
         base_uniforms: &NativeShaderUniforms,
         job: &NativeIsfPassJob,
-        image_input_slots: &[usize],
+        input_slots: &[usize],
         quality_scale: f32,
         audio: &NativeIsfAudioFrame,
     ) -> Result<(), String> {
@@ -23801,27 +23758,17 @@ impl RenderState {
             0.0,
         ];
 
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
-        let slot_view = self.source_frame_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Ghost Render Core ISF Pass Host Output View"),
-            format: Some(self.source_frame_format),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            base_mip_level: 0,
-            mip_level_count: Some(1),
-            base_array_layer: safe_slot as u32,
-            array_layer_count: Some(1),
-            ..Default::default()
-        });
+        let edge = self.source_frame_size as u32;
+        let output = self.slots.ensure_generated(slot, edge, edge);
+        let safe_slot = self.slots.clamp_slot(slot);
+        let slot_view = output.target_view("Ghost Render Core ISF Pass Host Output View", 0);
         let scale_view = if use_scaled { Some(self.ensure_native_shader_scale_target(output_edge)) } else { None };
         let output_view = scale_view.as_ref().unwrap_or(&slot_view);
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Ghost Render Core ISF Pass Host Encoder"),
         });
-        let input_slot = base_uniforms.frame_seed_inputs[3]
-            .round()
-            .clamp(0.0, (MAX_SOURCE_FRAME_SLOTS - 1) as f32) as u32;
-        self.encode_native_shader_input_copies(&mut encoder, input_slot, image_input_slots);
+        self.encode_native_shader_input_copies(&mut encoder, input_slots);
 
         let pass_count = job.passes.len();
         let mut output_written = false;
@@ -23970,7 +23917,7 @@ impl RenderState {
 
     fn mark_source_frame_slots_submitted(&self, slots: impl IntoIterator<Item = usize>) {
         let states = slots.into_iter().collect::<HashSet<_>>().into_iter().map(|slot| {
-            let state = Arc::clone(&self.source_frame_gpu_readiness[slot]);
+            let state = self.slot_readiness(slot);
             let epoch = state.epoch.load(Ordering::Acquire);
             state.submitted_epoch.store(epoch, Ordering::Release);
             (state, epoch)
@@ -23995,19 +23942,64 @@ impl RenderState {
         self.mark_source_frame_slots_submitted(plans);
     }
 
+    /// Readiness of `slot`'s picture on the GPU; slots past the first ones
+    /// get their tracker on first use.
+    fn slot_readiness(&self, slot: usize) -> Arc<SourceFrameGpuReadiness> {
+        let mut list = self.source_frame_gpu_readiness.borrow_mut();
+        if slot >= list.len() {
+            list.resize_with(slot + 1, || Arc::new(SourceFrameGpuReadiness::default()));
+        }
+        Arc::clone(&list[slot])
+    }
+
+    /// Size a generated picture (graph output, crossfade, mix) is rendered at:
+    /// the shared slot edge, or the output resolution when slots have their
+    /// own textures.
+    fn generated_frame_size(&self) -> (u32, u32) {
+        match self.slots.mode() {
+            SourceFrameMode::Shared => (self.source_frame_size as u32, self.source_frame_size as u32),
+            SourceFrameMode::PerSource => self.slots.fitted_size(self.config.width.max(1), self.config.height.max(1)),
+        }
+    }
+
+    /// Size an imported GPU picture is stored at.
+    fn imported_frame_size(&self, width: u32, height: u32) -> (u32, u32) {
+        match self.slots.mode() {
+            SourceFrameMode::Shared => (self.source_frame_size as u32, self.source_frame_size as u32),
+            SourceFrameMode::PerSource => self.slots.fitted_size(width, height),
+        }
+    }
+
+    /// Room for slot `slot`: grows the store when it is past the end.
+    fn ensure_slot_capacity(&self, slot: usize) -> bool {
+        slot < self.slots.capacity() || self.slots.grow(&self.queue, slot + 1).is_some_and(|cap| slot < cap)
+    }
+
+    /// Rebuild the compositor and Stage3D bind groups after the store
+    /// replaced a backing texture.
+    fn refresh_source_frame_bind_groups(&mut self) {
+        let generation = self.slots.generation();
+        if generation == self.source_frame_bind_generation {
+            return;
+        }
+        self.source_frames_bind_group = build_source_frames_bind_group(
+            &self.device, &self.source_frames_bind_group_layout, &self.slots, self.source_frame_bindings);
+        self.source_frame_bind_generation = generation;
+    }
+
     fn copy_source_frame_slot(&self, input_slot: usize, output_slot: usize) {
-        self.source_frame_gpu_readiness[output_slot].invalidate();
+        self.slot_readiness(output_slot).invalidate();
+        let source = self.slots.slot(input_slot);
+        let target = self.slots.ensure(output_slot, source.width, source.height, source.mips > 1);
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Clip transition GPU source snapshot"),
         });
-        for mip_level in 0..self.source_frame_mip_levels {
-            let size = ((self.source_frame_size as u32) >> mip_level).max(1);
+        for mip_level in 0..source.mips.min(target.mips) {
+            let (width, height) = source.mip_size(mip_level);
             encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo { texture: &self.source_frame_texture, mip_level,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: input_slot as u32 }, aspect: wgpu::TextureAspect::All },
-                wgpu::TexelCopyTextureInfo { texture: &self.source_frame_texture, mip_level,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: output_slot as u32 }, aspect: wgpu::TextureAspect::All },
-                wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+                source.copy_info(mip_level),
+                target.copy_info(mip_level),
+                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             );
         }
         self.queue.submit(Some(encoder.finish()));
@@ -24015,36 +24007,59 @@ impl RenderState {
     }
 
     fn write_source_frame_level_zero(&self, slot: usize, rgba: &[u8]) -> Option<usize> {
-        if rgba.len() < self.source_frame_size * self.source_frame_size * 4 {
+        let edge = self.source_frame_size;
+        if rgba.len() < edge * edge * 4 {
             return None;
         }
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let safe_slot = self.slots.clamp_slot(slot);
+        let target = self.slots.ensure(safe_slot, edge as u32, edge as u32, true);
         let (payload, bytes_per_row) =
-            source_frame_upload_payload(rgba, self.source_frame_size, self.source_frame_format);
+            source_frame_upload_payload(rgba, edge, self.source_frame_format);
         self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.source_frame_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: safe_slot as u32,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
+            target.copy_info(0),
             &payload,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(self.source_frame_size as u32),
+                rows_per_image: Some(edge as u32),
             },
-            wgpu::Extent3d {
-                width: self.source_frame_size as u32,
-                height: self.source_frame_size as u32,
-                depth_or_array_layers: 1,
-            },
+            wgpu::Extent3d { width: edge as u32, height: edge as u32, depth_or_array_layers: 1 },
         );
         Some(safe_slot)
+    }
+
+    /// Per-source store: a `width` x `height` picture becomes the slot's own
+    /// texture at exactly that size. Live video skips the mip chain (it is
+    /// sampled at level zero); stills build it.
+    fn write_slot_pixels(&self, slot: usize, rgba: &[u8], width: usize, height: usize, with_mips: bool) -> Option<usize> {
+        if width == 0 || height == 0 || rgba.len() < width.saturating_mul(height).saturating_mul(4) {
+            return None;
+        }
+        let safe_slot = self.slots.clamp_slot(slot);
+        let target = self.slots.ensure(safe_slot, width as u32, height as u32, with_mips);
+        let (payload, bytes_per_row) =
+            source_frame_upload_payload_dimensions(rgba, width, height, self.source_frame_format);
+        self.queue.write_texture(
+            target.copy_info(0),
+            &payload,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height as u32),
+            },
+            wgpu::Extent3d { width: width as u32, height: height as u32, depth_or_array_layers: 1 },
+        );
+        if with_mips && target.mips > 1 {
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Source Frame Mip Encoder"),
+            });
+            self.generate_source_frame_mips(&mut encoder, safe_slot);
+            self.queue.submit(Some(encoder.finish()));
+        } else {
+            self.queue.submit(std::iter::empty());
+        }
+        self.mark_source_frame_slots_submitted([safe_slot]);
+        Some(payload.len())
     }
 
     fn write_video_source_frame(
@@ -24061,28 +24076,21 @@ impl RenderState {
         // every active video and serializes the render loop. Upload the
         // decoder-sized image directly into its source rectangle as well:
         // resizing video on the render thread stalls every active session.
+        let edge = self.source_frame_size;
         if width == 0
             || height == 0
-            || origin_x.saturating_add(width) > self.source_frame_size
-            || origin_y.saturating_add(height) > self.source_frame_size
+            || origin_x.saturating_add(width) > edge
+            || origin_y.saturating_add(height) > edge
             || rgba.len() < width.saturating_mul(height).saturating_mul(4)
         {
             return None;
         }
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let safe_slot = self.slots.clamp_slot(slot);
+        let target = self.slots.ensure(safe_slot, edge as u32, edge as u32, true);
         let (payload, bytes_per_row) =
             source_frame_upload_payload_dimensions(rgba, width, height, self.source_frame_format);
         self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.source_frame_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: origin_x as u32,
-                    y: origin_y as u32,
-                    z: safe_slot as u32,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
+            target.copy_info_at(0, origin_x as u32, origin_y as u32),
             &payload,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
@@ -24114,28 +24122,23 @@ impl RenderState {
         self.mark_source_frame_slots_submitted([safe_slot]);
     }
 
-    /// Erase one source frame slot, every mip level, to transparent.
+    /// Erase one source frame slot, every mip level, to transparent. A
+    /// per-source slot simply lets its texture go: an empty slot reads as the
+    /// transparent placeholder.
     fn clear_source_frame_slot(&self, slot: usize) {
-        self.source_frame_gpu_readiness[slot.min(MAX_SOURCE_FRAME_SLOTS - 1)].invalidate();
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1) as u32;
+        self.slot_readiness(slot).invalidate();
+        if self.slots.mode() == SourceFrameMode::PerSource {
+            self.slots.release(slot);
+            return;
+        }
+        let target = self.slots.slot(slot);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Ghost Render Core Source Frame Slot Clear"),
             });
-        for mip_level in 0..self.source_frame_mip_levels.max(1) {
-            let view = self
-                .source_frame_texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("Ghost Render Core Source Frame Slot Clear View"),
-                    format: Some(self.source_frame_format),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_mip_level: mip_level,
-                    mip_level_count: Some(1),
-                    base_array_layer: safe_slot,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                });
+        for mip_level in 0..target.mips.max(1) {
+            let view = target.target_view("Ghost Render Core Source Frame Slot Clear View", mip_level);
             // A pass with no draws is just its clear.
             drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Ghost Render Core Source Frame Slot Clear"),
@@ -24286,19 +24289,10 @@ impl RenderState {
             dimension: Some(wgpu::TextureViewDimension::D2),
             ..Default::default()
         });
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
-        let target_view = self
-            .source_frame_texture
-            .create_view(&wgpu::TextureViewDescriptor {
-                label: Some("Ghost Render Core Shared Texture Source Frame Target"),
-                format: Some(self.source_frame_format),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                base_array_layer: safe_slot as u32,
-                array_layer_count: Some(1),
-                ..Default::default()
-            });
+        let safe_slot = self.slots.clamp_slot(slot);
+        let (target_width, target_height) = self.imported_frame_size(descriptor.width, descriptor.height);
+        let target = self.slots.ensure(safe_slot, target_width, target_height, true);
+        let target_view = target.target_view("Ghost Render Core Shared Texture Source Frame Target", 0);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -24309,9 +24303,8 @@ impl RenderState {
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         self.queue.submit(Some(encoder.finish()));
         self.mark_source_frame_slots_submitted([safe_slot]);
-        Ok(self
-            .source_frame_size
-            .saturating_mul(self.source_frame_size)
+        Ok((target.width as usize)
+            .saturating_mul(target.height as usize)
             .saturating_mul(texture_format_bytes_per_texel(self.source_frame_format))
             .min(u64::MAX as usize) as u64)
     }
@@ -24418,19 +24411,10 @@ impl RenderState {
             dimension: Some(wgpu::TextureViewDimension::D2),
             ..Default::default()
         });
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
-        let target_view = self
-            .source_frame_texture
-            .create_view(&wgpu::TextureViewDescriptor {
-                label: Some("Ghost Render Core Shared Texture Source Frame Target"),
-                format: Some(self.source_frame_format),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                base_array_layer: safe_slot as u32,
-                array_layer_count: Some(1),
-                ..Default::default()
-            });
+        let safe_slot = self.slots.clamp_slot(slot);
+        let (target_width, target_height) = self.imported_frame_size(descriptor.width, descriptor.height);
+        let target = self.slots.ensure(safe_slot, target_width, target_height, true);
+        let target_view = target.target_view("Ghost Render Core Shared Texture Source Frame Target", 0);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -24441,9 +24425,8 @@ impl RenderState {
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         self.queue.submit(Some(encoder.finish()));
         self.mark_source_frame_slots_submitted([safe_slot]);
-        Ok(self
-            .source_frame_size
-            .saturating_mul(self.source_frame_size)
+        Ok((target.width as usize)
+            .saturating_mul(target.height as usize)
             .saturating_mul(texture_format_bytes_per_texel(self.source_frame_format))
             .min(u64::MAX as usize) as u64)
     }
@@ -24451,20 +24434,23 @@ impl RenderState {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn import_native_video_frame(&self, slot: usize, frame: hardware_video::GpuVideoFrame,
         memory_lease: Option<Arc<NativeVideoMemoryLease>>) -> Result<[f32; 4], String> {
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
-        let size = self.source_frame_size as f32;
-        let scale = (size / frame.width.max(1) as f32).min(size / frame.height.max(1) as f32).min(1.0);
-        let width = (frame.width as f32 * scale).round().max(1.0);
-        let height = (frame.height as f32 * scale).round().max(1.0);
-        let viewport = [((size - width) * 0.5).floor(), ((size - height) * 0.5).floor(), width, height];
-        let target = self.source_frame_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Native hardware video target"),
-            format: Some(self.source_frame_format),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            base_mip_level: 0, mip_level_count: Some(1),
-            base_array_layer: safe_slot as u32, array_layer_count: Some(1),
-            ..Default::default()
-        });
+        let safe_slot = self.slots.clamp_slot(slot);
+        // Shared slots hold the frame centred at up to the slot edge; a
+        // per-source slot is the frame, at its decoded size.
+        let (slot_ref, viewport, source_rect) = if self.slots.mode() == SourceFrameMode::PerSource {
+            let (width, height) = self.slots.fitted_size(frame.width, frame.height);
+            let slot_ref = self.slots.ensure(safe_slot, width, height, false);
+            (slot_ref, [0.0, 0.0, width as f32, height as f32], [0.0, 0.0, 1.0, 1.0])
+        } else {
+            let size = self.source_frame_size as f32;
+            let scale = (size / frame.width.max(1) as f32).min(size / frame.height.max(1) as f32).min(1.0);
+            let width = (frame.width as f32 * scale).round().max(1.0);
+            let height = (frame.height as f32 * scale).round().max(1.0);
+            let viewport = [((size - width) * 0.5).floor(), ((size - height) * 0.5).floor(), width, height];
+            (self.slots.slot(safe_slot), viewport,
+                [viewport[0] / size, viewport[1] / size, width / size, height / size])
+        };
+        let target = slot_ref.target_view("Native hardware video target", 0);
         let is_hap = matches!(&frame.storage, hardware_video::FrameStorage::Hap(_));
         let mut batch_guard = self.hap_upload_batch.lock().unwrap();
         let mut encoder = if is_hap {
@@ -24491,7 +24477,7 @@ impl RenderState {
                 batch.encoder = Some(encoder);
                 batch.frames.push((frame, gpu_lease));
                 batch.slots.push(safe_slot);
-                return Ok([viewport[0] / size, viewport[1] / size, width / size, height / size]);
+                return Ok(source_rect);
             }
             self.hap_converter.finish_uploads(&encoder);
         }
@@ -24501,7 +24487,7 @@ impl RenderState {
         // The decoder/bridge may recycle this surface only after rendering
         // has completed. Submission alone does not establish lifetime.
         self.queue.on_submitted_work_done(move || { drop(frame); drop(gpu_lease); });
-        Ok([viewport[0] / size, viewport[1] / size, width / size, height / size])
+        Ok(source_rect)
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -24515,35 +24501,10 @@ impl RenderState {
     }
 
     fn generate_source_frame_mips(&self, encoder: &mut wgpu::CommandEncoder, slot: usize) {
-        if self.source_frame_mip_levels <= 1 {
-            return;
-        }
-        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
-        for mip_level in 1..self.source_frame_mip_levels {
-            let source_view = self
-                .source_frame_texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("Ghost Render Core Source Frame Mip Source"),
-                    format: Some(self.source_frame_format),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_mip_level: mip_level - 1,
-                    mip_level_count: Some(1),
-                    base_array_layer: safe_slot as u32,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                });
-            let target_view = self
-                .source_frame_texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("Ghost Render Core Source Frame Mip Target"),
-                    format: Some(self.source_frame_format),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_mip_level: mip_level,
-                    mip_level_count: Some(1),
-                    base_array_layer: safe_slot as u32,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                });
+        let target = self.slots.slot(slot);
+        for mip_level in 1..target.mips {
+            let source_view = target.target_view("Ghost Render Core Source Frame Mip Source", mip_level - 1);
+            let target_view = target.target_view("Ghost Render Core Source Frame Mip Target", mip_level);
             self.source_frame_blitter
                 .copy(&self.device, encoder, &source_view, &target_view);
         }
@@ -24615,13 +24576,12 @@ impl RenderState {
     /// Copy one source frame slot, scaled to the preview size, into a readback
     /// buffer. Returns as soon as the copy is queued; `finish()` waits for it.
     fn prepare_source_crop_readback(&mut self, slot: usize, rect: [f32; 4], request: &SourcePreviewRequest) -> Result<PendingFrameReadback, String> {
-        let size = self.source_frame_size as u32;
-        let x = (rect[0] * size as f32).round().max(0.0) as u32;
-        let y = (rect[1] * size as f32).round().max(0.0) as u32;
-        let x = x.min(size - 1);
-        let y = y.min(size - 1);
-        let width = ((rect[2] * size as f32).round() as u32).clamp(1, size - x);
-        let height = ((rect[3] * size as f32).round() as u32).clamp(1, size - y);
+        let source = self.slots.slot(slot);
+        let (size_x, size_y) = (source.width, source.height);
+        let x = ((rect[0] * size_x as f32).round().max(0.0) as u32).min(size_x - 1);
+        let y = ((rect[1] * size_y as f32).round().max(0.0) as u32).min(size_y - 1);
+        let width = ((rect[2] * size_x as f32).round() as u32).clamp(1, size_x - x);
+        let height = ((rect[3] * size_y as f32).round() as u32).clamp(1, size_y - y);
         let (w, h) = request.target_size(width, height);
         if !matches!(&self.source_crop_preview, Some((raw, _, _, sw, sh, pw, ph)) if (*sw,*sh,*pw,*ph)==(width,height,w,h) && raw.format() == self.source_frame_format) {
             let make = |label, width, height, format, usage| self.device.create_texture(&wgpu::TextureDescriptor {
@@ -24641,8 +24601,7 @@ impl RenderState {
         let (raw, target, blitter, _, _, _, _) = self.source_crop_preview.as_ref().unwrap();
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Crop preview") });
         encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo { texture: &self.source_frame_texture, mip_level: 0,
-                origin: wgpu::Origin3d { x, y, z: slot as u32 }, aspect: wgpu::TextureAspect::All },
+            source.copy_info_at(0, x, y),
             raw.as_image_copy(), wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
         blitter.copy(&self.device, &mut encoder, &raw.create_view(&Default::default()), &target.create_view(&Default::default()));
         self.queue.submit(Some(encoder.finish()));
@@ -24881,23 +24840,15 @@ impl RenderState {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        let source_frame_view = self.source_frame_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Ghost Render Core Source Frame View"),
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        self.bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Ghost Render Core Bind Group"),
-            layout: &self.scene_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.uniform_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.layer_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: self.source_preview_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&source_frame_view) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&self.source_frame_sampler) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&paint_mask_view) },
-            ],
-        });
+        self.bind_group = build_scene_bind_group(
+            &self.device,
+            &self.scene_bind_group_layout,
+            &self.uniform_buffer,
+            &self.layer_buffer,
+            &self.source_preview_buffer,
+            &self.source_frame_sampler,
+            &paint_mask_view,
+        );
         true
     }
 
@@ -24951,6 +24902,7 @@ impl RenderState {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(1, &self.source_frames_bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
 
@@ -25078,6 +25030,7 @@ impl RenderState {
         });
         pass.set_pipeline(&self.stage3d_mesh_pipeline);
         pass.set_bind_group(0, &self.stage3d_mesh_bind_group, &[]);
+        pass.set_bind_group(1, &self.source_frames_bind_group, &[]);
         pass.draw(0..144, 0..item_count as u32);
     }
 
@@ -25108,6 +25061,7 @@ impl RenderState {
         composite_output_index: usize,
         stage: OutputStage,
     ) -> Result<(), String> {
+        self.refresh_source_frame_bind_groups();
         self.allow_async_compile = false;
         self.frame_uniform_cursor = 0;
         self.write_frame_inputs(
@@ -25205,6 +25159,7 @@ impl RenderState {
         post_effects: &[[f32; 4]],
         stage: OutputStage,
     ) -> Result<SurfacePresentOutcome, String> {
+        self.refresh_source_frame_bind_groups();
         let mut present_outcome = SurfacePresentOutcome::Offscreen;
         let surface_frame = if present_surface {
             match self.surface.get_current_texture() {
@@ -26161,7 +26116,7 @@ fn stage3d_material(
 ) -> [f32; 4] {
     [
         source_slot
-            .map(|slot| (slot.min(MAX_SOURCE_FRAME_SLOTS - 1) + 1) as f32)
+            .map(|slot| (slot + 1) as f32)
             .unwrap_or(0.0),
         brightness.clamp(0.0, 8.0),
         uv_mode,
@@ -27906,7 +27861,7 @@ fn build_pixel_particles_globals_bytes(
     dt: f32,
     width: u32,
     height: u32,
-    source_frame_size: f32,
+    source_frame_size: [f32; 2],
 ) -> Vec<u8> {
     let mut bytes = vec![0_u8; PIXEL_PARTICLES_GLOBALS_BYTES as usize];
     write_f32_le(&mut bytes, 0, time);
@@ -27916,8 +27871,8 @@ fn build_pixel_particles_globals_bytes(
     for (index, value) in params.knobs.iter().enumerate() {
         write_f32_le(&mut bytes, 4 + index, *value);
     }
-    write_f32_le(&mut bytes, 8, source_frame_size);
-    write_f32_le(&mut bytes, 9, source_frame_size);
+    write_f32_le(&mut bytes, 8, source_frame_size[0]);
+    write_f32_le(&mut bytes, 9, source_frame_size[1]);
     write_f32_le(&mut bytes, 10, params.anchor_jitter);
     write_f32_le(&mut bytes, 11, if params.light_enabled { 1.0 } else { 0.0 });
     for index in 0..3 {
@@ -31233,6 +31188,128 @@ fn source_frame_hdr_requested() -> bool {
         .unwrap_or(false)
 }
 
+/// Which picture-slot store this device gets. `GA_SOURCE_FRAMES=shared`
+/// forces the shared array (to exercise the fallback on capable GPUs).
+fn choose_source_frame_mode(features: wgpu::Features, bindings: usize) -> SourceFrameMode {
+    let forced_shared = std::env::var("GA_SOURCE_FRAMES")
+        .is_ok_and(|value| value.trim().eq_ignore_ascii_case("shared"));
+    if !forced_shared && features.contains(PER_SOURCE_SLOT_FEATURES) && bindings >= INITIAL_SOURCE_FRAME_SLOTS {
+        SourceFrameMode::PerSource
+    } else {
+        SourceFrameMode::Shared
+    }
+}
+
+/// Most layers the shared array may grow to: the device's array-layer limit,
+/// and twice the tier's slot budget at this slot size.
+fn shared_source_frame_slot_ceiling(
+    limits: &wgpu::Limits,
+    size: usize,
+    format: wgpu::TextureFormat,
+    quality_policy: &str,
+    features: wgpu::Features,
+) -> usize {
+    let tier = source_frame_tier_for_policy(quality_policy, native_quality_tier(limits, features));
+    let texel = if format == SOURCE_FRAME_FORMAT_HDR { 8 } else { 4 };
+    let per_slot = source_frame_slot_bytes(size, texel).max(1);
+    let by_budget = source_frame_size_budget_bytes(tier).saturating_mul(2) / per_slot;
+    by_budget
+        .min(limits.max_texture_array_layers as usize)
+        .max(INITIAL_SOURCE_FRAME_SLOTS)
+}
+
+/// The compositor shader with the picture-slot readers for this store.
+fn heartbeat_wgsl(mode: SourceFrameMode, bindings: usize) -> String {
+    let body = include_str!("heartbeat.wgsl").replace(
+        "//#SOURCE_FRAMES",
+        &source_frames::compositor_source_frames_wgsl(mode, 1, 0, bindings),
+    );
+    format!("{}{body}", source_frames::source_frames_enable(mode))
+}
+
+fn stage3d_mesh_wgsl(mode: SourceFrameMode, bindings: usize) -> String {
+    let body = STAGE3D_MESH_WGSL.replace(
+        "//#SOURCE_FRAMES",
+        &source_frames::compositor_source_frames_wgsl(mode, 1, 0, bindings),
+    );
+    format!("{}{body}", source_frames::source_frames_enable(mode))
+}
+
+/// The resource behind a `source_frames` binding: the shared array view, or
+/// one view per slot. `views` keeps the per-slot views alive for the call.
+fn source_frames_views(store: &SourceFrameStore, bindings: usize) -> Vec<wgpu::TextureView> {
+    match store.mode() {
+        SourceFrameMode::Shared => vec![store.shared_array_view().expect("shared source-frame array")],
+        SourceFrameMode::PerSource => store.binding_array_views(bindings),
+    }
+}
+
+fn source_frames_resource<'a>(
+    mode: SourceFrameMode,
+    views: &'a [wgpu::TextureView],
+    refs: &'a [&'a wgpu::TextureView],
+) -> wgpu::BindingResource<'a> {
+    match mode {
+        SourceFrameMode::Shared => wgpu::BindingResource::TextureView(&views[0]),
+        SourceFrameMode::PerSource => wgpu::BindingResource::TextureViewArray(refs),
+    }
+}
+
+fn build_source_frames_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    store: &SourceFrameStore,
+    bindings: usize,
+) -> wgpu::BindGroup {
+    let views = source_frames_views(store, bindings);
+    let refs = views.iter().collect::<Vec<_>>();
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Ghost Render Core Source Frames"),
+        layout,
+        entries: &[wgpu::BindGroupEntry { binding: 0, resource: source_frames_resource(store.mode(), &views, &refs) }],
+    })
+}
+
+fn build_scene_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform_buffer: &wgpu::Buffer,
+    layer_buffer: &wgpu::Buffer,
+    source_preview_buffer: &wgpu::Buffer,
+    sampler: &wgpu::Sampler,
+    paint_mask_view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Ghost Render Core Bind Group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: layer_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: source_preview_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(paint_mask_view) },
+        ],
+    })
+}
+
+fn build_stage3d_mesh_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform_buffer: &wgpu::Buffer,
+    item_buffer: &wgpu::Buffer,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Ghost Render Core Stage3D Mesh Bind Group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: item_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler) },
+        ],
+    })
+}
+
 fn choose_source_frame_size(
     limits: &wgpu::Limits,
     features: wgpu::Features,
@@ -31311,8 +31388,9 @@ fn source_frame_size_budget_bytes(tier: &str) -> usize {
     let mb = match normalize_native_tier(tier) {
         "insane" => 896usize,
         "ultra" => 768usize,
-        // Forty-eight slots across three stores (two with mips) need
-        // ~704 MiB at 1024 RGBA8; retain SDR resolution during clip fades.
+        // The sizing estimate (the first 48 shared slots with mips, plus two
+        // stores of the same depth) is ~704 MiB at 1024 RGBA8; retain SDR
+        // resolution during clip fades.
         "balanced" => 768usize,
         "performance" => 768usize,
         _ => 256usize,
@@ -31320,10 +31398,22 @@ fn source_frame_size_budget_bytes(tier: &str) -> usize {
     mb * 1024 * 1024
 }
 
+/// One shared-array slot: every mip level.
+fn source_frame_slot_bytes(size: usize, bytes_per_texel: usize) -> usize {
+    (0..source_frame_mip_levels(size))
+        .map(|level| (size >> level).max(1).pow(2))
+        .sum::<usize>()
+        .saturating_mul(bytes_per_texel)
+}
+
+/// Slot sizing budget: the shared array at its starting size with mips, and
+/// room for two more stores of the same depth. The scratch stores are now
+/// smaller, but keeping the original estimate keeps the slot edge (and so the
+/// cost of every generated picture) where it was.
 fn estimate_source_frame_texture_bytes(size: usize, bytes_per_texel: usize) -> usize {
-    let base = size.saturating_mul(size).saturating_mul(bytes_per_texel).saturating_mul(MAX_SOURCE_FRAME_SLOTS);
+    let base = size.saturating_mul(size).saturating_mul(bytes_per_texel).saturating_mul(INITIAL_SOURCE_FRAME_SLOTS);
     let mip_pixels: usize = (0..source_frame_mip_levels(size)).map(|level| (size >> level).max(1).pow(2)).sum();
-    base.saturating_add(mip_pixels.saturating_mul(bytes_per_texel).saturating_mul(MAX_SOURCE_FRAME_SLOTS).saturating_mul(2))
+    base.saturating_add(mip_pixels.saturating_mul(bytes_per_texel).saturating_mul(INITIAL_SOURCE_FRAME_SLOTS).saturating_mul(2))
 }
 
 fn texture_format_label(format: wgpu::TextureFormat) -> &'static str {
@@ -33353,14 +33443,35 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} in heartbeat.wgsl"));
             line.split('=').nth(1).unwrap().trim().trim_end_matches(';').parse().unwrap()
         };
-        assert_eq!(constant("MAX_SOURCE_FRAME_SLOTS"), MAX_SOURCE_FRAME_SLOTS);
         assert_eq!(constant("MAX_SOURCE_PREVIEW_SLOTS"), MAX_SOURCE_PREVIEWS);
         assert!(wgsl.contains(&format!("i < {MAX_SCENE_LAYERS};")), "composite loop bound must equal MAX_SCENE_LAYERS");
+        // Slots are bounded by the store itself (textureNumLayers or the
+        // binding-array length), never by a constant of their own.
+        assert!(!wgsl.contains("MAX_SOURCE_FRAME_SLOTS"));
+        assert!(wgsl.contains("//#SOURCE_FRAMES"));
+    }
+
+    #[test]
+    fn compositor_and_stage3d_shaders_validate_for_both_slot_stores() {
+        for mode in [SourceFrameMode::Shared, SourceFrameMode::PerSource] {
+            for (name, source) in [("heartbeat", heartbeat_wgsl(mode, 64)), ("stage3d", stage3d_mesh_wgsl(mode, 64))] {
+                let module = naga::front::wgsl::parse_str(&source)
+                    .unwrap_or_else(|error| panic!("{name} {mode:?} parse: {}", error.emit_to_string(&source)));
+                let capabilities = match mode {
+                    SourceFrameMode::Shared => naga::valid::Capabilities::empty(),
+                    SourceFrameMode::PerSource => naga::valid::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY
+                        | naga::valid::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING,
+                };
+                naga::valid::Validator::new(naga::valid::ValidationFlags::all(), capabilities)
+                    .validate(&module)
+                    .unwrap_or_else(|error| panic!("{name} {mode:?} validation: {error:?}"));
+            }
+        }
     }
 
     #[test]
     fn heartbeat_compositor_wgsl_validates_with_the_edge_effect_layout() {
-        let module = naga::front::wgsl::parse_str(include_str!("heartbeat.wgsl"))
+        let module = naga::front::wgsl::parse_str(&heartbeat_wgsl(SourceFrameMode::Shared, 1))
             .unwrap_or_else(|error| panic!("heartbeat.wgsl parse: {error}"));
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
@@ -34515,7 +34626,7 @@ void main() {
         };
         let defaults = normalize_pixel_particles_native_params(&serde_json::json!({}));
         assert!(!defaults.grain_lit, "soft glow stays the default look");
-        let globals = build_pixel_particles_globals_bytes(&defaults, 1.0, 0.016, 160, 90, 1024.0);
+        let globals = build_pixel_particles_globals_bytes(&defaults, 1.0, 0.016, 160, 90, [1024.0, 1024.0]);
         assert_eq!(globals.len() as u64, PIXEL_PARTICLES_GLOBALS_BYTES);
         assert_eq!(read_f32(&globals, 44), 0.0);
         assert_eq!(read_f32(&globals, 48), 0.0);
@@ -34535,7 +34646,7 @@ void main() {
             "motionReactive": 1.0,
             "lightX": 0.0, "lightY": 0.0, "lightZ": 1.0
         }));
-        let globals = build_pixel_particles_globals_bytes(&lit, 1.0, 0.016, 160, 90, 1024.0);
+        let globals = build_pixel_particles_globals_bytes(&lit, 1.0, 0.016, 160, 90, [1024.0, 1024.0]);
         assert_eq!(read_f32(&globals, 44), 1.0);
         assert_eq!(read_f32(&globals, 48), 1.0);
         assert!((read_f32(&globals, 49) - 0.5).abs() < 1e-6);

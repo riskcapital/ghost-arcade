@@ -212,8 +212,10 @@ var<storage, read> layers: array<LayerData>;
 @group(0) @binding(2)
 var<storage, read> source_previews: array<vec4<f32>>;
 
-@group(0) @binding(3)
-var source_frames: texture_2d_array<f32>;
+// Picture slots (source_frames.rs): `source_frames` and the
+// source_frame_count/dims/load/sample readers are spliced in here for the
+// device's store (one shared array, or one texture per slot).
+//#SOURCE_FRAMES
 
 @group(0) @binding(4)
 var source_frame_sampler: sampler;
@@ -227,9 +229,6 @@ var paint_masks: texture_2d_array<f32>;
 const SOURCE_PREVIEW_SIZE: i32 = 256;
 const SOURCE_PREVIEW_PIXELS: i32 = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
 const MAX_SOURCE_PREVIEW_SLOTS: i32 = 16;
-// Must match MAX_SOURCE_FRAME_SLOTS in main.rs. A smaller bound here clamped
-// every layer in a higher slot onto slot 23, so it drew another layer's picture.
-const MAX_SOURCE_FRAME_SLOTS: i32 = 48;
 const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
 const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 
@@ -989,17 +988,23 @@ fn sample_source_preview(slot_plus_one: f32, uv: vec2<f32>) -> vec4<f32> {
   return sampled / max(total, 0.0001);
 }
 
+// The store's slot count bounds every slot the layer records name; a
+// tighter bound once drew another layer's picture in place of a high slot.
+fn safe_source_slot(slot: i32) -> i32 {
+  return clamp(slot, 0, source_frame_count() - 1);
+}
+
 fn sample_source_frame_texel(slot: i32, x: i32, y: i32) -> vec4<f32> {
-  let safe_slot = clamp(slot, 0, MAX_SOURCE_FRAME_SLOTS - 1);
-  let dims = vec2<i32>(textureDimensions(source_frames, 0));
+  let safe_slot = safe_source_slot(slot);
+  let dims = source_frame_dims(safe_slot);
   let sx = clamp(x, 0, dims.x - 1);
   let sy = clamp(y, 0, dims.y - 1);
-  return textureLoad(source_frames, vec2<i32>(sx, sy), safe_slot, 0);
+  return source_frame_load(safe_slot, vec2<i32>(sx, sy));
 }
 
 fn sample_source_frame_linear(slot: i32, uv: vec2<f32>) -> vec4<f32> {
   let sample_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
-  return textureSampleLevel(source_frames, source_frame_sampler, sample_uv, slot, 0.0);
+  return source_frame_sample(safe_source_slot(slot), source_frame_sampler, sample_uv);
 }
 
 fn sample_source_frame_live(slot: i32, uv: vec2<f32>) -> vec4<f32> {
@@ -1007,11 +1012,11 @@ fn sample_source_frame_live(slot: i32, uv: vec2<f32>) -> vec4<f32> {
   // Streaming video replaces level zero every frame and deliberately skips
   // per-frame mip generation. Pin live media to the resident level so the
   // sampler can never select an untouched (black) mip.
-  return textureSampleLevel(source_frames, source_frame_sampler, sample_uv, slot, 0.0);
+  return source_frame_sample(safe_source_slot(slot), source_frame_sampler, sample_uv);
 }
 
 fn sample_source_frame_minified(slot: i32, uv: vec2<f32>, footprint: f32) -> vec4<f32> {
-  let dims = vec2<f32>(textureDimensions(source_frames, 0));
+  let dims = vec2<f32>(source_frame_dims(safe_source_slot(slot)));
   let texel = vec2<f32>(1.0) / max(dims, vec2<f32>(1.0));
   let radius = clamp(footprint * 0.42, 0.75, 3.25);
   let sample_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
@@ -1033,7 +1038,7 @@ fn sample_source_frame_minified(slot: i32, uv: vec2<f32>, footprint: f32) -> vec
 }
 
 fn sample_source_frame(slot_code: f32, uv: vec2<f32>) -> vec4<f32> {
-  let slot = clamp(i32(floor(slot_code - SOURCE_FRAME_SLOT_OFFSET - 1.0)), 0, MAX_SOURCE_FRAME_SLOTS - 1);
+  let slot = safe_source_slot(i32(floor(slot_code - SOURCE_FRAME_SLOT_OFFSET - 1.0)));
   let sample_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
   return sample_source_frame_linear(slot, sample_uv);
 }
@@ -1041,7 +1046,7 @@ fn sample_source_frame(slot_code: f32, uv: vec2<f32>) -> vec4<f32> {
 fn sample_source_content(slot_code: f32, uv: vec2<f32>, layer_index: u32) -> vec4<f32> {
   if (slot_code >= SOURCE_FRAME_SLOT_OFFSET) {
     let rect = layers[layer_index].source_rect;
-    let slot = clamp(i32(floor(slot_code - SOURCE_FRAME_SLOT_OFFSET - 1.0)), 0, MAX_SOURCE_FRAME_SLOTS - 1);
+    let slot = safe_source_slot(i32(floor(slot_code - SOURCE_FRAME_SLOT_OFFSET - 1.0)));
     let sample_uv = rect.xy + uv * rect.zw;
     if (layers[layer_index].info.z > 2.5 && layers[layer_index].info.z < 3.5) {
       return sample_source_frame_live(slot, sample_uv);
