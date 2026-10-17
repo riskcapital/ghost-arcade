@@ -131,20 +131,22 @@ nativeDescribe('native video startup and handoff', () => {
     const rpc = core();
     try {
       await start(rpc);
-      for (let row = 0; row < 17; row++) {
+      // One more paused row than the core plays at once (32), plus a full grid
+      // of 16 preparations: one past the 48-session armed pool.
+      for (let row = 0; row < 33; row++) {
         await rpc.commands([layer(`paused-${row}`),
           { type: 'set_media_source_playback', ...playback(`paused-${row}`), paused: true },
           { ...bind(`paused-${row}`), layer_id: `paused-${row}` }]);
       }
       for (let index = 0; index < 16; index++) await rpc.send('prefetch_media', playback(`library:next-${index}:g1`));
       const before = await waitUntil(() => rpc.send('status'), status =>
-        status.native_video_sessions.length === 32 && status.native_video_sessions
+        status.native_video_sessions.length === 48 && status.native_video_sessions
           .filter((s: any) => s.source_id.startsWith('library:'))
           .every((s: any) => s.state === 'prerolled'), 'bounded pool prepared');
       await sleep(500);
       const after = await rpc.send('status');
       expect(after.native_video_session_evictions).toBe(before.native_video_session_evictions);
-      expect(after.native_video_sessions).toHaveLength(32);
+      expect(after.native_video_sessions).toHaveLength(48);
       expect(after.native_video_sessions.filter((s: any) => s.source_id.startsWith('library:')).every((s: any) => s.state === 'prerolled')).toBe(true);
     } finally { await rpc.close(); }
   }, 20000);

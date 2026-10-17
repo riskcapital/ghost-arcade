@@ -110,6 +110,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - uses: actions/cache@v4
         with:
           path: |
@@ -177,16 +178,22 @@ jobs:
         continue-on-error: true
         timeout-minutes: 20
         run: xvfb-run -a node scripts/native-renderer-smoke.mjs
+      - run: npm ci
+      - name: Native video playback (vitest)
+        id: video
+        continue-on-error: true
+        run: xvfb-run -a npx vitest run src/lib/renderer/nativeVideoPlayback.runtime.native.test.ts
       - name: Verdict
         if: always()
         run: |
           {
             echo "## Picture slots (${{ matrix.source_frames }})"
             echo '```'; cat picture-slots-mode.txt 2>/dev/null || echo "no mode probe output"; echo '```'
-            echo "mode probe: ${{ steps.mode.outcome }}, cargo test: ${{ steps.cargo.outcome }}, golden: ${{ steps.golden.outcome }}, smoke: ${{ steps.smoke.outcome }}"
+            echo "mode probe: ${{ steps.mode.outcome }}, cargo test: ${{ steps.cargo.outcome }}, golden: ${{ steps.golden.outcome }}, smoke: ${{ steps.smoke.outcome }}, video: ${{ steps.video.outcome }}"
           } >> "$GITHUB_STEP_SUMMARY"
           test "${{ steps.mode.outcome }}" = "success" && test "${{ steps.cargo.outcome }}" = "success" \
-            && test "${{ steps.golden.outcome }}" = "success" && test "${{ steps.smoke.outcome }}" = "success"
+            && test "${{ steps.golden.outcome }}" = "success" && test "${{ steps.smoke.outcome }}" = "success" \
+            && test "${{ steps.video.outcome }}" = "success"
 
   # ── Type check ──────────────────────────────────────────────────────────
   check:
