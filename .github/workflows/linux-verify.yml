@@ -89,6 +89,105 @@ jobs:
       - name: cargo test (npm run native:test)
         run: xvfb-run -a npm run native:test
 
+  # ── Picture-slot store, both backends ───────────────────────────────────
+  # Lavapipe picks per-source textures if it has binding arrays with
+  # non-uniform indexing; GA_SOURCE_FRAMES=shared forces the growable shared
+  # array either way, so both stores run on this driver.
+  picture-slots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        source_frames: [default, shared]
+    env:
+      GA_SOURCE_FRAMES: ${{ matrix.source_frames == 'shared' && 'shared' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install prerequisites
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $APT_BUILD $APT_RUNTIME
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: linux-verify-picture-slots-${{ hashFiles('native-renderer/Cargo.lock') }}
+          restore-keys: linux-verify-picture-slots-
+      - name: Vulkan driver on this runner
+        run: xvfb-run -a vulkaninfo --summary || true
+      - name: Build native render core
+        run: node scripts/build-native-core.mjs --arch=host
+      - name: Which picture-slot store the core picks
+        id: mode
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          xvfb-run -a node --input-type=module <<'EOF' | tee picture-slots-mode.txt
+          import { spawn } from 'node:child_process';
+          const child = spawn('native-renderer/target/release/ghost-render-core', [], { stdio: ['pipe', 'pipe', 'pipe'] });
+          let stdout = '';
+          let stderr = '';
+          let nextId = 1;
+          const pending = new Map();
+          child.stderr.on('data', (chunk) => { stderr += chunk; });
+          child.stdout.on('data', (chunk) => {
+            stdout += chunk;
+            let index;
+            while ((index = stdout.indexOf('\n')) >= 0) {
+              const line = stdout.slice(0, index).trim();
+              stdout = stdout.slice(index + 1);
+              if (!line) continue;
+              const message = JSON.parse(line);
+              pending.get(message.id)?.(message);
+              pending.delete(message.id);
+            }
+          });
+          const send = (method, params = {}) => new Promise((resolve, reject) => {
+            const id = nextId++;
+            const timer = setTimeout(() => reject(new Error(`${method} timed out`)), 20000);
+            pending.set(id, (message) => { clearTimeout(timer); resolve(message); });
+            child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
+          });
+          const started = await send('start', { config: { backend: 'vulkan', width: 640, height: 360, target_fps: 30 } });
+          const stats = await send('stats');
+          await send('shutdown').catch(() => {});
+          setTimeout(() => child.kill(), 2000).unref();
+          console.log(stderr.split('\n').filter((line) => /picture slots|adapter|backend/i.test(line)).join('\n'));
+          console.log(`start ok=${started.ok} backend_ready=${started.result?.backend_ready}`);
+          console.log(`source_frame_store=${stats.result?.source_frame_store}`);
+          const expected = process.env.GA_SOURCE_FRAMES === 'shared' ? 'shared' : null;
+          const store = stats.result?.source_frame_store;
+          if (!started.result?.backend_ready || !store || store === 'none' || (expected && store !== expected)) process.exit(1);
+          EOF
+      - name: cargo test --release
+        id: cargo
+        continue-on-error: true
+        run: xvfb-run -a cargo test --release --manifest-path native-renderer/Cargo.toml
+      - name: Preview/output golden
+        id: golden
+        continue-on-error: true
+        run: xvfb-run -a node scripts/native-preview-output-golden.mjs
+      - name: Render core smoke
+        id: smoke
+        continue-on-error: true
+        timeout-minutes: 20
+        run: xvfb-run -a node scripts/native-renderer-smoke.mjs
+      - name: Verdict
+        if: always()
+        run: |
+          {
+            echo "## Picture slots (${{ matrix.source_frames }})"
+            echo '```'; cat picture-slots-mode.txt 2>/dev/null || echo "no mode probe output"; echo '```'
+            echo "mode probe: ${{ steps.mode.outcome }}, cargo test: ${{ steps.cargo.outcome }}, golden: ${{ steps.golden.outcome }}, smoke: ${{ steps.smoke.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "${{ steps.mode.outcome }}" = "success" && test "${{ steps.cargo.outcome }}" = "success" \
+            && test "${{ steps.golden.outcome }}" = "success" && test "${{ steps.smoke.outcome }}" = "success"
+
   # ── Type check ──────────────────────────────────────────────────────────
   check:
     runs-on: ubuntu-latest
