@@ -154,7 +154,7 @@ jobs:
             child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
           });
           const started = await send('start', { config: { backend: 'vulkan', width: 640, height: 360, target_fps: 30 } });
-          const stats = await send('stats');
+          const stats = await send('status');
           await send('shutdown').catch(() => {});
           setTimeout(() => child.kill(), 2000).unref();
           console.log(stderr.split('\n').filter((line) => /picture slots|adapter|backend/i.test(line)).join('\n'));

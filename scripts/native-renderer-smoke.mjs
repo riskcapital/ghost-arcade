@@ -2508,7 +2508,7 @@ async function main() {
     }
     if (
       status.source_frame_last_upload_transport !==
-      (outputExportExpected ? 'shared-texture' : 'file')
+      (outputExportExpected ? 'shared-texture' : 'native-image')
     ) {
       throw new Error(`native source-frame last transport was not tracked: ${JSON.stringify(status)}`);
     }
