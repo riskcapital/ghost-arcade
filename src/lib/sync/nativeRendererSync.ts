@@ -10184,7 +10184,8 @@ export class NativeRendererSync {
               ? snap.geometrySig.split(':').slice(1, 9).join(':')
               : '';
           if (sigCorners) {
-            const sent = sigCorners.split(':').map(Number);
+            // geometrySig stores each value as sigNum's integer (value x 1e5).
+            const sent = sigCorners.split(':').map((value) => Number(value) / 1e5);
             const applied = (core.corners ?? []).flat().map(Number);
             if (sent.length === 8 && applied.length === 8) {
               for (let i = 0; i < 8; i += 1) {
@@ -10205,11 +10206,12 @@ export class NativeRendererSync {
             drift = `opacity sent=${snap.opacity} applied=${core.opacity}`;
           }
           if (!drift && typeof snap.uvSig === 'string' && snap.uvSig.includes('|')) {
-            // uvSig format: "x:y:w:h|fit:ratio:flipH:flipV" — matches the
+            // uvSig format: "x:y:w:h|fit:ratio:flipH:flipV" as sigNum integers
+            // (value x 1e5) — matches the
             // core's uv0/uv1 exactly. A drifted ratio squashes the picture
             // inside the layer quad ("preview cropped/misplaced").
             const [uv0Part, uv1Part] = snap.uvSig.split('|');
-            const sentUv = [...uv0Part.split(':'), ...uv1Part.split(':')].map(Number);
+            const sentUv = [...uv0Part.split(':'), ...uv1Part.split(':')].map((value) => Number(value) / 1e5);
             const appliedUv = [...(core.uv0 ?? []), ...(core.uv1 ?? [])].map(Number);
             if (sentUv.length === 8 && appliedUv.length === 8) {
               for (let i = 0; i < 8; i += 1) {

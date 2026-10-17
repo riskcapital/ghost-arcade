@@ -106,6 +106,33 @@ describe('native video trigger and live diagnostics', () => {
     expect(invokeCalls.some(call => call.command === 'native_renderer_get_layers_snapshot')).toBe(true);
     expect(invokeCalls.some(call => call.command === 'native_renderer_get_frame_snapshot')).toBe(false);
   });
+
+  it('reads the integer geometry and UV signatures without seeing drift', async () => {
+    // Signatures store each value as round(value x 1e5). Reading them as plain
+    // numbers made every layer look moved, so the whole scene was re-sent
+    // every second while nothing changed.
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeLayerReconcileAt = -Infinity;
+    sync.lastLayers.set('row', {
+      geometrySig: 'corners:0:100000:100000:100000:100000:0:0:0',
+      uvSig: '0:0:100000:100000|0:177778:0:0',
+      visible: true,
+      opacity: 1,
+    });
+    coreLayers = [{
+      layer_id: 'row', visible: true, opacity: 1,
+      corners: [[0, 1], [1, 1], [1, 0], [0, 0]],
+      uv0: [0, 0, 1, 1], uv1: [0, 1.77778, 0, 0],
+    }];
+    await sync.reconcileNativeLayerGeometry();
+    expect(sync.lastLayers.has('row')).toBe(true);
+
+    // A real move is still caught.
+    sync.nativeLayerReconcileAt = -Infinity;
+    coreLayers = [{ ...coreLayers[0], corners: [[0.2, 1], [1, 1], [1, 0], [0, 0]] }];
+    await sync.reconcileNativeLayerGeometry();
+    expect(sync.lastLayers.has('row')).toBe(false);
+  });
 });
 
 function lastSubmittedBatch(): any[] | null {
