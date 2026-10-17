@@ -160,7 +160,7 @@ jobs:
           console.log(stderr.split('\n').filter((line) => /picture slots|adapter|backend/i.test(line)).join('\n'));
           console.log(`start ok=${started.ok} backend_ready=${started.result?.backend_ready}`);
           console.log(`source_frame_store=${stats.result?.source_frame_store}`);
-          const expected = process.env.GA_SOURCE_FRAMES === 'shared' ? 'shared' : null;
+          const expected = process.env.GA_SOURCE_FRAMES === 'shared' ? 'shared-array' : null;
           const store = stats.result?.source_frame_store;
           if (!started.result?.backend_ready || !store || store === 'none' || (expected && store !== expected)) process.exit(1);
           EOF
