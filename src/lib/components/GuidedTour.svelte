@@ -458,7 +458,8 @@
   // case something switched it in between.
   $: if (open && path && index >= 0) {
     const vjOpen = get(vjClipLauncher).isOpen;
-    if (path.mode === 'vj' && !vjOpen) vjClipLauncher.setOpen(true);
+    // Open and live, as the VJ button does: clips only fire on a live deck.
+    if (path.mode === 'vj' && !vjOpen) { vjClipLauncher.setOpen(true); vjClipLauncher.setLive(true); }
     if (path.mode === 'mapping' && vjOpen) vjClipLauncher.setOpen(false);
   }
   // Run each step's set-up once, when the user arrives on it.

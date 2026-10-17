@@ -283,6 +283,10 @@ export async function applyStarterTemplate(id: string, startFresh: (name: string
   }
   const first = get(vjClipLauncher).blocks[0];
   if (first) vjClipLauncher.setActiveBlock(first.id);
+  // Into VJ mode the way the VJ button goes: open AND live. Open alone shows
+  // the deck, but clips will not fire and the MIX / STAGE / MAP switch stays
+  // hidden until the deck is live.
   vjClipLauncher.setOpen(true);
+  vjClipLauncher.setLive(true);
   return true;
 }
