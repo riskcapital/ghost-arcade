@@ -4804,17 +4804,25 @@
   }
   $: if (wsServerReady) syncShaderLibrary($mediaTrayShaders);
 
+  // The grid part of the mobile sync, kept until the launcher's blocks
+  // change. A crossfader sweep, a macro or a layer opacity re-sends the
+  // light fields only in effect: the grid is serialized once per edit.
+  let serializedGridFor: unknown = null;
+  let serializedGrid: unknown[] = [];
+
   // Sync VJ Clip Launcher state to mobile (clips in the grid)
   function syncVJClips() {
     if (ws && ws.readyState === WebSocket.OPEN) {
       // Common per-clip serializer used for both Bank A grid and Bank B grid.
+      // No shader source here: the phone reads it only from the clips that
+      // are playing (layerStates[].activeClip, below), and the grid's copy
+      // was ~1.5 MB of every message for a 256-clip set.
       const serializeClip = (clip: any) => clip ? {
         id: clip.id,
         type: clip.type,
         name: clip.name,
         src: clip.src,
         thumbnail: clip.thumbnail,
-        shaderCode: clip.shaderCode,
         effects: clip.effects || [],
       } : null;
       const serializeLayerState = (ls: any) => ({
@@ -4839,15 +4847,19 @@
       // every new feature surface so the mobile companion can render the
       // dual decks, crossfader, macros, snapshots, and quantize grid
       // alongside the original clip-grid + mixer + master controls.
-      const serializableClips = {
-        blocks: $vjClipLauncher.blocks.map(block => ({
+      if (serializedGridFor !== $vjClipLauncher.blocks) {
+        serializedGridFor = $vjClipLauncher.blocks;
+        serializedGrid = $vjClipLauncher.blocks.map(block => ({
           id: block.id,
           name: block.name,
           clipGrid: block.clipGrid.map(row => row.map(serializeClip)),
           // Per-block Bank B grid — new in v0.3.x. Switching blocks on
           // mobile flips both decks together (matching desktop behavior).
           bankBClipGrid: (block.bankBClipGrid || []).map(row => row.map(serializeClip)),
-        })),
+        }));
+      }
+      const serializableClips = {
+        blocks: serializedGrid,
         activeBlockId: $vjClipLauncher.activeBlockId,
         layerStates: $vjClipLauncher.layerStates.map(serializeLayerState),
         // Bank B per-layer state (independent of Bank A — opacity / blend /
@@ -4929,7 +4941,11 @@
   let syncVJClipsPending = false;
   let syncVJClipsTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleSyncVJClips() {
-    if (!wsServerReady) return;
+    // Nobody to tell: the server only relays this to phones. Skipping it
+    // keeps a crossfade or a macro sweep from serializing and sending the
+    // whole deck dozens of times a second for no one. A phone that connects
+    // gets the current state at once (the mobileConnected trigger below).
+    if (!wsServerReady || !mobileConnected) return;
     if (syncVJClipsTimer) {
       syncVJClipsPending = true;
       return;
@@ -4952,6 +4968,9 @@
   // (CRITICAL fix v17.1: prior version only watched vjClipLauncher,
   // so dragging a macro on desktop never reached mobile.)
   $: if (wsServerReady && $vjClipLauncher) {
+    scheduleSyncVJClips();
+  }
+  $: if (wsServerReady && mobileConnected) {
     scheduleSyncVJClips();
   }
   $: if (wsServerReady && $macros) {
