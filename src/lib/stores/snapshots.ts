@@ -19,7 +19,7 @@
  * this "scenes" or "presets" depending on which DAW they grew up on.
  */
 import { writable, get } from 'svelte/store';
-import { vjClipLauncher } from './vjClipLauncher';
+import { vjClipLauncher, vjClipLauncherNow } from './vjClipLauncher';
 import { macros } from './macros';
 import { registerSnapshotRecaller } from '../midi/midiRouter';
 import { modulationStore, type ParamModulation } from '../audio/modulation';
@@ -115,7 +115,7 @@ function createDefaultState(): SnapshotsState {
 
 /** Capture the live VJ + macro state into a Snapshot payload. */
 function captureLiveState(): Partial<Snapshot> {
-  const vj = get(vjClipLauncher);
+  const vj = vjClipLauncherNow();
   const macroState = get(macros);
 
   const macroValues: Record<string, number> = {};

@@ -17,7 +17,7 @@
   import { Stage3DRenderer } from '../stage3d/Stage3DRenderer';
   import { mediaLibrary } from '../stores/media';
   import { phoneVision } from '../stores/phoneVision';
-  import { vjOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
+  import { vjOutputLayers, vjClipLauncher, vjCrossfader } from '../stores/vjClipLauncher';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
@@ -1702,7 +1702,7 @@
 
           engine.setCrossfade(
             vjState.crossfaderEnabled === true && vjState.isLive,
-            vjState.crossfaderValue ?? 0,
+            $vjCrossfader,
             vjState.crossfaderTransition || 'dissolve',
             vjState.crossfaderCurve || 'constant-power',
             vjState.crossfaderBlendMode || 'normal',

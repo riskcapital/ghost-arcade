@@ -2,7 +2,7 @@ import { get } from 'svelte/store';
 import { midiRouter } from '../midi/midiRouter';
 import { normalizeControlPath, validateControlPath, CONTROL_PATH_EXAMPLES } from '../control/controlPaths';
 import { readControlPath } from '../osc/oscFeedback';
-import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { vjClipLauncher, vjClipLauncherNow } from '../stores/vjClipLauncher';
 import { project } from '../stores/layers';
 
 /**
@@ -65,7 +65,7 @@ function controlVocabulary(): Record<string, unknown> {
  * on bookkeeping. Anything finer is one read_control away.
  */
 function appState(): Record<string, unknown> {
-  const vj = get(vjClipLauncher) as any;
+  const vj = vjClipLauncherNow() as any;
   const proj = get(project) as any;
 
   const describeDeck = (layerStates: any[], grid: any[][]) =>

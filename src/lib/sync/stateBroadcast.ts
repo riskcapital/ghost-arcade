@@ -12,7 +12,7 @@
 import { get } from 'svelte/store';
 import { project } from '$lib/stores/layers';
 import { settings } from '$lib/stores/settings';
-import { vjClipLauncher } from '$lib/stores/vjClipLauncher';
+import { vjClipLauncher, vjCrossfader, vjClipLauncherNow } from '$lib/stores/vjClipLauncher';
 import { vjLayerSequencer } from '$lib/stores/vjLayerSequencer';
 import { stage3dScene } from '$lib/stage3d/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
@@ -262,7 +262,7 @@ let hasActiveReceiver = false;
 
 function buildSyncedStatePayload(): any {
   const projectData = project.exportProject() as any;
-  const vjState = get(vjClipLauncher) as any;
+  const vjState = vjClipLauncherNow() as any;
   const settingsState = get(settings);
   const liveVJState = buildLiveVJStatePayload(vjState, true);
 
@@ -323,7 +323,7 @@ function buildVJLayerSequencerSyncSignature(): string {
   });
 }
 
-function buildLiveVJStatePayload(vjState = get(vjClipLauncher) as any, includeGrids = false): any {
+function buildLiveVJStatePayload(vjState = vjClipLauncherNow() as any, includeGrids = false): any {
   const safeBlocks = includeGrids
     ? (vjState.blocks || []).map((block: any) => ({
         id: block.id,
@@ -557,7 +557,7 @@ function doBroadcastVJState() {
   if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
 
   try {
-    const vjState = get(vjClipLauncher) as any;
+    const vjState = vjClipLauncherNow() as any;
 
     const structuralChanged = !lastSentVJStructure
       || lastSentVJStructure.blocks !== vjState.blocks
@@ -640,6 +640,8 @@ function initSender() {
     broadcastVJState();
   });
   unsubscribers.push(unsubVJ);
+  // The crossfader moves without touching the launcher state.
+  unsubscribers.push(vjCrossfader.subscribe(() => broadcastVJState()));
 
   let lastVJSequencerSignature = '';
   const unsubVJSequencer = vjLayerSequencer.subscribe(() => {
