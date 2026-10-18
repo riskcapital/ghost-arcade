@@ -28,6 +28,7 @@
   import GuidedTour from './lib/components/GuidedTour.svelte';
   import TemplatePicker from './lib/components/TemplatePicker.svelte';
   import { onboarding } from './lib/stores/onboarding';
+  import { liveOutput, LIVE_OUTPUT_FULLSCREEN_EVENT } from './lib/stores/liveOutput';
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
@@ -990,6 +991,10 @@
     window.addEventListener('ga-open-output-window', handleTourOpenOutput);
     const handleTourCloseSettings = () => { showSettings = false; };
     window.addEventListener('ga-close-settings', handleTourCloseSettings);
+    // The VJ header sends the output to the projector the same way the
+    // mapping toolbar's Fullscreen button does.
+    const handleToggleOutputFullscreen = () => { void toggleFullscreen(); };
+    window.addEventListener(LIVE_OUTPUT_FULLSCREEN_EVENT, handleToggleOutputFullscreen);
 
     // Load saved AI shaders from server
     loadShadersFromServer().catch(e => {
@@ -1416,6 +1421,7 @@
       window.removeEventListener('open-settings', handleOpenSettings);
       window.removeEventListener('ga-open-output-window', handleTourOpenOutput);
       window.removeEventListener('ga-close-settings', handleTourCloseSettings);
+      window.removeEventListener(LIVE_OUTPUT_FULLSCREEN_EVENT, handleToggleOutputFullscreen);
       window.removeEventListener('open-stage3d', handleOpenStage3D);
       if (autoConnectTimeout) {
         clearTimeout(autoConnectTimeout);
@@ -4063,6 +4069,7 @@
 
   // Output window state
   let outputMode: 'embedded' | 'window' | 'fullscreen' = 'embedded';
+  $: liveOutput.set({ mode: outputIsOpen ? outputMode : 'embedded' });
 
   function openOutputWindow() {
     outputMode = 'window';
