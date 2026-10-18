@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Converted from Three.js by Claude",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Infinite Grid - Layered grids with orange fracture lines, purple pillars, void core, and dust",
     "ISFVSN": "2.0",
     "CATEGORIES": ["Generator"],
@@ -160,10 +160,11 @@ vec3 getGridColor(int idx) {
     else return vec3(0.03, 0.08, 0.25);
 }
 
-// Grid pattern with perspective
-float grid(vec2 uv, float divisions, float lineWidth) {
+// Grid pattern with perspective. pixel is the size of one screen pixel in
+// uv units, which is what fwidth(uv) would measure for this mapping.
+float grid(vec2 uv, float divisions, float lineWidth, float pixel) {
     vec2 g = abs(fract(uv * divisions - 0.5) - 0.5);
-    vec2 fw = fwidth(uv * divisions);
+    vec2 fw = vec2(pixel * divisions);
     fw = max(fw, vec2(0.001)); // Prevent division by zero
     g = g / fw;
     float line = min(g.x, g.y);
@@ -199,7 +200,9 @@ vec3 infiniteGrids(vec2 uv, float t, float depth) {
         float divisions = 4.0 + fi * 0.5;
         float lineWidth = 3.0 + fi * 0.5;
 
-        float g = grid(layerUV, divisions, lineWidth);
+        // Screen pixel in layer uv: scaled with the layer, widened by the rotation
+        float pixel = scale * (abs(c) + abs(s)) / (min(RENDERSIZE.x, RENDERSIZE.y) * zoom);
+        float g = grid(layerUV, divisions, lineWidth, pixel);
 
         // Color based on layer
         int colorIdx = int(mod(fi, 3.0));

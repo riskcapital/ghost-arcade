@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Optimized spiral galaxy with turbulence, position control, zoom, video input influence, and adjustable particle size and line thickness, with crisp vector rendering",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],
@@ -202,9 +202,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         col += particleColor * particleAlpha * 0.8; // Slightly brighter for visibility
 
         // Connect to nearby particles with crisp vector-like lines
-        int startJ = max(i + 1, i - 10);
-        int endJ = min(i + 10, maxParticles);
-        for (int j = startJ; j < endJ; j++) {
+        // The next nine particles, counted with a constant bound as GLSL ES 1.0 requires
+        for (int k = 1; k < 10; k++) {
+            int j = i + k;
             if (j >= maxParticles) break;
             vec2 p2 = getParticlePos(j, t);
             float dist = length(p1 - p2);

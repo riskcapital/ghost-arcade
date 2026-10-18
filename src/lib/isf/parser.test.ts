@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseISF, detectAudioReady } from './parser';
+import { parseISF, detectAudioReady, getISFPassTargets } from './parser';
+
+const count = (source: string, text: string) => source.split(text).length - 1;
 
 describe('detectAudioReady', () => {
   it('returns true when audio uniforms are present', () => {
@@ -83,5 +85,75 @@ void main() {}`;
     expect(result.fragmentShader).toContain('uniform float speed;');
     expect(result.fragmentShader).toContain('uniform bool enabled;');
     expect(result.fragmentShader).toContain('uniform int mode;');
+  });
+});
+
+describe('built-in uniform declarations', () => {
+  it('declares RENDERSIZE once, before the helpers, when the shader declares it too', () => {
+    const source = `/*{ "INPUTS": [] }*/\nuniform float TIME;\nuniform vec2  RENDERSIZE;\nvoid main() { gl_FragColor = vec4(gl_FragCoord.xy / RENDERSIZE, TIME, 1.0); }`;
+    const frag = parseISF(source).fragmentShader;
+    expect(count(frag, 'uniform vec2 RENDERSIZE;')).toBe(1);
+    expect(frag).not.toMatch(/uniform vec2\s{2,}RENDERSIZE/);
+    expect(count(frag, 'uniform float TIME;')).toBe(1);
+    expect(frag.indexOf('uniform vec2 RENDERSIZE;')).toBeLessThan(frag.indexOf('vec4 IMG_PIXEL('));
+  });
+
+  it('aliases a declared renderSize onto RENDERSIZE', () => {
+    const source = `/*{ "INPUTS": [] }*/\nuniform vec2 renderSize;\nvoid main() { gl_FragColor = vec4(gl_FragCoord.xy / renderSize, 0.0, 1.0); }`;
+    const frag = parseISF(source).fragmentShader;
+    expect(frag).toContain('uniform vec2 RENDERSIZE;');
+    expect(frag).toContain('#define renderSize RENDERSIZE');
+    expect(frag).not.toContain('uniform vec2 renderSize;');
+  });
+
+  it('keeps a shader declaration of another type in place of its own', () => {
+    const source = `/*{ "INPUTS": [] }*/\nuniform float FRAMEINDEX;\nvoid main() { gl_FragColor = vec4(FRAMEINDEX); }`;
+    const frag = parseISF(source).fragmentShader;
+    expect(frag).toContain('uniform float FRAMEINDEX;');
+    expect(frag).not.toContain('uniform int FRAMEINDEX;');
+  });
+
+  it('declares an input that shares a built-in name once', () => {
+    const source = `/*{ "INPUTS": [{ "NAME": "audioBass", "TYPE": "float" }] }*/\nvoid main() { gl_FragColor = vec4(audioBass); }`;
+    expect(count(parseISF(source).fragmentShader, 'uniform float audioBass;')).toBe(1);
+  });
+});
+
+describe('integer clamp/min/max', () => {
+  it('adds integer overloads for the functions the shader calls', () => {
+    const source = `/*{ "INPUTS": [] }*/\nvoid main() { int n = clamp(3, 1, 2); gl_FragColor = vec4(float(n)); }`;
+    const frag = parseISF(source).fragmentShader;
+    expect(frag).toContain('int clamp(int x, int lo, int hi)');
+    expect(frag).not.toContain('int min(int a, int b)');
+    expect(frag).not.toContain('int max(int a, int b)');
+  });
+
+  it('leaves a shader that defines its own overload alone', () => {
+    const source = `/*{ "INPUTS": [] }*/\nint max(int a, int b) { return a > b ? a : b; }\nvoid main() { gl_FragColor = vec4(float(max(1, 2))); }`;
+    expect(count(parseISF(source).fragmentShader, 'int max(int a, int b)')).toBe(1);
+  });
+});
+
+describe('multi-pass shaders', () => {
+  it('pins PASSINDEX to the output pass and declares pass targets', () => {
+    const source = `/*{
+  "INPUTS": [],
+  "PASSES": [{ "TARGET": "bufferA", "PERSISTENT": true }, {}]
+}*/
+uniform int PASSINDEX;
+void main() {
+  if (PASSINDEX == 0) gl_FragColor = texture2D(bufferA, vUv);
+  else gl_FragColor = vec4(1.0);
+}`;
+    const frag = parseISF(source).fragmentShader;
+    expect(frag).toContain('#define PASSINDEX 1');
+    expect(frag).not.toContain('uniform int PASSINDEX;');
+    expect(frag).toContain('uniform sampler2D bufferA;');
+  });
+
+  it('collects targets from PASSES and PERSISTENT_BUFFERS', () => {
+    expect(getISFPassTargets({ PASSES: [{ TARGET: 'a' }, {}, { TARGET: 'a' }], PERSISTENT_BUFFERS: ['b'] })).toEqual(['a', 'b']);
+    expect(getISFPassTargets({ PERSISTENT_BUFFERS: { trails: { WIDTH: '$WIDTH' } } })).toEqual(['trails']);
+    expect(getISFPassTargets({ PASSES: [{ TARGET: 'not valid' }] })).toEqual([]);
   });
 });

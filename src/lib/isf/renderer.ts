@@ -1,6 +1,6 @@
 // ISF Shader Renderer for Three.js
 import * as THREE from 'three';
-import { parseISF, createUniformsFromInputs, type ISFMetadata } from './parser';
+import { parseISF, createUniformsFromInputs, getISFPassTargets, type ISFMetadata } from './parser';
 import { audioTextures } from '../audio/audioTextures';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
 import type { AudioState } from '../stores/audio';
@@ -141,6 +141,10 @@ export function createISFShader(
       parsedISFCache.set(sourceHash, parsed);
     }
     const uniforms = createUniformsFromInputs(parsed.metadata.INPUTS);
+    // Pass targets bind the empty texture: only the output pass is drawn
+    for (const target of getISFPassTargets(parsed.metadata)) {
+      uniforms[target] ??= { value: null };
+    }
 
     // Initialize Vector uniforms with proper Three.js types
     uniforms.RENDERSIZE.value = new THREE.Vector2(1920, 1080);

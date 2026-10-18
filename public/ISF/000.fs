@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Optimized spiral galaxy with turbulence and position control",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],
@@ -156,9 +156,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         col += vec3(0.8, 0.8, 1.0) * particleGlow * 0.3;
 
         // Connect to nearby particles, but limit the search range
-        int startJ = max(i + 1, i - 10); // Look at a smaller range
-        int endJ = min(i + 10, maxParticles);
-        for (int j = startJ; j < endJ; j++) {
+        // The next nine particles, counted with a constant bound as GLSL ES 1.0 requires
+        for (int k = 1; k < 10; k++) {
+            int j = i + k;
             if (j >= maxParticles) break;
             vec2 p2 = getParticlePos(j, t);
             float dist = length(p1 - p2);

@@ -18,7 +18,9 @@ export interface ISFMetadata {
   CATEGORIES?: string[];
   INPUTS: ISFInput[];
   IMPORTED?: Record<string, { PATH: string }>;
-  PASSES?: Array<{ TARGET?: string; WIDTH?: string; HEIGHT?: string }>;
+  PASSES?: Array<{ TARGET?: string; PERSISTENT?: boolean; WIDTH?: string; HEIGHT?: string }>;
+  /** ISF 1.x: buffer names, or name -> size spec. */
+  PERSISTENT_BUFFERS?: string[] | Record<string, unknown>;
   ISFVSN?: string;
 }
 
@@ -189,6 +191,57 @@ function fixShaderLoops(source: string): string {
   return glsl;
 }
 
+/** Uniforms the renderer sets on every ISF shader, in declaration order */
+const BUILTIN_UNIFORMS: Array<[type: string, name: string]> = [
+  ['vec2', 'RENDERSIZE'],
+  ['float', 'TIME'],
+  ['float', 'TIMEDELTA'],
+  ['int', 'FRAMEINDEX'],
+  ['vec4', 'DATE'],
+  // Audio-reactive uniforms (always available to all ISF shaders, zero-config)
+  ['sampler2D', 'audioFFT'],
+  ['sampler2D', 'audioWaveform'],
+  ['float', 'audioLevel'],
+  ['float', 'audioBass'],
+  ['float', 'audioMid'],
+  ['float', 'audioHigh'],
+  ['float', 'audioBeat'],
+  ['float', 'audioBeatPhase'],
+  ['float', 'audioBPM'],
+  ['float', 'audioSpectralCentroid'],
+];
+
+const INT_OVERLOADS: Record<string, string> = {
+  clamp: 'int clamp(int x, int lo, int hi) { return x < lo ? lo : (x > hi ? hi : x); }\n',
+  min: 'int min(int a, int b) { return a < b ? a : b; }\n',
+  max: 'int max(int a, int b) { return a > b ? a : b; }\n',
+};
+
+/** Matches a whole-line `uniform <type> <name>;`, precision qualifier allowed */
+function uniformDeclaration(type: string, name: string): RegExp {
+  return new RegExp(`^[ \\t]*uniform\\s+(?:(?:lowp|mediump|highp)\\s+)?${type}\\s+${name}\\s*;[ \\t]*$`, 'gm');
+}
+
+/** True when the source declares a uniform of this name, of any type */
+function declaresUniform(source: string, name: string): boolean {
+  return new RegExp(`\\buniform\\s+(?:(?:lowp|mediump|highp)\\s+)?\\w+\\s+${name}\\s*;`).test(source);
+}
+
+/** Buffers that PASSES (ISF 2) and PERSISTENT_BUFFERS (ISF 1) render into */
+export function getISFPassTargets(metadata: Pick<ISFMetadata, 'PASSES' | 'PERSISTENT_BUFFERS'>): string[] {
+  const persistent = metadata.PERSISTENT_BUFFERS;
+  const names = [
+    ...(Array.isArray(metadata.PASSES) ? metadata.PASSES.map((pass) => pass?.TARGET) : []),
+    ...(Array.isArray(persistent) ? persistent : Object.keys(persistent ?? {})),
+  ];
+  const targets: string[] = [];
+  for (const name of names) {
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    if (/^[A-Za-z_]\w*$/.test(trimmed) && !targets.includes(trimmed)) targets.push(trimmed);
+  }
+  return targets;
+}
+
 /**
  * Convert ISF shader code to standard WebGL GLSL
  * Handles ISF-specific uniforms and functions
@@ -223,32 +276,37 @@ function convertISFtoGLSL(source: string, metadata: ISFMetadata): string {
   // Remove any standalone existing precision statements - we'll add our own
   glsl = glsl.replace(/^precision\s+(highp|mediump|lowp)\s+float\s*;\s*$/gm, '');
 
-  // Build uniform declarations for built-in ISF uniforms (only if not already declared)
+  // Built-in uniforms are declared once, here, ahead of the helpers below
+  // that read them. A shader's own declaration of one is dropped in favour
+  // of this one: left in place it either clashed with it (redefinition) or,
+  // when its spelling slipped past the check, came after IMG_PIXEL had
+  // already used RENDERSIZE (undeclared identifier). A declaration of
+  // another type is the shader's to keep.
   let uniformDeclarations = '';
+  const declared = new Set<string>();
+  const declare = (type: string, name: string) => {
+    if (declared.has(name)) return;
+    declared.add(name);
+    uniformDeclarations += `uniform ${type} ${name};\n`;
+  };
 
-
-  // Add built-in uniforms only if not already present (check for various common naming)
-  // Also handle lowercase 'renderSize' variant
-  if (!glsl.includes('uniform vec2 RENDERSIZE') && !glsl.includes('uniform vec2 renderSize')) {
-    uniformDeclarations += 'uniform vec2 RENDERSIZE;\n';
+  for (const [type, name] of BUILTIN_UNIFORMS) {
+    glsl = glsl.replace(uniformDeclaration(type, name), '');
+    if (declaresUniform(glsl, name)) declared.add(name);
+    else declare(type, name);
   }
 
-  // Add alias for lowercase variant if used in shader but not declared
-  if (glsl.includes('renderSize') && !glsl.includes('uniform vec2 renderSize')) {
+  // renderSize is a common misspelling; the renderer keeps it equal to RENDERSIZE
+  glsl = glsl.replace(uniformDeclaration('vec2', 'renderSize'), '');
+  if (/\brenderSize\b/.test(glsl)) {
     uniformDeclarations += '#define renderSize RENDERSIZE\n';
   }
 
-  if (!glsl.includes('uniform float TIME')) {
-    uniformDeclarations += 'uniform float TIME;\n';
-  }
-  if (!glsl.includes('uniform float TIMEDELTA')) {
-    uniformDeclarations += 'uniform float TIMEDELTA;\n';
-  }
-  if (!glsl.includes('uniform int FRAMEINDEX')) {
-    uniformDeclarations += 'uniform int FRAMEINDEX;\n';
-  }
-  if (!glsl.includes('uniform vec4 DATE')) {
-    uniformDeclarations += 'uniform vec4 DATE;\n';
+  // This renderer draws a single pass, so PASSINDEX is pinned to the last
+  // pass, the one that writes the output.
+  if (/\bPASSINDEX\b/.test(code)) {
+    glsl = glsl.replace(uniformDeclaration('int', 'PASSINDEX'), '');
+    uniformDeclarations += `#define PASSINDEX ${Math.max((metadata.PASSES?.length ?? 0) - 1, 0)}\n`;
   }
 
   // Add varying for UV coordinates
@@ -256,31 +314,42 @@ function convertISFtoGLSL(source: string, metadata: ISFMetadata): string {
 
   // Add uniforms for each input (only if not already declared)
   for (const input of metadata.INPUTS) {
-    // Check if uniform is already declared with any type
-    const uniformCheck = new RegExp(`uniform\\s+\\w+\\s+${input.NAME}\\s*;`);
-    if (uniformCheck.test(glsl)) continue;
+    if (declaresUniform(glsl, input.NAME)) continue;
 
     switch (input.TYPE) {
       case 'float':
       case 'event':
-        uniformDeclarations += `uniform float ${input.NAME};\n`;
+        declare('float', input.NAME);
         break;
       case 'bool':
-        uniformDeclarations += `uniform bool ${input.NAME};\n`;
+        declare('bool', input.NAME);
         break;
       case 'long':
-        uniformDeclarations += `uniform int ${input.NAME};\n`;
+        declare('int', input.NAME);
         break;
       case 'point2D':
-        uniformDeclarations += `uniform vec2 ${input.NAME};\n`;
+        declare('vec2', input.NAME);
         break;
       case 'color':
-        uniformDeclarations += `uniform vec4 ${input.NAME};\n`;
+        declare('vec4', input.NAME);
         break;
       case 'image':
-        uniformDeclarations += `uniform sampler2D ${input.NAME};\n`;
-        uniformDeclarations += `uniform vec2 _${input.NAME}_imgSize;\n`;
+        declare('sampler2D', input.NAME);
+        declare('vec2', `_${input.NAME}_imgSize`);
         break;
+    }
+  }
+
+  // Pass targets sample as black here, which lets multi-pass shaders compile
+  for (const name of getISFPassTargets(metadata)) {
+    if (!declaresUniform(glsl, name)) declare('sampler2D', name);
+  }
+
+  // GLSL ES 1.0 has clamp/min/max for floats only; shaders written against
+  // desktop GLSL call them on ints as well
+  for (const [name, overload] of Object.entries(INT_OVERLOADS)) {
+    if (new RegExp(`\\b${name}\\s*\\(`).test(code) && !new RegExp(`\\bint\\s+${name}\\s*\\(`).test(code)) {
+      uniformDeclarations += overload;
     }
   }
 
@@ -301,23 +370,6 @@ vec4 IMG_PIXEL(sampler2D img, vec2 coord) {
   return texture2D(img, coord / RENDERSIZE);
 }
 `;
-  }
-
-  // Audio-reactive uniforms (always available to all ISF shaders, zero-config)
-  if (!glsl.includes('uniform sampler2D audioFFT')) {
-    uniformDeclarations += 'uniform sampler2D audioFFT;\n';
-  }
-  if (!glsl.includes('uniform sampler2D audioWaveform')) {
-    uniformDeclarations += 'uniform sampler2D audioWaveform;\n';
-  }
-  const audioFloatUniforms = [
-    'audioLevel', 'audioBass', 'audioMid', 'audioHigh',
-    'audioBeat', 'audioBeatPhase', 'audioBPM', 'audioSpectralCentroid'
-  ];
-  for (const name of audioFloatUniforms) {
-    if (!glsl.includes(`uniform float ${name}`)) {
-      uniformDeclarations += `uniform float ${name};\n`;
-    }
   }
 
   // Audio sampling helpers (available in all shaders)

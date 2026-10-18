@@ -359,6 +359,9 @@ void main() {
     float minDist = 1000.0;
     int closestBlob = 0;
     float closestDepth = 0.0;
+    // Screen position and depth of closestBlob (ES 1.0 can't index arrays by it)
+    vec2 closestScreen = vec2(0.0);
+    float closestBlobDepth = 1.0;
 
     // Store blob screen positions
     vec2 blobScreenPos[40];
@@ -377,6 +380,10 @@ void main() {
             blobScreenPos[i] = screen;
             blobDepth[i] = depth;
             blobVisible[i] = true;
+            if (i == 0) {
+                closestScreen = screen;
+                closestBlobDepth = depth;
+            }
 
             // Metaball contribution
             float dist2D = length(uv - screen);
@@ -391,9 +398,11 @@ void main() {
             }
 
             // Track closest for color
-            if (dist2D < length(uv - blobScreenPos[closestBlob])) {
+            if (dist2D < length(uv - closestScreen)) {
                 closestBlob = i;
                 closestDepth = depth / cameraDistance;
+                closestScreen = screen;
+                closestBlobDepth = depth;
             }
         } else {
             blobVisible[i] = false;
@@ -410,8 +419,8 @@ void main() {
 
             vec3 posA = rotation * getBlobPosition(i, time, netMode);
 
-            for (int j = i + 1; j < 40; j++) {
-                if (j >= blobCnt || !blobVisible[j]) continue;
+            for (int j = 0; j < 40; j++) {
+                if (j <= i || j >= blobCnt || !blobVisible[j]) continue;
 
                 vec3 posB = rotation * getBlobPosition(j, time, netMode);
 
@@ -454,8 +463,8 @@ void main() {
 
         // Blob glow from center
         if (blobGlow > 0.0) {
-            float centerDist = length(uv - blobScreenPos[closestBlob]);
-            float size = blobSize / (blobDepth[closestBlob] / cameraDistance);
+            float centerDist = length(uv - closestScreen);
+            float size = blobSize / (closestBlobDepth / cameraDistance);
             float glow = 1.0 - smoothstep(0.0, size * 2.0, centerDist);
             col += blobColor * glow * blobGlow * showBlobs * 0.3;
         }

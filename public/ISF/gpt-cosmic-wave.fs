@@ -1,12 +1,24 @@
-```glsl
-attribute vec2 isf_vertShaderInit;
+/*{
+    "CREDIT":       "Ghost Arcade",
+    "DESCRIPTION":  "Data Tapestry — fluid, melting particle network connected by lines",
+    "ISFVSN":       "2.0",
+    "CATEGORIES":   [ "generator" ],
+    "INPUTS": [
+        { "NAME":"timeScale",      "TYPE":"float", "MIN":0.0,  "MAX":5.0,  "DEFAULT":1.0 },
+        { "NAME":"gridRes",        "TYPE":"long",  "DEFAULT":8,   "VALUES":[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] },
+        { "NAME":"noiseScale",     "TYPE":"float", "MIN":0.1,  "MAX":10.0,"DEFAULT":2.5 },
+        { "NAME":"connectThresh",  "TYPE":"float", "MIN":0.001,"MAX":0.05,"DEFAULT":0.01},
+        { "NAME":"meltAmount",     "TYPE":"float", "MIN":0.0,  "MAX":1.0,  "DEFAULT":0.4 },
+        { "NAME":"colorIntensity", "TYPE":"float", "MIN":0.0,  "MAX":2.0,  "DEFAULT":1.0 }
+    ]
+}*/
 
 #ifdef GL_ES
 precision highp float;
 #endif
 
-uniform vec2  iResolution;
-uniform float iTime;
+#define iResolution RENDERSIZE
+#define iTime TIME
 uniform float timeScale;
 uniform float gridRes;
 uniform float noiseScale;
@@ -116,4 +128,3 @@ void main(){
     vec3 col = mix(bgCol, netCol, clamp(netVal*1.5,0.0,1.0));
     gl_FragColor = vec4(col,1.0);
 }
-```

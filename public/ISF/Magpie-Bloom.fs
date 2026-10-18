@@ -21,9 +21,9 @@
 
         { "NAME": "emissionStrength","TYPE": "float", "MIN": 0.0, "MAX": 2.0,  "DEFAULT": 0.80, "LABEL": "Body emission" },
 
-        { "NAME": "audioBass",      "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.0,  "LABEL": "Audio → bass channel" },
-        { "NAME": "audioMids",      "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.0,  "LABEL": "Audio → mids channel" },
-        { "NAME": "audioHighs",     "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.0,  "LABEL": "Audio → highs channel" },
+        { "NAME": "audioBassParam", "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.0,  "LABEL": "Audio → bass channel" },
+        { "NAME": "audioMidsParam", "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.0,  "LABEL": "Audio → mids channel" },
+        { "NAME": "audioHighsParam", "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.0,  "LABEL": "Audio → highs channel" },
         { "NAME": "exposure",       "TYPE": "float", "MIN": 0.5,  "MAX": 2.0,  "DEFAULT": 1.00, "LABEL": "Exposure" },
 
         { "NAME": "bodyHi",         "TYPE": "color", "DEFAULT": [0.85, 0.95, 0.30, 1.0], "LABEL": "Body — ridges (yellow)" },
@@ -156,7 +156,7 @@ float plumeDensity(vec3 p, float t) {
 // the form with vertical bias) and animates via 3-axis trig drift
 // + an overall upward velocity. We accumulate point-line distance
 // from the camera ray to each particle and shade as a soft additive
-// disk. The audioHighs channel boosts brightness; randomized per-
+// disk. The audioHighsParam channel boosts brightness; randomized per-
 // particle phase keeps the motion organic rather than synchronized.
 //
 // Cost: 80 iterations × ~12 ops = ~1000 ops per pixel. Roughly
@@ -284,13 +284,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float midsRaw  = sampleFFT(0.35) + audioLevel * 0.10;
     float highsRaw = sampleFFT(0.72) + audioLevel * 0.05;
 
-    float bass  = bassRaw  * audioBass;
-    float mids  = midsRaw  * audioMids;
-    float highs = highsRaw * audioHighs;
+    float bass  = bassRaw  * audioBassParam;
+    float mids  = midsRaw  * audioMidsParam;
+    float highs = highsRaw * audioHighsParam;
 
     // Bass-driven form pulse + bright pulse
     float pulse = bass * 0.20;
-    float brightPulse = 1.0 + bass * 0.45 + audioLevel * audioBass * 0.15;
+    float brightPulse = 1.0 + bass * 0.45 + audioLevel * audioBassParam * 0.15;
 
     // Camera — slow orbit + slight vertical bob
     float camAngle = sin(t * 0.07) * 0.5 + t * 0.04;
@@ -403,7 +403,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     // ── Lightning flashes (additive screen-space overlay) ──
     // Trigger = mid-band energy + a baseline so it sparkles even
     // without audio (set lightning > 0 in the params for ambient,
-    // turn audioMids up for true reactive bursts).
+    // turn audioMidsParam up for true reactive bursts).
     float trigger = lightning * (0.18 + mids * 1.5);
     float bolt = lightningField(uv, TIME, trigger);
     col += lightningColor.rgb * bolt * 1.4;
