@@ -53,6 +53,9 @@
     await wait(150);
     document.querySelector(`[data-tour="${target}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
+  function openMediaTray() {
+    click('.tray-toggle:not(.open)');
+  }
   function openVjMedia() {
     if (document.querySelector('.right-panel-vj.collapsed')) click('.vj-right-tray-toggle');
   }
@@ -188,9 +191,8 @@
           bullets: [
             'Open the output window with the button below, or with Output Window in the main toolbar',
             'Drag that window onto the projector screen',
-            'Stage Edit splits the picture across several screens',
+            'STAGE at the top of VJ mode plays the deck across your mapped screens',
           ],
-          targets: ['button[title^="Edit live 2D stage"]'],
           action: { label: 'Open the output window', run: openOutput },
         },
         outro,
@@ -243,7 +245,7 @@
             'When a shader is selected, its controls appear above the library',
           ],
           targets: ['.media-tray'],
-          prepare: selectFirstSurface,
+          prepare: () => { selectFirstSurface(); openMediaTray(); },
         },
         {
           title: 'Fine-tune the surface',
