@@ -16,6 +16,7 @@ import { generateUUID } from '../utils/uuid';
 import { syncStageEffectsFromSurfaces, createDefaultStageEffect } from './stageEffects';
 import { getStageTemplate } from './stageTemplates';
 import { restoreStagePresetSurface } from './stagePresetSurfaces';
+import { stageScreenGuidePoints } from '../utils/stageScreenGuide';
 
 // ─── State ───────────────────────────────────────────────
 
@@ -670,6 +671,27 @@ function createSurfaceStore() {
 	      return slice.id;
 	    },
 
+    /** Link a screen made in the live stage editor to a 2D stage slice, so
+     *  the Stage Designer shows it and its edits sync back. */
+    registerLiveScreenLayer(layer: import('../types').Layer): string | null {
+      if (layer.type !== 'screen') return null;
+      let state = get({ subscribe });
+      let surface = state.surfaces.find(item => item.id === state.activeSurfaceId);
+      if (!surface) {
+        this.createSurface('Stage 1');
+        state = get({ subscribe });
+        surface = state.surfaces.find(item => item.id === state.activeSurfaceId);
+      }
+      if (!surface) return null;
+      const existing = surface.slices.find(slice => slice.sourceBinding?.kind === 'layer' && slice.sourceBinding.layerId === layer.id);
+      if (existing) return existing.id;
+      const polygon = stageScreenGuidePoints(layer).map(point => ({ x: point.x * surface!.width, y: (1 - point.y) * surface!.height }));
+      if (polygon.length < 3) return null;
+      const sliceId = this.addSlice(polygon, layer.name);
+      if (sliceId) this.bindSliceSource(sliceId, { kind: 'layer', layerId: layer.id });
+      return sliceId;
+    },
+
     updateSlice(sliceId: string, patch: Partial<SurfaceSlice>) {
       mutateWithHistory(s => ({
         ...s,
@@ -1052,7 +1074,7 @@ function createSurfaceStore() {
      *  Re-application is idempotent: existing slice→layer links are
      *  updated in place (layer keeps its content + name customizations),
      *  and new slices get new layers.  Returns true on success. */
-    async applyStage(): Promise<boolean> {
+    async applyStage(options: { stayInVJ?: boolean } = {}): Promise<boolean> {
       const state = get({ subscribe });
       const surface = state.surfaces.find(x => x.id === state.activeSurfaceId);
       if (!surface || surface.slices.length === 0) {
@@ -1085,9 +1107,12 @@ function createSurfaceStore() {
         } : sf),
       }));
       // Pop the user back into the main mapping workspace so they can
-      // start assigning content to the freshly-created layers.
-      const { workspace } = await import('./workspace');
-      workspace.closeAll();
+      // start assigning content to the freshly-created layers. The live
+      // stage editor applies in place and leaves the deck where it is.
+      if (!options.stayInVJ) {
+        const { workspace } = await import('./workspace');
+        workspace.closeAll();
+      }
       return true;
     },
 

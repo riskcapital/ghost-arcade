@@ -14,10 +14,12 @@
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { workspace } from '../stores/workspace';
+  import { vjStageEdit } from '../stores/vjStageEdit';
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
   import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
   import { surfaceStore, activeSurface } from '../stores/surface';
   import type { StageEffectType, IntegratedEffectType, IntegratedEffectSource, MediaSource } from '../types';
+  import { VJ_MIX_SOURCE_INDEX } from '../types';
 
   // Stage Effects tab UX state — which effect type the user has
   // chosen in the "Add" picker. Defaults to the first catalog entry.
@@ -1367,6 +1369,31 @@
   let vjNdiChecked = false;
   let vjNdiScanning = false;
   let vjNdiStatusHint = 'Open an NDI® sender in other mapping software, other VJ software, OBS, or another VJ app on this machine or network';
+  // Live stage editing: the mapping editor's screens over the playing deck.
+  // A first screen is made (or the 2D stage applied) so there is something
+  // to edit, showing the deck mix.
+  async function openLiveStageEditor() {
+    if (!$project.layers.some(layer => layer.type === 'screen')) {
+      if ($activeSurface?.slices.length) {
+        await surfaceStore.applyStage({ stayInVJ: true });
+        for (const layer of get(project).layers) {
+          if (layer.type === 'screen' && layer.vjLayerIndex === 0) project.setLayerVJIndex(layer.id, VJ_MIX_SOURCE_INDEX);
+        }
+      } else {
+        project.addScreenLayer('Main Screen');
+        const screenId = get(project).selectedLayerId;
+        if (screenId) {
+          project.setLayerVJIndex(screenId, VJ_MIX_SOURCE_INDEX);
+          const screen = get(project).layers.find(layer => layer.id === screenId);
+          if (screen) surfaceStore.registerLiveScreenLayer(screen);
+        }
+      }
+    }
+    // This view change must not clear active clip transitions.
+    vjClipLauncher.setStageMode(true);
+    vjStageEdit.set(true);
+  }
+
   async function vjStartNdiScan() {
     const api = (window as any).ghostNDI;
     if (!api) {
@@ -3613,7 +3640,7 @@
 />
 
 {#if $vjClipLauncher.isOpen}
-  <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen}>
+  <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen} class:stage-edit-hidden={$vjStageEdit}>
     <!-- Header -->
     <div class="vj-header" use:fitToolbar>
       <!-- Lead column: fixed-size left controls, then the MIX/STAGE/MAP
@@ -3750,9 +3777,7 @@
           </svg>
           Stage Sim
         </button>
-        <!-- The Stage Designer, as mapping mode's Stage button opens it. The
-             deck keeps playing to the output while it is open. -->
-        <button class="minimize-btn stage-sim-btn" onclick={() => workspace.openStage()} title="Edit the stage screens and their warp" aria-label="Open Stage Editor">
+        <button class="minimize-btn stage-sim-btn" onclick={openLiveStageEditor} title="Edit live 2D stage screens, warp, and VJ routing" aria-label="Edit live 2D stage">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
           Stage Edit
         </button>
@@ -6104,6 +6129,7 @@
 
 <style>
   /* VJ Overlay */
+  .vj-overlay.stage-edit-hidden { display: none; }
   .vj-overlay {
     position: fixed;
     inset: 0;
