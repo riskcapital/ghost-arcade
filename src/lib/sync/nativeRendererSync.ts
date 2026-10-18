@@ -7906,12 +7906,16 @@ export class NativeRendererSync {
     if (!this.supportsNativeFeature('native_post_composite_graph')) return noChain();
     const mappingComposition = get(project)?.mappingComposition;
     const vjState = get(vjClipLauncher);
-    // Mix composition FX already run on __vj-mix__. Maps mode has no mix
-    // carrier; its composition FX belong on the final preset composite.
-    // Mapping FX belong only to Mapping or the mapped Stage composition.
-    const outputEffects = vjState.isLive && !vjState.stageMode
-      ? (vjState.mapMode ? vjState.compositionEffects ?? [] : [])
-      : (mappingComposition?.enabled ? mappingComposition.effects ?? [] : []);
+    // VJ composition FX run here, on the final composite, in every live VJ
+    // mode: the same chain the macros use, so every effect works on the
+    // whole picture, including the ones that sample neighbouring pixels
+    // (ASCII, blur, kaleidoscope), which did not come through on the mix
+    // carrier. Mapping FX belong to Mapping and to the mapped STAGE output,
+    // where they run first.
+    const mappingEffects = mappingComposition?.enabled ? mappingComposition.effects ?? [] : [];
+    const outputEffects = vjState.isLive
+      ? [...(vjState.stageMode ? mappingEffects : []), ...(vjState.compositionEffects ?? [])]
+      : mappingEffects;
     const candidates = [
       ...outputEffects
         .map((effect) => ({ effect, mix: Number(effect.opacity ?? 1) })),

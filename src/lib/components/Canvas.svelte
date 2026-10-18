@@ -1700,8 +1700,9 @@
 
       // The VJ rows as native layers: clip transitions, the A/B crossfade
       // carriers and the VJ Mix carrier. null = a derived store is one tick
-      // behind the launcher; the caller skips this sync. `mixFx` is false in
-      // MAP, where composition FX run once on the final output instead.
+      // behind the launcher; the caller skips this sync. `mixFx` puts the
+      // composition FX on the carrier; every live VJ mode passes false and
+      // runs them once on the final output instead (nativeRendererSync).
       const buildNativeVjFeedLayers = (vjState: VJClipLauncherState, mixFx: boolean): Layer[] | null => {
         const appendMix = (list: Layer[]) => {
           const state = get(vjClipLauncher);
@@ -1852,7 +1853,10 @@
             return composeMapOutputLayers(feeds, mappingLive, presetLayers, get(project).mapSurfaces);
           }
           if (vjState.stoppedAll) return stageWrap([]);
-          const feeds = buildNativeVjFeedLayers(vjState, true);
+          // Composition FX run once on the final output, on the same
+          // post-composite chain as the macros (nativeRendererSync), not on
+          // the mix carrier.
+          const feeds = buildNativeVjFeedLayers(vjState, false);
           return feeds ? stageWrap(feeds) : null;
         }
         // MAPPING mode. Mid-transition this is BOTH compositions' layer
