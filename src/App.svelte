@@ -67,7 +67,11 @@
     catch { return false; }
   };
   import VJModePanel from './lib/components/VJModePanel.svelte';
-  import StageDesignerPanel from './lib/components/StageDesignerPanel.svelte';
+  import VJStageEditPanel from './lib/components/VJStageEditPanel.svelte';
+  import VJStageInspector from './lib/components/VJStageInspector.svelte';
+  import StageEditorHeader from './lib/components/StageEditorHeader.svelte';
+  import { stageScreenGuidePath } from './lib/utils/stageScreenGuide';
+  import { vjStageEdit } from './lib/stores/vjStageEdit';
   import ProjectionSimulatorPanel from './lib/components/ProjectionSimulatorPanel.svelte';
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
   import VideoConverterModal from './lib/components/VideoConverterModal.svelte';
@@ -4070,6 +4074,7 @@
   // Output window state
   let outputMode: 'embedded' | 'window' | 'fullscreen' = 'embedded';
   $: liveOutput.set({ mode: outputIsOpen ? outputMode : 'embedded' });
+  $: if ($vjStageEdit && $vjClipLauncher.isOpen && !$vjClipLauncher.stageMode) vjStageEdit.set(false);
 
   function openOutputWindow() {
     outputMode = 'window';
@@ -5694,7 +5699,7 @@
     {/if}
 
     <!-- Header / Toolbar -->
-    <header class="toolbar" use:fitToolbar>
+    <header class="toolbar" use:fitToolbar class:stage-edit-toolbar-hidden={$vjStageEdit}>
       <div class="toolbar-left">
         <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="header-logo" />
         {#if gpuInfo}
@@ -6045,8 +6050,8 @@
              mode via the activeWorkspace flag in the workspace store. -->
         <button
           class="stage-btn stage-edit-btn"
-          class:active={$workspace === 'stage'}
-          onclick={() => workspace.openStage()}
+          class:active={$vjStageEdit}
+          onclick={() => vjStageEdit.set(true)}
           title="Open Stage Editor"
           aria-label="Open Stage Editor"
         >
@@ -6193,6 +6198,10 @@
       </div>
     </header>
 
+    {#if $vjStageEdit}
+      <StageEditorHeader onUndo={handleUndo} onRedo={handleRedo} onFit={resetViewportTransform} zoom={viewportZoom} />
+    {/if}
+
     <!-- Main Content -->
     <main
       class="main-content"
@@ -6204,7 +6213,11 @@
            LeftSidebar swaps LayerPanel ↔ ScreenPanel based on the
            active tab (uiState.leftSidebarTab). Screens tab also
            enables the warp-handle overlay in the editor viewport. -->
-      <LeftSidebar />
+      {#if $vjStageEdit}
+        <VJStageEditPanel />
+      {:else}
+        <LeftSidebar />
+      {/if}
 
       <!-- Viewport with canvas and warp handles -->
       <div
@@ -6270,6 +6283,22 @@
           >
             <GridOverlay />
           </div>
+        {/if}
+        {#if $vjStageEdit}
+          <svg class="vj-stage-guides" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px; width: {canvasWidth}px; height: {canvasHeight}px;" viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} aria-label="Live VJ screen outlines">
+            <defs><pattern id="live-stage-grid" width={canvasWidth / 8} height={canvasHeight / 4} patternUnits="userSpaceOnUse"><path d={`M ${canvasWidth / 8} 0 L 0 0 0 ${canvasHeight / 4}`} fill="none" stroke="var(--ga-blue-mute-300)" stroke-width="0.6" opacity="0.28" /></pattern></defs>
+            <rect width={canvasWidth} height={canvasHeight} fill="url(#live-stage-grid)" pointer-events="none" />
+            {#each $project.layers.filter(layer => layer.type === 'screen' && layer.visible) as screen, index (screen.id)}
+              <path
+                d={stageScreenGuidePath(screen, canvasWidth, canvasHeight)}
+                class:selected={screen.id === $project.selectedLayerId}
+                onclick={(event) => { event.stopPropagation(); project.selectLayer(screen.id); }}
+                role="button"
+                aria-label={`Select ${screen.name}`}
+              />
+              <text x={screen.corners.topLeft.x * canvasWidth + 8} y={(1 - screen.corners.topLeft.y) * canvasHeight - 9} class="vj-stage-screen-label">{index + 1} · {screen.name}</text>
+            {/each}
+          </svg>
         {/if}
         <!-- Screen warp overlay (Screens tab only).
              Mounted at the same offset as the layer warp handles so
@@ -6929,6 +6958,9 @@
       </div>
 
       <!-- Right sidebar panel (always present to keep viewport size stable) -->
+      {#if $vjStageEdit}
+        <VJStageInspector />
+      {:else}
       <div class="right-sidebar">
         {#if $selectedLinesLayer}
           <LinesPanel />
@@ -7005,6 +7037,7 @@
           {/if}
         {/if}
       </div>
+      {/if}
 
     </main>
 
@@ -7027,10 +7060,12 @@
     <ShowTimeline />
 
     <!-- Bottom dock pills (Presets / Sequencer / Keyframes) — coral-active. -->
-    <BottomDock
-      presetsOpen={presetTrayOpen}
-      onTogglePresets={() => presetTrayOpen = !presetTrayOpen}
-    />
+    {#if !$vjStageEdit}
+      <BottomDock
+        presetsOpen={presetTrayOpen}
+        onTogglePresets={() => presetTrayOpen = !presetTrayOpen}
+      />
+    {/if}
 
     <!-- VJ Mode Panel (full screen overlay) -->
     <VJModePanel
@@ -7057,9 +7092,6 @@
     <!-- Stage Designer overlay (fullscreen, z=999 — same pattern as
          VJModePanel). Mutual exclusion guaranteed by activeWorkspace
          setter in workspace.ts. -->
-    {#if $workspace === 'stage'}
-      <StageDesignerPanel />
-    {/if}
 
     {#if $workspace === 'projection-sim'}
       <ProjectionSimulatorPanel sourceCanvas={canvasComponent?.getCanvas?.() ?? null} />
@@ -7128,7 +7160,7 @@
     <MediaPipeLearnHUD />
 
     <!-- Footer / Status bar -->
-    <footer class="statusbar">
+    <footer class="statusbar" class:stage-edit-status-hidden={$vjStageEdit}>
       <span>Project: {$project.name}</span>
       <span>Layers: {$project.layers.length}</span>
       {#if $selectedLayer}
@@ -9017,6 +9049,13 @@
   }
 
   /* Main Content */
+  .toolbar.stage-edit-toolbar-hidden { display: none !important; }
+  .statusbar.stage-edit-status-hidden { display: none !important; }
+  .vj-stage-guides { position: absolute; z-index: 11; overflow: visible; pointer-events: none; }
+  .vj-stage-guides path { fill: color-mix(in srgb, var(--ga-blue-mute-600) 2.5%, transparent); stroke: var(--ga-blue-200); stroke-width: 1.5; stroke-dasharray: 7 5; vector-effect: non-scaling-stroke; pointer-events: visiblePainted; cursor: pointer; }
+  .vj-stage-guides path.selected { stroke: #e6f2ff; stroke-width: 2; stroke-dasharray: none; }
+  .vj-stage-screen-label { fill: #c6dbf7; font: 600 11px Inter, system-ui, sans-serif; paint-order: stroke; stroke: #0d1119; stroke-width: 3px; pointer-events: none; }
+
   .main-content {
     flex: 1;
     display: flex;
