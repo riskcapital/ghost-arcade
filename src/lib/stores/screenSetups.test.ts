@@ -111,7 +111,9 @@ describe('wiring', () => {
   it('New Project asks for the default setup', () => {
     // A default that nothing consults is no default at all.
     const app = readFileSync(join(process.cwd(), 'src', 'App.svelte'), 'utf8');
-    const start = app.indexOf('function newProjectConfirm()');
+    // File > New and every template start through startFreshProject.
+    const start = app.indexOf('function startFreshProject(');
+    expect(start).toBeGreaterThan(-1);
     const body = app.slice(start, app.indexOf('\n  }', start));
     expect(body).toContain('resetOutputStageForNewProject(screenSetups.defaultSnapshot())');
   });

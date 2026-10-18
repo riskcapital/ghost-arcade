@@ -112,7 +112,10 @@ describe('new project output reset', () => {
   });
 
   it('is actually called when a new project is created', () => {
-    const start = appSource.indexOf('function newProjectConfirm()');
+    // File > New and every template start through startFreshProject.
+    const confirm = appSource.indexOf('function newProjectConfirm()');
+    expect(appSource.slice(confirm, appSource.indexOf('\n  }', confirm))).toContain('startFreshProject(');
+    const start = appSource.indexOf('function startFreshProject(');
     expect(start).toBeGreaterThan(-1);
     const body = appSource.slice(start, appSource.indexOf('\n  }', start));
     expect(body).toContain('resetOutputStageForNewProject');
