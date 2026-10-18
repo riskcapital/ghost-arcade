@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Converted from Three.js by Claude",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "State of the Planet - Static view with multi-colored tendrils, particles, orbs, and embers",
     "ISFVSN": "2.0",
     "CATEGORIES": ["Generator"],
@@ -244,7 +244,7 @@ vec3 particleLayers(vec2 uv, float t) {
                 float dist = length(d);
 
                 // Size variation
-                float sizeNoise = snoise(vec3(id * 0.3, float(layer), 0.0));
+                float sizeNoise = snoise(vec3(id * 0.3, float(layer)));
                 float size = baseSize * (0.5 + pow((sizeNoise + 1.0) * 0.5, 2.0) * 1.5);
 
                 if (dist < size * 2.0) {

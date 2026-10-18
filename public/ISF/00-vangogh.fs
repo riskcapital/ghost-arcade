@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Grok, created by xAI",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "Lava Lamp Fractal Waves: Geometric Tracking - 3D waves with varied colors, splashes, and computer vision-like tracking",
     "ISFVSN": "2.0",
     "CATEGORIES": [ "Generator" ],
@@ -37,21 +37,21 @@
             "TYPE": "float",
             "MIN": 0.0,
             "MAX": 1.0,
-            "DEFAULT": 0.6 // Blue base
+            "DEFAULT": 0.6
         },
         {
             "NAME": "secondaryColorHue",
             "TYPE": "float",
             "MIN": 0.0,
             "MAX": 1.0,
-            "DEFAULT": 0.0 // Red highlights
+            "DEFAULT": 0.0
         },
         {
             "NAME": "splashColorHue",
             "TYPE": "float",
             "MIN": 0.0,
             "MAX": 1.0,
-            "DEFAULT": 0.3 // Green splashes
+            "DEFAULT": 0.3
         },
         {
             "NAME": "zDepthScale",

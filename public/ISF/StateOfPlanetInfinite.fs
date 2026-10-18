@@ -1,5 +1,5 @@
 /*{
-    "CREDIT": "Converted from Three.js by Claude",
+    "CREDIT": "Ghost Arcade",
     "DESCRIPTION": "State of the Planet - Infinite flythrough with particles, tendrils, and orbs",
     "ISFVSN": "2.0",
     "CATEGORIES": ["Generator"],
@@ -197,19 +197,19 @@ vec3 particleField(vec2 uv, float t, float z) {
                 // Drift animation
                 float drift = snoise(vec3(id * 0.1, t * 0.1 * speed)) * turbulence;
                 particlePos.x += drift * 0.2;
-                particlePos.y += snoise(vec3(id * 0.2, t * 0.15 * speed, 0.0)) * turbulence * 0.15;
+                particlePos.y += snoise(vec3(id * 0.2, t * 0.15 * speed)) * turbulence * 0.15;
 
                 vec2 d = tilePos - offset - particlePos;
                 float dist = length(d);
 
                 // Size variation based on noise
-                float sizeNoise = snoise(vec3(id * 0.3, layerZ * 0.1, 0.0));
+                float sizeNoise = snoise(vec3(id * 0.3, layerZ * 0.1));
                 float size = 0.02 + pow((sizeNoise + 1.0) * 0.5, 2.0) * 0.08;
                 size /= layerScale;
 
                 if (dist < size) {
                     // Color based on noise
-                    float colorNoise = snoise(vec3(id * 0.1, layerZ * 0.05, 0.0));
+                    float colorNoise = snoise(vec3(id * 0.1, layerZ * 0.05));
                     vec3 particleColor;
                     if (colorNoise < warmCoolMix - 0.5) {
                         particleColor = warmColor(hash2(id * 3.45));
