@@ -5083,8 +5083,15 @@
 
           <!-- Column headers (per-deck — column triggers fire only on this deck) -->
           <div class="column-headers">
-            <div class="live-preview-header">LIVE</div>
-            <div class="layer-controls-header"></div>
+            {#if $deckCrossfaderOn}
+              <div class="deck-corner-header">
+                <span class="deck-label">DECK {bank}</span>
+                <span class="deck-corner-live">LIVE</span>
+              </div>
+            {:else}
+              <div class="live-preview-header">LIVE</div>
+              <div class="layer-controls-header"></div>
+            {/if}
             {#each columnIndices as colIdx (colIdx)}
               <button
                 class="column-trigger"
@@ -5308,7 +5315,6 @@
         {#if $vjClipLauncher.crossfaderEnabled}
           <div class="dual-decks">
             <div class="deck-wrapper deck-a" class:focused={$vjClipLauncher.selectedDeck === 'A'}>
-              <div class="deck-label">DECK A</div>
               {@render deckUI('A')}
             </div>
 
@@ -5454,12 +5460,13 @@
             </div>
 
             <div class="deck-wrapper deck-b" class:focused={$vjClipLauncher.selectedDeck === 'B'}>
-              <div class="deck-label">DECK B</div>
               {@render deckUI('B')}
             </div>
           </div>
         {:else}
-          {@render deckUI('A')}
+          <div class="deck-scroll">
+            {@render deckUI('A')}
+          </div>
         {/if}
       </div>
 
@@ -6245,11 +6252,39 @@
     font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--text-muted, #888);
-    margin-bottom: 6px;
     padding: 2px 6px;
-    align-self: flex-start;
     border-radius: 3px;
     background: rgba(255, 255, 255, 0.04);
+  }
+  /* Deck name and LIVE share the pinned corner above the layer controls. */
+  .deck-corner-header {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    flex: 0 0 210px;
+    width: 210px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--vj-deck-bg);
+    box-shadow: 0 0 0 4px var(--vj-deck-bg), -12px 0 0 4px var(--vj-deck-bg);
+  }
+  .grid-section.reversed .deck-corner-header {
+    left: auto;
+    right: 0;
+  }
+  .deck-corner-live {
+    font-size: 10px;
+    font-weight: 600;
+    color: #666;
+  }
+  /* The header fills the wrapper's top padding so rows scrolling up
+     cannot show above it. */
+  .deck-wrapper .column-headers {
+    top: -8px;
+    margin-top: -8px;
+    padding-top: 8px;
   }
   .deck-wrapper.deck-a .deck-label { color: var(--ga-blue-200); }
   .deck-wrapper.deck-b .deck-label { color: #FF8577; }
@@ -6499,15 +6534,9 @@
      siblings inside the same scrollable container — they stay aligned
      at every scroll offset. */
   .deck-wrapper {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    border: 1px solid #2a2a2a;
-    border-radius: 8px;
-    background: #0c0c10;
-    padding: 8px;
-    transition: border-color 0.18s, box-shadow 0.18s;
+    overflow: auto;
+    position: relative;
+    --vj-deck-bg: #0c0c10;
   }
 
   /* Lock cell + column-trigger widths inside dual-deck mode so the two
@@ -7986,9 +8015,81 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: auto;
+    /* The block tabs and deck toolbar stay put; only the deck scrolls. */
+    overflow: hidden;
+    min-height: 0;
     background: #0e0e0e;
     padding: 12px;
+    --vj-deck-bg: #0e0e0e;
+  }
+
+  .deck-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+  /* Rows span every column so the pinned controls hold for the whole
+     sideways scroll. */
+  .deck-scroll .column-headers,
+  .deck-scroll .layer-row {
+    width: max-content;
+    min-width: 100%;
+  }
+  /* One shared base width keeps the column buttons lined up with the
+     cells whether the columns fit or overflow. */
+  .deck-scroll .column-trigger,
+  .deck-scroll .clip-cell {
+    flex: 1 1 76px;
+    width: 76px;
+  }
+
+  /* Layer preview + controls stay pinned while columns scroll sideways and
+     travel with their row on a vertical scroll. */
+  .layer-row .layer-live-preview,
+  .live-preview-header {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+  }
+  .layer-controls,
+  .layer-controls-header {
+    position: sticky;
+    left: 60px;
+    z-index: 4;
+  }
+  .live-preview-header,
+  .layer-controls-header {
+    background: var(--vj-deck-bg);
+    box-shadow: 0 0 0 4px var(--vj-deck-bg), -12px 0 0 4px var(--vj-deck-bg);
+  }
+  /* Full-height backing behind the pinned preview so cells never show
+     through under the thumbnail or in the gap beside the controls. */
+  .layer-row::before {
+    content: '';
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    flex: 0 0 60px;
+    margin-right: -64px;
+    background: var(--vj-deck-bg);
+    box-shadow: -12px 0 0 var(--vj-deck-bg);
+  }
+  .grid-section.reversed .layer-row::before {
+    left: auto;
+    right: 0;
+    margin-right: 0;
+    margin-left: -64px;
+    box-shadow: 12px 0 0 var(--vj-deck-bg);
+  }
+  .grid-section.reversed .layer-live-preview,
+  .grid-section.reversed .live-preview-header {
+    left: auto;
+    right: 0;
+  }
+  .grid-section.reversed .layer-controls,
+  .grid-section.reversed .layer-controls-header {
+    left: auto;
+    right: 60px;
   }
 
   .column-headers {
@@ -7997,7 +8098,7 @@
     margin-bottom: 8px;
     position: sticky;
     top: 0;
-    background: #0e0e0e;
+    background: var(--vj-deck-bg, #0e0e0e);
     z-index: 10;
     padding-bottom: 8px;
     min-width: 100%;
@@ -8757,23 +8858,27 @@
 
   /* Scrollbar */
   .media-list::-webkit-scrollbar,
-  .grid-section::-webkit-scrollbar {
+  .grid-section::-webkit-scrollbar,
+  .deck-scroll::-webkit-scrollbar {
     width: 6px;
   }
 
   .media-list::-webkit-scrollbar-track,
-  .grid-section::-webkit-scrollbar-track {
+  .grid-section::-webkit-scrollbar-track,
+  .deck-scroll::-webkit-scrollbar-track {
     background: #141414;
   }
 
   .media-list::-webkit-scrollbar-thumb,
-  .grid-section::-webkit-scrollbar-thumb {
+  .grid-section::-webkit-scrollbar-thumb,
+  .deck-scroll::-webkit-scrollbar-thumb {
     background: #333;
     border-radius: 3px;
   }
 
   .media-list::-webkit-scrollbar-thumb:hover,
-  .grid-section::-webkit-scrollbar-thumb:hover {
+  .grid-section::-webkit-scrollbar-thumb:hover,
+  .deck-scroll::-webkit-scrollbar-thumb:hover {
     background: #444;
   }
 
