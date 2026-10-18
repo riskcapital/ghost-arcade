@@ -7081,18 +7081,16 @@
       }}
     />
 
-    <!-- VJ Live indicator & reopen button (when minimized) -->
-    {#if $vjClipLauncher.isLive && !$vjClipLauncher.isOpen}
+    <!-- VJ Live indicator & reopen button (when minimized). The live stage
+         editor's own header shows the live output instead. -->
+    {#if $vjClipLauncher.isLive && !$vjClipLauncher.isOpen && !$vjStageEdit}
       <button class="vj-reopen-btn" onclick={() => vjClipLauncher.setOpen(true)}>
         <span class="live-dot-pulse"></span>
         VJ Live — Open Panel
       </button>
     {/if}
 
-    <!-- Stage Designer overlay (fullscreen, z=999 — same pattern as
-         VJModePanel). Mutual exclusion guaranteed by activeWorkspace
-         setter in workspace.ts. -->
-
+    <!-- Projection simulator remains a separate workspace. -->
     {#if $workspace === 'projection-sim'}
       <ProjectionSimulatorPanel sourceCanvas={canvasComponent?.getCanvas?.() ?? null} />
     {/if}
