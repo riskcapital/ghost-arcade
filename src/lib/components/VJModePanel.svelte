@@ -55,7 +55,8 @@
   import SynthVision from './SynthVision.svelte';
   import VJAudioBar from './VJAudioBar.svelte';
   import AudioInputPicker from './AudioInputPicker.svelte';
-  import ClipAudioMasterControl from './ClipAudioMasterControl.svelte';
+  import VJAudioOutput from './VJAudioOutput.svelte';
+  import VJTempoControls from './VJTempoControls.svelte';
   import AudioMeterPanel from './AudioMeterPanel.svelte';
   import MacroKnobBar from './MacroKnobBar.svelte';
   import { fitToolbar } from '../utils/toolbarFit';
@@ -5021,13 +5022,14 @@
           </div>
           <VJGroups />
           <div class="vj-dock-group">
-            <!-- Tap tempo, beat dots, auto tempo and the analyzer. -->
+            <!-- Tap tempo, beat dots, tempo detection and the analyzer, then
+                 nudge and resync for the beat clock. -->
             <AudioMeterPanel alwaysShow />
+            <VJTempoControls />
             <!-- Same picker component mapping and Performer use; state flows
                  through audioStore, so toggling here flips every mode. -->
             <AudioInputPicker />
-            <!-- How loud the clips play; appears while one is playing with sound. -->
-            <ClipAudioMasterControl />
+            <VJAudioOutput />
             <!-- Launch quantization. OFF = instant trigger (default); 1/4..4bar
                  align launches to detected beats (or the virtual clock at the
                  current BPM when audio is off). -->

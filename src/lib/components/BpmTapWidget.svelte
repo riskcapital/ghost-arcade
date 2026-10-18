@@ -77,8 +77,9 @@
     </label>
     {#if error}<span class="tempo-error" role="status">{error}</span>{/if}
     <button class="bpm-auto-btn" class:active={automatic} aria-pressed={automatic}
-      aria-label="Automatic tempo" onclick={clearTap} title={autoHelp}>
-      <span class="auto-label">AUTO</span>
+      aria-label="Detect tempo from audio" onclick={clearTap} title={`${autoStatus}. ${autoHelp}`}>
+      <i class="auto-dot" class:live={automatic && !waitingForAudio} aria-hidden="true"></i>
+      <span class="auto-label">DETECT TEMPO</span>
       <span class="auto-status" aria-live="polite">{autoStatus}</span>
     </button>
   </div>
@@ -139,6 +140,7 @@
     color: var(--ga-violet, #9b87f5);
   }
 
+  /* Dark and plain like its neighbours: on is a lit dot and brighter text, not a filled chip. */
   .bpm-auto-btn {
     display: flex;
     align-items: center;
@@ -160,7 +162,10 @@
     cursor: pointer;
   }
 
-  .auto-label { font-size: 11px; line-height: 12px; }
+  .auto-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ga-line-3, rgba(255, 255, 255, 0.2)); }
+  .bpm-auto-btn.active .auto-dot { background: var(--ga-blue-300, #7d9bff); }
+  .bpm-auto-btn.active .auto-dot.live { background: var(--ga-blue, #5278ff); box-shadow: 0 0 6px var(--ga-blue, #5278ff); }
+  /* The state is still announced and in the tooltip; it is just not printed in the bar. */
   .auto-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .bpm-auto-btn.active { color: var(--ga-ink-0, #e6ebf5); }
   .bpm-auto-btn:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }

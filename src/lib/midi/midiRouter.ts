@@ -11,6 +11,8 @@ import type { MidiMapping, MidiMessageType } from './midiTypes';
 import type { BlendMode } from '../types';
 import { getPluginByEffectType } from '../plugins/registry';
 import { normalizeControlPath } from '../control/controlPaths';
+import { releaseTempoNudgeInputs, setTempoNudgeInput, resyncLaunchClock } from '../stores/launchClock';
+import { clipAudio, clipAudioMaster } from '../audio/clipAudio';
 
 // Prebuilt lookup: "cc:74" -> [MidiMapping, ...]
 // Rebuilt automatically when mappings change
@@ -91,9 +93,8 @@ export function registerShowControl(handler: ((action: ShowControlAction) => voi
 }
 
 class MidiRouter {
-  /** Let go of anything an input was holding. This line of the app has no
-   *  held triggers, so there is nothing to release; callers share the API. */
-  public releaseInputs(_prefix: string) {}
+  /** Let go of anything an input was holding (a held tempo nudge). */
+  public releaseInputs(prefix: string) { releaseTempoNudgeInputs(prefix); }
 
   private dispatchShow(parts: string[], value: number) {
     if (!(value > 0) || !_showControl) return;
@@ -116,6 +117,14 @@ class MidiRouter {
       // Channel filter
       if (mapping.channel !== -1 && mapping.channel !== channel) continue;
 
+      // Tempo nudges are held: the press and the release both have to land.
+      const isTempoNudge = /^vj:tempo:(nudge-up|nudge-down|resync)$/.test(normalizeControlPath(mapping.path));
+      const inputId = `midi:${mapping.id}:${channel}:${number}`;
+      if (isTempoNudge) {
+        this.dispatch(mapping.path, type === 'note' && value === 0 ? 0 : this.convertValue(value, mapping, type), mapping, inputId);
+        continue;
+      }
+
       // Throttle check
       const wait = THROTTLE_MS - (now - (lastUpdateTime.get(mapping.path) || 0));
       clearTimeout(trailingUpdates.get(mapping.path));
@@ -126,7 +135,7 @@ class MidiRouter {
           const at = performance.now();
           lastUpdateTime.set(mapping.path, at);
           if (at < (userInteractingPaths.get(mapping.path) || 0)) return;
-          this.dispatch(mapping.path, this.convertValue(value, mapping, type), mapping);
+          this.dispatch(mapping.path, this.convertValue(value, mapping, type), mapping, inputId);
         }, wait));
         continue;
       }
@@ -140,7 +149,7 @@ class MidiRouter {
       const targetValue = this.convertValue(value, mapping, type);
 
       // Dispatch to correct store
-      this.dispatch(mapping.path, targetValue, mapping);
+      this.dispatch(mapping.path, targetValue, mapping, inputId);
     }
   }
 
@@ -206,13 +215,13 @@ class MidiRouter {
       discreteValues: opts.discreteValues,
     };
     try {
-      this.dispatch(path, value, mapping);
+      this.dispatch(path, value, mapping, opts.inputId ?? `path:${path}`);
     } catch (err) {
       console.warn(`[MIDI Router] dispatchPath failed for ${path}:`, err);
     }
   }
 
-  private dispatch(path: string, value: number, mapping: MidiMapping) {
+  private dispatch(path: string, value: number, mapping: MidiMapping, inputId?: string) {
     path = normalizeControlPath(path);
     const parts = path.split(':');
     const scope = parts[0]; // 'map', 'vj', 'vj-b', 'sv'
@@ -227,7 +236,7 @@ class MidiRouter {
           break;
         case 'vj':
           // Bank A is the canonical deck — most controllers use this scope.
-          this.dispatchVJ(parts, value, mapping, 'A');
+          this.dispatchVJ(parts, value, mapping, 'A', inputId);
           break;
         case 'vj-b':
           // Bank B parallels vj: opacity / solo / mute / trigger / column /
@@ -432,10 +441,18 @@ class MidiRouter {
     }
   }
 
-  private dispatchVJ(parts: string[], value: number, mapping: MidiMapping, bank: 'A' | 'B' = 'A') {
+  private dispatchVJ(parts: string[], value: number, mapping: MidiMapping, bank: 'A' | 'B' = 'A', inputId?: string) {
     // parts: ['vj' | 'vj-b', layerIndex|'master'|'crossfader'|..., property, ...]
     const layerPart = parts[1];
     const property = parts[2];
+
+    // Beat clock: hold nudge-up / nudge-down to bend the tempo, resync makes
+    // now the downbeat (rising edge).
+    if (layerPart === 'tempo' && ['nudge-up', 'nudge-down', 'resync'].includes(property)) {
+      if (property === 'resync') { if (value > 0) resyncLaunchClock(); }
+      else setTempoNudgeInput(inputId ?? `path:${parts.join(':')}`, value > 0 ? (property === 'nudge-up' ? 1 : -1) : 0);
+      return;
+    }
 
     // VJ Mode toggle: vj:mode. Rising edge enters/leaves the full VJ
     // workspace so controller users can return to regular mapping mode
@@ -452,6 +469,10 @@ class MidiRouter {
     }
 
     if (layerPart === 'master') {
+      // Clip audio master (the deck bar's Audio Out).
+      const audio = property?.toLowerCase();
+      if (audio === 'audiovolume') clipAudio.setMasterVolume(value);
+      if (audio === 'audiomute' && value > 0) clipAudio.setMasterMuted(!get(clipAudioMaster).muted);
       if (property === 'opacity') {
         vjClipLauncher.setMasterOpacity(value);
       }

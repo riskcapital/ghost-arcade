@@ -33,6 +33,7 @@ export interface ClipAudioMasterState {
 }
 
 const MASTER_KEY = 'ghost-arcade_clip_audio_master';
+const OUTPUT_KEY = 'ghost-arcade_clip_audio_output';
 const clamp = (value: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Number.isFinite(value) ? value : lo));
 
 function savedMaster(): { volume: number; muted: boolean } {
@@ -105,6 +106,7 @@ export class ClipAudioMixer {
   private wired = new WeakMap<HTMLMediaElement, Wiring>();
   private sounding = new Set<HTMLMediaElement>();
   private level = savedMaster();
+  private output = savedOutput();
 
   constructor(private createContext: () => AudioContext = () => new AudioContext()) {}
 
@@ -114,6 +116,7 @@ export class ClipAudioMixer {
       this.master = this.context.createGain();
       this.master.gain.value = this.level.muted ? 0 : this.level.volume;
       this.master.connect(this.context.destination);
+      if (this.output !== 'default') void this.routeTo(this.output);
     }
     if (this.context.state === 'suspended') void this.context.resume().catch(() => {});
     return { context: this.context, master: this.master };
@@ -169,6 +172,27 @@ export class ClipAudioMixer {
   }
   setMasterVolume(volume: number): void { this.setLevel({ ...this.level, volume: clamp(volume, 0, 1) }); }
   setMasterMuted(muted: boolean): void { this.setLevel({ ...this.level, muted }); }
+
+  /** The output device clip sound plays on ('default' = the system's). */
+  get outputDevice(): string { return this.output; }
+  async setOutputDevice(deviceId: string): Promise<void> {
+    this.output = deviceId || 'default';
+    try { localStorage.setItem(OUTPUT_KEY, this.output); } catch { /* holds for this session */ }
+    if (this.context) await this.routeTo(this.output);
+  }
+  private async routeTo(deviceId: string): Promise<void> {
+    const context = this.context as (AudioContext & { setSinkId?: (id: string) => Promise<void> }) | null;
+    if (!context?.setSinkId) return;
+    try {
+      await context.setSinkId(deviceId === 'default' ? '' : deviceId);
+    } catch (error) {
+      console.warn('[ClipAudio] could not switch output device:', error);
+    }
+  }
+}
+
+function savedOutput(): string {
+  try { return localStorage.getItem(OUTPUT_KEY) || 'default'; } catch { return 'default'; }
 }
 
 export const clipAudio = new ClipAudioMixer();

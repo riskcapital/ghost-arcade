@@ -86,4 +86,19 @@ describe('the mixer', () => {
     mixer.setMasterVolume(0.4);
     expect(made).toBe(0);
   });
+
+  it('plays on the chosen output device, now and once the mixer starts', async () => {
+    const sinks: string[] = [];
+    const { context } = fakeContext();
+    (context as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId = async (id) => { sinks.push(id); };
+    const mixer = new ClipAudioMixer(() => context);
+    await mixer.setOutputDevice('usb-interface');
+    expect(sinks).toEqual([]); // nothing to route until a clip sounds
+    mixer.apply([{ id: 'a', element: el(), gain: 1, pan: 0 }]);
+    await Promise.resolve();
+    expect(sinks).toEqual(['usb-interface']);
+    await mixer.setOutputDevice('default');
+    expect(sinks).toEqual(['usb-interface', '']);
+    expect(mixer.outputDevice).toBe('default');
+  });
 });
