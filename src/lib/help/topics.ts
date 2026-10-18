@@ -18,6 +18,7 @@ export const helpTopics: Record<string, { title: string; description: string }> 
   riders: { title: 'Smoke and Fluid Riders', description: 'Shape fluid motion and the particles moving through it.' },
   'point-clouds': { title: 'Point clouds and splats', description: 'Position and style scanned three-dimensional content.' },
   effects: { title: 'Effects', description: 'Adjust an effect or its parameters. Effect order changes the resulting image.' },
+  'edge-effects': { title: 'Edge Effects and Looks', description: 'Outline and animate the edges of a shape, or apply a ready-made look to it.' },
   'custom-effects': { title: 'Custom effects', description: 'Load and control a custom effect plugin.' },
   'custom-shaders': { title: 'Shaders', description: 'Load a shader and adjust the inputs it exposes.' },
   'ai-generation': { title: 'AI generation', description: 'Configure and use the available generation tools.' },

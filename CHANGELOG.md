@@ -1,3 +1,7 @@
+# Ghost Arcade 2.1.0 — October 18, 2026
+
+A welcome screen with a guided tour and ready-made show templates; VJ decks of any size stack properly at full resolution, with up to 32 rows playing; a projector button in VJ mode; Map Sim auto-mapping; six interface languages and new shader packs. See [release notes](docs/releases/v2.1.0.md).
+
 # Ghost Arcade 2.0.19 — October 12, 2026
 
 Clips added in the current session play their sound; more audio output formats; missing clip files are marked and can be relinked; drag to fill a row with a clip and to reorder rows; each Interactive object has its own look. See [release notes](docs/releases/v2.0.19.md).

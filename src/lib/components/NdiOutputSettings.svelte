@@ -19,7 +19,7 @@
   onMount(() => { void refresh(); return () => { alive = false; }; });
 </script>
 
-<div class="ndi-output" data-help-page="outputs">
+<div class="ndi-output" data-help-page="syphon-spout-ndi">
   <div class="status-row">
     <strong>{checking ? 'Checking NDI output…' : status.active ? 'NDI output enabled' : status.available ? 'NDI output ready' : 'NDI output unavailable'}</strong>
     <button onclick={refresh} disabled={checking}>Refresh</button>
