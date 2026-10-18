@@ -4965,10 +4965,8 @@
                 {/if}
               </div>
             {/each}
+            <button class="add-block-btn" onclick={handleAddBlock} title="Add new block" aria-label="Add new block">+</button>
           </div>
-          <button class="add-block-btn" onclick={handleAddBlock} title="Add new block">
-            +
-          </button>
           <div class="grid-snaps">
             <SnapshotBank placement="inline" />
           </div>
