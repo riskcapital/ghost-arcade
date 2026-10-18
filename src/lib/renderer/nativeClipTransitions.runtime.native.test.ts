@@ -265,7 +265,7 @@ describe('native clip transition graph ownership', () => {
     } finally { await rpc.close(); }
   }, 30000);
 
-  itIfNativeCore('refuses excess sources and optional snapshots without displacing live pictures', async () => {
+  itIfNativeCore('adds picture slots past the first ones without displacing live pictures', async () => {
     const rpc = createRpc();
     try {
       await startCore(rpc, 60);
@@ -283,15 +283,18 @@ describe('native clip transition graph ownership', () => {
       await rpc.send('submit_commands', { commands }, 30000);
       await ready(rpc, 'capacity-1', 'capacity-1');
       const before = await rpc.send('status');
+      // Every slot is taken by a live picture: the next one gets a new slot.
       await rpc.send('submit_commands', { commands: [
         { type: 'upload_source_frame', source_id: 'overflow', width: 16, height: 16, rgba_b64: solidB64([0, 0, 255]), seq: 1 },
       ] });
       const after = await rpc.send('status');
-      expect(after.source_frame_rejected_uploads).toBe(before.source_frame_rejected_uploads + 1);
-      expect(after.source_frame_last_reject_reason).toMatch(/capacity reached/);
+      expect(after.source_frame_rejected_uploads).toBe(before.source_frame_rejected_uploads);
+      expect(after.source_frame_slots).toBeGreaterThan(capacity);
       expect((await rpc.send('get_layer_source_readiness', { layer_id: 'capacity-1', source_id: 'capacity-1' })).ready).toBe(true);
-      await expect(rpc.send('capture_layer_source_frame', { layer_id: 'capacity-1', source_id: 'vj-clip-snapshot-A-0' }))
-        .rejects.toThrow(/no free GPU source slot/);
+      // An optional fade snapshot gets a slot of its own too.
+      await rpc.send('capture_layer_source_frame', { layer_id: 'capacity-1', source_id: 'vj-clip-snapshot-A-0' });
+      expect((await rpc.send('get_source_frame_readiness', { source_id: 'vj-clip-snapshot-A-0' })).source_slot)
+        .toBeGreaterThanOrEqual(capacity);
       await settleOn(rpc, 'red');
     } finally { await rpc.close(); }
   }, 60000);

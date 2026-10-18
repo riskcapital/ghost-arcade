@@ -25237,6 +25237,11 @@ impl RenderState {
         self.frame_uniform_cursor = 0;
         if !frozen && output_gate > 0.0 { self.admit_graph_jobs(native_graph_jobs.iter().chain(composite_graph_jobs.iter()))?; }
         self.render_native_graph_frame_jobs(&mut mirror_encoder, native_graph_jobs)?;
+        // A graph that renders into a slot for the first time creates that
+        // slot's texture while encoding (per-source store). Rebind before
+        // compositing, or this frame reads the empty placeholder (a black
+        // flash on a Screen that just switched to a crossfade copy).
+        self.refresh_source_frame_bind_groups();
         let mirror_timestamp_writes = if should_record_timing && !record_full_frame_timing {
             self.gpu_timing
                 .as_ref()
