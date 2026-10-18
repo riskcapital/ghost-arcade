@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Welcome screen — first launch only. Offers the guided tour and the
+  // Welcome screen — every fresh launch. Offers the guided tour and the
   // starter templates but never starts either by itself: people who already
   // know VJ software go straight to a blank or saved project.
   import { onMount } from 'svelte';
@@ -21,7 +21,6 @@
   onMount(() => { requestAnimationFrame(() => { ready = true; }); });
 
   function choose(choice: Choice) {
-    localStorage.setItem('ghostarcade-welcome-seen', 'true');
     onClose();
     choice.run();
   }

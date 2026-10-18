@@ -533,6 +533,8 @@
     localStorage.removeItem('ghostarcade-autosave');
     localStorage.removeItem('ghostarcade-autosave-timestamp');
     showRecoveryModal = false;
+    // Back in their own project: no need for the welcome screen this time.
+    showWelcome = false;
   }
 
   function discardAutosave() {
@@ -934,12 +936,10 @@
     // "Check now" from Settings calls runVersionCheck(true).
     runVersionCheck(false);
 
-    // No license check in the OSS build — go straight to first-run UX.
+    // No license check in the OSS build. Every fresh launch opens on the
+    // welcome screen (tour, template, open or blank), not just the first.
     initLicense().then(() => {
-      const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
-      if (!welcomeSeen && !promptsSuppressed()) {
-        showWelcome = true;
-      }
+      if (!promptsSuppressed()) showWelcome = true;
     });
 
     // Check for app updates (compares against latest GitHub release)
@@ -7108,13 +7108,10 @@
       onClose={() => showVideoConverter = false}
     />
 
-    <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
-    {#if showWelcome}
+    <!-- Welcome screen, every launch; it waits for a recovery prompt. -->
+    {#if showWelcome && !showRecoveryModal}
       <WelcomeModal
-        onClose={() => {
-          showWelcome = false;
-          localStorage.setItem('ghostarcade-welcome-seen', 'true');
-        }}
+        onClose={() => { showWelcome = false; }}
         onTour={() => onboarding.startTour()}
         onTemplates={() => onboarding.openTemplates()}
         onOpenProject={loadComposition}
