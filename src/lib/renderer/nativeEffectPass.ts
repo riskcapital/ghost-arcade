@@ -566,6 +566,11 @@ export interface NativeEffectPassOptions {
     bokehShape: number;
     bokehRotation: number;
     bokehMix: number;
+    bokehFocusMode: number;
+    bokehFocusX: number;
+    bokehFocusY: number;
+    bokehFocusSize: number;
+    bokehFocusFalloff: number;
     godRaysIntensity: number;
     godRaysDecay: number;
     godRaysExposure: number;
@@ -1713,6 +1718,23 @@ fn aperture_mask(p: vec2<f32>, shape: u32) -> f32 {
   let folded = fract1((ang + half_ang) / (2.0 * half_ang)) * (2.0 * half_ang) - half_ang;
   let poly_r = cos(half_ang) / max(0.001, cos(folded));
   return select(0.0, 1.0, r <= poly_r);
+}
+
+// Defocus Bokeh's focus area: 0 inside it (sharp), rising to 1 (the full
+// blur radius) across the falloff. focus = (x, y, size, falloff) in
+// top-origin UV; distances run 0 at the focus point to 1 at the frame's
+// corner (round focus) or its top and bottom edges (band focus).
+fn bokeh_focus_blur(uv: vec2<f32>, mode: u32, focus: vec4<f32>, texel: vec2<f32>) -> f32 {
+  let aspect = texel.y / max(texel.x, 0.000001);
+  let center = clamp(focus.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+  let size = clamp(focus.z, 0.0, 1.0);
+  let falloff = max(clamp(focus.w, 0.0, 1.0), 0.001);
+  var d = abs(uv.y - center.y) * 2.0;
+  if (mode != 2u) {
+    let p = (uv - center) * vec2<f32>(aspect, 1.0);
+    d = length(p) / length(vec2<f32>(aspect, 1.0) * 0.5);
+  }
+  return smoothstep(size, size + falloff, d);
 }
 
 fn displacement_offset(uv: vec2<f32>, t: f32, amount: f32) -> vec2<f32> {
@@ -4359,7 +4381,12 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 69u) {
-    let radius = max(0.0, amount);
+    let texel = effect_texel();
+    let focus_mode = u32(round(clamp(u.params1.w, 0.0, 2.0)));
+    var radius = max(0.0, amount);
+    if (focus_mode != 0u) {
+      radius *= bokeh_focus_blur(uv, focus_mode, u.params2, texel);
+    }
     if (radius < 0.5) {
       return src;
     }
@@ -4372,7 +4399,6 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let wet = clamp(u.params1.z, 0.0, 1.0);
     let c = cos(rot);
     let s = sin(rot);
-    let texel = effect_texel();
     var acc = vec3<f32>(0.0);
     var wsum = 0.0;
     for (var i = 0u; i < 48u; i = i + 1u) {
@@ -9393,7 +9419,11 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param4 = clampNumber(params.bokehShape ?? params.shape ?? params.param5, 0, 2, 0);
     param5 = clampNumber(params.bokehRotation ?? params.rotation ?? params.param6, 0, 360, 0);
     param6 = clampNumber(params.bokehMix ?? params.outputMix ?? params.mix ?? params.param7, 0, 1, 1);
-    param7 = 0;
+    param7 = Math.round(clampNumber(params.bokehFocusMode, 0, 2, 0));
+    param8 = clampNumber(params.bokehFocusX, 0, 1, 0.5);
+    param9 = clampNumber(params.bokehFocusY, 0, 1, 0.5);
+    param10 = clampNumber(params.bokehFocusSize, 0, 1, 0.3);
+    param11 = clampNumber(params.bokehFocusFalloff, 0, 1, 0.4);
   } else if (options.effect === 'god-rays') {
     amount = clampNumber(options.amount ?? params.godRaysIntensity ?? params.amount, 0, 2, 0.7);
     param0 = clampNumber(params.godRaysDecay ?? params.param0, 0.85, 1, 0.95);

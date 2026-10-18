@@ -700,6 +700,19 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
       ],
     },
     bokehRadius: { label: 'Radius', min: 0, max: 30, step: 0.5, default: 12 },
+    // Depth of field: keep a focus area sharp and soften toward the edges.
+    bokehFocusMode: {
+      label: 'Focus', min: 0, max: 2, step: 1, default: 0, type: 'select',
+      options: [
+        { value: 0, label: 'Everywhere (no focus area)' },
+        { value: 1, label: 'Center (round)' },
+        { value: 2, label: 'Band (horizontal)' },
+      ],
+    },
+    bokehFocusX: { label: 'Focus X', min: 0, max: 1, step: 0.01, default: 0.5 },
+    bokehFocusY: { label: 'Focus Y', min: 0, max: 1, step: 0.01, default: 0.5 },
+    bokehFocusSize: { label: 'Focus Size', min: 0, max: 1, step: 0.01, default: 0.3 },
+    bokehFocusFalloff: { label: 'Focus Softness', min: 0, max: 1, step: 0.01, default: 0.4 },
     bokehSamples: { label: 'Samples', min: 8, max: 48, step: 2, default: 24 },
     bokehBrightWeight: { label: 'Bright Boost', min: 0, max: 2, step: 0.01, default: 0.8 },
     bokehThreshold: { label: 'Highlight Threshold', min: 0, max: 1, step: 0.01, default: 0.7 },
@@ -2993,12 +3006,16 @@ export const effectPresets: Partial<Record<EffectType, EffectPreset[]>> = {
   // Defocus Bokeh (hero) — disc bokeh presets.
   defocusBokeh: [
     { name: 'Off',                  params: { bokehRadius: 0 } },
-    { name: 'Subtle Bokeh',         params: { bokehShape: 0, bokehRadius: 6, bokehSamples: 16, bokehBrightWeight: 0.5, bokehThreshold: 0.7 } },
-    { name: 'Cinematic Disc',       params: { bokehShape: 0, bokehRadius: 14, bokehSamples: 32, bokehBrightWeight: 1.0, bokehThreshold: 0.65 } },
-    { name: 'Hex Aperture',         params: { bokehShape: 1, bokehRadius: 14, bokehSamples: 32, bokehBrightWeight: 1.0, bokehThreshold: 0.65, bokehRotation: 0 } },
-    { name: 'Octagon Vintage',      params: { bokehShape: 2, bokehRadius: 12, bokehSamples: 28, bokehBrightWeight: 0.85, bokehThreshold: 0.7, bokehRotation: 22.5 } },
-    { name: 'Chromatic Bokeh Balls',params: { bokehShape: 0, bokehRadius: 16, bokehSamples: 36, bokehBrightWeight: 1.4, bokehThreshold: 0.6, bokehChromaFringe: 0.6 } },
-    { name: 'Heavy Defocus',        params: { bokehShape: 0, bokehRadius: 24, bokehSamples: 48, bokehBrightWeight: 1.2, bokehThreshold: 0.55 } },
+    { name: 'Subtle Bokeh',         params: { bokehFocusMode: 0, bokehShape: 0, bokehRadius: 6, bokehSamples: 16, bokehBrightWeight: 0.5, bokehThreshold: 0.7 } },
+    { name: 'Cinematic Disc',       params: { bokehFocusMode: 0, bokehShape: 0, bokehRadius: 14, bokehSamples: 32, bokehBrightWeight: 1.0, bokehThreshold: 0.65 } },
+    { name: 'Hex Aperture',         params: { bokehFocusMode: 0, bokehShape: 1, bokehRadius: 14, bokehSamples: 32, bokehBrightWeight: 1.0, bokehThreshold: 0.65, bokehRotation: 0 } },
+    { name: 'Octagon Vintage',      params: { bokehFocusMode: 0, bokehShape: 2, bokehRadius: 12, bokehSamples: 28, bokehBrightWeight: 0.85, bokehThreshold: 0.7, bokehRotation: 22.5 } },
+    { name: 'Chromatic Bokeh Balls',params: { bokehFocusMode: 0, bokehShape: 0, bokehRadius: 16, bokehSamples: 36, bokehBrightWeight: 1.4, bokehThreshold: 0.6, bokehChromaFringe: 0.6 } },
+    { name: 'Heavy Defocus',        params: { bokehFocusMode: 0, bokehShape: 0, bokehRadius: 24, bokehSamples: 48, bokehBrightWeight: 1.2, bokehThreshold: 0.55 } },
+    { name: 'Depth of Field',       params: { bokehShape: 0, bokehRadius: 14, bokehSamples: 32, bokehBrightWeight: 0.8, bokehThreshold: 0.7, bokehFocusMode: 1, bokehFocusX: 0.5, bokehFocusY: 0.5, bokehFocusSize: 0.3, bokehFocusFalloff: 0.4 } },
+    { name: 'Soft Edges',           params: { bokehShape: 0, bokehRadius: 8, bokehSamples: 24, bokehBrightWeight: 0.4, bokehThreshold: 0.75, bokehFocusMode: 1, bokehFocusX: 0.5, bokehFocusY: 0.5, bokehFocusSize: 0.5, bokehFocusFalloff: 0.5 } },
+    { name: 'Shallow Portrait',     params: { bokehShape: 1, bokehRadius: 20, bokehSamples: 40, bokehBrightWeight: 1.1, bokehThreshold: 0.6, bokehFocusMode: 1, bokehFocusX: 0.5, bokehFocusY: 0.45, bokehFocusSize: 0.18, bokehFocusFalloff: 0.3 } },
+    { name: 'Focus Band',           params: { bokehShape: 0, bokehRadius: 16, bokehSamples: 32, bokehBrightWeight: 0.9, bokehThreshold: 0.65, bokehFocusMode: 2, bokehFocusY: 0.5, bokehFocusSize: 0.25, bokehFocusFalloff: 0.35 } },
   ],
   // Chromatic Aberration (hero) — lens fringe presets.
   chromaticAberration: [

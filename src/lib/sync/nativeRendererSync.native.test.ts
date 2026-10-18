@@ -2671,7 +2671,20 @@ describe('native renderer sync effect-pass descriptors', () => {
         bokehRotation: 35,
         bokehMix: 0.75,
       },
-    })).toBe('defocus-bokeh:14.0000:32.0000:1.1000:0.6200:0.2500:1:35.0000:0.7500');
+    })).toBe('defocus-bokeh:14.0000:32.0000:1.1000:0.6200:0.2500:1:35.0000:0.7500:0:0.5000:0.5000:0.3000:0.4000');
+
+    // Depth of field: a sharp focus area that softens toward the edges.
+    expect(effectToNativeDescriptor({
+      type: 'defocusBokeh',
+      params: {
+        bokehRadius: 20,
+        bokehFocusMode: 1,
+        bokehFocusX: 0.3,
+        bokehFocusY: 0.6,
+        bokehFocusSize: 0.2,
+        bokehFocusFalloff: 0.25,
+      },
+    })).toBe('defocus-bokeh:20.0000:24.0000:0.8000:0.7000:0.0000:0:0.0000:1.0000:1:0.3000:0.6000:0.2000:0.2500');
 
     expect(effectToNativeDescriptor({
       type: 'godRays',
@@ -2836,7 +2849,7 @@ describe('native renderer sync effect-pass descriptors', () => {
       },
     });
 
-    expect(nativeEffectPassFromDescriptor('defocus-bokeh:14.0000:32.0000:1.1000:0.6200:0.2500:1:35.0000:0.7500')).toMatchObject({
+    expect(nativeEffectPassFromDescriptor('defocus-bokeh:14.0000:32.0000:1.1000:0.6200:0.2500:1:35.0000:0.7500:2:0.4000:0.5500:0.2000:0.3000')).toMatchObject({
       effect: 'defocus-bokeh',
       amount: 14,
       params: {
@@ -2847,8 +2860,16 @@ describe('native renderer sync effect-pass descriptors', () => {
         bokehShape: 1,
         bokehRotation: 35,
         bokehMix: 0.75,
+        bokehFocusMode: 2,
+        bokehFocusX: 0.4,
+        bokehFocusY: 0.55,
+        bokehFocusSize: 0.2,
+        bokehFocusFalloff: 0.3,
       },
     });
+    // Descriptors saved before the focus area keep blurring everywhere.
+    expect(nativeEffectPassFromDescriptor('defocus-bokeh:14.0000:32.0000:1.1000:0.6200:0.2500:1:35.0000:0.7500')?.params)
+      .toMatchObject({ bokehFocusMode: 0 });
 
     expect(nativeEffectPassFromDescriptor('god-rays:0.8500:0.9700:0.4500:0.8800:0.5500:0.4200:0.1200:96.0000:1.0000:0.8400:0.6200:0.9000')).toMatchObject({
       effect: 'god-rays',

@@ -1123,6 +1123,8 @@ export function createEffectMaterial(effectType: EffectType): THREE.ShaderMateri
       uniforms.uShape = { value: 0 };
       uniforms.uRotation = { value: 0 };
       uniforms.uMix = { value: 1 };
+      uniforms.uFocusMode = { value: 0 };
+      uniforms.uFocus = { value: new THREE.Vector4(0.5, 0.5, 0.3, 0.4) };
       break;
 
     case 'chromaticAberration':
@@ -2772,6 +2774,10 @@ export function updateEffectUniforms(
       if (u.uShape && p.bokehShape !== undefined) u.uShape.value = p.bokehShape;
       if (u.uRotation && p.bokehRotation !== undefined) u.uRotation.value = p.bokehRotation;
       if (u.uMix && p.bokehMix !== undefined) u.uMix.value = p.bokehMix;
+      if (u.uFocusMode && p.bokehFocusMode !== undefined) u.uFocusMode.value = p.bokehFocusMode;
+      if (u.uFocus) {
+        u.uFocus.value.set(p.bokehFocusX ?? 0.5, p.bokehFocusY ?? 0.5, p.bokehFocusSize ?? 0.3, p.bokehFocusFalloff ?? 0.4);
+      }
       break;
 
     case 'chromaticAberration':
@@ -4571,6 +4577,7 @@ export function getDefaultEffectParams(type: EffectType): EffectParams {
       return {
         bokehRadius: 12, bokehSamples: 24, bokehBrightWeight: 0.8, bokehThreshold: 0.7,
         bokehChromaFringe: 0, bokehShape: 0, bokehRotation: 0, bokehMix: 1,
+        bokehFocusMode: 0, bokehFocusX: 0.5, bokehFocusY: 0.5, bokehFocusSize: 0.3, bokehFocusFalloff: 0.4,
       };
     case 'diffusionPromist':
       return {

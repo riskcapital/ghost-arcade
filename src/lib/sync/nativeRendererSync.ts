@@ -1456,6 +1456,11 @@ export function effectToNativeDescriptor(effect: any): string | null {
     const shapeRaw = firstFiniteParam(params, ['bokehShape', 'shape'], 0);
     const rotationRaw = firstFiniteParam(params, ['bokehRotation', 'rotation'], 0);
     const mixRaw = firstFiniteParam(params, ['bokehMix', 'outputMix', 'mix'], 1);
+    const focusModeRaw = firstFiniteParam(params, ['bokehFocusMode'], 0);
+    const focusXRaw = firstFiniteParam(params, ['bokehFocusX'], 0.5);
+    const focusYRaw = firstFiniteParam(params, ['bokehFocusY'], 0.5);
+    const focusSizeRaw = firstFiniteParam(params, ['bokehFocusSize'], 0.3);
+    const focusFalloffRaw = firstFiniteParam(params, ['bokehFocusFalloff'], 0.4);
     return [
       'defocus-bokeh',
       Math.max(0, Math.min(30, radiusRaw)).toFixed(4),
@@ -1466,6 +1471,11 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(2, Math.round(shapeRaw))).toFixed(0),
       (((rotationRaw % 360) + 360) % 360).toFixed(4),
       Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(focusModeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, focusXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, focusYRaw)).toFixed(4),
+      Math.max(0, Math.min(1, focusSizeRaw)).toFixed(4),
+      Math.max(0, Math.min(1, focusFalloffRaw)).toFixed(4),
     ].join(':');
   }
   if (type === 'godrays') {
@@ -2893,6 +2903,11 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       bokehShape: Number(rawParam4 ?? 0),
       bokehRotation: Number(rawParam5 ?? 0),
       bokehMix: Number(rawParam6 ?? 1),
+      bokehFocusMode: Number(rawParam7 ?? 0),
+      bokehFocusX: Number(rawParam8 ?? 0.5),
+      bokehFocusY: Number(rawParam9 ?? 0.5),
+      bokehFocusSize: Number(rawParam10 ?? 0.3),
+      bokehFocusFalloff: Number(rawParam11 ?? 0.4),
     };
   } else if (effect === 'god-rays') {
     params = {
