@@ -3546,6 +3546,11 @@ export interface EffectParams {
   bokehShape?: number;             // 0=disc, 1=hex, 2=octagon
   bokehRotation?: number;          // 0-360
   bokehMix?: number;               // 0-1
+  bokehFocusMode?: number;         // 0=everywhere, 1=centre, 2=horizontal band
+  bokehFocusX?: number;            // 0-1 focus point (left to right)
+  bokehFocusY?: number;            // 0-1 focus point (top to bottom)
+  bokehFocusSize?: number;         // 0-1 in-focus area (1 reaches the corners / edges)
+  bokehFocusFalloff?: number;      // 0-1 sharp-to-soft transition width
 
   // Chromatic Aberration (hero)
   caAmount?: number;               // 0-1
