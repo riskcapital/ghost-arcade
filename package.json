@@ -19,6 +19,9 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
+    "predev": "node scripts/generate-isf-thumbnail-manifest.mjs",
+    "prebuild": "node scripts/generate-isf-thumbnail-manifest.mjs",
+    "isf:thumbnails": "node scripts/generate-isf-thumbnail-manifest.mjs",
     "dev:native-mobile": "vite --config vite.config.native-mobile.ts",
     "desktop": "concurrently \"npm run dev\" \"electron .\"",
     "build": "vite build",

@@ -400,6 +400,16 @@
   } catch { /* ignore */ }
   $: try { localStorage.setItem('ghostarcade-settings-section', selectedSection); } catch { /* */ }
 
+  // The guided tour jumps straight to a section (MIDI clock, Ableton Link).
+  onMount(() => {
+    const jump = (e: Event) => {
+      const section = (e as CustomEvent<{ section?: string }>).detail?.section;
+      if (section && SIDEBAR.some(c => c.sections.some(s => s.id === section))) selectedSection = section as SectionId;
+    };
+    window.addEventListener('ga-settings-section', jump);
+    return () => window.removeEventListener('ga-settings-section', jump);
+  });
+
   // Is the NDI native addon built + the NDI runtime initialized? Drives
   // the "NDI" option's disabled state in the per-slice transport
   // dropdown. Probed once on mount; falls back to false if the
@@ -1685,6 +1695,7 @@
               </div>
               <button
                 class="secondary-btn midi-learn-btn"
+                data-tour="midi-learn"
                 class:active={midiEditMode}
                 disabled={midiDevices.length === 0 && !midiEditMode}
                 onclick={() => midiStore.toggleEditMode()}
@@ -1830,7 +1841,7 @@
             <ControllerLightsSettings />
 
             <!-- MIDI Clock — sync to / from external transport -->
-            <h3 style="margin-top: 18px;">MIDI Clock</h3>
+            <h3 style="margin-top: 18px;" data-tour="midi-clock">MIDI Clock</h3>
 
             <div class="setting-row">
               <div class="setting-label">
@@ -1903,9 +1914,9 @@
             <!-- Ableton Link — WiFi/LAN tempo session with DAWs, DJ
                  software, and other Link apps. Tempo flows both ways;
                  a running MIDI clock-in takes priority over Link. -->
-            <h3 style="margin-top: 18px;">Ableton Link</h3>
+            <h3 style="margin-top: 18px;" data-tour="ableton-link-title">Ableton Link</h3>
 
-            <div class="setting-row">
+            <div class="setting-row" data-tour="ableton-link">
               <div class="setting-label">
                 <span class="label-text">Enable Ableton Link</span>
                 <span class="label-hint">Join the tempo session on your network — Serato, Rekordbox, Ableton Live, other VJ software and other Link apps sync automatically</span>
