@@ -1,5 +1,4 @@
-import { get } from 'svelte/store';
-import { vjClipLauncher, predictedClipPlayheadSeconds } from '../stores/vjClipLauncher';
+import { vjClipLauncherNow, predictedClipPlayheadSeconds } from '../stores/vjClipLauncher';
 
 /**
  * Reading control paths, so OSC can send state back out.
@@ -36,7 +35,7 @@ export function readControlPath(path: string): ControlPathValue | null {
   if (!deck) return null;
 
   const parts = path.split(':');
-  const state = get(vjClipLauncher) as any;
+  const state = vjClipLauncherNow() as any;
   const layerStates = deck === 'B' ? state.bankBLayerStates : state.layerStates;
   const grid = deck === 'B' ? state.bankBClipGrid : state.clipGrid;
   const tail = parts[1];

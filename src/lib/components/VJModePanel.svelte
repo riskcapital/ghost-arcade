@@ -26,7 +26,7 @@
   import { get } from 'svelte/store';
   import { prepareVideoImport } from '../video/videoImport';
   import { mediaLibrary, type MediaItem } from '../stores/media';
-  import { vjClipLauncher, MAX_VJ_COLUMNS, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
+  import { vjClipLauncher, vjCrossfader, vjSlice, MAX_VJ_COLUMNS, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { liveOutput, toggleOutputFullscreen, openOutputDisplayMenu } from '../stores/liveOutput';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
@@ -328,6 +328,19 @@
   let layerIndices: number[] = [];
   let columnIndices: number[] = [];
 
+  // The deck grid reads the launcher through these slices rather than the
+  // whole state, so a fader or opacity move re-renders only the rows it
+  // touches instead of every cell on both decks.
+  const deckClipGridA = vjSlice(s => s.clipGrid);
+  const deckClipGridB = vjSlice(s => s.bankBClipGrid);
+  const deckLayerStatesA = vjSlice(s => s.layerStates);
+  const deckLayerStatesB = vjSlice(s => s.bankBLayerStates);
+  const deckCrossfaderOn = vjSlice(s => s.crossfaderEnabled);
+  const deckSelected = vjSlice(s => s.selectedDeck);
+  const deckMapMode = vjSlice(s => s.mapMode);
+  const deckPendingTriggers = vjSlice(s => s.pendingTriggers);
+  const deckColumnCount = vjSlice(s => s.numColumns);
+
   // ---- Deck resolution helpers --------------------------------------------
   // When the crossfader is on, the UI renders TWO complete decks side-by-side.
   // These helpers route reads to the right state slice based on the deck tag.
@@ -524,7 +537,7 @@
   });
   $: if (nativePreviewActive) {
     if ($vjClipLauncher.isOpen && !$vjStageEdit && previewContainerEl) {
-      nativePreviewHostEl.set(previewContainerEl);
+      if ($nativePreviewHostEl !== previewContainerEl) nativePreviewHostEl.set(previewContainerEl);
     } else if ($nativePreviewHostEl === previewContainerEl) {
       nativePreviewHostEl.set(null);
     }
@@ -2650,7 +2663,7 @@
       setCrossfaderModSource('manual');
     }
 
-    const start = clamp01($vjClipLauncher.crossfaderValue);
+    const start = clamp01($vjCrossfader);
     const end = clamp01(target);
     const durationSec = Math.max(0, Math.min(8, $vjClipLauncher.crossfaderFadeDuration ?? 0));
     if (durationSec <= 0 || Math.abs(start - end) < 0.0005) {
@@ -5041,7 +5054,7 @@
               <div class="deck-preview-stack" aria-label="Deck confidence monitors">
                 <div
                   class="deck-preview-container deck-monitor-hole"
-                  class:deck-live={$vjClipLauncher.crossfaderValue < 0.5}
+                  class:deck-live={$vjCrossfader < 0.5}
                   bind:this={deckMonitorAEl}
                 >
                   {#if nativePresenterUnsupported}
@@ -5054,7 +5067,7 @@
                 </div>
                 <div
                   class="deck-preview-container deck-monitor-hole"
-                  class:deck-live={$vjClipLauncher.crossfaderValue >= 0.5}
+                  class:deck-live={$vjCrossfader >= 0.5}
                   bind:this={deckMonitorBEl}
                 >
                   {#if nativePresenterUnsupported}
@@ -5943,14 +5956,14 @@
              writes through to the matching bank in the store.
              ==================================================================== -->
         {#snippet deckUI(bank: VJDeck)}
-          {@const grid = bank === 'B' ? $vjClipLauncher.bankBClipGrid : $vjClipLauncher.clipGrid}
-          {@const states = bank === 'B' ? $vjClipLauncher.bankBLayerStates : $vjClipLauncher.layerStates}
-          {@const isSelectedDeck = !$vjClipLauncher.crossfaderEnabled || $vjClipLauncher.selectedDeck === bank}
+          {@const grid = bank === 'B' ? $deckClipGridB : $deckClipGridA}
+          {@const states = bank === 'B' ? $deckLayerStatesB : $deckLayerStatesA}
+          {@const isSelectedDeck = !$deckCrossfaderOn || $deckSelected === bank}
           {@const midiPrefix = bank === 'B' ? 'vj-b' : 'vj'}
 
           <!-- Column headers (per-deck — column triggers fire only on this deck) -->
           <div class="column-headers">
-            {#if $vjClipLauncher.crossfaderEnabled}
+            {#if $deckCrossfaderOn}
               <div class="deck-corner-header">
                 <span class="deck-label">DECK {bank}</span>
                 <span class="deck-corner-live">LIVE</span>
@@ -5960,7 +5973,7 @@
               <div class="layer-controls-header"></div>
             {/if}
             {#each columnIndices as colIdx (colIdx)}
-              {@const columnQueued = $vjClipLauncher.pendingTriggers.some(p => p.kind === 'column' && p.columnIndex === colIdx && p.bank === bank)}
+              {@const columnQueued = $deckPendingTriggers.some(p => p.kind === 'column' && p.columnIndex === colIdx && p.bank === bank)}
               <button
                 class="column-trigger"
                 class:queued={columnQueued}
@@ -6089,7 +6102,7 @@
                     <option value={mode}>{mode}</option>
                   {/each}
                 </select>
-                <VJLayerSettings layer={states[layerIdx]} index={layerIdx} deck={bank} columns={$vjClipLauncher.numColumns} />
+                <VJLayerSettings layer={states[layerIdx]} index={layerIdx} deck={bank} columns={$deckColumnCount} />
                 </div>
               </div>
 
@@ -6100,9 +6113,9 @@
               {#each columnIndices as colIdx (colIdx)}
                 {@const clip = grid[layerIdx]?.[colIdx]}
                 {@const isActive = activeClip !== null && clip != null && activeClip.id === clip.id}
-                {@const isPresetActive = !$vjClipLauncher.mapMode && clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
-                {@const isQueued = $vjClipLauncher.pendingTriggers.some(p => (p.kind === 'column' ? (!states[layerIdx].locked && !states[layerIdx].ignoreColumnTrigger && (!p.layerIndices || p.layerIndices.includes(layerIdx))) : p.layerIndex === layerIdx) && p.columnIndex === colIdx && p.bank === bank)}
-                {@const isClipFirable = clip == null || clip.type !== 'preset' || $vjClipLauncher.mapMode}
+                {@const isPresetActive = !$deckMapMode && clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
+                {@const isQueued = $deckPendingTriggers.some(p => (p.kind === 'column' ? (!states[layerIdx].locked && !states[layerIdx].ignoreColumnTrigger && (!p.layerIndices || p.layerIndices.includes(layerIdx))) : p.layerIndex === layerIdx) && p.columnIndex === colIdx && p.bank === bank)}
+                {@const isClipFirable = clip == null || clip.type !== 'preset' || $deckMapMode}
                 {@const isFileMissing = clipFileMissing(clip, $missingClipFiles)}
                 <div
                   class="clip-cell"
@@ -6207,7 +6220,7 @@
               </div>
               <button
                 class="cut-btn cut-a"
-                class:active={$vjClipLauncher.crossfaderValue === 0}
+                class:active={$vjCrossfader === 0}
                 onclick={() => glideCrossfaderTo(0)}
                 title="Cut to Deck A"
                 data-midi-path="vj:crossfader:cut-a"
@@ -6220,7 +6233,7 @@
                   min="0"
                   max="1"
                   step="0.001"
-                  value={1 - $vjClipLauncher.crossfaderValue}
+                  value={1 - $vjCrossfader}
                   oninput={(e) => setCrossfaderManualValue(1 - parseFloat((e.target as HTMLInputElement).value))}
                   class="xfade-vertical-input"
                   data-midi-path="vj:crossfader:value"
@@ -6232,13 +6245,13 @@
                 <div class="xfade-vertical-rail" aria-hidden="true"></div>
                 <div
                   class="xfade-vertical-knob"
-                  style={`top: clamp(9px, ${$vjClipLauncher.crossfaderValue * 100}%, calc(100% - 9px));`}
+                  style={`top: clamp(9px, ${$vjCrossfader * 100}%, calc(100% - 9px));`}
                   aria-hidden="true"
                 ></div>
               </div>
               <button
                 class="cut-btn cut-b"
-                class:active={$vjClipLauncher.crossfaderValue === 1}
+                class:active={$vjCrossfader === 1}
                 onclick={() => glideCrossfaderTo(1)}
                 title="Cut to Deck B"
                 data-midi-path="vj:crossfader:cut-b"
@@ -6246,7 +6259,7 @@
                 data-midi-mode="toggle"
               >▶</button>
 
-              <div class="xfade-readout">{Math.round($vjClipLauncher.crossfaderValue * 100)}%</div>
+              <div class="xfade-readout">{Math.round($vjCrossfader * 100)}%</div>
 
               <label class="xfade-time-control" title="Fade time for Cut A/B buttons">
                 <span>TIME</span>

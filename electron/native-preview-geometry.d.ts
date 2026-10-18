@@ -21,6 +21,11 @@ export interface NativePreviewGeometryStatus {
   contentY?: number;
   contentWidth?: number;
   contentHeight?: number;
+  /** Windows presenter: the child window's box, in whole pixels. */
+  x?: number;
+  y?: number;
+  rectWidth?: number;
+  rectHeight?: number;
 }
 
 export function normalizeNativePreviewRect(

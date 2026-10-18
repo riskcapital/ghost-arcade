@@ -121,6 +121,32 @@ describe('native preview geometry contract', () => {
     })).toBe(false);
   });
 
+  it('checks the Windows presenter on the child window box it reports', () => {
+    // At 112.5% the device-pixel rect has fractional content edges; the
+    // presenter only places the whole-pixel window.
+    const rect = nativePreviewRectToDevicePixels(normalizeNativePreviewRect({
+      x: 406.4,
+      y: 80.9,
+      width: 593.8,
+      height: 334.2,
+      contentX: 0,
+      contentY: 0,
+      contentWidth: 593.8,
+      contentHeight: 334.2,
+    }, 7), 1.125);
+    const status = {
+      attached: true,
+      x: rect.x,
+      y: rect.y,
+      rectWidth: rect.width,
+      rectHeight: rect.height,
+    };
+    expect(nativePreviewGeometryMatches(rect, status)).toBe(true);
+    expect(nativePreviewGeometryMatches(rect, { ...status, x: rect.x + 3 })).toBe(false);
+    expect(nativePreviewGeometryMatches(rect, { ...status, rectHeight: rect.height - 2 })).toBe(false);
+    expect(nativePreviewGeometryMatches(rect, { ...status, attached: false })).toBe(false);
+  });
+
   it('keeps the DOM canvas as the sole geometry and content owner', () => {
     const addonPath = fileURLToPath(new URL(
       '../../../electron/native/native_preview_addon.mm',

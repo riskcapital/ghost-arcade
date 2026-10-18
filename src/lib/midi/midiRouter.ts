@@ -85,6 +85,10 @@ midiStore.subscribe(state => {
 // Throttle: track last update time per path to avoid flooding stores
 const lastUpdateTime = new Map<string, number>();
 const THROTTLE_MS = 16; // ~60fps max update rate
+// The last value to arrive inside a throttle window is delivered when the
+// window ends. Dropping it lost the end of a fast move: a crossfader or knob
+// slammed to its end stopped a few percent short.
+const trailingUpdates = new Map<string, ReturnType<typeof setTimeout>>();
 
 // User interaction suppression: when user is manually dragging a slider,
 // suppress MIDI updates for that path to prevent fighting/jumping
@@ -148,8 +152,19 @@ class MidiRouter {
       // Preserve fader zero crossings, pad releases and final scratch targets.
       // The native scrubber coalesces pending targets without dropping it.
       if (!isVideoScratchPath(mapping.path) && !isClipTrigger && !isLayerFader && !isVideoCue && !isTempoNudge) {
-        const lastTime = lastUpdateTime.get(mapping.path) || 0;
-        if (now - lastTime < THROTTLE_MS) continue;
+        const wait = THROTTLE_MS - (now - (lastUpdateTime.get(mapping.path) || 0));
+        clearTimeout(trailingUpdates.get(mapping.path));
+        trailingUpdates.delete(mapping.path);
+        if (wait > 0) {
+          trailingUpdates.set(mapping.path, setTimeout(() => {
+            trailingUpdates.delete(mapping.path);
+            const at = performance.now();
+            lastUpdateTime.set(mapping.path, at);
+            if (at < (userInteractingPaths.get(mapping.path) || 0)) return;
+            this.dispatch(mapping.path, this.convertValue(value, mapping, type), mapping, `midi:${mapping.id}:${channel}:${number}`);
+          }, wait));
+          continue;
+        }
         lastUpdateTime.set(mapping.path, now);
       }
 

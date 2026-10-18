@@ -37,7 +37,7 @@ import {advanceInteractiveAuto} from '../mobile/studio/interactiveEffects';
 import { resolveAutoValue as resolveValue, advanceAutoPhase, autoClipPosition } from './autoWave';
 import { launchClockPosition } from '../stores/launchClock';
 import { project } from '../stores/layers';
-import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { vjClipLauncher, vjClipLauncherNow } from '../stores/vjClipLauncher';
 import { showToast } from '../stores/errorToast';
 import type { AutoConfig, Layer, Effect } from '../types';
 
@@ -75,7 +75,7 @@ function tick(now: number) {
   // One shared phase sample keeps all synced parameters aligned. Free sweeps
   // still skip stalls; beat sweeps catch up to the grid immediately.
   const beat = launchClockPosition(now).beat;
-  const vj = get(vjClipLauncher);
+  const vj = vjClipLauncherNow();
   const crossfader = vj.crossfaderEnabled ? vj.crossfaderValue : undefined;
 
   const p = get(project);

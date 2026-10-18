@@ -5989,6 +5989,12 @@
     overflow-y: auto;
     padding: 8px 14px 12px;
     background: var(--ga-panel, #0b0d11);
+    /* Its own stacking context: the raised load badges otherwise escape the
+       scroller and paint above it, and the compositor gave each one a layer
+       of its own (dozens), which made every repaint of the app slower. Above
+       the sticky footer so the context menu inside stays on top. */
+    position: relative;
+    z-index: 2;
   }
 
   .empty-state {

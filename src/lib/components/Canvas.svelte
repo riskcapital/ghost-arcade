@@ -7,6 +7,7 @@
   import { compositionTransition } from '../stores/compositionTransition';
   import { buildCompositionTransitionLayers } from '../renderer/compositionTransitionLayers';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
+  import { watchLayout } from '../utils/layoutWatch';
   import { splatPointer } from '../stores/splatPointer';
   import { stage3dScene } from '../stage3d/store';
   import { buildNativeStage3DScene } from '../stage3d/nativeSceneBridge';
@@ -14,7 +15,7 @@
   import { Stage3DRenderer } from '../stage3d/Stage3DRenderer';
   import { mediaLibrary } from '../stores/media';
   import { phoneVision } from '../stores/phoneVision';
-  import { vjOutputLayers, vjTransitionOutputLayers, vjClipLauncher, type VJClipLauncherState } from '../stores/vjClipLauncher';
+  import { vjOutputLayers, vjTransitionOutputLayers, vjClipLauncher, vjCrossfader, vjClipLauncherNow, type VJClipLauncherState } from '../stores/vjClipLauncher';
   import { buildMapPresetLayers, composeMapOutputLayers, mapPresetRows, type MapPresetCacheEntry } from '../renderer/mapPresetLayers';
   import { vjClipTransitions, vjClipTransitionKey } from '../stores/vjClipTransitions';
   import { buildVJClipTransitionLayers, makeVJClipTransitionCarrier, vjClipTransitionInputId, vjClipTransitionSourceId, type VJClipTransitionState } from '../renderer/vjClipTransitionNative';
@@ -1819,7 +1820,7 @@
         );
       };
       const nativeEffectiveLayers = (): Layer[] | null => {
-        const vjState = get(vjClipLauncher);
+        const vjState = vjClipLauncherNow();
         // STAGE mode: the VJ feed layers render their frames invisibly while
         // the mapping scene's Screen layers sample those streams core-side
         // via vj_layer_index. Both lists must reach the native sync.
@@ -1949,7 +1950,7 @@
         const now = Date.now();
         if (now - __vjFeedDebugAt > 3000) {
           __vjFeedDebugAt = now;
-          const vjState = get(vjClipLauncher);
+          const vjState = vjClipLauncherNow();
           if (vjState.isLive) {
             const vjLayers = get(vjOutputLayers);
             console.log('[NativeRendererSync] vj-feed', JSON.stringify({
@@ -2059,10 +2060,15 @@
         clipTransitionCoordinator.refresh();
         scheduleNativeLayersSync();
       });
+      // The preview box letterboxes to the project's aspect; nothing else in
+      // the project moves it (modulation rewrites the project every frame).
+      let previewProjectSize = '';
       nativeProjectUnsub = project.subscribe(($project) => {
         queueNativeLayerInteractions($project.layers || []);
         scheduleNativeLayersSync();
-        if (nativeEditorPreviewWindowEnabled || nativeEmbeddedPreviewEnabled) {
+        const size = `${$project.width}x${$project.height}`;
+        if ((nativeEditorPreviewWindowEnabled || nativeEmbeddedPreviewEnabled) && size !== previewProjectSize) {
+          previewProjectSize = size;
           scheduleNativePreviewWindowSync('project');
         }
       });
@@ -2140,6 +2146,7 @@
       stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
       const nativeVjLayersUnsub = vjOutputLayers.subscribe(() => scheduleNativeLayersSync());
       const nativeVjStateUnsub = vjClipLauncher.subscribe(() => scheduleNativeLayersSync());
+      const nativeCrossfaderUnsub = vjCrossfader.subscribe(() => scheduleNativeLayersSync());
       // The timeline and the sequencer drive layer state without touching the
       // project store, so nothing here re-synced on their ticks. The sync's
       // own RAF loop covers layers that animate continuously (shaders), but a
@@ -2178,6 +2185,7 @@
         previousNativeProjectUnsub();
         nativeVjLayersUnsub();
         nativeVjStateUnsub();
+        nativeCrossfaderUnsub();
         nativeClipTransitionsUnsub();
         nativeRetainedClipsUnsub();
         vjClipTransitions.clear();
@@ -2412,14 +2420,41 @@
         previewMirrorCtx = null;
       });
 
+      // Measure the canvas and preview boxes only while something may be
+      // moving them: after a resize, a pan or zoom, a scroll or a panel
+      // change, for long enough to follow a CSS transition, plus a slow
+      // safety check. Measuring every frame forced a layout per frame.
+      const LAYOUT_SETTLE_MS = 400;
+      const LAYOUT_RECHECK_MS = 500;
+      let layoutMovingUntil = 0;
+      let layoutCheckedAt = 0;
+      const layoutChanged = () => { layoutMovingUntil = performance.now() + LAYOUT_SETTLE_MS; };
+      let unwatchLayout = watchLayout([containerEl, wrapperEl], layoutChanged);
+      let watchedHostEl: HTMLElement | null | undefined;
+      const unwatchPreviewHost = nativePreviewHostEl.subscribe((hostEl) => {
+        if (hostEl === watchedHostEl) return;
+        watchedHostEl = hostEl;
+        unwatchLayout();
+        unwatchLayout = watchLayout([containerEl, wrapperEl, hostEl], layoutChanged);
+        layoutChanged();
+      });
+      nativeTeardownCallbacks.push(() => {
+        unwatchPreviewHost();
+        unwatchLayout();
+      });
+
       let _nativeShellFrames = 0;
       function animateNativeShell() {
         nativeRendererSync?.setRenderClock(null);
         // Publish one atomic geometry revision for both the native presenter
         // and every DOM overlay. The signature prevents redundant store/IPC
-        // updates while still following live resize, zoom, and pan each frame.
-        publishEditorCanvasGeometry();
-        scheduleNativePreviewWindowSync('layout-frame');
+        // updates.
+        const layoutNow = performance.now();
+        if (layoutNow <= layoutMovingUntil || layoutNow - layoutCheckedAt >= LAYOUT_RECHECK_MS) {
+          layoutCheckedAt = layoutNow;
+          publishEditorCanvasGeometry();
+          scheduleNativePreviewWindowSync('layout-frame');
+        }
         void ensureEditorPreviewFallback();
         drawEditorPreviewFallback();
         fpsFrameCount++;
@@ -2849,7 +2884,7 @@
 
         engine.setCrossfade(
           vjState.crossfaderEnabled === true && vjState.isLive,
-          vjState.crossfaderValue ?? 0,
+          $vjCrossfader,
           vjState.crossfaderTransition || 'dissolve',
           vjState.crossfaderCurve || 'constant-power',
           vjState.crossfaderBlendMode || 'normal'

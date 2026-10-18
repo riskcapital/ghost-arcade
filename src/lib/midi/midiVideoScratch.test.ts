@@ -24,7 +24,7 @@ vi.mock('../stores/vjClipLauncher', async () => {
   harness.vj = writable({ layerStates: [], bankBLayerStates: [] });
   return { vjClipLauncher: { ...harness.vj,
     pressCuePoint: vi.fn(), setActiveClipCuePoint: vi.fn(),
-    setLayerAudio: vi.fn(), setLayerOpacity: vi.fn(), triggerClip: vi.fn(), releaseClip: vi.fn(), releaseInputs: vi.fn(),
+    setLayerAudio: vi.fn(), setLayerOpacity: vi.fn(), setCrossfaderValue: vi.fn(), triggerClip: vi.fn(), releaseClip: vi.fn(), releaseInputs: vi.fn(),
     updateActiveClipVideoProps: vi.fn(), syncActiveClipPosition: vi.fn(),
   } };
 });
@@ -64,6 +64,22 @@ describe('MIDI native video scratch routing', () => {
     expect(vjClipLauncher.updateActiveClipVideoProps).toHaveBeenCalledWith(0, { audioPan: .5 }, 'B');
     midiRouter.dispatchPath('vj-b:0:video:audio', 1);
     expect(vjClipLauncher.updateActiveClipVideoProps).toHaveBeenCalledWith(0, { audioPlayback: false }, 'B');
+  });
+
+  it('delivers the last value of a throttled burst once the window ends', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      harness.midi.set({ mappings: [mapping('vj:crossfader:value')] });
+      midiRouter.routeMessage(0, 'cc', 74, 64);
+      midiRouter.routeMessage(0, 'cc', 74, 100);
+      midiRouter.routeMessage(0, 'cc', 74, 127);
+      expect(vjClipLauncher.setCrossfaderValue).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(20);
+      expect(vjClipLauncher.setCrossfaderValue).toHaveBeenCalledTimes(2);
+      expect(vjClipLauncher.setCrossfaderValue).toHaveBeenLastCalledWith(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('releases rapid tempo nudge notes and routes resync only on press', () => {

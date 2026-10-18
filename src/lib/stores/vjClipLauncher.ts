@@ -13,7 +13,7 @@ import { videoBeatFit } from '../media/videoBeatFit';
 // Manages the clip grid state for the VJ clip launcher workflow
 // Works with shaders and videos directly (not compositions)
 
-import { writable, derived, get } from 'svelte/store';
+import { writable, derived, get, type Readable } from 'svelte/store';
 import { clipFilePath } from '../vj/clipFiles';
 import { pathToFileUrl } from '../storage/assetRegistry';
 import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, IntegratedEffectSource, SplatContent, Model3DContent, GPULayerContent, TextContent, ISFInputDef } from '../types';
@@ -1117,12 +1117,47 @@ function ignoresColumn(row: VJLayerState): boolean {
   return row.activeClip?.ignoreColumnTrigger ?? row.ignoreColumnTrigger ?? false;
 }
 
+// ===== Crossfader position =====
+// The fader moves every frame while it is ridden. Writing each step into the
+// launcher state woke every subscriber of the whole deck (both panels, the
+// renderer sync, the audio mix, controller feedback) for a value only a few of
+// them show, and the fader stuttered. Its position lives in its own store;
+// the launcher state picks it up when the fader comes to rest, or with the
+// next change to anything else in the deck.
+const crossfaderPosition = writable(0);
+export const vjCrossfader = { subscribe: crossfaderPosition.subscribe };
+const CROSSFADER_REST_MS = 120;
+
 // Create the store
 function createVJClipLauncherStore() {
-  const { subscribe, set, update: updateStore } = writable<VJClipLauncherState>(createDefaultState());
+  const { subscribe, set: setStore, update: updateStore } = writable<VJClipLauncherState>(createDefaultState());
   const holds = new Map<string, { clipId: string; column: number; inputs: Set<string> }>();
   const rowKey = (deck: VJDeck, row: number) => `${deck}:${row}`;
-  const update = (change: (state: VJClipLauncherState) => VJClipLauncherState) => updateStore(before => {
+  // True while the fader has moved since the state last carried its position.
+  let crossfaderMoved = false;
+  let crossfaderRestTimer: ReturnType<typeof setTimeout> | null = null;
+  const settleCrossfader = () => {
+    crossfaderMoved = false;
+    if (crossfaderRestTimer) clearTimeout(crossfaderRestTimer);
+    crossfaderRestTimer = null;
+  };
+  const carryCrossfader = (state: VJClipLauncherState): VJClipLauncherState => {
+    if (!crossfaderMoved) return state;
+    settleCrossfader();
+    const value = get(crossfaderPosition);
+    return state.crossfaderValue === value ? state : { ...state, crossfaderValue: value };
+  };
+  // Anything else that moves the fader (a cut, a snapshot, a project load)
+  // goes through the state; the position follows it.
+  subscribe(state => {
+    if (!crossfaderMoved) crossfaderPosition.set(state.crossfaderValue);
+  });
+  const set = (state: VJClipLauncherState) => {
+    settleCrossfader();
+    setStore(state);
+  };
+  const update = (change: (state: VJClipLauncherState) => VJClipLauncherState) => updateStore(current => {
+    const before = carryCrossfader(current);
     let next = change(before);
     if (next.pendingTriggers.some(p => p.kind === 'column')) {
       next = { ...next, pendingTriggers: next.pendingTriggers.flatMap(p => {
@@ -3613,7 +3648,14 @@ function createVJClipLauncherStore() {
 
     setCrossfaderValue(value: number) {
       const clamped = Math.max(0, Math.min(1, value));
-      update(state => ({ ...state, crossfaderValue: clamped }));
+      if (clamped === get(crossfaderPosition)) return;
+      crossfaderMoved = true;
+      crossfaderPosition.set(clamped);
+      if (crossfaderRestTimer) clearTimeout(crossfaderRestTimer);
+      crossfaderRestTimer = setTimeout(() => {
+        crossfaderRestTimer = null;
+        if (crossfaderMoved) update(state => state);
+      }, CROSSFADER_REST_MS);
     },
 
     setCrossfaderTransition(transition: CrossfaderTransition) {
@@ -3644,6 +3686,49 @@ function createVJClipLauncherStore() {
 }
 
 export const vjClipLauncher = createVJClipLauncherStore();
+
+/** The launcher state with the crossfader where it is right now. */
+export function vjClipLauncherNow(): VJClipLauncherState {
+  const state = get(vjClipLauncher);
+  const value = get(crossfaderPosition);
+  return state.crossfaderValue === value ? state : { ...state, crossfaderValue: value };
+}
+
+/**
+ * One part of the launcher state as its own store, notifying only when that
+ * part is replaced. Every launcher update replaces the state object, so a
+ * component reading `$vjClipLauncher.clipGrid` re-renders the whole grid
+ * when a fader moves; reading a slice re-renders it only when the grid
+ * itself changes.
+ */
+export function vjSlice<T>(pick: (state: VJClipLauncherState) => T): Readable<T> {
+  const subscribers = new Set<(value: T) => void>();
+  let value: T;
+  let stop: (() => void) | null = null;
+  return {
+    subscribe(run) {
+      if (!stop) {
+        let first = true;
+        stop = vjClipLauncher.subscribe((state) => {
+          const next = pick(state);
+          if (!first && next === value) return;
+          first = false;
+          value = next;
+          for (const subscriber of subscribers) subscriber(value);
+        });
+      }
+      subscribers.add(run);
+      run(value);
+      return () => {
+        subscribers.delete(run);
+        if (subscribers.size === 0 && stop) {
+          stop();
+          stop = null;
+        }
+      };
+    },
+  };
+}
 
 // A single scheduler for both decks; dormant when nothing is following.
 const autopilotClock = new VJAutopilotClock();
@@ -3832,7 +3917,7 @@ if (typeof window !== 'undefined' && isDesktopApp) {
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      const command = nativeClipAudioMix(get(vjClipLauncher), get(nativeAudioMaster), get(vjClipTransitions));
+      const command = nativeClipAudioMix(vjClipLauncherNow(), get(nativeAudioMaster), get(vjClipTransitions));
       const audible = command.voices.some(voice => voice.gain > 0);
       if (get(nativeClipAudioAudible) !== audible) nativeClipAudioAudible.set(audible);
       const next = JSON.stringify(command);
@@ -3842,6 +3927,7 @@ if (typeof window !== 'undefined' && isDesktopApp) {
     });
   };
   vjClipLauncher.subscribe(publishAudio);
+  vjCrossfader.subscribe(publishAudio);
   nativeAudioMaster.subscribe(publishAudio);
   // Clip transitions fade the audio too: the core follows each fade's clock.
   vjClipTransitions.subscribe(publishAudio);

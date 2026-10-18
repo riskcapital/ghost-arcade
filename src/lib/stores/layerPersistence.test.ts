@@ -2088,3 +2088,60 @@ describe('Interactive layer project and preset persistence',()=>{
   error.mockRestore();
  });
 });
+
+describe('VJ crossfader position', () => {
+  it('moves without touching the launcher state, which picks it up at rest', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { vjClipLauncher, vjCrossfader, vjClipLauncherNow } = await import('./vjClipLauncher');
+      vjClipLauncher.cutToA();
+      let emissions = 0;
+      const stop = vjClipLauncher.subscribe(() => { emissions++; });
+      emissions = 0;
+      vjClipLauncher.setCrossfaderValue(.25);
+      vjClipLauncher.setCrossfaderValue(.4);
+      expect(get(vjCrossfader)).toBe(.4);
+      expect(vjClipLauncherNow().crossfaderValue).toBe(.4);
+      expect(emissions).toBe(0);
+      expect(get(vjClipLauncher).crossfaderValue).toBe(0);
+      vi.advanceTimersByTime(200);
+      expect(emissions).toBe(1);
+      expect(get(vjClipLauncher).crossfaderValue).toBe(.4);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('carries a moving fader into any other launcher change, and follows cuts', async () => {
+    const { vjClipLauncher, vjCrossfader } = await import('./vjClipLauncher');
+    vjClipLauncher.cutToA();
+    vjClipLauncher.setCrossfaderValue(.7);
+    vjClipLauncher.setMasterOpacity(.5);
+    expect(get(vjClipLauncher).crossfaderValue).toBe(.7);
+    expect(get(vjClipLauncher).masterOpacity).toBe(.5);
+    vjClipLauncher.cutToB();
+    expect(get(vjCrossfader)).toBe(1);
+    expect(get(vjClipLauncher).crossfaderValue).toBe(1);
+    vjClipLauncher.setMasterOpacity(1);
+  });
+
+  it('saves where the fader is, even while it is moving', async () => {
+    const { vjClipLauncher } = await import('./vjClipLauncher');
+    vjClipLauncher.cutToA();
+    vjClipLauncher.setCrossfaderValue(.35);
+    const saved: any = layers.project.exportProject();
+    expect(saved.vjClipLauncher.crossfaderValue).toBe(.35);
+  });
+
+  it('notifies a slice only when its part of the state is replaced', async () => {
+    const { vjClipLauncher, vjSlice } = await import('./vjClipLauncher');
+    const grids: unknown[] = [];
+    const stop = vjSlice(state => state.clipGrid).subscribe(grid => grids.push(grid));
+    vjClipLauncher.setMasterOpacity(.8);
+    vjClipLauncher.setMasterOpacity(1);
+    expect(grids).toHaveLength(1);
+    expect(grids[0]).toBe(get(vjClipLauncher).clipGrid);
+    stop();
+  });
+});

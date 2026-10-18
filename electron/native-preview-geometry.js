@@ -73,6 +73,21 @@ export function nativePreviewRectSignature(rect) {
 
 export function nativePreviewGeometryMatches(rect, status, tolerance = 0.75) {
   if (!status?.attached) return false;
+  // The Windows presenter places a child window over the canvas and reports
+  // that box in whole pixels, with no generation or content rectangle.
+  // Checking it against the macOS fields never matched, so the editor
+  // re-sent the rectangle on every frame.
+  if (status.geometryGeneration === undefined && status.rectWidth !== undefined) {
+    return [
+      [status.x, rect.x],
+      [status.y, rect.y],
+      [status.rectWidth, rect.width],
+      [status.rectHeight, rect.height],
+    ].every(([actual, expected]) => (
+      Number.isFinite(Number(actual)) &&
+      Math.abs(Number(actual) - Number(expected)) <= tolerance
+    ));
+  }
   if (Number(status.geometryGeneration) !== Number(rect.generation)) return false;
   const pairs = [
     [status.viewX, rect.x],
