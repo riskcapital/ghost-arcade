@@ -197,8 +197,10 @@ function convertISFtoGLSL(source: string, metadata: ISFMetadata): string {
   // First, fix any problematic loop constructs
   let glsl = fixShaderLoops(source);
 
-  // Check if shader uses derivative functions (dFdx, dFdy, fwidth)
-  const needsDerivatives = /\b(dFdx|dFdy|fwidth)\s*\(/.test(glsl);
+  // Check if shader uses derivative functions (dFdx, dFdy, fwidth). Comments
+  // are skipped: a note that mentions fwidth() is not a call.
+  const code = glsl.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const needsDerivatives = /\b(dFdx|dFdy|fwidth)\s*\(/.test(code);
 
   // CRITICAL FIX: Handle Shadertoy-style global variable initialization from uniforms
   // In GLSL, you cannot initialize global variables with uniform values at compile time.
@@ -224,10 +226,6 @@ function convertISFtoGLSL(source: string, metadata: ISFMetadata): string {
   // Build uniform declarations for built-in ISF uniforms (only if not already declared)
   let uniformDeclarations = '';
 
-  // Enable derivatives extension if needed (must be first)
-  if (needsDerivatives) {
-    uniformDeclarations += '#extension GL_OES_standard_derivatives : enable\n';
-  }
 
   // Add built-in uniforms only if not already present (check for various common naming)
   // Also handle lowercase 'renderSize' variant
@@ -343,8 +341,12 @@ float sampleWaveform(float u) {
 #define isf_FragNormCoord (gl_FragCoord.xy / RENDERSIZE)
 `;
 
-  // Prepend precision and uniforms
-  const header = `precision highp float;
+  // Prepend precision and uniforms. An #extension directive has to come
+  // before any other statement in GLSL ES 1.0, precision included: placed
+  // after it, every shader that uses derivatives failed to compile and
+  // played black.
+  const extensions = needsDerivatives ? '#extension GL_OES_standard_derivatives : enable\n' : '';
+  const header = `${extensions}precision highp float;
 ${uniformDeclarations}
 `;
 
