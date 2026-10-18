@@ -389,6 +389,7 @@
   import { compositionTransition } from './lib/stores/compositionTransition';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
+  import { liveOutput, LIVE_OUTPUT_FULLSCREEN_EVENT, LIVE_OUTPUT_WINDOW_EVENT, LIVE_OUTPUT_DISPLAY_MENU_EVENT } from './lib/stores/liveOutput';
   import { screenSetups } from './lib/stores/screenSetups';
   import { mcpStore } from './lib/mcp/mcpStore';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
@@ -1881,6 +1882,17 @@
     // The guided tour's "Open the output window" step.
     const handleTourOpenOutput = () => { if (!outputIsOpen) void openOutputWindow(); };
     window.addEventListener('ga-open-output-window', handleTourOpenOutput);
+    // The VJ header and Settings → Display send the output the same way the
+    // mapping toolbar does.
+    const handleToggleOutputFullscreen = () => { void toggleFullscreen(); };
+    const handleToggleOutputWindow = () => { if (outputIsOpen) closeOutputWindow(); else void openOutputWindow(); };
+    const handleOutputDisplayMenu = (event: Event) => {
+      const { x, y } = (event as CustomEvent<{ x: number; y: number }>).detail ?? { x: 0, y: 0 };
+      void openDisplayMenu({ clientX: x, clientY: y, preventDefault() {} } as MouseEvent, 'liveOutput');
+    };
+    window.addEventListener(LIVE_OUTPUT_FULLSCREEN_EVENT, handleToggleOutputFullscreen);
+    window.addEventListener(LIVE_OUTPUT_WINDOW_EVENT, handleToggleOutputWindow);
+    window.addEventListener(LIVE_OUTPUT_DISPLAY_MENU_EVENT, handleOutputDisplayMenu);
     // Map Sim's Auto-map button works from the pop-out too; the layers
     // belong to this window's project.
     const stopAutoMapHost = startAutoMapHost();
@@ -2367,6 +2379,9 @@
       window.removeEventListener('open-settings', handleOpenSettings);
       window.removeEventListener('open-stage3d', handleOpenStage3D);
       window.removeEventListener('ga-open-output-window', handleTourOpenOutput);
+      window.removeEventListener(LIVE_OUTPUT_FULLSCREEN_EVENT, handleToggleOutputFullscreen);
+      window.removeEventListener(LIVE_OUTPUT_WINDOW_EVENT, handleToggleOutputWindow);
+      window.removeEventListener(LIVE_OUTPUT_DISPLAY_MENU_EVENT, handleOutputDisplayMenu);
       stopAutoMapHost();
       window.removeEventListener('ga-close-settings', handleTourCloseSettings);
       if (autoConnectTimeout) {
@@ -4978,6 +4993,7 @@
 
   // Output window state
   let outputMode: 'embedded' | 'window' | 'fullscreen' = 'embedded';
+  $: liveOutput.set({ mode: outputIsOpen ? outputMode : 'embedded' });
 
   async function openOutputWindow() {
     outputMode = 'window';
@@ -6993,42 +7009,6 @@
         </button>
       </div>
 
-      {#if displayMenu}
-        {@const _menu = displayMenu}
-        {@const _assigned = $settings.output.displayAssignments[_menu.surface]}
-        <!-- Display picker. Right-click lives on the button that launches the
-             surface, so the assignment is set where you look for it rather than
-             buried in Settings. -->
-        <div class="display-menu-backdrop" onclick={() => (displayMenu = null)} oncontextmenu={(e) => { e.preventDefault(); displayMenu = null; }} role="presentation"></div>
-        <div class="display-menu" style="left:{_menu.x}px; top:{_menu.y}px;" role="menu">
-          <div class="display-menu-title">{SURFACE_LABELS[_menu.surface]} — display</div>
-          <button class="display-menu-item" class:checked={_assigned == null}
-            onclick={() => chooseSurfaceTarget(_menu.surface, null)}>
-            <span class="display-menu-check">{_assigned == null ? '✓' : ''}</span>
-            Auto
-          </button>
-          {#each cachedDisplays as display}
-            <button class="display-menu-item" class:checked={_assigned === display.id}
-              onclick={() => chooseSurfaceTarget(_menu.surface, display.id)}>
-              <span class="display-menu-check">{_assigned === display.id ? '✓' : ''}</span>
-              {display.label}{display.isPrimary ? ' (main)' : ''}
-              <span class="display-menu-dim">{display.width}×{display.height}</span>
-            </button>
-          {/each}
-          {#if _menu.surface !== 'liveOutput'}
-            <div class="display-menu-sep"></div>
-            <button class="display-menu-item" class:checked={_assigned === 'windowed'}
-              onclick={() => chooseSurfaceTarget(_menu.surface, 'windowed')}>
-              <span class="display-menu-check">{_assigned === 'windowed' ? '✓' : ''}</span>
-              Open in window
-            </button>
-            <div class="display-menu-hint">
-              A floating window never gives up a screen, so this can stay open
-              while the show holds the projector.
-            </div>
-          {/if}
-        </div>
-      {/if}
 
       <div class="toolbar-right">
         <!-- Blackout Button -->
@@ -8267,6 +8247,46 @@
         applyProject={applyMediaRelinks} onClose={() => showProjectMedia = false} />
     {/if}
 
+    <!-- Display picker for the output and the sims. At the top level so it
+         opens from the VJ header and Settings too, not only the mapping
+         toolbar (hidden in VJ mode). -->
+      {#if displayMenu}
+        {@const _menu = displayMenu}
+        {@const _assigned = $settings.output.displayAssignments[_menu.surface]}
+        <!-- Display picker. Right-click lives on the button that launches the
+             surface, so the assignment is set where you look for it rather than
+             buried in Settings. -->
+        <div class="display-menu-backdrop" onclick={() => (displayMenu = null)} oncontextmenu={(e) => { e.preventDefault(); displayMenu = null; }} role="presentation"></div>
+        <div class="display-menu" style="left:{_menu.x}px; top:{_menu.y}px;" role="menu">
+          <div class="display-menu-title">{SURFACE_LABELS[_menu.surface]} — display</div>
+          <button class="display-menu-item" class:checked={_assigned == null}
+            onclick={() => chooseSurfaceTarget(_menu.surface, null)}>
+            <span class="display-menu-check">{_assigned == null ? '✓' : ''}</span>
+            Auto
+          </button>
+          {#each cachedDisplays as display}
+            <button class="display-menu-item" class:checked={_assigned === display.id}
+              onclick={() => chooseSurfaceTarget(_menu.surface, display.id)}>
+              <span class="display-menu-check">{_assigned === display.id ? '✓' : ''}</span>
+              {display.label}{display.isPrimary ? ' (main)' : ''}
+              <span class="display-menu-dim">{display.width}×{display.height}</span>
+            </button>
+          {/each}
+          {#if _menu.surface !== 'liveOutput'}
+            <div class="display-menu-sep"></div>
+            <button class="display-menu-item" class:checked={_assigned === 'windowed'}
+              onclick={() => chooseSurfaceTarget(_menu.surface, 'windowed')}>
+              <span class="display-menu-check">{_assigned === 'windowed' ? '✓' : ''}</span>
+              Open in window
+            </button>
+            <div class="display-menu-hint">
+              A floating window never gives up a screen, so this can stay open
+              while the show holds the projector.
+            </div>
+          {/if}
+        </div>
+      {/if}
+
     <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
     {#if showWelcome && splashGone && !showLinuxGpuNotice}
       <WelcomeModal
@@ -9397,11 +9417,11 @@
   .display-menu-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 9998;
+    z-index: 200100;
   }
   .display-menu {
     position: fixed;
-    z-index: 9999;
+    z-index: 200101;
     min-width: 230px;
     padding: 6px;
     background: #14161c;

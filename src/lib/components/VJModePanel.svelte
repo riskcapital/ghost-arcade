@@ -27,6 +27,7 @@
   import { prepareVideoImport } from '../video/videoImport';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, MAX_VJ_COLUMNS, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
+  import { liveOutput, toggleOutputFullscreen, openOutputDisplayMenu } from '../stores/liveOutput';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
@@ -4348,6 +4349,31 @@
            controls in the same places. Flip-layout was removed; the option
            now lives in Settings → Appearance. -->
       <div class="header-right">
+        <!-- Send the output fullscreen to the projector, the same as the
+             mapping toolbar's Fullscreen button: a template can open straight
+             into VJ mode, and this is the way out to the projector from here. -->
+        <button
+          class="minimize-btn output-send-btn"
+          class:active={$liveOutput.mode === 'fullscreen'}
+          onclick={toggleOutputFullscreen}
+          oncontextmenu={openOutputDisplayMenu}
+          title={$liveOutput.mode === 'fullscreen'
+            ? 'Take the output off the projector (right-click to choose the display)'
+            : 'Send the output fullscreen to the projector (right-click to choose the display)'}
+          aria-label={$liveOutput.mode === 'fullscreen' ? 'Stop fullscreen output' : 'Send output fullscreen to the projector'}
+          aria-pressed={$liveOutput.mode === 'fullscreen'}
+          data-midi-path="vj:output"
+          data-midi-label="Fullscreen Output"
+          data-midi-mode="toggle"
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2.5" y="9" width="12" height="8" rx="2" />
+            <circle cx="7" cy="13" r="2.1" />
+            <path d="M14.5 11.2 21.5 7.5" />
+            <path d="M14.5 14.8 21.5 18.5" />
+            <path d="M21.5 7.5v11" />
+          </svg>
+        </button>
         <div class="rec-split">
         {#if vjIsRecording}
           <div class="vj-recording-indicator">
@@ -7867,6 +7893,13 @@
     font-weight: 600;
     white-space: nowrap;
   }
+  /* Live while the output is fullscreen on a projector. */
+  .output-send-btn.active {
+    color: var(--ga-live, #46d18a);
+    border-color: color-mix(in srgb, var(--ga-live, #46d18a) 60%, transparent);
+    background: color-mix(in srgb, var(--ga-live, #46d18a) 14%, transparent);
+  }
+
   .minimize-btn {
     width: var(--vj-icon-btn);
     height: var(--vj-control-h);

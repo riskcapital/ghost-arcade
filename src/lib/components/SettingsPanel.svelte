@@ -148,6 +148,7 @@
   // Multi-Output / per-slice config (createDefaultSlice, maxOutputSlices,
   // OutputCanvasPreview) moved to the Screens tab — see ScreenPanel.svelte.
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
+  import { liveOutput, toggleOutputFullscreen, toggleOutputWindow, openOutputDisplayMenu } from '../stores/liveOutput';
   import { getErrorLog, clearErrorLog, recordError, type ErrorEntry } from '../utils/errorReporter';
   import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
 
@@ -1036,6 +1037,71 @@
              both describe output-frame behavior, so they were folded
              into the Display section. -->
         {#if selectedSection === 'output:display'}
+        <!-- First on the Display page: sending the picture to the projector. -->
+        <section class="settings-section">
+          <h3>Output</h3>
+          <!-- Send the output to the projector from here too: the same
+               controls as the mapping toolbar and the VJ header, so it is
+               reachable whichever mode the project opened in. -->
+          <div class="setting-row output-send-row">
+            <div class="setting-label">
+              <span class="label-text">Projector</span>
+              <span class="label-hint">
+                {#if $liveOutput.mode === 'fullscreen'}
+                  Fullscreen on the projector
+                {:else if $liveOutput.mode === 'window'}
+                  In a floating output window
+                {:else}
+                  Not sent to a projector yet
+                {/if}
+              </span>
+            </div>
+            <div class="output-send-buttons">
+              <button
+                class="secondary-btn output-send"
+                class:active={$liveOutput.mode === 'fullscreen'}
+                onclick={toggleOutputFullscreen}
+                oncontextmenu={openOutputDisplayMenu}
+                aria-pressed={$liveOutput.mode === 'fullscreen'}
+                title="Fullscreen on the projector or external display"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="2.5" y="9" width="12" height="8" rx="2" />
+                  <circle cx="7" cy="13" r="2.1" />
+                  <path d="M14.5 11.2 21.5 7.5" />
+                  <path d="M14.5 14.8 21.5 18.5" />
+                  <path d="M21.5 7.5v11" />
+                </svg>
+                {$liveOutput.mode === 'fullscreen' ? 'Stop Fullscreen' : 'Fullscreen Output'}
+              </button>
+              <button
+                class="secondary-btn"
+                class:active={$liveOutput.mode === 'window'}
+                onclick={toggleOutputWindow}
+                aria-pressed={$liveOutput.mode === 'window'}
+                title="A floating output window you can drag to any screen"
+              >
+                {$liveOutput.mode === 'window' ? 'Close Window' : 'Output Window'}
+              </button>
+              {#if isDesktopApp}
+                <button
+                  class="secondary-btn"
+                  onclick={(e) => openOutputDisplayMenu(e)}
+                  title="Choose which display the fullscreen output goes to"
+                >
+                  Choose Display…
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          <!-- Match Resolution: snaps the project canvas to the native pixel
+               dimensions of the display the output window is on (or would be).
+               Eliminates source→projector scaling entirely. -->
+        </section>
+        {/if}
+
+        {#if selectedSection === 'output:display'}
         <section class="settings-section">
           <h3>Canvas</h3>
 
@@ -1344,9 +1410,6 @@
         <section class="settings-section">
           <h3>Display</h3>
 
-          <!-- Match Resolution: snaps the project canvas to the native pixel
-               dimensions of the display the output window is on (or would be).
-               Eliminates source→projector scaling entirely. -->
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Resolution</span>
@@ -4159,6 +4222,27 @@
     display: flex;
     gap: 8px;
     align-items: center;
+  }
+
+  .output-send-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .output-send-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .output-send {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .output-send-buttons .secondary-btn.active {
+    color: var(--ga-live, #46d18a);
+    border-color: color-mix(in srgb, var(--ga-live, #46d18a) 60%, transparent);
+    background: color-mix(in srgb, var(--ga-live, #46d18a) 14%, #222);
   }
 
   .secondary-btn {
