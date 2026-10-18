@@ -3693,52 +3693,6 @@
         <MacroKnobBar />
       </div>
 
-      <!-- Tap tempo + FFT meter + expandable EQ tweaks. Self-hides when
-           audio is off so the header stays clean for users who haven't
-           enabled audio yet. Replaces the standalone audio strip below.
-           Mic (AudioInputPicker) sits immediately after the meter so the
-           audio cluster reads as one logical group. -->
-      <div class="header-meter">
-        <AudioMeterPanel alwaysShow />
-
-        <!-- Audio input picker — same component + same location as mapping
-             mode. State flows through audioStore so toggling here also flips
-             mapping/Performer. Moved out of the right-cluster so the mic
-             lives next to the analyzer (input → output). -->
-        <AudioInputPicker />
-        <!-- How loud the clips play; appears while one is playing with sound. -->
-        <ClipAudioMasterControl />
-
-        <!-- Launch quantization selector. OFF = instant trigger (default).
-             1/4..4bar = beat-aligned launches anchored to detected beats
-             (or virtual clock at current BPM if audio is off). Beginners
-             leave this OFF; pros snap to bar boundaries for tight drops. -->
-        <VJGroups />
-        <div class="header-quant" title="Launch quantize — clips fire on the next beat boundary instead of instantly">
-          <span class="header-quant-label">QUANT</span>
-          <select
-            class="header-quant-select"
-            value={$vjClipLauncher.quantization}
-            onchange={(e) => vjClipLauncher.setQuantization((e.target as HTMLSelectElement).value as any)}
-            data-midi-path="vj:quantize"
-            data-midi-label="Launch Quantize"
-            data-midi-discrete="true"
-          >
-            <option value="off">OFF</option>
-            <option value="1/4">1/4</option>
-            <option value="1/2">1/2</option>
-            <option value="1bar">1 BAR</option>
-            <option value="2bar">2 BAR</option>
-            <option value="4bar">4 BAR</option>
-          </select>
-          {#if $vjClipLauncher.pendingTriggers.length > 0}
-            <span class="header-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} clip{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 's'} queued">
-              {$vjClipLauncher.pendingTriggers.length} ·
-            </span>
-          {/if}
-        </div>
-      </div>
-
       <!-- Right cluster — tight icon grid that mirrors the mapping-mode
            toolbar-right. Order matches mapping (REC → mode toggles → Stage →
            Settings → Back) so users moving between modes find the same
@@ -3756,37 +3710,6 @@
         {:else}
           <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
             ● REC
-          </button>
-        {/if}
-
-        <button
-          class="vj-seq-toggle-btn"
-          class:active={$vjLayerSequencer.isOpen}
-          onclick={() => vjLayerSequencer.toggleOpen()}
-          title="Layer Sequencer"
-          aria-label="Layer Sequencer"
-        >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
-            <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
-            <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
-            <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-        </button>
-
-        {#if $vjClipLauncher.isLive}
-          <!-- A/B crossfader toggle moved into the right cluster so it
-               groups with the other compact icon buttons. -->
-          <button
-            class="ab-toggle-btn"
-            class:active={$vjClipLauncher.crossfaderEnabled}
-            onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
-            title="A/B Crossfader: split the deck into two independent banks with a transition fader between them"
-            data-midi-path="vj:crossfader:enabled"
-            data-midi-label="Crossfader Enabled"
-            data-midi-mode="toggle"
-          >
-            <span class="ab-toggle-glyph">A/B</span>
           </button>
         {/if}
 
@@ -5049,21 +4972,91 @@
           <div class="grid-snaps">
             <SnapshotBank placement="inline" />
           </div>
+          <div class="vj-dock-group vj-dock-tools">
+            <button
+              class="vj-seq-toggle-btn dock-labelled-btn"
+              class:active={$vjLayerSequencer.isOpen}
+              onclick={() => vjLayerSequencer.toggleOpen()}
+              title="Layer Sequencer"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
+                <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
+                <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
+                <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              Sequencer
+            </button>
+
+            {#if $vjClipLauncher.isLive}
+              <button
+                class="ab-toggle-btn dock-labelled-btn"
+                class:active={$vjClipLauncher.crossfaderEnabled}
+                onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
+                title="Split the deck into two independent banks with a transition fader between them"
+                data-midi-path="vj:crossfader:enabled"
+                data-midi-label="Crossfader Enabled"
+                data-midi-mode="toggle"
+              >
+                Split Deck A/B
+              </button>
+            {/if}
+          </div>
         </div>
 
-        <!-- Grid dimension controls -->
-        <div class="grid-dimension-controls">
-          <div class="dim-group">
-            <span class="dim-label">Layers</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title="Remove layer">−</button>
-            <span class="dim-value">{$vjClipLauncher.numLayers}</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.addLayer()} title="Add layer">+</button>
+        <!-- Deck controls: grid size, groups, tempo and audio, launch
+             quantize. Above the deck, next to what they act on. -->
+        <div class="vj-dock" role="toolbar" aria-label="Deck controls">
+          <div class="grid-dimension-controls">
+            <div class="dim-group">
+              <span class="dim-label">Rows</span>
+              <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title="Remove row" aria-label="Remove row">−</button>
+              <span class="dim-value">{$vjClipLauncher.numLayers}</span>
+              <button class="dim-btn" onclick={() => vjClipLauncher.addLayer()} title="Add row" aria-label="Add row">+</button>
+            </div>
+            <div class="dim-group">
+              <span class="dim-label">Cols</span>
+              <button class="dim-btn" onclick={() => vjClipLauncher.removeColumn()} title="Remove column" aria-label="Remove column">−</button>
+              <span class="dim-value">{$vjClipLauncher.numColumns}</span>
+              <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title="Add column" aria-label="Add column">+</button>
+            </div>
           </div>
-          <div class="dim-group">
-            <span class="dim-label">Columns</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.removeColumn()} title="Remove column">−</button>
-            <span class="dim-value">{$vjClipLauncher.numColumns}</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title="Add column">+</button>
+          <VJGroups />
+          <div class="vj-dock-group">
+            <!-- Tap tempo, beat dots, auto tempo and the analyzer. -->
+            <AudioMeterPanel alwaysShow />
+            <!-- Same picker component mapping and Performer use; state flows
+                 through audioStore, so toggling here flips every mode. -->
+            <AudioInputPicker />
+            <!-- How loud the clips play; appears while one is playing with sound. -->
+            <ClipAudioMasterControl />
+            <!-- Launch quantization. OFF = instant trigger (default); 1/4..4bar
+                 align launches to detected beats (or the virtual clock at the
+                 current BPM when audio is off). -->
+            <div class="header-quant" title="Launch quantize — clips fire on the next beat boundary instead of instantly">
+              <span class="header-quant-label">QUANT</span>
+              <select
+                class="header-quant-select"
+                aria-label="Launch quantization"
+                value={$vjClipLauncher.quantization}
+                onchange={(e) => vjClipLauncher.setQuantization((e.target as HTMLSelectElement).value as any)}
+                data-midi-path="vj:quantize"
+                data-midi-label="Launch Quantize"
+                data-midi-discrete="true"
+              >
+                <option value="off">OFF</option>
+                <option value="1/4">1/4</option>
+                <option value="1/2">1/2</option>
+                <option value="1bar">1 BAR</option>
+                <option value="2bar">2 BAR</option>
+                <option value="4bar">4 BAR</option>
+              </select>
+              {#if $vjClipLauncher.pendingTriggers.length > 0}
+                <span class="header-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} clip{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 's'} queued">
+                  {$vjClipLauncher.pendingTriggers.length} ·
+                </span>
+              {/if}
+            </div>
           </div>
         </div>
 
@@ -6186,9 +6179,6 @@
     border-color: transparent;
     box-shadow: 0 0 12px rgba(255, 133, 119, 0.45);
   }
-  .ab-toggle-glyph {
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-  }
   .ab-toggle-label {
     text-transform: uppercase;
   }
@@ -6651,37 +6641,82 @@
     z-index: 2;
   }
 
-  /* Audio meter slot in the header — sits between the MIX/STAGE/AB cluster
-     and the right-side icons. Self-collapses when audio is off. */
-  .header-meter {
+  /* Deck controls bar above the deck. Compact controls wrap as groups on
+     narrow decks; popovers stay unclipped. */
+  .vj-dock {
+    flex-wrap: wrap;
+    white-space: nowrap;
+    --vj-header-font: 11px;
+    --vj-control-h: 28px;
+    --vj-meter-gap: 4px;
+    --vj-right-gap: 4px;
+    margin-bottom: 8px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
     flex: 0 0 auto;
-    min-width: 0;
+    box-sizing: border-box;
+    padding: 5px var(--vj-header-pad-x);
+    background: #141414;
+    border-top: 1px solid #333;
+    overflow: visible;
+    position: relative;
+    z-index: 15;
+  }
+  .vj-dock-group {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    display: flex;
+    align-items: center;
     gap: var(--vj-meter-gap);
+    min-width: 0;
+  }
+  .vj-dock-tools {
+    flex-wrap: nowrap;
+    --vj-header-font: 11px;
+    --vj-control-h: 28px;
+    --vj-right-gap: 4px;
+    margin-left: auto;
+    gap: var(--vj-right-gap);
+    flex: 0 0 auto;
+  }
+  /* Labelled dock buttons — icon + word, sized like the other dock chips. */
+  .dock-labelled-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    height: var(--vj-control-h);
+    padding: 0 10px;
+    font-size: var(--vj-header-font);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
   }
 
-  .header-meter :global(.amp-strip) {
+  .vj-dock :global(.amp-strip) {
     gap: var(--vj-meter-gap);
     padding: 0;
   }
-  .header-meter :global(.amp-fft-btn) {
+  .vj-dock :global(.amp-fft-btn) {
     height: var(--vj-control-h);
     padding: 0 calc(var(--vj-file-pad-x) - 2px);
     gap: var(--vj-meter-gap);
   }
-  .header-meter :global(.amp-bars) {
+  .vj-dock :global(.amp-bars) {
     height: calc(var(--vj-control-h) - 10px);
     gap: var(--vj-amp-bar-gap);
   }
-  .header-meter :global(.amp-bar) {
+  .vj-dock :global(.amp-bar) {
     width: var(--vj-amp-bar-w);
   }
-  .header-meter :global(.aip-btn) {
+  .vj-dock :global(.aip-btn) {
     width: calc(var(--vj-icon-btn) + 2px);
     height: var(--vj-control-h);
   }
-  .header-meter :global(.aip-mic-chevron) {
+  .vj-dock :global(.aip-mic-chevron) {
     width: var(--vj-aip-chevron-w);
   }
 
@@ -6729,9 +6764,6 @@
     0%, 100% { opacity: 0.6; }
     50%      { opacity: 1; }
   }
-  /* Audio input picker now lives inside .header-meter (right of the
-     analyzer), so no positioning override is needed in the right
-     cluster anymore. */
 
   .vj-logo {
     height: var(--vj-logo-h);
@@ -10925,7 +10957,7 @@
     border-color: rgba(187, 134, 252, 0.4);
   }
 
-  .header-meter :global(.amp-bandstrip) {
+  .vj-dock :global(.amp-bandstrip) {
     gap: var(--vj-amp-bar-gap);
   }
   .preview-wrapper.ab-monitoring .preview-layout {
