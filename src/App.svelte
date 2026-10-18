@@ -25,10 +25,9 @@
   import { probeWebGPU } from './lib/renderer/webgpuCapability';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
-  // Feature tour removed at user request — was an interactive multi-step
-  // overlay shown on first launch, but disrupted the experience for users
-  // already familiar with VJ software. The OnboardingTour.svelte and
-  // onboarding store files remain on disk but are no longer mounted.
+  import GuidedTour from './lib/components/GuidedTour.svelte';
+  import TemplatePicker from './lib/components/TemplatePicker.svelte';
+  import { onboarding } from './lib/stores/onboarding';
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
@@ -765,7 +764,7 @@
     // read/write surface; no behaviour depends on it.
     // The VJ deck and Performer are here for the same reason: a check driven
     // from outside has to read the same stores the panels write.
-    try { (window as any).__ghostArcade = { project, settings, vjClipLauncher, synthVisionStore, showTimeline, cueList, dmxStore, getEngine: () => canvasComponent?.getEngine() ?? null }; } catch { /* sealed */ }
+    try { (window as any).__ghostArcade = { project, settings, vjClipLauncher, synthVisionStore, showTimeline, cueList, dmxStore, onboarding, getEngine: () => canvasComponent?.getEngine() ?? null }; } catch { /* sealed */ }
 
     // Show control: cue list executor, show:* control paths, timeline
     // markers, timecode chase, the scheduler and projector polling.
@@ -986,6 +985,11 @@
     // openStage3D() that the toolbar button hits.
     const handleOpenStage3D = () => { openStage3D(); };
     window.addEventListener('open-stage3d', handleOpenStage3D);
+    // The guided tour's "Open the output window" step.
+    const handleTourOpenOutput = () => { if (!outputIsOpen) openOutputWindow(); };
+    window.addEventListener('ga-open-output-window', handleTourOpenOutput);
+    const handleTourCloseSettings = () => { showSettings = false; };
+    window.addEventListener('ga-close-settings', handleTourCloseSettings);
 
     // Load saved AI shaders from server
     loadShadersFromServer().catch(e => {
@@ -1410,6 +1414,8 @@
       window.removeEventListener('beforeunload', onBeforeUnload);
       window.removeEventListener('hashchange', handleHashChange);
       window.removeEventListener('open-settings', handleOpenSettings);
+      window.removeEventListener('ga-open-output-window', handleTourOpenOutput);
+      window.removeEventListener('ga-close-settings', handleTourCloseSettings);
       window.removeEventListener('open-stage3d', handleOpenStage3D);
       if (autoConnectTimeout) {
         clearTimeout(autoConnectTimeout);
@@ -4700,8 +4706,13 @@
   }
   function newProjectConfirm() {
     showNewProjectModal = false;
+    startFreshProject('Untitled Project');
+  }
+  /** Clear everything a project owns, as File → New does. Templates call
+   *  this before building their own deck. */
+  function startFreshProject(name: string) {
     settings.resetOutputStageForNewProject(screenSetups.defaultSnapshot());
-    project.newProject('Untitled Project');
+    project.newProject(name);
     vjClipLauncher.reset();
     synthVisionStore.reset();
     mediaLibrary.reset();
@@ -5714,6 +5725,17 @@
                 </span>
                 <span class="menu-label">New</span>
                 <span class="menu-shortcut">Ctrl+N</span>
+              </button>
+              <button class="menu-item" onclick={() => { fileMenuOpen = false; onboarding.openTemplates(); }}>
+                <span class="menu-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                  </svg>
+                </span>
+                <span class="menu-label">New from Template...</span>
               </button>
               <button class="menu-item" onclick={loadComposition}>
                 <span class="menu-icon">
@@ -7051,13 +7073,23 @@
 
     <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
     {#if showWelcome}
-      <WelcomeModal onClose={() => {
-        showWelcome = false;
-        localStorage.setItem('ghostarcade-welcome-seen', 'true');
-      }} />
+      <WelcomeModal
+        onClose={() => {
+          showWelcome = false;
+          localStorage.setItem('ghostarcade-welcome-seen', 'true');
+        }}
+        onTour={() => onboarding.startTour()}
+        onTemplates={() => onboarding.openTemplates()}
+        onOpenProject={loadComposition}
+      />
     {/if}
 
-    <!-- (Feature tour removed by request — see import comment.) -->
+    <TemplatePicker {hasUnsavedChanges} startFresh={(name) => {
+      startFreshProject(name);
+      // A template is a fresh start; saving it is the user's choice.
+      markAsSaved();
+    }} />
+    <GuidedTour />
 
     <!-- Update available modal — shown when user clicks the Settings update
          banner. Handles download + install + auto-quit so the user never
@@ -7235,7 +7267,9 @@
 {/if}
 
 <!-- Keyboard Shortcut Help Overlay -->
-<ShortcutsOverlay visible={showShortcutHelp} onClose={() => showShortcutHelp = false} />
+<ShortcutsOverlay visible={showShortcutHelp} onClose={() => showShortcutHelp = false}
+  onTour={() => { showShortcutHelp = false; onboarding.startTour(); }}
+  onTemplates={() => { showShortcutHelp = false; onboarding.openTemplates(); }} />
 {#if showProjectMedia}
   <ProjectMediaModal projectPath={currentProjectPath} exportProject={() => project.exportProjectJSONForSave()}
     applyProject={applyMediaRelinks} onClose={() => showProjectMedia = false} />

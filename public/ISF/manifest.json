@@ -4157,6 +4157,816 @@
       "featured": true,
       "defaultLoad": true,
       "enabled": true
+    },
+    {
+      "file": "Featured-lumenstrata.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-lumenveil.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-murmur.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-prism.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-pulse.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-quantumchamber.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-sentinels.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-tendril.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-tide.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-chrysalis.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-crystallon.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-dispersion.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-drift.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-aurora.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Featured-chladniplate.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "featured",
+        "mobile-set"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-MinimalSurface.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "tpms",
+        "gyroid",
+        "lattice",
+        "tunnel",
+        "raymarch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-QuaternionJulia.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "quaternion",
+        "julia",
+        "fractal",
+        "4d",
+        "raymarch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Quasicrystal.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "quasicrystal",
+        "aperiodic",
+        "interference",
+        "duotone",
+        "print",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-HopfFibration.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "hopf",
+        "fibration",
+        "4d",
+        "volumetric",
+        "topology",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Apollonian.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "apollonian",
+        "packing",
+        "thin-film",
+        "iridescent",
+        "raymarch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-SphericalHarmonics.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "spherical-harmonics",
+        "orbital",
+        "lobes",
+        "complementary",
+        "raymarch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-DeepDescent.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "glass",
+        "translucent",
+        "caustics",
+        "godrays",
+        "organic",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-DriftVeil.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "veil",
+        "membrane",
+        "translucent",
+        "underwater",
+        "godrays",
+        "audio",
+        "ga2-pack",
+        "deep-descent"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Cathedral.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "menger",
+        "lattice",
+        "volumetric",
+        "godrays",
+        "architecture",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-CircleLimit.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "hyperbolic",
+        "tiling",
+        "poincare",
+        "escher",
+        "inlay",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Eclipse.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "eclipse",
+        "corona",
+        "sun",
+        "diamond ring",
+        "astronomy",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-ColouredShadows.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "shadows",
+        "light",
+        "rgb",
+        "columns",
+        "architecture",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Lightbox.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "paper cut",
+        "lightbox",
+        "landscape",
+        "layers",
+        "silhouette",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-PhasePortrait.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "complex",
+        "phase portrait",
+        "conformal",
+        "checkerboard",
+        "mathematics",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-SoftCells.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "soft cells",
+        "tiling",
+        "cushion",
+        "organic",
+        "2024",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Kakeya.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "kakeya",
+        "needle",
+        "perron tree",
+        "besicovitch",
+        "geometry",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-CapSet.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "cap set",
+        "set game",
+        "combinatorics",
+        "grid",
+        "funsearch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-Murmuration.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "murmuration",
+        "elliptic curves",
+        "flock",
+        "points",
+        "number theory",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "GA2-MovingSofa.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "moving sofa",
+        "gerver",
+        "corridor",
+        "geometry",
+        "kinetic",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-BeamRig.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "beams",
+        "moving heads",
+        "haze",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-ColourWash.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "wash",
+        "par",
+        "colour",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-LightCurtain.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "beams",
+        "curtain",
+        "acl",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-GoboSpots.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "gobo",
+        "spots",
+        "prism",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-Blinders.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "blinders",
+        "lamps",
+        "matrix",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-LiquidSky.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "laser",
+        "liquid sky",
+        "haze",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-Followspot.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "followspot",
+        "spot",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-Strobe.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "strobe",
+        "flash",
+        "lightning",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "STAGE-MirrorBall.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "stage lights",
+        "mirror ball",
+        "disco",
+        "flecks",
+        "concert",
+        "audio",
+        "stage-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-OilWheel.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "oil wheel",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-AcidFlow.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "acid flow",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-TieDye.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "tie-dye",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-Chrysanthemum.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "chrysanthemum",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-FormConstants.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "form constants",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PSY-OilSlick.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "oil slick",
+        "psychedelic",
+        "liquid light",
+        "audio",
+        "psy-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "Quotron.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "terminal",
+        "ascii",
+        "generative",
+        "retro"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
     }
   ]
 }

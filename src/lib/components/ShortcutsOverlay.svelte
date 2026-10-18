@@ -2,6 +2,8 @@
   import { isMac } from '$lib/bridge';
   export let visible = false;
   export let onClose: () => void;
+  export let onTour: () => void = () => {};
+  export let onTemplates: () => void = () => {};
 
   const mod = isMac ? 'Cmd' : 'Ctrl';
 </script>
@@ -11,6 +13,10 @@
     <div class="shortcut-overlay" onclick={(e) => e.stopPropagation()}>
       <button aria-label="Close keyboard shortcuts" class="shortcut-overlay-close" onclick={onClose}>&times;</button>
       <h2 class="shortcut-overlay-title">Keyboard Shortcuts</h2>
+      <div class="shortcut-start">
+        <button class="shortcut-start-btn" onclick={onTour}>Take the tour</button>
+        <button class="shortcut-start-btn" onclick={onTemplates}>Start from a template</button>
+      </div>
       <div class="shortcut-columns">
         <div class="shortcut-section">
           <h3>General</h3>
@@ -55,6 +61,22 @@
 {/if}
 
 <style>
+  .shortcut-start {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 14px;
+  }
+  .shortcut-start-btn {
+    font: inherit;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 7px;
+    border: 1px solid #3a3f4a;
+    background: #1d2a40;
+    color: #dfe3ea;
+    cursor: pointer;
+  }
+  .shortcut-start-btn:hover { border-color: #5a6274; }
   /* Bug fix (Mar 2026): the component had NO style block at all, so
      `?` button "did nothing" — the overlay rendered but was invisible
      (unpositioned divs at the document end). Adding proper modal
