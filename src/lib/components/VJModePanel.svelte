@@ -60,6 +60,7 @@
   import AudioMeterPanel from './AudioMeterPanel.svelte';
   import MacroKnobBar from './MacroKnobBar.svelte';
   import { fitToolbar } from '../utils/toolbarFit';
+  import { liveOutput, toggleOutputFullscreen } from '../stores/liveOutput';
   import SnapshotBank from './SnapshotBank.svelte';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   // VJAudioBar import retained for fallback / type compatibility but the
@@ -3615,6 +3616,9 @@
   <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen}>
     <!-- Header -->
     <div class="vj-header" use:fitToolbar>
+      <!-- Lead column: fixed-size left controls, then the MIX/STAGE/MAP
+           toggle centred in whatever space is left before the macro bank. -->
+      <div class="header-lead">
       <div class="header-left">
         <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="vj-logo" />
         <!-- File Menu -->
@@ -3677,6 +3681,7 @@
         </button>
       </div>
 
+      <div class="header-stage-slot">
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
           <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
@@ -3684,6 +3689,8 @@
           <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">MAP</button>
         </div>
       {/if}
+      </div>
+      </div>
 
       <!-- Macros — 8 user-assignable knobs that each drive any number of
            parameters with per-destination curves and ranges. Beginners
@@ -3700,6 +3707,24 @@
            controls in the same places. Flip-layout was removed; the option
            now lives in Settings → Appearance. -->
       <div class="header-right">
+        <!-- Send the output fullscreen to the projector, the same as the
+             mapping toolbar's Fullscreen button. -->
+        <button
+          class="minimize-btn output-send-btn"
+          class:active={$liveOutput.mode === 'fullscreen'}
+          onclick={toggleOutputFullscreen}
+          title={$liveOutput.mode === 'fullscreen' ? 'Take the output off the projector' : 'Send the output fullscreen to the projector'}
+          aria-label={$liveOutput.mode === 'fullscreen' ? 'Stop fullscreen output' : 'Send output fullscreen to the projector'}
+          aria-pressed={$liveOutput.mode === 'fullscreen'}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2.5" y="9" width="12" height="8" rx="2" />
+            <circle cx="7" cy="13" r="2.1" />
+            <path d="M14.5 11.2 21.5 7.5" />
+            <path d="M14.5 14.8 21.5 18.5" />
+            <path d="M21.5 7.5v11" />
+          </svg>
+        </button>
         {#if vjIsRecording}
           <div class="vj-recording-indicator">
             <span class="vj-rec-dot"></span>
@@ -3714,22 +3739,29 @@
           </button>
         {/if}
 
-        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open 3D Stage (no need to minimize VJ)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2L4 7l8 5 8-5z"/><path d="M4 12l8 5 8-5"/><path d="M4 17l8 5 8-5"/>
+        <!-- Same glyph mapping mode's Stage Sim button uses, so the two
+             modes read as the same destination. -->
+        <button class="minimize-btn stage-sim-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open Stage Simulator" aria-label="Open Stage Simulator">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 16.4 12 12l8 4.4-8 4.5-8-4.5Z" />
+            <path d="M7.2 14.7V8.6L12 5.5l4.8 3.1v6.1" />
+            <path d="M7.2 8.6 12 11.5l4.8-2.9" />
+            <path d="M12 5.5v6" />
           </svg>
+          Stage Sim
+        </button>
+        <!-- The Stage Designer, as mapping mode's Stage button opens it. The
+             deck keeps playing to the output while it is open. -->
+        <button class="minimize-btn stage-sim-btn" onclick={() => workspace.openStage()} title="Edit the stage screens and their warp" aria-label="Open Stage Editor">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
+          Stage Edit
         </button>
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="minimize-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output" aria-label="Exit VJ">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 18l-6-6 6-6"/>
-          </svg>
-        </button>
-        <button class="exit-btn" onclick={handleExitVJClick}>Exit VJ</button>
+        <button class="exit-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output">Exit VJ</button>
       </div>
     </div>
 
@@ -6587,9 +6619,9 @@
 
   /* Header */
   .vj-header {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
     position: relative;
     gap: var(--vj-header-gap);
     min-height: var(--vj-header-h);
@@ -6619,7 +6651,10 @@
     gap: var(--vj-right-gap);
     margin-left: 0;
     z-index: 3;
-    flex: 0 0 auto;
+    /* Right column, pinned to the end. Never wraps — Exit VJ has to stay
+       reachable. */
+    justify-self: end;
+    flex-wrap: nowrap;
     background: transparent;
     padding-left: 0;
   }
@@ -6627,11 +6662,23 @@
   /* Macro knob row — sits between the crossfader toggle and the audio
      meter. Always visible; users can resize / reorder by editing the
      header layout. The bar self-sizes to its content. */
+  .header-lead {
+    display: flex;
+    align-items: center;
+    gap: var(--vj-header-gap);
+    min-width: 0;
+  }
+  .header-stage-slot {
+    display: flex;
+    flex: 1 1 auto;
+    justify-content: center;
+    min-width: 0;
+  }
   .header-macros {
     display: flex;
     align-items: center;
     justify-content: center;
-    flex: 0 0 var(--vj-macro-bank-w);
+    justify-self: center;
     width: var(--vj-macro-bank-w);
     min-width: 0;
     max-width: var(--vj-macro-bank-w);
@@ -6959,6 +7006,22 @@
   /* Compact square icon button — same footprint as mapping-mode's
      settings/3D buttons (32×32). No padding around the SVG so the
      icons crowd into a tidy grid. */
+  /* Labelled variant — matches mapping mode's "Stage Sim" chip. */
+  .minimize-btn.stage-sim-btn {
+    width: auto;
+    padding: 0 10px;
+    gap: 7px;
+    font-size: var(--vj-header-font);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  /* Live while the output is fullscreen on a projector. */
+  .output-send-btn.active {
+    color: var(--ga-live, #46d18a);
+    border-color: color-mix(in srgb, var(--ga-live, #46d18a) 60%, transparent);
+    background: color-mix(in srgb, var(--ga-live, #46d18a) 14%, transparent);
+  }
+
   .minimize-btn {
     width: var(--vj-icon-btn);
     height: var(--vj-control-h);
