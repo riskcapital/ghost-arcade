@@ -3325,10 +3325,14 @@ it('isolates Mapping, VJ Mix, VJ Maps and Stage composition effect ownership', a
         compositionEffects: [{ id: 'vj', type: 'blur', enabled: true, opacity: 1, blendMode: 'normal', params: { blurRadius: 5 } }] });
       return sync.compositeEffectGraphCommand(32, 32)?.render_passes.map((p: any) => p.name) ?? [];
     };
+    // Mapping: only the mapping FX.
     expect(mode(false, false, false)).toEqual(['composite-fx-invert-0']);
-    expect(mode(true, false, false)).toEqual([]);
+    // Every live VJ mode runs its composition FX on the final output (not on
+    // the mix carrier), so effects that sample neighbours work there too.
+    expect(mode(true, false, false)).toEqual(['composite-fx-blur-0']);
     expect(mode(true, true, false)).toEqual(['composite-fx-blur-0']);
-    expect(mode(true, false, true)).toEqual(['composite-fx-invert-0']);
+    // STAGE: the mapped output's FX first, then the VJ composition FX.
+    expect(mode(true, false, true)).toEqual(['composite-fx-invert-0', 'composite-fx-blur-1']);
   } finally { project.set(original.project); macros.set(original.macros); vjClipLauncher.set(original.vj); }
 });
 
