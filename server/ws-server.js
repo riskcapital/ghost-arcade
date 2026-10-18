@@ -349,10 +349,55 @@ export function setPairingToken(token) {
   }
 }
 
+// ── Thumbnails for the phone app ──────────────────────────────────────
+// The desktop sends thumbnails as paths into its own app (./ISF/...). A
+// phone browser loads its page from this machine, so they resolve here. The
+// native phone app runs from its own bundle, which only has the shaders it
+// shipped with, so anything added since showed a broken image. For an app
+// connection, point them at this machine's HTTP server instead, at the
+// address the phone dialled, with the pairing token an <img> cannot send as
+// a header.
+const THUMBNAIL_MESSAGES = new Set(['vj_clips_sync', 'library_sync', 'shader_library_sync']);
+
+/** The app shell's origin: capacitor:// on iOS, http(s)://localhost (no port) on Android. */
+function isPhoneAppOrigin(origin) {
+  return /^(capacitor|ionic):\/\/localhost$/i.test(origin) || /^https?:\/\/localhost$/i.test(origin);
+}
+
+function assetBaseFor(req) {
+  if (!isPhoneAppOrigin(String(req.headers.origin || ''))) return null;
+  let host = '';
+  try { host = new URL(`http://${req.headers.host || ''}`).hostname; } catch { return null; }
+  return host ? `http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${HTTP_PORT}` : null;
+}
+
+function rewriteThumbnails(value, base, token) {
+  const fix = (src) => {
+    if (typeof src !== 'string' || !(src.startsWith('./') || (src.startsWith('/') && !src.startsWith('//')))) return src;
+    const pathPart = src.replace(/^\.?\//, '');
+    return `${base}/${pathPart}${pathPart.includes('?') ? '&' : '?'}${PAIRING_QUERY_PARAM}=${encodeURIComponent(token)}`;
+  };
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (!node || typeof node !== 'object') return node;
+    const out = {};
+    for (const [key, v] of Object.entries(node)) out[key] = key === 'thumbnail' ? fix(v) : walk(v);
+    return out;
+  };
+  return walk(value);
+}
+
+/** The message as this client should receive it, serialized. */
+function payloadFor(client, msg, shared) {
+  if (!client.assetBase || !pairingToken || !THUMBNAIL_MESSAGES.has(msg.type)) return shared;
+  return JSON.stringify(rewriteThumbnails(msg, client.assetBase, pairingToken));
+}
+
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
   console.log(`[+] Client connected: ${clientIp}`);
   clients.add(ws);
+  ws.assetBase = assetBaseFor(req);
   // Interactive Studio: one phone keeps one identity across reconnects.
   ws.studioAddress = String(clientIp || 'unknown').replace(/[^\w.:-]/g, '_').slice(0, 39);
   ws.studioPeers = new Set();
@@ -366,18 +411,14 @@ wss.on('connection', (ws, req) => {
 
   // Send media library state to new client
   if (mediaLibraryState.length > 0) {
-    ws.send(JSON.stringify({
-      type: 'library_sync',
-      library: mediaLibraryState,
-    }));
+    const msg = { type: 'library_sync', library: mediaLibraryState };
+    ws.send(payloadFor(ws, msg, JSON.stringify(msg)));
   }
 
   // Send VJ clips state to new client
   if (vjClipsState) {
-    ws.send(JSON.stringify({
-      type: 'vj_clips_sync',
-      vjClips: vjClipsState,
-    }));
+    const msg = { type: 'vj_clips_sync', vjClips: vjClipsState };
+    ws.send(payloadFor(ws, msg, JSON.stringify(msg)));
   }
 
   // Send compositions state to new client
@@ -397,10 +438,8 @@ wss.on('connection', (ws, req) => {
 
   // Send user shader library so mobile mirrors desktop's custom adds.
   if (shaderLibraryState.length > 0) {
-    ws.send(JSON.stringify({
-      type: 'shader_library_sync',
-      shaders: shaderLibraryState,
-    }));
+    const msg = { type: 'shader_library_sync', shaders: shaderLibraryState };
+    ws.send(payloadFor(ws, msg, JSON.stringify(msg)));
   }
 
   // Broadcast client count
@@ -1064,7 +1103,7 @@ function broadcast(sender, msg) {
   const data = JSON.stringify(msg);
   for (const client of clients) {
     if (client !== sender && client.readyState === WebSocket.OPEN) {
-      client.send(data);
+      client.send(payloadFor(client, msg, data));
     }
   }
 }
@@ -1074,7 +1113,7 @@ function broadcastAll(msg) {
   const data = JSON.stringify(msg);
   for (const client of clients) {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(data);
+      client.send(payloadFor(client, msg, data));
     }
   }
 }
@@ -1385,6 +1424,15 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // A development checkout's dist/ is whatever was built last, so files
+  // added to public/ since (new shader thumbnails) are missing from it; the
+  // source folder still has them. A packaged app has no public/ beside it.
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    const publicDir = path.join(__dirname, '..', 'public');
+    const fromPublic = path.resolve(publicDir, '.' + reqPath);
+    const inside = !path.relative(publicDir, fromPublic).startsWith('..') && !path.isAbsolute(path.relative(publicDir, fromPublic));
+    if (inside && fs.existsSync(fromPublic) && fs.statSync(fromPublic).isFile()) filePath = fromPublic;
+  }
   // If the file doesn't exist, serve index.html (SPA fallback)
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
     filePath = path.join(distDir, 'index.html');
