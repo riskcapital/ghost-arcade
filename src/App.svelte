@@ -2899,14 +2899,14 @@
       connectionError = '';
       // Register as desktop client — mobileConnected will be set by client_count messages
       ws?.send(JSON.stringify({ type: 'register_desktop', credential: desktopCredential }));
-      // Send initial state
-      syncState();
+      // State goes out when a phone connects (pushAllToPhone), not now.
     };
 
     ws.onclose = () => {
       wsServerReady = false;
       mobileConnected = false;
       clientCount = 0;
+      phoneLastSent = new Map();
     };
 
     ws.onerror = (event) => {
@@ -3693,13 +3693,26 @@
     }
     return value;
   }
+  // Last payload sent per message type. The server keeps the latest of
+  // each and replays it to a phone that connects, so a payload identical to
+  // the last one is never worth sending again: loading a project re-emits
+  // the shader list a dozen times with the same contents.
+  let phoneLastSent = new Map<string, string>();
+  function sendToPhone(message: { type: string; [key: string]: unknown }, replacer?: (key: string, value: any) => any): void {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const text = JSON.stringify(message, replacer);
+    if (phoneLastSent.get(message.type) === text) return;
+    phoneLastSent.set(message.type, text);
+    ws.send(text);
+  }
+
   function syncState() {
     if (ws && ws.readyState === WebSocket.OPEN) {
       try {
-        ws.send(JSON.stringify({
+        sendToPhone({
           type: 'sync',
           project: $project,
-        }, _sanitizeForSync));
+        }, _sanitizeForSync);
       } catch (err) {
         // Belt-and-suspenders: even with the replacer, an exotic
         // circular structure could slip through. Don't let it brick
@@ -3767,20 +3780,36 @@
         thumbnail: thumb,
       };
     }));
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({
+    sendToPhone({
       type: 'library_sync',
       library: out,
-    }));
+    });
   }
 
-  // Sync on project changes
-  $: if (wsServerReady && $project) {
-    syncState();
+  // ─── Phone link ──────────────────────────────────────────────────────
+  // The phone drives the desktop; it does not mirror it. What it needs to
+  // draw its controls goes out only while a phone is connected, and each
+  // item has exactly one trigger: every trigger depends on `phoneLinked`, so
+  // it fires once when a phone connects and again only when its own state
+  // changes. With no phone the desktop sends nothing, so editing, dragging
+  // and crossfading never serialize state for no one. Project edits arrive
+  // at frame rate during a drag; the phone's layer list needs a tenth.
+  const PHONE_PROJECT_SYNC_MS = 100;
+  let phoneProjectSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  function schedulePhoneProjectSync() {
+    if (phoneProjectSyncTimer) return;
+    phoneProjectSyncTimer = setTimeout(() => {
+      phoneProjectSyncTimer = null;
+      if (wsServerReady && mobileConnected) syncState();
+    }, PHONE_PROJECT_SYNC_MS);
+  }
+  $: phoneLinked = wsServerReady && mobileConnected;
+
+  $: if (phoneLinked && $project) {
+    schedulePhoneProjectSync();
   }
 
-  // Sync media library when it changes
-  $: if (wsServerReady && $mediaLibrary) {
+  $: if (phoneLinked && $mediaLibrary) {
     syncMediaLibrary();
   }
 
@@ -3789,10 +3818,10 @@
   // freeze button + B-key shortcut + any other connected mobile peer).
   function syncOutputFreeze(frozen: boolean) {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'output_freeze_state', frozen }));
+      sendToPhone({ type: 'output_freeze_state', frozen });
     }
   }
-  $: if (wsServerReady) syncOutputFreeze($outputFrozen);
+  $: if (phoneLinked) syncOutputFreeze($outputFrozen);
 
   // Sync the MediaTray's canonical shader list to mobile. This is the
   // EXACT same list the desktop user picks from (manifest catalog +
@@ -3809,22 +3838,39 @@
     thumbnail?: string;
     custom?: boolean;
   }>) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'shader_library_sync', shaders: list }));
+    sendToPhone({ type: 'shader_library_sync', shaders: list });
   }
-  $: if (wsServerReady) syncShaderLibrary($mediaTrayShaders);
+  // The shader list settles over a burst of updates while a project loads:
+  // send it once the burst is over.
+  let phoneShaderSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  $: if (phoneLinked) {
+    const shaders = $mediaTrayShaders;
+    if (phoneShaderSyncTimer) clearTimeout(phoneShaderSyncTimer);
+    phoneShaderSyncTimer = setTimeout(() => {
+      phoneShaderSyncTimer = null;
+      syncShaderLibrary(shaders);
+    }, 150);
+  }
+
+  // The grid part of the mobile sync, kept until the launcher's blocks
+  // change. A crossfader sweep, a macro or a layer opacity re-sends the
+  // light fields only in effect: the grid is serialized once per edit.
+  let serializedGridFor: unknown = null;
+  let serializedGrid: unknown[] = [];
 
   // Sync VJ Clip Launcher state to mobile (clips in the grid)
   function syncVJClips() {
     if (ws && ws.readyState === WebSocket.OPEN) {
       // Common per-clip serializer used for both Bank A grid and Bank B grid.
+      // No shader source here: the phone reads it only from the clips that
+      // are playing (layerStates[].activeClip, below), and the grid's copy
+      // was ~1.5 MB of every message for a 256-clip set.
       const serializeClip = (clip: any) => clip ? {
         id: clip.id,
         type: clip.type,
         name: clip.name,
         src: clip.src,
         thumbnail: clip.thumbnail,
-        shaderCode: clip.shaderCode,
         effects: clip.effects || [],
       } : null;
       const serializeLayerState = (ls: any) => ({
@@ -3849,15 +3895,19 @@
       // every new feature surface so the mobile companion can render the
       // dual decks, crossfader, macros, snapshots, and quantize grid
       // alongside the original clip-grid + mixer + master controls.
-      const serializableClips = {
-        blocks: $vjClipLauncher.blocks.map(block => ({
+      if (serializedGridFor !== $vjClipLauncher.blocks) {
+        serializedGridFor = $vjClipLauncher.blocks;
+        serializedGrid = $vjClipLauncher.blocks.map(block => ({
           id: block.id,
           name: block.name,
           clipGrid: block.clipGrid.map(row => row.map(serializeClip)),
           // Per-block Bank B grid — new in v0.3.x. Switching blocks on
           // mobile flips both decks together (matching desktop behavior).
           bankBClipGrid: (block.bankBClipGrid || []).map(row => row.map(serializeClip)),
-        })),
+        }));
+      }
+      const serializableClips = {
+        blocks: serializedGrid,
         activeBlockId: $vjClipLauncher.activeBlockId,
         layerStates: $vjClipLauncher.layerStates.map(serializeLayerState),
         // Bank B per-layer state (independent of Bank A — opacity / blend /
@@ -3905,10 +3955,10 @@
         bpm: $audioStore.bpm,
         manualBPM: $audioStore.manualBPM,
       };
-      ws.send(JSON.stringify({
+      sendToPhone({
         type: 'vj_clips_sync',
         vjClips: serializableClips,
-      }));
+      });
     }
   }
 
@@ -3921,10 +3971,10 @@
         name: comp.name,
         thumbnail: comp.thumbnail,
       }));
-      ws.send(JSON.stringify({
+      sendToPhone({
         type: 'compositions_sync',
         compositions: serializableCompositions,
-      }));
+      });
     }
   }
 
@@ -3939,7 +3989,11 @@
   let syncVJClipsPending = false;
   let syncVJClipsTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleSyncVJClips() {
-    if (!wsServerReady) return;
+    // Nobody to tell: the server only relays this to phones. Skipping it
+    // keeps a crossfade or a macro sweep from serializing and sending the
+    // whole deck dozens of times a second for no one. A phone that connects
+    // gets the current state at once (the mobileConnected trigger below).
+    if (!wsServerReady || !mobileConnected) return;
     if (syncVJClipsTimer) {
       syncVJClipsPending = true;
       return;
@@ -3961,18 +4015,18 @@
   // identifiers it actually sees in the `if (...)` expression.
   // (CRITICAL fix v17.1: prior version only watched vjClipLauncher,
   // so dragging a macro on desktop never reached mobile.)
-  $: if (wsServerReady && $vjClipLauncher) {
+  $: if (phoneLinked && $vjClipLauncher) {
     scheduleSyncVJClips();
   }
-  $: if (wsServerReady && $macros) {
+  $: if (phoneLinked && $macros) {
     scheduleSyncVJClips();
   }
-  $: if (wsServerReady && $snapshotsStore) {
+  $: if (phoneLinked && $snapshotsStore) {
     scheduleSyncVJClips();
   }
   // Audio: BPM / manualBPM only (NOT beat — that's emitted via the
   // dedicated beat_pulse channel because it's a 10ms momentary flag).
-  $: if (wsServerReady && ($audioStore.bpm || $audioStore.manualBPM)) {
+  $: if (phoneLinked && ($audioStore.bpm || $audioStore.manualBPM)) {
     scheduleSyncVJClips();
   }
 
@@ -3982,7 +4036,7 @@
   // momentarily flash the TAP button + BPM number. This bypasses the
   // syncVJClips throttle so beats stay tight (within one rAF frame).
   let lastBeatFlag = false;
-  $: if (wsServerReady && ws && ws.readyState === WebSocket.OPEN) {
+  $: if (phoneLinked && ws && ws.readyState === WebSocket.OPEN) {
     const now = !!$audioStore.beat?.isBeat;
     if (now && !lastBeatFlag) {
       try {
@@ -3997,7 +4051,7 @@
   }
 
   // Sync compositions when project vjMode changes
-  $: if (wsServerReady && $project.vjMode?.compositions) {
+  $: if (phoneLinked && $project.vjMode?.compositions) {
     syncCompositions();
   }
 

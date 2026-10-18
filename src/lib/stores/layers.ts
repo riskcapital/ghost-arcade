@@ -5,7 +5,7 @@ import type { GroupConfig } from '../types';
 import { buildLookEffects, lookPalette } from '../looks/edgeLooks';
 import { edgeLook } from '../looks/edgeLookCatalog';
 import { mediaLibrary } from './media';
-import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
+import { vjClipLauncher, vjClipLauncherNow, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
 import { disposeJSAnimationContext } from '../renderer/js-animation';
 import { synthVisionStore } from './synthVision';
 import { modulationStore, type ParamModulation } from '../audio/modulation';
@@ -4816,7 +4816,7 @@ void main() {
       }));
 
       // Export VJ Clip Launcher state (strip runtime objects like videoElement)
-      const currentVjClipLauncher = get(vjClipLauncher);
+      const currentVjClipLauncher = vjClipLauncherNow();
       const exportClip = (clip: VJClip | null) => {
         if (!clip) return null;
         const recoveredAssetRef = recoverVJClipAssetRef(clip as any, currentMedia);

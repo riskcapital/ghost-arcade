@@ -3670,6 +3670,8 @@ export const defocusBokehHeroShader = /* glsl */ `
   uniform float uShape;         // 0=disc, 1=hexagon, 2=octagon
   uniform float uRotation;      // 0-360 aperture rotation
   uniform float uMix;           // 0-1
+  uniform float uFocusMode;     // 0=everywhere, 1=centre, 2=horizontal band
+  uniform vec4 uFocus;          // focus x, y (top-origin), size, falloff
   uniform vec2 uResolution;
   varying vec2 vUv;
 
@@ -3689,9 +3691,24 @@ export const defocusBokehHeroShader = /* glsl */ `
     return r <= polyR ? 1.0 : 0.0;
   }
 
+  // 0 inside the focus area (sharp), rising to 1 (full blur) across the
+  // falloff. Distances run 0 at the focus point to 1 at the frame's corner
+  // (centre focus) or its top and bottom edges (band focus).
+  float focusBlur(vec2 uv) {
+    vec2 center = vec2(uFocus.x, 1.0 - uFocus.y);
+    float d = abs(uv.y - center.y) * 2.0;
+    if (int(uFocusMode + 0.5) != 2) {
+      float aspect = uResolution.x / max(uResolution.y, 1.0);
+      d = length((uv - center) * vec2(aspect, 1.0)) / length(vec2(aspect, 1.0) * 0.5);
+    }
+    return smoothstep(uFocus.z, uFocus.z + max(uFocus.w, 0.001), d);
+  }
+
   void main() {
     vec4 src = texture2D(uTexture, vUv);
-    if (uRadius < 0.5) { gl_FragColor = src; return; }
+    float blurRadius = uRadius;
+    if (int(uFocusMode + 0.5) != 0) blurRadius *= focusBlur(vUv);
+    if (blurRadius < 0.5) { gl_FragColor = src; return; }
 
     int samples = int(clamp(uSamples, 8.0, 48.0));
     int shape = int(uShape + 0.5);
@@ -3721,15 +3738,15 @@ export const defocusBokehHeroShader = /* glsl */ `
       if (uChromaFringe > 0.001) {
         // Per-channel offset for fringing
         vec2 dir = normalize(rotDisc + 1e-6);
-        float rOff = uRadius * (1.0 + uChromaFringe * 0.05);
-        float bOff = uRadius * (1.0 - uChromaFringe * 0.05);
-        off = rotDisc * uRadius * texel;
-        float r = texture2D(uTexture, vUv + dir * rOff * texel + (off - dir * uRadius * texel)).r;
+        float rOff = blurRadius * (1.0 + uChromaFringe * 0.05);
+        float bOff = blurRadius * (1.0 - uChromaFringe * 0.05);
+        off = rotDisc * blurRadius * texel;
+        float r = texture2D(uTexture, vUv + dir * rOff * texel + (off - dir * blurRadius * texel)).r;
         float g = texture2D(uTexture, vUv + off).g;
-        float b = texture2D(uTexture, vUv + dir * bOff * texel + (off - dir * uRadius * texel)).b;
+        float b = texture2D(uTexture, vUv + dir * bOff * texel + (off - dir * blurRadius * texel)).b;
         c = vec3(r, g, b);
       } else {
-        off = rotDisc * uRadius * texel;
+        off = rotDisc * blurRadius * texel;
         c = texture2D(uTexture, vUv + off).rgb;
       }
 
