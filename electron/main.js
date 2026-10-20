@@ -9465,6 +9465,7 @@ function cleanupAndQuit() {
   runCleanupStep('detachNativeEditorPreview', () => detachNativeEditorPreview('app-quit'));
   runCleanupStep('stopSpoutSender', stopSpoutSender);
   runCleanupStep('stopSpoutReceiver', stopSpoutReceiver);
+  runCleanupStep('stopAbletonBridge', () => abletonBridge.stop());
   runCleanupStep('destroyNdiSenders', destroyNdiSenders);
   runCleanupStep('destroyNdiReceivers', destroyNdiReceivers);
   runCleanupStep('stopNativeRenderer', () => nativeRendererBroker.shutdownSync());

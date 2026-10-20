@@ -1,0 +1,3 @@
+# The Live script ships byte-for-byte the same from every build, so an
+# installed copy compares equal whichever OS installed it.
+ableton/**/*.py text eol=lf
