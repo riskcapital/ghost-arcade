@@ -180,6 +180,7 @@ private:
     bool m_initialized;
     bool m_hasExternalDevice;
     int m_adapterIndex;                 // GPU adapter index for Spout (discrete GPU)
+    std::wstring m_probedName;          // shared texture the other adapters were tried for
     std::string m_senderName;
     unsigned int m_width;
     unsigned int m_height;
@@ -344,6 +345,15 @@ private:
         ComPtr<ID3D11Texture2D> sharedTexture;
         HRESULT hr = m_extDevice1->OpenSharedResourceByName(
             wideName.c_str(), GENERIC_ALL, IID_PPV_ARGS(&sharedTexture));
+        // A texture made on another GPU won't open here: find the adapter the
+        // producer rendered on, once per texture, whatever the GPUs are named.
+        if (FAILED(hr) && wideName != m_probedName) {
+            m_probedName = wideName;
+            if (MatchProducerAdapter(wideName)) {
+                hr = m_extDevice1->OpenSharedResourceByName(
+                    wideName.c_str(), GENERIC_ALL, IID_PPV_ARGS(&sharedTexture));
+            }
+        }
         if (FAILED(hr)) {
             static int errCount = 0;
             if (errCount++ < 5)
@@ -510,6 +520,51 @@ private:
 
         m_hasExternalDevice = true;
         printf("[SpoutAddon] External D3D11 device created on adapter %d for zero-copy path\n", m_adapterIndex);
+    }
+
+    // Rebuild the shared device, and SpoutDX on it, on another adapter.
+    bool SwitchAdapter(int index) {
+        if (m_initialized) {
+            m_spout.ReleaseSender();
+            m_spout.CloseDirectX11();
+            m_initialized = false;
+        }
+        m_extDevice.Reset();
+        m_extDevice1.Reset();
+        m_extContext.Reset();
+        m_hasExternalDevice = false;
+        m_adapterIndex = index;
+        CreateExternalDevice();
+        if (!m_hasExternalDevice || !m_spout.OpenDirectX11(m_extDevice.Get())) return false;
+        m_initialized = true;
+        if (!m_senderName.empty()) m_spout.SetSenderName(m_senderName.c_str());
+        return true;
+    }
+
+    // The name-based pick can choose the wrong GPU (a laptop rendering on
+    // its integrated GPU, or several adapters for one card). Try each
+    // hardware adapter until the producer's texture opens on it; keep that
+    // one, or return to the original if none can.
+    bool MatchProducerAdapter(const std::wstring& sharedName) {
+        ComPtr<IDXGIFactory1> factory;
+        if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return false;
+        const int original = m_adapterIndex;
+        ComPtr<IDXGIAdapter1> adapter;
+        for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
+            DXGI_ADAPTER_DESC1 desc;
+            const bool software = FAILED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
+            adapter.Reset();
+            if ((int)i == original || software) continue;
+            if (!SwitchAdapter((int)i)) continue;
+            ComPtr<ID3D11Texture2D> probe;
+            if (SUCCEEDED(m_extDevice1->OpenSharedResourceByName(sharedName.c_str(), GENERIC_ALL, IID_PPV_ARGS(&probe)))) {
+                printf("[SpoutAddon] Producer texture opens on adapter %u; switched from adapter %d\n", i, original);
+                return true;
+            }
+        }
+        printf("[SpoutAddon] No other adapter opens the producer texture; staying on adapter %d\n", original);
+        SwitchAdapter(original);
+        return false;
     }
 
     void Cleanup() {
