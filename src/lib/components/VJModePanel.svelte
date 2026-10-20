@@ -85,6 +85,7 @@
   import MacroKnobBar from './MacroKnobBar.svelte';
   import SnapshotBank from './SnapshotBank.svelte';
   import AbletonBridgePanel from './ableton/AbletonBridgePanel.svelte';
+  import { abletonBridge } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   // VJAudioBar import retained for fallback / type compatibility but the
   // standalone strip below the header was dropped — its contents are now
@@ -4437,10 +4438,6 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
           Stage Edit
         </button>
-        <button class="minimize-btn stage-sim-btn" class:active={abletonBridgeOpen} onclick={() => (abletonBridgeOpen = true)} title="Link Ableton Live scenes and clips to visuals" aria-label="Open Ableton bridge">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6v12M8 6v12M12 6v12M16 6v12"/><path d="M20 9v6"/></svg>
-          Ableton
-        </button>
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -5949,6 +5946,10 @@
               </span>
             {/if}
           </div>
+          <button class="dock-ableton" class:connected={$abletonBridge.connected} onclick={() => (abletonBridgeOpen = true)} title={$abletonBridge.connected ? 'Ableton Live connected — link scenes and clips to visuals' : 'Link Ableton Live scenes and clips to visuals'} aria-label="Open Ableton bridge">
+            <span class="dock-ableton-dot" aria-hidden="true"></span>
+            ABLETON
+          </button>
         </div>
 
 
@@ -9204,6 +9205,24 @@
     border-radius: 4px;
     height: var(--vj-control-h);
   }
+  .dock-ableton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--vj-control-h);
+    padding: 0 calc(var(--vj-file-pad-x) - 4px);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--vj-label-font);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+  }
+  .dock-ableton:hover { color: var(--ga-ink-0, #eef0f4); border-color: rgba(255, 255, 255, 0.2); }
+  .dock-ableton-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); }
+  .dock-ableton.connected .dock-ableton-dot { background: var(--ga-live, #46d18a); }
   .dock-quant-label {
     font-size: var(--vj-label-font);
     font-weight: 700;
