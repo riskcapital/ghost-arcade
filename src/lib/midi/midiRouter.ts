@@ -13,6 +13,7 @@ import { setBaseValue as setModulationBase } from '../audio/modulation';
 import type { MidiMapping, MidiMessageType } from './midiTypes';
 import { BLEND_MODE_ORDER } from '../types';
 import type { BlendMode, Effect } from '../types';
+import { resolveEffectParam } from './effectParamTarget';
 import { getPluginByEffectType } from '../plugins/registry';
 import { isVideoScratchPath, normalizeControlPath } from '../control/controlPaths';
 import { audioStore } from '../stores/audio';
@@ -804,12 +805,7 @@ class MidiRouter {
       const paramName = parts[3];
       if (!effectId || !paramName) return;
       // Paths arrive lowercased; effect ids and camelCase param keys don't.
-      const resolve = (effects: Effect[]) => {
-        const effect = effects.find(e => e.id.toLowerCase() === effectId);
-        if (!effect) return null;
-        const keys = [...Object.keys(effect.params ?? {}), ...Object.keys(effectParamLabels[effect.type] ?? {})];
-        return { id: effect.id, key: keys.find(k => k.toLowerCase() === paramName) ?? paramName };
-      };
+      const resolve = (effects: Effect[]) => resolveEffectParam(effects, effectId, paramName, effectParamLabels);
       const state = get(vjClipLauncher);
       const composition = resolve(state.compositionEffects);
       if (composition) vjClipLauncher.updateCompositionEffectParams(composition.id, { [composition.key]: value });
