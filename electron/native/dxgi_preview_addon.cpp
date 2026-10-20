@@ -1063,10 +1063,15 @@ Napi::Object StatusObject(Napi::Env env, const PreviewSurface& surface) {
 
 Napi::Value StabilizeHost(const Napi::CallbackInfo& info) {
   HWND host = info.Length() > 0 ? HwndFromBuffer(info[0]) : nullptr;
-  std::lock_guard<std::mutex> lock(g_surfaceMutex);
   std::string error;
-  const bool ok = host && g_primary.Stabilize(host, &error);
+  bool ok;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaceMutex);
+    ok = host && g_primary.Stabilize(host, &error);
+  }
   if (!ok) g_lastError = error;
+  // Monitors are only touched on this (UI) thread, so they re-stack outside
+  // the lock and never hold up the presentation pump.
   for (auto& entry : g_monitors) entry.second->Restack();
   return Napi::Boolean::New(info.Env(), ok);
 }

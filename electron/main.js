@@ -2089,6 +2089,13 @@ let nativeOutputTextureSharePromoteTimer = null;
 let nativeOutputTextureSharePromoteInFlight = false;
 let nativeOutputTextureSharePromoteAttempts = 0;
 let nativeOutputTextureSharePromotionReason = null;
+// Native sends that return false, counted apart from other failures: the
+// output only falls back to OSR when they persist, then retries native.
+let nativeOutputTextureShareSendFailures = 0;
+let nativeOutputTextureShareSendFailingSince = 0;
+let nativeOutputSendRetryTimer = null;
+let nativeOutputSendRetryAttempts = 0;
+const NATIVE_SEND_RETRY_LIMIT = 6;
 
 // Embedded native editor preview presenter. This is intentionally separate
 // from the external output-window path: the editor preview is a child/native
@@ -4024,6 +4031,7 @@ function createSpoutSender(name, width, height, { startOsr = true } = {}) {
 
 function stopSpoutSender() {
   spoutSendActive = false;
+  cancelNativeOutputSendRetry();
   stopNativeOutputTextureSharePromotion();
   stopNativeOutputTextureSharePump();
 
@@ -4576,6 +4584,31 @@ function startNativeOutputTextureSharePromotion(reason = 'waiting-for-native-out
 
 // Hand texture sharing back to the OSR window when the native output can't be
 // published. `retry` keeps checking whether the native output recovers.
+function cancelNativeOutputSendRetry() {
+  if (nativeOutputSendRetryTimer) clearTimeout(nativeOutputSendRetryTimer);
+  nativeOutputSendRetryTimer = null;
+  nativeOutputSendRetryAttempts = 0;
+}
+
+// Native sends failed and the output fell back to OSR. The cause can pass
+// (the core recreating its output texture on a resize), so try native again
+// with back-off — 10s, 20s, 40s… — a few times before staying on OSR.
+function scheduleNativeOutputSendRetry() {
+  if (nativeOutputSendRetryTimer) return;
+  if (nativeOutputSendRetryAttempts >= NATIVE_SEND_RETRY_LIMIT) {
+    console.warn(`[${textureShareLabel} Native] native sends keep failing; staying on OSR texture share`);
+    return;
+  }
+  const delayMs = 10000 * 2 ** nativeOutputSendRetryAttempts;
+  nativeOutputSendRetryAttempts++;
+  nativeOutputSendRetryTimer = setTimeout(() => {
+    nativeOutputSendRetryTimer = null;
+    if (spoutSendActive && spoutOutput && !nativeOutputTextureShareActive) {
+      startNativeOutputTextureSharePromotion('native-send-retry');
+    }
+  }, delayMs);
+}
+
 function fallBackToOsrTextureShare(reason, retry) {
   const failure = isMac ? 'native-iosurface-failed' : 'native-dxgi-failed';
   console.warn(`[${textureShareLabel} Native] falling back to OSR texture share after ${reason}`);
@@ -4600,6 +4633,8 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
   nativeOutputTextureShareLastPublishedFrame = 0;
   nativeOutputTextureShareLastPublishedHandle = null;
   nativeOutputTextureShareFailCount = 0;
+  nativeOutputTextureShareSendFailures = 0;
+  nativeOutputTextureShareSendFailingSince = 0;
   nativeOutputTextureShareWaitingForFrame = false;
   nativeOutputTextureShareWaitingForFrameLogged = false;
   nativeOutputTextureShareLastLogTime = Date.now();
@@ -4674,20 +4709,25 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
         }
       }
       if (!ok) {
-        nativeOutputTextureShareFailCount++;
-        if (nativeOutputTextureShareFailCount <= 5) {
+        nativeOutputTextureShareSendFailures++;
+        if (!nativeOutputTextureShareSendFailingSince) nativeOutputTextureShareSendFailingSince = Date.now();
+        if (nativeOutputTextureShareSendFailures <= 5) {
           console.warn(`[${textureShareLabel} Native] ${method} returned false for ${width}x${height}`);
         }
         // The texture exists but the addon can't send it (for example, it
-        // opened on a different GPU adapter). Retrying the promotion would
-        // fail the same way, so stay on the OSR path.
-        if (nativeOutputTextureShareFailCount >= 10) {
+        // opened on a different GPU adapter). Once that has lasted a
+        // second, fall back to OSR and retry native later with back-off.
+        if (nativeOutputTextureShareSendFailures >= 10 && Date.now() - nativeOutputTextureShareSendFailingSince >= 1000) {
           fallBackToOsrTextureShare(`${method} failing`, false);
+          scheduleNativeOutputSendRetry();
         }
         return;
       }
 
       nativeOutputTextureShareFailCount = 0;
+      nativeOutputTextureShareSendFailures = 0;
+      nativeOutputTextureShareSendFailingSince = 0;
+      nativeOutputSendRetryAttempts = 0;
       nativeOutputTextureShareWaitingForFrame = false;
       nativeOutputTextureShareWaitingForFrameLogged = false;
       nativeOutputTextureShareLastPublishedFrame = frameId;
