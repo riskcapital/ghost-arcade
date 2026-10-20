@@ -1,3 +1,7 @@
+# Ghost Arcade 2.1.2 — October 20, 2026
+
+Spout output reaches receivers on Windows PCs that list the same graphics card more than once, and falls back to window sharing instead of staying silent. See [release notes](docs/releases/v2.1.2.md).
+
 # Ghost Arcade 2.1.1 — October 19, 2026
 
 The welcome screen opens on every launch, not only the first. See [release notes](docs/releases/v2.1.1.md).
