@@ -35,6 +35,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const { parseOSCPacket, encodeOSCMessage } = require('./osc-parser.cjs');
+const abletonBridge = require('./ableton-bridge.cjs');
 const { randomUUID } = require('crypto');
 
 // Development runs can use a throwaway profile, so a test boot never shares
@@ -5646,6 +5647,36 @@ function registerIpcHandlers() {
     error: oscLastError,
   }));
   ipcMain.handle('osc_send', (_, { host, port, messages }) => sendOscBatch(host, port, messages));
+
+  // --- Ableton bridge ---
+  const appRoot = path.join(__dirname, '..');
+  ipcMain.handle('ableton_bridge_start', () => abletonBridge.start(mainWindow));
+  ipcMain.handle('ableton_bridge_stop', () => {
+    abletonBridge.stop();
+    return { ok: true };
+  });
+  ipcMain.handle('ableton_bridge_status', () => abletonBridge.status());
+  ipcMain.handle('ableton_bridge_send', (_, { message } = {}) => abletonBridge.send(message));
+  ipcMain.handle('ableton_script_status', () => abletonBridge.scriptStatus(app, appRoot));
+  ipcMain.handle('ableton_script_install', async (_, { chooseFolder = false } = {}) => {
+    let folder = null;
+    if (chooseFolder) {
+      const picked = await dialog.showOpenDialog(mainWindow, {
+        title: 'Choose your Ableton "Remote Scripts" folder',
+        defaultPath: abletonBridge.remoteScriptsFolder(app),
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      folder = picked.filePaths[0];
+    }
+    return abletonBridge.installScript(app, appRoot, folder);
+  });
+  ipcMain.handle('ableton_script_reveal', () => {
+    const { path: target, installed } = abletonBridge.scriptStatus(app, appRoot);
+    if (installed) shell.showItemInFolder(path.join(target, '__init__.py'));
+    else shell.openPath(abletonBridge.remoteScriptsFolder(app));
+    return { ok: true };
+  });
 
   // --- LAN remote pairing ---
   // The editor shows the token beside the Connect Mobile QR code, puts it in

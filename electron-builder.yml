@@ -62,6 +62,13 @@ extraResources:
     filter:
       - "**/*"
 
+  # The Ableton Live control surface, copied into the user's Remote Scripts
+  # folder from the Ableton bridge panel (electron/ableton-bridge.cjs).
+  - from: ableton/GhostArcade/
+    to: ableton/GhostArcade/
+    filter:
+      - "*.py"
+
 asarUnpack:
   - "electron/native/**/*.node"
   - "node_modules/ffmpeg-static/**/*"

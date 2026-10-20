@@ -310,6 +310,33 @@ contextBridge.exposeInMainWorld('ghostOSC', {
   },
 });
 
+// Ableton bridge — the link to Ghost Arcade's Live control surface.
+//   start() / stop() / status() → the loopback listener on port 11050.
+//   send(message) → a request to the Live script (resync, launch).
+//   scriptStatus() / installScript({ chooseFolder }) / revealScript() → the
+//     copy of the script in Live's User Library.
+//   onMessage(cb) → cb(messages[]) for each batch from Live.
+//   onStatus(cb) → cb({ listening, error }) when the listener changes.
+contextBridge.exposeInMainWorld('ghostAbleton', {
+  start: () => ipcRenderer.invoke('ableton_bridge_start'),
+  stop: () => ipcRenderer.invoke('ableton_bridge_stop'),
+  status: () => ipcRenderer.invoke('ableton_bridge_status'),
+  send: (message) => ipcRenderer.invoke('ableton_bridge_send', { message }),
+  scriptStatus: () => ipcRenderer.invoke('ableton_script_status'),
+  installScript: ({ chooseFolder = false } = {}) => ipcRenderer.invoke('ableton_script_install', { chooseFolder }),
+  revealScript: () => ipcRenderer.invoke('ableton_script_reveal'),
+  onMessage: (cb) => {
+    const handler = (_e, msgs) => { try { cb(msgs); } catch (err) { console.warn('[Ableton] renderer handler', err); } };
+    ipcRenderer.on('ableton-bridge-msg', handler);
+    return () => ipcRenderer.removeListener('ableton-bridge-msg', handler);
+  },
+  onStatus: (cb) => {
+    const handler = (_e, s) => { try { cb(s); } catch (err) { console.warn('[Ableton] renderer status handler', err); } };
+    ipcRenderer.on('ableton-bridge-status', handler);
+    return () => ipcRenderer.removeListener('ableton-bridge-status', handler);
+  },
+});
+
 // Art-Net / sACN DMX input. Off until start() is called.
 //   start(config) → { ok, error?, status }  (bindAddress, artnet, sacn,
 //     sacnMulticast, universes, mergeMode, timeoutMs, rateHz)

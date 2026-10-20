@@ -51,6 +51,7 @@ import { serializeShowControl, hydrateShowControl } from '../show/showControlPer
 import { getDefaultEffectParams } from '../renderer/effects';
 import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { oscStore } from '../osc/oscStore';
+import { abletonBridge } from '../ableton/abletonBridge';
 import { dmxStore } from '../dmx/dmxStore';
 import { keyboardStore } from '../keyboard/keyboardStore';
 import { mediaPipeBus } from '../mediapipe/mediaPipeBus';
@@ -5475,6 +5476,7 @@ void main() {
         // Include OSC config (port + bindings). The listener is
         // restarted on project load if the saved state was enabled.
         osc: oscStore.serialize(),
+        abletonBridge: abletonBridge.serialize(),
         // Include DMX input bindings, universe filter and merge rule. The
         // on/off switch and bind address are machine settings and stay out.
         dmxInput: dmxStore.serialize(),
@@ -6344,6 +6346,13 @@ void main() {
           oscStore.hydrate((parsed as any).osc);
         } else {
           oscStore.reset();
+        }
+
+        // Ableton bridge links. Older saves have none.
+        if ((parsed as any).abletonBridge) {
+          abletonBridge.hydrate((parsed as any).abletonBridge);
+        } else {
+          abletonBridge.reset();
         }
 
         // Import DMX input bindings. Older saves don't carry them.

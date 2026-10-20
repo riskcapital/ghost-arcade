@@ -84,6 +84,7 @@
   import AudioMeterPanel from './AudioMeterPanel.svelte';
   import MacroKnobBar from './MacroKnobBar.svelte';
   import SnapshotBank from './SnapshotBank.svelte';
+  import AbletonBridgePanel from './ableton/AbletonBridgePanel.svelte';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   // VJAudioBar import retained for fallback / type compatibility but the
   // standalone strip below the header was dropped — its contents are now
@@ -1152,6 +1153,8 @@
   // Recording state (shared recorder with audio support)
   let vjRecorderHandle: RecorderHandle | null = null;
   let vjIsRecording = false;
+  // Ableton bridge opens over VJ mode so the output keeps playing.
+  let abletonBridgeOpen = false;
   let vjRecordingDuration = 0;
 
   function vjStartRecording() {
@@ -4434,6 +4437,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
           Stage Edit
         </button>
+        <button class="minimize-btn stage-sim-btn" class:active={abletonBridgeOpen} onclick={() => (abletonBridgeOpen = true)} title="Link Ableton Live scenes and clips to visuals" aria-label="Open Ableton bridge">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6v12M8 6v12M12 6v12M16 6v12"/><path d="M20 9v6"/></svg>
+          Ableton
+        </button>
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -6871,6 +6878,10 @@
 
     <VJLayerSequencer />
 </div>
+{/if}
+
+{#if abletonBridgeOpen && $vjClipLauncher.isOpen}
+  <AbletonBridgePanel onClose={() => (abletonBridgeOpen = false)} />
 {/if}
 
 {#if vjScreenPickerOpen}

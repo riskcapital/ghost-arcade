@@ -471,6 +471,7 @@
   // main App chunk — it's only needed when the mobile-connect panel opens.
   import { midiManager } from './lib/midi/midiManager';
   import { oscStore } from './lib/osc/oscStore';
+  import { abletonBridge } from './lib/ableton/abletonBridge';
   import { dmxStore } from './lib/dmx/dmxStore';
   import { midiStore } from './lib/midi/midiStore';
   import { keyboardStore } from './lib/keyboard/keyboardStore';
@@ -1274,6 +1275,7 @@
     viewportEl?.removeEventListener('wheel', handleViewportWheel);
     destroyPhoneVisionSession(true);
     oscStore.destroy();
+    abletonBridge.destroy();
     dmxStore.destroy();
   });
 
@@ -1926,6 +1928,7 @@
     // Attach OSC bridge listeners + restore the saved enable/port state
     // so the listener comes back on boot without a Settings visit.
     void oscStore.initialize();
+    abletonBridge.initialize();
     // DMX input comes back only if it was switched on on this machine.
     void dmxStore.initialize();
     // Restores the server if it was enabled last session, and attaches the
@@ -5736,6 +5739,8 @@
     snapshots.reset();
     // DMX input bindings belong to the project; the listener stays as set.
     dmxStore.reset();
+    // Ableton links too; the connection to Live stays up.
+    abletonBridge.reset();
     // And show control: a new project must not inherit the last one's cue
     // list, timecode chase, schedule or projectors (a schedule left armed
     // would start firing cues into an empty project).
