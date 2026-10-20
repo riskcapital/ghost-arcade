@@ -111,6 +111,11 @@ class GhostArcade(ControlSurface):
         self._watch = {"params": [], "levels": [], "score": []}
         self._level_sent = {}
         self._level_pending = {}
+        # Score clip notes, read once and refreshed when Live reports a
+        # change: (track, slot) -> (clip, fingerprint, notes), and the
+        # listener.
+        self._notes_cache = {}
+        self._note_listeners = {}
         self._rebuild = True
         self._song = Live.Application.get_application().get_document()
         self._open_socket()
@@ -130,6 +135,7 @@ class GhostArcade(ControlSurface):
         self._send({"t": "bye"})
         self._remove_listeners()
         self._remove_watchers()
+        self._forget_notes()
         for remove, callback in (
             (self._song.remove_tracks_listener, self._structure_changed),
             (self._song.remove_scenes_listener, self._structure_changed),
@@ -152,6 +158,8 @@ class GhostArcade(ControlSurface):
         self._receive()
         if self._rebuild:
             self._rebuild = False
+            # Track and slot indices may have moved.
+            self._forget_notes()
             self._add_listeners()
             self._apply_watch()
             self._send_structure(force=True)
@@ -273,6 +281,7 @@ class GhostArcade(ControlSurface):
                 "levels": [int(i) for i in message.get("levels", [])],
                 "score": [int(i) for i in message.get("score", [])],
             }
+            self._forget_notes()
             self._apply_watch()
             self._send_structure(force=True)
 
@@ -307,12 +316,51 @@ class GhostArcade(ControlSurface):
                 clip = slot.clip
                 entry = [_name(clip.name), clip.color, clip.length]
                 if score and clip.is_midi_clip:
-                    entry.append(_clip_notes(clip))
+                    entry.append(self._score_notes(index, len(slots), clip))
                 slots.append(entry)
             else:
                 slots.append(None)
         return {"n": _name(track.name), "c": track.color, "midi": bool(track.has_midi_input),
                 "x": int(track.mixer_device.crossfade_assign), "slots": slots}
+
+    def _score_notes(self, track_index, slot_index, clip):
+        """A score clip's notes, from the cache unless the clip changed."""
+        key = (track_index, slot_index)
+        fingerprint = (clip.name, clip.length, clip.loop_start, clip.loop_end)
+        cached = self._notes_cache.get(key)
+        if cached is not None and cached[0] == clip and cached[1] == fingerprint:
+            return cached[2]
+        notes = _clip_notes(clip)
+        self._notes_cache[key] = (clip, fingerprint, notes)
+        self._listen_notes(key, clip)
+        return notes
+
+    def _listen_notes(self, key, clip):
+        previous = self._note_listeners.pop(key, None)
+        if previous is not None:
+            try:
+                previous[0].remove_notes_listener(previous[1])
+            except Exception:
+                pass
+
+        def changed():
+            self._notes_cache.pop(key, None)
+        try:
+            clip.add_notes_listener(changed)
+            self._note_listeners[key] = (clip, changed)
+        except Exception:
+            # Without the listener the clip is still re-read whenever its
+            # name, length or loop changes.
+            pass
+
+    def _forget_notes(self):
+        for clip, callback in self._note_listeners.values():
+            try:
+                clip.remove_notes_listener(callback)
+            except Exception:
+                pass
+        self._note_listeners = {}
+        self._notes_cache = {}
 
     def _send_track(self, index, track, state):
         """One track, split so every datagram stays small."""
