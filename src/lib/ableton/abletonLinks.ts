@@ -25,6 +25,8 @@ export interface LiveTrack {
   name: string;
   color: number;
   midi: boolean;
+  /** Which side of Live's crossfader the track is on. */
+  side: 'A' | 'B' | null;
   slots: (LiveClip | null)[];
   /** Slot index playing, or -1. */
   playing: number;

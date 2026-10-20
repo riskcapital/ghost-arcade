@@ -3,7 +3,7 @@ import { barBeat, launchBeat, liveColor, matchByName, positionFallback, quantize
 
 const scene = (name: string): LiveScene => ({ name, color: 0, queued: false });
 const track = (name: string, clips: (string | null)[]): LiveTrack => ({
-  name, color: 0, midi: true, playing: -1, fired: -1, startedBeat: 0, firedBeat: 0,
+  name, color: 0, midi: true, side: null, playing: -1, fired: -1, startedBeat: 0, firedBeat: 0,
   slots: clips.map(c => (c === null ? null : { name: c, color: 0, length: 16 })),
 });
 

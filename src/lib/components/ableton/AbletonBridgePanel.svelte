@@ -39,12 +39,14 @@
   import AbletonScoreView from './AbletonScoreView.svelte';
   import AbletonArrangementView from './AbletonArrangementView.svelte';
   import AbletonSignalsView from './AbletonSignalsView.svelte';
+  import AbletonDecksView from './AbletonDecksView.svelte';
 
   export let onClose: () => void;
 
-  type View = 'session' | 'score' | 'arrangement' | 'signals' | 'links';
+  type View = 'session' | 'decks' | 'score' | 'arrangement' | 'signals' | 'links';
   const VIEWS: { id: View; label: string }[] = [
     { id: 'session', label: 'Session' },
+    { id: 'decks', label: 'Decks' },
     { id: 'score', label: 'Score' },
     { id: 'arrangement', label: 'Arrangement' },
     { id: 'signals', label: 'Signals' },
@@ -212,7 +214,7 @@
     try { link(source, JSON.parse(raw) as VisualAction); } catch { /* not ours */ }
   }
 
-  function autoMap(kind: 'scenes' | 'tracks' | 'clear') {
+  function autoMap(kind: 'scenes' | 'tracks' | 'decks' | 'clear') {
     if (kind === 'clear') {
       if (!confirmClear) { confirmClear = true; return; }
       abletonBridge.clearLinks();
@@ -221,6 +223,7 @@
     confirmClear = false;
     if (kind === 'clear') return;
     if (kind === 'scenes') abletonBridge.linkScenesToColumns(deck);
+    else if (kind === 'decks') abletonBridge.linkDecks();
     else abletonBridge.linkTracksToLayers(deck);
   }
 
@@ -288,6 +291,7 @@
           <div class="menu" role="menu">
             <button role="menuitem" onclick={() => autoMap('scenes')}><b>Scenes → columns</b><span>Scene 1 fires column 1, and so on</span></button>
             <button role="menuitem" onclick={() => autoMap('tracks')}><b>Tracks → layers</b><span>Live's grid drives the VJ grid cell for cell</span></button>
+            <button role="menuitem" onclick={() => autoMap('decks')}><b>Decks → decks</b><span>Song N on Live's A/B decks plays column N on that deck</span></button>
             <button role="menuitem" class="danger" disabled={!bridge.links.length} onclick={() => autoMap('clear')}>
               <b>{confirmClear ? `Click again to remove ${bridge.links.length} links` : 'Clear all links'}</b>
             </button>
@@ -456,6 +460,10 @@
               {/each}
             </div>
           {/if}
+        </div>
+      {:else if view === 'decks'}
+        <div class="pane">
+          <AbletonDecksView {bridge} {ctx} {beat} {selected} onSelect={select} />
         </div>
       {:else if view === 'score'}
         <div class="pane">

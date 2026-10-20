@@ -91,6 +91,8 @@ export interface AbletonBridgeState {
   /** Pitch → visual for score notes (saved); unmapped pitches use the
    *  default lanes. */
   scoreMap: Record<number, VisualAction>;
+  /** Live's A/B decks drive Ghost Arcade's decks and crossfader (saved). */
+  deckMode: boolean;
   // Runtime only.
   listening: boolean;
   error: string | null;
@@ -100,6 +102,8 @@ export interface AbletonBridgeState {
   denominator: number;
   playing: boolean;
   quantize: number;
+  /** Live's crossfader, 0 = full A, 1 = full B. */
+  crossfader: number;
   scenes: LiveScene[];
   tracks: LiveTrack[];
   cues: LiveCue[];
@@ -123,6 +127,7 @@ const INITIAL: AbletonBridgeState = {
   signals: [],
   scoreTracks: [],
   scoreMap: {},
+  deckMode: false,
   listening: false,
   error: null,
   connected: false,
@@ -131,6 +136,7 @@ const INITIAL: AbletonBridgeState = {
   denominator: 4,
   playing: false,
   quantize: 4,
+  crossfader: 0.5,
   scenes: [],
   tracks: [],
   cues: [],
@@ -444,6 +450,14 @@ function createAbletonBridge() {
     }, RELINK_DELAY_MS);
   }
 
+  /** Live's crossfader moved: mirror it, and move Ghost Arcade's in deck mode. */
+  function applyCrossfader(value: number) {
+    if (!Number.isFinite(value)) return;
+    const v = Math.max(0, Math.min(1, value));
+    if (Math.abs(read().crossfader - v) > 0.0005) update(s => ({ ...s, crossfader: v }));
+    if (read().deckMode) vjClipLauncher.setCrossfaderValue(v);
+  }
+
   function setTrack(index: number, patch: Partial<LiveTrack>) {
     update(s => {
       if (!s.tracks[index]) return s;
@@ -480,6 +494,7 @@ function createAbletonBridge() {
           playing: !!message.playing,
           quantize: Number.isInteger(message.quantize) ? message.quantize : s.quantize,
         }));
+        if (typeof message.xf === 'number') applyCrossfader(message.xf);
         if (!wasConnected) {
           sentWatch = '';
           send({ t: 'sync' });
@@ -508,7 +523,7 @@ function createAbletonBridge() {
           scenes,
           cues,
           tracks: Array.from({ length: count }, (_, i) => s.tracks[i]
-            ?? { name: '', color: 0, midi: false, slots: [], playing: -1, fired: -1, startedBeat: 0, firedBeat: 0 }),
+            ?? { name: '', color: 0, midi: false, side: null, slots: [], playing: -1, fired: -1, startedBeat: 0, firedBeat: 0 }),
         }));
         scheduleRelink();
         break;
@@ -520,6 +535,7 @@ function createAbletonBridge() {
           name: String(message.n ?? ''),
           color: Number(message.c) || 0,
           midi: !!message.midi,
+          side: message.x === 0 ? 'A' : message.x === 2 ? 'B' : null,
           slots: (Array.isArray(message.slots) ? message.slots : []).map(parseSlot),
           playing: Number(message.play) >= 0 ? Number(message.play) : -1,
           fired: Number(message.fired) >= 0 ? Number(message.fired) : -1,
@@ -570,6 +586,9 @@ function createAbletonBridge() {
         syncWatch();
         break;
       }
+      case 'xf':
+        applyCrossfader(Number(message.v));
+        break;
       case 'param':
         paramValues.set(`${message.i}:${message.j}:${message.k}`, Math.max(0, Math.min(1, Number(message.v) || 0)));
         break;
@@ -778,6 +797,52 @@ function createAbletonBridge() {
       });
     },
 
+    // ── Decks ───────────────────────────────────────────────────────
+
+    /** Link Live's A/B decks to Ghost Arcade's: the crossfader follows
+     *  Live's, and Ghost Arcade's two decks go live. */
+    setDeckMode(on: boolean) {
+      update(s => ({ ...s, deckMode: on }));
+      if (on) {
+        vjClipLauncher.setCrossfaderEnabled(true);
+        vjClipLauncher.setCrossfaderValue(read().crossfader);
+      }
+    },
+
+    /** Move Live's crossfader (and Ghost Arcade's with it in deck mode). */
+    setCrossfader(value: number) {
+      const v = Math.max(0, Math.min(1, value));
+      send({ t: 'crossfader', v });
+      applyCrossfader(v);
+    },
+
+    /** Put a Live track on a side of Live's crossfader. */
+    assignTrack(track: number, side: 'A' | 'B' | null) {
+      send({ t: 'assign', i: track, x: side === 'A' ? 0 : side === 'B' ? 2 : 1 });
+    },
+
+    /** Song N on a Live deck plays column N on the matching Ghost Arcade
+     *  deck. Replaces those clips' links. */
+    linkDecks() {
+      const columns = get(vjClipLauncher).numColumns;
+      update(s => {
+        const added: AbletonLink[] = [];
+        s.tracks.forEach((track, t) => {
+          if (!track.side) return;
+          track.slots.forEach((clip, slot) => {
+            if (!clip || slot >= columns) return;
+            added.push({
+              id: generateUUID(),
+              source: { kind: 'clip', track: t, slot, trackName: track.name, name: clip.name },
+              action: { kind: 'column', deck: track.side!, column: slot },
+            });
+          });
+        });
+        const kept = s.links.filter(l => !added.some(a => samePlace(a.source, l.source)));
+        return { ...s, links: [...kept, ...added] };
+      });
+    },
+
     // ── Visual score ────────────────────────────────────────────────
 
     setScoreTrack(name: string, on: boolean) {
@@ -835,24 +900,26 @@ function createAbletonBridge() {
         signals: sanitizeSignals(saved.signals),
         scoreTracks: Array.isArray(saved.scoreTracks) ? saved.scoreTracks.filter((n: unknown) => typeof n === 'string') : [],
         scoreMap,
+        deckMode: !!saved.deckMode,
         missing: [],
         fired: {},
       }));
       signalState.clear();
+      if (saved.deckMode) vjClipLauncher.setCrossfaderEnabled(true);
       if (read().scenes.length || read().tracks.length) scheduleRelink();
       if (saved.enabled && !read().listening) void startListener();
     },
 
     serialize() {
-      const { enabled, links, signals, scoreTracks, scoreMap } = read();
-      return { enabled, links, signals, scoreTracks, scoreMap };
+      const { enabled, links, signals, scoreTracks, scoreMap, deckMode } = read();
+      return { enabled, links, signals, scoreTracks, scoreMap, deckMode };
     },
 
     reset() {
       linkedCounts = null;
       signalState.clear();
       releaseAll();
-      update(s => ({ ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, missing: [], fired: {} }));
+      update(s => ({ ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, deckMode: false, missing: [], fired: {} }));
       syncWatch();
     },
   };

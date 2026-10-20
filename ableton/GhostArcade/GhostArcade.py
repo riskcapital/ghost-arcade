@@ -82,6 +82,7 @@ class GhostArcade(ControlSurface):
         # song position never runs on a stale tempo.
         self._song.add_is_playing_listener(self._send_hello)
         self._song.add_tempo_listener(self._send_hello)
+        self._crossfader().add_value_listener(self._send_crossfader)
         self._notify("Ghost Arcade connected")
 
     # Live lifecycle
@@ -96,6 +97,7 @@ class GhostArcade(ControlSurface):
             (self._song.remove_cue_points_listener, self._structure_changed),
             (self._song.remove_is_playing_listener, self._send_hello),
             (self._song.remove_tempo_listener, self._send_hello),
+            (self._crossfader().remove_value_listener, self._send_crossfader),
         ):
             try:
                 remove(callback)
@@ -192,6 +194,15 @@ class GhostArcade(ControlSurface):
                 track.stop_all_clips()
         elif kind == "jump":
             song.current_song_time = max(0.0, float(message.get("time", 0)))
+        elif kind == "crossfader":
+            fader = self._crossfader()
+            fader.value = fader.min + max(0.0, min(1.0, float(message.get("v", 0)))) * (fader.max - fader.min)
+        elif kind == "assign":
+            # Crossfader side for a track: 0 = A, 1 = none, 2 = B.
+            track = self._track(int(message.get("i", -2)))
+            side = int(message.get("x", 1))
+            if track is not None and track != song.master_track and side in (0, 1, 2):
+                track.mixer_device.crossfade_assign = side
         elif kind == "toggle_cue":
             song.set_or_delete_cue()
         elif kind == "create_score_track":
@@ -221,8 +232,15 @@ class GhostArcade(ControlSurface):
             "playing": bool(song.is_playing),
             "quantize": int(song.clip_trigger_quantization),
             "beat": song.current_song_time,
+            "xf": _normalized(self._crossfader()),
             "rev": self._revision,
         })
+
+    def _crossfader(self):
+        return self._song.master_track.mixer_device.crossfader
+
+    def _send_crossfader(self):
+        self._send({"t": "xf", "v": _normalized(self._crossfader())})
 
     def _track_state(self, index, track):
         score = index in self._watch["score"]
@@ -236,7 +254,8 @@ class GhostArcade(ControlSurface):
                 slots.append(entry)
             else:
                 slots.append(None)
-        return {"n": _name(track.name), "c": track.color, "midi": bool(track.has_midi_input), "slots": slots}
+        return {"n": _name(track.name), "c": track.color, "midi": bool(track.has_midi_input),
+                "x": int(track.mixer_device.crossfade_assign), "slots": slots}
 
     def _send_structure(self, force=False):
         song = self._song

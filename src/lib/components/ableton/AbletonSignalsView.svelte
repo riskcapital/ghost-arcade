@@ -52,16 +52,18 @@
     return bridge.tracks[index]?.name ?? '';
   }
 
-  function sourceFor(): SignalSource | null {
-    const name = trackName(track);
-    if (kind === 'param') {
-      const d = devices?.[device];
-      const p = d?.params[param];
-      if (!d || !p) return null;
-      return { kind, track, device, param, trackName: name, deviceName: d.name, paramName: p.name };
+  // Takes everything it reads so the form re-checks as devices load.
+  function sourceFor(k: Kind, t: number, list: typeof devices, d: number, p: number): SignalSource | null {
+    const name = trackName(t);
+    if (k === 'param') {
+      const dev = list?.[d];
+      const par = dev?.params[p];
+      if (!dev || !par) return null;
+      return { kind: k, track: t, device: d, param: p, trackName: name, deviceName: dev.name, paramName: par.name };
     }
-    return { kind, track, trackName: name } as SignalSource;
+    return { kind: k, track: t, trackName: name } as SignalSource;
   }
+  $: pending = sourceFor(kind, track, devices, device, param);
 
   async function pick() {
     const picked = await pickTarget();
@@ -69,9 +71,8 @@
   }
 
   function add() {
-    const source = sourceFor();
-    if (!source || !target) return;
-    abletonBridge.addSignal(source, target);
+    if (!pending || !target) return;
+    abletonBridge.addSignal(pending, target);
     adding = false;
   }
 
@@ -137,7 +138,7 @@
           <button class="ghost" onclick={pick} title="Click any slider or knob in Ghost Arcade">Pick a control…</button>
         </div>
       </label>
-      <button class="solid" disabled={!target || !sourceFor()} onclick={add}>Add signal</button>
+      <button class="solid" disabled={!target || !pending} onclick={add}>Add signal</button>
       <button class="ghost" onclick={() => (adding = false)}>Cancel</button>
     </div>
   {/if}
