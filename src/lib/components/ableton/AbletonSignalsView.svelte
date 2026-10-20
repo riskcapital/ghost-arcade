@@ -47,14 +47,14 @@
     adding = true;
   }
 
-  function trackName(index: number) {
-    if (index === -1) return kind === 'color' ? 'Scenes' : 'Master';
-    return bridge.tracks[index]?.name ?? '';
+  function trackName(state: AbletonBridgeState, k: Kind, index: number) {
+    if (index === -1) return k === 'color' ? 'Scenes' : 'Master';
+    return state.tracks[index]?.name ?? '';
   }
 
   // Takes everything it reads so the form re-checks as devices load.
-  function sourceFor(k: Kind, t: number, list: typeof devices, d: number, p: number): SignalSource | null {
-    const name = trackName(t);
+  function sourceFor(state: AbletonBridgeState, k: Kind, t: number, list: typeof devices, d: number, p: number): SignalSource | null {
+    const name = trackName(state, k, t);
     if (k === 'param') {
       const dev = list?.[d];
       const par = dev?.params[p];
@@ -63,7 +63,7 @@
     }
     return { kind: k, track: t, trackName: name } as SignalSource;
   }
-  $: pending = sourceFor(kind, track, devices, device, param);
+  $: pending = sourceFor(bridge, kind, track, devices, device, param);
 
   async function pick() {
     const picked = await pickTarget();
@@ -86,8 +86,8 @@
     }
   }
 
-  function trackColor(source: SignalSource) {
-    return liveColor(source.track >= 0 ? bridge.tracks[source.track]?.color ?? 0x888780 : 0x888780);
+  function trackColor(state: AbletonBridgeState, source: SignalSource) {
+    return liveColor(source.track >= 0 ? state.tracks[source.track]?.color ?? 0x888780 : 0x888780);
   }
 
   function setRange(link: SignalLink, key: 'min' | 'max', value: string) {
@@ -153,7 +153,7 @@
   {#each bridge.signals as link (link.id)}
     {@const d = describe(link.source)}
     <div class="row">
-      <span class="swatch" style="background: {trackColor(link.source)}"></span>
+      <span class="swatch" style="background: {trackColor(bridge, link.source)}"></span>
       <span class="src"><b>{d.title}</b><small>{d.sub}</small></span>
       <span class="meter"><span style="transform: scaleX({$abletonSignalLevels[link.id] ?? 0})"></span></span>
       <span class="arrow">→</span>

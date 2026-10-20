@@ -40,7 +40,21 @@ function commonPrefixWords(names: string[]): string {
   return first.slice(0, count).join(' ');
 }
 
+/** Same-named songs get "#2", "#3"… so every key is unique. */
+function uniqueKeys(songs: SetlistSong[]): SetlistSong[] {
+  const seen = new Map<string, number>();
+  return songs.map(song => {
+    const count = (seen.get(song.key) ?? 0) + 1;
+    seen.set(song.key, count);
+    return count === 1 ? song : { ...song, key: `${song.key}#${count}` };
+  });
+}
+
 export function deriveSongs(scenes: LiveScene[], tracks: LiveTrack[]): SetlistSong[] {
+  return uniqueKeys(songsIn(scenes, tracks));
+}
+
+function songsIn(scenes: LiveScene[], tracks: LiveTrack[]): SetlistSong[] {
   const deckTracks = tracks.map((t, i) => ({ t, i })).filter(x => x.t.side);
   if (deckTracks.length) {
     const songs: SetlistSong[] = [];

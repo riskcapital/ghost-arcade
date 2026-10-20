@@ -102,6 +102,15 @@
     abletonBridge.setSetlistOrder(keys);
   }
 
+  /** Drop below the last row: move the song to the end of the set. */
+  function onDropEnd(event: DragEvent) {
+    event.preventDefault();
+    const key = event.dataTransfer?.getData(DRAG_TYPE) || dragKey;
+    dragKey = dropKey = null;
+    if (!key) return;
+    abletonBridge.setSetlistOrder([...songs.map(s => s.key).filter(k => k !== key), key]);
+  }
+
   function play(song: SetlistSong) {
     abletonBridge.playSong(song);
     onSelect(songSource(bridge, song));
@@ -183,6 +192,7 @@
         role="button"
         draggable={!query.trim()}
         ondragstart={(e) => onDragStart(e, song)}
+        ondragend={() => (dragKey = dropKey = null)}
         ondragover={(e) => onDragOver(e, song)}
         ondragleave={() => (dropKey = null)}
         ondrop={(e) => onDrop(e, song)}
@@ -214,10 +224,20 @@
         <span class="deck" class:a={song.kind === 'clip' && song.side === 'A'} class:b={song.kind === 'clip' && song.side === 'B'}>{deckLabel(song)}</span>
         <span class="visual" title={links[0] ? actionLabel(ctx, links[0].action) : 'No visual linked — pick one on the right'}>
           <span class="vis">{#if thumb}<img src={thumb} alt="" />{:else if links[0]}<i>{actionTag(links[0].action)}</i>{:else}<i class="none">+</i>{/if}</span>
-          <span class="vis-label">{links[0] ? actionLabel(ctx, links[0].action) : 'No visual'}</span>
+          <span class="vis-label">{links[0] ? actionLabel(ctx, links[0].action) : 'No visual'}{links.length > 1 ? ` +${links.length - 1}` : ''}</span>
         </span>
       </div>
     {/each}
+    {#if dragKey}
+      <div
+        class="end-drop"
+        class:drop={dropKey === '__end'}
+        role="presentation"
+        ondragover={(e) => { if (e.dataTransfer?.types.includes(DRAG_TYPE)) { e.preventDefault(); dropKey = '__end'; } }}
+        ondragleave={() => (dropKey = null)}
+        ondrop={onDropEnd}
+      >Drop here to play last</div>
+    {/if}
   </div>
 </div>
 
@@ -272,6 +292,8 @@
   .row.queued { animation: queued 0.5s steps(2) infinite; }
   .row.played { opacity: 0.5; }
   .row.drop { box-shadow: inset 0 2px 0 #c9c4ff; }
+  .end-drop { height: 30px; display: flex; align-items: center; justify-content: center; border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 3px; color: var(--ga-ink-2, #8a909b); font-size: 11px; }
+  .end-drop.drop { border-color: #c9c4ff; color: #c9c4ff; }
   @keyframes queued { 50% { box-shadow: inset 0 0 0 1px #e0a33a; } }
   .num { color: var(--ga-ink-2, #8a909b); font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-size: 11px; text-align: right; }
   .play { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.15); background: transparent; color: var(--ga-ink-1, #b8bdc6); cursor: pointer; padding: 0; }

@@ -51,6 +51,8 @@ export type VisualAction =
   | { kind: 'clip'; deck: VJDeck; layer: number; column: number }
   /** Snapshot slot, 0-based. */
   | { kind: 'snapshot'; slot: number }
+  /** A Stage preset, by id; `name` finds it again if it was re-saved. */
+  | { kind: 'stage'; presetId: string; scope: 'project' | 'global'; name: string }
   /** Any Ghost Arcade control: set to `value`, then back to `release`
    *  (when the note ends, or straight after a launch). */
   | { kind: 'control'; path: string; label: string; value: number; release: number };
@@ -208,6 +210,9 @@ export function sanitizeAction(a: any): VisualAction | null {
     return { kind: 'clip', deck: deck(a.deck), layer: a.layer, column: a.column };
   }
   if (a?.kind === 'snapshot' && int(a.slot) !== null) return { kind: 'snapshot', slot: a.slot };
+  if (a?.kind === 'stage' && typeof a.presetId === 'string' && a.presetId) {
+    return { kind: 'stage', presetId: a.presetId, scope: a.scope === 'global' ? 'global' : 'project', name: String(a.name ?? '') };
+  }
   if (a?.kind === 'control' && typeof a.path === 'string' && a.path) {
     return { kind: 'control', path: a.path, label: String(a.label ?? a.path), value: num(a.value, 1), release: num(a.release, 0) };
   }

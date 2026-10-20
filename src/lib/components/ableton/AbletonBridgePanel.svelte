@@ -8,7 +8,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { fly } from 'svelte/transition';
-  import { abletonBridge, scoreAction, songBeat } from '../../ableton/abletonBridge';
+  import { abletonBridge, scoreAction, songBeat, type AbletonBridgeState } from '../../ableton/abletonBridge';
   import {
     barBeat,
     launchBeat,
@@ -36,6 +36,8 @@
   import { mediaPipeBus } from '../../mediapipe/mediaPipeBus';
   import { vjClipLauncher, type VJDeck } from '../../stores/vjClipLauncher';
   import { snapshots } from '../../stores/snapshots';
+  import { stagePresets } from '../../stores/layers';
+  import { globalStagePresets } from '../../stores/globalPresets';
   import AbletonScoreView from './AbletonScoreView.svelte';
   import AbletonArrangementView from './AbletonArrangementView.svelte';
   import AbletonSignalsView from './AbletonSignalsView.svelte';
@@ -77,6 +79,10 @@
     bankBClipGrid: $vjClipLauncher.bankBClipGrid,
     numColumns: $vjClipLauncher.numColumns,
     snapshots: $snapshots.snapshots,
+    stagePresets: [
+      ...$stagePresets.map(p => ({ id: p.id, name: p.name, thumbnail: p.thumbnail, scope: (p.scope || 'project') as 'project' | 'global' })),
+      ...$globalStagePresets.map(p => ({ id: p.id, name: p.name, thumbnail: p.thumbnail, scope: 'global' as const })),
+    ],
   } satisfies VisualContext;
   $: shelf = buildShelf(ctx, tab, deck);
   $: laneAction = selectedPitch === null ? null : scoreAction(bridge, selectedPitch, ctx.numColumns);
@@ -89,7 +95,11 @@
   onMount(() => {
     void abletonBridge.enable();
     void abletonBridge.refreshScript();
-    const tick = () => { now = performance.now(); frame = requestAnimationFrame(tick); };
+    // Redraw per frame only while Live is connected; nothing moves otherwise.
+    const tick = () => {
+      if ($abletonBridge.connected) now = performance.now();
+      frame = requestAnimationFrame(tick);
+    };
     frame = requestAnimationFrame(tick);
   });
   onDestroy(() => cancelAnimationFrame(frame));
@@ -106,10 +116,12 @@
     return source.kind === 'scene' ? 'Scene' : source.kind === 'locator' ? 'Locator' : 'Clip';
   }
 
-  function sourceColor(source: AbletonSource): string {
-    if (source.kind === 'scene') return liveColor(bridge.scenes[source.scene]?.color ?? 0x888888);
+  // Helpers that read the set take it as an argument, so the template
+  // re-renders when it changes.
+  function sourceColor(state: AbletonBridgeState, source: AbletonSource): string {
+    if (source.kind === 'scene') return liveColor(state.scenes[source.scene]?.color ?? 0x888888);
     if (source.kind === 'locator') return '#e0a33a';
-    return liveColor(bridge.tracks[source.track]?.slots[source.slot]?.color ?? 0x888888);
+    return liveColor(state.tracks[source.track]?.slots[source.slot]?.color ?? 0x888888);
   }
 
   // ── Timing ────────────────────────────────────────────────────────────
@@ -136,12 +148,12 @@
 
   // ── Linking ───────────────────────────────────────────────────────────
 
-  function sceneSource(scene: number): AbletonSource {
-    return { kind: 'scene', scene, name: bridge.scenes[scene]?.name ?? '' };
+  function sceneSource(state: AbletonBridgeState, scene: number): AbletonSource {
+    return { kind: 'scene', scene, name: state.scenes[scene]?.name ?? '' };
   }
 
-  function clipSource(track: number, slot: number): AbletonSource {
-    const t = bridge.tracks[track];
+  function clipSource(state: AbletonBridgeState, track: number, slot: number): AbletonSource {
+    const t = state.tracks[track];
     return { kind: 'clip', track, slot, trackName: t?.name ?? '', name: t?.slots[slot]?.name ?? '' };
   }
 
@@ -233,7 +245,11 @@
     installMessage = '';
     const result = await abletonBridge.installScript(chooseFolder);
     if (!result || result.canceled) return;
-    installMessage = result.ok ? `Installed to ${result.path}` : `Couldn't install: ${result.error}`;
+    // Live loads control surfaces at launch, so a new or updated script
+    // needs Live restarted.
+    installMessage = result.ok
+      ? `Installed to ${result.path}${(result.paths?.length ?? 1) > 1 ? ` and ${result.paths!.length - 1} more` : ''}. Restart Live to load it.`
+      : `Couldn't install: ${result.error}`;
   }
 
   function age(at: number, t: number): string {
@@ -376,7 +392,7 @@
               {/each}
 
               {#each bridge.scenes as scene, s}
-                {@const source = sceneSource(s)}
+                {@const source = sceneSource(bridge, s)}
                 {@const links = linksForScene(bridge.links, s)}
                 {@const firing = bridge.tracks.some(tr => tr.fired === s)}
                 <div
@@ -417,7 +433,7 @@
                 {#each bridge.tracks as track, t}
                   {@const clip = track.slots[s]}
                   {#if clip}
-                    {@const source = clipSource(t, s)}
+                    {@const source = clipSource(bridge, t, s)}
                     {@const clipLinks = linksForClip(bridge.links, t, s)}
                     {@const playing = track.playing === s}
                     {@const queued = track.fired === s}
@@ -493,7 +509,7 @@
             {#each bridge.links as l (l.id)}
               {@const thumb = actionThumb(ctx, l.action)}
               <div class="link-line" class:missing={bridge.missing.includes(l.id)} class:flash={now - (bridge.fired[l.id] ?? -1e9) < 450}>
-                <span class="swatch" style="background: {sourceColor(l.source)}"></span>
+                <span class="swatch" style="background: {sourceColor(bridge, l.source)}"></span>
                 <span class="from">{sourceLabel(l.source)}<small>{sourceKind(l.source)}</small></span>
                 <span class="arrow">→</span>
                 <span class="to">
@@ -542,7 +558,7 @@
             <button class="ghost wide" onclick={pickControl}>Pick a control…</button>
           </div>
         {:else if selected}
-          <div class="inspect" style="--live: {sourceColor(selected)}">
+          <div class="inspect" style="--live: {sourceColor(bridge, selected)}">
             <div class="inspect-head">
               <span class="kind">{sourceKind(selected)}</span>
               <span class="title">{sourceLabel(selected)}</span>
@@ -575,8 +591,9 @@
               <button class:active={tab === 'columns'} onclick={() => (tab = 'columns')}>Columns</button>
               <button class:active={tab === 'clips'} onclick={() => (tab = 'clips')}>Clips</button>
               <button class:active={tab === 'snapshots'} onclick={() => (tab = 'snapshots')}>Snaps</button>
+              <button class:active={tab === 'stage'} onclick={() => (tab = 'stage')}>Stage</button>
             </div>
-            {#if tab !== 'snapshots'}
+            {#if tab === 'columns' || tab === 'clips'}
               <div class="seg">
                 <button class:active={deck === 'A'} onclick={() => (deck = 'A')}>A</button>
                 <button class:active={deck === 'B'} onclick={() => (deck = 'B')}>B</button>
@@ -598,7 +615,7 @@
                 <span class="tile-label">{item.label}</span>
               </button>
             {:else}
-              <p class="hint">{tab === 'snapshots' ? 'Save a snapshot from SNAPS first.' : 'No clips on this deck yet.'}</p>
+              <p class="hint">{tab === 'snapshots' ? 'Save a snapshot from SNAPS first.' : tab === 'stage' ? 'Save a Stage preset from the Stage panel first.' : 'No clips on this deck yet.'}</p>
             {/each}
           </div>
         </div>

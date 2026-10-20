@@ -26,6 +26,10 @@ describe('deck sets', () => {
   it('alternates decks when there is no saved order', () => {
     expect(orderSongs(deriveSongs([], tracks), []).map(s => s.title)).toEqual(['House', 'Garage', 'Techno']);
   });
+  it('gives same-named songs their own keys', () => {
+    const songs = deriveSongs([], [track('A', 'A', ['Loop', 'Loop'])]);
+    expect(new Set(songs.map(s => s.key)).size).toBe(2);
+  });
   it('keeps a saved order and appends new songs', () => {
     const songs = deriveSongs([], tracks);
     expect(orderSongs(songs, [songs[1].key]).map(s => s.title)).toEqual(['Techno', 'House', 'Garage']);

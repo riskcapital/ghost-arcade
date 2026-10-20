@@ -264,7 +264,10 @@ export const mediaPipeBus = {
         }
       };
       const onKey = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') finish(null);
+        if (e.key !== 'Escape') return;
+        // Escape cancels the pick only; panels behind it shouldn't close too.
+        e.stopImmediatePropagation();
+        finish(null);
       };
       const finish = (t: LearnTarget | null) => {
         if (!learnActive) return;

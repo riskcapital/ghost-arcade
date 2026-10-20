@@ -22,7 +22,7 @@
   $: scoreIndices = scoreTrackIndices(bridge);
   $: midiTracks = bridge.tracks.map((t, i) => ({ track: t, index: i })).filter(x => x.track.midi);
   $: active = activeClip(bridge, scoreIndices);
-  $: lanes = laneList(bridge, scoreIndices);
+  $: lanes = laneList(bridge, scoreIndices, ctx.numColumns);
   $: progress = active?.playing ? loopProgress(bridge, active.track, beat) : 0;
 
   /** The score clip to draw: the first one playing, else the first with notes. */
@@ -40,13 +40,13 @@
     return null;
   }
 
-  function laneList(state: AbletonBridgeState, indices: number[]): number[] {
+  function laneList(state: AbletonBridgeState, indices: number[], columns: number): number[] {
     const pitches = new Set<number>(Object.keys(state.scoreMap).map(Number));
     for (const t of indices) {
       for (const clip of state.tracks[t].slots) for (const n of clip?.notes ?? []) pitches.add(n[0]);
     }
     if (!pitches.size) {
-      for (let i = 0; i < Math.min(ctx.numColumns, 8); i++) pitches.add(SCORE_COLUMN_BASE + i);
+      for (let i = 0; i < Math.min(columns, 8); i++) pitches.add(SCORE_COLUMN_BASE + i);
       for (let i = 0; i < 4; i++) pitches.add(SCORE_SNAPSHOT_BASE + i);
     }
     return [...pitches].sort((a, b) => b - a);

@@ -8,21 +8,32 @@ import type { VisualAction } from './abletonLinks';
 import type { VJClip, VJDeck } from '../stores/vjClipLauncher';
 import type { Snapshot } from '../stores/snapshots';
 
+/** A Stage preset as the tray lists it (project and global together). */
+export interface StagePresetEntry { id: string; name: string; thumbnail?: string; scope: 'project' | 'global' }
+
 export interface VisualContext {
   clipGrid: (VJClip | null)[][];
   bankBClipGrid: (VJClip | null)[][];
   numColumns: number;
   snapshots: Snapshot[];
+  stagePresets: StagePresetEntry[];
 }
 
 export interface ShelfItem { key: string; label: string; hint: string; thumbnail?: string; action: VisualAction }
-export type ShelfTab = 'columns' | 'clips' | 'snapshots';
+export type ShelfTab = 'columns' | 'clips' | 'snapshots' | 'stage';
+
+/** The Stage preset an action names: by id, else by name if it was re-saved. */
+export function findStagePreset(presets: StagePresetEntry[], action: { presetId: string; scope: string; name: string }) {
+  return presets.find(p => p.id === action.presetId)
+    ?? presets.find(p => p.scope === action.scope && p.name === action.name && !!action.name);
+}
 
 function gridFor(ctx: VisualContext, deck: VJDeck) {
   return deck === 'B' ? ctx.bankBClipGrid : ctx.clipGrid;
 }
 
 export function actionThumb(ctx: VisualContext, action: VisualAction): string | undefined {
+  if (action.kind === 'stage') return findStagePreset(ctx.stagePresets, action)?.thumbnail;
   if (action.kind === 'snapshot' || action.kind === 'control') return undefined;
   const grid = gridFor(ctx, action.deck);
   if (action.kind === 'clip') return grid[action.layer]?.[action.column]?.thumbnail;
@@ -33,11 +44,16 @@ export function actionThumb(ctx: VisualContext, action: VisualAction): string | 
 export function actionTag(action: VisualAction): string {
   if (action.kind === 'snapshot') return `S${action.slot + 1}`;
   if (action.kind === 'control') return 'FX';
+  if (action.kind === 'stage') return 'STG';
   return '·';
 }
 
 export function actionLabel(ctx: VisualContext, action: VisualAction): string {
   if (action.kind === 'control') return action.label;
+  if (action.kind === 'stage') {
+    const preset = findStagePreset(ctx.stagePresets, action);
+    return preset ? `Stage · ${preset.name}` : `Stage · ${action.name || 'missing preset'}`;
+  }
   if (action.kind === 'snapshot') {
     const snap = ctx.snapshots[action.slot];
     return snap?.capturedAt ? snap.name || `Snapshot ${action.slot + 1}` : `Snapshot ${action.slot + 1} (empty)`;
@@ -49,12 +65,20 @@ export function actionLabel(ctx: VisualContext, action: VisualAction): string {
 
 export function actionHint(action: VisualAction): string {
   if (action.kind === 'control') return 'Control hit';
+  if (action.kind === 'stage') return action.scope === 'global' ? 'Global Stage preset' : 'Stage preset';
   if (action.kind === 'snapshot') return `Snapshot slot ${action.slot + 1}`;
   if (action.kind === 'column') return 'Whole column';
   return `Layer ${action.layer + 1} · Column ${action.column + 1}`;
 }
 
 export function buildShelf(ctx: VisualContext, tab: ShelfTab, deck: VJDeck): ShelfItem[] {
+  if (tab === 'stage') {
+    return ctx.stagePresets.map(preset => ({
+      key: `stage-${preset.scope}-${preset.id}`, label: preset.name, hint: preset.scope === 'global' ? 'Global' : 'Project',
+      thumbnail: preset.thumbnail,
+      action: { kind: 'stage', presetId: preset.id, scope: preset.scope, name: preset.name } as VisualAction,
+    }));
+  }
   if (tab === 'snapshots') {
     return ctx.snapshots.flatMap((snap, slot) => snap.capturedAt ? [{
       key: `snap-${slot}`, label: snap.name || `Snapshot ${slot + 1}`, hint: `Slot ${slot + 1}`,

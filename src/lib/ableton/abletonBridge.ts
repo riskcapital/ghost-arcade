@@ -22,6 +22,8 @@ import { get, writable } from 'svelte/store';
 import { generateUUID } from '../utils/uuid';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { snapshots } from '../stores/snapshots';
+import { project } from '../stores/layers';
+import { globalStagePresets } from '../stores/globalPresets';
 import { midiRouter } from '../midi/midiRouter';
 import {
   launchBeat,
@@ -70,6 +72,13 @@ const SIGNAL_MS = 16;
 /** How long a launched control hit holds before it releases. */
 const HIT_MS = 120;
 const ACTIVITY_LENGTH = 8;
+/** A song position this far from where it should be is a jump, not drift. */
+const JUMP_BEATS = 0.25;
+/** A scene's trigger clearing counts as a launch only with a clip of that
+ *  scene starting within this window (ms); otherwise it was cancelled. */
+const SCENE_CONFIRM_MS = 250;
+/** A device list is asked for at most this often per track (ms). */
+const DEVICE_REQUEST_MS = 2000;
 
 export interface ScriptStatus {
   installed: boolean;
@@ -200,8 +209,9 @@ export function upcomingLaunch(state: AbletonBridgeState, beat: number): { label
     if (beats > 0 && (!best || beats < best.beats)) best = { label, beats };
   };
   state.scenes.forEach((scene, s) => {
+    if (!scene.queued) return;
     const firing = state.tracks.find(t => t.fired === s);
-    if (scene.queued || firing) consider(scene.name || `Scene ${s + 1}`, firing?.firedBeat ?? beat, linksForScene(state.links, s));
+    consider(scene.name || `Scene ${s + 1}`, firing?.firedBeat ?? beat, linksForScene(state.links, s));
   });
   state.tracks.forEach((track, t) => {
     if (track.fired >= 0) consider(track.slots[track.fired]?.name || track.name, track.firedBeat, linksForClip(state.links, t, track.fired));
@@ -236,9 +246,17 @@ function createAbletonBridge() {
   let lastHello = 0;
   /** Scene and track counts the links were last resolved against. */
   let linkedCounts: { scenes: number; tracks: number } | null = null;
-  /** Scenes whose trigger cleared in the batch being handled. */
-  let launchedScenes: number[] = [];
-  let sceneQueuedInBatch = false;
+  /** Scenes whose trigger cleared, waiting for one of their clips to start
+   *  (ms timestamps), and when each scene row last had a clip start. */
+  const sceneClears = new Map<number, number>();
+  const sceneStarts = new Map<number, number>();
+  /** Each track's last clip start, so one launch reported two ways (the
+   *  queue clearing and the playing slot) fires its links once. */
+  const lastStarts = new Map<number, { slot: number; at: number }>();
+  /** When each track's devices were last asked for. */
+  const deviceRequests = new Map<number, number>();
+  /** Live's crossfader as last reported, to push only real moves. */
+  let liveCrossfader = Number.NaN;
   /** The last watch request sent, to avoid repeating it. */
   let sentWatch = '';
 
@@ -254,9 +272,11 @@ function createAbletonBridge() {
   /** Control releases due at a song position. */
   let releases: { beat: number; path: string; value: number; inputId: string }[] = [];
   let conductorBeat = 0;
-  /** A deck song waiting to land before the crossfader moves to it. */
-  let pendingMix: { track: number; slot: number; side: 'A' | 'B'; bars: number; title: string } | null = null;
+  /** A deck song waiting to land before the crossfader moves to it; it
+   *  lapses if the song hasn't landed by `deadline` (song beats). */
+  let pendingMix: { track: number; slot: number; side: 'A' | 'B'; bars: number; title: string; deadline: number } | null = null;
   let lastMixSentAt = 0;
+  let lastMixValue = Number.NaN;
   let lastSignalAt = 0;
   let lastMeterAt = 0;
 
@@ -270,6 +290,7 @@ function createAbletonBridge() {
     if (action.kind === 'column') vjClipLauncher.triggerColumnNow(action.column, action.deck);
     else if (action.kind === 'clip') vjClipLauncher.triggerClipNow(action.layer, action.column, action.deck);
     else if (action.kind === 'snapshot') snapshots.recall(action.slot);
+    else if (action.kind === 'stage') loadStage(action);
     else {
       const value = action.release + (action.value - action.release) * (velocity / 127);
       const inputId = hold?.inputId ?? `ableton:hit:${action.path}`;
@@ -277,6 +298,15 @@ function createAbletonBridge() {
       if (hold) releases.push({ beat: hold.untilBeat, path: action.path, value: action.release, inputId });
       else setTimeout(() => midiRouter.dispatchPath(action.path, action.release, { inputId }), HIT_MS);
     }
+  }
+
+  /** Recall a Stage preset the way the VJ panel's preset list does. */
+  function loadStage(action: Extract<VisualAction, { kind: 'stage' }>) {
+    const presets = action.scope === 'global' ? get(globalStagePresets) : get(project).stagePresets ?? [];
+    const preset = presets.find(p => p.id === action.presetId) ?? presets.find(p => !!action.name && p.name === action.name);
+    if (!preset) return;
+    if (action.scope === 'global') project.loadStagePresetSnapshot(preset);
+    else project.loadStagePreset(preset.id);
   }
 
   function fire(links: AbletonLink[], label: string) {
@@ -313,6 +343,74 @@ function createAbletonBridge() {
     return read().scenes[index]?.name || `Scene ${index + 1}`;
   }
 
+  /** A clip started (or restarted) on a track: fire its links. */
+  function clipStarted(track: number, slot: number) {
+    const now = performance.now();
+    const last = lastStarts.get(track);
+    if (last && last.slot === slot && now - last.at < SCENE_CONFIRM_MS) return;
+    lastStarts.set(track, { slot, at: now });
+    setTrack(track, { playing: slot, fired: -1, startedBeat: read().clockBeat });
+    sceneStarts.set(slot, performance.now());
+    const t = read().tracks[track];
+    const clip = t?.slots[slot];
+    if (clip) colorValues.set(track, colorHue(clip.color));
+    markPlayed(song => song.kind === 'clip' && song.track === track && song.slot === slot);
+    if (pendingMix && pendingMix.track === track && pendingMix.slot === slot) {
+      startMix(pendingMix);
+      pendingMix = null;
+    }
+    fire(linksForClip(read().links, track, slot), `${t?.name || `Track ${track + 1}`} · ${clip?.name || 'Clip'}`);
+  }
+
+  function sceneLaunched(scene: number) {
+    const color = read().scenes[scene]?.color;
+    if (color) colorValues.set(-1, colorHue(color));
+    markPlayed(song => song.kind === 'scenes' && song.sections[0]?.scene === scene);
+    fire(linksForScene(read().links, scene), sceneLabel(scene));
+  }
+
+  /** Resolve scene triggers that cleared: launched if one of the scene's
+   *  clips started around the same moment, cancelled otherwise. */
+  function confirmScenes() {
+    if (!sceneClears.size) return;
+    const now = performance.now();
+    for (const [scene, at] of sceneClears) {
+      const started = sceneStarts.get(scene);
+      if (started !== undefined && Math.abs(started - at) <= SCENE_CONFIRM_MS) {
+        sceneClears.delete(scene);
+        sceneLaunched(scene);
+      } else if (now - at > SCENE_CONFIRM_MS) {
+        sceneClears.delete(scene);
+      }
+    }
+  }
+
+  /** Live's song position: corrects drift, and on a jump (a locator, an
+   *  arrangement loop wrapping) keeps every timing in step with it. */
+  function applyClock(beat: number) {
+    const s = read();
+    const now = performance.now();
+    const shift = s.playing && s.clockAt > 0 ? beat - songBeat(s, now) : 0;
+    const jumped = Math.abs(shift) > JUMP_BEATS;
+    update(st => {
+      const next = { ...st, clockBeat: beat, clockAt: now };
+      if (!jumped) return next;
+      // Session clips keep their own time when the song position jumps.
+      next.tracks = st.tracks.map(t => ({ ...t, startedBeat: t.startedBeat + shift, firedBeat: t.firedBeat + shift }));
+      if (st.mix) next.mix = { ...st.mix, startBeat: st.mix.startBeat + shift };
+      return next;
+    });
+    if (jumped) {
+      releases = releases.map(r => ({ ...r, beat: r.beat + shift }));
+      if (pendingMix) pendingMix = { ...pendingMix, deadline: pendingMix.deadline + shift };
+    }
+  }
+
+  function cancelMix() {
+    pendingMix = null;
+    if (read().mix) update(s => ({ ...s, mix: null }));
+  }
+
   function releaseAll() {
     for (const r of releases) midiRouter.dispatchPath(r.path, r.value, { inputId: r.inputId });
     releases = [];
@@ -324,7 +422,12 @@ function createAbletonBridge() {
   function tick() {
     const s = read();
     const now = performance.now();
-    const beat = songBeat(s, now);
+    let beat = songBeat(s, now);
+    // A small step back is a clock correction, not a jump: hold position so
+    // nothing near it fires twice.
+    if (beat < conductorBeat && conductorBeat - beat < 0.5) beat = conductorBeat;
+    confirmScenes();
+    if (pendingMix && s.playing && beat > pendingMix.deadline) pendingMix = null;
 
     if (s.playing) {
       const columns = get(vjClipLauncher).numColumns;
@@ -362,11 +465,12 @@ function createAbletonBridge() {
       }
     }
 
-    if (s.mix && now - lastMixSentAt >= 30) {
+    if (s.mix && s.playing && now - lastMixSentAt >= 30) {
       lastMixSentAt = now;
       const v = mixPosition(s.mix.from, s.mix.to, s.mix.startBeat, s.mix.beats, beat);
+      lastMixValue = v;
       send({ t: 'crossfader', v });
-      applyCrossfader(v);
+      applyCrossfader(v, false);
       if (v === s.mix.to) update(st => ({ ...st, mix: null }));
     }
 
@@ -384,7 +488,8 @@ function createAbletonBridge() {
       const [pitch, , duration, velocity] = note;
       const action = scoreAction(s, pitch, columns);
       if (!action) continue;
-      runAction(action, velocity, { untilBeat: track.startedBeat + at + duration, inputId: `ableton:score:${t}:${pitch}` });
+      // Each note holds its own input, so overlapping notes don't cut each other short.
+      runAction(action, velocity, { untilBeat: track.startedBeat + at + duration, inputId: `ableton:score:${t}:${pitch}:${at}` });
       hits[pitch] = now;
     }
     if (Object.keys(hits).length) abletonScoreHits.update(h => ({ ...h, ...hits }));
@@ -498,10 +603,14 @@ function createAbletonBridge() {
     }, RELINK_DELAY_MS);
   }
 
-  /** Live's crossfader moved: mirror it, and move Ghost Arcade's in deck mode. */
-  function applyCrossfader(value: number) {
+  /** The crossfader moved: mirror it, and move Ghost Arcade's in deck mode.
+   *  Reports from Live push only when its fader actually moved, so the
+   *  heartbeat never snaps Ghost Arcade's crossfader back. */
+  function applyCrossfader(value: number, fromLive = true) {
     if (!Number.isFinite(value)) return;
     const v = Math.max(0, Math.min(1, value));
+    if (fromLive && Math.abs(v - liveCrossfader) <= 0.0005) return;
+    liveCrossfader = v;
     if (Math.abs(read().crossfader - v) > 0.0005) update(s => ({ ...s, crossfader: v }));
     if (read().deckMode) vjClipLauncher.setCrossfaderValue(v);
   }
@@ -523,11 +632,11 @@ function createAbletonBridge() {
     return { name: String(slot[0] ?? ''), color: Number(slot[1]) || 0, length: Number(slot[2]) || 4, ...(notes ? { notes } : {}) };
   }
 
+  const emptyTrack = (): LiveTrack =>
+    ({ name: '', color: 0, midi: false, side: null, slots: [], playing: -1, fired: -1, startedBeat: 0, firedBeat: 0 });
+
   function handle(message: LiveMessage) {
-    if (typeof message.beat === 'number' && Number.isFinite(message.beat)) {
-      const beat = message.beat;
-      update(s => ({ ...s, clockBeat: beat, clockAt: performance.now() }));
-    }
+    if (typeof message.beat === 'number' && Number.isFinite(message.beat)) applyClock(message.beat);
     switch (message.t) {
       case 'hello': {
         const wasConnected = read().connected;
@@ -548,7 +657,12 @@ function createAbletonBridge() {
           send({ t: 'sync' });
           startConductor();
         }
-        if (wasPlaying && !message.playing) releaseAll();
+        // Starting from a locator still fires it.
+        if (!wasPlaying && message.playing) conductorBeat = read().clockBeat - 0.001;
+        if (wasPlaying && !message.playing) {
+          releaseAll();
+          cancelMix();
+        }
         break;
       }
       case 'bye':
@@ -557,11 +671,16 @@ function createAbletonBridge() {
         stopConductor();
         break;
       case 'set': {
-        const scenes: LiveScene[] = (Array.isArray(message.scenes) ? message.scenes : []).map((scene: any, index: number) => ({
-          name: String(scene?.n ?? ''),
-          color: Number(scene?.c) || 0,
-          queued: read().scenes[index]?.queued ?? false,
-        }));
+        // Scenes arrive in parts: this one first, the rest as 'scenes'.
+        const part = Array.isArray(message.scenes) ? message.scenes : [];
+        const total = Number.isInteger(message.count) ? Math.max(part.length, message.count) : part.length;
+        const scenes: LiveScene[] = Array.from({ length: total }, (_, index) => {
+          const scene = part[index];
+          const known = read().scenes[index];
+          return scene
+            ? { name: String(scene?.n ?? ''), color: Number(scene?.c) || 0, queued: known?.queued ?? false }
+            : known ?? { name: '', color: 0, queued: false };
+        });
         const cues: LiveCue[] = (Array.isArray(message.cues) ? message.cues : [])
           .filter((c: any) => Array.isArray(c))
           .map((c: any) => ({ name: String(c[0] ?? ''), time: Number(c[1]) || 0 }));
@@ -570,46 +689,81 @@ function createAbletonBridge() {
           ...s,
           scenes,
           cues,
-          tracks: Array.from({ length: count }, (_, i) => s.tracks[i]
-            ?? { name: '', color: 0, midi: false, side: null, slots: [], playing: -1, fired: -1, startedBeat: 0, firedBeat: 0 }),
+          tracks: Array.from({ length: count }, (_, i) => s.tracks[i] ?? emptyTrack()),
         }));
         scheduleRelink();
         break;
       }
+      case 'scenes': {
+        const offset = Number(message.o);
+        if (!Number.isInteger(offset) || !Array.isArray(message.scenes)) break;
+        update(s => {
+          const scenes = s.scenes.slice();
+          message.scenes.forEach((scene: any, i: number) => {
+            scenes[offset + i] = { name: String(scene?.n ?? ''), color: Number(scene?.c) || 0, queued: scenes[offset + i]?.queued ?? false };
+          });
+          return { ...s, scenes };
+        });
+        scheduleRelink();
+        break;
+      }
       case 'track': {
+        // Slots arrive in parts: this one first, the rest as 'slots'.
         const index = Number(message.i);
         if (!Number.isInteger(index)) break;
-        setTrack(index, {
+        const part = (Array.isArray(message.slots) ? message.slots : []).map(parseSlot);
+        const total = Number.isInteger(message.count) ? Math.max(part.length, message.count) : part.length;
+        const known = read().tracks[index];
+        const playing = Number(message.play) >= 0 ? Number(message.play) : -1;
+        const patch: Partial<LiveTrack> = {
           name: String(message.n ?? ''),
           color: Number(message.c) || 0,
           midi: !!message.midi,
           side: message.x === 0 ? 'A' : message.x === 2 ? 'B' : null,
-          slots: (Array.isArray(message.slots) ? message.slots : []).map(parseSlot),
-          playing: Number(message.play) >= 0 ? Number(message.play) : -1,
+          slots: Array.from({ length: total }, (_, i) => (i < part.length ? part[i] : known?.slots[i] ?? null)),
+          playing,
           fired: Number(message.fired) >= 0 ? Number(message.fired) : -1,
-        });
+        };
+        // A clip found already playing: line its loop up with the song.
+        if (playing >= 0 && typeof message.pos === 'number' && (known?.playing !== playing || !known?.startedBeat)) {
+          patch.startedBeat = songBeat(read()) - message.pos;
+        }
+        setTrack(index, patch);
+        scheduleRelink();
+        break;
+      }
+      case 'slots': {
+        const index = Number(message.i);
+        const offset = Number(message.o);
+        if (!Number.isInteger(index) || !Number.isInteger(offset) || !Array.isArray(message.slots)) break;
+        const track = read().tracks[index];
+        if (!track) break;
+        const slots = track.slots.slice();
+        message.slots.forEach((slot: any, i: number) => { slots[offset + i] = parseSlot(slot); });
+        setTrack(index, { slots });
         scheduleRelink();
         break;
       }
       case 'play': {
         const track = Number(message.i);
         const slot = Number(message.s) >= 0 ? Number(message.s) : -1;
-        setTrack(track, { playing: slot, fired: -1, startedBeat: read().clockBeat });
-        if (slot >= 0) {
-          const t = read().tracks[track];
-          const clip = t?.slots[slot];
-          if (clip) colorValues.set(track, colorHue(clip.color));
-          markPlayed(song => song.kind === 'clip' && song.track === track && song.slot === slot);
-          if (pendingMix && pendingMix.track === track && pendingMix.slot === slot) {
-            startMix(pendingMix);
-            pendingMix = null;
-          }
-          fire(linksForClip(read().links, track, slot), `${t?.name || `Track ${track + 1}`} · ${clip?.name || 'Clip'}`);
-        }
+        if (slot >= 0) clipStarted(track, slot);
+        else setTrack(track, { playing: -1, fired: -1 });
         break;
       }
       case 'fired': {
-        setTrack(Number(message.i), { fired: Number(message.s) >= 0 ? Number(message.s) : -1, firedBeat: read().clockBeat });
+        const index = Number(message.i);
+        const slot = Number(message.s) >= 0 ? Number(message.s) : -1;
+        const track = read().tracks[index];
+        if (!track) break;
+        // Relaunching the playing clip changes no playing slot: its queue
+        // clearing while that same clip plays is the restart.
+        if (slot === -1 && track.fired >= 0 && track.fired === track.playing) {
+          clipStarted(index, track.fired);
+          break;
+        }
+        if (pendingMix && pendingMix.track === index && slot >= 0 && slot !== pendingMix.slot) pendingMix = null;
+        setTrack(index, { fired: slot, firedBeat: read().clockBeat });
         break;
       }
       case 'scene': {
@@ -621,10 +775,14 @@ function createAbletonBridge() {
           scenes[index] = { ...scenes[index], queued };
           return { ...s, scenes };
         });
-        // Live clears the trigger the moment the scene launches. With the
-        // transport stopped it launches at once and only the clear arrives.
-        if (queued) sceneQueuedInBatch = true;
-        else launchedScenes.push(index);
+        // Live clears the trigger the moment the scene launches, or when it
+        // is cancelled or replaced. An empty scene can only be told by the
+        // clear; otherwise one of its clips must start with it.
+        if (!queued) {
+          const empty = !read().tracks.some(t => t.slots[index]);
+          if (empty) sceneLaunched(index);
+          else sceneClears.set(index, performance.now());
+        }
         break;
       }
       case 'devices': {
@@ -639,8 +797,18 @@ function createAbletonBridge() {
         syncWatch();
         break;
       }
-      case 'xf':
-        applyCrossfader(Number(message.v));
+      case 'xf': {
+        const v = Number(message.v);
+        // Live's own fader moved away from the sweep: the DJ took over.
+        if (read().mix && Number.isFinite(lastMixValue) && Math.abs(v - lastMixValue) > 0.05) cancelMix();
+        applyCrossfader(v);
+        break;
+      }
+      case 'error':
+        if (message.what === 'create_score_track') {
+          const now = performance.now();
+          update(s => ({ ...s, activity: [{ text: "Live couldn't add a track (track limit?)", at: now }, ...s.activity].slice(0, ACTIVITY_LENGTH) }));
+        }
         break;
       case 'param':
         paramValues.set(`${message.i}:${message.j}:${message.k}`, Math.max(0, Math.min(1, Number(message.v) || 0)));
@@ -678,21 +846,10 @@ function createAbletonBridge() {
       const bridge = api();
       if (!bridge || unsubscribeMessages) return;
       unsubscribeMessages = bridge.onMessage((messages: LiveMessage[]) => {
-        launchedScenes = [];
-        sceneQueuedInBatch = false;
         for (const message of messages) {
           if (message && typeof message.t === 'string') handle(message);
         }
-        // A trigger that clears while another scene queues was replaced,
-        // not launched.
-        if (!sceneQueuedInBatch) {
-          for (const scene of launchedScenes) {
-            const color = read().scenes[scene]?.color;
-            if (color) colorValues.set(-1, colorHue(color));
-            markPlayed(song => song.kind === 'scenes' && song.sections[0]?.scene === scene);
-            fire(linksForScene(read().links, scene), sceneLabel(scene));
-          }
-        }
+        confirmScenes();
       });
       unsubscribeStatus = bridge.onStatus((status: { listening: boolean; error: string | null }) => {
         update(s => ({ ...s, listening: status.listening, error: status.error, connected: status.listening && s.connected }));
@@ -739,7 +896,7 @@ function createAbletonBridge() {
     async installScript(chooseFolder = false) {
       const result = await api()?.installScript({ chooseFolder });
       await this.refreshScript();
-      return result as { ok: boolean; path?: string; error?: string; canceled?: boolean } | undefined;
+      return result as { ok: boolean; path?: string; paths?: string[]; error?: string; canceled?: boolean } | undefined;
     },
 
     revealScript() {
@@ -780,6 +937,9 @@ function createAbletonBridge() {
     },
     /** Ask Live for a track's devices and their parameters. */
     requestDevices(track: number) {
+      const now = performance.now();
+      if (now - (deviceRequests.get(track) ?? -Infinity) < DEVICE_REQUEST_MS) return;
+      deviceRequests.set(track, now);
       send({ t: 'devices', i: track });
     },
 
@@ -867,10 +1027,9 @@ function createAbletonBridge() {
      *  Taking the fader by hand cancels an auto-mix. */
     setCrossfader(value: number) {
       const v = Math.max(0, Math.min(1, value));
-      pendingMix = null;
-      if (read().mix) update(s => ({ ...s, mix: null }));
+      cancelMix();
       send({ t: 'crossfader', v });
-      applyCrossfader(v);
+      applyCrossfader(v, false);
     },
 
     /** Put a Live track on a side of Live's crossfader. */
@@ -914,7 +1073,13 @@ function createAbletonBridge() {
       const s = read();
       if (!s.deckMode || !song.side) return;
       const otherPlaying = s.tracks.some(t => t.side && t.side !== song.side && t.playing >= 0);
-      pendingMix = { track: song.track, slot: song.slot, side: song.side, bars: otherPlaying ? s.autoMixBars : 0, title: song.title };
+      const perBar = s.numerator * (4 / s.denominator);
+      const step = quantizeBeats(s.quantize, s.numerator, s.denominator);
+      pendingMix = {
+        track: song.track, slot: song.slot, side: song.side, bars: otherPlaying ? s.autoMixBars : 0, title: song.title,
+        // If it hasn't landed a bar after its launch point, it isn't coming.
+        deadline: launchBeat(songBeat(s), step) + perBar,
+      };
     },
 
     /** Play the next unplayed song in set order. */
@@ -981,7 +1146,15 @@ function createAbletonBridge() {
 
     hydrate(raw: unknown) {
       const saved = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>;
-      linkedCounts = null;
+      // The set the links were made against; position matching is only
+      // trusted when the open set has the same shape.
+      const counts = saved.linkedCounts;
+      linkedCounts = counts && Number.isInteger(counts.scenes) && Number.isInteger(counts.tracks)
+        ? { scenes: counts.scenes, tracks: counts.tracks }
+        : null;
+      cancelMix();
+      releaseAll();
+      scorePlayhead.clear();
       const scoreMap: Record<number, VisualAction> = {};
       for (const [pitch, action] of Object.entries(saved.scoreMap ?? {})) {
         const clean = sanitizeAction(action);
@@ -1011,16 +1184,18 @@ function createAbletonBridge() {
 
     serialize() {
       const { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars } = read();
-      return { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars };
+      return { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars, linkedCounts };
     },
 
     reset() {
       linkedCounts = null;
       signalState.clear();
+      cancelMix();
       releaseAll();
+      scorePlayhead.clear();
       update(s => ({
         ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, deckMode: false,
-        setlistOrder: [], played: [], currentSong: null, mix: null, missing: [], fired: {},
+        setlistOrder: [], autoMixBars: 8, played: [], currentSong: null, mix: null, missing: [], fired: {},
       }));
       syncWatch();
     },
@@ -1028,3 +1203,7 @@ function createAbletonBridge() {
 }
 
 export const abletonBridge = createAbletonBridge();
+
+// A hot reload builds a fresh store; retire the old one's listener and
+// timers so links don't fire twice.
+if (import.meta.hot) import.meta.hot.dispose(() => abletonBridge.destroy());
