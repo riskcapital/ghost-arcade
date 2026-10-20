@@ -3490,6 +3490,7 @@ const deckMonitorAttachedNames = new Set();
 let deckMonitorPump = null;
 let deckMonitorPumpInFlight = false;
 let deckMonitorPumpGeneration = 0;
+let deckMonitorPumpTicks = 0;
 const deckMonitorLastBinding = new Map(); // name -> `${handle}:${w}x${h}`
 const deckMonitorLastFrame = new Map();   // name -> { frame, at }
 
@@ -3503,6 +3504,9 @@ function startDeckMonitorPump() {
       const addon = nativePreviewAddon;
       const windows = process.platform === 'win32';
       if (!addon || typeof addon[windows ? 'monitorSetSharedTexture' : 'monitorSetIOSurface'] !== 'function') return;
+      // Windows monitors are separate windows kept behind the editor; re-stack
+      // them twice a second even when the decks produce no new frames.
+      if (windows && ++deckMonitorPumpTicks % 15 === 0) addon.monitorRestack?.();
       const state = await nativeRendererBroker.invoke('native_renderer_get_deck_monitor_state', {});
       if (generation !== deckMonitorPumpGeneration) return;
       if (!state?.available || !Array.isArray(state.banks)) return;
@@ -8520,6 +8524,10 @@ function createMainWindow() {
   for (const event of ['show', 'hide', 'minimize', 'restore', 'enter-full-screen', 'leave-full-screen', 'resize', 'move']) {
     mainWindow.on(event, stabilizeNativeEditorHost);
   }
+  // Windows raises only the editor window on activation; its native preview
+  // and deck monitor underlays must be re-stacked behind it straight away or
+  // the app in front shows through their holes.
+  if (process.platform === 'win32') mainWindow.on('focus', stabilizeNativeEditorHost);
   mainWindow.webContents.on('did-finish-load', stabilizeNativeEditorHost);
 
   if (process.platform === 'darwin') {

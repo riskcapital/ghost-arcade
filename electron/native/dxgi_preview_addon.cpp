@@ -365,6 +365,13 @@ class PreviewSurface {
     return true;
   }
 
+  // Raising the editor window does not carry these separate top-level
+  // windows with it, so they stay under whatever app was in front until
+  // re-stacked directly behind the host again.
+  void Restack() {
+    if (attached_) PositionBehind();
+  }
+
   // The underlay spans the host's ENTIRE client area, not just the canvas rect.
   // macOS gets an opaque backdrop for free (the NSWindow stays opaque and only
   // Chromium's surface is alpha-capable), but a Windows `transparent: true`
@@ -1060,6 +1067,7 @@ Napi::Value StabilizeHost(const Napi::CallbackInfo& info) {
   std::string error;
   const bool ok = host && g_primary.Stabilize(host, &error);
   if (!ok) g_lastError = error;
+  for (auto& entry : g_monitors) entry.second->Restack();
   return Napi::Boolean::New(info.Env(), ok);
 }
 
@@ -1364,6 +1372,12 @@ Napi::Value MonitorSetSharedTexture(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(env, true);
 }
 
+// monitorRestack() — keep every deck/slice monitor directly behind its host.
+Napi::Value MonitorRestack(const Napi::CallbackInfo& info) {
+  for (auto& entry : g_monitors) entry.second->Restack();
+  return Napi::Boolean::New(info.Env(), true);
+}
+
 Napi::Value MonitorDetach(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 1 || !info[0].IsString()) return Napi::Boolean::New(env, false);
@@ -1393,6 +1407,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("monitorAttach", Napi::Function::New(env, MonitorAttach));
   exports.Set("monitorSetSharedTexture", Napi::Function::New(env, MonitorSetSharedTexture));
   exports.Set("monitorDetach", Napi::Function::New(env, MonitorDetach));
+  exports.Set("monitorRestack", Napi::Function::New(env, MonitorRestack));
   exports.Set("platform", Napi::String::New(env, "win32"));
   return exports;
 }
