@@ -4619,6 +4619,18 @@ function fallBackToOsrTextureShare(reason, retry) {
   }
 }
 
+// The texture exists but the addon can't send it (for example, it opened
+// on a different GPU adapter). Once that has lasted a second, fall back to
+// OSR and retry native later with back-off.
+function noteNativeOutputSendFailure(reason) {
+  nativeOutputTextureShareSendFailures++;
+  if (!nativeOutputTextureShareSendFailingSince) nativeOutputTextureShareSendFailingSince = Date.now();
+  if (nativeOutputTextureShareSendFailures >= 10 && Date.now() - nativeOutputTextureShareSendFailingSince >= 1000) {
+    fallBackToOsrTextureShare(reason, false);
+    scheduleNativeOutputSendRetry();
+  }
+}
+
 function startNativeOutputTextureSharePump(initialTexture = null) {
   stopNativeOutputTextureSharePromotion();
   stopNativeOutputTextureSharePump();
@@ -4669,6 +4681,9 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
         if (nativeOutputTextureShareFailCount <= 5) {
           console.warn(`[${textureShareLabel} Native] output shared texture is ready but addon cannot publish it via ${nativeOutputTextureShareMethodLabel(texture, spoutOutput)}`);
         }
+        if (nativeOutputTextureShareFailCount >= 10) {
+          fallBackToOsrTextureShare('addon cannot publish the native texture', false);
+        }
         return;
       }
 
@@ -4709,18 +4724,10 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
         }
       }
       if (!ok) {
-        nativeOutputTextureShareSendFailures++;
-        if (!nativeOutputTextureShareSendFailingSince) nativeOutputTextureShareSendFailingSince = Date.now();
-        if (nativeOutputTextureShareSendFailures <= 5) {
+        if (nativeOutputTextureShareSendFailures < 5) {
           console.warn(`[${textureShareLabel} Native] ${method} returned false for ${width}x${height}`);
         }
-        // The texture exists but the addon can't send it (for example, it
-        // opened on a different GPU adapter). Once that has lasted a
-        // second, fall back to OSR and retry native later with back-off.
-        if (nativeOutputTextureShareSendFailures >= 10 && Date.now() - nativeOutputTextureShareSendFailingSince >= 1000) {
-          fallBackToOsrTextureShare(`${method} failing`, false);
-          scheduleNativeOutputSendRetry();
-        }
+        noteNativeOutputSendFailure(`${method} failing`);
         return;
       }
 
@@ -4742,10 +4749,10 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
         nativeOutputTextureShareLastLogTime = now;
       }
     } catch (err) {
-      nativeOutputTextureShareFailCount++;
-      if (nativeOutputTextureShareFailCount <= 5) {
+      if (nativeOutputTextureShareSendFailures < 5) {
         console.error(`[${textureShareLabel} Native] publish error:`, err?.message || err);
       }
+      noteNativeOutputSendFailure('native publish errors');
     } finally {
       nativeOutputTextureShareInFlight = false;
     }
