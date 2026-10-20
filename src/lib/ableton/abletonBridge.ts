@@ -18,7 +18,7 @@
  * (exportProject / importProject in src/lib/stores/layers.ts).
  */
 
-import { get, writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 import { generateUUID } from '../utils/uuid';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { snapshots } from '../stores/snapshots';
@@ -121,8 +121,6 @@ export interface AbletonBridgeState {
   denominator: number;
   playing: boolean;
   quantize: number;
-  /** Live's crossfader, 0 = full A, 1 = full B. */
-  crossfader: number;
   scenes: LiveScene[];
   tracks: LiveTrack[];
   cues: LiveCue[];
@@ -160,7 +158,6 @@ const INITIAL: AbletonBridgeState = {
   denominator: 4,
   playing: false,
   quantize: 4,
-  crossfader: 0.5,
   scenes: [],
   tracks: [],
   cues: [],
@@ -224,6 +221,11 @@ export function setlist(state: Pick<AbletonBridgeState, 'scenes' | 'tracks' | 's
   return orderSongs(deriveSongs(state.scenes, state.tracks), state.setlistOrder);
 }
 
+/** Live's crossfader, 0 = full A, 1 = full B. A store of its own, like
+ *  vjCrossfader: riding the fader or an auto-mix sweep wakes only what
+ *  shows the fader, not everything that watches the bridge. */
+export const abletonCrossfader = writable(0.5);
+
 /** Live values per signal (0..1, after smoothing) for meters. */
 export const abletonSignalLevels = writable<Record<string, number>>({});
 /** Last time each score pitch fired (performance.now()), for lane flashes. */
@@ -257,6 +259,12 @@ function createAbletonBridge() {
   const deviceRequests = new Map<number, number>();
   /** Live's crossfader as last reported, to push only real moves. */
   let liveCrossfader = Number.NaN;
+  /** When Ghost Arcade last moved Live's crossfader: Live echoes each value
+   *  back a moment later, and a late echo must not pull the fader back. */
+  let ownCrossfaderAt = 0;
+  /** Echoes arrive within this window (ms); a bigger jump is the DJ. */
+  const ECHO_MS = 250;
+  const ECHO_RANGE = 0.05;
   /** The last watch request sent, to avoid repeating it. */
   let sentWatch = '';
 
@@ -335,7 +343,7 @@ function createAbletonBridge() {
     const perBar = s.numerator * (4 / s.denominator);
     update(st => ({
       ...st,
-      mix: { from: st.crossfader, to: mix.side === 'A' ? 0 : 1, startBeat: st.clockBeat, beats: mix.bars * perBar, title: mix.title },
+      mix: { from: get(abletonCrossfader), to: mix.side === 'A' ? 0 : 1, startBeat: st.clockBeat, beats: mix.bars * perBar, title: mix.title },
     }));
   }
 
@@ -469,8 +477,7 @@ function createAbletonBridge() {
       lastMixSentAt = now;
       const v = mixPosition(s.mix.from, s.mix.to, s.mix.startBeat, s.mix.beats, beat);
       lastMixValue = v;
-      send({ t: 'crossfader', v });
-      applyCrossfader(v, false);
+      sendCrossfader(v);
       if (v === s.mix.to) update(st => ({ ...st, mix: null }));
     }
 
@@ -611,8 +618,20 @@ function createAbletonBridge() {
     const v = Math.max(0, Math.min(1, value));
     if (fromLive && Math.abs(v - liveCrossfader) <= 0.0005) return;
     liveCrossfader = v;
-    if (Math.abs(read().crossfader - v) > 0.0005) update(s => ({ ...s, crossfader: v }));
+    if (Math.abs(get(abletonCrossfader) - v) > 0.0005) abletonCrossfader.set(v);
     if (read().deckMode) vjClipLauncher.setCrossfaderValue(v);
+  }
+
+  /** Move Live's crossfader from here, and Ghost Arcade's with it. */
+  function sendCrossfader(v: number) {
+    ownCrossfaderAt = performance.now();
+    send({ t: 'crossfader', v });
+    applyCrossfader(v, false);
+  }
+
+  /** Live reported a value close to one we just sent: it's our own echo. */
+  function isEcho(v: number) {
+    return performance.now() - ownCrossfaderAt < ECHO_MS && Math.abs(v - get(abletonCrossfader)) < ECHO_RANGE;
   }
 
   function setTrack(index: number, patch: Partial<LiveTrack>) {
@@ -651,7 +670,7 @@ function createAbletonBridge() {
           playing: !!message.playing,
           quantize: Number.isInteger(message.quantize) ? message.quantize : s.quantize,
         }));
-        if (typeof message.xf === 'number') applyCrossfader(message.xf);
+        if (typeof message.xf === 'number' && !isEcho(message.xf)) applyCrossfader(message.xf);
         if (!wasConnected) {
           sentWatch = '';
           send({ t: 'sync' });
@@ -799,8 +818,9 @@ function createAbletonBridge() {
       }
       case 'xf': {
         const v = Number(message.v);
+        if (isEcho(v)) break;
         // Live's own fader moved away from the sweep: the DJ took over.
-        if (read().mix && Number.isFinite(lastMixValue) && Math.abs(v - lastMixValue) > 0.05) cancelMix();
+        if (read().mix && Number.isFinite(lastMixValue) && Math.abs(v - lastMixValue) > ECHO_RANGE) cancelMix();
         applyCrossfader(v);
         break;
       }
@@ -1019,7 +1039,7 @@ function createAbletonBridge() {
       update(s => ({ ...s, deckMode: on }));
       if (on) {
         vjClipLauncher.setCrossfaderEnabled(true);
-        vjClipLauncher.setCrossfaderValue(read().crossfader);
+        vjClipLauncher.setCrossfaderValue(get(abletonCrossfader));
       }
     },
 
@@ -1028,8 +1048,7 @@ function createAbletonBridge() {
     setCrossfader(value: number) {
       const v = Math.max(0, Math.min(1, value));
       cancelMix();
-      send({ t: 'crossfader', v });
-      applyCrossfader(v, false);
+      sendCrossfader(v);
     },
 
     /** Put a Live track on a side of Live's crossfader. */
@@ -1203,6 +1222,10 @@ function createAbletonBridge() {
 }
 
 export const abletonBridge = createAbletonBridge();
+
+/** Just whether Live is connected: for chrome like the dock button, which
+ *  shouldn't wake on every message from Live. */
+export const abletonConnected = derived(abletonBridge, s => s.connected);
 
 // A hot reload builds a fresh store; retire the old one's listener and
 // timers so links don't fire twice.

@@ -95,9 +95,10 @@
   onMount(() => {
     void abletonBridge.enable();
     void abletonBridge.refreshScript();
-    // Redraw per frame only while Live is connected; nothing moves otherwise.
-    const tick = () => {
-      if ($abletonBridge.connected) now = performance.now();
+    // Playheads and countdowns redraw at most 20 times a second, and only
+    // while something moves, so the tray never competes with riding faders.
+    const tick = (time: number) => {
+      if (time - now >= 50 && moving($abletonBridge)) now = performance.now();
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -125,6 +126,15 @@
   }
 
   // ── Timing ────────────────────────────────────────────────────────────
+
+  /** Anything on screen that changes with time: playheads, countdowns,
+   *  an auto-mix, or a launch flash or activity age still settling. */
+  function moving(state: AbletonBridgeState): boolean {
+    if (!state.connected) return false;
+    const latestAt = state.activity[0]?.at ?? -Infinity;
+    return state.playing || !!state.mix || performance.now() - latestAt < 60000
+      || state.tracks.some(t => t.fired >= 0) || state.scenes.some(sc => sc.queued);
+  }
 
   /** Fraction through the playing clip's loop. */
   function progress(track: number, slot: number, at: number): number {
@@ -394,11 +404,11 @@
               {#each bridge.scenes as scene, s}
                 {@const source = sceneSource(bridge, s)}
                 {@const links = linksForScene(bridge.links, s)}
-                {@const firing = bridge.tracks.some(tr => tr.fired === s)}
+                {@const firing = scene.queued ? bridge.tracks.find(tr => tr.fired === s) : undefined}
                 <div
                   class="cell scene"
                   class:selected={selected && samePlace(source, selected)}
-                  class:queued={scene.queued || firing}
+                  class:queued={scene.queued}
                   class:drop={dropTarget === cellKey(source)}
                   class:flash={recent(links, now)}
                   style="--live: {liveColor(scene.color || 0x5f5e5a)}"
@@ -414,8 +424,8 @@
                     <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>
                   </button>
                   <span class="name">{scene.name || `Scene ${s + 1}`}</span>
-                  {#if (scene.queued || firing) && countdown(bridge.tracks.find(tr => tr.fired === s)?.firedBeat ?? beat, beat)}
-                    <span class="countdown">{countdown(bridge.tracks.find(tr => tr.fired === s)?.firedBeat ?? beat, beat)}</span>
+                  {#if scene.queued && countdown(firing?.firedBeat ?? beat, beat)}
+                    <span class="countdown">{countdown(firing?.firedBeat ?? beat, beat)}</span>
                   {/if}
                   {#if links.length}
                     <span class="visuals">

@@ -86,7 +86,7 @@
   import SnapshotBank from './SnapshotBank.svelte';
   import AbletonBridgePanel from './ableton/AbletonBridgePanel.svelte';
   import AbletonCountdown from './ableton/AbletonCountdown.svelte';
-  import { abletonBridge } from '../ableton/abletonBridge';
+  import { abletonConnected } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   // VJAudioBar import retained for fallback / type compatibility but the
   // standalone strip below the header was dropped — its contents are now
@@ -5952,7 +5952,7 @@
               </span>
             {/if}
           </div>
-          <button class="dock-ableton" class:connected={$abletonBridge.connected} onclick={() => (abletonBridgeOpen = true)} title={$abletonBridge.connected ? 'Ableton Live connected — link scenes and clips to visuals' : 'Link Ableton Live scenes and clips to visuals'} aria-label="Open Ableton bridge">
+          <button class="dock-ableton" class:connected={$abletonConnected} onclick={() => (abletonBridgeOpen = true)} title={$abletonConnected ? 'Ableton Live connected — link scenes and clips to visuals' : 'Link Ableton Live scenes and clips to visuals'} aria-label="Open Ableton bridge">
             <span class="dock-ableton-dot" aria-hidden="true"></span>
             ABLETON
           </button>

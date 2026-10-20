@@ -5,7 +5,7 @@
    * Arcade deck and Live's crossfader moves Ghost Arcade's, so mixing songs
    * mixes the visuals.
    */
-  import { abletonBridge, type AbletonBridgeState } from '../../ableton/abletonBridge';
+  import { abletonBridge, abletonCrossfader, type AbletonBridgeState } from '../../ableton/abletonBridge';
   import { launchBeat, linksForClip, liveColor, quantizeBeats, samePlace, type AbletonSource } from '../../ableton/abletonLinks';
   import { actionLabel, actionTag, actionThumb, type VisualContext } from '../../ableton/abletonVisuals';
 
@@ -19,7 +19,7 @@
 
   $: step = quantizeBeats(bridge.quantize, bridge.numerator, bridge.denominator);
   $: unassigned = bridge.tracks.map((t, i) => ({ t, i })).filter(x => !x.t.side && x.t.slots.some(Boolean));
-  $: onAir = bridge.crossfader < 0.45 ? 'A' : bridge.crossfader > 0.55 ? 'B' : 'AB';
+  $: onAir = $abletonCrossfader < 0.45 ? 'A' : $abletonCrossfader > 0.55 ? 'B' : 'AB';
 
   // Helpers take the state they read, so the template re-renders with it.
   function decks(state: AbletonBridgeState, side: 'A' | 'B') {
@@ -75,7 +75,7 @@
             min="0"
             max="1"
             step="0.005"
-            value={bridge.crossfader}
+            value={$abletonCrossfader}
             oninput={(e) => abletonBridge.setCrossfader(Number((e.target as HTMLInputElement).value))}
             aria-label="Crossfader"
             title="Moves Live's crossfader{bridge.deckMode ? ' and Ghost Arcade\'s' : ''}"
