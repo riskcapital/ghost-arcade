@@ -1817,9 +1817,14 @@
     if (!promptsSuppressed()) runVersionCheck(false);
 
     // No license check in the OSS build — go straight to first-run UX.
+    // The welcome screen opens on every launch, not only the first: it is
+    // the way in to the tour, the templates and recent work. Show mode and a
+    // crash-recovery offer skip it; automated UI scripts set
+    // ghostarcade-welcome-skip to keep it out of their way.
     initLicense().then(() => {
-      const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
-      if (!welcomeSeen && !promptsSuppressed()) {
+      let skip = false;
+      try { skip = localStorage.getItem('ghostarcade-welcome-skip') === 'true'; } catch { /* storage unavailable */ }
+      if (!skip && !promptsSuppressed() && !showRecoveryModal) {
         showWelcome = true;
       }
     });
@@ -8341,13 +8346,10 @@
         </div>
       {/if}
 
-    <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
+    <!-- Welcome screen, on every launch — EULA gate removed in OSS build. -->
     {#if showWelcome && splashGone && !showLinuxGpuNotice}
       <WelcomeModal
-        onClose={() => {
-          showWelcome = false;
-          localStorage.setItem('ghostarcade-welcome-seen', 'true');
-        }}
+        onClose={() => { showWelcome = false; }}
         onTour={() => onboarding.startTour()}
         onTemplates={() => onboarding.openTemplates()}
         onOpenProject={loadComposition}
