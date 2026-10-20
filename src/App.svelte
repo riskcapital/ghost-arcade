@@ -938,8 +938,12 @@
 
     // No license check in the OSS build. Every fresh launch opens on the
     // welcome screen (tour, template, open or blank), not just the first.
+    // Automated UI scripts set ghostarcade-welcome-skip to keep it out of
+    // their way.
     initLicense().then(() => {
-      if (!promptsSuppressed()) showWelcome = true;
+      let skip = false;
+      try { skip = localStorage.getItem('ghostarcade-welcome-skip') === 'true'; } catch { /* storage unavailable */ }
+      if (!skip && !promptsSuppressed()) showWelcome = true;
     });
 
     // Check for app updates (compares against latest GitHub release)
