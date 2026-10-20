@@ -57,6 +57,7 @@ import {
   type SignalSource,
   type SignalTarget,
 } from './abletonScore';
+import { deriveSongs, mixPosition, nextSong, orderSongs, type SetlistSong } from './abletonSetlist';
 
 /** No heartbeat for this long means Live (or the script) went away. */
 const CONNECTION_TIMEOUT_MS = 3500;
@@ -93,7 +94,16 @@ export interface AbletonBridgeState {
   scoreMap: Record<number, VisualAction>;
   /** Live's A/B decks drive Ghost Arcade's decks and crossfader (saved). */
   deckMode: boolean;
+  /** Song keys in the DJ's set order (saved). */
+  setlistOrder: string[];
+  /** Bars an auto-mix takes to sweep the crossfader; 0 cuts (saved). */
+  autoMixBars: number;
   // Runtime only.
+  /** Songs that have played this session, and the one playing now. */
+  played: string[];
+  currentSong: string | null;
+  /** A crossfader sweep in progress, in song beats. */
+  mix: { from: number; to: number; startBeat: number; beats: number; title: string } | null;
   listening: boolean;
   error: string | null;
   connected: boolean;
@@ -128,6 +138,11 @@ const INITIAL: AbletonBridgeState = {
   scoreTracks: [],
   scoreMap: {},
   deckMode: false,
+  setlistOrder: [],
+  autoMixBars: 8,
+  played: [],
+  currentSong: null,
+  mix: null,
   listening: false,
   error: null,
   connected: false,
@@ -194,6 +209,11 @@ export function upcomingLaunch(state: AbletonBridgeState, beat: number): { label
   return best;
 }
 
+/** The set's songs in the DJ's order. */
+export function setlist(state: Pick<AbletonBridgeState, 'scenes' | 'tracks' | 'setlistOrder'>): SetlistSong[] {
+  return orderSongs(deriveSongs(state.scenes, state.tracks), state.setlistOrder);
+}
+
 /** Live values per signal (0..1, after smoothing) for meters. */
 export const abletonSignalLevels = writable<Record<string, number>>({});
 /** Last time each score pitch fired (performance.now()), for lane flashes. */
@@ -234,6 +254,9 @@ function createAbletonBridge() {
   /** Control releases due at a song position. */
   let releases: { beat: number; path: string; value: number; inputId: string }[] = [];
   let conductorBeat = 0;
+  /** A deck song waiting to land before the crossfader moves to it. */
+  let pendingMix: { track: number; slot: number; side: 'A' | 'B'; bars: number; title: string } | null = null;
+  let lastMixSentAt = 0;
   let lastSignalAt = 0;
   let lastMeterAt = 0;
 
@@ -266,6 +289,23 @@ function createAbletonBridge() {
       ...s,
       fired: { ...s.fired, ...Object.fromEntries(live.map(l => [l.id, now])) },
       activity: [{ text: label, at: now }, ...s.activity].slice(0, ACTIVITY_LENGTH),
+    }));
+  }
+
+  /** Mark the song a launch belongs to as played and current. */
+  function markPlayed(match: (song: SetlistSong) => boolean) {
+    const song = deriveSongs(read().scenes, read().tracks).find(match);
+    if (!song) return;
+    update(s => ({ ...s, currentSong: song.key, played: s.played.includes(song.key) ? s.played : [...s.played, song.key] }));
+  }
+
+  /** A deck song landed: start moving the crossfader to its side. */
+  function startMix(mix: NonNullable<typeof pendingMix>) {
+    const s = read();
+    const perBar = s.numerator * (4 / s.denominator);
+    update(st => ({
+      ...st,
+      mix: { from: st.crossfader, to: mix.side === 'A' ? 0 : 1, startBeat: st.clockBeat, beats: mix.bars * perBar, title: mix.title },
     }));
   }
 
@@ -320,6 +360,14 @@ function createAbletonBridge() {
         releases = releases.filter(r => !due.includes(r));
         for (const r of due) midiRouter.dispatchPath(r.path, r.value, { inputId: r.inputId });
       }
+    }
+
+    if (s.mix && now - lastMixSentAt >= 30) {
+      lastMixSentAt = now;
+      const v = mixPosition(s.mix.from, s.mix.to, s.mix.startBeat, s.mix.beats, beat);
+      send({ t: 'crossfader', v });
+      applyCrossfader(v);
+      if (v === s.mix.to) update(st => ({ ...st, mix: null }));
     }
 
     if (now - lastSignalAt >= SIGNAL_MS && s.signals.length) {
@@ -551,6 +599,11 @@ function createAbletonBridge() {
           const t = read().tracks[track];
           const clip = t?.slots[slot];
           if (clip) colorValues.set(track, colorHue(clip.color));
+          markPlayed(song => song.kind === 'clip' && song.track === track && song.slot === slot);
+          if (pendingMix && pendingMix.track === track && pendingMix.slot === slot) {
+            startMix(pendingMix);
+            pendingMix = null;
+          }
           fire(linksForClip(read().links, track, slot), `${t?.name || `Track ${track + 1}`} · ${clip?.name || 'Clip'}`);
         }
         break;
@@ -636,6 +689,7 @@ function createAbletonBridge() {
           for (const scene of launchedScenes) {
             const color = read().scenes[scene]?.color;
             if (color) colorValues.set(-1, colorHue(color));
+            markPlayed(song => song.kind === 'scenes' && song.sections[0]?.scene === scene);
             fire(linksForScene(read().links, scene), sceneLabel(scene));
           }
         }
@@ -809,9 +863,12 @@ function createAbletonBridge() {
       }
     },
 
-    /** Move Live's crossfader (and Ghost Arcade's with it in deck mode). */
+    /** Move Live's crossfader (and Ghost Arcade's with it in deck mode).
+     *  Taking the fader by hand cancels an auto-mix. */
     setCrossfader(value: number) {
       const v = Math.max(0, Math.min(1, value));
+      pendingMix = null;
+      if (read().mix) update(s => ({ ...s, mix: null }));
       send({ t: 'crossfader', v });
       applyCrossfader(v);
     },
@@ -841,6 +898,43 @@ function createAbletonBridge() {
         const kept = s.links.filter(l => !added.some(a => samePlace(a.source, l.source)));
         return { ...s, links: [...kept, ...added] };
       });
+    },
+
+    // ── Setlist ─────────────────────────────────────────────────────
+
+    /** Play a song in Live; it lands on the bar. In deck mode the
+     *  crossfader then moves to the song's deck: a sweep over the auto-mix
+     *  bars when the other deck is playing, otherwise a cut. */
+    playSong(song: SetlistSong) {
+      if (song.kind === 'scenes') {
+        if (song.sections[0]) send({ t: 'fire_scene', s: song.sections[0].scene });
+        return;
+      }
+      send({ t: 'fire_clip', i: song.track, s: song.slot });
+      const s = read();
+      if (!s.deckMode || !song.side) return;
+      const otherPlaying = s.tracks.some(t => t.side && t.side !== song.side && t.playing >= 0);
+      pendingMix = { track: song.track, slot: song.slot, side: song.side, bars: otherPlaying ? s.autoMixBars : 0, title: song.title };
+    },
+
+    /** Play the next unplayed song in set order. */
+    playNext() {
+      const s = read();
+      const song = nextSong(setlist(s), s.currentSong, new Set(s.played));
+      if (song) this.playSong(song);
+      return song;
+    },
+
+    setSetlistOrder(keys: string[]) {
+      update(s => ({ ...s, setlistOrder: keys }));
+    },
+
+    setAutoMixBars(bars: number) {
+      update(s => ({ ...s, autoMixBars: Math.max(0, Math.min(32, Math.round(bars))) }));
+    },
+
+    resetPlayed() {
+      update(s => ({ ...s, played: [], currentSong: null }));
     },
 
     // ── Visual score ────────────────────────────────────────────────
@@ -901,6 +995,11 @@ function createAbletonBridge() {
         scoreTracks: Array.isArray(saved.scoreTracks) ? saved.scoreTracks.filter((n: unknown) => typeof n === 'string') : [],
         scoreMap,
         deckMode: !!saved.deckMode,
+        setlistOrder: Array.isArray(saved.setlistOrder) ? saved.setlistOrder.filter((k: unknown) => typeof k === 'string') : [],
+        autoMixBars: Number.isFinite(saved.autoMixBars) ? Math.max(0, Math.min(32, saved.autoMixBars)) : 8,
+        played: [],
+        currentSong: null,
+        mix: null,
         missing: [],
         fired: {},
       }));
@@ -911,15 +1010,18 @@ function createAbletonBridge() {
     },
 
     serialize() {
-      const { enabled, links, signals, scoreTracks, scoreMap, deckMode } = read();
-      return { enabled, links, signals, scoreTracks, scoreMap, deckMode };
+      const { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars } = read();
+      return { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars };
     },
 
     reset() {
       linkedCounts = null;
       signalState.clear();
       releaseAll();
-      update(s => ({ ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, deckMode: false, missing: [], fired: {} }));
+      update(s => ({
+        ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, deckMode: false,
+        setlistOrder: [], played: [], currentSong: null, mix: null, missing: [], fired: {},
+      }));
       syncWatch();
     },
   };

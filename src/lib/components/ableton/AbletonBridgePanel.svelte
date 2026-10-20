@@ -40,11 +40,13 @@
   import AbletonArrangementView from './AbletonArrangementView.svelte';
   import AbletonSignalsView from './AbletonSignalsView.svelte';
   import AbletonDecksView from './AbletonDecksView.svelte';
+  import AbletonSetlistView from './AbletonSetlistView.svelte';
 
   export let onClose: () => void;
 
-  type View = 'session' | 'decks' | 'score' | 'arrangement' | 'signals' | 'links';
+  type View = 'setlist' | 'session' | 'decks' | 'score' | 'arrangement' | 'signals' | 'links';
   const VIEWS: { id: View; label: string }[] = [
+    { id: 'setlist', label: 'Setlist' },
     { id: 'session', label: 'Session' },
     { id: 'decks', label: 'Decks' },
     { id: 'score', label: 'Score' },
@@ -53,7 +55,7 @@
     { id: 'links', label: 'Links' },
   ];
 
-  let view: View = 'session';
+  let view: View = 'setlist';
   /** A score lane being edited, instead of a scene, clip or locator. */
   let selectedPitch: number | null = null;
   /** The tray steps aside while the user clicks a control to pick it. */
@@ -254,7 +256,9 @@
   <div class="picking" role="status">Click any slider, knob or button in Ghost Arcade · Esc cancels</div>
 {/if}
 
-<section class="tray" class:stepped-aside={picking} transition:fly={{ y: 24, duration: 180 }} aria-label="Ableton Live">
+<!-- The tray's controls carry their own tooltips; the generic VJ hover help
+     would describe Live's songs and clips as VJ controls. -->
+<section class="tray" class:stepped-aside={picking} transition:fly={{ y: 24, duration: 180 }} aria-label="Ableton Live" data-help-disabled>
   <header class="bar">
     <div class="brand" class:on={bridge.connected} title={bridge.connected ? 'Live connected' : bridge.error ?? 'Waiting for Live'}>
       <span class="dot"></span>LIVE
@@ -460,6 +464,10 @@
               {/each}
             </div>
           {/if}
+        </div>
+      {:else if view === 'setlist'}
+        <div class="pane">
+          <AbletonSetlistView {bridge} {ctx} {beat} {selected} onSelect={select} />
         </div>
       {:else if view === 'decks'}
         <div class="pane">
