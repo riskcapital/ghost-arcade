@@ -6,7 +6,8 @@
    *
    * Opens over VJ mode so the output keeps running while links are made.
    */
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import {
     linksForClip,
@@ -20,8 +21,13 @@
   } from '../../ableton/abletonLinks';
   import { vjClipLauncher, type VJClip, type VJDeck } from '../../stores/vjClipLauncher';
   import { snapshots, type Snapshot } from '../../stores/snapshots';
+  import { nativePreviewHostEl } from '../../stores/nativePreviewHost';
 
   export let onClose: () => void;
+  /** The render core's presenter shows through a transparent box here. */
+  export let nativePreview = false;
+
+  let previewEl: HTMLDivElement | null = null;
 
   type PaletteTab = 'columns' | 'clips' | 'snapshots';
   interface PaletteItem { key: string; label: string; hint: string; thumbnail?: string; action: VisualAction }
@@ -39,6 +45,18 @@
   $: selectedLinks = selected ? bridge.links.filter(l => samePlace(l.source, selected!)) : [];
   $: selectedLabel = selected ? sourceLabel(selected) : '';
   $: scriptReady = !!bridge.script?.installed && !!bridge.script?.current;
+  // Claim the presenter for the preview box while it exists.
+  $: if (nativePreview) {
+    if (previewEl) {
+      if ($nativePreviewHostEl !== previewEl) nativePreviewHostEl.set(previewEl);
+    } else if ($nativePreviewHostEl && !$nativePreviewHostEl.isConnected) {
+      nativePreviewHostEl.set(null);
+    }
+  }
+
+  onDestroy(() => {
+    if (previewEl && get(nativePreviewHostEl) === previewEl) nativePreviewHostEl.set(null);
+  });
 
   onMount(() => {
     void abletonBridge.enable();
@@ -174,7 +192,7 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="ab-root" role="dialog" aria-label="Ableton bridge">
+<div class="ab-root" class:see-through={nativePreview && bridge.connected} role="dialog" aria-label="Ableton bridge">
   <header class="ab-top">
     <button class="ab-icon" onclick={onClose} title="Back to VJ" aria-label="Back to VJ">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
@@ -309,6 +327,9 @@
       </div>
 
       <aside class="ab-side">
+        <div class="ab-preview" class:hole={nativePreview} bind:this={previewEl}>
+          {#if !nativePreview}<span>Output preview</span>{/if}
+        </div>
         <section class="ab-links">
           {#if selected}
             <div class="side-title">{selectedLabel}</div>
@@ -392,6 +413,12 @@
     font-family: var(--ga-font-ui, Inter, system-ui, sans-serif);
     font-size: 12px;
   }
+  /* With the native presenter, only the preview box is left unpainted. */
+  .ab-root.see-through { background: transparent; }
+  .ab-root.see-through .ab-top,
+  .ab-root.see-through .ab-grid-wrap,
+  .ab-root.see-through .ab-links,
+  .ab-root.see-through .ab-palette { background: #05070b; }
   .ab-top {
     display: flex;
     align-items: center;
@@ -548,6 +575,18 @@
   @keyframes fired { from { background: rgba(127, 119, 221, 0.95); color: #fff; } }
 
   .ab-side { border-left: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)); display: flex; flex-direction: column; min-height: 0; }
+  .ab-preview {
+    flex: 0 0 auto;
+    aspect-ratio: 16 / 9;
+    margin: 12px 12px 0;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ga-ink-2, #8a909b);
+  }
+  .ab-preview.hole { background: transparent; }
   .ab-links { padding: 12px; border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)); }
   .side-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hint { margin: 0; color: var(--ga-ink-2, #8a909b); line-height: 1.5; }

@@ -538,7 +538,8 @@
     return () => { cancelled = true; };
   });
   $: if (nativePreviewActive) {
-    if ($vjClipLauncher.isOpen && !$vjStageEdit && previewContainerEl) {
+    // The Ableton panel shows the output in its own box while it is open.
+    if ($vjClipLauncher.isOpen && !$vjStageEdit && !abletonBridgeOpen && previewContainerEl) {
       if ($nativePreviewHostEl !== previewContainerEl) nativePreviewHostEl.set(previewContainerEl);
     } else if ($nativePreviewHostEl === previewContainerEl) {
       nativePreviewHostEl.set(null);
@@ -4237,6 +4238,7 @@
     class:native-underlay={nativePreviewActive}
     class:mac-titlebar-offset={isMac}
     class:stage-edit-hidden={$vjStageEdit}
+    class:ableton-hidden={abletonBridgeOpen}
   >
     <!-- Header -->
     <div
@@ -6882,7 +6884,7 @@
 {/if}
 
 {#if abletonBridgeOpen && $vjClipLauncher.isOpen}
-  <AbletonBridgePanel onClose={() => (abletonBridgeOpen = false)} />
+  <AbletonBridgePanel nativePreview={nativePreviewActive} onClose={() => (abletonBridgeOpen = false)} />
 {/if}
 
 {#if vjScreenPickerOpen}
@@ -8832,6 +8834,9 @@
     background: transparent;
   }
   .vj-overlay.stage-edit-hidden { display: none; }
+  /* The Ableton panel replaces the VJ view (output keeps playing) and needs
+     the stack beneath it clear so the presenter can show through its box. */
+  .vj-overlay.ableton-hidden { display: none; }
   /* Keep the VJ header clear of the macOS traffic-light strip — the app
      titlebar (30px, z-index 2000) always paints above this overlay. */
   .vj-overlay.mac-titlebar-offset {
