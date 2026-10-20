@@ -12,7 +12,7 @@ import type { SVParamKey } from '../stores/synthVision';
 import { setBaseValue as setModulationBase } from '../audio/modulation';
 import type { MidiMapping, MidiMessageType } from './midiTypes';
 import { BLEND_MODE_ORDER } from '../types';
-import type { BlendMode } from '../types';
+import type { BlendMode, Effect } from '../types';
 import { getPluginByEffectType } from '../plugins/registry';
 import { isVideoScratchPath, normalizeControlPath } from '../control/controlPaths';
 import { audioStore } from '../stores/audio';
@@ -803,11 +803,20 @@ class MidiRouter {
       const effectId = parts[2];
       const paramName = parts[3];
       if (!effectId || !paramName) return;
-      vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: value });
+      // Paths arrive lowercased; effect ids and camelCase param keys don't.
+      const resolve = (effects: Effect[]) => {
+        const effect = effects.find(e => e.id.toLowerCase() === effectId);
+        if (!effect) return null;
+        const keys = [...Object.keys(effect.params ?? {}), ...Object.keys(effectParamLabels[effect.type] ?? {})];
+        return { id: effect.id, key: keys.find(k => k.toLowerCase() === paramName) ?? paramName };
+      };
       const state = get(vjClipLauncher);
+      const composition = resolve(state.compositionEffects);
+      if (composition) vjClipLauncher.updateCompositionEffectParams(composition.id, { [composition.key]: value });
       const layerStates = bank === 'B' ? state.bankBLayerStates : state.layerStates;
       for (let i = 0; i < layerStates.length; i++) {
-        vjClipLauncher.updateLayerEffectParams(i, effectId, { [paramName]: value }, bank);
+        const target = resolve(layerStates[i].effects);
+        if (target) vjClipLauncher.updateLayerEffectParams(i, target.id, { [target.key]: value }, bank);
       }
       return;
     }
