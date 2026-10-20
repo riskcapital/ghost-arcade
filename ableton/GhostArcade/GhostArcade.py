@@ -1,14 +1,17 @@
 # Ghost Arcade control surface.
 #
-# Reports the Live set (tracks, scenes, clip names and colours) and every
-# clip and scene launch to Ghost Arcade as JSON over UDP on this machine, so
-# visuals can be linked to the set by name and fire on the same bar.
+# Reports the Live set (tracks, scenes, clip names and colours, locators)
+# and every clip and scene launch to Ghost Arcade as JSON over UDP on this
+# machine, so visuals can be linked to the set by name and fire on the same
+# bar. On request it also streams device knobs, track levels and the notes
+# of visual score tracks.
 #
 # Ghost Arcade listens on 127.0.0.1:11050; this script listens on
-# 127.0.0.1:11051 for requests (resync, launch a clip or scene).
+# 127.0.0.1:11051 for requests (resync, launch, transport, what to watch).
 
 import json
 import socket
+import time
 
 import Live
 
@@ -19,15 +22,41 @@ except ImportError:
 
 APP_ADDRESS = ("127.0.0.1", 11050)
 SCRIPT_ADDRESS = ("127.0.0.1", 11051)
-PROTOCOL = 1
+PROTOCOL = 2
 NAME_LIMIT = 64
 # update_display runs roughly ten times a second.
 HEARTBEAT_TICKS = 10
 STRUCTURE_TICKS = 5
+# Track levels go out at most this often per track (seconds).
+LEVEL_INTERVAL = 0.02
+# Notes beyond this many per clip are left out of a score.
+NOTE_LIMIT = 512
 
 
 def _name(value):
     return (value or "")[:NAME_LIMIT]
+
+
+def _normalized(parameter):
+    span = parameter.max - parameter.min
+    return (parameter.value - parameter.min) / span if span else 0.0
+
+
+def _clip_notes(clip):
+    """The clip's loop as [pitch, start, duration, velocity], start from the loop start."""
+    start = clip.loop_start
+    span = clip.loop_end - clip.loop_start
+    notes = []
+    try:
+        for note in clip.get_notes_extended(0, 128, start, span):
+            if not note.mute:
+                notes.append([note.pitch, note.start_time - start, note.duration, int(note.velocity)])
+    except AttributeError:
+        for pitch, at, duration, velocity, mute in clip.get_notes(start, 0, span, 128):
+            if not mute:
+                notes.append([pitch, at - start, duration, int(velocity)])
+    notes.sort(key=lambda note: note[1])
+    return notes[:NOTE_LIMIT]
 
 
 class GhostArcade(ControlSurface):
@@ -39,11 +68,16 @@ class GhostArcade(ControlSurface):
         self._signature = None
         self._revision = 0
         self._listeners = []
+        self._watchers = []
+        self._watch = {"params": [], "levels": [], "score": []}
+        self._level_sent = {}
+        self._level_pending = {}
         self._rebuild = True
         self._song = Live.Application.get_application().get_document()
         self._open_socket()
         self._song.add_tracks_listener(self._structure_changed)
         self._song.add_scenes_listener(self._structure_changed)
+        self._song.add_cue_points_listener(self._structure_changed)
         # Transport and tempo changes go out at once so Ghost Arcade's
         # song position never runs on a stale tempo.
         self._song.add_is_playing_listener(self._send_hello)
@@ -55,9 +89,11 @@ class GhostArcade(ControlSurface):
     def disconnect(self):
         self._send({"t": "bye"})
         self._remove_listeners()
+        self._remove_watchers()
         for remove, callback in (
             (self._song.remove_tracks_listener, self._structure_changed),
             (self._song.remove_scenes_listener, self._structure_changed),
+            (self._song.remove_cue_points_listener, self._structure_changed),
             (self._song.remove_is_playing_listener, self._send_hello),
             (self._song.remove_tempo_listener, self._send_hello),
         ):
@@ -76,12 +112,14 @@ class GhostArcade(ControlSurface):
         if self._rebuild:
             self._rebuild = False
             self._add_listeners()
+            self._apply_watch()
             self._send_structure(force=True)
         self._ticks += 1
         if self._ticks % STRUCTURE_TICKS == 0:
             self._send_structure()
         if self._ticks % HEARTBEAT_TICKS == 0:
             self._send_hello()
+        self._flush_levels()
 
     # Transport
 
@@ -118,35 +156,57 @@ class GhostArcade(ControlSurface):
             except Exception as error:
                 self._log("Ghost Arcade: bad request (%s)" % error)
 
+    def _track(self, index):
+        """A track by index; -1 is the master track."""
+        if index == -1:
+            return self._song.master_track
+        tracks = self._song.tracks
+        return tracks[index] if 0 <= index < len(tracks) else None
+
     def _handle(self, message):
         kind = message.get("t")
+        song = self._song
         if kind == "sync":
             self._send_hello()
             self._send_structure(force=True)
         elif kind == "fire_scene":
-            scenes = self._song.scenes
             index = int(message.get("s", -1))
-            if 0 <= index < len(scenes):
-                scenes[index].fire()
+            if 0 <= index < len(song.scenes):
+                song.scenes[index].fire()
         elif kind == "fire_clip":
-            tracks = self._song.tracks
-            track = int(message.get("i", -1))
+            track = self._track(int(message.get("i", -2)))
             slot = int(message.get("s", -1))
-            if 0 <= track < len(tracks) and 0 <= slot < len(tracks[track].clip_slots):
-                tracks[track].clip_slots[slot].fire()
+            if track is not None and 0 <= slot < len(track.clip_slots):
+                track.clip_slots[slot].fire()
         elif kind == "stop_all":
-            self._song.stop_all_clips()
+            song.stop_all_clips()
         elif kind == "play":
-            self._song.start_playing()
+            song.start_playing()
         elif kind == "continue":
-            self._song.continue_playing()
+            song.continue_playing()
         elif kind == "stop":
-            self._song.stop_playing()
+            song.stop_playing()
         elif kind == "stop_track":
-            tracks = self._song.tracks
-            track = int(message.get("i", -1))
-            if 0 <= track < len(tracks):
-                tracks[track].stop_all_clips()
+            track = self._track(int(message.get("i", -2)))
+            if track is not None and track != song.master_track:
+                track.stop_all_clips()
+        elif kind == "jump":
+            song.current_song_time = max(0.0, float(message.get("time", 0)))
+        elif kind == "toggle_cue":
+            song.set_or_delete_cue()
+        elif kind == "create_score_track":
+            song.create_midi_track(len(song.tracks))
+            song.tracks[len(song.tracks) - 1].name = "Ghost Arcade"
+        elif kind == "devices":
+            self._send_devices(int(message.get("i", -2)))
+        elif kind == "watch":
+            self._watch = {
+                "params": [list(p) for p in message.get("params", []) if len(p) == 3],
+                "levels": [int(i) for i in message.get("levels", [])],
+                "score": [int(i) for i in message.get("score", [])],
+            }
+            self._apply_watch()
+            self._send_structure(force=True)
 
     # State
 
@@ -164,39 +224,57 @@ class GhostArcade(ControlSurface):
             "rev": self._revision,
         })
 
-    def _track_state(self, track):
+    def _track_state(self, index, track):
+        score = index in self._watch["score"]
         slots = []
         for slot in track.clip_slots:
             if slot.has_clip:
                 clip = slot.clip
-                slots.append([_name(clip.name), clip.color, clip.length])
+                entry = [_name(clip.name), clip.color, clip.length]
+                if score and clip.is_midi_clip:
+                    entry.append(_clip_notes(clip))
+                slots.append(entry)
             else:
                 slots.append(None)
-        return {"n": _name(track.name), "c": track.color, "slots": slots}
+        return {"n": _name(track.name), "c": track.color, "midi": bool(track.has_midi_input), "slots": slots}
 
     def _send_structure(self, force=False):
-        scenes = [{"n": _name(scene.name), "c": getattr(scene, "color", 0)} for scene in self._song.scenes]
-        tracks = [self._track_state(track) for track in self._song.tracks]
-        signature = json.dumps([scenes, tracks])
+        song = self._song
+        scenes = [{"n": _name(scene.name), "c": getattr(scene, "color", 0)} for scene in song.scenes]
+        tracks = [self._track_state(index, track) for index, track in enumerate(song.tracks)]
+        cues = sorted([[_name(cue.name), cue.time] for cue in song.cue_points], key=lambda cue: cue[1])
+        signature = json.dumps([scenes, tracks, cues])
         if not force and signature == self._signature:
             return
         self._signature = signature
         self._revision += 1
         # One datagram per track keeps every message well under the UDP limit.
-        self._send({"t": "set", "rev": self._revision, "scenes": scenes, "tracks": len(tracks)})
-        for index, (state, track) in enumerate(zip(tracks, self._song.tracks)):
+        self._send({"t": "set", "rev": self._revision, "scenes": scenes, "tracks": len(tracks), "cues": cues})
+        for index, (state, track) in enumerate(zip(tracks, song.tracks)):
             state.update({"t": "track", "rev": self._revision, "i": index,
                           "play": track.playing_slot_index, "fired": track.fired_slot_index})
             self._send(state)
+
+    def _send_devices(self, index):
+        track = self._track(index)
+        if track is None:
+            return
+        devices = []
+        for device in track.devices:
+            devices.append({
+                "n": _name(device.name),
+                "p": [[_name(parameter.name), _normalized(parameter)] for parameter in device.parameters],
+            })
+        self._send({"t": "devices", "i": index, "devices": devices})
 
     # Launch events
 
     def _structure_changed(self):
         self._rebuild = True
 
-    def _listen(self, subject, prop, callback):
+    def _listen(self, subject, prop, callback, into=None):
         getattr(subject, "add_%s_listener" % prop)(callback)
-        self._listeners.append((subject, prop, callback))
+        (self._listeners if into is None else into).append((subject, prop, callback))
 
     def _add_listeners(self):
         self._remove_listeners()
@@ -206,13 +284,14 @@ class GhostArcade(ControlSurface):
         for index, scene in enumerate(self._song.scenes):
             self._listen(scene, "is_triggered", self._make_scene_callback(index, scene))
 
-    def _remove_listeners(self):
-        for subject, prop, callback in self._listeners:
+    def _remove_listeners(self, listeners=None):
+        listeners = self._listeners if listeners is None else listeners
+        for subject, prop, callback in listeners:
             try:
                 getattr(subject, "remove_%s_listener" % prop)(callback)
             except Exception:
                 pass
-        self._listeners = []
+        del listeners[:]
 
     def _make_track_callback(self, index, track, kind):
         attribute = "playing_slot_index" if kind == "play" else "fired_slot_index"
@@ -225,6 +304,51 @@ class GhostArcade(ControlSurface):
         def callback():
             self._send({"t": "scene", "s": index, "trig": bool(scene.is_triggered), "beat": self._song.current_song_time})
         return callback
+
+    # Knobs and levels
+
+    def _remove_watchers(self):
+        self._remove_listeners(self._watchers)
+
+    def _apply_watch(self):
+        self._remove_watchers()
+        for i, j, k in self._watch["params"]:
+            track = self._track(i)
+            if track is None or not 0 <= j < len(track.devices):
+                continue
+            parameters = track.devices[j].parameters
+            if not 0 <= k < len(parameters):
+                continue
+            callback = self._make_param_callback(i, j, k, parameters[k])
+            self._listen(parameters[k], "value", callback, self._watchers)
+            callback()
+        for i in self._watch["levels"]:
+            track = self._track(i)
+            if track is not None:
+                self._listen(track, "output_meter_level", self._make_level_callback(i, track), self._watchers)
+
+    def _make_param_callback(self, i, j, k, parameter):
+        def callback():
+            self._send({"t": "param", "i": i, "j": j, "k": k, "v": _normalized(parameter)})
+        return callback
+
+    def _make_level_callback(self, i, track):
+        def callback():
+            now = time.time()
+            if now - self._level_sent.get(i, 0) >= LEVEL_INTERVAL:
+                self._level_sent[i] = now
+                self._level_pending.pop(i, None)
+                self._send({"t": "lvl", "i": i, "v": track.output_meter_level})
+            else:
+                self._level_pending[i] = track
+        return callback
+
+    def _flush_levels(self):
+        # A level held back by the rate limit still goes out, so meters
+        # settle on their real value.
+        for i, track in list(self._level_pending.items()):
+            self._send({"t": "lvl", "i": i, "v": track.output_meter_level})
+        self._level_pending = {}
 
     # Messages
 

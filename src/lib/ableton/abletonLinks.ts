@@ -11,10 +11,20 @@
 
 import type { VJDeck } from '../stores/vjClipLauncher';
 
-export interface LiveClip { name: string; color: number; /** Loop length, beats. */ length: number }
+/** [pitch, start (beats from the loop start), duration (beats), velocity]. */
+export type ScoreNote = [number, number, number, number];
+export interface LiveClip {
+  name: string;
+  color: number;
+  /** Loop length, beats. */
+  length: number;
+  /** Notes, for clips on visual score tracks. */
+  notes?: ScoreNote[];
+}
 export interface LiveTrack {
   name: string;
   color: number;
+  midi: boolean;
   slots: (LiveClip | null)[];
   /** Slot index playing, or -1. */
   playing: number;
@@ -26,16 +36,22 @@ export interface LiveTrack {
   firedBeat: number;
 }
 export interface LiveScene { name: string; color: number; queued: boolean }
+/** An arrangement locator. */
+export interface LiveCue { name: string; time: number }
 
 export type AbletonSource =
   | { kind: 'scene'; scene: number; name: string }
-  | { kind: 'clip'; track: number; slot: number; trackName: string; name: string };
+  | { kind: 'clip'; track: number; slot: number; trackName: string; name: string }
+  | { kind: 'locator'; index: number; name: string };
 
 export type VisualAction =
   | { kind: 'column'; deck: VJDeck; column: number }
   | { kind: 'clip'; deck: VJDeck; layer: number; column: number }
   /** Snapshot slot, 0-based. */
-  | { kind: 'snapshot'; slot: number };
+  | { kind: 'snapshot'; slot: number }
+  /** Any Ghost Arcade control: set to `value`, then back to `release`
+   *  (when the note ends, or straight after a launch). */
+  | { kind: 'control'; path: string; label: string; value: number; release: number };
 
 export interface AbletonLink {
   id: string;
@@ -58,7 +74,7 @@ export function matchByName(names: string[], name: string, index: number, byPosi
 
 /** Which lists may fall back to matching by position. */
 export interface PositionFallback { scenes: boolean; tracks: boolean }
-const ANY_POSITION: PositionFallback = { scenes: true, tracks: true };
+export const ANY_POSITION: PositionFallback = { scenes: true, tracks: true };
 
 /** Position fallback is safe only where the count didn't change. */
 export function positionFallback(
@@ -70,13 +86,19 @@ export function positionFallback(
 }
 
 /** Re-point a link's source at the current set. Null when it no longer
- *  matches anything (its scene, track or clip is gone). */
+ *  matches anything (its scene, track, clip or locator is gone). */
 export function resolveSource(
   source: AbletonSource,
   scenes: LiveScene[],
   tracks: LiveTrack[],
   fallback: PositionFallback = ANY_POSITION,
+  cues: LiveCue[] = [],
 ): AbletonSource | null {
+  if (source.kind === 'locator') {
+    // A named locator is matched by name only: its order is its time.
+    const index = matchByName(cues.map(c => c.name), source.name, source.index, false);
+    return index < 0 ? null : { kind: 'locator', index, name: cues[index].name };
+  }
   if (source.kind === 'scene') {
     const scene = matchByName(scenes.map(s => s.name), source.name, source.scene, fallback.scenes);
     return scene < 0 ? null : { kind: 'scene', scene, name: scenes[scene].name };
@@ -91,17 +113,18 @@ export function resolveSource(
 }
 
 /** Links re-pointed at the current set, plus the ids of links that match
- *  nothing (their scene, track or clip is gone). Those keep their last known
- *  place so they come back if the clip does, but must not fire meanwhile. */
+ *  nothing. Those keep their last known place so they come back if the clip
+ *  does, but must not fire meanwhile. */
 export function relink(
   links: AbletonLink[],
   scenes: LiveScene[],
   tracks: LiveTrack[],
   fallback: PositionFallback = ANY_POSITION,
+  cues: LiveCue[] = [],
 ): { links: AbletonLink[]; missing: string[] } {
   const missing: string[] = [];
   const next = links.map(link => {
-    const source = resolveSource(link.source, scenes, tracks, fallback);
+    const source = resolveSource(link.source, scenes, tracks, fallback, cues);
     if (!source) {
       missing.push(link.id);
       return link;
@@ -112,17 +135,19 @@ export function relink(
 }
 
 export function sameSource(a: AbletonSource, b: AbletonSource): boolean {
-  if (a.kind === 'scene' && b.kind === 'scene') return a.scene === b.scene && a.name === b.name;
-  if (a.kind === 'clip' && b.kind === 'clip') {
-    return a.track === b.track && a.slot === b.slot && a.trackName === b.trackName && a.name === b.name;
-  }
-  return false;
+  return samePlace(a, b) && sourceName(a) === sourceName(b)
+    && (a.kind !== 'clip' || b.kind !== 'clip' || a.trackName === b.trackName);
+}
+
+function sourceName(source: AbletonSource): string {
+  return source.name;
 }
 
 /** Same place in the set, ignoring names. */
 export function samePlace(a: AbletonSource, b: AbletonSource): boolean {
   if (a.kind === 'scene' && b.kind === 'scene') return a.scene === b.scene;
   if (a.kind === 'clip' && b.kind === 'clip') return a.track === b.track && a.slot === b.slot;
+  if (a.kind === 'locator' && b.kind === 'locator') return a.index === b.index;
   return false;
 }
 
@@ -132,6 +157,10 @@ export function linksForScene(links: AbletonLink[], scene: number): AbletonLink[
 
 export function linksForClip(links: AbletonLink[], track: number, slot: number): AbletonLink[] {
   return links.filter(l => l.source.kind === 'clip' && l.source.track === track && l.source.slot === slot);
+}
+
+export function linksForLocator(links: AbletonLink[], index: number): AbletonLink[] {
+  return links.filter(l => l.source.kind === 'locator' && l.source.index === index);
 }
 
 /** Live's colours arrive as 0xRRGGBB integers. */
@@ -167,29 +196,37 @@ export function quantizeLabel(index: number): string {
   return QUANTIZE_LABELS[index] ?? '';
 }
 
+const int = (v: unknown) => (Number.isInteger(v) && (v as number) >= 0 ? (v as number) : null);
+const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+
+export function sanitizeAction(a: any): VisualAction | null {
+  const deck = (v: unknown): VJDeck => (v === 'B' ? 'B' : 'A');
+  if (a?.kind === 'column' && int(a.column) !== null) return { kind: 'column', deck: deck(a.deck), column: a.column };
+  if (a?.kind === 'clip' && int(a.layer) !== null && int(a.column) !== null) {
+    return { kind: 'clip', deck: deck(a.deck), layer: a.layer, column: a.column };
+  }
+  if (a?.kind === 'snapshot' && int(a.slot) !== null) return { kind: 'snapshot', slot: a.slot };
+  if (a?.kind === 'control' && typeof a.path === 'string' && a.path) {
+    return { kind: 'control', path: a.path, label: String(a.label ?? a.path), value: num(a.value, 1), release: num(a.release, 0) };
+  }
+  return null;
+}
+
 export function sanitizeLinks(raw: unknown): AbletonLink[] {
   if (!Array.isArray(raw)) return [];
-  const int = (v: unknown) => (Number.isInteger(v) && (v as number) >= 0 ? (v as number) : null);
-  const deck = (v: unknown): VJDeck => (v === 'B' ? 'B' : 'A');
   const out: AbletonLink[] = [];
   for (const item of raw as any[]) {
     if (!item || typeof item.id !== 'string') continue;
     const s = item.source;
-    const a = item.action;
     let source: AbletonSource | null = null;
     if (s?.kind === 'scene' && int(s.scene) !== null) {
       source = { kind: 'scene', scene: s.scene, name: String(s.name ?? '') };
     } else if (s?.kind === 'clip' && int(s.track) !== null && int(s.slot) !== null) {
       source = { kind: 'clip', track: s.track, slot: s.slot, trackName: String(s.trackName ?? ''), name: String(s.name ?? '') };
+    } else if (s?.kind === 'locator' && int(s.index) !== null) {
+      source = { kind: 'locator', index: s.index, name: String(s.name ?? '') };
     }
-    let action: VisualAction | null = null;
-    if (a?.kind === 'column' && int(a.column) !== null) {
-      action = { kind: 'column', deck: deck(a.deck), column: a.column };
-    } else if (a?.kind === 'clip' && int(a.layer) !== null && int(a.column) !== null) {
-      action = { kind: 'clip', deck: deck(a.deck), layer: a.layer, column: a.column };
-    } else if (a?.kind === 'snapshot' && int(a.slot) !== null) {
-      action = { kind: 'snapshot', slot: a.slot };
-    }
+    const action = sanitizeAction(item.action);
     if (source && action) out.push({ id: item.id, source, action });
   }
   return out;

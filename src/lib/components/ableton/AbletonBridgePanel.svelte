@@ -8,7 +8,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { fly } from 'svelte/transition';
-  import { abletonBridge, songBeat } from '../../ableton/abletonBridge';
+  import { abletonBridge, scoreAction, songBeat } from '../../ableton/abletonBridge';
   import {
     barBeat,
     launchBeat,
@@ -22,16 +22,40 @@
     type AbletonSource,
     type VisualAction,
   } from '../../ableton/abletonLinks';
-  import { vjClipLauncher, type VJClip, type VJDeck } from '../../stores/vjClipLauncher';
-  import { snapshots, type Snapshot } from '../../stores/snapshots';
+  import { noteName, type SignalTarget } from '../../ableton/abletonScore';
+  import {
+    actionHint,
+    actionLabel,
+    actionTag,
+    actionThumb,
+    buildShelf,
+    VISUAL_DRAG_TYPE,
+    type ShelfTab,
+    type VisualContext,
+  } from '../../ableton/abletonVisuals';
+  import { mediaPipeBus } from '../../mediapipe/mediaPipeBus';
+  import { vjClipLauncher, type VJDeck } from '../../stores/vjClipLauncher';
+  import { snapshots } from '../../stores/snapshots';
+  import AbletonScoreView from './AbletonScoreView.svelte';
+  import AbletonArrangementView from './AbletonArrangementView.svelte';
+  import AbletonSignalsView from './AbletonSignalsView.svelte';
 
   export let onClose: () => void;
 
-  type ShelfTab = 'columns' | 'clips' | 'snapshots';
-  type View = 'session' | 'links';
-  interface ShelfItem { key: string; label: string; hint: string; thumbnail?: string; action: VisualAction }
+  type View = 'session' | 'score' | 'arrangement' | 'signals' | 'links';
+  const VIEWS: { id: View; label: string }[] = [
+    { id: 'session', label: 'Session' },
+    { id: 'score', label: 'Score' },
+    { id: 'arrangement', label: 'Arrangement' },
+    { id: 'signals', label: 'Signals' },
+    { id: 'links', label: 'Links' },
+  ];
 
   let view: View = 'session';
+  /** A score lane being edited, instead of a scene, clip or locator. */
+  let selectedPitch: number | null = null;
+  /** The tray steps aside while the user clicks a control to pick it. */
+  let picking = false;
   let deck: VJDeck = 'A';
   let tab: ShelfTab = 'columns';
   let selected: AbletonSource | null = null;
@@ -44,8 +68,14 @@
   let frame = 0;
 
   $: bridge = $abletonBridge;
-  $: grid = deck === 'B' ? $vjClipLauncher.bankBClipGrid : $vjClipLauncher.clipGrid;
-  $: shelf = buildShelf(tab, deck, grid, $vjClipLauncher.numColumns, $snapshots.snapshots);
+  $: ctx = {
+    clipGrid: $vjClipLauncher.clipGrid,
+    bankBClipGrid: $vjClipLauncher.bankBClipGrid,
+    numColumns: $vjClipLauncher.numColumns,
+    snapshots: $snapshots.snapshots,
+  } satisfies VisualContext;
+  $: shelf = buildShelf(ctx, tab, deck);
+  $: laneAction = selectedPitch === null ? null : scoreAction(bridge, selectedPitch, ctx.numColumns);
   $: selectedLinks = selected ? bridge.links.filter(l => samePlace(l.source, selected!)) : [];
   $: scriptReady = !!bridge.script?.installed && !!bridge.script?.current;
   $: beat = songBeat(bridge, now);
@@ -60,68 +90,22 @@
   });
   onDestroy(() => cancelAnimationFrame(frame));
 
-  // ── Labels and thumbnails ─────────────────────────────────────────────
-
-  function gridFor(d: VJDeck) {
-    return d === 'B' ? $vjClipLauncher.bankBClipGrid : $vjClipLauncher.clipGrid;
-  }
-
-  function actionThumb(action: VisualAction): string | undefined {
-    if (action.kind === 'snapshot') return undefined;
-    const g = gridFor(action.deck);
-    if (action.kind === 'clip') return g[action.layer]?.[action.column]?.thumbnail;
-    return g.map(row => row?.[action.column]).find(c => c?.thumbnail)?.thumbnail;
-  }
-
-  function actionLabel(action: VisualAction): string {
-    if (action.kind === 'snapshot') {
-      const snap = $snapshots.snapshots[action.slot];
-      return snap?.capturedAt ? snap.name || `Snapshot ${action.slot + 1}` : `Snapshot ${action.slot + 1} (empty)`;
-    }
-    const deckSuffix = action.deck === 'B' ? ' · B' : '';
-    if (action.kind === 'column') return `Column ${action.column + 1}${deckSuffix}`;
-    return `${gridFor(action.deck)[action.layer]?.[action.column]?.name ?? 'Empty slot'}${deckSuffix}`;
-  }
-
-  function actionHint(action: VisualAction): string {
-    if (action.kind === 'snapshot') return `Snapshot slot ${action.slot + 1}`;
-    if (action.kind === 'column') return 'Whole column';
-    return `Layer ${action.layer + 1} · Column ${action.column + 1}`;
-  }
+  // ── Labels ────────────────────────────────────────────────────────────
 
   function sourceLabel(source: AbletonSource): string {
     if (source.kind === 'scene') return source.name || `Scene ${source.scene + 1}`;
+    if (source.kind === 'locator') return source.name || `Locator ${source.index + 1}`;
     return `${source.trackName || `Track ${source.track + 1}`} · ${source.name || `Clip ${source.slot + 1}`}`;
+  }
+
+  function sourceKind(source: AbletonSource): string {
+    return source.kind === 'scene' ? 'Scene' : source.kind === 'locator' ? 'Locator' : 'Clip';
   }
 
   function sourceColor(source: AbletonSource): string {
     if (source.kind === 'scene') return liveColor(bridge.scenes[source.scene]?.color ?? 0x888888);
+    if (source.kind === 'locator') return '#e0a33a';
     return liveColor(bridge.tracks[source.track]?.slots[source.slot]?.color ?? 0x888888);
-  }
-
-  function buildShelf(kind: ShelfTab, d: VJDeck, clipGrid: (VJClip | null)[][], columns: number, snaps: Snapshot[]): ShelfItem[] {
-    if (kind === 'snapshots') {
-      return snaps.flatMap((snap, slot) => snap.capturedAt ? [{
-        key: `snap-${slot}`, label: snap.name || `Snapshot ${slot + 1}`, hint: `Slot ${slot + 1}`,
-        action: { kind: 'snapshot', slot } as VisualAction,
-      }] : []);
-    }
-    if (kind === 'columns') {
-      return Array.from({ length: columns }, (_, column) => {
-        const clips = clipGrid.map(row => row?.[column]).filter(Boolean) as VJClip[];
-        return {
-          key: `col-${d}-${column}`, label: `Column ${column + 1}`,
-          hint: clips.length ? clips.map(c => c.name).join(', ') : 'Empty',
-          thumbnail: clips.find(c => c.thumbnail)?.thumbnail,
-          action: { kind: 'column', deck: d, column } as VisualAction,
-        };
-      });
-    }
-    return clipGrid.flatMap((row, layer) => (row ?? []).flatMap((clip, column) => clip ? [{
-      key: `clip-${d}-${layer}-${column}`, label: clip.name, hint: `L${layer + 1} · C${column + 1}`,
-      thumbnail: clip.thumbnail,
-      action: { kind: 'clip', deck: d, layer, column } as VisualAction,
-    }] : []));
   }
 
   // ── Timing ────────────────────────────────────────────────────────────
@@ -158,25 +142,63 @@
   }
 
   function cellKey(source: AbletonSource) {
+    if (source.kind === 'locator') return `l${source.index}`;
     return source.kind === 'scene' ? `s${source.scene}` : `c${source.track}-${source.slot}`;
   }
 
   function select(source: AbletonSource) {
+    selectedPitch = null;
     selected = selected && samePlace(selected, source) ? null : source;
+  }
+
+  function selectLane(pitch: number) {
+    selected = null;
+    selectedPitch = selectedPitch === pitch ? null : pitch;
   }
 
   function link(source: AbletonSource, action: VisualAction) {
     abletonBridge.addLink(source, action);
+    selectedPitch = null;
     selected = source;
   }
 
+  function setLane(pitch: number, action: VisualAction | null) {
+    abletonBridge.setScoreLane(pitch, action);
+    selected = null;
+    selectedPitch = pitch;
+  }
+
+  /** Give the shelf's pick to whatever is selected. */
+  function assign(action: VisualAction) {
+    if (selectedPitch !== null) setLane(selectedPitch, action);
+    else if (selected) link(selected, action);
+  }
+
+  /** Step aside so the user can click any Ghost Arcade control. */
+  async function pickTarget(): Promise<SignalTarget | null> {
+    picking = true;
+    try {
+      const picked = await mediaPipeBus.pickTarget();
+      if (!picked) return null;
+      return { path: picked.path, label: picked.label || picked.path, min: picked.min ?? 0, max: picked.max ?? 1 };
+    } finally {
+      picking = false;
+    }
+  }
+
+  /** Link a control hit (a strobe, a flash, a macro jump) to the selection. */
+  async function pickControl() {
+    const target = await pickTarget();
+    if (target) assign({ kind: 'control', path: target.path, label: target.label, value: target.max, release: target.min });
+  }
+
   function onDragStart(event: DragEvent, action: VisualAction) {
-    event.dataTransfer?.setData('application/x-ghost-visual', JSON.stringify(action));
+    event.dataTransfer?.setData(VISUAL_DRAG_TYPE, JSON.stringify(action));
     if (event.dataTransfer) event.dataTransfer.effectAllowed = 'link';
   }
 
   function onDragOver(event: DragEvent, source: AbletonSource) {
-    if (!event.dataTransfer?.types.includes('application/x-ghost-visual')) return;
+    if (!event.dataTransfer?.types.includes(VISUAL_DRAG_TYPE)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'link';
     dropTarget = cellKey(source);
@@ -185,7 +207,7 @@
   function onDrop(event: DragEvent, source: AbletonSource) {
     event.preventDefault();
     dropTarget = null;
-    const raw = event.dataTransfer?.getData('application/x-ghost-visual');
+    const raw = event.dataTransfer?.getData(VISUAL_DRAG_TYPE);
     if (!raw) return;
     try { link(source, JSON.parse(raw) as VisualAction); } catch { /* not ours */ }
   }
@@ -193,7 +215,7 @@
   function autoMap(kind: 'scenes' | 'tracks' | 'clear') {
     if (kind === 'clear') {
       if (!confirmClear) { confirmClear = true; return; }
-      for (const l of bridge.links) abletonBridge.removeLink(l.id);
+      abletonBridge.clearLinks();
     }
     mapMenuOpen = false;
     confirmClear = false;
@@ -216,15 +238,20 @@
 
   function onKeydown(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
+    if (picking) return;
     if (mapMenuOpen) { mapMenuOpen = false; confirmClear = false; }
-    else if (selected) selected = null;
+    else if (selected || selectedPitch !== null) { selected = null; selectedPitch = null; }
     else onClose();
   }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-<section class="tray" transition:fly={{ y: 24, duration: 180 }} aria-label="Ableton Live">
+{#if picking}
+  <div class="picking" role="status">Click any slider, knob or button in Ghost Arcade · Esc cancels</div>
+{/if}
+
+<section class="tray" class:stepped-aside={picking} transition:fly={{ y: 24, duration: 180 }} aria-label="Ableton Live">
   <header class="bar">
     <div class="brand" class:on={bridge.connected} title={bridge.connected ? 'Live connected' : bridge.error ?? 'Waiting for Live'}>
       <span class="dot"></span>LIVE
@@ -245,8 +272,14 @@
       </div>
 
       <div class="views" role="tablist">
-        <button role="tab" aria-selected={view === 'session'} class:active={view === 'session'} onclick={() => (view = 'session')}>Session</button>
-        <button role="tab" aria-selected={view === 'links'} class:active={view === 'links'} onclick={() => (view = 'links')}>Links <span class="count">{bridge.links.length}</span></button>
+        {#each VIEWS as v (v.id)}
+          <button role="tab" aria-selected={view === v.id} class:active={view === v.id} onclick={() => (view = v.id)}>
+            {v.label}
+            {#if v.id === 'links'}<span class="count">{bridge.links.length}</span>{/if}
+            {#if v.id === 'signals' && bridge.signals.length}<span class="count">{bridge.signals.length}</span>{/if}
+            {#if v.id === 'arrangement' && bridge.cues.length}<span class="count">{bridge.cues.length}</span>{/if}
+          </button>
+        {/each}
       </div>
 
       <div class="map">
@@ -363,9 +396,9 @@
                   {#if links.length}
                     <span class="visuals">
                       {#each links.slice(0, 3) as l (l.id)}
-                        {@const thumb = actionThumb(l.action)}
-                        <span class="vis" class:missing={bridge.missing.includes(l.id)} title={actionLabel(l.action)}>
-                          {#if thumb}<img src={thumb} alt="" />{:else}<i>{l.action.kind === 'snapshot' ? `S${l.action.slot + 1}` : '·'}</i>{/if}
+                        {@const thumb = actionThumb(ctx, l.action)}
+                        <span class="vis" class:missing={bridge.missing.includes(l.id)} title={actionLabel(ctx, l.action)}>
+                          {#if thumb}<img src={thumb} alt="" />{:else}<i>{actionTag(l.action)}</i>{/if}
                         </span>
                       {/each}
                       {#if links.length > 3}<span class="more">+{links.length - 3}</span>{/if}
@@ -406,9 +439,9 @@
                       {#if clipLinks.length}
                         <span class="visuals">
                           {#each clipLinks.slice(0, 2) as l (l.id)}
-                            {@const thumb = actionThumb(l.action)}
-                            <span class="vis" class:missing={bridge.missing.includes(l.id)} title={actionLabel(l.action)}>
-                              {#if thumb}<img src={thumb} alt="" />{:else}<i>{l.action.kind === 'snapshot' ? `S${l.action.slot + 1}` : '·'}</i>{/if}
+                            {@const thumb = actionThumb(ctx, l.action)}
+                            <span class="vis" class:missing={bridge.missing.includes(l.id)} title={actionLabel(ctx, l.action)}>
+                              {#if thumb}<img src={thumb} alt="" />{:else}<i>{actionTag(l.action)}</i>{/if}
                             </span>
                           {/each}
                           {#if clipLinks.length > 2}<span class="more">+{clipLinks.length - 2}</span>{/if}
@@ -424,20 +457,32 @@
             </div>
           {/if}
         </div>
+      {:else if view === 'score'}
+        <div class="pane">
+          <AbletonScoreView {bridge} {ctx} {beat} {now} {selectedPitch} onSelectLane={selectLane} onDropLane={(pitch, action) => setLane(pitch, action)} />
+        </div>
+      {:else if view === 'arrangement'}
+        <div class="pane">
+          <AbletonArrangementView {bridge} {ctx} {beat} {now} {selected} onSelect={select} onDrop={link} />
+        </div>
+      {:else if view === 'signals'}
+        <div class="pane">
+          <AbletonSignalsView {bridge} {pickTarget} />
+        </div>
       {:else}
         <div class="links-view">
           {#if !bridge.links.length}
             <div class="empty">No links yet. Drag a visual onto a scene or clip, or try Auto-map.</div>
           {:else}
             {#each bridge.links as l (l.id)}
-              {@const thumb = actionThumb(l.action)}
+              {@const thumb = actionThumb(ctx, l.action)}
               <div class="link-line" class:missing={bridge.missing.includes(l.id)} class:flash={now - (bridge.fired[l.id] ?? -1e9) < 450}>
                 <span class="swatch" style="background: {sourceColor(l.source)}"></span>
-                <span class="from">{sourceLabel(l.source)}<small>{l.source.kind === 'scene' ? 'Scene' : 'Clip'}</small></span>
+                <span class="from">{sourceLabel(l.source)}<small>{sourceKind(l.source)}</small></span>
                 <span class="arrow">→</span>
                 <span class="to">
-                  <span class="vis big">{#if thumb}<img src={thumb} alt="" />{:else}<i>{l.action.kind === 'snapshot' ? `S${l.action.slot + 1}` : '·'}</i>{/if}</span>
-                  {actionLabel(l.action)}
+                  <span class="vis big">{#if thumb}<img src={thumb} alt="" />{:else}<i>{actionTag(l.action)}</i>{/if}</span>
+                  {actionLabel(ctx, l.action)}
                 </span>
                 {#if bridge.missing.includes(l.id)}<span class="warn">Not in this set</span>{/if}
                 <button class="tp small" onclick={() => abletonBridge.preview(l)} title="Fire this visual now" aria-label="Fire this visual now">
@@ -453,20 +498,47 @@
       {/if}
 
       <aside class="side">
-        {#if selected}
+        {#if selectedPitch !== null}
+          {@const thumb = laneAction ? actionThumb(ctx, laneAction) : undefined}
+          <div class="inspect" style="--live: #7f77dd">
+            <div class="inspect-head">
+              <span class="kind">Score lane</span>
+              <span class="title">{noteName(selectedPitch)}</span>
+              <button class="tp small" onclick={() => (selectedPitch = null)} aria-label="Deselect">
+                <svg width="9" height="9" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1 1l8 8M9 1 1 9"/></svg>
+              </button>
+            </div>
+            {#if laneAction}
+              <div class="linked">
+                <span class="vis big">{#if thumb}<img src={thumb} alt="" />{:else}<i>{actionTag(laneAction)}</i>{/if}</span>
+                <span class="linked-text"><b>{actionLabel(ctx, laneAction)}</b><small>{selectedPitch in bridge.scoreMap ? actionHint(laneAction) : 'Default lane'}</small></span>
+                <button class="tp small" onclick={() => laneAction && abletonBridge.previewAction(laneAction)} title="Fire now" aria-label="Fire this visual now">
+                  <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>
+                </button>
+                {#if selectedPitch in bridge.scoreMap}
+                  <button class="tp small" onclick={() => selectedPitch !== null && abletonBridge.setScoreLane(selectedPitch, null)} title="Back to the default" aria-label="Reset lane">
+                    <svg width="9" height="9" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1 1l8 8M9 1 1 9"/></svg>
+                  </button>
+                {/if}
+              </div>
+            {/if}
+            <p class="hint">Pick a visual below, or a control hit.</p>
+            <button class="ghost wide" onclick={pickControl}>Pick a control…</button>
+          </div>
+        {:else if selected}
           <div class="inspect" style="--live: {sourceColor(selected)}">
             <div class="inspect-head">
-              <span class="kind">{selected.kind === 'scene' ? 'Scene' : 'Clip'}</span>
+              <span class="kind">{sourceKind(selected)}</span>
               <span class="title">{sourceLabel(selected)}</span>
               <button class="tp small" onclick={() => (selected = null)} aria-label="Deselect">
                 <svg width="9" height="9" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1 1l8 8M9 1 1 9"/></svg>
               </button>
             </div>
             {#each selectedLinks as l (l.id)}
-              {@const thumb = actionThumb(l.action)}
+              {@const thumb = actionThumb(ctx, l.action)}
               <div class="linked" class:missing={bridge.missing.includes(l.id)}>
-                <span class="vis big">{#if thumb}<img src={thumb} alt="" />{:else}<i>{l.action.kind === 'snapshot' ? `S${l.action.slot + 1}` : '·'}</i>{/if}</span>
-                <span class="linked-text"><b>{actionLabel(l.action)}</b><small>{actionHint(l.action)}</small></span>
+                <span class="vis big">{#if thumb}<img src={thumb} alt="" />{:else}<i>{actionTag(l.action)}</i>{/if}</span>
+                <span class="linked-text"><b>{actionLabel(ctx, l.action)}</b><small>{actionHint(l.action)}</small></span>
                 <button class="tp small" onclick={() => abletonBridge.preview(l)} title="Fire now" aria-label="Fire this visual now">
                   <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>
                 </button>
@@ -475,8 +547,9 @@
                 </button>
               </div>
             {:else}
-              <p class="hint">Pick a visual below to fire with this {selected.kind}.</p>
+              <p class="hint">Pick a visual below to fire with this {sourceKind(selected).toLowerCase()}.</p>
             {/each}
+            <button class="ghost wide" onclick={pickControl} title="A strobe, a flash, a macro jump — any Ghost Arcade control">Pick a control…</button>
           </div>
         {/if}
 
@@ -494,18 +567,18 @@
               </div>
             {/if}
           </div>
-          {#if !selected}<p class="hint">Drag onto a scene or clip.</p>{/if}
+          {#if !selected && selectedPitch === null}<p class="hint">Drag onto a scene, clip, locator or score lane.</p>{/if}
           <div class="shelf-grid">
             {#each shelf as item (item.key)}
               <button
                 class="tile"
-                class:armed={!!selected}
+                class:armed={!!selected || selectedPitch !== null}
                 draggable="true"
                 ondragstart={(e) => onDragStart(e, item.action)}
-                onclick={() => selected && link(selected, item.action)}
-                title={selected ? `Link to ${sourceLabel(selected)}` : `${item.label} — ${item.hint}`}
+                onclick={() => assign(item.action)}
+                title={selected ? `Link to ${sourceLabel(selected)}` : selectedPitch !== null ? `Play on ${noteName(selectedPitch)}` : `${item.label} — ${item.hint}`}
               >
-                <span class="tile-thumb">{#if item.thumbnail}<img src={item.thumbnail} alt="" />{:else}<i>{item.action.kind === 'snapshot' ? `S${item.action.slot + 1}` : ''}</i>{/if}</span>
+                <span class="tile-thumb">{#if item.thumbnail}<img src={item.thumbnail} alt="" />{:else}<i>{actionTag(item.action)}</i>{/if}</span>
                 <span class="tile-label">{item.label}</span>
               </button>
             {:else}
@@ -531,6 +604,23 @@
     font-family: var(--ga-font-ui, Inter, system-ui, sans-serif);
     font-size: 12px;
     min-height: 0;
+  }
+
+  .tray.stepped-aside { visibility: hidden; }
+  .picking {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3000;
+    padding: 9px 16px;
+    border-radius: 20px;
+    background: #7f77dd;
+    color: #fff;
+    font-weight: 600;
+    font-size: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
   }
 
   /* ── Top bar ── */
@@ -654,7 +744,8 @@
 
   /* ── Body ── */
   .body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 290px; }
-  .session, .links-view { overflow: auto; padding: 8px 10px 12px; min-width: 0; }
+  .session, .links-view, .pane { overflow: auto; padding: 8px 10px 12px; min-width: 0; }
+  .ghost.wide { width: 100%; margin-top: 6px; }
   .empty { padding: 32px; text-align: center; color: var(--ga-ink-2, #8a909b); }
   .grid {
     display: grid;

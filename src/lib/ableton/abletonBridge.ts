@@ -1,42 +1,74 @@
 /**
- * Ableton bridge — mirrors the Live set and fires linked visuals.
+ * Ableton bridge — mirrors the Live set and drives Ghost Arcade from it.
  *
  *  - Ghost Arcade's Live control surface (ableton/GhostArcade) reports the
  *    set and every launch over loopback UDP; Electron main forwards each
  *    batch through `window.ghostAbleton.onMessage`.
- *  - The set is mirrored here: scenes, tracks, clip names and colours, and
- *    which slots are playing or queued.
- *  - Links (src/lib/ableton/abletonLinks.ts) pair a scene or clip with a VJ
- *    column, clip or snapshot. They fire the moment Live launches, not on
- *    Ghost Arcade's own launch quantize, because Live has already waited
- *    for the bar.
+ *  - The set is mirrored here: scenes, tracks, clip names and colours,
+ *    locators, and which slots are playing or queued.
+ *  - Links pair a scene, clip or locator with a visual. They fire the moment
+ *    Live launches (or the song reaches the locator), not on Ghost Arcade's
+ *    own launch quantize, because Live has already waited for the bar.
+ *  - Visual score tracks: notes on a Live MIDI track fire visuals, scheduled
+ *    against Live's song position by the conductor loop below.
+ *  - Signals: Live knobs, track levels, loop progress and launch colours
+ *    drive any Ghost Arcade control through the control router.
  *
- * Links are saved with the project (exportProject / importProject in
- * src/lib/stores/layers.ts).
+ * Links, signals and the score map are saved with the project
+ * (exportProject / importProject in src/lib/stores/layers.ts).
  */
 
 import { get, writable } from 'svelte/store';
 import { generateUUID } from '../utils/uuid';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { snapshots } from '../stores/snapshots';
+import { midiRouter } from '../midi/midiRouter';
 import {
+  launchBeat,
   linksForClip,
+  linksForLocator,
   linksForScene,
   positionFallback,
+  quantizeBeats,
   relink,
   samePlace,
+  sanitizeAction,
   sanitizeLinks,
   type AbletonLink,
   type AbletonSource,
+  type LiveCue,
   type LiveScene,
   type LiveTrack,
+  type ScoreNote,
   type VisualAction,
 } from './abletonLinks';
+import {
+  colorHue,
+  defaultScoreAction,
+  isScoreTrackName,
+  autoRange,
+  locatorsReached,
+  notesDue,
+  sanitizeSignals,
+  signalOutput,
+  smoothToward,
+  type LevelRange,
+  type SignalLink,
+  type SignalSource,
+  type SignalTarget,
+} from './abletonScore';
 
 /** No heartbeat for this long means Live (or the script) went away. */
 const CONNECTION_TIMEOUT_MS = 3500;
 /** Track messages for one set arrive as a burst; relink once it settles. */
 const RELINK_DELAY_MS = 150;
+/** The conductor's tick: score notes land within this of their beat. */
+const CONDUCTOR_MS = 6;
+/** Signals reach their controls at most this often. */
+const SIGNAL_MS = 16;
+/** How long a launched control hit holds before it releases. */
+const HIT_MS = 120;
+const ACTIVITY_LENGTH = 8;
 
 export interface ScriptStatus {
   installed: boolean;
@@ -46,10 +78,19 @@ export interface ScriptStatus {
   available: boolean;
 }
 
+export interface LiveDevice { name: string; params: { name: string; value: number }[] }
+
 export interface AbletonBridgeState {
   /** Start the listener with the project (saved). */
   enabled: boolean;
   links: AbletonLink[];
+  signals: SignalLink[];
+  /** Names of MIDI tracks marked as visual score tracks (saved). Tracks
+   *  named "Ghost Arcade" or "Visuals" count without being marked. */
+  scoreTracks: string[];
+  /** Pitch → visual for score notes (saved); unmapped pitches use the
+   *  default lanes. */
+  scoreMap: Record<number, VisualAction>;
   // Runtime only.
   listening: boolean;
   error: string | null;
@@ -61,6 +102,9 @@ export interface AbletonBridgeState {
   quantize: number;
   scenes: LiveScene[];
   tracks: LiveTrack[];
+  cues: LiveCue[];
+  /** Device lists by track index, fetched on request. */
+  devices: Record<number, LiveDevice[]>;
   /** Links that match nothing in the current set. */
   missing: string[];
   /** Last time each link fired (performance.now()), for the UI flash. */
@@ -73,15 +117,12 @@ export interface AbletonBridgeState {
   script: ScriptStatus | null;
 }
 
-/** Live's song position now, run forward from the last report. */
-export function songBeat(state: AbletonBridgeState, now = performance.now()): number {
-  if (!state.playing) return state.clockBeat;
-  return state.clockBeat + ((now - state.clockAt) / 1000) * (state.tempo / 60);
-}
-
 const INITIAL: AbletonBridgeState = {
   enabled: false,
   links: [],
+  signals: [],
+  scoreTracks: [],
+  scoreMap: {},
   listening: false,
   error: null,
   connected: false,
@@ -92,6 +133,8 @@ const INITIAL: AbletonBridgeState = {
   quantize: 4,
   scenes: [],
   tracks: [],
+  cues: [],
+  devices: {},
   missing: [],
   fired: {},
   clockBeat: 0,
@@ -100,7 +143,55 @@ const INITIAL: AbletonBridgeState = {
   script: null,
 };
 
-const ACTIVITY_LENGTH = 8;
+/** Live's song position now, run forward from the last report. */
+export function songBeat(state: AbletonBridgeState, now = performance.now()): number {
+  if (!state.playing) return state.clockBeat;
+  return state.clockBeat + ((now - state.clockAt) / 1000) * (state.tempo / 60);
+}
+
+/** Track indices whose clips are visual scores. */
+export function scoreTrackIndices(state: Pick<AbletonBridgeState, 'tracks' | 'scoreTracks'>): number[] {
+  return state.tracks.flatMap((track, index) =>
+    track.midi && (isScoreTrackName(track.name) || state.scoreTracks.includes(track.name)) ? [index] : []);
+}
+
+/** What a score pitch fires. */
+export function scoreAction(state: Pick<AbletonBridgeState, 'scoreMap'>, pitch: number, columns: number): VisualAction | null {
+  return state.scoreMap[pitch] ?? defaultScoreAction(pitch, columns);
+}
+
+/** Fraction through the playing clip's loop on `track` (0 when idle). */
+export function loopProgress(state: AbletonBridgeState, track: number, beat: number): number {
+  const t = state.tracks[track];
+  if (!t || t.playing < 0 || !state.playing) return 0;
+  const length = t.slots[t.playing]?.length || 4;
+  return (Math.max(0, beat - t.startedBeat) % length) / length;
+}
+
+/** The next queued launch that will change the visuals, for countdowns. */
+export function upcomingLaunch(state: AbletonBridgeState, beat: number): { label: string; beats: number } | null {
+  if (!state.playing) return null;
+  const step = quantizeBeats(state.quantize, state.numerator, state.denominator);
+  let best: { label: string; beats: number } | null = null;
+  const consider = (label: string, firedBeat: number, links: AbletonLink[]) => {
+    if (!links.length) return;
+    const beats = launchBeat(firedBeat, step) - beat;
+    if (beats > 0 && (!best || beats < best.beats)) best = { label, beats };
+  };
+  state.scenes.forEach((scene, s) => {
+    const firing = state.tracks.find(t => t.fired === s);
+    if (scene.queued || firing) consider(scene.name || `Scene ${s + 1}`, firing?.firedBeat ?? beat, linksForScene(state.links, s));
+  });
+  state.tracks.forEach((track, t) => {
+    if (track.fired >= 0) consider(track.slots[track.fired]?.name || track.name, track.firedBeat, linksForClip(state.links, t, track.fired));
+  });
+  return best;
+}
+
+/** Live values per signal (0..1, after smoothing) for meters. */
+export const abletonSignalLevels = writable<Record<string, number>>({});
+/** Last time each score pitch fired (performance.now()), for lane flashes. */
+export const abletonScoreHits = writable<Record<number, number>>({});
 
 type LiveMessage = Record<string, any> & { t: string };
 
@@ -114,6 +205,7 @@ function createAbletonBridge() {
   let unsubscribeMessages: (() => void) | null = null;
   let unsubscribeStatus: (() => void) | null = null;
   let watchdog: ReturnType<typeof setInterval> | null = null;
+  let conductor: ReturnType<typeof setInterval> | null = null;
   let relinkTimer: ReturnType<typeof setTimeout> | null = null;
   let lastHello = 0;
   /** Scene and track counts the links were last resolved against. */
@@ -121,15 +213,41 @@ function createAbletonBridge() {
   /** Scenes whose trigger cleared in the batch being handled. */
   let launchedScenes: number[] = [];
   let sceneQueuedInBatch = false;
+  /** The last watch request sent, to avoid repeating it. */
+  let sentWatch = '';
+
+  // High-rate values stay out of the store.
+  const paramValues = new Map<string, number>();
+  /** Track levels, already auto-ranged to 0..1. */
+  const levelValues = new Map<number, number>();
+  const levelRanges = new Map<number, LevelRange>();
+  const colorValues = new Map<number, number>();
+  const signalState = new Map<string, { value: number; sent: number }>();
+  /** Elapsed beats each playing score clip has been scheduled up to. */
+  const scorePlayhead = new Map<string, number>();
+  /** Control releases due at a song position. */
+  let releases: { beat: number; path: string; value: number; inputId: string }[] = [];
+  let conductorBeat = 0;
+  let lastSignalAt = 0;
+  let lastMeterAt = 0;
 
   function send(message: LiveMessage) {
     void api()?.send(message);
   }
 
-  function runAction(action: VisualAction) {
+  // ── Firing ──────────────────────────────────────────────────────────
+
+  function runAction(action: VisualAction, velocity = 127, hold?: { untilBeat: number; inputId: string }) {
     if (action.kind === 'column') vjClipLauncher.triggerColumnNow(action.column, action.deck);
     else if (action.kind === 'clip') vjClipLauncher.triggerClipNow(action.layer, action.column, action.deck);
-    else snapshots.recall(action.slot);
+    else if (action.kind === 'snapshot') snapshots.recall(action.slot);
+    else {
+      const value = action.release + (action.value - action.release) * (velocity / 127);
+      const inputId = hold?.inputId ?? `ableton:hit:${action.path}`;
+      midiRouter.dispatchPath(action.path, value, { inputId });
+      if (hold) releases.push({ beat: hold.untilBeat, path: action.path, value: action.release, inputId });
+      else setTimeout(() => midiRouter.dispatchPath(action.path, action.release, { inputId }), HIT_MS);
+    }
   }
 
   function fire(links: AbletonLink[], label: string) {
@@ -149,16 +267,180 @@ function createAbletonBridge() {
     return read().scenes[index]?.name || `Scene ${index + 1}`;
   }
 
+  function releaseAll() {
+    for (const r of releases) midiRouter.dispatchPath(r.path, r.value, { inputId: r.inputId });
+    releases = [];
+    midiRouter.releaseInputs('ableton:');
+  }
+
+  // ── Conductor: score notes, locators, signals ───────────────────────
+
+  function tick() {
+    const s = read();
+    const now = performance.now();
+    const beat = songBeat(s, now);
+
+    if (s.playing) {
+      const columns = get(vjClipLauncher).numColumns;
+      const active = new Set<string>();
+      for (const t of scoreTrackIndices(s)) {
+        const track = s.tracks[t];
+        const clip = track.playing >= 0 ? track.slots[track.playing] : null;
+        if (!clip?.notes?.length) continue;
+        const key = `${t}:${track.playing}:${track.startedBeat}`;
+        active.add(key);
+        const elapsed = beat - track.startedBeat;
+        // A clip found already playing (or a long stall) picks up from now
+        // rather than replaying every note it missed.
+        const known = scorePlayhead.get(key);
+        const from = known === undefined ? (elapsed > 0.5 ? elapsed : -1e-6) : (elapsed - known > 8 ? elapsed : known);
+        if (elapsed <= from) { scorePlayhead.set(key, from); continue; }
+        scorePlayhead.set(key, elapsed);
+        const due = notesDue(clip.notes, from, elapsed, clip.length);
+        if (due.length) playNotes(s, t, track, due, columns);
+      }
+      if (scorePlayhead.size > active.size) {
+        for (const key of scorePlayhead.keys()) if (!active.has(key)) scorePlayhead.delete(key);
+      }
+      for (const index of locatorsReached(s.cues, conductorBeat, beat)) {
+        fire(linksForLocator(s.links, index), s.cues[index]?.name || `Locator ${index + 1}`);
+      }
+    }
+    conductorBeat = beat;
+
+    if (releases.length) {
+      const due = releases.filter(r => !s.playing || beat >= r.beat);
+      if (due.length) {
+        releases = releases.filter(r => !due.includes(r));
+        for (const r of due) midiRouter.dispatchPath(r.path, r.value, { inputId: r.inputId });
+      }
+    }
+
+    if (now - lastSignalAt >= SIGNAL_MS && s.signals.length) {
+      const dt = Math.min(0.1, (now - lastSignalAt) / 1000);
+      lastSignalAt = now;
+      driveSignals(s, beat, dt, now);
+    }
+  }
+
+  function playNotes(s: AbletonBridgeState, t: number, track: LiveTrack, due: { note: ScoreNote; at: number }[], columns: number) {
+    const hits: Record<number, number> = {};
+    const now = performance.now();
+    for (const { note, at } of due) {
+      const [pitch, , duration, velocity] = note;
+      const action = scoreAction(s, pitch, columns);
+      if (!action) continue;
+      runAction(action, velocity, { untilBeat: track.startedBeat + at + duration, inputId: `ableton:score:${t}:${pitch}` });
+      hits[pitch] = now;
+    }
+    if (Object.keys(hits).length) abletonScoreHits.update(h => ({ ...h, ...hits }));
+  }
+
+  function signalInput(s: AbletonBridgeState, source: SignalSource, beat: number): number {
+    switch (source.kind) {
+      case 'param': return paramValues.get(`${source.track}:${source.device}:${source.param}`) ?? 0;
+      case 'level': return levelValues.get(source.track) ?? 0;
+      case 'phrase': return loopProgress(s, source.track, beat);
+      case 'color': return colorValues.get(source.track) ?? 0;
+    }
+  }
+
+  function driveSignals(s: AbletonBridgeState, beat: number, dt: number, now: number) {
+    const meters: Record<string, number> = {};
+    for (const link of s.signals) {
+      const input = signalInput(s, link.source, beat);
+      const state = signalState.get(link.id) ?? { value: input, sent: Number.NaN };
+      // Colour jumps between hues; gliding through the wheel would pass
+      // every colour in between.
+      state.value = link.source.kind === 'color' ? input : smoothToward(state.value, input, link.smooth, dt);
+      const output = signalOutput(state.value, link);
+      const range = Math.abs(link.target.max - link.target.min) || 1;
+      if (!(Math.abs(output - state.sent) < range * 0.002)) {
+        state.sent = output;
+        midiRouter.dispatchPath(link.target.path, output, { inputId: `ableton:signal:${link.id}` });
+      }
+      signalState.set(link.id, state);
+      meters[link.id] = state.value;
+    }
+    if (now - lastMeterAt > 50) {
+      lastMeterAt = now;
+      abletonSignalLevels.set(meters);
+    }
+  }
+
+  function startConductor() {
+    if (conductor) return;
+    conductorBeat = songBeat(read());
+    lastSignalAt = performance.now();
+    conductor = setInterval(tick, CONDUCTOR_MS);
+  }
+
+  function stopConductor() {
+    if (conductor) clearInterval(conductor);
+    conductor = null;
+    releaseAll();
+  }
+
+  // ── Watching: what Live streams to us ───────────────────────────────
+
+  function syncWatch(force = false) {
+    const s = read();
+    if (!s.connected) return;
+    const params = s.signals.flatMap(l => l.source.kind === 'param' ? [[l.source.track, l.source.device, l.source.param]] : []);
+    const levels = [...new Set(s.signals.flatMap(l => l.source.kind === 'level' ? [l.source.track] : []))];
+    const score = scoreTrackIndices(s);
+    const watch = JSON.stringify({ params, levels, score });
+    if (!force && watch === sentWatch) return;
+    sentWatch = watch;
+    send({ t: 'watch', params, levels, score });
+  }
+
+  /** Re-point param signals at their device and parameter by name once a
+   *  track's devices are known. */
+  function relinkParams(track: number, devices: LiveDevice[]) {
+    update(s => {
+      let changed = false;
+      const signals = s.signals.map(link => {
+        const src = link.source;
+        if (src.kind !== 'param' || src.track !== track) return link;
+        let device = devices[src.device]?.name === src.deviceName ? src.device : devices.findIndex(d => d.name === src.deviceName);
+        if (device < 0) device = src.device;
+        const params = devices[device]?.params ?? [];
+        let param = params[src.param]?.name === src.paramName ? src.param : params.findIndex(p => p.name === src.paramName);
+        if (param < 0) param = src.param;
+        if (device === src.device && param === src.param) return link;
+        changed = true;
+        return { ...link, source: { ...src, device, param } };
+      });
+      return changed ? { ...s, signals } : s;
+    });
+  }
+
+  /** Re-point signals at their tracks by name after the set changes. */
+  function relinkSignalTracks(s: AbletonBridgeState): SignalLink[] {
+    return s.signals.map(link => {
+      const src = link.source;
+      if (src.track < 0 || !src.trackName) return link;
+      if (s.tracks[src.track]?.name === src.trackName) return link;
+      const track = s.tracks.findIndex(t => t.name === src.trackName);
+      return track < 0 ? link : { ...link, source: { ...src, track } };
+    });
+  }
+
   function scheduleRelink() {
     if (relinkTimer) clearTimeout(relinkTimer);
     relinkTimer = setTimeout(() => {
       relinkTimer = null;
       update(s => {
         const counts = { scenes: s.scenes.length, tracks: s.tracks.length };
-        const { links, missing } = relink(s.links, s.scenes, s.tracks, positionFallback(linkedCounts, counts));
+        const { links, missing } = relink(s.links, s.scenes, s.tracks, positionFallback(linkedCounts, counts), s.cues);
         linkedCounts = counts;
-        return { ...s, links, missing };
+        return { ...s, links, missing, signals: relinkSignalTracks(s) };
       });
+      syncWatch();
+      // Param signals need their tracks' devices to follow renames.
+      const tracks = new Set(read().signals.flatMap(l => l.source.kind === 'param' ? [l.source.track] : []));
+      for (const track of tracks) send({ t: 'devices', i: track });
     }, RELINK_DELAY_MS);
   }
 
@@ -171,6 +453,14 @@ function createAbletonBridge() {
     });
   }
 
+  function parseSlot(slot: any) {
+    if (!Array.isArray(slot)) return null;
+    const notes = Array.isArray(slot[3])
+      ? (slot[3] as any[]).filter(n => Array.isArray(n) && n.length >= 4).map(n => [Number(n[0]), Number(n[1]), Number(n[2]), Number(n[3])] as ScoreNote)
+      : undefined;
+    return { name: String(slot[0] ?? ''), color: Number(slot[1]) || 0, length: Number(slot[2]) || 4, ...(notes ? { notes } : {}) };
+  }
+
   function handle(message: LiveMessage) {
     if (typeof message.beat === 'number' && Number.isFinite(message.beat)) {
       const beat = message.beat;
@@ -179,6 +469,7 @@ function createAbletonBridge() {
     switch (message.t) {
       case 'hello': {
         const wasConnected = read().connected;
+        const wasPlaying = read().playing;
         lastHello = performance.now();
         update(s => ({
           ...s,
@@ -189,12 +480,18 @@ function createAbletonBridge() {
           playing: !!message.playing,
           quantize: Number.isInteger(message.quantize) ? message.quantize : s.quantize,
         }));
-        if (!wasConnected) send({ t: 'sync' });
+        if (!wasConnected) {
+          sentWatch = '';
+          send({ t: 'sync' });
+          startConductor();
+        }
+        if (wasPlaying && !message.playing) releaseAll();
         break;
       }
       case 'bye':
         lastHello = 0;
         update(s => ({ ...s, connected: false }));
+        stopConductor();
         break;
       case 'set': {
         const scenes: LiveScene[] = (Array.isArray(message.scenes) ? message.scenes : []).map((scene: any, index: number) => ({
@@ -202,12 +499,16 @@ function createAbletonBridge() {
           color: Number(scene?.c) || 0,
           queued: read().scenes[index]?.queued ?? false,
         }));
+        const cues: LiveCue[] = (Array.isArray(message.cues) ? message.cues : [])
+          .filter((c: any) => Array.isArray(c))
+          .map((c: any) => ({ name: String(c[0] ?? ''), time: Number(c[1]) || 0 }));
         const count = Math.max(0, Number(message.tracks) || 0);
         update(s => ({
           ...s,
           scenes,
+          cues,
           tracks: Array.from({ length: count }, (_, i) => s.tracks[i]
-            ?? { name: '', color: 0, slots: [], playing: -1, fired: -1, startedBeat: 0, firedBeat: 0 }),
+            ?? { name: '', color: 0, midi: false, slots: [], playing: -1, fired: -1, startedBeat: 0, firedBeat: 0 }),
         }));
         scheduleRelink();
         break;
@@ -218,8 +519,8 @@ function createAbletonBridge() {
         setTrack(index, {
           name: String(message.n ?? ''),
           color: Number(message.c) || 0,
-          slots: (Array.isArray(message.slots) ? message.slots : []).map((slot: any) =>
-            Array.isArray(slot) ? { name: String(slot[0] ?? ''), color: Number(slot[1]) || 0, length: Number(slot[2]) || 4 } : null),
+          midi: !!message.midi,
+          slots: (Array.isArray(message.slots) ? message.slots : []).map(parseSlot),
           playing: Number(message.play) >= 0 ? Number(message.play) : -1,
           fired: Number(message.fired) >= 0 ? Number(message.fired) : -1,
         });
@@ -232,7 +533,9 @@ function createAbletonBridge() {
         setTrack(track, { playing: slot, fired: -1, startedBeat: read().clockBeat });
         if (slot >= 0) {
           const t = read().tracks[track];
-          fire(linksForClip(read().links, track, slot), `${t?.name || `Track ${track + 1}`} · ${t?.slots[slot]?.name || 'Clip'}`);
+          const clip = t?.slots[slot];
+          if (clip) colorValues.set(track, colorHue(clip.color));
+          fire(linksForClip(read().links, track, slot), `${t?.name || `Track ${track + 1}`} · ${clip?.name || 'Clip'}`);
         }
         break;
       }
@@ -255,6 +558,29 @@ function createAbletonBridge() {
         else launchedScenes.push(index);
         break;
       }
+      case 'devices': {
+        const track = Number(message.i);
+        if (!Number.isInteger(track)) break;
+        const devices: LiveDevice[] = (Array.isArray(message.devices) ? message.devices : []).map((d: any) => ({
+          name: String(d?.n ?? ''),
+          params: (Array.isArray(d?.p) ? d.p : []).map((p: any) => ({ name: String(p?.[0] ?? ''), value: Number(p?.[1]) || 0 })),
+        }));
+        update(s => ({ ...s, devices: { ...s.devices, [track]: devices } }));
+        relinkParams(track, devices);
+        syncWatch();
+        break;
+      }
+      case 'param':
+        paramValues.set(`${message.i}:${message.j}:${message.k}`, Math.max(0, Math.min(1, Number(message.v) || 0)));
+        break;
+      case 'lvl': {
+        const track = Number(message.i);
+        const level = Math.max(0, Number(message.v) || 0);
+        const range = levelRanges.get(track) ?? { lo: level, hi: level };
+        levelRanges.set(track, range);
+        levelValues.set(track, autoRange(range, level));
+        break;
+      }
     }
   }
 
@@ -269,6 +595,7 @@ function createAbletonBridge() {
   async function stopListener() {
     await api()?.stop();
     lastHello = 0;
+    stopConductor();
     update(s => ({ ...s, listening: false, connected: false }));
   }
 
@@ -287,7 +614,11 @@ function createAbletonBridge() {
         // A trigger that clears while another scene queues was replaced,
         // not launched.
         if (!sceneQueuedInBatch) {
-          for (const scene of launchedScenes) fire(linksForScene(read().links, scene), sceneLabel(scene));
+          for (const scene of launchedScenes) {
+            const color = read().scenes[scene]?.color;
+            if (color) colorValues.set(-1, colorHue(color));
+            fire(linksForScene(read().links, scene), sceneLabel(scene));
+          }
         }
       });
       unsubscribeStatus = bridge.onStatus((status: { listening: boolean; error: string | null }) => {
@@ -296,6 +627,7 @@ function createAbletonBridge() {
       watchdog = setInterval(() => {
         if (read().connected && performance.now() - lastHello > CONNECTION_TIMEOUT_MS) {
           update(s => ({ ...s, connected: false }));
+          stopConductor();
         }
       }, 1000);
     },
@@ -307,6 +639,7 @@ function createAbletonBridge() {
       if (watchdog) clearInterval(watchdog);
       if (relinkTimer) clearTimeout(relinkTimer);
       watchdog = relinkTimer = null;
+      stopConductor();
     },
 
     /** Turn the bridge on for this project and start listening. */
@@ -340,14 +673,14 @@ function createAbletonBridge() {
       void api()?.revealScript();
     },
 
-    /** Launch in Live. */
+    // ── Live remote ─────────────────────────────────────────────────
+
     launchScene(scene: number) {
       send({ t: 'fire_scene', s: scene });
     },
     launchClip(track: number, slot: number) {
       send({ t: 'fire_clip', i: track, s: slot });
     },
-    /** Live's transport. */
     play() {
       send({ t: read().clockBeat > 0 ? 'continue' : 'play' });
     },
@@ -360,11 +693,34 @@ function createAbletonBridge() {
     stopTrack(track: number) {
       send({ t: 'stop_track', i: track });
     },
+    /** Move Live's song position (arrangement locators). */
+    jump(beat: number) {
+      send({ t: 'jump', time: beat });
+    },
+    /** Add or remove a locator at Live's song position. */
+    toggleLocator() {
+      send({ t: 'toggle_cue' });
+    },
+    /** Add a MIDI track named "Ghost Arcade" to the Live set. */
+    createScoreTrack() {
+      send({ t: 'create_score_track' });
+    },
+    /** Ask Live for a track's devices and their parameters. */
+    requestDevices(track: number) {
+      send({ t: 'devices', i: track });
+    },
+
+    // ── Links ───────────────────────────────────────────────────────
 
     /** Run a link's visual now, as if Live had launched it. */
     preview(link: AbletonLink) {
       runAction(link.action);
       update(s => ({ ...s, fired: { ...s.fired, [link.id]: performance.now() } }));
+    },
+
+    /** Run any visual now. */
+    previewAction(action: VisualAction) {
+      runAction(action);
     },
 
     addLink(source: AbletonSource, action: VisualAction) {
@@ -377,7 +733,11 @@ function createAbletonBridge() {
       update(s => ({ ...s, links: s.links.filter(l => l.id !== id), missing: s.missing.filter(m => m !== id) }));
     },
 
-    /** Remove every link on one scene or clip. */
+    clearLinks() {
+      update(s => ({ ...s, links: [], missing: [] }));
+    },
+
+    /** Remove every link on one scene, clip or locator. */
     clearSource(source: AbletonSource) {
       update(s => ({ ...s, links: s.links.filter(l => !samePlace(l.source, source)) }));
     },
@@ -418,22 +778,82 @@ function createAbletonBridge() {
       });
     },
 
+    // ── Visual score ────────────────────────────────────────────────
+
+    setScoreTrack(name: string, on: boolean) {
+      update(s => ({
+        ...s,
+        scoreTracks: on ? [...new Set([...s.scoreTracks, name])] : s.scoreTracks.filter(n => n !== name),
+      }));
+      syncWatch();
+    },
+
+    setScoreLane(pitch: number, action: VisualAction | null) {
+      update(s => {
+        const scoreMap = { ...s.scoreMap };
+        if (action) scoreMap[pitch] = action;
+        else delete scoreMap[pitch];
+        return { ...s, scoreMap };
+      });
+    },
+
+    // ── Signals ─────────────────────────────────────────────────────
+
+    addSignal(source: SignalSource, target: SignalTarget) {
+      const link: SignalLink = { id: generateUUID(), source, target, invert: false, smooth: source.kind === 'level' ? 0.15 : 0 };
+      update(s => ({ ...s, signals: [...s.signals, link] }));
+      syncWatch();
+      return link;
+    },
+
+    updateSignal(id: string, patch: Partial<Pick<SignalLink, 'invert' | 'smooth' | 'target'>>) {
+      update(s => ({ ...s, signals: s.signals.map(l => l.id === id ? { ...l, ...patch } : l) }));
+      signalState.delete(id);
+    },
+
+    removeSignal(id: string) {
+      update(s => ({ ...s, signals: s.signals.filter(l => l.id !== id) }));
+      signalState.delete(id);
+      midiRouter.releaseInputs(`ableton:signal:${id}`);
+      syncWatch();
+    },
+
+    // ── Project ─────────────────────────────────────────────────────
+
     hydrate(raw: unknown) {
-      const saved = (raw && typeof raw === 'object' ? raw : {}) as Partial<AbletonBridgeState>;
+      const saved = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>;
       linkedCounts = null;
-      update(s => ({ ...s, enabled: !!saved.enabled, links: sanitizeLinks(saved.links), missing: [], fired: {} }));
+      const scoreMap: Record<number, VisualAction> = {};
+      for (const [pitch, action] of Object.entries(saved.scoreMap ?? {})) {
+        const clean = sanitizeAction(action);
+        if (clean && Number.isInteger(Number(pitch))) scoreMap[Number(pitch)] = clean;
+      }
+      update(s => ({
+        ...s,
+        enabled: !!saved.enabled,
+        links: sanitizeLinks(saved.links),
+        signals: sanitizeSignals(saved.signals),
+        scoreTracks: Array.isArray(saved.scoreTracks) ? saved.scoreTracks.filter((n: unknown) => typeof n === 'string') : [],
+        scoreMap,
+        missing: [],
+        fired: {},
+      }));
+      signalState.clear();
       if (read().scenes.length || read().tracks.length) scheduleRelink();
       if (saved.enabled && !read().listening) void startListener();
     },
 
     serialize() {
-      const { enabled, links } = read();
-      return { enabled, links };
+      const { enabled, links, signals, scoreTracks, scoreMap } = read();
+      return { enabled, links, signals, scoreTracks, scoreMap };
     },
 
     reset() {
       linkedCounts = null;
-      update(s => ({ ...s, enabled: false, links: [], missing: [], fired: {} }));
+      signalState.clear();
+      releaseAll();
+      update(s => ({ ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, missing: [], fired: {} }));
+      syncWatch();
     },
   };
 }

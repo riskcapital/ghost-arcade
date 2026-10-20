@@ -85,6 +85,7 @@
   import MacroKnobBar from './MacroKnobBar.svelte';
   import SnapshotBank from './SnapshotBank.svelte';
   import AbletonBridgePanel from './ableton/AbletonBridgePanel.svelte';
+  import AbletonCountdown from './ableton/AbletonCountdown.svelte';
   import { abletonBridge } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   // VJAudioBar import retained for fallback / type compatibility but the
@@ -5033,6 +5034,7 @@
           <div class="preview-layout">
             <div class="preview-container program-preview" class:native-hole={nativePreviewActive} bind:this={previewContainerEl}>
               <canvas bind:this={previewCanvas} class="preview-canvas" class:hidden-for-native={nativePreviewActive}></canvas>
+              <AbletonCountdown />
               {#if $vjClipLauncher.stageMode && !$vjClipLauncher.layerStates.some(state => state.activeClip) && !$vjClipLauncher.bankBLayerStates.some(state => state.activeClip)}
                 {#if $project.layers.some(layer => layer.type === 'screen' && layer.visible)}
                   <svg class="stage-preview-guides" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Stage screen slice boundaries">
