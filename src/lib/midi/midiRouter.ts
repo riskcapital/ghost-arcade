@@ -13,7 +13,7 @@ import { setBaseValue as setModulationBase } from '../audio/modulation';
 import type { MidiMapping, MidiMessageType } from './midiTypes';
 import { BLEND_MODE_ORDER } from '../types';
 import type { BlendMode, Effect } from '../types';
-import { resolveEffectParam } from './effectParamTarget';
+import { clampToSchema, resolveEffectParam } from './effectParamTarget';
 import { getPluginByEffectType } from '../plugins/registry';
 import { isVideoScratchPath, normalizeControlPath } from '../control/controlPaths';
 import { audioStore } from '../stores/audio';
@@ -545,7 +545,8 @@ class MidiRouter {
       if (parts[3] === 'level') vjClipLauncher.updateGroup(id, { opacity: Math.max(0, Math.min(1, value)) });
       else if (parts[3] === 'column' && value > 0 && /^\d+$/.test(parts[4] ?? '')) vjClipLauncher.triggerColumn(Number(parts[4]), bank, id);
       else if (parts[3] === 'fx') {
-        const effect = group.effects.find(effect => effect.id === parts[4]);
+        // Paths arrive lowercased; effect ids may not be.
+        const effect = group.effects.find(effect => effect.id.toLowerCase() === parts[4]);
         if (!effect) return;
         const key = parts[5];
         if (key === 'mix') vjClipLauncher.updateGroupEffect(id, effect.id, { opacity: Math.max(0, Math.min(1, value)) });
@@ -808,11 +809,16 @@ class MidiRouter {
       const resolve = (effects: Effect[]) => resolveEffectParam(effects, effectId, paramName, effectParamLabels);
       const state = get(vjClipLauncher);
       const composition = resolve(state.compositionEffects);
-      if (composition) vjClipLauncher.updateCompositionEffectParams(composition.id, { [composition.key]: value });
+      if (composition) {
+        const clamped = clampToSchema(state.compositionEffects, composition, value, effectParamLabels);
+        vjClipLauncher.updateCompositionEffectParams(composition.id, { [composition.key]: clamped });
+      }
       const layerStates = bank === 'B' ? state.bankBLayerStates : state.layerStates;
       for (let i = 0; i < layerStates.length; i++) {
         const target = resolve(layerStates[i].effects);
-        if (target) vjClipLauncher.updateLayerEffectParams(i, target.id, { [target.key]: value }, bank);
+        if (!target) continue;
+        const clamped = clampToSchema(layerStates[i].effects, target, value, effectParamLabels);
+        vjClipLauncher.updateLayerEffectParams(i, target.id, { [target.key]: clamped }, bank);
       }
       return;
     }
