@@ -55,27 +55,29 @@ static int FindDiscreteGpuAdapter() {
     ComPtr<IDXGIFactory1> factory;
     if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return 0;
 
-    int bestAdapter = 0;
+    // -1 until a discrete GPU is found: adapter 0 is itself a valid choice.
+    int bestAdapter = -1;
     ComPtr<IDXGIAdapter> adapter;
     for (UINT i = 0; factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
         DXGI_ADAPTER_DESC desc;
         adapter->GetDesc(&desc);
         char name[128];
         wcstombs(name, desc.Description, sizeof(name));
-        printf("[SpoutAddon] GPU Adapter %u: %s (VRAM: %llu MB)\n",
-            i, name, (unsigned long long)(desc.DedicatedVideoMemory / (1024*1024)));
+        printf("[SpoutAddon] GPU Adapter %u: %s (VRAM: %llu MB, LUID %08lx:%08lx)\n",
+            i, name, (unsigned long long)(desc.DedicatedVideoMemory / (1024*1024)),
+            (unsigned long)desc.AdapterLuid.HighPart, (unsigned long)desc.AdapterLuid.LowPart);
 
-        // Check for NVIDIA or AMD discrete GPU
-        if (wcsstr(desc.Description, L"NVIDIA") || wcsstr(desc.Description, L"AMD") ||
-            wcsstr(desc.Description, L"Radeon")) {
-            if (bestAdapter == 0 || i < (UINT)bestAdapter) {
-                bestAdapter = (int)i;
-                printf("[SpoutAddon]   -> Selected as discrete GPU (adapter %d)\n", bestAdapter);
-            }
+        // The first NVIDIA or AMD adapter wins.
+        if (bestAdapter < 0 &&
+            (wcsstr(desc.Description, L"NVIDIA") || wcsstr(desc.Description, L"AMD") ||
+             wcsstr(desc.Description, L"Radeon"))) {
+            bestAdapter = (int)i;
+            printf("[SpoutAddon]   -> Selected as discrete GPU (adapter %d)\n", bestAdapter);
         }
         adapter.Reset();
     }
 
+    if (bestAdapter < 0) bestAdapter = 0;
     printf("[SpoutAddon] Using GPU adapter %d for Spout\n", bestAdapter);
     return bestAdapter;
 }
@@ -292,12 +294,14 @@ private:
             sharedHandle, IID_PPV_ARGS(&sharedTexture));
 
         if (FAILED(hr)) {
+            HRESULT hr1 = hr;
             hr = m_extDevice->OpenSharedResource(
                 sharedHandle, IID_PPV_ARGS(&sharedTexture));
             if (FAILED(hr)) {
                 static int errCount = 0;
                 if (errCount++ < 5)
-                    printf("[SpoutAddon] OpenSharedResource failed: 0x%08lx\n", hr);
+                    printf("[SpoutAddon] OpenSharedResource1 failed: 0x%08lx, OpenSharedResource failed: 0x%08lx\n",
+                        hr1, hr);
                 return Napi::Boolean::New(env, false);
             }
         }
@@ -757,12 +761,14 @@ private:
         HRESULT hr = m_extDevice1->OpenSharedResource1(
             sharedHandle, IID_PPV_ARGS(&atlasTexture));
         if (FAILED(hr)) {
+            HRESULT hr1 = hr;
             hr = m_extDevice->OpenSharedResource(
                 sharedHandle, IID_PPV_ARGS(&atlasTexture));
             if (FAILED(hr)) {
                 static int errCount = 0;
                 if (errCount++ < 5)
-                    printf("[SpoutAddon] AtlasOutput: OpenSharedResource failed: 0x%08lx\n", hr);
+                    printf("[SpoutAddon] AtlasOutput: OpenSharedResource1 failed: 0x%08lx, OpenSharedResource failed: 0x%08lx\n",
+                        hr1, hr);
                 return Napi::Number::New(env, 0);
             }
         }

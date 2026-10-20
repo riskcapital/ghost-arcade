@@ -4570,6 +4570,18 @@ function startNativeOutputTextureSharePromotion(reason = 'waiting-for-native-out
   return true;
 }
 
+// Hand texture sharing back to the OSR window when the native output can't be
+// published. `retry` keeps checking whether the native output recovers.
+function fallBackToOsrTextureShare(reason, retry) {
+  const failure = isMac ? 'native-iosurface-failed' : 'native-dxgi-failed';
+  console.warn(`[${textureShareLabel} Native] falling back to OSR texture share after ${reason}`);
+  stopNativeOutputTextureSharePump(failure);
+  if (spoutSendActive && spoutOutput && !spoutOsrWindow) {
+    createSpoutOsrWindow(spoutSendW, spoutSendH);
+    if (retry) startNativeOutputTextureSharePromotion(failure);
+  }
+}
+
 function startNativeOutputTextureSharePump(initialTexture = null) {
   stopNativeOutputTextureSharePromotion();
   stopNativeOutputTextureSharePump();
@@ -4601,12 +4613,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
           console.warn(`[${textureShareLabel} Native] output shared texture unavailable:`, JSON.stringify(texture));
         }
         if (nativeOutputTextureShareFailCount >= 10) {
-          console.warn(`[${textureShareLabel} Native] falling back to OSR texture share after repeated native output failures`);
-          stopNativeOutputTextureSharePump(isMac ? 'native-iosurface-failed' : 'native-dxgi-failed');
-          if (spoutSendActive && spoutOutput && !spoutOsrWindow) {
-            createSpoutOsrWindow(spoutSendW, spoutSendH);
-            startNativeOutputTextureSharePromotion(isMac ? 'native-iosurface-failed' : 'native-dxgi-failed');
-          }
+          fallBackToOsrTextureShare('repeated native output failures', true);
         }
         return;
       }
@@ -4666,6 +4673,12 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
         nativeOutputTextureShareFailCount++;
         if (nativeOutputTextureShareFailCount <= 5) {
           console.warn(`[${textureShareLabel} Native] ${method} returned false for ${width}x${height}`);
+        }
+        // The texture exists but the addon can't send it (for example, it
+        // opened on a different GPU adapter). Retrying the promotion would
+        // fail the same way, so stay on the OSR path.
+        if (nativeOutputTextureShareFailCount >= 10) {
+          fallBackToOsrTextureShare(`${method} failing`, false);
         }
         return;
       }
