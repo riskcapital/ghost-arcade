@@ -44,6 +44,10 @@ class GhostArcade(ControlSurface):
         self._open_socket()
         self._song.add_tracks_listener(self._structure_changed)
         self._song.add_scenes_listener(self._structure_changed)
+        # Transport and tempo changes go out at once so Ghost Arcade's
+        # song position never runs on a stale tempo.
+        self._song.add_is_playing_listener(self._send_hello)
+        self._song.add_tempo_listener(self._send_hello)
         self._notify("Ghost Arcade connected")
 
     # Live lifecycle
@@ -54,6 +58,8 @@ class GhostArcade(ControlSurface):
         for remove, callback in (
             (self._song.remove_tracks_listener, self._structure_changed),
             (self._song.remove_scenes_listener, self._structure_changed),
+            (self._song.remove_is_playing_listener, self._send_hello),
+            (self._song.remove_tempo_listener, self._send_hello),
         ):
             try:
                 remove(callback)
@@ -130,6 +136,17 @@ class GhostArcade(ControlSurface):
                 tracks[track].clip_slots[slot].fire()
         elif kind == "stop_all":
             self._song.stop_all_clips()
+        elif kind == "play":
+            self._song.start_playing()
+        elif kind == "continue":
+            self._song.continue_playing()
+        elif kind == "stop":
+            self._song.stop_playing()
+        elif kind == "stop_track":
+            tracks = self._song.tracks
+            track = int(message.get("i", -1))
+            if 0 <= track < len(tracks):
+                tracks[track].stop_all_clips()
 
     # State
 
@@ -152,7 +169,7 @@ class GhostArcade(ControlSurface):
         for slot in track.clip_slots:
             if slot.has_clip:
                 clip = slot.clip
-                slots.append([_name(clip.name), clip.color])
+                slots.append([_name(clip.name), clip.color, clip.length])
             else:
                 slots.append(None)
         return {"n": _name(track.name), "c": track.color, "slots": slots}

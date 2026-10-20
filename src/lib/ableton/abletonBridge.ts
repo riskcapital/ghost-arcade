@@ -65,7 +65,18 @@ export interface AbletonBridgeState {
   missing: string[];
   /** Last time each link fired (performance.now()), for the UI flash. */
   fired: Record<string, number>;
+  /** Live's song position (beats) at `clockAt` (performance.now()). */
+  clockBeat: number;
+  clockAt: number;
+  /** Recent launches, newest first, for the activity strip. */
+  activity: { text: string; at: number }[];
   script: ScriptStatus | null;
+}
+
+/** Live's song position now, run forward from the last report. */
+export function songBeat(state: AbletonBridgeState, now = performance.now()): number {
+  if (!state.playing) return state.clockBeat;
+  return state.clockBeat + ((now - state.clockAt) / 1000) * (state.tempo / 60);
 }
 
 const INITIAL: AbletonBridgeState = {
@@ -83,8 +94,13 @@ const INITIAL: AbletonBridgeState = {
   tracks: [],
   missing: [],
   fired: {},
+  clockBeat: 0,
+  clockAt: 0,
+  activity: [],
   script: null,
 };
+
+const ACTIVITY_LENGTH = 8;
 
 type LiveMessage = Record<string, any> & { t: string };
 
@@ -116,13 +132,21 @@ function createAbletonBridge() {
     else snapshots.recall(action.slot);
   }
 
-  function fire(links: AbletonLink[]) {
+  function fire(links: AbletonLink[], label: string) {
     const { missing } = read();
     const live = links.filter(link => !missing.includes(link.id));
     if (!live.length) return;
     for (const link of live) runAction(link.action);
     const now = performance.now();
-    update(s => ({ ...s, fired: { ...s.fired, ...Object.fromEntries(live.map(l => [l.id, now])) } }));
+    update(s => ({
+      ...s,
+      fired: { ...s.fired, ...Object.fromEntries(live.map(l => [l.id, now])) },
+      activity: [{ text: label, at: now }, ...s.activity].slice(0, ACTIVITY_LENGTH),
+    }));
+  }
+
+  function sceneLabel(index: number) {
+    return read().scenes[index]?.name || `Scene ${index + 1}`;
   }
 
   function scheduleRelink() {
@@ -148,6 +172,10 @@ function createAbletonBridge() {
   }
 
   function handle(message: LiveMessage) {
+    if (typeof message.beat === 'number' && Number.isFinite(message.beat)) {
+      const beat = message.beat;
+      update(s => ({ ...s, clockBeat: beat, clockAt: performance.now() }));
+    }
     switch (message.t) {
       case 'hello': {
         const wasConnected = read().connected;
@@ -178,7 +206,8 @@ function createAbletonBridge() {
         update(s => ({
           ...s,
           scenes,
-          tracks: Array.from({ length: count }, (_, i) => s.tracks[i] ?? { name: '', color: 0, slots: [], playing: -1, fired: -1 }),
+          tracks: Array.from({ length: count }, (_, i) => s.tracks[i]
+            ?? { name: '', color: 0, slots: [], playing: -1, fired: -1, startedBeat: 0, firedBeat: 0 }),
         }));
         scheduleRelink();
         break;
@@ -190,7 +219,7 @@ function createAbletonBridge() {
           name: String(message.n ?? ''),
           color: Number(message.c) || 0,
           slots: (Array.isArray(message.slots) ? message.slots : []).map((slot: any) =>
-            Array.isArray(slot) ? { name: String(slot[0] ?? ''), color: Number(slot[1]) || 0 } : null),
+            Array.isArray(slot) ? { name: String(slot[0] ?? ''), color: Number(slot[1]) || 0, length: Number(slot[2]) || 4 } : null),
           playing: Number(message.play) >= 0 ? Number(message.play) : -1,
           fired: Number(message.fired) >= 0 ? Number(message.fired) : -1,
         });
@@ -200,12 +229,15 @@ function createAbletonBridge() {
       case 'play': {
         const track = Number(message.i);
         const slot = Number(message.s) >= 0 ? Number(message.s) : -1;
-        setTrack(track, { playing: slot, fired: -1 });
-        if (slot >= 0) fire(linksForClip(read().links, track, slot));
+        setTrack(track, { playing: slot, fired: -1, startedBeat: read().clockBeat });
+        if (slot >= 0) {
+          const t = read().tracks[track];
+          fire(linksForClip(read().links, track, slot), `${t?.name || `Track ${track + 1}`} · ${t?.slots[slot]?.name || 'Clip'}`);
+        }
         break;
       }
       case 'fired': {
-        setTrack(Number(message.i), { fired: Number(message.s) >= 0 ? Number(message.s) : -1 });
+        setTrack(Number(message.i), { fired: Number(message.s) >= 0 ? Number(message.s) : -1, firedBeat: read().clockBeat });
         break;
       }
       case 'scene': {
@@ -255,7 +287,7 @@ function createAbletonBridge() {
         // A trigger that clears while another scene queues was replaced,
         // not launched.
         if (!sceneQueuedInBatch) {
-          for (const scene of launchedScenes) fire(linksForScene(read().links, scene));
+          for (const scene of launchedScenes) fire(linksForScene(read().links, scene), sceneLabel(scene));
         }
       });
       unsubscribeStatus = bridge.onStatus((status: { listening: boolean; error: string | null }) => {
@@ -315,6 +347,19 @@ function createAbletonBridge() {
     launchClip(track: number, slot: number) {
       send({ t: 'fire_clip', i: track, s: slot });
     },
+    /** Live's transport. */
+    play() {
+      send({ t: read().clockBeat > 0 ? 'continue' : 'play' });
+    },
+    stop() {
+      send({ t: 'stop' });
+    },
+    stopAllClips() {
+      send({ t: 'stop_all' });
+    },
+    stopTrack(track: number) {
+      send({ t: 'stop_track', i: track });
+    },
 
     /** Run a link's visual now, as if Live had launched it. */
     preview(link: AbletonLink) {
@@ -349,6 +394,26 @@ function createAbletonBridge() {
           source: { kind: 'scene', scene, name: s.scenes[scene].name },
           action: { kind: 'column', deck, column: scene },
         }));
+        return { ...s, links: [...kept, ...added] };
+      });
+    },
+
+    /** Mirror the Live grid onto deck `deck`: track N clip M launches VJ
+     *  layer N column M, wherever both exist. Replaces those clips' links. */
+    linkTracksToLayers(deck: 'A' | 'B' = 'A') {
+      const launcher = get(vjClipLauncher);
+      const grid = deck === 'B' ? launcher.bankBClipGrid : launcher.clipGrid;
+      update(s => {
+        const added: AbletonLink[] = [];
+        s.tracks.forEach((track, t) => track.slots.forEach((clip, slot) => {
+          if (!clip || !grid[t]?.[slot]) return;
+          added.push({
+            id: generateUUID(),
+            source: { kind: 'clip', track: t, slot, trackName: track.name, name: clip.name },
+            action: { kind: 'clip', deck, layer: t, column: slot },
+          });
+        }));
+        const kept = s.links.filter(l => !added.some(a => samePlace(a.source, l.source)));
         return { ...s, links: [...kept, ...added] };
       });
     },

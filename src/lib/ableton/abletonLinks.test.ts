@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { liveColor, matchByName, positionFallback, relink, resolveSource, sanitizeLinks, type AbletonLink, type LiveScene, type LiveTrack } from './abletonLinks';
+import { barBeat, launchBeat, liveColor, matchByName, positionFallback, quantizeBeats, relink, resolveSource, sanitizeLinks, type AbletonLink, type LiveScene, type LiveTrack } from './abletonLinks';
 
 const scene = (name: string): LiveScene => ({ name, color: 0, queued: false });
 const track = (name: string, clips: (string | null)[]): LiveTrack => ({
-  name, color: 0, playing: -1, fired: -1, slots: clips.map(c => (c === null ? null : { name: c, color: 0 })),
+  name, color: 0, playing: -1, fired: -1, startedBeat: 0, firedBeat: 0,
+  slots: clips.map(c => (c === null ? null : { name: c, color: 0, length: 16 })),
 });
 
 describe('matchByName', () => {
@@ -65,6 +66,22 @@ describe('sanitizeLinks', () => {
       null,
     ]);
     expect(links).toEqual([{ id: 'a', source: { kind: 'scene', scene: 0, name: 'Intro' }, action: { kind: 'column', deck: 'A', column: 2 } }]);
+  });
+});
+
+describe('song position', () => {
+  it('finds the beat a queued launch lands on', () => {
+    const bar = quantizeBeats(4, 4, 4);
+    expect(bar).toBe(4);
+    expect(launchBeat(6.1, bar)).toBe(8);
+    expect(launchBeat(8, bar)).toBe(8);
+    expect(launchBeat(5, quantizeBeats(0, 4, 4))).toBe(5);
+    expect(quantizeBeats(2, 3, 4)).toBe(12);
+  });
+  it('shows bar and beat like Live', () => {
+    expect(barBeat(0, 4, 4)).toBe('1.1');
+    expect(barBeat(15.9, 4, 4)).toBe('4.4');
+    expect(barBeat(6, 6, 8)).toBe('3.1');
   });
 });
 

@@ -11,7 +11,7 @@
 
 import type { VJDeck } from '../stores/vjClipLauncher';
 
-export interface LiveClip { name: string; color: number }
+export interface LiveClip { name: string; color: number; /** Loop length, beats. */ length: number }
 export interface LiveTrack {
   name: string;
   color: number;
@@ -20,6 +20,10 @@ export interface LiveTrack {
   playing: number;
   /** Slot index queued to launch, or -1. */
   fired: number;
+  /** Song position (beats) when the playing clip started. */
+  startedBeat: number;
+  /** Song position (beats) when the queued clip was fired. */
+  firedBeat: number;
 }
 export interface LiveScene { name: string; color: number; queued: boolean }
 
@@ -133,6 +137,28 @@ export function linksForClip(links: AbletonLink[], track: number, slot: number):
 /** Live's colours arrive as 0xRRGGBB integers. */
 export function liveColor(color: number): string {
   return `#${(Math.max(0, color | 0) & 0xffffff).toString(16).padStart(6, '0')}`;
+}
+
+/** Beats in one step of Live's launch quantization (0 for None). */
+export function quantizeBeats(index: number, numerator: number, denominator: number): number {
+  const bar = numerator * (4 / denominator);
+  const steps = [0, 8 * bar, 4 * bar, 2 * bar, bar, 2, 4 / 3, 1, 2 / 3, 0.5, 1 / 3, 0.25, 1 / 6, 0.125];
+  return steps[index] ?? 0;
+}
+
+/** Song position where something fired at `firedBeat` will launch. */
+export function launchBeat(firedBeat: number, step: number): number {
+  if (step <= 0) return firedBeat;
+  return Math.ceil(firedBeat / step - 1e-6) * step;
+}
+
+/** "Bar.beat" for a song position, 1-based like Live's display. */
+export function barBeat(beat: number, numerator: number, denominator: number): string {
+  const perBar = numerator * (4 / denominator);
+  const position = Math.max(0, beat);
+  const bar = Math.floor(position / perBar) + 1;
+  const inBar = Math.floor((position % perBar) / (4 / denominator)) + 1;
+  return `${bar}.${inBar}`;
 }
 
 /** Live's global launch quantization, by its enum index. */
