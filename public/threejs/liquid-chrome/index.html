@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Liquid Chrome · Ghost Arcade p5.js shader</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { overflow: hidden; background: #000; }
+    canvas { display: block; }
+  </style>
+  <!-- Ghost Arcade loads its own copy of p5.js; this tag lets the file
+       run on its own in any browser too. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.0/p5.min.js"></script>
+</head>
+<body>
+  <script>
+    // Liquid Chrome: A slow molten mirror with oil-slick iridescence, lit by sweeping studio lights. Highs make it shimmer.
+    // One fullscreen fragment shader driven by p5.js (WEBGL). Sliders come
+    // from window.shaderParams; audio from window.ghostAudio. Ghost Arcade Pro
+    // runs the shader natively: its uniforms share the sliders' names, and
+    // the audio uniforms use Ghost Arcade's audio names.
+    window.shaderParams = {
+      speed: 1.0, // min: 0 max: 3
+      scale: 1.0, // min: 0.3 max: 3
+      depth: 1.0, // min: 0.2 max: 3
+      iridescence: 0.7, // min: 0 max: 1.5
+      hue: 0.0, // min: 0 max: 1
+      react: 0.6, // min: 0 max: 2
+    };
+
+    window.shaderParamDefs = [
+      { name: 'speed', label: 'Speed', type: 'number', min: 0, max: 3, default: 1.0 },
+      { name: 'scale', label: 'Scale', type: 'number', min: 0.3, max: 3, default: 1.0 },
+      { name: 'depth', label: 'Surface Depth', type: 'number', min: 0.2, max: 3, default: 1.0 },
+      { name: 'iridescence', label: 'Iridescence', type: 'number', min: 0, max: 1.5, default: 0.7 },
+      { name: 'hue', label: 'Hue Shift', type: 'number', min: 0, max: 1, default: 0.0 },
+      { name: 'react', label: 'Audio Reactivity', type: 'number', min: 0, max: 2, default: 0.6 },
+    ];
+
+    const vert = `
+attribute vec3 aPosition;
+void main() {
+  vec4 position = vec4(aPosition, 1.0);
+  position.xy = position.xy * 2.0 - 1.0;
+  gl_Position = position;
+}`;
+
+    const frag = `
+precision highp float;
+uniform vec2 resolution;
+uniform float time;
+uniform float scale;
+uniform float depth;
+uniform float iridescence;
+uniform float hue;
+uniform float react;
+uniform float audioLevel;
+uniform float audioBass;
+uniform float audioMid;
+uniform float audioHigh;
+uniform float audioBeat;
+
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.17));
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = hash21(i);
+  float b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0));
+  float d = hash21(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
+  for (int i = 0; i < 5; i++) {
+    v += a * vnoise(p);
+    p = m * p;
+    a *= 0.5;
+  }
+  return v;
+}
+vec3 palette(float t) {
+  return 0.5 + 0.5 * cos(6.2831853 * (t + vec3(0.0, 0.33, 0.67)));
+}
+vec3 hueRotate(vec3 c, float h) {
+  vec3 k = vec3(0.57735);
+  float a = h * 6.2831853;
+  float ca = cos(a);
+  return c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca);
+}
+vec3 tonemap(vec3 c) {
+  c = max(c, 0.0);
+  return c / (1.0 + c * 0.6);
+}
+
+float smoothNoise(vec2 p) {
+  float v = 0.0;
+  float a = 0.55;
+  mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
+  for (int i = 0; i < 3; i++) {
+    v += a * vnoise(p);
+    p = m * p;
+    a *= 0.45;
+  }
+  return v;
+}
+float height(vec2 p) {
+  float t = time * 0.12;
+  vec2 w = vec2(smoothNoise(p * 0.7 + t), smoothNoise(p * 0.7 - t + 3.1));
+  return smoothNoise(p + 1.6 * w + vec2(t * 0.5, -t * 0.3));
+}
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * resolution) / resolution.y;
+  vec2 p = uv * scale * 1.3;
+  float e = 0.035;
+  float h = height(p);
+  float hx = height(p + vec2(e, 0.0));
+  float hy = height(p + vec2(0.0, e));
+  float amp = depth * (1.0 + react * 0.5 * audioBass) * 9.0;
+  vec3 n = normalize(vec3((h - hx) * amp, (h - hy) * amp, 1.0));
+  vec3 r = reflect(vec3(0.0, 0.0, -1.0), n);
+  float sweep = time * 0.35;
+  float key = pow(max(0.0, 1.0 - abs(r.x * 1.6 - sin(sweep) * 0.9)), 5.0);
+  float rim = pow(max(0.0, 1.0 - abs(r.y * 1.8 + cos(sweep * 0.7) * 0.8)), 7.0);
+  vec3 env = mix(vec3(0.015, 0.018, 0.03), vec3(0.32, 0.36, 0.45), 0.5 + 0.5 * r.y);
+  env += vec3(1.0, 0.97, 0.92) * key * (1.3 + react * 1.4 * audioHigh);
+  env += vec3(0.6, 0.8, 1.0) * rim * 0.9;
+  float fres = pow(1.0 - max(n.z, 0.0), 1.5);
+  vec3 film = hueRotate(palette(h * 2.2 + fres * 1.5 + time * 0.02), hue);
+  vec3 col = env * mix(vec3(1.0), film * 1.6, iridescence * (0.3 + fres));
+  col += film * fres * iridescence * 0.35;
+  col *= smoothstep(1.7, 0.5, length(uv));
+  gl_FragColor = vec4(tonemap(col * 1.25), 1.0);
+}
+`;
+
+    let ghostShader;
+    let shaderTime = 0;
+
+    function num(value, fallback) {
+      return typeof value === 'number' && isFinite(value) ? value : fallback;
+    }
+
+    function setup() {
+      pixelDensity(1);
+      createCanvas(windowWidth, windowHeight, WEBGL);
+      noStroke();
+      ghostShader = createShader(vert, frag);
+    }
+
+    function draw() {
+      const p = window.shaderParams || {};
+      const a = window.ghostAudio || {};
+      // Speed scales the clock rather than the shader, so changing it never jumps.
+      shaderTime += Math.min(deltaTime, 100) / 1000 * num(p.speed, 1.0);
+      shader(ghostShader);
+      ghostShader.setUniform('resolution', [width, height]);
+      ghostShader.setUniform('time', shaderTime);
+      ghostShader.setUniform('scale', num(p.scale, 1.0));
+      ghostShader.setUniform('depth', num(p.depth, 1.0));
+      ghostShader.setUniform('iridescence', num(p.iridescence, 0.7));
+      ghostShader.setUniform('hue', num(p.hue, 0.0));
+      ghostShader.setUniform('react', num(p.react, 0.6));
+      ghostShader.setUniform('audioLevel', num(a.level, 0));
+      ghostShader.setUniform('audioBass', num(a.bass, 0));
+      ghostShader.setUniform('audioMid', num(a.mid, 0));
+      ghostShader.setUniform('audioHigh', num(a.high !== undefined ? a.high : a.treble, 0));
+      ghostShader.setUniform('audioBeat', num(a.beat, 0));
+      rect(0, 0, width, height);
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+  </script>
+</body>
+</html>
