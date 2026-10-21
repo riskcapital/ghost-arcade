@@ -107,7 +107,7 @@
                 <button class="launch" onclick={(e) => { e.stopPropagation(); abletonBridge.launchClip(i, song.slot); }} title="Cue in Live — lands on the bar" aria-label="Cue {song.title}">
                   <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>
                 </button>
-                <span class="title">{song.title}{#if song.bpm}<small>{song.bpm}</small>{/if}</span>
+                <span class="title" translate="no">{song.title}{#if song.bpm}<small>{song.bpm}</small>{/if}</span>
                 {#if waiting >= 0 && countdown(bridge, i, beat)}<span class="countdown">{countdown(bridge, i, beat)}</span>{/if}
                 {#if on >= 0}<span class="badge">{onAir === side || onAir === 'AB' ? 'ON AIR' : 'PLAYING'}</span>{/if}
                 <span class="vis" title={links[0] ? actionLabel(ctx, links[0].action) : 'No visual linked'}>
@@ -123,7 +123,7 @@
                       class:waiting={waiting === n}
                       onclick={(e) => { e.stopPropagation(); abletonBridge.playSection(song, n); }}
                       title="Play {section.label}; it loops until the next"
-                    >{section.label}</button>
+                    ><span translate="no">{section.label}</span></button>
                   {/each}
                 </div>
               {/if}

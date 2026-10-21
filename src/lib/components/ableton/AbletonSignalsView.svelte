@@ -109,7 +109,7 @@
       <label>
         <span>{kind === 'color' ? 'From' : 'Track'}</span>
         <select bind:value={track} onchange={() => { device = 0; param = 0; }}>
-          {#each tracks as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
+          {#each tracks as t (t.index)}<option value={t.index} translate="no">{t.name}</option>{/each}
         </select>
       </label>
       {#if kind === 'param'}
@@ -117,13 +117,13 @@
           <span>Device</span>
           <select bind:value={device} onchange={() => (param = 0)} disabled={!devices?.length}>
             {#if devices === null}<option>Loading…</option>{:else if !devices.length}<option>No devices</option>{/if}
-            {#each devices ?? [] as d, i}<option value={i}>{d.name}</option>{/each}
+            {#each devices ?? [] as d, i}<option value={i} translate="no">{d.name}</option>{/each}
           </select>
         </label>
         <label>
           <span>Knob</span>
           <select bind:value={param} disabled={!params.length}>
-            {#each params as p, i}<option value={i}>{p.name}</option>{/each}
+            {#each params as p, i}<option value={i} translate="no">{p.name}</option>{/each}
           </select>
         </label>
       {/if}

@@ -93,7 +93,7 @@
           ondrop={(e) => drop(e, index)}
           title="{cue.name || 'Locator'} at {barBeat(cue.time, bridge.numerator, bridge.denominator)}"
         >
-          <span class="flag">{cue.name || `Locator ${index + 1}`}</span>
+          <span class="flag" translate={cue.name ? 'no' : 'yes'}>{cue.name || `Locator ${index + 1}`}</span>
           <span class="visuals">
             {#each links.slice(0, 3) as l (l.id)}
               {@const thumb = actionThumb(ctx, l.action)}

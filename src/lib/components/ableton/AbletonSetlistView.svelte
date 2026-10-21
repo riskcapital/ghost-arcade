@@ -205,7 +205,7 @@
         <span class="label">Now playing</span>
         <div class="modes" role="radiogroup" aria-label="Play mode">
           {#each MODES as mode (mode.id)}
-            <button role="radio" aria-checked={bridge.playMode === mode.id} class:active={bridge.playMode === mode.id} onclick={() => abletonBridge.setPlayMode(mode.id)} title={mode.hint}>{mode.label}</button>
+            <button role="radio" aria-checked={bridge.playMode === mode.id} class:active={bridge.playMode === mode.id} onclick={() => abletonBridge.setPlayMode(mode.id)} title={mode.hint}><span translate={mode.id === 'live' ? 'no' : 'yes'}>{mode.label}</span></button>
           {/each}
         </div>
         {#if bridge.playMode !== 'live'}
@@ -213,7 +213,7 @@
         {/if}
       </div>
       {#if current}
-        <span class="title" style="--live: {liveColor(current.color)}">{current.title}</span>
+        <span class="title" translate="no" style="--live: {liveColor(current.color)}">{current.title}</span>
         <span class="meta">
           {#if current.kind === 'clip' && current.side}<b>Deck {current.side}</b>{/if}
           {#if current.bpm}{current.bpm} BPM{/if}
@@ -234,7 +234,7 @@
                   onclick={() => current && abletonBridge.playSection(current, i)}
                   title={on === i ? `${section.label} is playing` : `Go to ${section.label}, landing on Live's launch quantization`}
                 >
-                  <span class="pad-label">{section.label}</span>
+                  <span class="pad-label" translate="no">{section.label}</span>
                   {#if waiting === i && cueCountdown(bridge, current, beat)}<span class="pad-count">{cueCountdown(bridge, current, beat)}</span>{/if}
                   {#if on === i}<span class="pad-loop" style="transform: scaleX({bridge.playMode === 'live' ? loopAt(bridge, current, i, beat) : planAt(bridge, current, i, beat)})"></span>{/if}
                 </button>
@@ -265,10 +265,10 @@
     <div class="next">
       <span class="label">{cued ? 'Cued' : 'Up next'}</span>
       {#if cued}
-        <span class="title">{cued.title}</span>
+        <span class="title" translate="no">{cued.title}</span>
         {#if cueCountdown(bridge, cued, beat)}<span class="countdown">{cueCountdown(bridge, cued, beat)}</span>{/if}
       {:else if upNext}
-        <span class="title">{upNext.title}</span>
+        <span class="title" translate="no">{upNext.title}</span>
       {:else}
         <span class="title idle">End of set</span>
       {/if}
@@ -334,7 +334,7 @@
           <svg width="11" height="11" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>
         </button>
         <span class="name">
-          <span class="song-title">{song.title}</span>
+          <span class="song-title" translate="no">{song.title}</span>
           {#if song.sections.length > 1}
             {@const on = playingSection(song, bridge.tracks)}
             {@const waiting = queuedSection(song, bridge.tracks, bridge.scenes)}
@@ -346,7 +346,7 @@
                   class:waiting={waiting === i}
                   onclick={(e) => { e.stopPropagation(); abletonBridge.playSection(song, i); }}
                   title="Play {section.label}"
-                >{section.label}</button>
+                ><span translate="no">{section.label}</span></button>
               {/each}
             </span>
           {/if}

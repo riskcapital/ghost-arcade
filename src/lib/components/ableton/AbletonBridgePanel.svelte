@@ -483,7 +483,7 @@
               </div>
               {#each bridge.tracks as track, t}
                 <div class="track-head" style="--live: {liveColor(track.color)}">
-                  <span class="track-name" title={track.name}>{track.name || `Track ${t + 1}`}</span>
+                  <span class="track-name" translate="no" title={track.name}>{track.name || `Track ${t + 1}`}</span>
                   <button class="tp small" onclick={() => abletonBridge.stopTrack(t)} title="Stop {track.name}" aria-label="Stop {track.name}">
                     <svg width="8" height="8" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" fill="currentColor"/></svg>
                   </button>
@@ -512,7 +512,7 @@
                   <button class="launch" onclick={(e) => { e.stopPropagation(); abletonBridge.launchScene(s); }} title="Launch scene in Live" aria-label="Launch scene in Live">
                     <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>
                   </button>
-                  <span class="name">{scene.name || `Scene ${s + 1}`}</span>
+                  <span class="name" translate={scene.name ? 'no' : 'yes'}>{scene.name || `Scene ${s + 1}`}</span>
                   {#if scene.queued && countdown(firing?.firedBeat ?? beat, beat)}
                     <span class="countdown">{countdown(firing?.firedBeat ?? beat, beat)}</span>
                   {/if}
@@ -555,7 +555,7 @@
                       <button class="launch" onclick={(e) => { e.stopPropagation(); abletonBridge.launchClip(t, s); }} title="Launch clip in Live" aria-label="Launch clip in Live">
                         <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>
                       </button>
-                      <span class="name">{clip.name || 'Clip'}</span>
+                      <span class="name" translate={clip.name ? 'no' : 'yes'}>{clip.name || 'Clip'}</span>
                       {#if queued && countdown(track.firedBeat, beat)}
                         <span class="countdown">{countdown(track.firedBeat, beat)}</span>
                       {/if}
