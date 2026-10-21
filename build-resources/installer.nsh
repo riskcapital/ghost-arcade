@@ -24,7 +24,7 @@
       ; A full uninstall (no --updated or --keep-shortcuts, which are for an
       ; in-place upgrade), so the old shortcuts go too. App data is kept.
       ExecWait '$R4 /S /KEEP_APP_DATA _?=$R3' $R5
-      ${ifNot} ${errors}
+      ${ifNot} ${Errors}
         ; Run in place (_?=), the uninstaller cannot delete itself.
         Delete "$R3\Uninstall Ghost Arcade.exe"
         RMDir "$R3"
@@ -35,9 +35,9 @@
 
 !macro customInstall
   !insertmacro removeOldGhostArcade2 HKCU
-  UserInfo::GetAccountType
-  Pop $R6
-  ${if} $R6 == "Admin"
+  ; An install for all users runs elevated, so it can also remove an old
+  ; all-users copy.
+  ${if} $installMode == "all"
     !insertmacro removeOldGhostArcade2 HKLM
   ${endIf}
 !macroend

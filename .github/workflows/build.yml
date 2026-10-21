@@ -39,7 +39,7 @@ jobs:
             if [ -f "$NOTES_FILE" ]; then
               gh release edit "${{ github.ref_name }}" \
                 --repo riskcapital/ghost-arcade-releases \
-                --title "Ghost Arcade ${{ github.ref_name }}" \
+                --title "Ghost Arcade Pro ${GITHUB_REF_NAME#v}" \
                 --notes-file "$NOTES_FILE"
               echo "Release ${{ github.ref_name }} notes refreshed from $NOTES_FILE"
             fi
@@ -50,7 +50,7 @@ jobs:
             fi
             gh release create "${{ github.ref_name }}" \
               --repo riskcapital/ghost-arcade-releases \
-              --title "Ghost Arcade ${{ github.ref_name }}" \
+              --title "Ghost Arcade Pro ${GITHUB_REF_NAME#v}" \
               "${NOTES_ARGS[@]}" \
               --target main
             echo "Release ${{ github.ref_name }} created"

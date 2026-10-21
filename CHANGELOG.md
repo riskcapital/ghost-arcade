@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.3 — October 21, 2026
+
+The 2.x line is now Ghost Arcade Pro and installs beside Ghost Arcade Studio, carrying your settings over; a bridge to Ableton Live links scenes, clips and locators to visuals, with a setlist, autoplay, linked two-deck crossfaders, a score track and signals; Spout and deck monitor fixes on Windows; a deck bar that fills its row. See [release notes](docs/releases/v2.1.3.md).
+
 # Ghost Arcade 2.1.2 — October 20, 2026
 
 Spout output reaches receivers on Windows PCs that list the same graphics card more than once, and falls back to window sharing instead of staying silent. See [release notes](docs/releases/v2.1.2.md).
