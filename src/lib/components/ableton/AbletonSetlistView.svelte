@@ -31,7 +31,7 @@
   $: played = new Set(bridge.played);
   $: perBar = bridge.numerator * (4 / bridge.denominator);
   $: step = quantizeBeats(bridge.quantize, bridge.numerator, bridge.denominator);
-  $: current = songs.find(s => s.key === bridge.currentSong && isPlaying(bridge, s)) ?? null;
+  $: current = nowPlaying(bridge, songs, $abletonCrossfader);
   $: upNext = nextSong(songs, bridge.currentSong, played);
   $: cued = songs.find(s => isCued(bridge, s)) ?? null;
   $: mixProgress = bridge.mix ? Math.max(0, Math.min(1, (beat - bridge.mix.startBeat) / Math.max(0.001, bridge.mix.beats))) : 0;
@@ -39,6 +39,18 @@
   // Helpers take the state they read, so the template re-renders with it.
   function isPlaying(state: AbletonBridgeState, song: SetlistSong): boolean {
     return playingSection(song, state.tracks) >= 0;
+  }
+
+  /** The song on air: the last one launched while it plays; otherwise
+   *  (songs started before Ghost Arcade was watching) the playing song on
+   *  the side the crossfader favours, or any playing song. */
+  function nowPlaying(state: AbletonBridgeState, list: SetlistSong[], fader: number): SetlistSong | null {
+    const playing = list.filter(s => isPlaying(state, s));
+    const side = fader < 0.5 ? 'A' : 'B';
+    return playing.find(s => s.key === state.currentSong)
+      ?? playing.find(s => s.kind === 'clip' && s.side === side)
+      ?? playing[0]
+      ?? null;
   }
 
   /** Waiting to start: a section is queued and the song isn't playing yet. */
