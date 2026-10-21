@@ -34,12 +34,12 @@ import os from 'os';
 import { randomUUID } from 'crypto';
 import { safeStorage } from 'electron';
 
-// The app is called Ghost Arcade Studio now, and Electron would name its data
-// folder after that. Keep the folder every earlier version used, so settings,
-// the autosave, pairing and project media are all still there after updating.
-// A test run that passes --user-data-dir keeps its own profile.
+// Studio keeps its data where every earlier version did, "ghost-arcade"
+// (electron/user-data-folder.cjs). A test run that passes --user-data-dir keeps
+// its own profile.
 if (app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
-  app.setPath('userData', path.join(app.getPath('appData'), 'Ghost Arcade'));
+  const { studioUserDataFolder } = require('./user-data-folder.cjs');
+  app.setPath('userData', studioUserDataFolder(app.getPath('appData')));
 }
 
 // Start-at-boot / show mode (electron/show-startup.cjs). The session query is
@@ -6071,7 +6071,7 @@ app.whenReady().then(async () => {
   // Create window after server is ready
   createMainWindow();
 
-  // macOS: the old "Ghost Arcade.app" stays beside the renamed app after a
+  // macOS: the old "Ghost-Arcade.app" stays beside the renamed app after a
   // drag install. Offer once to move it to the Trash, never during a show.
   if (app.isPackaged && process.platform === 'darwin') {
     setTimeout(() => {
