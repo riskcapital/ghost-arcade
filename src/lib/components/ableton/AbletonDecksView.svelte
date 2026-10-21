@@ -76,8 +76,8 @@
     {#each SIDES as side, sideIndex (side)}
       {#if sideIndex === 1}
         <div class="fader">
-          <AbletonCrossfader value={$abletonCrossfader} linked={bridge.deckMode} onChange={(v) => abletonBridge.setCrossfader(v)} />
-          {#if !bridge.deckMode}<small>Turn on Link decks to mix the visuals too</small>{/if}
+          <AbletonCrossfader value={$abletonCrossfader} linked={bridge.deckMode} onChange={(v) => abletonBridge.setCrossfader(v)} onToggleLink={(on) => abletonBridge.setDeckMode(on)} />
+          {#if !bridge.deckMode}<small>Only the audio moves. Link to mix the visuals too</small>{/if}
         </div>
       {/if}
       <section class="deck" class:on-air={onAir === side || onAir === 'AB'}>

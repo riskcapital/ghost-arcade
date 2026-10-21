@@ -73,6 +73,7 @@
   let drill: { track: number; slot: number } | null = null;
   let laneTrack: number | null = null;
   let scrambleOpen = false;
+  let mapEl: HTMLDivElement | undefined;
   const SCRAMBLE_TARGETS: { id: ScrambleTarget; label: string }[] = [
     { id: 'shader', label: 'Shader' },
     { id: 'fx', label: 'FX' },
@@ -308,6 +309,15 @@
     return s < 2 ? 'now' : s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
   }
 
+  /** The Scramble and Auto-map menus close on a click anywhere else. */
+  function onWindowPointerDown(event: PointerEvent) {
+    if (!mapMenuOpen && !scrambleOpen) return;
+    if (mapEl && event.target instanceof Node && mapEl.contains(event.target)) return;
+    mapMenuOpen = false;
+    scrambleOpen = false;
+    confirmClear = false;
+  }
+
   function onKeydown(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     if (picking) return;
@@ -317,7 +327,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onpointerdown={onWindowPointerDown} />
 
 {#if picking}
   <div class="picking" role="status">Click any slider, knob or button in Ghost Arcade · Esc cancels</div>
@@ -356,7 +366,7 @@
         {/each}
       </div>
 
-      <div class="map">
+      <div class="map" bind:this={mapEl}>
         <button
           class="ghost scramble-btn"
           class:on={bridge.beatScramble.on}

@@ -10,6 +10,8 @@
   export let linked = false;
   export let compact = false;
   export let onChange: (value: number) => void;
+  /** Turns the link between Live's decks and Ghost Arcade's on or off. */
+  export let onToggleLink: ((on: boolean) => void) | undefined = undefined;
 
   const TICKS = 11;
 
@@ -63,7 +65,17 @@
 <div class="xfader" class:compact class:dragging>
   <div class="lamps">
     <button class="lamp a" style="--level: {levelA}" onclick={() => onChange(0)} title="Cut to deck A">A</button>
-    <span class="state">{linked ? 'Linked' : 'Live only'}</span>
+    {#if onToggleLink}
+      <button
+        class="state link"
+        class:linked
+        aria-pressed={linked}
+        onclick={() => onToggleLink?.(!linked)}
+        title={linked ? "Live's crossfader moves Ghost Arcade's decks too. Click to move the audio only" : "Only Live's audio moves. Click to link Ghost Arcade's decks"}
+      >{linked ? '● Linked' : '○ Live only'}</button>
+    {:else}
+      <span class="state">{linked ? 'Linked' : 'Live only'}</span>
+    {/if}
     <button class="lamp b" style="--level: {levelB}" onclick={() => onChange(1)} title="Cut to deck B">B</button>
   </div>
   <div
@@ -135,6 +147,8 @@
   .lamp.a { --deck: var(--a); }
   .lamp.b { --deck: var(--b); }
   .state { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ga-ink-2, #8a909b); }
+  .state.link { padding: 3px 8px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.14); background: transparent; font: inherit; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: #e0a33a; cursor: pointer; }
+  .state.link.linked { color: var(--ga-live, #46d18a); border-color: color-mix(in srgb, var(--ga-live, #46d18a) 45%, transparent); }
 
   .slot {
     position: relative;

@@ -358,6 +358,9 @@ function createAbletonBridge() {
   /** A deck song waiting to land before the crossfader moves to it; it
    *  lapses if the song hasn't landed by `deadline` (song beats). */
   let pendingMix: { track: number; slot: number; side: 'A' | 'B'; bars: number; title: string; deadline: number } | null = null;
+  /** Whether this project has said if Live's decks drive Ghost Arcade's;
+   *  until it has, a set with decks on both sides links them. */
+  let deckModeChosen = false;
   /** The beat-scramble grid step last seen, to fire on each new one. */
   let lastScrambleStep: number | null = null;
   /** Autoplay steps already taken, so each fires once. */
@@ -880,6 +883,24 @@ function createAbletonBridge() {
     });
   }
 
+  /** A two-deck set links its decks to Ghost Arcade's by itself, unless
+   *  the project turned that off. */
+  function autoLinkDecks() {
+    const s = read();
+    if (deckModeChosen || s.deckMode) return;
+    if (!s.tracks.some(t => t.side === 'A') || !s.tracks.some(t => t.side === 'B')) return;
+    applyDeckMode(true);
+    update(st => ({ ...st, activity: [{ text: "Linked Live's decks to Ghost Arcade's", at: performance.now() }, ...st.activity].slice(0, ACTIVITY_LENGTH) }));
+  }
+
+  function applyDeckMode(on: boolean) {
+    update(s => ({ ...s, deckMode: on }));
+    if (on) {
+      vjClipLauncher.setCrossfaderEnabled(true);
+      vjClipLauncher.setCrossfaderValue(get(abletonCrossfader));
+    }
+  }
+
   /** Drum Rack pad names, keyed by note. */
   function parsePads(raw: unknown): Record<number, string> | undefined {
     if (!raw || typeof raw !== 'object') return undefined;
@@ -997,6 +1018,7 @@ function createAbletonBridge() {
         }
         setTrack(index, patch);
         scheduleRelink();
+        autoLinkDecks();
         break;
       }
       case 'slots': {
@@ -1304,11 +1326,8 @@ function createAbletonBridge() {
     /** Link Live's A/B decks to Ghost Arcade's: the crossfader follows
      *  Live's, and Ghost Arcade's two decks go live. */
     setDeckMode(on: boolean) {
-      update(s => ({ ...s, deckMode: on }));
-      if (on) {
-        vjClipLauncher.setCrossfaderEnabled(true);
-        vjClipLauncher.setCrossfaderValue(get(abletonCrossfader));
-      }
+      deckModeChosen = true;
+      applyDeckMode(on);
     },
 
     /** Move Live's crossfader (and Ghost Arcade's with it in deck mode).
@@ -1545,14 +1564,16 @@ function createAbletonBridge() {
         fired: {},
       }));
       signalState.clear();
+      deckModeChosen = !!saved.deckModeChosen || !!saved.deckMode;
       if (saved.deckMode) vjClipLauncher.setCrossfaderEnabled(true);
+      else autoLinkDecks();
       if (read().scenes.length || read().tracks.length) scheduleRelink();
       if (saved.enabled && !read().listening) void startListener();
     },
 
     serialize() {
       const { enabled, links, signals, scoreTracks, scoreMap, trackScoreMaps, beatScramble, deckMode, setlistOrder, autoMixBars, playMode, songPlans } = read();
-      return { enabled, links, signals, scoreTracks, scoreMap, trackScoreMaps, beatScramble, deckMode, setlistOrder, autoMixBars, playMode, songPlans, linkedCounts };
+      return { enabled, links, signals, scoreTracks, scoreMap, trackScoreMaps, beatScramble, deckMode, deckModeChosen, setlistOrder, autoMixBars, playMode, songPlans, linkedCounts };
     },
 
     reset() {
@@ -1569,7 +1590,11 @@ function createAbletonBridge() {
       pendingStops = [];
       outgoingSong = null;
       autoDone.clear();
+      deckModeChosen = false;
       syncWatch();
+      // The connection stays open across projects, so the open set can
+      // link its decks right away.
+      autoLinkDecks();
     },
   };
 }

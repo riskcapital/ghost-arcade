@@ -284,12 +284,8 @@
       </div>
       {#if bridge.mix}
         <span class="mixing">Mixing to {bridge.mix.to === 0 ? 'A' : 'B'} · {bridge.mix.title}<span class="bar"><span style="transform: scaleX({mixProgress})"></span></span></span>
-      {:else if !bridge.deckMode}
-        <span class="hint">Turn on Link decks (Decks tab) to mix the crossfader</span>
       {/if}
-      {#if bridge.deckMode}
-        <AbletonCrossfader compact value={$abletonCrossfader} linked onChange={(v) => abletonBridge.setCrossfader(v)} />
-      {/if}
+      <AbletonCrossfader compact value={$abletonCrossfader} linked={bridge.deckMode} onChange={(v) => abletonBridge.setCrossfader(v)} onToggleLink={(on) => abletonBridge.setDeckMode(on)} />
     </div>
   </div>
 
