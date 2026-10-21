@@ -6,10 +6,15 @@
    * plays the next song that hasn't played yet. A song made of sections
    * (Intro, Build, Drop…) gets a pad per section: each loops until the
    * next is picked, so the intro runs as long as the room needs.
+   *
+   * Play mode decides who moves things along: Live leaves every section to
+   * the DJ, Song follows each song's plan (bars per section), and Set plays
+   * the whole setlist, mixing into each song as the last one ends. Hold
+   * keeps the current section looping in either automatic mode.
    */
   import { abletonBridge, abletonCrossfader, setlist, songBeat, type AbletonBridgeState } from '../../ableton/abletonBridge';
   import { launchBeat, linksForClip, linksForScene, liveColor, quantizeBeats, samePlace, type AbletonSource } from '../../ableton/abletonLinks';
-  import { nextSong, playingSection, queuedSection, type SetlistSong } from '../../ableton/abletonSetlist';
+  import { autoEvents, nextPlanBars, nextSong, playingSection, queuedSection, sectionPlan, type PlayMode, type SetlistSong } from '../../ableton/abletonSetlist';
   import { actionLabel, actionTag, actionThumb, type VisualContext } from '../../ableton/abletonVisuals';
   import AbletonCrossfader from './AbletonCrossfader.svelte';
 
@@ -20,6 +25,11 @@
   export let onSelect: (source: AbletonSource) => void;
 
   const MIX_CHOICES = [0, 4, 8, 16];
+  const MODES: { id: PlayMode; label: string; hint: string }[] = [
+    { id: 'live', label: 'Live', hint: 'You pick every section and song' },
+    { id: 'song', label: 'Song', hint: "Sections follow each song's plan; the last one loops until Next" },
+    { id: 'set', label: 'Set', hint: 'The whole setlist plays itself, mixing into each next song' },
+  ];
   const DRAG_TYPE = 'application/x-ghost-setlist';
 
   let query = '';
@@ -86,6 +96,47 @@
     return (Math.max(0, at - track.startedBeat) % length) / length;
   }
 
+  /** How far through its planned bars the playing section is, 0..1. */
+  function planAt(state: AbletonBridgeState, song: SetlistSong, index: number, at: number): number {
+    const track = sectionTrack(state, song, index);
+    if (!state.playing || !track) return 0;
+    const bars = sectionPlan(state.songPlans, song)[index] ?? 8;
+    return Math.max(0, Math.min(1, (at - track.startedBeat) / (bars * perBar)));
+  }
+
+  /** What autoplay does next and when, in words. */
+  function autoStatus(state: AbletonBridgeState, song: SetlistSong, at: number): string {
+    if (state.playMode === 'live') return '';
+    const index = playingSection(song, state.tracks);
+    const track = sectionTrack(state, song, index);
+    if (index < 0 || !track) return '';
+    const label = song.sections[index]?.label ?? 'This section';
+    if (state.hold) return `Holding ${label}. Release Hold to carry on`;
+    const upcoming = nextSong(setlist(state), song.key, new Set(state.played));
+    const mixBars = state.deckMode && upcoming?.kind === 'clip' && song.kind === 'clip' && upcoming.track !== song.track ? state.autoMixBars : 0;
+    const [event] = autoEvents({
+      mode: state.playMode, hold: false, plan: sectionPlan(state.songPlans, song), index,
+      startedBeat: track.startedBeat, perBar, hasNext: !!upcoming, mixBars,
+    });
+    if (!event) return `${song.sections.length > 1 ? label : song.title} loops until you press Next`;
+    const bars = Math.ceil((event.at - at) / perBar);
+    const when = bars <= 0 ? 'now' : `in ${bars} bar${bars === 1 ? '' : 's'}`;
+    if (event.kind === 'section') return `${song.sections[event.index].label} ${when}`;
+    if (event.kind === 'next') return `${upcoming?.title} ${mixBars ? 'mixes in' : 'starts'} ${when}`;
+    return `Set ends ${when}`;
+  }
+
+  /** A song's planned length in bars. */
+  function songBars(state: AbletonBridgeState, song: SetlistSong): number {
+    return sectionPlan(state.songPlans, song).reduce((sum, bars) => sum + bars, 0);
+  }
+
+  function cycleBars(event: MouseEvent, song: SetlistSong, index: number, step: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    abletonBridge.setSectionBars(song, index, nextPlanBars(sectionPlan(bridge.songPlans, song)[index], step));
+  }
+
   function sectionLabel(state: AbletonBridgeState, song: SetlistSong): string {
     const index = playingSection(song, state.tracks);
     return index >= 0 && song.sections.length > 1 ? song.sections[index].label : '';
@@ -150,7 +201,17 @@
 <div class="setlist">
   <div class="deck-strip">
     <div class="now">
-      <span class="label">Now playing</span>
+      <div class="now-head">
+        <span class="label">Now playing</span>
+        <div class="modes" role="radiogroup" aria-label="Play mode">
+          {#each MODES as mode (mode.id)}
+            <button role="radio" aria-checked={bridge.playMode === mode.id} class:active={bridge.playMode === mode.id} onclick={() => abletonBridge.setPlayMode(mode.id)} title={mode.hint}>{mode.label}</button>
+          {/each}
+        </div>
+        {#if bridge.playMode !== 'live'}
+          <button class="hold" class:on={bridge.hold} aria-pressed={bridge.hold} onclick={() => abletonBridge.setHold(!bridge.hold)} title="Keep the section playing now looping; autoplay waits">Hold</button>
+        {/if}
+      </div>
       {#if current}
         <span class="title" style="--live: {liveColor(current.color)}">{current.title}</span>
         <span class="meta">
@@ -163,20 +224,38 @@
           {@const waiting = queuedSection(current, bridge.tracks, bridge.scenes)}
           <div class="pads" role="group" aria-label="Sections of {current.title}">
             {#each current.sections as section, i (i)}
-              <button
-                class="pad"
-                class:on={on === i}
-                class:waiting={waiting === i}
-                class:next={on >= 0 && waiting < 0 && i === on + 1}
-                onclick={() => current && abletonBridge.playSection(current, i)}
-                title={on === i ? `${section.label} is looping. Pick the next section when you're ready` : `Go to ${section.label}, landing on Live's launch quantization`}
-              >
-                <span class="pad-label">{section.label}</span>
-                {#if waiting === i && cueCountdown(bridge, current, beat)}<span class="pad-count">{cueCountdown(bridge, current, beat)}</span>{/if}
-                {#if on === i}<span class="pad-loop" style="transform: scaleX({loopAt(bridge, current, i, beat)})"></span>{/if}
-              </button>
+              {@const plan = sectionPlan(bridge.songPlans, current)}
+              <div class="pad-cell">
+                <button
+                  class="pad"
+                  class:on={on === i}
+                  class:waiting={waiting === i}
+                  class:next={on >= 0 && waiting < 0 && i === on + 1}
+                  onclick={() => current && abletonBridge.playSection(current, i)}
+                  title={on === i ? `${section.label} is playing` : `Go to ${section.label}, landing on Live's launch quantization`}
+                >
+                  <span class="pad-label">{section.label}</span>
+                  {#if waiting === i && cueCountdown(bridge, current, beat)}<span class="pad-count">{cueCountdown(bridge, current, beat)}</span>{/if}
+                  {#if on === i}<span class="pad-loop" style="transform: scaleX({bridge.playMode === 'live' ? loopAt(bridge, current, i, beat) : planAt(bridge, current, i, beat)})"></span>{/if}
+                </button>
+                <button
+                  class="pad-bars"
+                  class:dim={bridge.playMode === 'live'}
+                  onclick={(e) => current && cycleBars(e, current, i, 1)}
+                  oncontextmenu={(e) => current && cycleBars(e, current, i, -1)}
+                  title="Autoplay gives {section.label} {plan[i]} bars. Click for longer, right-click for shorter"
+                >{plan[i]} bars</button>
+              </div>
             {/each}
           </div>
+        {:else if bridge.playMode !== 'live'}
+          {@const plan = sectionPlan(bridge.songPlans, current)}
+          <div class="pads">
+            <button class="pad-bars solo" onclick={(e) => current && cycleBars(e, current, 0, 1)} oncontextmenu={(e) => current && cycleBars(e, current, 0, -1)} title="How long autoplay plays this song. Click for longer, right-click for shorter">Plays {plan[0]} bars</button>
+          </div>
+        {/if}
+        {#if autoStatus(bridge, current, beat)}
+          <span class="auto-status" class:held={bridge.hold}>{autoStatus(bridge, current, beat)}</span>
         {/if}
       {:else}
         <span class="title idle">Nothing yet — pick a song or press Next</span>
@@ -193,7 +272,7 @@
       {:else}
         <span class="title idle">End of set</span>
       {/if}
-      <button class="next-btn" disabled={!upNext} onclick={() => abletonBridge.playNext()} title="Play the next unplayed song in your order">Next ▶</button>
+      <button class="next-btn" disabled={!upNext} onclick={() => abletonBridge.playNext()} title="Play the next unplayed song in your order">{bridge.playMode === 'set' && !current ? 'Start set ▶' : 'Next ▶'}</button>
     </div>
 
     <div class="mixer">
@@ -279,7 +358,8 @@
         <span class="status">
           {#if playing}<b class="on">{bridge.currentSong === song.key ? 'NOW' : 'PLAYING'}</b> <small>bar {barsIn(bridge, song, beat)}</small>
           {:else if queued}<span class="countdown">{cueCountdown(bridge, song, beat) || '•'}</span>
-          {:else if played.has(song.key)}<small>played</small>{/if}
+          {:else if played.has(song.key)}<small>played</small>
+          {:else if bridge.playMode !== 'live'}<small>{songBars(bridge, song)} bars</small>{/if}
         </span>
         <span class="bpm">{song.bpm ?? '—'}</span>
         <span class="deck" class:a={song.kind === 'clip' && song.side === 'A'} class:b={song.kind === 'clip' && song.side === 'B'}>{deckLabel(song)}</span>
@@ -368,6 +448,22 @@
   .section.waiting { animation: waiting 0.5s steps(2) infinite; }
   @keyframes waiting { 50% { border-color: #e0a33a; color: #e0a33a; } }
   .pads { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .now-head { display: flex; align-items: center; gap: 8px; }
+  .now-head .label { flex: 1; }
+  .modes { display: flex; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 3px; overflow: hidden; }
+  .modes button { padding: 3px 10px; background: transparent; border: none; color: var(--ga-ink-2, #8a909b); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .modes button + button { border-left: 1px solid rgba(255, 255, 255, 0.08); }
+  .modes button.active { background: var(--ga-ink-0, #eef0f4); color: #07090d; }
+  .hold { padding: 3px 10px; border-radius: 3px; border: 1px solid rgba(224, 163, 58, 0.5); background: transparent; color: #e0a33a; font: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; cursor: pointer; }
+  .hold.on { background: #e0a33a; color: #1a1204; }
+  .pad-cell { display: flex; flex-direction: column; gap: 2px; }
+  .pad-bars { height: 16px; padding: 0 6px; border: none; border-radius: 2px; background: transparent; color: var(--ga-ink-2, #8a909b); font: inherit; font-size: 10px; font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); cursor: pointer; }
+  .pad-bars:hover { color: var(--ga-ink-0, #eef0f4); background: rgba(255, 255, 255, 0.06); }
+  .pad-bars.dim { opacity: 0.55; }
+  .pad-bars.solo { height: 24px; padding: 0 10px; border: 1px solid rgba(255, 255, 255, 0.14); font-size: 11px; }
+  .auto-status { margin-top: 6px; font-size: 11px; color: #c9c4ff; }
+  .auto-status::before { content: '▸ '; }
+  .auto-status.held { color: #e0a33a; }
   .pad {
     position: relative;
     overflow: hidden;

@@ -59,7 +59,17 @@ import {
   type SignalSource,
   type SignalTarget,
 } from './abletonScore';
-import { deriveSongs, mixPosition, nextSong, orderSongs, type SetlistSong } from './abletonSetlist';
+import {
+  deriveSongs,
+  mixPosition,
+  autoEvents,
+  nextSong,
+  orderSongs,
+  playingSection,
+  sectionPlan,
+  type PlayMode,
+  type SetlistSong,
+} from './abletonSetlist';
 
 /** No heartbeat for this long means Live (or the script) went away. */
 const CONNECTION_TIMEOUT_MS = 3500;
@@ -107,7 +117,14 @@ export interface AbletonBridgeState {
   setlistOrder: string[];
   /** Bars an auto-mix takes to sweep the crossfader; 0 cuts (saved). */
   autoMixBars: number;
+  /** Who moves the set along: the DJ, each song's plan, or the whole set
+   *  playing itself (saved). */
+  playMode: PlayMode;
+  /** Bars per section, by song key, where the DJ changed them (saved). */
+  songPlans: Record<string, number[]>;
   // Runtime only.
+  /** Keep the section playing now looping; autoplay waits. */
+  hold: boolean;
   /** Songs that have played this session, and the one playing now. */
   played: string[];
   currentSong: string | null;
@@ -147,6 +164,9 @@ const INITIAL: AbletonBridgeState = {
   deckMode: false,
   setlistOrder: [],
   autoMixBars: 8,
+  playMode: 'live',
+  songPlans: {},
+  hold: false,
   played: [],
   currentSong: null,
   mix: null,
@@ -235,6 +255,17 @@ type LiveMessage = Record<string, any> & { t: string };
 
 const api = () => (typeof window !== 'undefined' ? (window as any).ghostAbleton : undefined);
 
+/** Saved section plans, keeping only whole positive bar counts. */
+function sanitizePlans(raw: unknown): Record<string, number[]> {
+  const plans: Record<string, number[]> = {};
+  if (!raw || typeof raw !== 'object') return plans;
+  for (const [key, bars] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(bars)) continue;
+    plans[key] = bars.map(b => (Number.isFinite(b) && (b as number) > 0 ? Math.min(256, Math.round(b as number)) : 0));
+  }
+  return plans;
+}
+
 /** Whether a new visual on a source takes the place of an existing one:
  *  only one column per deck, one snapshot and one Stage preset can show. */
 function replaces(next: VisualAction, existing: VisualAction): boolean {
@@ -290,6 +321,12 @@ function createAbletonBridge() {
   /** A deck song waiting to land before the crossfader moves to it; it
    *  lapses if the song hasn't landed by `deadline` (song beats). */
   let pendingMix: { track: number; slot: number; side: 'A' | 'B'; bars: number; title: string; deadline: number } | null = null;
+  /** Autoplay steps already taken, so each fires once. */
+  const autoDone = new Set<string>();
+  /** Tracks to stop when an outgoing song's last section ends. */
+  let pendingStops: { track: number; at: number }[] = [];
+  /** A song mixing out under the next one, still following its plan. */
+  let outgoingSong: string | null = null;
   let lastMixSentAt = 0;
   let lastMixValue = Number.NaN;
   let lastSignalAt = 0;
@@ -485,14 +522,136 @@ function createAbletonBridge() {
       const v = mixPosition(s.mix.from, s.mix.to, s.mix.startBeat, s.mix.beats, beat);
       lastMixValue = v;
       sendCrossfader(v);
-      if (v === s.mix.to) update(st => ({ ...st, mix: null }));
+      if (v === s.mix.to) {
+        update(st => ({ ...st, mix: null }));
+        // Once the room has fully moved over, an autoplaying set stops the
+        // deck it left so its last section doesn't loop on unheard.
+        if (s.playMode !== 'live') stopSide(s.mix.to === 0 ? 'B' : 'A');
+      }
     }
+
+    if (s.playing) autoPlay(s, beat);
 
     if (now - lastSignalAt >= SIGNAL_MS && s.signals.length) {
       const dt = Math.min(0.1, (now - lastSignalAt) / 1000);
       lastSignalAt = now;
       driveSignals(s, beat, dt, now);
     }
+  }
+
+  // ── Autoplay ────────────────────────────────────────────────────────
+
+  /** The track timing a song's section. */
+  function sectionTrack(s: AbletonBridgeState, song: SetlistSong, index: number): LiveTrack | undefined {
+    if (song.kind === 'clip') return s.tracks[song.track];
+    const scene = song.sections[index]?.scene;
+    return s.tracks.find(t => t.playing === scene);
+  }
+
+  /** Beats before a step is due to send it, so Live's launch quantization
+   *  lands it on time: half a quantize step, or a hair with none. */
+  function sendLead(s: AbletonBridgeState): number {
+    const step = quantizeBeats(s.quantize, s.numerator, s.denominator);
+    return step > 0 ? step / 2 : 0.05;
+  }
+
+  function stopSide(side: 'A' | 'B') {
+    read().tracks.forEach((t, i) => { if (t.side === side && t.playing >= 0) send({ t: 'stop_track', i }); });
+  }
+
+  /** Move the set along by the songs' plans: the next section when one's
+   *  bars are up and, in set mode, the next song mixed in to finish as the
+   *  last section ends. A song mixing out keeps following its plan. */
+  function autoPlay(s: AbletonBridgeState, beat: number) {
+    const lead = sendLead(s);
+    if (pendingStops.length) {
+      const due = pendingStops.filter(p => beat >= p.at - lead);
+      pendingStops = pendingStops.filter(p => !due.includes(p));
+      for (const p of due) send({ t: 'stop_track', i: p.track });
+    }
+    if (s.playMode === 'live') return;
+    const songs = setlist(s);
+    const out = outgoingSong && outgoingSong !== s.currentSong ? songs.find(x => x.key === outgoingSong) : undefined;
+    if (out) advance(s, out, beat, lead, songs, true);
+    else outgoingSong = null;
+    const song = songs.find(x => x.key === s.currentSong);
+    if (song) advance(s, song, beat, lead, songs, false);
+  }
+
+  function advance(s: AbletonBridgeState, song: SetlistSong, beat: number, lead: number, songs: SetlistSong[], outgoing: boolean) {
+    const index = playingSection(song, s.tracks);
+    const track = sectionTrack(s, song, index);
+    if (index < 0 || !track) {
+      if (outgoing) outgoingSong = null;
+      return;
+    }
+    const perBar = s.numerator * (4 / s.denominator);
+    const upNext = outgoing ? null : nextSong(songs, song.key, new Set(s.played));
+    const events = autoEvents({
+      // A song mixing out only finishes its own sections.
+      mode: outgoing ? 'song' : s.playMode, hold: !outgoing && s.hold, plan: sectionPlan(s.songPlans, song), index,
+      startedBeat: track.startedBeat, perBar, hasNext: !!upNext,
+      mixBars: s.deckMode && upNext?.kind === 'clip' && song.kind === 'clip' && upNext.track !== song.track ? s.autoMixBars : 0,
+    });
+    for (const event of events) {
+      if (beat < event.at - lead) break;
+      // Already mixing into the next song: that launch happened.
+      if (event.kind === 'next' && outgoingSong === song.key) continue;
+      const key = `${song.key}:${index}:${track.startedBeat.toFixed(3)}:${event.kind}`;
+      if (autoDone.has(key)) continue;
+      if (autoDone.size > 256) autoDone.clear();
+      autoDone.add(key);
+      if (event.kind === 'section') launchSection(song, event.index);
+      else if (event.kind === 'next' && upNext) {
+        launchSong(upNext);
+        outgoingSong = song.key;
+        // The outgoing song stops as its last section ends, unless the next
+        // one replaces it on the same track anyway.
+        if (song.kind === 'clip' && !(upNext.kind === 'clip' && upNext.track === song.track)) {
+          pendingStops.push({ track: song.track, at: event.stopAt });
+        }
+      } else if (event.kind === 'end') {
+        if (song.kind === 'clip') pendingStops.push({ track: song.track, at: event.at });
+        else send({ t: 'stop_all' });
+        update(st => ({ ...st, activity: [{ text: 'End of set', at: performance.now() }, ...st.activity].slice(0, ACTIVITY_LENGTH) }));
+      }
+    }
+  }
+
+  /** Play a song in Live; it lands on Live's launch quantization. In deck
+   *  mode the crossfader then moves to the song's deck: a sweep over the
+   *  auto-mix bars when the other deck is playing, otherwise a cut. */
+  function launchSong(song: SetlistSong) {
+    if (song.kind === 'scenes') {
+      if (song.sections[0]) send({ t: 'fire_scene', s: song.sections[0].scene });
+      return;
+    }
+    send({ t: 'fire_clip', i: song.track, s: song.slot });
+    const s = read();
+    if (!s.deckMode || !song.side) return;
+    const otherPlaying = s.tracks.some(t => t.side && t.side !== song.side && t.playing >= 0);
+    const perBar = s.numerator * (4 / s.denominator);
+    const step = quantizeBeats(s.quantize, s.numerator, s.denominator);
+    pendingMix = {
+      track: song.track, slot: song.slot, side: song.side, bars: otherPlaying ? s.autoMixBars : 0, title: song.title,
+      // If it hasn't landed a bar after its launch point, it isn't coming.
+      deadline: launchBeat(songBeat(s), step) + perBar,
+    };
+  }
+
+  /** Jump to a section of a song; it loops until the next one. */
+  function launchSection(song: SetlistSong, index: number) {
+    if (song.kind === 'scenes') {
+      const section = song.sections[index];
+      if (section) send({ t: 'fire_scene', s: section.scene });
+      return;
+    }
+    if (index === 0) {
+      launchSong(song);
+      return;
+    }
+    const section = song.sections[index];
+    if (section) send({ t: 'fire_clip', i: song.track, s: section.slot });
   }
 
   function playNotes(s: AbletonBridgeState, t: number, track: LiveTrack, due: { note: ScoreNote; at: number }[], columns: number) {
@@ -1113,37 +1272,33 @@ function createAbletonBridge() {
      *  crossfader then moves to the song's deck: a sweep over the auto-mix
      *  bars when the other deck is playing, otherwise a cut. */
     playSong(song: SetlistSong) {
-      if (song.kind === 'scenes') {
-        if (song.sections[0]) send({ t: 'fire_scene', s: song.sections[0].scene });
-        return;
-      }
-      send({ t: 'fire_clip', i: song.track, s: song.slot });
-      const s = read();
-      if (!s.deckMode || !song.side) return;
-      const otherPlaying = s.tracks.some(t => t.side && t.side !== song.side && t.playing >= 0);
-      const perBar = s.numerator * (4 / s.denominator);
-      const step = quantizeBeats(s.quantize, s.numerator, s.denominator);
-      pendingMix = {
-        track: song.track, slot: song.slot, side: song.side, bars: otherPlaying ? s.autoMixBars : 0, title: song.title,
-        // If it hasn't landed a bar after its launch point, it isn't coming.
-        deadline: launchBeat(songBeat(s), step) + perBar,
-      };
+      launchSong(song);
     },
 
     /** Jump to a section of a song (Intro, Build, Drop…). It lands on
      *  Live's launch quantization and loops until the next one. */
     playSection(song: SetlistSong, index: number) {
-      if (song.kind === 'scenes') {
-        const section = song.sections[index];
-        if (section) send({ t: 'fire_scene', s: section.scene });
-        return;
-      }
-      if (index === 0) {
-        this.playSong(song);
-        return;
-      }
-      const section = song.sections[index];
-      if (section) send({ t: 'fire_clip', i: song.track, s: section.slot });
+      launchSection(song, index);
+    },
+
+    /** Who moves the set along: 'live' (the DJ), 'song' (each song's
+     *  plan) or 'set' (the whole setlist plays itself). */
+    setPlayMode(mode: PlayMode) {
+      update(s => ({ ...s, playMode: mode, hold: false }));
+    },
+
+    /** Keep the section playing now looping until released. */
+    setHold(on: boolean) {
+      update(s => ({ ...s, hold: on }));
+    },
+
+    /** How many bars a section plays before autoplay moves on. */
+    setSectionBars(song: SetlistSong, index: number, bars: number) {
+      update(s => {
+        const plan = sectionPlan(s.songPlans, song);
+        plan[index] = Math.max(1, Math.min(256, Math.round(bars)));
+        return { ...s, songPlans: { ...s.songPlans, [song.key]: plan } };
+      });
     },
 
     /** Play the next unplayed song in set order. */
@@ -1234,6 +1389,9 @@ function createAbletonBridge() {
         deckMode: !!saved.deckMode,
         setlistOrder: Array.isArray(saved.setlistOrder) ? saved.setlistOrder.filter((k: unknown) => typeof k === 'string') : [],
         autoMixBars: Number.isFinite(saved.autoMixBars) ? Math.max(0, Math.min(32, saved.autoMixBars)) : 8,
+        playMode: saved.playMode === 'song' || saved.playMode === 'set' ? saved.playMode : 'live',
+        songPlans: sanitizePlans(saved.songPlans),
+        hold: false,
         played: [],
         currentSong: null,
         mix: null,
@@ -1247,8 +1405,8 @@ function createAbletonBridge() {
     },
 
     serialize() {
-      const { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars } = read();
-      return { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars, linkedCounts };
+      const { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars, playMode, songPlans } = read();
+      return { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars, playMode, songPlans, linkedCounts };
     },
 
     reset() {
@@ -1259,8 +1417,12 @@ function createAbletonBridge() {
       scorePlayhead.clear();
       update(s => ({
         ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, deckMode: false,
-        setlistOrder: [], autoMixBars: 8, played: [], currentSong: null, mix: null, missing: [], fired: {},
+        setlistOrder: [], autoMixBars: 8, playMode: 'live', songPlans: {}, hold: false,
+        played: [], currentSong: null, mix: null, missing: [], fired: {},
       }));
+      pendingStops = [];
+      outgoingSong = null;
+      autoDone.clear();
       syncWatch();
     },
   };

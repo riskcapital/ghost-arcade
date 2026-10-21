@@ -154,6 +154,81 @@ export function queuedSection(song: SetlistSong, tracks: LiveTrack[], scenes: Li
   return song.sections.findIndex(sec => !!scenes[sec.scene]?.queued || tracks.some(t => t.fired === sec.scene));
 }
 
+// ── Autoplay ────────────────────────────────────────────────────────────
+
+/**
+ * How a set plays:
+ *  - live: the DJ picks every section and song.
+ *  - song: sections follow the song's plan; the last one loops until Next.
+ *  - set:  the whole setlist plays itself, mixing into each next song so the
+ *          mix lands as the last section ends.
+ */
+export type PlayMode = 'live' | 'song' | 'set';
+
+export const PLAN_BARS = [1, 2, 4, 8, 16, 32, 64] as const;
+const BIG_SECTION = /drop|chorus|peak|main/i;
+
+/** Bars per section before a plan is edited: 16 for a drop or chorus, 8 for
+ *  the rest, 32 for a song with no sections. */
+export function defaultPlan(song: SetlistSong): number[] {
+  if (song.sections.length < 2) return [32];
+  return song.sections.map(sec => (BIG_SECTION.test(sec.label) ? 16 : 8));
+}
+
+/** A song's plan: the DJ's bars where saved, the defaults elsewhere. */
+export function sectionPlan(plans: Record<string, number[]>, song: SetlistSong): number[] {
+  const saved = plans[song.key];
+  const fallback = defaultPlan(song);
+  return fallback.map((bars, i) => (Number.isFinite(saved?.[i]) && saved![i] > 0 ? saved![i] : bars));
+}
+
+/** The next plan length up from `bars`, wrapping back to the shortest. */
+export function nextPlanBars(bars: number, step = 1): number {
+  const index = PLAN_BARS.findIndex(b => b >= bars);
+  const at = (index < 0 ? PLAN_BARS.length - 1 : index) + step;
+  return PLAN_BARS[(at + PLAN_BARS.length) % PLAN_BARS.length];
+}
+
+export type AutoEvent =
+  | { kind: 'section'; index: number; at: number }
+  | { kind: 'next'; at: number; stopAt: number }
+  | { kind: 'end'; at: number };
+
+/**
+ * What autoplay has coming for the song playing, soonest first, each with
+ * the song beat it should land on:
+ *  - the next section, when this one's bars are up;
+ *  - in set mode, the next song, launched so a `mixBars` mix finishes as the
+ *    song's last section ends (the song then stops), or the end of the set.
+ * A long mix can start before the last section does; the song carries on
+ * through its plan underneath. Nothing is due in live mode or on a hold, and
+ * in song mode the last section waits for Next.
+ */
+export function autoEvents(opts: {
+  mode: PlayMode;
+  hold: boolean;
+  plan: number[];
+  index: number;
+  startedBeat: number;
+  perBar: number;
+  hasNext: boolean;
+  mixBars: number;
+}): AutoEvent[] {
+  const { mode, hold, plan, index, startedBeat, perBar, hasNext, mixBars } = opts;
+  if (mode === 'live' || hold || index < 0 || !plan.length) return [];
+  const barsOf = (i: number) => plan[i] ?? plan[plan.length - 1];
+  const sectionEnd = startedBeat + barsOf(index) * perBar;
+  const events: AutoEvent[] = [];
+  if (index < plan.length - 1) events.push({ kind: 'section', index: index + 1, at: sectionEnd });
+  if (mode === 'set') {
+    let songEnd = sectionEnd;
+    for (let i = index + 1; i < plan.length; i++) songEnd += barsOf(i) * perBar;
+    if (!hasNext) events.push({ kind: 'end', at: songEnd });
+    else events.push({ kind: 'next', at: songEnd - mixBars * perBar, stopAt: songEnd });
+  }
+  return events.sort((a, b) => a.at - b.at);
+}
+
 /** The song after `current` in set order that hasn't played yet. */
 export function nextSong(ordered: SetlistSong[], current: string | null, played: Set<string>): SetlistSong | null {
   const start = current ? ordered.findIndex(s => s.key === current) + 1 : 0;

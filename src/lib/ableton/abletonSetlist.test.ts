@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveSongs, mixPosition, nextSong, orderSongs, parseBpm, playingSection, queuedSection, stripBpm } from './abletonSetlist';
+import { defaultPlan, deriveSongs, mixPosition, autoEvents, nextPlanBars, nextSong, orderSongs, parseBpm, playingSection, queuedSection, sectionPlan, stripBpm } from './abletonSetlist';
 import type { LiveScene, LiveTrack } from './abletonLinks';
 
 const track = (name: string, side: 'A' | 'B' | null, clips: (string | null)[]): LiveTrack => ({
@@ -69,6 +69,46 @@ describe('next song', () => {
     expect(nextSong(songs, songs[0].key, new Set([songs[0].key]))?.title).toBe('Two');
     expect(nextSong(songs, songs[2].key, new Set([songs[2].key, songs[1].key]))?.title).toBe('One');
     expect(nextSong(songs, songs[0].key, new Set(songs.map(s => s.key)))).toBeNull();
+  });
+});
+
+describe('autoplay', () => {
+  const deck = track('Deck A', 'A', ['Sunrise 122 BPM', 'Sunrise Build', 'Sunrise Drop', 'Sunrise Outro']);
+  const [song] = deriveSongs([], [deck]);
+  const base = { mode: 'song' as const, hold: false, plan: [8, 8, 16, 8], startedBeat: 100, perBar: 4, hasNext: true, mixBars: 4 };
+
+  it('plans 8 bars a section, 16 for a drop, 32 for a song without sections', () => {
+    expect(defaultPlan(song)).toEqual([8, 8, 16, 8]);
+    expect(defaultPlan(deriveSongs([], [track('A', 'A', ['Loop'])])[0])).toEqual([32]);
+  });
+  it('keeps edited bars and fills the rest from the defaults', () => {
+    expect(sectionPlan({ [song.key]: [4, 0, 32] }, song)).toEqual([4, 8, 32, 8]);
+  });
+  it('steps through plan lengths', () => {
+    expect(nextPlanBars(8)).toBe(16);
+    expect(nextPlanBars(64)).toBe(1);
+    expect(nextPlanBars(8, -1)).toBe(4);
+  });
+  it('moves to the next section when the bars are up', () => {
+    expect(autoEvents({ ...base, index: 0 })).toEqual([{ kind: 'section', index: 1, at: 132 }]);
+  });
+  it('waits on a hold, in live mode, and on the last section in song mode', () => {
+    expect(autoEvents({ ...base, index: 0, hold: true })).toEqual([]);
+    expect(autoEvents({ ...base, index: 0, mode: 'live' })).toEqual([]);
+    expect(autoEvents({ ...base, index: 3 })).toEqual([]);
+  });
+  it('starts the next song so the mix finishes as the last section ends', () => {
+    // On the outro (8 bars from beat 100): a 4-bar mix starts halfway in.
+    expect(autoEvents({ ...base, mode: 'set', index: 3 })).toEqual([{ kind: 'next', at: 116, stopAt: 132 }]);
+    expect(autoEvents({ ...base, mode: 'set', index: 3, hasNext: false })).toEqual([{ kind: 'end', at: 132 }]);
+  });
+  it('starts a mix longer than the outro during the section before it', () => {
+    // On the drop (16 bars from beat 100), then an 8-bar outro: the song
+    // ends at 196, so a 16-bar mix starts at 132, while the drop plays.
+    expect(autoEvents({ ...base, mode: 'set', index: 2, mixBars: 16 })).toEqual([
+      { kind: 'next', at: 132, stopAt: 196 },
+      { kind: 'section', index: 3, at: 164 },
+    ]);
   });
 });
 
