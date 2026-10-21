@@ -8549,7 +8549,7 @@
           title="A newer version is available - open the download page"
         >v{appVersion} → {versionInfo.latest}</a>
       {:else}
-        <span class="version-label" title="Ghost Arcade v{appVersion}">v{appVersion}</span>
+        <span class="version-label" title="Ghost Arcade Pro {appVersion}">v{appVersion}</span>
       {/if}
       <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title="Keyboard Shortcuts (?)">?</button>
     </footer>

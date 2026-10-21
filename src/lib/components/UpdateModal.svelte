@@ -39,7 +39,7 @@
       <div class="update-modal-header">
         <div>
           <div class="update-eyebrow">Update available</div>
-          <h2>Ghost Arcade v{$updateInfo.latestVersion}</h2>
+          <h2>Ghost Arcade Pro {$updateInfo.latestVersion}</h2>
           <p class="update-version-line">You have v{$updateInfo.currentVersion}</p>
         </div>
         <button class="update-close" onclick={close} aria-label="Close">x</button>

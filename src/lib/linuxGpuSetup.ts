@@ -40,8 +40,8 @@ export interface LinuxGpuDiagnosis {
 
 /** The 1.9 line: the newest build of the channel for machines 2.x cannot run on. */
 export const LEGACY_DOWNLOADS = {
-  appImage: 'https://ghostarcade.live/api/download?platform=linux',
-  deb: 'https://ghostarcade.live/api/download?platform=linux-deb',
+  appImage: 'https://ghostarcade.live/api/download?product=studio&platform=linux',
+  deb: 'https://ghostarcade.live/api/download?product=studio&platform=linux-deb',
 };
 
 const VENDOR_NAME: Record<LinuxGpu['vendor'], string> = { amd: 'AMD', intel: 'Intel', nvidia: 'NVIDIA', other: 'graphics' };

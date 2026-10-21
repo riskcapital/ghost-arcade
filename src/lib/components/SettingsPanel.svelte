@@ -790,7 +790,7 @@
             <div class="update-banner-content">
               <div class="update-badge">UPDATE</div>
               <div class="update-text">
-                <strong>Ghost Arcade v{$updateInfo.latestVersion}</strong> is available
+                <strong>Ghost Arcade Pro {$updateInfo.latestVersion}</strong> is available
                 <span class="update-current">(you have v{$updateInfo.currentVersion})</span>
               </div>
             </div>

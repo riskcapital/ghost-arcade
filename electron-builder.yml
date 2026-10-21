@@ -1,8 +1,11 @@
-appId: live.ghostarcade.app
-productName: "Ghost Arcade"          # user-facing display name (start menu, window title)
-executableName: "Ghost-Arcade"       # actual .exe filename — no spaces so signtool can quote-free
+appId: live.ghostarcade.pro
+productName: "Ghost Arcade Pro"      # user-facing display name (start menu, window title)
+# Its own appId, so Pro installs beside Ghost Arcade Studio (which keeps
+# live.ghostarcade.app) instead of replacing it. On first launch Pro copies
+# the settings from the old "Ghost Arcade" data folder (electron/profile-migration.cjs).
+executableName: "Ghost-Arcade-Pro"   # actual .exe filename — no spaces so signtool can quote-free
 copyright: "Copyright (c) 2024-2026 Risk Capital Media LLC"
-artifactName: "Ghost-Arcade-${version}-${arch}.${ext}"
+artifactName: "Ghost-Arcade-Pro-${version}-${arch}.${ext}"
 
 directories:
   output: dist-electron
@@ -122,8 +125,8 @@ nsis:
   uninstallerIcon: build-resources/icons/icon.ico
   installerSidebar: brand-assets/installer-splash.bmp
   uninstallerSidebar: brand-assets/installer-splash.bmp
-  shortcutName: "Ghost Arcade"
-  artifactName: "Ghost-Arcade-Setup-${version}.${ext}"
+  shortcutName: "Ghost Arcade Pro"
+  artifactName: "Ghost-Arcade-Pro-Setup-${version}.${ext}"
 
 # ─── macOS ─────────────────────────────────────────────────────────────────
 mac:
@@ -183,6 +186,9 @@ dmg:
 #     adapter and the app opens into NATIVE OFFLINE. The GPU driver's Vulkan
 #     ICD comes from the driver itself (Mesa or the vendor's package).
 deb:
+  # Its own package name, so installing Pro does not replace the Ghost Arcade
+  # Studio package (still named ghost-arcade).
+  packageName: ghost-arcade-pro
   depends:
     - libgtk-3-0
     - libnotify4
@@ -210,15 +216,15 @@ linux:
   icon: build-resources/icons
   category: AudioVideo
   synopsis: "Open-source projection mapping + VJ software"
-  description: "Ghost Arcade — live performance visuals with projection mapping, shader effects, MediaPipe gesture input, and audio reactivity. AGPL-3.0."
+  description: "Ghost Arcade Pro — live performance visuals with projection mapping, shader effects, MediaPipe gesture input, and audio reactivity. AGPL-3.0."
   desktop:
     entry:
-      Name: "Ghost Arcade"
+      Name: "Ghost Arcade Pro"
       Comment: "Projection mapping and VJ software"
       Categories: "AudioVideo;Graphics;"
   # Same filename pattern as Windows/Mac so the website's URL templating
   # in src/lib/release.ts stays predictable.
-  artifactName: "Ghost-Arcade-${version}-${arch}.${ext}"
+  artifactName: "Ghost-Arcade-Pro-${version}-${arch}.${ext}"
 
 # ─── Publish ────────────────────────────────────────────────────────────────
 # Intentionally NO `publish:` block here. CI (.github/workflows/build.yml)

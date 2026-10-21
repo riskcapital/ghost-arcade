@@ -109,8 +109,8 @@
       <section class="legacy" class:solo={onlyLegacy}>
         <div class="legacy-text">
           <p class="legacy-eyebrow">{onlyLegacy ? 'Recommended' : 'Or skip the setup'}</p>
-          <h3>Ghost Arcade 1.9 runs on this machine as it is</h3>
-          <p>It draws through OpenGL, so it works without these drivers. Your shaders and projects open in both.</p>
+          <h3>Ghost Arcade Studio runs on this machine as it is</h3>
+          <p>It draws through OpenGL, so it works without these drivers. It installs beside Pro, and your shaders and projects open in both.</p>
         </div>
         <div class="legacy-actions">
           <button type="button" class="primary" onclick={() => openExternalUrl(LEGACY_DOWNLOADS.appImage)}>

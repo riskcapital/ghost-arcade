@@ -31,6 +31,9 @@ import {
 import { createJsSourceHost, JS_SOURCE_SCHEME } from './js-source-host.js';
 // License system removed in OSS build — see src/lib/stores/license.ts.
 
+// The product this build is. Studio and Pro install side by side.
+const PRODUCT_NAME = 'Ghost Arcade Pro';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
@@ -43,6 +46,26 @@ const { randomUUID } = require('crypto');
 // lock with an installed copy that is open at the same time.
 if (!app.isPackaged && process.env.GA_USER_DATA_DIR) {
   app.setPath('userData', process.env.GA_USER_DATA_DIR);
+}
+
+// Up to 2.1.2 this app was called Ghost Arcade and kept its data in a folder of
+// that name, which Ghost Arcade Studio still uses. Pro has its own folder; on
+// its first launch it copies the settings across (electron/profile-migration.cjs).
+// GA_PROFILE_MIGRATE_FROM points a development run at a test copy instead.
+const LEGACY_USER_DATA_DIR = path.join(app.getPath('appData'), 'Ghost Arcade');
+{
+  const from = !app.isPackaged ? process.env.GA_PROFILE_MIGRATE_FROM : LEGACY_USER_DATA_DIR;
+  if (from) {
+    try {
+      require('./profile-migration.cjs').migrateProfile({
+        from,
+        to: app.getPath('userData'),
+        log: (msg) => console.log(msg),
+      });
+    } catch (err) {
+      console.error('[Profile] Settings migration failed:', err?.message || err);
+    }
+  }
 }
 
 // Start-at-boot / show mode (electron/show-startup.cjs). Created after the
@@ -72,7 +95,12 @@ const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPat
 // ghost-asset:// (see electron/path-grants.cjs).
 const mediaLocate = require('./media-locate.cjs');
 const pathGrants = require('./path-grants.cjs').createPathGrants({
-  assetDirs: [path.join(app.getPath('userData'), 'project-assets')],
+  // The old Ghost Arcade folder's media too: projects made before the rename
+  // point there, and it is not copied (see electron/profile-migration.cjs).
+  assetDirs: [
+    path.join(app.getPath('userData'), 'project-assets'),
+    path.join(LEGACY_USER_DATA_DIR, 'project-assets'),
+  ],
   storePath: path.join(app.getPath('userData'), 'path-grants.json'),
 });
 const PATH_NOT_ALLOWED = { success: false, code: 'path-not-allowed', error: 'That location was not chosen in a file dialog, so the app will not write there.' };
@@ -2163,8 +2191,42 @@ function remotePort(value, fallback) {
   const port = Number(value);
   return !app.isPackaged && Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback;
 }
-const REMOTE_WS_PORT = remotePort(process.env.WS_PORT, 9001);
-const REMOTE_HTTP_PORT = remotePort(process.env.HTTP_PORT, 9002);
+let REMOTE_WS_PORT = remotePort(process.env.WS_PORT, 9001);
+let REMOTE_HTTP_PORT = remotePort(process.env.HTTP_PORT, 9002);
+
+// Ghost Arcade Studio and Ghost Arcade Pro can run at the same time, and both
+// serve the LAN remote. Whichever starts second would find 9001/9002 taken, and
+// its phone link would quietly reach the other app. So when the usual pair is
+// busy, move to the next free pair (9011/9012, 9021/9022, ...). The QR link
+// carries the ports, so a phone that scans it finds the right app.
+const REMOTE_PORT_STEP = 10;
+const REMOTE_PORT_TRIES = 6;
+
+function remotePortIsFree(port) {
+  const host = process.env.GA_REMOTE_BIND_HOST || '0.0.0.0';
+  return new Promise(resolve => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.once('error', () => resolve(false));
+    probe.listen(port, host, () => probe.close(() => resolve(true)));
+  });
+}
+
+async function pickRemotePorts() {
+  const baseWs = REMOTE_WS_PORT;
+  const baseHttp = REMOTE_HTTP_PORT;
+  for (let i = 0; i < REMOTE_PORT_TRIES; i++) {
+    const wsPort = baseWs + i * REMOTE_PORT_STEP;
+    const httpPort = baseHttp + i * REMOTE_PORT_STEP;
+    if (await remotePortIsFree(wsPort) && await remotePortIsFree(httpPort)) {
+      if (i > 0) console.log(`[Main] Remote ports ${baseWs}/${baseHttp} are busy; using ${wsPort}/${httpPort}`);
+      REMOTE_WS_PORT = wsPort;
+      REMOTE_HTTP_PORT = httpPort;
+      return;
+    }
+  }
+  console.warn('[Main] No free remote port pair found; trying the usual ports anyway');
+}
 
 // ─── LAN remote pairing ─────────────────────────────────────────────
 // The token a phone must present to the remote's WebSocket and HTTP servers
@@ -2229,6 +2291,8 @@ async function resetRemotePairing() {
   return remotePairingInfo();
 }
 
+let remotePortsPicked = false;
+
 async function startNodeServer() {
   // Start the Node.js WS/HTTP server (server/ws-server.js)
   const serverPath = path.join(__dirname, '..', 'server', 'ws-server.js');
@@ -2241,6 +2305,13 @@ async function startNodeServer() {
   // listener; report startup failure and leave the existing process alone.
 
   console.log('[Main] Starting Node.js server:', serverPath);
+
+  // Only pick ports for the first start. A restart (new pairing token) reuses
+  // the pair this app already owns, so connected phones keep their address.
+  if (!remotePortsPicked) {
+    await pickRemotePorts();
+    remotePortsPicked = true;
+  }
 
   // Set env vars the server expects
   process.env.WS_PORT = String(REMOTE_WS_PORT);
@@ -8403,6 +8474,7 @@ function registerIpcHandlers() {
         licenseKey,
         machineId,
         appVersion: app.getVersion(),
+        product: PRODUCT_NAME,
         platform: process.platform,
         error: String(error).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 10000) : undefined,
@@ -8513,7 +8585,7 @@ function createMainWindow() {
     height: 900,
     minWidth: 1200,
     minHeight: 700,
-    title: 'Ghost Arcade',
+    title: PRODUCT_NAME,
     // Keep the real OS window chrome even though the editor content is
     // transparent on macOS for the embedded Metal preview underlay. Relying
     // on Electron's implicit transparent-window style can drop the title bar
@@ -8614,9 +8686,9 @@ function createMainWindow() {
     const { Menu } = require('electron');
     const template = [
       {
-        label: 'Ghost Arcade',
+        label: PRODUCT_NAME,
         submenu: [
-          { label: 'About Ghost Arcade', role: 'about' },
+          { label: `About ${PRODUCT_NAME}`, role: 'about' },
           { type: 'separator' },
           { label: 'Settings', accelerator: 'Cmd+,', click: () => mainWindow?.webContents.send('open-settings') },
           { type: 'separator' },
@@ -9282,7 +9354,7 @@ app.whenReady().then(async () => {
   startPowerSaveBlocker();
 
   app.setAboutPanelOptions({
-    applicationName: 'Ghost Arcade',
+    applicationName: PRODUCT_NAME,
     applicationVersion: app.getVersion(),
     copyright: 'Copyright (c) 2024-2026 Risk Capital Media LLC',
     credits: 'NDI® is a registered trademark of Vizrt NDI AB. https://ndi.video/',
@@ -9384,6 +9456,25 @@ app.whenReady().then(async () => {
 
   // Create window after server is ready
   createMainWindow();
+
+  // macOS: the old "Ghost Arcade.app" stays beside the renamed app after a
+  // drag install. Offer once to move it to the Trash, never during a show.
+  if (app.isPackaged && process.platform === 'darwin') {
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (showStartup.get()?.session?.showMode) return;
+      require('./old-app-cleanup.cjs').offerOldAppCleanup({
+        line: 'pro',
+        productName: PRODUCT_NAME,
+        userDataDir: app.getPath('userData'),
+        ownExePath: app.getPath('exe'),
+        ask: (options) => dialog.showMessageBox(mainWindow, options),
+        tell: (options) => dialog.showMessageBox(mainWindow, options),
+        trash: (appPath) => shell.trashItem(appPath),
+        log: (msg) => console.log(msg),
+      }).catch((err) => console.warn('[Cleanup] Old app check failed:', err?.message || err));
+    }, 12000);
+  }
 
   // Display hotplug. On stage the performer can pull an HDMI cable at any
   // moment. Previously: if the output window was on the removed display, the
