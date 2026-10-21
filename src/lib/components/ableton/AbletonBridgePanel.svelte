@@ -67,6 +67,11 @@
   let selected: AbletonSource | null = null;
   let dropTarget: string | null = null;
   let mapMenuOpen = false;
+  /** The Ghost Arcade deck an auto-map fills. */
+  let mapDeck: VJDeck = 'A';
+  /** What the last auto-map did, shown briefly beside the button. */
+  let mapMessage = '';
+  let mapMessageTimer: ReturnType<typeof setTimeout> | undefined;
   /** "Clear all links" asks again inline rather than with a blocking dialog. */
   let confirmClear = false;
   let installMessage = '';
@@ -74,6 +79,7 @@
   let frame = 0;
 
   $: bridge = $abletonBridge;
+  $: deckSet = bridge.tracks.some(t => t.side);
   $: ctx = {
     clipGrid: $vjClipLauncher.clipGrid,
     bankBClipGrid: $vjClipLauncher.bankBClipGrid,
@@ -245,10 +251,13 @@
     }
     mapMenuOpen = false;
     confirmClear = false;
-    if (kind === 'clear') return;
-    if (kind === 'scenes') abletonBridge.linkScenesToColumns(deck);
-    else if (kind === 'decks') abletonBridge.linkDecks();
-    else abletonBridge.linkTracksToLayers(deck);
+    let message = 'Cleared every link';
+    if (kind === 'scenes') message = `Linked ${abletonBridge.linkScenesToColumns(mapDeck)} scenes to deck ${mapDeck} columns`;
+    else if (kind === 'decks') message = `Linked ${abletonBridge.linkDecks()} songs to their decks' columns`;
+    else if (kind === 'tracks') message = `Linked ${abletonBridge.linkTracksToLayers(mapDeck)} clips to deck ${mapDeck}`;
+    mapMessage = message;
+    clearTimeout(mapMessageTimer);
+    mapMessageTimer = setTimeout(() => (mapMessage = ''), 4000);
   }
 
   async function install(chooseFolder = false) {
@@ -317,11 +326,27 @@
 
       <div class="map">
         <button class="ghost" onclick={() => { mapMenuOpen = !mapMenuOpen; confirmClear = false; }} aria-expanded={mapMenuOpen}>Auto-map ▾</button>
+        {#if mapMessage}<span class="map-message" role="status">{mapMessage}</span>{/if}
         {#if mapMenuOpen}
           <div class="menu" role="menu">
-            <button role="menuitem" onclick={() => autoMap('scenes')}><b>Scenes → columns</b><span>Scene 1 fires column 1, and so on</span></button>
+            {#if deckSet}
+              <button role="menuitem" class="recommended" onclick={() => autoMap('decks')}><b>Songs → columns <em>For this set</em></b><span>Song N on each Live deck plays column N on the same Ghost Arcade deck</span></button>
+            {/if}
+            <div class="menu-deck">
+              <span>Fill Ghost Arcade deck</span>
+              <div class="seg">
+                <button class:active={mapDeck === 'A'} onclick={() => (mapDeck = 'A')}>A</button>
+                <button class:active={mapDeck === 'B'} onclick={() => (mapDeck = 'B')}>B</button>
+              </div>
+            </div>
+            <button role="menuitem" class:recommended={!deckSet} onclick={() => autoMap('scenes')}>
+              <b>Scenes → columns{#if !deckSet} <em>For this set</em>{/if}</b>
+              <span>{deckSet ? "Fires only when a whole scene launches. Songs launched on a deck won't follow it" : 'Scene 1 fires column 1, and so on'}</span>
+            </button>
             <button role="menuitem" onclick={() => autoMap('tracks')}><b>Tracks → layers</b><span>Live's grid drives the VJ grid cell for cell</span></button>
-            <button role="menuitem" onclick={() => autoMap('decks')}><b>Decks → decks</b><span>Song N on Live's A/B decks plays column N on that deck</span></button>
+            {#if !deckSet}
+              <button role="menuitem" disabled><b>Songs → columns</b><span>Needs tracks on the A and B sides of Live's crossfader</span></button>
+            {/if}
             <button role="menuitem" class="danger" disabled={!bridge.links.length} onclick={() => autoMap('clear')}>
               <b>{confirmClear ? `Click again to remove ${bridge.links.length} links` : 'Clear all links'}</b>
             </button>
@@ -576,6 +601,9 @@
                 <svg width="9" height="9" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1 1l8 8M9 1 1 9"/></svg>
               </button>
             </div>
+            {#if selectedLinks.length > 1}
+              <button class="clear-all" onclick={() => selected && abletonBridge.clearSource(selected)}>Clear all {selectedLinks.length}</button>
+            {/if}
             {#each selectedLinks as l (l.id)}
               {@const thumb = actionThumb(ctx, l.action)}
               <div class="linked" class:missing={bridge.missing.includes(l.id)}>
@@ -591,6 +619,7 @@
             {:else}
               <p class="hint">Pick a visual below to fire with this {sourceKind(selected).toLowerCase()}.</p>
             {/each}
+            {#if selectedLinks.length}<p class="hint">A new column replaces the one on the same deck.</p>{/if}
             <button class="ghost wide" onclick={pickControl} title="A strobe, a flash, a macro jump — any Ghost Arcade control">Pick a control…</button>
           </div>
         {/if}
@@ -757,6 +786,14 @@
   .menu b { font-weight: 600; }
   .menu span { color: var(--ga-ink-2, #8a909b); font-size: 11px; }
   .menu .danger b { color: #ff8a7a; }
+  .menu em { margin-left: 6px; padding: 1px 5px; border-radius: 2px; background: color-mix(in srgb, var(--ga-live, #46d18a) 22%, transparent); color: var(--ga-live, #46d18a); font-style: normal; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; vertical-align: 1px; }
+  .menu .recommended { box-shadow: inset 2px 0 0 var(--ga-live, #46d18a); }
+  .menu-deck { display: flex; align-items: center; justify-content: space-between; padding: 6px 9px 4px; margin-top: 2px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+  .menu-deck > span { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .menu-deck .seg button { display: inline-flex; flex-direction: row; width: auto; padding: 2px 10px; }
+  .map-message { margin-left: 8px; font-size: 11px; color: var(--ga-live, #46d18a); white-space: nowrap; }
+  .clear-all { align-self: flex-end; margin: -4px 0 4px auto; display: block; height: 20px; padding: 0 8px; border-radius: 3px; border: 1px solid rgba(255, 138, 122, 0.35); background: transparent; color: #ff8a7a; font: inherit; font-size: 10px; cursor: pointer; }
+  .clear-all:hover { background: rgba(255, 138, 122, 0.1); }
   .menu button:disabled { opacity: 0.4; cursor: default; }
   .activity {
     flex: 1;

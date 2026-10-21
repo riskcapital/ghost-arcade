@@ -18,11 +18,23 @@
 
   let dropIndex: number | null = null;
 
+  // The timeline covers the locators (or 64 bars), not wherever Live's
+  // position has run to: playing clips in Session View keeps the song
+  // position climbing, and following it would squash every locator into
+  // the first pixels. Past the end, the playhead waits at the edge.
   $: perBar = bridge.numerator * (4 / bridge.denominator);
   $: lastCue = bridge.cues.length ? bridge.cues[bridge.cues.length - 1].time : 0;
-  $: span = Math.max(lastCue + 16 * perBar, beat + 8 * perBar, 64 * perBar);
-  $: rulerStep = span / perBar > 96 ? 16 : span / perBar > 48 ? 8 : 4;
+  $: span = Math.max(lastCue + 16 * perBar, 64 * perBar);
+  $: rulerStep = niceStep(span / perBar);
   $: ruler = Array.from({ length: Math.floor(span / (perBar * rulerStep)) + 1 }, (_, i) => i * rulerStep * perBar);
+  $: beyond = beat > span;
+
+  /** Bars between ruler labels: a power of two that keeps about twelve. */
+  function niceStep(bars: number): number {
+    let step = 1;
+    while (bars / step > 12) step *= 2;
+    return step;
+  }
 
   function source(index: number): AbletonSource {
     return { kind: 'locator', index, name: bridge.cues[index]?.name ?? '' };
@@ -91,7 +103,9 @@
           </span>
         </button>
       {/each}
-      <span class="playhead" class:moving={bridge.playing} style="left: {(Math.min(beat, span) / span) * 100}%"></span>
+      <span class="playhead" class:moving={bridge.playing} class:beyond style="left: {(Math.min(beat, span) / span) * 100}%">
+        {#if beyond}<span class="beyond-label">bar {Math.floor(beat / perBar) + 1} ▸</span>{/if}
+      </span>
     </div>
   </div>
 </div>
@@ -137,4 +151,6 @@
   .empty-vis { font-size: 10px; color: var(--ga-ink-2, #8a909b); border: 1px dashed rgba(255, 255, 255, 0.15); padding: 4px 6px; border-radius: 2px; }
   .playhead { position: absolute; top: -18px; bottom: 0; width: 2px; background: var(--ga-ink-2, #8a909b); pointer-events: none; }
   .playhead.moving { background: var(--ga-live, #46d18a); }
+  .playhead.beyond { opacity: 0.6; }
+  .beyond-label { position: absolute; top: 22px; right: 6px; padding: 1px 6px; border-radius: 3px; background: #0c0f14; border: 1px solid rgba(255, 255, 255, 0.12); font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-size: 10px; color: var(--ga-ink-1, #b8bdc6); white-space: nowrap; }
 </style>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveSongs, mixPosition, nextSong, orderSongs, parseBpm, stripBpm } from './abletonSetlist';
+import { deriveSongs, mixPosition, nextSong, orderSongs, parseBpm, playingSection, queuedSection, stripBpm } from './abletonSetlist';
 import type { LiveScene, LiveTrack } from './abletonLinks';
 
 const track = (name: string, side: 'A' | 'B' | null, clips: (string | null)[]): LiveTrack => ({
@@ -29,6 +29,21 @@ describe('deck sets', () => {
   it('gives same-named songs their own keys', () => {
     const songs = deriveSongs([], [track('A', 'A', ['Loop', 'Loop'])]);
     expect(new Set(songs.map(s => s.key)).size).toBe(2);
+  });
+  it('makes the clips after a tempo-named clip its sections', () => {
+    const deck = track('Deck A', 'A', ['Sunrise 122 BPM', 'Sunrise Build', 'Sunrise Drop', null, 'Night Drive 125 BPM', 'Night Drive Outro']);
+    const songs = deriveSongs([], [deck]);
+    expect(songs.map(s => s.title)).toEqual(['Sunrise', 'Night Drive']);
+    const first = songs[0];
+    expect(first.kind === 'clip' && first.sections).toEqual([{ slot: 0, label: 'Start' }, { slot: 1, label: 'Build' }, { slot: 2, label: 'Drop' }]);
+    expect(first.kind === 'clip' && first.slot).toBe(0);
+    expect(songs[1].kind === 'clip' && songs[1].sections.map(x => x.slot)).toEqual([4, 5]);
+  });
+  it('finds the section playing and the one queued', () => {
+    const deck = { ...track('Deck A', 'A', ['Sunrise 122 BPM', 'Sunrise Build', 'Sunrise Drop']), playing: 1, fired: 2 };
+    const [song] = deriveSongs([], [deck]);
+    expect(playingSection(song, [deck])).toBe(1);
+    expect(queuedSection(song, [deck], [])).toBe(2);
   });
   it('keeps a saved order and appends new songs', () => {
     const songs = deriveSongs([], tracks);

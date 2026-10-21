@@ -1,8 +1,11 @@
 /**
  * Setlist: the songs in a Live set, as a DJ sees them.
  *
- *  - A deck set (tracks on the A/B sides of Live's crossfader): every clip
- *    on a deck track is a song, played on that deck.
+ *  - A deck set (tracks on the A/B sides of Live's crossfader): clips on a
+ *    deck track are songs, played on that deck. When a track names tempos,
+ *    a clip with a tempo in its name ("Sunrise 122 BPM") starts a song and
+ *    the clips after it ("Sunrise Build", "Sunrise Drop") are its sections;
+ *    otherwise every clip is a song of its own.
  *  - A stems set (songs as blocks of scenes): a scene whose name carries a
  *    tempo ("Deep Hours Intro 122 BPM") starts a song; the scenes after it,
  *    up to the next such scene, are its sections.
@@ -14,9 +17,10 @@
 import type { LiveScene, LiveTrack } from './abletonLinks';
 
 export interface SetlistSection { scene: number; label: string }
+export interface ClipSection { slot: number; label: string }
 
 export type SetlistSong =
-  | { key: string; kind: 'clip'; title: string; bpm: number | null; color: number; track: number; slot: number; side: 'A' | 'B' | null }
+  | { key: string; kind: 'clip'; title: string; bpm: number | null; color: number; track: number; slot: number; side: 'A' | 'B' | null; sections: ClipSection[] }
   | { key: string; kind: 'scenes'; title: string; bpm: number | null; color: number; sections: SetlistSection[] };
 
 const BPM = /(\d{2,3}(?:\.\d+)?)\s*-?\s*bpm/i;
@@ -40,6 +44,14 @@ function commonPrefixWords(names: string[]): string {
   return first.slice(0, count).join(' ');
 }
 
+/** Section labels: each name without the words the song's names share;
+ *  a section named just for the song ("Sunrise") is where it starts. */
+function sectionLabels(names: string[]): { title: string; labels: string[] } {
+  if (names.length < 2) return { title: names[0], labels: names };
+  const prefix = commonPrefixWords(names);
+  return { title: prefix || names[0], labels: names.map(name => name.slice(prefix.length).trim() || 'Start') };
+}
+
 /** Same-named songs get "#2", "#3"… so every key is unique. */
 function uniqueKeys(songs: SetlistSong[]): SetlistSong[] {
   const seen = new Map<string, number>();
@@ -59,14 +71,23 @@ function songsIn(scenes: LiveScene[], tracks: LiveTrack[]): SetlistSong[] {
   if (deckTracks.length) {
     const songs: SetlistSong[] = [];
     for (const { t, i } of deckTracks) {
+      const sectioned = t.slots.some(clip => clip && parseBpm(clip.name) !== null);
+      const groups: number[][] = [];
       t.slots.forEach((clip, slot) => {
         if (!clip) return;
-        const title = stripBpm(clip.name) || `${t.name} ${slot + 1}`;
-        songs.push({
-          key: `clip:${t.name}:${clip.name || slot}`,
-          kind: 'clip', title, bpm: parseBpm(clip.name), color: clip.color, track: i, slot, side: t.side,
-        });
+        if (!groups.length || !sectioned || parseBpm(clip.name) !== null) groups.push([slot]);
+        else groups[groups.length - 1].push(slot);
       });
+      for (const group of groups) {
+        const first = t.slots[group[0]]!;
+        const names = group.map(slot => stripBpm(t.slots[slot]!.name) || `${t.name} ${slot + 1}`);
+        const { title, labels } = sectionLabels(names);
+        songs.push({
+          key: `clip:${t.name}:${first.name || group[0]}`,
+          kind: 'clip', title, bpm: parseBpm(first.name), color: first.color, track: i, slot: group[0], side: t.side,
+          sections: group.map((slot, n) => ({ slot, label: labels[n] })),
+        });
+      }
     }
     return songs;
   }
@@ -81,15 +102,14 @@ function songsIn(scenes: LiveScene[], tracks: LiveTrack[]): SetlistSong[] {
   });
   return groups.map(group => {
     const names = group.map(index => stripBpm(scenes[index].name) || `Scene ${index + 1}`);
-    const prefix = group.length > 1 ? commonPrefixWords(names) : '';
-    const title = prefix || names[0];
+    const { title, labels } = sectionLabels(names);
     return {
       key: `scenes:${title}`,
       kind: 'scenes' as const,
       title,
       bpm: parseBpm(scenes[group[0]].name),
       color: scenes[group[0]].color,
-      sections: group.map((scene, i) => ({ scene, label: names[i].slice(prefix.length).trim() || names[i] })),
+      sections: group.map((scene, i) => ({ scene, label: labels[i] })),
     };
   });
 }
@@ -114,6 +134,24 @@ export function orderSongs(songs: SetlistSong[], order: string[]): SetlistSong[]
     return alternated;
   }
   return [...ordered, ...rest];
+}
+
+/** The section of a song playing now, by index, or -1. */
+export function playingSection(song: SetlistSong, tracks: LiveTrack[]): number {
+  if (song.kind === 'clip') {
+    const slot = tracks[song.track]?.playing ?? -1;
+    return song.sections.findIndex(sec => sec.slot === slot);
+  }
+  return song.sections.findIndex(sec => tracks.some(t => t.playing === sec.scene));
+}
+
+/** The section of a song waiting to launch, by index, or -1. */
+export function queuedSection(song: SetlistSong, tracks: LiveTrack[], scenes: LiveScene[]): number {
+  if (song.kind === 'clip') {
+    const slot = tracks[song.track]?.fired ?? -1;
+    return song.sections.findIndex(sec => sec.slot === slot);
+  }
+  return song.sections.findIndex(sec => !!scenes[sec.scene]?.queued || tracks.some(t => t.fired === sec.scene));
 }
 
 /** The song after `current` in set order that hasn't played yet. */

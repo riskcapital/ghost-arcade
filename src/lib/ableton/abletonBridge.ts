@@ -235,6 +235,13 @@ type LiveMessage = Record<string, any> & { t: string };
 
 const api = () => (typeof window !== 'undefined' ? (window as any).ghostAbleton : undefined);
 
+/** Whether a new visual on a source takes the place of an existing one:
+ *  only one column per deck, one snapshot and one Stage preset can show. */
+function replaces(next: VisualAction, existing: VisualAction): boolean {
+  if (next.kind === 'column' && existing.kind === 'column') return next.deck === existing.deck;
+  return (next.kind === 'snapshot' || next.kind === 'stage') && existing.kind === next.kind;
+}
+
 function createAbletonBridge() {
   const store = writable<AbletonBridgeState>({ ...INITIAL });
   const { subscribe, update } = store;
@@ -362,7 +369,7 @@ function createAbletonBridge() {
     const t = read().tracks[track];
     const clip = t?.slots[slot];
     if (clip) colorValues.set(track, colorHue(clip.color));
-    markPlayed(song => song.kind === 'clip' && song.track === track && song.slot === slot);
+    markPlayed(song => song.kind === 'clip' && song.track === track && song.sections.some(sec => sec.slot === slot));
     if (pendingMix && pendingMix.track === track && pendingMix.slot === slot) {
       startMix(pendingMix);
       pendingMix = null;
@@ -976,9 +983,16 @@ function createAbletonBridge() {
       runAction(action);
     },
 
+    /** Link a visual to a moment in Live. A source shows one column per
+     *  deck, one snapshot and one Stage preset, so a new one of those
+     *  replaces the old; clip triggers and control hits add up. */
     addLink(source: AbletonSource, action: VisualAction) {
       const link: AbletonLink = { id: generateUUID(), source, action };
-      update(s => ({ ...s, links: [...s.links, link], missing: s.missing.filter(id => id !== link.id) }));
+      update(s => ({
+        ...s,
+        links: [...s.links.filter(l => !(samePlace(l.source, source) && replaces(action, l.action))), link],
+        missing: s.missing.filter(id => id !== link.id),
+      }));
       return link;
     },
 
@@ -996,12 +1010,15 @@ function createAbletonBridge() {
     },
 
     /** Scene N launches VJ column N on `deck`, for every scene that fits in
-     *  the clip grid. Replaces those scenes' existing links. */
-    linkScenesToColumns(deck: 'A' | 'B' = 'A') {
+     *  the clip grid. Replaces those scenes' column links; returns how many
+     *  scenes were linked. */
+    linkScenesToColumns(deck: 'A' | 'B' = 'A'): number {
       const columns = get(vjClipLauncher).numColumns;
+      let count = 0;
       update(s => {
-        const count = Math.min(s.scenes.length, columns);
-        const kept = s.links.filter(l => l.source.kind !== 'scene' || l.source.scene >= count);
+        count = Math.min(s.scenes.length, columns);
+        // Only the scenes' column links are replaced; other visuals stay.
+        const kept = s.links.filter(l => l.source.kind !== 'scene' || l.source.scene >= count || l.action.kind !== 'column');
         const added: AbletonLink[] = Array.from({ length: count }, (_, scene) => ({
           id: generateUUID(),
           source: { kind: 'scene', scene, name: s.scenes[scene].name },
@@ -1009,13 +1026,16 @@ function createAbletonBridge() {
         }));
         return { ...s, links: [...kept, ...added] };
       });
+      return count;
     },
 
     /** Mirror the Live grid onto deck `deck`: track N clip M launches VJ
-     *  layer N column M, wherever both exist. Replaces those clips' links. */
-    linkTracksToLayers(deck: 'A' | 'B' = 'A') {
+     *  layer N column M, wherever both exist. Replaces those clips' clip
+     *  links; other visuals on them stay. */
+    linkTracksToLayers(deck: 'A' | 'B' = 'A'): number {
       const launcher = get(vjClipLauncher);
       const grid = deck === 'B' ? launcher.bankBClipGrid : launcher.clipGrid;
+      let count = 0;
       update(s => {
         const added: AbletonLink[] = [];
         s.tracks.forEach((track, t) => track.slots.forEach((clip, slot) => {
@@ -1026,9 +1046,11 @@ function createAbletonBridge() {
             action: { kind: 'clip', deck, layer: t, column: slot },
           });
         }));
-        const kept = s.links.filter(l => !added.some(a => samePlace(a.source, l.source)));
+        const kept = s.links.filter(l => l.action.kind !== 'clip' || !added.some(a => samePlace(a.source, l.source)));
+        count = added.length;
         return { ...s, links: [...kept, ...added] };
       });
+      return count;
     },
 
     // ── Decks ───────────────────────────────────────────────────────
@@ -1057,25 +1079,32 @@ function createAbletonBridge() {
     },
 
     /** Song N on a Live deck plays column N on the matching Ghost Arcade
-     *  deck. Replaces those clips' links. */
-    linkDecks() {
+     *  deck, from its first section on. Replaces the column links on the
+     *  decks' clips; other visuals stay. */
+    linkDecks(): number {
       const columns = get(vjClipLauncher).numColumns;
+      let count = 0;
       update(s => {
         const added: AbletonLink[] = [];
-        s.tracks.forEach((track, t) => {
-          if (!track.side) return;
-          track.slots.forEach((clip, slot) => {
-            if (!clip || slot >= columns) return;
-            added.push({
-              id: generateUUID(),
-              source: { kind: 'clip', track: t, slot, trackName: track.name, name: clip.name },
-              action: { kind: 'column', deck: track.side!, column: slot },
-            });
+        const perDeck = new Map<number, number>();
+        for (const song of deriveSongs(s.scenes, s.tracks)) {
+          if (song.kind !== 'clip' || !song.side) continue;
+          const column = perDeck.get(song.track) ?? 0;
+          perDeck.set(song.track, column + 1);
+          if (column >= columns) continue;
+          const track = s.tracks[song.track];
+          added.push({
+            id: generateUUID(),
+            source: { kind: 'clip', track: song.track, slot: song.slot, trackName: track.name, name: track.slots[song.slot]?.name ?? '' },
+            action: { kind: 'column', deck: song.side, column },
           });
-        });
-        const kept = s.links.filter(l => !added.some(a => samePlace(a.source, l.source)));
+        }
+        const onDeck = (l: AbletonLink) => l.source.kind === 'clip' && !!s.tracks[l.source.track]?.side;
+        const kept = s.links.filter(l => l.action.kind !== 'column' || !onDeck(l));
+        count = added.length;
         return { ...s, links: [...kept, ...added] };
       });
+      return count;
     },
 
     // ── Setlist ─────────────────────────────────────────────────────
@@ -1099,6 +1128,22 @@ function createAbletonBridge() {
         // If it hasn't landed a bar after its launch point, it isn't coming.
         deadline: launchBeat(songBeat(s), step) + perBar,
       };
+    },
+
+    /** Jump to a section of a song (Intro, Build, Drop…). It lands on
+     *  Live's launch quantization and loops until the next one. */
+    playSection(song: SetlistSong, index: number) {
+      if (song.kind === 'scenes') {
+        const section = song.sections[index];
+        if (section) send({ t: 'fire_scene', s: section.scene });
+        return;
+      }
+      if (index === 0) {
+        this.playSong(song);
+        return;
+      }
+      const section = song.sections[index];
+      if (section) send({ t: 'fire_clip', i: song.track, s: section.slot });
     },
 
     /** Play the next unplayed song in set order. */

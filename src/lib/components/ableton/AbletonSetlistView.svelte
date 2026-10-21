@@ -3,12 +3,15 @@
    * Setlist — every song in the Live set as one list, in the DJ's order.
    * Play any song in any order; it lands on the bar with its visuals, and in
    * deck mode the crossfader mixes over to it. Drag rows to reorder; Next
-   * plays the next song that hasn't played yet.
+   * plays the next song that hasn't played yet. A song made of sections
+   * (Intro, Build, Drop…) gets a pad per section: each loops until the
+   * next is picked, so the intro runs as long as the room needs.
    */
-  import { abletonBridge, setlist, songBeat, type AbletonBridgeState } from '../../ableton/abletonBridge';
+  import { abletonBridge, abletonCrossfader, setlist, songBeat, type AbletonBridgeState } from '../../ableton/abletonBridge';
   import { launchBeat, linksForClip, linksForScene, liveColor, quantizeBeats, samePlace, type AbletonSource } from '../../ableton/abletonLinks';
-  import { nextSong, type SetlistSong } from '../../ableton/abletonSetlist';
+  import { nextSong, playingSection, queuedSection, type SetlistSong } from '../../ableton/abletonSetlist';
   import { actionLabel, actionTag, actionThumb, type VisualContext } from '../../ableton/abletonVisuals';
+  import AbletonCrossfader from './AbletonCrossfader.svelte';
 
   export let bridge: AbletonBridgeState;
   export let ctx: VisualContext;
@@ -35,30 +38,45 @@
 
   // Helpers take the state they read, so the template re-renders with it.
   function isPlaying(state: AbletonBridgeState, song: SetlistSong): boolean {
-    if (song.kind === 'clip') return state.tracks[song.track]?.playing === song.slot;
-    return song.sections.some(sec => state.tracks.some(t => t.playing === sec.scene));
+    return playingSection(song, state.tracks) >= 0;
   }
 
+  /** Waiting to start: a section is queued and the song isn't playing yet. */
   function isCued(state: AbletonBridgeState, song: SetlistSong): boolean {
-    if (song.kind === 'clip') return state.tracks[song.track]?.fired === song.slot;
-    const first = song.sections[0]?.scene ?? -1;
-    return !!state.scenes[first]?.queued || state.tracks.some(t => t.fired === first);
+    return !isPlaying(state, song) && queuedSection(song, state.tracks, state.scenes) >= 0;
+  }
+
+  /** The track a section plays on, for its timing. */
+  function sectionTrack(state: AbletonBridgeState, song: SetlistSong, index: number) {
+    if (song.kind === 'clip') return state.tracks[song.track];
+    const scene = song.sections[index]?.scene;
+    return state.tracks.find(t => t.playing === scene || t.fired === scene);
   }
 
   function cueCountdown(state: AbletonBridgeState, song: SetlistSong, at: number): string {
-    const fired = song.kind === 'clip'
-      ? state.tracks[song.track]?.firedBeat
-      : state.tracks.find(t => t.fired === song.sections[0]?.scene)?.firedBeat;
+    const index = queuedSection(song, state.tracks, state.scenes);
+    const fired = sectionTrack(state, song, Math.max(0, index))?.firedBeat;
     const left = launchBeat(fired ?? at, step) - at;
     if (!state.playing || left <= 0) return '';
     return left >= 1 ? String(Math.ceil(left)) : '•';
   }
 
   function barsIn(state: AbletonBridgeState, song: SetlistSong, at: number): number {
-    const track = song.kind === 'clip'
-      ? state.tracks[song.track]
-      : state.tracks.find(t => song.sections.some(sec => sec.scene === t.playing));
+    const track = sectionTrack(state, song, playingSection(song, state.tracks));
     return track ? Math.floor(Math.max(0, at - track.startedBeat) / perBar) + 1 : 0;
+  }
+
+  /** How far through its loop the playing section is, 0..1. */
+  function loopAt(state: AbletonBridgeState, song: SetlistSong, index: number, at: number): number {
+    const track = sectionTrack(state, song, index);
+    if (!state.playing || !track || track.playing < 0) return 0;
+    const length = track.slots[track.playing]?.length || perBar;
+    return (Math.max(0, at - track.startedBeat) % length) / length;
+  }
+
+  function sectionLabel(state: AbletonBridgeState, song: SetlistSong): string {
+    const index = playingSection(song, state.tracks);
+    return index >= 0 && song.sections.length > 1 ? song.sections[index].label : '';
   }
 
   function songLinks(state: AbletonBridgeState, song: SetlistSong) {
@@ -75,7 +93,7 @@
   }
 
   function deckLabel(song: SetlistSong): string {
-    return song.kind === 'clip' ? (song.side ?? '–') : `${song.sections.length} parts`;
+    return song.kind === 'clip' ? (song.side ?? '–') : '';
   }
 
   // ── Reordering ───────────────────────────────────────────────────────
@@ -126,8 +144,28 @@
         <span class="meta">
           {#if current.kind === 'clip' && current.side}<b>Deck {current.side}</b>{/if}
           {#if current.bpm}{current.bpm} BPM{/if}
-          · bar {barsIn(bridge, current, beat)}
+          · {sectionLabel(bridge, current) ? `${sectionLabel(bridge, current)} · ` : ''}bar {barsIn(bridge, current, beat)}
         </span>
+        {#if current.sections.length > 1}
+          {@const on = playingSection(current, bridge.tracks)}
+          {@const waiting = queuedSection(current, bridge.tracks, bridge.scenes)}
+          <div class="pads" role="group" aria-label="Sections of {current.title}">
+            {#each current.sections as section, i (i)}
+              <button
+                class="pad"
+                class:on={on === i}
+                class:waiting={waiting === i}
+                class:next={on >= 0 && waiting < 0 && i === on + 1}
+                onclick={() => current && abletonBridge.playSection(current, i)}
+                title={on === i ? `${section.label} is looping. Pick the next section when you're ready` : `Go to ${section.label}, landing on Live's launch quantization`}
+              >
+                <span class="pad-label">{section.label}</span>
+                {#if waiting === i && cueCountdown(bridge, current, beat)}<span class="pad-count">{cueCountdown(bridge, current, beat)}</span>{/if}
+                {#if on === i}<span class="pad-loop" style="transform: scaleX({loopAt(bridge, current, i, beat)})"></span>{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
       {:else}
         <span class="title idle">Nothing yet — pick a song or press Next</span>
       {/if}
@@ -157,6 +195,9 @@
         <span class="mixing">Mixing to {bridge.mix.to === 0 ? 'A' : 'B'} · {bridge.mix.title}<span class="bar"><span style="transform: scaleX({mixProgress})"></span></span></span>
       {:else if !bridge.deckMode}
         <span class="hint">Turn on Link decks (Decks tab) to mix the crossfader</span>
+      {/if}
+      {#if bridge.deckMode}
+        <AbletonCrossfader compact value={$abletonCrossfader} linked onChange={(v) => abletonBridge.setCrossfader(v)} />
       {/if}
     </div>
   </div>
@@ -207,10 +248,18 @@
         </button>
         <span class="name">
           <span class="song-title">{song.title}</span>
-          {#if song.kind === 'scenes' && song.sections.length > 1}
+          {#if song.sections.length > 1}
+            {@const on = playingSection(song, bridge.tracks)}
+            {@const waiting = queuedSection(song, bridge.tracks, bridge.scenes)}
             <span class="sections">
-              {#each song.sections as section (section.scene)}
-                <button class="section" onclick={(e) => { e.stopPropagation(); abletonBridge.launchScene(section.scene); }} title="Launch {section.label}">{section.label}</button>
+              {#each song.sections as section, i (i)}
+                <button
+                  class="section"
+                  class:on={on === i}
+                  class:waiting={waiting === i}
+                  onclick={(e) => { e.stopPropagation(); abletonBridge.playSection(song, i); }}
+                  title="Play {section.label}"
+                >{section.label}</button>
               {/each}
             </span>
           {/if}
@@ -255,7 +304,7 @@
   .next { position: relative; padding-right: 92px; }
   .next-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); height: 32px; padding: 0 14px; border-radius: 4px; border: none; background: var(--ga-ink-0, #eef0f4); color: #07090d; font: inherit; font-weight: 700; cursor: pointer; }
   .next-btn:disabled { opacity: 0.35; cursor: default; }
-  .mixer { justify-content: center; }
+  .mixer { justify-content: center; width: 250px; }
   .seg { display: flex; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 3px; }
   .seg button { padding: 4px 9px; background: transparent; border: none; color: var(--ga-ink-2, #8a909b); font: inherit; cursor: pointer; white-space: nowrap; }
   .seg button.active { background: rgba(255, 255, 255, 0.12); color: var(--ga-ink-0, #eef0f4); }
@@ -303,6 +352,36 @@
   .sections { display: flex; gap: 3px; flex-wrap: nowrap; overflow: hidden; }
   .section { height: 20px; padding: 0 7px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.12); background: transparent; color: var(--ga-ink-1, #b8bdc6); font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap; }
   .section:hover { border-color: var(--live); color: var(--ga-ink-0, #eef0f4); }
+  .section.on { background: var(--ga-live, #46d18a); border-color: transparent; color: #07090d; font-weight: 600; }
+  .section.waiting { animation: waiting 0.5s steps(2) infinite; }
+  @keyframes waiting { 50% { border-color: #e0a33a; color: #e0a33a; } }
+  .pads { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .pad {
+    position: relative;
+    overflow: hidden;
+    min-width: 74px;
+    height: 34px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ga-ink-1, #b8bdc6);
+    font: inherit;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+  }
+  .pad:hover { border-color: rgba(255, 255, 255, 0.35); color: var(--ga-ink-0, #eef0f4); }
+  .pad.next { border-color: color-mix(in srgb, var(--ga-live, #46d18a) 45%, transparent); }
+  .pad.on { background: color-mix(in srgb, var(--ga-live, #46d18a) 22%, #0c0f14); border-color: var(--ga-live, #46d18a); color: var(--ga-ink-0, #eef0f4); }
+  .pad.waiting { animation: pad-waiting 0.5s steps(2) infinite; }
+  @keyframes pad-waiting { 50% { border-color: #e0a33a; background: rgba(224, 163, 58, 0.18); } }
+  .pad-loop { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--ga-live, #46d18a); transform-origin: left center; }
+  .pad-count { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #e0a33a; color: #1a1204; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); }
   .status { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ga-ink-2, #8a909b); }
   .status .on { color: var(--ga-live, #46d18a); font-size: 10px; letter-spacing: 0.08em; }
   .bpm { font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-size: 11px; color: var(--ga-ink-1, #b8bdc6); }
