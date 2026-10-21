@@ -9287,37 +9287,37 @@
   /* The group's controls wrap one by one with the rest of the bar, so a
      narrow deck fills every line rather than leaving a gap at the end of
      the first. */
-  .vj-dock-group { display: contents; }
-  .vj-dock-group > :global(*) { flex: 1 1 auto; }
-  .vj-dock-group :global(button),
-  .vj-dock-group :global(label) { justify-content: center; }
+  .vj-dock > .vj-dock-group { display: contents; }
+  .vj-dock > .vj-dock-group > :global(*) { flex: 1 1 auto; }
+  .vj-dock > .vj-dock-group :global(button),
+  .vj-dock > .vj-dock-group :global(label) { justify-content: center; }
 
   /* Meter + tap tempo: the widest group. */
-  .vj-dock-group > :global(.amp-strip) { flex-grow: 4; }
-  .vj-dock-group :global(.amp-fft-btn) { flex: 1 1 auto; max-width: 200px; }
-  .vj-dock-group :global(.bpm-tap-widget) { flex: 3 1 auto; }
-  .vj-dock-group :global(.bpm-tap-btn) { flex: 1 1 auto; max-width: 90px; }
-  .vj-dock-group :global(.bpm-readout) { flex: 1.2 1 auto; max-width: 120px; }
-  .vj-dock-group :global(.bpm-auto-btn) { flex: 2 1 auto; max-width: 190px; }
+  .vj-dock > .vj-dock-group > :global(.amp-strip) { flex-grow: 4; }
+  .vj-dock > .vj-dock-group :global(.amp-fft-btn) { flex: 1 1 auto; max-width: 200px; }
+  .vj-dock > .vj-dock-group :global(.bpm-tap-widget) { flex: 3 1 auto; }
+  .vj-dock > .vj-dock-group :global(.bpm-tap-btn) { flex: 1 1 auto; max-width: 90px; }
+  .vj-dock > .vj-dock-group :global(.bpm-readout) { flex: 1.2 1 auto; max-width: 120px; }
+  .vj-dock > .vj-dock-group :global(.bpm-auto-btn) { flex: 2 1 auto; max-width: 190px; }
 
   /* Nudge and resync. */
-  .vj-dock-group > :global(.tempo-controls) { flex-grow: 1.6; }
-  .vj-dock-group :global(.nudge-group) { flex: 2 1 auto; }
-  .vj-dock-group :global(.nudge-group button) { flex: 1 1 auto; }
-  .vj-dock-group :global(.tempo-controls > button) { flex: 1 1 auto; }
+  .vj-dock > .vj-dock-group > :global(.tempo-controls) { flex-grow: 1.6; }
+  .vj-dock > .vj-dock-group :global(.nudge-group) { flex: 2 1 auto; }
+  .vj-dock > .vj-dock-group :global(.nudge-group button) { flex: 1 1 auto; }
+  .vj-dock > .vj-dock-group :global(.tempo-controls > button) { flex: 1 1 auto; }
 
   /* Audio in and out. */
-  .vj-dock-group > :global(.audio-input-picker) { flex-grow: 0.8; }
-  .vj-dock-group :global(.aip-mic-group) { flex: 2 1 auto; }
-  .vj-dock-group :global(.aip-mic-main) { flex: 1 1 auto; }
-  .vj-dock-group :global(.audio-input-picker > .aip-btn) { flex: 1 1 auto; }
-  .vj-dock-group > :global(.audio-output) { flex-grow: 1.2; }
-  .vj-dock-group :global(.audio-output > .output-button) { width: 100%; }
+  .vj-dock > .vj-dock-group > :global(.audio-input-picker) { flex-grow: 0.8; }
+  .vj-dock > .vj-dock-group :global(.aip-mic-group) { flex: 2 1 auto; }
+  .vj-dock > .vj-dock-group :global(.aip-mic-main) { flex: 1 1 auto; }
+  .vj-dock > .vj-dock-group :global(.audio-input-picker > .aip-btn) { flex: 1 1 auto; }
+  .vj-dock > .vj-dock-group > :global(.audio-output) { flex-grow: 1.2; }
+  .vj-dock > .vj-dock-group :global(.audio-output > .output-button) { width: 100%; }
 
   /* Launch quantize and the Ableton tray. */
-  .vj-dock-group > .dock-quant { flex-grow: 1.1; justify-content: center; gap: 10px; }
-  .vj-dock-group > .dock-quant .dock-quant-select { flex: 1 1 auto; max-width: 90px; text-align: center; }
-  .vj-dock-group > .dock-ableton { flex-grow: 1.1; justify-content: center; }
+  .vj-dock > .vj-dock-group > .dock-quant { flex-grow: 1.1; justify-content: center; gap: 10px; }
+  .vj-dock > .vj-dock-group > .dock-quant .dock-quant-select { flex: 1 1 auto; max-width: 90px; text-align: center; }
+  .vj-dock > .vj-dock-group > .dock-ableton { flex-grow: 1.1; justify-content: center; }
   /* Media tray stays right; only the grid internals flip */
 
   /* Layer select icon */
