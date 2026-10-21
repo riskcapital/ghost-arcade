@@ -395,10 +395,11 @@
           mandatory: {
             chromeMediaSource: 'desktop',
             chromeMediaSourceId: picked.id,
-            // Cap to 1080p so we don't burn CPU on a 4K capture path
-            // by default. Users who need higher can edit this later.
-            maxWidth: 1920,
-            maxHeight: 1080,
+            // Up to 4096 px on each side, in the window's own aspect
+            // ratio: 4K slides and square dome masters arrive sharp. (A
+            // 1080p cap here made captured 4K windows blurry.)
+            maxWidth: 4096,
+            maxHeight: 4096,
             maxFrameRate: 60,
           },
         } as any,
