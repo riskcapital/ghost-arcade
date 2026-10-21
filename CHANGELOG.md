@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.5 — October 21, 2026
+
+Captured windows and screens arrive at full resolution: Retina pixel scale on macOS, live resizing, and up to 4096 px where the browser capture is used. See [release notes](docs/releases/v2.1.5.md).
+
 # Ghost Arcade Pro 2.1.4 — October 21, 2026
 
 Pro keeps its data in its own folder with its own keychain key: no keychain password prompt on macOS, settings copied from the earlier folder on first launch, and Pro and Studio run side by side. See [release notes](docs/releases/v2.1.4.md).
