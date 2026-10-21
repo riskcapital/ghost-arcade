@@ -155,6 +155,21 @@ function decodeXml(value) {
     .replace(/&amp;/g, '&');
 }
 
+/**
+ * The versions of Live that have run on this computer, most recently used
+ * first ("12.1.5", "10.1.43"), from their preference folders. The setup steps
+ * use the newest to name the right menu: Live 12 says Settings where Live 10
+ * and 11 say Preferences.
+ */
+function installedLiveVersions(app) {
+  const versions = [];
+  for (const folder of livePreferenceFolders(app)) {
+    const match = folder.split(/[\\/]/).map((part) => /^Live (\d+(?:\.\d+)*)/.exec(part)).find(Boolean);
+    if (match && !versions.includes(match[1])) versions.push(match[1]);
+  }
+  return versions;
+}
+
 /** Every User Library the installed versions of Live use, newest first. */
 function configuredUserLibraries(app) {
   const libraries = [];
@@ -228,6 +243,7 @@ function scriptStatus(app, appRoot) {
     return {
       installed,
       current,
+      liveVersions: installedLiveVersions(app),
       path: target,
       libraryFound: fs.existsSync(path.dirname(path.dirname(target))),
       available: !!source,

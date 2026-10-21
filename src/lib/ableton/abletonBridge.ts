@@ -98,6 +98,8 @@ export interface ScriptStatus {
   path: string;
   libraryFound: boolean;
   available: boolean;
+  /** Live versions that have run on this computer, most recently used first. */
+  liveVersions?: string[];
 }
 
 export interface LiveDevice { name: string; params: { name: string; value: number }[] }

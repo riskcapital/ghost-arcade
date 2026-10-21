@@ -24,6 +24,7 @@
     type VisualAction,
   } from '../../ableton/abletonLinks';
   import { noteName, type SignalTarget } from '../../ableton/abletonScore';
+  import { livePlatform, liveSetupWords } from '../../ableton/liveSetup';
   import {
     actionHint,
     actionLabel,
@@ -104,6 +105,9 @@
   $: laneAction = selectedPitch === null ? null : scoreAction(bridge, selectedPitch, ctx.numColumns);
   $: selectedLinks = selected ? bridge.links.filter(l => samePlace(l.source, selected!)) : [];
   $: scriptReady = !!bridge.script?.installed && !!bridge.script?.current;
+  // Where Live keeps the Control Surface setting, for this computer's OS and
+  // the newest Live that has run here.
+  $: liveWords = liveSetupWords(livePlatform(), bridge.script?.liveVersions);
   $: beat = songBeat(bridge, now);
   $: step = quantizeBeats(bridge.quantize, bridge.numerator, bridge.denominator);
   $: latest = bridge.activity[0];
@@ -436,36 +440,98 @@
 
   {#if !bridge.connected}
     <div class="setup">
-      <div class="step" class:done={scriptReady}>
-        <span class="num">1</span>
-        <div>
-          <b>Install the Live script</b>
-          <p>A small control surface in your Ableton User Library.</p>
-          <div class="row">
-            <button class="solid" onclick={() => install(false)}>
-              {bridge.script?.installed ? (bridge.script.current ? 'Reinstall' : 'Update script') : 'Install script'}
-            </button>
-            <button class="ghost" onclick={() => install(true)}>Choose folder…</button>
-            {#if bridge.script?.installed}<button class="ghost" onclick={() => abletonBridge.revealScript()}>Show</button>{/if}
+      <div class="setup-hero">
+        <svg class="hero-mark" viewBox="0 0 96 40" aria-hidden="true">
+          <!-- Live's clip grid, a link, Ghost Arcade's ghost. -->
+          <g class="hero-grid">
+            <rect x="2" y="6" width="8" height="28" rx="1.5" />
+            <rect x="13" y="12" width="8" height="22" rx="1.5" />
+            <rect x="24" y="2" width="8" height="32" rx="1.5" />
+          </g>
+          <g class="hero-link" fill="none" stroke-width="2.2" stroke-linecap="round">
+            <path d="M40 20h16" stroke-dasharray="2 4" />
+            <path d="M44 14.5a5.5 5.5 0 0 0 0 11M52 14.5a5.5 5.5 0 0 1 0 11" />
+          </g>
+          <path class="hero-ghost" d="M78 4c-7.2 0-12.5 5.5-12.5 12.7V36l4.1-3 3.9 3.2 4.5-3.2 4.5 3.2 3.9-3.2 4.1 3V16.7C90.5 9.5 85.2 4 78 4Z" />
+          <circle class="hero-eye" cx="73.5" cy="17" r="2.2" />
+          <circle class="hero-eye" cx="82.5" cy="17" r="2.2" />
+        </svg>
+        <div class="hero-text">
+          <h3>Connect Ableton Live</h3>
+          <p>Three steps, once. After that Ghost Arcade connects whenever Live is open.</p>
+        </div>
+        <span class="live-found" class:none={!liveWords.version}>
+          {#if liveWords.version}
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>
+            <span>Found</span> <span translate="no">{liveWords.version}</span>
+          {:else}
+            No Live found on this computer yet
+          {/if}
+        </span>
+      </div>
+
+      <ol class="steps">
+        <li class="step" class:done={scriptReady}>
+          <div class="step-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><path d="M4 9.5A2.5 2.5 0 0 1 6.5 7h6l2.5 3h10.5A2.5 2.5 0 0 1 28 12.5v11a2.5 2.5 0 0 1-2.5 2.5h-19A2.5 2.5 0 0 1 4 23.5z" /><path class="accent" d="M16 13.5v7.5M12.5 17.5 16 21l3.5-3.5" /></svg>
           </div>
-          {#if installMessage}<p class="note">{installMessage}</p>{/if}
-        </div>
-      </div>
-      <div class="step">
-        <span class="num">2</span>
-        <div>
-          <b>Turn it on in Live</b>
-          <p>Restart Live. In Preferences (Settings in Live 12) → Link / MIDI, set a Control Surface to <b>GhostArcade</b>.</p>
-        </div>
-      </div>
-      <div class="step" class:done={bridge.connected}>
-        <span class="num">3</span>
-        <div>
-          <b>{bridge.listening ? 'Waiting for Live…' : 'Starting…'}</b>
-          <p>Your session grid appears here the moment Live says hello.</p>
-          {#if bridge.error}<p class="note error">{bridge.error}</p>{/if}
-        </div>
-      </div>
+          <div class="step-body">
+            <span class="step-n">Step 1{#if scriptReady}<i>Done</i>{/if}</span>
+            <b>Install the Live script</b>
+            <p>A small control surface that Ghost Arcade copies into your Ableton User Library.</p>
+            <div class="row">
+              <button class="solid" onclick={() => install(false)}>
+                {bridge.script?.installed ? (bridge.script.current ? 'Reinstall' : 'Update script') : 'Install script'}
+              </button>
+              <button class="ghost" onclick={() => install(true)}>Choose folder…</button>
+              {#if bridge.script?.installed}<button class="ghost" onclick={() => abletonBridge.revealScript()}>Show</button>{/if}
+            </div>
+            {#if installMessage}<p class="note">{installMessage}</p>{/if}
+          </div>
+        </li>
+
+        <li class="step">
+          <div class="step-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><path d="M7 6v20M16 6v20M25 6v20" /><rect class="accent-fill" x="4" y="17" width="6" height="4" rx="1" /><rect class="accent-fill" x="13" y="9" width="6" height="4" rx="1" /><rect class="accent-fill" x="22" y="14" width="6" height="4" rx="1" /></svg>
+          </div>
+          <div class="step-body">
+            <span class="step-n">Step 2</span>
+            <b>Turn it on in Live</b>
+            <ol class="sub">
+              <li><span class="dot" aria-hidden="true"></span>Restart Live, so it finds the script.</li>
+              <li>
+                <span class="dot" aria-hidden="true"></span>
+                <span>
+                  <span class="sub-label">Open Live's settings:</span>
+                  <span class="live-path" translate="no">{#each liveWords.menu as item, i}{#if i}<em aria-hidden="true">›</em>{/if}{item}{/each}</span>
+                  <span class="keys" translate="no">{#each liveWords.shortcut as key}<kbd>{key}</kbd>{/each}</span>
+                  {#if liveWords.menuAlternative}<small>({liveWords.menuAlternative})</small>{/if}
+                </span>
+              </li>
+              <li>
+                <span class="dot" aria-hidden="true"></span>
+                <span><span class="sub-label">Tab:</span> <span class="live-path" translate="no">{liveWords.tab}</span>{#if liveWords.tabNote} <small>({liveWords.tabNote})</small>{/if}</span>
+              </li>
+              <li>
+                <span class="dot" aria-hidden="true"></span>
+                <span><span class="sub-label">Control Surface:</span> <span class="live-path" translate="no">GhostArcade</span> <small>Input and Output can stay on None.</small></span>
+              </li>
+            </ol>
+          </div>
+        </li>
+
+        <li class="step" class:done={bridge.connected} class:listening={bridge.listening && !bridge.connected}>
+          <div class="step-icon signal" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><circle class="accent-fill" cx="16" cy="20" r="2.6" /><path class="wave w1" d="M11.5 15.5a6.4 6.4 0 0 1 9 0" /><path class="wave w2" d="M8 12a11.3 11.3 0 0 1 16 0" /><path class="wave w3" d="M4.5 8.5a16.3 16.3 0 0 1 23 0" /></svg>
+          </div>
+          <div class="step-body">
+            <span class="step-n">Step 3</span>
+            <b>{bridge.listening ? 'Waiting for Live…' : 'Starting…'}</b>
+            <p>Your session grid appears here the moment Live says hello.</p>
+            {#if bridge.error}<p class="note error">{bridge.error}</p>{/if}
+          </div>
+        </li>
+      </ol>
     </div>
   {:else}
     <div class="body">
@@ -888,13 +954,51 @@
   .close:hover { color: var(--ga-ink-0, #eef0f4); }
 
   /* ── Setup ── */
-  .setup { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 16px; align-content: start; }
-  .step { display: flex; gap: 12px; padding: 14px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 4px; background: rgba(255, 255, 255, 0.02); }
-  .step .num { width: 22px; height: 22px; flex: 0 0 auto; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.25); display: flex; align-items: center; justify-content: center; font-size: 11px; }
-  .step.done .num { border-color: var(--ga-live, #46d18a); color: var(--ga-live, #46d18a); }
-  .step b { font-weight: 600; }
+  .setup { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px; padding: 18px 20px 20px; }
+  .setup-hero { display: flex; align-items: center; gap: 16px; padding: 14px 18px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; background: linear-gradient(90deg, rgba(70, 209, 138, 0.07), rgba(255, 255, 255, 0.015) 55%); }
+  .hero-mark { width: 92px; height: 38px; flex: 0 0 auto; }
+  .hero-grid rect { fill: rgba(255, 255, 255, 0.16); }
+  .hero-grid rect:nth-child(2) { fill: var(--ga-live, #46d18a); opacity: 0.85; }
+  .hero-link path { stroke: rgba(255, 255, 255, 0.45); }
+  .hero-ghost { fill: var(--ga-ink-0, #eef0f4); }
+  .hero-eye { fill: #0b0d11; }
+  .hero-text { flex: 1; min-width: 0; }
+  .hero-text h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--ga-ink-0, #eef0f4); letter-spacing: 0.01em; }
+  .hero-text p { margin: 3px 0 0; color: var(--ga-ink-1, #b8bdc6); font-size: 12px; }
+  .live-found { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--ga-live, #46d18a); background: rgba(70, 209, 138, 0.1); border: 1px solid rgba(70, 209, 138, 0.28); white-space: nowrap; }
+  .live-found svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .live-found.none { color: var(--ga-ink-2, #8a909b); background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.1); }
+
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .step { position: relative; display: flex; gap: 14px; padding: 16px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; background: rgba(255, 255, 255, 0.02); transition: border-color 0.2s, background 0.2s; }
+  .step.done { border-color: rgba(70, 209, 138, 0.35); background: rgba(70, 209, 138, 0.04); }
+  .step-icon { width: 44px; height: 44px; flex: 0 0 auto; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); color: var(--ga-ink-1, #b8bdc6); }
+  .step-icon svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .step-icon .accent { stroke: var(--ga-live, #46d18a); }
+  .step-icon .accent-fill { fill: var(--ga-live, #46d18a); stroke: none; }
+  .step.done .step-icon { color: var(--ga-live, #46d18a); border-color: rgba(70, 209, 138, 0.3); background: rgba(70, 209, 138, 0.08); }
+  .step-body { min-width: 0; flex: 1; }
+  .step-n { display: flex; align-items: center; gap: 8px; font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ga-ink-2, #8a909b); margin-bottom: 4px; }
+  .step-n i { font-style: normal; color: var(--ga-live, #46d18a); }
+  .step b { font-weight: 600; color: var(--ga-ink-0, #eef0f4); }
   .step p { margin: 4px 0 0; color: var(--ga-ink-1, #b8bdc6); line-height: 1.5; }
-  .step .row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .step .row { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+  .sub { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 7px; color: var(--ga-ink-1, #b8bdc6); line-height: 1.55; }
+  .sub li { display: flex; gap: 9px; align-items: baseline; }
+  .sub .dot { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: rgba(255, 255, 255, 0.3); transform: translateY(-2px); }
+  .sub small { color: var(--ga-ink-2, #8a909b); font-size: 11px; }
+  .sub .sub-label { color: var(--ga-ink-1, #b8bdc6); margin-right: 2px; }
+  .sub .keys { display: inline-flex; margin-left: 4px; }
+  .live-path { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--ga-ink-0, #eef0f4); font-weight: 500; white-space: nowrap; }
+  .live-path em { font-style: normal; color: var(--ga-ink-2, #8a909b); }
+  kbd { display: inline-block; min-width: 18px; padding: 0 5px; margin: 0 2px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.18); border-bottom-width: 2px; background: rgba(255, 255, 255, 0.05); font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-size: 11px; text-align: center; color: var(--ga-ink-0, #eef0f4); }
+  .signal .wave { stroke: rgba(255, 255, 255, 0.35); }
+  .step.listening .signal .wave { animation: ga-live-wave 1.8s ease-in-out infinite; }
+  .step.listening .signal .w2 { animation-delay: 0.2s; }
+  .step.listening .signal .w3 { animation-delay: 0.4s; }
+  .step.done .signal .wave { stroke: var(--ga-live, #46d18a); }
+  @keyframes ga-live-wave { 0%, 100% { stroke: rgba(255, 255, 255, 0.18); } 40% { stroke: var(--ga-live, #46d18a); } }
+  @media (prefers-reduced-motion: reduce) { .step.listening .signal .wave { animation: none; } }
   .note { font-size: 11px; color: var(--ga-ink-2, #8a909b) !important; word-break: break-all; }
   .note.error { color: #ff7a6b !important; }
 

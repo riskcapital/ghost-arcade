@@ -9267,6 +9267,57 @@
   .vj-dock :global(.amp-bandstrip) {
     gap: var(--vj-amp-bar-gap);
   }
+
+  /* ── Deck bar fills its row ──
+     Every control takes a share of the width in proportion to how much it
+     holds, never less than its content. The buttons inside stop growing at
+     a sensible width and sit centred in their share. On a narrow deck the
+     bar wraps control by control, and each line fills the same way. Scoped to this bar: the same components
+     sit at their natural size in mapping mode and Performer. */
+  .vj-dock {
+    gap: 6px 8px;
+    justify-content: space-between;
+  }
+  .vj-dock > .grid-dimension-controls { flex: 1.4 1 auto; }
+  .vj-dock .dim-group { flex: 1 1 0; justify-content: space-between; }
+  .vj-dock .dim-group .dim-value { flex: 1 1 auto; }
+  .vj-dock .dim-group .dim-btn { width: 28px; flex: 0 0 auto; }
+  .vj-dock > :global(.groups) { flex: 0.7 1 auto; }
+  .vj-dock > :global(.groups) > :global(.groups-trigger) { width: 100%; height: var(--vj-control-h); display: inline-flex; align-items: center; justify-content: center; }
+  /* The group's controls wrap one by one with the rest of the bar, so a
+     narrow deck fills every line rather than leaving a gap at the end of
+     the first. */
+  .vj-dock-group { display: contents; }
+  .vj-dock-group > :global(*) { flex: 1 1 auto; }
+  .vj-dock-group :global(button),
+  .vj-dock-group :global(label) { justify-content: center; }
+
+  /* Meter + tap tempo: the widest group. */
+  .vj-dock-group > :global(.amp-strip) { flex-grow: 4; }
+  .vj-dock-group :global(.amp-fft-btn) { flex: 1 1 auto; max-width: 200px; }
+  .vj-dock-group :global(.bpm-tap-widget) { flex: 3 1 auto; }
+  .vj-dock-group :global(.bpm-tap-btn) { flex: 1 1 auto; max-width: 90px; }
+  .vj-dock-group :global(.bpm-readout) { flex: 1.2 1 auto; max-width: 120px; }
+  .vj-dock-group :global(.bpm-auto-btn) { flex: 2 1 auto; max-width: 190px; }
+
+  /* Nudge and resync. */
+  .vj-dock-group > :global(.tempo-controls) { flex-grow: 1.6; }
+  .vj-dock-group :global(.nudge-group) { flex: 2 1 auto; }
+  .vj-dock-group :global(.nudge-group button) { flex: 1 1 auto; }
+  .vj-dock-group :global(.tempo-controls > button) { flex: 1 1 auto; }
+
+  /* Audio in and out. */
+  .vj-dock-group > :global(.audio-input-picker) { flex-grow: 0.8; }
+  .vj-dock-group :global(.aip-mic-group) { flex: 2 1 auto; }
+  .vj-dock-group :global(.aip-mic-main) { flex: 1 1 auto; }
+  .vj-dock-group :global(.audio-input-picker > .aip-btn) { flex: 1 1 auto; }
+  .vj-dock-group > :global(.audio-output) { flex-grow: 1.2; }
+  .vj-dock-group :global(.audio-output > .output-button) { width: 100%; }
+
+  /* Launch quantize and the Ableton tray. */
+  .vj-dock-group > .dock-quant { flex-grow: 1.1; justify-content: center; gap: 10px; }
+  .vj-dock-group > .dock-quant .dock-quant-select { flex: 1 1 auto; max-width: 90px; text-align: center; }
+  .vj-dock-group > .dock-ableton { flex-grow: 1.1; justify-content: center; }
   /* Media tray stays right; only the grid internals flip */
 
   /* Layer select icon */
