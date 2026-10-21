@@ -8,7 +8,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { fly } from 'svelte/transition';
-  import { abletonBridge, scoreAction, songBeat, type AbletonBridgeState } from '../../ableton/abletonBridge';
+  import { abletonBridge, scoreAction, setlist, songBeat, type AbletonBridgeState } from '../../ableton/abletonBridge';
   import {
     barBeat,
     launchBeat,
@@ -80,6 +80,7 @@
 
   $: bridge = $abletonBridge;
   $: deckSet = bridge.tracks.some(t => t.side);
+  $: sectioned = deckSet && setlist(bridge).some(song => song.sections.length > 1);
   $: ctx = {
     clipGrid: $vjClipLauncher.clipGrid,
     bankBClipGrid: $vjClipLauncher.bankBClipGrid,
@@ -244,7 +245,7 @@
     try { link(source, JSON.parse(raw) as VisualAction); } catch { /* not ours */ }
   }
 
-  function autoMap(kind: 'scenes' | 'tracks' | 'decks' | 'clear') {
+  function autoMap(kind: 'scenes' | 'tracks' | 'decks' | 'parts' | 'clear') {
     if (kind === 'clear') {
       if (!confirmClear) { confirmClear = true; return; }
       abletonBridge.clearLinks();
@@ -254,6 +255,7 @@
     let message = 'Cleared every link';
     if (kind === 'scenes') message = `Linked ${abletonBridge.linkScenesToColumns(mapDeck)} scenes to deck ${mapDeck} columns`;
     else if (kind === 'decks') message = `Linked ${abletonBridge.linkDecks()} songs to their decks' columns`;
+    else if (kind === 'parts') message = `Gave ${abletonBridge.linkSections()} song parts a column each`;
     else if (kind === 'tracks') message = `Linked ${abletonBridge.linkTracksToLayers(mapDeck)} clips to deck ${mapDeck}`;
     mapMessage = message;
     clearTimeout(mapMessageTimer);
@@ -330,7 +332,10 @@
         {#if mapMenuOpen}
           <div class="menu" role="menu">
             {#if deckSet}
-              <button role="menuitem" class="recommended" onclick={() => autoMap('decks')}><b>Songs → columns <em>For this set</em></b><span>Song N on each Live deck plays column N on the same Ghost Arcade deck</span></button>
+              {#if sectioned}
+                <button role="menuitem" class="recommended" onclick={() => autoMap('parts')}><b>Parts → columns <em>For this set</em></b><span>Every part of every song plays its own column on the song's deck, so the visuals change with Build, Drop and Outro</span></button>
+              {/if}
+              <button role="menuitem" class:recommended={!sectioned} onclick={() => autoMap('decks')}><b>Songs → columns{#if !sectioned} <em>For this set</em>{/if}</b><span>Song N on each Live deck plays column N on the same Ghost Arcade deck; its visuals hold through the song</span></button>
             {/if}
             <div class="menu-deck">
               <span>Fill Ghost Arcade deck</span>

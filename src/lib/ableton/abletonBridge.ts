@@ -1210,22 +1210,27 @@ function createAbletonBridge() {
     },
 
     /** Mirror the Live grid onto deck `deck`: track N clip M launches VJ
-     *  layer N column M, wherever both exist. Replaces those clips' clip
-     *  links; other visuals on them stay. */
+     *  layer N column M, wherever both exist. A track on a side of Live's
+     *  crossfader fills that side's deck instead, its first track on layer
+     *  1. Replaces those clips' clip links; other visuals on them stay. */
     linkTracksToLayers(deck: 'A' | 'B' = 'A'): number {
       const launcher = get(vjClipLauncher);
-      const grid = deck === 'B' ? launcher.bankBClipGrid : launcher.clipGrid;
       let count = 0;
       update(s => {
         const added: AbletonLink[] = [];
-        s.tracks.forEach((track, t) => track.slots.forEach((clip, slot) => {
-          if (!clip || !grid[t]?.[slot]) return;
-          added.push({
-            id: generateUUID(),
-            source: { kind: 'clip', track: t, slot, trackName: track.name, name: clip.name },
-            action: { kind: 'clip', deck, layer: t, column: slot },
+        s.tracks.forEach((track, t) => {
+          const target = track.side ?? deck;
+          const layer = track.side ? s.tracks.slice(0, t).filter(o => o.side === track.side).length : t;
+          const grid = target === 'B' ? launcher.bankBClipGrid : launcher.clipGrid;
+          track.slots.forEach((clip, slot) => {
+            if (!clip || !grid[layer]?.[slot]) return;
+            added.push({
+              id: generateUUID(),
+              source: { kind: 'clip', track: t, slot, trackName: track.name, name: clip.name },
+              action: { kind: 'clip', deck: target, layer, column: slot },
+            });
           });
-        }));
+        });
         const kept = s.links.filter(l => l.action.kind !== 'clip' || !added.some(a => samePlace(a.source, l.source)));
         count = added.length;
         return { ...s, links: [...kept, ...added] };
@@ -1281,6 +1286,39 @@ function createAbletonBridge() {
         }
         const onDeck = (l: AbletonLink) => l.source.kind === 'clip' && !!s.tracks[l.source.track]?.side;
         const kept = s.links.filter(l => l.action.kind !== 'column' || !onDeck(l));
+        count = added.length;
+        return { ...s, links: [...kept, ...added] };
+      });
+      return count;
+    },
+
+    /** Every part of every song gets a column of its own on the song's
+     *  deck, in set order: Sunrise's Start, Build, Drop and Outro play
+     *  columns 1 to 4, the next song on that deck carries on from 5. So
+     *  the visuals change with each part. Replaces the column and clip
+     *  links on the decks' clips; returns how many parts were linked. */
+    linkSections(): number {
+      const columns = get(vjClipLauncher).numColumns;
+      let count = 0;
+      update(s => {
+        const added: AbletonLink[] = [];
+        const next = new Map<'A' | 'B', number>();
+        for (const song of setlist(s)) {
+          if (song.kind !== 'clip' || !song.side) continue;
+          const track = s.tracks[song.track];
+          for (const section of song.sections) {
+            const column = next.get(song.side) ?? 0;
+            if (column >= columns) break;
+            next.set(song.side, column + 1);
+            added.push({
+              id: generateUUID(),
+              source: { kind: 'clip', track: song.track, slot: section.slot, trackName: track.name, name: track.slots[section.slot]?.name ?? '' },
+              action: { kind: 'column', deck: song.side, column },
+            });
+          }
+        }
+        const onDeck = (l: AbletonLink) => l.source.kind === 'clip' && !!s.tracks[l.source.track]?.side;
+        const kept = s.links.filter(l => (l.action.kind !== 'column' && l.action.kind !== 'clip') || !onDeck(l));
         count = added.length;
         return { ...s, links: [...kept, ...added] };
       });
