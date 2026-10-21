@@ -1,8 +1,8 @@
 /**
- * First launch of Ghost Arcade Pro: bring the settings over from "Ghost Arcade".
+ * First launch of Ghost Arcade Pro: bring the settings over from "ghost-arcade".
  *
- * Up to 2.1.2 this line was called Ghost Arcade and kept its data in a folder
- * of that name, the same folder the 1.9 line (now Ghost Arcade Studio) uses.
+ * Up to 2.1.3 this line kept its data in a folder named after the code package,
+ * "ghost-arcade", the same folder the 1.9 line (now Ghost Arcade Studio) uses.
  * Pro has its own folder so the two apps can run side by side. On the first
  * launch, while Pro's folder is still empty, copy the old folder's settings,
  * Local Storage (preferences and the project autosave), shaders and file
@@ -47,6 +47,7 @@ const SKIP = new Set([
   'SingletonCookie',
   'lockfile',
   'RunningChromeVersion',
+  'DevToolsActivePort',
   MARKER,
 ]);
 

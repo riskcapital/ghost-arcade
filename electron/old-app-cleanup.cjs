@@ -1,5 +1,5 @@
 /**
- * macOS: offer to move the old "Ghost Arcade.app" to the Trash.
+ * macOS: offer to move the old "Ghost-Arcade.app" to the Trash.
  *
  * Ghost Arcade Studio (the 1.9 line) and Ghost Arcade Pro (the 2.x line) used
  * to share the name Ghost Arcade. A Mac install is a drag into Applications, so
@@ -16,14 +16,16 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const OLD_APP_NAME = 'Ghost Arcade.app';
+// The bundle is named after executableName ("Ghost-Arcade"); "Ghost Arcade"
+// covers a copy someone renamed in Finder.
+const OLD_APP_NAMES = ['Ghost-Arcade.app', 'Ghost Arcade.app'];
 const STORE = 'old-app-cleanup.json';
 
 function oldAppCandidates(home = os.homedir()) {
-  return [
-    path.join('/Applications', OLD_APP_NAME),
-    path.join(home, 'Applications', OLD_APP_NAME),
-  ];
+  return OLD_APP_NAMES.flatMap((name) => [
+    path.join('/Applications', name),
+    path.join(home, 'Applications', name),
+  ]);
 }
 
 function readBundleVersion(appPath, exec = execFileSync) {

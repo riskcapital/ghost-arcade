@@ -48,11 +48,12 @@ if (!app.isPackaged && process.env.GA_USER_DATA_DIR) {
   app.setPath('userData', process.env.GA_USER_DATA_DIR);
 }
 
-// Up to 2.1.2 this app was called Ghost Arcade and kept its data in a folder of
-// that name, which Ghost Arcade Studio still uses. Pro has its own folder; on
-// its first launch it copies the settings across (electron/profile-migration.cjs).
+// Pro's data folder and keychain key are named after its productName in
+// package.json ("Ghost Arcade Pro"). Every earlier version, and Ghost Arcade
+// Studio, keep theirs under the code package's name, "ghost-arcade". On its
+// first launch Pro copies the settings across (electron/profile-migration.cjs).
 // GA_PROFILE_MIGRATE_FROM points a development run at a test copy instead.
-const LEGACY_USER_DATA_DIR = path.join(app.getPath('appData'), 'Ghost Arcade');
+const LEGACY_USER_DATA_DIR = path.join(app.getPath('appData'), 'ghost-arcade');
 {
   const from = !app.isPackaged ? process.env.GA_PROFILE_MIGRATE_FROM : LEGACY_USER_DATA_DIR;
   if (from) {
@@ -95,7 +96,7 @@ const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPat
 // ghost-asset:// (see electron/path-grants.cjs).
 const mediaLocate = require('./media-locate.cjs');
 const pathGrants = require('./path-grants.cjs').createPathGrants({
-  // The old Ghost Arcade folder's media too: projects made before the rename
+  // The old ghost-arcade folder's media too: projects made before the split
   // point there, and it is not copied (see electron/profile-migration.cjs).
   assetDirs: [
     path.join(app.getPath('userData'), 'project-assets'),
@@ -9457,7 +9458,7 @@ app.whenReady().then(async () => {
   // Create window after server is ready
   createMainWindow();
 
-  // macOS: the old "Ghost Arcade.app" stays beside the renamed app after a
+  // macOS: the old "Ghost-Arcade.app" stays beside the renamed app after a
   // drag install. Offer once to move it to the Trash, never during a show.
   if (app.isPackaged && process.platform === 'darwin') {
     setTimeout(() => {
