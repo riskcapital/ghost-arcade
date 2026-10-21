@@ -16,6 +16,7 @@
 #include <napi.h>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <mutex>
 #include <string>
@@ -47,6 +48,8 @@ static uint32_t GhostNumericSourceID(NSString* sourceID) {
 @property(nonatomic, copy) NSString* kind;
 @property(nonatomic, strong) AVCaptureSession* cameraSession;
 @property(nonatomic, strong) SCStream* screenStream;
+@property(nonatomic, strong) SCStreamConfiguration* screenConfig API_AVAILABLE(macos(12.3));
+@property(nonatomic, assign) CFAbsoluteTime lastResizeAt;
 @property(nonatomic, strong) dispatch_queue_t frameQueue;
 @property(nonatomic, strong) id<MTLDevice> metalDevice;
 @property(nonatomic, strong) id<MTLCommandQueue> metalCommandQueue;
@@ -60,6 +63,31 @@ static uint32_t GhostNumericSourceID(NSString* sourceID) {
 - (void)stop;
 - (NSDictionary*)textureInfo;
 @end
+
+// ScreenCaptureKit sizes (SCWindow.frame, SCDisplay.width) are in points.
+// Capturing at that size on a Retina screen gives half the pixels in each
+// direction, so a 4K slide window arrived blurry. These turn points into the
+// pixels the screen actually shows.
+static const NSUInteger kGhostMaxCaptureDimension = 8192;
+
+static CGFloat GhostScaleForDisplayID(CGDirectDisplayID displayID) {
+  for (NSScreen* screen in NSScreen.screens) {
+    NSNumber* number = screen.deviceDescription[@"NSScreenNumber"];
+    if (number && number.unsignedIntValue == displayID) return screen.backingScaleFactor;
+  }
+  return 0;
+}
+
+static CGFloat GhostLargestBackingScale(void) {
+  CGFloat scale = 1;
+  for (NSScreen* screen in NSScreen.screens) scale = MAX(scale, screen.backingScaleFactor);
+  return scale;
+}
+
+static NSUInteger GhostPixels(CGFloat points, CGFloat scale) {
+  const CGFloat pixels = std::round(std::max<CGFloat>(1, points) * std::max<CGFloat>(1, scale));
+  return (NSUInteger)std::min<CGFloat>(pixels, kGhostMaxCaptureDimension);
+}
 
 @implementation GhostLiveCaptureSession
 
@@ -239,9 +267,50 @@ static uint32_t GhostNumericSourceID(NSString* sourceID) {
 - (void)stream:(SCStream*)stream
  didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
           ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
-  (void)stream;
   if (type != SCStreamOutputTypeScreen || !CMSampleBufferDataIsReady(sampleBuffer)) return;
+  [self followContentSizeOfSampleBuffer:sampleBuffer stream:stream];
   [self setLatestSurfaceFromPixelBuffer:CMSampleBufferGetImageBuffer(sampleBuffer)];
+}
+
+// A captured window that is resized, or moved to a screen with another
+// scale, would otherwise keep the size the capture started at: bigger
+// windows came out scaled down. Each frame says where the content sits in
+// the output and at what scale, so match the output to the content's real
+// pixel size, at most twice a second.
+- (void)followContentSizeOfSampleBuffer:(CMSampleBufferRef)sampleBuffer stream:(SCStream*)stream API_AVAILABLE(macos(12.3)) {
+  SCStreamConfiguration* current = self.screenConfig;
+  if (!current || stream != self.screenStream) return;
+  CFArrayRef attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
+  if (!attachmentsArray || CFArrayGetCount(attachmentsArray) == 0) return;
+  NSDictionary* info = (__bridge NSDictionary*)CFArrayGetValueAtIndex(attachmentsArray, 0);
+  NSDictionary* rectDict = info[SCStreamFrameInfoContentRect];
+  NSNumber* contentScale = info[SCStreamFrameInfoContentScale];
+  NSNumber* scaleFactor = info[SCStreamFrameInfoScaleFactor];
+  if (!rectDict || !contentScale || !scaleFactor) return;
+  CGRect contentRect = CGRectZero;
+  if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)rectDict, &contentRect)) return;
+  const CGFloat fit = contentScale.doubleValue;
+  const CGFloat scale = scaleFactor.doubleValue;
+  if (fit <= 0 || scale <= 0) return;
+  const NSUInteger wantW = GhostPixels(contentRect.size.width / fit, scale);
+  const NSUInteger wantH = GhostPixels(contentRect.size.height / fit, scale);
+  const NSUInteger haveW = (NSUInteger)current.width;
+  const NSUInteger haveH = (NSUInteger)current.height;
+  if ((wantW > haveW ? wantW - haveW : haveW - wantW) <= 2 && (wantH > haveH ? wantH - haveH : haveH - wantH) <= 2) return;
+  const CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+  if (now - self.lastResizeAt < 0.5) return;
+  self.lastResizeAt = now;
+
+  SCStreamConfiguration* next = [[SCStreamConfiguration alloc] init];
+  next.width = wantW;
+  next.height = wantH;
+  next.pixelFormat = current.pixelFormat;
+  next.minimumFrameInterval = current.minimumFrameInterval;
+  next.queueDepth = current.queueDepth;
+  next.showsCursor = current.showsCursor;
+  next.colorSpaceName = current.colorSpaceName;
+  self.screenConfig = next;
+  [stream updateConfiguration:next completionHandler:^(__unused NSError* error) {}];
 }
 
 - (void)stream:(SCStream*)stream didStopWithError:(NSError*)error API_AVAILABLE(macos(12.3)) {
@@ -352,8 +421,12 @@ static uint32_t GhostNumericSourceID(NSString* sourceID) {
         if (!selected && content.displays.count > 0) selected = content.displays.firstObject;
         if (selected) {
           filter = [[SCContentFilter alloc] initWithDisplay:selected excludingWindows:@[]];
-          width = selected.width;
-          height = selected.height;
+          CGFloat scale = 0;
+          if (@available(macOS 14.0, *)) scale = filter.pointPixelScale;
+          if (scale <= 0) scale = GhostScaleForDisplayID(selected.displayID);
+          if (scale <= 0) scale = GhostLargestBackingScale();
+          width = GhostPixels(selected.width, scale);
+          height = GhostPixels(selected.height, scale);
         }
       } else {
         SCWindow* selected = nil;
@@ -362,8 +435,14 @@ static uint32_t GhostNumericSourceID(NSString* sourceID) {
         }
         if (selected) {
           filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:selected];
-          width = (NSUInteger)std::max(1.0, selected.frame.size.width);
-          height = (NSUInteger)std::max(1.0, selected.frame.size.height);
+          // The window's own screen decides its scale; frames that follow
+          // correct it if the window moves or is resized (see the stream
+          // output handler).
+          CGFloat scale = 0;
+          if (@available(macOS 14.0, *)) scale = filter.pointPixelScale;
+          if (scale <= 0) scale = GhostLargestBackingScale();
+          width = GhostPixels(selected.frame.size.width, scale);
+          height = GhostPixels(selected.frame.size.height, scale);
         }
       }
 
@@ -392,6 +471,7 @@ static uint32_t GhostNumericSourceID(NSString* sourceID) {
         return;
       }
       strongSelf.screenStream = stream;
+      strongSelf.screenConfig = config;
       [stream startCaptureWithCompletionHandler:^(NSError* startError) {
         if (startError) strongSelf.lastError = startError.localizedDescription;
       }];
@@ -409,6 +489,7 @@ static uint32_t GhostNumericSourceID(NSString* sourceID) {
   if (@available(macOS 12.3, *)) {
     SCStream* stream = self.screenStream;
     self.screenStream = nil;
+    self.screenConfig = nil;
     if (stream) [stream stopCaptureWithCompletionHandler:^(__unused NSError* error) {}];
   }
 }

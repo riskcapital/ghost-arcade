@@ -1913,8 +1913,9 @@
           mandatory: {
             chromeMediaSource: 'desktop',
             chromeMediaSourceId: picked.id,
-            maxWidth: 1920,
-            maxHeight: 1080,
+            // Up to 4096 px on each side, in the window's own aspect ratio.
+            maxWidth: 4096,
+            maxHeight: 4096,
             maxFrameRate: 60,
           },
         } as any,
