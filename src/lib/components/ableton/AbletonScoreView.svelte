@@ -183,7 +183,7 @@
         >
           <span class="note">
             <b>{laneName(pitch, laneTrack, drums)}</b>
-            {#if drums}<small>{noteName(pitch)}{#if active} · {hitCount(active.clip, pitch)}×{/if}</small>{/if}
+            {#if drums}<small>{noteName(pitch)}{active ? ` · ${hitCount(active.clip, pitch)}×` : ''}</small>{/if}
           </span>
           <span class="vis">{#if thumb}<img src={thumb} alt="" />{:else}<i>{action ? actionTag(action) : '+'}</i>{/if}</span>
           <span class="what">{action ? actionLabel(ctx, action) : 'Drop a visual'}</span>
@@ -245,7 +245,7 @@
   .clip-name { display: flex; align-items: center; gap: 6px; font-weight: 500; }
   .clip-name small { color: var(--ga-ink-2, #8a909b); font-weight: 400; }
   .dot { width: 8px; height: 8px; border-radius: 2px; }
-  .lanes { --head: 240px; position: relative; display: flex; flex-direction: column; gap: 2px; }
+  .lanes { --head: 270px; position: relative; display: flex; flex-direction: column; gap: 2px; }
   .lane { display: grid; grid-template-columns: var(--head) minmax(0, 1fr); min-height: 28px; }
   .lanes.drums .lane { min-height: 32px; }
   .lane-head {
@@ -260,7 +260,7 @@
   .lane-head.custom { border-left: 2px solid #7f77dd; }
   .lane-head.drop { box-shadow: inset 0 0 0 2px #c9c4ff; }
   .lane.selected .lane-head { box-shadow: inset 0 0 0 1px var(--ga-ink-0, #eef0f4); }
-  .note { width: 78px; display: flex; flex-direction: column; line-height: 1.15; flex: 0 0 auto; }
+  .note { width: 104px; display: flex; flex-direction: column; line-height: 1.15; flex: 0 0 auto; }
   .note b { font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .note small { font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-size: 9px; color: var(--ga-ink-2, #8a909b); }
   .lanes:not(.drums) .note b { font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-weight: 400; color: var(--ga-ink-2, #8a909b); }
