@@ -41,6 +41,31 @@ export function defaultScoreAction(pitch: number, columns: number): VisualAction
   return null;
 }
 
+// ── Drums ────────────────────────────────────────────────────────────────
+
+/** General MIDI drum names, the layout Live's Drum Racks and most kits use
+ *  (C1 = 36 is the kick). */
+const GM_DRUMS: Record<number, string> = {
+  35: 'Kick 2', 36: 'Kick', 37: 'Side Stick', 38: 'Snare', 39: 'Clap', 40: 'Snare 2',
+  41: 'Low Tom', 42: 'Closed Hat', 43: 'Low Tom 2', 44: 'Pedal Hat', 45: 'Mid Tom',
+  46: 'Open Hat', 47: 'Mid Tom 2', 48: 'High Tom', 49: 'Crash', 50: 'High Tom 2',
+  51: 'Ride', 52: 'China', 53: 'Ride Bell', 54: 'Tambourine', 55: 'Splash',
+  56: 'Cowbell', 57: 'Crash 2', 59: 'Ride 2', 60: 'Hi Bongo', 61: 'Low Bongo',
+  62: 'Mute Conga', 63: 'Conga', 64: 'Low Conga', 69: 'Cabasa', 70: 'Maracas',
+  75: 'Claves', 76: 'Hi Block', 77: 'Low Block',
+};
+
+/** A track that plays drums: it has a Drum Rack, or says so in its name. */
+export function isDrumTrack(track: { name: string; pads?: Record<number, string> }): boolean {
+  return Object.keys(track.pads ?? {}).length > 0 || /\b(drums?|beats?|kit|perc(ussion)?|808|909)\b/i.test(track.name);
+}
+
+/** What a pitch is called on a drum track: the Drum Rack pad's own name,
+ *  else its General MIDI drum, else its note name. */
+export function drumName(pitch: number, pads?: Record<number, string>): string {
+  return pads?.[pitch] || GM_DRUMS[pitch] || noteName(pitch);
+}
+
 export interface DueNote { note: ScoreNote; /** Elapsed beats since the clip started. */ at: number }
 
 /**

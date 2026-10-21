@@ -36,6 +36,8 @@ export interface LiveTrack {
   startedBeat: number;
   /** Song position (beats) when the queued clip was fired. */
   firedBeat: number;
+  /** A Drum Rack's pad names by note, when the track has one. */
+  pads?: Record<number, string>;
 }
 export interface LiveScene { name: string; color: number; queued: boolean }
 /** An arrangement locator. */
@@ -55,7 +57,10 @@ export type VisualAction =
   | { kind: 'stage'; presetId: string; scope: 'project' | 'global'; name: string }
   /** Any Ghost Arcade control: set to `value`, then back to `release`
    *  (when the note ends, or straight after a launch). */
-  | { kind: 'control'; path: string; label: string; value: number; release: number };
+  | { kind: 'control'; path: string; label: string; value: number; release: number }
+  /** Scramble what's on screen: shader params, effect params or both,
+   *  `amount` of the way toward random values. */
+  | { kind: 'scramble'; target: 'shader' | 'fx' | 'both'; amount: number };
 
 export interface AbletonLink {
   id: string;
@@ -215,6 +220,10 @@ export function sanitizeAction(a: any): VisualAction | null {
   }
   if (a?.kind === 'control' && typeof a.path === 'string' && a.path) {
     return { kind: 'control', path: a.path, label: String(a.label ?? a.path), value: num(a.value, 1), release: num(a.release, 0) };
+  }
+  if (a?.kind === 'scramble') {
+    const target = a.target === 'shader' || a.target === 'fx' ? a.target : 'both';
+    return { kind: 'scramble', target, amount: Math.max(0.05, Math.min(1, num(a.amount, 0.6))) };
   }
   return null;
 }

@@ -44,9 +44,12 @@ import {
   type ScoreNote,
   type VisualAction,
 } from './abletonLinks';
+import { DEFAULT_BEAT_SCRAMBLE, sanitizeBeatScramble, type BeatScrambleSettings } from './beatScramble';
+import { scrambleNow } from './scrambleDecks';
 import {
   colorHue,
   defaultScoreAction,
+  isDrumTrack,
   isScoreTrackName,
   autoRange,
   locatorsReached,
@@ -111,6 +114,11 @@ export interface AbletonBridgeState {
   /** Pitch → visual for score notes (saved); unmapped pitches use the
    *  default lanes. */
   scoreMap: Record<number, VisualAction>;
+  /** Pitch → visual for one track's notes, by track name (saved): a drum
+   *  track's kick lane, say. Takes precedence over `scoreMap`. */
+  trackScoreMaps: Record<string, Record<number, VisualAction>>;
+  /** Scramble what's on screen on a beat grid (saved). */
+  beatScramble: BeatScrambleSettings;
   /** Live's A/B decks drive Ghost Arcade's decks and crossfader (saved). */
   deckMode: boolean;
   /** Song keys in the DJ's set order (saved). */
@@ -161,6 +169,8 @@ const INITIAL: AbletonBridgeState = {
   signals: [],
   scoreTracks: [],
   scoreMap: {},
+  trackScoreMaps: {},
+  beatScramble: DEFAULT_BEAT_SCRAMBLE,
   deckMode: false,
   setlistOrder: [],
   autoMixBars: 8,
@@ -203,7 +213,18 @@ export function scoreTrackIndices(state: Pick<AbletonBridgeState, 'tracks' | 'sc
 }
 
 /** What a score pitch fires. */
-export function scoreAction(state: Pick<AbletonBridgeState, 'scoreMap'>, pitch: number, columns: number): VisualAction | null {
+/** The visual a score note fires: the track's own lane map first; then,
+ *  except on drum tracks (whose lanes start empty, so a hi-hat doesn't fire
+ *  a column eight times a bar), the shared map and the default lanes. */
+export function scoreAction(
+  state: Pick<AbletonBridgeState, 'scoreMap' | 'trackScoreMaps'>,
+  pitch: number,
+  columns: number,
+  track?: Pick<LiveTrack, 'name' | 'pads'>,
+): VisualAction | null {
+  const own = track ? state.trackScoreMaps[track.name]?.[pitch] : undefined;
+  if (own) return own;
+  if (track && isDrumTrack(track)) return null;
   return state.scoreMap[pitch] ?? defaultScoreAction(pitch, columns);
 }
 
@@ -254,6 +275,22 @@ export const abletonScoreHits = writable<Record<number, number>>({});
 type LiveMessage = Record<string, any> & { t: string };
 
 const api = () => (typeof window !== 'undefined' ? (window as any).ghostAbleton : undefined);
+
+/** Saved per-track lane maps, keeping only valid pitches and visuals. */
+function sanitizeTrackMaps(raw: unknown): Record<string, Record<number, VisualAction>> {
+  const maps: Record<string, Record<number, VisualAction>> = {};
+  if (!raw || typeof raw !== 'object') return maps;
+  for (const [name, lanes] of Object.entries(raw as Record<string, unknown>)) {
+    if (!lanes || typeof lanes !== 'object') continue;
+    const clean: Record<number, VisualAction> = {};
+    for (const [pitch, action] of Object.entries(lanes as Record<string, unknown>)) {
+      const valid = sanitizeAction(action);
+      if (valid && Number.isInteger(Number(pitch))) clean[Number(pitch)] = valid;
+    }
+    if (Object.keys(clean).length) maps[name] = clean;
+  }
+  return maps;
+}
 
 /** Saved section plans, keeping only whole positive bar counts. */
 function sanitizePlans(raw: unknown): Record<string, number[]> {
@@ -321,6 +358,8 @@ function createAbletonBridge() {
   /** A deck song waiting to land before the crossfader moves to it; it
    *  lapses if the song hasn't landed by `deadline` (song beats). */
   let pendingMix: { track: number; slot: number; side: 'A' | 'B'; bars: number; title: string; deadline: number } | null = null;
+  /** The beat-scramble grid step last seen, to fire on each new one. */
+  let lastScrambleStep: number | null = null;
   /** Autoplay steps already taken, so each fires once. */
   const autoDone = new Set<string>();
   /** Tracks to stop when an outgoing song's last section ends. */
@@ -343,6 +382,8 @@ function createAbletonBridge() {
     else if (action.kind === 'clip') vjClipLauncher.triggerClipNow(action.layer, action.column, action.deck);
     else if (action.kind === 'snapshot') snapshots.recall(action.slot);
     else if (action.kind === 'stage') loadStage(action);
+    // Harder hits scramble further.
+    else if (action.kind === 'scramble') scrambleNow(action.target, Math.max(0.05, action.amount * (velocity / 127)));
     else {
       const value = action.release + (action.value - action.release) * (velocity / 127);
       const inputId = hold?.inputId ?? `ableton:hit:${action.path}`;
@@ -540,6 +581,15 @@ function createAbletonBridge() {
 
     if (s.playing) autoPlay(s, beat);
 
+    // Beat scramble: on each multiple of `every` beats of the song.
+    if (s.beatScramble.on && s.playing) {
+      const step = Math.floor(beat / s.beatScramble.every + 1e-6);
+      if (step !== lastScrambleStep) {
+        if (lastScrambleStep !== null && step > lastScrambleStep) scrambleNow(s.beatScramble.target, s.beatScramble.amount);
+        lastScrambleStep = step;
+      }
+    } else lastScrambleStep = null;
+
     if (now - lastSignalAt >= SIGNAL_MS && s.signals.length) {
       const dt = Math.min(0.1, (now - lastSignalAt) / 1000);
       lastSignalAt = now;
@@ -680,7 +730,7 @@ function createAbletonBridge() {
     const now = performance.now();
     for (const { note, at } of due) {
       const [pitch, , duration, velocity] = note;
-      const action = scoreAction(s, pitch, columns);
+      const action = scoreAction(s, pitch, columns, track);
       if (!action) continue;
       // Each note holds its own input, so overlapping notes don't cut each other short.
       runAction(action, velocity, { untilBeat: track.startedBeat + at + duration, inputId: `ableton:score:${t}:${pitch}:${at}` });
@@ -830,6 +880,16 @@ function createAbletonBridge() {
     });
   }
 
+  /** Drum Rack pad names, keyed by note. */
+  function parsePads(raw: unknown): Record<number, string> | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const pads: Record<number, string> = {};
+    for (const [note, name] of Object.entries(raw as Record<string, unknown>)) {
+      if (Number.isInteger(Number(note)) && typeof name === 'string' && name) pads[Number(note)] = name;
+    }
+    return Object.keys(pads).length ? pads : undefined;
+  }
+
   function parseSlot(slot: any) {
     if (!Array.isArray(slot)) return null;
     const notes = Array.isArray(slot[3])
@@ -929,6 +989,7 @@ function createAbletonBridge() {
           slots: Array.from({ length: total }, (_, i) => (i < part.length ? part[i] : known?.slots[i] ?? null)),
           playing,
           fired: Number(message.fired) >= 0 ? Number(message.fired) : -1,
+          pads: parsePads(message.pads),
         };
         // A clip found already playing: line its loop up with the song.
         if (playing >= 0 && typeof message.pos === 'number' && (known?.playing !== playing || !known?.startedBeat)) {
@@ -1390,6 +1451,30 @@ function createAbletonBridge() {
       syncWatch();
     },
 
+    /** Turn the beat scramble on or off, or change its grid, target or
+     *  amount. */
+    setBeatScramble(patch: Partial<BeatScrambleSettings>) {
+      update(s => ({ ...s, beatScramble: sanitizeBeatScramble({ ...s.beatScramble, ...patch }) }));
+    },
+
+    /** Scramble what's on screen right now, as the beat scramble would. */
+    scrambleNow() {
+      const { target, amount } = read().beatScramble;
+      scrambleNow(target, amount);
+    },
+
+    /** Map a pitch on one track (by name) to a visual, or clear it. */
+    setTrackLane(trackName: string, pitch: number, action: VisualAction | null) {
+      update(s => {
+        const lanes = { ...(s.trackScoreMaps[trackName] ?? {}) };
+        if (action) lanes[pitch] = action;
+        else delete lanes[pitch];
+        const trackScoreMaps = { ...s.trackScoreMaps, [trackName]: lanes };
+        if (!Object.keys(lanes).length) delete trackScoreMaps[trackName];
+        return { ...s, trackScoreMaps };
+      });
+    },
+
     setScoreLane(pitch: number, action: VisualAction | null) {
       update(s => {
         const scoreMap = { ...s.scoreMap };
@@ -1445,6 +1530,8 @@ function createAbletonBridge() {
         signals: sanitizeSignals(saved.signals),
         scoreTracks: Array.isArray(saved.scoreTracks) ? saved.scoreTracks.filter((n: unknown) => typeof n === 'string') : [],
         scoreMap,
+        trackScoreMaps: sanitizeTrackMaps(saved.trackScoreMaps),
+        beatScramble: sanitizeBeatScramble(saved.beatScramble),
         deckMode: !!saved.deckMode,
         setlistOrder: Array.isArray(saved.setlistOrder) ? saved.setlistOrder.filter((k: unknown) => typeof k === 'string') : [],
         autoMixBars: Number.isFinite(saved.autoMixBars) ? Math.max(0, Math.min(32, saved.autoMixBars)) : 8,
@@ -1464,8 +1551,8 @@ function createAbletonBridge() {
     },
 
     serialize() {
-      const { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars, playMode, songPlans } = read();
-      return { enabled, links, signals, scoreTracks, scoreMap, deckMode, setlistOrder, autoMixBars, playMode, songPlans, linkedCounts };
+      const { enabled, links, signals, scoreTracks, scoreMap, trackScoreMaps, beatScramble, deckMode, setlistOrder, autoMixBars, playMode, songPlans } = read();
+      return { enabled, links, signals, scoreTracks, scoreMap, trackScoreMaps, beatScramble, deckMode, setlistOrder, autoMixBars, playMode, songPlans, linkedCounts };
     },
 
     reset() {
@@ -1475,7 +1562,7 @@ function createAbletonBridge() {
       releaseAll();
       scorePlayhead.clear();
       update(s => ({
-        ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, deckMode: false,
+        ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, trackScoreMaps: {}, beatScramble: DEFAULT_BEAT_SCRAMBLE, deckMode: false,
         setlistOrder: [], autoMixBars: 8, playMode: 'live', songPlans: {}, hold: false,
         played: [], currentSong: null, mix: null, missing: [], fired: {},
       }));
