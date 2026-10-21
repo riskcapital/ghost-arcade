@@ -84,7 +84,7 @@
   <div class="welcome-card">
     <section class="welcome-hero">
       <img src="{import.meta.env.BASE_URL}icon-new.png" alt="" class="welcome-mark" />
-      <p class="welcome-eyebrow">Welcome to Ghost Arcade</p>
+      <p class="welcome-eyebrow">Welcome to Ghost Arcade Studio</p>
       <h1 id="welcome-title" class="welcome-title">Light up the room.</h1>
       <p class="welcome-lede">Live visuals, projection mapping and stage lighting, from your first clip to a full show.</p>
       <ul class="welcome-points">

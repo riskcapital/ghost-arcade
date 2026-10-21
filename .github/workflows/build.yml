@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+      # Ghost Arcade Studio releases (this line, renamed from 1.9).
+      - 'studio-v*'
   workflow_dispatch:
     inputs:
       version:
@@ -34,24 +36,34 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           NOTES_FILE="docs/releases/${{ github.ref_name }}.md"
-          if gh release view "${{ github.ref_name }}" --repo riskcapital/ghost-arcade-releases > /dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} already exists — skipping create"
+          TAG="${{ github.ref_name }}"
+          # Studio tags read "Ghost Arcade Studio 2.0.0". Studio releases are
+          # never marked Latest: Ghost Arcade Pro's update check reads the
+          # Latest release, and must keep seeing Pro.
+          if [[ "$TAG" == studio-v* ]]; then
+            TITLE="Ghost Arcade Studio ${TAG#studio-v}"
+          else
+            TITLE="Ghost Arcade $TAG"
+          fi
+          if gh release view "$TAG" --repo riskcapital/ghost-arcade-releases > /dev/null 2>&1; then
+            echo "Release $TAG already exists — skipping create"
             if [ -f "$NOTES_FILE" ]; then
-              gh release edit "${{ github.ref_name }}" \
+              gh release edit "$TAG" \
                 --repo riskcapital/ghost-arcade-releases \
-                --title "Ghost Arcade ${{ github.ref_name }}" \
+                --title "$TITLE" \
                 --notes-file "$NOTES_FILE"
-              echo "Release ${{ github.ref_name }} notes refreshed from $NOTES_FILE"
+              echo "Release $TAG notes refreshed from $NOTES_FILE"
             fi
           else
             NOTES_ARGS=(--notes "Signed Windows installer + notarized macOS DMGs + Linux AppImage/deb uploaded by CI.")
             if [ -f "$NOTES_FILE" ]; then
               NOTES_ARGS=(--notes-file "$NOTES_FILE")
             fi
-            gh release create "${{ github.ref_name }}" \
+            gh release create "$TAG" \
               --repo riskcapital/ghost-arcade-releases \
-              --title "Ghost Arcade ${{ github.ref_name }}" \
+              --title "$TITLE" \
               "${NOTES_ARGS[@]}" \
+              --latest=false \
               --target main
             echo "Release ${{ github.ref_name }} created"
           fi
@@ -114,7 +126,7 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
       - name: Upload Windows installer to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/studio-v')
         uses: softprops/action-gh-release@v2
         with:
           repository: riskcapital/ghost-arcade-releases
@@ -127,6 +139,7 @@ jobs:
           prerelease: false
           generate_release_notes: false
           overwrite_files: true
+          make_latest: false
 
   build-macos:
     needs: create-release
@@ -229,7 +242,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload macOS DMGs to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/studio-v')
         uses: softprops/action-gh-release@v2
         with:
           repository: riskcapital/ghost-arcade-releases
@@ -242,6 +255,7 @@ jobs:
           prerelease: false
           generate_release_notes: false
           overwrite_files: true
+          make_latest: false
 
   build-linux:
     needs: create-release
@@ -291,7 +305,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Linux installers to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/studio-v')
         uses: softprops/action-gh-release@v2
         with:
           repository: riskcapital/ghost-arcade-releases
@@ -305,3 +319,4 @@ jobs:
           prerelease: false
           generate_release_notes: false
           overwrite_files: true
+          make_latest: false

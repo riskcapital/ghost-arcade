@@ -23,6 +23,9 @@ import net from 'net';
 import dgram from 'dgram';
 // License system removed in OSS build — see src/lib/stores/license.ts.
 
+// The product this build is. Studio and Pro install side by side.
+const PRODUCT_NAME = 'Ghost Arcade Studio';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
@@ -30,6 +33,14 @@ const { parseOSCPacket, encodeOSCMessage } = require('./osc-parser.cjs');
 import os from 'os';
 import { randomUUID } from 'crypto';
 import { safeStorage } from 'electron';
+
+// The app is called Ghost Arcade Studio now, and Electron would name its data
+// folder after that. Keep the folder every earlier version used, so settings,
+// the autosave, pairing and project media are all still there after updating.
+// A test run that passes --user-data-dir keeps its own profile.
+if (app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'Ghost Arcade'));
+}
 
 // Start-at-boot / show mode (electron/show-startup.cjs). The session query is
 // synchronous: the renderer needs to know whether to suppress its first-run
@@ -1417,8 +1428,42 @@ function remotePort(value, fallback) {
   const port = Number(value);
   return !app.isPackaged && Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback;
 }
-const REMOTE_WS_PORT = remotePort(process.env.WS_PORT, 9001);
-const REMOTE_HTTP_PORT = remotePort(process.env.HTTP_PORT, 9002);
+let REMOTE_WS_PORT = remotePort(process.env.WS_PORT, 9001);
+let REMOTE_HTTP_PORT = remotePort(process.env.HTTP_PORT, 9002);
+
+// Ghost Arcade Studio and Ghost Arcade Pro can run at the same time, and both
+// serve the LAN remote. Whichever starts second would find 9001/9002 taken, and
+// its phone link would quietly reach the other app. So when the usual pair is
+// busy, move to the next free pair (9011/9012, 9021/9022, ...). The QR link
+// carries the ports, so a phone that scans it finds the right app.
+const REMOTE_PORT_STEP = 10;
+const REMOTE_PORT_TRIES = 6;
+
+function remotePortIsFree(port) {
+  const host = process.env.GA_REMOTE_BIND_HOST || '0.0.0.0';
+  return new Promise(resolve => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.once('error', () => resolve(false));
+    probe.listen(port, host, () => probe.close(() => resolve(true)));
+  });
+}
+
+async function pickRemotePorts() {
+  const baseWs = REMOTE_WS_PORT;
+  const baseHttp = REMOTE_HTTP_PORT;
+  for (let i = 0; i < REMOTE_PORT_TRIES; i++) {
+    const wsPort = baseWs + i * REMOTE_PORT_STEP;
+    const httpPort = baseHttp + i * REMOTE_PORT_STEP;
+    if (await remotePortIsFree(wsPort) && await remotePortIsFree(httpPort)) {
+      if (i > 0) console.log(`[Main] Remote ports ${baseWs}/${baseHttp} are busy; using ${wsPort}/${httpPort}`);
+      REMOTE_WS_PORT = wsPort;
+      REMOTE_HTTP_PORT = httpPort;
+      return;
+    }
+  }
+  console.warn('[Main] No free remote port pair found; trying the usual ports anyway');
+}
 
 // ─── LAN remote pairing ─────────────────────────────────────────────
 // The token a phone must present to the remote's WebSocket and HTTP servers
@@ -1485,6 +1530,8 @@ async function resetRemotePairing() {
   return remotePairingInfo();
 }
 
+let remotePortsPicked = false;
+
 async function startNodeServer() {
   // Start the Node.js WS/HTTP server (server/ws-server.js)
   const serverPath = path.join(__dirname, '..', 'server', 'ws-server.js');
@@ -1497,6 +1544,13 @@ async function startNodeServer() {
   // listener; report startup failure and leave the existing process alone.
 
   console.log('[Main] Starting Node.js server:', serverPath);
+
+  // Only pick ports for the first start. A restart (new pairing token) reuses
+  // the pair this app already owns, so connected phones keep their address.
+  if (!remotePortsPicked) {
+    await pickRemotePorts();
+    remotePortsPicked = true;
+  }
 
   // Set env vars the server expects
   process.env.WS_PORT = String(REMOTE_WS_PORT);
@@ -5169,6 +5223,7 @@ function registerIpcHandlers() {
         licenseKey,
         machineId,
         appVersion: app.getVersion(),
+        product: PRODUCT_NAME,
         platform: process.platform,
         error: String(error).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 10000) : undefined,
@@ -5278,7 +5333,7 @@ function createMainWindow() {
     height: 900,
     minWidth: 1200,
     minHeight: 700,
-    title: 'Ghost Arcade',
+    title: PRODUCT_NAME,
     backgroundColor: '#0a0a0c',
     autoHideMenuBar: true,
     // Window icon — single source-of-truth lives in build-resources/icons.
@@ -5313,9 +5368,9 @@ function createMainWindow() {
     const { Menu } = require('electron');
     const template = [
       {
-        label: 'Ghost Arcade',
+        label: PRODUCT_NAME,
         submenu: [
-          { label: 'About Ghost Arcade', role: 'about' },
+          { label: `About ${PRODUCT_NAME}`, role: 'about' },
           { type: 'separator' },
           { label: 'Settings', accelerator: 'Cmd+,', click: () => mainWindow.webContents.send('open-settings') },
           { type: 'separator' },
@@ -5911,7 +5966,7 @@ app.whenReady().then(async () => {
   startPowerSaveBlocker();
 
   app.setAboutPanelOptions({
-    applicationName: 'Ghost Arcade',
+    applicationName: PRODUCT_NAME,
     applicationVersion: app.getVersion(),
     copyright: 'Copyright (c) 2024-2026 Risk Capital Media LLC',
     credits: 'NDI® is a registered trademark of Vizrt NDI AB. https://ndi.video/',
@@ -6015,6 +6070,25 @@ app.whenReady().then(async () => {
 
   // Create window after server is ready
   createMainWindow();
+
+  // macOS: the old "Ghost Arcade.app" stays beside the renamed app after a
+  // drag install. Offer once to move it to the Trash, never during a show.
+  if (app.isPackaged && process.platform === 'darwin') {
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (showStartup.get()?.session?.showMode) return;
+      require('./old-app-cleanup.cjs').offerOldAppCleanup({
+        line: 'studio',
+        productName: PRODUCT_NAME,
+        userDataDir: app.getPath('userData'),
+        ownExePath: app.getPath('exe'),
+        ask: (options) => dialog.showMessageBox(mainWindow, options),
+        tell: (options) => dialog.showMessageBox(mainWindow, options),
+        trash: (appPath) => shell.trashItem(appPath),
+        log: (msg) => console.log(msg),
+      }).catch((err) => console.warn('[Cleanup] Old app check failed:', err?.message || err));
+    }, 12000);
+  }
 
   // Display hotplug. On stage the performer can pull an HDMI cable at any
   // moment. Previously: if the output window was on the removed display, the

@@ -1,8 +1,12 @@
 appId: live.ghostarcade.app
-productName: "Ghost Arcade"          # user-facing display name (start menu, window title)
-executableName: "Ghost-Arcade"       # actual .exe filename — no spaces so signtool can quote-free
+productName: "Ghost Arcade Studio"   # user-facing display name (start menu, window title)
+# appId stays live.ghostarcade.app: Studio is the line most people run, so it
+# upgrades their existing Ghost Arcade install in place. Ghost Arcade Pro has
+# its own appId, so the two install side by side. electron/main.js keeps the
+# data folder named "Ghost Arcade" so settings and projects carry over.
+executableName: "Ghost-Arcade-Studio" # actual .exe filename — no spaces so signtool can quote-free
 copyright: "Copyright (c) 2024-2026 Risk Capital Media LLC"
-artifactName: "Ghost-Arcade-${version}-${arch}.${ext}"
+artifactName: "Ghost-Arcade-Studio-${version}-${arch}.${ext}"
 
 directories:
   output: dist-electron
@@ -84,8 +88,8 @@ nsis:
   uninstallerIcon: build-resources/icons/icon.ico
   installerSidebar: brand-assets/installer-splash.bmp
   uninstallerSidebar: brand-assets/installer-splash.bmp
-  shortcutName: "Ghost Arcade"
-  artifactName: "Ghost-Arcade-Setup-${version}.${ext}"
+  shortcutName: "Ghost Arcade Studio"
+  artifactName: "Ghost-Arcade-Studio-Setup-${version}.${ext}"
 
 # ─── macOS ─────────────────────────────────────────────────────────────────
 mac:
@@ -140,15 +144,15 @@ linux:
   icon: build-resources/icons
   category: AudioVideo
   synopsis: "Open-source projection mapping + VJ software"
-  description: "Ghost Arcade — live performance visuals with projection mapping, shader effects, MediaPipe gesture input, and audio reactivity. AGPL-3.0."
+  description: "Ghost Arcade Studio — live performance visuals with projection mapping, shader effects, MediaPipe gesture input, and audio reactivity. AGPL-3.0."
   desktop:
     entry:
-      Name: "Ghost Arcade"
+      Name: "Ghost Arcade Studio"
       Comment: "Projection mapping and VJ software"
       Categories: "AudioVideo;Graphics;"
   # Same filename pattern as Windows/Mac so the website's URL templating
   # in src/lib/release.ts stays predictable.
-  artifactName: "Ghost-Arcade-${version}-${arch}.${ext}"
+  artifactName: "Ghost-Arcade-Studio-${version}-${arch}.${ext}"
 
 # ─── Publish ────────────────────────────────────────────────────────────────
 # Intentionally NO `publish:` block here. CI (.github/workflows/build.yml)

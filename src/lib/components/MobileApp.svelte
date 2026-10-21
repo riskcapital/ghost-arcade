@@ -1303,23 +1303,30 @@
 
     // Determine server URL: prefer saved, then derive from page hostname
     const hostname = window.location.hostname;
+    const params = new URLSearchParams(window.location.search);
+    // The desktop's QR link names the WebSocket port when it is not the
+    // default (Ghost Arcade Pro may hold 9001), and a link is fresher than
+    // whatever was saved last time.
+    const linkedPort = Number(params.get('ws'));
+    const defaultUrl = `ws://${hostname}:${Number.isInteger(linkedPort) && linkedPort > 0 && linkedPort < 65536 ? linkedPort : 9001}`;
+    const openedFromLink = params.has(PAIRING_QUERY_PARAM) || params.has('ws');
     let savedUrl: string | null = null;
     try { savedUrl = localStorage.getItem('ghost-arcade_server_url'); } catch { /* private browsing */ }
 
-    if (savedUrl) {
+    if (savedUrl && !openedFromLink) {
       // Validate saved URL matches current hostname (IP may have changed via DHCP)
       try {
         const savedHost = new URL(savedUrl).hostname;
         if (savedHost === hostname || savedHost === 'localhost' || savedHost === '127.0.0.1') {
           serverUrl = savedUrl;
         } else {
-          serverUrl = `ws://${hostname}:9001`;
+          serverUrl = defaultUrl;
         }
       } catch {
-        serverUrl = `ws://${hostname}:9001`;
+        serverUrl = defaultUrl;
       }
     } else {
-      serverUrl = `ws://${hostname}:9001`;
+      serverUrl = defaultUrl;
     }
 
     // A scanned QR link carries the pairing code. Keep it, then take it back
