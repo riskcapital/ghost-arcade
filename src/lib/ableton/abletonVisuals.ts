@@ -20,9 +20,7 @@ export interface VisualContext {
 }
 
 export interface ShelfItem { key: string; label: string; hint: string; thumbnail?: string; action: VisualAction }
-export type ShelfTab = 'columns' | 'clips' | 'snapshots' | 'stage' | 'scramble';
-
-const SCRAMBLE_LABELS = { shader: 'Shader', fx: 'FX', both: 'Shader + FX' } as const;
+export type ShelfTab = 'columns' | 'clips' | 'snapshots' | 'stage';
 
 /** The Stage preset an action names: by id, else by name if it was re-saved. */
 export function findStagePreset(presets: StagePresetEntry[], action: { presetId: string; scope: string; name: string }) {
@@ -36,7 +34,7 @@ function gridFor(ctx: VisualContext, deck: VJDeck) {
 
 export function actionThumb(ctx: VisualContext, action: VisualAction): string | undefined {
   if (action.kind === 'stage') return findStagePreset(ctx.stagePresets, action)?.thumbnail;
-  if (action.kind === 'snapshot' || action.kind === 'control' || action.kind === 'scramble') return undefined;
+  if (action.kind === 'snapshot' || action.kind === 'control') return undefined;
   const grid = gridFor(ctx, action.deck);
   if (action.kind === 'clip') return grid[action.layer]?.[action.column]?.thumbnail;
   return grid.map(row => row?.[action.column]).find(c => c?.thumbnail)?.thumbnail;
@@ -47,13 +45,11 @@ export function actionTag(action: VisualAction): string {
   if (action.kind === 'snapshot') return `S${action.slot + 1}`;
   if (action.kind === 'control') return 'FX';
   if (action.kind === 'stage') return 'STG';
-  if (action.kind === 'scramble') return 'MIX';
   return '·';
 }
 
 export function actionLabel(ctx: VisualContext, action: VisualAction): string {
   if (action.kind === 'control') return action.label;
-  if (action.kind === 'scramble') return `Scramble ${SCRAMBLE_LABELS[action.target]}`;
   if (action.kind === 'stage') {
     const preset = findStagePreset(ctx.stagePresets, action);
     return preset ? `Stage · ${preset.name}` : `Stage · ${action.name || 'missing preset'}`;
@@ -69,7 +65,6 @@ export function actionLabel(ctx: VisualContext, action: VisualAction): string {
 
 export function actionHint(action: VisualAction): string {
   if (action.kind === 'control') return 'Control hit';
-  if (action.kind === 'scramble') return `${Math.round(action.amount * 100)}% toward random, on screen now`;
   if (action.kind === 'stage') return action.scope === 'global' ? 'Global Stage preset' : 'Stage preset';
   if (action.kind === 'snapshot') return `Snapshot slot ${action.slot + 1}`;
   if (action.kind === 'column') return 'Whole column';
@@ -77,14 +72,6 @@ export function actionHint(action: VisualAction): string {
 }
 
 export function buildShelf(ctx: VisualContext, tab: ShelfTab, deck: VJDeck): ShelfItem[] {
-  if (tab === 'scramble') {
-    return (['shader', 'fx', 'both'] as const).flatMap(target => [0.3, 0.7].map(amount => ({
-      key: `scramble-${target}-${amount}`,
-      label: `${SCRAMBLE_LABELS[target]} ${amount < 0.5 ? 'nudge' : 'scramble'}`,
-      hint: amount < 0.5 ? 'A small push on every hit' : 'A new look on every hit',
-      action: { kind: 'scramble', target, amount } as VisualAction,
-    })));
-  }
   if (tab === 'stage') {
     return ctx.stagePresets.map(preset => ({
       key: `stage-${preset.scope}-${preset.id}`, label: preset.name, hint: preset.scope === 'global' ? 'Global' : 'Project',

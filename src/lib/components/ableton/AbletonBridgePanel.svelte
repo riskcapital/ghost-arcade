@@ -8,7 +8,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { fly } from 'svelte/transition';
-  import { abletonBridge, scoreAction, scoreTrackIndices, setlist, songBeat, type AbletonBridgeState } from '../../ableton/abletonBridge';
+  import { abletonBridge, scoreAction, setlist, songBeat, type AbletonBridgeState } from '../../ableton/abletonBridge';
   import { SCRAMBLE_EVERY, type ScrambleTarget } from '../../ableton/beatScramble';
   import {
     barBeat,
@@ -23,7 +23,7 @@
     type AbletonSource,
     type VisualAction,
   } from '../../ableton/abletonLinks';
-  import { drumName, isDrumTrack, noteName, type SignalTarget } from '../../ableton/abletonScore';
+  import { noteName, type SignalTarget } from '../../ableton/abletonScore';
   import {
     actionHint,
     actionLabel,
@@ -68,10 +68,6 @@
   let selected: AbletonSource | null = null;
   let dropTarget: string | null = null;
   let mapMenuOpen = false;
-  /** The MIDI clip opened in the Score view, and the track a selected score
-   *  lane belongs to (null for the shared lanes). */
-  let drill: { track: number; slot: number } | null = null;
-  let laneTrack: number | null = null;
   let scrambleOpen = false;
   let mapEl: HTMLDivElement | undefined;
   const SCRAMBLE_TARGETS: { id: ScrambleTarget; label: string }[] = [
@@ -105,11 +101,7 @@
     ],
   } satisfies VisualContext;
   $: shelf = buildShelf(ctx, tab, deck);
-  $: laneTrackInfo = laneTrack === null ? undefined : bridge.tracks[laneTrack];
-  $: laneAction = selectedPitch === null ? null : scoreAction(bridge, selectedPitch, ctx.numColumns, laneTrackInfo);
-  $: laneOwn = selectedPitch !== null && (laneTrackInfo ? selectedPitch in (bridge.trackScoreMaps[laneTrackInfo.name] ?? {}) : selectedPitch in bridge.scoreMap);
-  $: laneTitle = selectedPitch === null ? '' : laneTrackInfo && isDrumTrack(laneTrackInfo) ? drumName(selectedPitch, laneTrackInfo.pads) : noteName(selectedPitch);
-  $: selectedMidiClip = selected?.kind === 'clip' && bridge.tracks[selected.track]?.midi ? selected : null;
+  $: laneAction = selectedPitch === null ? null : scoreAction(bridge, selectedPitch, ctx.numColumns);
   $: selectedLinks = selected ? bridge.links.filter(l => samePlace(l.source, selected!)) : [];
   $: scriptReady = !!bridge.script?.installed && !!bridge.script?.current;
   $: beat = songBeat(bridge, now);
@@ -201,20 +193,9 @@
     selected = selected && samePlace(selected, source) ? null : source;
   }
 
-  function selectLane(pitch: number, track: number | null = laneTrack) {
+  function selectLane(pitch: number) {
     selected = null;
-    selectedPitch = selectedPitch === pitch && laneTrack === track ? null : pitch;
-    laneTrack = track;
-  }
-
-  /** Open a MIDI clip's notes; its track starts driving visuals so they
-   *  reach Ghost Arcade (a drum track's lanes stay empty until filled). */
-  function openClip(track: number, slot: number) {
-    drill = { track, slot };
-    selectedPitch = null;
-    laneTrack = track;
-    const t = bridge.tracks[track];
-    if (t && !scoreTrackIndices(bridge).includes(track)) abletonBridge.setScoreTrack(t.name, true);
+    selectedPitch = selectedPitch === pitch ? null : pitch;
   }
 
   function link(source: AbletonSource, action: VisualAction) {
@@ -223,13 +204,10 @@
     selected = source;
   }
 
-  function setLane(pitch: number, action: VisualAction | null, track: number | null = laneTrack) {
-    const t = track === null ? undefined : bridge.tracks[track];
-    if (t) abletonBridge.setTrackLane(t.name, pitch, action);
-    else abletonBridge.setScoreLane(pitch, action);
+  function setLane(pitch: number, action: VisualAction | null) {
+    abletonBridge.setScoreLane(pitch, action);
     selected = null;
     selectedPitch = pitch;
-    laneTrack = track;
   }
 
   /** Give the shelf's pick to whatever is selected. */
@@ -404,7 +382,7 @@
             </div>
             <div class="scramble-row">
               <button class="ghost" onclick={() => abletonBridge.scrambleNow()}>Scramble now</button>
-              <span class="hint">Or drop a Scramble on a drum lane in Score</span>
+
             </div>
           </div>
         {/if}
@@ -612,7 +590,7 @@
         </div>
       {:else if view === 'score'}
         <div class="pane">
-          <AbletonScoreView {bridge} {ctx} {beat} {now} {selectedPitch} {drill} onDrill={openClip} onSelectLane={selectLane} onDropLane={(pitch, action, track) => setLane(pitch, action, track)} />
+          <AbletonScoreView {bridge} {ctx} {beat} {now} {selectedPitch} onSelectLane={selectLane} onDropLane={(pitch, action) => setLane(pitch, action)} />
         </div>
       {:else if view === 'arrangement'}
         <div class="pane">
@@ -655,8 +633,8 @@
           {@const thumb = laneAction ? actionThumb(ctx, laneAction) : undefined}
           <div class="inspect" style="--live: #7f77dd">
             <div class="inspect-head">
-              <span class="kind">{laneTrackInfo ? laneTrackInfo.name : 'Score lane'}</span>
-              <span class="title">{laneTitle}</span>
+              <span class="kind">Score lane</span>
+              <span class="title">{noteName(selectedPitch)}</span>
               <button class="tp small" onclick={() => (selectedPitch = null)} aria-label="Deselect">
                 <svg width="9" height="9" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1 1l8 8M9 1 1 9"/></svg>
               </button>
@@ -664,12 +642,12 @@
             {#if laneAction}
               <div class="linked">
                 <span class="vis big">{#if thumb}<img src={thumb} alt="" />{:else}<i>{actionTag(laneAction)}</i>{/if}</span>
-                <span class="linked-text"><b>{actionLabel(ctx, laneAction)}</b><small>{laneOwn ? actionHint(laneAction) : 'Default lane'}</small></span>
+                <span class="linked-text"><b>{actionLabel(ctx, laneAction)}</b><small>{selectedPitch in bridge.scoreMap ? actionHint(laneAction) : 'Default lane'}</small></span>
                 <button class="tp small" onclick={() => laneAction && abletonBridge.previewAction(laneAction)} title="Fire now" aria-label="Fire this visual now">
                   <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>
                 </button>
-                {#if laneOwn}
-                  <button class="tp small" onclick={() => selectedPitch !== null && setLane(selectedPitch, null)} title="Clear this lane" aria-label="Clear lane">
+                {#if selectedPitch in bridge.scoreMap}
+                  <button class="tp small" onclick={() => selectedPitch !== null && abletonBridge.setScoreLane(selectedPitch, null)} title="Back to the default" aria-label="Reset lane">
                     <svg width="9" height="9" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1 1l8 8M9 1 1 9"/></svg>
                   </button>
                 {/if}
@@ -707,9 +685,6 @@
             {/each}
             {#if selectedLinks.length}<p class="hint">A new column replaces the one on the same deck.</p>{/if}
             <button class="ghost wide" onclick={pickControl} title="A strobe, a flash, a macro jump — any Ghost Arcade control">Pick a control…</button>
-            {#if selectedMidiClip}
-              <button class="ghost wide" onclick={() => { if (selectedMidiClip) { openClip(selectedMidiClip.track, selectedMidiClip.slot); view = 'score'; selected = null; } }} title="See this clip's notes as lanes and give each drum a visual">Open notes ▸</button>
-            {/if}
           </div>
         {/if}
 
@@ -720,7 +695,6 @@
               <button class:active={tab === 'clips'} onclick={() => (tab = 'clips')}>Clips</button>
               <button class:active={tab === 'snapshots'} onclick={() => (tab = 'snapshots')}>Snaps</button>
               <button class:active={tab === 'stage'} onclick={() => (tab = 'stage')}>Stage</button>
-              <button class:active={tab === 'scramble'} onclick={() => (tab = 'scramble')} title="Scramble shader and FX params on a hit">Scramble</button>
             </div>
             {#if tab === 'columns' || tab === 'clips'}
               <div class="seg">

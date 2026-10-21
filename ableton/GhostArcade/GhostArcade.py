@@ -320,26 +320,8 @@ class GhostArcade(ControlSurface):
                 slots.append(entry)
             else:
                 slots.append(None)
-        info = {"n": _name(track.name), "c": track.color, "midi": bool(track.has_midi_input),
+        return {"n": _name(track.name), "c": track.color, "midi": bool(track.has_midi_input),
                 "x": int(track.mixer_device.crossfade_assign), "slots": slots}
-        pads = self._drum_pads(track)
-        if pads:
-            info["pads"] = pads
-        return info
-
-    def _drum_pads(self, track):
-        """A Drum Rack's filled pads, note -> name, so drum lanes read
-        "Kick" rather than "C1"."""
-        if not track.has_midi_input:
-            return None
-        for device in track.devices:
-            if getattr(device, "can_have_drum_pads", False) and device.can_have_drum_pads:
-                pads = {}
-                for pad in device.drum_pads:
-                    if pad.chains:
-                        pads[str(pad.note)] = _name(pad.name)
-                return pads
-        return None
 
     def _score_notes(self, track_index, slot_index, clip):
         """A score clip's notes, from the cache unless the clip changed."""
