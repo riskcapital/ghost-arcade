@@ -97,6 +97,7 @@
   import { settings, outputFrozen } from './lib/stores/settings';
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
+  import { formatReleaseTag } from './lib/utils/compatibilityReleases';
   import { fitToolbar } from './lib/utils/toolbarFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
@@ -131,7 +132,7 @@
   import { history, canUndo, canRedo } from './lib/stores/history';
   import { recentFiles } from './lib/stores/recentFiles';
   import { initLicense, destroyLicense } from './lib/stores/license';
-  import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
+  import { startUpdateChecker, stopUpdateChecker, updateInfo } from './lib/stores/updateChecker';
   import { startAutoEngine, stopAutoEngine } from './lib/audio/autoEngine';
   import { linesStore } from './lib/stores/lines';
   import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
@@ -487,6 +488,19 @@
   // Auto-save & crash recovery state
   let autosaveInterval: ReturnType<typeof setInterval> | null = null;
   let showRecoveryModal = false;
+
+  // A newer release opens the update window once, after the welcome screen
+  // and any recovery offer are out of the way. Once per version: closing it
+  // means "not now", and the status-bar badge and Settings still offer it.
+  const UPDATE_ALERT_SEEN_KEY = 'ghostarcade-update-alert-seen';
+  $: if ($updateInfo.available && !showWelcome && !showRecoveryModal && !$updateModalOpen && !promptsSuppressed()) {
+    let seen: string | null = null;
+    try { seen = localStorage.getItem(UPDATE_ALERT_SEEN_KEY); } catch { /* storage unavailable */ }
+    if (seen !== $updateInfo.latestVersion) {
+      try { localStorage.setItem(UPDATE_ALERT_SEEN_KEY, $updateInfo.latestVersion); } catch { /* storage unavailable */ }
+      updateModalOpen.set(true);
+    }
+  }
   let recoveryTimestamp = '';
 
   // Track project changes to detect unsaved state
@@ -7286,7 +7300,7 @@
             openExternalUrl(versionInfo?.releaseUrl || '');
           }}
           title="A newer version is available - open the download page"
-        >v{appVersion} → {versionInfo.latest}</a>
+        >v{appVersion} → {formatReleaseTag(versionInfo.latest)}</a>
       {:else}
         <span class="version-label" title="Ghost Arcade v{appVersion}">v{appVersion}</span>
       {/if}

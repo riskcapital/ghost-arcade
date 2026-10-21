@@ -228,8 +228,12 @@ function cleanReleaseBody(body: string | null | undefined): string[] {
   if (!body) return [];
 
   return body
+    // Hidden markers (the compatibility channel tag) and the release's own
+    // top-level title are not release notes.
+    .replace(/<!--[\s\S]*?-->/g, '')
     .split(/\r?\n/)
     .map((line) => line.trim())
+    .filter((line) => !/^#\s/.test(line))
     .map((line) => line.replace(/^[-*]\s+/, '').replace(/^#+\s*/, ''))
     .filter((line) => line.length > 0)
     .filter((line) => !/^https?:\/\//i.test(line))
@@ -245,7 +249,7 @@ export function releaseNotesForVersion(version: string, fallbackBody?: string): 
 
   const cleaned = cleanReleaseBody(fallbackBody);
   return {
-    title: `Ghost Arcade v${normalized || version}`,
+    title: "What's new",
     summary: cleaned.slice(0, 3),
     highlights: cleaned.length > 0
       ? cleaned

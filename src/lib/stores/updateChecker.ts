@@ -4,14 +4,16 @@
  */
 
 import { writable } from 'svelte/store';
-import { releaseNotesForVersion } from '../releaseNotes';
-import { fetchCompatibilityRelease, compatibilityReleaseUrl, COMPATIBILITY_RELEASES_URL } from '../utils/compatibilityReleases';
+import { releaseNotesForVersion, DOWNLOAD_PAGE_URL } from '../releaseNotes';
+import { fetchCompatibilityRelease, compatibilityReleaseUrl, releaseProductName, releaseVersion } from '../utils/compatibilityReleases';
 
 const CURRENT_VERSION = __APP_VERSION__;
 const CHECK_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 
 export interface UpdateInfo {
   available: boolean;
+  /** "Ghost Arcade Studio" for Studio releases, "Ghost Arcade" before them. */
+  productName: string;
   currentVersion: string;
   latestVersion: string;
   releaseUrl: string;
@@ -29,14 +31,15 @@ export interface UpdateInfo {
 
 export const updateInfo = writable<UpdateInfo>({
   available: false,
+  productName: 'Ghost Arcade',
   currentVersion: CURRENT_VERSION,
   latestVersion: CURRENT_VERSION,
   releaseUrl: '',
   releaseNotes: '',
   releaseTitle: '',
   releaseHighlights: [],
-  downloadPageUrl: COMPATIBILITY_RELEASES_URL,
-  changelogUrl: COMPATIBILITY_RELEASES_URL,
+  downloadPageUrl: DOWNLOAD_PAGE_URL,
+  changelogUrl: DOWNLOAD_PAGE_URL,
   downloadUrls: {},
 });
 
@@ -56,7 +59,7 @@ export async function checkForUpdates(): Promise<void> {
   try {
     const data = await fetchCompatibilityRelease();
     const latestTag = data.tag_name || '';
-    const latestVersion = latestTag.replace(/^v/, '');
+    const latestVersion = releaseVersion(latestTag);
 
     if (!latestVersion) return;
 
@@ -73,13 +76,16 @@ export async function checkForUpdates(): Promise<void> {
 
     updateInfo.set({
       available: isNewer,
+      productName: releaseProductName(latestTag),
       currentVersion: CURRENT_VERSION,
       latestVersion,
       releaseUrl: compatibilityReleaseUrl(data),
       releaseNotes: notes.highlights.join('\n'),
       releaseTitle: notes.title,
       releaseHighlights: notes.highlights,
-      downloadPageUrl: compatibilityReleaseUrl(data),
+      // The website's download page: signed installers for every platform,
+      // and where downloads are registered.
+      downloadPageUrl: DOWNLOAD_PAGE_URL,
       changelogUrl: compatibilityReleaseUrl(data),
       downloadUrls: {},
     });

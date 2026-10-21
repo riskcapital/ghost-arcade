@@ -35,7 +35,7 @@ export interface VersionCheckResult {
 
 /** Strip a leading 'v' from a version string. Returns '' if input is falsy. */
 function strip(v: string | null | undefined): string {
-  return (v ?? '').replace(/^v/, '');
+  return (v ?? '').replace(/^(?:studio-)?v/, '');
 }
 
 /**

@@ -36,6 +36,7 @@
   import { updateModalOpen } from '../stores/uiState';
   import { project } from '../stores/layers';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
+  import { formatReleaseTag } from '../utils/compatibilityReleases';
   import { openExternalUrl } from '../bridge';
 
   // Version-check state for the Settings → Updates section.
@@ -679,7 +680,7 @@
             <div class="update-banner-content">
               <div class="update-badge">UPDATE</div>
               <div class="update-text">
-                <strong>Ghost Arcade v{$updateInfo.latestVersion}</strong> is available
+                <strong>{$updateInfo.productName} {$updateInfo.latestVersion}</strong> is available
                 <span class="update-current">(you have v{$updateInfo.currentVersion})</span>
               </div>
             </div>
@@ -868,7 +869,7 @@
                 {#if versionInfo?.error}
                   Last check failed: {versionInfo.error}.
                 {:else if versionInfo?.hasUpdate && versionInfo.latest}
-                  <strong style="color: #BB86FC;">{versionInfo.latest}</strong> is available — open the download page to install it.
+                  <strong style="color: #BB86FC;">{formatReleaseTag(versionInfo.latest)}</strong> is available — open the download page to install it.
                 {:else if versionInfo?.latest && !versionInfo.hasUpdate}
                   You're on the latest release.
                 {:else}
