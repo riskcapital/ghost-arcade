@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kinetic Type · Ghost Arcade p5.js</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { overflow: hidden; background: #000; }
+    canvas { display: block; }
+  </style>
+  <!-- Ghost Arcade loads its own copy of p5.js; this tag lets the file
+       run on its own in any browser too. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.0/p5.min.js"></script>
+</head>
+<body>
+  <script>
+    // Kinetic Type: Words built from particles: they fly in and assemble, hold, then scatter on the snare and become the next word. Edit the WORDS list to use your own lyrics or titles.
+    // Drawn on black with glowing strokes: set the layer's blend mode to Add
+    // or Screen, and put glow, feedback or colour effects after it.
+    window.shaderParams = {
+      speed: 1.0, // min: 0 max: 3
+      particles: 1800.0, // min: 400 max: 4000
+      hold: 4.0, // min: 1 max: 16
+      size: 0.8, // min: 0.3 max: 1
+      hue: 0.85, // min: 0 max: 1
+      react: 0.8, // min: 0 max: 2
+    };
+
+    window.shaderParamDefs = [
+      { name: 'speed', label: 'Speed', type: 'number', min: 0, max: 3, default: 1.0 },
+      { name: 'particles', label: 'Particles', type: 'number', min: 400, max: 4000, default: 1800.0 },
+      { name: 'hold', label: 'Hold Beats', type: 'number', min: 1, max: 16, default: 4.0 },
+      { name: 'size', label: 'Text Size', type: 'number', min: 0.3, max: 1, default: 0.8 },
+      { name: 'hue', label: 'Hue', type: 'number', min: 0, max: 1, default: 0.85 },
+      { name: 'react', label: 'Audio Reactivity', type: 'number', min: 0, max: 2, default: 0.8 },
+    ];
+
+    // ── Ghost Arcade bridge ─────────────────────────────────────────────
+    // Sliders arrive in window.shaderParams, audio in window.ghostAudio
+    // (level, bass, mid, treble, high, beat, beatPhase, kick, snare, bpm,
+    // all 0..1 except bpm). Read both every frame.
+    function P(name, fallback) {
+      const v = (window.shaderParams || {})[name];
+      return typeof v === 'number' && isFinite(v) ? v : fallback;
+    }
+    function A() { return window.ghostAudio || {}; }
+
+    // Musical events from the audio: a "hit" on each kick or beat, a
+    // "snare", and a running count of hits (4 hits = a bar). With no audio
+    // playing, a steady 120 BPM pulse keeps the sketch performing.
+    const pulse = (() => {
+      let lastHit = 0, lastSnare = 0, idle = 0, hits = 0, quiet = 0;
+      return function (dt) {
+        const a = A();
+        const hitLevel = Math.max(a.kick || 0, a.beat || 0);
+        const snareLevel = a.snare || 0;
+        const ev = { hit: false, snare: false, hits };
+        const live = a.active || (a.level || 0) > 0.02;
+        quiet = live ? 0 : quiet + dt;
+        if (quiet < 2) {
+          if (hitLevel > 0.55 && lastHit <= 0.55) ev.hit = true;
+          if (snareLevel > 0.55 && lastSnare <= 0.55) ev.snare = true;
+        } else {
+          idle += dt;
+          if (idle >= 0.5) { idle -= 0.5; ev.hit = true; ev.snare = hits % 2 === 1; }
+        }
+        lastHit = hitLevel; lastSnare = snareLevel;
+        if (ev.hit) hits++;
+        ev.hits = hits;
+        return ev;
+      };
+    })();
+
+    // Frame time in seconds, capped so a stall never makes things jump.
+    function frameSeconds() { return Math.min(deltaTime || 16.7, 100) / 1000; }
+
+    // Your words. Change these to lyrics, track titles or a crowd's names.
+    const WORDS = ['GHOST', 'ARCADE', 'p5.js', 'LIGHT', 'SOUND', 'FORM'];
+
+    let px, py, vx, vy, tx, ty, wordIndex = 0, state = 'assemble', stateTime = 0, holdHits = 0, wordHue = 0;
+
+    function wordPoints(word, count) {
+      const g = createGraphics(width, height);
+      g.pixelDensity(1);
+      g.background(0);
+      g.fill(255);
+      g.noStroke();
+      g.textStyle(BOLD);
+      g.textFont('Helvetica Neue, Arial Black, Arial, sans-serif');
+      g.textAlign(CENTER, CENTER);
+      let ts = height * 0.42;
+      g.textSize(ts);
+      const fit = (width * P('size', 0.8)) / Math.max(1, g.textWidth(word));
+      ts = Math.min(ts, ts * fit);
+      g.textSize(ts);
+      g.text(word, width / 2, height / 2);
+      g.loadPixels();
+      const pts = [];
+      const stepPx = Math.max(2, Math.floor(Math.sqrt((width * height) / 26000)));
+      for (let y = 0; y < height; y += stepPx) {
+        for (let x = 0; x < width; x += stepPx) {
+          if (g.pixels[(y * width + x) * 4] > 128) pts.push(x, y);
+        }
+      }
+      g.remove();
+      const out = new Float32Array(count * 2);
+      const m = pts.length / 2;
+      for (let i = 0; i < count; i++) {
+        const j = m > 0 ? Math.floor(Math.random() * m) : 0;
+        out[i * 2] = m > 0 ? pts[j * 2] + random(-1, 1) : width / 2;
+        out[i * 2 + 1] = m > 0 ? pts[j * 2 + 1] + random(-1, 1) : height / 2;
+      }
+      return out;
+    }
+
+    function nextWord() {
+      const n = px.length;
+      const t = wordPoints(WORDS[wordIndex % WORDS.length], n);
+      for (let i = 0; i < n; i++) { tx[i] = t[i * 2]; ty[i] = t[i * 2 + 1]; }
+      wordHue = (P('hue', 0.85) * 360 + wordIndex * 47) % 360;
+      wordIndex++;
+      state = 'assemble'; stateTime = 0; holdHits = 0;
+    }
+
+    function allocate(n) {
+      px = new Float32Array(n); py = new Float32Array(n);
+      vx = new Float32Array(n); vy = new Float32Array(n);
+      tx = new Float32Array(n); ty = new Float32Array(n);
+      for (let i = 0; i < n; i++) { px[i] = random(width); py[i] = random(height); }
+    }
+
+    function setup() {
+      pixelDensity(1);
+      createCanvas(windowWidth, windowHeight);
+      background(0);
+      allocate(Math.floor(P('particles', 1800)));
+      nextWord();
+    }
+
+    function draw() {
+      const dt = frameSeconds();
+      const ev = pulse(dt);
+      const a = A();
+      const speed = P('speed', 1);
+      const react = P('react', 0.8);
+      const wanted = Math.floor(constrain(P('particles', 1800), 400, 4000));
+      if (wanted !== px.length) { allocate(wanted); wordIndex = Math.max(0, wordIndex - 1); nextWord(); }
+      stateTime += dt * speed;
+
+      if (state === 'assemble' && stateTime > 1.4) { state = 'hold'; stateTime = 0; }
+      if (state === 'hold') {
+        if (ev.hit) holdHits++;
+        if ((ev.snare && holdHits >= P('hold', 4)) || stateTime > 12) {
+          state = 'scatter'; stateTime = 0;
+          for (let i = 0; i < px.length; i++) {
+            const ang = Math.atan2(py[i] - height / 2, px[i] - width / 2) + random(-0.6, 0.6);
+            const f = random(4, 14) * (1 + react * (a.snare || 0.5));
+            vx[i] = Math.cos(ang) * f; vy[i] = Math.sin(ang) * f;
+          }
+        }
+      }
+      if (state === 'scatter' && stateTime > 0.9) nextWord();
+
+      const n = px.length;
+      const k = state === 'scatter' ? 0 : (state === 'assemble' ? 0.045 : 0.09) * speed;
+      const damp = state === 'scatter' ? 0.96 : 0.82;
+      const jitter = state === 'hold' ? 0.6 + 2.5 * react * (a.high || a.treble || 0) : 0;
+      for (let i = 0; i < n; i++) {
+        vx[i] = (vx[i] + (tx[i] - px[i]) * k + (Math.random() - 0.5) * jitter) * damp;
+        vy[i] = (vy[i] + (ty[i] - py[i]) * k + (Math.random() - 0.5) * jitter) * damp;
+        px[i] += vx[i] * speed; py[i] += vy[i] * speed;
+      }
+
+      const ctx = drawingContext;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalCompositeOperation = 'lighter';
+      const glow = new Path2D();
+      const core = new Path2D();
+      const r = Math.max(1.6, Math.sqrt((width * height) / 900000) * 2.2);
+      for (let i = 0; i < n; i++) {
+        core.rect(px[i] - r * 0.5, py[i] - r * 0.5, r, r);
+        glow.moveTo(px[i] - vx[i] * 2.5, py[i] - vy[i] * 2.5);
+        glow.lineTo(px[i], py[i]);
+      }
+      ctx.lineWidth = r * 1.2;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'hsla(' + wordHue + ',95%,60%,0.55)';
+      ctx.stroke(glow);
+      ctx.fillStyle = 'hsla(' + ((wordHue + 30) % 360) + ',70%,' + (70 + 20 * (a.level || 0)) + '%,0.9)';
+      ctx.fill(core);
+    }
+
+    function windowResized() { resizeCanvas(windowWidth, windowHeight); background(0); wordIndex = Math.max(0, wordIndex - 1); nextWord(); }
+  </script>
+</body>
+</html>
