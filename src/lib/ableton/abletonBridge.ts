@@ -374,10 +374,17 @@ function createAbletonBridge() {
     }));
   }
 
-  /** Mark the song a launch belongs to as played and current. */
-  function markPlayed(match: (song: SetlistSong) => boolean) {
-    const song = deriveSongs(read().scenes, read().tracks).find(match);
+  /** Mark the song a launch belongs to as played and current. A later
+   *  section (a song mixing out reaching its outro) takes over only when
+   *  the current song has stopped. */
+  function markPlayed(match: (song: SetlistSong) => boolean, slot?: number) {
+    const s = read();
+    const songs = deriveSongs(s.scenes, s.tracks);
+    const song = songs.find(match);
     if (!song) return;
+    const opening = song.kind !== 'clip' || song.sections[0]?.slot === slot;
+    const current = songs.find(x => x.key === s.currentSong);
+    if (!opening && current && current.key !== song.key && playingSection(current, s.tracks) >= 0) return;
     update(s => ({ ...s, currentSong: song.key, played: s.played.includes(song.key) ? s.played : [...s.played, song.key] }));
   }
 
@@ -406,7 +413,7 @@ function createAbletonBridge() {
     const t = read().tracks[track];
     const clip = t?.slots[slot];
     if (clip) colorValues.set(track, colorHue(clip.color));
-    markPlayed(song => song.kind === 'clip' && song.track === track && song.sections.some(sec => sec.slot === slot));
+    markPlayed(song => song.kind === 'clip' && song.track === track && song.sections.some(sec => sec.slot === slot), slot);
     if (pendingMix && pendingMix.track === track && pendingMix.slot === slot) {
       startMix(pendingMix);
       pendingMix = null;
@@ -524,9 +531,10 @@ function createAbletonBridge() {
       sendCrossfader(v);
       if (v === s.mix.to) {
         update(st => ({ ...st, mix: null }));
-        // Once the room has fully moved over, an autoplaying set stops the
-        // deck it left so its last section doesn't loop on unheard.
-        if (s.playMode !== 'live') stopSide(s.mix.to === 0 ? 'B' : 'A');
+        // In song mode, once the room has fully moved over, the deck it left
+        // stops so its last section doesn't loop on unheard. (Set mode stops
+        // each outgoing song as its own plan ends.)
+        if (s.playMode === 'song') stopSide(s.mix.to === 0 ? 'B' : 'A');
       }
     }
 
@@ -555,8 +563,16 @@ function createAbletonBridge() {
     return step > 0 ? step / 2 : 0.05;
   }
 
+  /** Stop a deck's tracks, sparing any holding the current song or about
+   *  to launch one. */
   function stopSide(side: 'A' | 'B') {
-    read().tracks.forEach((t, i) => { if (t.side === side && t.playing >= 0) send({ t: 'stop_track', i }); });
+    const s = read();
+    const current = setlist(s).find(x => x.key === s.currentSong);
+    s.tracks.forEach((t, i) => {
+      if (t.side !== side || t.playing < 0 || t.fired >= 0 || pendingMix?.track === i) return;
+      if (current?.kind === 'clip' && current.track === i) return;
+      send({ t: 'stop_track', i });
+    });
   }
 
   /** Move the set along by the songs' plans: the next section when one's
@@ -571,9 +587,11 @@ function createAbletonBridge() {
     }
     if (s.playMode === 'live') return;
     const songs = setlist(s);
+    // Until the next song lands, the outgoing one is still current; it is
+    // let go once it stops playing.
     const out = outgoingSong && outgoingSong !== s.currentSong ? songs.find(x => x.key === outgoingSong) : undefined;
     if (out) advance(s, out, beat, lead, songs, true);
-    else outgoingSong = null;
+    else if (outgoingSong && outgoingSong !== s.currentSong) outgoingSong = null;
     const song = songs.find(x => x.key === s.currentSong);
     if (song) advance(s, song, beat, lead, songs, false);
   }
@@ -626,6 +644,9 @@ function createAbletonBridge() {
       if (song.sections[0]) send({ t: 'fire_scene', s: song.sections[0].scene });
       return;
     }
+    // A stop waiting for this track would cancel the launch in Live; the
+    // song replaces whatever plays there on the bar anyway.
+    pendingStops = pendingStops.filter(p => p.track !== song.track);
     send({ t: 'fire_clip', i: song.track, s: song.slot });
     const s = read();
     if (!s.deckMode || !song.side) return;
