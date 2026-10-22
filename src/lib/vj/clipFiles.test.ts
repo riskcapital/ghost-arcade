@@ -34,3 +34,12 @@ describe('clip files', () => {
     expect(fileNameOf('C:\\old\\three.mov')).toBe('three.mov');
   });
 });
+
+describe('shader clips', () => {
+  it('never count as missing a file: their code is in the project', () => {
+    expect(clipFilePath({ type: 'shader', shaderCode: 'void main(){}', src: 'ghost-asset://localhost/Users/me/Shows/ISF/Featured-tide.fs' })).toBeNull();
+  });
+  it('still check a video clip', () => {
+    expect(clipFilePath({ type: 'video', src: 'ghost-asset://localhost/Users/me/clip.mov' })).toBe('/Users/me/clip.mov');
+  });
+});

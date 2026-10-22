@@ -159,6 +159,23 @@ describe('VJ clip transition persistence', () => {
     for (const grid of [restored.clipGrid, restored.bankBClipGrid]) expect(grid[0][0]).toMatchObject({ audioPlayback: false, audioVolume: .4, audioPan: -.6, audioMuted: true });
   });
 
+  it('keeps built-in shader and Performer clips pointing at the app when a saved project opens', async () => {
+    const { vjClipLauncher } = await import('./vjClipLauncher');
+    const payload: any = transitionProject();
+    const shader = { id: 's', type: 'shader', name: 'Tide', src: './ISF/Featured-tide.fs', shaderCode: 'void main(){}' };
+    const performer = { id: 'p', type: 'synthvision', name: 'Performer', src: 'performer' };
+    const video = { id: 'v', type: 'video', name: 'clip', src: './clip.mp4' };
+    payload.vjClipLauncher.blocks[0].clipGrid[0][0] = shader;
+    payload.vjClipLauncher.blocks[0].clipGrid[0][1] = performer;
+    payload.vjClipLauncher.blocks[0].bankBClipGrid[0][0] = video;
+    expect(layers.project.importProject(payload, '/Users/someone/Shows/')).toBe(true);
+    const state = get(vjClipLauncher);
+    expect(state.clipGrid[0][0]!.src).toBe('./ISF/Featured-tide.fs');
+    expect(state.clipGrid[0][1]!.src).toBe('performer');
+    // A file saved beside the project still resolves next to it.
+    expect(state.bankBClipGrid[0][0]!.src).toContain('/Users/someone/Shows/clip.mp4');
+  });
+
   it('retains native-only video dimensions and duration across a project round trip', async () => {
     const { vjClipLauncher } = await import('./vjClipLauncher');
     const payload = transitionProject();

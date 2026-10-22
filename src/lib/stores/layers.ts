@@ -7,6 +7,9 @@ import { writable, derived, get } from 'svelte/store';
 import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MeshPointTangents, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, PixelMapConfig, PixelMapFixture, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
 import { createDefaultPixelMapConfig, normalizePixelMapConfig } from '../pixelmap/fixtures';
 
+/** Relative paths into folders the app ships (public/), e.g. ./ISF/Featured-tide.fs. */
+const BUNDLED_ASSET_PATH = /^(?:\.\/)?(?:ISF|threejs|looks|lib|fonts|mediapipe)\//;
+
 /** Keep only the object entries with a string id from a saved list; anything
  *  else in an older or hand-edited file is dropped instead of breaking the load. */
 function identifiedEntries(raw: unknown): any[] {
@@ -5811,6 +5814,12 @@ void main() {
             }
           }
           if (/^[A-Za-z][A-Za-z0-9+.-]+:/.test(src)) return src;
+          // Files that ship inside the app (the shader library, built-in
+          // pages, looks) are relative to the app, not to the project file.
+          if (BUNDLED_ASSET_PATH.test(src)) return src;
+          // A bare word with no folder or extension is a source keyword
+          // (a Performer clip's "performer"), not a file.
+          if (!/[\\/.]/.test(src)) return src;
           let absPath: string | null = null;
           if (src.startsWith('/')) {
             absPath = src;
