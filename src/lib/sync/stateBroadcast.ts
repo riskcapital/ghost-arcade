@@ -15,6 +15,7 @@ import { settings } from '$lib/stores/settings';
 import { vjClipLauncher, vjCrossfader, vjClipLauncherNow } from '$lib/stores/vjClipLauncher';
 import { vjLayerSequencer } from '$lib/stores/vjLayerSequencer';
 import { stage3dScene } from '$lib/stage3d/store';
+import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING } from '$lib/stage3d/types';
 import { invoke, isDesktopApp } from '$lib/bridge';
 
 const CHANNEL_NAME = 'ghostarcade-state-sync';
@@ -227,7 +228,7 @@ function isExternalPreviewWindow(): boolean {
 // ============================================================
 
 interface StateMessage {
-  type: 'project-state' | 'vj-state' | 'stage3d-state' | 'settings-update' | 'osr-request-state' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen';
+  type: 'project-state' | 'vj-state' | 'stage3d-state' | 'stage3d-edit' | 'settings-update' | 'osr-request-state' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen';
   data?: any;
   timestamp: number;
 }
@@ -611,6 +612,8 @@ function initSender() {
       console.log('[StateSync] OSR requested full state — activating broadcast');
       hasActiveReceiver = true;
       sendFullState();
+    } else if (event.data?.type === 'stage3d-edit') {
+      applyStage3DEditFromWindow(event.data.data);
     }
   };
 
@@ -654,6 +657,8 @@ function initSender() {
   unsubscribers.push(unsubVJSequencer);
 
   const unsubStage3D = stage3dScene.subscribe(() => {
+    // An edit that came from the Stage Sim window is already there.
+    if (applyingStage3DEdit) return;
     scheduleStage3DRelayScenePublish();
     broadcastStage3DState();
   });
@@ -833,8 +838,56 @@ function applyStage3DScenePayload(data: any, sourceLabel: string) {
  *  cross-window broadcast and never get reset by clip-change side
  *  effects. Everything else (camera, environment, schema bumps) takes
  *  the incoming value. */
+function isEmptyRecord(value: any): boolean {
+  return !value || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0);
+}
+
+function sameSerializable(a: any, b: any): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function withDefaults<T extends Record<string, any>>(defaults: T, value: any): T {
+  return { ...defaults, ...(value ?? {}) } as T;
+}
+
+function isPristineFallbackStage3DScene(scene: any): boolean {
+  if (!scene?.schemaVersion || scene.schemaVersion !== 1 || !Array.isArray(scene.nodes)) return false;
+  const venue = scene.venue ?? 'festival';
+  const basePreset = scene.basePreset ?? 'festival';
+  return venue === 'festival'
+    && basePreset === 'festival'
+    && scene.nodes.length === 0
+    && (!Array.isArray(scene.userElements) || scene.userElements.length === 0)
+    && isEmptyRecord(scene.screenOverrides)
+    && isEmptyRecord(scene.sceneryOverrides)
+    && !scene.platform
+    && sameSerializable(scene.camera, { position: [12, 6, 14], target: [0, 2, 0], fov: 50 })
+    && sameSerializable(scene.environment, {
+      background: '#06060a',
+      ambient: 0.4,
+      showGround: true,
+      groundColor: '#15151b',
+    })
+    && sameSerializable(withDefaults(DEFAULT_LIGHTING, scene.lighting), DEFAULT_LIGHTING)
+    && sameSerializable(withDefaults(DEFAULT_ATMOSPHERE, scene.atmosphere), DEFAULT_ATMOSPHERE);
+}
+
 function mergeStage3DScenePreservingLocal(incoming: any): void {
+  applyingRemoteStage3D = true;
+  try {
+    mergeStage3DSceneInto(incoming);
+  } finally {
+    applyingRemoteStage3D = false;
+  }
+}
+
+function mergeStage3DSceneInto(incoming: any): void {
   const current: any = get(stage3dScene);
+  // A fresh Stage Sim window takes the editor's scene as it is.
+  if (isPristineFallbackStage3DScene(current)) {
+    stage3dScene.loadScene(incoming);
+    return;
+  }
   const merged: any = {
     ...incoming,
     // Local-owned: keep ours over incoming. `??` so an undefined local
@@ -875,6 +928,47 @@ function applySettingsPayload(data: any, sourceLabel: string) {
     settings.update(s => ({ ...s, output: { ...s.output, ...data.output } }));
   } catch (err) {
     console.error(`[StateSync] Failed to import settings (${sourceLabel}):`, err);
+  }
+}
+
+/*
+ * Stage Sim edits flow back to the editor. The Stage Sim window keeps its
+ * own copy of the stage scene (venue, lighting, beams, haze, objects), and
+ * a new window starts from the editor's copy. Without this the editor never
+ * learned of those edits, so closing and reopening Stage Sim, or saving the
+ * project, lost them.
+ */
+let applyingRemoteStage3D = false;
+let applyingStage3DEdit = false;
+let stage3DEditTimer: ReturnType<typeof setTimeout> | null = null;
+let lastStage3DEditSent = '';
+
+function sendStage3DEdit(): void {
+  if (stage3DEditTimer) return;
+  stage3DEditTimer = setTimeout(() => {
+    stage3DEditTimer = null;
+    if (!channel || mode !== 'receiver') return;
+    const json = JSON.stringify(get(stage3dScene));
+    if (json === lastStage3DEditSent) return;
+    lastStage3DEditSent = json;
+    try {
+      channel.postMessage({ type: 'stage3d-edit', data: JSON.parse(json), timestamp: Date.now() } satisfies StateMessage);
+    } catch (err) {
+      console.error('[StateSync] Failed to send Stage 3D edit:', err);
+    }
+  }, 120);
+}
+
+function applyStage3DEditFromWindow(data: any): void {
+  if (!data || data.schemaVersion !== 1 || !Array.isArray(data.nodes)) return;
+  if (JSON.stringify(get(stage3dScene)) === JSON.stringify(data)) return;
+  applyingStage3DEdit = true;
+  try {
+    stage3dScene.loadScene(data);
+  } catch (err) {
+    console.error('[StateSync] Failed to apply Stage 3D edit:', err);
+  } finally {
+    applyingStage3DEdit = false;
   }
 }
 
@@ -999,6 +1093,16 @@ function initReceiver() {
     }
   });
   unsubscribers.push(unsubCursorVis);
+
+  if (isStage3DWindow()) {
+    // The first value is the window's starting scene, not an edit.
+    let first = true;
+    unsubscribers.push(stage3dScene.subscribe(() => {
+      if (first) { first = false; return; }
+      if (applyingRemoteStage3D) return;
+      sendStage3DEdit();
+    }));
+  }
 
   // Request initial state from main window
   channel.postMessage({
