@@ -339,13 +339,20 @@ Pick ONE strong idea and execute it with care. Restraint reads better at scale t
     return typeof v === 'number' ? v : fallback;
   };
   // Clear or fade the frame. With Transparent on it fades to clear instead of
-  // black, so the marks float over the layers below. Use 1 for a full clear;
-  // keep trail fades at 0.04 or more so old marks fully disappear.
+  // black, so the marks float over the layers below. Use 1 for a full clear.
+  // Slow fades never quite reach empty: 0.05 or more keeps old marks under 4%.
   function fadeTo(alpha) {
     const ctx = drawingContext;
-    ctx.globalCompositeOperation = (window.shaderParams || {}).transparent === true ? 'destination-out' : 'source-over';
-    ctx.fillStyle = 'rgba(0,0,0,' + alpha + ')';
+    const clear = (window.shaderParams || {}).transparent === true;
+    ctx.globalCompositeOperation = clear ? 'destination-out' : 'source-over';
+    ctx.fillStyle = 'rgba(0,0,0,' + Math.min(1, Math.max(0, alpha)) + ')';
     ctx.fillRect(0, 0, width, height);
+    if (!clear) {
+      // Keep the frame fully opaque: back anything see-through with black.
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, width, height);
+    }
     ctx.globalCompositeOperation = 'source-over';
   }
 
