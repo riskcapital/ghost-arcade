@@ -2457,6 +2457,7 @@
         }
         void ensureEditorPreviewFallback();
         drawEditorPreviewFallback();
+        if (!isOsrMode && !isOutputMode) broadcastLiveAudioFrame();
         fpsFrameCount++;
         const fpsNow = performance.now();
         const fpsElapsed = fpsNow - fpsLastTime;
@@ -5316,6 +5317,24 @@
     }
   }
 
+  // Send the latest audio analysis to the other windows (output, Spout,
+  // Stage Sim). Their own JS context has no audio input, so without this
+  // their shaders see zero audio. Sent once per new analysis; when audio
+  // stops, isActive=false tells receivers to fall back to the editor's
+  // zero state. Called from both render loops: under the native engine the
+  // editor never renders shader textures itself, so tying this to that
+  // pass left Stage Sim with no audio at all.
+  let lastBroadcastAnalysis: unknown = null;
+  let lastBroadcastActive = false;
+  function broadcastLiveAudioFrame() {
+    const rawAnalysis = getLastRawAnalysis();
+    const active = !!$audioStore.isActive;
+    if (!rawAnalysis || (rawAnalysis === lastBroadcastAnalysis && active === lastBroadcastActive)) return;
+    lastBroadcastAnalysis = rawAnalysis;
+    lastBroadcastActive = active;
+    broadcastAudioFrame(rawAnalysis, active);
+  }
+
   // Update ISF shaders each frame - renders them to their textures
   function updateShaderTextures(layerList: Layer[]) {
     if (!engine) return;
@@ -5332,14 +5351,8 @@
     // uniforms even when the editor is fully reactive. See audioBroadcast.ts.
     const audioState = $audioStore;
     const rawAnalysis = getLastRawAnalysis();
-    if (rawAnalysis && audioState.isActive) {
-      audioTextures.update(rawAnalysis);
-      broadcastAudioFrame(rawAnalysis, true);
-    } else if (rawAnalysis) {
-      // Send isActive=false to telegraph "stop reacting" to receivers,
-      // so their shaders fall back to the same zero state the editor uses.
-      broadcastAudioFrame(rawAnalysis, false);
-    }
+    if (rawAnalysis && audioState.isActive) audioTextures.update(rawAnalysis);
+    broadcastLiveAudioFrame();
 
     for (const layer of layerList) {
       if (!layer.source || layer.source.type !== 'shader') continue;
