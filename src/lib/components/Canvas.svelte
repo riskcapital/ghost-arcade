@@ -3341,6 +3341,7 @@
                 $settings?.output?.slices ?? [],
                 stage3DSourceLayers,
                 renderClockSeconds,
+                !!nativeMaster,
               );
             }
           }

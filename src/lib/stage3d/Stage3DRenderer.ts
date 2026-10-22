@@ -904,6 +904,10 @@ export class Stage3DRenderer {
     _outputSlices: OutputSlice[],
     sourceLayers: Layer[] = [],
     clockTimeSeconds: number | null = null,
+    /** The master is the render core's finished program picture. Each
+     *  screen then shows its own slice of it, so Stage Sim matches the
+     *  program and the outputs: deck mix, composition effects, Flux. */
+    masterIsProgram = false,
   ): void {
     this.ensureRenderTargets(renderer);
     const clockIsManual = typeof clockTimeSeconds === 'number' && Number.isFinite(clockTimeSeconds);
@@ -1159,11 +1163,24 @@ export class Stage3DRenderer {
       // (line ~2273) so 2D mapping mode and Stage3D mode look the same.
       let texture: THREE.Texture | null = null;
       let useUnifiedCrop = false;
+      const ownCorners = (layer as any).corners;
+      if (masterIsProgram && masterTexture && layer.type === 'screen' && ownCorners) {
+        // Same box the program preview draws for this screen.
+        const xs = [ownCorners.topLeft.x, ownCorners.topRight.x, ownCorners.bottomLeft.x, ownCorners.bottomRight.x];
+        const ys = [ownCorners.topLeft.y, ownCorners.topRight.y, ownCorners.bottomLeft.y, ownCorners.bottomRight.y];
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        if (maxX - minX > 1e-4 && maxY - minY > 1e-4) {
+          texture = masterTexture;
+          useUnifiedCrop = true;
+          u.uCropRegion.value.set(minX, minY, maxX - minX, maxY - minY);
+        }
+      }
       const parentId = (layer as any).parentGroupId as string | null | undefined;
       const parent = parentId ? layerById.get(parentId) : null;
       const parentUnified = parent?.groupConfig?.shaderMode === 'unified';
       const parentTex = (parent?.source?.texture as THREE.Texture | null | undefined) ?? null;
-      if (parent && parentUnified && parentTex) {
+      if (!texture && parent && parentUnified && parentTex) {
         const c = (layer as any).corners;
         if (c) {
           const xs = [c.topLeft.x, c.topRight.x, c.bottomLeft.x, c.bottomRight.x];
@@ -1213,7 +1230,10 @@ export class Stage3DRenderer {
       u.uBrightness.value = (finish === 'projection' ? base * 0.6 : base) * screenBoost * fxBrightness;
       u.uTime.value = time;
       u.uScreenAspect.value = entry.defaultWidth / Math.max(0.0001, entry.defaultHeight);
-      u.uSourceAspect.value = 16 / 9;
+      // A slice of the 16:9 picture has the slice's own shape.
+      u.uSourceAspect.value = useUnifiedCrop
+        ? (16 / 9) * u.uCropRegion.value.z / Math.max(0.0001, u.uCropRegion.value.w)
+        : 16 / 9;
       u.uDisplayFit.value = FIT_INDEX[override.displayFit ?? 'stretch'] ?? 0;
       u.uEdgeEffect.value = EDGE_INDEX[override.edgeEffect ?? 'none'] ?? 0;
       u.uPanelSize.value.set(entry.defaultWidth, entry.defaultHeight);
