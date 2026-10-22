@@ -1493,6 +1493,7 @@
             <div class="sc"><label>Speed <b>{content.animationSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.animationSpeed} oninput={(e) => updateSetting('animationSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Draw Speed <b>{content.drawSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="10" step="0.1" value={content.drawSpeed} oninput={(e) => updateSetting('drawSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Trail Length <b>{content.trailLength.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.trailLength} oninput={(e) => updateSetting('trailLength', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc" title="Softens the front edge of the drawing animation instead of a hard cut"><label>Head Feather <b>{(content.headFeather ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.headFeather ?? 0} oninput={(e) => updateSetting('headFeather', parseFloat((e.target as HTMLInputElement).value))} /></div>
             {#if content.loopMode === 'pingpong'}
               <div class="sc"><label>Ping Pong Hold <b>{content.pingPongHold ?? 0}ms</b></label><input type="range" min="0" max="5000" step="100" value={content.pingPongHold ?? 0} oninput={(e) => updateSetting('pingPongHold', parseInt((e.target as HTMLInputElement).value))} /></div>
             {/if}

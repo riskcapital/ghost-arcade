@@ -407,8 +407,10 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
   data[33] = clamp(finite(content.echoOffset, 0.05), 0, 0.2);
   data[34] = clamp(finite(content.echoDecay, 0.3), 0, 1);
   data[35] = gate(clamp(finite(content.motionBlur, 0), 0, 1));
-  // fx5 — ping-pong hold (seconds at each end of the bounce).
+  // fx5 — ping-pong hold (seconds at each end of the bounce), and the head
+  // feather that softens the leading edge of the draw animation.
   data[36] = Math.max(0, finite(content.pingPongHold, 0)) / 1000;
+  data[37] = clamp(finite(content.headFeather, 0), 0, 1);
 
   const sourceId = String(options.sourceId || 'light-painting-native-source');
   const uniformId = `light-painting:${sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_')}:uniform`;
@@ -469,7 +471,7 @@ struct PaintData {
   fx2: vec4<f32>, // waveFreq, waveSpeed, sparkle, multiColorGlow
   fx3: vec4<f32>, // flowPulse, flowSpeed, flowWidth, afterglow
   fx4: vec4<f32>, // echo, echoOffset, echoDecay, motionBlur
-  fx5: vec4<f32>, // pingPongHoldSec, spare, spare, spare
+  fx5: vec4<f32>, // pingPongHoldSec, headFeather, spare, spare
   strokes: array<vec4<f32>, ${LIGHT_PAINTING_MAX_STROKES * LIGHT_PAINTING_STROKE_VEC4S}>,
   points: array<vec4<f32>, ${LIGHT_PAINTING_MAX_POINTS}>,
   chunks: array<vec4<f32>, ${LIGHT_PAINTING_MAX_CHUNKS}>,
@@ -658,6 +660,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
 
     // ── Draw animation window (playback on the core clock) ──
     var vis = 1.0;
+    var head_prog = 2.0; // where the drawn part ends; 2 = no moving head
     if (e5.x > 0.5) {
       let raw = t * e5.y * global_speed * 0.22 + e6.x;
       if (paint.header2.z > 0.5) {
@@ -673,6 +676,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         if (slot < slot_target) { vis = 0.0; }
         else if (slot == slot_target) {
           let prog = clamp((local - f32(slot_target) * slot_len) / draw_dur, 0.0, 1.0);
+          head_prog = prog;
           if (s_norm > prog) { vis = 0.0; }
         }
       } else {
@@ -691,6 +695,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
           else if (local < 2.0 + hold) { prog = (2.0 + hold) - local; }
           else { prog = 0.0; }
         }
+        head_prog = prog;
         if (s_norm > prog) { vis = 0.0; }
         else if (e6.y > 0.001 || paint.fx3.w > 0.001) {
           let window = max(0.03, 1.0 - e6.y);
@@ -703,7 +708,18 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         }
       }
     } else {
+      head_prog = e6.x;
       if (s_norm > e6.x) { vis = 0.0; }
+    }
+    // Head feather: fade the leading edge over a length that scales with
+    // the brush, instead of cutting the stroke off in a straight slice.
+    // A fully drawn stroke keeps its end.
+    if (vis > 0.0 && paint.fx5.y > 0.001 && head_prog < 0.999) {
+      // Up to twelve brush widths; squared so a bright glow brush, which
+      // stays saturated until it is nearly gone, still fades visibly.
+      let feather = paint.fx5.y * max(bw * 12.0, 96.0) / total_len;
+      let ramp = smoothstep(0.0, feather, head_prog - s_norm);
+      vis = vis * ramp * ramp;
     }
     if (vis <= 0.001) { continue; }
 

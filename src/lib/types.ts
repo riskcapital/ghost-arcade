@@ -1456,6 +1456,7 @@ export interface LightPaintingContent {
   staggerStrokes: boolean;            // Draw strokes one after another vs all at once
   staggerDelay: number;               // Delay between staggered strokes in ms
   pingPongHold: number;               // Hold at each end of ping-pong playback in ms
+  headFeather?: number;               // Softens the leading edge of the draw animation 0-1 (0 = hard edge)
   sequenceMode: LightPaintingSequenceMode; // Stroke playback ordering
   randomSequenceSeed: number;         // Seed used for deterministic random stroke order
 
@@ -1544,6 +1545,7 @@ export function createDefaultLightPaintingContent(): LightPaintingContent {
     staggerStrokes: true,
     staggerDelay: 200,
     pingPongHold: 0,
+    headFeather: 0,
     sequenceMode: 'recorded',
     randomSequenceSeed: 1337,
     bloom: 1.5,
