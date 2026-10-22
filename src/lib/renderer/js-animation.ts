@@ -77,7 +77,7 @@ export interface JSAnimationContext {
   texture: THREE.CanvasTexture;
   animationType: 'threejs' | 'p5js';
   updateTexture: () => void;
-  updateParams: (params: Record<string, number | boolean | number[]>) => void;
+  updateParams: (params: Record<string, number | boolean | number[] | string>) => void;
   dispose: () => void;
 }
 
@@ -174,7 +174,7 @@ export function createJSAnimationContext(
     }
   };
 
-  const updateParams = (params: Record<string, number | boolean | number[]>) => {
+  const updateParams = (params: Record<string, number | boolean | number[] | string>) => {
     try {
       const iframeWindow = iframe.contentWindow as Window & { shaderParams?: Record<string, unknown> };
       if (iframeWindow?.shaderParams) {
@@ -237,7 +237,7 @@ export function updateAllJSAnimationTextures(): void {
 /**
  * Update parameters for a specific animation
  */
-export function updateJSAnimationParams(id: string, params: Record<string, number | boolean | number[]>): void {
+export function updateJSAnimationParams(id: string, params: Record<string, number | boolean | number[] | string>): void {
   const context = jsAnimationCache.get(id);
   if (context) {
     context.updateParams(params);

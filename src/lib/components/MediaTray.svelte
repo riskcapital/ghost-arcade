@@ -1196,7 +1196,7 @@
   // Built-in JS animations seeded into jsAnimations on mount. The list
   // is supplied by the vite plugin at build time so dropping a new
   // folder into public/threejs/<name>/ ships it on the next build.
-  const BUILT_IN_THREEJS: Array<{ id: string; folder: string; name: string; url: string }> =
+  const BUILT_IN_THREEJS: Array<{ id: string; folder: string; name: string; url: string; thumbnail?: string }> =
     bundledThreeJSItems as any;
 
   async function seedBuiltInThreeJSItems() {
@@ -1212,7 +1212,7 @@
         const htmlCode = await resp.text();
         const params = parseShaderParamDefs(htmlCode);
         const values = parseShaderParamValues(htmlCode);
-        const paramValues: Record<string, number | boolean | number[]> = {};
+        const paramValues: Record<string, number | boolean | number[] | string> = {};
         for (const p of params) paramValues[p.name] = values[p.name] ?? p.default;
         const isP5 = /p5\.(min\.)?js|new\s+p5\s*\(/.test(htmlCode);
         const item: JSAnimationItem = {
@@ -1225,12 +1225,13 @@
             params: params.length > 0 ? params : undefined,
             paramValues: params.length > 0 ? paramValues : undefined,
           },
-          thumbnail: undefined,
+          thumbnail: def.thumbnail,
         };
         jsAnimations = [...jsAnimations, item];
         // Background thumbnail capture — non-blocking so the item appears
         // immediately and the thumbnail backfills a few seconds later.
-        captureJSAnimationThumbnail(htmlCode).then(thumb => {
+        // Shipped thumbnail first; capture one only for pages without.
+        if (!def.thumbnail) captureJSAnimationThumbnail(htmlCode).then(thumb => {
           if (!thumb) return;
           const idx = jsAnimations.findIndex(a => a.id === def.id);
           if (idx >= 0) {
@@ -1500,7 +1501,7 @@
         // Also parse window.shaderParams for the live values; falls back
         // to the def's default if not present.
         const parsedValues = parseShaderParamValues(htmlCode);
-        const paramValues: Record<string, number | boolean | number[]> = {};
+        const paramValues: Record<string, number | boolean | number[] | string> = {};
         for (const def of parsedDefs) {
           paramValues[def.name] = parsedValues[def.name] ?? def.default;
         }
@@ -1578,32 +1579,36 @@
 
   function parseShaderParamDefs(html: string): Array<{
     name: string;
-    type: 'number' | 'boolean' | 'color';
-    default: number | boolean | number[];
+    type: 'number' | 'boolean' | 'color' | 'text' | 'select';
+    default: number | boolean | number[] | string;
     min?: number;
     max?: number;
     label?: string;
+    options?: string[];
   }> {
     const lit = extractBracketedAfter(html, /window\.shaderParamDefs\s*=\s*/);
     if (!lit) return [];
     try {
       const arr = new Function('return ' + lit)();
       if (!Array.isArray(arr)) return [];
-      return arr.filter(d => d && typeof d.name === 'string' && d.type).map(d => ({
-        name: String(d.name),
-        type: d.type as 'number' | 'boolean' | 'color',
-        default: d.default,
-        min: typeof d.min === 'number' ? d.min : undefined,
-        max: typeof d.max === 'number' ? d.max : undefined,
-        label: typeof d.label === 'string' ? d.label : d.name,
-      }));
+      return arr.filter(d => d && typeof d.name === 'string' && d.type)
+        .filter(d => d.type !== 'select' || (Array.isArray(d.options) && d.options.length > 0))
+        .map(d => ({
+          name: String(d.name),
+          type: d.type as 'number' | 'boolean' | 'color' | 'text' | 'select',
+          default: typeof d.default === 'string' ? d.default.slice(0, 500) : d.default,
+          min: typeof d.min === 'number' ? d.min : undefined,
+          max: typeof d.max === 'number' ? d.max : undefined,
+          label: typeof d.label === 'string' ? d.label : d.name,
+          options: Array.isArray(d.options) ? d.options.filter((o: unknown) => typeof o === 'string').slice(0, 64) : undefined,
+        }));
     } catch (err) {
       console.warn('[MediaTray] failed to parse shaderParamDefs:', err);
       return [];
     }
   }
 
-  function parseShaderParamValues(html: string): Record<string, number | boolean | number[]> {
+  function parseShaderParamValues(html: string): Record<string, number | boolean | number[] | string> {
     const lit = extractBracketedAfter(html, /window\.shaderParams\s*=\s*/);
     if (!lit) return {};
     try {
@@ -3448,7 +3453,7 @@
   }
 
   // Update JS animation parameter
-  function updateJSAnimationParam(paramName: string, value: number | boolean) {
+  function updateJSAnimationParam(paramName: string, value: number | boolean | string) {
     if (!selectedJSAnimation || !$selectedLayerId) return;
 
     // Update local state
@@ -3865,6 +3870,29 @@
                 checked={(selectedJSAnimation.jsAnimation.paramValues?.[param.name] ?? param.default) as boolean}
                 onchange={(e) => updateJSAnimationParam(param.name, (e.target as HTMLInputElement).checked)}
               />
+            </div>
+          {:else if param.type === 'text'}
+            <div class="param-row param-row-text">
+              <label>{param.label || param.name}</label>
+              <input
+                type="text"
+                maxlength="500"
+                value={String(selectedJSAnimation.jsAnimation.paramValues?.[param.name] ?? param.default ?? '')}
+                oninput={(e) => updateJSAnimationParam(param.name, (e.target as HTMLInputElement).value)}
+                onkeydown={(e) => e.stopPropagation()}
+              />
+            </div>
+          {:else if param.type === 'select'}
+            <div class="param-row">
+              <label>{param.label || param.name}</label>
+              <select
+                value={String(selectedJSAnimation.jsAnimation.paramValues?.[param.name] ?? param.default ?? '')}
+                onchange={(e) => updateJSAnimationParam(param.name, (e.target as HTMLSelectElement).value)}
+              >
+                {#each param.options ?? [] as option (option)}
+                  <option value={option}>{option}</option>
+                {/each}
+              </select>
             </div>
           {/if}
         {/each}

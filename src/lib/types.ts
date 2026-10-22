@@ -381,13 +381,15 @@ export interface JSAnimationSource {
   htmlCode: string;  // Complete HTML file content
   params?: Array<{
     name: string;
-    type: 'number' | 'boolean' | 'color';
-    default: number | boolean | number[];
+    type: 'number' | 'boolean' | 'color' | 'text' | 'select';
+    default: number | boolean | number[] | string;
     min?: number;
     max?: number;
     label?: string;
+    /** Choices for a 'select' control. */
+    options?: string[];
   }>;
-  paramValues?: Record<string, number | boolean | number[]>;
+  paramValues?: Record<string, number | boolean | number[] | string>;
   aiGenerated?: boolean;
   aiPrompt?: string;  // Original prompt used to generate
 }
