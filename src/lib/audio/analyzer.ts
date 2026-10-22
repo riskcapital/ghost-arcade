@@ -280,14 +280,27 @@ export class AudioAnalyzer {
     try {
       // getDisplayMedia captures system audio - user picks a tab/window/screen
       // We only need the audio track; video is minimal (required by the API)
-      this.stream = await (navigator.mediaDevices as any).getDisplayMedia({
-        video: { width: 1, height: 1, frameRate: 1 },
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+      const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+      const macPermissionHint = 'Grant Screen & System Audio Recording permission to Ghost Arcade (System Settings → Privacy & Security → Screen & System Audio Recording), then fully quit + relaunch the app.';
+      try {
+        this.stream = await (navigator.mediaDevices as any).getDisplayMedia({
+          video: { width: 1, height: 1, frameRate: 1 },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+      } catch (err) {
+        // Without that permission macOS lists no screens, so the request is
+        // refused outright ("Invalid capture constraints"), which says
+        // nothing useful. Point at the setting instead.
+        if (isMac) {
+          const detail = err instanceof Error ? ` (${err.message})` : '';
+          throw new Error(`System audio is blocked. ${macPermissionHint}${detail}`);
+        }
+        throw err;
+      }
 
       // Verify audio track exists. On macOS this most often means the
       // Screen Recording permission hasn't been granted to Ghost
@@ -298,10 +311,9 @@ export class AudioAnalyzer {
       if (audioTracks.length === 0) {
         this.stream!.getTracks().forEach(t => t.stop());
         this.stream = null;
-        const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
         const msg = isMac
-          ? 'No system audio track. Grant Screen Recording permission to Ghost Arcade (System Settings → Privacy & Security → Screen & System Audio Recording), then fully quit + relaunch the app.'
-          : 'No audio track. Pick a source that has audio output when the system picker appears.';
+          ? `No system audio track. ${macPermissionHint}`
+          :'No audio track. Pick a source that has audio output when the system picker appears.';
         throw new Error(msg);
       }
 
