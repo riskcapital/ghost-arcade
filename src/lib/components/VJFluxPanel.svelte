@@ -14,7 +14,7 @@
    * preview, so the preview never moves; with too little room it shrinks to
    * two buttons.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import FluxPad from './studio/FluxPad.svelte';
   import { FLUX_BLENDS, FLUX_MODULES, type FluxState } from '../mobile/studio/flux';
   import { deskFlux } from '../stores/deskFlux';
@@ -26,9 +26,11 @@
   export let previewEl: HTMLElement | null = null;
   /** Effects panel on the right: the gap is on the preview's right. */
   export let reversed = false;
+  /** Changes whenever the preview moves without resizing (A/B centring). */
+  export let layoutKey: unknown = null;
 
-  const FULL_MIN = 190;
-  const FULL_MAX = 300;
+  const FULL_MIN = 170;
+  const FULL_MAX = 640;
   const COMPACT_MIN = 60;
 
   const TARGET_KEY = 'ga.vj.randomize';
@@ -61,6 +63,8 @@
 
   $: flux = $deskFlux;
   $: mode = room >= FULL_MIN ? 'full' : room >= COMPACT_MIN ? 'compact' : 'none';
+  // The panel fills the whole gap up to the preview, narrower when the
+  // preview needs the room.
   $: width = Math.min(FULL_MAX, room);
   $: live = flux.active && flux.modules.length > 0;
 
@@ -114,7 +118,7 @@
 
   let observer: ResizeObserver | null = null;
   $: if (observer) { observer.disconnect(); if (wrapperEl) observer.observe(wrapperEl); if (previewEl) observer.observe(previewEl); measure(); }
-  $: reversed, measure();
+  $: reversed, layoutKey, void tick().then(measure);
 
   onMount(() => {
     observer = new ResizeObserver(() => measure());
@@ -135,7 +139,7 @@
 <svelte:window onkeydown={onKey} onpointerdown={closeOptions} />
 
 {#if mode !== 'none'}
-  <div class="vj-flux" class:compact={mode === 'compact'} class:reversed style={`width:${mode === 'full' ? width : 56}px`}>
+  <div class="vj-flux" class:compact={mode === 'compact'} class:narrow={mode === 'full' && width < 230} class:reversed style={`width:${mode === 'full' ? width : 56}px`}>
     {#if mode === 'full'}
       <div class="head">
         <div class="randomize" class:flash={scrambled}>
@@ -179,7 +183,7 @@
       </div>
       <div class="foot">
         <label title="How much of the Flux picture is mixed in">
-          <span>Wet / dry</span>
+          <span>{width < 230 ? 'Wet' : 'Wet / dry'}</span>
           <input type="range" min="0" max="1" step="0.01" value={flux.mix}
             oninput={(e) => patch({ mix: Number((e.target as HTMLInputElement).value) })}
             data-midi-path="vj:flux:mix" data-midi-label="Flux wet" data-midi-min="0" data-midi-max="1" />
@@ -216,6 +220,13 @@
     overflow: hidden;
   }
   .vj-flux.reversed { left: auto; right: 0; }
+  /* A skinny panel keeps every control, a little tighter. */
+  .vj-flux.narrow { padding: 8px; gap: 6px; }
+  .vj-flux.narrow .head { gap: 4px; }
+  .vj-flux.narrow .randomize .rnd { letter-spacing: 0; padding: 6px 4px; }
+  .vj-flux.narrow .chip { padding: 6px 5px; }
+  .vj-flux.narrow .modules { gap: 3px; }
+  .vj-flux.narrow .modules button { font-size: 9px; padding: 0 1px; }
   .vj-flux.compact { padding: 6px; align-items: stretch; }
   .head { display: flex; align-items: center; gap: 6px; position: relative; }
   .title { position: absolute; top: 7px; left: 8px; z-index: 5; pointer-events: none; font: 600 10px/1 var(--ga-font-mono, ui-monospace, monospace); letter-spacing: 0.14em; color: rgba(201, 207, 219, 0.7); }

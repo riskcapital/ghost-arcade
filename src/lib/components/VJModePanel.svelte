@@ -17,7 +17,7 @@
   // VJ Mode Panel - Layers/Columns Grid
   // Uses vjClipLauncher store for state management
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { isMac, isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
@@ -501,6 +501,29 @@
   let previewCanvas: HTMLCanvasElement;
   let previewContainerEl: HTMLDivElement | null = null;
   let previewWrapperEl: HTMLDivElement | null = null;
+  // A/B monitoring centres the program over the crossfader, the middle of
+  // the two decks below; measured, because the decks' widths are not fixed.
+  let crossfaderStripEl: HTMLDivElement | null = null;
+  let abDeckCentre: number | null = null;
+  function measureAbDeckCentre() {
+    if (!previewWrapperEl || !crossfaderStripEl) { abDeckCentre = null; return; }
+    const wrapper = previewWrapperEl.getBoundingClientRect();
+    const strip = crossfaderStripEl.getBoundingClientRect();
+    if (strip.width <= 0 || wrapper.width <= 0) { abDeckCentre = null; return; }
+    const next = Math.round((strip.left + strip.right) / 2 - wrapper.left);
+    if (next !== abDeckCentre) abDeckCentre = next;
+  }
+  let abCentreObserver: ResizeObserver | null = null;
+  $: if (typeof ResizeObserver !== 'undefined') {
+    abCentreObserver?.disconnect();
+    abCentreObserver = new ResizeObserver(() => measureAbDeckCentre());
+    if (previewWrapperEl) abCentreObserver.observe(previewWrapperEl);
+    if (crossfaderStripEl) abCentreObserver.observe(crossfaderStripEl);
+    measureAbDeckCentre();
+  }
+  onDestroy(() => abCentreObserver?.disconnect());
+  // Flipping the layout moves the decks without resizing anything.
+  $: $settings.ui.vjLayoutReversed, deckMonitorsVisible, void tick().then(measureAbDeckCentre);
   // Full-native mode: the render core's output is shown by repositioning the
   // native presenter underlay into our preview box (registered below).
   const nativeEngineActive = isDesktopApp && NATIVE_ENGINE_ONLY;
@@ -5034,8 +5057,8 @@
 
         <!-- CENTER: Preview 16:9 (+ stacked deck confidence monitors in split-deck mode) -->
         <div class="preview-wrapper" class:ab-monitoring={deckMonitorsVisible} bind:this={previewWrapperEl}>
-          <VJFluxPanel wrapperEl={previewWrapperEl} previewEl={previewContainerEl} reversed={!!$settings.ui.vjLayoutReversed} />
-          <div class="preview-layout">
+          <VJFluxPanel wrapperEl={previewWrapperEl} previewEl={previewContainerEl} reversed={!!$settings.ui.vjLayoutReversed} layoutKey={`${abDeckCentre}:${deckMonitorsVisible}`} />
+          <div class="preview-layout" style:--ab-cx-measured={abDeckCentre === null ? null : `${abDeckCentre}px`}>
             <div class="preview-container program-preview" class:native-hole={nativePreviewActive} bind:this={previewContainerEl}>
               <canvas bind:this={previewCanvas} class="preview-canvas" class:hidden-for-native={nativePreviewActive}></canvas>
               <AbletonCountdown />
@@ -6253,7 +6276,7 @@
             </div>
 
             <!-- Vertical crossfader strip between the two decks -->
-            <div class="crossfader-strip">
+            <div class="crossfader-strip" bind:this={crossfaderStripEl}>
               <div class="xfade-mod-row">
                 <span class="xfade-mod-label">XFADE</span>
                 <button
@@ -8744,53 +8767,50 @@
     inset: 0;
   }
 
+  /* A/B monitoring: the program stays centred over the decks below (the
+     same centre the single preview uses) and the A/B stack sits beside it,
+     exactly as tall as the program: two 16:9 monitors and an 8px gap, so
+     (program width / 2 − 64/9 px) wide. The program takes the largest
+     width that fits the height, the stack's side and the other side; the
+     Flux panel fills whatever is left on the effects side. */
   .preview-wrapper.ab-monitoring .preview-layout {
     container-type: size;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
     min-width: 0;
-    /* Keep the Flux panel's column free on the effects side: the program
-       and the A/B monitors size themselves to what is left. */
-    box-sizing: border-box;
-    padding-left: clamp(64px, 14vw, 248px);
+    --ab-cx: var(--ab-cx-measured, calc(50cqw + ((var(--vj-media-tray-center-offset) - var(--vj-effects-center-offset)) / 2)));
+    /* 178px = the narrowest Flux panel (170) and its gap. */
+    --ab-pw: min(calc(100cqh * 16 / 9), calc(100cqw - var(--ab-cx) - 3px), calc((var(--ab-cx) - 178px) * 2));
   }
   .vj-preview-section.reversed .preview-wrapper.ab-monitoring .preview-layout {
-    padding-left: 0;
-    padding-right: clamp(64px, 14vw, 248px);
+    --ab-pw: min(calc(100cqh * 16 / 9), calc(var(--ab-cx) - 3px), calc((100cqw - var(--ab-cx) - 178px) * 2));
   }
 
-  /* Fit the program box inside (available width − monitor stack) ×
-     available height while KEEPING the output aspect — sizing from
-     container units instead of flex-grow, because a flexed width plus
-     a clamped max-height silently overrides aspect-ratio and
-     stretches the picture. */
   .preview-wrapper.ab-monitoring .program-preview {
-    position: relative;
-    top: auto;
+    position: absolute;
+    top: 50%;
     bottom: auto;
-    left: auto;
-    transform: none;
-    flex: 0 0 auto;
+    left: var(--ab-cx);
+    transform: translate(-50%, -50%);
     aspect-ratio: 16 / 9;
-    /* The A/B stack beside it is exactly as tall as the program: two
-       16:9 monitors and an 8px gap, so it is (program width / 2 − 64/9 px)
-       wide. With the 10px layout gap the pair needs 1.5 × width + 2.9px. */
-    width: min(calc((100cqw - 3px) / 1.5), calc(100cqh * 16 / 9));
+    width: var(--ab-pw);
     height: auto;
     max-width: none;
     max-height: 100%;
   }
 
   .deck-preview-stack {
-    flex: 0 0 auto;
-    width: calc(min(calc((100cqw - 3px) / 1.5), calc(100cqh * 16 / 9)) / 2 - 7.12px);
+    position: absolute;
+    top: 50%;
+    left: calc(var(--ab-cx) + var(--ab-pw) / 2 + 10px);
+    transform: translateY(-50%);
+    width: calc(var(--ab-pw) / 2 - 7.12px);
     min-width: 0;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
     gap: 8px;
+  }
+  .vj-preview-section.reversed .deck-preview-stack {
+    left: calc(var(--ab-cx) - var(--ab-pw) / 2 - 10px - (var(--ab-pw) / 2 - 7.12px));
   }
 
   .deck-preview-container {
