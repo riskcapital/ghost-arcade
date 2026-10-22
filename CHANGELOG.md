@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.7 — October 22, 2026
+
+Flux and Randomize in VJ mode: the phone's Flux pad plays from the desktop with a slide-up effect picker, and Randomize scrambles playing shaders and effects from a button, Tab or MIDI; Flux plays inside each Screen in Stage mode and on the whole mix in Mix; Stage Sim shows each screen's slice of the program, reacts to audio and keeps its settings; template projects reopen with their shaders; point clouds survive hide/show; Light Painting Head Feather; the program preview stays centred over the decks with A/B monitors that match its height. See [release notes](docs/releases/v2.1.7.md).
+
 # Ghost Arcade Pro 2.1.6 — October 21, 2026
 
 Fourteen p5.js sketches ship in the JS tab, six of them running as native shaders; JS pages get text boxes, menus and colour pickers, and a Transparent switch; AI-generated p5.js plays to p5's strengths; JS tiles show their thumbnails; a clear message when macOS blocks system audio. See [release notes](docs/releases/v2.1.6.md).
