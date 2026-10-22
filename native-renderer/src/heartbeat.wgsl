@@ -79,11 +79,14 @@ struct Uniforms {
   clock: vec4<f32>,
   // Flux, played from a paired phone, applied by the output stage:
   //   flux0 = (x, y, energy, wet amount; 0 = off)
-  //   flux1 = (beat lock, blend mode, _, module bits)
+  //   flux1 = (beat lock, blend mode, screen count, module bits)
   // Module bits follow FLUX_MODULES in flux.ts: Liquid, Fold, Prism, Echo,
   // Solar, Slice, Tile, Tunnel, Pixel, Glitch, Ink, Pulse.
+  //   flux_regions = each screen's box in composition UV (x0, y0, x1, y1),
+  //   y up; Flux plays inside each one on its own. None = the whole frame.
   flux0: vec4<f32>,
   flux1: vec4<f32>,
+  flux_regions: array<vec4<f32>, 16>,
 }
 
 @group(0) @binding(0)
@@ -3935,13 +3938,35 @@ fn flux_has(bit: u32) -> bool {
 fn flux_rot(a: f32) -> mat2x2<f32> {
   return mat2x2<f32>(vec2<f32>(cos(a), -sin(a)), vec2<f32>(sin(a), cos(a)));
 }
-/// The picture at `q` (same UV as fs_output's `uv`), mirrored past its edges.
+/// The screen box Flux is playing in for this pixel; see flux_apply.
+var<private> flux_box: vec4<f32>;
+/// The screen box containing `uv`: the whole frame when there are no
+/// screens, x0 < 0 when the pixel lies outside every screen.
+fn flux_region(uv: vec2<f32>) -> vec4<f32> {
+  let count = i32(u.flux1.z + 0.5);
+  if (count <= 0) { return vec4<f32>(0.0, 0.0, 1.0, 1.0); }
+  for (var i = 0; i < 16; i = i + 1) {
+    if (i >= count) { break; }
+    let r = u.flux_regions[i];
+    if (uv.x >= r.x && uv.x <= r.z && uv.y >= r.y && uv.y <= r.w) { return r; }
+  }
+  return vec4<f32>(-1.0);
+}
+/// The picture at `q`, in the current screen's own 0..1 space, mirrored past
+/// its edges so an effect never pulls in a neighbouring screen.
 fn flux_tap(q: vec2<f32>) -> vec3<f32> {
   let m = q - 2.0 * floor(q / 2.0);
   let w = vec2<f32>(1.0) - abs(m - vec2<f32>(1.0));
-  return textureSampleLevel(creative_master, creative_sampler, vec2<f32>(w.x, 1.0 - w.y), 0.0).rgb;
+  let c = flux_box.xy + w * (flux_box.zw - flux_box.xy);
+  return textureSampleLevel(creative_master, creative_sampler, vec2<f32>(c.x, 1.0 - c.y), 0.0).rgb;
 }
-fn flux_apply(dry: vec3<f32>, uv_in: vec2<f32>) -> vec3<f32> {
+fn flux_apply(dry: vec3<f32>, uv_frame: vec2<f32>) -> vec3<f32> {
+  // Each screen plays Flux in its own space, so a Fold or Tile repeats
+  // inside every screen instead of across the whole stage.
+  flux_box = flux_region(uv_frame);
+  if (flux_box.x < -0.5) { return dry; }
+  let box_size = max(flux_box.zw - flux_box.xy, vec2<f32>(1e-4));
+  let uv_in = (uv_frame - flux_box.xy) / box_size;
   let PI = 3.14159265;
   let TAU = 6.2831853;
   let x = u.flux0.x * 2.0 - 1.0;
@@ -3985,7 +4010,7 @@ fn flux_apply(dry: vec3<f32>, uv_in: vec2<f32>) -> vec3<f32> {
   var uv = p + vec2<f32>(0.5);
   if (pixel) {
     let rows = 150.0 - min(y, 1.0) * 138.0;
-    let cells = vec2<f32>(rows * u.resolution.x / max(u.resolution.y, 1.0), rows);
+    let cells = vec2<f32>(rows * (u.resolution.x * box_size.x) / max(u.resolution.y * box_size.y, 1.0), rows);
     uv = (floor(uv * cells) + vec2<f32>(0.5)) / cells;
   }
   var wet = flux_tap(uv);

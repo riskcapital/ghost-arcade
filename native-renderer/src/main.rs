@@ -1336,6 +1336,8 @@ struct Uniforms {
     /// Flux from a paired phone: see `Uniforms.flux0` in heartbeat.wgsl.
     flux0: [f32; 4],
     flux1: [f32; 4],
+    /// Each screen's box for Flux: see `Uniforms.flux_regions` in heartbeat.wgsl.
+    flux_regions: [[f32; 4]; MAX_FLUX_REGIONS],
 }
 
 #[repr(C)]
@@ -1449,6 +1451,9 @@ fn layer_cull_bounds(layer: &LayerGpu) -> [f32; 4] {
     }
     b
 }
+
+/// Screens Flux plays inside separately (see `set_output_flux`).
+const MAX_FLUX_REGIONS: usize = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -4088,6 +4093,7 @@ struct RenderState {
     beat_clock: BeatClock,
     /// Flux played from a paired phone, applied by the output stage (zero = off).
     output_flux: [[f32; 4]; 2],
+    output_flux_regions: [[f32; 4]; MAX_FLUX_REGIONS],
     gpu_timing: Option<GpuTimingState>,
     gpu_frames_submitted: u64,
     gpu_frames_completed: Arc<AtomicU64>,
@@ -6980,12 +6986,30 @@ impl App {
                 "set_output_flux" => {
                     // Flux from a paired phone. Absent or zero gain switches it off.
                     let number = |key: &str, fallback: f64| command.get(key).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(fallback) as f32;
+                    // Screens: boxes (x0, y0, x1, y1) in composition UV, y up.
+                    // Flux plays inside each one; none means the whole frame.
+                    let mut regions = [[0.0f32; 4]; MAX_FLUX_REGIONS];
+                    let mut region_count = 0usize;
+                    if let Some(list) = command.get("regions").and_then(Value::as_array) {
+                        for item in list {
+                            if region_count >= MAX_FLUX_REGIONS { break; }
+                            let Some(v) = item.as_array() else { continue };
+                            let at = |i: usize| v.get(i).and_then(Value::as_f64).filter(|n| n.is_finite()).map(|n| n as f32);
+                            let (Some(x0), Some(y0), Some(x1), Some(y1)) = (at(0), at(1), at(2), at(3)) else { continue };
+                            let (x0, x1) = (x0.min(x1).clamp(0.0, 1.0), x0.max(x1).clamp(0.0, 1.0));
+                            let (y0, y1) = (y0.min(y1).clamp(0.0, 1.0), y0.max(y1).clamp(0.0, 1.0));
+                            if x1 - x0 < 1e-4 || y1 - y0 < 1e-4 { continue; }
+                            regions[region_count] = [x0, y0, x1, y1];
+                            region_count += 1;
+                        }
+                    }
                     let flux = [
                         [number("x", 0.5).clamp(0.0, 1.0), number("y", 0.5).clamp(0.0, 1.0), number("energy", 0.0).clamp(0.0, 1.0), number("gain", 0.0).clamp(0.0, 1.0)],
-                        [number("beat_lock", 0.0).clamp(0.0, 1.0), number("blend", 0.0).clamp(0.0, 6.0).round(), 0.0, number("modules", 0.0).clamp(0.0, 4095.0).round()],
+                        [number("beat_lock", 0.0).clamp(0.0, 1.0), number("blend", 0.0).clamp(0.0, 6.0).round(), region_count as f32, number("modules", 0.0).clamp(0.0, 4095.0).round()],
                     ];
                     if let Some(renderer) = self.renderer.as_mut() {
                         renderer.output_flux = flux;
+                        renderer.output_flux_regions = regions;
                     }
                 }
                 "set_beat_clock" => {
@@ -19653,6 +19677,7 @@ impl RenderState {
                 clock: [0.0, 120.0, 0.0, 0.0],
                 flux0: [0.0; 4],
                 flux1: [0.0; 4],
+                flux_regions: [[0.0; 4]; MAX_FLUX_REGIONS],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -20365,6 +20390,7 @@ impl RenderState {
             start_time: Instant::now(),
             beat_clock: BeatClock::default(),
             output_flux: [[0.0; 4]; 2],
+            output_flux_regions: [[0.0; 4]; MAX_FLUX_REGIONS],
             gpu_timing,
             gpu_frames_submitted: 0,
             gpu_frames_completed,
@@ -24738,12 +24764,14 @@ impl RenderState {
         self.output_presenter.clock = clock;
         self.output_presenter.live_time = time;
         self.output_presenter.flux = self.output_flux;
+        self.output_presenter.flux_regions = self.output_flux_regions;
         let uniforms = Uniforms {
             resolution: [self.config.width as f32, self.config.height as f32],
             time,
             clock,
             flux0: self.output_flux[0],
             flux1: self.output_flux[1],
+            flux_regions: self.output_flux_regions,
             command_phase,
             layer_count: layers_seen as f32,
             frame_count: frame_count as f32,

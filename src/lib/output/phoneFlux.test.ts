@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../api/native-renderer', () => ({ submitNativeRendererCommands: vi.fn(async () => undefined) }));
-import { easeFluxGain, fluxModuleBits, readPhoneFlux, FLUX_MODULE_BITS } from './phoneFlux';
+import { easeFluxGain, fluxModuleBits, fluxRegionsFromLayers, readPhoneFlux, FLUX_MODULE_BITS } from './phoneFlux';
 
 describe('Flux from a paired phone', () => {
   it('uses the same module order as the phone, which is the order the shader reads', () => {
@@ -25,5 +25,19 @@ describe('Flux from a paired phone', () => {
     expect(gain).toBe(0.8);
     for (let i = 0; i < 60; i++) gain = easeFluxGain(gain, 0, 0.016);
     expect(gain).toBe(0);
+  });
+});
+
+describe('Flux screen boxes', () => {
+  const screen = (x0: number, y0: number, x1: number, y1: number, extra: Record<string, unknown> = {}) => ({
+    type: 'screen', visible: true,
+    corners: { topLeft: { x: x0, y: y1 }, topRight: { x: x1, y: y1 }, bottomLeft: { x: x0, y: y0 }, bottomRight: { x: x1, y: y0 } },
+    ...extra,
+  });
+  it('gives one box per visible screen, clamped to the frame', () => {
+    expect(fluxRegionsFromLayers([screen(0, 0, 0.25, 1), screen(0.5, -0.2, 0.75, 1.3), screen(0.8, 0, 1, 1, { visible: false }), { type: 'media' }])).toEqual([[0, 0, 0.25, 1], [0.5, 0, 0.75, 1]]);
+  });
+  it('is empty without screens, so Flux covers the whole frame', () => {
+    expect(fluxRegionsFromLayers([{ type: 'media' }])).toEqual([]);
   });
 });

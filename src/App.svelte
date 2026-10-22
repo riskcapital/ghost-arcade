@@ -74,7 +74,7 @@
   import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
   import {readMobileCalibration} from './lib/output/mobileCalibrationImport';
   import { openScreenOutputList, setScreenPatternFrames } from './lib/stores/screenOutputStatus';
-  import { receivePhoneFlux } from './lib/output/phoneFlux';
+  import { fluxRegionsFromLayers, receivePhoneFlux, setFluxRegionsSource } from './lib/output/phoneFlux';
   import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
@@ -1613,6 +1613,8 @@
 
   onMount(() => {
     let appMounted = true;
+    // Flux (from the VJ pad or a phone) plays inside each Screen on its own.
+    setFluxRegionsSource(() => fluxRegionsFromLayers(get(project).layers));
     const stopInterfaceScale = startInterfaceScale();
     const stopTranslation = startTranslation();
     // Scans received from a phone in earlier sessions (Media Library, Scan tab).

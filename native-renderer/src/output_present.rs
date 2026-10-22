@@ -12,6 +12,7 @@ pub(super) struct OutputPresenter {
     /// Flux from a paired phone, the beat clock and the running time, set by
     /// the renderer each frame so every output drawn here plays the same Flux.
     pub(super) flux: [[f32; 4]; 2],
+    pub(super) flux_regions: [[f32; 4]; MAX_FLUX_REGIONS],
     pub(super) clock: [f32; 4],
     pub(super) live_time: f32,
 }
@@ -111,6 +112,7 @@ impl OutputPresenter {
             uniform,
             uniforms,
             flux: [[0.0; 4]; 2],
+            flux_regions: [[0.0; 4]; MAX_FLUX_REGIONS],
             clock: [0.0, 120.0, 0.0, 0.0],
             live_time: 0.0,
             input_layout,
@@ -184,6 +186,7 @@ impl OutputPresenter {
             clock: self.clock,
             flux0: self.flux[0],
             flux1: self.flux[1],
+            flux_regions: self.flux_regions,
             output_gate: gate,
             out0: stage.out0,
             out1: stage.out1,

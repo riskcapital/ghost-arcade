@@ -44,9 +44,39 @@ let lastStep = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
 let lastSent = '';
 
+type Corners = { topLeft: { x: number; y: number }; topRight: { x: number; y: number }; bottomLeft: { x: number; y: number }; bottomRight: { x: number; y: number } };
+type ScreenLike = { type?: string; visible?: boolean; corners?: Corners };
+
+/**
+ * Each visible Screen's box in composition UV (x0, y0, x1, y1), y up, at most
+ * 16. Flux plays inside each Screen on its own, so a Fold or Tile repeats
+ * within every screen of a stage instead of warping the stage as a whole.
+ */
+export function fluxRegionsFromLayers(layers: readonly ScreenLike[]): number[][] {
+  const regions: number[][] = [];
+  for (const layer of layers) {
+    if (layer.type !== 'screen' || layer.visible === false || !layer.corners) continue;
+    const c = layer.corners;
+    const xs = [c.topLeft.x, c.topRight.x, c.bottomLeft.x, c.bottomRight.x];
+    const ys = [c.topLeft.y, c.topRight.y, c.bottomLeft.y, c.bottomRight.y];
+    if (![...xs, ...ys].every(Number.isFinite)) continue;
+    const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map((v) => Math.round(Math.max(0, Math.min(1, v)) * 1e4) / 1e4);
+    if (box[2] - box[0] < 1e-3 || box[3] - box[1] < 1e-3) continue;
+    regions.push(box);
+    if (regions.length === 16) break;
+  }
+  return regions;
+}
+
+let regionsSource: () => number[][] = () => [];
+/** Where the Screen boxes come from (App.svelte passes the project's layers). */
+export function setFluxRegionsSource(source: () => number[][]) { regionsSource = source; }
+
 function send() {
   const s = state;
-  const command = { type: 'set_output_flux', x: s?.x ?? 0.5, y: s?.y ?? 0.5, energy: s?.energy ?? 0, gain, beat_lock: s?.beat ? 1 : 0, blend: s?.blend ?? 0, modules: s ? fluxModuleBits(s.modules) : 0 };
+  let regions: number[][] = [];
+  try { regions = regionsSource(); } catch { /* no project yet */ }
+  const command = { type: 'set_output_flux', x: s?.x ?? 0.5, y: s?.y ?? 0.5, energy: s?.energy ?? 0, gain, beat_lock: s?.beat ? 1 : 0, blend: s?.blend ?? 0, modules: s ? fluxModuleBits(s.modules) : 0, regions };
   const signature = JSON.stringify(command);
   if (signature === lastSent) return;
   lastSent = signature;
