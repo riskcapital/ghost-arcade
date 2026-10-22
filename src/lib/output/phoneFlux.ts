@@ -68,6 +68,16 @@ export function fluxRegionsFromLayers(layers: readonly ScreenLike[]): number[][]
   return regions;
 }
 
+/**
+ * The boxes Flux plays in right now. In VJ mode the Screens only slice the
+ * picture in Stage mode; in Mix (and Map) Flux plays on the whole mix. In
+ * Mapping mode the Screens are the slices.
+ */
+export function fluxRegionsFor(vj: { isOpen?: boolean; stageMode?: boolean } | null | undefined, layers: readonly ScreenLike[]): number[][] {
+  if (vj?.isOpen && !vj.stageMode) return [];
+  return fluxRegionsFromLayers(layers);
+}
+
 let regionsSource: () => number[][] = () => [];
 /** Where the Screen boxes come from (App.svelte passes the project's layers). */
 export function setFluxRegionsSource(source: () => number[][]) { regionsSource = source; }

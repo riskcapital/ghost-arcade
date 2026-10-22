@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../api/native-renderer', () => ({ submitNativeRendererCommands: vi.fn(async () => undefined) }));
-import { easeFluxGain, fluxModuleBits, fluxRegionsFromLayers, readPhoneFlux, FLUX_MODULE_BITS } from './phoneFlux';
+import { easeFluxGain, fluxModuleBits, fluxRegionsFor, fluxRegionsFromLayers, readPhoneFlux, FLUX_MODULE_BITS } from './phoneFlux';
 
 describe('Flux from a paired phone', () => {
   it('uses the same module order as the phone, which is the order the shader reads', () => {
@@ -39,5 +39,16 @@ describe('Flux screen boxes', () => {
   });
   it('is empty without screens, so Flux covers the whole frame', () => {
     expect(fluxRegionsFromLayers([{ type: 'media' }])).toEqual([]);
+  });
+});
+
+describe('Flux slicing by mode', () => {
+  const layers = [{ type: 'screen', visible: true, corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 0.5, y: 1 }, bottomLeft: { x: 0, y: 0 }, bottomRight: { x: 0.5, y: 0 } } }];
+  it('plays on the whole mix in VJ Mix mode', () => {
+    expect(fluxRegionsFor({ isOpen: true, stageMode: false }, layers)).toEqual([]);
+  });
+  it('plays inside each Screen in VJ Stage mode and in Mapping mode', () => {
+    expect(fluxRegionsFor({ isOpen: true, stageMode: true }, layers)).toEqual([[0, 0, 0.5, 1]]);
+    expect(fluxRegionsFor({ isOpen: false, stageMode: false }, layers)).toEqual([[0, 0, 0.5, 1]]);
   });
 });
