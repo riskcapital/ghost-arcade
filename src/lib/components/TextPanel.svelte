@@ -3,6 +3,7 @@
   import type { TextAnimationType } from '../types';
   import TextMotionControls from './TextMotionControls.svelte';
   import { TEXT_ANIMATIONS, TEXT_ANIMATION_GROUPS, TEXT_EDIT_LIMIT, wordCount } from '../text/textMotionCatalog';
+  import { installedFontChoices, isFontInstalled } from '../text/fontAvailability';
 
   // System font list (common cross-platform fonts + variable fonts)
   const systemFonts = [
@@ -45,6 +46,8 @@
 
   $: layer = $selectedLayer;
   $: tc = layer?.textContent;
+  // Only fonts this computer has: a missing one draws as the default font.
+  $: fontChoices = installedFontChoices(availableFonts, tc?.fontFamily);
   $: anim = tc?.animation;
 </script>
 
@@ -88,8 +91,8 @@
           onclick={() => detectFonts()}
           onchange={(e) => project.updateTextContent(layer.id, { fontFamily: (e.target as HTMLSelectElement).value })}
         >
-          {#each availableFonts as font}
-            <option value={font} style="font-family: '{font}'">{font}</option>
+          {#each fontChoices as font}
+            <option value={font} style="font-family: '{font}'">{isFontInstalled(font) ? font : `${font} (not installed)`}</option>
           {/each}
         </select>
       </div>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TextAnimation, TextAnimationType, TextContent } from '../types';
+  import { installedFontChoices, isFontInstalled } from '../text/fontAvailability';
   import TextMotionControls from './TextMotionControls.svelte';
   import { TEXT_ANIMATIONS, TEXT_EDIT_LIMIT, wordCount } from '../text/textMotionCatalog';
 
@@ -35,7 +36,7 @@
 
   <section>
     <div class="section-label">Typography</div>
-    <label class="select-row"><span>Font</span><select value={content.fontFamily} onchange={(event) => onUpdate({ fontFamily: (event.target as HTMLSelectElement).value })}>{#each fonts as font}<option value={font}>{font}</option>{/each}</select></label>
+    <label class="select-row"><span>Font</span><select value={content.fontFamily} onchange={(event) => onUpdate({ fontFamily: (event.target as HTMLSelectElement).value })}>{#each installedFontChoices(fonts, content.fontFamily) as font}<option value={font}>{isFontInstalled(font) ? font : `${font} (not installed)`}</option>{/each}</select></label>
     <label class="range-row"><span>Size</span><input type="range" min="12" max="500" step="1" value={content.fontSize} oninput={(event) => onUpdate({ fontSize: Number((event.target as HTMLInputElement).value) })} /><output>{content.fontSize}px</output></label>
     <label class="range-row"><span>Weight</span><input type="range" min="100" max="900" step="100" value={content.fontWeight} oninput={(event) => onUpdate({ fontWeight: Number((event.target as HTMLInputElement).value) })} /><output>{content.fontWeight}</output></label>
     <label class="select-row"><span>Style</span><select value={content.fontStyle} onchange={(event) => onUpdate({ fontStyle: (event.target as HTMLSelectElement).value as 'normal' | 'italic' })}><option value="normal">Normal</option><option value="italic">Italic</option></select></label>
