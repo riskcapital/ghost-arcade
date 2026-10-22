@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.8 — October 22, 2026
+
+Light Painting plays like Studio: strokes draw in sequence and stay drawn, Forward, Reverse, Ping Pong (with hold) and Once play the whole drawing, stroke ends taper with a rounded glow, and the trail fades as in Studio. See [release notes](docs/releases/v2.1.8.md).
+
 # Ghost Arcade Pro 2.1.7 — October 22, 2026
 
 Flux and Randomize in VJ mode: the phone's Flux pad plays from the desktop with a slide-up effect picker, and Randomize scrambles playing shaders and effects from a button, Tab or MIDI; Flux plays inside each Screen in Stage mode and on the whole mix in Mix; Stage Sim shows each screen's slice of the program, reacts to audio and keeps its settings; template projects reopen with their shaders; point clouds survive hide/show; Light Painting Head Feather; the program preview stays centred over the decks with A/B monitors that match its height. See [release notes](docs/releases/v2.1.7.md).
