@@ -4,7 +4,7 @@
  */
 import type { AssetRef } from '../storage/assetRegistry';
 
-export type ClipFileSource = { src?: string; name?: string; _assetRef?: AssetRef } | null | undefined;
+export type ClipFileSource = { src?: string; name?: string; type?: string; shaderCode?: string; _assetRef?: AssetRef } | null | undefined;
 
 /** The absolute path a `ghost-asset://` or `file://` URL points at. */
 export function localPathFromUrl(src: string | undefined | null): string | null {
@@ -24,6 +24,9 @@ export function localPathFromUrl(src: string | undefined | null): string | null 
 /** The file a clip plays from, or null for a clip that is not a local file. */
 export function clipFilePath(clip: ClipFileSource): string | null {
   if (!clip) return null;
+  // A shader clip carries its code in the project; its src only names
+  // where the code came from, so it never goes missing.
+  if (clip.type === 'shader' && clip.shaderCode) return null;
   const fromSrc = localPathFromUrl(clip.src);
   if (fromSrc) return fromSrc;
   // A file picked in this session plays from a blob: URL; where it came from

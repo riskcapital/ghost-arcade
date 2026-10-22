@@ -5191,6 +5191,12 @@ void main() {
               return src;
             }
           }
+          // Files that ship inside the app (the shader library, built-in
+          // pages, looks) are relative to the app, not to the project file.
+          if (/^(?:\.\/)?(?:ISF|threejs|looks|lib|fonts|mediapipe)\//.test(src)) return src;
+          // A bare word with no folder or extension is a source keyword
+          // (a Performer clip's "performer"), not a file.
+          if (!/[\\/.]/.test(src)) return src;
           let absPath: string | null = null;
           if (/^[A-Z]:\\/i.test(src) || src.startsWith('/')) {
             absPath = src;
