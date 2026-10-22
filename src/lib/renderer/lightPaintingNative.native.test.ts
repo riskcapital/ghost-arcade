@@ -17,6 +17,7 @@ import {
   buildLightPaintingNativeComputeGraph,
   buildLightPaintingNativePrecompileCommands,
   isNativeLightPaintingBrush,
+  lightPaintingStrokeProgress,
 } from './lightPaintingNative';
 
 const ALL_LIGHT_PAINTING_BRUSHES: LightPaintingBrushType[] = [
@@ -270,8 +271,6 @@ describe('native Light Painting graph', () => {
     expect(data[17]).toBeCloseTo(0.8);
     expect(data[19]).toBeCloseTo(0.5);
     expect(strokeField(data, 0, 25)).toBeCloseTo(0.4); // snake trail = 1 - head size
-    // drawSpeed × (4.5 / per-stroke duration, floored at 0.15s): 2 * (4.5 / 0.15)
-    expect(strokeField(data, 0, 21)).toBeCloseTo(60);
   });
 
   it('sways packed points with wind only during playback', () => {
@@ -410,5 +409,32 @@ describe('native Light Painting graph', () => {
         entry: 'fs_paint',
       }),
     ]);
+  });
+});
+
+describe('Light Painting timeline', () => {
+  const base = { durationsMs: [1000, 1000], order: [0, 1], stagger: true, staggerDelayMs: 0, pingPongHoldMs: 0 };
+  it('forward: a finished stroke stays while the next one draws, then the loop starts empty', () => {
+    expect(lightPaintingStrokeProgress({ ...base, loopMode: 'forward', timeMs: 500 })).toEqual([0.5, 0]);
+    expect(lightPaintingStrokeProgress({ ...base, loopMode: 'forward', timeMs: 1500 })).toEqual([1, 0.5]);
+    expect(lightPaintingStrokeProgress({ ...base, loopMode: 'forward', timeMs: 2500 })).toEqual([0.5, 0]);
+  });
+  it('reverse: the whole drawing un-draws, last stroke first', () => {
+    expect(lightPaintingStrokeProgress({ ...base, loopMode: 'reverse', timeMs: 500 })).toEqual([1, 0.5]);
+    expect(lightPaintingStrokeProgress({ ...base, loopMode: 'reverse', timeMs: 1500 })).toEqual([0.5, 0]);
+  });
+  it('ping pong: draws, holds, un-draws, holds empty', () => {
+    const pp = { ...base, loopMode: 'pingpong', pingPongHoldMs: 1000 };
+    expect(lightPaintingStrokeProgress({ ...pp, timeMs: 1500 })).toEqual([1, 0.5]);
+    expect(lightPaintingStrokeProgress({ ...pp, timeMs: 2500 })).toEqual([1, 1]);
+    expect(lightPaintingStrokeProgress({ ...pp, timeMs: 3500 })).toEqual([1, 0.5]);
+    expect(lightPaintingStrokeProgress({ ...pp, timeMs: 5500 })).toEqual([0, 0]);
+  });
+  it('once: draws through and stays', () => {
+    expect(lightPaintingStrokeProgress({ ...base, loopMode: 'once', timeMs: 9000 })).toEqual([1, 1]);
+  });
+  it('plays strokes in sequence order, and all at once without stagger', () => {
+    expect(lightPaintingStrokeProgress({ ...base, order: [1, 0], loopMode: 'forward', timeMs: 500 })).toEqual([0, 0.5]);
+    expect(lightPaintingStrokeProgress({ ...base, stagger: false, loopMode: 'forward', timeMs: 500 })).toEqual([0.5, 0.5]);
   });
 });

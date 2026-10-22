@@ -134,6 +134,60 @@ export function lightPaintingSequenceSlots(
   return slots;
 }
 
+/**
+ * Where each stroke's draw has got to, 0..1, on the layer's timeline. The
+ * same rules as the browser renderer: strokes draw one after another
+ * (staggered, in sequence order, `staggerDelay` apart) or all at once; a
+ * finished stroke stays drawn until the timeline loops; and the loop mode
+ * plays that whole timeline forward, backward, there and back with a hold
+ * at each end, or once and stops. Times are milliseconds of animation time.
+ */
+export function lightPaintingStrokeProgress(options: {
+  durationsMs: readonly number[];
+  /** Playback order: slot k plays stroke order[k]. */
+  order: readonly number[];
+  stagger: boolean;
+  staggerDelayMs: number;
+  loopMode: string;
+  pingPongHoldMs: number;
+  timeMs: number;
+}): number[] {
+  const { durationsMs, order, stagger, loopMode } = options;
+  const delay = Math.max(0, options.staggerDelayMs);
+  const hold = Math.max(0, options.pingPongHoldMs);
+  const n = durationsMs.length;
+  const starts = new Array<number>(n).fill(0);
+  let total = 0;
+  if (stagger) {
+    for (const index of order) {
+      starts[index] = total;
+      total += durationsMs[index] + delay;
+    }
+  } else {
+    for (const d of durationsMs) total = Math.max(total, d);
+  }
+  let t = Math.max(0, options.timeMs);
+  if (total > 0) {
+    if (loopMode === 'once') t = Math.min(t, total);
+    else if (loopMode === 'reverse') t = total - (t % total);
+    else if (loopMode === 'pingpong') {
+      const cycle = total * 2 + hold * 2;
+      const c = t % cycle;
+      if (c < total) t = c;
+      else if (c < total + hold) t = total;
+      else if (c < total * 2 + hold) t = total - (c - total - hold);
+      else t = 0;
+    } else t = t % total;
+  }
+  return durationsMs.map((d, i) => (d <= 0 ? 1 : clamp((t - starts[i]) / d, 0, 1)));
+}
+
+/** Length of one loop of the timeline, for the sequence order's cycle count. */
+export function lightPaintingLoopLengthMs(totalMs: number, loopMode: string, pingPongHoldMs: number): number {
+  if (totalMs <= 0) return 1;
+  return loopMode === 'pingpong' ? totalMs * 2 + Math.max(0, pingPongHoldMs) * 2 : totalMs;
+}
+
 export interface LightPaintingNativeGraphOptions {
   sourceId: string;
   content: LightPaintingContent;
@@ -280,22 +334,20 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
     // Speed scales the travel rate.
     const snakeAmount = clamp(finite(content.snake, 0), 0, 0.98);
     const snakeOn = !isLive && content.isPlaying && snakeAmount > 0.005;
+    // Playing: the shader draws up to e6.x (filled in below from the
+    // layer's timeline) with the trail. Otherwise the stroke is shown as
+    // far as e6.x, whole by default, without a trail.
     data[e + 20] = !isLive && content.isPlaying ? 1 : 0;
-    // Per-stroke draw timing: legacy plays each stroke over
-    // stroke.duration / drawSpeed. The shader's base cycle is 4.5s, so
-    // fold (4.5 / durationSec) into the rate. Missing/zero durations
-    // keep the historical 4.5s cycle.
+    // A stroke draws over its recorded duration / drawSpeed; strokes from
+    // before durations were recorded take the historical 4.5s.
     const durMs = finite(stroke.duration, 0);
     const durationSec = durMs > 1 ? clamp(durMs / 1000, 0.15, 60) : 4.5;
-    data[e + 21] = Math.max(0.05, finite(content.drawSpeed, 1)) * (4.5 / durationSec) *
-      (snakeOn ? Math.max(0.1, finite(content.snakeSpeed, 1)) : 1);
-    data[e + 22] = content.loopMode === 'once' ? (snakeOn ? 1 : 0) : content.loopMode === 'pingpong' ? 2 : 1;
+    data[e + 21] = 0;
+    data[e + 22] = 0;
     data[e + 23] = 0;
-    // Paused mid-animation freezes the partial draw at the scrub position;
-    // a never-played stroke (position 0) is retained artwork, not empty.
-    data[e + 24] = isLive ? 1 : content.isPlaying ? playbackPosition : pausedProgress;
+    data[e + 24] = 1;
     data[e + 25] = snakeOn ? 1 - snakeAmount : clamp(finite(content.trailLength, 0.3), 0, 1);
-    data[e + 26] = content.loopMode === 'reverse' ? 1 : 0;
+    data[e + 26] = 0;
     data[e + 27] = clamp(finite(brush.taperCurve, 1), 0.25, 4); // taper curve exponent
     // Render reach: how far a pixel can be from the path and still get
     // visible energy. Falling/rising particle brushes travel further.
@@ -334,25 +386,50 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
     packedCount += 1;
   }
 
-  // Sequential-stagger playback order. The live preview stroke never
-  // animates, so it keeps slot 0 and is excluded from the ordering.
+  // Each stroke's progress on the layer's timeline (see
+  // lightPaintingStrokeProgress). The live preview stroke is always whole.
   const animatedStrokes = packedStrokes.filter((stroke) => !stroke.isLive);
-  if (animatedStrokes.length > 1) {
-    const drawSpeed = Math.max(0.05, finite(content.drawSpeed, 1));
-    // Mirror the per-stroke duration packing (mean across animated
-    // strokes — the shader assumes uniform slot lengths).
-    const meanDurSec = animatedStrokes.reduce((sum, s) => sum + s.durSec, 0) / animatedStrokes.length;
-    const drawDur = meanDurSec / (drawSpeed * globalSpeed);
-    const cycleLen = Math.max(0.001, (drawDur + staggerDelaySec) * packedCount);
-    const cycleIndex = content.loopMode === 'once' ? 0 : Math.floor(time / cycleLen);
+  if (animatedStrokes.length > 0) {
+    const drawSpeed = Math.max(0.01, finite(content.drawSpeed, 1));
+    const durationsMs = animatedStrokes.map((stroke) => (stroke.durSec * 1000) / drawSpeed);
+    const stagger = !!content.staggerStrokes;
+    const delayMs = staggerDelaySec * 1000;
+    const snakeOn = content.isPlaying && clamp(finite(content.snake, 0), 0, 0.98) > 0.005;
+    // Snake keeps travelling even in Once mode.
+    const loopMode = snakeOn && content.loopMode === 'once' ? 'forward' : String(content.loopMode ?? 'forward');
+    const holdMs = Math.max(0, finite(content.pingPongHold, 0));
+    const totalMs = stagger
+      ? durationsMs.reduce((sum, d) => sum + d + delayMs, 0)
+      : Math.max(...durationsMs);
+    const rate = globalSpeed * (snakeOn ? Math.max(0.1, finite(content.snakeSpeed, 1)) : 1);
+    const timeMs = time * 1000 * rate;
+    const cycleIndex = loopMode === 'once' ? 0 : Math.floor(timeMs / lightPaintingLoopLengthMs(totalMs, loopMode, holdMs));
     const slots = lightPaintingSequenceSlots(
       animatedStrokes.map((stroke) => stroke.center),
       String(content.sequenceMode ?? 'recorded'),
       finite(content.randomSequenceSeed, 1337),
       cycleIndex,
     );
+    const order = new Array<number>(animatedStrokes.length);
+    slots.forEach((slot, index) => { order[slot] = index; });
+    let progress: number[];
+    if (content.isPlaying) {
+      progress = lightPaintingStrokeProgress({
+        durationsMs, order, stagger, staggerDelayMs: delayMs, loopMode, pingPongHoldMs: holdMs, timeMs,
+      });
+    } else if (pausedProgress < 1) {
+      // Paused part-way: show the timeline at the scrub position.
+      progress = lightPaintingStrokeProgress({
+        // The scrub covers the drawing itself, not the gap after the last stroke.
+        durationsMs, order, stagger, staggerDelayMs: delayMs, loopMode: 'once', pingPongHoldMs: 0,
+        timeMs: pausedProgress * (stagger ? totalMs - delayMs : totalMs),
+      });
+    } else {
+      progress = durationsMs.map(() => 1);
+    }
     animatedStrokes.forEach((stroke, index) => {
       data[stroke.base + 23] = slots[index];
+      data[stroke.base + 24] = progress[index];
     });
   }
 
@@ -464,14 +541,14 @@ export const LIGHT_PAINTING_NATIVE_WGSL = /* wgsl */`
 struct PaintData {
   header0: vec4<f32>, // width, height, time, delta
   header1: vec4<f32>, // strokeCount, bloom, bass, treble
-  header2: vec4<f32>, // beat, globalSpeed, staggerSeq, staggerDelay
+  header2: vec4<f32>, // beat, globalSpeed, _, _ (stagger now runs on the CPU timeline)
   bg: vec4<f32>,
   fx0: vec4<f32>, // colorShift, pulse, pulseSpeed, strobe
   fx1: vec4<f32>, // flicker, breathe, breatheSpeed, wave
   fx2: vec4<f32>, // waveFreq, waveSpeed, sparkle, multiColorGlow
   fx3: vec4<f32>, // flowPulse, flowSpeed, flowWidth, afterglow
   fx4: vec4<f32>, // echo, echoOffset, echoDecay, motionBlur
-  fx5: vec4<f32>, // pingPongHoldSec, headFeather, spare, spare
+  fx5: vec4<f32>, // _, headFeather, spare, spare
   strokes: array<vec4<f32>, ${LIGHT_PAINTING_MAX_STROKES * LIGHT_PAINTING_STROKE_VEC4S}>,
   points: array<vec4<f32>, ${LIGHT_PAINTING_MAX_POINTS}>,
   chunks: array<vec4<f32>, ${LIGHT_PAINTING_MAX_CHUNKS}>,
@@ -559,8 +636,8 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     let color2 = paint.strokes[base + 2];
     let e3 = paint.strokes[base + 3]; // glow, softness, jitter, speed
     let e4 = paint.strokes[base + 4]; // opacity, pressureAmt, seed, taper
-    let e5 = paint.strokes[base + 5]; // animEnabled, drawSpeed, loopMode, seqSlot
-    let e6 = paint.strokes[base + 6]; // drawProgress, trailLength, reverse, phase
+    let e5 = paint.strokes[base + 5]; // playing (trail on), _, _, seqSlot
+    let e6 = paint.strokes[base + 6]; // drawProgress (from the CPU timeline), trailLength, _, phase
     let e7 = paint.strokes[base + 7]; // totalLen, reach, taperStart, taperEnd
     let e8 = paint.strokes[base + 9]; // gpuSpiralSpeed, gpuSpiralPitch, gpuSpiralRadius, gpuAux
     let brush = i32(e0.x + 0.5);
@@ -658,59 +735,36 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     let s_prog = s_norm; // un-reversed progress for the width profile
     if (e6.z > 0.5) { s_norm = 1.0 - s_norm; }
 
-    // ── Draw animation window (playback on the core clock) ──
+    // ── Draw animation ──
+    // e6.x is how far this stroke has drawn, worked out on the CPU from the
+    // layer's timeline (stagger, sequence order, loop mode, ping-pong hold).
     var vis = 1.0;
     var head_prog = 2.0; // where the drawn part ends; 2 = no moving head
-    if (e5.x > 0.5) {
-      let raw = t * e5.y * global_speed * 0.22 + e6.x;
-      if (paint.header2.z > 0.5) {
-        // Sequential stagger: strokes reveal one after another in the
-        // slot order packed by the CPU (Sequence Order modes).
-        let slot_target = i32(e5.w + 0.5);
-        let n = max(1.0, paint.header1.x);
-        let draw_dur = 4.5 / max(0.1, e5.y * global_speed);
-        let slot_len = draw_dur + paint.header2.w;
-        let total = slot_len * n;
-        let local = t - floor(t / total) * total;
-        let slot = i32(floor(local / slot_len));
-        if (slot < slot_target) { vis = 0.0; }
-        else if (slot == slot_target) {
-          let prog = clamp((local - f32(slot_target) * slot_len) / draw_dur, 0.0, 1.0);
-          head_prog = prog;
-          if (s_norm > prog) { vis = 0.0; }
-        }
-      } else {
-        var prog = fract(raw);
-        let loop_mode = i32(e5.z + 0.5);
-        if (loop_mode == 0) { prog = clamp(raw, 0.0, 1.0); }
-        else if (loop_mode == 2) {
-          // Ping-pong with hold: pause at the fully-drawn and empty ends
-          // (legacy pingPongHold). Hold is converted from seconds into
-          // progress units via the stroke's own draw rate.
-          let hold = max(paint.fx5.x, 0.0) * e5.y * global_speed * 0.22;
-          let period = 2.0 + 2.0 * hold;
-          let local = raw - floor(raw / period) * period;
-          if (local < 1.0) { prog = local; }
-          else if (local < 1.0 + hold) { prog = 1.0; }
-          else if (local < 2.0 + hold) { prog = (2.0 + hold) - local; }
-          else { prog = 0.0; }
-        }
-        head_prog = prog;
-        if (s_norm > prog) { vis = 0.0; }
-        else if (e6.y > 0.001 || paint.fx3.w > 0.001) {
-          let window = max(0.03, 1.0 - e6.y);
-          vis = 1.0 - clamp((prog - s_norm) / window, 0.0, 1.0);
-          // Afterglow leaves a long dim tail behind the animated head.
-          if (paint.fx3.w > 0.001) {
-            let tail = (1.0 - clamp((prog - s_norm) / (window * (1.0 + paint.fx3.w * 6.0)), 0.0, 1.0)) * paint.fx3.w * 0.55;
-            vis = max(vis, tail);
-          }
-        }
+    let prog = clamp(e6.x, 0.0, 1.0);
+    if (prog < 0.9995) { head_prog = prog; }
+    if (s_norm > prog) { vis = 0.0; }
+    else if (e5.x > 0.5 && e6.y > 0.001) {
+      // Trail: only the last (1 - trail) of the drawn part shows, fading
+      // toward its tail with the same quadratic falloff as the browser
+      // renderer. A short drawn part fades over its own length.
+      let window = max(0.02, 1.0 - e6.y);
+      let span = max(min(prog, window), 0.001);
+      let from_head = (prog - s_norm) / span;
+      if (prog - s_norm > window) { vis = 0.0; }
+      else { let a = clamp(1.0 - from_head, 0.0, 1.0); vis = a * a; }
+      // Afterglow leaves a long dim tail behind the animated head.
+      if (paint.fx3.w > 0.001) {
+        let tail = (1.0 - clamp((prog - s_norm) / (window * (1.0 + paint.fx3.w * 6.0)), 0.0, 1.0)) * paint.fx3.w * 0.55;
+        vis = max(vis, tail);
       }
-    } else {
-      head_prog = e6.x;
-      if (s_norm > e6.x) { vis = 0.0; }
     }
+    // End taper, as the browser renderer: width and brightness fade over
+    // the first and last fifth of the stroke.
+    var taper = 1.0;
+    if (e4.w > 0.001) {
+      taper = min(1.0, s_prog * 5.0) * min(1.0, (1.0 - s_prog) * 5.0);
+    }
+    vis = vis * taper;
     // Head feather: fade the leading edge over a length that scales with
     // the brush, instead of cutting the stroke off in a straight slice.
     // A fully drawn stroke keeps its end.
@@ -725,11 +779,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
 
     // Pressure + end taper drive the working width. e4.w == 0 means the
     // brush's taper toggle is off (guard avoids smoothstep(0, 0, x)).
-    var taper = 1.0;
-    if (e4.w > 0.001) {
-      taper = min(smoothstep(0.0, e4.w * 60.0, s), smoothstep(0.0, e4.w * 60.0, total_len - s));
-    }
-    var w = bw * mix(1.0, best_pressure, e4.y) * mix(0.55, 1.0, taper);
+    var w = bw * mix(1.0, best_pressure, e4.y) * max(0.06, taper);
     // taperStart/taperEnd width profile with taperCurve power (ported
     // from the retired compute-particle pipeline's taper_curve vec4).
     w = w * max(0.05, mix(e7.z, e7.w, pow(s_prog, max(0.25, e6.w))));
