@@ -8751,6 +8751,14 @@
     justify-content: center;
     gap: 10px;
     min-width: 0;
+    /* Keep the Flux panel's column free on the effects side: the program
+       and the A/B monitors size themselves to what is left. */
+    box-sizing: border-box;
+    padding-left: clamp(64px, 14vw, 248px);
+  }
+  .vj-preview-section.reversed .preview-wrapper.ab-monitoring .preview-layout {
+    padding-left: 0;
+    padding-right: clamp(64px, 14vw, 248px);
   }
 
   /* Fit the program box inside (available width − monitor stack) ×
