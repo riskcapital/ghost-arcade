@@ -1199,6 +1199,20 @@
   const BUILT_IN_THREEJS: Array<{ id: string; folder: string; name: string; url: string; thumbnail?: string }> =
     bundledThreeJSItems as any;
 
+  /**
+   * Capture a first-frame thumbnail for a JS animation in the background, so
+   * the tile appears at once and its picture fills in a moment later.
+   */
+  function fillJSAnimationThumbnail(id: string, htmlCode: string) {
+    captureJSAnimationThumbnail(htmlCode).then((thumb) => {
+      if (!thumb) return;
+      const idx = jsAnimations.findIndex((a) => a.id === id);
+      if (idx < 0) return;
+      jsAnimations[idx] = { ...jsAnimations[idx], thumbnail: thumb };
+      jsAnimations = [...jsAnimations];
+    }).catch(() => { /* no thumbnail; the tile keeps its icon */ });
+  }
+
   async function seedBuiltInThreeJSItems() {
     for (const def of BUILT_IN_THREEJS) {
       // Skip if already in the list (re-mount of MediaTray would duplicate)
@@ -1228,17 +1242,8 @@
           thumbnail: def.thumbnail,
         };
         jsAnimations = [...jsAnimations, item];
-        // Background thumbnail capture — non-blocking so the item appears
-        // immediately and the thumbnail backfills a few seconds later.
         // Shipped thumbnail first; capture one only for pages without.
-        if (!def.thumbnail) captureJSAnimationThumbnail(htmlCode).then(thumb => {
-          if (!thumb) return;
-          const idx = jsAnimations.findIndex(a => a.id === def.id);
-          if (idx >= 0) {
-            jsAnimations[idx] = { ...jsAnimations[idx], thumbnail: thumb };
-            jsAnimations = [...jsAnimations];
-          }
-        }).catch(() => { /* */ });
+        if (!def.thumbnail) fillJSAnimationThumbnail(def.id, htmlCode);
       } catch (err) {
         console.warn('[MediaTray] error seeding built-in', def.name, err);
       }
@@ -3082,6 +3087,7 @@
         // Add new JS animation
         jsAnimations = [...jsAnimations, jsItem];
       }
+      fillJSAnimationThumbnail(jsItem.id, jsItem.jsAnimation.htmlCode);
 
       activeTab = 'js';
     }
@@ -3324,6 +3330,7 @@
       };
 
       jsAnimations = [...jsAnimations, jsItem];
+      fillJSAnimationThumbnail(jsItem.id, saved.code);
 
       // Switch to JS tab
       activeTab = 'js';
@@ -4355,7 +4362,9 @@
             title={trayItemActionTitle()}
           >
             <div class="js-icon" class:threejs={item.type === 'threejs'} class:p5js={item.type === 'p5js'}>
-              {#if item.type === 'threejs'}
+              {#if item.thumbnail}
+                <img src={item.thumbnail} alt={item.name} draggable="false" />
+              {:else if item.type === 'threejs'}
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/>
                   <circle cx="12" cy="12" r="3"/>
