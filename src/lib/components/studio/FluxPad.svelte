@@ -9,6 +9,9 @@
 
   export let value: FluxState;
   export let onchange: (state: FluxState) => void;
+  /** What the idle pad says, with and without modules chosen. */
+  export let playHint = 'Touch the picture to play';
+  export let emptyHint = 'Choose a module below';
 
   let pointer: number | null = null;
   let expressionPointer: number | null = null;
@@ -71,7 +74,7 @@
   <div class="cross-x" style={`left:${value.x * 100}%`}></div>
   <div class="cross-y" style={`bottom:${value.y * 100}%`}></div>
   <div class="cursor" style={`left:${value.x * 100}%;bottom:${value.y * 100}%`}></div>
-  {#if !value.active}<span class="invitation">{value.modules.length ? 'Touch the picture to play' : 'Choose a module below'}</span>{/if}
+  {#if !value.active}<span class="invitation">{value.modules.length ? playHint : emptyHint}</span>{/if}
 </div>
 
 <style>

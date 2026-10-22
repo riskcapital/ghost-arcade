@@ -1,5 +1,6 @@
 <script lang="ts">
   import VJGroups from './VJGroups.svelte';
+  import VJFluxPanel from './VJFluxPanel.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
   import LooksGallery from './LooksGallery.svelte';
   import LooksIcon from './LooksIcon.svelte';
@@ -499,6 +500,7 @@
   // Preview canvas
   let previewCanvas: HTMLCanvasElement;
   let previewContainerEl: HTMLDivElement | null = null;
+  let previewWrapperEl: HTMLDivElement | null = null;
   // Full-native mode: the render core's output is shown by repositioning the
   // native presenter underlay into our preview box (registered below).
   const nativeEngineActive = isDesktopApp && NATIVE_ENGINE_ONLY;
@@ -5031,7 +5033,8 @@
         </div>
 
         <!-- CENTER: Preview 16:9 (+ stacked deck confidence monitors in split-deck mode) -->
-        <div class="preview-wrapper" class:ab-monitoring={deckMonitorsVisible}>
+        <div class="preview-wrapper" class:ab-monitoring={deckMonitorsVisible} bind:this={previewWrapperEl}>
+          <VJFluxPanel wrapperEl={previewWrapperEl} previewEl={previewContainerEl} reversed={!!$settings.ui.vjLayoutReversed} />
           <div class="preview-layout">
             <div class="preview-container program-preview" class:native-hole={nativePreviewActive} bind:this={previewContainerEl}>
               <canvas bind:this={previewCanvas} class="preview-canvas" class:hidden-for-native={nativePreviewActive}></canvas>

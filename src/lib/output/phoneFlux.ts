@@ -36,6 +36,8 @@ export function easeFluxGain(gain: number, target: number, seconds: number): num
 }
 
 let state: PhoneFlux | null = null;
+/** True while the VJ panel's own Flux pad is playing: it never times out. */
+let deskControl = false;
 let gain = 0;
 let lastHeard = 0;
 let lastStep = 0;
@@ -55,7 +57,7 @@ function step() {
   const now = performance.now();
   const seconds = (now - lastStep) / 1000;
   lastStep = now;
-  if (state && now - lastHeard > SILENCE_MS) state = { ...state, active: false };
+  if (state && !deskControl && now - lastHeard > SILENCE_MS) state = { ...state, active: false };
   gain = easeFluxGain(gain, state?.active ? state.mix : 0, seconds);
   send();
   if (gain === 0 && !state?.active) { clearInterval(timer); timer = undefined; }
@@ -63,6 +65,7 @@ function step() {
 
 /** A `studio_flux` message from a paired phone. */
 export function receivePhoneFlux(message: Record<string, unknown>) {
+  deskControl = false;
   state = readPhoneFlux(message);
   lastHeard = performance.now();
   if (!timer) { lastStep = lastHeard; timer = setInterval(step, 16); }
@@ -73,4 +76,19 @@ export function receivePhoneFlux(message: Record<string, unknown>) {
 export function stopPhoneFlux() {
   if (state) state = { ...state, active: false };
   if (!timer && gain > 0) { lastStep = performance.now(); timer = setInterval(step, 16); }
+}
+
+/**
+ * Flux from the VJ panel's own pad on this computer. Same effect and fade as
+ * the phone's, without the silence timeout. An idle pad never takes Flux away
+ * from a phone that is playing it.
+ */
+export function setDeskFlux(message: Record<string, unknown>) {
+  const next = readPhoneFlux(message);
+  if (!next.active && !deskControl) return;
+  deskControl = next.active;
+  state = next;
+  lastHeard = performance.now();
+  if (!timer) { lastStep = lastHeard; timer = setInterval(step, 16); }
+  step();
 }

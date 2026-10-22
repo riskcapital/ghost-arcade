@@ -732,6 +732,13 @@ class MidiRouter {
       return;
     }
 
+    // Flux pad and RND in the VJ panel: vj:flux:rnd | on | x | y | mix.
+    // The panel owns the Flux state, so the router just forwards.
+    if (layerPart === 'flux' && bank === 'A') {
+      window.dispatchEvent(new CustomEvent('vj-flux', { detail: { action: property, value } }));
+      return;
+    }
+
     if (layerPart === 'stopall') {
       if (value > 0) vjClipLauncher.stopAll();
       return;
