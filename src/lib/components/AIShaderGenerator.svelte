@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { generateWithAI, extractJSParams, type GenerationType } from '../api/ai-client';
+  import { generateWithAI, type GenerationType } from '../api/ai-client';
+  import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import type { MediaSource, JSAnimationSource, ISFInputDef } from '../types';
   import { generateUUID } from '../types';
   import { createEventDispatcher, onMount } from 'svelte';
@@ -119,17 +120,15 @@
         // Three.js or p5.js animation
         const animationType = generationType === 'threejs' ? 'threejs' : 'p5js';
 
-        // Parse params from window.shaderParams in the code
-        const params = extractJSParams(result.code);
+        // The controls the page declares (window.shaderParamDefs: labels,
+        // ranges, text boxes, menus), else its flat window.shaderParams.
+        const parsed = jsAnimationFromHtml(result.code);
 
         const jsAnimation: JSAnimationSource = {
           animationType,
           htmlCode: result.code,
-          params,
-          paramValues: params?.reduce((acc, p) => {
-            acc[p.name] = p.default;
-            return acc;
-          }, {} as Record<string, number | boolean | number[]>),
+          params: parsed.params,
+          paramValues: parsed.paramValues,
           aiGenerated: true,
           aiPrompt: description
         };
@@ -195,11 +194,11 @@
       'Morphing wireframe icosahedron with pulsing vertices and aurora-colored glow'
     ],
     'p5js': [
-      'Perlin noise flow field with 400 neon particles leaving colorful trails',
-      'Gravitational attractor system with glowing orbiting particles and motion blur',
-      'Sacred geometry pattern with rotating overlapping circles in golden ratio',
-      'Particle explosion bursts with radial symmetry and rainbow color cycling',
-      'Constellation network of drifting stars connected by glowing lines'
+      'A flock of 600 boids leaving thin ink trails, tightening into a swirl on every kick',
+      'A recursive tree that grows branch by branch, sways in a noise wind and regrows every few bars',
+      'Flow-field hatching: thousands of short pen strokes that build up slowly like an etching',
+      'Truchet tiles in two neon colours that flip in waves on the beat',
+      'Kinetic type: the words from a text box break into letters that scatter and re-form'
     ]
   };
 

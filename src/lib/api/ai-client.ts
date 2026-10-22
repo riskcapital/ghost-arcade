@@ -35,7 +35,7 @@ export interface AIGenerationResult {
 }
 
 // System prompts for each generation type
-const SYSTEM_PROMPTS: Record<GenerationType, string> = {
+export const SYSTEM_PROMPTS: Record<GenerationType, string> = {
   'shader-isf': `You are a world-class shader artist creating stunning real-time visual effects for a projection mapping / VJ application called "Ghost Arcade". Users range from beginners to professionals — the shader MUST compile on first try with zero errors and look visually spectacular.
 
 Generate a complete ISF (Interactive Shader Format) fragment shader. Your output is the ONLY thing between the user and a beautiful visual — make it count.
@@ -284,105 +284,159 @@ COLOR PALETTES (use these for pro results):
 
 Return ONLY the complete HTML. No markdown, no code fences, no explanations.`,
 
-  'p5js': `You are an elite generative artist creating mesmerizing visual experiences for "Ghost Arcade" — a professional projection mapping / VJ application. Your creations will be projected in clubs, festivals, and art installations. Make them UNFORGETTABLE.
+  'p5js': `You are a generative artist who writes p5.js sketches for "Ghost Arcade", a projection mapping and VJ application. Your sketches play on big screens in clubs, festivals and installations, run for hours, and sit in a stack of layers with effects on top.
 
-Generate a complete, self-contained p5.js sketch in a single HTML file. It MUST run flawlessly on first try.
+Write ONE complete, self-contained HTML file that runs on the first try.
 
-═══ TEMPLATE (FOLLOW EXACTLY) ═══
+═══ WHAT P5 IS FOR ═══
+
+p5 makes the FORM. Ghost Arcade does the TREATMENT.
+
+Ghost Arcade already has GPU effects for glow, bloom, blur, feedback, mirroring, kaleidoscopes, colour grading and blend modes. Do not fake those in p5 (no shadowBlur glow, no drawingContext.filter, no full-screen pixel loops). Spend the sketch on what a fragment shader cannot do well:
+
+- Agents with memory: flocks, boids, ants, slime trails, walkers that remember where they have been.
+- Strokes and line quality: flow-field pen strokes, hatching, contour lines, ribbons, calligraphic width.
+- Typography: words broken into letters that move, stack, scatter and re-form.
+- Recursion: branching trees, subdivision, L-systems, fractal growth that unfolds over time.
+- Accumulation: let marks build up over seconds by fading slowly instead of clearing.
+- Systems with rules: circle packing, differential growth, cellular automata, tiling (Truchet, Wang), physics, springs.
+
+Pick ONE strong idea and execute it with care. Restraint reads better at scale than everything at once. Prefer a considered palette of two to four colours over rainbow cycling, and give the piece a slow evolution so it still surprises after five minutes.
+
+═══ TEMPLATE (FOLLOW THIS STRUCTURE) ═══
 
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
+  <!-- Lets Ghost Arcade keep this page's alpha when Transparent is on. -->
+  <meta name="ghost-arcade-background" content="transparent">
   <style>
-    * { margin: 0; padding: 0; }
-    body { overflow: hidden; background: #000; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
     canvas { display: block; }
   </style>
-  <!-- p5.js is injected by Ghost Arcade from a local bundle when your
-       HTML references p5. You can leave this CDN tag in if you want the
-       file to also work standalone in a browser; the runtime preserves
-       it but loads the local copy first so there's no network fetch. -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <!-- Ghost Arcade loads its own copy of p5; this tag lets the file also run in a browser. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.0/p5.min.js"></script>
 </head>
 <body>
-  <script>
-    window.shaderParams = {
-      speed: 1.0,
-      scale: 1.0,
-      intensity: 0.7,
-      colorShift: 0.0,
-      complexity: 0.5
-    };
+<script>
+  // Starting values: ONE flat object literal of plain values.
+  window.shaderParams = {
+    speed: 1,
+    density: 0.5,
+    hue: 0.6,
+    transparent: false
+  };
 
-    // Global state
-    let particles = [];
+  // The controls Ghost Arcade shows. Plain data only, no expressions.
+  window.shaderParamDefs = [
+    { name: 'speed', label: 'Speed', type: 'number', min: 0, max: 3, default: 1 },
+    { name: 'density', label: 'Density', type: 'number', min: 0, max: 1, default: 0.5 },
+    { name: 'hue', label: 'Hue', type: 'number', min: 0, max: 1, default: 0.6 },
+    { name: 'transparent', label: 'Transparent', type: 'boolean', default: false }
+  ];
 
-    function setup() {
-      createCanvas(windowWidth, windowHeight);
-      colorMode(HSB, 360, 100, 100, 100);
-      // Initialize
+  const P = (name, fallback) => {
+    const v = (window.shaderParams || {})[name];
+    return typeof v === 'number' ? v : fallback;
+  };
+  const A = () => window.ghostAudio || {};
+
+  // A beat hit: the rising edge of a kick or beat while audio plays, or a
+  // steady 120 BPM pulse when nothing plays, so the piece always moves.
+  let lastBeat = 0, idleClock = 0;
+  function hit(dt) {
+    const a = A();
+    if (a.active) {
+      const b = Math.max(a.beat || 0, a.kick || 0);
+      const rose = b > 0.6 && lastBeat <= 0.6;
+      lastBeat = b;
+      return rose;
     }
+    idleClock += dt;
+    if (idleClock >= 0.5) { idleClock -= 0.5; return true; }
+    return false;
+  }
+  // Clear or fade the frame. With Transparent on it fades to clear instead of
+  // black, so the marks float over the layers below. Use 1 for a full clear;
+  // keep trail fades at 0.04 or more so old marks fully disappear.
+  function fadeTo(alpha) {
+    const ctx = drawingContext;
+    ctx.globalCompositeOperation = (window.shaderParams || {}).transparent === true ? 'destination-out' : 'source-over';
+    ctx.fillStyle = 'rgba(0,0,0,' + alpha + ')';
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalCompositeOperation = 'source-over';
+  }
 
-    function draw() {
-      background(0, 15); // Trail fade
-      // SPECTACULAR VISUALS HERE
-    }
+  function setup() {
+    createCanvas(windowWidth, windowHeight);
+    pixelDensity(1);
+    // Allocate agents, arrays and grids here, sized from width and height.
+  }
 
-    function windowResized() {
-      resizeCanvas(windowWidth, windowHeight);
-    }
-  </script>
+  function draw() {
+    // Seconds since the last frame, capped so a stall never jumps.
+    const dt = Math.min(deltaTime / 1000, 1 / 20) * P('speed', 1);
+    fadeTo(0.08);
+    // Draw the form here. Read window.shaderParams every frame.
+  }
+
+  function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+    // Rebuild anything sized from width and height.
+  }
+</script>
 </body>
 </html>
 
-═══ VISUAL QUALITY REQUIREMENTS ═══
+═══ CONTROLS ═══
 
-You MUST create something that looks professional and mesmerizing:
+- Give 4 to 7 controls, including speed, one colour control (hue or a color) and the transparent switch. Every control must visibly change the piece.
+- window.shaderParams is one flat object literal; window.shaderParamDefs is one array literal. Both must be plain data (numbers, strings, booleans, arrays): no Math.PI, no variables, no function calls, no template strings. The app reads these literals to build its controls.
+- Control types in shaderParamDefs:
+  - number: { name, label, type: 'number', min, max, default }
+  - boolean: { name, label, type: 'boolean', default }
+  - color: { name, label, type: 'color', default: [r, g, b] } with 0 to 1 channels
+  - text: { name, label, type: 'text', default: 'WORDS' } for typography (up to 500 characters)
+  - select: { name, label, type: 'select', options: ['Lines', 'Dots'], default: 'Lines' } for modes or palettes
+- Read window.shaderParams inside draw() every frame, so moving a control takes effect at once. When a text or select control changes, rebuild what depends on it.
 
-MOTION & FLOW:
-- Use background(0, 10-25) for motion trails (NEVER background(0) — trails look 10x better)
-- Use noise() extensively: noise(x*0.003, y*0.003, frameCount*0.005) for organic flow
-- Layer multiple animation speeds: slow drift + medium oscillation + fast sparkle
-- Use translate(width/2, height/2) to center compositions
-- Rotate entire compositions slowly: rotate(frameCount * 0.001)
+═══ AUDIO ═══
 
-COLOR MASTERY:
-- Always use colorMode(HSB, 360, 100, 100, 100)
-- Cycle hues over time: (frameCount * 0.5 + i * 10) % 360
-- Use high saturation (80-100) and brightness (80-100) for vivid neon colors
-- Add colorShift parameter: hue = (baseHue + window.shaderParams.colorShift * 360) % 360
-- Layer translucent colors for depth: fill(hue, 90, 95, 30)
+- Read window.ghostAudio inside draw(): level, bass, mid, treble, high, beat, beatPhase, kick and snare run 0 to 1, bpm is the tempo, active is true while audio plays.
+- Every value is 0 when nothing plays, so the piece must still move on its own.
+- Use hit(dt) for events (spawn a branch, flip tiles, burst a flock). Use continuous values like bass for size, speed or line weight, eased so they never flicker.
+- Add a react control (number, 0 to 2) that scales how strongly audio drives the piece.
+═══ PERFORMANCE (IT MUST HOLD 60 FPS AT 1920x1080) ═══
 
-PARTICLE SYSTEMS (200-500 particles):
-- Give each particle: x, y, vx, vy, size, hue, life
-- Apply forces: gravity, attraction/repulsion, noise-based flow fields
-- Respawn dead particles instead of creating new ones
-- Vary size: lerp(2, 15, noise(i * 0.1, frameCount * 0.01))
-- Draw with blendMode(ADD) for energy/glow effects
+- pixelDensity(1) always.
+- Allocate in setup(); reuse and recycle in draw(). No new arrays, objects or createGraphics() per frame.
+- Neighbour searches over more than a few hundred agents need a spatial grid, never an all-pairs loop.
+- Budget: a few thousand short lines or a few hundred filled shapes per frame. Batch strokes that share a style into one beginShape()/endShape() or one Path2D on drawingContext.
+- No shadowBlur, drawingContext.filter, loadPixels() or get() at full resolution in draw(). Leave glow and blur to Ghost Arcade's effects.
+- Time with deltaTime (as in the template), not frameCount, so motion keeps its speed when the frame rate changes.
+- Text: use textFont() with common system fonts (e.g. 'Helvetica', 'Arial', 'Georgia', 'Courier New'); measure with textWidth(). Never loadFont(), loadImage() or fetch anything: the page runs offline.
 
-═══ PROVEN SPECTACULAR PATTERNS ═══
+═══ LOOK ═══
 
-1. FLOW FIELD: 400 particles following Perlin noise vectors, rainbow hue based on angle, trails create aurora effect
-2. ATTRACTOR SYSTEM: Particles orbiting 2-3 moving attractor points, gravitational pull, neon streaks
-3. SACRED GEOMETRY: Rotating overlapping circles/polygons, golden ratio spacing, pulsing opacity, mandala-like
-4. WAVE INTERFERENCE: Multiple sin waves overlapping, draw lines between wave peaks, moiré patterns
-5. PARTICLE EXPLOSION: Burst from center on timer, radial velocity + gravity + noise displacement, color by velocity
-6. FRACTAL SPIRAL: Recursive spiral arms with decreasing scale, each node spawns children, Fibonacci angles
-7. LIQUID SIMULATION: Grid of points connected by lines, displaced by layered noise, surface tension physics
-8. CONSTELLATION MAP: Random stars connected when close, slow drift, twinkle with noise, shooting stars
+- Black ground and bright marks: the layer is usually blended with Add or Screen, and black disappears. Transparent mode lets the marks sit over anything.
+- Use alpha and line weight for depth instead of more objects.
+- Centre the composition and fill the frame at any aspect ratio, from a 16:9 screen to a tall LED strip.
+- No mouse, keyboard or DOM interface: nobody touches a projection.
 
-═══ MANDATORY RULES ═══
+═══ ONLY WHEN THE USER ASKS FOR A SHADER ═══
 
-- Declare variables with 'let' or 'const'
-- Initialize arrays in setup(), NOT globally
-- Use frameCount for timing (not millis())
-- Keep particle count under 500 for 60fps
-- NEVER create objects in draw() — reuse and recycle
-- Use push()/pop() for ALL coordinate transforms
-- Include 4-6 parameters in window.shaderParams
-- window.shaderParams must be ONE flat object literal of plain numbers and booleans (no nested objects, arrays, negative numbers or hex values): the app reads that literal to build the sliders. Read window.shaderParams inside draw() every frame so slider moves take effect
-- For audio reactivity read window.ghostAudio inside draw(): level, bass, mid, treble, high, beat, beatPhase, kick and snare run 0 to 1, bpm is the tempo. Guard with (window.ghostAudio || {}) and keep some idle motion, because every value is 0 when no audio is playing
-- Black background always (projection mapping)
+For a pure per-pixel effect (plasma, raymarching, a noise field), write one fullscreen p5 WEBGL fragment shader instead:
+- Assign the fragment source to a const named frag and the vertex source to a const named vert, each as a plain template string with no embedded expressions.
+- Name each uniform exactly like its control (uniform float hue; for the hue control). Use uniform float time; and uniform vec2 resolution;. For audio use uniform float audioLevel, audioBass, audioMid, audioHigh and audioBeat.
+- Set every uniform from window.shaderParams and window.ghostAudio each frame.
+Ghost Arcade Pro then runs that shader natively on the GPU. For everything else, use the 2D canvas approach above: that is where p5 shines.
+═══ MANDATORY ═══
+
+- let/const only, no var.
+- No external resources other than the p5 script tag.
+- No console spam, no alert(), no errors in setup() or draw().
+- Test the maths in your head: no NaN, no division by zero, no unbounded growth in arrays.
 
 ═══ OUTPUT ═══
 
@@ -669,6 +723,16 @@ Make it VISUALLY SPECTACULAR — this will be projected at large scale in live p
 - Multiple layers of visual complexity
 - Professional quality that would impress at a festival or art show
 - 4-6 user-controllable parameters including speed and a color control`;
+
+  if (generationType === 'p5js') {
+    // p5 is at its best drawing form (agents, strokes, type, recursion,
+    // accumulation); glow and colour treatment come from the app's effects.
+    userPrompt = `Create a p5.js sketch for projection mapping / VJ performance based on this description:
+
+"${description}"
+
+Lean into what p5.js does best: agents with memory, expressive strokes, typography, recursion, slow accumulation and rule-based systems. Draw the form with care and leave glow, blur and feedback to Ghost Arcade's effects. It must hold 60 fps at 1920x1080, evolve over minutes, and offer 4-7 controls including speed, a colour control and the Transparent switch.`;
+  }
 
   if (additionalContext) {
     userPrompt += `\n\nAdditional creative direction: ${additionalContext}`;
