@@ -8766,19 +8766,22 @@
     transform: none;
     flex: 0 0 auto;
     aspect-ratio: 16 / 9;
-    width: min(calc(100cqw - clamp(124px, 18vw, 220px) - 10px), calc(100cqh * 16 / 9));
+    /* The A/B stack beside it is exactly as tall as the program: two
+       16:9 monitors and an 8px gap, so it is (program width / 2 − 64/9 px)
+       wide. With the 10px layout gap the pair needs 1.5 × width + 2.9px. */
+    width: min(calc((100cqw - 3px) / 1.5), calc(100cqh * 16 / 9));
     height: auto;
     max-width: none;
     max-height: 100%;
   }
 
   .deck-preview-stack {
-    flex: 0 1 clamp(124px, 18vw, 220px);
-    width: clamp(124px, 18vw, 220px);
+    flex: 0 0 auto;
+    width: calc(min(calc((100cqw - 3px) / 1.5), calc(100cqh * 16 / 9)) / 2 - 7.12px);
     min-width: 0;
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    justify-content: space-between;
     gap: 8px;
   }
 
@@ -8839,22 +8842,6 @@
     border: 1px solid rgba(255, 255, 255, 0.24);
     font-size: 10px;
     line-height: 1;
-  }
-
-  @media (max-width: 1180px) {
-    .preview-wrapper.ab-monitoring .preview-layout {
-      gap: 6px;
-    }
-
-    .preview-wrapper.ab-monitoring .program-preview {
-      width: min(calc(100cqw - 118px - 6px), calc(100cqh * 16 / 9));
-    }
-
-    .deck-preview-stack {
-      flex-basis: 118px;
-      width: 118px;
-      gap: 5px;
-    }
   }
 
   /* Full-native: the preview box is a transparent hole in the VJ overlay —
