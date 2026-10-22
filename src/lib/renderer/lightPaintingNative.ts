@@ -572,6 +572,13 @@ fn lp_hsv(h: f32, s: f32, v: f32) -> vec3<f32> {
   let q = abs(fract(vec3<f32>(h) + vec3<f32>(1.0, 0.6666667, 0.3333333)) * 6.0 - vec3<f32>(3.0));
   return v * mix(vec3<f32>(1.0), clamp(q - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), s);
 }
+/// Width factor of the end taper at progress t along the stroke (see the
+/// browser renderer: width and brightness fade over the first and last fifth).
+fn lp_taper(t: f32, on: bool) -> f32 {
+  if (!on) { return 1.0; }
+  let u = clamp(t, 0.0, 1.0);
+  return min(1.0, u * 5.0) * min(1.0, (1.0 - u) * 5.0);
+}
 fn lp_gauss(d: f32, sigma: f32) -> f32 { return exp(-d * d / max(2.0 * sigma * sigma, 0.0001)); }
 fn lp_hue_rotate(c: vec3<f32>, turns: f32) -> vec3<f32> {
   let a = turns * 6.28318530;
@@ -669,6 +676,15 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     // is beyond the stroke's render reach from the chunk's bbox — the
     // skipped segments could not have contributed visible energy.
     var best_d = 1e9;
+    // The point a pixel belongs to is chosen like overlapping round stamps
+    // (distance minus that point's tapered radius): a pixel just past a thin
+    // tip takes the wider stroke beside it, so the glow rounds off instead
+    // of ending on a straight line at the tip.
+    var best_m = 1e9;
+    let taper_on = e4.w > 0.001;
+    // Radius of the round stamp at full width; a point's stamp shrinks with
+    // the taper, and the pixel takes the stamp it is deepest inside.
+    let cap_r = max(0.75, e0.y) * 1.5;
     var best_s = 0.0;
     var best_tan = vec2<f32>(1.0, 0.0);
     var best_side = 1.0;
@@ -698,9 +714,12 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         let h = clamp(dot(p - a, ab) / seg_len2, 0.0, 1.0);
         let q = a + ab * h;
         let dseg = distance(p, q);
-        if (dseg < best_d) {
+        let s_c = mix(pa.z, pb.z, h);
+        let m = dseg - cap_r * lp_taper(s_c / total_len, taper_on);
+        if (m < best_m) {
+          best_m = m;
           best_d = dseg;
-          best_s = mix(pa.z, pb.z, h);
+          best_s = s_c;
           best_tan = normalize(ab);
           best_side = sign((p.x - a.x) * ab.y - (p.y - a.y) * ab.x);
           best_q = q;
@@ -717,9 +736,12 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         let h = clamp(dot(p - a, ab) / (seg_len * seg_len), 0.0, 1.0);
         let q = a + ab * h;
         let dseg = distance(p, q);
-        if (dseg < best_d) {
+        let s_c = pa.z + h * seg_len;
+        let m = dseg - cap_r * lp_taper(s_c / total_len, taper_on);
+        if (m < best_m) {
+          best_m = m;
           best_d = dseg;
-          best_s = pa.z + h * seg_len;
+          best_s = s_c;
           best_tan = ab / seg_len;
           best_side = sign((p.x - a.x) * ab.y - (p.y - a.y) * ab.x);
           best_q = q;
@@ -760,10 +782,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     }
     // End taper, as the browser renderer: width and brightness fade over
     // the first and last fifth of the stroke.
-    var taper = 1.0;
-    if (e4.w > 0.001) {
-      taper = min(1.0, s_prog * 5.0) * min(1.0, (1.0 - s_prog) * 5.0);
-    }
+    let taper = lp_taper(s_prog, taper_on);
     vis = vis * taper;
     // Head feather: fade the leading edge over a length that scales with
     // the brush, instead of cutting the stroke off in a straight slice.
