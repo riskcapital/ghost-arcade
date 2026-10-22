@@ -2,6 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <!-- Lets Ghost Arcade keep this page's alpha (see the Transparent switch). -->
+  <meta name="ghost-arcade-background" content="transparent">
   <title>Flock · Ghost Arcade p5.js</title>
   <style>
     * { margin: 0; padding: 0; }
@@ -16,8 +18,10 @@
   <script>
     // Flock: A murmuration of boids leaving light trails. Bass pulls the flock tighter, highs add jitter, and each kick scatters it from a random point.
     // Drawn on black with glowing strokes: set the layer's blend mode to Add
-    // or Screen, and put glow, feedback or colour effects after it.
+    // or Screen, or turn on Transparent to draw over the layers below. Put
+    // glow, feedback or colour effects after it in the layer's chain.
     window.shaderParams = {
+      transparent: false,
       speed: 1.0, // min: 0 max: 3
       boids: 700.0, // min: 50 max: 1500
       cohesion: 1.0, // min: 0 max: 3
@@ -27,6 +31,7 @@
     };
 
     window.shaderParamDefs = [
+      { name: 'transparent', label: 'Transparent', type: 'boolean', default: false },
       { name: 'speed', label: 'Speed', type: 'number', min: 0, max: 3, default: 1.0 },
       { name: 'boids', label: 'Boids', type: 'number', min: 50, max: 1500, default: 700.0 },
       { name: 'cohesion', label: 'Cohesion', type: 'number', min: 0, max: 3, default: 1.0 },
@@ -42,6 +47,10 @@
     function P(name, fallback) {
       const v = (window.shaderParams || {})[name];
       return typeof v === 'number' && isFinite(v) ? v : fallback;
+    }
+    function S(name, fallback) {
+      const v = (window.shaderParams || {})[name];
+      return typeof v === 'string' ? v : fallback;
     }
     function A() { return window.ghostAudio || {}; }
 
@@ -70,6 +79,18 @@
         return ev;
       };
     })();
+
+    // Clear or fade the frame. With the Transparent switch on, the canvas
+    // fades to see-through instead of black, so the marks can sit over the
+    // layers below (Ghost Arcade keeps the alpha for this page).
+    function fadeTo(alpha) {
+      const ctx = drawingContext;
+      const clear = (window.shaderParams || {}).transparent === true;
+      ctx.globalCompositeOperation = clear ? 'destination-out' : 'source-over';
+      ctx.fillStyle = 'rgba(0,0,0,' + Math.min(1, Math.max(0, alpha)) + ')';
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalCompositeOperation = 'source-over';
+    }
 
     // Frame time in seconds, capped so a stall never makes things jump.
     function frameSeconds() { return Math.min(deltaTime || 16.7, 100) / 1000; }
@@ -133,9 +154,7 @@
         if (y[i] < 0) y[i] += height; if (y[i] > height) y[i] -= height;
       }
       const ctx = drawingContext;
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = 'rgba(0,0,0,' + (1 - P('trail', 0.85)) + ')';
-      ctx.fillRect(0, 0, width, height);
+      fadeTo(1 - P('trail', 0.85));
       ctx.globalCompositeOperation = 'lighter';
       ctx.lineCap = 'round';
       const paths = [new Path2D(), new Path2D(), new Path2D()];
