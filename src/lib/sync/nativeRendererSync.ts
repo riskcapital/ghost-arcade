@@ -5393,6 +5393,30 @@ export class NativeRendererSync {
     nativeTextureSourceId: string;
   }>();
 
+  /**
+   * The core frees a graph layer's GPU buffers when the layer leaves the
+   * native graph (hidden, blocked or re-routed). Forget what was uploaded for
+   * it, so the next install sends the points, mesh or raster again instead of
+   * rendering from buffers that no longer exist.
+   */
+  private forgetNativeGraphUploads(layerId: string) {
+    const splat = this.nativeSplatState.get(layerId);
+    if (splat) {
+      splat.uploadedSig = '';
+      splat.textureUploadedSig = '';
+    }
+    const model = this.nativeModel3DState.get(layerId);
+    if (model) {
+      model.meshUploadedSig = '';
+      model.textureUploadedSig = '';
+    }
+    const svg = this.nativeSvgState.get(layerId);
+    if (svg) svg.uploaded = false;
+    const text = this.nativeTextState.get(layerId);
+    if (text) text.atlasUploaded = false;
+    this.nativePointCloudUploadSignatures.delete(layerId);
+  }
+
   private nativeSplatStateFor(layerId: string) {
     let state = this.nativeSplatState.get(layerId);
     if (!state) {
@@ -9437,6 +9461,7 @@ export class NativeRendererSync {
             type: 'remove_native_graph_layer',
             layer_id: layer.id,
           });
+          this.forgetNativeGraphUploads(layer.id);
         }
         return;
       }
@@ -9833,6 +9858,7 @@ export class NativeRendererSync {
           type: 'remove_native_graph_layer',
           layer_id: layer.id,
         });
+        this.forgetNativeGraphUploads(layer.id);
       }
 
       const src = nativeSource.source;
