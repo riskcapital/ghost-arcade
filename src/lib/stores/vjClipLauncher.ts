@@ -2379,7 +2379,7 @@ function createVJClipLauncherStore() {
     // Update a JS animation parameter on the active VJ clip. The clip owns
     // these values in VJ mode; Mapping's selected-layer editor must not leak
     // into this state.
-    updateActiveClipJSAnimationParam(layerIndex: number, paramName: string, value: number | boolean | number[], deck: VJDeck = 'A') {
+    updateActiveClipJSAnimationParam(layerIndex: number, paramName: string, value: number | boolean | number[] | string, deck: VJDeck = 'A') {
       let runtimeClipId: string | null = null;
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);

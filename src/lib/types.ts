@@ -436,19 +436,25 @@ export interface NdiSource {
 // JavaScript animation types (Three.js or p5.js)
 export type JSAnimationType = 'threejs' | 'p5js';
 
+/** A JS page control's value: a slider number, a switch, an RGB(A) colour,
+ *  or text (a text box, or the chosen option of a dropdown). */
+export type JSAnimationParamValue = number | boolean | number[] | string;
+
 // JavaScript animation source (for user-created/AI-generated animations)
 export interface JSAnimationSource {
   animationType: JSAnimationType;
   htmlCode: string;  // Complete HTML file content
   params?: Array<{
     name: string;
-    type: 'number' | 'boolean' | 'color';
-    default: number | boolean | number[];
+    type: 'number' | 'boolean' | 'color' | 'text' | 'select';
+    default: JSAnimationParamValue;
     min?: number;
     max?: number;
     label?: string;
+    /** Choices for a 'select' control. */
+    options?: string[];
   }>;
-  paramValues?: Record<string, number | boolean | number[]>;
+  paramValues?: Record<string, JSAnimationParamValue>;
   aiGenerated?: boolean;
   aiPrompt?: string;  // Original prompt used to generate
 }

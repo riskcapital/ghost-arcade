@@ -65,6 +65,9 @@ function sanitizeValues(values) {
     else if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
     else if (Array.isArray(value) && value.every((v) => typeof v === 'number' && Number.isFinite(v))) {
       out[key] = value.slice(0, 4);
+    } else if (typeof value === 'string') {
+      // Text boxes and dropdowns (e.g. Kinetic Type's words and font).
+      out[key] = value.slice(0, 500);
     }
   }
   return out;

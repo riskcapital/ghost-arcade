@@ -18,6 +18,8 @@
     // Drawn on black with glowing strokes: set the layer's blend mode to Add
     // or Screen, and put glow, feedback or colour effects after it.
     window.shaderParams = {
+      words: 'GHOST ARCADE p5.js LIGHT SOUND FORM',
+      font: 'Sans',
       speed: 1.0, // min: 0 max: 3
       particles: 1800.0, // min: 400 max: 4000
       hold: 4.0, // min: 1 max: 16
@@ -27,6 +29,8 @@
     };
 
     window.shaderParamDefs = [
+      { name: 'words', label: 'Words', type: 'text', default: 'GHOST ARCADE p5.js LIGHT SOUND FORM' },
+      { name: 'font', label: 'Font', type: 'select', options: ['Sans', 'Geometric', 'Serif', 'Mono', 'Condensed', 'Rounded', 'Script'], default: 'Sans' },
       { name: 'speed', label: 'Speed', type: 'number', min: 0, max: 3, default: 1.0 },
       { name: 'particles', label: 'Particles', type: 'number', min: 400, max: 4000, default: 1800.0 },
       { name: 'hold', label: 'Hold Beats', type: 'number', min: 1, max: 16, default: 4.0 },
@@ -42,6 +46,10 @@
     function P(name, fallback) {
       const v = (window.shaderParams || {})[name];
       return typeof v === 'number' && isFinite(v) ? v : fallback;
+    }
+    function S(name, fallback) {
+      const v = (window.shaderParams || {})[name];
+      return typeof v === 'string' ? v : fallback;
     }
     function A() { return window.ghostAudio || {}; }
 
@@ -74,10 +82,45 @@
     // Frame time in seconds, capped so a stall never makes things jump.
     function frameSeconds() { return Math.min(deltaTime || 16.7, 100) / 1000; }
 
-    // Your words. Change these to lyrics, track titles or a crowd's names.
-    const WORDS = ['GHOST', 'ARCADE', 'p5.js', 'LIGHT', 'SOUND', 'FORM'];
+    // The Words box: words separated by spaces, or phrases separated by
+    // commas or |. Type lyrics, track titles or a crowd's names.
+    const FONTS = {
+      Sans: 'Helvetica Neue, Helvetica, Arial, sans-serif',
+      Geometric: 'Futura, Avenir Next, Century Gothic, Trebuchet MS, sans-serif',
+      Serif: 'Didot, Bodoni 72, Georgia, Times New Roman, serif',
+      Mono: 'SF Mono, Menlo, Consolas, Courier New, monospace',
+      Condensed: 'Impact, Haettenschweiler, Arial Narrow, sans-serif',
+      Rounded: 'Arial Rounded MT Bold, Nunito, Trebuchet MS, sans-serif',
+      Script: 'Snell Roundhand, Brush Script MT, Segoe Script, cursive',
+    };
+    // p5 quotes the font name, so a CSS fallback list would be read as one
+    // name. Pick the first font of the list that is installed instead.
+    const fontProbe = document.createElement('canvas').getContext('2d');
+    function hasFont(name) {
+      const sample = 'mmmmmmmmmmlliWW@#';
+      for (const base of ['monospace', 'serif']) {
+        fontProbe.font = '72px ' + base;
+        const plain = fontProbe.measureText(sample).width;
+        fontProbe.font = '72px "' + name + '", ' + base;
+        if (fontProbe.measureText(sample).width !== plain) return true;
+      }
+      return false;
+    }
+    const pickedFonts = {};
+    function pickFont(key) {
+      if (pickedFonts[key]) return pickedFonts[key];
+      const stack = (FONTS[key] || FONTS.Sans).split(',').map((n) => n.trim());
+      pickedFonts[key] = stack.find(hasFont) || 'Arial';
+      return pickedFonts[key];
+    }
+    function wordList() {
+      const text = S('words', 'GHOST ARCADE p5.js');
+      const parts = /[,|]/.test(text) ? text.split(/[,|]/) : text.split(/\s+/);
+      const list = parts.map((w) => w.trim()).filter(Boolean).slice(0, 64);
+      return list.length ? list : ['p5.js'];
+    }
 
-    let px, py, vx, vy, tx, ty, wordIndex = 0, state = 'assemble', stateTime = 0, holdHits = 0, wordHue = 0;
+    let px, py, vx, vy, tx, ty, wordIndex = 0, state = 'assemble', stateTime = 0, holdHits = 0, wordHue = 0, textSig = '';
 
     function wordPoints(word, count) {
       const g = createGraphics(width, height);
@@ -86,7 +129,7 @@
       g.fill(255);
       g.noStroke();
       g.textStyle(BOLD);
-      g.textFont('Helvetica Neue, Arial Black, Arial, sans-serif');
+      g.textFont(pickFont(S('font', 'Sans')));
       g.textAlign(CENTER, CENTER);
       let ts = height * 0.42;
       g.textSize(ts);
@@ -115,7 +158,8 @@
 
     function nextWord() {
       const n = px.length;
-      const t = wordPoints(WORDS[wordIndex % WORDS.length], n);
+      const words = wordList();
+      const t = wordPoints(words[wordIndex % words.length], n);
       for (let i = 0; i < n; i++) { tx[i] = t[i * 2]; ty[i] = t[i * 2 + 1]; }
       wordHue = (P('hue', 0.85) * 360 + wordIndex * 47) % 360;
       wordIndex++;
@@ -145,6 +189,9 @@
       const react = P('react', 0.8);
       const wanted = Math.floor(constrain(P('particles', 1800), 400, 4000));
       if (wanted !== px.length) { allocate(wanted); wordIndex = Math.max(0, wordIndex - 1); nextWord(); }
+      // New text or font: start the sequence again with it.
+      const sig = S('words', '') + '|' + S('font', 'Sans');
+      if (sig !== textSig) { textSig = sig; wordIndex = 0; nextWord(); }
       stateTime += dt * speed;
 
       if (state === 'assemble' && stateTime > 1.4) { state = 'hold'; stateTime = 0; }

@@ -1412,7 +1412,7 @@
   // Built-in JS animations seeded into jsAnimations on mount. The list
   // is supplied by the vite plugin at build time so dropping a new
   // folder into public/threejs/<name>/ ships it on the next build.
-  const BUILT_IN_THREEJS: Array<{ id: string; folder: string; name: string; url: string }> =
+  const BUILT_IN_THREEJS: Array<{ id: string; folder: string; name: string; url: string; thumbnail?: string }> =
     bundledThreeJSItems as any;
 
   async function seedBuiltInThreeJSItems() {
@@ -1432,12 +1432,13 @@
           name: def.name,
           type: jsAnimation.animationType,
           jsAnimation,
-          thumbnail: undefined,
+          thumbnail: def.thumbnail,
         };
         jsAnimations = [...jsAnimations, item];
         // Background thumbnail capture — non-blocking so the item appears
         // immediately and the thumbnail backfills a few seconds later.
-        captureJSAnimationThumbnail(htmlCode).then(thumb => {
+        // Shipped thumbnail first; capture one only for pages without.
+        if (!def.thumbnail) captureJSAnimationThumbnail(htmlCode).then(thumb => {
           if (!thumb) return;
           const idx = jsAnimations.findIndex(a => a.id === def.id);
           if (idx >= 0) {
@@ -3896,7 +3897,7 @@
   }
 
   // Update JS animation parameter
-  function updateJSAnimationParam(paramName: string, value: number | boolean) {
+  function updateJSAnimationParam(paramName: string, value: number | boolean | string) {
     if (!selectedJSAnimation || !$selectedLayerId) return;
 
     // Update local state
@@ -4351,6 +4352,29 @@
                 checked={(selectedJSAnimation.jsAnimation.paramValues?.[param.name] ?? param.default) as boolean}
                 onchange={(e) => updateJSAnimationParam(param.name, (e.target as HTMLInputElement).checked)}
               />
+            </div>
+          {:else if param.type === 'text'}
+            <div class="param-row param-row-text">
+              <label>{param.label || param.name}</label>
+              <input
+                type="text"
+                maxlength="500"
+                value={String(selectedJSAnimation.jsAnimation.paramValues?.[param.name] ?? param.default ?? '')}
+                oninput={(e) => updateJSAnimationParam(param.name, (e.target as HTMLInputElement).value)}
+                onkeydown={(e) => e.stopPropagation()}
+              />
+            </div>
+          {:else if param.type === 'select'}
+            <div class="param-row">
+              <label>{param.label || param.name}</label>
+              <select
+                value={String(selectedJSAnimation.jsAnimation.paramValues?.[param.name] ?? param.default ?? '')}
+                onchange={(e) => updateJSAnimationParam(param.name, (e.target as HTMLSelectElement).value)}
+              >
+                {#each param.options ?? [] as option (option)}
+                  <option value={option}>{option}</option>
+                {/each}
+              </select>
             </div>
           {/if}
         {/each}

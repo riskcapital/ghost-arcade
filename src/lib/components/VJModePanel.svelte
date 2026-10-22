@@ -2350,7 +2350,7 @@
   function setJSAnimationParamValue(
     layerIndex: number,
     paramName: string,
-    value: number | boolean | number[]
+    value: number | boolean | number[] | string
   ) {
     vjClipLauncher.updateActiveClipJSAnimationParam(layerIndex, paramName, value, paramDeck);
   }
@@ -5386,6 +5386,35 @@
                           />
                           <span>{jsAnimationColorHex(currentValue).toUpperCase()}</span>
                         </div>
+                      {:else if param.type === 'text'}
+                        <input
+                          class="js-text-param"
+                          type="text"
+                          maxlength="500"
+                          value={typeof currentValue === 'string' ? currentValue : String(param.default ?? '')}
+                          oninput={(event) => setJSAnimationParamValue(
+                            selectedLayerIndex!,
+                            param.name,
+                            (event.target as HTMLInputElement).value
+                          )}
+                          onkeydown={(event) => event.stopPropagation()}
+                          aria-label={param.label || param.name}
+                        />
+                      {:else if param.type === 'select'}
+                        <select
+                          class="js-select-param"
+                          value={typeof currentValue === 'string' ? currentValue : String(param.default ?? '')}
+                          onchange={(event) => setJSAnimationParamValue(
+                            selectedLayerIndex!,
+                            param.name,
+                            (event.target as HTMLSelectElement).value
+                          )}
+                          aria-label={param.label || param.name}
+                        >
+                          {#each param.options ?? [] as option (option)}
+                            <option value={option}>{option}</option>
+                          {/each}
+                        </select>
                       {/if}
                     </div>
                   {/each}
@@ -9098,6 +9127,20 @@
     cursor: pointer;
   }
 
+  .js-text-param,
+  .js-select-param {
+    width: 100%;
+    box-sizing: border-box;
+    height: 26px;
+    padding: 0 8px;
+    background: #0d0d10;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 4px;
+    color: var(--ga-ink-0, #eef0f4);
+    font-size: 12px;
+  }
+  .js-text-param:focus,
+  .js-select-param:focus { outline: none; border-color: var(--accent-primary, #BB86FC); }
   .js-no-params {
     padding: 14px 10px;
     color: #666;

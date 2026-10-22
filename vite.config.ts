@@ -32,6 +32,7 @@ function threejsBundlesPlugin(): Plugin {
     load(id) {
       if (id !== resolvedId) return null;
       const names = scan();
+      const dir = resolve(__dirname, 'public/threejs');
       // Capitalize folder name for the display label; underscores/hyphens
       // become spaces so 'paint_drip' renders as 'Paint Drip'.
       const items = names.map(name => ({
@@ -39,6 +40,8 @@ function threejsBundlesPlugin(): Plugin {
         folder: name,
         name: name.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
         url: `${assetBase}threejs/${encodeURIComponent(name)}/index.html`,
+        // A thumb.jpg beside the page is shown in the JS tab at once.
+        thumbnail: existsSync(resolve(dir, name, 'thumb.jpg')) ? `${assetBase}threejs/${encodeURIComponent(name)}/thumb.jpg` : undefined,
       }));
       return `export default ${JSON.stringify(items, null, 2)};`;
     },

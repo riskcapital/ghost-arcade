@@ -24,7 +24,7 @@ const AUDIO_PUSH_MS = 33;
 const HOST_FPS = 60;
 const MAX_HOST_EDGE = 1920;
 
-type ParamValue = number | boolean | number[];
+type ParamValue = number | boolean | number[] | string;
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<any>;
 
 export interface JsCanvasSourceLike {

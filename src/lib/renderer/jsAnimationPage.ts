@@ -13,7 +13,8 @@ import type { JSAnimationSource } from '../types';
 import { extractJSParams } from '../api/ai-client';
 
 export type JsAnimationParam = NonNullable<JSAnimationSource['params']>[number];
-type ParamValue = number | boolean | number[];
+type ParamValue = number | boolean | number[] | string;
+const MAX_TEXT = 500;
 
 class LiteralParser {
   private i: number;
@@ -168,6 +169,13 @@ export function parseShaderParamDefs(html: string): JsAnimationParam[] {
       params.push({ name: def.name, type: 'boolean', default: def.default === true, label });
     } else if (def.type === 'color') {
       params.push({ name: def.name, type: 'color', default: isNumberArray(def.default) ? def.default : [1, 1, 1], label });
+    } else if (def.type === 'text') {
+      params.push({ name: def.name, type: 'text', default: typeof def.default === 'string' ? def.default.slice(0, MAX_TEXT) : '', label });
+    } else if (def.type === 'select') {
+      const options = Array.isArray(def.options) ? def.options.filter((o): o is string => typeof o === 'string').slice(0, 64) : [];
+      if (options.length === 0) continue;
+      const fallback = typeof def.default === 'string' && options.includes(def.default) ? def.default : options[0];
+      params.push({ name: def.name, type: 'select', default: fallback, options, label });
     }
   }
   return params;
@@ -179,6 +187,7 @@ export function parseShaderParamValues(html: string): Record<string, ParamValue>
   const values: Record<string, ParamValue> = {};
   for (const [key, value] of Object.entries(object)) {
     if (typeof value === 'number' || typeof value === 'boolean' || isNumberArray(value)) values[key] = value;
+    else if (typeof value === 'string') values[key] = value.slice(0, MAX_TEXT);
   }
   return values;
 }

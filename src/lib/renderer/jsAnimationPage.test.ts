@@ -71,3 +71,30 @@ describe('jsAnimationFromHtml', () => {
     expect(isP5Page('<script>new p5((s) => {});</script>')).toBe(true);
   });
 });
+
+describe('text and dropdown controls', () => {
+  const html = `<script src="p5.min.js"></script><script>
+    window.shaderParams = { words: 'HELLO WORLD', font: 'Serif', speed: 1.0 };
+    window.shaderParamDefs = [
+      { name: 'words', label: 'Words', type: 'text', default: 'GHOST' },
+      { name: 'font', label: 'Font', type: 'select', options: ['Sans', 'Serif'], default: 'Sans' },
+      { name: 'bad', label: 'Bad', type: 'select', options: [], default: 'x' },
+      { name: 'speed', label: 'Speed', type: 'number', min: 0, max: 3, default: 1 },
+    ];
+  </script>`;
+
+  it('reads a text box and a dropdown, with their starting values', () => {
+    const page = jsAnimationFromHtml(html);
+    const byName = Object.fromEntries((page.params ?? []).map((p) => [p.name, p]));
+    expect(byName.words).toMatchObject({ type: 'text', default: 'GHOST', label: 'Words' });
+    expect(byName.font).toMatchObject({ type: 'select', options: ['Sans', 'Serif'], default: 'Sans' });
+    expect(byName.bad).toBeUndefined();
+    expect(page.paramValues).toMatchObject({ words: 'HELLO WORLD', font: 'Serif', speed: 1 });
+  });
+
+  it('caps text length', () => {
+    const long = 'x'.repeat(2000);
+    const page = jsAnimationFromHtml(`<script>window.shaderParamDefs = [{ name: 't', type: 'text', default: '${long}' }];</script>`);
+    expect(String(page.params?.[0].default).length).toBe(500);
+  });
+});

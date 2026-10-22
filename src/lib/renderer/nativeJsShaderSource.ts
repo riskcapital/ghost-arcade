@@ -202,7 +202,11 @@ export function nativeShaderSourceFromJavascript(
   jsAnimation: JSAnimationSource | null | undefined,
 ): NativeJavascriptShaderSource | null {
   if (!jsAnimation?.htmlCode) return null;
-  const params = jsAnimation.params ?? [];
+  // Text boxes and dropdowns have no shader equivalent; only sliders,
+  // switches and colours become shader inputs.
+  const params = (jsAnimation.params ?? []).filter(
+    (param) => param.type === 'number' || param.type === 'boolean' || param.type === 'color',
+  );
   const paramsSignature = JSON.stringify(params);
   const cached = nativeJavascriptShaderCache.get(jsAnimation);
   let shaderCode = cached?.htmlCode === jsAnimation.htmlCode && cached.paramsSignature === paramsSignature
@@ -248,7 +252,8 @@ export function nativeShaderSourceFromJavascript(
   }
   const shaderValues: Record<string, number | boolean | number[]> = {};
   for (const param of params) {
-    shaderValues[param.name] = jsAnimation.paramValues?.[param.name] ?? param.default;
+    const value = jsAnimation.paramValues?.[param.name] ?? param.default;
+    if (typeof value !== 'string') shaderValues[param.name] = value;
   }
   return {
     shaderCode,
