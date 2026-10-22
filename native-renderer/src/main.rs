@@ -18742,9 +18742,25 @@ impl App {
         // compositor's BGRA order. Swap here: doing it in the Electron main
         // process would be a per-frame JS loop over megabytes, on the thread
         // that answers every editor IPC call.
-        if string_at(command, &["pixel_format"]).as_deref() == Some("bgra") {
+        // Offscreen pages also arrive premultiplied (Chromium paints that
+        // way); the compositor expects straight alpha, so a transparent
+        // page's soft edges and glows would come out too dark. Opaque
+        // pixels (alpha 255) are left as they are.
+        let bgra = string_at(command, &["pixel_format"]).as_deref() == Some("bgra");
+        let premultiplied = command.get("premultiplied").and_then(Value::as_bool).unwrap_or(false);
+        if bgra || premultiplied {
             for pixel in rgba.chunks_exact_mut(4) {
-                pixel.swap(0, 2);
+                if bgra {
+                    pixel.swap(0, 2);
+                }
+                if premultiplied {
+                    let alpha = pixel[3] as u32;
+                    if alpha > 0 && alpha < 255 {
+                        for channel in &mut pixel[..3] {
+                            *channel = ((*channel as u32 * 255 + alpha / 2) / alpha).min(255) as u8;
+                        }
+                    }
+                }
             }
         }
         // `placement: "rect"` writes the frame into its slot as sent, the way

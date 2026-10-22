@@ -35,6 +35,16 @@ export const THREE_IMPORT_MAP = {
 };
 
 /**
+ * A page asks for a see-through background with
+ * <meta name="ghost-arcade-background" content="transparent">. Its host
+ * window is then transparent and the alpha it draws reaches the layer, so a
+ * sketch can draw its marks over whatever is below it.
+ */
+export function wantsTransparentBackground(html) {
+  return /<meta\b[^>]*\bname\s*=\s*["']ghost-arcade-background["'][^>]*\bcontent\s*=\s*["']transparent["']/i.test(String(html ?? ''));
+}
+
+/**
  * The page as the host serves it: bundled three and p5 instead of CDN copies,
  * a pixel ratio of 1, a black unpadded body, and the host bridge. Shims go
  * first in <head> so they run before any of the page's own scripts.
@@ -48,8 +58,11 @@ export function buildHostHtml(html) {
   const page = wantsP5
     ? source.replace(/<script\b[^>]*\bsrc\s*=\s*["']https?:\/\/[^"']*\/p5(?:\.min)?\.js["'][^>]*>\s*<\/script>/gi, '')
     : source;
+  const transparent = wantsTransparentBackground(source);
   const shims = [
-    '<style>html,body{margin:0;padding:0;background:#000;overflow:hidden}</style>',
+    transparent
+      ? '<style>html,body{margin:0;padding:0;background:transparent!important;overflow:hidden}</style>'
+      : '<style>html,body{margin:0;padding:0;background:#000;overflow:hidden}</style>',
     '<script>(function(){try{Object.defineProperty(window,"devicePixelRatio",{value:1,configurable:true});}catch(e){}})();</script>',
     `<script type="importmap">${JSON.stringify(THREE_IMPORT_MAP)}</script>`,
     `<script>${HOST_BRIDGE_SCRIPT}</script>`,

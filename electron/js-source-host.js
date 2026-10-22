@@ -20,7 +20,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { buildHostHtml } from './js-source-page.js';
+import { buildHostHtml, wantsTransparentBackground } from './js-source-page.js';
 
 export const JS_SOURCE_SCHEME = 'ghost-js';
 const PARTITION = 'ghost-js-sources';
@@ -222,6 +222,9 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
             height,
             rgba_buffer: bitmap,
             pixel_format: 'bgra',
+            // Offscreen frames are premultiplied; only a see-through page
+            // has alpha below 255 for the core to straighten.
+            premultiplied: entry.transparent === true,
             placement: 'rect',
           },
         ],
@@ -286,13 +289,15 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     ensureProtocol();
 
     const token = `s${(++tokenSerial).toString(36)}`;
+    const transparent = wantsTransparentBackground(html);
     const win = new BrowserWindow({
       width,
       height,
       useContentSize: true,
       show: false,
       frame: false,
-      backgroundColor: '#000000',
+      transparent,
+      backgroundColor: transparent ? '#00000000' : '#000000',
       paintWhenInitiallyHidden: true,
       webPreferences: {
         offscreen: true,
@@ -313,6 +318,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       hash,
       html: buildHostHtml(html),
       window: win,
+      transparent,
       width,
       height,
       fps,

@@ -2,6 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <!-- Lets Ghost Arcade keep this page's alpha (see the Transparent switch). -->
+  <meta name="ghost-arcade-background" content="transparent">
   <title>Ink Flow · Ghost Arcade p5.js</title>
   <style>
     * { margin: 0; padding: 0; }
@@ -16,8 +18,10 @@
   <script>
     // Ink Flow: Thousands of ink agents follow a noise field and build calligraphy over time. Each kick throws a burst of ink; every 32 hits the field reseeds and the palette turns.
     // Drawn on black with glowing strokes: set the layer's blend mode to Add
-    // or Screen, and put glow, feedback or colour effects after it.
+    // or Screen, or turn on Transparent to draw over the layers below. Put
+    // glow, feedback or colour effects after it in the layer's chain.
     window.shaderParams = {
+      transparent: false,
       speed: 1.0, // min: 0 max: 3
       agents: 1600.0, // min: 200 max: 4000
       scale: 1.0, // min: 0.2 max: 3
@@ -28,6 +32,7 @@
     };
 
     window.shaderParamDefs = [
+      { name: 'transparent', label: 'Transparent', type: 'boolean', default: false },
       { name: 'speed', label: 'Speed', type: 'number', min: 0, max: 3, default: 1.0 },
       { name: 'agents', label: 'Agents', type: 'number', min: 200, max: 4000, default: 1600.0 },
       { name: 'scale', label: 'Field Scale', type: 'number', min: 0.2, max: 3, default: 1.0 },
@@ -44,6 +49,10 @@
     function P(name, fallback) {
       const v = (window.shaderParams || {})[name];
       return typeof v === 'number' && isFinite(v) ? v : fallback;
+    }
+    function S(name, fallback) {
+      const v = (window.shaderParams || {})[name];
+      return typeof v === 'string' ? v : fallback;
     }
     function A() { return window.ghostAudio || {}; }
 
@@ -72,6 +81,18 @@
         return ev;
       };
     })();
+
+    // Clear or fade the frame. With the Transparent switch on, the canvas
+    // fades to see-through instead of black, so the marks can sit over the
+    // layers below (Ghost Arcade keeps the alpha for this page).
+    function fadeTo(alpha) {
+      const ctx = drawingContext;
+      const clear = (window.shaderParams || {}).transparent === true;
+      ctx.globalCompositeOperation = clear ? 'destination-out' : 'source-over';
+      ctx.fillStyle = 'rgba(0,0,0,' + Math.min(1, Math.max(0, alpha)) + ')';
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalCompositeOperation = 'source-over';
+    }
 
     // Frame time in seconds, capped so a stall never makes things jump.
     function frameSeconds() { return Math.min(deltaTime || 16.7, 100) / 1000; }
@@ -126,9 +147,7 @@
       }
 
       const ctx = drawingContext;
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = 'rgba(0,0,0,' + P('fade', 0.04) + ')';
-      ctx.fillRect(0, 0, width, height);
+      fadeTo(P('fade', 0.025));
       ctx.globalCompositeOperation = 'lighter';
       ctx.lineCap = 'round';
       ctx.lineWidth = P('weight', 1.2);

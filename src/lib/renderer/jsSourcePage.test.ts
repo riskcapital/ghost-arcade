@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 // @ts-ignore plain JS module shared with the Electron main process
-import { buildHostHtml } from '../../../electron/js-source-page.js';
+import { buildHostHtml, wantsTransparentBackground } from '../../../electron/js-source-page.js';
 
 const threePage = `<!DOCTYPE html>
 <html>
@@ -60,5 +60,21 @@ describe('buildHostHtml', () => {
     const html = buildHostHtml(threePage);
     expect(html).toContain('"devicePixelRatio",{value:1');
     expect(html).toContain('html,body{margin:0;padding:0;background:#000;overflow:hidden}');
+  });
+});
+
+describe('see-through pages', () => {
+  const transparentPage = '<html><head><meta name="ghost-arcade-background" content="transparent"><style>body{background:#000}</style></head><body><script src="p5.min.js"></script></body></html>';
+
+  it('only pages that ask for it get a transparent background', () => {
+    expect(wantsTransparentBackground(transparentPage)).toBe(true);
+    expect(wantsTransparentBackground('<html><head></head><body></body></html>')).toBe(false);
+    expect(wantsTransparentBackground('<meta name="ghost-arcade-background" content="black">')).toBe(false);
+  });
+
+  it('overrides the page background so the canvas alpha shows through', () => {
+    const html = buildHostHtml(transparentPage);
+    expect(html).toContain('background:transparent!important');
+    expect(buildHostHtml('<html><head></head><body></body></html>')).toContain('background:#000');
   });
 });

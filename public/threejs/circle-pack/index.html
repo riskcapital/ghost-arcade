@@ -2,6 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <!-- Lets Ghost Arcade keep this page's alpha (see the Transparent switch). -->
+  <meta name="ghost-arcade-background" content="transparent">
   <title>Circle Pack · Ghost Arcade p5.js</title>
   <style>
     * { margin: 0; padding: 0; }
@@ -16,8 +18,10 @@
   <script>
     // Circle Pack: Circles grow until they touch, packing the frame over the course of a song. When it is full, or when the music drops, the pack dissolves and starts again.
     // Drawn on black with glowing strokes: set the layer's blend mode to Add
-    // or Screen, and put glow, feedback or colour effects after it.
+    // or Screen, or turn on Transparent to draw over the layers below. Put
+    // glow, feedback or colour effects after it in the layer's chain.
     window.shaderParams = {
+      transparent: false,
       speed: 1.0, // min: 0 max: 3
       spawn: 3.0, // min: 1 max: 40
       gap: 2.0, // min: 0 max: 12
@@ -27,6 +31,7 @@
     };
 
     window.shaderParamDefs = [
+      { name: 'transparent', label: 'Transparent', type: 'boolean', default: false },
       { name: 'speed', label: 'Growth Speed', type: 'number', min: 0, max: 3, default: 1.0 },
       { name: 'spawn', label: 'Spawn Rate', type: 'number', min: 1, max: 40, default: 3.0 },
       { name: 'gap', label: 'Gap', type: 'number', min: 0, max: 12, default: 2.0 },
@@ -42,6 +47,10 @@
     function P(name, fallback) {
       const v = (window.shaderParams || {})[name];
       return typeof v === 'number' && isFinite(v) ? v : fallback;
+    }
+    function S(name, fallback) {
+      const v = (window.shaderParams || {})[name];
+      return typeof v === 'string' ? v : fallback;
     }
     function A() { return window.ghostAudio || {}; }
 
@@ -70,6 +79,18 @@
         return ev;
       };
     })();
+
+    // Clear or fade the frame. With the Transparent switch on, the canvas
+    // fades to see-through instead of black, so the marks can sit over the
+    // layers below (Ghost Arcade keeps the alpha for this page).
+    function fadeTo(alpha) {
+      const ctx = drawingContext;
+      const clear = (window.shaderParams || {}).transparent === true;
+      ctx.globalCompositeOperation = clear ? 'destination-out' : 'source-over';
+      ctx.fillStyle = 'rgba(0,0,0,' + Math.min(1, Math.max(0, alpha)) + ')';
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalCompositeOperation = 'source-over';
+    }
 
     // Frame time in seconds, capped so a stall never makes things jump.
     function frameSeconds() { return Math.min(deltaTime || 16.7, 100) / 1000; }
@@ -156,9 +177,7 @@
       if (ev.hit && circles.length) { for (let k = 0; k < 6; k++) { const c = circles[Math.floor(random(circles.length))]; c.flash = 1; } }
 
       const ctx = drawingContext;
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, width, height);
+      fadeTo(1);
       const shrink = 1 - dissolve;
       const base = P('hue', 0.75);
       const BUCKETS = 6;
