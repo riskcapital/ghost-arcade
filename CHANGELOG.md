@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.6 — October 21, 2026
+
+Fourteen p5.js sketches ship in the JS tab, six of them running as native shaders; JS pages get text boxes, menus and colour pickers, and a Transparent switch; AI-generated p5.js plays to p5's strengths; JS tiles show their thumbnails; a clear message when macOS blocks system audio. See [release notes](docs/releases/v2.1.6.md).
+
 # Ghost Arcade Pro 2.1.5 — October 21, 2026
 
 Captured windows and screens arrive at full resolution: Retina pixel scale on macOS, live resizing, and up to 4096 px where the browser capture is used. See [release notes](docs/releases/v2.1.5.md).
