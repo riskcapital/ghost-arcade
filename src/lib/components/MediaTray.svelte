@@ -3897,7 +3897,22 @@
   }
 
   // Update JS animation parameter
-  function updateJSAnimationParam(paramName: string, value: number | boolean | string) {
+  // Colour controls hold [r, g, b] in 0..1; the picker speaks #rrggbb.
+  function jsColorHex(value: unknown): string {
+    if (!Array.isArray(value) || value.length < 3) return '#ffffff';
+    return '#' + value.slice(0, 3).map((channel) => {
+      const numeric = Number(channel);
+      const byte = numeric <= 1 ? numeric * 255 : numeric;
+      return Math.max(0, Math.min(255, Math.round(byte || 0))).toString(16).padStart(2, '0');
+    }).join('');
+  }
+
+  function jsColorValue(hex: string): number[] {
+    const normalized = hex.replace('#', '').padEnd(6, '0').slice(0, 6);
+    return [0, 2, 4].map((offset) => parseInt(normalized.slice(offset, offset + 2), 16) / 255);
+  }
+
+  function updateJSAnimationParam(paramName: string, value: number | boolean | string | number[]) {
     if (!selectedJSAnimation || !$selectedLayerId) return;
 
     // Update local state
@@ -4351,6 +4366,15 @@
                 type="checkbox"
                 checked={(selectedJSAnimation.jsAnimation.paramValues?.[param.name] ?? param.default) as boolean}
                 onchange={(e) => updateJSAnimationParam(param.name, (e.target as HTMLInputElement).checked)}
+              />
+            </div>
+          {:else if param.type === 'color'}
+            <div class="param-row">
+              <label>{param.label || param.name}</label>
+              <input
+                type="color"
+                value={jsColorHex(selectedJSAnimation.jsAnimation.paramValues?.[param.name] ?? param.default)}
+                oninput={(e) => updateJSAnimationParam(param.name, jsColorValue((e.target as HTMLInputElement).value))}
               />
             </div>
           {:else if param.type === 'text'}
