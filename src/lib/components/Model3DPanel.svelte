@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { project, selectedLayer } from '../stores/layers';
   import { showLoading, hideLoading } from '../stores/loading';
+  import { MODEL3D_DEFORMATIONS, MODEL3D_DEFORM_ORDER, effectiveModel3DDeformAxis, model3dDeformInfo } from '../model3d/model3dDeforms';
   import type {
     Model3DMaterialType,
     Model3DWireframeMode,
@@ -58,30 +59,6 @@
     { value: 'diamonds', label: 'Diamonds' },
   ];
 
-  // Deformation types
-  const deformationTypes: { value: Model3DDeformationType; label: string; description: string }[] = [
-    { value: 'none', label: 'None', description: 'No deformation' },
-    { value: 'noise', label: 'Noise', description: 'Perlin noise displacement' },
-    { value: 'wave', label: 'Wave', description: 'Sinusoidal ripple' },
-    { value: 'pulse', label: 'Pulse', description: 'Concentric ripple from center' },
-    { value: 'bulge', label: 'Bulge', description: 'Traveling outward wave' },
-    { value: 'twist', label: 'Twist', description: 'Rotate along Y axis' },
-    { value: 'swirl', label: 'Swirl', description: 'Helical vortex twist' },
-    { value: 'bend', label: 'Bend', description: 'Arc around X axis' },
-    { value: 'taper', label: 'Taper', description: 'Pinch ends toward axis' },
-    { value: 'spherify', label: 'Spherify', description: 'Pull to sphere (radius = spread)' },
-    { value: 'inflate', label: 'Inflate', description: 'Push along normals (pulsing)' },
-    { value: 'breathe', label: 'Breathe', description: 'Soft pulsating scale' },
-    { value: 'explode', label: 'Explode', description: 'Steady outward push — pair with rotate animation' },
-    { value: 'implode', label: 'Implode', description: 'Steady inward pull' },
-    { value: 'shatter', label: 'Shatter', description: 'Fragments scatter outward (steady)' },
-    { value: 'fracture', label: 'Fracture', description: 'Chunks drift apart along random axes' },
-    { value: 'melt', label: 'Melt', description: 'Drip downward' },
-    { value: 'pixelate', label: 'Voxelize', description: 'Snap to voxel grid' },
-    { value: 'jelly', label: 'Jelly', description: 'Bouncy soft body' },
-    { value: 'tentacle', label: 'Tentacle', description: 'Tendril-like waves' },
-    { value: 'magnetic', label: 'Magnetic', description: 'Pull toward poles' },
-  ];
 
   // Animation types
   const animationTypes: { value: Model3DAnimationType; label: string; description: string }[] = [
@@ -154,6 +131,8 @@
   // Dual-mode: use provided content prop or fall back to selected layer
   $: layer = $selectedLayer;
   $: mc = (content || layer?.model3dContent) as Model3DContent;
+  // Only the controls the chosen deformation reads are shown.
+  $: deformInfo = model3dDeformInfo(mc?.deformationType);
   $: isVJMode = !!onUpdate;
 
   // Track blob URLs + the original File so we can re-create a blob without
@@ -844,11 +823,11 @@
               data-midi-path="map:model3d:deformationType"
               data-midi-label="Deformation Type"
               data-midi-min="0"
-              data-midi-max="14"
+              data-midi-max={MODEL3D_DEFORM_ORDER.length - 1}
               data-midi-step="1"
-              data-midi-discrete="none,noise,wave,twist,bend,taper,spherify,inflate,explode,implode,shatter,melt,pixelate,jelly,breathe"
+              data-midi-discrete={MODEL3D_DEFORM_ORDER.join(',')}
             >
-              {#each deformationTypes as def}
+              {#each MODEL3D_DEFORMATIONS as def}
                 <option value={def.value} title={def.description}>{def.label}</option>
               {/each}
             </select>
@@ -870,6 +849,7 @@
               <span class="value">{mc.deformationIntensity.toFixed(2)}</span>
             </div>
 
+            {#if deformInfo.speed}
             <div class="property-row">
               <label>Speed</label>
               <input
@@ -884,9 +864,11 @@
               />
               <span class="value">{mc.deformationSpeed.toFixed(1)}</span>
             </div>
+            {/if}
 
+            {#if deformInfo.scale}
             <div class="property-row">
-              <label>Scale</label>
+              <label>{deformInfo.scaleLabel ?? 'Scale'}</label>
               <input
                 type="range" min="0.1" max="10" step="0.1"
                 value={mc.deformationScale}
@@ -899,9 +881,11 @@
               />
               <span class="value">{mc.deformationScale.toFixed(1)}</span>
             </div>
+            {/if}
 
+            {#if deformInfo.spread}
             <div class="property-row">
-              <label>Spread</label>
+              <label>{deformInfo.spreadLabel ?? 'Spread'}</label>
               <input
                 type="range" min="0" max="6" step="0.05"
                 value={mc.deformationSpread ?? 1}
@@ -914,11 +898,12 @@
               />
               <span class="value">{(mc.deformationSpread ?? 1).toFixed(2)}</span>
             </div>
+            {/if}
 
             <div class="property-row">
               <label>Axis</label>
               <select
-                value={mc.deformationAxis}
+                value={effectiveModel3DDeformAxis(mc.deformationType, mc.deformationAxis)}
                 onchange={(e) => updateContent({ deformationAxis: (e.target as HTMLSelectElement).value as any })}
                 data-midi-path="map:model3d:deformationAxis"
                 data-midi-label="Deformation Axis"
@@ -928,9 +913,9 @@
                 data-midi-discrete="all,x,y,z"
               >
                 <option value="all">All</option>
-                <option value="x">X Only</option>
-                <option value="y">Y Only</option>
-                <option value="z">Z Only</option>
+                {#if deformInfo.axes.includes('x')}<option value="x">X Only</option>{/if}
+                {#if deformInfo.axes.includes('y')}<option value="y">Y Only</option>{/if}
+                {#if deformInfo.axes.includes('z')}<option value="z">Z Only</option>{/if}
               </select>
             </div>
           {/if}
