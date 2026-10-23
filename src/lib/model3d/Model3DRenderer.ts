@@ -6,6 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { model3dDeformAxisIndex } from './model3dDeforms';
 import type {
   Model3DContent,
   Model3DMaterialType,
@@ -142,6 +143,8 @@ const morphingVertexShader = `
   // Spread = how far displacement-style morphs push pieces from their rest position.
   // 1.0 keeps legacy behavior; >1 pushes farther (explode/shatter/etc.).
   uniform float morphSpread;
+  // Restrict the displacement to one axis: 0 all, 1 x, 2 y, 3 z.
+  uniform int morphAxis;
 
   // Simplex noise for organic deformation
   vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -310,7 +313,7 @@ const morphingVertexShader = `
     else if (morphType == 10) {
       float height = (pos.y - center.y + 1.0) * 0.5;
       float melt = pow(height, 2.0) * intensity * morphSpread;
-      float noise = snoise(pos * morphScale + t * 0.2);
+      float noise = snoise(pos * morphScale + t * 0.6);
       offset.y = -melt * 0.5;
       offset.x = noise * melt * 0.3;
       offset.z = noise * melt * 0.3;
@@ -419,6 +422,17 @@ const morphingVertexShader = `
       offset = chunkDir * separation;
       localIntensity = intensity;
     }
+
+    // 20: Breathe - the whole model swells and shrinks softly
+    else if (morphType == 20) {
+      float breath = sin(t * 2.0);
+      offset = (pos - center) * breath * intensity * 0.2 * morphSpread;
+      localIntensity = abs(breath) * intensity;
+    }
+
+    if (morphAxis == 1) offset = vec3(offset.x, 0.0, 0.0);
+    else if (morphAxis == 2) offset = vec3(0.0, offset.y, 0.0);
+    else if (morphAxis == 3) offset = vec3(0.0, 0.0, offset.z);
 
     vMorphIntensity = localIntensity;
     return (pos + offset) / assetToCanonical;
@@ -681,6 +695,7 @@ type SourceMorphUniforms = {
   audioLevel: THREE.IUniform<number>;
   audioMorphResponse: THREE.IUniform<number>;
   morphSpread: THREE.IUniform<number>;
+  morphAxis: THREE.IUniform<number>;
 };
 
 export function getModel3DMorphTypeIndex(type: Model3DDeformationType): number {
@@ -691,7 +706,7 @@ export function getModel3DMorphTypeIndex(type: Model3DDeformationType): number {
     'wave': 3,
     'twist': 4,
     'inflate': 5,
-    'breathe': 5,
+    'breathe': 20,
     'bulge': 6,
     'jelly': 7,
     'explode': 8,
@@ -1575,6 +1590,7 @@ export class Model3DRenderer {
       morphSpeed: { value: content.deformationSpeed },
       morphScale: { value: content.deformationScale },
       morphSpread: { value: content.deformationSpread ?? 1 },
+      morphAxis: { value: model3dDeformAxisIndex(content.deformationType, content.deformationAxis) },
       morphPhase: { value: 0.0 },
       morphCenter: { value: new THREE.Vector3(0, 0, 0) },
       morphReferenceSize: { value: getModel3DMorphReferenceSize(this.modelSize) },
@@ -1969,6 +1985,7 @@ export class Model3DRenderer {
       audioLevel: { value: 0 },
       audioMorphResponse: { value: 0 },
       morphSpread: { value: 1 },
+      morphAxis: { value: 0 },
     };
     const previousOnBeforeCompile = material.onBeforeCompile.bind(material);
     const previousProgramCacheKey = material.customProgramCacheKey.bind(material);
@@ -1979,7 +1996,7 @@ export class Model3DRenderer {
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = injectModel3DSourceMorphVertexShader(shader.vertexShader);
     };
-    material.customProgramCacheKey = () => `${previousProgramCacheKey()}|ghost-arcade-source-morph-v3`;
+    material.customProgramCacheKey = () => `${previousProgramCacheKey()}|ghost-arcade-source-morph-v4`;
     material.needsUpdate = true;
     return uniforms;
   }
@@ -2001,6 +2018,7 @@ export class Model3DRenderer {
     uniforms.morphSpeed.value = content.deformationSpeed;
     uniforms.morphScale.value = content.deformationScale;
     uniforms.morphSpread.value = content.deformationSpread ?? 1;
+    uniforms.morphAxis.value = model3dDeformAxisIndex(content.deformationType, content.deformationAxis);
     uniforms.morphReferenceSize.value = getModel3DMorphReferenceSize(this.modelSize);
     uniforms.audioLevel.value = audioLevel;
     uniforms.audioMorphResponse.value = content.audio.deformResponse;
@@ -2118,6 +2136,9 @@ export class Model3DRenderer {
         if (uniforms.morphSpeed) uniforms.morphSpeed.value = content.deformationSpeed;
         if (uniforms.morphScale) uniforms.morphScale.value = content.deformationScale;
         if (uniforms.morphSpread) uniforms.morphSpread.value = content.deformationSpread ?? 1;
+        if (uniforms.morphAxis) {
+          uniforms.morphAxis.value = model3dDeformAxisIndex(content.deformationType, content.deformationAxis);
+        }
         if (uniforms.morphReferenceSize) {
           uniforms.morphReferenceSize.value = getModel3DMorphReferenceSize(this.modelSize);
         }
@@ -2283,6 +2304,7 @@ export class Model3DRenderer {
             morphSpeed: { value: content.deformationSpeed },
             morphScale: { value: content.deformationScale },
             morphSpread: { value: content.deformationSpread ?? 1 },
+            morphAxis: { value: model3dDeformAxisIndex(content.deformationType, content.deformationAxis) },
             morphPhase: { value: 0 },
             morphCenter: { value: new THREE.Vector3() },
             morphReferenceSize: { value: getModel3DMorphReferenceSize(this.modelSize) },
@@ -2436,6 +2458,7 @@ export class Model3DRenderer {
             morphSpeed: { value: content.deformationSpeed },
             morphScale: { value: content.deformationScale },
             morphSpread: { value: content.deformationSpread ?? 1 },
+            morphAxis: { value: model3dDeformAxisIndex(content.deformationType, content.deformationAxis) },
             morphPhase: { value: 0 },
             morphCenter: { value: new THREE.Vector3() },
             morphReferenceSize: { value: getModel3DMorphReferenceSize(this.modelSize) },

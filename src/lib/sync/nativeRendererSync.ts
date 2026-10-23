@@ -7440,6 +7440,7 @@ export class NativeRendererSync {
               audioHigh: audio.high,
               audioBeat: audio.beat,
               audioBeatPhase: audio.beatPhase,
+              meshDiagonal: state.mesh?.diagonal,
             });
             if (state.mesh) state.meshUploadedSig = fileSig;
             return graph;

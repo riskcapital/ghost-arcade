@@ -6,22 +6,18 @@
 // the release renderer's lighting model, materials, and deformations.
 import type { Model3DContent } from '$lib/types';
 import { getModel3DLightingProfile } from '$lib/model3d/Model3DRenderer';
+import { MODEL3D_DEFORM_ORDER, model3dDeformAxisIndex } from '$lib/model3d/model3dDeforms';
 
 export const MODEL3D_NATIVE_SHADER_ID = 'model3d/render-v1';
 export const MODEL3D_MAX_VERTICES = 3_500_000; // unique vertices
 export const MODEL3D_MAX_INDICES = 9_000_000; // 3M triangles
 export const MODEL3D_VERTEX_VEC4S = 2;
-export const MODEL3D_UNIFORM_VEC4S = 26;
+export const MODEL3D_UNIFORM_VEC4S = 27;
 export const MODEL3D_UNIFORM_BYTES = MODEL3D_UNIFORM_VEC4S * 16;
 
 const MATERIALS = [
   'source', 'standard', 'wireframe', 'glass', 'chrome', 'hologram', 'lava', 'ice',
   'neon', 'xray', 'toon', 'matcap', 'fresnel', 'dissolve', 'glitch', 'normal', 'depth',
-];
-const DEFORMS = [
-  'none', 'noise', 'wave', 'twist', 'bend', 'taper', 'spherify', 'inflate',
-  'explode', 'implode', 'shatter', 'melt', 'pixelate', 'jelly', 'breathe',
-  'pulse', 'bulge', 'tentacle', 'magnetic', 'swirl', 'fracture',
 ];
 
 function finite(v: unknown, fb = 0): number {
@@ -46,7 +42,12 @@ export interface Model3DNativeMesh {
   sourceVertexCount: number;
   faceCount: number;
   texture: { rgba: Uint8ClampedArray; width: number; height: number } | null;
+  /** Bounding diagonal after normalization (the longest side is 4 units). */
+  diagonal: number;
 }
+
+/** A cube's diagonal at the normalized size: the fallback before a mesh loads. */
+export const MODEL3D_DEFAULT_DIAGONAL = 4 * Math.sqrt(3);
 
 function toHalf(value: number): number {
   const f32 = new Float32Array(1);
@@ -276,6 +277,7 @@ export async function loadModel3DNativeMesh(
     sourceVertexCount: uniqueTotal,
     faceCount: Math.round(triTotal),
     texture,
+    diagonal: Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * norm,
   };
 }
 
@@ -430,6 +432,8 @@ export interface Model3DNativeGraphOptions {
   audioBeat?: number;
   audioBeatPhase?: number;
   includeSnapshot?: boolean;
+  /** The mesh's bounding diagonal in its normalized units (see loadModel3DNativeMesh). */
+  meshDiagonal?: number;
 }
 
 export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOptions) {
@@ -535,16 +539,16 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
   data[43] = clamp(finite(c.ambientIntensity, 0.4) * profile.ambientScale, 0, 3);
   data[44] = rimColor[0]; data[45] = rimColor[1]; data[46] = rimColor[2];
   data[47] = clamp(finite(c.rimIntensity, 0) * profile.rimScale, 0, 5);
-  data[48] = idx(DEFORMS, c.deformationType);
+  data[48] = idx(MODEL3D_DEFORM_ORDER, c.deformationType);
   // Release morph shader: intensity = morphIntensity + level*deformResponse
   // (+ beatExplode * beat * 0.5 boost in updateShaderUniforms).
   data[49] = clamp(
     finite(c.deformationIntensity, 0.5)
       + audioLevel * clamp(finite(au.deformResponse, 0), 0, 4)
       + clamp(finite(c.beatExplode, 0), 0, 4) * beat * 0.5,
-    0, 4) * clamp(finite(c.deformationSpread, 1), 0.2, 6);
-  data[50] = Math.max(0.05, finite(c.deformationSpeed, 1));
-  data[51] = Math.max(0.1, finite(c.deformationScale, 1));
+    0, 4);
+  data[50] = Math.max(0, finite(c.deformationSpeed, 1));
+  data[51] = Math.max(0.1, finite(c.deformationScale, 2));
   data[52] = options.hasTexture && c.materialType === 'source' ? 1 : 0;
   data[53] = clamp(finite(c.toonLevels, 4), 2, 12);
   data[54] = clamp(finite(c.dissolveAmount, 0), 0, 1);
@@ -600,7 +604,7 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
     ? Math.max(0, finite(c.environmentIntensity, 1))
       * finite((profile as { environmentScale?: number }).environmentScale, 0.25)
     : 0;
-  data[94] = idx(['all', 'x', 'y', 'z'], c.deformationAxis);
+  data[94] = model3dDeformAxisIndex(c.deformationType, c.deformationAxis);
   data[95] = (c.shadowsEnabled ?? true)
     ? clamp(finite((profile as { selfShadowStrength?: number }).selfShadowStrength, 0.6), 0, 1)
     : 0;
@@ -615,6 +619,10 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
   data[100] = decorCol[0]; data[101] = decorCol[1]; data[102] = decorCol[2];
   const decorStride = Math.max(1, Math.ceil(Math.max(1, options.vertexCount) / 60000));
   data[103] = decorStride;
+  // deform1: spread, and the scale into the WebGL renderer's deformation
+  // space (bounding diagonal = 2 units).
+  data[104] = clamp(finite(c.deformationSpread, 1), 0, 6);
+  data[105] = 2 / Math.max(1e-3, finite(options.meshDiagonal, MODEL3D_DEFAULT_DIAGONAL));
 
   const bg = c.backgroundMode === 'color' ? col255(c.backgroundColor, [0, 0, 0]) : [0, 0, 0];
   const bgA = c.backgroundMode === 'color' ? clamp(finite(c.backgroundOpacity, 1), 0, 1) : 0;
@@ -745,6 +753,7 @@ struct ModelParams {
   fx3: vec4<f32>,      // audioColorPump, envIntensity, deformAxis, shadowStrength
   fx4: vec4<f32>,      // shadowSoftness, shadowBias, decorMode, decorSize
   decor0: vec4<f32>,   // decorColor.rgb, decorStride
+  deform1: vec4<f32>,  // spread, native-to-canonical scale, 0, 0
 }
 @group(0) @binding(0) var<uniform> mp: ModelParams;
 @group(0) @binding(1) var<storage, read> verts: array<vec4<f32>>;
@@ -768,6 +777,123 @@ fn m_hsv2rgb(c: vec3<f32>) -> vec3<f32> {
   return c.z * mix(vec3<f32>(1.0), clamp(p - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
 }
 
+fn m_fbm3(p0: vec3<f32>) -> f32 {
+  var p = p0;
+  var f = 0.5 * m_noise3(p); p = p * 2.01;
+  f = f + 0.25 * m_noise3(p); p = p * 2.02;
+  f = f + 0.125 * m_noise3(p); p = p * 2.03;
+  f = f + 0.0625 * m_noise3(p);
+  return f / 0.9375;
+}
+fn m_safe_norm(v: vec3<f32>) -> vec3<f32> {
+  let l = length(v);
+  return select(vec3<f32>(0.0), v / max(l, 1e-6), l > 1e-6);
+}
+
+// Deformations: the WebGL renderer's applyMorph, in its canonical space (the
+// model's bounding diagonal = 2 units, centred), so each type reads the same
+// controls and looks the same in both renderers. Indices follow
+// MODEL3D_DEFORM_ORDER in model3dDeforms.ts.
+fn m_deform(p: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
+  let dt = i32(mp.deform.x + 0.5);
+  let di = mp.deform.y;          // intensity, with audio and beat
+  let spd = mp.deform.z;
+  let tt = mp.screen.z * spd;    // time * speed
+  let dsc = mp.deform.w;         // scale
+  let dspr = mp.deform1.x;       // spread
+  let to_c = max(mp.deform1.y, 1e-6);
+  if (dt <= 0 || di < 0.001) { return p; }
+  let cp = p * to_c;
+  var off = vec3<f32>(0.0);
+  if (dt == 1) { // noise
+    let n1 = m_fbm3(cp * dsc + vec3<f32>(tt * 0.5));
+    let n2 = m_fbm3(cp * dsc * 1.5 - vec3<f32>(tt * 0.3));
+    off = nrm * (n1 * 0.7 + n2 * 0.3) * di * dspr;
+  } else if (dt == 2) { // wave
+    let w = (sin(cp.x * dsc * 2.0 + tt * 2.0) + sin(cp.z * dsc * 2.0 + tt * 1.7) + sin((cp.x + cp.z) * dsc + tt * 2.3)) / 3.0;
+    off = nrm * w * di * 0.5 * dspr;
+  } else if (dt == 3) { // twist
+    let a = sin(cp.y * dsc + tt) * di * 0.5 * dspr;
+    let ca = cos(a); let sa = sin(a);
+    off = vec3<f32>(cp.x * ca - cp.z * sa, cp.y, cp.x * sa + cp.z * ca) - cp;
+  } else if (dt == 4) { // bend
+    let a = cp.y * di * dspr;
+    let ca = cos(a); let sa = sin(a);
+    off = vec3<f32>(cp.x, cp.y * ca - cp.z * sa, cp.y * sa + cp.z * ca) - cp;
+  } else if (dt == 5) { // taper
+    off = -vec3<f32>(cp.x, 0.0, cp.z) * abs(cp.y) * di * dspr;
+  } else if (dt == 6) { // spherify (spread = radius)
+    off = (m_safe_norm(cp) * dspr - cp) * di;
+  } else if (dt == 7) { // inflate
+    let b = pow(sin(tt * 2.0) * 0.5 + 0.5, 0.7);
+    let v = 1.0 + m_noise3(cp * dsc * 2.0 + vec3<f32>(tt * 0.5)) * 0.2;
+    off = nrm * b * di * v * dspr;
+  } else if (dt == 8) { // explode
+    let n = m_noise3(cp * 10.0) * 0.3 + 0.7;
+    off = m_safe_norm(cp) * di * n * dspr;
+  } else if (dt == 9) { // implode
+    let n = m_noise3(cp * 10.0) * 0.3 + 0.7;
+    off = -cp * clamp(di * dspr, 0.0, 1.5) * n * 0.5;
+  } else if (dt == 10) { // shatter
+    let q = max(dsc * 0.8, 1e-3);
+    let chunk = floor(cp * q) / q;
+    let n1 = m_noise3(chunk * 5.0);
+    let n2 = m_noise3(chunk * 5.0 + vec3<f32>(100.0));
+    let n3 = m_noise3(chunk * 5.0 + vec3<f32>(200.0));
+    let sc = m_safe_norm(vec3<f32>(n1, n2, n3) + m_safe_norm(cp + vec3<f32>(0.001)) * 0.5);
+    off = sc * di * dspr * (0.6 + abs(n1) * 0.4);
+  } else if (dt == 11) { // melt
+    let h = clamp((cp.y + 1.0) * 0.5, 0.0, 1.0);
+    let m = h * h * di * dspr;
+    let n = m_noise3(cp * dsc + vec3<f32>(tt * 0.6));
+    off = vec3<f32>(n * m * 0.3, -m * 0.5, n * m * 0.3);
+  } else if (dt == 12) { // voxelize
+    let vs = max(0.04, 0.5 / max(dsc, 0.1));
+    off = (floor(cp / vs + 0.5) * vs - cp) * di * dspr;
+  } else if (dt == 13) { // jelly
+    let w1 = sin(cp.y * 3.0 + tt * 4.0) * sin(cp.x * 2.0 + tt * 3.0);
+    let w2 = sin(cp.z * 2.5 + tt * 3.5) * cos(cp.y * 2.0 + tt * 2.5);
+    let j = sin((w1 + w2) * 0.5 * 3.14159 + length(cp) * 0.5);
+    off = nrm * j * di * 0.4 * dspr;
+  } else if (dt == 14) { // breathe
+    off = cp * sin(tt * 2.0) * di * 0.2 * dspr;
+  } else if (dt == 15) { // pulse
+    var pl = sin(length(cp) * dsc * 3.0 - tt * 4.0) * 0.5 + 0.5;
+    pl = pl * pl;
+    off = m_safe_norm(cp) * pl * di * 0.5 * dspr;
+  } else if (dt == 16) { // bulge
+    var w = max(0.0, sin(cp.y * dsc * 2.0 - tt * 3.0));
+    w = w * w;
+    off = nrm * w * di * dspr;
+  } else if (dt == 17) { // tentacle
+    let k = cp.y * dsc * 4.0 - tt * 3.0;
+    let a = di * 0.3 * (cp.y + 1.0) * dspr;
+    off = vec3<f32>(sin(k + cp.x * 2.0) * a, 0.0, sin(k + cp.z * 2.0 + 1.0) * a);
+  } else if (dt == 18) { // magnetic
+    let pull = (sin(tt) * 0.5 + 0.5) * di * dspr;
+    off = vec3<f32>(-cp.x * pull * 0.2, sign(cp.y) * pull * 0.5, -cp.z * pull * 0.2);
+  } else if (dt == 19) { // swirl
+    let r = length(cp.xz);
+    let ang = atan2(cp.z, cp.x) + (cp.y * dsc + tt * spd * 0.5) * di;
+    let pr = r * (1.0 + di * dspr * 0.3);
+    off = vec3<f32>(cos(ang) * pr, cp.y, sin(ang) * pr) - cp;
+  } else if (dt == 20) { // fracture
+    let id = floor(cp * dsc * 0.5);
+    let seed = m_noise3(id * 7.0);
+    let dir = m_safe_norm(vec3<f32>(
+      m_noise3(id * 3.1 + vec3<f32>(11.0)),
+      m_noise3(id * 3.1 + vec3<f32>(22.0)),
+      m_noise3(id * 3.1 + vec3<f32>(33.0))) + cp * 0.4);
+    off = dir * (0.6 + abs(seed) * 0.6) * di * dspr;
+  }
+  // Axis restriction: keep only the chosen component of the displacement.
+  let dax = i32(mp.fx3.z + 0.5);
+  if (dax == 1) { off = vec3<f32>(off.x, 0.0, 0.0); }
+  else if (dax == 2) { off = vec3<f32>(0.0, off.y, 0.0); }
+  else if (dax == 3) { off = vec3<f32>(0.0, 0.0, off.z); }
+  return (cp + off) / to_c;
+}
+
 struct VsOut {
   @builtin(position) position: vec4<f32>,
   @location(0) normal: vec3<f32>,
@@ -788,70 +914,11 @@ struct VsOut {
   var nrm = p1.xyz;
   let tri = f32(vi / 3u);
 
-  let opos = pos;
   var bary = vec3<f32>(0.0);
   bary[vi % 3u] = 1.0;
 
-  // Deformation (object space, before transform)
-  let dt = i32(mp.deform.x + 0.5);
-  let di = mp.deform.y;
-  let dsp = t * mp.deform.z;
-  let dsc = mp.deform.w;
-  if (dt == 1) {
-    pos = pos + nrm * m_noise3(pos * dsc * 2.0 + dsp) * di * 0.3;
-  } else if (dt == 2) {
-    pos.y = pos.y + sin(pos.x * dsc * 2.0 + dsp * 2.0) * di * 0.3;
-  } else if (dt == 3) {
-    let a = pos.y * di * dsc * 0.8 + dsp * 0.3;
-    let ca = cos(a); let sa = sin(a);
-    pos = vec3<f32>(pos.x * ca - pos.z * sa, pos.y, pos.x * sa + pos.z * ca);
-  } else if (dt == 4) {
-    let a = pos.y * di * 0.4;
-    pos.x = pos.x + sin(a) * 1.5;
-  } else if (dt == 5) {
-    let s = mix(1.0, 0.2, clamp((pos.y + 2.0) / 4.0, 0.0, 1.0) * di);
-    pos = vec3<f32>(pos.x * s, pos.y, pos.z * s);
-  } else if (dt == 6) {
-    let r = normalize(pos + vec3<f32>(1e-5)) * 1.6;
-    pos = mix(pos, r, di * (0.5 + 0.5 * sin(dsp)));
-  } else if (dt == 7) {
-    pos = pos + nrm * di * 0.3 * (0.5 + 0.5 * sin(dsp));
-  } else if (dt == 8 || dt == 10 || dt == 20) {
-    let dir = normalize(pos + vec3<f32>(1e-5));
-    let h = m_hash3(vec3<f32>(tri * 0.13, tri * 0.71, tri * 0.37));
-    pos = pos + dir * di * (0.4 + h * 0.8);
-  } else if (dt == 9) {
-    pos = mix(pos, vec3<f32>(0.0), di * 0.7);
-  } else if (dt == 11) {
-    let melt = clamp((2.0 - pos.y) / 4.0, 0.0, 1.0) * di;
-    pos.y = pos.y - melt * (0.5 + 0.5 * sin(dsp * 0.5));
-    pos.x = pos.x * (1.0 + melt * 0.3);
-    pos.z = pos.z * (1.0 + melt * 0.3);
-  } else if (dt == 12) {
-    let g = max(0.15, 0.8 / dsc);
-    pos = floor(pos / g + 0.5) * g;
-  } else if (dt == 13) {
-    pos = pos + vec3<f32>(sin(dsp * 3.0 + pos.y * 2.0), 0.0, cos(dsp * 2.5 + pos.x * 2.0)) * di * 0.15;
-  } else if (dt == 14) {
-    pos = pos * (1.0 + sin(dsp * 2.0) * di * 0.2);
-  } else if (dt == 15 || dt == 16) {
-    let d = length(pos);
-    pos = pos + normalize(pos + vec3<f32>(1e-5)) * sin(d * dsc * 3.0 - dsp * 3.0) * di * 0.2;
-  } else if (dt == 17) {
-    pos.x = pos.x + sin(pos.y * dsc * 2.0 + dsp * 2.0) * di * 0.3 * clamp(pos.y + 1.0, 0.0, 2.0);
-  } else if (dt == 18) {
-    pos.y = pos.y + sign(pos.y) * di * 0.3 * (0.5 + 0.5 * sin(dsp));
-  } else if (dt == 19) {
-    let a = length(pos.xz) * di * dsc + dsp;
-    let ca = cos(a); let sa = sin(a);
-    pos = vec3<f32>(pos.x * ca - pos.z * sa, pos.y, pos.x * sa + pos.z * ca);
-  }
-
-  // Deformation axis mask: restrict displacement to one axis (0 = all).
-  let dax = i32(mp.fx3.z + 0.5);
-  if (dax == 1) { pos = vec3<f32>(pos.x, opos.y, opos.z); }
-  else if (dax == 2) { pos = vec3<f32>(opos.x, pos.y, opos.z); }
-  else if (dax == 3) { pos = vec3<f32>(opos.x, opos.y, pos.z); }
+  // Deformation (object space, before transform).
+  pos = m_deform(pos, nrm);
 
   // Model transform: per-axis scale, euler ZYX, translate. anim0.xy carry the
   // Y/Z scale so morphLoop can squash and stretch; a zero (uniform never
@@ -1122,7 +1189,7 @@ struct VsOut {
 
 // Vertex decorations: one small screen-facing triangle per strided vertex.
 // Approximates the release's instanced sphere/cube/pyramid markers ('points'
-// draws extra small). Markers follow the model transform but not the vertex
+// draws extra small). Markers follow the model transform and the vertex
 // deformations.
 struct DecorOut {
   @builtin(position) position: vec4<f32>,
@@ -1139,7 +1206,7 @@ struct DecorOut {
     out.shade = 0.0;
     return out;
   }
-  var pos = verts[m * 2u].xyz;
+  var pos = m_deform(verts[m * 2u].xyz, verts[m * 2u + 1u].xyz);
   let scale_y = select(mp.anim0.x, mp.xform0.x, mp.anim0.x <= 0.0);
   let scale_z = select(mp.anim0.y, mp.xform0.x, mp.anim0.y <= 0.0);
   pos = pos * vec3<f32>(mp.xform0.x, scale_y, scale_z);
