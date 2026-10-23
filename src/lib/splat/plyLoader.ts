@@ -694,17 +694,57 @@ function calculateBounds(vertices: PLYVertex[]): {
   };
 }
 
+/**
+ * Read a fetched file, reporting read progress as the bytes arrive when the
+ * size is known. A file that is still downloading (iCloud, a network drive)
+ * then shows the read moving instead of sitting at zero.
+ */
+export async function readResponseBuffer(
+  response: Response,
+  onProgress?: PLYLoadOptions['onProgress'],
+): Promise<ArrayBuffer> {
+  const total = Number(response.headers.get('content-length')) || 0;
+  const body = response.body;
+  if (!onProgress || !body || total <= 0) {
+    const buffer = await response.arrayBuffer();
+    onProgress?.({ phase: 'read', progress: 1 });
+    return buffer;
+  }
+  const reader = body.getReader();
+  let bytes = new Uint8Array(total);
+  let received = 0;
+  let reported = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (received + value.byteLength > bytes.byteLength) {
+      // The stated length was short (a compressed transfer): grow.
+      const grown = new Uint8Array(Math.max(bytes.byteLength * 2, received + value.byteLength));
+      grown.set(bytes.subarray(0, received));
+      bytes = grown;
+    }
+    bytes.set(value, received);
+    received += value.byteLength;
+    const progress = Math.min(1, received / total);
+    if (progress - reported >= 0.01) {
+      reported = progress;
+      onProgress({ phase: 'read', progress });
+    }
+  }
+  onProgress({ phase: 'read', progress: 1 });
+  return received === bytes.byteLength ? bytes.buffer : bytes.slice(0, received).buffer;
+}
+
 // Load PLY from file path or URL
 export async function loadPLY(pathOrUrl: string, options: PLYLoadOptions = {}): Promise<PLYData> {
   let buffer: ArrayBuffer;
 
+  options.onProgress?.({ phase: 'read', progress: 0 });
   const response = await fetch(pathOrUrl);
   if (!response.ok && !pathOrUrl.startsWith('blob:')) {
     throw new Error(`Failed to read PLY: ${response.status} ${response.statusText}`);
   }
-  options.onProgress?.({ phase: 'read', progress: 0 });
-  buffer = await response.arrayBuffer();
-  options.onProgress?.({ phase: 'read', progress: 1 });
+  buffer = await readResponseBuffer(response, options.onProgress);
 
   await yieldToBrowser();
   return parsePLYBufferProgressive(buffer, options);
