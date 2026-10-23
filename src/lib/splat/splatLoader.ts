@@ -6,7 +6,7 @@
 //   - Color: RGBA as 4x uint8 (4 bytes)
 //   - Rotation: quaternion as 4x uint8 (4 bytes) — normalized to [0,255] → [-1,1]
 
-import { DEFAULT_SPLAT_POINT_BUDGET, type PLYVertex, type PLYData, type PLYLoadOptions } from './plyLoader';
+import { DEFAULT_SPLAT_POINT_BUDGET, readResponseBuffer, type PLYVertex, type PLYData, type PLYLoadOptions } from './plyLoader';
 
 const SPLAT_ROW_SIZE = 32;
 
@@ -229,7 +229,6 @@ export async function loadSplatFromUrl(url: string, options: PLYLoadOptions = {}
   if (!response.ok) {
     throw new Error(`Failed to fetch .splat file: ${response.status} ${response.statusText}`);
   }
-  const buffer = await response.arrayBuffer();
-  options.onProgress?.({ phase: 'read', progress: 1 });
+  const buffer = await readResponseBuffer(response, options.onProgress);
   return parseSplatBufferProgressive(buffer, options);
 }
