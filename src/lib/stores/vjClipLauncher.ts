@@ -758,7 +758,7 @@ function waitForVideoEvent(
   });
 }
 
-function waitForPresentedVideoFrame(videoEl: HTMLVideoElement, timeoutMs = 500): Promise<void> {
+function waitForPresentedVideoFrame(videoEl: HTMLVideoElement, timeoutMs = 500, atTime?: number): Promise<void> {
   return new Promise((resolve) => {
     let settled = false;
     let frameHandle: number | undefined;
@@ -773,7 +773,16 @@ function waitForPresentedVideoFrame(videoEl: HTMLVideoElement, timeoutMs = 500):
     };
     const timeout = window.setTimeout(finish, timeoutMs);
     if (typeof videoEl.requestVideoFrameCallback === 'function') {
-      frameHandle = videoEl.requestVideoFrameCallback(finish);
+      // With `atTime`, only the frame at that media time counts: a frame
+      // presented just before a seek must not end the wait for the seek's.
+      const onFrame = (_now: number, meta: { mediaTime?: number }) => {
+        if (atTime === undefined || typeof meta?.mediaTime !== 'number' || Math.abs(meta.mediaTime - atTime) <= 0.05) {
+          finish();
+        } else if (!settled) {
+          frameHandle = videoEl.requestVideoFrameCallback(onFrame);
+        }
+      };
+      frameHandle = videoEl.requestVideoFrameCallback(onFrame);
     } else {
       requestAnimationFrame(() => requestAnimationFrame(finish));
     }
@@ -823,14 +832,19 @@ function armVideoClipForTrigger(clip: VJClip): Promise<HTMLVideoElement> {
     const target = Math.max(0, Math.min(1, clip.trimStart ?? 0)) * duration;
     if (!hasDecodedVideoFrame(videoEl) ||
         Math.abs(videoEl.currentTime - target) > Math.max(1 / 120, duration * 0.00001)) {
-      const seeked = waitForVideoEvent(videoEl, 'seeked');
-      videoEl.currentTime = target;
-      await seeked;
       // `seeked` means the media timeline moved; it does not guarantee the
       // corresponding frame has reached Chromium's presentation queue yet.
       // Waiting for rVFC prevents activation from winning that race by one
-      // compositor frame.
-      await waitForPresentedVideoFrame(videoEl);
+      // compositor frame. The callback is registered BEFORE the seek: a
+      // paused video presents exactly one frame for it, often before
+      // `seeked` resolves, and a callback registered after that waits for a
+      // frame that never comes. That held every re-arm for the full timeout
+      // (~0.5s), and a clip fired again soon after it stopped waited for it.
+      const seeked = waitForVideoEvent(videoEl, 'seeked');
+      const presented = waitForPresentedVideoFrame(videoEl, 500, target);
+      videoEl.currentTime = target;
+      await seeked;
+      await presented;
     }
 
     await waitForDecodedClipFrame(clip, videoEl);
