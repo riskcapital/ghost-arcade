@@ -2449,6 +2449,24 @@ struct ShaderRecord {
     compiled_at_ms: u64,
 }
 
+/// The picture a layer showed before its source changed. It stays on screen
+/// until the new source delivers a picture of its own, so switching a layer
+/// to a page, shader or image that is still starting never flashes the
+/// loading fill or the layers underneath.
+#[derive(Clone, Debug)]
+struct HeldPicture {
+    source_id: String,
+    slot: usize,
+    rect: [f32; 4],
+    kind: f32,
+    since: Instant,
+}
+
+/// How long a layer may hold its outgoing picture. A source that has not
+/// delivered by then (a page that failed to load, a broken file) shows its
+/// loading state instead of leaving the old content up.
+const LAYER_HOLD_MAX: Duration = Duration::from_millis(1500);
+
 #[derive(Clone, Debug)]
 struct SceneLayer {
     id: String,
@@ -2510,6 +2528,8 @@ struct SceneLayer {
     deck_monitor_opacity: f32,
     /// Colour multiplier from `set_layer_tint`; white leaves the layer as is.
     tint: [f32; 4],
+    /// The outgoing picture, shown until the new source has one.
+    held: Option<HeldPicture>,
 }
 
 #[derive(Clone, Debug)]
@@ -3343,19 +3363,22 @@ impl SceneLayer {
             deck_monitor_bank: None,
             deck_monitor_opacity: 1.0,
             tint: [1.0; 4],
+            held: None,
         }
     }
 
     fn gpu(&self) -> LayerGpu {
         let [tl, tr, br, bl] = self.corners;
+        let held = self.held.as_ref();
         // Missing media pixels are not a solid-colour source. This also
         // covers a video whose texture was evicted under pool pressure.
-        let waiting_for_video = self.source_kind == source_kind("video")
+        let waiting_for_video = held.is_none()
+            && self.source_kind == source_kind("video")
             && self.frame_slot.is_none();
         // An empty layer (nothing bound, no colour of its own) draws the
         // alignment card instead of a flat fill, so it takes the full path.
-        let empty_card = self.shows_empty_card();
-        let plain_fill = !empty_card && !self.shader_rendered && self.source_kind < 9.0
+        let empty_card = held.is_none() && self.shows_empty_card();
+        let plain_fill = held.is_none() && !empty_card && !self.shader_rendered && self.source_kind < 9.0
             && self.frame_slot.is_none() && self.preview_slot.is_none()
             && self.effect_count < 0.5 && self.mesh_rows < 2 && self.mesh_cols < 2
             && self.shape == [0.0, 0.0, 0.0, 1.0] && self.shape2 == [1.0, 0.7, 6.0, 0.4]
@@ -3389,15 +3412,21 @@ impl SceneLayer {
             meta: [
                 if self.visible { 1.0 } else { 0.0 },
                 self.z_index as f32,
-                if self.shader_rendered {
+                if let Some(held) = held {
+                    held.kind
+                } else if self.shader_rendered {
                     NATIVE_SHADER_SOURCE_KIND
                 } else {
                     self.source_kind
                 },
-                self.frame_slot
-                    .map(|slot| SOURCE_FRAME_SLOT_OFFSET + slot as f32 + 1.0)
-                    .or_else(|| self.preview_slot.map(|slot| slot as f32 + 1.0))
-                    .unwrap_or(0.0),
+                if let Some(held) = held {
+                    SOURCE_FRAME_SLOT_OFFSET + held.slot as f32 + 1.0
+                } else {
+                    self.frame_slot
+                        .map(|slot| SOURCE_FRAME_SLOT_OFFSET + slot as f32 + 1.0)
+                        .or_else(|| self.preview_slot.map(|slot| slot as f32 + 1.0))
+                        .unwrap_or(0.0)
+                },
             ],
             params0: [
                 self.native_params[0],
@@ -3442,7 +3471,7 @@ impl SceneLayer {
             mesh: self.mesh_gpu(),
             mesh_tangents: self.mesh_tangents_gpu(),
             mesh_bounds: self.mesh_bounds_gpu(),
-            source_rect: self.source_rect,
+            source_rect: held.map_or(self.source_rect, |held| held.rect),
             fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), 0, 0],
             tint: [self.tint[0], self.tint[1], self.tint[2], self.color[3].clamp(0.0, 1.0)],
         }
@@ -5695,6 +5724,7 @@ impl App {
                     "shader_frame_slot": layer.shader_frame_slot,
                     "source_kind": layer.source_kind,
                     "shader_rendered": layer.shader_rendered,
+                    "held_source_id": layer.held.as_ref().map(|held| held.source_id.clone()),
                     "mesh_rows": layer.mesh_rows,
                     "mesh_cols": layer.mesh_cols,
                     "mask_info": layer.mask_info,
@@ -12260,6 +12290,7 @@ impl App {
             return;
         }
         self.pump_scheduled_launches();
+        self.expire_layer_holds();
         self.sync_gpu_frame_stats();
         if self
             .renderer
@@ -15687,7 +15718,13 @@ impl App {
         if entry.color[3] <= 0.0 {
             entry.color = [0.45, 0.92, 1.0, 0.88];
         }
+        // The new shader has drawn: it replaces the held picture.
+        let shows_shader = entry.shader_rendered && entry.frame_slot == entry.shader_frame_slot;
+        let held_layer = (shows_shader && entry.held.is_some()).then(|| entry.id.clone());
         self.stats.native_shader_renders = self.stats.native_shader_renders.saturating_add(1);
+        if let Some(layer_id) = held_layer {
+            self.end_layer_hold(&layer_id);
+        }
     }
 
     fn apply_effect_chain(&mut self, command: &Value) {
@@ -15759,6 +15796,7 @@ impl App {
             return; // The editor has not yet acknowledged the scheduled handoff.
         }
         self.scheduled_binding_guards.remove(&layer_id);
+        let outgoing_picture = self.layer_displayed_picture(&layer_id);
         let source_id_for_decode = source_id.clone();
         let uri_for_decode = string_at(command, &["uri"]);
         let source_type =
@@ -15827,9 +15865,10 @@ impl App {
         let effect_pass_display = uri_for_decode
             .as_deref()
             .is_some_and(|uri| uri.starts_with("native-effect-pass://"));
-        if effective_source_type != "shader" && !effect_pass_display {
+        // The shader's output is let go below, once any hold on it is set.
+        let release_shader_output = effective_source_type != "shader" && !effect_pass_display;
+        if release_shader_output {
             self.isf_layer_bindings.remove(&layer_id);
-            self.release_layer_shader_output(&layer_id, None);
         }
         let new_source_id = source_id.clone();
         let entry = self
@@ -15883,6 +15922,31 @@ impl App {
         if effective_source_type != "color" {
             entry.color = source_type_color(&effective_source_type, &layer_id);
         }
+        // A page, shader or image that has no picture yet keeps the layer's
+        // outgoing picture on screen until its first frame (see HeldPicture).
+        let source_changed = new_source_id.as_deref() != previous_source_id.as_deref();
+        let waits_for_picture = match effective_source_type.as_str() {
+            "image" => entry.frame_slot.is_none(),
+            "shader" => true,
+            _ => false,
+        };
+        let mut dropped_hold = None;
+        if source_changed && waits_for_picture && !effect_pass_display {
+            if let Some(picture) = outgoing_picture {
+                if entry.held.as_ref().is_some_and(|held| held.source_id != picture.source_id) {
+                    dropped_hold = entry.held.take().map(|held| held.source_id);
+                }
+                entry.held = Some(picture);
+            }
+        } else if source_changed || !waits_for_picture {
+            dropped_hold = entry.held.take().map(|held| held.source_id);
+        }
+        if release_shader_output {
+            self.release_layer_shader_output(&layer_id, None);
+        }
+        if let Some(previous) = dropped_hold {
+            self.release_replaced_media_source(previous);
+        }
         if let Some(previous) = previous_source_id
             && new_source_id.as_deref() != Some(previous.as_str())
         {
@@ -15899,12 +15963,78 @@ impl App {
         }
     }
 
+    /// The real picture a layer is showing now, if any: a held picture, a
+    /// rendered shader frame, or a delivered media frame. Placeholders and
+    /// the empty input frame do not count.
+    fn layer_displayed_picture(&self, layer_id: &str) -> Option<HeldPicture> {
+        let layer = self.scene_layers.get(layer_id)?;
+        if let Some(held) = &layer.held {
+            return Some(held.clone());
+        }
+        if layer.shader_rendered
+            && let (Some(slot), Some(source_id)) = (layer.shader_frame_slot, layer.shader_source_id.as_ref())
+            && layer.frame_slot == Some(slot)
+        {
+            return Some(HeldPicture {
+                source_id: source_id.clone(),
+                slot,
+                rect: [0.0, 0.0, 1.0, 1.0],
+                kind: NATIVE_SHADER_SOURCE_KIND,
+                since: Instant::now(),
+            });
+        }
+        let source_id = layer.source_id.as_ref()?;
+        let slot = layer.frame_slot?;
+        if source_id == EMPTY_SOURCE_FRAME_ID
+            || source_id.starts_with("effect-pass:")
+            || layer.source_kind < 0.5
+            || !self.source_frames.contains_key(source_id)
+            || self.source_frame_slots.get(source_id) != Some(&slot)
+        {
+            return None;
+        }
+        Some(HeldPicture {
+            source_id: source_id.clone(),
+            slot,
+            rect: layer.source_rect,
+            kind: if layer.shader_rendered { NATIVE_SHADER_SOURCE_KIND } else { layer.source_kind },
+            since: Instant::now(),
+        })
+    }
+
+    /// The layer has its own picture now: stop showing the held one.
+    fn end_layer_hold(&mut self, layer_id: &str) {
+        let held = self.scene_layers.get_mut(layer_id).and_then(|layer| layer.held.take());
+        if let Some(held) = held {
+            self.release_replaced_media_source(held.source_id);
+        }
+    }
+
+    /// Give up holds that have waited too long for their new source.
+    fn expire_layer_holds(&mut self) {
+        let expired = self.scene_layers.values()
+            .filter(|layer| layer.held.as_ref().is_some_and(|held| held.since.elapsed() >= LAYER_HOLD_MAX))
+            .map(|layer| layer.id.clone())
+            .collect::<Vec<_>>();
+        for layer_id in expired {
+            self.end_layer_hold(&layer_id);
+        }
+    }
+
     fn commit_pending_media_bindings_for_source(
         &mut self,
         source_id: &str,
         frame_slot: usize,
         source_rect: [f32; 4],
     ) {
+        // Layers already bound to this source have their picture now.
+        let delivered = self.scene_layers.values()
+            .filter(|layer| layer.held.is_some() && layer.source_id.as_deref() == Some(source_id))
+            .map(|layer| layer.id.clone())
+            .collect::<Vec<_>>();
+        for layer_id in delivered {
+            self.end_layer_hold(&layer_id);
+        }
         let ready_layers = self
             .pending_media_bindings
             .iter()
@@ -15936,6 +16066,9 @@ impl App {
             entry.shader_rendered = false;
             entry.shader_id = None;
             entry.color = source_type_color(&binding.source_type, &layer_id);
+            if let Some(held) = entry.held.take() {
+                replaced_sources.push(held.source_id);
+            }
         }
         // The commit just unbound these sources from their layers; free their
         // sessions/slots unless something else still references them.
@@ -15952,6 +16085,7 @@ impl App {
             layer.source_id.as_deref() == Some(source_id)
                 || layer.effect_input_source_id.as_deref() == Some(source_id)
                 || layer.shader_source_id.as_deref() == Some(source_id)
+                || layer.held.as_ref().is_some_and(|held| held.source_id == source_id)
         })
             || self
                 .pending_media_bindings
@@ -19059,11 +19193,12 @@ impl App {
             self.scheduled_binding_guards.remove(&layer_id);
             self.captured_graph_holds.remove(&layer_id);
             self.paint_masks.remove_layer(&layer_id);
-            let (removed_source, removed_shader_output, removed_effect_input) = self
+            let (removed_source, removed_shader_output, removed_effect_input, removed_held) = self
                 .scene_layers
                 .remove(&layer_id)
-                .map(|layer| (layer.source_id, layer.shader_source_id, layer.effect_input_source_id))
-                .unwrap_or((None, None, None));
+                .map(|layer| (layer.source_id, layer.shader_source_id, layer.effect_input_source_id,
+                    layer.held.map(|held| held.source_id)))
+                .unwrap_or((None, None, None, None));
             let pending_source = self
                 .pending_media_bindings
                 .remove(&layer_id)
@@ -19096,6 +19231,9 @@ impl App {
                 self.release_media_source_if_orphaned(&source_id);
             }
             if let Some(source_id) = removed_shader_output {
+                self.release_media_source_if_orphaned(&source_id);
+            }
+            if let Some(source_id) = removed_held {
                 self.release_media_source_if_orphaned(&source_id);
             }
             if let Some(source_id) = pending_source {

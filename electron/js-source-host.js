@@ -29,6 +29,8 @@ const PARTITION = 'ghost-js-sources';
 const MAX_HOSTS = 8;
 const MAX_FPS = 60;
 const MAX_FRAMES_IN_FLIGHT = 2;
+// How long after load a page may stay blank before its frames go up anyway.
+const FIRST_FRAME_WAIT_MS = 400;
 // Thumbnails: how long a page gets to draw after loading, and the hard stop.
 const THUMBNAIL_SETTLE_MS = 1500;
 const THUMBNAIL_TIMEOUT_MS = 8000;
@@ -192,9 +194,24 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     log.warn?.(`[JsSource] ${entry.id} renderer exited (${reason || 'unknown'}), crash ${count}`);
   }
 
+  // True when a frame holds nothing yet: no alpha on a see-through page, or
+  // only the black window background on an opaque one. Sampled sparsely; it
+  // runs only until the page's first real frame.
+  function frameIsBlank(bitmap, transparent) {
+    const stride = 4 * 97;
+    for (let i = 0; i + 3 < bitmap.length; i += stride) {
+      if (transparent ? bitmap[i + 3] !== 0 : (bitmap[i] | bitmap[i + 1] | bitmap[i + 2]) !== 0) return false;
+    }
+    return true;
+  }
+
   function handlePaint(entry, image) {
     if (entry.closed) return;
     entry.paints += 1;
+    // Until the page has loaded and drawn, its frames are blank. The core
+    // keeps showing the layer's previous picture until this source's first
+    // upload, so sending a blank one would flash the layers underneath.
+    if (!entry.drawn && !entry.loaded) return;
     // A frame's round trip ends when the core has applied it, which is at
     // least one render tick. With a single frame in flight that caps uploads
     // near 40 a second on a 60 Hz core; two keeps pace without letting a
@@ -207,6 +224,13 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     if (!width || !height) return;
     const bitmap = image.toBitmap();
     if (bitmap.length < width * height * 4) return;
+    if (!entry.drawn) {
+      // A page that stays blank (a sketch that starts on black) still goes up
+      // shortly after load rather than never.
+      const waited = Date.now() - entry.loadedAt >= FIRST_FRAME_WAIT_MS;
+      if (!waited && frameIsBlank(bitmap, entry.transparent === true)) return;
+      entry.drawn = true;
+    }
     entry.uploading += 1;
     entry.frameWidth = width;
     entry.frameHeight = height;
@@ -324,6 +348,8 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       fps,
       params,
       loaded: false,
+      loadedAt: 0,
+      drawn: false,
       closed: false,
       uploading: 0,
       paints: 0,
@@ -347,6 +373,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     wc.on('will-navigate', (event) => event.preventDefault());
     wc.on('did-finish-load', () => {
       current.loaded = true;
+      current.loadedAt = Date.now();
       // The page's own `window.shaderParams = {...}` has run by now; the saved
       // values go on top of its defaults.
       if (Object.keys(current.params).length > 0) wc.send('ghost-js:params', current.params);
