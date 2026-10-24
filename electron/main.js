@@ -15,7 +15,7 @@
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, powerSaveBlocker, protocol, screen, session, shell, utilityProcess } from 'electron';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { spawn, fork, execSync } from 'child_process';
 import { createRequire } from 'module';
 import fs from 'fs';
@@ -28,6 +28,10 @@ const PRODUCT_NAME = 'Ghost Arcade Studio';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/** A path that climbs out of a folder. Only a whole `..` segment does; a
+ *  file named "Intro...mov" does not. */
+const climbsUp = (value) => value.split(/[\\/]/).includes('..');
 const require = createRequire(import.meta.url);
 const { parseOSCPacket, encodeOSCMessage } = require('./osc-parser.cjs');
 import os from 'os';
@@ -2885,6 +2889,19 @@ function registerIpcHandlers() {
 
   // --- Project media: check, relink, collect ---
   const projectMedia = require('./project-media.cjs');
+  /** Point a project's media at files that are there (see project-media.cjs). */
+  async function prepareProjectContent(content, dir) {
+    let data;
+    try { data = JSON.parse(content); } catch { return { content, media: null }; }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return { content, media: null };
+    try {
+      const media = await projectMedia.prepareProjectMediaForOpen(data, dir);
+      return { content: JSON.stringify(data, null, 2), media };
+    } catch (err) {
+      console.warn('[Main] Could not check project media:', err?.message || err);
+      return { content, media: null };
+    }
+  }
   const mediaRequest = args => {
     if (typeof args?.json !== 'string') throw new Error('Project data is required.');
     const data = JSON.parse(args.json);
@@ -2898,7 +2915,12 @@ function registerIpcHandlers() {
   });
   ipcMain.handle('project_media_relink', async (_, args) => {
     const { data, dir } = mediaRequest(args);
-    return JSON.stringify(await projectMedia.relinkProjectMedia(data, dir, args.id, args.replacementPath));
+    const replacement = assertAbsolutePath(args.replacementPath, 'replacement file');
+    await projectMedia.relinkProjectMedia(data, dir, args.id, replacement);
+    // A moved media folder: every other missing file there comes back too.
+    const alsoFound = await projectMedia.relinkMissingInFolder(data, dir, path.dirname(replacement));
+    for (const file of [replacement, ...alsoFound]) pathGrants.registerPickedFile(file);
+    return { json: JSON.stringify(data), alsoFound: alsoFound.length };
   });
   ipcMain.handle('project_media_collect', async (_, args) => {
     const { data, dir } = mediaRequest(args);
@@ -2909,9 +2931,23 @@ function registerIpcHandlers() {
   // Which of these media files are still on disk.
   // Which of these media files are still on disk. Only paths the renderer
   // may already read are answered, so this cannot be used to probe the disk.
+  // A path the renderer cannot read (one from another computer, or never
+  // granted) cannot play either, so it counts as missing. Its disk is not
+  // looked at, so this still cannot probe for files.
   ipcMain.handle('media_files_status', async (_, args) => {
-    const paths = (Array.isArray(args?.paths) ? args.paths : []).filter((p) => pathGrants.canRead(p));
-    return mediaLocate.mediaFilesStatus(paths);
+    const asked = Array.isArray(args?.paths) ? args.paths.filter((p) => typeof p === 'string') : [];
+    const status = await mediaLocate.mediaFilesStatus(asked.filter((p) => pathGrants.canRead(p)));
+    for (const p of asked) if (!(p in status)) status[p] = false;
+    return status;
+  });
+  // After one file was located, look beside it for these other names. The
+  // located file must be one the user picked, and only files found are granted.
+  ipcMain.handle('media_find_beside', async (_, args) => {
+    const file = typeof args?.file === 'string' ? path.normalize(args.file) : '';
+    if (!file || !path.isAbsolute(file) || !pathGrants.canRead(file)) return { found: {} };
+    const found = await mediaLocate.findMediaInFolder(path.dirname(file), args?.names, { maxDepth: 3 });
+    for (const hit of Object.values(found)) pathGrants.registerPickedFile(hit);
+    return { found };
   });
   // A path from preload's getPathForFile (a file the user picked or dropped).
   // Not in the renderer's command allowlist: page content cannot send it.
@@ -4220,7 +4256,7 @@ function registerIpcHandlers() {
       if (typeof filePath !== 'string' || !filePath) return { success: false, error: 'Invalid file path' };
       if (typeof content !== 'string') return { success: false, error: 'Content must be a string' };
       const normalized = path.normalize(filePath);
-      if (!path.isAbsolute(normalized) || normalized.includes('..')) {
+      if (!path.isAbsolute(normalized) || climbsUp(normalized)) {
         return { success: false, error: 'Invalid file path' };
       }
       if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
@@ -4228,6 +4264,40 @@ function registerIpcHandlers() {
       return { success: true };
     } catch (err) {
       console.error('[Main] save_file_text error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  // Save a project file. Next to each media file's absolute location the
+  // project records where it is from the project's folder, so the show
+  // opens after the folder is moved or copied to another computer. The file
+  // is written beside the target and renamed over it: a crash or a full
+  // disk mid-save leaves the previous project intact.
+  ipcMain.handle('save_project_file', async (_, args) => {
+    try {
+      const filePath = typeof args?.path === 'string' ? path.normalize(args.path) : '';
+      if (!filePath || !path.isAbsolute(filePath) || climbsUp(filePath)) return { success: false, error: 'Invalid file path' };
+      if (typeof args?.content !== 'string') return { success: false, error: 'Content must be a string' };
+      if (!pathGrants.canWrite(filePath)) return PATH_NOT_ALLOWED;
+      let content = args.content;
+      try {
+        const data = JSON.parse(content);
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          content = JSON.stringify(projectMedia.makeProjectPortable(data, path.dirname(filePath)), null, 2);
+        }
+      } catch { /* not JSON: write it as given */ }
+      const temp = `${filePath}.saving-${process.pid}`;
+      try {
+        fs.writeFileSync(temp, content, 'utf8');
+        fs.renameSync(temp, filePath);
+      } catch (err) {
+        try { fs.unlinkSync(temp); } catch { /* never written */ }
+        throw err;
+      }
+      pathGrants.registerProjectFile(filePath, content);
+      return { success: true };
+    } catch (err) {
+      console.error('[Main] save_project_file error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
     }
   });
@@ -5038,7 +5108,7 @@ function registerIpcHandlers() {
       // we just ensure the path is absolute and doesn't contain `..` segments
       // sneaking through user-constructed filenames).
       const normalized = path.normalize(filePath);
-      if (!path.isAbsolute(normalized) || normalized.includes('..')) {
+      if (!path.isAbsolute(normalized) || climbsUp(normalized)) {
         return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
       }
       if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
@@ -5063,7 +5133,7 @@ function registerIpcHandlers() {
       const { path: filePath, bytes } = args;
       if (typeof filePath !== 'string' || !filePath) return { success: false, error: 'Invalid file path' };
       const normalized = path.normalize(filePath);
-      if (!path.isAbsolute(normalized) || normalized.includes('..')) {
+      if (!path.isAbsolute(normalized) || climbsUp(normalized)) {
         return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
       }
       if (!pathGrants.canWrite(normalized)) return PATH_NOT_ALLOWED;
@@ -5105,10 +5175,10 @@ function registerIpcHandlers() {
       }
       const normSrc = path.normalize(sourcePath);
       const normDest = path.normalize(destPath);
-      if (!path.isAbsolute(normSrc) || normSrc.includes('..')) {
+      if (!path.isAbsolute(normSrc) || climbsUp(normSrc)) {
         return { success: false, error: 'sourcePath must be absolute (no traversal)' };
       }
-      if (!path.isAbsolute(normDest) || normDest.includes('..')) {
+      if (!path.isAbsolute(normDest) || climbsUp(normDest)) {
         return { success: false, error: 'destPath must be absolute (no traversal)' };
       }
       if (!pathGrants.canRead(normSrc)) {
@@ -5148,10 +5218,26 @@ function registerIpcHandlers() {
     if (!fs.existsSync(filePath)) {
       throw new Error('File not found');
     }
-    const content = fs.readFileSync(filePath, 'utf-8');
+    let content = fs.readFileSync(filePath, 'utf-8');
+    const dir = path.dirname(filePath);
+    const prepared = await prepareProjectContent(content, dir);
+    content = prepared.content;
     // Save writes back to this file, and its media loads through ghost-asset://.
     pathGrants.registerProjectFile(filePath, content);
-    return { content, dir: path.dirname(filePath) };
+    return { content, dir, media: prepared.media };
+  });
+  // The same for project data the renderer already holds (a recovered
+  // autosave): find its media, make what was found readable.
+  ipcMain.handle('take_pending_project_open', () => {
+    const filePath = pendingProjectOpen;
+    pendingProjectOpen = null;
+    return filePath;
+  });
+  ipcMain.handle('prepare_project_media', async (_, args) => {
+    const { dir } = mediaRequest(args);
+    const prepared = await prepareProjectContent(args.json, dir);
+    try { pathGrants.registerProjectData(JSON.parse(prepared.content), dir); } catch { /* not JSON */ }
+    return prepared;
   });
 
   // Native renderer commands — stub as not available in Electron mode
@@ -5979,6 +6065,41 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
 // App Lifecycle
 // ============================================================
 
+// ── Opening a project from the desktop ──────────────────────────────────
+// Double-clicking a .gha (or dropping one on the app icon) opens it here.
+// macOS sends 'open-file', also for the file that launched the app; Windows
+// and Linux pass it on the command line, to this process or, when the app
+// is already running, to it as a second instance. The path waits here until
+// the editor asks for it, so a file that arrives while the window is still
+// loading is not lost.
+let pendingProjectOpen = null;
+const PROJECT_OPEN_EXTENSIONS = new Set(['.gha']);
+function projectFileFromArgs(argv) {
+  for (const arg of (argv || []).slice(1)) {
+    if (typeof arg !== 'string' || arg.startsWith('-')) continue;
+    if (!PROJECT_OPEN_EXTENSIONS.has(path.extname(arg).toLowerCase())) continue;
+    try { if (fs.statSync(arg).isFile()) return path.resolve(arg); } catch { /* not a file */ }
+  }
+  return null;
+}
+function queueProjectOpen(filePath) {
+  if (!filePath || !PROJECT_OPEN_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return;
+  // The user chose this file: it may be read and saved back to.
+  pathGrants.registerPickedFile(filePath);
+  pathGrants.allowWriteFile(filePath);
+  pendingProjectOpen = filePath;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    if (!mainWindow.webContents.isLoading()) mainWindow.webContents.send('open-project-file');
+  }
+}
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  queueProjectOpen(filePath);
+});
+queueProjectOpen(projectFileFromArgs(process.argv));
+
 // Ensure only one instance runs at a time
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -5986,12 +6107,14 @@ if (!gotLock) {
   app.quit();
 }
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
   // Focus existing window when user tries to launch a second instance
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   }
+  // Launched by double-clicking a project: open it in this window.
+  queueProjectOpen(projectFileFromArgs(argv));
 });
 
 app.whenReady().then(async () => {
@@ -6057,7 +6180,7 @@ app.whenReady().then(async () => {
         p = p.slice(1); // strip leading slash on Windows drive paths
       }
       const normalized = path.normalize(p);
-      if (!path.isAbsolute(normalized) || normalized.includes('..')) {
+      if (!path.isAbsolute(normalized) || climbsUp(normalized)) {
         return addCorsHeaders(new Response('Bad path', { status: 400 }));
       }
       if (!pathGrants.canRead(normalized)) {
@@ -6073,7 +6196,9 @@ app.whenReady().then(async () => {
       // Forward the Range header so <video> seek + decoder buffering work
       // correctly — without it net.fetch returns the whole file for every
       // request and the browser can't issue partial reads.
-      const fileUrl = 'file:///' + normalized.replace(/\\/g, '/').replace(/^\//, '');
+      // pathToFileURL encodes the name: built by hand, a '#' or '%' in a
+      // file name cut the URL short and the file never loaded.
+      const fileUrl = pathToFileURL(normalized).href;
       const fetchHeaders = new Headers();
       const range = request.headers.get('range');
       if (range) fetchHeaders.set('range', range);

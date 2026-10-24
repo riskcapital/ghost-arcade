@@ -5174,12 +5174,16 @@ void main() {
         // layer as broken until the user re-imports each file by hand.
         const resolveSrc = (src: string): string => {
           if (!src) return src;
-          // Pass through any URL with a scheme. Without this, a project
-          // that already contains `ghost-asset://...` URLs (because it was
-          // opened, the URL got resolved, then re-saved and re-opened)
-          // gets the URL doubled because the resolver mistakes it for a
-          // relative path and prepends projectDir.
-          if (/^(https?:|blob:|data:|ghost-asset:)/i.test(src)) return src;
+          /*
+           * Pass through anything carrying a URI scheme, not just a fixed
+           * few. The old allowlist (https/blob/data/ghost-asset) turned every
+           * other scheme into a path: `builtin:grid` came back as
+           * `<projectDir>/builtin:grid`, and `live://webcam/<id>` the same,
+           * and re-saving kept the damage. A Windows drive letter is checked
+           * first because `C:\\clip.mp4` looks like a scheme; real schemes are
+           * two or more characters, drives are exactly one.
+           */
+          if (/^[A-Za-z]:[\\/]/.test(src)) return pathToFileUrl(src);
           if (/^file:/i.test(src)) {
             // Decode the file URL back to a path, then re-encode through
             // our pathToFileUrl which emits ghost-asset:// in Electron.
@@ -5191,6 +5195,7 @@ void main() {
               return src;
             }
           }
+          if (/^[A-Za-z][A-Za-z0-9+.-]+:/.test(src)) return src;
           // Files that ship inside the app (the shader library, built-in
           // pages, looks) are relative to the app, not to the project file.
           if (/^(?:\.\/)?(?:ISF|threejs|looks|lib|fonts|mediapipe)\//.test(src)) return src;
@@ -5198,7 +5203,7 @@ void main() {
           // (a Performer clip's "performer"), not a file.
           if (!/[\\/.]/.test(src)) return src;
           let absPath: string | null = null;
-          if (/^[A-Z]:\\/i.test(src) || src.startsWith('/')) {
+          if (src.startsWith('/')) {
             absPath = src;
           } else if (projectDir) {
             const sep = projectDir.includes('\\') ? '\\' : '/';
@@ -5228,6 +5233,15 @@ void main() {
             if (ref.url) return String(ref.url);
           }
           return resolveSrc(fallbackSrc);
+        };
+
+        // A saved thumbnail worth keeping. An image's thumbnail is the image
+        // file itself, saved where it was then: the resolved file replaces
+        // it, so a moved show does not keep pointing at the old place.
+        const keptThumbnail = (thumbnail: unknown, type: string): string | undefined => {
+          if (typeof thumbnail !== 'string' || !thumbnail || thumbnail.startsWith('blob:')) return undefined;
+          if (type === 'image' && /^(?:ghost-asset|file):/i.test(thumbnail)) return undefined;
+          return thumbnail;
         };
 
         const resolveGpuLayerAssetParams = (gpuLayerContent: any): void => {
@@ -5355,9 +5369,7 @@ void main() {
             const ref = (item as any)._assetRef;
             const resolvedSrc = resolveWithRef(ref, item.src || '');
             const mediaType = item.type || 'image';
-            const savedThumbnail = typeof item.thumbnail === 'string' && !item.thumbnail.startsWith('blob:')
-              ? item.thumbnail
-              : undefined;
+            const savedThumbnail = keptThumbnail(item.thumbnail, mediaType);
             mediaLibrary.addItem({
               id: item.id || generateUUID(),
               name: item.name || 'Media',
@@ -5391,9 +5403,7 @@ void main() {
             // dead blob: URLs after reload.
             const clipType = clip.type || 'image';
             const baseSrc = resolveWithRef(clip._assetRef, clip.src || '');
-            const savedThumbnail = typeof clip.thumbnail === 'string' && !clip.thumbnail.startsWith('blob:')
-              ? clip.thumbnail
-              : undefined;
+            const savedThumbnail = keptThumbnail(clip.thumbnail, clipType);
             // Splat/Model3D clip-shaped content lives on splatContent /
             // model3DContent off the clip (added by VJModePanel). Resolve
             // those too so clip-launcher cells with .ply / .glb survive.
@@ -5751,6 +5761,58 @@ void main() {
           catch (e) { console.warn('[Import] geoDeck restore failed:', e); }
         }
 
+        // Every media field of a layer, resolved from its AssetRef (the
+        // main process has already pointed those at files that exist) with
+        // the legacy path walk as the fallback. Layers and the copies of
+        // layers that stage presets carry both go through this.
+        const resolveLayerMedia = (layer: any) => {
+            // Resolve every media-path field. Prefer AssetRef so blob URLs
+            // that died at session end still resolve to the originating
+            // disk file (or the sibling-copy beside the .gha). Falls back
+            // to the legacy resolveSrc when no assetRef is present (older
+            // projects from before assetRef shipped).
+            if (layer.source) {
+              layer.source.src = resolveWithRef(
+                (layer.source as any)._assetRef,
+                layer.source.src,
+              );
+              if (isVideoSource(layer.source)) {
+                rehydrateVideoSource(layer.source);
+              }
+            }
+            if (layer.splatContent) {
+              if (layer.splatContent.filePath || (layer.splatContent as any)._assetRef) {
+                layer.splatContent.filePath = resolveWithRef(
+                  (layer.splatContent as any)._assetRef,
+                  layer.splatContent.filePath,
+                );
+              }
+              if (layer.splatContent.texturePath || (layer.splatContent as any)._textureAssetRef) {
+                layer.splatContent.texturePath = resolveWithRef(
+                  (layer.splatContent as any)._textureAssetRef,
+                  layer.splatContent.texturePath,
+                );
+              }
+            }
+            if (layer.model3dContent) {
+              if (layer.model3dContent.modelData || (layer.model3dContent as any)._assetRef) {
+                layer.model3dContent.modelData = resolveWithRef(
+                  (layer.model3dContent as any)._assetRef,
+                  layer.model3dContent.modelData || '',
+                );
+              }
+            }
+            if ((layer as any).pixelFXContent) {
+              const px = (layer as any).pixelFXContent;
+              if (px.sourceUrl || px._sourceAssetRef) {
+                px.sourceUrl = resolveWithRef(px._sourceAssetRef, px.sourceUrl || '');
+              }
+            }
+            if ((layer as any).gpuLayerContent) {
+              resolveGpuLayerAssetParams((layer as any).gpuLayerContent);
+            }
+        };
+
         // Reconstruct the project with proper defaults
         const importedProject: Project = {
           id: proj.id || generateUUID(),
@@ -5760,57 +5822,19 @@ void main() {
           selectedLayerId: proj.selectedLayerId || null,
           layers: (proj.layers || []).map(layer => {
             const imported = this._importLayer(layer);
-            // Resolve every media-path field. Prefer AssetRef so blob URLs
-            // that died at session end still resolve to the originating
-            // disk file (or the sibling-copy beside the .gha). Falls back
-            // to the legacy resolveSrc when no assetRef is present (older
-            // projects from before assetRef shipped).
-            if (imported.source) {
-              imported.source.src = resolveWithRef(
-                (imported.source as any)._assetRef,
-                imported.source.src,
-              );
-              if (isVideoSource(imported.source)) {
-                rehydrateVideoSource(imported.source);
-              }
-            }
-            if (imported.splatContent) {
-              if (imported.splatContent.filePath || (imported.splatContent as any)._assetRef) {
-                imported.splatContent.filePath = resolveWithRef(
-                  (imported.splatContent as any)._assetRef,
-                  imported.splatContent.filePath,
-                );
-              }
-              if (imported.splatContent.texturePath || (imported.splatContent as any)._textureAssetRef) {
-                imported.splatContent.texturePath = resolveWithRef(
-                  (imported.splatContent as any)._textureAssetRef,
-                  imported.splatContent.texturePath,
-                );
-              }
-            }
-            if (imported.model3dContent) {
-              if (imported.model3dContent.modelData || (imported.model3dContent as any)._assetRef) {
-                imported.model3dContent.modelData = resolveWithRef(
-                  (imported.model3dContent as any)._assetRef,
-                  imported.model3dContent.modelData || '',
-                );
-              }
-            }
-            if ((imported as any).pixelFXContent) {
-              const px = (imported as any).pixelFXContent;
-              if (px.sourceUrl || px._sourceAssetRef) {
-                px.sourceUrl = resolveWithRef(px._sourceAssetRef, px.sourceUrl || '');
-              }
-            }
-            if ((imported as any).gpuLayerContent) {
-              resolveGpuLayerAssetParams((imported as any).gpuLayerContent);
-            }
+            resolveLayerMedia(imported);
             return imported;
           }),
           mappingComposition: normalizeMappingCompositionState(proj.mappingComposition),
           vjMode: importedVjMode,
           mediaFolders: normalizeMediaTrayFolders(proj.mediaFolders),
-          stagePresets: (proj as any).stagePresets || [],
+          // Stage presets carry their own copies of layers; their media is
+          // resolved like the project's own layers.
+          stagePresets: ((proj as any).stagePresets || []).map((preset: any) => (
+            Array.isArray(preset?.layers)
+              ? { ...preset, layers: preset.layers.map((layer: any) => { resolveLayerMedia(layer); return layer; }) }
+              : preset
+          )),
           svKeyboardPresets: (proj as any).svKeyboardPresets || [],
           surfaces: (proj as any).surfaces || [],
           activeSurfaceId: (proj as any).activeSurfaceId ?? null,

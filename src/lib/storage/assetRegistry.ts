@@ -71,6 +71,12 @@ function blobToDataUrl(blob: Blob): Promise<string> {
  * The returned `runtimeUrl` is a `blob:` URL the caller can hand to <video>,
  * <img>, Three.js loaders, etc. immediately.
  */
+/** A reference that still points at the media after a restart. */
+export function hasDurableAssetLocation(ref: AssetRef | null | undefined): ref is AssetRef {
+  const durableUrl = ref?.url && !ref.url.startsWith('blob:');
+  return !!(ref?.projectPath || ref?.originalPath || ref?.dataUrl || durableUrl);
+}
+
 export function createAssetRefFromFile(file: File): CapturedAsset {
   const w = window as any;
   const electronPath: string | null = w.electronAPI?.getPathForFile?.(file) || null;
@@ -164,6 +170,20 @@ export async function createAssetRefFromGeneratedBlob(
  * in which case the Files API provides blob URLs and this branch is
  * cosmetic / rarely hit.
  */
+
+/**
+ * Capture a picked or dropped file so the project can find it again. A file
+ * with no path on disk (dropped from a browser or an app that only hands over
+ * its bytes) is copied into the app's project assets; otherwise the project
+ * would save it with no location and reopen it empty.
+ */
+export async function createDurableAssetRefFromFile(file: File): Promise<CapturedAsset> {
+  const captured = createAssetRefFromFile(file);
+  if (hasDurableAssetLocation(captured.assetRef)) return captured;
+  // Reuse the runtime URL already created above so this does not leak a second
+  // object URL for the same file.
+  return createAssetRefFromGeneratedBlob(file, file.name, file.type || undefined, captured.runtimeUrl);
+}
 export function pathToFileUrl(p: string): string {
   let urlPath = p.replace(/\\/g, '/');
   if (!urlPath.startsWith('/')) urlPath = '/' + urlPath;

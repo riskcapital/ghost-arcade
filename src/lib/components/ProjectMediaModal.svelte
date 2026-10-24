@@ -22,9 +22,12 @@
     try {
       const picked = await invoke('open_project_dialog', { title: `Locate ${item.name}`, filters: [{ name: 'Media files', extensions: ['*'] }] });
       if (picked.canceled || !picked.filePath) return;
-      const json = await invoke('project_media_relink', { json: await exportProject(), projectPath, id: item.id, replacementPath: picked.filePath });
-      applyProject(json);
-      message = 'Media relinked. Save the project to keep this change.';
+      const result = await invoke('project_media_relink', { json: await exportProject(), projectPath, id: item.id, replacementPath: picked.filePath });
+      applyProject(result.json);
+      // Other missing files in the same folder are relinked with it.
+      message = result.alsoFound
+        ? `Media relinked, with ${result.alsoFound} other missing file${result.alsoFound === 1 ? '' : 's'} found in the same folder. Save the project to keep this.`
+        : 'Media relinked. Save the project to keep this change.';
       media = await invoke('project_media_scan', { json: await exportProject(), projectPath });
     } catch (e: any) { error = e.message || String(e); }
     finally { busy = false; }

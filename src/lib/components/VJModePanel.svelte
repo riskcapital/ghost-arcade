@@ -30,7 +30,7 @@
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
   import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
   import { audioStore } from '../stores/audio';
-  import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
+  import { createAssetRefFromFile, createAssetRefFromGeneratedBlob, createDurableAssetRefFromFile } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
   import { modulationStore, modulationEngine, setParamModSource, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
@@ -51,7 +51,7 @@
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { showLoading } from '../stores/loading';
   import { showToast } from '../stores/errorToast';
-  import { missingClipFiles, checkClipFiles, searchFolderForFiles, chooseReplacementFile } from '../stores/missingMedia';
+  import { missingClipFiles, checkClipFiles, searchFolderForFiles, chooseReplacementFile, findFilesBeside, noteMediaRelinked } from '../stores/missingMedia';
   import { clipFilePath, clipFilePaths, fileNameOf, matchFoundFiles } from '../vj/clipFiles';
   import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
   import SynthVision from './SynthVision.svelte';
@@ -2505,7 +2505,7 @@
         // Use blob URL for splat files (more efficient than data URLs for binary).
         // Pair with AssetRef so the clip survives save/reload — without it,
         // every VJ splat clip comes back broken after closing the app.
-        const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
+        const { assetRef, runtimeUrl: blobUrl } = await createDurableAssetRefFromFile(file);
         const isSplatFormat = file.name.toLowerCase().endsWith('.splat');
         vjClipLauncher.updateClipSplatContent(layerIndex, columnIndex, {
           filePath: blobUrl,
@@ -2520,7 +2520,7 @@
       } else {
         // Use blob URL for 3D model files. AssetRef carries the durable disk
         // path so save/reload restores the model — blob URLs alone can't.
-        const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
+        const { assetRef, runtimeUrl: blobUrl } = await createDurableAssetRefFromFile(file);
         const ext = file.name.split('.').pop()?.toLowerCase() || 'glb';
         vjClipLauncher.updateClipModel3DContent(layerIndex, columnIndex, {
           modelData: blobUrl,
@@ -3225,9 +3225,14 @@
   // clips that lost theirs and clears the mark when the file is back.
   const MISSING_FILE_CHECK_MS = 4000;
   let locatingFiles = false;
+  // Every block's clips, not only the block on screen: a show opened on
+  // another computer should say what is missing before a block is switched to.
   const deckClipFiles = () => {
     const state = get(vjClipLauncher);
-    return clipFilePaths([state.clipGrid, state.bankBClipGrid]);
+    const others = (state.blocks ?? [])
+      .filter((block) => block.id !== state.activeBlockId)
+      .flatMap((block) => [block.clipGrid, block.bankBClipGrid]);
+    return clipFilePaths([state.clipGrid, state.bankBClipGrid, ...others]);
   };
   const refreshMissingFiles = () => checkClipFiles(deckClipFiles());
   onMount(() => {
@@ -3258,6 +3263,7 @@
       const found = Object.keys(moves).length;
       if (!found) { showToast('None of the missing files are in that folder.', 'warning'); return; }
       const clips = vjClipLauncher.relinkClipFiles(moves);
+      noteMediaRelinked();
       const left = (await refreshMissingFiles()).size;
       showToast(`Found ${found} file${found === 1 ? '' : 's'} and relinked ${clips} clip${clips === 1 ? '' : 's'}.${left ? ` ${left} still missing.` : ''} Save the project to keep this.`, left ? 'warning' : 'info');
     } catch (error) {
@@ -3275,9 +3281,14 @@
     try {
       const to = await chooseReplacementFile(fileNameOf(from));
       if (!to) return;
-      const clips = vjClipLauncher.relinkClipFiles({ [from]: to });
+      // The other missing clips usually moved with it: look beside it.
+      const others = [...await refreshMissingFiles()].filter((p) => p !== from);
+      const moves = { ...matchFoundFiles(others, await findFilesBeside(to, others.map(fileNameOf))), [from]: to };
+      const clips = vjClipLauncher.relinkClipFiles(moves);
+      noteMediaRelinked();
       await refreshMissingFiles();
-      showToast(`Relinked ${clips} clip${clips === 1 ? '' : 's'} to ${fileNameOf(to)}. Save the project to keep this.`, 'info');
+      const extra = Object.keys(moves).length - 1;
+      showToast(`Relinked ${clips} clip${clips === 1 ? '' : 's'} to ${fileNameOf(to)}${extra ? ` and ${extra} other file${extra === 1 ? '' : 's'} found beside it` : ''}. Save the project to keep this.`, 'info');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not use that file.', 'error');
     } finally {

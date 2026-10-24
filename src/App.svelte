@@ -101,6 +101,7 @@
   import { fitToolbar } from './lib/utils/toolbarFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
+  import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
   import { audioStore } from './lib/stores/audio';
   // macros.ts registers a callback with midiRouter on import so
   // `vj:macro:N:value` MIDI messages route into the macro store. Pulled in
@@ -445,6 +446,26 @@
     const dir = currentProjectPath?.substring(0, currentProjectPath.lastIndexOf(sep) + 1);
     vjClipLauncher.stopAll();
     if (!project.importProjectJSON(json, dir)) throw new Error('Could not reload the relinked project.');
+    noteMediaRelinked();
+  }
+
+  /**
+   * Say what opening a project found about its media: files that moved and
+   * were found in their new place (an unsaved change until the project is
+   * saved), and files that could not be found.
+   */
+  function reportOpenedMedia(media: { moved?: string[]; missing?: string[] } | null | undefined) {
+    const moved = media?.moved?.length ?? 0;
+    const missing = media?.missing?.length ?? 0;
+    if (moved) noteMediaRelinked();
+    if (missing) {
+      showToast(
+        `${missing} media file${missing === 1 ? ' is' : 's are'} missing${moved ? ` (${moved} found in a new place)` : ''}. File → Project Media… can find ${missing === 1 ? 'it' : 'them'}.`,
+        'warning',
+      );
+    } else if (moved) {
+      showToast(`Found ${moved} media file${moved === 1 ? '' : 's'} in a new place. Save the project to keep ${moved === 1 ? 'it' : 'them'}.`, 'info');
+    }
   }
 
   // App version baked in at build time from package.json (see vite.config.ts).
@@ -487,6 +508,8 @@
 
   // Auto-save & crash recovery state
   let autosaveInterval: ReturnType<typeof setInterval> | null = null;
+  // Projects double-clicked in the Finder / Explorer while the app runs.
+  let stopProjectOpenListener: (() => void) | null = null;
   let showRecoveryModal = false;
 
   // A newer release opens the update window once, after the welcome screen
@@ -510,6 +533,8 @@
     const currentState = JSON.stringify({
       layers: $project.layers.map(l => ({ id: l.id, name: l.name, type: l.type, opacity: l.opacity, visible: l.visible, corners: l.corners, contentFit: l.contentFit })),
       name: $project.name,
+      // Relinked media lives in asset refs no other field shows.
+      mediaEdits: $mediaRelinkVersion,
     });
     hasUnsavedChanges = lastSavedState !== null && currentState !== lastSavedState;
   }
@@ -518,6 +543,7 @@
     const currentState = JSON.stringify({
       layers: get(project).layers.map(l => ({ id: l.id, name: l.name, type: l.type, opacity: l.opacity, visible: l.visible, corners: l.corners, contentFit: l.contentFit })),
       name: get(project).name,
+      mediaEdits: get(mediaRelinkVersion),
     });
     lastSavedState = currentState;
     hasUnsavedChanges = false;
@@ -531,6 +557,8 @@
       clearInterval(autosaveInterval);
       autosaveInterval = null;
     }
+    stopProjectOpenListener?.();
+    stopProjectOpenListener = null;
     viewportEl?.removeEventListener('wheel', handleViewportWheel);
     destroyPhoneVisionSession(true);
     oscStore.destroy();
@@ -538,14 +566,35 @@
   });
 
   // Recovery modal actions
-  function recoverAutosave() {
-    const savedData = localStorage.getItem('ghostarcade-autosave');
+  async function recoverAutosave() {
+    let savedData = localStorage.getItem('ghostarcade-autosave');
     if (savedData) {
-      project.importProjectJSON(savedData);
+      // Recover against the project file the snapshot was taken from, so its
+      // media resolves the way Open resolves it and Save goes back there.
+      const savedPath = localStorage.getItem('ghostarcade-autosave-path') || '';
+      let projectDir: string | undefined;
+      if (savedPath) {
+        const sep = savedPath.includes('\\') ? '\\' : '/';
+        projectDir = savedPath.substring(0, savedPath.lastIndexOf(sep) + 1) || undefined;
+        currentProjectPath = savedPath;
+      }
+      let media: { moved?: string[]; missing?: string[] } | null = null;
+      if (isDesktopApp) {
+        try {
+          const prepared = await invoke<{ content: string; media: any }>('prepare_project_media', { json: savedData, projectPath: savedPath || undefined });
+          if (typeof prepared?.content === 'string') savedData = prepared.content;
+          media = prepared?.media ?? null;
+        } catch (err) {
+          console.warn('[Recovery] Could not check the media of the recovered project:', err);
+        }
+      }
+      project.importProjectJSON(savedData!, projectDir);
       markAsSaved();
+      reportOpenedMedia(media);
     }
     localStorage.removeItem('ghostarcade-autosave');
     localStorage.removeItem('ghostarcade-autosave-timestamp');
+    localStorage.removeItem('ghostarcade-autosave-path');
     showRecoveryModal = false;
     // Back in their own project: no need for the welcome screen this time.
     showWelcome = false;
@@ -1107,6 +1156,27 @@
       showRecoveryModal = true;
     }
 
+    // --- A project double-clicked in the Finder / Explorer ---
+    // The main process holds the file until the editor is ready for it;
+    // later ones arrive while the app is running.
+    const desktopApi = (window as any).electronAPI;
+    if (isDesktopApp && desktopApi?.invoke && !isShowModeLaunch()) {
+      const openPendingProject = async () => {
+        try {
+          const pending: string | null = await desktopApi.invoke('take_pending_project_open');
+          if (!pending) return;
+          showRecoveryModal = false;
+          showWelcome = false;
+          if (!(await openProjectAtPath(pending))) alert('Failed to load project. The file may be corrupted or invalid.');
+        } catch (err: any) {
+          alert(`Failed to load project: ${err?.message || err}`);
+        }
+      };
+      void openPendingProject();
+      const stop = desktopApi.on?.('open-project-file', () => void openPendingProject());
+      if (typeof stop === 'function') stopProjectOpenListener = stop;
+    }
+
     // --- Show mode: open the show project, the outputs, and start ---
     if (isShowModeLaunch()) {
       const config = launchConfig();
@@ -1124,13 +1194,23 @@
     }
 
     // --- Auto-save interval: every 30 seconds ---
+    // A VJ show can have no mapping layers at all; its clips are worth keeping.
+    const hasVjClips = () => {
+      const vj = get(vjClipLauncher);
+      const anyClip = (grid: unknown) => Array.isArray(grid) && grid.some((row) => Array.isArray(row) && row.some(Boolean));
+      return anyClip(vj.clipGrid) || anyClip(vj.bankBClipGrid)
+        || ((vj as any).blocks ?? []).some((block: any) => anyClip(block.clipGrid) || anyClip(block.bankBClipGrid));
+    };
     autosaveInterval = setInterval(() => {
       const proj = get(project);
-      if (proj.layers.length > 0) {
+      if (proj.layers.length > 0 || hasVjClips()) {
         try {
           const jsonStr = project.exportProjectJSON();
           localStorage.setItem('ghostarcade-autosave', jsonStr);
           localStorage.setItem('ghostarcade-autosave-timestamp', Date.now().toString());
+          // Remember which file this snapshot belongs to so recovery can
+          // resolve its media the same way Open does.
+          localStorage.setItem('ghostarcade-autosave-path', currentProjectPath ?? '');
         } catch (e) {
           console.warn('[AutoSave] Failed to auto-save project:', e);
         }
@@ -4142,9 +4222,9 @@
   }
 
   /** Open a project file from disk without a dialog (show mode). */
-  async function openProjectAtPath(path: string): Promise<boolean> {
+  async function openProjectAtPath(path: string, name = path.split(/[\\/]/).pop() || path): Promise<boolean> {
     const { invoke } = await import('$lib/bridge');
-    const result = await invoke<{ content: string; dir: string }>('read_project_file', { path });
+    const result = await invoke<{ content: string; dir: string; media?: { moved?: string[]; missing?: string[] } | null }>('read_project_file', { path });
     try { synthVisionStore.reset(); } catch {}
     try { sessionClipCache.clear(); } catch {}
     try { isfShaderCache.clear(); } catch {}
@@ -4153,7 +4233,9 @@
     if (success) {
       currentFileHandle = null;
       currentProjectPath = path;
+      recentFiles.add(name, path);
       markAsSaved();
+      reportOpenedMedia(result.media);
     }
     return success;
   }
@@ -4496,7 +4578,7 @@
             const sep = currentProjectPath.includes('\\') ? '\\' : '/';
             const projectDir = currentProjectPath.substring(0, currentProjectPath.lastIndexOf(sep) + 1);
             const portableJson = await materializeAssetsInProject(jsonStr, projectDir);
-            const result = await api.invoke('save_file_text', { path: currentProjectPath, content: portableJson });
+            const result = await api.invoke('save_project_file', { path: currentProjectPath, content: portableJson });
             if (!result?.success) {
               alert(`Save failed: ${result?.error || 'unknown error'}`);
               return;
@@ -4593,7 +4675,7 @@
           const sep = filePath.includes('\\') ? '\\' : '/';
           const projectDir = filePath.substring(0, filePath.lastIndexOf(sep) + 1);
           const portableJson = await materializeAssetsInProject(jsonStr, projectDir);
-          const writeResult = await api.invoke('save_file_text', { path: filePath, content: portableJson });
+          const writeResult = await api.invoke('save_project_file', { path: filePath, content: portableJson });
           if (!writeResult?.success) {
             alert(`Save failed: ${writeResult?.error || 'unknown error'}`);
             return;
@@ -4692,6 +4774,16 @@
       projectDir = electronPath.substring(0, electronPath.lastIndexOf(sep) + 1);
     }
 
+    // On the desktop, open by path: the main process finds the project's
+    // media where it is now before the project loads.
+    if (electronPath && isDesktopApp) {
+      input.value = '';
+      openProjectAtPath(electronPath, file.name)
+        .then((ok) => { if (!ok) alert('Failed to load project. The file may be corrupted or invalid.'); })
+        .catch((err) => alert(`Failed to load project: ${err?.message || err}`));
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
@@ -4780,20 +4872,8 @@
     // Electron: read the file directly from disk via IPC
     if (isDesktopApp && entry.path) {
       try {
-        const { invoke } = await import('$lib/bridge');
-        const result = await invoke<{ content: string; dir: string }>('read_project_file', { path: entry.path });
-        try { synthVisionStore.reset(); } catch {}
-        try { sessionClipCache.clear(); } catch {}
-        try { isfShaderCache.clear(); } catch {}
-        try { modulationStore.clearAll(); } catch {}
-        const success = project.importProjectJSON(result.content, result.dir);
-        if (success) {
+        if (await openProjectAtPath(entry.path, entry.name)) {
           console.log('Project loaded from recent:', entry.path);
-          currentFileHandle = null;
-          // Track the loaded path so Save updates this file in place.
-          currentProjectPath = entry.path;
-          recentFiles.add(entry.name, entry.path); // Bump to top
-          markAsSaved();
           return;
         }
         alert('Failed to load project. The file may be corrupted or invalid.');

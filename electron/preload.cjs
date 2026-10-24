@@ -14,7 +14,8 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 // Allowed IPC commands — restrict renderer to known-safe operations
 const ALLOWED_IPC_COMMANDS = new Set([
   // Scans sent from a paired phone (electron/phone-scan-store.cjs)
-  'media_files_status', 'media_find_in_folder',
+  'media_files_status', 'media_find_in_folder', 'media_find_beside',
+  'save_project_file', 'prepare_project_media', 'take_pending_project_open',
   'pjlink_command', 'pjlink_set_password', 'pjlink_has_password',
   'show_startup_get', 'show_startup_set',
   'pixelmap_send_frame', 'pixelmap_stop', 'pixelmap_get_stats',
@@ -130,7 +131,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'video-converter-progress', 'video-loop-progress'];
+    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'video-converter-progress', 'video-loop-progress', 'open-project-file'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);

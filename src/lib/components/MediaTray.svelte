@@ -32,7 +32,7 @@
   import { modulationStore, setParamModSource, setParamModAmount, updateParamMod, setBaseValue, registerParamRanges, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { mediaTrayShaders } from '../stores/mediaTrayShaders';
-  import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
+  import { createAssetRefFromFile, createAssetRefFromGeneratedBlob, createDurableAssetRefFromFile } from '../storage/assetRegistry';
   import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
   import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
   // Built-in Three.js / p5.js animations — auto-discovered from
@@ -1405,7 +1405,7 @@
     // Capture both the runtime URL AND a durable AssetRef. The blob URL dies
     // at session end; the AssetRef carries the absolute disk path so reload
     // works even without the .gha sibling-copy (Electron Save As).
-    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
+    const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
     const mediaType = getMediaType(file);
 
     if (mediaType === 'video') {
