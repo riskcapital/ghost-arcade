@@ -2922,6 +2922,76 @@ function registerIpcHandlers() {
     for (const file of [replacement, ...alsoFound]) pathGrants.registerPickedFile(file);
     return { json: JSON.stringify(data), alsoFound: alsoFound.length };
   });
+  // ── Project packages: the show and its media in one .zip ──
+  // The zip's location comes from a save dialog shown here, never from the
+  // renderer. Progress goes to the window that asked; one pack at a time.
+  const projectPackage = require('./project-package.cjs');
+  let packing = null;
+  ipcMain.handle('export_project_package', async (event, args) => {
+    if (packing) throw new Error('A package is already being written.');
+    const { data, dir } = mediaRequest(args);
+    const projectName = typeof args?.projectName === 'string' ? args.projectName.slice(0, 120) : 'Project';
+    const safeName = projectName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'Project';
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    const picked = await dialog.showSaveDialog(win, {
+      title: 'Export Package',
+      defaultPath: path.join(dir || app.getPath('documents'), `${safeName}.zip`),
+      filters: [{ name: 'Ghost Arcade Package', extensions: ['zip'] }],
+    });
+    if (picked.canceled || !picked.filePath) return { canceled: true };
+    const outputPath = /\.zip$/i.test(picked.filePath) ? picked.filePath : `${picked.filePath}.zip`;
+    const controller = new AbortController();
+    packing = controller;
+    let lastSent = 0;
+    try {
+      const result = await projectPackage.exportProjectPackage(data, dir, outputPath, {
+        projectName: safeName,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          const now = Date.now();
+          if (now - lastSent < 100 && progress.done < progress.total) return;
+          lastSent = now;
+          if (!event.sender.isDestroyed()) event.sender.send('project-package-progress', progress);
+        },
+      });
+      return { canceled: false, ...result };
+    } catch (error) {
+      if (error?.code === 'cancelled') return { canceled: true };
+      throw error;
+    } finally {
+      packing = null;
+    }
+  });
+  ipcMain.handle('cancel_project_package', () => {
+    packing?.abort();
+    return { cancelling: !!packing };
+  });
+  // Pick a package and a place to unpack it; the project inside becomes
+  // the one the renderer may open and save back to.
+  ipcMain.handle('open_project_package', async (event, args) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    // A package already picked in File → Open (and so readable), or ask for one.
+    const given = typeof args?.zipPath === 'string' ? path.normalize(args.zipPath) : '';
+    const zip = given && /\.zip$/i.test(given) && path.isAbsolute(given) && pathGrants.canRead(given)
+      ? { canceled: false, filePaths: [given] }
+      : await dialog.showOpenDialog(win, {
+        title: 'Open Package',
+        properties: ['openFile'],
+        filters: [{ name: 'Ghost Arcade Package', extensions: ['zip'] }],
+      });
+    if (zip.canceled || !zip.filePaths[0]) return { canceled: true };
+    const where = await dialog.showOpenDialog(win, {
+      title: 'Choose where to unpack the project',
+      buttonLabel: 'Unpack Here',
+      defaultPath: path.dirname(zip.filePaths[0]),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (where.canceled || !where.filePaths[0]) return { canceled: true };
+    const { folder, projectPath } = await projectPackage.unpackProjectPackage(zip.filePaths[0], where.filePaths[0]);
+    pathGrants.registerPickedFile(projectPath);
+    pathGrants.allowWriteFile(projectPath);
+    return { canceled: false, folder, projectPath };
+  });
   ipcMain.handle('project_media_collect', async (_, args) => {
     const { data, dir } = mediaRequest(args);
     return projectMedia.collectProjectMedia(data, dir, assertAbsolutePath(args.outputPath, 'output path'));

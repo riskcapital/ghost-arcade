@@ -119,6 +119,15 @@ describe('paths the renderer may write and read', () => {
     expect(handler).toContain('climbsUp(filePath)');
   });
 
+  it('writes a package only where a save dialog chose, and opens only a zip the user picked', () => {
+    const exportHandler = mainHandler('export_project_package');
+    expect(exportHandler).toContain('dialog.showSaveDialog(');
+    expect(exportHandler).not.toMatch(/args\??\.outputPath/);
+    const open = mainHandler('open_project_package');
+    expect(open).toContain('pathGrants.canRead(given)');
+    expect(open).toContain('dialog.showOpenDialog(');
+  });
+
   it('compares Windows paths without regard to case or slash direction', () => {
     const g = createPathGrants({ assetDirs: ['C:\\Users\\vj\\AppData\\ga\\project-assets'], platform: 'win32' });
     g.allowWriteDir('D:\\Export');

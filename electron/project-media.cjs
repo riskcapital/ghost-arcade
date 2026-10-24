@@ -2,7 +2,6 @@
 const fs = require('fs/promises');
 const path = require('path');
 const { fileURLToPath, pathToFileURL } = require('url');
-const crypto = require('crypto');
 const { findMediaInFolder } = require('./media-locate.cjs');
 const REF_FIELDS = new Set(['_assetRef', '_textureAssetRef', '_sourceAssetRef', 'assetRef']);
 const MEDIA_FIELDS = ['src', 'mediaSrc', 'modelData', 'filePath', 'texturePath', 'sourceUrl', 'assetUrl', 'url'];
@@ -198,40 +197,148 @@ function makeProjectPortable(data, projectDir) {
   visit(data);
   return data;
 }
+// ── Packing a show's media (Collect beside a new project, Export Package) ──
+// Files keep their own names; a different file with a taken name becomes
+// "name (2).ext". A model that loads files from beside itself (a .gltf's
+// buffers and textures, an .obj's materials and theirs) gets a folder with
+// those files at the same places, so it loads as it did.
+const SAFE_NAME = /[<>:"/\\|?*\x00-\x1f]/g;
+const GENERIC_FONTS = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'inherit', 'initial']);
+async function gltfDependencies(file) {
+  const json = JSON.parse(await fs.readFile(file, 'utf8'));
+  return [...(json.buffers || []), ...(json.images || [])]
+    .map(item => item && item.uri)
+    .filter(uri => typeof uri === 'string' && uri && !/^[a-z][a-z0-9+.-]*:/i.test(uri))
+    .map(uri => { try { return decodeURIComponent(uri); } catch { return uri; } });
+}
+async function objDependencies(file) {
+  const libraries = [];
+  for (const line of (await fs.readFile(file, 'utf8')).split(/\r?\n/)) {
+    const match = /^\s*mtllib\s+(.+?)\s*$/.exec(line);
+    if (match) libraries.push(match[1]);
+  }
+  const textures = [];
+  for (const library of libraries) {
+    let text;
+    try { text = await fs.readFile(path.resolve(path.dirname(file), library.replace(/\\/g, '/')), 'utf8'); } catch { continue; }
+    for (const line of text.split(/\r?\n/)) {
+      // Options come before the file name: the file is the last word.
+      const match = /^\s*(map_\w+|bump|disp|decal|refl|norm)\s+(.+?)\s*$/i.exec(line);
+      if (match) textures.push(match[2].split(/\s+/).pop());
+    }
+  }
+  return [...libraries, ...textures];
+}
+const DEPENDENCY_READERS = { '.gltf': gltfDependencies, '.obj': objDependencies };
+/** Files a model loads from beside itself: those inside its folder, and the names of any outside it. */
+async function modelDependencies(file) {
+  const read = DEPENDENCY_READERS[path.extname(file).toLowerCase()];
+  const inside = [], outside = [];
+  if (!read) return { inside, outside };
+  let names = [];
+  try { names = await read(file); } catch { return { inside, outside }; }
+  const dir = path.dirname(file);
+  for (const name of new Set(names)) {
+    const absolute = path.resolve(dir, name.replace(/\\/g, '/'));
+    const relative = path.relative(dir, absolute);
+    if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) outside.push(name);
+    else inside.push({ relative: relative.split(path.sep).join('/'), absolute });
+  }
+  return { inside, outside };
+}
+/** Font families the show names. They are not packed: they have to be installed. */
+function fontsUsed(data) {
+  const fonts = new Set();
+  const visit = node => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    for (const [key, value] of Object.entries(node)) {
+      if (/^font(Family)?$/i.test(key) && typeof value === 'string') {
+        for (const family of value.split(',')) {
+          const name = family.trim().replace(/^["']|["']$/g, '');
+          if (name && !GENERIC_FONTS.has(name.toLowerCase())) fonts.add(name);
+        }
+      } else visit(value);
+    }
+  };
+  visit(data);
+  return [...fonts].sort();
+}
+/**
+ * Decide where every media file of a show goes under `folder` in a packed
+ * copy, and point the project at those places (relative to the packed
+ * project file). Returns the files to copy, what could not be packed, and
+ * the fonts the show needs installed.
+ */
+async function planPackedMedia(data, projectDir, folder = 'Media') {
+  const files = [];
+  const placed = new Map();
+  const taken = new Set();
+  const missing = [];
+  const unique = name => {
+    const ext = path.extname(name), stem = name.slice(0, name.length - ext.length);
+    let candidate = name;
+    for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${stem} (${n})${ext}`;
+    taken.add(candidate.toLowerCase());
+    return candidate;
+  };
+  for (const entry of mediaEntries(data, projectDir)) {
+    const found = await existingFile(entry.candidates);
+    if (!found) { missing.push(entry.name); continue; }
+    let key;
+    try { key = await fs.realpath(found.path); } catch { key = found.path; }
+    let target = placed.get(key);
+    if (!target) {
+      const name = path.basename(found.path).replace(SAFE_NAME, '_');
+      const dependencies = await modelDependencies(found.path);
+      if (dependencies.inside.length || dependencies.outside.length) {
+        const own = `${folder}/${unique(name.slice(0, name.length - path.extname(name).length) || 'Model')}`;
+        target = `${own}/${name}`;
+        files.push({ source: found.path, target, size: found.size });
+        for (const dependency of dependencies.inside) {
+          const stat = await existingFile([dependency.absolute]);
+          if (stat) files.push({ source: dependency.absolute, target: `${own}/${dependency.relative}`, size: stat.size });
+          else missing.push(`${dependency.relative} (used by ${name})`);
+        }
+        for (const outside of dependencies.outside) missing.push(`${outside} (outside the folder of ${name})`);
+      } else {
+        target = `${folder}/${unique(name)}`;
+        files.push({ source: found.path, target, size: found.size });
+      }
+      placed.set(key, target);
+    }
+    for (const ref of entry.refs) {
+      ref.kind = 'project-file'; ref.projectPath = './' + target;
+      delete ref.originalPath; delete ref.relativePath;
+    }
+    for (const { node, field } of entry.fields) node[field] = './' + target;
+  }
+  return { files, missing, fonts: fontsUsed(data) };
+}
+async function exists(target) {
+  try { await fs.stat(target); return true; } catch { return false; }
+}
+/**
+ * Collect: a new project file with every media file copied into a "Media"
+ * folder beside it ("Media 2"… when taken). Files that cannot be found are
+ * listed, not packed; the copy is still written.
+ */
 async function collectProjectMedia(data, projectDir, outputPath) {
   if (!path.isAbsolute(outputPath) || path.extname(outputPath).toLowerCase() !== '.gha') throw new Error('Choose a .gha project filename.');
-  try { await fs.stat(outputPath); throw new Error('Choose a new filename; an existing project will not be overwritten.'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const entries = mediaEntries(data, projectDir);
-  const sources = new Map();
-  for (const entry of entries) {
-    const found = await existingFile(entry.candidates);
-    if (!found) throw new Error(`Locate missing media before collecting: ${entry.name}`);
-    // External model/playlist dependencies need their own dependency collector.
-    if (['.gltf', '.obj', '.mtl', '.m3u8'].includes(path.extname(found.path).toLowerCase())) throw new Error(`Collect does not yet include external dependencies for ${entry.name}. Use a self-contained media file first.`);
-    sources.set(entry.id, found.path);
-  }
+  if (await exists(outputPath)) throw new Error('Choose a new filename; an existing project will not be overwritten.');
   const parent = path.dirname(outputPath);
   await fs.mkdir(parent, { recursive: true });
-  const folder = await fs.mkdtemp(path.join(parent, 'Media-'));
-  const copied = new Map();
+  let folderName = 'Media';
+  for (let n = 2; await exists(path.join(parent, folderName)); n++) folderName = `Media ${n}`;
+  const plan = await planPackedMedia(data, projectDir, folderName);
+  const folder = path.join(parent, folderName);
+  await fs.mkdir(folder);
   let published = false;
   try {
-    for (const entry of entries) {
-      const source = sources.get(entry.id), canonical = await fs.realpath(source);
-      let filename = copied.get(canonical);
-      if (!filename) {
-        const safeName = path.basename(source).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
-        filename = crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 12) + '-' + safeName;
-        await fs.copyFile(source, path.join(folder, filename), fs.constants.COPYFILE_EXCL);
-        copied.set(canonical, filename);
-      }
-      const relative = './' + path.basename(folder) + '/' + filename;
-      for (const ref of entry.refs) {
-        ref.kind = 'project-file'; ref.projectPath = relative;
-        delete ref.originalPath;
-      }
-      for (const { node, field } of entry.fields) node[field] = relative;
+    for (const file of plan.files) {
+      const destination = path.join(parent, ...file.target.split('/'));
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.copyFile(file.source, destination, fs.constants.COPYFILE_EXCL);
     }
     // Exclusive create means another save cannot be silently overwritten.
     const handle = await fs.open(outputPath, 'wx');
@@ -240,10 +347,10 @@ async function collectProjectMedia(data, projectDir, outputPath) {
       await handle.sync(); published = true;
     } catch (error) { await handle.close(); await fs.unlink(outputPath); throw error; }
     await handle.close();
-    return { outputPath, mediaFolder: folder, filesCopied: copied.size };
+    return { outputPath, mediaFolder: folder, filesCopied: plan.files.length, missing: plan.missing, fonts: plan.fonts };
   } finally { if (!published) await fs.rm(folder, { recursive: true, force: true }); }
 }
 module.exports = {
   mediaEntries, scanProjectMedia, relinkProjectMedia, relinkMissingInFolder, collectProjectMedia,
-  prepareProjectMediaForOpen, makeProjectPortable,
+  prepareProjectMediaForOpen, makeProjectPortable, planPackedMedia, modelDependencies,
 };
