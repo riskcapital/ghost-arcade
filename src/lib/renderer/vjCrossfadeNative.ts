@@ -92,10 +92,23 @@ fn sampleA(uv: vec2<f32>) -> vec4<f32> {
   let opacity = clamp(u.bankOpacity.x, 0.0, 1.0);
   return vec4<f32>(c.rgb * opacity, opacity);
 }
-fn sampleB(uv: vec2<f32>) -> vec4<f32> {
+fn sampleBRaw(uv: vec2<f32>) -> vec4<f32> {
   let c = normalizeSample(textureSampleLevel(texB, samp, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0));
   let opacity = clamp(u.bankOpacity.y, 0.0, 1.0);
   return vec4<f32>(c.rgb * opacity, opacity);
+}
+
+// Deck B as the transition brings it in. With a blend mode other than
+// Normal, B arrives combined with A by that mode (difference, multiply…)
+// and settles into plain B as the fader reaches B, so the transition runs
+// once from A to B instead of passing through a blended midpoint.
+fn sampleB(uv: vec2<f32>) -> vec4<f32> {
+  let b = sampleBRaw(uv);
+  let blendMode = i32(u.blendMode + 0.5);
+  if (blendMode == 0) { return b; }
+  let blended = xfBlend(sampleA(uv).rgb, b.rgb, blendMode);
+  let settle = smoothstep(0.0, 1.0, clamp(u.mixv, 0.0, 1.0));
+  return vec4<f32>(mix(blended, b.rgb, settle), b.a);
 }
 
 fn xfHash(p: vec2<f32>) -> f32 {
@@ -279,18 +292,8 @@ fn transitionColor(uv: vec2<f32>, m: f32, t: f32, transition: i32) -> vec4<f32> 
 fn fsMain(in: VsOut) -> @location(0) vec4<f32> {
   let m = clamp(u.mixv, 0.0, 1.0);
   let transition = i32(u.transition + 0.5);
+  // The blend mode lives in sampleB: one transition, A to B.
   var color = transitionColor(in.uv, m, u.time, transition);
-
-  // Blend-mode tint over the overlap zone — transition journey preserved,
-  // mixed pixels tinted by the selected per-channel math.
-  let blendMode = i32(u.blendMode + 0.5);
-  if (blendMode != 0) {
-    let a = sampleA(in.uv).rgb;
-    let b = sampleB(in.uv).rgb;
-    let blended = xfBlend(a, b, blendMode);
-    let overlap = 1.0 - abs(m - 0.5) * 2.0;
-    color = vec4<f32>(mix(color.rgb, blended, overlap), color.a);
-  }
 
   // 2% dead zone at each end: operators expect fader-at-end = clean bank,
   // no residual seams/cracks/slivers from the transition math.

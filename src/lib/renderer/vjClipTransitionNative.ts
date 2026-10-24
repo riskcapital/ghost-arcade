@@ -281,28 +281,35 @@ fn sampleA(uv: vec2<f32>) -> vec4<f32> {
   let sampleUv = clamp(q.xy, u.a.sourceRect.xy + halfTexel, u.a.sourceRect.xy + u.a.sourceRect.zw - halfTexel);
   return premultiply(textureSampleLevel(texA, samp, sampleUv, 0.0), u.a);
 }
-fn sampleB(uv: vec2<f32>) -> vec4<f32> {
+fn sampleBRaw(uv: vec2<f32>) -> vec4<f32> {
   let q = branchUV(uv, u.b);
   if (q.z < 0.5) { return vec4<f32>(0.0); }
   let halfTexel = vec2<f32>(0.5) / vec2<f32>(textureDimensions(texB));
   let sampleUv = clamp(q.xy, u.b.sourceRect.xy + halfTexel, u.b.sourceRect.xy + u.b.sourceRect.zw - halfTexel);
   return premultiply(textureSampleLevel(texB, samp, sampleUv, 0.0), u.b);
 }
+// B as the transition brings it in: with a blend mode other than Normal it
+// arrives combined with A and settles into plain B by the end, so the
+// transition runs once from A to B (see the bank crossfade's sampleB).
+fn sampleB(uv: vec2<f32>) -> vec4<f32> {
+  let b = sampleBRaw(uv);
+  let mode = i32(u.blendMode + 0.5);
+  if (mode == 0 || b.a <= 0.0) { return b; }
+  let a = sampleA(uv);
+  if (a.a <= 0.0) { return b; }
+  let blended = xfBlend(a.rgb / max(a.a, 0.0001), b.rgb / max(b.a, 0.0001), mode) * b.a;
+  let settle = smoothstep(0.0, 1.0, clamp(u.mixv, 0.0, 1.0));
+  return vec4<f32>(mix(blended, b.rgb, settle), b.a);
+}
 ${transitionFunctions}
 @fragment fn fsMain(in: VsOut) -> @location(0) vec4<f32> {
   if (u.ready.y < 0.5) { return sampleA(in.uv); }
-  if (u.ready.x < 0.5) { return sampleB(in.uv); }
+  if (u.ready.x < 0.5) { return sampleBRaw(in.uv); }
   let m = clamp(u.mixv, 0.0, 1.0);
   if (m <= 0.0) { return sampleA(in.uv); }
   if (m >= 1.0) { return sampleB(in.uv); }
+  // The blend mode lives in sampleB: one transition, A to B.
   var color = transitionColor(in.uv, m, u.time, i32(u.transition + 0.5));
-  if (i32(u.blendMode + 0.5) != 0) {
-    let a = sampleA(in.uv);
-    let b = sampleB(in.uv);
-    let overlap = (1.0 - abs(m - 0.5) * 2.0) * min(a.a, b.a);
-    let blended = xfBlend(a.rgb / max(a.a, 0.0001), b.rgb / max(b.a, 0.0001), i32(u.blendMode + 0.5));
-    color = vec4<f32>(mix(color.rgb, blended * color.a, overlap), color.a);
-  }
   if (m < 0.02) { color = mix(sampleA(in.uv), color, smoothstep(0.0, 0.02, m)); }
   else if (m > 0.98) { color = mix(color, sampleB(in.uv), smoothstep(0.98, 1.0, m)); }
   return vec4<f32>(color.rgb, clamp(color.a, 0.0, 1.0));
