@@ -413,6 +413,8 @@ const sliceWindows = new Map();
 // timeout to avoid cross-call leakage).
 let pendingOutputWindowConfig = null;
 let pendingOutputWindowConfigTimer = null;
+// Set by setWindowOpenHandler for the window did-create-window receives next.
+let nextOutputWindowFullscreen = false;
 let sidecarProcess = null;
 let embeddedServerModule = null;
 const wledSockets = new Map();  // controllerId -> dgram.Socket
@@ -1326,15 +1328,13 @@ function closeAuxiliaryWindows() {
   if (outputWindow && !outputWindow.isDestroyed()) {
     const win = outputWindow;
     outputWindow = null;
-    try { win.close(); } catch {}
+    closeOutputBrowserWindow(win);
   } else {
     outputWindow = null;
   }
 
   for (const [sliceId, win] of sliceWindows.entries()) {
-    if (win && !win.isDestroyed()) {
-      try { win.close(); } catch {}
-    }
+    closeOutputBrowserWindow(win);
     sliceWindows.delete(sliceId);
   }
 
@@ -3713,6 +3713,7 @@ function registerIpcHandlers() {
   // staleness across user clicks.
   ipcMain.handle('configure_next_output_window', (_, config) => {
     pendingOutputWindowConfig = config && typeof config === 'object' ? { ...config } : null;
+    nextOutputWindowFullscreen = false;
     if (pendingOutputWindowConfigTimer) {
       clearTimeout(pendingOutputWindowConfigTimer);
       pendingOutputWindowConfigTimer = null;
@@ -3761,7 +3762,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('close_output_window', () => {
     if (outputWindow) {
-      outputWindow.close();
+      closeOutputBrowserWindow(outputWindow);
       outputWindow = null;
     }
   });
@@ -3887,9 +3888,9 @@ function registerIpcHandlers() {
 
   // --- Toggle output fullscreen ---
   ipcMain.handle('output_toggle_fullscreen', () => {
-    if (outputWindow) {
-      const isFs = outputWindow.isFullScreen();
-      outputWindow.setFullScreen(!isFs);
+    if (outputWindow && !outputWindow.isDestroyed()) {
+      const isFs = isOutputFullScreen(outputWindow);
+      setOutputFullScreen(outputWindow, !isFs);
       outputWindow.setMenuBarVisibility(isFs);
       return !isFs;
     }
@@ -3973,7 +3974,7 @@ function registerIpcHandlers() {
     // always present a fresh state to the operator.
     const existing = sliceWindows.get(sliceId);
     if (existing && !existing.isDestroyed()) {
-      try { existing.close(); } catch {}
+      closeOutputBrowserWindow(existing);
       sliceWindows.delete(sliceId);
     }
 
@@ -3985,8 +3986,7 @@ function registerIpcHandlers() {
       y: bounds.y,
       title: `Ghost Arcade Output — slice ${sliceId}`,
       frame: false,
-      fullscreen: true,
-      simpleFullscreen: process.platform === 'darwin',
+      fullscreen: !isMac,
       autoHideMenuBar: true,
       skipTaskbar: false,
       backgroundColor: '#000000',
@@ -3999,6 +3999,7 @@ function registerIpcHandlers() {
         backgroundThrottling: false,
       },
     });
+    if (isMac) setOutputFullScreen(win, true);
     win.setMenuBarVisibility(false);
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
@@ -4026,10 +4027,7 @@ function registerIpcHandlers() {
   ipcMain.handle('output_close_slice_window', (_e, args) => {
     const { sliceId } = args || {};
     if (!sliceId) return { ok: false, error: 'sliceId required' };
-    const win = sliceWindows.get(sliceId);
-    if (win && !win.isDestroyed()) {
-      try { win.close(); } catch {}
-    }
+    closeOutputBrowserWindow(sliceWindows.get(sliceId));
     sliceWindows.delete(sliceId);
     return { ok: true };
   });
@@ -5490,6 +5488,8 @@ function createMainWindow() {
     // matches the legacy `output_open_slice_window` behaviour. Output
     // windows keep the framed, resizable chrome for in-app preview.
     const isSliceWin = isSliceDisplay;
+    // did-create-window puts it into simple fullscreen on macOS.
+    nextOutputWindowFullscreen = isSliceWin || fullscreen;
     return {
       action: 'allow',
       overrideBrowserWindowOptions: {
@@ -5500,8 +5500,7 @@ function createMainWindow() {
         title: isSliceWin ? 'Ghost Arcade Output — slice' : 'Ghost Arcade Output',
         resizable: !isSliceWin,
         frame: !isSliceWin,
-        fullscreen: isSliceWin ? true : fullscreen,
-        simpleFullscreen: process.platform === 'darwin',
+        fullscreen: isMac ? false : (isSliceWin ? true : fullscreen),
         autoHideMenuBar: true,
         skipTaskbar: false,
         backgroundColor: '#000000',
@@ -5531,6 +5530,9 @@ function createMainWindow() {
     const isWebgpuOutput = url.includes('mode=webgpu-display');
     const isSliceDisplay = url.includes('mode=slice-display');
     if (!isWebgpuOutput && !isSliceDisplay) return;
+    const wantsFullscreen = nextOutputWindowFullscreen;
+    nextOutputWindowFullscreen = false;
+    if (wantsFullscreen && isMac) setOutputFullScreen(newWindow, true);
     if (isSliceDisplay) {
       // Per-screen slice window opened via window.open from the editor.
       // Lives in the SAME renderer process as the editor (Electron groups
@@ -5546,7 +5548,7 @@ function createMainWindow() {
         if (sliceId) {
           const existing = sliceWindows.get(sliceId);
           if (existing && existing !== newWindow && !existing.isDestroyed()) {
-            try { existing.close(); } catch { /* */ }
+            closeOutputBrowserWindow(existing);
           }
           sliceWindows.set(sliceId, newWindow);
           installOutputEscapeHandler(newWindow, { closeOnEscape: true });
@@ -5768,13 +5770,42 @@ function createProjectionSimWindow() {
   projectionSimWindow.on('leave-full-screen', () => publishProjectionSimFullscreenState(false));
 }
 
+// Output and slice windows fill their display with macOS "simple" fullscreen
+// (no separate Space). They are put there with setSimpleFullScreen. A window
+// created with both `fullscreen` and `simpleFullscreen`, or given
+// setFullScreen(true) with `simpleFullscreen` set, never finishes its
+// fullscreen transition in Electron, and close() then waits on it forever:
+// the output stayed up when the Fullscreen button was clicked again.
+function setOutputFullScreen(win, on) {
+  if (!win || win.isDestroyed()) return;
+  if (isMac) win.setSimpleFullScreen(!!on);
+  else win.setFullScreen(!!on);
+}
+
+function isOutputFullScreen(win) {
+  if (!win || win.isDestroyed()) return false;
+  return win.isFullScreen() || (typeof win.isSimpleFullScreen === 'function' && win.isSimpleFullScreen());
+}
+
+/** Close an output or slice window for certain: one that ignores close() is destroyed. */
+function closeOutputBrowserWindow(win) {
+  if (!win || win.isDestroyed()) return;
+  try { win.close(); } catch { /* destroyed below */ }
+  setTimeout(() => {
+    if (!win.isDestroyed()) {
+      console.warn('[Output] window ignored close(); destroying it');
+      try { win.destroy(); } catch { /* gone */ }
+    }
+  }, 1000);
+}
+
 function installOutputEscapeHandler(win, { closeOnEscape = false } = {}) {
   if (!win || win.isDestroyed()) return;
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.key !== 'Escape') return;
     event.preventDefault();
     if (closeOnEscape) {
-      try { win.close(); } catch { /* noop */ }
+      closeOutputBrowserWindow(win);
       return;
     }
     try {
@@ -5801,7 +5832,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   y = Number(y) || 0;
 
   if (outputWindow) {
-    outputWindow.close();
+    closeOutputBrowserWindow(outputWindow);
   }
 
   // Find the target display
@@ -5832,8 +5863,8 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     title: 'Ghost Arcade Output',
     resizable: true,
     frame: true,
-    fullscreen: fullscreen,
-    simpleFullscreen: process.platform === 'darwin',  // macOS: use simple fullscreen for VJ output (no Mission Control space)
+    // macOS: simple fullscreen (no Mission Control space), entered below.
+    fullscreen: isMac ? false : fullscreen,
     autoHideMenuBar: true,
     skipTaskbar: false,
     backgroundColor: '#000000',
@@ -5847,6 +5878,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     },
   });
   outputWindow = win;
+  if (fullscreen && isMac) setOutputFullScreen(win, true);
   installOutputEscapeHandler(win);
 
   // Hide menu bar for clean look
@@ -6112,13 +6144,13 @@ app.whenReady().then(async () => {
       // Move to the primary display's top-left.
       const primary = screen.getPrimaryDisplay();
       console.warn(`[Main] Display removed (id=${removedDisplay?.id}); snapping output window to primary display.`);
+      setOutputFullScreen(outputWindow, false);
       outputWindow.setBounds({
         x: primary.bounds.x + 40,
         y: primary.bounds.y + 40,
         width: Math.min(1280, primary.bounds.width - 80),
         height: Math.min(720, primary.bounds.height - 80),
       });
-      outputWindow.setFullScreen(false);
     } catch (err) {
       console.error('[Main] display-removed handler failed:', err?.message || err);
     }
