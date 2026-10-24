@@ -231,6 +231,10 @@ export interface LineDrawAnimation {
   loopMode: LineLoopMode;
   reverse: boolean;          // Draw from end to start
   easing: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
+  /** Softens the leading edge of the draw into a fade (0 = hard cut). */
+  headFeather?: number;      // 0-1
+  /** Thins the line toward the leading edge (0 = full width to the tip). */
+  headTaper?: number;        // 0-1
 }
 
 // ============================================================================
@@ -310,7 +314,25 @@ export interface LinesContent {
   // Shared shader mask mode
   sharedShaderMode: boolean;     // When true, lines act as mask windows into a shared shader
   sharedShaderSourceId: string;  // ISF shader or video sourceId to render through all lines
+  // Light Up: lines fade in and out by position (a wave across them) or at
+  // random times. Combines with the draw animation.
+  revealMode?: LinesRevealMode;
+  revealSpeed?: number;          // sweeps (or random changes) per second-ish 0.02-2
+  revealWidth?: number;          // share of lines lit at once 0.05-1
+  revealFade?: number;           // softness of the fade in and out 0-1
+  revealFloor?: number;          // how bright an unlit line stays 0-1
 }
+
+export type LinesRevealMode = 'off' | 'waveRight' | 'waveLeft' | 'wavePingPong' | 'random';
+
+/** Light Up defaults, also what Reset All Animations returns to. */
+export const LINES_REVEAL_DEFAULTS = {
+  revealMode: 'off' as LinesRevealMode,
+  revealSpeed: 0.25,
+  revealWidth: 0.3,
+  revealFade: 0.6,
+  revealFloor: 0,
+};
 
 // ============================================================================
 // FACTORY FUNCTIONS
@@ -381,6 +403,8 @@ export function createDefaultDrawAnimation(): LineDrawAnimation {
     loopMode: 'loop',
     reverse: false,
     easing: 'linear',
+    headFeather: 0,
+    headTaper: 0,
   };
 }
 
@@ -420,5 +444,6 @@ export function createDefaultLinesContent(): LinesContent {
     afterglow: 0,
     sharedShaderMode: false,
     sharedShaderSourceId: '',
+    ...LINES_REVEAL_DEFAULTS,
   };
 }

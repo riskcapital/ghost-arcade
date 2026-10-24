@@ -11,7 +11,10 @@
     LineDrawAnimation,
     LineToolMode,
     LineLoopMode,
+    LinesRevealMode,
   } from '../lines/types';
+  import { createDefaultDrawAnimation, LINES_REVEAL_DEFAULTS } from '../lines/types';
+  import { restartLinesAnimation } from '../lines/linesClock';
 
   // Dual-mode props: no props = mapping mode, with props = VJ mode
   export let content: LinesContent | undefined = undefined;
@@ -20,6 +23,8 @@
 
   // Tab state
   let activeTab: 'tools' | 'stroke' | 'animation' | 'settings' = 'tools';
+  // Draw Animation edits every line unless "This line" is picked.
+  let drawScope: 'all' | 'one' = 'all';
 
   // Listen for lines mode resets from App.svelte
   onMount(() => {
@@ -57,6 +62,10 @@
   $: elements = lc?.elements ?? [];
   $: selectedElementId = lc?.selectedElementId ?? null;
   $: selectedEl = elements.find((e) => e.id === selectedElementId) ?? null;
+  // The line whose draw settings the Animation tab shows: the selected one,
+  // or the first when editing all lines with none selected.
+  $: animEl = selectedEl ?? (drawScope === 'all' ? elements[0] ?? null : null);
+  $: revealMode = (lc?.revealMode ?? 'off') as LinesRevealMode;
   $: toolMode = $linesStore.toolMode;
 
   // === Color helpers ===
@@ -119,8 +128,37 @@
   }
 
   function updateSelectedDrawAnimation(updates: Partial<LineDrawAnimation>) {
+    if (drawScope === 'all') {
+      if (!elements.length) return;
+      // Only the changed setting goes to every line; the rest stay their own.
+      updateElements(elements.map((e) => ({ ...e, drawAnimation: { ...e.drawAnimation, ...updates } })));
+      return;
+    }
     if (!selectedEl) return;
     updateSelectedElement({ drawAnimation: { ...selectedEl.drawAnimation, ...updates } });
+  }
+
+  /**
+   * Every line's draw animation and motion, the layer's stagger and Light Up
+   * back to their defaults, and the animations restarted. Undo brings the
+   * settings back.
+   */
+  function resetAllAnimations() {
+    if (!lc) return;
+    updateContent({
+      elements: elements.map((e) => ({
+        ...e,
+        drawAnimation: createDefaultDrawAnimation(),
+        motionFx: { mode: 'none', amount: 0.5, speed: 1 },
+      })),
+      globalDrawSpeed: 1,
+      staggerMode: 'simultaneous',
+      staggerDelay: 200,
+      waveWindowSize: 3,
+      ...LINES_REVEAL_DEFAULTS,
+    });
+    if (layerId && !onUpdate) restartLinesAnimation(layerId);
+    window.dispatchEvent(new CustomEvent('lines-reset-animations'));
   }
 
   // === Tool mode ===
@@ -813,30 +851,37 @@
         {@const animatedCount = elements.filter(e => e.drawAnimation.enabled).length}
         <div class="anim-status">{animatedCount} / {elements.length} lines animated</div>
 
-        {#if selectedEl}
+        {#if animEl}
           <div class="sec-label">Draw Animation</div>
+          {#if elements.length > 1}
+            <div class="scope-toggle" role="group" aria-label="Which lines the draw animation changes">
+              <button class:active={drawScope === 'all'} onclick={() => (drawScope = 'all')}>All lines</button>
+              <button class:active={drawScope === 'one'} onclick={() => (drawScope = 'one')} disabled={!selectedEl}
+                title={selectedEl ? 'Change only the selected line' : 'Select a line first'}>This line</button>
+            </div>
+          {/if}
           <div class="check-row">
-            <label><input type="checkbox" checked={selectedEl.drawAnimation.enabled}
+            <label><input type="checkbox" checked={animEl.drawAnimation.enabled}
               onchange={(e) => updateSelectedDrawAnimation({ enabled: (e.target as HTMLInputElement).checked })} /> Enabled</label>
           </div>
 
-          {#if selectedEl.drawAnimation.enabled}
+          {#if animEl.drawAnimation.enabled}
             <div class="slider-col">
               <div class="sc">
-                <label>Draw Speed <b>{selectedEl.drawAnimation.drawSpeed.toFixed(1)}</b></label>
-                <input type="range" min="0.1" max="10" step="0.1" value={selectedEl.drawAnimation.drawSpeed}
+                <label>Draw Speed <b>{animEl.drawAnimation.drawSpeed.toFixed(1)}</b></label>
+                <input type="range" min="0.1" max="10" step="0.1" value={animEl.drawAnimation.drawSpeed}
                   oninput={(e) => updateSelectedDrawAnimation({ drawSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
               <div class="sc">
-                <label>Trail Length <b>{selectedEl.drawAnimation.trailLength.toFixed(2)}</b></label>
-                <input type="range" min="0" max="1" step="0.01" value={selectedEl.drawAnimation.trailLength}
+                <label>Trail Length <b>{animEl.drawAnimation.trailLength.toFixed(2)}</b></label>
+                <input type="range" min="0" max="1" step="0.01" value={animEl.drawAnimation.trailLength}
                   oninput={(e) => updateSelectedDrawAnimation({ trailLength: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
             </div>
 
             <div class="control-row">
               <span class="control-label">Loop</span>
-              <select value={selectedEl.drawAnimation.loopMode}
+              <select value={animEl.drawAnimation.loopMode}
                 onchange={(e) => updateSelectedDrawAnimation({ loopMode: (e.target as HTMLSelectElement).value as LineLoopMode })}>
                 <option value="once">Once</option>
                 <option value="loop">Loop</option>
@@ -846,13 +891,13 @@
             </div>
 
             <div class="check-row">
-              <label><input type="checkbox" checked={selectedEl.drawAnimation.reverse}
+              <label><input type="checkbox" checked={animEl.drawAnimation.reverse}
                 onchange={(e) => updateSelectedDrawAnimation({ reverse: (e.target as HTMLInputElement).checked })} /> Reverse</label>
             </div>
 
             <div class="control-row">
               <span class="control-label">Easing</span>
-              <select value={selectedEl.drawAnimation.easing}
+              <select value={animEl.drawAnimation.easing}
                 onchange={(e) => updateSelectedDrawAnimation({ easing: (e.target as HTMLSelectElement).value as LineDrawAnimation['easing'] })}>
                 <option value="linear">Linear</option>
                 <option value="easeIn">Ease In</option>
@@ -861,8 +906,21 @@
               </select>
             </div>
 
-            <!-- Apply animation to all lines -->
-            {#if elements.length > 1}
+            <div class="slider-col">
+              <div class="sc">
+                <label title="Softens the leading edge of the draw into a fade">Head Feather <b>{(animEl.drawAnimation.headFeather ?? 0).toFixed(2)}</b></label>
+                <input type="range" min="0" max="1" step="0.01" value={animEl.drawAnimation.headFeather ?? 0}
+                  oninput={(e) => updateSelectedDrawAnimation({ headFeather: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+              <div class="sc">
+                <label title="Thins the line toward the leading edge">Head Taper <b>{(animEl.drawAnimation.headTaper ?? 0).toFixed(2)}</b></label>
+                <input type="range" min="0" max="1" step="0.01" value={animEl.drawAnimation.headTaper ?? 0}
+                  oninput={(e) => updateSelectedDrawAnimation({ headTaper: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+            </div>
+
+            <!-- Copy this line's animation to the others -->
+            {#if elements.length > 1 && drawScope === 'one' && selectedEl}
               <button class="apply-all-btn" onclick={applyAnimationToAll}>
                 Apply Animation to All Lines
               </button>
@@ -870,7 +928,7 @@
           {/if}
 
         {:else}
-          <div class="empty-msg">Select an element to edit its draw animation</div>
+          <div class="empty-msg">Draw a line to animate it</div>
         {/if}
 
         {#if elements.length > 0}
@@ -900,6 +958,45 @@
                 <label>Speed <b>{motionFx.speed.toFixed(1)}</b></label>
                 <input type="range" min="0.1" max="4" step="0.1" value={motionFx.speed}
                   oninput={(e) => updateSelectedMotionFx({ speed: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+            </div>
+          {/if}
+        {/if}
+
+        {#if elements.length > 0}
+          <div class="sec-label">Light Up (all lines)</div>
+          <div class="control-row">
+            <span class="control-label">Mode</span>
+            <select value={revealMode}
+              onchange={(e) => updateContent({ revealMode: (e.target as HTMLSelectElement).value as LinesRevealMode })}>
+              <option value="off">Off</option>
+              <option value="waveRight">Wave, left to right</option>
+              <option value="waveLeft">Wave, right to left</option>
+              <option value="wavePingPong">Wave, back and forth</option>
+              <option value="random">Random</option>
+            </select>
+          </div>
+          {#if revealMode !== 'off'}
+            <div class="slider-col">
+              <div class="sc">
+                <label>Speed <b>{(lc.revealSpeed ?? LINES_REVEAL_DEFAULTS.revealSpeed).toFixed(2)}</b></label>
+                <input type="range" min="0.02" max="2" step="0.01" value={lc.revealSpeed ?? LINES_REVEAL_DEFAULTS.revealSpeed}
+                  oninput={(e) => updateContent({ revealSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+              <div class="sc">
+                <label title="How many of the lines are lit at once">Lit at once <b>{Math.round((lc.revealWidth ?? LINES_REVEAL_DEFAULTS.revealWidth) * 100)}%</b></label>
+                <input type="range" min="0.05" max="1" step="0.01" value={lc.revealWidth ?? LINES_REVEAL_DEFAULTS.revealWidth}
+                  oninput={(e) => updateContent({ revealWidth: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+              <div class="sc">
+                <label title="How gently lines fade in and out">Fade <b>{(lc.revealFade ?? LINES_REVEAL_DEFAULTS.revealFade).toFixed(2)}</b></label>
+                <input type="range" min="0" max="1" step="0.01" value={lc.revealFade ?? LINES_REVEAL_DEFAULTS.revealFade}
+                  oninput={(e) => updateContent({ revealFade: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+              <div class="sc">
+                <label title="How bright a line stays while it is not lit">Dim to <b>{Math.round((lc.revealFloor ?? 0) * 100)}%</b></label>
+                <input type="range" min="0" max="1" step="0.01" value={lc.revealFloor ?? 0}
+                  oninput={(e) => updateContent({ revealFloor: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
             </div>
           {/if}
@@ -948,7 +1045,8 @@
           </div>
         {/if}
 
-        <button class="reset-btn" onclick={() => window.dispatchEvent(new CustomEvent('lines-reset-animations'))}>
+        <button class="reset-btn" onclick={resetAllAnimations}
+          title="Every line's draw animation, motion, stagger and Light Up back to the defaults, restarted">
           Reset All Animations
         </button>
 
@@ -1254,6 +1352,19 @@
     background: rgba(187, 134, 252, 0.2);
     border-color: rgba(187, 134, 252, 0.4);
   }
+
+  /* Draw Animation scope: all lines or the selected one */
+  .scope-toggle {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    margin: 2px 0 8px; border: 1px solid #333; border-radius: 4px; overflow: hidden;
+  }
+  .scope-toggle button {
+    padding: 4px 8px; font-size: 11px; background: transparent; color: #999;
+    border: none; cursor: pointer;
+  }
+  .scope-toggle button + button { border-left: 1px solid #333; }
+  .scope-toggle button.active { background: rgba(187, 134, 252, 0.16); color: #BB86FC; font-weight: 600; }
+  .scope-toggle button:disabled { opacity: 0.4; cursor: default; }
 
   /* Reset animations button */
   .reset-btn {

@@ -8,10 +8,12 @@ import type { Point2D } from '../types';
 
 export const LINES_NATIVE_SHADER_ID = 'lines/render';
 
-export const LINES_MAX_ELEMENTS = 8;
-export const LINES_ELEMENT_VEC4S = 9;
-export const LINES_MAX_POINTS = 384;
-const HEADER_VEC4S = 5;
+// 32 lines and 2048 points keep the table at about 38 KB, inside the 64 KB a
+// uniform buffer may bind.
+export const LINES_MAX_ELEMENTS = 32;
+export const LINES_ELEMENT_VEC4S = 10;
+export const LINES_MAX_POINTS = 2048;
+const HEADER_VEC4S = 7;
 const POINTS_OFFSET_VEC4 = HEADER_VEC4S + LINES_MAX_ELEMENTS * LINES_ELEMENT_VEC4S;
 const TOTAL_VEC4S = POINTS_OFFSET_VEC4 + LINES_MAX_POINTS;
 export const LINES_UNIFORM_BYTES = TOTAL_VEC4S * 16;
@@ -28,12 +30,23 @@ export const LINES_EASING_LIST = ['linear', 'easeIn', 'easeOut', 'easeInOut'];
 export const LINES_BLEND_MODE_LIST = ['normal', 'add', 'multiply', 'screen'];
 export const LINES_MOTION_FX_LIST = ['none', 'wave', 'breathe', 'shimmer', 'spin', 'orbit', 'audioPulse'];
 export const LINES_STAGGER_MODE_LIST = ['simultaneous', 'sequential', 'cascade', 'solo', 'random', 'wave'];
+export const LINES_REVEAL_MODE_LIST = ['off', 'waveRight', 'waveLeft', 'wavePingPong', 'random'];
 const codeMap = (list: string[]): Record<string, number> =>
   Object.fromEntries(list.map((key, i) => [key, i]));
 const LOOP_CODES = codeMap(LINES_LOOP_MODE_LIST);
 const EASE_CODES = codeMap(LINES_EASING_LIST);
 const BLEND_CODES = codeMap(LINES_BLEND_MODE_LIST);
 const MOTION_CODES = codeMap(LINES_MOTION_FX_LIST) as Record<LineMotionFxMode, number>;
+
+/** A stable 0-1 value per line, so Random keeps each line's timing. */
+function lineSeed(id: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) / 4294967296;
+}
 
 function finite(value: unknown, fallback: number): number {
   const n = Number(value);
@@ -191,6 +204,8 @@ export function buildLinesNativeComputeGraph(options: LinesNativeGraphOptions) {
 
   let pointCursor = 0;
   let packedCount = 0;
+  // Each packed line's horizontal centre (pixels), for Light Up's wave order.
+  const centres: number[] = [];
   for (let index = 0; index < visible.length; index++) {
     const element = visible[index];
     let pts: Point2D[] = element.shape.points.map((point) => ({ x: point.x, y: point.y }));
@@ -312,6 +327,11 @@ export function buildLinesNativeComputeGraph(options: LinesNativeGraphOptions) {
     data[e + 33] = Math.max(0, Math.min(1, finite(motion.amount, 0.5)));
     data[e + 34] = Math.max(0, Math.min(4, finite(motion.speed, 1)));
     data[e + 35] = 0;
+    // e9: Light Up position (set below, once every centre is known), seed,
+    // and the draw animation's head feather and taper.
+    data[e + 37] = lineSeed(String(element.id ?? index));
+    data[e + 38] = Math.max(0, Math.min(1, finite(anim?.headFeather, 0)));
+    data[e + 39] = Math.max(0, Math.min(1, finite(anim?.headTaper, 0)));
     // Bounding box (pixels), padded by stroke reach for early-out culling.
     let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
     for (const point of pts) {
@@ -331,8 +351,16 @@ export function buildLinesNativeComputeGraph(options: LinesNativeGraphOptions) {
       data[e + 30] = maxX + reach;
       data[e + 31] = maxY + reach;
     }
+    centres.push((minX + maxX) / 2);
     packedCount += 1;
   }
+
+  // Light Up runs across the lines left to right by their centres, spread
+  // evenly by rank so a cluster of lines still lights one after another.
+  const order = centres.map((x, i) => ({ x, i })).sort((a, b) => a.x - b.x || a.i - b.i);
+  order.forEach(({ i }, rank) => {
+    data[(HEADER_VEC4S + i * LINES_ELEMENT_VEC4S) * 4 + 36] = order.length > 1 ? rank / (order.length - 1) : 0.5;
+  });
 
   const bg = Array.isArray(content.backgroundColor) ? content.backgroundColor : [0, 0, 0, 0];
   data[0] = width;
@@ -355,6 +383,12 @@ export function buildLinesNativeComputeGraph(options: LinesNativeGraphOptions) {
   data[17] = finite(bg[1], 0);
   data[18] = finite(bg[2], 0);
   data[19] = finite(bg[3], 0);
+  // Light Up: mode, speed, share lit at once, fade softness; dim level.
+  data[20] = Math.max(0, LINES_REVEAL_MODE_LIST.indexOf(String(content.revealMode ?? 'off')));
+  data[21] = Math.max(0.01, Math.min(4, finite(content.revealSpeed, 0.25)));
+  data[22] = Math.max(0.02, Math.min(1, finite(content.revealWidth, 0.3)));
+  data[23] = Math.max(0, Math.min(1, finite(content.revealFade, 0.6)));
+  data[24] = Math.max(0, Math.min(1, finite(content.revealFloor, 0)));
 
   const sourceId = String(options.sourceId || 'lines-native-source');
   const uniformPrefix = String(options.uniformPrefix || 'lines');
@@ -422,6 +456,8 @@ struct LinesData {
   header2: vec4<f32>, // beat, globalSpeed, sequentialFlag, staggerDelay
   header3: vec4<f32>, // afterglow, waveWindow, staggerMode, 0
   bg: vec4<f32>,
+  reveal0: vec4<f32>, // Light Up: mode, speed, share lit, fade
+  reveal1: vec4<f32>, // Light Up: dim level, 0, 0, 0
   elements: array<vec4<f32>, ${LINES_MAX_ELEMENTS * LINES_ELEMENT_VEC4S}>,
   points: array<vec4<f32>, ${LINES_MAX_POINTS}>,
 }
@@ -450,6 +486,55 @@ fn ln_noise(p: vec2<f32>) -> f32 {
 fn ln_hsv(h: f32, s: f32, v: f32) -> vec3<f32> {
   let p = abs(fract(vec3<f32>(h) + vec3<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - vec3<f32>(3.0));
   return v * mix(vec3<f32>(1.0), clamp(p - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), s);
+}
+
+fn ln_value_noise1(x: f32) -> f32 {
+  let i = floor(x);
+  let f = fract(x);
+  let u = f * f * (3.0 - 2.0 * f);
+  return mix(ln_hash(i), ln_hash(i + 1.0), u);
+}
+
+// Light Up: how lit a line is now. pos is the line's 0-1 place from left to
+// right, seed its own random value. The waves sweep a lit band across the
+// lines; Random lights each line while its own slow noise is high.
+fn ln_light_up(pos: f32, seed: f32, t: f32) -> f32 {
+  let mode = i32(floor(lines.reveal0.x + 0.5));
+  if (mode == 0) { return 1.0; }
+  let speed = lines.reveal0.y;
+  let width = lines.reveal0.z;
+  let fade = lines.reveal0.w;
+  let dim = lines.reveal1.x;
+  var lit = 0.0;
+  if (mode == 4) {
+    let n = ln_value_noise1(t * speed * 2.0 + seed * 113.0);
+    let threshold = 1.0 - width;
+    let soft = 0.02 + fade * 0.3;
+    lit = smoothstep(threshold - soft, threshold + soft, n);
+  } else {
+    var u = pos;
+    if (mode == 2) { u = 1.0 - pos; }
+    var g = fract(t * speed);
+    if (mode == 3) { g = 1.0 - abs(1.0 - 2.0 * fract(t * speed * 0.5)); }
+    let half_band = width * 0.5;
+    let front = -half_band + g * (1.0 + 2.0 * half_band);
+    let d = abs(u - front);
+    let soft = max(0.001, half_band * fade);
+    lit = 1.0 - smoothstep(half_band - soft, half_band, d);
+  }
+  return dim + (1.0 - dim) * lit;
+}
+
+// Draw head: fade (feather) and thin (taper) the line just behind the
+// leading edge. behind is how far back from the head, as a share of the line.
+fn ln_head_alpha(behind: f32, feather: f32) -> f32 {
+  if (feather <= 0.001) { return 1.0; }
+  return smoothstep(0.0, feather * 0.35, behind);
+}
+
+fn ln_head_width(behind: f32, taper: f32) -> f32 {
+  if (taper <= 0.001) { return 1.0; }
+  return mix(0.08, 1.0, smoothstep(0.0, taper * 0.35, behind));
 }
 
 fn ln_ease(p: f32, mode: i32) -> f32 {
@@ -499,6 +584,9 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
     let base = e * ${LINES_ELEMENT_VEC4S};
     let e7 = lines.elements[base + 7];
     if (p.x < e7.x || p.y < e7.y || p.x > e7.z || p.y > e7.w) { continue; }
+    let e9 = lines.elements[base + 9];
+    let light = ln_light_up(e9.x, e9.y, t);
+    if (light <= 0.001) { continue; }
     let e0 = lines.elements[base];
     let e1 = lines.elements[base + 1];
     let e2 = lines.elements[base + 2];
@@ -569,6 +657,7 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
 
     // Draw animation window.
     var vis = 1.0;
+    var head_width = 1.0;
     let anim_enabled = e4.x > 0.5;
     let loop_mode = i32(floor(e4.z + 0.5));
     let sequential = lines.header2.z > 0.5;
@@ -596,10 +685,17 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
             let window = max(0.03, 1.0 - trail) * (1.0 + afterglow * 3.0);
             vis = 1.0 - clamp((prog - s_norm) / window, 0.0, 1.0);
           }
+          if (prog < 0.999) {
+            vis = vis * ln_head_alpha(prog - s_norm, e9.z);
+            head_width = ln_head_width(prog - s_norm, e9.w);
+          }
         }
       }
     } else if (anim_enabled) {
-      let raw = (t * e4.y * global_speed * 0.25) + e5.x + e6.w;
+      // An animated line draws from its start. Draw Progress (e5.x) is the
+      // static amount; adding it here left a Once animation (Draw Progress
+      // defaults to 1) finished before it began.
+      let raw = (t * e4.y * global_speed * 0.25) + e6.w;
       var prog = e5.x;
       if (loop_mode == 0) {
         prog = clamp(raw, 0.0, 1.0);
@@ -618,6 +714,10 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
           let window = max(0.03, 1.0 - trail) * (1.0 + afterglow * 3.0);
           vis = 1.0 - clamp((prog - s_norm) / window, 0.0, 1.0);
         }
+        if (prog < 0.999) {
+          vis = vis * ln_head_alpha(prog - s_norm, e9.z);
+          head_width = ln_head_width(prog - s_norm, e9.w);
+        }
       }
     } else {
       if (s_norm > e5.x) { vis = 0.0; }
@@ -625,6 +725,7 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
     if (vis <= 0.001 && stroke_type != 7 && stroke_type != 8) { continue; }
 
     let aa = 1.5;
+    width = width * head_width;
     let half_w = width * 0.5;
     let d = best_d;
     var cov = 1.0 - smoothstep(half_w - aa, half_w + aa, d);
@@ -791,9 +892,9 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
     } else if (motion_mode == 6) {
       out_a = clamp(out_a * (1.0 + beat * motion_amt * 0.6), 0.0, 1.0);
     }
-    out_a = out_a * vis * e5.w;
+    out_a = out_a * vis * e5.w * light;
     if (bloom > 0.001) {
-      out_a = clamp(out_a + bloom * 0.5 * exp(-d * d / (2.0 * width * width * 16.0)) * vis * e5.w, 0.0, 1.0);
+      out_a = clamp(out_a + bloom * 0.5 * exp(-d * d / (2.0 * width * width * 16.0)) * vis * e5.w * light, 0.0, 1.0);
     }
     if (out_a <= 0.0015) { continue; }
 

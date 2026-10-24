@@ -88,6 +88,7 @@ import {
   buildLinesNativeComputeGraph,
   buildLinesNativePrecompileCommands,
 } from '$lib/renderer/linesNative';
+import { linesAnimationTime } from '$lib/lines/linesClock';
 import {
   buildSvgNativeComputeGraph,
   buildSvgNativePrecompileCommands,
@@ -7033,7 +7034,8 @@ export class NativeRendererSync {
               content: layer.linesContent ?? { elements: [] } as any,
               width,
               height,
-              time: graphTime,
+              // Measured from the layer's last Reset All Animations.
+              time: linesAnimationTime(layer.id, graphTime),
               frameDelta: graphDelta,
               frameIndex: graphFrameIndex,
               audioBass: audio.bass,
