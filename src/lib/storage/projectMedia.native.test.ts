@@ -45,21 +45,31 @@ describe('project media management', () => {
     expect(scan.every((entry: any) => !entry.missing && entry.path.startsWith(moved))).toBe(true);
     expect(await fs.readFile(scan[0].path, 'utf8')).toBe('video fixture');
   });
-  it('never overwrites a project or silently collects missing/session media', async () => {
+  it('never overwrites a project, and lists missing and session media instead of packing them', async () => {
     const target = path.join(root, 'existing.gha'); await fs.writeFile(target, 'keep');
     await expect(collectProjectMedia({}, root, target)).rejects.toThrow('not be overwritten');
     expect(await fs.readFile(target, 'utf8')).toBe('keep');
-    for (const data of [{ a: { src: 'blob:gone', name: 'Unsaved clip' } }, { a: { _assetRef: { name: 'Lost clip' } } }]) {
+    for (const [i, data] of [{ a: { src: 'blob:gone', name: 'Unsaved clip' } }, { a: { _assetRef: { name: 'Lost clip' } } }].entries()) {
       expect((await scanProjectMedia(data, root))[0].missing).toBe(true);
-      await expect(collectProjectMedia(data, root, path.join(root, 'missing.gha'))).rejects.toThrow('Locate missing');
+      const result = await collectProjectMedia(data, root, path.join(root, `missing-${i}`, 'missing.gha'));
+      expect(result.filesCopied).toBe(0);
+      expect(result.missing).toHaveLength(1);
     }
   });
   it('does not treat generators, network inputs, embedded media or inline model JSON as files', async () => {
     expect(await scanProjectMedia({ a: { src: 'builtin:grid' }, b: { src: 'live://camera/1' }, c: { _assetRef: { dataUrl: 'data:image/png;base64,AA==' } }, d: { src: 'https://example.com/movie.mp4' }, e: { modelData: '{"vertices":[]}' } }, root)).toEqual([]);
   });
-  it('refuses models with uncollected external dependencies', async () => {
-    const model = path.join(root, 'model.gltf'); await fs.writeFile(model, '{}');
-    await expect(collectProjectMedia({ a: { _assetRef: { originalPath: model } } }, root, path.join(root, 'model.gha'))).rejects.toThrow('external dependencies');
+  it('collects a model with the files it loads from beside it', async () => {
+    const dir = path.join(root, 'robot'); await fs.mkdir(path.join(dir, 'tex'), { recursive: true });
+    const model = path.join(dir, 'robot.gltf');
+    await fs.writeFile(model, JSON.stringify({ buffers: [{ uri: 'robot.bin' }], images: [{ uri: 'tex/skin%20one.png' }, { uri: 'data:image/png;base64,AA==' }, { uri: '../shared.png' }] }));
+    await fs.writeFile(path.join(dir, 'robot.bin'), 'bin'); await fs.writeFile(path.join(dir, 'tex', 'skin one.png'), 'png');
+    const data = { a: { _assetRef: { originalPath: model } } };
+    const result = await collectProjectMedia(data, root, path.join(root, 'model-out', 'model.gha'));
+    expect(result.filesCopied).toBe(3);
+    expect(data.a._assetRef).toMatchObject({ projectPath: './Media/robot/robot.gltf' });
+    expect(await fs.readFile(path.join(root, 'model-out', 'Media', 'robot', 'tex', 'skin one.png'), 'utf8')).toBe('png');
+    expect(result.missing).toEqual(['../shared.png (outside the folder of robot.gltf)']);
   });
 });
 

@@ -63,6 +63,7 @@
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
   import VideoConverterModal from './lib/components/VideoConverterModal.svelte';
   import ProjectMediaModal from './lib/components/ProjectMediaModal.svelte';
+  import ProjectPackageModal from './lib/components/ProjectPackageModal.svelte';
   import { workspace } from './lib/stores/workspace';
   import PresetTray from './lib/components/PresetTray.svelte';
   import BottomDock from './lib/components/BottomDock.svelte';
@@ -1152,6 +1153,25 @@
   let showOfflineRender = false;
   let showVideoConverter = false;
   let showProjectMedia = false;
+  // File → Export Package…: the show and its media in one .zip.
+  let showProjectPackage = false;
+
+  /** File → Open Package…: unpack a package and open the project in it.
+   *  `zipPath` is a package already picked (File → Open on a .zip). */
+  async function openProjectPackage(zipPath?: string) {
+    fileMenuOpen = false;
+    try {
+      const unpacked = await (window as any).electronAPI.invoke('open_project_package', zipPath ? { zipPath } : {});
+      if (unpacked?.canceled || !unpacked?.projectPath) return;
+      if (!(await openProjectAtPath(unpacked.projectPath))) {
+        alert('The package unpacked, but its project could not be opened.');
+        return;
+      }
+      showToast(`Unpacked to ${unpacked.folder}`, 'info');
+    } catch (err: any) {
+      alert(`Could not open the package: ${err?.message || err}`);
+    }
+  }
 
   function applyMediaRelinks(json: string) {
     const sep = currentProjectPath?.includes('\\') ? '\\' : '/';
@@ -5747,6 +5767,11 @@
 
     // On the desktop, open by path: the main process finds the project's
     // media where it is now before the project loads.
+    if (electronPath && isDesktopApp && /\.zip$/i.test(electronPath)) {
+      input.value = '';
+      void openProjectPackage(electronPath);
+      return;
+    }
     if (electronPath && isDesktopApp) {
       input.value = '';
       openProjectAtPath(electronPath, file.name)
@@ -7014,6 +7039,12 @@
                 <button class="menu-item" onclick={() => { fileMenuOpen = false; showProjectMedia = true; }}>
                   <span class="menu-icon">▣</span><span class="menu-label">Project Media...</span>
                 </button>
+                <button class="menu-item" onclick={() => { fileMenuOpen = false; showProjectPackage = true; }}>
+                  <span class="menu-icon">⇪</span><span class="menu-label">Export Package...</span>
+                </button>
+                <button class="menu-item" onclick={() => openProjectPackage()}>
+                  <span class="menu-icon">⇩</span><span class="menu-label">Open Package...</span>
+                </button>
               {/if}
               <div class="menu-separator"></div>
               <button class="menu-item" onclick={importPresetsFromFile}>
@@ -7080,7 +7111,7 @@
       <!-- Hidden file input for loading compositions -->
       <input
         type="file"
-        accept=".gha,.shrnk,.json"
+        accept={isDesktopApp ? '.gha,.zip,.shrnk,.json' : '.gha,.shrnk,.json'}
         style="display: none;"
         bind:this={fileInput}
         onchange={handleFileLoad}
@@ -8389,6 +8420,10 @@
     {#if showProjectMedia}
       <ProjectMediaModal projectPath={currentProjectPath} exportProject={() => project.exportProjectJSONForSave()}
         applyProject={applyMediaRelinks} onClose={() => showProjectMedia = false} />
+    {/if}
+    {#if showProjectPackage && isDesktopApp}
+      <ProjectPackageModal projectPath={currentProjectPath} projectName={$project.name}
+        exportProject={() => project.exportProjectJSONForSave()} onClose={() => showProjectPackage = false} />
     {/if}
 
     <!-- Display picker for the output and the sims. At the top level so it

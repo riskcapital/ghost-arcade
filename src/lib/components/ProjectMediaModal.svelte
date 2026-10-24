@@ -40,7 +40,9 @@
       message = 'Copying media. Large shows may take a few minutes…';
       const result = await invoke('project_media_collect', { json: await exportProject(), projectPath, outputPath: picked.filePath });
       resultPath = result.outputPath;
-      message = `Portable copy saved with ${result.filesCopied} media file${result.filesCopied === 1 ? '' : 's'}. Move the project and its Media folder together.`;
+      const missing = result.missing?.length ? ` ${result.missing.length} missing file${result.missing.length === 1 ? ' was' : 's were'} left out: ${result.missing.join(', ')}.` : '';
+      const fonts = result.fonts?.length ? ` Fonts are not copied; the other computer needs ${result.fonts.join(', ')}.` : '';
+      message = `Portable copy saved with ${result.filesCopied} media file${result.filesCopied === 1 ? '' : 's'}. Move the project and its Media folder together.${missing}${fonts}`;
     } catch (e: any) { message = ''; error = e.message || String(e); }
     finally { busy = false; }
   }
@@ -64,7 +66,7 @@
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#if message}<p role="status">{message}</p>{/if}
     {#if resultPath}<p class="result">{resultPath}</p>{/if}
-    <footer><button disabled={busy} onclick={scan}>Refresh</button><button disabled={busy || media.some(m => m.missing)} onclick={collect}>Collect project and media…</button><button disabled={busy} onclick={onClose}>Close</button></footer>
+    <footer><button disabled={busy} onclick={scan}>Refresh</button><button disabled={busy} onclick={collect}>Collect project and media…</button><button disabled={busy} onclick={onClose}>Close</button></footer>
   </section>
 </div>
 

@@ -78,6 +78,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'project_media_scan', 'project_media_relink', 'project_media_collect',
   'media_files_status', 'media_find_in_folder', 'media_find_beside',
   'save_project_file', 'prepare_project_media', 'take_pending_project_open',
+  'export_project_package', 'cancel_project_package', 'open_project_package',
   'inspect_video_import',
   'open_project_dialog',
   'download_demo_zip', 'read_project_file',
@@ -201,7 +202,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file'];
+    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);
