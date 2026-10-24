@@ -41,10 +41,10 @@ export interface TransitionDef {
 // top level — GLSL ES 1.00 forbids nested function definitions, so any
 // helpers a transition needs have to be declared here, not inside main().
 //
-// uBlendMode (int) selects the A↔B math at the mix point. 0 = normal
-// (use the transition shader's output verbatim). Any other value picks
-// a per-component math (multiply/screen/add/etc.) and the BLEND_TAIL
-// below sweeps the output A → blend(A,B) → B as uMix moves 0 → 0.5 → 1.
+// uBlendMode (int) picks how B comes in. 0 = normal (plain B). Any other
+// value picks a per-component math (multiply/screen/add/etc.): sampleB
+// returns B combined with A by that math, settling into plain B as uMix
+// reaches 1, so every transition runs once from A to B.
 const SHARED_HEADER = `
 precision highp float;
 varying vec2 vUv;
@@ -56,7 +56,7 @@ uniform vec2  uRes;
 uniform int   uBlendMode;
 
 vec4 sampleA(vec2 uv) { return texture2D(tBankA, uv); }
-vec4 sampleB(vec2 uv) { return texture2D(tBankB, uv); }
+vec4 sampleBRaw(vec2 uv) { return texture2D(tBankB, uv); }
 
 float xfHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float xfNoise(vec2 p) {
@@ -69,7 +69,7 @@ float xfNoise(vec2 p) {
 // Per-channel blend math. Mirrors the canonical Photoshop-style modes
 // the layer compositing path uses, scoped to a single fragment so it
 // runs cheap inside the crossfade quad. Caller picks between these via
-// uBlendMode and we sweep A → blended → B as the fader crosses 0..1.
+// uBlendMode; sampleB below applies it as B comes in.
 vec3 xfBlend(vec3 a, vec3 b, int mode) {
   if (mode == 1) return a * b;                             // multiply
   if (mode == 2) return 1.0 - (1.0 - a) * (1.0 - b);       // screen
@@ -84,6 +84,15 @@ vec3 xfBlend(vec3 a, vec3 b, int mode) {
   }
   if (mode == 8) return a + b - 2.0 * a * b;               // exclusion
   return mix(a, b, 0.5);                                   // fallback (unused; mode==0 short-circuits)
+}
+
+// Bank B as the transition brings it in (see uBlendMode above).
+vec4 sampleB(vec2 uv) {
+  vec4 b = sampleBRaw(uv);
+  if (uBlendMode == 0) return b;
+  vec3 blended = xfBlend(sampleA(uv).rgb, b.rgb, uBlendMode);
+  float settle = smoothstep(0.0, 1.0, clamp(uMix, 0.0, 1.0));
+  return vec4(mix(blended, b.rgb, settle), b.a);
 }
 `;
 
@@ -119,36 +128,8 @@ const DEAD_ZONE_TAIL = `
     gl_FragColor = mix(gl_FragColor, sampleB(vUv), t);
   }
 `;
-// When a non-normal blend mode is selected, MIX the transition shader's
-// gl_FragColor with the per-pixel blend equation in the "overlap zone"
-// — the region of the fader where both A and B are contributing. This
-// preserves the transition's spatial journey (wipe, glitch shards,
-// dissolve noise, etc.) and tints the visible mixed pixels with the
-// chosen blend math (multiply, screen, add, etc.). At fader extremes
-// the overlap factor is 0 so the transition output passes through
-// unchanged — combined with the DEAD_ZONE_TAIL below, uMix=0 always
-// gives pure A and uMix=1 always gives pure B regardless of blend mode.
-//
-// Earlier impl REPLACED the transition output entirely when blend mode
-// != normal — operator complaint: "options must be identical and work.
-// both transition and blend mode at the same time." This version honors
-// both: pick "glitch + multiply" → glitch shards rendered with multiply
-// blend at the midpoint; pick "dissolve + screen" → noise dissolve
-// rendered with screen blend, etc.
-const BLEND_TAIL = `
-  if (uBlendMode != 0) {
-    vec3 a = sampleA(vUv).rgb;
-    vec3 b = sampleB(vUv).rgb;
-    vec3 blended = xfBlend(a, b, uBlendMode);
-    // Overlap factor: 1 at uMix=0.5 (peak A+B mix), 0 at extremes.
-    // Triangular envelope so the blend tint fades in / out smoothly
-    // across the fader rather than popping in.
-    float overlap = 1.0 - abs(uMix - 0.5) * 2.0;
-    gl_FragColor = vec4(mix(gl_FragColor.rgb, blended, overlap), gl_FragColor.a);
-  }
-`;
 function buildShader(body: string): string {
-  return `${SHARED_HEADER}\nvoid main() {\n${body}\n${BLEND_TAIL}\n${DEAD_ZONE_TAIL}\n}`;
+  return `${SHARED_HEADER}\nvoid main() {\n${body}\n${DEAD_ZONE_TAIL}\n}`;
 }
 
 // ─── 01 · DISSOLVE ────────────────────────────────────────────────────
