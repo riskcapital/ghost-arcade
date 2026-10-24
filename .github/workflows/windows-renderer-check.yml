@@ -1,9 +1,13 @@
 name: Windows renderer checks
 
 on:
+  push:
+    branches:
+      - 'ci/windows-**'
   pull_request:
     paths:
       - 'native-renderer/**'
+      - 'electron/native/**'
       - 'electron/conversion-ffmpeg.cjs'
       - 'electron/video-converter-*'
       - 'scripts/ensure-windows-ffmpeg.mjs'
@@ -31,6 +35,26 @@ jobs:
       - run: npm run windows:ffmpeg
       - run: node scripts/ensure-windows-ffmpeg.mjs --verify
       - run: npx vitest run src/lib/video/conversionFfmpeg.test.ts src/lib/video/videoConverter.native.test.ts src/lib/output/slicePresentation.test.ts
+  native-addons:
+    # The C++ addons (the Windows presenter with its Screen pump, readback,
+    # capture) only build with the Windows toolchain. Same steps as the
+    # release build, so a change to them fails here rather than at release.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Install native addon dependencies
+        run: npm ci --ignore-scripts
+        working-directory: electron/native
+      - name: Build native addons
+        run: npm run build -- --rebuild
+        working-directory: electron/native
+      - name: Test the Screen and deck monitor pumps
+        run: npx vitest run src/lib/output/sliceNativePump.test.ts src/lib/renderer/deckMonitorPump.test.ts src/lib/output/slicePresentation.test.ts
   compile-and-unit-tests:
     runs-on: windows-2022
     steps:
