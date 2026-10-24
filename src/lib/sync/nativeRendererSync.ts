@@ -97,11 +97,6 @@ import {
   buildLightPaintingNativePrecompileCommands,
 } from '$lib/renderer/lightPaintingNative';
 import {
-  DEFAULT_GPU_SOURCE_ID,
-  getDefaultGpuSourceImage,
-  gpuSourceParamIsBound,
-} from '$lib/renderer/defaultSourceImage';
-import {
   buildTextNativeAtlas,
   buildTextNativeComputeGraph,
   buildTextNativePrecompileCommands,
@@ -4742,11 +4737,8 @@ function nativeGraphParamsForLayer(
 /**
  * Input source for a webcam.
  *
- * Returns null while the addon session is still opening, which reads as "not
- * bound yet" and leaves the instrument blank for the moment it takes. It must
- * NOT fall through to the demo image: a camera that is starting and a camera
- * that failed would then look identical, both showing a picture the user did
- * not pick.
+ * Returns null while the addon session is still opening, which leaves the
+ * instrument blank for the moment it takes.
  */
 function cameraNativeLayerSource(deviceId: string): NativeLayerSource | null {
   const source = cameraLayerSource(deviceId);
@@ -5731,9 +5723,6 @@ export class NativeRendererSync {
   private sharedTextureInfoInFlight = new Set<string>();
   private sharedTextureInfoNextPollAt = new Map<string, number>();
   private sharedTextureReceiverSender: string | null = null;
-  /** Has the built-in demo source frame been pushed to THIS core session?
-   *  Cleared on teardown so a relaunched core gets it again. */
-  private defaultGpuSourceUploaded = false;
   private nextStatusPollAt = 0;
   private nextReadinessPollAt = 0;
   private statusPollInFlight = false;
@@ -6231,46 +6220,11 @@ export class NativeRendererSync {
     return null;
   }
 
-  /** Synthetic input source standing in for the built-in demo image.
-   *  `source` is null on purpose: there is no MediaSource behind it, no
-   *  URI to prefetch and no element to preview — the pixels are uploaded
-   *  once by `appendDefaultGpuSourceUpload` under a well-known id and every
-   *  layer that falls back binds that same source frame. */
-  private defaultGpuSourceInput(): NativeLayerSource {
-    return {
-      id: DEFAULT_GPU_SOURCE_ID,
-      uri: DEFAULT_GPU_SOURCE_ID,
-      sourceType: 'image',
-      source: null,
-      shouldPrefetch: false,
-      shouldPreview: false,
-      previewElement: null,
-      aspect: 1,
-    };
-  }
-
   private nativeGraphInputSourceForLayer(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource | null {
-    // Point Cloud FX consumes .ply/.splat geometry, so it has no image
-    // fallback — an unbound picker there really does mean "nothing to draw".
-    if (kind === 'point-cloud-fx') return this.nativeGraphSourceParamForLayer(layer);
-    // Deliberately NOT particle-field. Its `media` mode is not in the mode
-    // dropdown (galaxy/atomic/swarm/lattice/field/gravity only), so a user can
-    // never select their way into the black screen this fallback exists to
-    // prevent — only legacy projects carry mode=media, and those already have
-    // their own bound source. Standing the demo image in there would also look
-    // wrong: particle-field reads the image as a particle distribution and
-    // renders it as a thin sliver rather than a picture.
-    if (kind !== 'flythrough' && kind !== 'pixel-particles') return null;
-    const params = layer.gpuLayerContent?.params ?? {};
-    const bound = this.nativeGraphSourceParamForLayer(layer);
-    if (bound) return bound;
-    // Nothing picked yet — stand the built-in demo image in so the shader
-    // has pixels the moment it is selected instead of rendering black. A
-    // source that IS picked but fails to resolve (missing media, codec the
-    // native path can't take) keeps falling through to null: that has its
-    // own messaging and must not be papered over.
-    if (!gpuSourceParamIsBound(params.source)) return this.defaultGpuSourceInput();
-    return null;
+    // Only the picked input. With none picked the layer draws nothing and
+    // its panel asks for one (see gpuShaderInput.ts).
+    if (kind !== 'point-cloud-fx' && kind !== 'flythrough' && kind !== 'pixel-particles') return null;
+    return this.nativeGraphSourceParamForLayer(layer);
   }
 
   private nativeGraphUsesSourceFrameInput(layer: Layer, route: NativeGraphLayerRoute): boolean {
@@ -6586,36 +6540,9 @@ export class NativeRendererSync {
   }
 
   private nativeSourceFrameUploaded(source: NativeLayerSource | null): boolean {
-    if (source?.id === DEFAULT_GPU_SOURCE_ID) return this.defaultGpuSourceUploaded;
     const src = source?.source;
     if (!src) return false;
     return this.sourcePreviewSeq.has(this.sourceCacheKey(src.id, src.src));
-  }
-
-  /**
-   * Upload the built-in demo image, once per core session.
-   *
-   * Generated on the CPU and pushed through the base64 `upload_source_frame`
-   * transport (the same one the text atlas and splat/model textures use).
-   * One upload is shared by every layer and shader that falls back to it —
-   * the id is constant, so re-binding it costs nothing.
-   */
-  private appendDefaultGpuSourceUpload(commands: RendererCommand[]): void {
-    if (this.defaultGpuSourceUploaded) return;
-    if (!this.supportsNativeFeature('source_frame_upload')) return;
-    const image = getDefaultGpuSourceImage();
-    commands.push({
-      type: 'upload_source_frame',
-      source_id: DEFAULT_GPU_SOURCE_ID,
-      seq: 1,
-      width: image.width,
-      height: image.height,
-      rgba_b64: encodeAtlasBase64(image.rgba),
-    } as unknown as RendererCommand);
-    this.defaultGpuSourceUploaded = true;
-    console.log(
-      `[NativeRendererSync] built-in demo source uploaded ${image.width}x${image.height} as ${DEFAULT_GPU_SOURCE_ID}`,
-    );
   }
 
   private canUseNativeStaticImageDecode(
@@ -8490,7 +8417,6 @@ export class NativeRendererSync {
     this.sourcePreviewSig.clear();
     this.sourcePreviewFailures.clear();
     this.jsCanvasHosts.closeAll();
-    this.defaultGpuSourceUploaded = false;
     this.resetSharedTextureUploadTracking();
     this.resetNativeImageDecodeTracking();
     this.resetNativeVideoDecodeTracking();
@@ -9351,12 +9277,6 @@ export class NativeRendererSync {
 
       const graphInput = nativeGraphRoute?.inputSource;
       const graphInputSrc = graphInput?.source ?? null;
-      // `graphInputCommands` is submitted ahead of the frame batch that
-      // carries `set_native_graph_layer`, so the demo source frame is
-      // already resident by the time the core builds the graph.
-      if (graphInput?.id === DEFAULT_GPU_SOURCE_ID) {
-        this.appendDefaultGpuSourceUpload(graphInputCommands);
-      }
       /*
        * Track the camera the layer ASKS for, not the one that resolved.
        *
@@ -10140,10 +10060,6 @@ export class NativeRendererSync {
       noteNativeIpcProbe(graphInputCommands);
       const graphInputSummary = await submitNativeRendererCommands(graphInputCommands);
       this.warnNativeCommandDrops(graphInputSummary, 'graph-input-source-frames');
-      // The demo source is uploaded exactly once, so a dropped batch would
-      // otherwise strand every fallback layer on a missing source frame
-      // forever. Arm the retry instead.
-      if (Number(graphInputSummary?.dropped ?? 0) > 0) this.defaultGpuSourceUploaded = false;
     }
 
     const graphSourceCommands = await this.renderNativeGraphSources(layers, width, height, renderClock, visual);

@@ -1,63 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_GPU_SOURCE_ID,
   DEFAULT_GPU_SOURCE_SIZE,
   getDefaultGpuSourceImage,
-  gpuLayerNeedsDefaultSource,
-  gpuShaderUsesDefaultSource,
-  gpuSourceParamIsBound,
   renderDefaultGpuSourceImage,
 } from './defaultSourceImage';
 
-describe('built-in demo source eligibility', () => {
-  it('covers exactly the image-driven shaders', () => {
-    expect(gpuShaderUsesDefaultSource('pixel-particles')).toBe(true);
-    expect(gpuShaderUsesDefaultSource('flythrough')).toBe(true);
-    expect(gpuShaderUsesDefaultSource('particle-field', { mode: 'media' })).toBe(true);
-    // `gravity-wells` is the legacy alias the native route normalises to
-    // particle-field; it has to answer the same way.
-    expect(gpuShaderUsesDefaultSource('gravity-wells', { mode: 'media' })).toBe(true);
-
-    // Procedural particle-field modes never wanted pixels.
-    expect(gpuShaderUsesDefaultSource('particle-field', { mode: 'galaxy' })).toBe(false);
-    expect(gpuShaderUsesDefaultSource('particle-field')).toBe(false);
-    // Point Cloud FX takes .ply/.splat geometry — an image is meaningless.
-    expect(gpuShaderUsesDefaultSource('point-cloud-fx')).toBe(false);
-    expect(gpuShaderUsesDefaultSource('planet')).toBe(false);
-    expect(gpuShaderUsesDefaultSource(null)).toBe(false);
-  });
-
-  it('treats only a genuinely empty picker as unbound', () => {
-    expect(gpuSourceParamIsBound(null)).toBe(false);
-    expect(gpuSourceParamIsBound(undefined)).toBe(false);
-    expect(gpuSourceParamIsBound({})).toBe(false);
-    expect(gpuSourceParamIsBound({ type: 'media' })).toBe(false);
-    expect(gpuSourceParamIsBound({ type: 'media', mediaId: '' })).toBe(false);
-    expect(gpuSourceParamIsBound({ type: 'file' })).toBe(false);
-
-    expect(gpuSourceParamIsBound({ type: 'media', mediaId: 'm1' })).toBe(true);
-    expect(gpuSourceParamIsBound({ type: 'layer', layerId: 'l1' })).toBe(true);
-    expect(gpuSourceParamIsBound({ type: 'file', url: 'blob:x' })).toBe(true);
-    expect(gpuSourceParamIsBound({ type: 'camera', deviceId: '' })).toBe(true);
-    expect(gpuSourceParamIsBound({ type: 'spout', senderName: 'Test Sender' })).toBe(true);
-  });
-
-  it('engages with no source and disengages once one is bound', () => {
-    expect(gpuLayerNeedsDefaultSource('pixel-particles', {})).toBe(true);
-    expect(gpuLayerNeedsDefaultSource('pixel-particles', { source: null })).toBe(true);
-    expect(gpuLayerNeedsDefaultSource('pixel-particles', { source: { type: 'media', mediaId: 'm1' } })).toBe(false);
-    // Clearing it again re-engages the fallback rather than going black.
-    expect(gpuLayerNeedsDefaultSource('pixel-particles', { source: null })).toBe(true);
-    // Never engages for a shader that does not consume pixels.
-    expect(gpuLayerNeedsDefaultSource('point-cloud-fx', { source: null })).toBe(false);
-  });
-});
-
-describe('built-in demo source image', () => {
-  it('has a stable source-frame id', () => {
-    expect(DEFAULT_GPU_SOURCE_ID).toBe('ghost:builtin-demo-source');
-  });
-
+describe('bench test picture', () => {
   it('renders a fully opaque square with the structure the depth modes need', () => {
     // Small size keeps the test fast; the shading is resolution-independent.
     const image = renderDefaultGpuSourceImage(128);

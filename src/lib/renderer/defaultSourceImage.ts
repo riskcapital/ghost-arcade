@@ -1,42 +1,19 @@
 /**
- * defaultSourceImage — the built-in demo image the source-driven GPU
- * shaders fall back to when the operator has not bound a source yet.
+ * defaultSourceImage — a deterministic test picture for the source-driven
+ * GPU shaders (Pixel Particles, Flythrough), used by the particle bench
+ * (scripts/native-particle-bench.mjs) and tests.
  *
- * Why this exists
- * ---------------
- * `pixel-particles`, `flythrough` and `particle-field` (media mode) all
- * derive their geometry from an input image/video. With nothing bound the
- * native route used to refuse to build at all, so picking one of them from
- * the shader list produced a black frame — which reads as "broken", not as
- * "waiting for input". This module supplies a real picture so the shader
- * has something to chew on the instant it is selected. The moment the user
- * binds their own source it takes over completely; this is a fallback, not
- * a selection, and it is never written into `layer.gpuLayerContent.params`,
- * so it can never end up in a saved project.
- *
- * Why procedural rather than a bundled file
- * -----------------------------------------
- * These shaders read STRUCTURE out of the picture: pixel-particles pulls
- * depth from luminance / inverse luma / edges / saturation, flythrough
- * replicates it into slabs along Z. A flat logo makes a flat, boring
- * cloud. Generating the image lets us guarantee exactly the properties the
- * shaders want — a wide luminance range with real depth ordering, hard
- * edges for the edge-depth mode, and saturated complementary colour for
- * the saturation mode — with no binary asset, no loader, no decode path,
- * and no way for it to go missing at runtime. It is also pure math, so it
- * is deterministic and testable in Node with no DOM or GPU.
+ * It used to stand in for the operator's input when none was picked. That
+ * read as the user's own source having been lost, so the app no longer uses
+ * it: a shader with no input draws nothing and its panel asks for one (see
+ * gpuShaderInput.ts).
  *
  * The picture: an arcade horizon. A banded retro sun over a perspective
- * grid floor, ridgelines behind it, stars above. Through a depth-from-luma
- * point cloud the sun becomes a raised disc, the grid a glowing lattice,
- * and the ridges fall away behind — a composition that was chosen because
- * it reads well as a 3D cloud, not just as a 2D thumbnail.
+ * grid floor, ridgelines behind it, stars above. It has a wide luminance
+ * range with real depth ordering, hard edges for the edge-depth mode and
+ * saturated complementary colour for the saturation mode, so it exercises
+ * every depth mode. Pure math: deterministic and testable in Node.
  */
-
-/** Source-frame id the built-in demo image is uploaded under in the native
- *  core. Well-known and constant so it is uploaded once and shared by every
- *  layer and shader that falls back to it. */
-export const DEFAULT_GPU_SOURCE_ID = 'ghost:builtin-demo-source';
 
 /** Square, because the core's CPU source-frame upload resamples whatever it
  *  is given onto a square texture — an off-square demo image would arrive
@@ -45,65 +22,11 @@ export const DEFAULT_GPU_SOURCE_ID = 'ghost:builtin-demo-source';
 export const DEFAULT_GPU_SOURCE_SIZE = 1024;
 
 /** Shown in the panel so nobody thinks their own file failed to load. */
-export const DEFAULT_GPU_SOURCE_LABEL = 'Built-in demo image';
-
 export interface DefaultGpuSourceImage {
   width: number;
   height: number;
   /** Tightly packed RGBA8, row-major, top row first. */
   rgba: Uint8ClampedArray;
-}
-
-// ───────────────────────── shader eligibility ─────────────────────────
-
-/**
- * Is this GPU shader one that falls back to the demo image?
- *
- * `point-cloud-fx` is deliberately NOT in this set: it consumes .ply /
- * .splat geometry, so an image would be meaningless to it (and it is
- * archived out of the picker anyway).
- */
-export function gpuShaderUsesDefaultSource(
-  shaderId: string | null | undefined,
-  params?: Record<string, unknown> | null,
-): boolean {
-  const id = String(shaderId ?? '').trim().toLowerCase();
-  if (id === 'pixel-particles' || id === 'flythrough') return true;
-  if (id === 'particle-field' || id === 'gravity-wells') {
-    return String(params?.mode ?? '').trim().toLowerCase() === 'media';
-  }
-  return false;
-}
-
-/**
- * Has the operator bound a source of their own?
- *
- * Only a genuinely EMPTY picker engages the fallback. A source that is
- * present but unresolvable (missing media item, unsupported codec) is a
- * different problem with its own messaging — masking it with the demo
- * image would hide a real failure.
- */
-export function gpuSourceParamIsBound(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const source = value as Record<string, unknown>;
-  const type = String(source.type ?? '').trim();
-  if (!type) return false;
-  switch (type) {
-    case 'media': return !!String(source.mediaId ?? '').trim();
-    case 'layer': return !!String(source.layerId ?? '').trim();
-    case 'file': return !!String(source.url ?? '').trim();
-    case 'camera': return true;
-    case 'spout': return !!String(source.senderName ?? '').trim();
-    default: return true;
-  }
-}
-
-/** Convenience: this layer's shader wants pixels and the picker is empty. */
-export function gpuLayerNeedsDefaultSource(
-  shaderId: string | null | undefined,
-  params?: Record<string, unknown> | null,
-): boolean {
-  return gpuShaderUsesDefaultSource(shaderId, params) && !gpuSourceParamIsBound(params?.source);
 }
 
 // ───────────────────────── tiny math kit ─────────────────────────
@@ -439,31 +362,7 @@ export function getDefaultGpuSourceImage(): DefaultGpuSourceImage {
   return cachedImage;
 }
 
-let cachedBitmap: ImageBitmap | HTMLCanvasElement | null = null;
-
-/**
- * Browser-path handle for shaders that only accept a `CanvasImageSource`.
- * Shaders that implement `setSourceFromBytes` should use
- * `getDefaultGpuSourceImage()` directly and skip this entirely.
- */
-export function getDefaultGpuSourceCanvas(): HTMLCanvasElement | ImageBitmap | null {
-  if (cachedBitmap) return cachedBitmap;
-  if (typeof document === 'undefined') return null;
-  const image = getDefaultGpuSourceImage();
-  const canvas = document.createElement('canvas');
-  canvas.width = image.width;
-  canvas.height = image.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  const imageData = ctx.createImageData(image.width, image.height);
-  imageData.data.set(image.rgba);
-  ctx.putImageData(imageData, 0, 0);
-  cachedBitmap = canvas;
-  return cachedBitmap;
-}
-
-/** Test seam — drops the memoised image/canvas. */
+/** Test seam — drops the memoised image. */
 export function resetDefaultGpuSourceCache(): void {
   cachedImage = null;
-  cachedBitmap = null;
 }

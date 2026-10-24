@@ -1,5 +1,4 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_GPU_SOURCE_ID } from '../renderer/defaultSourceImage';
 import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
 import type {
   NativeEffectPassRuntime,
@@ -919,9 +918,9 @@ describe('native renderer sync graph effect routing', () => {
     expect(sync.nativeEffectPassRouteForLayer(layer)).toBeNull();
   });
 
-  // Selecting a source-driven shader used to produce a black frame: with no
-  // source bound the route refused to build at all. It now falls back to the
-  // built-in demo image so the shader has pixels the moment it is picked.
+  // A source-driven shader with no input draws nothing (its panel asks for
+  // one). There is no stand-in picture: it read as the user's own source
+  // having been lost.
   function sourceDrivenSync(kind: string) {
     const sync = new NativeRendererSyncCtor() as any;
     sync.nativeComputeGraphSourceFrames = true;
@@ -942,26 +941,17 @@ describe('native renderer sync graph effect routing', () => {
     };
   }
 
-  // particle-field is deliberately absent: `media` is not in its mode dropdown
-  // (galaxy/atomic/swarm/lattice/field/gravity), so nobody can select their way
-  // into the black screen this fallback exists to prevent. See the companion
-  // test below, which pins that exclusion.
   it.each([
-    ['pixel-particles', 'pixel-particles', {}],
-    ['flythrough', 'flythrough', {}],
-  ])('falls back to the built-in demo source for %s with nothing bound', (kind, shaderId, extraParams) => {
+    ['pixel-particles'],
+    ['flythrough'],
+    ['point-cloud-fx'],
+  ])('builds no %s route until an input is picked', (kind) => {
     const sync = sourceDrivenSync(kind);
-
-    const unbound = sync.nativeGraphRouteForLayer(gpuLayer(shaderId, { ...extraParams, source: null }));
-    expect(unbound?.kind).toBe(kind);
-    expect(unbound?.inputSource?.id).toBe(DEFAULT_GPU_SOURCE_ID);
-
-    // Never bound at all (param absent) behaves the same as explicitly cleared.
-    const missing = sync.nativeGraphRouteForLayer(gpuLayer(shaderId, { ...extraParams }));
-    expect(missing?.inputSource?.id).toBe(DEFAULT_GPU_SOURCE_ID);
+    expect(sync.nativeGraphRouteForLayer(gpuLayer(kind, { source: null }))).toBeNull();
+    expect(sync.nativeGraphRouteForLayer(gpuLayer(kind, {}))).toBeNull();
   });
 
-  it('drops the demo fallback the moment a real source is bound, and picks it back up when cleared', () => {
+  it('routes the picked input, and stops when it is cleared', () => {
     const sync = sourceDrivenSync('pixel-particles');
     const boundSource = {
       type: 'file',
@@ -972,47 +962,19 @@ describe('native renderer sync graph effect routing', () => {
 
     const bound = sync.nativeGraphRouteForLayer(gpuLayer('pixel-particles', { source: boundSource }));
     expect(bound?.kind).toBe('pixel-particles');
-    expect(bound?.inputSource?.id).not.toBe(DEFAULT_GPU_SOURCE_ID);
     expect(bound?.inputSource?.uri).toContain('clip.png');
 
-    const cleared = sync.nativeGraphRouteForLayer(gpuLayer('pixel-particles', { source: null }));
-    expect(cleared?.inputSource?.id).toBe(DEFAULT_GPU_SOURCE_ID);
+    expect(sync.nativeGraphRouteForLayer(gpuLayer('pixel-particles', { source: null }))).toBeNull();
   });
 
-  it('leaves particle-field (any mode) and Point Cloud FX without a fallback', () => {
+  it('keeps procedural particle-field modes free of any input', () => {
     const particleField = sourceDrivenSync('particle-field');
-    // media mode is unreachable from the UI and only exists in legacy projects,
-    // which carry their own bound source — so an unbound media-mode layer keeps
-    // the pre-existing no-route behaviour rather than gaining a demo image it
-    // would render as a thin sliver.
     expect(
       particleField.nativeGraphRouteForLayer(gpuLayer('particle-field', { mode: 'media', source: null })),
     ).toBeNull();
-    // Non-media modes are procedural — they never wanted an input source.
     const galaxy = particleField.nativeGraphRouteForLayer(gpuLayer('particle-field', { mode: 'galaxy' }));
     expect(galaxy?.kind).toBe('particle-field');
     expect(galaxy?.inputSource).toBeNull();
-
-    // Point Cloud FX consumes .ply/.splat geometry; an image means nothing to
-    // it, so an empty picker still refuses the route.
-    const pointCloud = sourceDrivenSync('point-cloud-fx');
-    expect(pointCloud.nativeGraphRouteForLayer(gpuLayer('point-cloud-fx', { source: null }))).toBeNull();
-  });
-
-  it('uploads the demo source frame exactly once per core session', () => {
-    const sync = sourceDrivenSync('pixel-particles');
-    sync.nativeFeatureFlags = { source_frame_upload: true };
-
-    const commands: any[] = [];
-    sync.appendDefaultGpuSourceUpload(commands);
-    sync.appendDefaultGpuSourceUpload(commands);
-    sync.appendDefaultGpuSourceUpload(commands);
-
-    expect(commands).toHaveLength(1);
-    expect(commands[0].type).toBe('upload_source_frame');
-    expect(commands[0].source_id).toBe(DEFAULT_GPU_SOURCE_ID);
-    expect(commands[0].width).toBe(commands[0].height);
-    expect(String(commands[0].rgba_b64).length).toBeGreaterThan(1000);
   });
 
   it('exposes Point Cloud FX once its buffers and animation are core-owned', () => {
