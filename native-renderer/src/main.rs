@@ -3907,9 +3907,10 @@ fn parse_layer_mesh_tangents(
 
 fn set_scene_layer_color(layer: &mut SceneLayer, rgba: [f32; 4]) {
     layer.color = rgba;
-    // The editor only sends this for colour layers (layerRgba returns null
-    // for every other type), so it is exactly the signal that the colour is
-    // the content rather than a placeholder.
+    // The editor only sends this for colour layers, and for media layers
+    // that carry a fill colour until they get content (layerRgba returns
+    // null for every other type): either way the colour is meant to be seen,
+    // not a placeholder card. Bound content replaces it.
     layer.explicit_color = true;
 }
 

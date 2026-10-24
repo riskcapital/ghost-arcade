@@ -3609,9 +3609,13 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 }
 
 function layerRgba(layer: Layer): [number, number, number, number] | null {
-  if (layer.type !== 'color' || !layer.colorContent) return null;
+  if (!layer.colorContent || (layer.type !== 'color' && layer.type !== 'media')) return null;
   const c = layer.colorContent;
   const [r, g, b] = hslToRgb(c.hue, c.saturation, c.lightness);
+  // A media layer's colour is its fill while it has no content (Map Sim
+  // auto-map faces): the core draws it instead of the alignment card, and
+  // content replaces it. Its alpha must not fade the content later.
+  if (layer.type === 'media') return [r, g, b, 1];
   const a = Math.max(0, Math.min(1, c.alpha));
   return [r, g, b, a];
 }
@@ -3843,9 +3847,26 @@ export function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
       const contentMode = shapeContentModeFromFit(layer.contentFit);
       const fit = contentMode === 'mask' ? 0 : contentMode === 'contain' ? 2 : 1;
       const contentFollow = contentMode === 'follow';
+      // Stretch puts the whole picture inside the shape: the base outline is
+      // packed relative to its own bounds, so at rest each point of the
+      // shape shows the matching point of the content (its bounding box is
+      // the full frame), and dragging a vertex still pulls the content with
+      // it. Packed as drawn on the layer it only cut a window out of a
+      // full-layer picture, which is what Fill (a plain mask) is for.
+      let baseMinX = Infinity, baseMinY = Infinity, baseMaxX = -Infinity, baseMaxY = -Infinity;
+      for (const point of base) {
+        baseMinX = Math.min(baseMinX, point.x); baseMaxX = Math.max(baseMaxX, point.x);
+        baseMinY = Math.min(baseMinY, point.y); baseMaxY = Math.max(baseMaxY, point.y);
+      }
+      const baseWidth = Math.max(0.0001, baseMaxX - baseMinX);
+      const baseHeight = Math.max(0.0001, baseMaxY - baseMinY);
+      const contentBase = base.map((point) => ({
+        x: quantizeNative((point.x - baseMinX) / baseWidth),
+        y: quantizeNative((point.y - baseMinY) / baseHeight),
+      }));
       const shapePoints: NativeVec4[] = [
         ...packOutline(flat),
-        ...(contentFollow ? packOutline(base) : []),
+        ...(contentFollow ? packOutline(contentBase) : []),
       ];
       const feather = quantizeNative(clampNumber(Number(params.feather ?? 0), 0, 1));
       const payload: NativeVec4 = [6, feather, 0, 1];

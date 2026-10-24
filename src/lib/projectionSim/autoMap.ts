@@ -23,9 +23,10 @@ export const AUTO_MAP_TAG = 'projection-sim-auto-map';
 type Face = { name: string; normal: THREE.Vector3; corners: THREE.Vector3[] };
 
 /** Flat colour per face: a hue per object, lit by which way the face
- *  points, like a lit model. Colour layers cost almost nothing to render,
- *  so a large model stays smooth, and the shading shows at a glance whether
- *  every face landed on the right surface. */
+ *  points, like a lit model. Each face is a media layer that shows this
+ *  colour until it is given content, so the shading shows at a glance
+ *  whether every face landed on the right surface. An empty layer costs
+ *  almost nothing to render, so a large model stays smooth. */
 function faceColour(objectIndex: number, face: Face): { hue: number; saturation: number; lightness: number; alpha: number } {
   const hue = Math.round((objectIndex * 137.508 + 205) % 360);
   const up = face.normal.y;
@@ -227,11 +228,12 @@ export async function autoMapProjectionSim(
   // projector's image the one in front wins, as it does on the object.
   const byDepth = [...chosen].sort((a, b) => b.depth - a.depth);
   for (const candidate of byDepth) {
-    const id = project.addLayer(candidate.name, shaderFile ? 'media' : 'color');
+    // Media layers, so every face takes a shader, clip or image like any
+    // other layer; the face colour is only their fill while they are empty.
+    const id = project.addLayer(candidate.name, 'media');
     if (!id) continue;
-    if (!shaderFile) {
-      project.updateLayer(id, { colorContent: candidate.colour } as any);
-    } else if (shaderCode) {
+    project.updateLayer(id, { colorContent: candidate.colour } as any);
+    if (shaderFile && shaderCode) {
       project.setLayerSource(id, {
         id: `${shaderFile}-${id}`,
         type: 'shader',

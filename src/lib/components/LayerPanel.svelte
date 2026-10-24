@@ -1650,8 +1650,9 @@
                 <line x1="2" y1="20" x2="22" y2="4" stroke-dasharray="2,2"/>
               </svg>
             </div>
-          {:else if layer.type === 'color' && layer.colorContent}
-            <!-- Solid color thumbnail -->
+          {:else if layer.colorContent && (layer.type === 'color' || (layer.type === 'media' && !layer.source))}
+            <!-- Solid color thumbnail; an empty media layer with a fill colour
+                 (a Map Sim auto-map face) shows the colour it draws -->
             <div
               class="color-thumb"
               style="background: hsl({layer.colorContent.hue}, {layer.colorContent.saturation}%, {layer.colorContent.lightness}%);"

@@ -215,6 +215,34 @@ function differingShare(a: Snapshot, b: Snapshot, tolerance = 3): number {
   return count / (a.bytes.length / 4);
 }
 
+describe('content in a Custom Shape on the native core', () => {
+  // The gradient's red runs left to right and its green top to bottom, so a
+  // pixel's colour says which part of the picture it shows.
+  itIfNativeCore('stretches the whole picture over the shape, and Fill only masks it', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await startCore(rpc);
+      const layer = shapedLayer(square);
+      // Just inside the square's top-left and bottom-right corners.
+      const topLeft = { x: 0.26, y: 0.69 };
+      const bottomRight = { x: 0.59, y: 0.31 };
+
+      layer.contentFit = 'stretch';
+      const stretched = await render(rpc, layer, null);
+      expect(at(stretched, topLeft.x, topLeft.y, stretched.red), 'stretch: left edge shows the picture\'s left').toBeLessThan(24);
+      expect(at(stretched, topLeft.x, topLeft.y, stretched.green), 'stretch: top edge shows the picture\'s top').toBeLessThan(24);
+      expect(at(stretched, bottomRight.x, bottomRight.y, stretched.red)).toBeGreaterThan(228);
+      expect(at(stretched, bottomRight.x, bottomRight.y, stretched.green)).toBeGreaterThan(228);
+
+      layer.contentFit = 'fill';
+      const masked = await render(rpc, layer, null);
+      // A window onto the full-layer picture: the colours of that spot.
+      expect(Math.abs(at(masked, topLeft.x, topLeft.y, masked.red) - 0.26 * 255)).toBeLessThan(16);
+      expect(Math.abs(at(masked, topLeft.x, topLeft.y, masked.green) - 0.31 * 255)).toBeLessThan(16);
+    } finally { await rpc.close(); }
+  }, 60000);
+});
+
 describe('mesh fitted to a Custom Shape on the native core', () => {
   itIfNativeCore('renders an unwarped fitted mesh exactly like no mesh', async () => {
     const rpc = createNativeRpc();
