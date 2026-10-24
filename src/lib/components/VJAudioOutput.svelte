@@ -43,7 +43,7 @@
     const timer = setInterval(() => { if (opened) void refresh(); }, 1500); return () => { clearInterval(timer); unsubscribe(); }; });
 </script>
 <div data-help-page="midi-audio" class="audio-output">
-  <button class="output-button" class:muted={$nativeAudioMaster.muted} aria-expanded={opened} onclick={open} title="Clip audio output and master volume">Audio Out <span>{$nativeAudioMaster.muted ? 'Muted' : `${Math.round($nativeAudioMaster.volume * 100)}%`}</span></button>
+  <button class="output-button" class:muted={$nativeAudioMaster.muted} aria-expanded={opened} onclick={open} title="Clip audio output and master volume">OUT <span>{$nativeAudioMaster.muted ? 'Muted' : `${Math.round($nativeAudioMaster.volume * 100)}%`}</span></button>
     <div bind:this={tray} popover="auto" class="output-panel" role="group" aria-label="Clip audio output"
       style:left="{left}px" style:top="{top}px" style:max-height="calc(100vh - {top + 8}px)"
       ontoggle={e => opened = (e as ToggleEvent).newState === 'open'}>
@@ -60,8 +60,9 @@
 <style>
   .audio-output { position: relative; font-size: 12px; }
   button, select { min-height: 28px; border: 1px solid #34383f; border-radius: 5px; background: #121419; color: #dce0e7; font: inherit; padding: 4px 8px; }
-  .output-button { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
-  .output-button span, .status { color: #969eab; font-size: 11px; }
+  .output-button { display: flex; gap: 6px; align-items: center; white-space: nowrap; letter-spacing: 0.08em; font-weight: 700; font-size: 11px; }
+  .output-button span { color: #969eab; font-size: 11px; font-weight: 500; letter-spacing: 0; }
+  .status { color: #969eab; font-size: 11px; }
   .muted, .active { background: var(--ga-blue-700); border-color: var(--ga-blue-500); }
   .output-panel { color: #dce0e7; font-size: 12px; position: fixed; margin: 0; inset: auto; overflow-y: auto; width: 280px; max-width: calc(100vw - 16px); padding: 14px; border: 1px solid var(--ga-blue-mute-600); border-radius: 8px; background: #111318; box-shadow: 0 12px 36px #0009; }
   .panel-heading { display: flex; justify-content: space-between; align-items: center; font-weight: 650; margin-bottom: 12px; }

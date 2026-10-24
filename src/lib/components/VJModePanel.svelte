@@ -6025,9 +6025,11 @@
               <option value="2bar">2 BAR</option>
               <option value="4bar">4 BAR</option>
             </select>
+            <!-- Queued launches: a badge on the box's corner, so it never
+                 widens the bar and pushes the controls onto another line. -->
             {#if $vjClipLauncher.pendingTriggers.length > 0}
               <span class="dock-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} launch{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 'es'} queued">
-                {$vjClipLauncher.pendingTriggers.length} ·
+                {$vjClipLauncher.pendingTriggers.length}
               </span>
             {/if}
           </div>
@@ -9297,6 +9299,7 @@
     flex: 0 0 auto;
   }
   .dock-quant {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -9354,9 +9357,20 @@
     white-space: nowrap;
   }
   .dock-quant-pending {
-    font-size: var(--vj-label-font);
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: #ffd166;
+    color: #1a1406;
+    font-size: 10px;
     font-weight: 700;
-    color: #ffd166;
+    line-height: 16px;
+    text-align: center;
+    pointer-events: none;
   }
   .vj-dock :global(.amp-strip),
   .vj-dock :global(.audio-input-picker) {
