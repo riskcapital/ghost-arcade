@@ -116,7 +116,7 @@
     effectToNativeDescriptor,
     nativeEffectPassFromDescriptor,
   } from '$lib/sync/nativeRendererSync';
-  import { appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
+  import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
   import { NATIVE_EFFECT_PASS_LIMIT } from '$lib/renderer/nativeEffectChainPolicy';
   import {
     captureNativeLayerSourceFrame,
@@ -1774,6 +1774,29 @@
           : applyFaderCurve(rawFader, xfadeCurve);
         const stateA = vjState.layerStates ?? [];
         const stateB = vjState.bankBLayerStates ?? [];
+        // Mix output with both decks playing: the slider runs between the
+        // whole Deck A and Deck B pictures, so its transition and blend mode
+        // apply whatever rows each deck uses. Stage keeps the per-row pairing
+        // below, because each Screen shows one row's own A/B mix.
+        const slots = [...byIndex.values()];
+        if (!vjState.stageMode && slots.some(slot => slot.a) && slots.some(slot => slot.b)) {
+          const residents: Layer[] = [...output];
+          for (const slot of slots) {
+            if (slot.a) residents.push({ ...slot.a, _deckMonitorBank: 'a', _deckMonitorOpacity: slot.a.opacity });
+            if (slot.b) residents.push({ ...slot.b, _deckMonitorBank: 'b', _deckMonitorOpacity: slot.b.opacity });
+          }
+          const state = get(vjClipLauncher);
+          return appendNativeVjDeckCrossfade(
+            appendNativePerformerWorldLayers(residents, incomingLayers ?? [], null),
+            state.groups ?? [],
+            mixFx ? nativeCompositionEffects(state.compositionEffects) : [],
+            {
+              mix: shapedMix,
+              transition: vjState.crossfaderTransition || 'dissolve',
+              blendMode: vjState.crossfaderBlendMode || 'normal',
+            },
+          );
+        }
         // A MAP preset occupies a row without producing a feed, so it never
         // counts as the missing half of an A/B pair.
         const visibleRow = (rows: typeof stateA, idx: number) => !!rows[idx]?.activeClip

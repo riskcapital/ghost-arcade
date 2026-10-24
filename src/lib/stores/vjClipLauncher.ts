@@ -1148,6 +1148,22 @@ function createVJClipLauncherStore() {
     const value = get(crossfaderPosition);
     return state.crossfaderValue === value ? state : { ...state, crossfaderValue: value };
   };
+  const moveCrossfader = (value: number) => {
+    const clamped = Math.max(0, Math.min(1, value));
+    if (clamped === get(crossfaderPosition)) return;
+    crossfaderMoved = true;
+    crossfaderPosition.set(clamped);
+    if (crossfaderRestTimer) clearTimeout(crossfaderRestTimer);
+    crossfaderRestTimer = setTimeout(() => {
+      crossfaderRestTimer = null;
+      if (crossfaderMoved) update(state => state);
+    }, CROSSFADER_REST_MS);
+  };
+  let crossfaderGlideFrame: number | null = null;
+  const cancelCrossfaderGlide = () => {
+    if (crossfaderGlideFrame !== null && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(crossfaderGlideFrame);
+    crossfaderGlideFrame = null;
+  };
   // Anything else that moves the fader (a cut, a snapshot, a project load)
   // goes through the state; the position follows it.
   subscribe(state => {
@@ -3703,15 +3719,37 @@ function createVJClipLauncherStore() {
     },
 
     setCrossfaderValue(value: number) {
-      const clamped = Math.max(0, Math.min(1, value));
-      if (clamped === get(crossfaderPosition)) return;
-      crossfaderMoved = true;
-      crossfaderPosition.set(clamped);
-      if (crossfaderRestTimer) clearTimeout(crossfaderRestTimer);
-      crossfaderRestTimer = setTimeout(() => {
-        crossfaderRestTimer = null;
-        if (crossfaderMoved) update(state => state);
-      }, CROSSFADER_REST_MS);
+      // A hand on the fader takes over from a cut that is still gliding.
+      cancelCrossfaderGlide();
+      moveCrossfader(value);
+    },
+
+    /**
+     * Move the fader to `target` over the TIME set beside it (Cut A / Cut B
+     * from the buttons, MIDI, OSC or a cue), or at once when TIME is 0s.
+     */
+    glideCrossfaderTo(target: number) {
+      cancelCrossfaderGlide();
+      const end = Math.max(0, Math.min(1, target));
+      const start = get(crossfaderPosition);
+      const seconds = Math.max(0, Math.min(8, get({ subscribe }).crossfaderFadeDuration ?? 0));
+      if (seconds <= 0 || Math.abs(start - end) < 0.0005 || typeof requestAnimationFrame === 'undefined') {
+        update(state => ({ ...state, crossfaderValue: end }));
+        return;
+      }
+      const started = performance.now();
+      const tick = (now: number) => {
+        const t = Math.max(0, Math.min(1, (now - started) / (seconds * 1000)));
+        const eased = t * t * (3 - 2 * t);
+        moveCrossfader(start + (end - start) * eased);
+        if (t < 1) {
+          crossfaderGlideFrame = requestAnimationFrame(tick);
+        } else {
+          crossfaderGlideFrame = null;
+          update(state => ({ ...state, crossfaderValue: end }));
+        }
+      };
+      crossfaderGlideFrame = requestAnimationFrame(tick);
     },
 
     setCrossfaderTransition(transition: CrossfaderTransition) {
@@ -3731,12 +3769,13 @@ function createVJClipLauncherStore() {
       update(state => ({ ...state, crossfaderFadeDuration: clamped }));
     },
 
+    // Cut A / Cut B: glide over the fader's TIME, like the buttons beside it.
     cutToA() {
-      update(state => ({ ...state, crossfaderValue: 0 }));
+      this.glideCrossfaderTo(0);
     },
 
     cutToB() {
-      update(state => ({ ...state, crossfaderValue: 1 }));
+      this.glideCrossfaderTo(1);
     },
   };
 }

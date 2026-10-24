@@ -84,6 +84,82 @@ export function appendNativeVjMixCarrier(list: Layer[], groups: VJGroup[], compo
 }
 
 
+export interface VjDeckCrossfade {
+  /** Post-curve fader position, 0 = Deck A, 1 = Deck B. */
+  mix: number;
+  transition: string;
+  blendMode: string;
+}
+
+/**
+ * The A/B slider between whole decks. Each deck's rows (their own opacity,
+ * blend and groups, plus its Performer worlds) are mixed into one picture,
+ * and the slider's transition and blend mode run between the two pictures.
+ * Pairing row N of Deck A with row N of Deck B only worked when both decks
+ * used the same rows; this works whatever rows each deck plays on.
+ */
+export function appendNativeVjDeckCrossfade(
+  list: Layer[],
+  groups: VJGroup[],
+  compositionEffects: Effect[],
+  xfade: VjDeckCrossfade,
+): Layer[] {
+  const rowsFor = (deck: 'A' | 'B') => {
+    type Row = { index: number; order: number; layerId: string; opacity: number; blendMode: string };
+    const rows: Row[] = [];
+    for (const layer of list) {
+      const id = String(layer.id);
+      const row = /^vj-layer-(\d+)-([AB])$/.exec(id);
+      const world = /^performer-world-([AB])-(\d+)$/.exec(id);
+      if (row && row[2] === deck) {
+        rows.push({ index: Number(row[1]), order: 0, layerId: id,
+          opacity: Math.max(0, Math.min(1, layer.opacity ?? 1)), blendMode: String(layer.blendMode || 'normal') });
+      } else if (world && world[1] === deck && layer.visible !== false) {
+        rows.push({ index: Number(world[2]), order: 1, layerId: id,
+          opacity: Math.max(0, Math.min(1, layer.opacity ?? 1)), blendMode: String(layer.blendMode || 'add') });
+      }
+    }
+    // Bottom to top: row 0 is topmost; a row's Performer world sits on it.
+    return rows
+      .sort((a, b) => b.index - a.index || a.order - b.order)
+      .map(({ index, layerId, opacity, blendMode }) => ({
+        layerId, opacity, blendMode,
+        groupId: groups.find(g => index >= g.first && index <= g.last)?.id,
+      }));
+  };
+  const effectLayer = (id: string, name: string, src: string, effectSource: { effectType: string } & Record<string, unknown>, opacity: number, effects: Effect[] = []): Layer => ({
+    ...createLayer(id, name, 'media'),
+    visible: true,
+    opacity,
+    blendMode: 'normal',
+    source: { id: `${id}-src`, type: 'effect', src, name, effectSource } as unknown as NonNullable<Layer['source']>,
+    effects,
+    edgeEffects: null,
+  } as Layer);
+  // Each deck's picture and the transition between them render as feeds
+  // only (opacity 0); the VJ Mix carrier presents the result once.
+  const deckA = effectLayer('__vj-deck-mix-A__', 'Deck A', 'plugin://vj-mix/deck-a',
+    { effectType: 'vj-mix', vjmixRows: rowsFor('A'), vjmixGroups: groups }, 0);
+  const deckB = effectLayer('__vj-deck-mix-B__', 'Deck B', 'plugin://vj-mix/deck-b',
+    { effectType: 'vj-mix', vjmixRows: rowsFor('B'), vjmixGroups: groups }, 0);
+  const crossfade = effectLayer('__vj-deck-xfade__', 'A/B', 'plugin://vj-crossfade/decks', {
+    effectType: 'vj-crossfade',
+    vjxfadeLayerA: deckA.id,
+    vjxfadeLayerB: deckB.id,
+    vjxfadeMix: Math.max(0, Math.min(1, xfade.mix)),
+    vjxfadeTransition: xfade.transition || 'dissolve',
+    vjxfadeBlend: xfade.blendMode || 'normal',
+    vjxfadeOpacityA: 1,
+    vjxfadeOpacityB: 1,
+  }, 0);
+  const mix = effectLayer('__vj-mix__', 'VJ Mix', 'plugin://vj-mix', {
+    effectType: 'vj-mix',
+    vjmixRows: [{ layerId: crossfade.id, opacity: 1, blendMode: 'normal' }],
+    vjmixGroups: [],
+  }, 1, compositionEffects);
+  return [...list.map(layer => ({ ...layer, opacity: 0 })), deckA, deckB, crossfade, mix];
+}
+
 /** Stage output contains screen slices and only their parent containers. */
 export function vjStageScreenLayers(layers: Layer[]): Layer[] {
   const screens = layers.filter(layer => layer.type === 'screen');
