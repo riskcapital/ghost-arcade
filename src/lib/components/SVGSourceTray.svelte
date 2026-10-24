@@ -476,7 +476,7 @@
       <!-- Position & Scale Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('position')}>
-          <span>Position & Scale</span>
+          <span>Position, Rotation & Scale</span>
           <span class="toggle">{expandedSections.position ? '-' : '+'}</span>
         </button>
         {#if expandedSections.position && $selectedSVGContent}
@@ -517,12 +517,37 @@
               />
               <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.contentScale ?? 1).toFixed(2)} />
             </div>
+            <div class="param-row">
+              <label>Rotate X</label>
+              <input type="range" min="-180" max="180" step="1"
+                value={$selectedSVGContent.rotateX ?? 0}
+                oninput={(e) => updateParam('rotateX', parseFloat((e.target as HTMLInputElement).value))} />
+              <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateX ?? 0)} />
+            </div>
+            <div class="param-row">
+              <label>Rotate Y</label>
+              <input type="range" min="-180" max="180" step="1"
+                value={$selectedSVGContent.rotateY ?? 0}
+                oninput={(e) => updateParam('rotateY', parseFloat((e.target as HTMLInputElement).value))} />
+              <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateY ?? 0)} />
+            </div>
+            <div class="param-row">
+              <label>Rotate Z</label>
+              <input type="range" min="-180" max="180" step="1"
+                value={$selectedSVGContent.rotateZ ?? 0}
+                oninput={(e) => updateParam('rotateZ', parseFloat((e.target as HTMLInputElement).value))} />
+              <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateZ ?? 0)} />
+            </div>
+            <div class="param-hint">Or use the transform gizmo on the canvas: Move, Rotate, Scale.</div>
             <button class="reset-position-btn" onclick={() => {
               updateParam('panX', 0);
               updateParam('panY', 0);
               updateParam('contentScale', 1);
+              updateParam('rotateX', 0);
+              updateParam('rotateY', 0);
+              updateParam('rotateZ', 0);
             }}>
-              Reset Position
+              Reset Position & Rotation
             </button>
           </div>
         {/if}
@@ -640,28 +665,6 @@
                   value={$selectedSVGContent.cameraFov ?? 40}
                   oninput={(e) => updateParam('cameraFov', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.cameraFov ?? 40)} />
-              </div>
-              <div class="param-subhead">Rotate (manual)</div>
-              <div class="param-row">
-                <label>Rotate X</label>
-                <input type="range" min="-180" max="180" step="1"
-                  value={$selectedSVGContent.rotateX ?? 0}
-                  oninput={(e) => updateParam('rotateX', parseFloat((e.target as HTMLInputElement).value))} />
-                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateX ?? 0)} />
-              </div>
-              <div class="param-row">
-                <label>Rotate Y</label>
-                <input type="range" min="-180" max="180" step="1"
-                  value={$selectedSVGContent.rotateY ?? 0}
-                  oninput={(e) => updateParam('rotateY', parseFloat((e.target as HTMLInputElement).value))} />
-                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateY ?? 0)} />
-              </div>
-              <div class="param-row">
-                <label>Rotate Z</label>
-                <input type="range" min="-180" max="180" step="1"
-                  value={$selectedSVGContent.rotateZ ?? 0}
-                  oninput={(e) => updateParam('rotateZ', parseFloat((e.target as HTMLInputElement).value))} />
-                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateZ ?? 0)} />
               </div>
               <div class="param-subhead">Auto-spin (speed)</div>
               <div class="param-row">
@@ -2190,6 +2193,12 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   }
   .param-subhead:first-child { margin-top: 2px; }
+  .param-hint {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--text-muted, #888);
+    margin: 6px 0 8px;
+  }
 
   .param-row label {
     flex: 0 0 70px;

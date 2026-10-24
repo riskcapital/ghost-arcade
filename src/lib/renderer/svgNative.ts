@@ -534,9 +534,12 @@ function packedSvgHeader(options: SvgNativeGraphOptions, geometry: SvgGeometry):
     ? 1 + Math.sin(time * finite(content.breatheSpeed, 1) * Math.PI * 2) * clamp(finite(content.breatheAmount, 0.08), 0, 0.5)
     : 1;
   const floatY = renderMode === 2 ? Math.sin(time * finite(content.floatSpeed, 0.8)) * finite(content.floatAmount, 0) : 0;
-  const rx = renderMode === 2 ? (finite(content.rotateX, 0) * Math.PI / 180) + time * finite(content.rotateSpeedX, 0) : 0;
-  const ry = renderMode === 2 ? (finite(content.rotateY, 0) * Math.PI / 180) + time * finite(content.rotateSpeedY, 0) : 0;
-  const rz = renderMode === 2 ? (finite(content.rotateZ, 0) * Math.PI / 180) + time * finite(content.rotateSpeedZ, 0) : 0;
+  // Manual rotation turns the SVG in every mode; auto-spin belongs to the 3D
+  // (extrude) look, so a flat logo with the default spin speed stays still.
+  const spin = renderMode === 2 ? time : 0;
+  const rx = (finite(content.rotateX, 0) * Math.PI / 180) + spin * finite(content.rotateSpeedX, 0);
+  const ry = (finite(content.rotateY, 0) * Math.PI / 180) + spin * finite(content.rotateSpeedY, 0);
+  const rz = (finite(content.rotateZ, 0) * Math.PI / 180) + spin * finite(content.rotateSpeedZ, 0);
   const depth = renderMode === 2 ? clamp(finite(content.extrudeDepth, 24), 0, 160) : 0;
   const fov = clamp(finite(content.cameraFov, 45), 20, 90) * Math.PI / 180;
   const focal = height * 0.5 / Math.tan(fov * 0.5);
@@ -672,7 +675,8 @@ fn transform_point(art: vec2<f32>, z: f32) -> vec2<f32> {
   // h21 = depth, focal, offset xy.  Same math the CPU used to run per frame.
   let local = (art - svg.h19.xy) * svg.h19.z * svg.h19.w;
   let mode = i32(svg.h6.x + 0.5);
-  if (mode != 2) { return local + svg.h21.zw; }
+  // Flat shapes take the same rotation, as a card at z = 0.
+  if (mode != 2 && all(svg.h20.xyz == vec3<f32>(0.0))) { return local + svg.h21.zw; }
   let cx = cos(svg.h20.x); let sx = sin(svg.h20.x);
   let cy = cos(svg.h20.y); let sy = sin(svg.h20.y);
   let cz = cos(svg.h20.z); let sz = sin(svg.h20.z);
@@ -757,6 +761,17 @@ fn in_tri(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> bool {
   return !((d1<0.0||d2<0.0||d3<0.0)&&(d1>0.0||d2>0.0||d3>0.0));
 }
 fn bit_on(bits: u32, index: u32) -> bool { return (bits & (1u << index)) != 0u; }
+// The 3D modes' rotation (X, then Y, then Z) applied to one vector.
+fn rot_xyz(v: vec3<f32>) -> vec3<f32> {
+  let cx = cos(svg.h20.x); let sx = sin(svg.h20.x);
+  let cy = cos(svg.h20.y); let sy = sin(svg.h20.y);
+  let cz = cos(svg.h20.z); let sz = sin(svg.h20.z);
+  let py = v.y * cx - v.z * sx;
+  var pz = v.y * sx + v.z * cx;
+  let px = v.x * cy + pz * sy;
+  pz = -v.x * sy + pz * cy;
+  return vec3<f32>(px * cz - py * sz, px * sz + py * cz, pz);
+}
 fn generated_color(ci: i32, p: vec2<f32>) -> vec3<f32> {
   let cycle=svg.h2.z*svg.h0.z*svg.h2.w; let mode=i32(svg.h1.w+0.5); var h=fract(svg.h2.y+cmeta[u32(ci)*4u].w+cycle);
   if(mode==1){h=fract(p.x/svg.h0.x+p.y/svg.h0.y*0.35+cycle);} else if(mode==2){h=fract(svg.h2.y+cycle);}
@@ -778,7 +793,24 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
   // output. This is the whole fidelity story -- gradients, arcs, text and
   // masks are Chromium's, not a reconstruction.
   if(render_mode==0 && svg.h18.x>0.5){
-    let uv=(input.uv-vec2<f32>(svg.h18.y,svg.h18.z)*0.5-0.5)/max(svg.h18.w,0.05)+0.5;
+    var uv=(input.uv-vec2<f32>(svg.h18.y,svg.h18.z)*0.5-0.5)/max(svg.h18.w,0.05)+0.5;
+    if(any(svg.h20.xyz != vec3<f32>(0.0))){
+      // Rotate the picture as a card about its centre, in pixels so its
+      // aspect holds, with the 3D modes' perspective: find the point on the
+      // turned card that lands on this pixel.
+      let centre=resolution*(vec2<f32>(svg.h18.y,svg.h18.z)*0.5+0.5);
+      let sp=input.uv*resolution-centre;
+      let focal=svg.h21.y;
+      let r1=rot_xyz(vec3<f32>(1.0,0.0,0.0)); let r2=rot_xyz(vec3<f32>(0.0,1.0,0.0));
+      let a=vec2<f32>(focal*r1.x-sp.x*r1.z, focal*r1.y-sp.y*r1.z);
+      let b=vec2<f32>(focal*r2.x-sp.x*r2.z, focal*r2.y-sp.y*r2.z);
+      let det=a.x*b.y-b.x*a.y;
+      if(abs(det)<1e-6){ return vec4<f32>(0.0); }
+      let rhs=sp*focal;
+      let u=(rhs.x*b.y-b.x*rhs.y)/det; let v=(a.x*rhs.y-rhs.x*a.y)/det;
+      if(focal+u*r1.z+v*r2.z<=focal*0.22){ return vec4<f32>(0.0); }
+      uv=vec2<f32>(u,v)/(resolution*max(svg.h18.w,0.05))+0.5;
+    }
     if(uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0){ return vec4<f32>(0.0); }
     let texel=textureSampleLevel(raster_tex,raster_samp,uv,0.0);
     return vec4<f32>(texel.rgb*texel.a,texel.a);

@@ -4,7 +4,7 @@
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { SPLAT_AUTOMATABLE_PARAM_MAP } from '../splat/splatParamSchema';
   import { MODEL3D_AUTOMATABLE_PARAM_MAP } from '../model3d/model3dParamSchema';
-  import type { Model3DContent, SplatContent } from '../types';
+  import type { Model3DContent, SplatContent, SVGContent } from '../types';
 
   export let containerWidth = 1920;
   export let containerHeight = 1080;
@@ -35,7 +35,30 @@
   let drag: DragState | null = null;
 
   $: layer = $selectedLayer;
-  $: content = layer?.type === 'splat' ? layer.splatContent : layer?.type === 'model3d' ? layer.model3dContent : null;
+  $: isSvg = layer?.type === 'svg';
+  // An SVG layer reads through the same fields: pan is its position, Scale
+  // its size and Rotate X/Y/Z its rotation (degrees).
+  $: content = layer?.type === 'splat'
+    ? layer.splatContent
+    : layer?.type === 'model3d'
+      ? layer.model3dContent
+      : layer?.type === 'svg' && layer.svgContent
+        ? svgAsTransform(layer.svgContent)
+        : null;
+
+  function svgAsTransform(svg: SVGContent) {
+    return {
+      positionX: svg.panX ?? 0,
+      positionY: svg.panY ?? 0,
+      positionZ: 0,
+      rotationX: svg.rotateX ?? 0,
+      rotationY: svg.rotateY ?? 0,
+      rotationZ: svg.rotateZ ?? 0,
+      scaleUniform: svg.contentScale ?? 1,
+    };
+  }
+
+  const wrapDegrees = (deg: number) => ((((deg + 180) % 360) + 360) % 360) - 180;
   $: positionScale = Math.max(12, Math.min(containerWidth, containerHeight) * 0.075);
   $: centerX = Math.max(76, containerWidth - 112);
   $: centerY = Math.max(86, containerHeight - 104);
@@ -57,6 +80,17 @@
 
   function updateTransform(updates: Partial<SplatContent> & Partial<Model3DContent>) {
     if (!layer) return;
+    if (layer.type === 'svg') {
+      const svg: Partial<SVGContent> = {};
+      if (updates.positionX !== undefined) svg.panX = Math.max(-2, Math.min(2, updates.positionX));
+      if (updates.positionY !== undefined) svg.panY = Math.max(-2, Math.min(2, updates.positionY));
+      if (updates.rotationX !== undefined) svg.rotateX = wrapDegrees(updates.rotationX);
+      if (updates.rotationY !== undefined) svg.rotateY = wrapDegrees(updates.rotationY);
+      if (updates.rotationZ !== undefined) svg.rotateZ = wrapDegrees(updates.rotationZ);
+      if (updates.scaleUniform !== undefined) svg.contentScale = Math.max(0.05, Math.min(8, updates.scaleUniform));
+      project.updateSVGContent(layer.id, svg);
+      return;
+    }
     if (layer.type === 'splat') {
       project.updateSplatContent(layer.id, updates as Partial<SplatContent>);
     } else if (layer.type === 'model3d') {
@@ -126,6 +160,11 @@
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
 
+    if (isSvg) {
+      dragSvg(event, dx, dy);
+      return;
+    }
+
     if (mode === 'move') {
       const unitsPerPixel = 1 / positionScale;
       if (drag.axis === 'x') {
@@ -167,6 +206,34 @@
     }
   }
 
+  // SVG: the picture follows the pointer when moved (pan is in half-canvas
+  // units, down is positive), a horizontal drag turns it, a vertical drag
+  // tilts it, and the Z ring spins it.
+  function dragSvg(event: PointerEvent, dx: number, dy: number) {
+    if (!drag) return;
+    if (mode === 'move') {
+      const w = Math.max(1, containerWidth);
+      const h = Math.max(1, containerHeight);
+      updateTransform({
+        positionX: drag.axis === 'y' ? drag.positionX : drag.positionX + (dx * 2) / w,
+        positionY: drag.axis === 'x' ? drag.positionY : drag.positionY + (dy * 2) / h,
+      });
+    } else if (mode === 'rotate') {
+      if (drag.axis === 'z') {
+        const angle = Math.atan2(event.clientY - drag.centerClientY, event.clientX - drag.centerClientX);
+        updateTransform({ rotationZ: drag.rotationZ + ((angle - drag.startAngle) * 180) / Math.PI });
+      } else if (drag.axis === 'x') {
+        updateTransform({ rotationX: drag.rotationX - dy * 0.45 });
+      } else if (drag.axis === 'y') {
+        updateTransform({ rotationY: drag.rotationY + dx * 0.45 });
+      } else {
+        updateTransform({ rotationX: drag.rotationX - dy * 0.45, rotationY: drag.rotationY + dx * 0.45 });
+      }
+    } else {
+      updateTransform({ scaleUniform: drag.scaleUniform * Math.exp((dx - dy) * 0.008) });
+    }
+  }
+
   function endDrag(event: PointerEvent) {
     if (drag && event.pointerId !== drag.pointerId) return;
     const hadDrag = !!drag;
@@ -193,6 +260,11 @@
       positionY: 0,
       positionZ: 0,
     };
+    if (layer.type === 'svg') {
+      updateTransform(updates);
+      recordDiscreteAction();
+      return;
+    }
     if (layer.type === 'splat') {
       const splatUpdates = { ...updates, cameraDistance: 5, cameraOrbitX: 0, cameraOrbitY: 0 };
       project.updateSplatContent(layer.id, splatUpdates);
@@ -241,7 +313,7 @@
   });
 </script>
 
-{#if layer && content && (layer.type === 'splat' || layer.type === 'model3d')}
+{#if layer && content && (layer.type === 'splat' || layer.type === 'model3d' || layer.type === 'svg')}
   <div data-help-page="layers"
     class="object-gizmo"
     class:dragging={!!drag}
@@ -306,6 +378,7 @@
         >
           Z&nbsp;+90°
         </button>
+        {#if !isSvg}
         <button
           class="flip-upright"
           on:pointerdown|stopPropagation
@@ -314,6 +387,7 @@
         >
           Flip Upright
         </button>
+        {/if}
       </div>
     {/if}
 
@@ -349,6 +423,7 @@
         ></span>
         <span class="axis axis-y" class:highlighted={hoverAxis === 'y' || drag?.axis === 'y'}></span>
         <span class="axis-tip axis-y-tip" class:highlighted={hoverAxis === 'y' || drag?.axis === 'y'}></span>
+        {#if !isSvg}
         <span
           class="axis-hit axis-hit-z"
           on:pointerenter={() => setHoverAxis('z')}
@@ -357,6 +432,7 @@
         ></span>
         <span class="axis axis-z" class:highlighted={hoverAxis === 'z' || drag?.axis === 'z'}></span>
         <span class="axis-tip axis-z-tip" class:highlighted={hoverAxis === 'z' || drag?.axis === 'z'}></span>
+        {/if}
         <span
           class="axis-origin"
           class:highlighted={hoverAxis === 'free' || drag?.axis === 'free'}
