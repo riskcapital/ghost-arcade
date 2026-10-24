@@ -176,6 +176,9 @@
 
       <div class="mp-learn-prompt">
         Click any <span class="mp-learn-tag-inline">orange-outlined</span> param to bind. Pick again to keep going.
+        {#if !isGesture}
+          Clips, tabs and buttons keep working, so you can move to another layer or shader and keep binding.
+        {/if}
       </div>
 
       {#if sessionBindings.length > 0}

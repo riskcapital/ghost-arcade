@@ -4431,7 +4431,7 @@
                             <input type="range" min={input.MIN ?? 0} max={input.MAX ?? 1} step={((input.MAX ?? 1) - (input.MIN ?? 0)) / 200}
                               value={_sliderVal}
                               oninput={(e) => { markUserInteracting(`vj:${selectedLayerIndex}:shader:${input.NAME}`); setShaderParamValue(selectedLayerIndex!, input.NAME, parseFloat((e.target as HTMLInputElement).value)); }} class="param-slider"
-                              data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
+                              data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:shader:{input.NAME}"
                               data-midi-label="{input.LABEL || input.NAME}"
                               data-midi-min={input.MIN ?? 0}
                               data-midi-max={input.MAX ?? 1}
@@ -4485,7 +4485,7 @@
                         <div class="shader-param-toggle">
                           <button class="bool-toggle" class:on={getShaderParamValue(selectedLayerIndex!, input.NAME, 0) > 0.5}
                             onclick={() => { const cur = getShaderParamValue(selectedLayerIndex!, input.NAME, 0); setShaderParamValue(selectedLayerIndex!, input.NAME, cur > 0.5 ? 0 : 1); }}
-                            data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
+                            data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:shader:{input.NAME}"
                             data-midi-label="{input.LABEL || input.NAME}"
                             data-midi-discrete="true">
                             {getShaderParamValue(selectedLayerIndex!, input.NAME, 0) > 0.5 ? 'ON' : 'OFF'}
@@ -4495,7 +4495,7 @@
                         <div class="shader-param-select">
                           <select class="long-select" value={getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0)}
                             onchange={(e) => setShaderParamValue(selectedLayerIndex!, input.NAME, parseInt((e.target as HTMLSelectElement).value))}
-                            data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
+                            data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:shader:{input.NAME}"
                             data-midi-label="{input.LABEL || input.NAME}"
                             data-midi-discrete="true">
                             {#each input.VALUES as val, i}<option value={val}>{input.LABELS?.[i] ?? val}</option>{/each}
@@ -4506,7 +4506,7 @@
                           <input type="range" min={input.MIN ?? 0} max={input.MAX ?? 10} step="1"
                             value={getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0)}
                             oninput={(e) => setShaderParamValue(selectedLayerIndex!, input.NAME, parseInt((e.target as HTMLInputElement).value))} class="param-slider"
-                            data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
+                            data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:shader:{input.NAME}"
                             data-midi-label="{input.LABEL || input.NAME}"
                             data-midi-min={input.MIN ?? 0}
                             data-midi-max={input.MAX ?? 10}

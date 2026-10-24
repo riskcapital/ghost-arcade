@@ -10,7 +10,7 @@ import { setBaseValue as setModulationBase } from '../audio/modulation';
 import type { MidiMapping, MidiMessageType } from './midiTypes';
 import type { BlendMode } from '../types';
 import { getPluginByEffectType } from '../plugins/registry';
-import { normalizeControlPath } from '../control/controlPaths';
+import { controlPathAsWritten, matchControlKey, normalizeControlPath } from '../control/controlPaths';
 import { releaseTempoNudgeInputs, setTempoNudgeInput, resyncLaunchClock } from '../stores/launchClock';
 import { clipAudio, clipAudioMaster } from '../audio/clipAudio';
 
@@ -200,7 +200,12 @@ class MidiRouter {
    * `discreteValues` lets callers target the discrete-cycle params
    * (e.g. crossfader transition, blend mode) with named values.
    */
-  public dispatchPath(path: string, value: number, opts: { discreteValues?: string[]; inputId?: string } = {}) {
+  /**
+   * `layerId` aims a mapping-mode path (map:…) at that layer instead of
+   * whichever layer is selected: gesture bindings keep driving the layer
+   * they were made on.
+   */
+  public dispatchPath(path: string, value: number, opts: { discreteValues?: string[]; inputId?: string; layerId?: string } = {}) {
     const mapping: MidiMapping = {
       id: '__macro__',
       channel: -1,
@@ -215,13 +220,16 @@ class MidiRouter {
       discreteValues: opts.discreteValues,
     };
     try {
-      this.dispatch(path, value, mapping, opts.inputId ?? `path:${path}`);
+      this.dispatch(path, value, mapping, opts.inputId ?? `path:${opts.layerId ? `${opts.layerId}:` : ''}${path}`, opts.layerId);
     } catch (err) {
       console.warn(`[MIDI Router] dispatchPath failed for ${path}:`, err);
     }
   }
 
-  private dispatch(path: string, value: number, mapping: MidiMapping, inputId?: string) {
+  private dispatch(path: string, value: number, mapping: MidiMapping, inputId?: string, layerId?: string) {
+    // Keywords match on the lowercased path; names (params, effects,
+    // groups) are read from `names`, which keeps the spelling.
+    const names = controlPathAsWritten(path).split(':');
     path = normalizeControlPath(path);
     const parts = path.split(':');
     const scope = parts[0]; // 'map', 'vj', 'vj-b', 'sv'
@@ -229,23 +237,23 @@ class MidiRouter {
     try {
       switch (scope) {
         case 'map':
-          this.dispatchMapping(parts, value, mapping);
+          this.dispatchMapping(parts, value, mapping, layerId, names);
           break;
         case 'show':
           this.dispatchShow(parts, value);
           break;
         case 'vj':
           // Bank A is the canonical deck — most controllers use this scope.
-          this.dispatchVJ(parts, value, mapping, 'A', inputId);
+          this.dispatchVJ(parts, value, mapping, 'A', inputId, names);
           break;
         case 'vj-b':
           // Bank B parallels vj: opacity / solo / mute / trigger / column /
           // block all route to bankBLayerStates + bankBClipGrid via the
           // same dispatcher with bank='B'. Same path shape minus the scope.
-          this.dispatchVJ(parts, value, mapping, 'B');
+          this.dispatchVJ(parts, value, mapping, 'B', undefined, names);
           break;
         case 'sv':
-          this.dispatchPerformer(parts, value, mapping);
+          this.dispatchPerformer(parts, value, mapping, names);
           break;
       }
     } catch (err) {
@@ -253,7 +261,7 @@ class MidiRouter {
     }
   }
 
-  private dispatchMapping(parts: string[], value: number, mapping: MidiMapping) {
+  private dispatchMapping(parts: string[], value: number, mapping: MidiMapping, layerId?: string, names: string[] = parts) {
     // parts: ['map', contentType, property]
     // contentType: 'splat', 'model3d', 'layer', 'preset'
     const contentType = parts[1];
@@ -280,7 +288,11 @@ class MidiRouter {
     }
 
     const property = parts.slice(2).join('.'); // supports nested like 'echo.count'
-    const layer = get(selectedLayer);
+    // The property as written, for the content fields it names.
+    const exactProperty = names.slice(2).join('.');
+    const layer = layerId
+      ? get(project).layers.find((candidate) => candidate.id === layerId) ?? null
+      : get(selectedLayer);
     if (!layer) return;
 
     // Mapping media transport: map:media:play|restart|position
@@ -314,11 +326,12 @@ class MidiRouter {
 
     // Layer-level properties (opacity, etc.)
     if (contentType === 'layer') {
+      const layerKey = matchControlKey(exactProperty, layer);
       if (mapping.mode === 'toggle') {
-        const current = (layer as any)[property];
-        project.updateLayer(layer.id, { [property]: !current });
+        const current = (layer as any)[layerKey];
+        project.updateLayer(layer.id, { [layerKey]: !current });
       } else {
-        project.updateLayer(layer.id, { [property]: value });
+        project.updateLayer(layer.id, { [layerKey]: value });
       }
       return;
     }
@@ -326,11 +339,13 @@ class MidiRouter {
     // Handle toggle mode for content properties
     if (mapping.mode === 'toggle') {
       if (contentType === 'splat' && layer.splatContent) {
-        const current = (layer.splatContent as any)[property];
-        project.updateSplatContent(layer.id, { [property]: !current });
+        const key = matchControlKey(exactProperty, layer.splatContent);
+        const current = (layer.splatContent as any)[key];
+        project.updateSplatContent(layer.id, { [key]: !current });
       } else if (contentType === 'model3d' && layer.model3dContent) {
-        const current = (layer.model3dContent as any)[property];
-        project.updateModel3DContent(layer.id, { [property]: !current });
+        const key = matchControlKey(exactProperty, layer.model3dContent);
+        const current = (layer.model3dContent as any)[key];
+        project.updateModel3DContent(layer.id, { [key]: !current });
       } else if (contentType === 'plugin') {
         // Handled below so plugin toggles can flip source.effectSource params.
       } else {
@@ -344,10 +359,10 @@ class MidiRouter {
       const index = Math.round(value);
       const discreteVal = mapping.discreteValues[Math.min(index, mapping.discreteValues.length - 1)];
       if (contentType === 'splat') {
-        project.updateSplatContent(layer.id, { [property]: discreteVal });
+        project.updateSplatContent(layer.id, { [matchControlKey(exactProperty, layer.splatContent)]: discreteVal });
         return;
       } else if (contentType === 'model3d') {
-        project.updateModel3DContent(layer.id, { [property]: discreteVal });
+        project.updateModel3DContent(layer.id, { [matchControlKey(exactProperty, layer.model3dContent)]: discreteVal });
         return;
       }
       if (contentType !== 'plugin') return;
@@ -355,10 +370,12 @@ class MidiRouter {
 
     // Effect parameters: map:effect:<effectId>:<paramName>
     if (contentType === 'effect') {
-      const effectId = parts[2];
-      const paramName = parts[3];
-      if (effectId && paramName) {
-        project.updateEffectParams(layer.id, effectId, { [paramName]: value });
+      const writtenId = names[2];
+      const effect = (layer.effects ?? []).find((candidate: any) => candidate.id === writtenId)
+        ?? (layer.effects ?? []).find((candidate: any) => String(candidate.id).toLowerCase() === parts[2]);
+      const paramName = names[3];
+      if (effect && paramName) {
+        project.updateEffectParams(layer.id, effect.id, { [matchControlKey(paramName, (effect as any).params)]: value });
       }
       return;
     }
@@ -371,7 +388,10 @@ class MidiRouter {
     // fields (bgOpacity, etc.) rather than per-shader params, so they
     // route through updateGPULayerContent instead.
     if (contentType === 'gpu') {
-      const paramKey = parts.slice(2).join(':');
+      const writtenKey = names.slice(2).join(':');
+      const paramKey = writtenKey.startsWith('__')
+        ? `__${matchControlKey(writtenKey.slice(2), layer.gpuLayerContent)}`
+        : matchControlKey(writtenKey, layer.gpuLayerContent?.params);
       if (!paramKey) return;
       if (!layer.gpuLayerContent) return;
       let next: any = value;
@@ -393,9 +413,9 @@ class MidiRouter {
     // MediaTray's slider uses. The shader engine reads shaderValues each
     // frame so changes show up immediately on the rendered output.
     if (contentType === 'shader') {
-      const paramName = parts.slice(2).join(':');
-      if (!paramName) return;
       if (!layer.source?.shaderValues) return;
+      const paramName = matchControlKey(names.slice(2).join(':'), layer.source.shaderValues);
+      if (!paramName) return;
       project.setLayerSource(layer.id, {
         ...layer.source,
         shaderValues: { ...layer.source.shaderValues, [paramName]: value },
@@ -412,9 +432,9 @@ class MidiRouter {
     // that wants toggle-style behaviour should use binding mode='latch'
     // which dispatches a flipping 0/1.
     if (contentType === 'plugin') {
-      const paramKey = parts.slice(2).join(':');
-      if (!paramKey) return;
       if (!layer.source?.effectSource) return;
+      const paramKey = matchControlKey(names.slice(2).join(':'), layer.source.effectSource);
+      if (!paramKey) return;
       if (mapping.mode === 'toggle' && value <= 0) return;
       const next = this.resolvePluginParamValue(layer.source.effectSource, paramKey, value, mapping);
       project.setLayerSource(layer.id, {
@@ -426,22 +446,22 @@ class MidiRouter {
 
     // Continuous value
     if (contentType === 'splat') {
-      project.updateSplatContent(layer.id, { [property]: value });
+      project.updateSplatContent(layer.id, { [matchControlKey(exactProperty, layer.splatContent)]: value });
     } else if (contentType === 'model3d') {
       // Handle nested properties (echo.count, camera.distance, audio.scaleResponse, etc.)
-      if (property.includes('.')) {
-        const dotParts = property.split('.');
-        const parent = dotParts[0];
-        const child = dotParts[1];
+      if (exactProperty.includes('.')) {
+        const dotParts = exactProperty.split('.');
+        const parent = matchControlKey(dotParts[0], layer.model3dContent);
         const currentParent = (layer.model3dContent as any)?.[parent] || {};
+        const child = matchControlKey(dotParts[1], currentParent);
         project.updateModel3DContent(layer.id, { [parent]: { ...currentParent, [child]: value } } as any);
       } else {
-        project.updateModel3DContent(layer.id, { [property]: value } as any);
+        project.updateModel3DContent(layer.id, { [matchControlKey(exactProperty, layer.model3dContent)]: value } as any);
       }
     }
   }
 
-  private dispatchVJ(parts: string[], value: number, mapping: MidiMapping, bank: 'A' | 'B' = 'A', inputId?: string) {
+  private dispatchVJ(parts: string[], value: number, mapping: MidiMapping, bank: 'A' | 'B' = 'A', inputId?: string, names: string[] = parts) {
     // parts: ['vj' | 'vj-b', layerIndex|'master'|'crossfader'|..., property, ...]
     const layerPart = parts[1];
     const property = parts[2];
@@ -523,7 +543,7 @@ class MidiRouter {
           }
           return;
         }
-        case 'blendMode': {
+        case 'blendmode': {
           const modes = ['normal','multiply','screen','add','difference','darken','lighten','overlay','exclusion'] as const;
           if (mapping.discreteValues && mapping.discreteValues.length > 0) {
             const idx = Math.round(value);
@@ -559,7 +579,11 @@ class MidiRouter {
 
     // Layer groups: vj:group:<id>:level and vj:group:<id>:column:<index>
     if (layerPart === 'group') {
-      const groupId = decodeURIComponent(parts[2] ?? '');
+      let written: string;
+      try { written = decodeURIComponent(names[2] ?? ''); } catch { return; }
+      const groups = get(vjClipLauncher).groups ?? [];
+      const groupId = (groups.find((group: any) => group.id === written)
+        ?? groups.find((group: any) => String(group.id).toLowerCase() === written.toLowerCase()))?.id ?? written;
       if (parts[3] === 'level') vjClipLauncher.updateGroup(groupId, { opacity: Math.max(0, Math.min(1, value)) });
       else if (parts[3] === 'column' && value > 0) {
         const colIdx = parseInt(parts[4], 10);
@@ -679,8 +703,8 @@ class MidiRouter {
     // effects need layer + column to address and aren't covered here
     // — bind those via per-clip UI for now.
     if (layerPart === 'fx') {
-      const effectId = parts[2];
-      const paramName = parts[3];
+      const effectId = names[2];
+      const paramName = names[3];
       if (!effectId || !paramName) return;
       vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: value });
       const state = get(vjClipLauncher);
@@ -718,7 +742,9 @@ class MidiRouter {
         break;
       case 'shader': {
         // parts: ['vj', '0', 'shader', 'speed']
-        const shaderParam = parts[3];
+        const st = get(vjClipLauncher);
+        const activeShader = (bank === 'B' ? st.bankBLayerStates : st.layerStates)[layerIndex]?.activeClip;
+        const shaderParam = names[3] ? matchControlKey(names[3], activeShader?.shaderValues) : '';
         if (shaderParam) {
           vjClipLauncher.updateActiveClipShaderValue(layerIndex, shaderParam, value, bank);
           // Update the modulation engine's base value too — otherwise
@@ -731,14 +757,18 @@ class MidiRouter {
         break;
       }
       case 'splat': {
-        const splatProp = parts[3];
+        const st = get(vjClipLauncher);
+        const activeSplat = (bank === 'B' ? st.bankBLayerStates : st.layerStates)[layerIndex]?.activeClip;
+        const splatProp = names[3] ? matchControlKey(names[3], (activeSplat as any)?.splatContent) : '';
         if (splatProp) {
           vjClipLauncher.updateActiveClipSplatContent(layerIndex, { [splatProp]: value }, bank);
         }
         break;
       }
       case 'model3d': {
-        const modelProp = parts[3];
+        const st = get(vjClipLauncher);
+        const activeModel = (bank === 'B' ? st.bankBLayerStates : st.layerStates)[layerIndex]?.activeClip;
+        const modelProp = names[3] ? matchControlKey(names[3], (activeModel as any)?.model3dContent) : '';
         if (modelProp) {
           vjClipLauncher.updateActiveClipModel3DContent(layerIndex, { [modelProp]: value } as any, bank);
         }
@@ -837,7 +867,7 @@ class MidiRouter {
     return value;
   }
 
-  private dispatchPerformer(parts: string[], value: number, mapping: MidiMapping) {
+  private dispatchPerformer(parts: string[], value: number, mapping: MidiMapping, names: string[] = parts) {
     // parts: ['sv', sub, ...]
     const sub = parts[1];
 
@@ -852,14 +882,14 @@ class MidiRouter {
           // Route to currently focused shader's param
           const svState = get(synthVisionStore);
           const shIdx = svState.layers[svState.focus].sh;
-          synthVisionStore.setShaderParam(shIdx, parts[3], value);
+          synthVisionStore.setShaderParam(shIdx, names[3], value);
         } else if (paramSub === 'world' && parts[3]) {
           // Route to currently focused world's param
           const svState = get(synthVisionStore);
           const wIdx = svState.layers[svState.focus].world;
-          synthVisionStore.setWorldParam(wIdx, parts[3], value);
+          synthVisionStore.setWorldParam(wIdx, names[3], value);
         } else {
-          synthVisionStore.setParam(paramSub as SVParamKey, value);
+          synthVisionStore.setParam(names[2] as SVParamKey, value);
         }
         break;
       }
@@ -867,7 +897,7 @@ class MidiRouter {
         // parts: ['sv', 'shader', '0', 'tunnelR']
         const shIdx = parseInt(parts[2], 10);
         if (!isNaN(shIdx) && parts[3]) {
-          synthVisionStore.setShaderParam(shIdx, parts[3], value);
+          synthVisionStore.setShaderParam(shIdx, names[3], value);
         }
         break;
       }
@@ -875,7 +905,7 @@ class MidiRouter {
         // parts: ['sv', 'world', '3', 'height']
         const wIdx = parseInt(parts[2], 10);
         if (!isNaN(wIdx) && parts[3]) {
-          synthVisionStore.setWorldParam(wIdx, parts[3], value);
+          synthVisionStore.setWorldParam(wIdx, names[3], value);
         }
         break;
       }
@@ -888,10 +918,10 @@ class MidiRouter {
       case 'bpm':
         synthVisionStore.setBpm(value);
         break;
-      case 'camOpacity':
+      case 'camopacity':
         synthVisionStore.setCamOpacity(value);
         break;
-      case 'spaceFx':
+      case 'spacefx':
         // Momentary trigger
         if (value > 0) synthVisionStore.triggerSpaceFx();
         break;
@@ -912,8 +942,9 @@ class MidiRouter {
         // parts: ['sv', 'isf', 'inputName']
         const svState = get(synthVisionStore);
         const assignedLayer = svState.assignedLayer;
-        if (assignedLayer !== null && parts[2]) {
-          vjClipLauncher.updateActiveClipShaderValue(assignedLayer, parts[2], value);
+        if (assignedLayer !== null && names[2]) {
+          const clip = get(vjClipLauncher).layerStates[assignedLayer]?.activeClip;
+          vjClipLauncher.updateActiveClipShaderValue(assignedLayer, matchControlKey(names[2], clip?.shaderValues), value);
         }
         break;
       }
@@ -923,9 +954,10 @@ class MidiRouter {
         const fxLayer = svState.assignedLayer;
         if (fxLayer !== null && parts[2] && parts[3]) {
           const effects = get(vjClipLauncher).layerStates[fxLayer]?.effects ?? [];
-          const effect = effects.find((e: any) => e.type === parts[2]);
+          const effect = effects.find((e: any) => e.type === names[2])
+            ?? effects.find((e: any) => String(e.type).toLowerCase() === parts[2]);
           if (effect) {
-            vjClipLauncher.updateLayerEffectParams(fxLayer, effect.id, { [parts[3]]: value });
+            vjClipLauncher.updateLayerEffectParams(fxLayer, effect.id, { [matchControlKey(names[3], (effect as any).params)]: value });
           }
         }
         break;
