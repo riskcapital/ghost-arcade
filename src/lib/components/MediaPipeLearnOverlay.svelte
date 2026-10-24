@@ -10,6 +10,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { mediaPipeBus, type MediaPipeBinding } from '../mediapipe/mediaPipeBus';
+  import { selectedLayer } from '../stores/layers';
 
   interface OverlayItem {
     path: string;
@@ -84,6 +85,9 @@
     const els = document.querySelectorAll<HTMLElement>('[data-midi-path]');
     const next: OverlayItem[] = [];
     els.forEach(el => {
+      // Only what a click would bind for the signal picked in the modal:
+      // clips, tabs and buttons stay plain navigation for a hand position.
+      if (!mediaPipeBus.canBindElement(el)) return;
       const path = el.dataset.midiPath!;
       const label = el.dataset.midiLabel || path;
       const rect = el.getBoundingClientRect();
@@ -117,8 +121,11 @@
     rafId = requestAnimationFrame(tickPositions);
   }
 
+  // A mapping-mode binding belongs to one layer, so it marks the control
+  // as bound only while that layer is the one shown.
   function bindingsForPath(path: string): MediaPipeBinding[] {
-    return bindings.filter(b => b.path === path);
+    const layerId = $selectedLayer?.id;
+    return bindings.filter(b => b.path === path && (!b.layerId || b.layerId === layerId));
   }
 
   onMount(() => {

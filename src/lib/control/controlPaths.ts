@@ -45,11 +45,39 @@ export const SHOW_CONTROL_ACTIONS = ['go', 'back', 'stop', 'reset'] as const;
 
 /** Accept old documentation/user syntax while keeping one router contract. */
 export function normalizeControlPath(path: string): string {
+  return controlPathAsWritten(path).toLowerCase();
+}
+
+/**
+ * The same path with its spelling kept: parameter, effect and group names
+ * are case-sensitive (pointSize, bgOpacity, an ISF input's NAME), so the
+ * router matches keywords on the lowercased path and reads names from this.
+ * Both have the same segments.
+ */
+export function controlPathAsWritten(path: string): string {
   const compact = path.trim().replace(/\s+/g, '');
   return compact
     .replace(/^mapping:/i, 'map:')
-    .replace(/^(vj(?:-b)?):layer:(\d+):/i, '$1:$2:')
-    .toLowerCase();
+    .replace(/^(vj(?:-b)?):layer:(\d+):/i, (_m, scope: string, index: string) => `${scope.toLowerCase()}:${index}:`);
+}
+
+/**
+ * The key in `sources` that `name` means: itself when present, otherwise
+ * the one that matches ignoring case (paths saved lowercased by older
+ * builds), otherwise `name` unchanged.
+ */
+export function matchControlKey(name: string, ...sources: Array<object | null | undefined>): string {
+  for (const source of sources) {
+    if (source && Object.prototype.hasOwnProperty.call(source, name)) return name;
+  }
+  const lower = name.toLowerCase();
+  for (const source of sources) {
+    if (!source) continue;
+    for (const key of Object.keys(source)) {
+      if (key.toLowerCase() === lower) return key;
+    }
+  }
+  return name;
 }
 
 export function isVideoScratchPath(path: string): boolean {

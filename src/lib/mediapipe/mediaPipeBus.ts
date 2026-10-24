@@ -6,7 +6,9 @@
 // `midiRouter.dispatchPath(path, 0..1)` — every MIDI-learnable param
 // in the app becomes gesture-bindable with no per-param plumbing.
 
+import { get } from 'svelte/store';
 import { midiRouter } from '../midi/midiRouter';
+import { selectedLayer } from '../stores/layers';
 import { mediaPipeSource } from './mediaPipeSource';
 import type { SignalFrame, GestureName } from './signals';
 
@@ -22,6 +24,9 @@ export interface MediaPipeBinding {
   path: string;
   /** UI label for the binding row — usually the param's display name. */
   label?: string;
+  /** The layer a mapping-mode param (map:…) belongs to. The binding drives
+   *  that layer, not whichever layer is selected when the gesture comes. */
+  layerId?: string;
   /** Source-range rescaling. For continuous signals the raw 0..1 range
    *  maps to [sourceMin..sourceMax] before midiRouter applies the
    *  param's own range. Lets you confine "palm Y" to a useful band. */
@@ -82,8 +87,36 @@ export interface LearnTarget {
   min?: number;
   max?: number;
   step?: number;
+  /** A button-like control (a clip, a tab, a toggle) rather than a value. */
+  action?: boolean;
+}
+
+// Paths that act rather than hold a value: launching clips and columns,
+// tabs, transport, stage and preset recalls. A hand position or pinch has
+// nothing to give them, and they are how the user moves around.
+const ACTION_PATH = /(^tray:|:trigger:|:column:|:stop$|:stopall$|^vj:stopall$|:solo$|:mute$|:rec(:|$)|^vj:rec$|^vj:stage:|^map:preset:|:play$|:restart$|:cue:|:resync$|:nudge-|:quantize$|:hold$)/;
+
+function isActionElement(el: HTMLElement, path: string): boolean {
+  const mode = el.getAttribute('data-midi-mode');
+  if (mode === 'toggle' || mode === 'trigger' || mode === 'momentary') return true;
+  if (el.tagName === 'BUTTON') return true;
+  if (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio' || el.type === 'button')) return true;
+  return ACTION_PATH.test(path);
+}
+
+/** Mapping-mode paths that belong to the selected layer (not presets or
+ *  stage effects, which are global). */
+function isLayerScopedPath(path: string): boolean {
+  return path.startsWith('map:') && !/^map:(preset|stage-effect):/.test(path);
+}
+
+/** A hand position or pinch drives values; only a gesture fires buttons. */
+function signalTakesActions(signalId: string): boolean {
+  return signalId.startsWith('gesture.');
 }
 let learnActive = false;
+// The running learn session's form, so the overlay can tell what it binds.
+let sessionSpec: (() => Pick<MediaPipeBinding, 'signalId'>) | null = null;
 let learnResolver: ((t: LearnTarget | null) => void) | null = null;
 let learnCleanup: (() => void) | null = null;
 const learnSubscribers = new Set<(active: boolean) => void>();
@@ -108,11 +141,26 @@ function findLearnTarget(start: EventTarget | null): LearnTarget | null {
         min: min != null ? Number(min) : undefined,
         max: max != null ? Number(max) : undefined,
         step: step != null ? Number(step) : undefined,
+        action: isActionElement(el, path),
       };
     }
     el = el.parentElement;
   }
   return null;
+}
+
+/** Path, label, range and (for mapping-mode params) the layer it belongs
+ *  to, taken from the clicked control. */
+function bindingTargetFields(t: LearnTarget, specLabel?: string) {
+  const layer = isLayerScopedPath(t.path) ? get(selectedLayer) : null;
+  const base = specLabel ?? t.label ?? t.path;
+  return {
+    path: t.path,
+    label: layer ? `${base} (${layer.name})` : base,
+    layerId: layer?.id,
+    targetMin: t.min,
+    targetMax: t.max,
+  };
 }
 
 function notify(): void {
@@ -151,7 +199,7 @@ function processFrame(frame: SignalFrame): void {
       const tMin = b.targetMin ?? 0;
       const tMax = b.targetMax ?? 1;
       const out = tMin + smoothed * (tMax - tMin);
-      try { midiRouter.dispatchPath(b.path, out); } catch (e) { console.warn('[MediaPipe] dispatchPath failed', b.path, e); }
+      try { midiRouter.dispatchPath(b.path, out, { layerId: b.layerId }); } catch (e) { console.warn('[MediaPipe] dispatchPath failed', b.path, e); }
     } else {
       // trigger / latch — categorical
       if (!b.signalId.startsWith('gesture.')) continue;
@@ -160,14 +208,14 @@ function processFrame(frame: SignalFrame): void {
       const conf = frame.confidence[b.signalId] ?? 0;
       if (conf < b.minConfidence) continue;
       if (b.mode === 'trigger') {
-        try { midiRouter.dispatchPath(b.path, 1); } catch {}
+        try { midiRouter.dispatchPath(b.path, 1, { layerId: b.layerId }); } catch {}
         // We don't follow up with 0 on the next frame — the source's
         // gesture-edge-only emission means the next frame is naturally
         // a non-fire. Consumers that want a momentary pulse should
         // re-bind as mode='momentary' once we add it (Phase 1B).
       } else if (b.mode === 'latch') {
         b._latched = b._latched ? 0 : 1;
-        try { midiRouter.dispatchPath(b.path, b._latched); } catch {}
+        try { midiRouter.dispatchPath(b.path, b._latched, { layerId: b.layerId }); } catch {}
       }
     }
   }
@@ -199,6 +247,7 @@ export const mediaPipeBus = {
       signalId: partial.signalId,
       path: partial.path,
       label: partial.label,
+      layerId: partial.layerId,
       sourceMin: partial.sourceMin ?? 0,
       sourceMax: partial.sourceMax ?? 1,
       invert: partial.invert ?? false,
@@ -302,14 +351,18 @@ export const mediaPipeBus = {
   beginLearnAndBind(spec: Partial<MediaPipeBinding> & Pick<MediaPipeBinding, 'signalId'>): void {
     void this.pickTarget().then(t => {
       if (!t) return;  // cancelled
-      this.add({
-        ...spec,
-        path: t.path,
-        label: spec.label ?? t.label,
-        targetMin: t.min,
-        targetMax: t.max,
-      });
+      this.add({ ...spec, ...bindingTargetFields(t, spec.label) });
     });
+  },
+
+  /** Can the current learn session bind this element? Used by the overlay
+   *  so it outlines only what a click would bind. */
+  canBindElement(el: HTMLElement): boolean {
+    if (!learnActive) return false;
+    const path = el.getAttribute('data-midi-path');
+    if (!path) return false;
+    if (!sessionSpec) return true;
+    return signalTakesActions(sessionSpec().signalId) || !isActionElement(el, path);
   },
 
   /** Multi-bind learn session. Stays armed across many target clicks
@@ -327,21 +380,20 @@ export const mediaPipeBus = {
     if (learnActive) this.cancelLearn();
 
     learnActive = true;
+    sessionSpec = getSpec;
     notifyLearn();
 
     const onClick = (e: MouseEvent) => {
       const target = findLearnTarget(e.target);
       if (!target) return;  // not a bindable element, let the click through
+      const spec = getSpec();
+      // With a hand position or pinch picked, clips, tabs and buttons keep
+      // working, so the user can move to another layer or shader without
+      // leaving the session.
+      if (target.action && !signalTakesActions(spec.signalId)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      const spec = getSpec();
-      const b = this.add({
-        ...spec,
-        path: target.path,
-        label: spec.label ?? target.label,
-        targetMin: target.min,
-        targetMax: target.max,
-      });
+      const b = this.add({ ...spec, ...bindingTargetFields(target, spec.label) });
       try { onBound(b); } catch {}
     };
     const onKey = (e: KeyboardEvent) => {
@@ -350,6 +402,7 @@ export const mediaPipeBus = {
     const stop = () => {
       if (!learnActive) return;
       learnActive = false;
+      sessionSpec = null;
       document.removeEventListener('click', onClick, true);
       document.removeEventListener('keydown', onKey, true);
       learnCleanup = null;
@@ -388,6 +441,7 @@ export const mediaPipeBus = {
         signalId: b.signalId,
         path: b.path,
         label: typeof b.label === 'string' ? b.label : undefined,
+        layerId: typeof b.layerId === 'string' ? b.layerId : undefined,
         sourceMin: typeof b.sourceMin === 'number' ? b.sourceMin : 0,
         sourceMax: typeof b.sourceMax === 'number' ? b.sourceMax : 1,
         invert: !!b.invert,
