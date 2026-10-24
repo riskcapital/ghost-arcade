@@ -444,6 +444,28 @@
     vjClipLauncher.duplicateBlock(blockContextMenu.blockId);
     blockContextMenu = null;
   }
+  // Merge another block's clips into the right-clicked one (both decks).
+  let blockMergeFromId = '';
+  $: if (blockContextMenu) {
+    const others = $vjClipLauncher.blocks.filter(b => b.id !== blockContextMenu!.blockId);
+    if (!others.some(b => b.id === blockMergeFromId)) blockMergeFromId = others[0]?.id ?? '';
+  }
+  function blockMenuMerge() {
+    if (!blockContextMenu || !blockMergeFromId) return;
+    const blocks = $vjClipLauncher.blocks;
+    const into = blocks.find(b => b.id === blockContextMenu!.blockId);
+    const from = blocks.find(b => b.id === blockMergeFromId);
+    blockContextMenu = null;
+    if (!into || !from) return;
+    if (!confirm(`Merge "${from.name}" into "${into.name}"? Its clips move into "${into.name}" and "${from.name}" is removed.`)) return;
+    const result = vjClipLauncher.mergeBlocks(into.id, from.id);
+    if (!result) return;
+    if (result.leftOver > 0) {
+      showToast(`Merged ${result.moved} clip${result.moved === 1 ? '' : 's'} into "${into.name}". ${result.leftOver} had no free cell and stay in "${from.name}".`, 'warning');
+    } else {
+      showToast(`Merged "${from.name}" into "${into.name}".`, 'info');
+    }
+  }
   function blockMenuDelete() {
     if (!blockContextMenu) return;
     if ($vjClipLauncher.blocks.length <= 1) { blockContextMenu = null; return; }
@@ -6465,6 +6487,19 @@
           <button class="ctx-item" onclick={blockMenuRename}>Rename Block</button>
           <button class="ctx-item" onclick={blockMenuDuplicate}>Duplicate Block</button>
           {#if $vjClipLauncher.blocks.length > 1}
+            <div class="ctx-separator"></div>
+            <div class="ctx-merge">
+              <span class="ctx-merge-label">Merge into this block</span>
+              <div class="ctx-merge-row">
+                <select bind:value={blockMergeFromId} aria-label="Block to merge into this one">
+                  {#each $vjClipLauncher.blocks.filter(b => b.id !== blockContextMenu?.blockId) as other (other.id)}
+                    <option value={other.id}>{other.name}</option>
+                  {/each}
+                </select>
+                <button class="ctx-merge-btn" onclick={blockMenuMerge} disabled={!blockMergeFromId}>Merge</button>
+              </div>
+            </div>
+            <div class="ctx-separator"></div>
             <button class="ctx-item ctx-danger" onclick={blockMenuDelete}>Delete Block</button>
           {/if}
         </div>
@@ -9910,6 +9945,42 @@
     inset: 0;
     z-index: 999;
   }
+  .ctx-merge {
+    padding: 4px 10px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ctx-merge-label {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #888;
+  }
+  .ctx-merge-row {
+    display: flex;
+    gap: 4px;
+  }
+  .ctx-merge-row select {
+    flex: 1;
+    min-width: 110px;
+    font-size: 12px;
+    background: #111;
+    color: #ddd;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 2px 4px;
+  }
+  .ctx-merge-btn {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--ga-blue-300, #6b8cff);
+    background: transparent;
+    color: var(--ga-blue-300, #6b8cff);
+    cursor: pointer;
+  }
+  .ctx-merge-btn:disabled { opacity: 0.4; cursor: default; }
   .ctx-menu {
     position: fixed;
     z-index: 1000;

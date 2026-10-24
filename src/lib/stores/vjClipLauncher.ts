@@ -1,4 +1,5 @@
 import { getDefaultEffectParams } from '../renderer/effects';
+import { mergeClipGrids } from './vjBlockMerge';
 import { NATIVE_EFFECT_PASS_LIMIT } from '../renderer/nativeEffectChainPolicy';
 import { normalizeVJGroups, removeVJGroupRow, type VJGroup } from './vjGroups';
 import { showToast } from './errorToast';
@@ -3228,6 +3229,43 @@ function createVJClipLauncherStore() {
           clipGrid: newClipGrid,
         };
       });
+    },
+
+    /**
+     * Merge block `fromId` into block `intoId`, both decks (see
+     * mergeClipGrids). The merged block goes away; if some of its clips had
+     * no free cell, it stays with just those. Returns what happened.
+     */
+    mergeBlocks(intoId: string, fromId: string): { moved: number; leftOver: number } | null {
+      let result: { moved: number; leftOver: number } | null = null;
+      let activate: string | null = null;
+      update(state => {
+        if (intoId === fromId) return state;
+        const into = state.blocks.find(b => b.id === intoId);
+        const from = state.blocks.find(b => b.id === fromId);
+        if (!into || !from) return state;
+        // The active block's live grids are the mirrors on the state.
+        const gridOf = (block: VJBlock, deck: VJDeck) => block.id === state.activeBlockId
+          ? (deck === 'A' ? state.clipGrid : state.bankBClipGrid)
+          : (deck === 'A' ? block.clipGrid : block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns));
+        const deckA = mergeClipGrids(gridOf(into, 'A'), gridOf(from, 'A'));
+        const deckB = mergeClipGrids(gridOf(into, 'B'), gridOf(from, 'B'));
+        const leftOver = deckA.leftOver + deckB.leftOver;
+        result = { moved: deckA.moved + deckB.moved, leftOver };
+        const blocks = state.blocks
+          .map((block) => {
+            if (block.id === intoId) return { ...block, clipGrid: deckA.grid, bankBClipGrid: deckB.grid };
+            if (block.id === fromId) return { ...block, clipGrid: deckA.rest, bankBClipGrid: deckB.rest };
+            return block;
+          })
+          .filter((block) => block.id !== fromId || leftOver > 0);
+        const activeId = blocks.some((block) => block.id === state.activeBlockId) ? state.activeBlockId : intoId;
+        if (activeId === intoId || activeId === fromId) activate = activeId;
+        return { ...state, blocks, activeBlockId: activeId };
+      });
+      // Re-read the active block's grids so the deck shows the merge.
+      if (activate) this.setActiveBlock(activate);
+      return result;
     },
 
     // Duplicate a block — copies BOTH banks so an A+B scene clones intact.
