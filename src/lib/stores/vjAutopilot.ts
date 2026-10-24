@@ -4,6 +4,8 @@ export interface VJAutopilot {
   unit: 'loops' | 'beats';
   count: number;
   column?: number;
+  /** Choose from this layer's clips in every block, not just the one shown. */
+  allBlocks?: boolean;
 }
 export const autopilotTargets: { value: AutopilotTarget; label: string }[] = [
   { value: 'none', label: 'Off' }, { value: 'next', label: 'Next clip' },
@@ -17,7 +19,8 @@ export function normalizeAutopilot(raw: unknown): VJAutopilot | undefined {
   if (!value || !autopilotTargets.some(t => t.value === value.target) || value.target === 'none') return undefined;
   return { target: value.target!, unit: value.unit === 'loops' ? 'loops' : 'beats',
     count: Number.isFinite(value.count) ? Math.max(1, Math.min(999, Math.floor(value.count!))) : 1,
-    ...(value.target === 'column' ? { column: Number.isInteger(value.column) && value.column! >= 0 ? value.column : 0 } : {}) };
+    ...(value.target === 'column' ? { column: Number.isInteger(value.column) && value.column! >= 0 ? value.column : 0 } : {}),
+    ...(value.allBlocks && value.target !== 'column' ? { allBlocks: true } : {}) };
 }
 
 /** Random bag tracks clip identities, so replacing a cell gives it a fresh turn. */
@@ -51,6 +54,8 @@ export function chooseAutopilotColumn(ids: (string | null)[], current: number | 
 }
 
 export interface AutopilotSample {
+  /** With allBlocks, where each entry of `ids` lives. */
+  cells?: { blockId: string; column: number }[];
   key: string;
   token: string;
   scope: string;

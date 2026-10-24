@@ -1,5 +1,5 @@
 import { getDefaultEffectParams } from '../renderer/effects';
-import { mergeClipGrids } from './vjBlockMerge';
+import { mergeBlockGrids } from './vjBlockMerge';
 import { NATIVE_EFFECT_PASS_LIMIT } from '../renderer/nativeEffectChainPolicy';
 import { normalizeVJGroups, removeVJGroupRow, type VJGroup } from './vjGroups';
 import { showToast } from './errorToast';
@@ -3232,12 +3232,13 @@ function createVJClipLauncherStore() {
     },
 
     /**
-     * Merge block `fromId` into block `intoId`, both decks (see
-     * mergeClipGrids). The merged block goes away; if some of its clips had
-     * no free cell, it stays with just those. Returns what happened.
+     * Merge block `fromId` into block `intoId` (see mergeBlockGrids): its
+     * columns go after the target's, adding grid columns as needed. The
+     * merged block goes away; if some columns were past the column limit
+     * it stays with just those. Returns what happened.
      */
-    mergeBlocks(intoId: string, fromId: string): { moved: number; leftOver: number } | null {
-      let result: { moved: number; leftOver: number } | null = null;
+    mergeBlocks(intoId: string, fromId: string): { moved: number; leftOver: number; addedColumns: number } | null {
+      let result: { moved: number; leftOver: number; addedColumns: number } | null = null;
       let activate: string | null = null;
       update(state => {
         if (intoId === fromId) return state;
@@ -3248,22 +3249,39 @@ function createVJClipLauncherStore() {
         const gridOf = (block: VJBlock, deck: VJDeck) => block.id === state.activeBlockId
           ? (deck === 'A' ? state.clipGrid : state.bankBClipGrid)
           : (deck === 'A' ? block.clipGrid : block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns));
-        const deckA = mergeClipGrids(gridOf(into, 'A'), gridOf(from, 'A'));
-        const deckB = mergeClipGrids(gridOf(into, 'B'), gridOf(from, 'B'));
-        const leftOver = deckA.leftOver + deckB.leftOver;
-        result = { moved: deckA.moved + deckB.moved, leftOver };
+        const merge = mergeBlockGrids({
+          targetA: gridOf(into, 'A'), targetB: gridOf(into, 'B'),
+          sourceA: gridOf(from, 'A'), sourceB: gridOf(from, 'B'),
+          maxColumns: MAX_VJ_COLUMNS,
+        });
+        const columns = Math.max(state.numColumns, merge.columns);
+        const pad = (grid: (VJClip | null)[][]) =>
+          grid.map(row => [...row, ...Array(Math.max(0, columns - row.length)).fill(null)]);
+        result = { moved: merge.moved, leftOver: merge.leftOver, addedColumns: columns - state.numColumns };
         const blocks = state.blocks
           .map((block) => {
-            if (block.id === intoId) return { ...block, clipGrid: deckA.grid, bankBClipGrid: deckB.grid };
-            if (block.id === fromId) return { ...block, clipGrid: deckA.rest, bankBClipGrid: deckB.rest };
-            return block;
+            if (block.id === intoId) return { ...block, clipGrid: pad(merge.gridA), bankBClipGrid: pad(merge.gridB) };
+            if (block.id === fromId) return { ...block, clipGrid: pad(merge.restA), bankBClipGrid: pad(merge.restB) };
+            return {
+              ...block,
+              clipGrid: pad(block.clipGrid),
+              bankBClipGrid: pad(block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns)),
+            };
           })
-          .filter((block) => block.id !== fromId || leftOver > 0);
+          .filter((block) => block.id !== fromId || merge.leftOver > 0);
         const activeId = blocks.some((block) => block.id === state.activeBlockId) ? state.activeBlockId : intoId;
-        if (activeId === intoId || activeId === fromId) activate = activeId;
-        return { ...state, blocks, activeBlockId: activeId };
+        const active = blocks.find((block) => block.id === activeId)!;
+        activate = activeId;
+        return {
+          ...state,
+          numColumns: columns,
+          blocks,
+          activeBlockId: activeId,
+          clipGrid: active.clipGrid.map(row => [...row]),
+          bankBClipGrid: (active.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, columns)).map(row => [...row]),
+        };
       });
-      // Re-read the active block's grids so the deck shows the merge.
+      // Re-bind the decks' playing clips to the merged grids.
       if (activate) this.setActiveBlock(activate);
       return result;
     },
@@ -3784,15 +3802,29 @@ function autopilotSamples(state: VJClipLauncherState): AutopilotSample[] {
       const config = normalizeAutopilot(row.autopilot);
       if (!clip || !config || row.autopilotPaused) return;
       // Presets only fire in MAP, where rows may mix presets and clips.
-      const ids = (pickGrid(state, deck)[index] ?? []).map(cell =>
-        cell && (state.mapMode || cell.type !== 'preset') ? cell.id : null);
+      const usable = (cell: VJClip | null | undefined) => cell && (state.mapMode || cell.type !== 'preset') ? cell.id : null;
+      let ids = (pickGrid(state, deck)[index] ?? []).map(usable);
+      let cells: { blockId: string; column: number }[] | undefined;
+      if (config.allBlocks && state.blocks.length > 1) {
+        // This block's row first, then the same row of every other block in
+        // tab order: Next plays on through them, Random draws from all.
+        cells = ids.map((_, column) => ({ blockId: state.activeBlockId, column }));
+        for (const block of state.blocks) {
+          if (block.id === state.activeBlockId) continue;
+          const row = (deck === 'A' ? block.clipGrid : block.bankBClipGrid)?.[index] ?? [];
+          row.forEach((cell, column) => {
+            ids = [...ids, usable(cell)];
+            cells!.push({ blockId: block.id, column });
+          });
+        }
+      }
       const current = ids.indexOf(clip.id);
       // Don't jump from a playing clip in an old block into unrelated content.
       if (current < 0) return;
       const pending = state.pendingTriggers.some(p => p.bank === deck && (p.kind === 'column'
         ? (!ignoresColumn(row) && (!p.layerIndices || p.layerIndices.includes(index))) : p.layerIndex === index));
       const duration = knownClipDurationSeconds(clip) ?? 0;
-      samples.push({ key: `${deck}:${index}`, scope: `${state.activeBlockId}:${deck}:${index}`,
+      samples.push({ key: `${deck}:${index}`, scope: `${cells ? 'all' : state.activeBlockId}:${deck}:${index}`, cells,
         token: `${get(launchClock).resyncedAt}:${state.activeBlockId}:${autopilotSourceToken(clip, config)}`, config, ids, current,
         running: !row.locked && !pending && !vjClipLauncher.hasHeldInput(index, deck) && clip.isPlaying !== false,
         bpm, rate: clip.playbackRate ?? 1,
@@ -3812,7 +3844,17 @@ function scheduleAutopilot() {
       const current = autopilotSamples(get(vjClipLauncher)).find(s => s.key === action.key);
       if (!current?.running || current.token !== action.token) continue;
       const [deck, row] = action.key.split(':');
-      vjClipLauncher.triggerClip(Number(row), action.column, deck as VJDeck, undefined, true);
+      const cell = current.cells?.[action.column];
+      const state = get(vjClipLauncher);
+      if (cell && cell.blockId !== state.activeBlockId) {
+        // A clip from another block plays on the layer without switching
+        // the block on screen.
+        const block = state.blocks.find(b => b.id === cell.blockId);
+        const clip = (deck === 'B' ? block?.bankBClipGrid : block?.clipGrid)?.[Number(row)]?.[cell.column];
+        if (clip) vjClipLauncher.launchTransientClip(Number(row), clip, deck as VJDeck);
+        continue;
+      }
+      vjClipLauncher.triggerClip(Number(row), cell ? cell.column : action.column, deck as VJDeck, undefined, true);
     }
     scheduleAutopilot();
   });

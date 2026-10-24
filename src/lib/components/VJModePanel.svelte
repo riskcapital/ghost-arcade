@@ -457,13 +457,14 @@
     const from = blocks.find(b => b.id === blockMergeFromId);
     blockContextMenu = null;
     if (!into || !from) return;
-    if (!confirm(`Merge "${from.name}" into "${into.name}"? Its clips move into "${into.name}" and "${from.name}" is removed.`)) return;
+    if (!confirm(`Merge "${from.name}" into "${into.name}"? Its columns go after the ones "${into.name}" uses (adding columns as needed) and "${from.name}" is removed.`)) return;
     const result = vjClipLauncher.mergeBlocks(into.id, from.id);
     if (!result) return;
+    const added = result.addedColumns > 0 ? ` Added ${result.addedColumns} column${result.addedColumns === 1 ? '' : 's'}.` : '';
     if (result.leftOver > 0) {
-      showToast(`Merged ${result.moved} clip${result.moved === 1 ? '' : 's'} into "${into.name}". ${result.leftOver} had no free cell and stay in "${from.name}".`, 'warning');
+      showToast(`Merged ${result.moved} clip${result.moved === 1 ? '' : 's'} into "${into.name}".${added} ${result.leftOver} did not fit in the ${MAX_VJ_COLUMNS}-column grid and stay in "${from.name}".`, 'warning');
     } else {
-      showToast(`Merged "${from.name}" into "${into.name}".`, 'info');
+      showToast(`Merged "${from.name}" into "${into.name}".${added}`, 'info');
     }
   }
   function blockMenuDelete() {

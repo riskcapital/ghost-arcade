@@ -22,6 +22,11 @@
         <option value="beats">beats</option><option value="loops">loops</option>
       </select>
     </label>
+    {#if value.target !== 'column'}
+      <label class="check"><input type="checkbox" checked={!!value.allBlocks}
+        data-help="Choose from this layer's clips in every block, not just the block shown. The block on screen stays as it is."
+        onchange={(e) => change({ allBlocks: e.currentTarget.checked })} /> Use clips from all blocks</label>
+    {/if}
     {#if value.target === 'column'}
       <label>Column <input aria-label="Autopilot target column" data-help="Choose the destination column for this layer when the autopilot interval completes." type="number" min="1" max={columns} value={(value.column ?? 0) + 1}
         onchange={(e) => change({ column: Math.max(0, Math.min(columns - 1, Number(e.currentTarget.value) - 1)) })} /></label>
@@ -33,6 +38,8 @@
   .autopilot { padding: 10px 12px; border: 1px solid var(--ga-border, #333); border-radius: var(--ga-rSoft, 8px); margin: 10px 0 12px; font-size: var(--ga-type-control, 12px); }
   label { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   select { flex: 1; min-width: 0; background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 4px; }
+  .check { gap: 6px; }
+  .check input { width: auto; }
   input { width: 54px; background: #222; color: #ddd; border: 1px solid #444; padding: 4px; }
   p { margin: 4px 0 0; color: #aaa; font-size: 11px; }
 </style>
