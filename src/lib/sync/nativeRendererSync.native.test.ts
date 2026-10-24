@@ -3386,3 +3386,66 @@ it('invalidates the regular display binding after an urgent video retrigger', as
 it('routes the Interactive layer type to the real native graph',()=>{
  expect(nativeUnsupportedSourceReason({id:'interactive',type:'interactive',source:{id:'source',type:'effect',effectSource:{effectType:'performer-world'}}},true)).toBeNull();
 });
+
+describe('image previews for the layer aspect', () => {
+  // A stand-in for HTMLImageElement: records every load the sync starts and
+  // lets the test finish it.
+  function fakeImages() {
+    const made: any[] = [];
+    class FakeImage {
+      crossOrigin = ''; onload: (() => void) | null = null; onerror: (() => void) | null = null;
+      naturalWidth = 0; naturalHeight = 0; complete = false; private value = '';
+      constructor() { made.push(this); }
+      get src() { return this.value; }
+      set src(v: string) { this.value = v; }
+    }
+    return { made, FakeImage };
+  }
+  const imageLayer = (id: string, src: string) => ({ id, source: { id: `img-${id}`, type: 'image', src } }) as any;
+  const imageSource = (layer: any) => ({ id: layer.source.id, uri: layer.source.src, sourceType: 'image', source: layer.source, shouldPrefetch: false, shouldPreview: true, previewElement: null });
+
+  it('stops fetching an image that cannot load, for every layer showing it', async () => {
+    const { made, FakeImage } = fakeImages();
+    const previous = (globalThis as any).Image;
+    (globalThis as any).Image = FakeImage;
+    try {
+      const sync = new NativeRendererSyncCtor() as any;
+      sync.running = true;
+      const layers = Array.from({ length: 20 }, (_, i) => imageLayer(`l${i}`, 'ghost-asset://localhost/broken.png'));
+      for (let frame = 0; frame < 30; frame++) {
+        for (const layer of layers) sync.nativeLayerSourceAspect(layer, imageSource(layer), 1920, 1080);
+        // The load in flight fails before the next frame.
+        for (const img of made) if (img.onerror && !img.failed) { img.failed = true; img.onerror(); }
+      }
+      // One load at a time for the file, and it gives up after three tries.
+      expect(made.length).toBe(3);
+    } finally { (globalThis as any).Image = previous; }
+  });
+
+  it('keeps the aspect of an image whose preview is over budget instead of loading it every frame', async () => {
+    const { made, FakeImage } = fakeImages();
+    const previous = (globalThis as any).Image;
+    (globalThis as any).Image = FakeImage;
+    try {
+      const sync = new NativeRendererSyncCtor() as any;
+      sync.running = true;
+      sync.scheduleSync = () => {};
+      // Fill the 128 MB preview budget with one big resident image.
+      sync.previewImageElements.set('big::x', { naturalWidth: 8000, naturalHeight: 4500, complete: true });
+      const layer = imageLayer('wide', 'ghost-asset://localhost/wide.png');
+      const first = sync.nativeLayerSourceAspect(layer, imageSource(layer), 1920, 1080);
+      expect(first).toBeCloseTo(1920 / 1080);
+      const img = made[0];
+      img.naturalWidth = 3000; img.naturalHeight = 1000; img.complete = true;
+      img.onload();
+      for (let frame = 0; frame < 10; frame++) {
+        expect(sync.nativeLayerSourceAspect(layer, imageSource(layer), 1920, 1080)).toBeCloseTo(3);
+      }
+      expect(made.length).toBe(1);
+      // Another layer with the same file learns it without a load of its own.
+      const twin = imageLayer('twin', 'ghost-asset://localhost/wide.png');
+      expect(sync.nativeLayerSourceAspect(twin, imageSource(twin), 1920, 1080)).toBeCloseTo(3);
+      expect(made.length).toBe(1);
+    } finally { (globalThis as any).Image = previous; }
+  });
+});

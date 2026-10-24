@@ -441,16 +441,32 @@ async function setCachedThumbnail(key: string, dataUrl: string): Promise<void> {
  * Generate a thumbnail with cache support.
  * Returns cached version if available, otherwise generates and caches.
  */
+// One render per shader at a time: a project with the same shader on many
+// layers asks for its thumbnail once per layer, all before the first one is
+// cached, and each used to render and encode its own copy.
+const thumbnailsInFlight = new Map<string, Promise<string>>();
+
 export async function generateCachedThumbnail(
   shaderCode: string,
   time: number = 0.5
 ): Promise<string> {
   const key = hashCode(shaderCode);
-  const cached = await getCachedThumbnail(key);
-  if (cached) return cached;
-  const thumb = await generateShaderThumbnail(shaderCode, time);
-  await setCachedThumbnail(key, thumb);
-  return thumb;
+  const flightKey = `${key}@${time}`;
+  const pending = thumbnailsInFlight.get(flightKey);
+  if (pending) return pending;
+  const run = (async () => {
+    const cached = await getCachedThumbnail(key);
+    if (cached) return cached;
+    const thumb = await generateShaderThumbnail(shaderCode, time);
+    await setCachedThumbnail(key, thumb);
+    return thumb;
+  })();
+  thumbnailsInFlight.set(flightKey, run);
+  try {
+    return await run;
+  } finally {
+    thumbnailsInFlight.delete(flightKey);
+  }
 }
 
 /**

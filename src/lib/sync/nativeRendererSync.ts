@@ -4303,10 +4303,26 @@ function gpuNativeSourceType(shaderId: string | undefined | null): string {
   return `gpu:${id || 'gpu'}`;
 }
 
+// Resolved per layer per frame; keyed on the source object and checked
+// against the fields it reads, since runtime code attaches fields to sources.
+type ReadableUriInputs = { src: string; ref: unknown; originalPath: unknown; projectPath: unknown; url: unknown; dataUrl: unknown };
+const readableMediaUriMemo = new WeakMap<object, ReadableUriInputs & { uri: string }>();
+
 function nativeReadableMediaUri(src: NonNullable<Layer['source']>): string {
   const fallbackSrc = String(src.src ?? '');
   const ref = (src as any)._assetRef ?? (src as any).assetRef;
-  return resolveAssetRefForRuntime(ref, undefined, fallbackSrc) ?? fallbackSrc;
+  const inputs: ReadableUriInputs = {
+    src: fallbackSrc, ref,
+    originalPath: ref?.originalPath, projectPath: ref?.projectPath, url: ref?.url, dataUrl: ref?.dataUrl,
+  };
+  const hit = readableMediaUriMemo.get(src);
+  if (hit && hit.src === inputs.src && hit.ref === inputs.ref && hit.originalPath === inputs.originalPath
+    && hit.projectPath === inputs.projectPath && hit.url === inputs.url && hit.dataUrl === inputs.dataUrl) {
+    return hit.uri;
+  }
+  const uri = resolveAssetRefForRuntime(ref, undefined, fallbackSrc) ?? fallbackSrc;
+  readableMediaUriMemo.set(src, { ...inputs, uri });
+  return uri;
 }
 
 function nativeReadableFileParamUri(src: Record<string, any>): string {
@@ -5674,6 +5690,12 @@ export class NativeRendererSync {
   private nativeSourceAspectCache = new Map<string, number>();
   private previewImageElements = new Map<string, HTMLImageElement>();
   private previewImageLoads = new Set<string>();
+  /** Aspect of each image file, by URL, once any layer has loaded it: the
+   *  same file on many layers is read once, and an image whose preview did
+   *  not fit the budget is not loaded again every frame for its aspect. */
+  private previewImageAspectByUrl = new Map<string, number>();
+  /** URLs with a preview load in flight, whichever layer started it. */
+  private previewImageUrlLoads = new Set<string>();
   private nativeComputeGraphSourceFrames = false;
   private nativeGraphCatalogComplete = false;
   private nativeGraphReadyKinds = new Set<NativeGraphRouteKind>();
@@ -8461,6 +8483,8 @@ export class NativeRendererSync {
     this.latestNativeStatus = null;
     this.previewImageElements.forEach(img => { img.onload = null; img.onerror = null; img.src = ''; });
     this.previewImageElements.clear();
+    this.previewImageAspectByUrl.clear();
+    this.previewImageUrlLoads.clear();
     this.nativeTextState.clear();
     this.nativeSvgState.clear();
     this.nativeModel3DState.clear();
@@ -10073,10 +10097,15 @@ export class NativeRendererSync {
      * trade during a show.
      */
     // `layers` was resolved at the top of this flush.
-    const liveImageKeys = new Set(layers.flatMap(layer =>
-      layer.source ? [this.sourceCacheKey(layer.source.id, layer.source.src)] : []));
+    // By source id: the preview is keyed by the source's resolved address
+    // (ghost-asset://...), not the path stored on the layer, so matching the
+    // whole key here dropped every preview mid-load and it was fetched again
+    // on the next frame, forever when the image could not load.
+    const liveSourceIds = new Set(layers.flatMap(layer => (layer.source ? [layer.source.id] : [])));
     this.previewImageElements.forEach((img, key) => {
-      if (liveImageKeys.has(key)) return;
+      if (liveSourceIds.has(key.slice(0, key.indexOf('::')))) return;
+      // A pending load dropped here never reaches onload, so free its URL.
+      if (this.previewImageLoads.has(key)) this.previewImageUrlLoads.delete(key.slice(key.indexOf('::') + 2));
       img.onload = null; img.onerror = null; img.src = '';
       this.previewImageElements.delete(key);
       this.previewImageLoads.delete(key);
@@ -10628,6 +10657,14 @@ export class NativeRendererSync {
     if (sourceKey) {
       const cachedAspect = this.nativeSourceAspectCache.get(sourceKey);
       if (cachedAspect) return cachedAspect;
+      // Another layer already read this image file.
+      const fileAspect = nativeSource.sourceType === 'image' && source?.src
+        ? this.previewImageAspectByUrl.get(source.src)
+        : undefined;
+      if (fileAspect) {
+        this.nativeSourceAspectCache.set(sourceKey, fileAspect);
+        return fileAspect;
+      }
     }
     const rememberAspect = (width: number, height: number): number | null => {
       if (!(width > 0 && height > 0)) return null;
@@ -10838,32 +10875,44 @@ fn fs_main() -> @location(0) vec4<f32> {
     const key = this.sourceCacheKey(src.id, src.src);
     const cached = this.previewImageElements.get(key);
     if (cached && cached.complete && cached.naturalWidth > 0) return cached;
-    if (!this.previewImageLoads.has(key)) {
+    // An image that keeps failing is not fetched again on every frame, and a
+    // file another layer is already loading is loaded once.
+    const url = src.src;
+    if ((this.sourcePreviewFailures.get(url) ?? 0) >= 3) return null;
+    if (!this.previewImageLoads.has(key) && !this.previewImageUrlLoads.has(url)) {
       this.previewImageLoads.add(key);
+      this.previewImageUrlLoads.add(url);
       const generation = this.lifecycleGeneration;
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         if (generation !== this.lifecycleGeneration || !this.running || this.previewImageElements.get(key) !== img) { img.onload = null; img.onerror = null; img.src = ''; return; }
         this.previewImageLoads.delete(key);
+        this.previewImageUrlLoads.delete(url);
+        // The aspect is kept even when the picture is not, so the layer is
+        // never loaded again just to learn it.
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          const aspect = clampNumber(img.naturalWidth / img.naturalHeight, 0.001, 128);
+          this.nativeSourceAspectCache.set(key, aspect);
+          this.previewImageAspectByUrl.set(url, aspect);
+        }
+        this.sourcePreviewFailures.delete(url);
         const bytes = img.naturalWidth * img.naturalHeight * 4;
         const resident = [...this.previewImageElements.values()].reduce((n, entry) => n + (entry === img ? 0 : entry.naturalWidth * entry.naturalHeight * 4), 0);
-        if (bytes + resident > 128 * 1024 * 1024) { this.previewImageElements.delete(key); img.onload = null; img.onerror = null; img.src = ''; return; }
-        this.previewImageElements.set(key, img);
-        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-          this.nativeSourceAspectCache.set(
-            key,
-            clampNumber(img.naturalWidth / img.naturalHeight, 0.001, 128),
-          );
+        if (bytes + resident > 128 * 1024 * 1024) {
+          this.previewImageElements.delete(key); img.onload = null; img.onerror = null; img.src = '';
+        } else {
+          this.previewImageElements.set(key, img);
         }
-        this.sourcePreviewFailures.delete(key);
         if (this.running) this.scheduleSync(this.desiredWidth, this.desiredHeight, this.latestLayers);
       };
       img.onerror = () => {
+        this.previewImageUrlLoads.delete(url);
         if (generation !== this.lifecycleGeneration || this.previewImageElements.get(key) !== img) return;
         this.previewImageElements.delete(key);
         this.previewImageLoads.delete(key);
-        this.sourcePreviewFailures.set(key, (this.sourcePreviewFailures.get(key) ?? 0) + 1);
+        // Counted per file: every layer showing it gives up together.
+        this.sourcePreviewFailures.set(url, (this.sourcePreviewFailures.get(url) ?? 0) + 1);
       };
       // Own pending loads too, so removal/stop can detach their callbacks.
       this.previewImageElements.set(key, img);

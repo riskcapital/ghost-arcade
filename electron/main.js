@@ -3510,15 +3510,28 @@ function detachSliceNativeLayer(sliceId) {
   if (sliceNativeAttached.size === 0) stopSliceNativePump();
 }
 
+/** Windows: the presenter addon can present Screens and deck monitors from
+ *  its own thread at the display's vblank (monitorSetSharedTextureSource).
+ *  JS then only publishes which texture each one shows, instead of copying
+ *  and presenting every frame of every Screen on the Electron main thread. */
+function windowsNativeMonitorPump(addon) {
+  return isWin && typeof addon?.monitorSetSharedTextureSource === 'function';
+}
+
 function startSliceNativePump() {
   if (sliceNativePump) return;
+  const nativePump = windowsNativeMonitorPump(nativePreviewAddon || loadNativePreviewAddon());
+  let ticks = 0;
   sliceNativePump = setInterval(async () => {
     if (sliceNativePumpInFlight || sliceNativeAttached.size === 0) return;
     sliceNativePumpInFlight = true;
     try {
       const addon = nativePreviewAddon;
-      const setter = isWin ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
+      const setter = nativePump ? 'monitorSetSharedTextureSource' : isWin ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
       if (!addon || typeof addon[setter] !== 'function') return;
+      // The native pump cannot move windows the UI thread owns, so keep each
+      // Screen's presenter placed behind its window from here.
+      if (nativePump && ++ticks % 5 === 0) addon.monitorRestack?.();
       const state = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
       if (!state?.available || !Array.isArray(state.slices)) return;
       for (const entry of state.slices) {
@@ -3532,17 +3545,20 @@ function startSliceNativePump() {
         const frame = Number(entry?.frame ?? 0);
         if ((isWin ? !sharedName : !Number.isFinite(surfaceId) || surfaceId <= 0)
           || width <= 0 || height <= 0) continue;
-        // macOS installs a display-link source, so binding once is enough and
-        // the core keeps writing into the same IOSurface. The Windows API
-        // presents once per call, so the frame counter has to be part of the
-        // key or the Screen would freeze on its first frame.
+        // macOS installs a display-link source and Windows' native pump
+        // presents at vblank, so binding once is enough while the core keeps
+        // writing into the same texture. The older Windows addon presents once
+        // per call, so there the frame counter has to be part of the key or
+        // the Screen would freeze on its first frame.
         const binding = isWin
-          ? `${sharedName}:${width}x${height}:${frame}`
+          ? `${sharedName}:${width}x${height}${nativePump ? '' : `:${frame}`}`
           : `${surfaceId}:${width}x${height}`;
         if (sliceNativeLastBinding.get(sliceId) === binding) continue;
-        const presented = isWin
-          ? addon.monitorSetSharedTexture(sliceMonitorName(sliceId), sharedName, width, height)
-          : addon.monitorSetIOSurface(sliceMonitorName(sliceId), surfaceId, width, height, false);
+        const presented = nativePump
+          ? addon.monitorSetSharedTextureSource(sliceMonitorName(sliceId), sharedName, width, height)
+          : isWin
+            ? addon.monitorSetSharedTexture(sliceMonitorName(sliceId), sharedName, width, height)
+            : addon.monitorSetIOSurface(sliceMonitorName(sliceId), surfaceId, width, height, false);
         if (presented) {
           const first = !sliceNativeLastBinding.has(sliceId);
           sliceNativeLastBinding.set(sliceId, binding);
@@ -3557,9 +3573,9 @@ function startSliceNativePump() {
     } finally {
       sliceNativePumpInFlight = false;
     }
-  }, isWin ? 1000 / 30 : 250);
+  }, nativePump ? 100 : isWin ? 1000 / 30 : 250);
   sliceNativePump.unref?.();
-  console.log(`[SliceNative] pump started (${isWin ? 'dxgi per-frame' : 'iosurface bind'})`);
+  console.log(`[SliceNative] pump started (${nativePump ? 'dxgi native vblank pump' : isWin ? 'dxgi per-frame' : 'iosurface bind'})`);
 }
 
 function stopSliceNativePump() {
@@ -3580,16 +3596,21 @@ const deckMonitorLastFrame = new Map();   // name -> { frame, at }
 function startDeckMonitorPump() {
   if (deckMonitorPump) return;
   const generation = deckMonitorPumpGeneration;
+  // Windows presents the decks from the addon's vblank pump when it has one
+  // (see windowsNativeMonitorPump).
+  const nativePump = process.platform === 'win32'
+    && typeof (nativePreviewAddon || loadNativePreviewAddon())?.monitorSetSharedTextureSource === 'function';
   deckMonitorPump = setInterval(async () => {
     if (generation !== deckMonitorPumpGeneration || deckMonitorPumpInFlight || deckMonitorAttachedNames.size === 0) return;
     deckMonitorPumpInFlight = true;
     try {
       const addon = nativePreviewAddon;
       const windows = process.platform === 'win32';
-      if (!addon || typeof addon[windows ? 'monitorSetSharedTexture' : 'monitorSetIOSurface'] !== 'function') return;
+      const setter = nativePump ? 'monitorSetSharedTextureSource' : windows ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
+      if (!addon || typeof addon[setter] !== 'function') return;
       // Windows monitors are separate windows kept behind the editor; re-stack
       // them twice a second even when the decks produce no new frames.
-      if (windows && ++deckMonitorPumpTicks % 15 === 0) addon.monitorRestack?.();
+      if (windows && ++deckMonitorPumpTicks % (nativePump ? 5 : 15) === 0) addon.monitorRestack?.();
       const state = await nativeRendererBroker.invoke('native_renderer_get_deck_monitor_state', {});
       if (generation !== deckMonitorPumpGeneration) return;
       if (!state?.available || !Array.isArray(state.banks)) return;
@@ -3610,13 +3631,18 @@ function startDeckMonitorPump() {
           continue;
         }
         if (!last || last.frame !== frame) deckMonitorLastFrame.set(name, { frame, at: now });
-        // The Windows API presents once per call; macOS installs a display-link
-        // source. Windows must present each new frame, not just bind once.
-        const binding = windows ? `${sharedName}:${width}x${height}:${frame}` : `${surfaceId}:${width}x${height}`;
+        // macOS installs a display-link source and Windows' native pump
+        // presents at vblank, so binding once is enough. The older Windows
+        // addon presents once per call and needs each new frame.
+        const binding = windows
+          ? `${sharedName}:${width}x${height}${nativePump ? '' : `:${frame}`}`
+          : `${surfaceId}:${width}x${height}`;
         if (deckMonitorLastBinding.get(name) === binding) continue;
-        const presented = windows
-          ? addon.monitorSetSharedTexture(name, sharedName, width, height)
-          : addon.monitorSetIOSurface(name, surfaceId, width, height, false);
+        const presented = nativePump
+          ? addon.monitorSetSharedTextureSource(name, sharedName, width, height)
+          : windows
+            ? addon.monitorSetSharedTexture(name, sharedName, width, height)
+            : addon.monitorSetIOSurface(name, surfaceId, width, height, false);
         if (presented) {
           const firstBinding = !deckMonitorLastBinding.has(name);
           deckMonitorLastBinding.set(name, binding);
@@ -3628,9 +3654,9 @@ function startDeckMonitorPump() {
     } finally {
       if (generation === deckMonitorPumpGeneration) deckMonitorPumpInFlight = false;
     }
-  }, process.platform === 'win32' ? 1000 / 30 : 250);
+  }, nativePump ? 100 : process.platform === 'win32' ? 1000 / 30 : 250);
   deckMonitorPump.unref?.();
-  console.log('[DeckMonitor] pump started');
+  console.log(`[DeckMonitor] pump started${nativePump ? ' (dxgi native vblank pump)' : ''}`);
 }
 
 function stopDeckMonitorPump() {
@@ -7080,6 +7106,12 @@ function registerIpcHandlers() {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return { content, media: null };
     try {
       const media = await projectMedia.prepareProjectMediaForOpen(data, dir);
+      // Files still in iCloud start downloading now, so they are here by
+      // the time the show needs them (a read would otherwise stall on them).
+      if (media.icloud?.length) {
+        mediaLocate.requestIcloudDownloads(media.icloud);
+        media.icloud = media.icloud.map((item) => item.name);
+      }
       return { content: JSON.stringify(data, null, 2), media };
     } catch (err) {
       console.warn('[Main] Could not check project media:', err?.message || err);
@@ -7191,6 +7223,14 @@ function registerIpcHandlers() {
     const status = await mediaLocate.mediaFilesStatus(asked.filter((p) => pathGrants.canRead(p)));
     for (const p of asked) if (!(p in status)) status[p] = false;
     return status;
+  });
+  // Start iCloud downloads of media the project uses (see media-locate.cjs).
+  // Only files the app may already read, and only on macOS.
+  ipcMain.handle('media_icloud_download', async (_, args) => {
+    const items = (Array.isArray(args?.items) ? args.items : [])
+      .filter((item) => typeof item?.file === 'string' && pathGrants.canRead(item.file))
+      .map((item) => ({ file: item.file, state: item.state === 'placeholder' ? 'placeholder' : 'dataless' }));
+    return { started: mediaLocate.requestIcloudDownloads(items) };
   });
   // After one file was located, look beside it for these other names. The
   // located file must be one the user picked, and only files found are granted.

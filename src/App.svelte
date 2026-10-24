@@ -1186,10 +1186,21 @@
    * were found in their new place (an unsaved change until the project is
    * saved), and files that could not be found.
    */
-  function reportOpenedMedia(media: { moved?: string[]; missing?: string[] } | null | undefined) {
+  function reportOpenedMedia(media: { moved?: string[]; missing?: string[]; icloud?: string[] } | null | undefined) {
     const moved = media?.moved?.length ?? 0;
     const missing = media?.missing?.length ?? 0;
+    const inIcloud = media?.icloud?.length ?? 0;
     if (moved) noteMediaRelinked();
+    if (inIcloud) {
+      // Not lost: iCloud keeps only a stub until a file is downloaded, and the
+      // download has been started.
+      const names = media!.icloud!.slice(0, 3).join(', ') + (inIcloud > 3 ? ` and ${inIcloud - 3} more` : '');
+      showToast(
+        `${inIcloud} media file${inIcloud === 1 ? ' is' : 's are'} in iCloud and not downloaded to this Mac yet (${names}). `
+          + `${inIcloud === 1 ? 'It is' : 'They are'} downloading now. If ${inIcloud === 1 ? 'it does' : 'any do'} not appear once downloaded, reopen the project.`,
+        'warning',
+      );
+    }
     if (missing) {
       showToast(
         `${missing} media file${missing === 1 ? ' is' : 's are'} missing${moved ? ` (${moved} found in a new place)` : ''}. File → Project Media… can find ${missing === 1 ? 'it' : 'them'}.`,

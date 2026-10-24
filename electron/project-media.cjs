@@ -2,7 +2,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const { fileURLToPath, pathToFileURL } = require('url');
-const { findMediaInFolder } = require('./media-locate.cjs');
+const { findMediaInFolder, icloudState } = require('./media-locate.cjs');
 const REF_FIELDS = new Set(['_assetRef', '_textureAssetRef', '_sourceAssetRef', 'assetRef']);
 const MEDIA_FIELDS = ['src', 'mediaSrc', 'modelData', 'filePath', 'texturePath', 'sourceUrl', 'assetUrl', 'url'];
 // Files that ship inside the app (the shader library, built-in pages, looks)
@@ -86,11 +86,26 @@ async function existingFile(candidates) {
   }
   return null;
 }
+/** Where a file that is not on disk sits in iCloud as an older `.icloud`
+ *  stub, if it does: `{ file, state: 'placeholder' }`. */
+async function icloudPlaceholder(candidates) {
+  for (const candidate of candidates) {
+    if (await icloudState(candidate) === 'placeholder') return { file: candidate, state: 'placeholder' };
+  }
+  return null;
+}
 async function scanProjectMedia(data, projectDir) {
   const results = [];
   for (const entry of mediaEntries(data, projectDir)) {
     const found = await existingFile(entry.candidates);
-    results.push({ id: entry.id, name: entry.name, path: found?.path || entry.candidates[0] || '', size: found?.size || 0, missing: !found, uses: entry.refs.length + entry.fields.length });
+    // In iCloud and not downloaded: 'dataless' (there, empty until read) or
+    // 'placeholder' (only its stub is there).
+    const icloud = found ? await icloudState(found.path) : (await icloudPlaceholder(entry.candidates))?.state ?? null;
+    const placeholderPath = icloud === 'placeholder' ? (await icloudPlaceholder(entry.candidates))?.file : null;
+    results.push({
+      id: entry.id, name: entry.name, path: found?.path || placeholderPath || entry.candidates[0] || '',
+      size: found?.size || 0, missing: !found, icloud, uses: entry.refs.length + entry.fields.length,
+    });
   }
   return results;
 }
@@ -147,13 +162,28 @@ async function prepareProjectMediaForOpen(data, projectDir) {
       if (stat) { found[entries.indexOf(entry)] = stat; moved.push(entry.name); }
     }
   }
+  // Files iCloud has not downloaded: on disk but empty until read, or (older
+  // macOS) only a `.icloud` stub where the file should be. Neither is lost;
+  // the caller starts their downloads and says so.
+  const icloud = [];
+  const placeholders = await Promise.all(entries.map((entry, index) => (found[index] ? null : icloudPlaceholder(entry.candidates))));
+  for (let index = 0; index < entries.length; index += 1) {
+    const file = found[index]?.path;
+    if (file && await icloudState(file) === 'dataless') icloud.push({ name: entries[index].name, file, state: 'dataless' });
+    else if (placeholders[index]) icloud.push({ name: entries[index].name, ...placeholders[index] });
+  }
   const missing = [];
   entries.forEach((entry, index) => {
     const file = found[index]?.path;
     if (!file) {
-      if (entry.candidates.length) missing.push(entry.name);
-      // Keep an absolute location so a Save As elsewhere can still place it.
-      for (const ref of entry.refs) if (!ref.originalPath && entry.candidates[0]) ref.originalPath = entry.candidates[0];
+      const placeholder = placeholders[index];
+      if (entry.candidates.length && !placeholder) missing.push(entry.name);
+      // Keep an absolute location so a Save As elsewhere can still place it;
+      // one waiting in iCloud keeps the place it will download to.
+      for (const ref of entry.refs) {
+        if (placeholder) ref.originalPath = placeholder.file;
+        else if (!ref.originalPath && entry.candidates[0]) ref.originalPath = entry.candidates[0];
+      }
       return;
     }
     for (const ref of entry.refs) {
@@ -165,7 +195,7 @@ async function prepareProjectMediaForOpen(data, projectDir) {
       if (localPath(node[field], projectDir) !== file) node[field] = pathToFileURL(file).href;
     }
   });
-  return { moved, missing };
+  return { moved, missing, icloud };
 }
 /**
  * Before a save: next to each file's absolute location, write where it is

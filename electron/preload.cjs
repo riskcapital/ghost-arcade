@@ -77,6 +77,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'copy_file_to_project',
   'project_media_scan', 'project_media_relink', 'project_media_collect',
   'media_files_status', 'media_find_in_folder', 'media_find_beside',
+  'media_icloud_download',
   'save_project_file', 'prepare_project_media', 'take_pending_project_open',
   'export_project_package', 'cancel_project_package', 'open_project_package',
   'inspect_video_import',

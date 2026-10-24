@@ -4,10 +4,11 @@ import { expect, it, vi } from 'vitest';
 const main = readFileSync('electron/main.js', 'utf8');
 const pump = main.slice(main.indexOf('const deckMonitorAttachedNames'), main.indexOf('// The rectangle the platform presenter takes.'));
 const handlers = main.slice(main.indexOf("  ipcMain.handle('deck_monitor_attach'"), main.indexOf('  // Pointer-rate viewport mutations'));
-function harness(platform = 'win32') {
+function harness(platform = 'win32', nativePump = false) {
   const ticks: Array<() => Promise<void>> = [];
   const ipc: Record<string, Function> = {};
-  const addon = { monitorAttach: vi.fn(() => true), monitorDetach: vi.fn(), monitorSetSharedTexture: vi.fn(() => true), monitorSetIOSurface: vi.fn(() => true) };
+  const addon: Record<string, any> = { monitorAttach: vi.fn(() => true), monitorDetach: vi.fn(), monitorSetSharedTexture: vi.fn(() => true), monitorSetIOSurface: vi.fn(() => true), monitorRestack: vi.fn() };
+  if (nativePump) addon.monitorSetSharedTextureSource = vi.fn(() => true);
   const invoke = vi.fn().mockResolvedValue({ available: true, banks: [{ bank: 'a', shared_name: 'A', handle: 1, width: 480, height: 270, frame: 1 }, { bank: 'b', shared_name: 'B', handle: 2, width: 480, height: 270, frame: 1 }] });
   const context = { process: { platform }, Buffer, Date, console: { log() {}, warn() {} }, nativePreviewAddon: addon,
     nativeRendererBroker: { invoke }, loadNativePreviewAddon: () => addon,
@@ -43,4 +44,18 @@ it('preserves Mac display-link binding without resending unchanged surfaces', as
   const h = harness('darwin'); await h.attach(); await h.ticks[0](); await h.ticks[0]();
   expect(h.addon.monitorSetIOSurface).toHaveBeenCalledTimes(2);
   expect(h.addon.monitorSetSharedTexture).not.toHaveBeenCalled();
+});
+it('hands Windows decks to the native vblank pump once per texture, not once per frame', async () => {
+  const h = harness('win32', true); await h.attach();
+  await h.ticks[0]();
+  expect(h.addon.monitorSetSharedTextureSource.mock.calls).toEqual([['deck-a', 'A', 480, 270], ['deck-b', 'B', 480, 270]]);
+  // New frames in the same texture: the addon's thread presents them itself.
+  h.invoke.mockResolvedValue({ available: true, banks: [{ bank: 'b', shared_name: 'B', width: 480, height: 270, frame: 9 }] });
+  await h.ticks[0](); await h.ticks[0]();
+  expect(h.addon.monitorSetSharedTextureSource).toHaveBeenCalledTimes(2);
+  expect(h.addon.monitorSetSharedTexture).not.toHaveBeenCalled();
+  // A new texture (a resize) is published again.
+  h.invoke.mockResolvedValue({ available: true, banks: [{ bank: 'b', shared_name: 'B2', width: 960, height: 540, frame: 10 }] });
+  await h.ticks[0]();
+  expect(h.addon.monitorSetSharedTextureSource).toHaveBeenLastCalledWith('deck-b', 'B2', 960, 540);
 });
