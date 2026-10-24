@@ -70,6 +70,15 @@ export interface MeshWarpGrid {
   /** Per-point tangent handles, [row][col], sparse: a missing entry is a
    *  point with straight edges. */
   tangents?: (MeshPointTangents | null | undefined)[][];
+  /** Where each point sits on the layer while the mesh is at rest, [row][col],
+   *  in layer UV with y up like `points`. Absent: the even lattice over the
+   *  whole layer that createMeshGrid makes. A mesh fitted to a Custom Shape
+   *  rests on the shape instead, so its points start on the shape. */
+  rest?: Point2D[][];
+  /** What `rest` was fitted to, so a new grid size fits it the same way.
+   *  'layer' is the whole layer, chosen on purpose: Mesh then never fits
+   *  itself to the shape. Absent: never chosen. */
+  fit?: 'shape' | 'outline' | 'layer';
 }
 
 export type WarpMode = 'corners' | 'mesh' | 'edge' | 'none';

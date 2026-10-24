@@ -117,15 +117,21 @@ export function meshEdgePoint(grid: MeshWarpGrid, r0: number, c0: number, r1: nu
 }
 
 /**
- * Where the mesh sends a local position. `x` runs along the columns and `y`
- * up the rows (1 at row 0, the top row), the same convention as the points
- * themselves. Straight meshes interpolate the cell bilinearly, exactly as
- * before; a Bezier mesh evaluates the cell as a Coons patch bounded by its
- * four cubic edges, which is the bicubic surface the native compositor
- * inverts per pixel.
+ * Where the mesh sends a position on the layer (layer UV, `y` up: 1 at the
+ * top row, the same convention as the points themselves). Straight meshes
+ * interpolate the cell bilinearly, exactly as before; a Bezier mesh
+ * evaluates the cell as a Coons patch bounded by its four cubic edges, which
+ * is the bicubic surface the native compositor inverts per pixel.
+ *
+ * A mesh fitted to a shape rests on part of the layer only (`rest`): the
+ * position is found in its rest lattice first. Beyond the lattice the
+ * nearest cell is continued outward, so an outline just past the fitted
+ * mesh still lands next to it.
  */
 export function evaluateMeshGrid(grid: MeshWarpGrid, x: number, y: number): Point2D {
-  return evaluateMeshByRows(grid, x, 1 - y);
+  if (!meshHasRest(grid)) return evaluateMeshByRows(grid, x, 1 - y);
+  const cell = restCellAt(grid, x, y);
+  return evaluateMeshCell(grid, cell.row, cell.col, cell.u, cell.v);
 }
 
 /**
@@ -168,15 +174,123 @@ export function evaluateMeshCell(grid: MeshWarpGrid, row: number, col: number, u
  *  curved, so the mesh warps nothing. */
 export function isIdentityMeshGrid(grid: MeshWarpGrid): boolean {
   if (meshGridHasTangents(grid)) return false;
+  const rest = meshHasRest(grid) ? grid.rest! : null;
   for (let r = 0; r < grid.rows; r++) {
     for (let c = 0; c < grid.cols; c++) {
       const point = grid.points[r]?.[c];
       if (!point) return false;
-      if (Math.abs(point.x - c / (grid.cols - 1)) > IDENTITY_EPSILON) return false;
-      if (Math.abs(point.y - (1 - r / (grid.rows - 1))) > IDENTITY_EPSILON) return false;
+      const at = rest ? rest[r][c] : { x: c / (grid.cols - 1), y: 1 - r / (grid.rows - 1) };
+      if (Math.abs(point.x - at.x) > IDENTITY_EPSILON) return false;
+      if (Math.abs(point.y - at.y) > IDENTITY_EPSILON) return false;
     }
   }
   return true;
+}
+
+// ─── Rest lattice ───────────────────────────────────────────────────────
+// A mesh fitted to a Custom Shape rests on the shape, not on the whole
+// layer: `rest` holds where each point sits on the layer while unwarped.
+// Points stay in the same space as always, so a warp is still "where the
+// point is now"; only the layer position each cell shows changes.
+
+/** True when the grid carries a usable rest lattice of its own. */
+export function meshHasRest(grid: MeshWarpGrid | null | undefined): boolean {
+  const rest = grid?.rest;
+  if (!grid || !Array.isArray(rest) || rest.length !== grid.rows) return false;
+  return rest.every((row) => Array.isArray(row) && row.length === grid.cols && row.every(finitePoint));
+}
+
+/** Where point (row, col) sits on the layer at rest (layer UV, y up). */
+export function meshRestPoint(grid: MeshWarpGrid, row: number, col: number): Point2D {
+  const p = grid.rest?.[row]?.[col];
+  if (meshHasRest(grid) && p) return { x: p.x, y: p.y };
+  return { x: col / (grid.cols - 1), y: 1 - row / (grid.rows - 1) };
+}
+
+/** The rest lattice, explicit: the grid's own, or the even one. */
+export function meshRestLattice(grid: MeshWarpGrid): Point2D[][] {
+  if (meshHasRest(grid)) return grid.rest!.map((row) => row.map((p) => ({ x: p.x, y: p.y })));
+  const lattice: Point2D[][] = [];
+  for (let r = 0; r < grid.rows; r++) {
+    const row: Point2D[] = [];
+    for (let c = 0; c < grid.cols; c++) row.push({ x: c / (grid.cols - 1), y: 1 - r / (grid.rows - 1) });
+    lattice.push(row);
+  }
+  return lattice;
+}
+
+/**
+ * Layer UV (y up) a grid position shows: `x` along the columns and `y` down
+ * the rows, both 0..1 (what invertMeshByRows returns). The rest lattice is
+ * interpolated across its cell; without one this is the position itself.
+ */
+export function meshDomainToLayerUv(grid: MeshWarpGrid, x: number, y: number): Point2D {
+  if (!meshHasRest(grid)) return { x, y: 1 - y };
+  const rest = grid.rest!;
+  const gx = Math.max(0, Math.min(grid.cols - 1, x * (grid.cols - 1)));
+  const gy = Math.max(0, Math.min(grid.rows - 1, y * (grid.rows - 1)));
+  const col = Math.min(grid.cols - 2, Math.floor(gx));
+  const row = Math.min(grid.rows - 2, Math.floor(gy));
+  const u = gx - col;
+  const v = gy - row;
+  const a = rest[row][col], b = rest[row][col + 1], c = rest[row + 1][col + 1], d = rest[row + 1][col];
+  return {
+    x: (1 - u) * (1 - v) * a.x + u * (1 - v) * b.x + (1 - u) * v * d.x + u * v * c.x,
+    y: (1 - u) * (1 - v) * a.y + u * (1 - v) * b.y + (1 - u) * v * d.y + u * v * c.y,
+  };
+}
+
+interface MeshCellPosition {
+  row: number;
+  col: number;
+  /** Along the columns; outside 0..1 beyond the lattice. */
+  u: number;
+  /** Down the rows; outside 0..1 beyond the lattice. */
+  v: number;
+}
+
+/** The rest cell holding layer UV (x, y up), or the nearest one continued
+ *  outward when the position lies beyond the lattice. */
+function restCellAt(grid: MeshWarpGrid, x: number, y: number): MeshCellPosition {
+  const rest = grid.rest!;
+  const q = { x, y };
+  let best: MeshCellPosition | null = null;
+  let bestOutside = Infinity;
+  // First the cells whose bounds hold the point; the rest only when none does.
+  for (const nearOnly of [true, false]) {
+    for (let row = 0; row < grid.rows - 1; row++) {
+      for (let col = 0; col < grid.cols - 1; col++) {
+        const a = rest[row][col], b = rest[row][col + 1], c = rest[row + 1][col + 1], d = rest[row + 1][col];
+        const inBounds = x >= Math.min(a.x, b.x, c.x, d.x) - 1e-6 && x <= Math.max(a.x, b.x, c.x, d.x) + 1e-6
+          && y >= Math.min(a.y, b.y, c.y, d.y) - 1e-6 && y <= Math.max(a.y, b.y, c.y, d.y) + 1e-6;
+        if (inBounds !== nearOnly) continue;
+        const uv = inverseBilinearCell(q, a, b, c, d);
+        if (!uv) continue;
+        const outside = Math.max(0, -uv.x, uv.x - 1, -uv.y, uv.y - 1);
+        if (outside <= CELL_EPSILON) return { row, col, u: Math.max(0, Math.min(1, uv.x)), v: Math.max(0, Math.min(1, uv.y)) };
+        if (outside < bestOutside) {
+          bestOutside = outside;
+          best = { row, col, u: uv.x, v: uv.y };
+        }
+      }
+    }
+  }
+  if (best) return best;
+  // Degenerate lattice: fall back to the even grid position.
+  const gx = Math.max(0, Math.min(grid.cols - 1, x * (grid.cols - 1)));
+  const gy = Math.max(0, Math.min(grid.rows - 1, (1 - y) * (grid.rows - 1)));
+  const col = Math.min(grid.cols - 2, Math.floor(gx));
+  const row = Math.min(grid.rows - 2, Math.floor(gy));
+  return { row, col, u: gx - col, v: gy - row };
+}
+
+/**
+ * Layer UV (y up) the mesh shows at `q`, a position in the corner quad with
+ * y up (the space of the points), or null where no cell covers it.
+ */
+export function invertLayerMesh(grid: MeshWarpGrid, q: Point2D): Point2D | null {
+  const hit = invertMeshByRows(grid, q);
+  return hit ? meshDomainToLayerUv(grid, hit.x, hit.y) : null;
 }
 
 /**
@@ -206,7 +320,9 @@ export function layerRenderMeshGrid(
   if (mode === 'corners' && (!wellFormed(grid) || isIdentityMeshGrid(grid))) return null;
   if (meshGridHasTangents(grid)) return grid;
   if (grid.bezier === undefined && grid.tangents === undefined) return grid;
-  return { rows: grid.rows, cols: grid.cols, points: grid.points };
+  const straight: MeshWarpGrid = { rows: grid.rows, cols: grid.cols, points: grid.points };
+  if (grid.rest) straight.rest = grid.rest;
+  return straight;
 }
 
 // ─── Inverse ────────────────────────────────────────────────────────────
@@ -376,6 +492,8 @@ export function cloneMeshGrid(grid: MeshWarpGrid): MeshWarpGrid {
     points: grid.points.map((row) => row.map((p) => ({ x: p.x, y: p.y }))),
   };
   if (grid.bezier !== undefined) copy.bezier = grid.bezier;
+  if (grid.rest) copy.rest = grid.rest.map((row) => row.map((p) => ({ x: p.x, y: p.y })));
+  if (grid.fit) copy.fit = grid.fit;
   if (grid.tangents) {
     copy.tangents = grid.tangents.map((row) => row.map((entry) => {
       if (!entry) return null;

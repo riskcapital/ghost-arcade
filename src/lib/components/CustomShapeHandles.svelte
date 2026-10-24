@@ -2,6 +2,7 @@
   import { selectedLayer, project } from '../stores/layers';
   import type { Point2D, BezierPoint } from '../types';
   import { onDestroy } from 'svelte';
+  import { evaluateMeshGrid, invertLayerMesh, layerRenderMeshGrid } from '../utils/meshWarp';
 
   // Container dimensions (set by parent)
   export let containerWidth: number = 800;
@@ -45,10 +46,20 @@
     bottomLeft: { x: 0, y: 0 }, bottomRight: { x: 1, y: 0 },
   };
 
-  // Forward bilinear: UV (0-1) → warped normalized position → pixel
-  function toPixel(point: Point2D): { x: number; y: number } {
+  // The mesh the layer renders with: the shape is cut in layer UV before
+  // the mesh bends it, so its handles go through the mesh too and stay on
+  // the outline the output shows.
+  $: renderMesh = $selectedLayer ? layerRenderMeshGrid($selectedLayer) : null;
+
+  // Forward: layer UV (0-1) → through the mesh and the corner pin → pixel.
+  // Reactive (not a plain function) so vertexPixels, svgPath and the handle
+  // markup re-run when the canvas resizes, the corners move or the mesh
+  // changes.
+  let toPixel: (point: Point2D) => { x: number; y: number };
+  $: toPixel = (point: Point2D): { x: number; y: number } => {
     const { topLeft: tl, topRight: tr, bottomLeft: bl, bottomRight: br } = corners;
-    const u = point.x, v = point.y;
+    const m = renderMesh ? evaluateMeshGrid(renderMesh, point.x, point.y) : point;
+    const u = m.x, v = m.y;
     const topX = tl.x + (tr.x - tl.x) * u;
     const topY = tl.y + (tr.y - tl.y) * u;
     const botX = bl.x + (br.x - bl.x) * u;
@@ -56,10 +67,35 @@
     const wx = botX + (topX - botX) * v;
     const wy = botY + (topY - botY) * v;
     return { x: wx * containerWidth, y: (1 - wy) * containerHeight };
+  };
+
+  // Pixel → layer UV: back through the corner pin, then the mesh.
+  function toNormalized(px: number, py: number): Point2D {
+    const local = toQuadLocal(px, py);
+    if (!renderMesh) return local;
+    const hit = invertLayerMesh(renderMesh, local);
+    if (hit) return hit;
+    // Off the mesh (a point dragged past its edge): solve the mesh map,
+    // which continues outward past a fitted mesh, from the nearest guess.
+    let u = local.x, v = local.y;
+    const h = 1e-4;
+    for (let i = 0; i < 12; i++) {
+      const p = evaluateMeshGrid(renderMesh, u, v);
+      const ex = local.x - p.x, ey = local.y - p.y;
+      if (ex * ex + ey * ey < 1e-14) break;
+      const pu = evaluateMeshGrid(renderMesh, u + h, v);
+      const pv = evaluateMeshGrid(renderMesh, u, v + h);
+      const a = (pu.x - p.x) / h, b = (pv.x - p.x) / h, c = (pu.y - p.y) / h, d = (pv.y - p.y) / h;
+      const det = a * d - b * c;
+      if (Math.abs(det) < 1e-10) return local;
+      u += (ex * d - ey * b) / det;
+      v += (a * ey - c * ex) / det;
+    }
+    return Number.isFinite(u) && Number.isFinite(v) ? { x: u, y: v } : local;
   }
 
-  // Inverse bilinear: pixel → UV (0-1) via Newton-Raphson iteration
-  function toNormalized(px: number, py: number): Point2D {
+  // Inverse bilinear: pixel → quad-local position (0-1) via Newton-Raphson iteration
+  function toQuadLocal(px: number, py: number): Point2D {
     const { topLeft: tl, topRight: tr, bottomLeft: bl, bottomRight: br } = corners;
     const tx = px / containerWidth;
     const ty = 1 - py / containerHeight;
@@ -161,7 +197,17 @@
       const b = customPoints[nextI];
       const bPx = vertexPixels[nextI];
       const hasCurve = a.cpOut || b.cpIn;
-      if (hasCurve) {
+      if (renderMesh) {
+        // The mesh bends every edge, straight ones too: trace it in layer
+        // UV and map each step, as the outline the output draws.
+        const c1 = a.cpOut ?? a;
+        const c2 = b.cpIn ?? b;
+        const steps = hasCurve ? 24 : 12;
+        for (let s = 1; s <= steps; s++) {
+          const p = s === steps ? bPx : toPixel(cubicBezier(a, c1, c2, b, s / steps));
+          d += ` L ${p.x},${p.y}`;
+        }
+      } else if (hasCurve) {
         const cp1 = a.cpOut ? toPixel(a.cpOut) : vertexPixels[i];
         const cp2 = b.cpIn ? toPixel(b.cpIn) : bPx;
         d += ` C ${cp1.x},${cp1.y} ${cp2.x},${cp2.y} ${bPx.x},${bPx.y}`;

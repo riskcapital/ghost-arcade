@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MeshPointTangents, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
-import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
+import { createLayer, createProject, createDefaultCorners, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, vjClipLauncherNow, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
@@ -39,7 +39,8 @@ import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
 import { maxLayers } from './license';
 import { settings, migrateOutputSlice } from './settings';
-import { withMeshPointTangents } from '../utils/meshWarp';
+import { isIdentityMeshGrid, meshGridHasTangents, withMeshPointTangents } from '../utils/meshWarp';
+import { fittedMeshGrid, refitRestingMesh } from '../utils/meshShapeFit';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
@@ -227,8 +228,30 @@ function placeNewLayer(layers: Layer[], newLayer: Layer, selectedLayerId: string
 }
 
 // Main project store
+/** A mesh fitted to a Custom Shape follows the shape while it is unwarped:
+ *  whatever changed the shape, the resting mesh is fitted to it again. */
+function keepFittedMeshesOnShapes(previous: Project, next: Project): Project {
+  if (next === previous || next.layers === previous.layers) return next;
+  let layers: Layer[] | null = null;
+  next.layers.forEach((layer, index) => {
+    if (!layer.meshGrid?.fit || layer.meshGrid.fit === 'layer') return;
+    const before = previous.layers[index]?.id === layer.id
+      ? previous.layers[index]
+      : previous.layers.find((candidate) => candidate.id === layer.id);
+    if (!before || before.layerShape === layer.layerShape || before.meshGrid !== layer.meshGrid) return;
+    const meshGrid = refitRestingMesh(layer.meshGrid, layer.layerShape);
+    if (meshGrid === layer.meshGrid) return;
+    layers ??= [...next.layers];
+    layers[index] = { ...layer, meshGrid: meshGrid ?? null };
+  });
+  return layers ? { ...next, layers } : next;
+}
+
 function createProjectStore() {
-  const { subscribe, set, update } = writable<Project>(createProject('Untitled Project'));
+  const projectWritable = writable<Project>(createProject('Untitled Project'));
+  const { subscribe, set } = projectWritable;
+  const update = (updater: (project: Project) => Project) =>
+    projectWritable.update((project) => keepFittedMeshesOnShapes(project, updater(project)));
 
   // Built-in inline shaders for default layer source
   const BUILTIN_SHADERS: Record<string, { name: string; code: string }> = {
@@ -1671,13 +1694,16 @@ void main() {
           if (layer.id !== layerId || !layer.layerShape || layer.layerShape.type !== 'custom') return layer;
           const pts = layer.layerShape.params.customPoints ?? [];
           if (pts.length < 3) return layer; // Need at least 3 points to close
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: { ...layer.layerShape.params, customClosed: true },
-            },
+          const layerShape: LayerShape = {
+            ...layer.layerShape,
+            params: { ...layer.layerShape.params, customClosed: true },
           };
+          // Already in Mesh with an unwarped mesh: put it on the new shape.
+          const grid = layer.meshGrid;
+          const meshGrid = layer.warpMode === 'mesh' && grid && !grid.fit && isIdentityMeshGrid(grid) && !meshGridHasTangents(grid)
+            ? fittedMeshGrid(layerShape, grid.rows, grid.cols, 'shape', grid.bezier).grid
+            : grid;
+          return { ...layer, layerShape, meshGrid };
         }),
       }));
       recordDiscreteAction();
@@ -2424,8 +2450,13 @@ void main() {
         ...project,
         layers: project.layers.map((l) => {
           if (l.id !== id) return l;
-          // Initialize mesh grid if switching to mesh mode and not already set
-          const meshGrid = warpMode === 'mesh' && !l.meshGrid ? createMeshGrid(3, 3) : l.meshGrid;
+          // Turning Mesh on gives a layer with a closed Custom Shape a mesh
+          // on the shape, not on the whole layer. A mesh that already
+          // carries a warp (or a fit) is kept as it is.
+          let meshGrid = l.meshGrid;
+          if (warpMode === 'mesh' && (!meshGrid || (!meshGrid.fit && isIdentityMeshGrid(meshGrid) && !meshGridHasTangents(meshGrid)))) {
+            meshGrid = fittedMeshGrid(l.layerShape, meshGrid?.rows ?? 3, meshGrid?.cols ?? 3, 'shape', meshGrid?.bezier).grid;
+          }
           return { ...l, warpMode, meshGrid };
         }),
       }));
@@ -2451,9 +2482,9 @@ void main() {
         ...project,
         layers: project.layers.map((l) => {
           if (l.id !== id) return l;
-          // A new grid starts straight, but stays in Bezier mode if it was.
-          const bezier = l.meshGrid?.bezier ? { bezier: true } : {};
-          return { ...l, meshGrid: { ...createMeshGrid(rows, cols), ...bezier } };
+          // A new grid starts straight, but stays in Bezier mode if it was,
+          // and stays fitted to the shape the way it was.
+          return { ...l, meshGrid: fittedMeshGrid(l.layerShape, rows, cols, l.meshGrid?.fit ?? null, l.meshGrid?.bezier).grid };
         }),
       }));
       recordDiscreteAction();
@@ -2464,11 +2495,32 @@ void main() {
         ...project,
         layers: project.layers.map((l) => {
           if (l.id !== id || !l.meshGrid) return l;
-          const bezier = l.meshGrid.bezier ? { bezier: true } : {};
-          return { ...l, meshGrid: { ...createMeshGrid(l.meshGrid.rows, l.meshGrid.cols), ...bezier } };
+          const { rows, cols, fit, bezier } = l.meshGrid;
+          return { ...l, meshGrid: fittedMeshGrid(l.layerShape, rows, cols, fit ?? null, bezier).grid };
         }),
       }));
       recordDiscreteAction();
+    },
+
+    /** Start the mesh over on the layer's Custom Shape: over its bounds
+     *  ('shape'), along its outline ('outline'), or over the whole layer
+     *  ('layer', which Mesh then keeps). Returns how it was fitted: a concave
+     *  outline may be followed across its inner corners, one that cannot be
+     *  followed at all gets the bounds, and a layer without a closed shape
+     *  gets the whole layer. */
+    fitMeshGrid(id: string, fit: 'shape' | 'outline' | 'layer'): { fitted: 'shape' | 'outline' | null; spansInnerCorners: boolean } {
+      let outcome: { fitted: 'shape' | 'outline' | null; spansInnerCorners: boolean } = { fitted: null, spansInnerCorners: false };
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== id) return l;
+          const result = fittedMeshGrid(l.layerShape, l.meshGrid?.rows ?? 3, l.meshGrid?.cols ?? 3, fit, l.meshGrid?.bezier);
+          outcome = { fitted: result.fitted, spansInnerCorners: result.spansInnerCorners === true };
+          return { ...l, meshGrid: result.grid };
+        }),
+      }));
+      recordDiscreteAction();
+      return outcome;
     },
 
     // Bezier mesh: curved cell edges shaped by per-point tangent handles.

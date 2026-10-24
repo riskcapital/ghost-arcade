@@ -3,6 +3,7 @@
   import EffectChainPresets from './EffectChainPresets.svelte';
   import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers } from '../stores/layers';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
+  import { fittableShapeOutline } from '../utils/meshShapeFit';
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import type { BlendMode, MediaSource, Effect, EffectType, ContentFitMode, VideoPlaybackMode, StageEffectType } from '../types';
@@ -31,6 +32,18 @@
   // until the next remount.
 
   // Shader thumbnail cache: layerId -> { url, codeSnippet }
+  // Set when "Outline" could not follow the shape exactly.
+  let meshFitNote: { layerId: string; text: string } | null = null;
+  function fitMesh(layerId: string, fit: 'shape' | 'outline' | 'layer') {
+    const { fitted, spansInnerCorners } = project.fitMeshGrid(layerId, fit);
+    meshFitNote = fit !== 'outline' ? null
+      : fitted !== 'outline'
+        ? { layerId, text: 'The mesh could not follow this outline without folding, so it covers the shape’s bounds.' }
+        : spansInnerCorners
+          ? { layerId, text: 'The mesh border runs across the outline’s inner corners, so no cell folds. The shape still hides what is outside it.' }
+          : null;
+  }
+
   let shaderThumbnails: Record<string, string> = {};
   let shaderThumbCodes: Record<string, string> = {}; // track which code generated the thumb
 
@@ -2228,6 +2241,43 @@
               Bezier curves
             </label>
           </div>
+          <!-- A closed Custom Shape: the mesh can rest on the shape instead of
+               the whole layer. Fitting starts the mesh over; content stays put. -->
+          {#if fittableShapeOutline(layer.layerShape)}
+            <div class="property-row">
+              <label for="mesh-fit-shape-{layer.id}">Fit Mesh To</label>
+              <div class="warp-mode-buttons">
+                <button
+                  id="mesh-fit-shape-{layer.id}"
+                  class="warp-mode-btn"
+                  class:active={layer.meshGrid.fit === 'shape'}
+                  title="An even grid over the shape's bounds"
+                  onclick={() => fitMesh(layer.id, 'shape')}
+                >
+                  Shape
+                </button>
+                <button
+                  class="warp-mode-btn"
+                  class:active={layer.meshGrid.fit === 'outline'}
+                  title="A grid whose border follows the outline"
+                  onclick={() => fitMesh(layer.id, 'outline')}
+                >
+                  Outline
+                </button>
+                <button
+                  class="warp-mode-btn"
+                  class:active={!layer.meshGrid.fit || layer.meshGrid.fit === 'layer'}
+                  title="An even grid over the whole layer"
+                  onclick={() => fitMesh(layer.id, 'layer')}
+                >
+                  Layer
+                </button>
+              </div>
+            </div>
+            {#if meshFitNote?.layerId === layer.id}
+              <p class="property-hint">{meshFitNote.text}</p>
+            {/if}
+          {/if}
         {/if}
 
         <!-- Reset warp -->
