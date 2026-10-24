@@ -75,8 +75,27 @@
       zeroCopy = !!s.experimental?.outputZeroCopy;
     });
     unsub();
-    return { experimentalWebRTC: webrtc, experimentalZeroCopy: zeroCopy };
+    return { experimentalWebRTC: webrtc, experimentalZeroCopy: zeroCopy && !zeroCopyUnavailable };
   }
+
+  // The zero-copy output needs WebGPU in the output window. When that window
+  // cannot start it (a blocklisted driver, a second GPU), it says so and the
+  // output reopens on the standard transport, which stays in use for the
+  // rest of the session, instead of leaving a status message on the projector.
+  let zeroCopyUnavailable = false;
+  let lastZeroCopyOpen: 'popup' | 'fullscreen' | null = null;
+  async function fallBackFromZeroCopy(event: Event) {
+    if (zeroCopyUnavailable) return;
+    zeroCopyUnavailable = true;
+    const reason = (event as CustomEvent).detail?.error || 'WebGPU unavailable';
+    console.warn(`[Output] Zero-copy output could not start (${reason}); reopening on the standard transport.`);
+    const reopen = lastZeroCopyOpen;
+    await invoke('close_output_window').catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    if (reopen === 'fullscreen') await openFullscreenExternal();
+    else if (reopen === 'popup') await openPopup(true);
+  }
+  if (typeof window !== 'undefined') window.addEventListener('ghost:zero-copy-output-failed', fallBackFromZeroCopy);
 
   // Open output window — opens a draggable window (double-click to fullscreen)
   export async function openPopup(preferExternal: boolean = true) {
@@ -190,6 +209,7 @@
         return;
       }
       isOpen = true;
+      lastZeroCopyOpen = 'popup';
       console.log(`[Output] Window opened on display "${target.label}" (${winW}x${winH}) [WebGPU zero-copy]`);
 
       // 3) Tell the presenter to attach to this window. The presenter
@@ -234,6 +254,7 @@
           return;
         }
         isOpen = true;
+        lastZeroCopyOpen = 'fullscreen';
         console.log(`[Output] Fullscreen on display ${target.label || target.id} [WebGPU zero-copy]`);
         const { attachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
         attachOutputWindow(newWin);
@@ -292,6 +313,7 @@
   }
 
   onDestroy(() => {
+    if (typeof window !== 'undefined') window.removeEventListener('ghost:zero-copy-output-failed', fallBackFromZeroCopy);
     close();
   });
 </script>

@@ -228,7 +228,7 @@ function isExternalPreviewWindow(): boolean {
 // ============================================================
 
 interface StateMessage {
-  type: 'project-state' | 'vj-state' | 'stage3d-state' | 'stage3d-edit' | 'settings-update' | 'osr-request-state' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen';
+  type: 'project-state' | 'vj-state' | 'stage3d-state' | 'stage3d-edit' | 'settings-update' | 'osr-request-state' | 'osr-alive' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen';
   data?: any;
   timestamp: number;
 }
@@ -260,6 +260,13 @@ function sendFullState() {
 }
 
 let hasActiveReceiver = false;
+// Receivers (output, Screen and Stage windows) say they are alive every few
+// seconds. Once none has for RECEIVER_TIMEOUT_MS the sender stops: every
+// project change used to be serialized for every layer for the rest of the
+// session after any output had once been opened.
+const RECEIVER_ALIVE_MS = 2000;
+const RECEIVER_TIMEOUT_MS = 15000;
+let lastReceiverAliveAt = 0;
 
 function buildSyncedStatePayload(): any {
   const projectData = project.exportProject() as any;
@@ -611,11 +618,27 @@ function initSender() {
     if (event.data?.type === 'osr-request-state') {
       console.log('[StateSync] OSR requested full state — activating broadcast');
       hasActiveReceiver = true;
+      lastReceiverAliveAt = Date.now();
       sendFullState();
+    } else if (event.data?.type === 'osr-alive') {
+      lastReceiverAliveAt = Date.now();
+      if (!hasActiveReceiver) {
+        // A receiver outlived a pause in its heartbeats: bring it up to date.
+        hasActiveReceiver = true;
+        sendFullState();
+      }
     } else if (event.data?.type === 'stage3d-edit') {
       applyStage3DEditFromWindow(event.data.data);
     }
   };
+
+  const receiverWatch = setInterval(() => {
+    if (hasActiveReceiver && Date.now() - lastReceiverAliveAt > RECEIVER_TIMEOUT_MS) {
+      hasActiveReceiver = false;
+      console.log('[StateSync] No output window has answered for a while — pausing broadcast');
+    }
+  }, RECEIVER_ALIVE_MS);
+  unsubscribers.push(() => clearInterval(receiverWatch));
 
   // Subscribe to project store changes. Diff-routed: a structural
   // change (layer add/remove/reorder, source/effect edits) triggers the
@@ -1109,6 +1132,11 @@ function initReceiver() {
     type: 'osr-request-state',
     timestamp: Date.now(),
   } satisfies StateMessage);
+  // And keep saying this window is here, so the sender stops once it is not.
+  const aliveTimer = setInterval(() => {
+    try { channel?.postMessage({ type: 'osr-alive', timestamp: Date.now() } satisfies StateMessage); } catch { /* closed */ }
+  }, RECEIVER_ALIVE_MS);
+  unsubscribers.push(() => clearInterval(aliveTimer));
 
   if (isExternalPreviewWindow()) {
     startStage3DRelayPolling();

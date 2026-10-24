@@ -112,6 +112,12 @@ function installMessageListener(): void {
   window.addEventListener('message', (event: MessageEvent) => {
     if (!event?.data || typeof event.data !== 'object') return;
     const data = event.data;
+    if (data.type === 'ghostarcade-output-webgpu-failed') {
+      // The output window could not start WebGPU; the editor falls back
+      // (OutputWindow listens for this).
+      window.dispatchEvent(new CustomEvent('ghost:zero-copy-output-failed', { detail: { error: String(data.error || '') } }));
+      return;
+    }
     if (data.type === 'ghostarcade-output-ready') {
       // Find which attached target sent this ready. event.source is a
       // WindowProxy when the message came from another window. Compare

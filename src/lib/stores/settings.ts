@@ -231,6 +231,11 @@ export const SHADER_QUALITY_MULTIPLIERS: Record<ShaderQualityMode, number> = {
 };
 
 export interface UISettings {
+  /** Mapping canvas zoom per wheel or pinch movement: 1 = normal, 0.25-3. */
+  canvasZoomSpeed?: number;
+  /** What a two-finger scroll does on the mapping canvas: zoom (mouse-wheel
+   *  style) or pan (trackpad style). A pinch always zooms. */
+  canvasScrollGesture?: 'zoom' | 'pan';
   colorScheme: ColorSchemeId;
   fluidQuality: FluidQualityMode;
   shaderQuality: ShaderQualityMode;
@@ -653,6 +658,10 @@ export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): Ou
 }
 
 export interface OutputSettings {
+  /** Resize the project to the projector's resolution when Fullscreen opens.
+   *  Off by default: it rebuilds every render target, which held up the
+   *  output, and changes the project without asking. */
+  matchResolutionOnFullscreen?: boolean;
   // Spout output (Windows only — shares GPU textures between apps)
   spoutEnabled: boolean;
   spoutName: string; // Legacy single-sender name (used when slices empty)

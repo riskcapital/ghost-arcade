@@ -908,6 +908,33 @@
 
           <div class="setting-row">
             <div class="setting-label">
+              <span class="label-text">Zoom Speed</span>
+              <span class="label-hint">How far the mapping canvas zooms per scroll or pinch. Lower it if a trackpad zooms too fast.</span>
+            </div>
+            <select value={String($settings.ui.canvasZoomSpeed ?? 1)}
+              onchange={(e) => settings.update((s) => { const next = { ...s, ui: { ...s.ui, canvasZoomSpeed: Number((e.target as HTMLSelectElement).value) } }; return next; })}>
+              <option value="0.25">Very slow</option>
+              <option value="0.5">Slow</option>
+              <option value="1">Normal</option>
+              <option value="1.75">Fast</option>
+              <option value="3">Very fast</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Two-Finger Scroll</span>
+              <span class="label-hint">On the mapping canvas. Zoom suits a mouse wheel; Pan suits a trackpad, where a pinch zooms.</span>
+            </div>
+            <select value={$settings.ui.canvasScrollGesture ?? 'zoom'}
+              onchange={(e) => settings.update((s) => ({ ...s, ui: { ...s.ui, canvasScrollGesture: (e.target as HTMLSelectElement).value as 'zoom' | 'pan' } }))}>
+              <option value="zoom">Zoom</option>
+              <option value="pan">Pan</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
               <span class="label-text">Resolution</span>
               <span class="label-hint">Current: {$project.width} x {$project.height}</span>
             </div>
@@ -1195,6 +1222,18 @@
             <button class="secondary-btn" onclick={handleMatchResolution} disabled={matchResBusy}>
               {matchResBusy ? 'Detecting…' : 'Match Output Display'}
             </button>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Match on Fullscreen</span>
+              <span class="label-hint">Resize the project to the projector's resolution each time Fullscreen opens. Off keeps the project's own size, and the output opens sooner.</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={$settings.output.matchResolutionOnFullscreen ?? false}
+                onchange={(e) => settings.update(s => ({ ...s, output: { ...s.output, matchResolutionOnFullscreen: (e.target as HTMLInputElement).checked } }))} />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           <div class="setting-row">

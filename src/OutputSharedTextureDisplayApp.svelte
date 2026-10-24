@@ -659,6 +659,16 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
     await initWebGPU();
 
+    // No WebGPU here (a blocklisted driver, another GPU): tell the editor,
+    // which reopens this output on the standard transport instead of
+    // leaving a status message on the projector.
+    if (initStatus === 'no-webgpu' || initStatus === 'error') {
+      try {
+        (window as any).opener?.postMessage({ type: 'ghostarcade-output-webgpu-failed', error: initError }, '*');
+      } catch { /* no editor to tell */ }
+      return;
+    }
+
     // WebGPU is now ready. Tell the editor we can receive frames.
     // If the editor's attachOutputWindow already fired its
     // 'editor-attach' probe before we got here, our listener handled

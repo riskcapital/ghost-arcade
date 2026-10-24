@@ -3412,8 +3412,33 @@
       if (layer.source.type === 'video') {
         const vEl = layer.source.videoElement;
         const ready = !!vEl && vEl.readyState >= 2 /* HAVE_CURRENT_DATA */ && vEl.videoWidth > 0 && vEl.videoHeight > 0;
-        if (layer.source.texture && ready) {
-          (layer.source.texture as THREE.VideoTexture).needsUpdate = true;
+        // Upload only frames the video has not handed over yet. Every
+        // texture used to re-upload every editor frame (60 a second for a
+        // 30 fps clip, per layer), which with many video slices was most of
+        // the frame. A playing video counts the frames it presents; each
+        // texture (one video can feed several slices) remembers the last it
+        // took. A paused one uploads when its position changes (a seek).
+        if (layer.source.texture && ready && vEl) {
+          const frames = vEl as HTMLVideoElement & { __gaFrameSeq?: number; __gaFrameWatch?: boolean };
+          if (!frames.__gaFrameWatch && typeof frames.requestVideoFrameCallback === 'function') {
+            frames.__gaFrameWatch = true;
+            frames.__gaFrameSeq = 1;
+            const onFrame = () => {
+              frames.__gaFrameSeq = (frames.__gaFrameSeq ?? 0) + 1;
+              frames.requestVideoFrameCallback(onFrame);
+            };
+            frames.requestVideoFrameCallback(onFrame);
+          }
+          const tex = layer.source.texture as THREE.VideoTexture & { __gaSeq?: number; __gaTime?: number };
+          const watched = !!frames.__gaFrameWatch;
+          const fresh = !watched
+            || tex.__gaSeq !== frames.__gaFrameSeq
+            || (frames.paused && tex.__gaTime !== frames.currentTime);
+          if (fresh) {
+            tex.needsUpdate = true;
+            tex.__gaSeq = frames.__gaFrameSeq;
+            tex.__gaTime = frames.currentTime;
+          }
         }
 
         // Video health watchdog — gated behind window.__VIDEO_DEBUG__ so
@@ -4413,8 +4438,17 @@
       broadcastAudioFrame(rawAnalysis, false);
     }
 
+    // A hidden or fully transparent shader layer is not drawn, so its shader
+    // is not run either, unless another layer reads it as an image input.
+    const layersReadAsInputs = new Set<string>();
+    for (const candidate of layerList) {
+      for (const ref of Object.values(candidate.source?.shaderImageInputs ?? {})) {
+        if (ref?.type === 'layer') layersReadAsInputs.add(ref.id);
+      }
+    }
     for (const layer of layerList) {
       if (!layer.source || layer.source.type !== 'shader') continue;
+      if ((layer.visible === false || (layer.opacity ?? 1) <= 0) && !layersReadAsInputs.has(layer.id)) continue;
       // Stage-mode injected sources share their RT with the VJ deck's own
       // pass that already ran above; re-rendering under a Screen-layer
       // cache key creates a second orphan instance and consumes the shared
