@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.9 — October 24, 2026
+
+Merge one VJ block into another, autopilot across every block, and an A/B slider whose transition and blend work between whole decks and run once from A to B; Lines Light Up with feathered and tapered draw heads and a working reset; SVG rotation in every mode with the transform gizmo; point cloud loads that continue in the background; deformation panels that show only the controls each type uses; MIDI, OSC, DMX and MediaPipe bindings that reach every parameter. See [release notes](docs/releases/v2.1.9.md).
+
 # Ghost Arcade Pro 2.1.8 — October 22, 2026
 
 Light Painting plays like Studio: strokes draw in sequence and stay drawn, Forward, Reverse, Ping Pong (with hold) and Once play the whole drawing, stroke ends taper with a rounded glow, and the trail fades as in Studio. See [release notes](docs/releases/v2.1.8.md).
