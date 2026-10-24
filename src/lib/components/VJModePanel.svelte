@@ -76,7 +76,7 @@
   import RecordingSourcePicker from './RecordingSourcePicker.svelte';
   import { showLoading } from '../stores/loading';
   import { showToast } from '../stores/errorToast';
-  import { missingClipFiles, checkClipFiles, searchFolderForFiles, chooseReplacementFile } from '../stores/missingMedia';
+  import { missingClipFiles, checkClipFiles, searchFolderForFiles, chooseReplacementFile, findFilesBeside, noteMediaRelinked } from '../stores/missingMedia';
   import { clipFilePath, clipFilePaths, fileNameOf, matchFoundFiles } from '../vj/clipFiles';
   import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
   import SynthVision from './SynthVision.svelte';
@@ -3850,9 +3850,14 @@
   const MISSING_FILE_CHECK_MS = 4000;
   let missingFileTimer: ReturnType<typeof setInterval> | null = null;
   let locatingFiles = false;
+  // Every block's clips, not only the block on screen: a show opened on
+  // another computer should say what is missing before a block is switched to.
   const deckClipFiles = () => {
     const state = get(vjClipLauncher);
-    return clipFilePaths([state.clipGrid, state.bankBClipGrid]);
+    const others = (state.blocks ?? [])
+      .filter((block) => block.id !== state.activeBlockId)
+      .flatMap((block) => [block.clipGrid, block.bankBClipGrid]);
+    return clipFilePaths([state.clipGrid, state.bankBClipGrid, ...others]);
   };
   const refreshMissingFiles = () => checkClipFiles(deckClipFiles());
   onMount(() => {
@@ -3883,6 +3888,7 @@
       const found = Object.keys(moves).length;
       if (!found) { showToast('None of the missing files are in that folder.', 'warning'); return; }
       const clips = vjClipLauncher.relinkClipFiles(moves);
+      noteMediaRelinked();
       const left = (await refreshMissingFiles()).size;
       showToast(`Found ${found} file${found === 1 ? '' : 's'} and relinked ${clips} clip${clips === 1 ? '' : 's'}.${left ? ` ${left} still missing.` : ''} Save the project to keep this.`, left ? 'warning' : 'info');
     } catch (error) {
@@ -3900,9 +3906,14 @@
     try {
       const to = await chooseReplacementFile(fileNameOf(from));
       if (!to) return;
-      const clips = vjClipLauncher.relinkClipFiles({ [from]: to });
+      // The other missing clips usually moved with it: look beside it.
+      const others = [...await refreshMissingFiles()].filter((p) => p !== from);
+      const moves = { ...matchFoundFiles(others, await findFilesBeside(to, others.map(fileNameOf))), [from]: to };
+      const clips = vjClipLauncher.relinkClipFiles(moves);
+      noteMediaRelinked();
       await refreshMissingFiles();
-      showToast(`Relinked ${clips} clip${clips === 1 ? '' : 's'} to ${fileNameOf(to)}. Save the project to keep this.`, 'info');
+      const extra = Object.keys(moves).length - 1;
+      showToast(`Relinked ${clips} clip${clips === 1 ? '' : 's'} to ${fileNameOf(to)}${extra ? ` and ${extra} other file${extra === 1 ? '' : 's'} found beside it` : ''}. Save the project to keep this.`, 'info');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not use that file.', 'error');
     } finally {

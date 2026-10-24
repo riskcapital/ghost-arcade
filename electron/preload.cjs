@@ -76,7 +76,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Saves seconds per gigabyte over save_file_binary for large videos/.glb.
   'copy_file_to_project',
   'project_media_scan', 'project_media_relink', 'project_media_collect',
-  'media_files_status', 'media_find_in_folder',
+  'media_files_status', 'media_find_in_folder', 'media_find_beside',
+  'save_project_file', 'prepare_project_media', 'take_pending_project_open',
   'inspect_video_import',
   'open_project_dialog',
   'download_demo_zip', 'read_project_file',
@@ -200,7 +201,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress'];
+    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);

@@ -15,15 +15,21 @@ const PROJECT_EXTENSIONS = new Set(['.gha', '.shrnk', '.json']);
 const MEDIA_EXTENSIONS = new Set([
   // video
   '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.mpg', '.mpeg', '.mts', '.m2ts', '.ts', '.3gp', '.ogv', '.mxf', '.hap',
+  '.m2v', '.mp2', '.vob', '.f4v', '.dv', '.asf', '.y4m',
   // image
   '.png', '.jpg', '.jpeg', '.jfif', '.gif', '.webp', '.avif', '.bmp', '.tif', '.tiff', '.svg', '.ico', '.heic', '.heif', '.exr', '.hdr', '.tga', '.dds', '.ktx', '.ktx2', '.psd',
+  '.apng', '.jxl', '.jp2', '.pbm', '.pgm', '.ppm',
   // audio
-  '.mp3', '.wav', '.ogg', '.oga', '.flac', '.aac', '.m4a', '.aif', '.aiff', '.opus', '.wma', '.mid', '.midi',
+  '.mp3', '.wav', '.ogg', '.oga', '.flac', '.aac', '.m4a', '.aif', '.aiff', '.opus', '.wma', '.mid', '.midi', '.caf', '.weba',
   // 3D models, splats, point clouds
   '.glb', '.gltf', '.bin', '.obj', '.mtl', '.fbx', '.stl', '.ply', '.splat', '.ksplat', '.spz', '.sog', '.usdz', '.dae', '.3ds',
   // looks, fonts, shaders, vector animation
-  '.cube', '.ttf', '.otf', '.woff', '.woff2', '.fs', '.vs', '.frag', '.vert', '.glsl', '.isf', '.wgsl', '.lottie', '.milk', '.html', '.htm', '.dmfx',
+  '.cube', '.3dl', '.ttf', '.otf', '.woff', '.woff2', '.fs', '.vs', '.frag', '.vert', '.glsl', '.isf', '.wgsl', '.lottie', '.milk', '.html', '.htm', '.dmfx',
 ]);
+// Models that load further files from beside themselves: a .gltf's buffers
+// and textures, an .obj's materials and theirs.
+const MODELS_WITH_FILES = new Set(['.gltf', '.obj', '.mtl']);
+const MEDIA_DIR_LIMIT = 2000;
 const REF_FIELDS = ['_assetRef', '_textureAssetRef', '_sourceAssetRef', 'assetRef'];
 const MEDIA_FIELDS = ['src', 'mediaSrc', 'modelData', 'filePath', 'texturePath', 'sourceUrl', 'assetUrl', 'url', 'thumbnail'];
 const PERSIST_LIMIT = 20000;
@@ -55,6 +61,8 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
   // files, the autosave, the media library) and comes back with them.
   const projectFiles = new Set();
   const persistedReads = new Set();
+  // Folders whose media files (by type only) are readable: a model's own.
+  const mediaDirs = new Set();
   let saveTimer = null;
 
   function load() {
@@ -69,6 +77,10 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
         const key = canon(entry);
         if (key) persistedReads.add(key);
       }
+      for (const entry of Array.isArray(stored?.mediaDirs) ? stored.mediaDirs.slice(-MEDIA_DIR_LIMIT) : []) {
+        const key = canon(entry);
+        if (key) mediaDirs.add(key);
+      }
     } catch { /* first run, or an unreadable store: start empty */ }
   }
   function trim(set) {
@@ -79,7 +91,7 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
     if (!storePath) return;
     try {
       fs.mkdirSync(path.dirname(storePath), { recursive: true });
-      fs.writeFileSync(storePath, JSON.stringify({ projectFiles: [...projectFiles], readFiles: [...persistedReads] }), 'utf8');
+      fs.writeFileSync(storePath, JSON.stringify({ projectFiles: [...projectFiles], readFiles: [...persistedReads], mediaDirs: [...mediaDirs] }), 'utf8');
     } catch { /* the grants still hold for this launch */ }
   }
   function scheduleSave() {
@@ -93,6 +105,15 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
     trim(set);
     scheduleSave();
   }
+  /** A readable model file makes the media files beside it readable. */
+  function rememberModelFolder(key) {
+    if (!MODELS_WITH_FILES.has(pathApi.extname(key).toLowerCase())) return;
+    const dir = pathApi.dirname(key);
+    if (mediaDirs.has(dir)) return;
+    mediaDirs.add(dir);
+    while (mediaDirs.size > MEDIA_DIR_LIMIT) mediaDirs.delete(mediaDirs.values().next().value);
+    scheduleSave();
+  }
 
   function isProjectFile(key) {
     return PROJECT_EXTENSIONS.has(pathApi.extname(key).toLowerCase());
@@ -103,6 +124,7 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
     const key = canon(value);
     if (!key) return false;
     remember(persistedReads, key);
+    rememberModelFolder(key);
     return true;
   }
   /** A folder the user picked to read from (an image sequence). */
@@ -141,6 +163,9 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
     if (!key) return false;
     if (readFiles.has(key) || persistedReads.has(key)) return true;
     for (const dir of readDirs) if (isInside(dir, key)) return true;
+    if (MEDIA_EXTENSIONS.has(pathApi.extname(key).toLowerCase())) {
+      for (const dir of mediaDirs) if (isInside(dir, key)) return true;
+    }
     return canWrite(key);
   }
 
@@ -172,6 +197,7 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
       if (!key) return;
       found++;
       remember(persistedReads, key);
+      rememberModelFolder(key);
     };
     const visit = (node, depth) => {
       if (!node || typeof node !== 'object' || depth > 64) return;
@@ -181,6 +207,7 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
         if (!ref || typeof ref !== 'object') continue;
         add(ref.originalPath);
         add(ref.projectPath);
+        add(ref.relativePath);
         add(ref.url);
       }
       for (const field of MEDIA_FIELDS) add(node[field]);
@@ -208,6 +235,7 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
     const key = canon(value);
     if (!key) return false;
     remember(persistedReads, key);
+    rememberModelFolder(key);
     if (isProjectFile(key)) registerProjectFile(value);
     return true;
   }

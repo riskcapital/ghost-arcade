@@ -26,20 +26,27 @@ async function mediaFilesStatus(paths) {
 }
 
 /**
+ * Names compare without case, as the file systems this runs on do, and in
+ * one Unicode form: macOS can hand back an accented letter as the letter
+ * plus a separate accent, where the same name saved on Windows is one
+ * character.
+ */
+const nameKey = name => name.normalize('NFC').toLowerCase();
+
+/**
  * Look through `dir` for files named like the ones asked for. The nearest
  * match to the top of the folder wins when a name appears more than once.
- * Names are compared without case, as the file systems this runs on do.
  */
-async function findMediaInFolder(dir, names) {
+async function findMediaInFolder(dir, names, { maxDepth = MAX_DEPTH, maxEntries = MAX_ENTRIES } = {}) {
   const wanted = new Map();
   for (const name of Array.isArray(names) ? names.slice(0, MAX_NAMES) : []) {
-    if (typeof name === 'string' && name && !/[\\/\0]/.test(name)) wanted.set(name.toLowerCase(), name);
+    if (typeof name === 'string' && name && !/[\\/\0]/.test(name)) wanted.set(nameKey(name), name);
   }
   const found = {};
   let remaining = wanted.size;
   let seen = 0;
   let level = [dir];
-  for (let depth = 0; depth <= MAX_DEPTH && level.length && remaining > 0 && seen < MAX_ENTRIES; depth += 1) {
+  for (let depth = 0; depth <= maxDepth && level.length && remaining > 0 && seen < maxEntries; depth += 1) {
     const next = [];
     for (const folder of level) {
       let entries;
@@ -55,12 +62,12 @@ async function findMediaInFolder(dir, names) {
           continue;
         }
         if (!entry.isFile()) continue;
-        const asked = wanted.get(entry.name.toLowerCase());
+        const asked = wanted.get(nameKey(entry.name));
         if (asked === undefined || found[asked]) continue;
         found[asked] = path.join(folder, entry.name);
         remaining -= 1;
       }
-      if (remaining <= 0 || seen >= MAX_ENTRIES) break;
+      if (remaining <= 0 || seen >= maxEntries) break;
     }
     level = next;
   }

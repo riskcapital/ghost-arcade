@@ -96,6 +96,29 @@ describe('paths the renderer may write and read', () => {
     expect(g.canWrite('/media/show/loop.mp4')).toBe(false);
   });
 
+  it('lets a model load the files beside it, and only media files', () => {
+    const g = grants();
+    g.registerProjectFile('/shows/tour/show.gha', JSON.stringify({
+      layers: [{ model3dContent: { _assetRef: { originalPath: '/models/robot/robot.gltf' } } }],
+    }));
+    expect(g.canRead('/models/robot/robot.gltf')).toBe(true);
+    expect(g.canRead('/models/robot/robot.bin')).toBe(true);
+    expect(g.canRead('/models/robot/textures/skin.png')).toBe(true);
+    expect(g.canRead('/models/robot/notes.txt')).toBe(false);
+    expect(g.canRead('/models/other.bin')).toBe(false);
+    // A file a later version saved above the project folder.
+    g.registerProjectFile('/shows/tour/b.gha', JSON.stringify({ a: { _assetRef: { relativePath: '../footage/b.mov' } } }));
+    expect(g.canRead('/shows/footage/b.mov')).toBe(true);
+  });
+
+  it('checks a project save against the grants and writes it in one step', () => {
+    const handler = mainHandler('save_project_file');
+    expect(handler).toContain('pathGrants.canWrite(filePath)');
+    expect(handler.indexOf('pathGrants.canWrite(')).toBeLessThan(handler.indexOf('fs.writeFileSync('));
+    expect(handler).toContain('fs.renameSync(temp, filePath)');
+    expect(handler).toContain('climbsUp(filePath)');
+  });
+
   it('compares Windows paths without regard to case or slash direction', () => {
     const g = createPathGrants({ assetDirs: ['C:\\Users\\vj\\AppData\\ga\\project-assets'], platform: 'win32' });
     g.allowWriteDir('D:\\Export');

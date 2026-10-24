@@ -7,6 +7,16 @@ import { writable, get } from 'svelte/store';
 /** Absolute paths that were checked and are not on disk. */
 export const missingClipFiles = writable<Set<string>>(new Set());
 
+/**
+ * Bumped whenever media is pointed at a new file (a relink, or files found
+ * in a new place on open). The project counts as changed until saved, so a
+ * relink prompts on quit instead of being lost.
+ */
+export const mediaRelinkVersion = writable(0);
+export function noteMediaRelinked(): void {
+  mediaRelinkVersion.update((n) => n + 1);
+}
+
 type Invoke = (command: string, args?: unknown) => Promise<any>;
 const invoker = (): Invoke | null => {
   const api = typeof window !== 'undefined' ? (window as any).electronAPI : null;
@@ -37,6 +47,17 @@ export async function searchFolderForFiles(names: string[]): Promise<{ canceled:
   const invoke = invoker();
   if (!invoke) return { canceled: true, dir: null, found: {} };
   return invoke('media_find_in_folder', { names });
+}
+
+/** Files named like these beside `file` (one the user just located). */
+export async function findFilesBeside(file: string, names: string[]): Promise<Record<string, string>> {
+  const invoke = invoker();
+  if (!invoke || !names.length) return {};
+  try {
+    return (await invoke('media_find_beside', { file, names }))?.found ?? {};
+  } catch {
+    return {};
+  }
 }
 
 /** Pick one replacement file. Returns its path, or null when cancelled. */
