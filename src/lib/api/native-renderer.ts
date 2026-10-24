@@ -818,6 +818,9 @@ export interface RendererStatus {
   decode_preview_cache_bypassed: boolean;
   decode_upload_queue_cap_mb: number;
   decode_handoff_byte_cap_mb: number;
+  /** Decoded-video memory budget in force, and the GPU memory it was sized from (0 = unknown). */
+  video_decode_budget_mb?: number;
+  gpu_memory_mb?: number;
   decode_handoff_predecode_shed_pct: number;
   shader_precompile_queue_cap: number;
   shader_precompile_per_frame: number;
@@ -1397,7 +1400,7 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
       decode_preview_size: config?.decode_preview_size ?? 96,
       decode_preview_cache_mb: config?.decode_preview_cache_mb ?? 128,
       decode_upload_queue_cap_mb: config?.decode_upload_queue_cap_mb ?? 256,
-      decode_handoff_byte_cap_mb: config?.decode_handoff_byte_cap_mb ?? 512,
+      decode_handoff_byte_cap_mb: config?.decode_handoff_byte_cap_mb ?? 0,
       decode_handoff_predecode_shed_pct: config?.decode_handoff_predecode_shed_pct ?? 90,
       decode_predecode_estimate_cache_cap_entries:
         config?.decode_predecode_estimate_cache_cap_entries ?? 8192,

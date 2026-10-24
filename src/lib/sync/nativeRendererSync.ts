@@ -5709,7 +5709,9 @@ export class NativeRendererSync {
   // Windows owns RGB bridge textures in addition to decoder surfaces. Keep
   // room for a prepared grid plus the playing rows; allocation stays lazy
   // and the core enforces this shared limit across all sessions.
-  private decodeHandoffByteCapMb = isWindows ? 1024 : 512;
+  // Memory for playing videos' decoded frames. 0 = automatic: the core sizes
+  // it to the GPU's memory (a quarter of it, 512 MB to 8 GB).
+  private decodeHandoffByteCapMb = 0;
   private decodeHandoffPredecodeShedPct = 90;
   private decodePredecodeEstimateCacheCapEntries = 8192;
   private mediaDropCommandPressurePct = 90;
@@ -5753,6 +5755,29 @@ export class NativeRendererSync {
     if (!status.backend_ready) {
       throw new Error(`Native renderer backend reported not ready: ${status.last_frame_error ?? 'unknown error'}`);
     }
+  }
+
+  /**
+   * The core takes at most `commandDrainLimit` commands in one transaction
+   * and refuses a larger one outright. Send everything but the last
+   * transaction's worth ahead, in order, in chunks under the limit; return
+   * what is left for the caller's own transaction and how many were dropped.
+   */
+  private async submitAheadInChunks(
+    commands: RendererCommand[],
+    context: string,
+  ): Promise<{ commands: RendererCommand[]; dropped: number }> {
+    const limit = Math.max(32, this.commandDrainLimit - 8);
+    if (commands.length <= limit) return { commands, dropped: 0 };
+    let dropped = 0;
+    let start = 0;
+    while (commands.length - start > limit) {
+      const summary = await submitNativeRendererCommands(commands.slice(start, start + limit));
+      this.warnNativeCommandDrops(summary, `${context}-chunk`);
+      dropped += Number(summary?.dropped ?? 0) || 0;
+      start += limit;
+    }
+    return { commands: commands.slice(start), dropped };
   }
 
   private warnNativeCommandDrops(
@@ -10060,8 +10085,11 @@ export class NativeRendererSync {
 
     if (graphInputCommands.length) {
       noteNativeIpcProbe(graphInputCommands);
-      const graphInputSummary = await submitNativeRendererCommands(graphInputCommands);
-      this.warnNativeCommandDrops(graphInputSummary, 'graph-input-source-frames');
+      const leftover = await this.submitAheadInChunks(graphInputCommands, 'graph-input-source-frames');
+      if (leftover.commands.length) {
+        const graphInputSummary = await submitNativeRendererCommands(leftover.commands);
+        this.warnNativeCommandDrops(graphInputSummary, 'graph-input-source-frames');
+      }
     }
 
     const graphSourceCommands = await this.renderNativeGraphSources(layers, width, height, renderClock, visual);
@@ -10079,15 +10107,22 @@ export class NativeRendererSync {
     if (!commands.length) return;
 
     commands.push({ type: 'present' });
+    noteNativeIpcProbe(commands);
+    // A whole scene of a few hundred layers (opening a big show, or the full
+    // resync when an output opens) is more commands than the core takes in
+    // one transaction; it refused the lot every frame and nothing appeared.
+    // The part over the limit goes ahead in chunks, in order.
+    const ahead = await this.submitAheadInChunks(commands, 'frame-batch');
+    if (!this.running || lifecycleGeneration !== this.lifecycleGeneration) return;
 
     const batch: CommandBatch = {
       frame_id: ++this.frameId,
-      commands,
+      commands: ahead.commands,
     };
 
-    noteNativeIpcProbe(commands);
     const batchSummary = await submitNativeRendererBatch(batch);
     this.warnNativeCommandDrops(batchSummary, 'frame-batch');
+    if (ahead.dropped && batchSummary) batchSummary.dropped = Number(batchSummary.dropped ?? 0) + ahead.dropped;
     if (!this.running || lifecycleGeneration !== this.lifecycleGeneration) return;
     if (this.pendingGraphBufferPrunes.length) {
       // After the batch: the graph that still used these buffers is gone.
@@ -11086,11 +11121,18 @@ fn fs_main() -> @location(0) vec4<f32> {
     }).catch(() => {});
   }
 
+  /** Settings → Video Memory: 0 = sized to the GPU, otherwise MB. */
+  async setVideoMemoryBudget(mb: number) {
+    await this.setDecodeHandoffPolicy(mb, this.decodeHandoffPredecodeShedPct);
+  }
+
   async setDecodeHandoffPolicy(
     decodeHandoffByteCapMb: number,
     decodeHandoffPredecodeShedPct: number,
   ) {
-    const clampedCapMb = Math.max(16, Math.min(1024, Math.round(decodeHandoffByteCapMb)));
+    // 0 is automatic (sized by the core to the GPU); otherwise the user's own figure.
+    const requestedMb = Math.round(Number(decodeHandoffByteCapMb) || 0);
+    const clampedCapMb = requestedMb <= 0 ? 0 : Math.max(128, Math.min(65536, requestedMb));
     const clampedShedPct = Math.max(50, Math.min(99, Math.round(decodeHandoffPredecodeShedPct)));
     this.decodeHandoffByteCapMb = clampedCapMb;
     this.decodeHandoffPredecodeShedPct = clampedShedPct;

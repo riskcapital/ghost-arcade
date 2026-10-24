@@ -229,6 +229,12 @@ var source_frame_sampler: sampler;
 @group(0) @binding(5)
 var paint_masks: texture_2d_array<f32>;
 
+// Tile bins (main.rs LAYER_TILES): [tiles_x, tiles_y, enabled, total], one
+// start per tile plus the end, then the layer indices, bottom to top.
+@group(0) @binding(6)
+var<storage, read> layer_tiles: array<u32>;
+const LAYER_TILES_HEADER: u32 = 4u;
+
 const SOURCE_PREVIEW_SIZE: i32 = 256;
 const SOURCE_PREVIEW_PIXELS: i32 = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
 const MAX_SOURCE_PREVIEW_SLOTS: i32 = 16;
@@ -3746,12 +3752,31 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     color += vec3<f32>(0.0, 0.7 + audio_treble * 0.2, 1.0) * grid_glow * vignette;
   }
 
-  // Bound must match MAX_SCENE_LAYERS in main.rs.
-  for (var i: i32 = 0; i < 1024; i = i + 1) {
-    if (f32(i) >= u.layer_count) {
-      break;
+  // Inside the canvas a pixel visits only the layers binned to its tile, in
+  // the same bottom-to-top order; elsewhere (a dome, an output warp) and
+  // with binning off it walks them all. Bound must match MAX_SCENE_LAYERS.
+  let tiles_x = layer_tiles[0];
+  let tiles_y = layer_tiles[1];
+  let binned = layer_tiles[2] == 1u && tiles_x > 0u && tiles_y > 0u
+    && all(canvas_uv >= vec2<f32>(0.0)) && all(canvas_uv <= vec2<f32>(1.0));
+  var walk_start = 0u;
+  var walk_end = u32(clamp(u.layer_count, 0.0, 1024.0));
+  if (binned) {
+    let tx = min(u32(canvas_uv.x * f32(tiles_x)), tiles_x - 1u);
+    let ty = min(u32(canvas_uv.y * f32(tiles_y)), tiles_y - 1u);
+    let cell = LAYER_TILES_HEADER + ty * tiles_x + tx;
+    walk_start = layer_tiles[cell];
+    walk_end = layer_tiles[cell + 1u];
+  }
+  let tile_indices = LAYER_TILES_HEADER + tiles_x * tiles_y + 1u;
+  for (var k: u32 = walk_start; k < walk_end; k = k + 1u) {
+    var layer_index = k;
+    if (binned) {
+      layer_index = layer_tiles[tile_indices + k];
     }
-    let layer_index = u32(i);
+    if (layer_index >= 1024u || f32(layer_index) >= u.layer_count) {
+      continue;
+    }
     // One small read decides most layers: outside its reach, skip it before
     // touching the rest of the record.
     let cull = layers[layer_index].cull;

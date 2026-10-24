@@ -61,7 +61,7 @@
       <p class="detail">{percent}% · {size(progress.done)} of {size(progress.total)}{progress.file ? ` · ${progress.file.replace(/^Media\//, '')}` : ''}</p>
       <footer><button disabled={cancelling} onclick={cancel}>{cancelling ? 'Cancelling…' : 'Cancel'}</button></footer>
     {:else if phase === 'done' && result}
-      <p>Saved {result.files} media file{result.files === 1 ? '' : 's'} with the project ({size(result.bytes)}).</p>
+      <p>Packed with the project: {result.files} {result.files === 1 ? 'media file' : 'media files'} ({size(result.bytes)}).</p>
       <p class="result">{result.outputPath}</p>
       <p class="hint">On the other computer, choose File → Open Package…, or unzip it and open the project inside.</p>
       {#if result.missing.length}

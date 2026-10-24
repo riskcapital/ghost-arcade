@@ -38,6 +38,7 @@
     nativeRendererRuntime,
   } from '../stores/nativeRenderer';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
+  import { getNativeRendererStatus } from '../api/native-renderer';
   import { openExternalUrl, invoke as bridgeInvoke, isElectron as bridgeIsElectron } from '../bridge';
   import { mergeRecordingCodecAvailability, recordingCodecOption, type RecordingCodecId, type RecordingCodecOption } from '../recording/recordingSources';
 
@@ -734,6 +735,23 @@
     settings.setShaderQuality(value);
   }
 
+  // Settings → Video Memory. Automatic is a quarter of the GPU's memory
+  // (512 MB to 8 GB); the core reports the GPU's memory so the menu can
+  // say what that comes to here.
+  const videoMemoryChoices = [1024, 2048, 4096, 8192, 16384];
+  let gpuMemoryMb = 0;
+  $: autoVideoMemoryMb = gpuMemoryMb > 0 ? Math.min(8192, Math.max(512, Math.round(gpuMemoryMb / 4))) : 0;
+  const formatMemory = (mb: number) => mb >= 1024 ? `${+(mb / 1024).toFixed(mb % 1024 ? 1 : 0)} GB` : `${mb} MB`;
+  onMount(() => {
+    if (!isDesktopApp) return;
+    void getNativeRendererStatus()
+      .then((status) => { gpuMemoryMb = Number(status?.gpu_memory_mb) || 0; })
+      .catch(() => {});
+  });
+  function handleVideoMemoryChange(e: Event) {
+    settings.setVideoMemoryMb(Number((e.target as HTMLSelectElement).value));
+  }
+
   function handleGpuInstrumentQualityChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value as GpuInstrumentQualityMode;
     settings.setGpuInstrumentQuality(value);
@@ -1104,6 +1122,33 @@
         {#if selectedSection === 'output:display'}
         <section class="settings-section">
           <h3>Canvas</h3>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Zoom Speed</span>
+              <span class="label-hint">How far the mapping canvas zooms per scroll or pinch. Lower it if a trackpad zooms too fast.</span>
+            </div>
+            <select value={String($settings.ui.canvasZoomSpeed ?? 1)}
+              onchange={(e) => settings.update((s) => { const next = { ...s, ui: { ...s.ui, canvasZoomSpeed: Number((e.target as HTMLSelectElement).value) } }; return next; })}>
+              <option value="0.25">Very slow</option>
+              <option value="0.5">Slow</option>
+              <option value="1">Normal</option>
+              <option value="1.75">Fast</option>
+              <option value="3">Very fast</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Two-Finger Scroll</span>
+              <span class="label-hint">On the mapping canvas. Zoom suits a mouse wheel; Pan suits a trackpad, where a pinch zooms.</span>
+            </div>
+            <select value={$settings.ui.canvasScrollGesture ?? 'zoom'}
+              onchange={(e) => settings.update((s) => ({ ...s, ui: { ...s.ui, canvasScrollGesture: (e.target as HTMLSelectElement).value as 'zoom' | 'pan' } }))}>
+              <option value="zoom">Zoom</option>
+              <option value="pan">Pan</option>
+            </select>
+          </div>
 
           <div class="setting-row">
             <div class="setting-label">
@@ -1829,6 +1874,20 @@
               {/each}
             </select>
           </div>
+          {#if isDesktopApp}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Video Memory</span>
+                <span class="label-hint">Memory the playing videos' frames may use. Automatic takes a quarter of this GPU's memory{gpuMemoryMb ? ` (${formatMemory(gpuMemoryMb)}), ${formatMemory(autoVideoMemoryMb)} here` : ''}. Raise it if many videos playing at once stutter; lower it if other apps need the memory.</span>
+              </div>
+              <select value={String($settings.performance.videoMemoryMb ?? 0)} onchange={handleVideoMemoryChange}>
+                <option value="0">Automatic{autoVideoMemoryMb ? ` (${formatMemory(autoVideoMemoryMb)})` : ''}</option>
+                {#each videoMemoryChoices as mb}
+                  <option value={String(mb)}>{formatMemory(mb)}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
         </section>
 
         <section class="settings-section">

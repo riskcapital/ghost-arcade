@@ -249,6 +249,7 @@
   let nativeRendererStatusTimer: ReturnType<typeof setInterval> | null = null;
   let nativeQualityUnsub: (() => void) | null = null;
   let lastPushedNativeQuality: string | null = null;
+  let lastPushedVideoMemoryMb = -1;
 
   /*
    * Settings' Shader Quality -> the native core's quality tier. The
@@ -1569,6 +1570,11 @@
        * corner-drag frame -- so only push when the tier actually changes.
        */
       nativeQualityUnsub = settings.subscribe((s) => {
+        const videoMemoryMb = s.performance.videoMemoryMb ?? 0;
+        if (videoMemoryMb !== lastPushedVideoMemoryMb && nativeRendererSync) {
+          lastPushedVideoMemoryMb = videoMemoryMb;
+          void nativeRendererSync.setVideoMemoryBudget(videoMemoryMb);
+        }
         const tier = NATIVE_QUALITY_TIER[s.ui.shaderQuality] ?? 'insane';
         if (tier === lastPushedNativeQuality) return;
         lastPushedNativeQuality = tier;
@@ -1576,6 +1582,9 @@
       });
 
       nativeRendererSync = new NativeRendererSync();
+      // Before start(), so the core starts with the chosen video memory.
+      lastPushedVideoMemoryMb = get(settings).performance.videoMemoryMb ?? 0;
+      void nativeRendererSync.setVideoMemoryBudget(lastPushedVideoMemoryMb);
       const size = getProjectOutputSize();
       void nativeRendererSync.start(size.width, size.height).then(() => {
         console.log('[NativeRendererSync] sync loop armed');

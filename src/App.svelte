@@ -2217,6 +2217,13 @@
         return;
       }
 
+      // Mapping canvas zoom: Ctrl/Cmd 0 fits it in view, + and − step.
+      if (!inInput && (e.ctrlKey || e.metaKey) && !e.altKey && !get(vjClipLauncher).isOpen) {
+        if (e.key === '0') { resetViewportTransform(); e.preventDefault(); return; }
+        if (e.key === '=' || e.key === '+') { zoomViewportStep(1); e.preventDefault(); return; }
+        if (e.key === '-') { zoomViewportStep(-1); e.preventDefault(); return; }
+      }
+
       // VJ Mode keyboard shortcuts: 1-9/0 for columns, F1-F8 for blocks.
       // Skip when SynthVision/Performer is active — those keys belong to
       // SynthVision's own document keydown handler in that mode, and the VJ
@@ -2662,6 +2669,21 @@
   }
 
   // Viewport pan/zoom handlers
+  /** Zoom the mapping canvas by `factor`, keeping the point (x, y) of the viewport still. */
+  function zoomViewportAt(factor: number, x: number, y: number) {
+    const newZoom = Math.max(0.1, Math.min(5, viewportZoom * factor));
+    const zoomRatio = newZoom / viewportZoom;
+    viewportPanX = x - (x - viewportPanX) * zoomRatio;
+    viewportPanY = y - (y - viewportPanY) * zoomRatio;
+    viewportZoom = newZoom;
+  }
+
+  /** Zoom buttons and shortcuts zoom around the middle of the canvas view. */
+  function zoomViewportStep(direction: 1 | -1) {
+    const rect = viewportEl?.getBoundingClientRect();
+    zoomViewportAt(direction > 0 ? 1.25 : 0.8, (rect?.width ?? 0) / 2, (rect?.height ?? 0) / 2);
+  }
+
   function handleViewportWheel(e: WheelEvent) {
     e.preventDefault();
 
@@ -2669,17 +2691,26 @@
     const rect = viewportEl.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
+    const ui = get(settings).ui;
+    // Line and page wheels (some mice, Windows) count in lines; trackpads in pixels.
+    const pixels = (delta: number) => (e.deltaMode === 1 ? delta * 16 : e.deltaMode === 2 ? delta * rect.height : delta);
 
-    // Calculate zoom
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-    const newZoom = Math.max(0.1, Math.min(5, viewportZoom * zoomFactor));
+    // Trackpad style: a two-finger scroll pans. A pinch arrives as a
+    // ctrl-wheel and always zooms.
+    if (!e.ctrlKey && ui.canvasScrollGesture === 'pan') {
+      viewportPanX -= pixels(e.deltaX);
+      viewportPanY -= pixels(e.deltaY);
+      return;
+    }
 
-    // Adjust pan to zoom towards mouse position
-    const zoomRatio = newZoom / viewportZoom;
-    viewportPanX = mouseX - (mouseX - viewportPanX) * zoomRatio;
-    viewportPanY = mouseY - (mouseY - viewportPanY) * zoomRatio;
-
-    viewportZoom = newZoom;
+    // Zoom by how far the wheel or fingers moved, not a fixed step per
+    // event: a trackpad sends dozens of small events per gesture, and a
+    // whole 10% step for each made the zoom race. Pinch deltas are smaller
+    // still, so they count for more.
+    const speed = Math.max(0.25, Math.min(3, Number(ui.canvasZoomSpeed) || 1));
+    const perPixel = (e.ctrlKey ? 0.01 : 0.0015) * speed;
+    const factor = Math.max(0.8, Math.min(1.25, Math.exp(-pixels(e.deltaY) * perPixel)));
+    zoomViewportAt(factor, mouseX, mouseY);
   }
 
   // ── Layer hit-testing for click-to-select ──
@@ -8218,10 +8249,16 @@
           {#if linesDrawingMode !== 'none'}
             | Drawing: {linesDrawingMode}
           {/if}
-          {#if viewportZoom !== 1 || viewportPanX !== 0 || viewportPanY !== 0}
-            | Zoom: {(viewportZoom * 100).toFixed(0)}%
-            <button class="reset-view-btn" onclick={resetViewportTransform}>Reset View</button>
-          {/if}
+        </div>
+
+        <!-- Canvas zoom: always on hand, and Fit brings back the default view
+             however far the canvas was zoomed or panned. -->
+        <div class="viewport-zoom" role="group" aria-label="Canvas zoom">
+          <button class="viewport-zoom-btn" onclick={() => zoomViewportStep(-1)} title="Zoom out (Ctrl/Cmd −)" aria-label="Zoom out">−</button>
+          <button class="viewport-zoom-level" onclick={resetViewportTransform} title="Fit the canvas in view (Ctrl/Cmd 0)">{(viewportZoom * 100).toFixed(0)}%</button>
+          <button class="viewport-zoom-btn" onclick={() => zoomViewportStep(1)} title="Zoom in (Ctrl/Cmd +)" aria-label="Zoom in">+</button>
+          <button class="viewport-zoom-fit" class:viewport-zoom-fit-active={viewportZoom !== 1 || viewportPanX !== 0 || viewportPanY !== 0}
+            onclick={resetViewportTransform} title="Fit the canvas in view (Ctrl/Cmd 0)">Fit</button>
         </div>
 
         <!-- Light Painting draw overlay (inside viewport for correct
@@ -10721,21 +10758,34 @@
     z-index: 50;
   }
 
-  .reset-view-btn {
-    background: var(--ga-card, #13161c);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    color: var(--ga-ink-1, #9aa0ac);
-    padding: 2px 6px;
+  .viewport-zoom {
+    position: fixed;
+    bottom: 8px;
+    right: 16px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    background: color-mix(in srgb, var(--ga-bar, #0e1014) 92%, transparent);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 11px;
+    z-index: 20;
+  }
+  .viewport-zoom button {
+    background: transparent;
+    border: 0;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: 12px;
+    line-height: 1;
+    padding: 4px 7px;
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    margin-left: 4px;
   }
-
-  .reset-view-btn:hover {
-    color: var(--ga-ink-0, #eef0f4);
-    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
-  }
+  .viewport-zoom button:hover { color: var(--ga-ink-0, #eef0f4); background: var(--ga-line, rgba(255, 255, 255, 0.07)); }
+  .viewport-zoom-level { min-width: 44px; font-variant-numeric: tabular-nums; }
+  .viewport-zoom-fit { border-left: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)) !important; }
+  .viewport-zoom-fit-active { color: var(--ga-ink-0, #eef0f4) !important; }
 
   /* Grid controls */
   .grid-controls {

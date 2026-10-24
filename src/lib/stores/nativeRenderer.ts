@@ -577,7 +577,25 @@ export function deriveNativeRendererRuntimeState(
  *  3-failure kill switch. Feeds the Layer Panel badge so a blanked layer is
  *  visibly failed rather than silently empty. Cleared per-layer when the
  *  route recovers (edit, or restart). */
-export const nativeFailedRouteLayers = writable<string[]>([]);
+/**
+ * A list of ids that tells subscribers only when the list really changed.
+ * The render sync "updates" it every frame for every graph layer, usually
+ * with the same list; a plain writable treats every array as new and re-ran
+ * each subscriber (the whole Layer panel) every frame.
+ */
+function idListStore(initial: string[]) {
+  const inner = writable(initial);
+  let current = initial;
+  const set = (next: string[]) => {
+    if (next === current) return;
+    if (next.length === current.length && next.every((id, i) => id === current[i])) return;
+    current = next;
+    inner.set(next);
+  };
+  return { subscribe: inner.subscribe, set, update: (fn: (ids: string[]) => string[]) => set(fn(current)) };
+}
+
+export const nativeFailedRouteLayers = idListStore([]);
 
 export const nativeRendererRuntime = writable<NativeRendererRuntimeState>({
   ...initialNativeRendererRuntimeState,

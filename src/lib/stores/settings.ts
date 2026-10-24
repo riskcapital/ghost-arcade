@@ -235,6 +235,11 @@ export const SHADER_QUALITY_MULTIPLIERS: Record<ShaderQualityMode, number> = {
 };
 
 export interface UISettings {
+  /** Mapping canvas zoom per wheel or pinch movement: 1 = normal, 0.25-3. */
+  canvasZoomSpeed?: number;
+  /** What a two-finger scroll does on the mapping canvas: zoom (mouse-wheel
+   *  style) or pan (trackpad style). A pinch always zooms. */
+  canvasScrollGesture?: 'zoom' | 'pan';
   colorScheme: ColorSchemeId;
   fluidQuality: FluidQualityMode;
   shaderQuality: ShaderQualityMode;
@@ -878,6 +883,9 @@ export interface PerformanceSettings {
    *  the device caps plus the adaptive live governor; fixed tiers keep
    *  counts/grid sizes stable for predictable show operation. */
   gpuInstrumentQuality: GpuInstrumentQualityMode;
+  /** Memory the playing videos' decoded frames may use, in MB. 0 = automatic:
+   *  a quarter of the GPU's memory (512 MB to 8 GB), chosen by the render core. */
+  videoMemoryMb: number;
   outputFrameRate: 60 | 30 | 24;
   outputMaxBitrate: number;
   outputDegradationPreference: 'maintain-resolution' | 'maintain-framerate' | 'balanced';
@@ -1148,6 +1156,7 @@ function createDefaultSettings(): AppSettings {
       previewMaxDim: 0,               // 0 = no cap (match main canvas)
       previewFrameRate: 60,
       gpuInstrumentQuality: 'auto',
+      videoMemoryMb: 0,
       outputFrameRate: 60,
       outputMaxBitrate: 80_000_000,   // 80 Mbps
       outputDegradationPreference: 'maintain-resolution',
@@ -1661,6 +1670,17 @@ function createSettingsStore() {
         const newSettings = {
           ...s,
           ui: { ...s.ui, shaderQuality: mode }
+        };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
+    setVideoMemoryMb(mb: number) {
+      update(s => {
+        const newSettings = {
+          ...s,
+          performance: { ...s.performance, videoMemoryMb: Math.max(0, Math.round(Number(mb) || 0)) }
         };
         saveSettings(newSettings);
         return newSettings;

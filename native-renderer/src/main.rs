@@ -131,6 +131,19 @@ use winit::{
 // Each layer is tested against its cull bounds first, so a large count costs
 // little when most layers miss most pixels.
 const MAX_SCENE_LAYERS: usize = 1024;
+// Tile bins for the composite. The canvas is cut into LAYER_TILES x
+// LAYER_TILES tiles, and each tile lists, bottom to top, the layers whose
+// cull bounds reach it, so a pixel visits those layers instead of testing
+// every layer in the scene. With a few hundred small slices that was most of
+// the composite's time, and every Screen's own composite paid it again.
+// Layout (u32): [tiles_x, tiles_y, enabled, total], then one start offset per
+// tile plus the end, then the layer indices. Past LAYER_TILE_INDEX_CAP
+// entries binning is switched off and every pixel walks every layer again.
+const LAYER_TILES: usize = 32;
+const LAYER_TILE_CELLS: usize = LAYER_TILES * LAYER_TILES;
+const LAYER_TILE_HEADER: usize = 4;
+const LAYER_TILE_INDEX_CAP: usize = 262_144;
+const LAYER_TILE_BUFFER_WORDS: usize = LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1 + LAYER_TILE_INDEX_CAP;
 const MAX_LAYER_MESH_SIDE: usize = 16;
 const MAX_LAYER_MESH_POINTS: usize = MAX_LAYER_MESH_SIDE * MAX_LAYER_MESH_SIDE;
 const MAX_LAYER_MESH_VEC4S: usize = MAX_LAYER_MESH_POINTS / 2;
@@ -918,6 +931,9 @@ struct CoreStatus {
     decode_preview_cache_bypassed: bool,
     decode_upload_queue_cap_mb: u32,
     decode_handoff_byte_cap_mb: u32,
+    /// The decoded-video memory budget in force, and the GPU memory it was sized from (0 = unknown).
+    video_decode_budget_mb: u64,
+    gpu_memory_mb: u64,
     decode_handoff_predecode_shed_pct: u32,
     decode_predecode_estimate_cache_entries: u32,
     decode_predecode_estimate_cache_cap_entries: u32,
@@ -1396,6 +1412,101 @@ struct LayerGpu {
     /// the content alpha folded into `color`, so edge effects on a
     /// source-less layer are not dimmed with its placeholder.
     tint: [f32; 4],
+}
+
+/// The GPU's memory: Metal's recommended working set (on Apple silicon a
+/// share of the unified memory), or a D3D12 adapter's own memory.
+fn gpu_memory_bytes(device: &wgpu::Device) -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_metal::MTLDevice;
+        let hal_device = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
+        let bytes = hal_device.raw_device().recommendedMaxWorkingSetSize();
+        return (bytes > 0).then_some(bytes);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return windows_video_texture::adapter_memory_bytes(device);
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = device;
+        None
+    }
+}
+
+/// The share of the composite a layer covers, as (width, height) in 0..1
+/// units: the bounding box of its corners, stretched by a mesh warp that
+/// reaches past them.
+fn layer_composite_extent(layer: &SceneLayer) -> (f32, f32) {
+    let bounds = |points: &mut dyn Iterator<Item = [f32; 2]>| {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for [x, y] in points {
+            x0 = x0.min(x); y0 = y0.min(y); x1 = x1.max(x); y1 = y1.max(y);
+        }
+        if x1 < x0 { (1.0, 1.0) } else { ((x1 - x0).max(0.0), (y1 - y0).max(0.0)) }
+    };
+    let (mut width, mut height) = bounds(&mut layer.corners.iter().copied());
+    if !layer.mesh_points.is_empty() {
+        let (mesh_w, mesh_h) = bounds(&mut layer.mesh_points.iter().copied());
+        width *= mesh_w.max(1.0);
+        height *= mesh_h.max(1.0);
+    }
+    (width, height)
+}
+
+/// Fill `out` with the tile bins for these cull bounds (see LAYER_TILES).
+/// Pixels outside the 0..1 canvas (a dome, an output warp) are not binned
+/// and walk every layer, so a layer that only reaches there is left out.
+fn build_layer_tiles(culls: &[[f32; 4]], out: &mut Vec<u32>) {
+    out.clear();
+    out.resize(LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1, 0);
+    out[0] = LAYER_TILES as u32;
+    out[1] = LAYER_TILES as u32;
+    let tile = |v: f32| ((v.clamp(0.0, 1.0) * LAYER_TILES as f32) as usize).min(LAYER_TILES - 1);
+    let ranges = culls
+        .iter()
+        .map(|c| {
+            let empty = !(c[0] <= c[2] && c[1] <= c[3]);
+            let off_canvas = c[2] < 0.0 || c[3] < 0.0 || c[0] > 1.0 || c[1] > 1.0;
+            (!empty && !off_canvas).then(|| (tile(c[0]), tile(c[1]), tile(c[2]), tile(c[3])))
+        })
+        .collect::<Vec<_>>();
+    let mut counts = [0u32; LAYER_TILE_CELLS];
+    let mut total = 0usize;
+    for (x0, y0, x1, y1) in ranges.iter().flatten() {
+        for ty in *y0..=*y1 {
+            for tx in *x0..=*x1 {
+                counts[ty * LAYER_TILES + tx] += 1;
+            }
+        }
+        total += (x1 - x0 + 1) * (y1 - y0 + 1);
+    }
+    if total > LAYER_TILE_INDEX_CAP {
+        return; // enabled stays 0
+    }
+    let mut cursor = [0u32; LAYER_TILE_CELLS];
+    let mut running = 0u32;
+    for cell in 0..LAYER_TILE_CELLS {
+        out[LAYER_TILE_HEADER + cell] = running;
+        cursor[cell] = running;
+        running += counts[cell];
+    }
+    out[LAYER_TILE_HEADER + LAYER_TILE_CELLS] = running;
+    let base = out.len();
+    out.resize(base + total, 0);
+    for (index, range) in ranges.iter().enumerate() {
+        let Some((x0, y0, x1, y1)) = range else { continue };
+        for ty in *y0..=*y1 {
+            for tx in *x0..=*x1 {
+                let cell = ty * LAYER_TILES + tx;
+                out[base + cursor[cell] as usize] = index as u32;
+                cursor[cell] += 1;
+            }
+        }
+    }
+    out[2] = 1;
+    out[3] = total as u32;
 }
 
 /// See `LayerGpu::cull`. Mirrors the compositor's own reject in
@@ -3981,6 +4092,11 @@ struct RenderState {
     /// buffer contents persist, and the compositor only reads slots below
     /// `layer_count`, so skipping is observationally identical.
     layer_upload_last: Vec<u8>,
+    /// Tile bins for the composite (see LAYER_TILES), rebuilt with the layer
+    /// upload and sent only when they change.
+    layer_tile_buffer: wgpu::Buffer,
+    layer_tile_scratch: Vec<u32>,
+    layer_tile_last: Vec<u32>,
     /// Picture slots (source_frames.rs): one shared array, or a texture per slot.
     slots: SourceFrameStore,
     /// Compositor binding-array length (PerSource), the per-source slot ceiling.
@@ -4276,6 +4392,9 @@ struct App {
     decode_upload_queue_cap_mb: u32,
     decode_handoff_byte_cap_mb: u32,
     video_memory_budget: Arc<NativeVideoMemoryBudget>,
+    /// The GPU's memory as the platform reports it (Metal's recommended
+    /// working set; a D3D12 adapter's own memory). None where unknown.
+    gpu_memory_bytes: Option<u64>,
     decode_handoff_predecode_shed_pct: u32,
     decode_predecode_estimate_cache_cap_entries: u32,
     vram_budget_mb: u32,
@@ -4433,6 +4552,9 @@ struct App {
     /// Pass plan + audio rows for ISF shaders that need the pass-aware host,
     /// with the precompile generation (a reload resets persistent buffers).
     shader_isf_hosts: HashMap<String, (Arc<NativeIsfHostInfo>, u64)>,
+    /// Per shader source: whether it samples any image (see
+    /// native_shader_reads_inputs). Checked once per source.
+    shader_reads_inputs: HashMap<u64, bool>,
     isf_shader_generation: u64,
     /// Latest analyser spectrum for ISF audio / audioFFT inputs.
     isf_audio_spectrum: IsfAudioSpectrum,
@@ -4681,8 +4803,10 @@ impl App {
             decode_preview_cache_mb: 128,
             decode_use_output_resolution: true,
             decode_upload_queue_cap_mb: 256,
-            decode_handoff_byte_cap_mb: 512,
+            // 0 = sized to the GPU (video_memory_budget_bytes).
+            decode_handoff_byte_cap_mb: 0,
             video_memory_budget: Arc::new(NativeVideoMemoryBudget::new(512 * 1024 * 1024)),
+            gpu_memory_bytes: None,
             decode_handoff_predecode_shed_pct: 90,
             decode_predecode_estimate_cache_cap_entries: 8192,
             vram_budget_mb: 4096,
@@ -4776,6 +4900,7 @@ impl App {
             shader_sources: HashMap::new(),
             shader_isf_inputs: HashMap::new(),
             shader_isf_hosts: HashMap::new(),
+            shader_reads_inputs: HashMap::new(),
             isf_shader_generation: 0,
             isf_audio_spectrum: IsfAudioSpectrum::default(),
             isf_multipass_renders: 0,
@@ -4851,7 +4976,9 @@ impl App {
             .rebase_to_caps(&renderer.native_caps.recommended_quality_tier);
         self.adapter_name = renderer.adapter_name();
         self.adapter_is_software = renderer.adapter_is_software;
+        self.gpu_memory_bytes = gpu_memory_bytes(&renderer.device);
         self.renderer = Some(renderer);
+        self.apply_video_memory_budget();
         Ok(())
     }
 
@@ -5374,6 +5501,8 @@ impl App {
             decode_preview_cache_bypassed: false,
             decode_upload_queue_cap_mb: self.decode_upload_queue_cap_mb,
             decode_handoff_byte_cap_mb: self.decode_handoff_byte_cap_mb,
+            video_decode_budget_mb: self.video_memory_budget.limit_bytes() / (1024 * 1024),
+            gpu_memory_mb: self.gpu_memory_bytes.unwrap_or(0) / (1024 * 1024),
             decode_handoff_predecode_shed_pct: self.decode_handoff_predecode_shed_pct,
             decode_predecode_estimate_cache_entries: 0,
             decode_predecode_estimate_cache_cap_entries: self
@@ -14405,13 +14534,32 @@ impl App {
             .clamp(1.0, 65_536.0) as u32;
     }
 
+    /// Memory the playing videos' decoded frames may hold. 0 MB from the
+    /// editor means automatic: a quarter of the GPU's memory, between 512 MB
+    /// and 8 GB, so a machine with a large GPU can play many more videos at
+    /// once than the old fixed 512 MB allowed. Any other value is the
+    /// user's own choice and is used as given.
+    fn video_memory_budget_bytes(&self) -> u64 {
+        const MIB: u64 = 1024 * 1024;
+        if self.decode_handoff_byte_cap_mb > 0 {
+            return u64::from(self.decode_handoff_byte_cap_mb) * MIB;
+        }
+        self.gpu_memory_bytes
+            .map(|bytes| (bytes / 4).clamp(512 * MIB, 8192 * MIB))
+            .unwrap_or(1024 * MIB)
+    }
+
+    fn apply_video_memory_budget(&mut self) {
+        self.video_memory_budget.set_limit(self.video_memory_budget_bytes());
+    }
+
     fn apply_decode_handoff_policy(&mut self, params: &Value) {
         let config = params.get("config").unwrap_or(params);
         self.decode_handoff_byte_cap_mb = number_at(config, &["decode_handoff_byte_cap_mb"])
             .unwrap_or(self.decode_handoff_byte_cap_mb as f64)
             .round()
-            .clamp(1.0, 65_536.0) as u32;
-        self.video_memory_budget.set_limit((u64::from(self.decode_handoff_byte_cap_mb) * 1024 * 1024).min(1024 * 1024 * 1024));
+            .clamp(0.0, 65_536.0) as u32;
+        self.apply_video_memory_budget();
         self.decode_handoff_predecode_shed_pct =
             number_at(config, &["decode_handoff_predecode_shed_pct"])
                 .unwrap_or(self.decode_handoff_predecode_shed_pct as f64)
@@ -15459,6 +15607,50 @@ impl App {
         }
     }
 
+    /// The pixels a layer covers on the composite, for sizing what is
+    /// rendered for it: the bounding box of its corners (stretched by a mesh
+    /// warp that reaches past them), with a quarter more for Screens that show
+    /// it in finer detail, rounded up to 128 pixels and kept between 256 and
+    /// `max_edge`. Rounding keeps a drag from reallocating every frame.
+    fn layer_render_footprint(&self, layer_id: &str, max_edge: u32) -> (u32, u32) {
+        let Some(layer) = self.scene_layers.get(layer_id) else {
+            return (max_edge, max_edge);
+        };
+        let (width, height) = layer_composite_extent(layer);
+        let edge = |extent: f32, composite: u32| -> u32 {
+            if !extent.is_finite() {
+                return max_edge;
+            }
+            let pixels = (extent * composite.max(1) as f32 * 1.25).ceil().max(1.0) as u32;
+            pixels.div_ceil(128).saturating_mul(128).clamp(256.min(max_edge), max_edge)
+        };
+        (edge(width, self.pending_width), edge(height, self.pending_height))
+    }
+
+    /// How much of the full decode size a video needs: the largest share of
+    /// the composite that a layer showing it covers, with the same headroom
+    /// as shaders, in coarse steps so resizing a layer rarely restarts its
+    /// decoder. Twenty videos on twenty small slices decoded twenty full
+    /// frames each and ran out of the decoder memory budget, so each one
+    /// played at a few frames a second. A video no layer shows directly (an
+    /// effect input, a splat texture) decodes in full.
+    fn video_decode_scale(&self, source_id: &str) -> f32 {
+        let mut needed = 0.0f32;
+        let mut shown = false;
+        for layer in self.scene_layers.values() {
+            if layer.source_id.as_deref() != Some(source_id) {
+                continue;
+            }
+            shown = true;
+            let (width, height) = layer_composite_extent(layer);
+            needed = needed.max(width.max(height) * 1.25);
+        }
+        if !shown || !needed.is_finite() {
+            return 1.0;
+        }
+        [0.25, 0.375, 0.5, 0.75].into_iter().find(|step| needed <= *step).unwrap_or(1.0)
+    }
+
     fn apply_render_isf_to_layer(&mut self, command: &Value) {
         let Some(layer_id) = string_at(command, &["layer_id"]) else {
             return;
@@ -15555,12 +15747,31 @@ impl App {
                 .get(&layer_id)
                 .and_then(|layer| layer.render_quality)
                 .unwrap_or(self.native_quality.quality_scale);
-            // Same shader, same input picture, same quality: the output is
-            // identical, so it is rendered once per frame and shared.
+            // A single-pass shader draws at the size its layer covers on the
+            // composite, not at the full source-frame size: a slice that is a
+            // sixteenth of the stage no longer renders a full 2–3K frame every
+            // frame. Multi-pass shaders keep their targets as authored.
+            let max_edge = self.renderer.as_ref().map_or(1024, |renderer| renderer.source_frame_size as u32);
+            let frame_size = if self.shader_isf_hosts.contains_key(&shader_id) {
+                (max_edge, max_edge)
+            } else {
+                self.layer_render_footprint(&layer_id, max_edge)
+            };
+            // Same shader, same input picture, same quality, same size: the
+            // output is identical, so it is rendered once per frame and shared.
             let source_id = format!(
-                "native-shader:{shader_id}:{source_hash:016x}:{input_source_slot}:{:08x}",
-                quality_scale_for_key.to_bits()
+                "native-shader:{shader_id}:{source_hash:016x}:{input_source_slot}:{:08x}:{}x{}",
+                quality_scale_for_key.to_bits(),
+                frame_size.0,
+                frame_size.1,
             );
+            // A shader that reads no image (a generator) gets no input copies:
+            // they were a full-size copy per shader per frame.
+            let reads_inputs = *self
+                .shader_reads_inputs
+                .entry(source_hash)
+                .or_insert_with(|| native_shader_reads_inputs(&source));
+            let copy_slots: &[usize] = if reads_inputs { &image_input_slots } else { &[] };
             // Free the frame this layer drew before (another clip, an edited
             // shader) first, so the new render reuses a free slot instead of
             // displacing another layer's.
@@ -15649,7 +15860,7 @@ impl App {
                             &fragment_entry,
                             &shader_uniforms,
                             &job,
-                            &image_input_slots,
+                            copy_slots,
                             quality_scale,
                             &audio,
                         )
@@ -15661,8 +15872,9 @@ impl App {
                             &source,
                             &fragment_entry,
                             &shader_uniforms,
-                            &image_input_slots,
+                            copy_slots,
                             quality_scale,
+                            frame_size,
                         )
                     };
                     match result {
@@ -17871,7 +18083,8 @@ impl App {
         // shared atomic budget still charges every retained GPU surface.
         let mut resident: usize = self.native_video_streams.values()
             .map(|s| s.stream.memory_bytes().saturating_sub(s.stream.optional_memory_bytes() as usize)).sum();
-        let budget = (self.decode_handoff_byte_cap_mb as usize * 1024 * 1024).min(1024 * 1024 * 1024);
+        // The budget in force: sized to the GPU unless the user chose one.
+        let budget = self.video_memory_budget.limit_bytes() as usize;
         let frame_bytes = width.clamp(16, 4096).saturating_mul(height.clamp(16, 4096)).saturating_mul(4);
         // Speculative library preroll must never prevent an on-stage clip
         // from starting. Reclaim unused prepared sessions until the new
@@ -18197,7 +18410,9 @@ impl App {
                     // Their owner explicitly releases them when the texture changes.
                     let playing = (visible_sources.contains(&source_id)
                         || source_id.starts_with("native-splat-video-")) && !state.paused;
-                    self.ensure_native_video_stream(&source_id, &state, width, height, playing);
+                    let scale = self.video_decode_scale(&source_id);
+                    let scaled = |edge: usize| (((edge as f32 * scale) as usize) / 2 * 2).max(64);
+                    self.ensure_native_video_stream(&source_id, &state, scaled(width), scaled(height), playing);
                 }
             }
             self.drain_native_video_streams();
@@ -19831,6 +20046,13 @@ impl RenderState {
             contents: bytemuck::cast_slice(&empty_layers),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
+        // Starts with binning off (enabled = 0): every pixel walks the layers.
+        let layer_tile_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ghost Render Core Layer Tiles"),
+            size: (LAYER_TILE_BUFFER_WORDS * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let empty_previews =
             vec![PreviewPixel::zeroed(); MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS];
         let source_preview_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -19971,6 +20193,17 @@ impl RenderState {
                     },
                     count: None,
                 },
+                // Tile bins for the composite (LAYER_TILES).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let paint_mask_texture = Self::create_paint_mask_texture(&device, 1, 1);
@@ -19998,6 +20231,7 @@ impl RenderState {
             &source_preview_buffer,
             &source_frame_sampler,
             &paint_mask_view,
+            &layer_tile_buffer,
         );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Ghost Render Core Pipeline Layout"),
@@ -20432,6 +20666,9 @@ impl RenderState {
             source_preview_buffer,
             layer_upload_scratch: vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS],
             layer_upload_last: Vec::new(),
+            layer_tile_buffer,
+            layer_tile_scratch: Vec::with_capacity(LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1),
+            layer_tile_last: Vec::new(),
             source_frame_bind_generation: source_frame_store.generation(),
             slots: source_frame_store,
             source_frame_bindings,
@@ -23579,6 +23816,7 @@ impl RenderState {
         uniforms: &NativeShaderUniforms,
         input_slots: &[usize],
         quality_scale: f32,
+        frame_size: (u32, u32),
     ) -> Result<(), String> {
         self.ensure_native_shader_pipeline(cache_key, source_kind, source, fragment_entry)?;
         self.queue.write_buffer(
@@ -23587,7 +23825,18 @@ impl RenderState {
             bytemuck::bytes_of(uniforms),
         );
         let full_size = self.source_frame_size as u32;
-        let output = self.slots.ensure_generated(slot, full_size, full_size);
+        // Per-source slots take the layer's own size. Shared slots are all
+        // one square, so there the size becomes a render scale instead.
+        let per_source = self.slots.mode() == SourceFrameMode::PerSource;
+        let (frame_w, frame_h) = (frame_size.0.clamp(1, full_size), frame_size.1.clamp(1, full_size));
+        // Drawn at (at least) the size it is shown, the picture needs no mip
+        // chain: building one was four more passes per shader per frame.
+        let output = if per_source {
+            self.slots.ensure(slot, frame_w, frame_h, false)
+        } else {
+            self.slots.ensure_generated(slot, full_size, full_size)
+        };
+        let footprint_scale = if per_source { 1.0 } else { frame_w.max(frame_h) as f32 / full_size as f32 };
         let safe_slot = self.slots.clamp_slot(slot);
 
         /*
@@ -23603,7 +23852,7 @@ impl RenderState {
          * 128 the mip chain built from it is coarser than the mip levels the
          * slot expects.
          */
-        let scale = quality_scale.clamp(0.2, 1.0);
+        let scale = (quality_scale.clamp(0.2, 1.0) * footprint_scale).clamp(0.05, 1.0);
         let full_size = output.width.min(output.height);
         let scaled_size = if scale >= 0.995 {
             full_size
@@ -24976,6 +25225,12 @@ impl RenderState {
             self.layer_upload_last.clear();
             self.layer_upload_last.extend_from_slice(layer_bytes);
         }
+        let culls = self.layer_upload_scratch[..filled].iter().map(|layer| layer.cull).collect::<Vec<_>>();
+        build_layer_tiles(&culls, &mut self.layer_tile_scratch);
+        if self.layer_tile_last != self.layer_tile_scratch {
+            self.queue.write_buffer(&self.layer_tile_buffer, 0, bytemuck::cast_slice(&self.layer_tile_scratch));
+            std::mem::swap(&mut self.layer_tile_last, &mut self.layer_tile_scratch);
+        }
 
         if let Some(source_previews) = source_previews {
             // `source_preview_pixel_data` already hands us an exactly-sized,
@@ -25030,6 +25285,7 @@ impl RenderState {
             &self.source_preview_buffer,
             &self.source_frame_sampler,
             &paint_mask_view,
+            &self.layer_tile_buffer,
         );
         true
     }
@@ -31465,6 +31721,7 @@ fn build_scene_bind_group(
     source_preview_buffer: &wgpu::Buffer,
     sampler: &wgpu::Sampler,
     paint_mask_view: &wgpu::TextureView,
+    layer_tile_buffer: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Ghost Render Core Bind Group"),
@@ -31475,6 +31732,7 @@ fn build_scene_bind_group(
             wgpu::BindGroupEntry { binding: 2, resource: source_preview_buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(sampler) },
             wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(paint_mask_view) },
+            wgpu::BindGroupEntry { binding: 6, resource: layer_tile_buffer.as_entire_binding() },
         ],
     })
 }
@@ -32189,6 +32447,15 @@ fn classify_native_shader_source(source: &str) -> NativeShaderSourceKind {
     } else {
         NativeShaderSourceKind::Glsl
     }
+}
+
+/// Whether a shader samples any image (its input, an image input, a pass
+/// buffer). One that does not (a generator) needs no input copies.
+fn native_shader_reads_inputs(source: &str) -> bool {
+    let (body, _) = strip_isf_json_header(source);
+    ["IMG_", "texture", "sampler", "inputImage", "ghost_source_frames", "textureSample"]
+        .iter()
+        .any(|marker| body.contains(marker))
 }
 
 fn looks_like_isf_glsl(source: &str) -> bool {
@@ -33631,11 +33898,41 @@ mod tests {
             line.split('=').nth(1).unwrap().trim().trim_end_matches(';').parse().unwrap()
         };
         assert_eq!(constant("MAX_SOURCE_PREVIEW_SLOTS"), MAX_SOURCE_PREVIEWS);
-        assert!(wgsl.contains(&format!("i < {MAX_SCENE_LAYERS};")), "composite loop bound must equal MAX_SCENE_LAYERS");
+        assert!(wgsl.contains(&format!("layer_index >= {MAX_SCENE_LAYERS}u")), "composite loop bound must equal MAX_SCENE_LAYERS");
+        assert!(wgsl.contains(&format!("clamp(u.layer_count, 0.0, {MAX_SCENE_LAYERS}.0)")), "composite loop bound must equal MAX_SCENE_LAYERS");
         // Slots are bounded by the store itself (textureNumLayers or the
         // binding-array length), never by a constant of their own.
         assert!(!wgsl.contains("MAX_SOURCE_FRAME_SLOTS"));
         assert!(wgsl.contains("//#SOURCE_FRAMES"));
+    }
+
+    #[test]
+    fn layer_tiles_list_each_tiles_layers_bottom_to_top() {
+        const NONE: [f32; 4] = [1.0e9, 1.0e9, -1.0e9, -1.0e9];
+        const ALL: [f32; 4] = [-1.0e9, -1.0e9, 1.0e9, 1.0e9];
+        let culls = [
+            [0.0, 0.0, 1.0, 1.0],        // 0: the whole canvas
+            [0.0, 0.0, 0.02, 0.02],      // 1: the bottom-left tile only
+            NONE,                        // 2: hidden
+            [0.5, 0.5, 0.52, 0.52],      // 3: one tile in the middle
+            [1.5, 1.5, 2.0, 2.0],        // 4: only off the canvas
+            ALL,                         // 5: a hierarchy mask
+        ];
+        let mut out = Vec::new();
+        build_layer_tiles(&culls, &mut out);
+        assert_eq!(&out[..3], &[LAYER_TILES as u32, LAYER_TILES as u32, 1]);
+        let tile = |tx: usize, ty: usize| {
+            let cell = LAYER_TILE_HEADER + ty * LAYER_TILES + tx;
+            let base = LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1;
+            out[base + out[cell] as usize..base + out[cell + 1] as usize].to_vec()
+        };
+        assert_eq!(tile(0, 0), vec![0, 1, 5]);
+        assert_eq!(tile(16, 16), vec![0, 3, 5]);
+        assert_eq!(tile(31, 31), vec![0, 5]);
+        // Too many entries: binning off, every pixel walks every layer.
+        let crowd = vec![[0.0, 0.0, 1.0, 1.0]; LAYER_TILE_INDEX_CAP / LAYER_TILE_CELLS + 1];
+        build_layer_tiles(&crowd, &mut out);
+        assert_eq!(out[2], 0);
     }
 
     #[test]

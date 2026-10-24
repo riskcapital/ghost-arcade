@@ -3198,9 +3198,12 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     decode_upload_queue_cap_mb: Number(
       status.decode_upload_queue_cap_mb ?? previous.decode_upload_queue_cap_mb ?? 256,
     ),
+    // 0 = sized by the core to the GPU's memory.
     decode_handoff_byte_cap_mb: Number(
-      status.decode_handoff_byte_cap_mb ?? previous.decode_handoff_byte_cap_mb ?? 512,
+      status.decode_handoff_byte_cap_mb ?? previous.decode_handoff_byte_cap_mb ?? 0,
     ),
+    video_decode_budget_mb: Number(status.video_decode_budget_mb ?? previous.video_decode_budget_mb ?? 0),
+    gpu_memory_mb: Number(status.gpu_memory_mb ?? previous.gpu_memory_mb ?? 0),
     decode_handoff_predecode_shed_pct: Number(
       status.decode_handoff_predecode_shed_pct ?? previous.decode_handoff_predecode_shed_pct ?? 90,
     ),
@@ -3829,7 +3832,9 @@ function makeDefaultStatus(overrides = {}) {
     decode_target_height: outputHeight,
     decode_preview_cache_bypassed: false,
     decode_upload_queue_cap_mb: 256,
-    decode_handoff_byte_cap_mb: 512,
+    decode_handoff_byte_cap_mb: 0,
+    video_decode_budget_mb: 0,
+    gpu_memory_mb: 0,
     decode_handoff_predecode_shed_pct: 90,
     shader_precompile_queue_cap: 4096,
     shader_precompile_per_frame: 4,

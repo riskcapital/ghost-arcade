@@ -33,6 +33,21 @@ use windows::{
     core::{Interface, PCWSTR},
 };
 
+/// The renderer adapter's own video memory, or its share of system memory
+/// for integrated graphics (which report little or none of their own).
+pub fn adapter_memory_bytes(device: &wgpu::Device) -> Option<u64> {
+    unsafe {
+        let hal_device = device.as_hal::<Dx12>()?;
+        let luid = hal_device.raw_device().GetAdapterLuid();
+        let factory: IDXGIFactory4 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).ok()?;
+        let adapter: IDXGIAdapter1 = factory.EnumAdapterByLuid(luid).ok()?;
+        let desc = adapter.GetDesc1().ok()?;
+        let dedicated = desc.DedicatedVideoMemory as u64;
+        let shared = desc.SharedSystemMemory as u64;
+        Some(if dedicated >= 512 * 1024 * 1024 { dedicated } else { dedicated.max(shared) })
+    }
+}
+
 const NV12: u32 = u32::from_be_bytes(*b"NV12");
 const P010: u32 = u32::from_be_bytes(*b"P010");
 // Slots are allocated only when every existing slot is retained. Cover the
