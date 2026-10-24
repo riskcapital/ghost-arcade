@@ -8321,6 +8321,12 @@ export class NativeRendererSync {
     if (!this.sliceWindowPoll) {
       void this.refreshOpenSliceWindows();
       this.sliceWindowPoll = setInterval(() => { void this.refreshOpenSliceWindows(); }, 1000);
+      // A Screen opened from the Screens panel is drawn at once; the poll
+      // only catches windows closed some other way. It used to wait up to a
+      // second for the poll before anything appeared.
+      const onSliceWindowsChanged = () => { void this.refreshOpenSliceWindows(); };
+      window.addEventListener('ghost:slice-windows-changed', onSliceWindowsChanged);
+      this.outputStateUnsubs.push(() => window.removeEventListener('ghost:slice-windows-changed', onSliceWindowsChanged));
     }
     this.outputStateUnsubs.push(outputFrozen.subscribe(() => this.pushOutputState()));
     this.outputStateUnsubs.push(vjClipLauncher.subscribe(() => this.scheduleCompositeEffects()));

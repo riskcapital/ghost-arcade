@@ -25,7 +25,7 @@
 
   const NATIVE_OUTPUT_READY_WAIT_MS = 1500;
   const NATIVE_OUTPUT_ACTIVE_WAIT_MS = 5000;
-  const NATIVE_OUTPUT_READY_POLL_MS = 100;
+  const NATIVE_OUTPUT_READY_POLL_MS = 40;
   const NATIVE_OUTPUT_MONITOR_MS = 250;
   let nativeOutputMonitor: ReturnType<typeof setInterval> | null = null;
 
@@ -240,6 +240,11 @@
   }
 
   async function openNativeCoreOutput(preferExternal: boolean, fullscreen: boolean): Promise<boolean> {
+    // How long each step of opening takes, in the log: an output that is
+    // slow to appear on one machine can be traced to the step that waits.
+    const openedAt = performance.now();
+    const marks: string[] = [];
+    const mark = (step: string) => marks.push(`${step} ${Math.round(performance.now() - openedAt)}ms`);
     try {
       const displays: any[] = await invoke('get_displays');
       let target = displays[0];
@@ -259,6 +264,7 @@
       const y = fullscreen ? displayY : displayY + Math.round((displayH - winH) / 2);
 
       const status = await ensureNativeCoreReady(winW, winH);
+      mark('core ready');
       if (!status) {
         console.warn(
           '[Output] Native render-core output requested but the core is not ready. No fallback output was opened.',
@@ -282,7 +288,9 @@
         decorations: !fullscreen,
         resizable: !fullscreen,
       });
-      await publishNativeRuntimeHandshake(configuredStatus).catch(() => {});
+      mark('window set');
+      // The runtime panel's handshake needs no wait: it runs alongside.
+      void publishNativeRuntimeHandshake(configuredStatus).catch(() => {});
       const expectedLayerCount = expectedNativeOutputLayerCount();
       requestNativeOutputSceneResync('managed-output-open');
 
@@ -302,11 +310,15 @@
         return false;
       }
 
-      if (activeStatus) await publishNativeRuntimeHandshake(activeStatus).catch(() => {});
+      mark('first frame');
+      if (activeStatus) void publishNativeRuntimeHandshake(activeStatus).catch(() => {});
       isOpen = true;
       startNativeOutputMonitor();
+      if (expectedLayerCount > 0 && Number(activeStatus?.output_last_presented_layer_count ?? 0) <= 0) {
+        console.warn(`[Output] Opened before the scene reached it: ${nativeOutputActivationDetail(activeStatus, expectedLayerCount)}`);
+      }
       console.log(
-        `[Output] Native render-core output opened on display "${target?.label || target?.id || 'default'}" (${winW}x${winH})`,
+        `[Output] Native render-core output opened on display "${target?.label || target?.id || 'default'}" (${winW}x${winH}) in ${Math.round(performance.now() - openedAt)}ms: ${marks.join(', ')}`,
       );
       return true;
     } catch (err) {
@@ -356,20 +368,23 @@
     return last;
   }
 
+  /**
+   * The output is open once its window presents frames healthily. The
+   * mapping project's visible-layer count is not the scene in VJ mode or a
+   * stopped show, and requiring it closed a working output after 5 seconds;
+   * a frame without the scene yet is only logged (see openNativeCoreOutput).
+   */
   function nativeManagedOutputIsActive(
     status: Awaited<ReturnType<typeof getNativeRendererStatus>> | null | undefined,
-    expectedLayerCount = expectedNativeOutputLayerCount(),
+    _expectedLayerCount = expectedNativeOutputLayerCount(),
   ): boolean {
-    const layerCountOk = expectedLayerCount <= 0 ||
-      Number(status?.output_last_presented_layer_count ?? 0) > 0;
     return !!(
       status?.running &&
       status.backend_ready &&
       status.output_window_attached &&
       status.output_swapchain_ready &&
       status.output_present_healthy &&
-      Number(status.swapchain_presented ?? 0) > 0 &&
-      layerCountOk
+      Number(status.swapchain_presented ?? 0) > 0
     );
   }
 

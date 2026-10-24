@@ -4416,6 +4416,12 @@ struct App {
     /// monitor. Buys exactly one clearing monitor pass when both banks empty.
     deck_monitors_lit: bool,
     output_window_attached: bool,
+    /// The composite size set by the project (set_output). While a
+    /// fullscreen output window shows it, the window's own size no longer
+    /// resizes the composite: opening fullscreen used to rebuild every
+    /// output texture at the display's size and then back at the project's.
+    output_size_configured: bool,
+    output_window_fullscreen: bool,
     editor_parent_window_handle_hex: Option<String>,
     editor_parent_window_handle_platform: Option<String>,
     editor_preview_parented_window: bool,
@@ -4814,6 +4820,8 @@ impl App {
             pending_render_retry: false,
             deck_monitors_lit: false,
             output_window_attached: false,
+            output_size_configured: false,
+            output_window_fullscreen: false,
             editor_parent_window_handle_hex: None,
             editor_parent_window_handle_platform: None,
             editor_preview_parented_window: false,
@@ -6829,6 +6837,9 @@ impl App {
     }
 
     fn apply_output_config(&mut self, params: &Value) {
+        if number_at(params, &["width"]).is_some() && number_at(params, &["height"]).is_some() {
+            self.output_size_configured = true;
+        }
         let width = number_at(params, &["width"]).unwrap_or(self.pending_width as f64);
         let height = number_at(params, &["height"]).unwrap_or(self.pending_height as f64);
         self.pending_width = width.round().clamp(64.0, 16384.0) as u32;
@@ -6922,7 +6933,18 @@ impl App {
         let height = number_at(config, &["height"])
             .or_else(|| number_at(config, &["h"]))
             .map(|value| value.round().clamp(1.0, 32768.0) as u32);
-        if let (Some(width), Some(height)) = (width, height) {
+        let fullscreen_request = bool_at(config, &["fullscreen"])
+            .or_else(|| bool_at(config, &["full_screen"]))
+            .or_else(|| bool_at(config, &["borderless"]));
+        if let Some(fullscreen) = fullscreen_request {
+            self.output_window_fullscreen = fullscreen;
+        }
+        // A fullscreen output shows the project's composite at the display's
+        // size; the composite itself stays the project's.
+        let keep_project_size = self.output_size_configured && self.output_window_fullscreen;
+        if let (Some(width), Some(height)) = (width, height)
+            && !keep_project_size
+        {
             self.pending_width = width;
             self.pending_height = height;
         }
@@ -19731,9 +19753,13 @@ impl ApplicationHandler<UserEvent> for App {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
             WindowEvent::Resized(size) => {
-                renderer.resize(size);
-                self.pending_width = renderer.config.width;
-                self.pending_height = renderer.config.height;
+                // See output_size_configured: a fullscreen output keeps the
+                // project's composite and the window scales it.
+                if !(self.output_size_configured && self.output_window_fullscreen) {
+                    renderer.resize(size);
+                    self.pending_width = renderer.config.width;
+                    self.pending_height = renderer.config.height;
+                }
             }
             WindowEvent::RedrawRequested => self.render(),
             _ => {}

@@ -78,6 +78,8 @@
       });
       if (!result?.ok) throw new Error(result?.error || 'Screen output could not open.');
       screenOutputError.set(null);
+      // The render core starts drawing this Screen now, not at its next poll.
+      window.dispatchEvent(new CustomEvent('ghost:slice-windows-changed'));
     } catch (error) {
       screenOutputError.set(error instanceof Error ? error.message : String(error));
     }
@@ -86,6 +88,7 @@
   async function closeOnDisplay(s: OutputSlice) {
     if (!isDesktopApp) return;
     await invoke('output_close_slice_window', { sliceId: s.id }).catch(() => {});
+    window.dispatchEvent(new CustomEvent('ghost:slice-windows-changed'));
     await refreshOpenWindows();
   }
 
