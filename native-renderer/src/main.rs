@@ -1400,6 +1400,10 @@ struct LayerGpu {
     mask_info: [f32; 4],
     mask: [[f32; 4]; MAX_LAYER_MASK_POINTS],
     mesh: [[f32; 4]; MAX_LAYER_MESH_VEC4S],
+    /// Where each mesh point rests on the layer, packed like `mesh`: the
+    /// layer position a cell shows. The even lattice unless the mesh was
+    /// fitted to a Custom Shape, whose mesh rests on the shape.
+    mesh_rest: [[f32; 4]; MAX_LAYER_MESH_VEC4S],
     mesh_tangents: [[f32; 4]; MAX_LAYER_MESH_TANGENT_VEC4S],
     /// Quad-local (y-down) rectangle (min u, min v, max u, max v) that holds
     /// a Bezier mesh's whole surface, bulges past the corner quad included.
@@ -2627,6 +2631,9 @@ struct SceneLayer {
     mesh_rows: u32,
     mesh_cols: u32,
     mesh_points: Vec<[f32; 2]>,
+    /// Rest position of each mesh point on the layer (y up, like
+    /// `mesh_points`). Empty for the even lattice over the whole layer.
+    mesh_rest: Vec<[f32; 2]>,
     /// Resolved Bezier tangents per mesh point (right, down, left, up), in
     /// the same y-up layer coordinates as `mesh_points`. Empty for a
     /// straight-edged mesh, which keeps the original bilinear cell path.
@@ -3469,6 +3476,7 @@ impl SceneLayer {
             mesh_rows: 0,
             mesh_cols: 0,
             mesh_points: Vec::new(),
+            mesh_rest: Vec::new(),
             mesh_tangents: Vec::new(),
             source_rect: [0.0, 0.0, 1.0, 1.0],
             deck_monitor_bank: None,
@@ -3580,6 +3588,7 @@ impl SceneLayer {
             mask_info: self.mask_info,
             mask: self.mask_gpu(),
             mesh: self.mesh_gpu(),
+            mesh_rest: self.mesh_rest_gpu(),
             mesh_tangents: self.mesh_tangents_gpu(),
             mesh_bounds: self.mesh_bounds_gpu(),
             source_rect: held.map_or(self.source_rect, |held| held.rect),
@@ -3739,6 +3748,31 @@ impl SceneLayer {
         }
         packed
     }
+
+    /// The rest lattice in the compositor's y-down layer space: the grid's
+    /// own when it was fitted to a shape, the even lattice otherwise.
+    fn mesh_rest_gpu(&self) -> [[f32; 4]; MAX_LAYER_MESH_VEC4S] {
+        let mut packed = [[0.0; 4]; MAX_LAYER_MESH_VEC4S];
+        let rows = self.mesh_rows as usize;
+        let cols = self.mesh_cols as usize;
+        if rows < 2 || cols < 2 {
+            return packed;
+        }
+        let fitted = self.mesh_rest.len() == rows * cols;
+        for index in 0..(rows * cols).min(MAX_LAYER_MESH_POINTS) {
+            let (x, y) = if fitted {
+                let p = self.mesh_rest[index];
+                (p[0], 1.0 - p[1])
+            } else {
+                ((index % cols) as f32 / (cols - 1) as f32, (index / cols) as f32 / (rows - 1) as f32)
+            };
+            let target = &mut packed[index / 2];
+            let offset = (index % 2) * 2;
+            target[offset] = x;
+            target[offset + 1] = y;
+        }
+        packed
+    }
 }
 
 /// Parse a `mesh_grid` command value onto a layer: the control points and,
@@ -3748,6 +3782,7 @@ fn apply_layer_mesh_grid(entry: &mut SceneLayer, mesh: Option<&Value>) {
     entry.mesh_rows = 0;
     entry.mesh_cols = 0;
     entry.mesh_points.clear();
+    entry.mesh_rest.clear();
     entry.mesh_tangents.clear();
     let Some(mesh) = mesh.and_then(Value::as_object) else { return };
     let rows = mesh
@@ -3785,6 +3820,34 @@ fn apply_layer_mesh_grid(entry: &mut SceneLayer, mesh: Option<&Value>) {
     entry.mesh_cols = cols;
     entry.mesh_tangents = parse_layer_mesh_tangents(mesh.get("tangents"), rows as usize, cols as usize, &points);
     entry.mesh_points = points;
+    entry.mesh_rest = parse_layer_mesh_rest(mesh.get("rest"), rows as usize, cols as usize);
+}
+
+/// A mesh fitted to a Custom Shape carries `rest`: where each point sits on
+/// the layer while unwarped (`[row][col]` of `{x, y}`, y up). Anything short
+/// of a full grid is the even lattice, returned as an empty vec.
+fn parse_layer_mesh_rest(rest: Option<&Value>, rows: usize, cols: usize) -> Vec<[f32; 2]> {
+    let Some(rest_rows) = rest.and_then(Value::as_array) else { return Vec::new() };
+    if rest_rows.len() != rows {
+        return Vec::new();
+    }
+    let mut points = Vec::with_capacity(rows * cols);
+    for row in rest_rows {
+        let Some(row_points) = row.as_array() else { return Vec::new() };
+        if row_points.len() != cols {
+            return Vec::new();
+        }
+        for point in row_points {
+            let (Some(x), Some(y)) = (number_at(point, &["x"]), number_at(point, &["y"])) else {
+                return Vec::new();
+            };
+            if !x.is_finite() || !y.is_finite() {
+                return Vec::new();
+            }
+            points.push([x.clamp(-8.0, 8.0) as f32, y.clamp(-8.0, 8.0) as f32]);
+        }
+    }
+    points
 }
 
 /// Resolve the editor's sparse `tangents` grid (`[row][col]` of
@@ -35026,6 +35089,45 @@ void main() {
         // No tangents: not a Bezier mesh, so the shader keeps the bilinear path.
         assert_eq!(gpu.fast_flags[1], 0);
         assert!(gpu.mesh_tangents.iter().all(|v| *v == [0.0; 4]));
+        // No rest of its own: cells show an even share of the whole layer.
+        assert_eq!(gpu.mesh_rest[0], [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(gpu.mesh_rest[1], [0.0, 1.0, 1.0, 1.0]);
+    }
+
+    /// A mesh fitted to a Custom Shape carries `rest`, where each point sits
+    /// on the layer: the compositor's cells show that part of the layer
+    /// (y flipped like the points). A partial or malformed rest is the even
+    /// lattice, so an odd grid never shows a scrambled picture.
+    #[test]
+    fn scene_layer_mesh_rest_packs_the_fitted_lattice() {
+        let mut layer = SceneLayer::new("fitted-layer".to_string(), 0);
+        let grid = serde_json::json!({
+            "rows": 2, "cols": 3,
+            "points": [
+                [{"x": 0.2, "y": 0.8}, {"x": 0.4, "y": 0.8}, {"x": 0.6, "y": 0.8}],
+                [{"x": 0.2, "y": 0.3}, {"x": 0.4, "y": 0.3}, {"x": 0.6, "y": 0.3}],
+            ],
+            "rest": [
+                [{"x": 0.2, "y": 0.8}, {"x": 0.4, "y": 0.8}, {"x": 0.6, "y": 0.8}],
+                [{"x": 0.2, "y": 0.3}, {"x": 0.4, "y": 0.3}, {"x": 0.6, "y": 0.3}],
+            ],
+        });
+        apply_layer_mesh_grid(&mut layer, Some(&grid));
+        assert_eq!(layer.mesh_rest.len(), 6);
+        let gpu = layer.gpu();
+        let close = |a: [f32; 4], b: [f32; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+        assert!(close(gpu.mesh_rest[0], [0.2, 0.2, 0.4, 0.2]), "{:?}", gpu.mesh_rest[0]);
+        assert!(close(gpu.mesh_rest[1], [0.6, 0.2, 0.2, 0.7]), "{:?}", gpu.mesh_rest[1]);
+        assert!(close(gpu.mesh_rest[2], [0.4, 0.7, 0.6, 0.7]), "{:?}", gpu.mesh_rest[2]);
+
+        let partial = serde_json::json!({
+            "rows": 2, "cols": 2,
+            "points": [[{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 1.0}], [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.0}]],
+            "rest": [[{"x": 0.2, "y": 0.8}, {"x": 0.6, "y": 0.8}]],
+        });
+        apply_layer_mesh_grid(&mut layer, Some(&partial));
+        assert!(layer.mesh_rest.is_empty());
+        assert_eq!(layer.gpu().mesh_rest[1], [0.0, 1.0, 1.0, 1.0]);
     }
 
     /// Sparse editor tangents resolve like resolveMeshTangents in

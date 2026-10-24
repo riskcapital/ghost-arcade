@@ -196,6 +196,10 @@ struct LayerData {
   mask_info: vec4<f32>,
   mask: array<vec4<f32>, 64>,
   mesh: array<vec4<f32>, 128>,
+  // Where each mesh point rests on the layer (y down), packed like `mesh`:
+  // the layer position a cell shows. The even lattice unless the mesh was
+  // fitted to a Custom Shape.
+  mesh_rest: array<vec4<f32>, 128>,
   // Bezier tangents, two vec4 per point: (right.xy, down.xy), (left.xy, up.xy).
   // Read only while fast_flags.y says the mesh is a Bezier mesh.
   mesh_tangents: array<vec4<f32>, 512>,
@@ -701,6 +705,22 @@ fn layer_mesh_point(layer_index: u32, index: u32) -> vec2<f32> {
   return select(packed.zw, packed.xy, (index & 1u) == 0u);
 }
 
+fn layer_mesh_rest_point(layer_index: u32, index: u32) -> vec2<f32> {
+  let packed = layers[layer_index].mesh_rest[index / 2u];
+  return select(packed.zw, packed.xy, (index & 1u) == 0u);
+}
+
+/// The layer position cell (row, col) shows at (u, v): its rest corners,
+/// interpolated. A mesh fitted to a shape rests on the shape, so its cells
+/// show the shape rather than an even share of the whole layer.
+fn layer_mesh_rest_uv(layer_index: u32, row: u32, col: u32, cols: u32, uv: vec2<f32>) -> vec2<f32> {
+  let a = layer_mesh_rest_point(layer_index, row * cols + col);
+  let b = layer_mesh_rest_point(layer_index, row * cols + col + 1u);
+  let c = layer_mesh_rest_point(layer_index, (row + 1u) * cols + col + 1u);
+  let d = layer_mesh_rest_point(layer_index, (row + 1u) * cols + col);
+  return mix(mix(a, b, uv.x), mix(d, c, uv.x), uv.y);
+}
+
 // Bezier mesh: every cell is a Coons patch bounded by four cubic edges, the
 // same surface src/lib/utils/meshWarp.ts evaluates for the editor outline.
 // Its bicubic form has 16 control points, so a cell can be rejected exactly
@@ -901,9 +921,7 @@ fn layer_mesh_uv_bezier(local_uv: vec2<f32>, layer_index: u32, rows: u32, cols: 
         if (!mesh_patch_contains_bounds(mesh_cell, local_uv)) { continue; }
         let cell = mesh_patch_uv(local_uv, mesh_cell);
         if (cell.x > 0.5) {
-          return vec3<f32>(1.0,
-            (f32(col) + cell.y) / f32(cols - 1u),
-            (f32(row) + cell.z) / f32(rows - 1u));
+          return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
         }
       }
     }
@@ -946,9 +964,7 @@ fn layer_mesh_uv(local_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
         // than turning an unsolved bilinear inverse into transparent pixels.
         let cell = mesh_cell_uv(local_uv, a, b, c, d);
         if (cell.x > 0.5) {
-          return vec3<f32>(1.0,
-            (f32(col) + cell.y) / f32(cols - 1u),
-            (f32(row) + cell.z) / f32(rows - 1u));
+          return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
         }
       }
     }

@@ -20,7 +20,7 @@
  */
 
 import type { Layer, PaintMaskConfig, PaintMaskStroke, Point2D, WarpCorners } from '../types';
-import { invertMeshByRows, layerRenderMeshGrid } from './meshWarp';
+import { invertLayerMesh, layerRenderMeshGrid } from './meshWarp';
 
 /** Encoded point range (matches POINT_RANGE_* in paint_mask.rs). */
 export const PAINT_POINT_MIN = -0.25;
@@ -183,8 +183,10 @@ export function canvasToLayerContent(layer: ContentGeometry, canvas: Point2D): P
   const grid = layerRenderMeshGrid(layer);
   if (grid && grid.rows >= 2 && grid.cols >= 2) {
     // Mesh points live in the quad's local space with y up (row 0 at y=1).
-    const hit = invertMeshByRows(grid, { x: local.x, y: 1 - local.y });
-    if (hit) return hit;
+    // The hit is the layer position that cell shows, which a mesh fitted to
+    // a shape keeps on the shape.
+    const hit = invertLayerMesh(grid, { x: local.x, y: 1 - local.y });
+    if (hit) return { x: hit.x, y: 1 - hit.y };
     // Off the mesh: the corner-quad position is the best available guess,
     // and only matters for dabs whose centre is outside the picture.
   }

@@ -31,7 +31,7 @@ import {
 } from '$lib/renderer/vjMixNative';
 import type { Layer, MeshWarpGrid, Model3DContent, SplatContent } from '$lib/types';
 import { buildEdgeEffectContext, nativeEdgeEffectPayload, type EdgeEffectContext } from '$lib/drawing/edgeEffects';
-import { layerRenderMeshGrid, meshGridHasTangents, resolveMeshTangents } from '$lib/utils/meshWarp';
+import { layerRenderMeshGrid, meshGridHasTangents, meshHasRest, resolveMeshTangents } from '$lib/utils/meshWarp';
 import { nativePaintStroke } from '$lib/utils/paintMask';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
@@ -3656,7 +3656,11 @@ function geometrySignature(layer: Layer): string {
       return [t.right.x, t.right.y, t.down.x, t.down.y, t.left.x, t.left.y, t.up.x, t.up.y];
     })).map(sigNum).join(':')
     : '';
-  return `mesh:${corners}:${grid.rows}x${grid.cols}:${points}${tangents}`;
+  // A mesh fitted to a shape shows another part of the layer at rest.
+  const rest = meshHasRest(grid)
+    ? ':rest:' + grid.rest!.flatMap((row) => row.flatMap((point) => [point.x, point.y])).map(sigNum).join(':')
+    : '';
+  return `mesh:${corners}:${grid.rows}x${grid.cols}:${points}${tangents}${rest}`;
 }
 
 function contentFitCode(value: Layer['contentFit']): number {

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent, MaskConfig, LayerShapeType, Point2D, ContentFitMode, EdgeEffect, GroupConfig, TransitionStyle } from '../types';
 import { GpuEffectRunner, isGpuEffect } from './gpuEffectRunner';
-import { evaluateMeshGrid, layerRenderMeshGrid, meshGridHasTangents } from '../utils/meshWarp';
+import { evaluateMeshByRows, layerRenderMeshGrid, meshDomainToLayerUv, meshGridHasTangents, meshHasRest } from '../utils/meshWarp';
 
 // ── Group rendering types ──────────────────────────────────────────────────
 type RenderUnit =
@@ -764,6 +764,11 @@ export class RenderEngine {
   // originalUVs: the original UV coordinates (0-1) stored when geometry was created
   private applyMeshWarp(geometry: THREE.BufferGeometry, meshGrid: MeshWarpGrid, corners: WarpCorners, originalUVs: Float32Array): void {
     const positions = geometry.attributes.position;
+    // A mesh fitted to a shape rests on part of the layer: each vertex shows
+    // the layer position its rest lattice gives, not its place on the plane.
+    const restUv = meshHasRest(meshGrid);
+    const uvs = geometry.attributes.uv as THREE.BufferAttribute | undefined;
+    const uvTouched = (geometry.userData as { restUv?: boolean }).restUv === true;
 
     for (let i = 0; i < positions.count; i++) {
       // Get original UV coordinates (0-1) from stored array
@@ -771,10 +776,14 @@ export class RenderEngine {
       const uvX = originalUVs[i * 2];
       const uvY = originalUVs[i * 2 + 1];
 
-      // First: get mesh deformation (local coords 0-1). The plane's Y goes
-      // up, which is the mesh's own convention (row 0 is y=1): bilinear for
-      // straight cells, the Coons patch of a Bezier cell otherwise.
-      const { x: meshX, y: meshY } = evaluateMeshGrid(meshGrid, uvX, uvY);
+      // First: get mesh deformation (local coords 0-1). The plane is the
+      // grid itself, y up (row 0 at the top): bilinear for straight cells,
+      // the Coons patch of a Bezier cell otherwise.
+      const { x: meshX, y: meshY } = evaluateMeshByRows(meshGrid, uvX, 1 - uvY);
+      if (uvs && (restUv || uvTouched)) {
+        const layerUv = meshDomainToLayerUv(meshGrid, uvX, 1 - uvY);
+        uvs.setXY(i, layerUv.x, layerUv.y);
+      }
 
       // Second: apply corner warp to the mesh-deformed position
       // Bilinear interpolation using the corner positions
@@ -791,6 +800,10 @@ export class RenderEngine {
     }
 
     positions.needsUpdate = true;
+    if (uvs && (restUv || uvTouched)) {
+      uvs.needsUpdate = true;
+      (geometry.userData as { restUv?: boolean }).restUv = restUv;
+    }
   }
 
   // Apply shape control point warping (currently unused - shape masking uses SDF post-process)

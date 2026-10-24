@@ -25,7 +25,7 @@ type StageMigratableLayer = {
     bottomLeft: StagePoint;
     bottomRight: StagePoint;
   } | null;
-  meshGrid?: { rows: number; cols: number; points: StagePoint[][] } | null;
+  meshGrid?: { rows: number; cols: number; points: StagePoint[][]; rest?: StagePoint[][] } | null;
   stageTextureFlipV?: boolean;
 };
 
@@ -54,6 +54,9 @@ export function migrateStageLayerCorners<T extends StageMigratableLayer>(layer: 
         points: [...grid.points]
           .reverse()
           .map((row) => (Array.isArray(row) ? row.map(flipY) : row)),
+        ...(Array.isArray(grid.rest)
+          ? { rest: [...grid.rest].reverse().map((row) => (Array.isArray(row) ? row.map(flipY) : row)) }
+          : {}),
       }
     : grid;
 
