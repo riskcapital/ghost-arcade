@@ -2896,6 +2896,12 @@ function registerIpcHandlers() {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return { content, media: null };
     try {
       const media = await projectMedia.prepareProjectMediaForOpen(data, dir);
+      // Files still in iCloud start downloading now, so they are here by
+      // the time the show needs them (a read would otherwise stall on them).
+      if (media.icloud?.length) {
+        mediaLocate.requestIcloudDownloads(media.icloud);
+        media.icloud = media.icloud.map((item) => item.name);
+      }
       return { content: JSON.stringify(data, null, 2), media };
     } catch (err) {
       console.warn('[Main] Could not check project media:', err?.message || err);
@@ -3009,6 +3015,14 @@ function registerIpcHandlers() {
     const status = await mediaLocate.mediaFilesStatus(asked.filter((p) => pathGrants.canRead(p)));
     for (const p of asked) if (!(p in status)) status[p] = false;
     return status;
+  });
+  // Start iCloud downloads of media the project uses (see media-locate.cjs).
+  // Only files the app may already read, and only on macOS.
+  ipcMain.handle('media_icloud_download', async (_, args) => {
+    const items = (Array.isArray(args?.items) ? args.items : [])
+      .filter((item) => typeof item?.file === 'string' && pathGrants.canRead(item.file))
+      .map((item) => ({ file: item.file, state: item.state === 'placeholder' ? 'placeholder' : 'dataless' }));
+    return { started: mediaLocate.requestIcloudDownloads(items) };
   });
   // After one file was located, look beside it for these other names. The
   // located file must be one the user picked, and only files found are granted.

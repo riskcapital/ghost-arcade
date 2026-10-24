@@ -15,6 +15,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const ALLOWED_IPC_COMMANDS = new Set([
   // Scans sent from a paired phone (electron/phone-scan-store.cjs)
   'media_files_status', 'media_find_in_folder', 'media_find_beside',
+  'media_icloud_download',
   'save_project_file', 'prepare_project_media', 'take_pending_project_open',
   'export_project_package', 'cancel_project_package', 'open_project_package',
   'pjlink_command', 'pjlink_set_password', 'pjlink_has_password',

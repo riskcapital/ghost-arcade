@@ -74,4 +74,53 @@ async function findMediaInFolder(dir, names, { maxDepth = MAX_DEPTH, maxEntries 
   return found;
 }
 
-module.exports = { mediaFilesStatus, findMediaInFolder };
+/**
+ * iCloud Drive with "Optimize Mac Storage" keeps only a stub of a file it has
+ * not downloaded. macOS 14 and later keep the name, but the file holds no
+ * data until it is read, and reading it waits for the whole download: a show
+ * that opens on such files stalls with no word of why. Earlier macOS hid the
+ * file and left `.name.icloud` beside it, so the file looked missing.
+ *
+ * Returns 'dataless' (there, not downloaded), 'placeholder' (only the
+ * `.icloud` stub is there) or null. `statFn` exists for tests.
+ */
+async function icloudState(file, { platform = process.platform, statFn = fs.promises.stat } = {}) {
+  if (platform !== 'darwin' || typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  try {
+    const stat = await statFn(file);
+    // No blocks on disk for a file with a size. Tiny files can live inside
+    // their metadata, so only files over 64 KB count.
+    return stat.isFile() && stat.size > 65536 && stat.blocks === 0 ? 'dataless' : null;
+  } catch { /* not there: look for the older stub */ }
+  try {
+    const stub = path.join(path.dirname(file), `.${path.basename(file)}.icloud`);
+    return (await statFn(stub)).isFile() ? 'placeholder' : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Start downloading these iCloud files without waiting. A dataless file
+ * downloads when it is read, so a separate process reads its first byte
+ * (the read blocks until the file is here; the app does not). An older
+ * `.icloud` stub is handed to brctl, which those macOS versions have.
+ */
+function requestIcloudDownloads(items, { spawnFn = require('child_process').execFile } = {}) {
+  const started = [];
+  for (const item of (Array.isArray(items) ? items : []).slice(0, 500)) {
+    const file = item?.file;
+    if (typeof file !== 'string' || !path.isAbsolute(file) || file.includes('\0')) continue;
+    if (item.state === 'dataless') {
+      spawnFn('/usr/bin/head', ['-c', '1', file], { timeout: 0, maxBuffer: 16 }, () => {});
+    } else if (item.state === 'placeholder') {
+      spawnFn('/usr/bin/brctl', ['download', file], { timeout: 60000 }, () => {});
+    } else {
+      continue;
+    }
+    started.push(file);
+  }
+  return started;
+}
+
+module.exports = { mediaFilesStatus, findMediaInFolder, icloudState, requestIcloudDownloads };

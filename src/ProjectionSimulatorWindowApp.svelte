@@ -16,6 +16,7 @@
   import { startModulationBroadcastReceiver } from './lib/sync/modulationBroadcast';
   import { initLicense } from './lib/stores/license';
   import { invoke } from '$lib/bridge';
+  import { startProjectionSimSceneSync } from '$lib/projectionSim/sceneSync';
 
   let canvasComponent: Canvas | null = null;
   let sourceCanvas: HTMLCanvasElement | null = null;
@@ -34,6 +35,9 @@
     }
 
     initStateBroadcast('receiver');
+    // Open on the project's scene, and hand every edit back to the editor,
+    // which saves it with the project.
+    stopSceneSync = startProjectionSimSceneSync('popout');
     startAudioBroadcastReceiver({ onFrame: (frame) => audioStore.injectBroadcastedFrame(frame) });
     startModulationBroadcastReceiver();
     initLicense().catch((e) => console.warn('[ProjectionSimWindow] License init:', e));
@@ -44,7 +48,11 @@
     window.addEventListener('beforeunload', notifyClosing);
   });
 
+  let stopSceneSync: (() => void) | null = null;
+
   onDestroy(() => {
+    stopSceneSync?.();
+    stopSceneSync = null;
     window.removeEventListener('beforeunload', notifyClosing);
     if (sourceCanvasPoll) {
       clearInterval(sourceCanvasPoll);

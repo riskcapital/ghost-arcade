@@ -4,7 +4,7 @@
   export let exportProject: () => Promise<string>;
   export let applyProject: (json: string) => void;
   export let onClose: () => void;
-  type Media = { id: string; name: string; path: string; missing: boolean; size: number; uses: number };
+  type Media = { id: string; name: string; path: string; missing: boolean; size: number; uses: number; icloud?: 'dataless' | 'placeholder' | null };
   let media: Media[] = [];
   let busy = false;
   let message = '';
@@ -32,6 +32,17 @@
     } catch (e: any) { error = e.message || String(e); }
     finally { busy = false; }
   }
+  // iCloud keeps only a stub of a file it has not downloaded; this starts the
+  // download. The list is checked again a little later.
+  async function downloadFromIcloud(item: Media) {
+    busy = true; error = ''; message = '';
+    try {
+      await invoke('media_icloud_download', { items: [{ file: item.path, state: item.icloud }] });
+      message = `Downloading ${item.name} from iCloud. It shows as Available here once it is on this Mac.`;
+      setTimeout(() => { if (!busy) void scan(); }, 4000);
+    } catch (e: any) { error = e.message || String(e); }
+    finally { busy = false; }
+  }
   async function collect() {
     busy = true; error = ''; message = ''; resultPath = '';
     try {
@@ -54,12 +65,16 @@
     <header><h2 id="media-title">Project Media</h2><button disabled={busy} onclick={onClose} aria-label="Close media manager">×</button></header>
     <p>Check local media, locate missing files, or collect a portable copy of this show.</p>
     <p class="hint">Relinking reloads the project and interrupts playback. Collecting leaves your current show open. Online media and live inputs still need their original connections.</p>
-    <div class="summary">{media.length} local reference{media.length === 1 ? '' : 's'} · {media.filter(m => m.missing).length} missing</div>
+    <div class="summary">{media.length} local reference{media.length === 1 ? '' : 's'} · {media.filter(m => m.missing && !m.icloud).length} missing{media.some(m => m.icloud) ? ` · ${media.filter(m => m.icloud).length} in iCloud` : ''}</div>
     <div class="list">
       {#each media as item (item.id)}
         <div class="item">
-          <div class="details"><strong>{item.name}</strong><span title={item.path}>{item.path || 'No saved location'}</span><small class:missing={item.missing}>{item.missing ? 'Missing' : 'Available'} · {item.uses} reference{item.uses === 1 ? '' : 's'}</small></div>
-          <button disabled={busy} onclick={() => locate(item)}>{item.missing ? 'Locate…' : 'Replace…'}</button>
+          <div class="details"><strong>{item.name}</strong><span title={item.path}>{item.path || 'No saved location'}</span><small class:missing={item.missing && !item.icloud} class:icloud={!!item.icloud}>{item.icloud ? 'In iCloud, not downloaded' : item.missing ? 'Missing' : 'Available'} · {item.uses} reference{item.uses === 1 ? '' : 's'}</small></div>
+          {#if item.icloud}
+            <button disabled={busy} onclick={() => downloadFromIcloud(item)}>Download</button>
+          {:else}
+            <button disabled={busy} onclick={() => locate(item)}>{item.missing ? 'Locate…' : 'Replace…'}</button>
+          {/if}
         </div>
       {:else}<p>{busy ? 'Checking media…' : 'No local media references in this project.'}</p>{/each}
     </div>
@@ -80,7 +95,7 @@
   .item { padding:12px 0; border-bottom:1px solid #363941; }
   .details { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
   .details span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#9da4b4; }
-  small { color:#8ccca4; } .missing,.error { color:#ffad9c; }
+  small { color:#8ccca4; } .missing,.error { color:#ffad9c; } .icloud { color:#9cc4ff; }
   button { border:1px solid #4c5260; background:var(--ga-blue-mute-800); color:inherit; border-radius:6px; padding:8px 12px; cursor:pointer; }
   button:disabled { opacity:.45; cursor:default; } footer { margin-top:18px; flex-wrap:wrap; justify-content:flex-end; }
   .result { overflow-wrap:anywhere; color:var(--ga-blue-200); }

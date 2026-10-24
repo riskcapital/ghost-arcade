@@ -19,6 +19,7 @@ import {
   resolveStagePresetSurfaceId,
 } from './stagePresetSurfaces';
 import { stage3dScene } from '../stage3d/store';
+import { projectionSimScene } from '../projectionSim/store';
 // Catalog of per-effect default params. Used by resetEffectParams to
 // snap an effect back to its baseline values when the user hits the
 // per-effect reset button in LayerPanel.
@@ -5009,6 +5010,7 @@ void main() {
       // Save-only sections (autosave and recovery), kept off the sync relay.
       try { exportData.project.showTimeline = showTimeline.serialize(); } catch { /* keep saving */ }
       try { exportData.project.showControl = serializeShowControl(); } catch { /* keep saving */ }
+      try { exportData.project.projectionSim = projectionSimScene.exportForProject(); } catch { /* keep saving */ }
       return JSON.stringify(exportData, null, 2);
     },
 
@@ -5056,6 +5058,13 @@ void main() {
       // do not belong on the per-tick sync relay either.
       try { syncExport.project.showTimeline = showTimeline.serialize(); } catch { /* keep saving */ }
       try { syncExport.project.showControl = serializeShowControl(); } catch { /* keep saving */ }
+      // The Map Sim scene (rooms, projectors, imported models) is save-only
+      // too: the sync relay must not carry it.
+      try {
+        syncExport.project.projectionSim = projectionSimScene.exportForProject();
+      } catch (err) {
+        console.warn('[Store] exportProjectForSave: Map Sim snapshot failed', err);
+      }
       return syncExport;
     },
 
@@ -5900,7 +5909,19 @@ void main() {
         // Restore a saved section, clear on a save-shaped payload without
         // one, and leave the running show alone on a live state-sync payload
         // (which never carries the save-only sections).
-        const saveShaped = 'stage3d' in (proj as any) || 'showTimeline' in (proj as any) || 'showControl' in (proj as any);
+        const saveShaped = 'stage3d' in (proj as any) || 'showTimeline' in (proj as any) || 'showControl' in (proj as any) || 'projectionSim' in (proj as any);
+        try {
+          const importedSim = (proj as any).projectionSim;
+          if (importedSim?.schemaVersion === 1
+            && Array.isArray(importedSim.objects)
+            && Array.isArray(importedSim.projectors)) {
+            projectionSimScene.loadSceneFromProject(importedSim, projectDir);
+          }
+          // No else: a project without the section keeps the session scene
+          // (fresh launches land on the cube-pyramid preset).
+        } catch (err) {
+          console.warn('[Store] importProject: Map Sim restore failed', err);
+        }
         try {
           const importedShow = (proj as any).showTimeline;
           if (importedShow && typeof importedShow === 'object') showTimeline.hydrate(importedShow, projectDir);

@@ -1,4 +1,5 @@
 import { get, writable } from 'svelte/store';
+import { recordMissingAsset, resolveAssetRefForRuntime } from '../storage/assetRegistry';
 import type {
   ProjectionSimGizmoMode,
   ProjectionSimObject,
@@ -33,7 +34,7 @@ function loadInitialScene(): ProjectionSimScene {
   return buildProjectionSimPreset('cube-pyramid') ?? createProjectionSimScene();
 }
 
-function normalizeScene(scene: ProjectionSimScene): ProjectionSimScene {
+function normalizeScene(scene: ProjectionSimScene, projectDir?: string): ProjectionSimScene {
   return {
     ...scene,
     environment: {
@@ -43,10 +44,19 @@ function normalizeScene(scene: ProjectionSimScene): ProjectionSimScene {
       surfaceStyle: scene.environment?.surfaceStyle ?? DEFAULT_ENVIRONMENT.surfaceStyle,
       shadowStrength: scene.environment?.shadowStrength ?? DEFAULT_ENVIRONMENT.shadowStrength,
     },
-    objects: (scene.objects ?? []).map((object) => ({
-      ...object,
-      locked: object.locked ?? false,
-    })),
+    objects: (scene.objects ?? []).map((object) => {
+      // Imported models come back from their saved file, beside the project
+      // first, so a moved or packaged show finds them.
+      const assetUrl = resolveAssetRefForRuntime(object.assetRef, projectDir, object.assetUrl) ?? object.assetUrl;
+      if (object.assetRef && !assetUrl) {
+        recordMissingAsset({ assetRef: object.assetRef, fieldHint: '3D model (Map Sim)' });
+      }
+      return {
+        ...object,
+        locked: object.locked ?? false,
+        assetUrl,
+      };
+    }),
     projectors: (scene.projectors ?? []).map((projector) => ({
       ...projector,
       locked: projector.locked ?? false,
@@ -99,6 +109,7 @@ function createProjectionSimStore() {
   const future: ProjectionSimScene[] = [];
   let suppressSnapshot = false;
   let lastSnapshotAt = 0;
+  let applyingRemote = false;
 
   function setScene(scene: ProjectionSimScene) {
     set(scene);
@@ -149,6 +160,30 @@ function createProjectionSimStore() {
       snapshot({ coalesce: false });
       setScene(normalizeScene(clone(scene)));
       setProjectionSimSelection(null);
+    },
+
+    /** Project-open restore. Unlike loadScene this resets undo history and
+     *  does NOT bump the history version — a freshly opened project must not
+     *  read as having unsaved sim edits. */
+    loadSceneFromProject(scene: ProjectionSimScene, projectDir?: string) {
+      past.length = 0;
+      future.length = 0;
+      lastSnapshotAt = 0;
+      setScene(normalizeScene(clone(scene), projectDir));
+      setProjectionSimSelection(null);
+    },
+
+    /** Save-time serializer: runtime blob/asset URLs are session-scoped, so
+     *  blank them whenever the durable AssetRef can reproduce them on load. */
+    exportForProject(): ProjectionSimScene {
+      const scene = clone(get({ subscribe }));
+      for (const object of scene.objects) {
+        const ref = object.assetRef;
+        if (ref && (ref.originalPath || ref.projectPath || ref.dataUrl || ref.url)) {
+          object.assetUrl = '';
+        }
+      }
+      return scene;
     },
 
     newScene() {
@@ -354,6 +389,25 @@ function createProjectionSimStore() {
         if (transform.target) patch.target = transform.target;
         this.updateProjector(id, patch);
       }
+    },
+
+    /** A scene edited in another window (the Map Sim pop-out, or the editor
+     *  after a project load). Not an undo step here; it is one in the window
+     *  that made it. */
+    applyRemoteScene(scene: ProjectionSimScene) {
+      applyingRemote = true;
+      try {
+        setScene(normalizeScene(clone(scene)));
+      } finally {
+        applyingRemote = false;
+      }
+      const selected = get(selectedProjectionSimTarget);
+      if (selected && !sceneHasTarget(get({ subscribe }), selected)) setProjectionSimSelection(null);
+      bumpHistoryVersion();
+    },
+
+    isApplyingRemote(): boolean {
+      return applyingRemote;
     },
 
     exportJSON(): string {

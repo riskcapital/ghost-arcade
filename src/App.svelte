@@ -103,6 +103,8 @@
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
+  import { projectionSimHistoryVersion } from './lib/projectionSim/store';
+  import { startProjectionSimSceneSync } from './lib/projectionSim/sceneSync';
   import { audioStore } from './lib/stores/audio';
   // macros.ts registers a callback with midiRouter on import so
   // `vj:macro:N:value` MIDI messages route into the macro store. Pulled in
@@ -199,6 +201,10 @@
   let showStage3D = false;
   let stage3DWindowOpen = false;
   let projectionSimWindowOpen = false;
+  // The editor owns the Map Sim scene that is saved with the project; the
+  // pop-out edits the same scene and hands every change back.
+  const stopProjectionSimSceneSync = startProjectionSimSceneSync('editor');
+  onDestroy(() => stopProjectionSimSceneSync());
   async function openStage3D() {
     if (isDesktopApp) {
       try {
@@ -474,10 +480,21 @@
    * were found in their new place (an unsaved change until the project is
    * saved), and files that could not be found.
    */
-  function reportOpenedMedia(media: { moved?: string[]; missing?: string[] } | null | undefined) {
+  function reportOpenedMedia(media: { moved?: string[]; missing?: string[]; icloud?: string[] } | null | undefined) {
     const moved = media?.moved?.length ?? 0;
     const missing = media?.missing?.length ?? 0;
+    const inIcloud = media?.icloud?.length ?? 0;
     if (moved) noteMediaRelinked();
+    if (inIcloud) {
+      // Not lost: iCloud keeps only a stub until a file is downloaded, and the
+      // download has been started.
+      const names = media!.icloud!.slice(0, 3).join(', ') + (inIcloud > 3 ? ` and ${inIcloud - 3} more` : '');
+      showToast(
+        `${inIcloud} media file${inIcloud === 1 ? ' is' : 's are'} in iCloud and not downloaded to this Mac yet (${names}). `
+          + `${inIcloud === 1 ? 'It is' : 'They are'} downloading now. If ${inIcloud === 1 ? 'it does' : 'any do'} not appear once downloaded, reopen the project.`,
+        'warning',
+      );
+    }
     if (missing) {
       showToast(
         `${missing} media file${missing === 1 ? ' is' : 's are'} missing${moved ? ` (${moved} found in a new place)` : ''}. File → Project Media… can find ${missing === 1 ? 'it' : 'them'}.`,
@@ -553,6 +570,8 @@
     const currentState = JSON.stringify({
       layers: $project.layers.map(l => ({ id: l.id, name: l.name, type: l.type, opacity: l.opacity, visible: l.visible, corners: l.corners, contentFit: l.contentFit })),
       name: $project.name,
+      // Map Sim edits are saved with the project too.
+      simEdits: $projectionSimHistoryVersion,
       // Relinked media lives in asset refs no other field shows.
       mediaEdits: $mediaRelinkVersion,
     });
@@ -563,6 +582,7 @@
     const currentState = JSON.stringify({
       layers: get(project).layers.map(l => ({ id: l.id, name: l.name, type: l.type, opacity: l.opacity, visible: l.visible, corners: l.corners, contentFit: l.contentFit })),
       name: get(project).name,
+      simEdits: get(projectionSimHistoryVersion),
       mediaEdits: get(mediaRelinkVersion),
     });
     lastSavedState = currentState;
