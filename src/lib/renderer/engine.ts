@@ -13,7 +13,7 @@ type RenderUnit =
 import type { DrawingElement, PointClickLineShape } from '../drawing/types';
 import { createDefaultShapeWarp, createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement } from '../lines/types';
-import { warpVertexShader, textureFragmentShader, blendShaders, passthroughVertexShader, opaqueOutputFragmentShader } from './shaders';
+import { warpVertexShader, textureFragmentShader, blendShaders, passthroughVertexShader, opaqueOutputFragmentShader, withLayerRect } from './shaders';
 import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader } from './effects';
 import { TemporalMagnificationRunner, isTemporalMagnificationEffect } from './temporalMagnificationRunner';
 import { domeProjectionShader } from './shaders/dome';
@@ -44,10 +44,31 @@ export interface OutputTransformParams {
   gamma?: number;
 }
 
+/** A layer image covering only part of the canvas (see compositeTexture). */
+interface LayerCompositeRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** composite uv -> image uv: xy scale, zw offset. */
+  xform: THREE.Vector4;
+}
+
+/** Shapes the layer material masks itself; others need a post pass. */
+const INLINE_MASKED_SHAPES = ['rectangle', 'circle', 'triangle', 'custom'];
+
 interface LayerRenderObject {
   mesh: THREE.Mesh;
   material: THREE.ShaderMaterial;
-  renderTarget: THREE.WebGLRenderTarget;
+  // The layer's own full-canvas image. Made only when the layer needs one
+  // (effects, masks, edge effects): a plain layer is drawn straight into
+  // the composite, or into a bounds-sized image (see layerDrawPath).
+  renderTarget: THREE.WebGLRenderTarget | null;
+  // Bounds-sized image for a plain layer with a non-normal blend mode.
+  boundedTarget?: THREE.WebGLRenderTarget | null;
+  // Where the bounds-sized image sits on the canvas this frame (pixels,
+  // y up) and how the blend pass reads it. Null: the full-canvas image.
+  compositeRect?: LayerCompositeRect | null;
   geometry: THREE.BufferGeometry;
   warpMode: 'corners' | 'mesh';
   meshGridSize?: { rows: number; cols: number };
@@ -218,6 +239,9 @@ export class RenderEngine {
   // overwrites the transition output with a triangular A → blended → B
   // sweep when this is non-zero. See crossfadeTransitions.ts.
   private crossfadeBlendModeIndex: number = 0;
+  /** Plain layers skip their own full-canvas image (see layerDrawPath).
+   *  False sends every layer through it, as before; kept for A/B checks. */
+  public fastLayerCompositing = true;
   private crossfadeStartTime: number = performance.now() / 1000;
   // Operator confidence monitors. These display the already-rendered bank
   // targets; they never create another layer renderer or rerun a source.
@@ -614,11 +638,12 @@ export class RenderEngine {
   private createBlendMaterial(mode: BlendMode): THREE.ShaderMaterial {
     return new THREE.ShaderMaterial({
       vertexShader: passthroughVertexShader,
-      fragmentShader: blendShaders[mode] || blendShaders.normal,
+      fragmentShader: withLayerRect(blendShaders[mode] || blendShaders.normal),
       uniforms: {
         uBase: { value: null },
         uLayer: { value: null },
         uOpacity: { value: 1.0 },
+        uLayerXform: { value: new THREE.Vector4(1, 1, 0, 0) },
       },
       transparent: true,
       depthTest: false,
@@ -633,6 +658,9 @@ export class RenderEngine {
       uniforms: {
         uTexture: { value: null },
         uOpacity: { value: 1.0 },
+        uDirectOpacity: { value: 0 },
+        uDirectFirst: { value: 0 },
+        uClipXform: { value: new THREE.Vector4(1, 1, 0, 0) },
         // Luminance-keyed background opacity. 1.0 = bg fully opaque
         // (default, no keying). GPU shader layers can lower this via
         // gpuLayerContent.bgOpacity to fade their dark background out
@@ -708,7 +736,7 @@ export class RenderEngine {
       existingTexture = obj.material.uniforms.uTexture.value;
       obj.mesh.geometry.dispose();
       obj.material.dispose();
-      obj.renderTarget.dispose();
+      this.releaseLayerTargets(obj);
       this.layerObjects.delete(layer.id);
       obj = undefined;
     }
@@ -737,7 +765,6 @@ export class RenderEngine {
       }
 
       const mesh = new THREE.Mesh(geometry, material);
-      const renderTarget = this.createRenderTarget();
 
       // Store original UV coordinates for mesh warp mode
       // These are the normalized positions (-1 to 1) that we'll use to calculate UVs
@@ -752,7 +779,7 @@ export class RenderEngine {
       obj = {
         mesh,
         material,
-        renderTarget,
+        renderTarget: null,
         geometry,
         warpMode: layer.warpMode === 'mesh' ? 'mesh' : 'corners',
         meshGridSize: layer.meshGrid ? { rows: layer.meshGrid.rows, cols: layer.meshGrid.cols } : undefined,
@@ -948,7 +975,7 @@ export class RenderEngine {
     if (obj) {
       obj.mesh.geometry.dispose();
       obj.material.dispose();
-      obj.renderTarget.dispose();
+      this.releaseLayerTargets(obj);
       this.layerObjects.delete(layerId);
     }
     // Also clean up color texture if exists
@@ -2013,24 +2040,42 @@ export class RenderEngine {
   /**
    * Composite a texture onto the main compositeTarget using blend mode.
    */
-  private compositeTexture(texture: THREE.Texture, opacity: number, blendMode: BlendMode, isFirst: boolean): void {
+  private compositeTexture(texture: THREE.Texture, opacity: number, blendMode: BlendMode, isFirst: boolean, rect: LayerCompositeRect | null = null): void {
     if (isFirst) {
       const blendMat = this.blendMaterials.get('normal')!;
       blendMat.uniforms.uBase.value = this.createBlackTexture();
       blendMat.uniforms.uLayer.value = texture;
       blendMat.uniforms.uOpacity.value = opacity;
+      if (rect) blendMat.uniforms.uLayerXform.value.copy(rect.xform);
       this.compositeQuad.material = blendMat;
       this.renderer.setRenderTarget(this.compositeTarget);
       this.renderer.render(this.compositeScene, this.camera);
+      blendMat.uniforms.uLayerXform.value.set(1, 1, 0, 0);
     } else {
+      // A bounds-sized layer image only changes its bounds: copy and blend
+      // just that region instead of the whole canvas.
+      const composite = this.compositeTarget;
+      if (rect) {
+        this.tempTarget.scissor.set(rect.x, rect.y, rect.width, rect.height);
+        this.tempTarget.scissorTest = true;
+        composite.scissor.set(rect.x, rect.y, rect.width, rect.height);
+        composite.scissorTest = true;
+      }
       this.swapTargets();
       const blendMat = this.blendMaterials.get(blendMode) || this.blendMaterials.get('normal')!;
       blendMat.uniforms.uBase.value = this.tempTarget.texture;
       blendMat.uniforms.uLayer.value = texture;
       blendMat.uniforms.uOpacity.value = opacity;
+      if (rect) blendMat.uniforms.uLayerXform.value.copy(rect.xform);
       this.compositeQuad.material = blendMat;
-      this.renderer.setRenderTarget(this.compositeTarget);
+      this.renderer.setRenderTarget(composite);
       this.renderer.render(this.compositeScene, this.camera);
+      if (rect) {
+        blendMat.uniforms.uLayerXform.value.set(1, 1, 0, 0);
+        this.tempTarget.scissorTest = false;
+        composite.scissorTest = false;
+        this.renderer.setRenderTarget(composite);
+      }
     }
   }
 
@@ -2163,18 +2208,24 @@ export class RenderEngine {
       const obj = this.getOrCreateLayerObject(child);
       const layerTexture = this.getLayerTexture(child, obj);
       if (layerTexture) {
-        let finalTexture = this.processLayerPipeline(child, obj, layerTexture);
-        if (activeHierarchyMask?.mask?.enabled) {
-          finalTexture = this.applyMask(
-            finalTexture,
-            activeHierarchyMask.mask,
-            activeHierarchyMask.id,
-          );
-        }
         // Continuous-mode gate (see renderUnitsToCurrentTarget comment).
         const childSeqGate = (child as any)._seqGate;
         const childCompositeOpacity = child.opacity * (typeof childSeqGate === 'number' ? childSeqGate : 1);
-        this.compositeTexture(finalTexture, childCompositeOpacity, child.blendMode, childIdx === 0);
+        const hierarchyMasked = !!activeHierarchyMask?.mask?.enabled;
+        const drawPath = hierarchyMasked ? 'full' : this.layerDrawPath(child);
+        if (drawPath === 'direct') {
+          this.drawLayerDirect(child, obj, layerTexture, childCompositeOpacity, childIdx === 0);
+        } else {
+          let finalTexture = this.processLayerPipeline(child, obj, layerTexture, drawPath === 'bounded');
+          if (hierarchyMasked) {
+            finalTexture = this.applyMask(
+              finalTexture,
+              activeHierarchyMask!.mask!,
+              activeHierarchyMask!.id,
+            );
+          }
+          this.compositeTexture(finalTexture, childCompositeOpacity, child.blendMode, childIdx === 0, obj.compositeRect ?? null);
+        }
         childIdx++;
       }
 
@@ -2232,14 +2283,15 @@ export class RenderEngine {
       const prevClearColor = this.renderer.getClearColor(this._tempColor);
       const prevClearAlpha = this.renderer.getClearAlpha();
       this.renderer.setClearColor(0x000000, 0);
+      const groupWarpTarget = this.fullLayerTarget(groupObj);
       this.scene.add(groupObj.mesh);
-      this.renderer.setRenderTarget(groupObj.renderTarget);
+      this.renderer.setRenderTarget(groupWarpTarget);
       this.renderer.clear();
       this.renderer.render(this.scene, this.camera);
       this.scene.remove(groupObj.mesh);
       this.renderer.setClearColor(prevClearColor, prevClearAlpha);
 
-      groupTexture = groupObj.renderTarget.texture;
+      groupTexture = groupWarpTarget.texture;
     }
 
     // Post-composite effects pass. Runtime-only field (`_` prefix → never
@@ -2278,7 +2330,12 @@ export class RenderEngine {
    * Process a layer through the full render pipeline (material setup, warp, render, effects, mask).
    * Returns the final compositable texture.
    */
-  private processLayerPipeline(layer: Layer, obj: LayerRenderObject, layerTexture: THREE.Texture): THREE.Texture {
+  /**
+   * Set the layer material up for this frame: texture, crop, shape, content
+   * fit and warp. Returns a function that undoes this frame's overrides
+   * (a group's unified crop) once the layer has been drawn.
+   */
+  private setupLayerMaterial(layer: Layer, obj: LayerRenderObject, layerTexture: THREE.Texture): () => void {
     // Update material
     obj.material.uniforms.uTexture.value = layerTexture;
     // GPU shader layers can fade their dark background by setting
@@ -2527,28 +2584,185 @@ export class RenderEngine {
       obj.material.uniforms.uCustomShapeFit.value = 0;
     }
 
+    return () => {
+      // Restore crop + custom-shape fit if we overrode them for unified mode
+      if ((layer as any)._unifiedCrop) {
+        obj.material.uniforms.uCropEnabled.value = prevCropEnabled;
+        obj.material.uniforms.uCropRegion.value.copy(prevCropRegion!);
+        if (prevCustomShapeFit !== undefined) {
+          obj.material.uniforms.uCustomShapeFit.value = prevCustomShapeFit;
+        }
+        delete (layer as any)._unifiedCrop;
+      }
+    };
+  }
+
+  /**
+   * How a layer reaches the composite. 'direct': drawn straight into the
+   * composite (normal blend, nothing that post-processes its image).
+   * 'bounded': the same kind of plain layer with another blend mode, drawn
+   * into an image the size of its bounds and blended over just those
+   * bounds. 'full': its own full-canvas image, for effects, masks, shape
+   * masks and edge effects, which work in canvas space.
+   */
+  private layerDrawPath(layer: Layer): 'direct' | 'bounded' | 'full' {
+    if (!this.fastLayerCompositing) return 'full';
+    if ((layer.effects?.length ?? 0) > 0) return 'full';
+    if (layer.mask?.enabled && layer.mask.shapes?.some((shape) => shape.closed && shape.points.length >= 3)) return 'full';
+    const shape = layer.layerShape;
+    if (shape?.enabled && !INLINE_MASKED_SHAPES.includes(shape.type)) return 'full';
+    if (layer.edgeEffects?.enabled && (layer.edgeEffects.effects?.length ?? 0) > 0) return 'full';
+    // The direct draw matches the blend pass only over an opaque clear (the
+    // main composite and the A/B banks). A group's image clears to
+    // transparent, where the pass also scales by the alpha already there.
+    const opaqueTarget = this.renderer.getClearAlpha() >= 1;
+    return (layer.blendMode ?? 'normal') === 'normal' && opaqueTarget ? 'direct' : 'bounded';
+  }
+
+  /**
+   * Draw a plain normal-blend layer straight into the composite. Matches
+   * rendering it into its own image and blending that in with the "normal"
+   * blend pass (see uDirectOpacity in the layer shader), without the
+   * full-canvas image, copy and blend passes.
+   */
+  private drawLayerDirect(layer: Layer, obj: LayerRenderObject, layerTexture: THREE.Texture, opacity: number, isFirst: boolean): void {
+    const restore = this.setupLayerMaterial(layer, obj, layerTexture);
+    if (obj.renderTarget || obj.boundedTarget) this.releaseLayerTargets(obj);
+    const material = obj.material;
+    const prevAutoClear = this.renderer.autoClear;
+    this.renderer.autoClear = false;
+    this.renderer.setRenderTarget(this.compositeTarget);
+    // The first blend pass covers the whole target, blended over the
+    // renderer's clear colour (opaque black): clear to the same.
+    if (isFirst) this.renderer.clear();
+    if (opacity > 0) {
+      material.uniforms.uDirectOpacity.value = opacity;
+      material.uniforms.uDirectFirst.value = isFirst ? 1 : 0;
+      material.blending = THREE.CustomBlending;
+      material.blendEquation = THREE.AddEquation;
+      material.blendSrc = THREE.OneFactor;
+      material.blendDst = THREE.OneMinusSrcAlphaFactor;
+      material.blendEquationAlpha = THREE.MaxEquation;
+      material.blendSrcAlpha = THREE.OneFactor;
+      material.blendDstAlpha = THREE.OneFactor;
+      this.scene.add(obj.mesh);
+      this.renderer.render(this.scene, this.camera);
+      this.scene.remove(obj.mesh);
+      material.blending = THREE.NormalBlending;
+      material.blendSrc = THREE.SrcAlphaFactor;
+      material.blendEquationAlpha = null;
+      material.blendSrcAlpha = null;
+      material.blendDstAlpha = null;
+      material.uniforms.uDirectOpacity.value = 0;
+      material.uniforms.uDirectFirst.value = 0;
+    }
+    this.renderer.autoClear = prevAutoClear;
+    restore();
+  }
+
+  /** Canvas pixels (y up) the layer's geometry covers, padded a little. */
+  private layerPixelBounds(obj: LayerRenderObject): { x: number; y: number; width: number; height: number } | null {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const take = (x: number, y: number) => {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    };
+    const uniforms = obj.material.uniforms;
+    if (uniforms.uUseMeshPosition.value) {
+      // Mesh warp: positions are already in clip space.
+      const positions = obj.geometry.attributes.position;
+      for (let i = 0; i < positions.count; i++) take((positions.getX(i) + 1) / 2, (positions.getY(i) + 1) / 2);
+    } else {
+      // Corner warp interpolates the corners, so it stays inside them.
+      for (const corner of [uniforms.uTopLeft.value, uniforms.uTopRight.value, uniforms.uBottomLeft.value, uniforms.uBottomRight.value]) {
+        take(corner.x, corner.y);
+      }
+    }
+    if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
+    const pad = 2;
+    const x0 = Math.max(0, Math.floor(minX * this.width) - pad);
+    const y0 = Math.max(0, Math.floor(minY * this.height) - pad);
+    const x1 = Math.min(this.width, Math.ceil(maxX * this.width) + pad);
+    const y1 = Math.min(this.height, Math.ceil(maxY * this.height) + pad);
+    if (x1 <= x0 || y1 <= y0) return null;
+    return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+  }
+
+  private fullLayerTarget(obj: LayerRenderObject): THREE.WebGLRenderTarget {
+    if (!obj.renderTarget) obj.renderTarget = this.createRenderTarget();
+    return obj.renderTarget;
+  }
+
+  private releaseLayerTargets(obj: LayerRenderObject): void {
+    obj.renderTarget?.dispose();
+    obj.renderTarget = null;
+    obj.boundedTarget?.dispose();
+    obj.boundedTarget = null;
+    obj.compositeRect = null;
+  }
+
+  /**
+   * The image a layer renders into this frame. A bounded layer gets one the
+   * size of its bounds (rounded up to 64 px so small moves reuse it), with
+   * the vertex transform placing the canvas into it; a large one keeps the
+   * full-canvas image, which saves nothing to shrink.
+   */
+  private layerImageTarget(obj: LayerRenderObject, bounded: boolean): THREE.WebGLRenderTarget {
+    obj.compositeRect = null;
+    obj.material.uniforms.uClipXform.value.set(1, 1, 0, 0);
+    const rect = bounded ? this.layerPixelBounds(obj) : null;
+    if (rect && rect.width * rect.height <= this.width * this.height * 0.5) {
+      const tw = Math.min(this.maxTextureSize, Math.ceil(rect.width / 64) * 64);
+      const th = Math.min(this.maxTextureSize, Math.ceil(rect.height / 64) * 64);
+      let target = obj.boundedTarget;
+      if (!target) {
+        target = new THREE.WebGLRenderTarget(tw, th, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.UnsignedByteType,
+        });
+        obj.boundedTarget = target;
+      } else if (target.width !== tw || target.height !== th) {
+        target.setSize(tw, th);
+      }
+      const W = this.width;
+      const H = this.height;
+      obj.material.uniforms.uClipXform.value.set(W / tw, H / th, W / tw - (2 * rect.x) / tw - 1, H / th - (2 * rect.y) / th - 1);
+      obj.compositeRect = { ...rect, xform: new THREE.Vector4(W / tw, H / th, -rect.x / tw, -rect.y / th) };
+      if (obj.renderTarget) {
+        obj.renderTarget.dispose();
+        obj.renderTarget = null;
+      }
+      return target;
+    }
+    if (obj.boundedTarget) {
+      obj.boundedTarget.dispose();
+      obj.boundedTarget = null;
+    }
+    return this.fullLayerTarget(obj);
+  }
+
+  private processLayerPipeline(layer: Layer, obj: LayerRenderObject, layerTexture: THREE.Texture, bounded = false): THREE.Texture {
+    const restore = this.setupLayerMaterial(layer, obj, layerTexture);
+    const target = this.layerImageTarget(obj, bounded);
+
     // Render to layer target
     const prevClearColor = this.renderer.getClearColor(this._tempColor);
     const prevClearAlpha = this.renderer.getClearAlpha();
     this.renderer.setClearColor(0x000000, 0);
     this.scene.add(obj.mesh);
-    this.renderer.setRenderTarget(obj.renderTarget);
+    this.renderer.setRenderTarget(target);
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     this.scene.remove(obj.mesh);
     this.renderer.setClearColor(prevClearColor, prevClearAlpha);
+    obj.material.uniforms.uClipXform.value.set(1, 1, 0, 0);
+    restore();
 
-    // Restore crop + custom-shape fit if we overrode them for unified mode
-    if ((layer as any)._unifiedCrop) {
-      obj.material.uniforms.uCropEnabled.value = prevCropEnabled;
-      obj.material.uniforms.uCropRegion.value.copy(prevCropRegion!);
-      if (prevCustomShapeFit !== undefined) {
-        obj.material.uniforms.uCustomShapeFit.value = prevCustomShapeFit;
-      }
-      delete (layer as any)._unifiedCrop;
-    }
-
-    let finalTexture: THREE.Texture = obj.renderTarget.texture;
+    let finalTexture: THREE.Texture = target.texture;
 
     // Effects (passes layer.id so GPU effects can key per-layer state)
     if (layer.effects && layer.effects.length > 0) {
@@ -2631,7 +2845,7 @@ export class RenderEngine {
 
     // Resize layer render targets
     for (const obj of this.layerObjects.values()) {
-      obj.renderTarget.setSize(projectW, projectH);
+      obj.renderTarget?.setSize(projectW, projectH);
     }
 
     // Bank crossfade FBOs (full-canvas resolution) — resize in place if
@@ -2963,7 +3177,7 @@ export class RenderEngine {
     for (const obj of this.layerObjects.values()) {
       obj.mesh.geometry.dispose();
       obj.material.dispose();
-      obj.renderTarget.dispose();
+      this.releaseLayerTargets(obj);
     }
 
     // Dispose color textures
@@ -3319,7 +3533,6 @@ export class RenderEngine {
       const obj = this.getOrCreateLayerObject(layer);
       const layerTexture = this.getLayerTexture(layer, obj);
       if (!layerTexture) continue;
-      const finalTexture = this.processLayerPipeline(layer, obj, layerTexture);
       // Continuous-mode sequencer rows stash a gate multiplier on the
       // layer (Canvas.svelte sets _seqGate when the row's ∞ flag is
       // on). The layer still renders its full pipeline upstream so its
@@ -3327,7 +3540,13 @@ export class RenderEngine {
       // hides the layer at composite time. Default 1 = unaffected.
       const seqGate = (layer as any)._seqGate;
       const compositeOpacity = layer.opacity * (typeof seqGate === 'number' ? seqGate : 1);
-      this.compositeTexture(finalTexture, compositeOpacity, layer.blendMode, compositeIdx === 0);
+      const drawPath = this.layerDrawPath(layer);
+      if (drawPath === 'direct') {
+        this.drawLayerDirect(layer, obj, layerTexture, compositeOpacity, compositeIdx === 0);
+      } else {
+        const finalTexture = this.processLayerPipeline(layer, obj, layerTexture, drawPath === 'bounded');
+        this.compositeTexture(finalTexture, compositeOpacity, layer.blendMode, compositeIdx === 0, obj.compositeRect ?? null);
+      }
       compositeIdx++;
 
       // GPU stroke-particle brushes sit at the light-paint layer's z.

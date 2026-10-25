@@ -13,6 +13,10 @@ export const warpVertexShader = /* glsl */ `
   // When false, compute position from corner uniforms (for corner warp mode)
   uniform bool uUseMeshPosition;
 
+  // Maps canvas clip space into a layer image that covers only the layer's
+  // bounds: xy scale, zw offset. (1, 1, 0, 0) for a full-canvas image.
+  uniform vec4 uClipXform;
+
   void main() {
     vUv = uv;
 
@@ -32,13 +36,19 @@ export const warpVertexShader = /* glsl */ `
       clipPos = pos * 2.0 - 1.0;
     }
 
-    gl_Position = vec4(clipPos, 0.0, 1.0);
+    gl_Position = vec4(clipPos * uClipXform.xy + uClipXform.zw, 0.0, 1.0);
   }
 `;
 
 export const textureFragmentShader = /* glsl */ `
   uniform sampler2D uTexture;
   uniform float uOpacity;
+  // > 0: the layer is drawn straight into the composite at this opacity
+  // (engine drawLayerDirect) instead of into its own image. The output then
+  // equals what the image + "normal" blend pass would have produced.
+  uniform float uDirectOpacity;
+  // 1 for the first layer of a composite (see below).
+  uniform float uDirectFirst;
   // Luminance-keyed background opacity. Default 1.0 = bg fully opaque
   // (no keying). Lower values fade the alpha proportionally to the
   // pixel's brightness, so dark areas become transparent while
@@ -362,7 +372,20 @@ export const textureFragmentShader = /* glsl */ `
     // mix gives the user a continuous fade between the two.
     float bgLuma = max(max(texColor.r, texColor.g), texColor.b);
     float bgKey = mix(bgLuma, 1.0, uBgOpacity);
-    gl_FragColor = vec4(texColor.rgb, texColor.a * uOpacity * mask * contentMask * bgKey);
+    float outA = texColor.a * uOpacity * mask * contentMask * bgKey;
+    if (uDirectOpacity > 0.0) {
+      // The image path stores rgb * outA (normal blending into a clear
+      // image), then the normal blend mixes that in by outA * opacity.
+      // Premultiplied by both, blended ONE / ONE_MINUS_SRC_ALPHA with a MAX
+      // alpha equation, this lands on the same pixels. The first layer's
+      // blend pass mixes over a transparent base and is then blended again
+      // over the cleared target, so it lands at one more factor of a.
+      float a = outA * uDirectOpacity;
+      float first = uDirectFirst > 0.5 ? a : 1.0;
+      gl_FragColor = vec4(texColor.rgb * outA * a * first, a);
+    } else {
+      gl_FragColor = vec4(texColor.rgb, outA);
+    }
   }
 `;
 
@@ -900,3 +923,22 @@ export const meshWarpVertexShader = /* glsl */ `
     gl_Position = vec4(clipPos, 0.0, 1.0);
   }
 `;
+
+/**
+ * Let a blend shader read a layer image that covers only part of the canvas.
+ * `uLayerXform` maps the composite's uv into the image (xy scale, zw
+ * offset); outside the image the layer is transparent. The default
+ * (1, 1, 0, 0) reads a full-canvas image exactly as before.
+ */
+export function withLayerRect(fragment: string): string {
+  const declaration = 'uniform sampler2D uLayer;';
+  if (!fragment.includes(declaration) || !fragment.includes('texture2D(uLayer, vUv)')) return fragment;
+  const helper = `${declaration}
+    uniform vec4 uLayerXform;
+    vec4 sampleBlendLayer(vec2 uv) {
+      vec2 t = uv * uLayerXform.xy + uLayerXform.zw;
+      if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) return vec4(0.0);
+      return texture2D(uLayer, t);
+    }`;
+  return fragment.replace(declaration, helper).split('texture2D(uLayer, vUv)').join('sampleBlendLayer(vUv)');
+}
