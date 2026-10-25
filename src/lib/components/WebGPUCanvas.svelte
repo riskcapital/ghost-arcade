@@ -676,6 +676,65 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     configuredBrushH = h;
   }
 
+  // The device comes from webgpuShared and outlives this component. If it
+  // is lost (GPU reset, sleep/wake, or destroyed by someone else) every
+  // call on it silently does nothing and the editor would show black for
+  // good, so rebuild on a fresh device. A burst of losses gives up and
+  // reports the error instead of looping.
+  let recentLosses: number[] = [];
+  function watchDeviceLoss(watched: any): void {
+    watched?.lost?.then((info: any) => {
+      if (disposed || watched !== device) return;
+      const now = performance.now();
+      recentLosses = [...recentLosses.filter((t) => now - t < 10000), now];
+      console.warn('[WebGPUCanvas] WebGPU device lost:', info?.reason, info?.message);
+      releaseDeviceResources();
+      if (recentLosses.length > 3) {
+        initStatus = 'error';
+        initError = 'WebGPU device keeps getting lost';
+        reconcileOutputRegistration();
+        return;
+      }
+      initStatus = 'init';
+      // Let webgpuShared drop the lost device first (its own lost handler
+      // runs before this one), so the re-init gets a new device.
+      setTimeout(() => {
+        if (disposed) return;
+        void initWebGPU().then(() => {
+          if (!disposed && (initStatus === 'running' || initStatus === 'no-source')) startFrameLoop();
+        });
+      }, 0);
+    });
+  }
+
+  /** Free what this component made on the device, never the device:
+   *  it is shared with the other WebGPU renderers and with the next
+   *  mount of this component. */
+  function releaseDeviceResources(): void {
+    try { advPaint?.dispose?.(); } catch { /* */ }
+    advPaint = null;
+    try { strokeParticles?.dispose?.(); } catch { /* */ }
+    strokeParticles = null;
+    setGPUBrushCanvas(null);
+    try { brushCtx?.unconfigure?.(); } catch { /* */ }
+    brushCanvas = null; brushCtx = null;
+    for (const r of pixelFXRenderers.values()) { try { r.dispose?.(); } catch { /* */ } }
+    pixelFXRenderers.clear();
+    pixelFXLoadedSourceUrl.clear();
+    for (const r of flythroughRenderers.values()) { try { r.dispose?.(); } catch { /* */ } }
+    flythroughRenderers.clear();
+    flythroughLoadedSourceKey.clear();
+    try { warpUniformBuffer?.destroy?.(); } catch { /* */ }
+    try { domeUniformBuffer?.destroy?.(); } catch { /* */ }
+    warpUniformBuffer = null;
+    domeUniformBuffer = null;
+    try { canvasContext?.unconfigure?.(); } catch { /* */ }
+    configuredPresentW = 0;
+    configuredPresentH = 0;
+    pipeline = null;
+    device = null;
+  }
+
   async function initWebGPU(): Promise<void> {
     // ── Drop any stale per-layer GPU renderers from a previous
     // device. HMR + device-lost both trigger re-init; per-layer
@@ -793,6 +852,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       }
 
       initStatus = sourceCanvas ? 'running' : 'no-source';
+      watchDeviceLoss(device);
       console.log('[WebGPUCanvas] WebGPU initialised. Adapter:',
         (adapter as any).info?.description || 'unknown');
       // WebGPU is now presenting — switch output capture from the WebGL
@@ -1560,22 +1620,13 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     window.removeEventListener('mouseup', onMouseUp, { capture: true } as any);
     if (audioUnsub) { try { audioUnsub(); } catch { /* */ } audioUnsub = null; }
     if (frozenUnsub) { try { frozenUnsub(); } catch { /* */ } frozenUnsub = null; }
-    setGPUBrushCanvas(null);
-    brushCanvas = null; brushCtx = null;
     if (projectUnsub) { try { projectUnsub(); } catch { /* */ } projectUnsub = null; }
     if (selectedLayerUnsub) { try { selectedLayerUnsub(); } catch { /* */ } selectedLayerUnsub = null; }
     if (settingsUnsub) { try { settingsUnsub(); } catch { /* */ } settingsUnsub = null; }
-    try { advPaint?.dispose?.(); } catch { /* */ }
-    advPaint = null;
-    try { strokeParticles?.dispose?.(); } catch { /* */ }
-    strokeParticles = null;
-    for (const r of pixelFXRenderers.values()) { try { r.dispose?.(); } catch { /* */ } }
-    pixelFXRenderers.clear();
-    pixelFXLoadedSourceUrl.clear();
-    for (const r of flythroughRenderers.values()) { try { r.dispose?.(); } catch { /* */ } }
-    flythroughRenderers.clear();
-    flythroughLoadedSourceKey.clear();
-    try { device?.destroy?.(); } catch { /* */ }
+    // Never destroy the device itself: it is the shared one. Destroying it
+    // here killed it under the next mount (a remount picks the same device
+    // up before its loss is reported), leaving the editor black.
+    releaseDeviceResources();
   });
 </script>
 
