@@ -373,7 +373,7 @@
   import { paintMaskLayerId } from './lib/stores/paintMaskTool';
   import PaintMaskOverlay from './lib/components/PaintMaskOverlay.svelte';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
-  import { keyframeTimeline } from './lib/stores/keyframeTimeline';
+  import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
   import { beginHistoryRestore, endHistoryRestore } from './lib/stores/historyHooks';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
@@ -399,7 +399,7 @@
   import RecordingSourcePicker from './lib/components/RecordingSourcePicker.svelte';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
-  import { audioStore } from './lib/stores/audio';
+  import { audioStore, audioBpm, audioManualBpm, isBeat } from './lib/stores/audio';
   // Side effect: the analyser follows clip audio when no live input runs.
   import './lib/audio/clipAudioFollow';
   // macros.ts registers a callback with midiRouter on import so
@@ -1263,7 +1263,7 @@
     const open: Record<BottomTray, boolean> = {
       presets: presetTrayOpen,
       sequencer: $layerSequencer.isOpen,
-      keyframes: $keyframeTimeline.isOpen,
+      keyframes: $keyframeTrayOpen,
       show: $showTimeline.isOpen,
     };
     const opened = (Object.keys(open) as BottomTray[]).filter((tray) => open[tray] && !_prevBottomTrays[tray]);
@@ -5081,8 +5081,8 @@
         // 120 BPM and would never reliably catch the up-edge through
         // the throttled sync. See `beat_pulse` channel emitted from
         // the audio analyzer's beat callback below.
-        bpm: $audioStore.bpm,
-        manualBPM: $audioStore.manualBPM,
+        bpm: $audioBpm,
+        manualBPM: $audioManualBpm,
       };
       sendToPhone({
         type: 'vj_clips_sync',
@@ -5155,24 +5155,28 @@
   }
   // Audio: BPM / manualBPM only (NOT beat — that's emitted via the
   // dedicated beat_pulse channel because it's a 10ms momentary flag).
-  $: if (phoneLinked && ($audioStore.bpm || $audioStore.manualBPM)) {
+  // The BPM-only stores change when the tempo does, not on every analysed
+  // frame like audioStore (which re-ran this, and the sync, every frame).
+  $: if (phoneLinked && ($audioBpm || $audioManualBpm)) {
     scheduleSyncVJClips();
   }
 
   // ── Beat pulse (separate channel) ────────────────────────────────
-  // Detect rising edges of $audioStore.beat.isBeat and fire a tiny
+  // Detect rising edges of the beat flag and fire a tiny
   // dedicated WS message. Mobile UI listens for `beat_pulse` to
   // momentarily flash the TAP button + BPM number. This bypasses the
   // syncVJClips throttle so beats stay tight (within one rAF frame).
+  // `isBeat` changes only on the edges, so this runs per beat, not per frame.
   let lastBeatFlag = false;
   $: if (phoneLinked && ws && ws.readyState === WebSocket.OPEN) {
-    const now = !!$audioStore.beat?.isBeat;
+    const now = !!$isBeat;
     if (now && !lastBeatFlag) {
+      const beat = get(audioStore).beat;
       try {
         ws.send(JSON.stringify({
           type: 'beat_pulse',
-          intensity: $audioStore.beat?.beatIntensity ?? 1,
-          count: $audioStore.beat?.beatCount ?? 0,
+          intensity: beat?.beatIntensity ?? 1,
+          count: beat?.beatCount ?? 0,
         }));
       } catch { /* socket may have closed mid-send */ }
     }
@@ -7526,7 +7530,7 @@
       class:native-primary-presenter={nativePreviewGlassActive}
       class:preset-tray-open={presetTrayOpen}
       class:seq-tray-open={$layerSequencer.isOpen}
-      class:kf-tray-open={$keyframeTimeline.isOpen}
+      class:kf-tray-open={$keyframeTrayOpen}
       class:show-tray-open={$showTimeline.isOpen}
     >
       <!-- Left sidebar — Layers / Screens tabs.
@@ -8668,7 +8672,7 @@
       </button>
       <button
         class="status-pill"
-        class:on={$keyframeTimeline.isOpen}
+        class:on={$keyframeTrayOpen}
         onclick={() => keyframeTimeline.toggleOpen()}
         title="Keyframes (⌘K)"
       >

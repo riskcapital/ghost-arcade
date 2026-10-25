@@ -2,7 +2,7 @@
   import { project, compositions, activeCompositionId } from '../stores/layers';
   import { showTimelineIsPlaying } from '../stores/showTimeline';
   import { presetTransition, TRANSITION_OPTIONS } from '../stores/presetTransition';
-  import { audioStore } from '../stores/audio';
+  import { audioBpm } from '../stores/audio';
   import type { Composition, CompositionTransitionStyle } from '../types';
   import { showLoading, hideLoading } from '../stores/loading';
   import { invoke, isDesktopApp } from '$lib/bridge';
@@ -220,8 +220,8 @@
   $: if ($showTimelineIsPlaying && autoPlaying) autoPlayStop();
 
   /** Reactive: pick up live BPM from audio store when in beat mode */
-  $: if (autoTimingMode === 'beat' && $audioStore.bpm > 0) {
-    autoBpm = $audioStore.bpm;
+  $: if (autoTimingMode === 'beat' && $audioBpm > 0) {
+    autoBpm = $audioBpm;
   }
 
   /** Progress 0-1 for the auto-play bar */

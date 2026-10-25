@@ -2,7 +2,7 @@
 // Svelte store that bridges the AudioAnalyzer engine to reactive UI and VJ systems
 // Provides real-time audio data, beat events, and BPM for the entire app
 
-import { writable, derived, get } from 'svelte/store';
+import { writable, derived, get, readable, type Readable } from 'svelte/store';
 import { audioAnalyzer, type AudioAnalysis, type AudioBands, type BeatState, type BandKickSnare } from '../audio/analyzer';
 
 // Cache raw analysis for audio texture updates (textures need Float32Array data)
@@ -482,3 +482,32 @@ export const beatPhase = derived(audioStore, $a => $a.beatPhase);
 
 // Derived: frequency bands
 export const audioBands = derived(audioStore, $a => $a.bands);
+
+/**
+ * One part of the audio state that only changes when that part does.
+ * `audioStore` is rewritten on every analysed frame, so a component reading
+ * a setting from it (the input type, the BPM) re-ran on every frame along
+ * with everything near it. Compared by identity, so a list keeps its
+ * reference until the list itself changes.
+ */
+function audioPart<T>(select: (state: AudioState) => T): Readable<T> {
+  return readable(select(get(audioStore)), (set) => {
+    let last = select(get(audioStore));
+    set(last);
+    return audioStore.subscribe((state) => {
+      const next = select(state);
+      if (Object.is(next, last)) return;
+      last = next;
+      set(next);
+    });
+  });
+}
+
+export const audioInputType = audioPart((s) => s.inputType);
+export const audioIsActive = audioPart((s) => s.isActive);
+export const audioError = audioPart((s) => s.error);
+export const audioBpm = audioPart((s) => s.bpm);
+export const audioManualBpm = audioPart((s) => s.manualBPM);
+export const audioBpmConfidence = audioPart((s) => s.bpmConfidence);
+export const audioInputDevices = audioPart((s) => s.availableInputDevices);
+export const audioPreferredInputDeviceId = audioPart((s) => s.preferredInputDeviceId);

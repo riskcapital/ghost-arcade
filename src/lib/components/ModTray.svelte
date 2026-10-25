@@ -53,7 +53,7 @@
   import { quintOut } from 'svelte/easing';
   import { defaultModRange, hasModRange, type ModSource, type ParamModulation } from '../audio/modulationControls';
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
-  import { audioStore } from '../stores/audio';
+  import { audioBpm, audioManualBpm } from '../stores/audio';
   import type { AutoConfig, KeyframeEasing } from '../types';
   import { KEYFRAME_EASINGS } from '../keyframes/easing';
 
@@ -136,7 +136,7 @@
   $: depth = mod?.amount ?? 0.5;
   $: invert = mod?.invert ?? false;
   $: speed = mod?.speed ?? 1;
-  $: bpm = $audioStore.manualBPM || $audioStore.bpm || 0;
+  $: bpm = $audioManualBpm || $audioBpm || 0;
 
   // ─── Min / Max range ───────────────────────────────────────────────
   $: rangeSupported = typeof paramMin === 'number' && typeof paramMax === 'number' && paramMax > paramMin;

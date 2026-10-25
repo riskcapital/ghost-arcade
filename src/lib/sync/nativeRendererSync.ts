@@ -7643,6 +7643,10 @@ export class NativeRendererSync {
     // emission into an extra RAF flush here would bypass the manual-clock
     // lock that scheduleSync() honours, so stay dormant like it does.
     if (this.manualClockExportDepth > 0) return;
+    // While the per-frame loop runs, its next flush carries the newest audio
+    // anyway. Live audio changes on every analysed frame, so flushing here
+    // too ran the whole scene sync a second time per display frame.
+    if (this.shaderAnimationRaf !== null) return;
     const audio = getVisualAudioSnapshot();
     const nextSig = this.audioSignature(audio);
     if (!audio.isActive && nextSig === this.lastAudioSig) return;
@@ -8591,12 +8595,26 @@ export class NativeRendererSync {
     const hasContinuousNativeLayers =
       hasVisibleNativeLayers || layers.some((layer) => nativeLayerNeedsContinuousSync(layer));
     if (hasContinuousNativeLayers && this.shaderAnimationRaf === null) {
-      const loop = () => {
+      // The core draws at its target rate. On a 120, 144 or 240 Hz display
+      // the animation frame comes two to four times as often, and flushing
+      // on every one repeated the whole per-layer sync for frames the core
+      // never draws. Flush on the core's cadence instead: the next flush is
+      // due one frame interval after the last was due, so a display that is
+      // not a multiple of it still averages the core's rate.
+      let nextFlushAt = 0;
+      const loop = (now: number) => {
         if (!this.running || this.manualClockExportDepth > 0) {
           this.stopShaderAnimation();
           return;
         }
-        void this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+        const interval = 1000 / Math.max(1, this.targetFps);
+        if (now >= nextFlushAt - 2) {
+          nextFlushAt += interval;
+          // Fell behind (a stall, or the first frame): restart the cadence
+          // here rather than flushing back to back to catch up.
+          if (nextFlushAt < now) nextFlushAt = now + interval;
+          void this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+        }
         this.shaderAnimationRaf = requestAnimationFrame(loop);
       };
       this.shaderAnimationRaf = requestAnimationFrame(loop);

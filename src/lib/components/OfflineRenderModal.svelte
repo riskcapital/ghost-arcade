@@ -14,7 +14,7 @@
   import { getNativeRendererCapabilities } from '../api/native-renderer';
   import { project } from '../stores/layers';
   import { showTimeline } from '../stores/showTimeline';
-  import { audioStore } from '../stores/audio';
+  import { audioInputType, audioIsActive } from '../stores/audio';
   import { isAudioDrivenMod, modulationStore } from '../audio/modulation';
 
   export let isOpen = false;
@@ -222,9 +222,9 @@
   // Non-blocking on purpose — plenty of renders with a mic open aren't
   // actually driving anything off it, and a user who wants the take
   // should get the take.
-  $: liveAudioInput = $audioStore.isActive
-    && ($audioStore.inputType === 'microphone' || $audioStore.inputType === 'system');
-  $: liveAudioInputLabel = $audioStore.inputType === 'system' ? 'System audio' : 'Microphone';
+  $: liveAudioInput = $audioIsActive
+    && ($audioInputType === 'microphone' || $audioInputType === 'system');
+  $: liveAudioInputLabel = $audioInputType === 'system' ? 'System audio' : 'Microphone';
   // Audio-reactive content is either an explicit modulation assignment
   // fed by the analyser, or a visible layer whose renderer samples the
   // audio snapshot every frame (lines / light painting / splat / 3D model

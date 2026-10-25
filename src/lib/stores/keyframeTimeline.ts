@@ -2,7 +2,7 @@
 // Per-layer keyframe animation system with RAF playback engine.
 // Pattern follows layerSequencer.ts for consistency.
 
-import { writable, get } from 'svelte/store';
+import { writable, get, derived } from 'svelte/store';
 import type {
   KeyframeEasing,
   Keyframe,
@@ -84,7 +84,23 @@ let lastFrameTime = 0;
 // Module-level reference to the store for the RAF tick function
 let _storeRef: ReturnType<typeof writable<KeyframeTimelineState>> | null = null;
 
-let _tickLogCounter = 0;
+// With no keyframes, playback only moves the playhead, and the store is
+// read by much of the UI: publish that ten times a second, not every frame,
+// carrying the time in between here.
+let pendingSeconds = 0;
+let lastPublishedTime = NaN;
+let lastPublishAt = 0;
+const PLAYHEAD_ONLY_PUBLISH_MS = 100;
+
+function anyTrackHasKeyframes(timelines: Record<string, LayerKeyframeTimeline>): boolean {
+  for (const timeline of Object.values(timelines)) {
+    for (const track of timeline.tracks) {
+      if (track.keyframes?.length || track.boolKeyframes?.length) return true;
+    }
+  }
+  return false;
+}
+
 function tick(now: number) {
   if (!_storeRef) { animFrameId = null; return; }
   const state = get(_storeRef);
@@ -92,14 +108,20 @@ function tick(now: number) {
     animFrameId = null;
     return;
   }
-  if (++_tickLogCounter % 60 === 0) {
-    console.log('[KF Tick] t=', state.config.currentTime.toFixed(2), 'overrides=', JSON.stringify(state.activeOverrides));
-  }
 
   const dt = lastFrameTime > 0 ? (now - lastFrameTime) / 1000 : 0;
   lastFrameTime = now;
+  // A seek (or anything else that set the time) restarts the carry.
+  if (state.config.currentTime !== lastPublishedTime) pendingSeconds = 0;
+  pendingSeconds += dt;
+  if (!anyTrackHasKeyframes(state.timelines) && now - lastPublishAt < PLAYHEAD_ONLY_PUBLISH_MS) {
+    animFrameId = requestAnimationFrame(tick);
+    return;
+  }
 
-  let newTime = state.config.currentTime + dt;
+  let newTime = state.config.currentTime + pendingSeconds;
+  pendingSeconds = 0;
+  lastPublishAt = now;
 
   // Handle end of timeline
   if (newTime >= state.config.duration) {
@@ -126,6 +148,7 @@ function tick(now: number) {
     config: { ...s.config, currentTime: newTime },
     activeOverrides: overrides,
   }));
+  lastPublishedTime = newTime;
 
   animFrameId = requestAnimationFrame(tick);
 }
@@ -630,6 +653,10 @@ function createKeyframeTimelineStore() {
 }
 
 export const keyframeTimeline = createKeyframeTimelineStore();
+
+/** Whether the keyframe tray is open. The timeline store changes on every
+ *  frame while it plays; this only when the tray opens or closes. */
+export const keyframeTrayOpen = derived(keyframeTimeline, (s) => s.isOpen);
 
 /**
  * True when a saved set of timelines holds at least one keyframe. A stage

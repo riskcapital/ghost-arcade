@@ -11,7 +11,7 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { getLastRawAnalysis } from '../stores/audio';
-  import { audioStore } from '../stores/audio';
+  import { audioInputType } from '../stores/audio';
 
   // Logical pixel size; canvas backing-store gets devicePixelRatio'd.
   // Sizable so the header can run a compact scope inside the meter button
@@ -27,16 +27,35 @@
 
   let ctx: CanvasRenderingContext2D | null = null;
   let drewIdle = false;
+  let lastDrawAt = 0;
+  // Theme colours, re-read once a second rather than on every frame: reading
+  // the computed style forces a style pass, and during a VJ set (clip audio
+  // is live input) this meter alone cost more than the frame sync.
+  let colours = { live: '#ff6f5e', idle: '#3a404a', at: -Infinity };
+  function themeColours(now: number) {
+    if (now - colours.at > 1000) {
+      const styles = getComputedStyle(document.documentElement);
+      colours = {
+        live: styles.getPropertyValue('--ga-coral').trim() || '#ff6f5e',
+        idle: styles.getPropertyValue('--ga-ink-3').trim() || '#3a404a',
+        at: now,
+      };
+    }
+    return colours;
+  }
 
-  function draw() {
+  function draw(now: number = performance.now()) {
     if (!mounted || !canvas) return;
     raf = requestAnimationFrame(draw);
     // With no audio input the meter is a flat line: draw it once and stop
     // repainting until input comes back (and never while the window is
     // hidden), instead of redrawing the same line 60 times a second.
     if (document.hidden) return;
-    const inputOn = $audioStore.inputType !== 'none';
+    const inputOn = $audioInputType !== 'none';
     if (!inputOn && drewIdle) return;
+    // A thumbnail-sized scope reads the same at 30 fps.
+    if (inputOn && now - lastDrawAt < 32) return;
+    lastDrawAt = now;
     drewIdle = !inputOn;
 
     ctx ??= canvas.getContext('2d');
@@ -50,14 +69,12 @@
 
     const analysis = getLastRawAnalysis();
     const data = analysis?.waveformData;
-    const live = !!(data && data.length > 0 && $audioStore.inputType !== 'none');
+    const live = !!(data && data.length > 0 && $audioInputType !== 'none');
 
     // Subtle baseline so the slot reads as a control even when silent
     const mid = h * 0.5;
     ctx.lineWidth = Math.max(1, Math.floor(dpr));
-    const styles = getComputedStyle(document.documentElement);
-    const liveColor = styles.getPropertyValue('--ga-coral').trim() || '#ff6f5e';
-    const idleColor = styles.getPropertyValue('--ga-ink-3').trim() || '#3a404a';
+    const { live: liveColor, idle: idleColor } = themeColours(now);
     ctx.strokeStyle = live ? liveColor : idleColor;
     ctx.beginPath();
 
@@ -87,6 +104,7 @@
     canvas.style.width = `${W}px`;
     canvas.style.height = `${H}px`;
     drewIdle = false;
+    colours.at = -Infinity;
   }
 
   $: if (mounted && canvas && (W || H)) resize();

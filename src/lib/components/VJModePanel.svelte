@@ -7,7 +7,7 @@
   import { videoBeatFit } from '../media/videoBeatFit';
   import { launchClock, TEMPO_NUDGE_AMOUNT } from '../stores/launchClock';
   import { abletonLink } from '../sync/abletonLink';
-  $: fitTempo = $abletonLink.enabled && $abletonLink.peers > 0 ? $abletonLink.tempo : ($audioStore.manualBPM || $audioStore.bpm || 120) * (1 + $launchClock.nudge * TEMPO_NUDGE_AMOUNT);
+  $: fitTempo = $abletonLink.enabled && $abletonLink.peers > 0 ? $abletonLink.tempo : ($audioManualBpm || $audioBpm || 120) * (1 + $launchClock.nudge * TEMPO_NUDGE_AMOUNT);
   import VJAudioOutput from './VJAudioOutput.svelte';
   import VideoPlaybackDirection from './VideoPlaybackDirection.svelte';
   import VideoPlaybackModes from './VideoPlaybackModes.svelte';
@@ -31,7 +31,7 @@
   import { liveOutput, toggleOutputFullscreen, openOutputDisplayMenu } from '../stores/liveOutput';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
-  import { keyframeTimeline } from '../stores/keyframeTimeline';
+  import { keyframeTrayOpen } from '../stores/keyframeTimeline';
   import { workspace } from '../stores/workspace';
   import { vjStageEdit } from '../stores/vjStageEdit';
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
@@ -48,7 +48,7 @@
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
   import { BLEND_MODE_ORDER, generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
-  import { audioStore } from '../stores/audio';
+  import { audioStore, audioBpm, audioIsActive, audioManualBpm } from '../stores/audio';
   import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
@@ -2215,19 +2215,31 @@
         shaders = loadedShaders;
         shadersLoading = false;
 
-        // Generate shader thumbnails in background
+        // Generate shader thumbnails in background. Only between frames
+        // (they render and encode on this thread, and the first opening of
+        // a fresh profile makes one per library shader, often mid-set), and
+        // the list redraws every few thumbnails rather than after each one.
+        const idle = () => new Promise<void>((resolve) => {
+          const ric = (window as any).requestIdleCallback as ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
+          if (ric) ric(() => resolve(), { timeout: 500 });
+          else setTimeout(resolve, 16);
+        });
+        let pendingThumbs = 0;
         for (const shader of shaders) {
           try {
+            await idle();
             shader.thumbnail = await generateShaderThumbnail(shader.shaderCode, 0.5);
-            shaders = [...shaders];
+            if (++pendingThumbs >= 8) { pendingThumbs = 0; shaders = [...shaders]; }
           } catch (err) {}
         }
+        if (pendingThumbs) shaders = [...shaders];
 
         // Generate Three.js thumbnails in background
         for (let i = 0; i < threejsItems.length; i++) {
           const item = threejsItems[i];
           if (!item.thumbnail) {
             try {
+              await idle();
               const thumbnail = await generateThreeJSThumbnail(item.src);
               if (thumbnail) {
                 threejsItems[i] = { ...item, thumbnail };
@@ -4294,7 +4306,7 @@
 {#if $vjClipLauncher.isOpen}
   <div data-help-page="vj-mode"
     class="vj-overlay"
-    class:kf-tray-open={$keyframeTimeline.isOpen}
+    class:kf-tray-open={$keyframeTrayOpen}
     class:native-underlay={nativePreviewActive}
     class:mac-titlebar-offset={isMac}
     class:stage-edit-hidden={$vjStageEdit}
@@ -4302,7 +4314,7 @@
     <!-- Header -->
     <div
       class="vj-header"
-      class:audio-on={$audioStore.isActive}
+      class:audio-on={$audioIsActive}
       class:frameless-caption={isDesktopApp && !isMac}
       onmousedown={(event) => {
         if (!isDesktopApp || isMac || event.button !== 0) return;
