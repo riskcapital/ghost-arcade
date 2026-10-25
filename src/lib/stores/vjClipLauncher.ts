@@ -256,9 +256,20 @@ export type QuantizationGrid = 'off' | '1/4' | '1/2' | '1bar' | '2bar' | '4bar';
 // reaches `fireAt`, the launcher pops it and fires immediately.
 export interface PendingTrigger {
   id: string;
+  /** 'column' fires a whole column (layerIndex is -1); a cell otherwise. */
+  kind?: 'clip' | 'column';
+  groupId?: string;
+  /** Block the trigger was queued in; a block switch drops it. */
+  blockId?: string;
+  /** Clips in the queued cell(s) when queued; a changed cell drops it. */
+  clipIds?: (string | null)[];
   layerIndex: number;
   columnIndex: number;
   bank: VJDeck;
+  /** Beat on the launch clock it fires on. fireAt follows it each frame, so
+   *  a tempo change, resync or Link session while queued still lands on
+   *  the grid the user sees. */
+  fireBeat?: number;
   fireAt: number;        // performance.now() target (ms)
   queuedAt: number;      // performance.now() when queued (for UI countdown)
 }
@@ -468,24 +479,15 @@ function blocksWithDeckGrid(
   });
 }
 
-// ─── Quantization clock helpers ──────────────────────────────────────────
+// ─── Quantization clock ──────────────────────────────────────────────────
 //
-// Two ground truths for "where are we in the bar":
-//   1) Audio is active + has detected beats → anchor to the most recent
-//      detected beat using audioStore.beat.timeSinceLastBeat. This stays
-//      tight even if BPM drifts because we measure against a real beat.
-//   2) Audio is off (or no beats detected yet) → run a virtual clock at
-//      the current manual/auto BPM with a fixed epoch. Beginners who tap
-//      a tempo without enabling audio still get usable quantization.
-//
-// `quantClockEpoch` is the wall-clock time the virtual clock started — it
-// only matters for branch (2) but stays stable across BPM changes so the
-// fader doesn't jump on every tempo tweak.
+// Quantized launches land on the shared launch clock (launchClock.ts), the
+// same grid the tempo display, Resync, tempo nudge, Ableton Link and
+// autopilot use, so "the next bar" means the bar the user sees.
 
 import { get as getStore } from 'svelte/store';
 import { audioStore } from './audio';
-
-const QUANT_CLOCK_EPOCH = performance.now();
+import { launchClockPosition } from './launchClock';
 
 /** Convert a quantization grid label to its size in beats (4/4 assumed). */
 function gridToBeats(grid: QuantizationGrid): number {
@@ -499,48 +501,31 @@ function gridToBeats(grid: QuantizationGrid): number {
   }
 }
 
-/**
- * Compute the next wall-clock time (performance.now() ms) that aligns to
- * the requested grid. Returns the current time if grid is 'off' so callers
- * can use the same code path for unscheduled triggers.
- */
-function nextQuantumWallTime(grid: QuantizationGrid): number {
+/** The launch-clock beat and wall-clock time of the next `grid` boundary.
+ *  The epsilon stops a trigger landing exactly on a boundary from being
+ *  scheduled onto that same boundary (it would fire at once). */
+function launchDeadline(grid: QuantizationGrid): { fireBeat: number; fireAt: number } {
   const now = performance.now();
-  const beats = gridToBeats(grid);
-  if (beats === 0) return now;
+  const { beat, beatMs } = launchClockPosition(now);
+  const size = gridToBeats(grid);
+  const fireBeat = size > 0 ? Math.ceil((beat + 0.001) / size) * size : beat;
+  return { fireBeat, fireAt: now + (fireBeat - beat) * beatMs };
+}
 
-  const audio = getStore(audioStore);
-  // Resolve BPM with manual override > auto-detected > fallback 120
-  const bpm = audio.manualBPM || audio.bpm || 120;
-  if (bpm <= 0) return now;
-  const beatMs = 60000 / bpm;
+function queuedClipIds(state: VJClipLauncherState, bank: VJDeck, column: number, layer?: number): (string | null)[] {
+  const grid = pickGrid(state, bank);
+  return layer === undefined ? grid.map(row => row[column]?.id ?? null) : [grid[layer]?.[column]?.id ?? null];
+}
 
-  // Anchor approach: find the wall-clock time of "beat 0" (the reference
-  // downbeat the clock counts from), then forward to the next boundary.
-  let anchorMs: number;
-  let anchorBeatPos: number;
-
-  if (audio.isActive && audio.beat.beatCount > 0 && audio.beat.timeSinceLastBeat >= 0) {
-    // Snap anchor to the most recent detected beat. timeSinceLastBeat is
-    // in seconds; convert to ms.
-    anchorMs = now - audio.beat.timeSinceLastBeat * 1000;
-    anchorBeatPos = audio.beat.beatCount;  // integer beat at anchorMs
-  } else {
-    // Virtual clock: anchor at the launcher's epoch, beat 0.
-    anchorMs = QUANT_CLOCK_EPOCH;
-    anchorBeatPos = 0;
-  }
-
-  // How many beats have elapsed since the anchor (float)?
-  const elapsedBeats = (now - anchorMs) / beatMs;
-  const currentBeatPos = anchorBeatPos + elapsedBeats;
-
-  // +epsilon so triggers fired exactly on the boundary don't get
-  // re-scheduled to the SAME boundary (would fire instantly, defeating
-  // the point of quantization).
-  const targetBeatPos = Math.ceil((currentBeatPos + 0.001) / beats) * beats;
-  const fireMs = anchorMs + (targetBeatPos - anchorBeatPos) * beatMs;
-  return fireMs;
+/** A queued trigger still fires only if what it was queued for is still
+ *  there: same block, same column and the same clips in its cell(s). */
+function queuedTriggerStillMatches(trigger: PendingTrigger, state: VJClipLauncherState): boolean {
+  if (trigger.blockId !== undefined && trigger.blockId !== state.activeBlockId) return false;
+  if (trigger.columnIndex < 0 || trigger.columnIndex >= state.numColumns) return false;
+  if (trigger.kind !== 'column' && (trigger.layerIndex < 0 || trigger.layerIndex >= state.numLayers)) return false;
+  if (!trigger.clipIds) return true;
+  const current = queuedClipIds(state, trigger.bank, trigger.columnIndex, trigger.kind === 'column' ? undefined : trigger.layerIndex);
+  return current.length === trigger.clipIds.length && current.every((id, index) => id === trigger.clipIds![index]);
 }
 
 // rAF tick state — only runs when there are pending triggers
@@ -554,13 +539,17 @@ function ensureQuantTickRunning(launcher: { update: any }) {
     launcher.update((s: VJClipLauncherState) => {
       if (s.pendingTriggers.length === 0) return s;
       const now = performance.now();
+      const clock = launchClockPosition(now);
       const due: PendingTrigger[] = [];
       const remaining: PendingTrigger[] = [];
       for (const p of s.pendingTriggers) {
-        if (p.fireAt <= now) due.push(p);
-        else remaining.push(p);
+        // Follow the clock: a tempo change, resync or Link session while
+        // queued moves the deadline with the grid.
+        const entry = p.fireBeat === undefined ? p : { ...p, fireAt: now + Math.max(0, p.fireBeat - clock.beat) * clock.beatMs };
+        if (entry.fireAt <= now + 0.00001) due.push(entry);
+        else remaining.push(entry);
       }
-      if (due.length === 0) return s;
+      if (due.length === 0) return { ...s, pendingTriggers: remaining };
       didFire = true;
       firedTriggers = due;
       return { ...s, pendingTriggers: remaining };
@@ -569,7 +558,9 @@ function ensureQuantTickRunning(launcher: { update: any }) {
     // (which itself calls update) doesn't recurse mid-mutation.
     if (didFire) {
       for (const t of firedTriggers) {
-        immediateTriggerClip(t.layerIndex, t.columnIndex, t.bank);
+        if (!queuedTriggerStillMatches(t, getStore(vjClipLauncher))) continue;
+        if (t.kind === 'column') vjClipLauncher.triggerColumnNow(t.columnIndex, t.bank, t.groupId);
+        else immediateTriggerClip(t.layerIndex, t.columnIndex, t.bank);
       }
     }
     // Continue ticking if anything is still queued
@@ -1395,13 +1386,16 @@ function createVJClipLauncherStore() {
         return;
       }
 
-      const fireAt = nextQuantumWallTime(grid);
+      const { fireAt, fireBeat } = launchDeadline(grid);
       const queuedAt = performance.now();
       update(s => ({
         ...s,
         pendingTriggers: [
-          ...s.pendingTriggers,
-          { id: generateUUID(), layerIndex, columnIndex, bank: deck, fireAt, queuedAt },
+          // Latest cell wins its row. A cell launch also replaces the deck's
+          // queued column, so a column never fires half-overridden.
+          ...s.pendingTriggers.filter(p => p.bank !== deck || (p.kind !== 'column' && p.layerIndex !== layerIndex)),
+          { id: generateUUID(), kind: 'clip', blockId: state.activeBlockId, clipIds: [clip.id],
+            layerIndex, columnIndex, bank: deck, fireAt, fireBeat, queuedAt },
         ],
       }));
       ensureQuantTickRunning({ update });
@@ -1413,8 +1407,39 @@ function createVJClipLauncherStore() {
       immediateTriggerClip(layerIndex, columnIndex, deck);
     },
 
-    // Trigger an entire column on the given deck (all layers at once)
+    // Trigger an entire column on the given deck (all layers at once).
+    // With launch quantize on, the column is queued as one trigger and
+    // fires on the next boundary; clicking it again while queued cancels.
     triggerColumn(columnIndex: number, deck: VJDeck = 'A', groupId?: string) {
+      const state = get({ subscribe });
+      if (!Number.isInteger(columnIndex) || columnIndex < 0 || columnIndex >= state.numColumns) return;
+      const group = groupId ? state.groups?.find(g => g.id === groupId) : undefined;
+      if (groupId && !group) return;
+      if (state.quantization === 'off') {
+        this.triggerColumnNow(columnIndex, deck, groupId);
+        return;
+      }
+      const inGroup = (layerIndex: number) => !group || (layerIndex >= group.first && layerIndex <= group.last);
+      const existing = state.pendingTriggers.some(p => p.kind === 'column' && p.bank === deck && p.columnIndex === columnIndex && p.groupId === groupId);
+      const entry: PendingTrigger = {
+        id: generateUUID(), kind: 'column', groupId, layerIndex: -1, columnIndex, bank: deck,
+        blockId: state.activeBlockId, clipIds: queuedClipIds(state, deck, columnIndex),
+        ...launchDeadline(state.quantization), queuedAt: performance.now(),
+      };
+      update(s => ({ ...s, pendingTriggers: [
+        // Drop this deck's queued cells the column covers, and any queued
+        // column on this deck (another group's column on other rows stays).
+        ...s.pendingTriggers.filter(p => p.bank !== deck || (p.kind === 'column'
+          ? !!groupId && !!p.groupId && p.groupId !== groupId
+          : !inGroup(p.layerIndex))),
+        ...(existing ? [] : [entry]),
+      ] }));
+      if (!existing) ensureQuantTickRunning({ update });
+    },
+
+    /** Fire a column now, bypassing quantize. Used by the 'off' path and by
+     *  the quantize tick when a queued column comes due. */
+    triggerColumnNow(columnIndex: number, deck: VJDeck = 'A', groupId?: string) {
       // A group launch only touches the rows in that group.
       const group = groupId ? get({ subscribe }).groups?.find(g => g.id === groupId) : undefined;
       if (groupId && !group) return;
@@ -1443,7 +1468,7 @@ function createVJClipLauncherStore() {
       }
       if (videosToArm.length > 0) {
         void Promise.all(videosToArm.map((clip) => armVideoClipForTrigger(clip)))
-          .then(() => vjClipLauncher.triggerColumn(columnIndex, deck, groupId))
+          .then(() => vjClipLauncher.triggerColumnNow(columnIndex, deck, groupId))
           .catch((error) => console.warn('[vjClipLauncher] column trigger held; video is not ready:', error));
         return;
       }

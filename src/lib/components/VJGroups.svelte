@@ -47,8 +47,10 @@
           <span>Launch · Deck {deck}</span>
           <div class="columns">
             {#each Array($vjClipLauncher.numColumns) as _, column}
+              {@const queued = $vjClipLauncher.pendingTriggers.some(trigger => trigger.kind === 'column' && trigger.groupId === group.id && trigger.bank === deck && trigger.columnIndex === column)}
               <button data-midi-path={`${deck === 'B' ? 'vj-b' : 'vj'}:group:${encodeURIComponent(group.id)}:column:${column}`}
                 data-midi-label={`${group.name} · Deck ${deck} · Column ${column + 1}`} data-midi-mode="trigger"
+                class:queued aria-pressed={queued}
                 onclick={() => vjClipLauncher.triggerColumn(column, deck, group.id)}>{column + 1}</button>
             {/each}
           </div>
@@ -80,5 +82,7 @@
   .columns button { min-width: 26px; }
   .head input, select, .tray button { border: 1px solid var(--ga-border, #3a4252); border-radius: 5px; color: var(--ga-text, #d6dfef); background: #1d222b; padding: 4px 6px; font-size: 12px; }
   .tray button { cursor: pointer; } .tray button:disabled { opacity: .4; cursor: default; }
+  /* Queued by launch quantize: matches the queued clip cells in the deck. */
+  .tray .columns button.queued { border-color: #f97316; box-shadow: 0 0 6px rgba(249, 115, 22, 0.45); }
   .create { margin-top: 9px; }
 </style>

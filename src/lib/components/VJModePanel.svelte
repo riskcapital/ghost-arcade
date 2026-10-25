@@ -3040,6 +3040,13 @@
   }
 
   // Trigger entire column
+  // A queued column covers every row, or only its group's rows.
+  function queuedColumnCoversRow(trigger: { groupId?: string }, layerIndex: number): boolean {
+    if (!trigger.groupId) return true;
+    const group = $vjClipLauncher.groups?.find(g => g.id === trigger.groupId);
+    return !!group && layerIndex >= group.first && layerIndex <= group.last;
+  }
+
   function handleColumnTrigger(columnIndex: number, bank: VJDeck = 'A') {
     vjClipLauncher.triggerColumn(columnIndex, bank);
   }
@@ -5169,10 +5176,13 @@
               <div class="layer-controls-header"></div>
             {/if}
             {#each columnIndices as colIdx (colIdx)}
+              {@const columnQueued = $deckPendingTriggers.some(p => p.kind === 'column' && !p.groupId && p.columnIndex === colIdx && p.bank === bank)}
               <button
                 class="column-trigger"
+                class:queued={columnQueued}
+                aria-pressed={columnQueued}
                 onclick={() => handleColumnTrigger(colIdx, bank)}
-                title={`Trigger column ${colIdx + 1} on Deck ${bank}`}
+                title={columnQueued ? `Cancel queued column ${colIdx + 1} on Deck ${bank}` : `Trigger column ${colIdx + 1} on Deck ${bank}`}
                 data-midi-path="{midiPrefix}:column:{colIdx}"
                 data-midi-label="Deck {bank} Column {colIdx + 1}"
                 data-midi-mode="toggle"
@@ -5298,7 +5308,7 @@
                 {@const clip = grid[layerIdx]?.[colIdx]}
                 {@const isActive = activeClip !== null && clip != null && activeClip.id === clip.id}
                 {@const isPresetActive = clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
-                {@const isQueued = $deckPendingTriggers.some(p => p.layerIndex === layerIdx && p.columnIndex === colIdx && p.bank === bank)}
+                {@const isQueued = $deckPendingTriggers.some(p => (p.kind === 'column' ? queuedColumnCoversRow(p, layerIdx) : p.layerIndex === layerIdx) && p.columnIndex === colIdx && p.bank === bank)}
                 {@const isClipFirable = clip == null || (clip.type === 'preset' ? $deckMapMode : !$deckMapMode)}
                 {@const isFileMissing = clipFileMissing(clip, $missingClipFiles)}
                 <div

@@ -13,6 +13,11 @@ export function pairedOutput(input: MidiDevice | undefined, outputs: LightOutput
   const exact = outputs.filter(o => o.state === 'connected' && norm(o.name ?? '') === norm(input.name));
   return exact.length === 1 ? exact[0] : undefined;
 }
+function columnCoversRow(state: VJClipLauncherState, groupId: string | undefined, row: number): boolean {
+  if (!groupId) return true;
+  const group = state.groups?.find(g => g.id === groupId);
+  return !!group && row >= group.first && row <= group.last;
+}
 export function clipPadState(state: VJClipLauncherState, deck: VJDeck, row: number, column: number): PadState {
   if (deck === 'B' && !state.crossfaderEnabled) return 'empty';
   const grid = deck === 'A' ? state.clipGrid : state.bankBClipGrid;
@@ -20,7 +25,7 @@ export function clipPadState(state: VJClipLauncherState, deck: VJDeck, row: numb
   const clip = grid[row]?.[column];
   if (!clip) return 'empty';
   if (state.pendingTriggers.some(p => p.bank === deck && p.columnIndex === column &&
-    p.layerIndex === row)) return 'queued';
+    (p.kind === 'column' ? columnCoversRow(state, p.groupId, row) : p.layerIndex === row))) return 'queued';
   return rows[row]?.activeClip?.id === clip.id ? 'playing' : 'loaded';
 }
 function color(state: PadState, deck: VJDeck, blink: boolean, generic: boolean): number {

@@ -53,6 +53,10 @@ describe('controller protocols and feedback', () => {
     expect(feedbackFrame(s, conf, profile, [], false).find(l => l.note === 57)?.value).toBe(0);
     s.pendingTriggers = [];
     expect(clipPadState(s, 'A', 0, 1)).toBe('loaded');
+    // A queued column lights every pad it will launch.
+    s.pendingTriggers = [{ kind: 'column', bank: 'A', columnIndex: 1, layerIndex: -1 } as any];
+    expect(clipPadState(s, 'A', 0, 1)).toBe('queued');
+    s.pendingTriggers = [];
     s.selectedDeck = 'B';
     expect(feedbackFrame(s, conf, profile, [], true)[0].value).toBe(45);
     s.crossfaderEnabled = false;
