@@ -1125,7 +1125,7 @@ function createDefaultSettings(): AppSettings {
       outputMaxBitrate: 80_000_000,   // 80 Mbps
       outputDegradationPreference: 'maintain-resolution',
       outputCodecPreference: 'auto',
-      editorMaxFps: 0,                // 0 = uncapped (match rAF / refresh rate)
+      editorMaxFps: 60,               // projectors are 60 Hz; 0 = uncapped (match the display)
       stage3DFrameRate: 30,           // external Stage 3D view renders its own compositor
       useWebGL2LightPainting: true,   // WebGL2 instanced renderer ON by default
     },
@@ -1209,6 +1209,29 @@ function runVersionMigration(): { versionChanged: boolean } {
 
 // Run migration BEFORE loading settings so stale output flags are cleared first
 runVersionMigration();
+
+/**
+ * The editor frame-rate cap now defaults to 60: rendering at 120/144 Hz on a
+ * high-refresh screen left a busy VJ set short of 60 on the projectors.
+ * Saved settings carry the old default (uncapped), so move them once; this
+ * key marks it done, and choosing Uncapped again afterwards is kept.
+ */
+function migrateEditorFrameRateCap(): void {
+  const DONE_KEY = 'ga_editor_fps_cap_60';
+  try {
+    if (localStorage.getItem(DONE_KEY)) return;
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.performance && (parsed.performance.editorMaxFps ?? 0) === 0) {
+        parsed.performance.editorMaxFps = 60;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+      }
+    }
+    localStorage.setItem(DONE_KEY, '1');
+  } catch { /* storage unavailable: the default applies */ }
+}
+migrateEditorFrameRateCap();
 
 // Load settings from localStorage
 function loadSettings(): AppSettings {
