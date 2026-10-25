@@ -49,6 +49,8 @@ export const textureFragmentShader = /* glsl */ `
   uniform float uDirectOpacity;
   // 1 for the first layer of a composite (see below).
   uniform float uDirectFirst;
+  // Blend mode of a direct draw: 0 normal, 1 multiply, 2 screen.
+  uniform int uDirectMode;
   // Luminance-keyed background opacity. Default 1.0 = bg fully opaque
   // (no keying). Lower values fade the alpha proportionally to the
   // pixel's brightness, so dark areas become transparent while
@@ -381,8 +383,19 @@ export const textureFragmentShader = /* glsl */ `
       // blend pass mixes over a transparent base and is then blended again
       // over the cleared target, so it lands at one more factor of a.
       float a = outA * uDirectOpacity;
-      float first = uDirectFirst > 0.5 ? a : 1.0;
-      gl_FragColor = vec4(texColor.rgb * outA * a * first, a);
+      vec3 layer = texColor.rgb * outA;
+      if (uDirectMode == 1) {
+        // Multiply: mix(base, base * layer, a) = base * (1 - a + a * layer),
+        // blended ZERO / SRC_COLOR.
+        gl_FragColor = vec4(1.0 - a + a * layer, a);
+      } else if (uDirectMode == 2) {
+        // Screen: mix(base, 1 - (1 - base)(1 - layer), a)
+        // = base + a * layer * (1 - base), blended ONE_MINUS_DST_COLOR / ONE.
+        gl_FragColor = vec4(a * layer, a);
+      } else {
+        float first = uDirectFirst > 0.5 ? a : 1.0;
+        gl_FragColor = vec4(layer * a * first, a);
+      }
     } else {
       gl_FragColor = vec4(texColor.rgb, outA);
     }

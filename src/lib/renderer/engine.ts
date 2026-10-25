@@ -57,6 +57,10 @@ interface LayerCompositeRect {
 /** Shapes the layer material masks itself; others need a post pass. */
 const INLINE_MASKED_SHAPES = ['rectangle', 'circle', 'triangle', 'custom'];
 
+/** Blend modes a plain layer can be drawn with straight into the composite
+ *  (uDirectMode in the layer shader). Others need the blend pass. */
+const DIRECT_BLEND_MODES: Partial<Record<BlendMode, number>> = { normal: 0, multiply: 1, screen: 2 };
+
 interface LayerRenderObject {
   mesh: THREE.Mesh;
   material: THREE.ShaderMaterial;
@@ -660,6 +664,7 @@ export class RenderEngine {
         uOpacity: { value: 1.0 },
         uDirectOpacity: { value: 0 },
         uDirectFirst: { value: 0 },
+        uDirectMode: { value: 0 },
         uClipXform: { value: new THREE.Vector4(1, 1, 0, 0) },
         // Luminance-keyed background opacity. 1.0 = bg fully opaque
         // (default, no keying). GPU shader layers can lower this via
@@ -2212,7 +2217,7 @@ export class RenderEngine {
         const childSeqGate = (child as any)._seqGate;
         const childCompositeOpacity = child.opacity * (typeof childSeqGate === 'number' ? childSeqGate : 1);
         const hierarchyMasked = !!activeHierarchyMask?.mask?.enabled;
-        const drawPath = hierarchyMasked ? 'full' : this.layerDrawPath(child);
+        const drawPath = hierarchyMasked ? 'full' : this.layerDrawPath(child, childIdx === 0);
         if (drawPath === 'direct') {
           this.drawLayerDirect(child, obj, layerTexture, childCompositeOpacity, childIdx === 0);
         } else {
@@ -2599,13 +2604,14 @@ export class RenderEngine {
 
   /**
    * How a layer reaches the composite. 'direct': drawn straight into the
-   * composite (normal blend, nothing that post-processes its image).
-   * 'bounded': the same kind of plain layer with another blend mode, drawn
-   * into an image the size of its bounds and blended over just those
-   * bounds. 'full': its own full-canvas image, for effects, masks, shape
-   * masks and edge effects, which work in canvas space.
+   * composite (normal, multiply or screen blend, nothing that
+   * post-processes its image). 'bounded': the same kind of plain layer with
+   * another blend mode (or a first-layer multiply/screen), drawn into an
+   * image the size of its bounds and blended over just those bounds.
+   * 'full': its own full-canvas image, for effects, masks, shape masks and
+   * edge effects, which work in canvas space.
    */
-  private layerDrawPath(layer: Layer): 'direct' | 'bounded' | 'full' {
+  private layerDrawPath(layer: Layer, isFirst: boolean): 'direct' | 'bounded' | 'full' {
     if (!this.fastLayerCompositing) return 'full';
     if ((layer.effects?.length ?? 0) > 0) return 'full';
     if (layer.mask?.enabled && layer.mask.shapes?.some((shape) => shape.closed && shape.points.length >= 3)) return 'full';
@@ -2615,15 +2621,19 @@ export class RenderEngine {
     // The direct draw matches the blend pass only over an opaque clear (the
     // main composite and the A/B banks). A group's image clears to
     // transparent, where the pass also scales by the alpha already there.
+    // Multiply and screen also skip the first layer, whose pass mixes over
+    // a transparent base.
     const opaqueTarget = this.renderer.getClearAlpha() >= 1;
-    return (layer.blendMode ?? 'normal') === 'normal' && opaqueTarget ? 'direct' : 'bounded';
+    const directMode = DIRECT_BLEND_MODES[layer.blendMode ?? 'normal'];
+    if (opaqueTarget && directMode !== undefined && (directMode === 0 || !isFirst)) return 'direct';
+    return 'bounded';
   }
 
   /**
-   * Draw a plain normal-blend layer straight into the composite. Matches
-   * rendering it into its own image and blending that in with the "normal"
-   * blend pass (see uDirectOpacity in the layer shader), without the
-   * full-canvas image, copy and blend passes.
+   * Draw a plain normal, multiply or screen layer straight into the
+   * composite. Matches rendering it into its own image and blending that in
+   * with the blend pass (see uDirectOpacity / uDirectMode in the layer
+   * shader), without the full-canvas image, copy and blend passes.
    */
   private drawLayerDirect(layer: Layer, obj: LayerRenderObject, layerTexture: THREE.Texture, opacity: number, isFirst: boolean): void {
     const restore = this.setupLayerMaterial(layer, obj, layerTexture);
@@ -2636,12 +2646,24 @@ export class RenderEngine {
     // renderer's clear colour (opaque black): clear to the same.
     if (isFirst) this.renderer.clear();
     if (opacity > 0) {
+      const mode = DIRECT_BLEND_MODES[layer.blendMode ?? 'normal'] ?? 0;
       material.uniforms.uDirectOpacity.value = opacity;
       material.uniforms.uDirectFirst.value = isFirst ? 1 : 0;
+      material.uniforms.uDirectMode.value = mode;
       material.blending = THREE.CustomBlending;
       material.blendEquation = THREE.AddEquation;
-      material.blendSrc = THREE.OneFactor;
-      material.blendDst = THREE.OneMinusSrcAlphaFactor;
+      if (mode === 1) {
+        // multiply: dst * src
+        material.blendSrc = THREE.ZeroFactor;
+        material.blendDst = THREE.SrcColorFactor;
+      } else if (mode === 2) {
+        // screen: src * (1 - dst) + dst
+        material.blendSrc = THREE.OneMinusDstColorFactor;
+        material.blendDst = THREE.OneFactor;
+      } else {
+        material.blendSrc = THREE.OneFactor;
+        material.blendDst = THREE.OneMinusSrcAlphaFactor;
+      }
       material.blendEquationAlpha = THREE.MaxEquation;
       material.blendSrcAlpha = THREE.OneFactor;
       material.blendDstAlpha = THREE.OneFactor;
@@ -2650,11 +2672,13 @@ export class RenderEngine {
       this.scene.remove(obj.mesh);
       material.blending = THREE.NormalBlending;
       material.blendSrc = THREE.SrcAlphaFactor;
+      material.blendDst = THREE.OneMinusSrcAlphaFactor;
       material.blendEquationAlpha = null;
       material.blendSrcAlpha = null;
       material.blendDstAlpha = null;
       material.uniforms.uDirectOpacity.value = 0;
       material.uniforms.uDirectFirst.value = 0;
+      material.uniforms.uDirectMode.value = 0;
     }
     this.renderer.autoClear = prevAutoClear;
     restore();
@@ -3540,7 +3564,7 @@ export class RenderEngine {
       // hides the layer at composite time. Default 1 = unaffected.
       const seqGate = (layer as any)._seqGate;
       const compositeOpacity = layer.opacity * (typeof seqGate === 'number' ? seqGate : 1);
-      const drawPath = this.layerDrawPath(layer);
+      const drawPath = this.layerDrawPath(layer, compositeIdx === 0);
       if (drawPath === 'direct') {
         this.drawLayerDirect(layer, obj, layerTexture, compositeOpacity, compositeIdx === 0);
       } else {
