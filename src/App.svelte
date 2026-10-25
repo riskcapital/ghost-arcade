@@ -7109,7 +7109,9 @@
 
         <!-- Canvas zoom: always on hand, and Fit brings back the default view
              however far the canvas was zoomed or panned. -->
-        <div class="viewport-zoom" role="group" aria-label="Canvas zoom">
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div class="viewport-zoom" role="group" aria-label="Canvas zoom"
+          onpointerdown={(e) => e.stopPropagation()} onmousedown={(e) => e.stopPropagation()}>
           <button class="viewport-zoom-btn" onclick={() => zoomViewportStep(-1)} title="Zoom out (Ctrl/Cmd −)" aria-label="Zoom out">−</button>
           <button class="viewport-zoom-level" onclick={resetViewportTransform} title="Fit the canvas in view (Ctrl/Cmd 0)">{(viewportZoom * 100).toFixed(0)}%</button>
           <button class="viewport-zoom-btn" onclick={() => zoomViewportStep(1)} title="Zoom in (Ctrl/Cmd +)" aria-label="Zoom in">+</button>
@@ -9352,10 +9354,12 @@
     z-index: 50;
   }
 
+  /* In the canvas's own corner, not the window's: pinned to the window it
+     sat under the side panels, away from the canvas it controls. */
   .viewport-zoom {
-    position: fixed;
-    bottom: 8px;
-    right: 16px;
+    position: absolute;
+    bottom: 10px;
+    right: 12px;
     display: flex;
     align-items: center;
     gap: 2px;
@@ -9364,7 +9368,7 @@
     backdrop-filter: blur(8px);
     border: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     border-radius: var(--ga-r-hard, 2px);
-    z-index: 20;
+    z-index: 30;
   }
   .viewport-zoom button {
     background: transparent;
