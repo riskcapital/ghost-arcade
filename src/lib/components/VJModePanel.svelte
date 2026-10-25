@@ -2087,7 +2087,7 @@
     thumbnail?: string;
   }
 
-  const bundledVJThreeJSItems: Array<{ id: string; folder: string; name: string; url: string }> =
+  const bundledVJThreeJSItems: Array<{ id: string; folder: string; name: string; url: string; thumbnail?: string }> =
     bundledThreeJSItems as any;
 
   // Default JS animation items that ship with every build. This mirrors
@@ -2107,7 +2107,9 @@
           id: def.id,
           name: def.name,
           src: def.url,
-          thumbnail: undefined,
+          // The page's shipped thumb.jpg, as the JS tab shows it. Without it
+          // every page was loaded and run in the background to capture one.
+          thumbnail: def.thumbnail,
         }))
       : fallbackThreeJSItems;
 
