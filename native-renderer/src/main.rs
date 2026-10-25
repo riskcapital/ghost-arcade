@@ -691,21 +691,18 @@ const RPC_FAST_PATH_UNORDERED_METHODS: &[&str] = &[
     "get_output_shared_texture",
 ];
 
-/// Reads whose answer the caller *does* correlate with commands it just sent.
-///
-/// `get_layers_snapshot` feeds the Electron scene reconciler, which repairs any
-/// layer it believes the core dropped. Answering it from a snapshot that predates
-/// an in-flight `submit_batch` would make it "repair" layers that were about to
-/// arrive, so it only takes the fast path when nothing is outstanding.
-const RPC_FAST_PATH_ORDERED_METHODS: &[&str] = &["layers_snapshot", "get_layers_snapshot"];
-
 /// The payloads served by the fast path, rebuilt as one immutable unit so a
 /// reader can never observe a torn mix of old and new fields.
+///
+/// `get_layers_snapshot` is not among them. The Electron scene reconciler
+/// asks for it at most once a second, while the snapshot is rebuilt after
+/// every RPC and every frame: building every layer's entry each time was
+/// most of the publish cost with hundreds of layers. It is answered on the
+/// main thread, in order with the commands before it.
 #[derive(Default)]
 struct PublishedRpcSnapshot {
     status: Value,
     stats: Value,
-    layers: Value,
     output_shared_texture: Value,
 }
 
@@ -714,7 +711,6 @@ impl PublishedRpcSnapshot {
         match method {
             "status" | "get_status" => Some(&self.status),
             "stats" | "get_stats" => Some(&self.stats),
-            "layers_snapshot" | "get_layers_snapshot" => Some(&self.layers),
             "output_shared_texture" | "get_output_shared_texture" => {
                 Some(&self.output_shared_texture)
             }
@@ -736,10 +732,10 @@ impl PublishedRpcSnapshot {
 ///   request it forwards to the main thread. `applied` is incremented **only**
 ///   by the main thread, after that request has been fully handled *and* after a
 ///   fresh snapshot has been published.
-/// * The reader serves from the snapshot only when `applied == queued`, i.e. it
-///   has nothing outstanding on the main thread. So a fast-path answer can never
-///   predate a mutation whose reply has already been sent, and a query issued
-///   after a pipelined `submit_batch` still queues behind it exactly as before.
+/// * Only reads whose callers don't correlate them with commands they just
+///   sent (status, stats, the output texture handle) are served from the
+///   snapshot. A read that must follow the commands before it (the layers
+///   snapshot) goes to the main thread and queues behind them.
 /// * Because only the reader writes `queued` and only the main thread writes
 ///   `applied`, neither counter needs a CAS; a `Release` store paired with an
 ///   `Acquire` load carries the published snapshot across the thread boundary.
@@ -802,10 +798,6 @@ impl RpcFastPath {
 
     fn release_republish(&self) {
         self.republish_pending.store(0, Ordering::Release);
-    }
-
-    fn idle(&self) -> bool {
-        self.applied.load(Ordering::Acquire) == self.queued.load(Ordering::Relaxed)
     }
 
     fn note_interest(&self) {
@@ -4125,6 +4117,27 @@ struct NativeHapUploadBatch {
     slots: Vec<usize>,
 }
 
+/// Uniform slices for single-pass shaders drawn in one batch: one buffer cut
+/// into aligned slices, each with its own bind group, so every shader in a
+/// frame can keep its own uniforms until the batch is submitted.
+struct NativeShaderUniformRing {
+    buffer: wgpu::Buffer,
+    stride: u64,
+    bind_groups: Vec<wgpu::BindGroup>,
+}
+
+/// Single-pass shader renders recorded into one encoder and submitted once
+/// (see `RenderState::begin_native_shader_batch`).
+struct NativeShaderBatch {
+    encoder: wgpu::CommandEncoder,
+    uniforms: Vec<u8>,
+    used: usize,
+    slots: Vec<usize>,
+}
+
+/// Shaders per batch before it is submitted and a new one begun.
+const NATIVE_SHADER_BATCH_SLOTS: usize = 64;
+
 struct RenderState {
     window: Arc<Window>,
     adapter_name: String,
@@ -4208,6 +4221,8 @@ struct RenderState {
     native_shader_vertex_module: wgpu::ShaderModule,
     native_shader_bind_group_layout: wgpu::BindGroupLayout,
     native_shader_bind_group: wgpu::BindGroup,
+    native_shader_ring: Option<NativeShaderUniformRing>,
+    native_shader_batch: Option<NativeShaderBatch>,
     /// D2Array view of the shadow input frames, for per-pass ISF bind groups.
     native_shader_input_view: wgpu::TextureView,
     /// 1x1 placeholder bound in unused ISF pass/audio slots.
@@ -5988,7 +6003,6 @@ impl App {
         self.fast_path.publish(PublishedRpcSnapshot {
             status: json!(self.status()),
             stats,
-            layers: self.layers_snapshot_payload(),
             output_shared_texture: self.output_shared_texture(),
         });
     }
@@ -15668,8 +15682,15 @@ impl App {
         let current_frame = self.native_frame_index();
         self.isf_frame_outputs.retain(|_, (_, frame)| *frame == current_frame);
         let layer_ids = self.isf_layer_bindings.keys().cloned().collect::<Vec<_>>();
+        // One encoder and one submit for all single-pass shaders this frame.
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.begin_native_shader_batch();
+        }
         for layer_id in layer_ids {
             self.apply_render_isf_to_layer(&json!({ "layer_id": layer_id }));
+        }
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.finish_native_shader_batch();
         }
     }
 
@@ -15918,6 +15939,8 @@ impl App {
                             time: shader_uniforms.resolution_time[2],
                         };
                         self.isf_multipass_renders = self.isf_multipass_renders.saturating_add(1);
+                        // It submits on its own: run the batched renders first.
+                        renderer.flush_native_shader_batch();
                         renderer.render_native_isf_pass_host_frame(
                             slot,
                             &pipeline_key,
@@ -20774,6 +20797,8 @@ impl RenderState {
             native_shader_vertex_module,
             native_shader_bind_group_layout,
             native_shader_bind_group,
+            native_shader_ring: None,
+            native_shader_batch: None,
             native_shader_input_view,
             isf_dummy_texture_view,
             isf_audio_rows: HashMap::new(),
@@ -23887,11 +23912,28 @@ impl RenderState {
         frame_size: (u32, u32),
     ) -> Result<(), String> {
         self.ensure_native_shader_pipeline(cache_key, source_kind, source, fragment_entry)?;
-        self.queue.write_buffer(
-            &self.native_shader_uniform_buffer,
-            0,
-            bytemuck::bytes_of(uniforms),
-        );
+        if self.native_shader_batch.as_ref().is_some_and(|batch| batch.used >= NATIVE_SHADER_BATCH_SLOTS) {
+            self.flush_native_shader_batch();
+        }
+        // In a batch the uniforms go into this shader's own slice, uploaded
+        // with the rest when the batch is submitted; alone they go straight
+        // into the shared buffer as before.
+        let mut batch = self.native_shader_batch.take();
+        let ring_index = match batch.as_mut() {
+            Some(batch) => {
+                let stride = self.native_shader_ring.as_ref().map_or(0, |ring| ring.stride as usize);
+                let index = batch.used;
+                batch.used += 1;
+                batch.uniforms.resize(batch.used * stride, 0);
+                let bytes = bytemuck::bytes_of(uniforms);
+                batch.uniforms[index * stride..index * stride + bytes.len()].copy_from_slice(bytes);
+                Some(index)
+            }
+            None => {
+                self.queue.write_buffer(&self.native_shader_uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+                None
+            }
+        };
         let full_size = self.source_frame_size as u32;
         // Per-source slots take the layer's own size. Shared slots are all
         // one square, so there the size becomes a render scale instead.
@@ -23936,15 +23978,25 @@ impl RenderState {
             None
         };
         let view = scale_view.as_ref().unwrap_or(&slot_view);
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut own_encoder = batch.is_none().then(|| {
+            self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Ghost Render Core Native Shader Encoder"),
-            });
-        self.encode_native_shader_input_copies(&mut encoder, input_slots);
+            })
+        });
+        let encoder = match (batch.as_mut(), own_encoder.as_mut()) {
+            (Some(batch), _) => &mut batch.encoder,
+            (None, Some(encoder)) => encoder,
+            (None, None) => unreachable!("an encoder exists either way"),
+        };
+        self.encode_native_shader_input_copies(encoder, input_slots);
         {
             let Some(pipeline) = self.native_shader_pipelines.get(cache_key) else {
+                self.native_shader_batch = batch;
                 return Err("native shader pipeline was not cached".to_string());
+            };
+            let bind_group = match (ring_index, self.native_shader_ring.as_ref()) {
+                (Some(index), Some(ring)) => &ring.bind_groups[index],
+                _ => &self.native_shader_bind_group,
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Ghost Render Core Native Shader Pass"),
@@ -23963,20 +24015,117 @@ impl RenderState {
                 multiview_mask: None,
             });
             pass.set_pipeline(&pipeline.pipeline);
-            pass.set_bind_group(0, &self.native_shader_bind_group, &[]);
+            pass.set_bind_group(0, bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
         if let Some(scale_view) = scale_view.as_ref() {
             /* Expand the reduced render into the slot so every downstream
                sampler still sees a fully populated mip 0 over 0..1. */
             self.source_frame_blitter
-                .copy(&self.device, &mut encoder, scale_view, &slot_view);
+                .copy(&self.device, encoder, scale_view, &slot_view);
         }
-        self.generate_source_frame_mips(&mut encoder, safe_slot);
-        self.queue.submit(Some(encoder.finish()));
-        self.mark_source_frame_slots_submitted([safe_slot]);
+        self.generate_source_frame_mips(encoder, safe_slot);
+        match batch {
+            Some(mut batch) => {
+                batch.slots.push(safe_slot);
+                self.native_shader_batch = Some(batch);
+            }
+            None => {
+                if let Some(encoder) = own_encoder {
+                    self.queue.submit(Some(encoder.finish()));
+                }
+                self.mark_source_frame_slots_submitted([safe_slot]);
+            }
+        }
         self.last_frame_error = None;
         Ok(())
+    }
+
+    /// Record single-pass shader renders into one encoder from here until
+    /// `finish_native_shader_batch`: one uniform upload and one submit for
+    /// all of them instead of an encoder, a staging buffer and a submit each.
+    fn begin_native_shader_batch(&mut self) {
+        if self.native_shader_batch.is_some() {
+            return;
+        }
+        if self.native_shader_ring.is_none() {
+            let size = std::mem::size_of::<NativeShaderUniforms>() as u64;
+            let align = self.device.limits().min_uniform_buffer_offset_alignment.max(1) as u64;
+            let stride = size.div_ceil(align) * align;
+            let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Ghost Render Core Native Shader Uniform Ring"),
+                size: stride * NATIVE_SHADER_BATCH_SLOTS as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_groups = (0..NATIVE_SHADER_BATCH_SLOTS)
+                .map(|index| {
+                    let mut entries = vec![
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &buffer,
+                                offset: index as u64 * stride,
+                                size: std::num::NonZeroU64::new(size),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&self.native_shader_input_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&self.source_frame_sampler),
+                        },
+                    ];
+                    for binding in NATIVE_ISF_FIRST_EXTRA_BINDING..NATIVE_ISF_FIRST_EXTRA_BINDING + NATIVE_ISF_EXTRA_TEXTURE_BINDINGS {
+                        entries.push(wgpu::BindGroupEntry {
+                            binding,
+                            resource: wgpu::BindingResource::TextureView(&self.isf_dummy_texture_view),
+                        });
+                    }
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Ghost Render Core Native Shader Ring Bind Group"),
+                        layout: &self.native_shader_bind_group_layout,
+                        entries: &entries,
+                    })
+                })
+                .collect();
+            self.native_shader_ring = Some(NativeShaderUniformRing { buffer, stride, bind_groups });
+        }
+        self.native_shader_batch = Some(NativeShaderBatch {
+            encoder: self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Native Shader Batch Encoder"),
+            }),
+            uniforms: Vec::new(),
+            used: 0,
+            slots: Vec::new(),
+        });
+    }
+
+    /// Upload the batch's uniforms and submit its renders.
+    fn finish_native_shader_batch(&mut self) {
+        let Some(batch) = self.native_shader_batch.take() else {
+            return;
+        };
+        if batch.used == 0 {
+            return;
+        }
+        if let Some(ring) = self.native_shader_ring.as_ref() {
+            self.queue.write_buffer(&ring.buffer, 0, &batch.uniforms);
+        }
+        self.queue.submit(Some(batch.encoder.finish()));
+        self.mark_source_frame_slots_submitted(batch.slots);
+    }
+
+    /// Submit what the batch holds and keep batching. Anything that submits
+    /// its own work (a multi-pass shader) does this first, so it runs after
+    /// the renders recorded before it.
+    fn flush_native_shader_batch(&mut self) {
+        if self.native_shader_batch.is_some() {
+            self.finish_native_shader_batch();
+            self.begin_native_shader_batch();
+        }
     }
 
     /// Make sure the (kind, width) audio row exists and holds this frame's
@@ -25960,10 +26109,9 @@ fn spawn_stdin_reader(
                     // `output_shared_texture` miss their deadline. The `idle()`
                     // gate keeps them ordered behind any command still in flight.
                     let unordered = RPC_FAST_PATH_UNORDERED_METHODS.contains(&req.method.as_str());
-                    let ordered = RPC_FAST_PATH_ORDERED_METHODS.contains(&req.method.as_str());
-                    if (unordered || ordered) && !fast_path.manual_clock() {
+                    if unordered && !fast_path.manual_clock() {
                         fast_path.note_interest();
-                        if req.id != 0 && (unordered || fast_path.idle()) {
+                        if req.id != 0 {
                             if let Some(result) = fast_path
                                 .read()
                                 .and_then(|snapshot| snapshot.get(&req.method).cloned())
