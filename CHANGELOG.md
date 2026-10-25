@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.10 — October 25, 2026
+
+Media that stays linked when a show folder moves or travels to another computer, with relinking a whole folder at once and iCloud files named and downloaded; Export Package and Open Package for a show and all its media in one .zip; mesh warp that fits Custom Shapes; auto-mapped faces that take content; many slices of video and shaders that play smoothly; fullscreen outputs on macOS that leave the menu bar and Dock alone; canvas zoom that is easy to control; a VJ library that opens without compiling every shader. See [release notes](docs/releases/v2.1.10.md).
+
 # Ghost Arcade Pro 2.1.9 — October 24, 2026
 
 Merge one VJ block into another, autopilot across every block, and an A/B slider whose transition and blend work between whole decks and run once from A to B; Lines Light Up with feathered and tapered draw heads and a working reset; SVG rotation in every mode with the transform gizmo; point cloud loads that continue in the background; deformation panels that show only the controls each type uses; MIDI, OSC, DMX and MediaPipe bindings that reach every parameter. See [release notes](docs/releases/v2.1.9.md).
