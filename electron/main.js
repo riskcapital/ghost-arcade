@@ -4019,10 +4019,13 @@ function registerIpcHandlers() {
 
   ipcMain.handle('output_exit_fullscreen', () => {
     if (outputWindow && !outputWindow.isDestroyed()) {
-      const wasSimpleFs = typeof outputWindow.isSimpleFullScreen === 'function' && outputWindow.isSimpleFullScreen();
-      const wasFs = outputWindow.isFullScreen() || wasSimpleFs;
+      if (macProjectorWindows.has(outputWindow)) {
+        // Borderless projector: leaving fullscreen closes it (see Escape).
+        closeOutputBrowserWindow(outputWindow);
+        return { ok: true, wasFullScreen: true, fullScreen: false, closed: true };
+      }
+      const wasFs = outputWindow.isFullScreen();
       if (wasFs) {
-        if (wasSimpleFs) outputWindow.setSimpleFullScreen(false);
         outputWindow.setFullScreen(false);
         outputWindow.setMenuBarVisibility(true);
         outputWindow.show();
@@ -4042,12 +4045,14 @@ function registerIpcHandlers() {
     const cx = bounds.x + bounds.width / 2;
     const cy = bounds.y + bounds.height / 2;
     const target = screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) });
-    const simpleFullScreen = typeof outputWindow.isSimpleFullScreen === 'function' && outputWindow.isSimpleFullScreen();
-    const fullScreen = outputWindow.isFullScreen() || simpleFullScreen;
+    const projector = macProjectorWindows.has(outputWindow);
+    const fullScreen = isOutputFullScreen(outputWindow);
     return {
       exists: true,
       fullScreen,
-      simpleFullScreen,
+      // Kept for callers that ask; a macOS projector fills the display the
+      // way simple fullscreen did.
+      simpleFullScreen: projector,
       isExternal: target.id !== primary.id,
       displayId: target.id,
       bounds,
@@ -4107,6 +4112,8 @@ function registerIpcHandlers() {
       title: `Ghost Arcade Output — slice ${sliceId}`,
       frame: false,
       fullscreen: !isMac,
+      // macOS: lets the projector cover the menu-bar strip (enterMacProjector).
+      enableLargerThanScreen: isMac,
       autoHideMenuBar: true,
       skipTaskbar: false,
       backgroundColor: '#000000',
@@ -4119,7 +4126,10 @@ function registerIpcHandlers() {
         backgroundThrottling: false,
       },
     });
-    if (isMac) setOutputFullScreen(win, true);
+    if (isMac) {
+      allowMacProjector(win);
+      setOutputFullScreen(win, true);
+    }
     win.setMenuBarVisibility(false);
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
@@ -5669,12 +5679,14 @@ function createMainWindow() {
         y: winY,
         title: isSliceWin ? 'Ghost Arcade Output — slice' : 'Ghost Arcade Output',
         resizable: !isSliceWin,
-        frame: !isSliceWin,
+        // macOS fullscreen outputs are borderless projectors (enterMacProjector).
+        frame: !isSliceWin && !(isMac && fullscreen),
+        enableLargerThanScreen: isMac && (isSliceWin || fullscreen),
         fullscreen: isMac ? false : (isSliceWin ? true : fullscreen),
         autoHideMenuBar: true,
         skipTaskbar: false,
         backgroundColor: '#000000',
-        hasShadow: !isSliceWin,
+        hasShadow: !isSliceWin && !(isMac && fullscreen),
         webPreferences: {
           preload: path.join(__dirname, 'preload.cjs'),
           contextIsolation: true,
@@ -5702,7 +5714,10 @@ function createMainWindow() {
     if (!isWebgpuOutput && !isSliceDisplay) return;
     const wantsFullscreen = nextOutputWindowFullscreen;
     nextOutputWindowFullscreen = false;
-    if (wantsFullscreen && isMac) setOutputFullScreen(newWindow, true);
+    if (wantsFullscreen && isMac) {
+      allowMacProjector(newWindow);
+      setOutputFullScreen(newWindow, true);
+    }
     if (isSliceDisplay) {
       // Per-screen slice window opened via window.open from the editor.
       // Lives in the SAME renderer process as the editor (Electron groups
@@ -5940,21 +5955,65 @@ function createProjectionSimWindow() {
   projectionSimWindow.on('leave-full-screen', () => publishProjectionSimFullscreenState(false));
 }
 
-// Output and slice windows fill their display with macOS "simple" fullscreen
-// (no separate Space). They are put there with setSimpleFullScreen. A window
-// created with both `fullscreen` and `simpleFullscreen`, or given
-// setFullScreen(true) with `simpleFullscreen` set, never finishes its
-// fullscreen transition in Electron, and close() then waits on it forever:
-// the output stayed up when the Fullscreen button was clicked again.
+// macOS projector windows. Simple fullscreen auto-hides the menu bar and the
+// Dock for the whole app, so they disappeared from the main screen while
+// Ghost Arcade was in front, and it leaves the window at the normal level,
+// so another app's menu bar drew across the top of the projector as soon as
+// the user switched apps. Native fullscreen opens a separate Space instead,
+// and a window built with `fullscreen` plus `simpleFullscreen` never finished
+// its transition (close() then waited on it forever).
+//
+// A projector is a borderless window over its display's whole frame,
+// menu-bar strip included, kept above the menu bar (level 24) and its status
+// items (25). The rest of the Mac is left alone. Output windows that open
+// fullscreen are built borderless on macOS so they can do this; a framed
+// window (a windowed preview) can't cover the menu-bar strip and uses native
+// fullscreen if it is toggled.
+const macProjectorCapable = new WeakSet();
+const macProjectorWindows = new WeakSet();
+
+/** Mark a borderless output window as able to become a macOS projector. */
+function allowMacProjector(win) {
+  if (isMac && win && !win.isDestroyed()) macProjectorCapable.add(win);
+}
+
+function enterMacProjector(win) {
+  const display = screen.getDisplayMatching(win.getBounds());
+  macProjectorWindows.add(win);
+  win.setAlwaysOnTop(true, 'status', 1);
+  // skipTransformProcessType: otherwise Electron hides the app's Dock icon.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  win.setBounds(display.bounds);
+}
+
+function leaveMacProjector(win) {
+  macProjectorWindows.delete(win);
+  const area = screen.getDisplayMatching(win.getBounds()).workArea;
+  win.setAlwaysOnTop(false);
+  win.setVisibleOnAllWorkspaces(false, { skipTransformProcessType: true });
+  const width = Math.min(1280, Math.round(area.width * 0.8));
+  const height = Math.min(720, Math.round(area.height * 0.8));
+  win.setBounds({
+    x: area.x + Math.round((area.width - width) / 2),
+    y: area.y + Math.round((area.height - height) / 2),
+    width,
+    height,
+  });
+}
+
 function setOutputFullScreen(win, on) {
   if (!win || win.isDestroyed()) return;
-  if (isMac) win.setSimpleFullScreen(!!on);
-  else win.setFullScreen(!!on);
+  if (isMac && macProjectorCapable.has(win)) {
+    if (on && !macProjectorWindows.has(win)) enterMacProjector(win);
+    else if (!on && macProjectorWindows.has(win)) leaveMacProjector(win);
+    return;
+  }
+  win.setFullScreen(!!on);
 }
 
 function isOutputFullScreen(win) {
   if (!win || win.isDestroyed()) return false;
-  return win.isFullScreen() || (typeof win.isSimpleFullScreen === 'function' && win.isSimpleFullScreen());
+  return macProjectorWindows.has(win) || win.isFullScreen();
 }
 
 /** Close an output or slice window for certain: one that ignores close() is destroyed. */
@@ -5974,14 +6033,13 @@ function installOutputEscapeHandler(win, { closeOnEscape = false } = {}) {
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.key !== 'Escape') return;
     event.preventDefault();
-    if (closeOnEscape) {
+    // A macOS projector has no frame to fall back to, so Escape closes it,
+    // as it does a native output.
+    if (closeOnEscape || macProjectorWindows.has(win)) {
       closeOutputBrowserWindow(win);
       return;
     }
     try {
-      if (typeof win.isSimpleFullScreen === 'function' && win.isSimpleFullScreen()) {
-        win.setSimpleFullScreen(false);
-      }
       if (win.isFullScreen()) {
         win.setFullScreen(false);
       }
@@ -6032,13 +6090,14 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     y: winY,
     title: 'Ghost Arcade Output',
     resizable: true,
-    frame: true,
-    // macOS: simple fullscreen (no Mission Control space), entered below.
+    // macOS fullscreen: a borderless projector, entered below.
+    frame: !(isMac && fullscreen),
+    enableLargerThanScreen: isMac && fullscreen,
     fullscreen: isMac ? false : fullscreen,
     autoHideMenuBar: true,
     skipTaskbar: false,
     backgroundColor: '#000000',
-    hasShadow: true,
+    hasShadow: !(isMac && fullscreen),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -6048,7 +6107,10 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     },
   });
   outputWindow = win;
-  if (fullscreen && isMac) setOutputFullScreen(win, true);
+  if (fullscreen && isMac) {
+    allowMacProjector(win);
+    setOutputFullScreen(win, true);
+  }
   installOutputEscapeHandler(win);
 
   // Hide menu bar for clean look
