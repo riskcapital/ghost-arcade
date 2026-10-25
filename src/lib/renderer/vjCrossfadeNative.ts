@@ -100,14 +100,16 @@ fn sampleBRaw(uv: vec2<f32>) -> vec4<f32> {
 
 // Deck B as the transition brings it in. With a blend mode other than
 // Normal, B arrives combined with A by that mode (difference, multiply…)
-// and settles into plain B as the fader reaches B, so the transition runs
-// once from A to B instead of passing through a blended midpoint.
+// at full strength through most of the throw and settles into plain B over
+// the last quarter, so the blend reads clearly and the transition still
+// runs once from A to B instead of passing through a blended midpoint.
+// (The default constant-power fader puts its middle at mix 0.71.)
 fn sampleB(uv: vec2<f32>) -> vec4<f32> {
   let b = sampleBRaw(uv);
   let blendMode = i32(u.blendMode + 0.5);
   if (blendMode == 0) { return b; }
   let blended = xfBlend(sampleA(uv).rgb, b.rgb, blendMode);
-  let settle = smoothstep(0.0, 1.0, clamp(u.mixv, 0.0, 1.0));
+  let settle = smoothstep(0.75, 1.0, clamp(u.mixv, 0.0, 1.0));
   return vec4<f32>(mix(blended, b.rgb, settle), b.a);
 }
 

@@ -289,8 +289,9 @@ fn sampleBRaw(uv: vec2<f32>) -> vec4<f32> {
   return premultiply(textureSampleLevel(texB, samp, sampleUv, 0.0), u.b);
 }
 // B as the transition brings it in: with a blend mode other than Normal it
-// arrives combined with A and settles into plain B by the end, so the
-// transition runs once from A to B (see the bank crossfade's sampleB).
+// arrives combined with A, holds the blend through most of the throw and
+// settles into plain B over the last quarter, so the transition runs once
+// from A to B (see the bank crossfade's sampleB).
 fn sampleB(uv: vec2<f32>) -> vec4<f32> {
   let b = sampleBRaw(uv);
   let mode = i32(u.blendMode + 0.5);
@@ -298,7 +299,7 @@ fn sampleB(uv: vec2<f32>) -> vec4<f32> {
   let a = sampleA(uv);
   if (a.a <= 0.0) { return b; }
   let blended = xfBlend(a.rgb / max(a.a, 0.0001), b.rgb / max(b.a, 0.0001), mode) * b.a;
-  let settle = smoothstep(0.0, 1.0, clamp(u.mixv, 0.0, 1.0));
+  let settle = smoothstep(0.75, 1.0, clamp(u.mixv, 0.0, 1.0));
   return vec4<f32>(mix(blended, b.rgb, settle), b.a);
 }
 ${transitionFunctions}

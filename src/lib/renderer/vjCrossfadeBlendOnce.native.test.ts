@@ -1,7 +1,9 @@
 // The A/B fader with a blend mode runs one transition from A to B. B comes in
-// combined with A by the blend mode and settles into plain B by the end; the
-// picture never passes through a whole-frame blend at the midpoint (which
-// looked like two transitions, A to the blend and then the blend to B).
+// combined with A by the blend mode, holds that blend through the middle of
+// the throw (so the blend mode is plainly visible) and settles into plain B
+// near the end; the picture never passes through a whole-frame blend at the
+// midpoint (which looked like two transitions, A to the blend and then the
+// blend to B).
 import { describe, expect, it } from 'vitest';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -159,13 +161,17 @@ describe('A/B blend modes run one transition', () => {
           expect(step.right.g).toBeGreaterThan(0.9);
           expect(step.right.b).toBeLessThan(0.05);
         }
-        // Where B has come in, it arrives as the difference with A (green +
-        // blue = cyan) and settles toward plain blue as the fader moves on.
-        expect(quarter.left.b).toBeGreaterThan(0.9);
-        expect(quarter.left.g).toBeGreaterThan(0.7);
-        expect(half.left.g).toBeLessThan(quarter.left.g - 0.2);
-        expect(threeQuarter.left.g).toBeLessThan(half.left.g - 0.2);
-        expect(threeQuarter.left.b).toBeGreaterThan(0.9);
+        // Where B has come in, it arrives as the whole difference with A
+        // (green + blue = cyan) and keeps it through the middle of the throw,
+        // so the blend mode reads clearly...
+        for (const step of [quarter, half, threeQuarter]) {
+          expect(step.left.b).toBeGreaterThan(0.9);
+          expect(step.left.g).toBeGreaterThan(0.85);
+        }
+        // ...then settles toward plain blue over the last stretch.
+        const late = await sampleAt(0.92);
+        expect(late.left.b).toBeGreaterThan(0.9);
+        expect(late.left.g).toBeLessThan(0.5);
       } finally {
         rpc.close();
       }

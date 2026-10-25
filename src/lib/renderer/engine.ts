@@ -3139,6 +3139,9 @@ export class RenderEngine {
     if (!textureA && textureB) mix = 1;
     if (textureA && !textureB) mix = 0;
     mat.uniforms.uMix.value = mix;
+    // The blend mode is per crossfade, not per material, so set it here too:
+    // stage mode never runs applyBankCrossfade, which is the other setter.
+    mat.uniforms.uBlendMode.value = this.crossfadeBlendModeIndex;
     mat.uniforms.uTime.value = (performance.now() / 1000) - this.crossfadeStartTime;
     if (mat.uniforms.uRes.value.x !== this.width || mat.uniforms.uRes.value.y !== this.height) {
       mat.uniforms.uRes.value.set(this.width, this.height);
