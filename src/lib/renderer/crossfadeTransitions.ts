@@ -43,8 +43,9 @@ export interface TransitionDef {
 //
 // uBlendMode (int) picks how B comes in. 0 = normal (plain B). Any other
 // value picks a per-component math (multiply/screen/add/etc.): sampleB
-// returns B combined with A by that math, settling into plain B as uMix
-// reaches 1, so every transition runs once from A to B.
+// returns B combined with A by that math at full strength through most of
+// the throw, settling into plain B over the last quarter, so the blend reads
+// clearly and every transition still runs once from A to B.
 const SHARED_HEADER = `
 precision highp float;
 varying vec2 vUv;
@@ -86,12 +87,14 @@ vec3 xfBlend(vec3 a, vec3 b, int mode) {
   return mix(a, b, 0.5);                                   // fallback (unused; mode==0 short-circuits)
 }
 
-// Bank B as the transition brings it in (see uBlendMode above).
+// Bank B as the transition brings it in (see uBlendMode above). The
+// settle starts at 0.75: the default constant-power fader puts its middle
+// at uMix 0.71, so the blend is still whole there.
 vec4 sampleB(vec2 uv) {
   vec4 b = sampleBRaw(uv);
   if (uBlendMode == 0) return b;
   vec3 blended = xfBlend(sampleA(uv).rgb, b.rgb, uBlendMode);
-  float settle = smoothstep(0.0, 1.0, clamp(uMix, 0.0, 1.0));
+  float settle = smoothstep(0.75, 1.0, clamp(uMix, 0.0, 1.0));
   return vec4(mix(blended, b.rgb, settle), b.a);
 }
 `;
