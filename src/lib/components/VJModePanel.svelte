@@ -12,7 +12,7 @@
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, vjCrossfader, vjSlice, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
-  import { keyframeTimeline } from '../stores/keyframeTimeline';
+  import { keyframeTrayOpen } from '../stores/keyframeTimeline';
   import { workspace } from '../stores/workspace';
   import { vjStageEdit } from '../stores/vjStageEdit';
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
@@ -1633,7 +1633,7 @@
     thumbnail?: string;
   }
 
-  const bundledVJThreeJSItems: Array<{ id: string; folder: string; name: string; url: string }> =
+  const bundledVJThreeJSItems: Array<{ id: string; folder: string; name: string; url: string; thumbnail?: string }> =
     bundledThreeJSItems as any;
 
   // Default JS animation items that ship with every build. This mirrors
@@ -1653,7 +1653,9 @@
           id: def.id,
           name: def.name,
           src: def.url,
-          thumbnail: undefined,
+          // The page's shipped thumb.jpg, as the JS tab shows it. Without it
+          // every page was loaded and run in the background to capture one.
+          thumbnail: def.thumbnail,
         }))
       : fallbackThreeJSItems;
 
@@ -1760,19 +1762,31 @@
         shaders = loadedShaders;
         shadersLoading = false;
 
-        // Generate shader thumbnails in background
+        // Generate shader thumbnails in background. Only between frames
+        // (they render and encode on this thread, and the first opening of
+        // a fresh profile makes one per library shader, often mid-set), and
+        // the list redraws every few thumbnails rather than after each one.
+        const idle = () => new Promise<void>((resolve) => {
+          const ric = (window as any).requestIdleCallback as ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
+          if (ric) ric(() => resolve(), { timeout: 500 });
+          else setTimeout(resolve, 16);
+        });
+        let pendingThumbs = 0;
         for (const shader of shaders) {
           try {
+            await idle();
             shader.thumbnail = await generateShaderThumbnail(shader.shaderCode, 0.5);
-            shaders = [...shaders];
+            if (++pendingThumbs >= 8) { pendingThumbs = 0; shaders = [...shaders]; }
           } catch (err) {}
         }
+        if (pendingThumbs) shaders = [...shaders];
 
         // Generate Three.js thumbnails in background
         for (let i = 0; i < threejsItems.length; i++) {
           const item = threejsItems[i];
           if (!item.thumbnail) {
             try {
+              await idle();
               const thumbnail = await generateThreeJSThumbnail(item.src);
               if (thumbnail) {
                 threejsItems[i] = { ...item, thumbnail };
@@ -3652,7 +3666,7 @@
 />
 
 {#if $vjClipLauncher.isOpen}
-  <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen} class:stage-edit-hidden={$vjStageEdit}>
+  <div class="vj-overlay" class:kf-tray-open={$keyframeTrayOpen} class:stage-edit-hidden={$vjStageEdit}>
     <!-- Header -->
     <div class="vj-header" use:fitToolbar>
       <!-- Lead column: fixed-size left controls, then the MIX/STAGE/MAP

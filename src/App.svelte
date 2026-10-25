@@ -93,7 +93,7 @@
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
-  import { keyframeTimeline } from './lib/stores/keyframeTimeline';
+  import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { settings, outputFrozen } from './lib/stores/settings';
   import { maskEditingLayerId } from './lib/stores/maskEditing';
@@ -106,7 +106,7 @@
   import { projectionSimHistoryVersion } from './lib/projectionSim/store';
   import { startProjectionSimSceneSync } from './lib/projectionSim/sceneSync';
   import { startAutoMapHost } from './lib/projectionSim/autoMap';
-  import { audioStore } from './lib/stores/audio';
+  import { audioStore, audioBpm, audioManualBpm, isBeat } from './lib/stores/audio';
   // macros.ts registers a callback with midiRouter on import so
   // `vj:macro:N:value` MIDI messages route into the macro store. Pulled in
   // here to guarantee it runs at app boot, even if the VJ panel hasn't
@@ -4142,8 +4142,8 @@
         // 120 BPM and would never reliably catch the up-edge through
         // the throttled sync. See `beat_pulse` channel emitted from
         // the audio analyzer's beat callback below.
-        bpm: $audioStore.bpm,
-        manualBPM: $audioStore.manualBPM,
+        bpm: $audioBpm,
+        manualBPM: $audioManualBpm,
       };
       sendToPhone({
         type: 'vj_clips_sync',
@@ -4216,24 +4216,28 @@
   }
   // Audio: BPM / manualBPM only (NOT beat — that's emitted via the
   // dedicated beat_pulse channel because it's a 10ms momentary flag).
-  $: if (phoneLinked && ($audioStore.bpm || $audioStore.manualBPM)) {
+  // The BPM-only stores change when the tempo does, not on every analysed
+  // frame like audioStore (which re-ran this, and the sync, every frame).
+  $: if (phoneLinked && ($audioBpm || $audioManualBpm)) {
     scheduleSyncVJClips();
   }
 
   // ── Beat pulse (separate channel) ────────────────────────────────
-  // Detect rising edges of $audioStore.beat.isBeat and fire a tiny
+  // Detect rising edges of the beat flag (isBeat changes only on the edges,
+  // so this runs per beat, not per frame) and fire a tiny
   // dedicated WS message. Mobile UI listens for `beat_pulse` to
   // momentarily flash the TAP button + BPM number. This bypasses the
   // syncVJClips throttle so beats stay tight (within one rAF frame).
   let lastBeatFlag = false;
   $: if (phoneLinked && ws && ws.readyState === WebSocket.OPEN) {
-    const now = !!$audioStore.beat?.isBeat;
+    const now = !!$isBeat;
     if (now && !lastBeatFlag) {
+      const beat = get(audioStore).beat;
       try {
         ws.send(JSON.stringify({
           type: 'beat_pulse',
-          intensity: $audioStore.beat?.beatIntensity ?? 1,
-          count: $audioStore.beat?.beatCount ?? 0,
+          intensity: beat?.beatIntensity ?? 1,
+          count: beat?.beatCount ?? 0,
         }));
       } catch { /* socket may have closed mid-send */ }
     }
@@ -6394,7 +6398,7 @@
       class="main-content"
       class:preset-tray-open={presetTrayOpen}
       class:seq-tray-open={$layerSequencer.isOpen}
-      class:kf-tray-open={$keyframeTimeline.isOpen}
+      class:kf-tray-open={$keyframeTrayOpen}
     >
       <!-- Left sidebar — Layers / Screens tabs.
            LeftSidebar swaps LayerPanel ↔ ScreenPanel based on the
@@ -7440,7 +7444,7 @@
       </button>
       <button
         class="status-pill"
-        class:on={$keyframeTimeline.isOpen}
+        class:on={$keyframeTrayOpen}
         onclick={() => keyframeTimeline.toggleOpen()}
         title="Keyframes (⌘K)"
       >

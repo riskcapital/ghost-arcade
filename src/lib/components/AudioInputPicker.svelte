@@ -14,7 +14,7 @@
    * All three read/write through the shared `audioStore` so toggling in one
    * mode is immediately reflected in every other mode.
    */
-  import { audioStore } from '../stores/audio';
+  import { audioInputDevices, audioInputType, audioPreferredInputDeviceId, audioStore } from '../stores/audio';
   import { isMac } from '../bridge';
   import AudioWaveformIndicator from './AudioWaveformIndicator.svelte';
 
@@ -58,7 +58,7 @@
   }
 
   async function activateMicInput() {
-    if ($audioStore.inputType === 'microphone') {
+    if ($audioInputType === 'microphone') {
       await audioStore.stop();
     } else {
       await audioStore.stop();
@@ -67,7 +67,7 @@
   }
 
   async function activateSystemAudio() {
-    if ($audioStore.inputType === 'system') {
+    if ($audioInputType === 'system') {
       await audioStore.stop();
     } else {
       await audioStore.stop();
@@ -87,7 +87,7 @@
   async function pickMicDevice(deviceId: string | null) {
     showMicPicker = false;
     await audioStore.setPreferredInputDevice(deviceId);
-    if ($audioStore.inputType !== 'microphone') {
+    if ($audioInputType !== 'microphone') {
       await audioStore.startMicrophone();
     }
   }
@@ -108,9 +108,9 @@
   <div class="aip-mic-group">
     <button
       class="aip-btn aip-mic-main"
-      class:active={$audioStore.inputType === 'microphone'}
+      class:active={$audioInputType === 'microphone'}
       onclick={activateMicInput}
-      title={$audioStore.inputType === 'microphone' ? 'Disable Mic' : 'Enable Mic Input (right side = pick device)'}
+      title={$audioInputType === 'microphone' ? 'Disable Mic' : 'Enable Mic Input (right side = pick device)'}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -118,7 +118,7 @@
         <line x1="12" y1="19" x2="12" y2="23"/>
         <line x1="8" y1="23" x2="16" y2="23"/>
       </svg>
-      {#if $audioStore.inputType === 'microphone'}
+      {#if $audioInputType === 'microphone'}
         <span class="aip-active-dot"></span>
       {/if}
     </button>
@@ -138,21 +138,21 @@
         <div class="aip-popover-label">Audio Input</div>
         <button
           class="aip-popover-item"
-          class:selected={$audioStore.preferredInputDeviceId === null}
+          class:selected={$audioPreferredInputDeviceId === null}
           onclick={() => pickMicDevice(null)}
         >
           System Default
         </button>
-        {#each $audioStore.availableInputDevices as dev (dev.deviceId)}
+        {#each $audioInputDevices as dev (dev.deviceId)}
           <button
             class="aip-popover-item"
-            class:selected={$audioStore.preferredInputDeviceId === dev.deviceId}
+            class:selected={$audioPreferredInputDeviceId === dev.deviceId}
             onclick={() => pickMicDevice(dev.deviceId)}
           >
             {dev.label}
           </button>
         {/each}
-        {#if $audioStore.availableInputDevices.length === 0}
+        {#if $audioInputDevices.length === 0}
           <div class="aip-popover-empty">No input devices found</div>
         {/if}
         <div class="aip-popover-hint">
@@ -174,9 +174,9 @@
 
   <button
     class="aip-btn"
-    class:active={$audioStore.inputType === 'system'}
+    class:active={$audioInputType === 'system'}
     onclick={activateSystemAudio}
-    title={$audioStore.inputType === 'system'
+    title={$audioInputType === 'system'
       ? 'Disable System Audio'
       : (isMac
         ? 'Capture System Audio — pick "Entire Screen" and toggle "Share audio" in the picker'
@@ -187,7 +187,7 @@
       <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
       <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
     </svg>
-    {#if $audioStore.inputType === 'system'}
+    {#if $audioInputType === 'system'}
       <span class="aip-active-dot"></span>
     {/if}
   </button>

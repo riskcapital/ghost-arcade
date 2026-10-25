@@ -1647,6 +1647,7 @@
     // 120/144/165Hz — the editor renders at that rate, but the projector
     // is almost always 60Hz so anything above 60 is wasted work. Users
     // dial this from Settings → Performance: 0 = uncapped (default).
+    // When the next capped render is due (see the gate in animate).
     let _lastEditorRenderTime = 0;
     function animate() {
       // Unconditional first-3-frames log. No gate, no store lookup. If THIS
@@ -1684,13 +1685,18 @@
       const _editorFpsCap = ($settings as any)?.performance?.editorMaxFps ?? 0;
       const _fpsCap = _stage3DFpsCap > 0 ? _stage3DFpsCap : _editorFpsCap;
       if (_fpsCap > 0 && engine?.manualTime === null) {
+        // Render on the cap's cadence: the next render is due one interval
+        // after the last was due. Measuring from the last render instead
+        // rounded every wait up to whole display frames, so a 60 cap on a
+        // 120 or 144 Hz display rendered at 40-48 fps.
         const now = performance.now();
         const interval = 1000 / _fpsCap;
-        if (now - _lastEditorRenderTime < interval) {
+        if (now < _lastEditorRenderTime - 2) {
           animationId = requestAnimationFrame(animate);
           return;
         }
-        _lastEditorRenderTime = now;
+        _lastEditorRenderTime += interval;
+        if (_lastEditorRenderTime < now) _lastEditorRenderTime = now + interval;
       }
 
       try {

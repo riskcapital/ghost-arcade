@@ -92,15 +92,27 @@ async function processQueue() {
   isGenerating = true;
 
   const item = thumbnailQueue.shift()!;
+  // A 5 second timeout keeps one slow shader from blocking the queue. The
+  // fallback is drawn only if the timeout wins (it used to be drawn and
+  // encoded for every thumbnail, five seconds later), and a render that
+  // lost is told to stop so it cannot draw over the next one.
+  const run = { cancelled: false };
+  let timer: ReturnType<typeof setTimeout> | null = null;
   try {
-    // Add a 5 second timeout to prevent any single shader from blocking the queue
     const thumbnail = await Promise.race([
-      generateThumbnailInternal(item.shaderCode, item.time),
-      new Promise<string>((resolve) => setTimeout(() => resolve(createFallbackThumbnail('#663399')), 5000))
+      generateThumbnailInternal(item.shaderCode, item.time, run),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => {
+          run.cancelled = true;
+          resolve(createFallbackThumbnail('#663399'));
+        }, 5000);
+      }),
     ]);
     item.resolve(thumbnail);
   } catch {
     item.resolve(createFallbackThumbnail('#ff0066'));
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 
   isGenerating = false;
@@ -132,7 +144,8 @@ export async function generateShaderThumbnail(
  */
 async function generateThumbnailInternal(
   shaderCode: string,
-  time: number
+  time: number,
+  run: { cancelled: boolean } = { cancelled: false },
 ): Promise<string> {
   try {
     const context = getSharedContext();
@@ -146,7 +159,8 @@ async function generateThumbnailInternal(
     const parsed = parseISF(shaderCode);
     const fragmentShaderSource = parsed.fragmentShader;
 
-    // Create and compile vertex shader
+    // Compile both shaders and link without asking how it went in between:
+    // each status query waits for the driver to finish.
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
     if (!vertexShader) {
       return createFallbackThumbnail('#ff00aa');
@@ -154,13 +168,6 @@ async function generateThumbnailInternal(
     gl.shaderSource(vertexShader, vertexShaderSource);
     gl.compileShader(vertexShader);
 
-    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
-      console.warn('Vertex shader error:', gl.getShaderInfoLog(vertexShader));
-      gl.deleteShader(vertexShader);
-      return createFallbackThumbnail('#ff00aa');
-    }
-
-    // Create and compile fragment shader
     const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
@@ -168,13 +175,6 @@ async function generateThumbnailInternal(
     }
     gl.shaderSource(fragmentShader, fragmentShaderSource);
     gl.compileShader(fragmentShader);
-
-    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
-      console.warn('Fragment shader error:', gl.getShaderInfoLog(fragmentShader));
-      gl.deleteShader(vertexShader);
-      gl.deleteShader(fragmentShader);
-      return createFallbackThumbnail('#ff6600');
-    }
 
     // Create program
     const program = gl.createProgram();
@@ -188,12 +188,32 @@ async function generateThumbnailInternal(
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
 
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.warn('Program link error:', gl.getProgramInfoLog(program));
+    // Where the driver compiles in the background, wait for it between
+    // frames instead of blocking this thread on the link status.
+    const parallel = gl.getExtension('KHR_parallel_shader_compile') as { COMPLETION_STATUS_KHR: number } | null;
+    if (parallel) {
+      while (!gl.getProgramParameter(program, parallel.COMPLETION_STATUS_KHR)) {
+        await new Promise((resolve) => setTimeout(resolve, 8));
+        if (run.cancelled) break;
+      }
+    }
+    if (run.cancelled) {
       gl.deleteProgram(program);
       gl.deleteShader(vertexShader);
       gl.deleteShader(fragmentShader);
-      return createFallbackThumbnail('#ff6600');
+      return createFallbackThumbnail('#663399');
+    }
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      const vertexOk = gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS);
+      const fragmentOk = gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS);
+      if (!vertexOk) console.warn('Vertex shader error:', gl.getShaderInfoLog(vertexShader));
+      else if (!fragmentOk) console.warn('Fragment shader error:', gl.getShaderInfoLog(fragmentShader));
+      else console.warn('Program link error:', gl.getProgramInfoLog(program));
+      gl.deleteProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      return createFallbackThumbnail(vertexOk ? '#ff6600' : '#ff00aa');
     }
 
     gl.useProgram(program);
@@ -441,6 +461,41 @@ async function setCachedThumbnail(key: string, dataUrl: string): Promise<void> {
  * Generate a thumbnail with cache support.
  * Returns cached version if available, otherwise generates and caches.
  */
+// The built-in library ships its thumbnails (public/ISF/thumbs, made by
+// scripts/build-isf-thumbnails.mjs), keyed like the cache below. Opening the
+// VJ library on a fresh profile used to compile every library shader in the
+// background (hundreds), and those compiles hold up the GPU for every
+// window, the editor's frames included.
+let shippedIndex: Promise<Record<string, string>> | null = null;
+async function shippedLibraryThumbnail(key: string): Promise<string | null> {
+  if (typeof fetch !== 'function') return null;
+  shippedIndex ??= fetch('./ISF/thumbs/index.json')
+    .then((response) => (response.ok ? response.json() : {}))
+    .catch(() => ({}));
+  const file = (await shippedIndex)[key];
+  if (!file) return null;
+  try {
+    const response = await fetch(`./ISF/thumbs/${file}`);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    // A data URL, like a rendered thumbnail: clips carry it into projects
+    // and to the phone, where a path into the app would not resolve.
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** The key a shader's thumbnail is cached and shipped under. */
+export function shaderThumbnailKey(shaderCode: string): string {
+  return hashCode(shaderCode);
+}
+
 // One render per shader at a time: a project with the same shader on many
 // layers asks for its thumbnail once per layer, all before the first one is
 // cached, and each used to render and encode its own copy.
@@ -457,6 +512,11 @@ export async function generateCachedThumbnail(
   const run = (async () => {
     const cached = await getCachedThumbnail(key);
     if (cached) return cached;
+    const shipped = await shippedLibraryThumbnail(key);
+    if (shipped) {
+      await setCachedThumbnail(key, shipped);
+      return shipped;
+    }
     const thumb = await generateShaderThumbnail(shaderCode, time);
     await setCachedThumbnail(key, thumb);
     return thumb;

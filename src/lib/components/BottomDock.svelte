@@ -13,7 +13,7 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { layerSequencer } from '../stores/layerSequencer';
-  import { keyframeTimeline } from '../stores/keyframeTimeline';
+  import { keyframeTimeline, keyframeTrayOpen } from '../stores/keyframeTimeline';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   // Hide the dock while the VJ panel is up — VJ has its own bottom
@@ -26,7 +26,7 @@
   export let presetsOpen = false;
 
   $: seqOpen = $layerSequencer.isOpen;
-  $: kfOpen = $keyframeTimeline.isOpen;
+  $: kfOpen = $keyframeTrayOpen;
 
   function toggleSeq() { layerSequencer.toggleOpen(); }
   function toggleKf()  { keyframeTimeline.toggleOpen(); }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { project, compositions, activeCompositionId } from '../stores/layers';
-  import { audioStore } from '../stores/audio';
+  import { audioBpm } from '../stores/audio';
   import type { Composition } from '../types';
   import type { TransitionType } from '../renderer/engine';
   import { showLoading, hideLoading } from '../stores/loading';
@@ -155,8 +155,8 @@
   }
 
   /** Reactive: pick up live BPM from audio store when in beat mode */
-  $: if (autoTimingMode === 'beat' && $audioStore.bpm > 0) {
-    autoBpm = $audioStore.bpm;
+  $: if (autoTimingMode === 'beat' && $audioBpm > 0) {
+    autoBpm = $audioBpm;
   }
 
   /** Progress 0-1 for the auto-play bar */

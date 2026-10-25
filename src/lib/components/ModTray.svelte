@@ -53,7 +53,7 @@
   import { quintOut } from 'svelte/easing';
   import type { ModSource, ParamModulation } from '../audio/modulation';
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
-  import { audioStore } from '../stores/audio';
+  import { audioBpm, audioManualBpm } from '../stores/audio';
   import type { AutoConfig } from '../types';
 
   export let label: string;
@@ -124,7 +124,7 @@
   $: depth = mod?.amount ?? 0.5;
   $: invert = mod?.invert ?? false;
   $: speed = mod?.speed ?? 1;
-  $: bpm = $audioStore.manualBPM || $audioStore.bpm || 0;
+  $: bpm = $audioManualBpm || $audioBpm || 0;
 
   function pickCategory(c: Category) {
     if (c === category) return;

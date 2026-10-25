@@ -11,7 +11,7 @@
    * force visibility — useful for the VJ top bar where audio detection
    * is already gated upstream.
    */
-  import { audioStore } from '../stores/audio';
+  import { audioBpm, audioBpmConfidence, audioIsActive, audioManualBpm, audioStore } from '../stores/audio';
   import { numericExpression } from '../utils/numericExpression';
 
   // When false (default) the widget self-hides if audio isn't active.
@@ -21,12 +21,12 @@
   let editing = false;
   let draft = '';
   let error = '';
-  $: automatic = $audioStore.manualBPM === null;
-  $: waitingForAudio = automatic && !$audioStore.isActive;
-  $: displayedBpm = waitingForAudio ? 0 : $audioStore.bpm;
+  $: automatic = $audioManualBpm === null;
+  $: waitingForAudio = automatic && !$audioIsActive;
+  $: displayedBpm = waitingForAudio ? 0 : $audioBpm;
   $: autoStatus = !automatic ? 'Use audio tempo'
     : waitingForAudio ? 'Waiting for audio'
-    : $audioStore.bpm > 0 && $audioStore.bpmConfidence > 0.5 ? 'Following audio' : 'Detecting tempo';
+    : $audioBpm > 0 && $audioBpmConfidence > 0.5 ? 'Following audio' : 'Detecting tempo';
   $: autoHelp = !automatic ? 'Switch from manual tempo to incoming audio tempo. Connect audio to detect BPM.'
     : waitingForAudio ? 'Automatic tempo is enabled. Connect an audio source to detect BPM, or type a BPM or tap to set tempo manually.'
     : 'Automatic tempo is enabled. Type a BPM or tap to switch to manual tempo.';
@@ -45,7 +45,7 @@
     editing = false;
     error = '';
     audioStore.setManualBPM(value);
-    draft = String($audioStore.bpm);
+    draft = String($audioBpm);
     return true;
   }
   function tempoKey(event: KeyboardEvent) {
@@ -64,10 +64,10 @@
   function clearTap() { editing = false; error = ''; audioStore.clearManualBPM(); }
 </script>
 
-{#if alwaysShow || $audioStore.isActive}
+{#if alwaysShow || $audioIsActive}
   <div data-help-page="midi-audio" class="bpm-tap-widget">
     <button class="bpm-tap-btn" onclick={handleTap} title="Tap to set tempo manually">TAP</button>
-    <label class="bpm-readout" class:confident={!waitingForAudio && $audioStore.bpmConfidence > 0.5}>
+    <label class="bpm-readout" class:confident={!waitingForAudio && $audioBpmConfidence > 0.5}>
       <input class="bpm-input" type="text" inputmode="text" maxlength="256" placeholder="—"
         aria-label="Tempo in BPM: number or expression" aria-invalid={!!error}
         title={error || 'Type a tempo or expression (30–300 BPM), e.g. 120/2; Enter applies, Escape cancels'}
