@@ -1748,6 +1748,9 @@ export class RenderEngine {
     if (l.type === 'lines' && (l as any)._linesTexture) return true;
     if (l.type === 'svg' && (l as any)._svgTexture) return true;
     if (l.type === 'color' && l.colorContent) return true;
+    // An empty media layer with a fill colour (a Map Sim auto-map face)
+    // shows the colour until it is given content.
+    if (l.type === 'media' && !l.source && l.colorContent) return true;
     if (l.type === 'lightpainting' && (l as any)._lightPaintingTexture) return true;
     if (l.type === 'text' && (l as any)._textTexture) return true;
     if (l.type === 'splat' && (l as any)._splatTexture) return true;
@@ -2265,6 +2268,9 @@ export class RenderEngine {
     if (layer.type === 'model3d') return (layer as any)._model3dTexture;
     if (layer.type === 'gpu') return (layer as any)._gpuLayerTexture;
     if (layer.type === 'color' && layer.colorContent) return this.getOrCreateColorTexture(layer.id, layer.colorContent);
+    if (layer.type === 'media' && !layer.source && layer.colorContent) {
+      return this.getOrCreateColorTexture(layer.id, { ...layer.colorContent, alpha: 1 });
+    }
     return layer.source?.texture || obj.material.uniforms.uTexture.value;
   }
 

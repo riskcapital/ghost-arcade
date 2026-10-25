@@ -362,10 +362,11 @@ void main() {
           }
         }
 
-        // Guard: only apply if layer still has no source
+        // Guard: only apply if layer still has no source. A layer given a
+        // fill colour (a Map Sim auto-map face) keeps showing that colour.
         const currentProject = get({ subscribe });
         const layer = currentProject.layers.find(l => l.id === layerId);
-        if (!layer || layer.source) return;
+        if (!layer || layer.source || layer.colorContent) return;
 
         const source: MediaSource = {
           id: `default-${layerId}-${Date.now()}`,

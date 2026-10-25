@@ -105,6 +105,7 @@
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
   import { projectionSimHistoryVersion } from './lib/projectionSim/store';
   import { startProjectionSimSceneSync } from './lib/projectionSim/sceneSync';
+  import { startAutoMapHost } from './lib/projectionSim/autoMap';
   import { audioStore } from './lib/stores/audio';
   // macros.ts registers a callback with midiRouter on import so
   // `vj:macro:N:value` MIDI messages route into the macro store. Pulled in
@@ -205,6 +206,10 @@
   // pop-out edits the same scene and hands every change back.
   const stopProjectionSimSceneSync = startProjectionSimSceneSync('editor');
   onDestroy(() => stopProjectionSimSceneSync());
+  // Map Sim's Auto-map button works from the pop-out too; the layers belong
+  // to this window's project.
+  const stopAutoMapHost = startAutoMapHost();
+  onDestroy(() => stopAutoMapHost());
   async function openStage3D() {
     if (isDesktopApp) {
       try {
