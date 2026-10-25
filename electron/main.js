@@ -414,6 +414,8 @@ const sliceWindows = new Map();
 // zero-copy output window. Cleared after consumption (or after a 5s
 // timeout to avoid cross-call leakage).
 let pendingOutputWindowConfig = null;
+// A window.open output that should become a macOS projector once created.
+let nextOutputWindowFullscreen = false;
 let pendingOutputWindowConfigTimer = null;
 let sidecarProcess = null;
 let embeddedServerModule = null;
@@ -6910,9 +6912,9 @@ function registerIpcHandlers() {
 
   // --- Toggle output fullscreen ---
   ipcMain.handle('output_toggle_fullscreen', () => {
-    if (outputWindow) {
-      const isFs = outputWindow.isFullScreen();
-      outputWindow.setFullScreen(!isFs);
+    if (outputWindow && !outputWindow.isDestroyed()) {
+      const isFs = isOutputFullScreen(outputWindow);
+      setOutputFullScreen(outputWindow, !isFs);
       outputWindow.setMenuBarVisibility(isFs);
       return !isFs;
     }
@@ -6980,9 +6982,9 @@ function registerIpcHandlers() {
       y: bounds.y,
       title: `Ghost Arcade Output — slice ${sliceId}`,
       frame: false,
-      // macOS enters simple fullscreen just below instead (see
-      // enterSliceFullscreen): built fullscreen, the window never closes.
+      // macOS makes it a projector just below instead (enterSliceFullscreen).
       fullscreen: process.platform !== 'darwin',
+      enableLargerThanScreen: isMac,
       autoHideMenuBar: true,
       skipTaskbar: false,
       // Transparent only when the core will present this slice natively —
@@ -9005,6 +9007,7 @@ function createMainWindow() {
     // matches the legacy `output_open_slice_window` behaviour. Output
     // windows keep the framed, resizable chrome for in-app preview.
     const isSliceWin = isSliceDisplay;
+    nextOutputWindowFullscreen = !isSliceWin && fullscreen;
     return {
       action: 'allow',
       overrideBrowserWindowOptions: {
@@ -9014,15 +9017,15 @@ function createMainWindow() {
         y: winY,
         title: isSliceWin ? 'Ghost Arcade Output — slice' : 'Ghost Arcade Output',
         resizable: !isSliceWin,
-        frame: !isSliceWin,
-        // A slice window enters simple fullscreen once created (see
-        // enterSliceFullscreen); built fullscreen on macOS it never closes.
-        fullscreen: isSliceWin ? process.platform !== 'darwin' : fullscreen,
-        simpleFullscreen: process.platform === 'darwin' && !isSliceWin,
+        // macOS: slices and fullscreen outputs are borderless projectors,
+        // entered once created (setOutputFullScreen).
+        frame: !isSliceWin && !(isMac && fullscreen),
+        enableLargerThanScreen: isMac && (isSliceWin || fullscreen),
+        fullscreen: isMac ? false : (isSliceWin ? true : fullscreen),
         autoHideMenuBar: true,
         skipTaskbar: false,
         backgroundColor: '#000000',
-        hasShadow: !isSliceWin,
+        hasShadow: !isSliceWin && !(isMac && fullscreen),
         webPreferences: {
           preload: path.join(__dirname, 'preload.cjs'),
           contextIsolation: true,
@@ -9083,6 +9086,11 @@ function createMainWindow() {
     }
     outputWindow = newWindow;
     try { newWindow.setMenuBarVisibility(false); } catch { /* */ }
+    if (nextOutputWindowFullscreen && isMac) {
+      allowMacProjector(newWindow);
+      setOutputFullScreen(newWindow, true);
+    }
+    nextOutputWindowFullscreen = false;
     console.log('[Output] zero-copy output window captured into outputWindow global');
     // DevTools opt-in via env var to match the perf baseline of the
     // legacy output path (devtools allocates extra GPU surfaces +
@@ -9357,24 +9365,74 @@ function createProjectionSimWindow(targetDisplayId = null) {
   projectionSimWindow.on('leave-full-screen', () => publishProjectionSimFullscreenState(false));
 }
 
-/**
- * Borderless full-display screen (slice) window. On macOS a window built
- * with `fullscreen: true` while `simpleFullscreen` is set never finishes
- * Electron's fullscreen transition, and Electron defers close() until it
- * does: "Close on display" and Esc left the window up, and every reopen
- * stacked another one over the display. Entering simple fullscreen after
- * construction gives the same window and closes normally. Other platforms
- * are built with `fullscreen: true` and need nothing here.
- */
+// macOS projector windows. Simple fullscreen auto-hides the menu bar and the
+// Dock for the whole app, so they disappeared from the main screen while
+// Ghost Arcade was in front, and setVisibleOnAllWorkspaces without
+// skipTransformProcessType hid the app's Dock icon. Native fullscreen opens a
+// separate Space, and a window built with `fullscreen` plus
+// `simpleFullscreen` never finishes Electron's transition (close() then waits
+// on it forever).
+//
+// A projector is a borderless window over its display's whole frame,
+// menu-bar strip included, kept above the menu bar (level 24) and its status
+// items (25), so another app's menu bar can't draw over it either. The rest
+// of the Mac is left alone. Output windows that open fullscreen are built
+// borderless on macOS so they can do this; a framed window (a windowed
+// preview) can't cover the menu-bar strip and uses native fullscreen if it
+// is toggled. Other platforms keep native fullscreen.
+const macProjectorCapable = new WeakSet();
+const macProjectorWindows = new WeakSet();
+
+/** Mark a borderless output window as able to become a macOS projector. */
+function allowMacProjector(win) {
+  if (isMac && win && !win.isDestroyed()) macProjectorCapable.add(win);
+}
+
+function enterMacProjector(win) {
+  const display = screen.getDisplayMatching(win.getBounds());
+  macProjectorWindows.add(win);
+  win.setAlwaysOnTop(true, 'status', 1);
+  // skipTransformProcessType: otherwise Electron hides the app's Dock icon.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  win.setBounds(display.bounds);
+}
+
+function leaveMacProjector(win) {
+  macProjectorWindows.delete(win);
+  const area = screen.getDisplayMatching(win.getBounds()).workArea;
+  win.setAlwaysOnTop(false);
+  win.setVisibleOnAllWorkspaces(false, { skipTransformProcessType: true });
+  const width = Math.min(1280, Math.round(area.width * 0.8));
+  const height = Math.min(720, Math.round(area.height * 0.8));
+  win.setBounds({
+    x: area.x + Math.round((area.width - width) / 2),
+    y: area.y + Math.round((area.height - height) / 2),
+    width,
+    height,
+  });
+}
+
+function setOutputFullScreen(win, on) {
+  if (!win || win.isDestroyed()) return;
+  if (isMac && macProjectorCapable.has(win)) {
+    if (on && !macProjectorWindows.has(win)) enterMacProjector(win);
+    else if (!on && macProjectorWindows.has(win)) leaveMacProjector(win);
+    return;
+  }
+  win.setFullScreen(!!on);
+}
+
+function isOutputFullScreen(win) {
+  if (!win || win.isDestroyed()) return false;
+  return macProjectorWindows.has(win) || win.isFullScreen();
+}
+
+/** Borderless full-display screen (slice) window: a projector on macOS.
+ *  Other platforms are built with `fullscreen: true` and need nothing here. */
 function enterSliceFullscreen(win) {
-  if (process.platform !== 'darwin' || !win || win.isDestroyed()) return;
-  // Pin the projector above menu/status windows even when a different app is
-  // active. Keep simple fullscreen's existing close/Escape lifecycle intact.
-  const bounds = screen.getDisplayMatching(win.getBounds()).bounds;
-  try { win.setSimpleFullScreen(true); } catch { /* */ }
-  try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* */ }
-  try { win.setAlwaysOnTop(true, 'main-menu', 2); } catch { /* */ }
-  try { win.setBounds(bounds); } catch { /* */ }
+  if (!isMac || !win || win.isDestroyed()) return;
+  allowMacProjector(win);
+  setOutputFullScreen(win, true);
 }
 
 function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false, experimentalZeroCopy = false) {
@@ -9415,13 +9473,14 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     y: winY,
     title: 'Ghost Arcade Output',
     resizable: true,
-    frame: true,
-    fullscreen: fullscreen,
-    simpleFullscreen: process.platform === 'darwin',  // macOS: use simple fullscreen for VJ output (no Mission Control space)
+    // macOS fullscreen: a borderless projector, entered below.
+    frame: !(isMac && fullscreen),
+    enableLargerThanScreen: isMac && fullscreen,
+    fullscreen: isMac ? false : fullscreen,
     autoHideMenuBar: true,
     skipTaskbar: false,
     backgroundColor: '#000000',
-    hasShadow: true,
+    hasShadow: !(isMac && fullscreen),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -9431,6 +9490,10 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     },
   });
   outputWindow = win;
+  if (fullscreen && isMac) {
+    allowMacProjector(win);
+    setOutputFullScreen(win, true);
+  }
 
   // Hide menu bar for clean look
   win.setMenuBarVisibility(false);
@@ -9740,7 +9803,7 @@ app.whenReady().then(async () => {
         width: Math.min(1280, primary.bounds.width - 80),
         height: Math.min(720, primary.bounds.height - 80),
       });
-      outputWindow.setFullScreen(false);
+      setOutputFullScreen(outputWindow, false);
     } catch (err) {
       console.error('[Main] display-removed handler failed:', err?.message || err);
     }

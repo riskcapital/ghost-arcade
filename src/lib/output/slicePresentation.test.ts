@@ -46,6 +46,12 @@ describe('native Screen output window routing',()=>{
     expect(windows[0].options).toMatchObject({transparent:true,width:1080,height:1920,x:1920});
     expect(attachLayer).toHaveBeenCalledWith('left',windows[0]);
     expect(sliceWindows.get('left')).toBe(windows[0]);
+    // macOS: a borderless projector placed over the menu-bar strip (not
+    // simple fullscreen, which hides the menu bar and Dock app-wide).
+    expect(windows[0].options).toMatchObject(platform==='darwin'
+      ? {frame:false,fullscreen:false,enableLargerThanScreen:true}
+      : {frame:false,fullscreen:true,enableLargerThanScreen:false});
+    expect(windows[0].options.simpleFullscreen).toBeUndefined();
   });
   it('does not silently open an uncalibrated fallback when the core is unavailable',async()=>{
     const {result,windows}=await open('win32',false);

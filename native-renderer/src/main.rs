@@ -103,7 +103,7 @@ use native_quality::{
 use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSApplication, NSApplicationPresentationOptions, NSView, NSWindow, NSWindowOrderingMode,
+    NSApplication, NSView, NSWindow, NSWindowOrderingMode,
     NSWindowCollectionBehavior, NSStatusWindowLevel, NSNormalWindowLevel,
 };
 #[cfg(target_os = "macos")]
@@ -4794,7 +4794,10 @@ fn set_managed_output_fullscreen(window: &Window, fullscreen: bool) {
             }
         }
     }
-    set_appkit_projector_presentation(fullscreen);
+    // No NSApplication presentation options: hiding the Dock and menu bar
+    // took them away from the main screen too whenever this process was
+    // active. The window level above covers both on the projector's own
+    // display.
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -4805,24 +4808,6 @@ fn set_managed_output_fullscreen(window: &Window, fullscreen: bool) {
         None
     });
 }
-
-#[cfg(target_os = "macos")]
-fn set_appkit_projector_presentation(fullscreen: bool) {
-    let Some(marker) = MainThreadMarker::new() else {
-        return;
-    };
-    let app = NSApplication::sharedApplication(marker);
-    let options = if fullscreen {
-        NSApplicationPresentationOptions::NSApplicationPresentationHideDock
-            | NSApplicationPresentationOptions::NSApplicationPresentationHideMenuBar
-    } else {
-        NSApplicationPresentationOptions::NSApplicationPresentationDefault
-    };
-    app.setPresentationOptions(options);
-}
-
-#[cfg(not(target_os = "macos"))]
-fn set_appkit_projector_presentation(_fullscreen: bool) {}
 
 #[cfg(not(target_os = "macos"))]
 fn promote_appkit_child_window_to_underlay(
@@ -6964,9 +6949,6 @@ impl App {
 
     fn apply_output_window_attached(&mut self, attached: bool) {
         self.output_window_attached = attached;
-        if !attached {
-            set_appkit_projector_presentation(false);
-        }
         if let Some(renderer) = self.renderer.as_ref() {
             renderer.window.set_visible(attached);
             if attached {
@@ -7082,8 +7064,6 @@ impl App {
             renderer.window.focus_window();
             activate_appkit_output_window(&renderer.window);
             renderer.window.request_redraw();
-        } else {
-            set_appkit_projector_presentation(false);
         }
     }
 
@@ -19795,7 +19775,6 @@ impl ApplicationHandler<UserEvent> for App {
                 // window should detach presentation while keeping the core alive for
                 // graph sync, recording, Syphon, and the next output attach.
                 self.output_window_attached = false;
-                set_appkit_projector_presentation(false);
                 renderer.window.set_visible(false);
                 set_managed_output_fullscreen(&renderer.window, false);
                 renderer.window.set_cursor_visible(true);
@@ -19808,7 +19787,6 @@ impl ApplicationHandler<UserEvent> for App {
                     && matches!(&event.logical_key, Key::Named(NamedKey::Escape)) =>
             {
                 self.output_window_attached = false;
-                set_appkit_projector_presentation(false);
                 renderer.window.set_visible(false);
                 set_managed_output_fullscreen(&renderer.window, false);
                 renderer.window.set_cursor_visible(true);
