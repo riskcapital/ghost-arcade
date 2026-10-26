@@ -494,6 +494,7 @@ export class AudioAnalyzer {
   getOrCreateAudioContext(): AudioContext {
     if (!this.audioContext) {
       this.audioContext = new AudioContext();
+      if (this.outputSinkId) void this.applyOutputSink();
     }
     // Browsers auto-suspend new contexts created outside a user gesture.
     // resume() is a no-op if already running, and harmless if the call
@@ -502,6 +503,48 @@ export class AudioAnalyzer {
       this.audioContext.resume().catch(() => { /* fires on next user gesture */ });
     }
     return this.audioContext;
+  }
+
+  /** Output device the shared context plays to; '' is the system default. */
+  private outputSinkId = '';
+  private outputSinkListeners = new Set<(error: string | null) => void>();
+
+  /**
+   * Play the shared context (show audio, clip audio) to this output device.
+   * '' is the system default. Applied now if the context exists, and to the
+   * context when it is created. Resolves to an error message, or null.
+   */
+  async setOutputSink(sinkId: string): Promise<string | null> {
+    this.outputSinkId = sinkId || '';
+    return this.applyOutputSink();
+  }
+
+  getOutputSink(): string {
+    return this.outputSinkId;
+  }
+
+  /** Called with the result of every sink change (null = applied). */
+  onOutputSinkResult(listener: (error: string | null) => void): () => void {
+    this.outputSinkListeners.add(listener);
+    return () => { this.outputSinkListeners.delete(listener); };
+  }
+
+  private async applyOutputSink(): Promise<string | null> {
+    const ctx = this.audioContext as (AudioContext & { setSinkId?: (id: string) => Promise<void>; sinkId?: string }) | null;
+    if (!ctx || ctx.state === 'closed') return null;
+    if (typeof ctx.setSinkId !== 'function') return 'This build cannot choose an audio output.';
+    if ((ctx.sinkId ?? '') === this.outputSinkId) return null;
+    let error: string | null = null;
+    try {
+      await ctx.setSinkId(this.outputSinkId);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      console.warn('[AudioAnalyzer] could not switch the audio output:', err);
+    }
+    for (const listener of this.outputSinkListeners) {
+      try { listener(error); } catch { /* listener's problem */ }
+    }
+    return error;
   }
 
   /** Permanently close the shared AudioContext — only safe at app shutdown. */

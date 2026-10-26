@@ -52,6 +52,7 @@
   import { cueList, cueLabel } from '../show/cueList';
   import { timecodeChase } from '../show/timecode/timecodeChase';
   import { settings } from '../stores/settings';
+  import { audioOutput, selectAudioOutput, startAudioOutputSelection } from '../audio/audioOutputDevice';
   import { isShowAudioFile } from '../audio/showAudioImport';
 
   // ── End of show + output device ─────────────────────────────────────────
@@ -60,6 +61,7 @@
   // for the app's life rather than to the open tray.
   let blackoutFromShow = false;
   onMount(() => {
+    startAudioOutputSelection();
     setShowTransportSink((event) => {
       if (event.type === 'end' && event.action === 'blackout') {
         blackoutFromShow = true;
@@ -862,6 +864,27 @@
             aria-label="Show audio output level"
           />
         </span>
+        {#if $audioOutput.supported}
+          <select
+            class="t-select t-out"
+            class:missing={$audioOutput.missing}
+            value={$audioOutput.deviceId}
+            onchange={(e) => void selectAudioOutput((e.currentTarget as HTMLSelectElement).value)}
+            onfocus={() => startAudioOutputSelection()}
+            title={$audioOutput.missing
+              ? 'The chosen sound card is not connected: playing on the system default'
+              : $audioOutput.error ?? 'Sound card the show audio plays on'}
+            aria-label="Show audio output"
+          >
+            <option value="">System default</option>
+            {#each $audioOutput.devices as device (device.deviceId)}
+              <option value={device.deviceId} class="device-name">{device.label}</option>
+            {/each}
+            {#if $audioOutput.missing}
+              <option value={$audioOutput.deviceId}>Not connected</option>
+            {/if}
+          </select>
+        {/if}
         {#if audioBlocked !== null}
           <button class="t-audio-warn" onclick={fixAudioOutput} title="Click to restore show audio output">
             {CLIP_AUDIO_BLOCK_TEXT[audioBlocked]}
@@ -1717,6 +1740,8 @@
     pointer-events: none;
   }
   .t-end { max-width: 160px; }
+  .t-out { max-width: 150px; }
+  .t-out.missing { border-color: rgba(251, 191, 36, 0.6); color: #fbbf24; }
 
   .show-block {
     position: absolute;

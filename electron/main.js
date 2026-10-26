@@ -8754,6 +8754,8 @@ function setupPermissions() {
     'local-fonts',
     'midi',
     'midiSysex',
+    // Choosing the sound card the show audio plays on (AudioContext.setSinkId).
+    'speaker-selection',
   ]);
 
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
