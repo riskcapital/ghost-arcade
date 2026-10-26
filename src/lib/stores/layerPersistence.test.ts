@@ -338,6 +338,23 @@ function layerInterfaceFields(): string[] {
   return fields;
 }
 
+function mediaSourceInterfaceFields(): string[] {
+  const source = readFileSync(join(process.cwd(), 'src/lib/types.ts'), 'utf8');
+  const match = source.match(/export interface MediaSource \{([\s\S]*?)\n\}/);
+  if (!match) throw new Error('MediaSource interface not found in types.ts');
+  const fields: string[] = [];
+  let depth = 0;
+  for (const line of match[1].split('\n')) {
+    const trimmed = line.trim();
+    if (depth === 0 && !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*')) {
+      const field = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\??\s*:/);
+      if (field) fields.push(field[1]);
+    }
+    depth += (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
+  }
+  return fields;
+}
+
 function exporterSource(): string {
   const source = readFileSync(join(process.cwd(), 'src/lib/stores/layers.ts'), 'utf8');
   const start = source.indexOf('    _exportLayer(layer: Layer)');
@@ -540,6 +557,53 @@ describe('Layer persistence', () => {
       + `Add them to the exporter, or to RUNTIME_ONLY_LAYER_FIELDS if they really `
       + `should not persist:\n  ${missing.join('\n  ')}`,
     ).toEqual([]);
+  });
+
+  it('saves every MediaSource field that is not runtime state', () => {
+    const fields = mediaSourceInterfaceFields();
+    expect(fields).toContain('shaderValueAuto');
+    const source: Record<string, unknown> = {};
+    for (const field of fields) source[field] = `saved-${field}`;
+    const layer = { ...types.createLayer('every-field', 'Every field', 'media'), source };
+    const exported = layers.project._exportLayer(layer as any) as any;
+    const restored = layers.project._importLayer(JSON.parse(JSON.stringify(exported))) as any;
+    const lost = fields
+      .filter((field) => !layers.isRuntimeOnlySourceField(field))
+      .filter((field) => restored.source[field] !== `saved-${field}`);
+    expect(
+      lost,
+      `MediaSource fields lost between save and reopen. Persist them, or mark them `
+      + `runtime-only in RUNTIME_ONLY_SOURCE_FIELDS if they really should not:\n  ${lost.join('\n  ')}`,
+    ).toEqual([]);
+    for (const field of fields.filter((f) => layers.isRuntimeOnlySourceField(f))) {
+      expect(exported.source[field], `${field} is runtime state and must not be saved`).toBeUndefined();
+    }
+  });
+
+  it('reopens Auto on a shader param, the selfie mirror and an NDI source', () => {
+    const shader = {
+      id: 'src-shader', type: 'shader', src: 'builtin:grid', name: 'Grid',
+      shaderValues: { gridSize: 37.2 },
+      shaderValueAuto: { gridSize: { enabled: true, mode: 'sine', rate: 0.5, min: 4, max: 100 } },
+    };
+    const camera = {
+      id: 'src-camera', type: 'webcam', src: 'live://webcam/cam-1', name: 'Camera',
+      mirrorX: true, liveSourceType: 'webcam', liveSourceSessionId: 'session-9',
+    };
+    const ndi = { id: 'src-ndi', type: 'ndi', src: 'ndi://Stage', name: 'NDI', ndiSource: { name: 'STAGE (Resolume)' }, playbackSyncBeats: 8 };
+    const make = (id: string, src: any) => ({ ...types.createLayer(id, id, 'media'), source: src });
+    const payload = { version: '2.1.10', project: { id: 'sources', name: 'Sources', width: 1920, height: 1080,
+      layers: [make('shader', shader), make('camera', camera), make('ndi', ndi)] } };
+    expect(layers.project.importProject(JSON.parse(JSON.stringify(payload)))).toBe(true);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    expect(layers.project.importProject(saved)).toBe(true);
+    const byId = (id: string) => get(layers.project).layers.find((l) => l.id === id)!.source as any;
+    expect(byId('shader').shaderValueAuto).toEqual(shader.shaderValueAuto);
+    expect(byId('camera').mirrorX).toBe(true);
+    expect(byId('camera').liveSourceType).toBe('webcam');
+    expect(byId('camera').liveSourceSessionId).toBeUndefined();
+    expect(byId('ndi').ndiSource).toEqual({ name: 'STAGE (Resolume)' });
+    expect(byId('ndi').playbackSyncBeats).toBe(8);
   });
 
   it('round-trips the settings a performer actually reaches for', () => {
