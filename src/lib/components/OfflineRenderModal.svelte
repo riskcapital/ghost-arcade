@@ -488,7 +488,8 @@
             <strong>{liveAudioInputLabel} input can't be time-locked to an offline render.</strong>
             Reactive timing will follow real elapsed time, so the audio in the exported clip
             won't line up with the visuals if the render runs slower than real time.
-            For frame-accurate reactivity, put the song on the Show timeline.
+            For frame-accurate reactivity, put the song on the Show timeline
+            (File › New Show from Audio).
           </span>
         </div>
       {/if}

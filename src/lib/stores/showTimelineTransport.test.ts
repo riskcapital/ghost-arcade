@@ -9,11 +9,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import {
+  fitShowZoom,
   normalizeShowEndAction,
   setShowAudioClockReader,
   setShowCompositionLoader,
   setShowTransportSink,
   showTimeline,
+  SHOW_MAX_ZOOM,
+  SHOW_MIN_ZOOM,
   type ShowTransportEvent,
 } from './showTimeline';
 
@@ -180,5 +183,27 @@ describe('end of the show', () => {
     showTimeline.hydrate(saved);
     expect(get(showTimeline).endAction).toBe('blackout');
     expect(normalizeShowEndAction('explode')).toBe('hold');
+  });
+});
+
+describe('laying a show out', () => {
+  it('replaces the preset lane in one go', () => {
+    hydrateShow({ duration: 60 });
+    showTimeline.setPresetClips([
+      { compositionId: 'C', startTime: 20, duration: 40, label: 'Late' },
+      { compositionId: 'D', startTime: 0, duration: 20 },
+    ]);
+    const s = get(showTimeline);
+    expect(s.presetClips.map((c) => [c.compositionId, c.startTime, c.duration])).toEqual([['D', 0, 20], ['C', 20, 40]]);
+    expect(s.duration).toBe(60);
+  });
+
+  it('zooms the whole show into the tray width', () => {
+    expect(fitShowZoom(200, 1000)).toBe(5);
+    expect(fitShowZoom(1, 100000)).toBe(SHOW_MAX_ZOOM);
+    expect(fitShowZoom(100000, 100)).toBe(SHOW_MIN_ZOOM);
+    hydrateShow({ duration: 100 });
+    showTimeline.zoomToFit(1200);
+    expect(get(showTimeline).zoom).toBe(12);
   });
 });

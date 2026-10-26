@@ -70,6 +70,8 @@
   import LayerSequencer from './lib/components/LayerSequencer.svelte';
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
   import ShowTimeline from './lib/components/ShowTimeline.svelte';
+  import ShowFromAudioModal from './lib/components/ShowFromAudioModal.svelte';
+  import { pickSongForShow } from './lib/show/showFromAudio';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import InteractiveStudio from './lib/components/studio/InteractiveStudio.svelte';
   import DesktopCalibrationImport from './lib/components/studio/DesktopCalibrationImport.svelte';
@@ -7079,6 +7081,16 @@
                 </span>
                 <span class="menu-label">New from Template...</span>
               </button>
+              <button class="menu-item" onclick={() => { fileMenuOpen = false; pickSongForShow(); }}>
+                <span class="menu-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18V5l12-2v13"></path>
+                    <circle cx="6" cy="18" r="3"></circle>
+                    <circle cx="18" cy="16" r="3"></circle>
+                  </svg>
+                </span>
+                <span class="menu-label">New Show from Audio...</span>
+              </button>
               <button class="menu-item" onclick={loadComposition}>
                 <span class="menu-icon">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -8497,6 +8509,8 @@
 
     <!-- Show Timeline (slide-up panel) — audio tracks + preset arrangement -->
     <ShowTimeline />
+    <!-- New show from audio (File menu, welcome screen, a song dropped on the workspace) -->
+    <ShowFromAudioModal />
 
     <!-- Bottom dock pills (Presets / Sequencer / Keyframes) — coral-active. -->
     {#if !vjNativeUnderlayActive && !$vjStageEdit}
@@ -8607,6 +8621,7 @@
         onTour={() => onboarding.startTour()}
         onTemplates={() => onboarding.openTemplates()}
         onOpenProject={loadComposition}
+        onShowFromAudio={pickSongForShow}
       />
     {/if}
 
