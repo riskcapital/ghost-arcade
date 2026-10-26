@@ -250,7 +250,8 @@ export interface IntegratedEffectSource {
   // 3D Model params (full config stored here for VJ clips)
   model3dContent?: Model3DContent;
   // Milkdrop (Butterchurn) params
-  milkdropPresetName?: string;           // currently-active preset (undefined = first available)
+  milkdropPresetName?: string;           // preset showing at save time; reopens on it (undefined = pick one)
+  milkdropLocked?: boolean;              // auto-evolve and hard cuts paused on the current preset
   milkdropPresetPack?: string;           // 'minimal' | 'full' | 'extra' | 'extra2' | 'md1' (default 'minimal')
   milkdropBlendTime?: number;            // seconds for preset crossfade (0–10, default 2.7)
   milkdropAutoEvolve?: boolean;          // cycle through presets automatically

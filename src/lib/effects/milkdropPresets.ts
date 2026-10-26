@@ -60,3 +60,13 @@ export function pickNextPreset(presets: Record<string, any>, current: string | n
   } while (next === current && tries < 8);
   return next;
 }
+
+/**
+ * The preset a Milkdrop layer starts on: the one it was saved showing, when
+ * the pack has it, otherwise a random one. Starting on a random preset every
+ * time made a saved project open looking different each time.
+ */
+export function initialPreset(presets: Record<string, any>, saved: string | null | undefined): string | null {
+  if (saved && Object.prototype.hasOwnProperty.call(presets, saved)) return saved;
+  return pickNextPreset(presets, null);
+}
