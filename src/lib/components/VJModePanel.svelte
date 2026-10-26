@@ -7063,6 +7063,11 @@
     font-weight: 600;
     color: #ff4444;
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    /* The timer ticks every second; a fixed width keeps the bar still. */
+    display: inline-block;
+    min-width: 5ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Compact square icon button — same footprint as mapping-mode's
@@ -7225,13 +7230,18 @@
     }
   }
 
-  /* The bar stays on one line at every width: fitToolbar scales it down to
-     fit instead of letting it wrap onto a second row. */
+  /* The bar stays on one line at every width: fitToolbar scales its groups
+     down to fit instead of letting it wrap onto a second row. The bar keeps
+     its height; only the groups inside it are scaled. */
   .vj-header {
     flex-wrap: nowrap;
   }
   .vj-header:global(.tb-measuring) :global(*) {
     transition: none !important;
+  }
+  /* Measured at its own width, not stretched over the lead column. */
+  .vj-header:global(.tb-measuring) .header-stage-slot {
+    flex: 0 0 auto !important;
   }
 
   /* Main Layout */
