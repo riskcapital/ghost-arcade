@@ -62,7 +62,8 @@ import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
 import { maxLayers } from './license';
-import { NATIVE_ENGINE_ONLY, settings, migrateOutputSlice } from './settings';
+import { NATIVE_ENGINE_ONLY, settings, migrateOutputSlice, PROJECT_OUTPUT_KEYS, PROJECT_OUTPUT_SETTING_KEYS, type OutputStageSnapshot } from './settings';
+import { screenSetups } from './screenSetups';
 import { isIdentityMeshGrid, meshGridHasTangents, withMeshPointTangents } from '../utils/meshWarp';
 import { fittedMeshGrid, refitRestingMesh } from '../utils/meshShapeFit';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
@@ -5608,6 +5609,10 @@ void main() {
           // Global master warp travels with the project so a venue's
           // keystone correction survives a reload / file handoff.
           outputMasterWarp: get(settings).output?.masterWarp ?? { enabled: false, mode: 'corners' },
+          // The rest of the output stage: dome, output rotation and crop,
+          // single-output edge blend and output grade. Not the blackout or
+          // test pattern, which are live switches.
+          outputSettings: settings.captureProjectOutputSettings(),
         },
         // Include media library
         mediaLibrary: exportMedia,
@@ -6753,8 +6758,34 @@ void main() {
         const incomingMW = (proj as any).outputMasterCanvasWidth;
         const incomingMH = (proj as any).outputMasterCanvasHeight;
         const incomingMasterWarp = (proj as any).outputMasterWarp;
-        if (Array.isArray(incomingSlices) || typeof incomingMW === 'number' || typeof incomingMH === 'number'
-            || (incomingMasterWarp && typeof incomingMasterWarp === 'object')) {
+        const incomingOutputSettings = (proj as any).outputSettings;
+        const savedOutputSettings: OutputStageSnapshot = {};
+        if (incomingOutputSettings && typeof incomingOutputSettings === 'object') {
+          for (const key of PROJECT_OUTPUT_SETTING_KEYS) {
+            if (key in incomingOutputSettings) savedOutputSettings[key] = incomingOutputSettings[key];
+          }
+        }
+        if (openingFile) {
+          // Opening a project sets the whole output stage: what the file
+          // saved, and for anything it does not carry (a file from an older
+          // build) the default setup or factory default — never what the
+          // previous project left behind. The live switches stay as they are.
+          settings.restoreOutputStage({
+            ...savedOutputSettings,
+            ...(Array.isArray(incomingSlices) ? {
+              slices: incomingSlices.map((sl: any) =>
+                migrateOutputSlice({ ...sl, id: sl?.id ?? `slice-${Math.random().toString(36).slice(2)}` })
+              ),
+            } : {}),
+            ...(typeof incomingMW === 'number' ? { masterCanvasWidth: incomingMW } : {}),
+            ...(typeof incomingMH === 'number' ? { masterCanvasHeight: incomingMH } : {}),
+            ...(incomingMasterWarp && typeof incomingMasterWarp === 'object'
+              ? { masterWarp: { enabled: false, mode: 'corners', ...incomingMasterWarp } }
+              : {}),
+          }, PROJECT_OUTPUT_KEYS, screenSetups.defaultSnapshot());
+        } else if (Array.isArray(incomingSlices) || typeof incomingMW === 'number' || typeof incomingMH === 'number'
+            || (incomingMasterWarp && typeof incomingMasterWarp === 'object')
+            || Object.keys(savedOutputSettings).length > 0) {
           settings.update(s => ({
             ...s,
             output: {
@@ -6769,6 +6800,7 @@ void main() {
               ...(incomingMasterWarp && typeof incomingMasterWarp === 'object'
                 ? { masterWarp: { enabled: false, mode: 'corners', ...incomingMasterWarp } }
                 : {}),
+              ...(savedOutputSettings as Partial<typeof s.output>),
             },
           }));
         }
