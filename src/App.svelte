@@ -7035,7 +7035,7 @@
         void invoke('win_maximize_toggle').then((v) => { winMaximized = !!v; });
       }}
     >
-      <div class="toolbar-left">
+      <div class="toolbar-left" data-tb-fixed>
         <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="header-logo" />
         <!-- Windows-style File Menu -->
         <div class="file-menu-container">
@@ -7241,8 +7241,11 @@
           onclick={outputIsOpen ? closeOutputWindow : openOutputWindow}
           title={outputIsOpen ? 'Close Output Window' : 'Open Output Window'}
         >
-          <span class="tb-long">{outputIsOpen ? 'Close Output' : 'Output Window'}</span>
-          <span class="tb-short">{outputIsOpen ? 'Close Output' : 'Output'}</span>
+          <!-- Both labels take the same room, so the bar does not rescale on open/close. -->
+          <span class="tb-swap">
+            <span class:tb-swap-off={!outputIsOpen}>Close Output</span>
+            <span class:tb-swap-off={outputIsOpen}>Output Window</span>
+          </span>
         </button>
         <button
           class="output-btn"
@@ -7467,13 +7470,12 @@
             }}
           >
             <span class="dot"></span>
-            {#if mobileConnected}
-              <span class="tb-long">Mobile: {clientCount - 1} connected</span>
-              <span class="tb-short">Mobile {clientCount - 1}</span>
-            {:else}
-              <span class="tb-long">Connect Mobile</span>
-              <span class="tb-short">Mobile</span>
-            {/if}
+            <!-- Both labels take the same room, so the bar does not rescale
+                 when a phone connects. -->
+            <span class="tb-swap">
+              <span class:tb-swap-off={!mobileConnected}>Mobile: {Math.max(0, clientCount - 1)} connected</span>
+              <span class:tb-swap-off={mobileConnected}>Connect Mobile</span>
+            </span>
           </button>
 
           {#if showMobileInfo}
@@ -9322,63 +9324,27 @@
     gap: 10px;
   }
 
-  /* Compact levels, stepped through by fitToolbar (lib/utils/toolbarFit.ts)
-     only as far as the window needs. Each level adds to the one before.
-     Gaps and paddings carry !important because studio-skin.css sets them
-     that way. Buttons that lose their label keep a title, and the Sim and
-     Stage buttons keep their aria-label. */
-  .tb-short {
-    display: none;
-  }
+  /* fitToolbar (lib/utils/toolbarFit.ts) measures the groups at full size
+     with this class on: no transitions, and the centre buttons at their own
+     width rather than stretched over the spare room. */
   .toolbar:global(.tb-measuring) :global(*) {
     transition: none !important;
   }
-
-  /* 1: tighter spacing. */
-  .toolbar:global(.tb-compact-1) {
-    padding: 0 10px !important;
-    gap: 6px !important;
-  }
-  .toolbar:global(.tb-compact-1) :is(.toolbar-left, .toolbar-center, .toolbar-right) {
-    gap: 6px !important;
-  }
-  .toolbar:global(.tb-compact-1) .header-logo {
-    margin-right: 2px !important;
-  }
-  .toolbar:global(.tb-compact-1) :is(.output-btn, .connection-btn, .file-menu-btn) {
-    padding: 0 9px !important;
-  }
-  .toolbar:global(.tb-compact-1) :is(.vj-btn, .stage-btn) {
-    padding: 0 12px !important;
+  .toolbar:global(.tb-measuring) .toolbar-center > :global(*) {
+    flex-grow: 0 !important;
   }
 
-  /* 2: short labels, and the Sim and Stage buttons show only their icons. */
-  .toolbar:global(.tb-compact-2) .tb-long {
-    display: none;
+  /* A label that changes (Output, Mobile) keeps the width of its longest
+     form: every form sits in the same grid cell, the unused ones hidden. */
+  .tb-swap {
+    display: inline-grid;
+    justify-items: center;
   }
-  .toolbar:global(.tb-compact-2) .tb-short {
-    display: inline;
+  .tb-swap > :global(*) {
+    grid-area: 1 / 1;
   }
-  .toolbar:global(.tb-compact-2) :is(.sim-launch-btn, .stage-btn) .tb-label {
-    display: none;
-  }
-  .toolbar:global(.tb-compact-2) :is(.sim-launch-btn, .stage-btn) {
-    padding: 0 8px !important;
-  }
-
-  /* 4: last resort. The centre group scrolls sideways instead of pushing
-     Settings and the right-hand controls out of the window. */
-  .toolbar:global(.tb-compact-4) .toolbar-center {
-    min-width: 0;
-    overflow-x: auto;
-    justify-content: flex-start;
-    scrollbar-width: none;
-  }
-  .toolbar:global(.tb-compact-4) .toolbar-center::-webkit-scrollbar {
-    display: none;
-  }
-  .toolbar:global(.tb-compact-4) .toolbar-center > * {
-    flex-shrink: 0;
+  .tb-swap > :global(.tb-swap-off) {
+    visibility: hidden;
   }
 
   .header-logo {
@@ -9725,7 +9691,7 @@
   .toolbar :is(.toolbar-left, .toolbar-center, .toolbar-right) > * {
     flex-shrink: 0;
   }
-  .toolbar :is(button, .tb-label, .tb-long) {
+  .toolbar :is(button, .tb-label, .tb-swap) {
     white-space: nowrap;
   }
 
@@ -10062,6 +10028,11 @@
     font-weight: 600;
     color: var(--ga-rec, #ff4438);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
+    /* The timer ticks every second; a fixed width keeps the bar still. */
+    display: inline-block;
+    min-width: 5ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Freeze button in header */

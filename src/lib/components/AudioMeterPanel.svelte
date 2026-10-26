@@ -16,6 +16,7 @@
   import { audioStore } from '../stores/audio';
   import BpmTapWidget from './BpmTapWidget.svelte';
   import AudioWaveformIndicator from './AudioWaveformIndicator.svelte';
+  import { portal } from '../utils/portal';
 
   let showEq = false;
   let popoverEl: HTMLDivElement | null = null;
@@ -130,7 +131,10 @@
 
     <!-- Expandable EQ / input-tweaks popover -->
     {#if showEq && $audioStore.isActive}
-      <div class="amp-popover" bind:this={popoverEl} style="top:{popTop}px; left:{popLeft}px">
+      <!-- The popover moves to <body> (see utils/portal.ts); this wrapper
+           stays here as the block's own node. -->
+      <div class="amp-popover-home">
+      <div class="amp-popover" use:portal bind:this={popoverEl} style="top:{popTop}px; left:{popLeft}px">
         <div class="amp-popover-title">AUDIO INPUT TWEAKS</div>
 
         <div class="amp-row">
@@ -190,6 +194,7 @@
             </div>
           {/each}
         </div>
+      </div>
       </div>
     {/if}
   </div>
@@ -293,9 +298,18 @@
     padding: 0 4px;
   }
 
-  /* Popover — fixed so no header overflow/stacking context clips it */
+  .amp-popover-home {
+    display: contents;
+  }
+
+  /* Popover — fixed at <body>, so no host's overflow, filter or zoom moves
+     or clips it. */
   .amp-popover {
     position: fixed;
+    font-family: var(--ga-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+    font-size: 13px;
+    color: var(--text-primary, #e8e8e8);
+    -webkit-app-region: no-drag;
     width: 280px;
     max-width: calc(100vw - 24px);
     background: var(--bg-tertiary, #1a1a1e);
