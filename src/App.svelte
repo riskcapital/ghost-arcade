@@ -9268,6 +9268,13 @@
     position: relative;
     z-index: 2000;
   }
+  /* The strip above is a window-drag region, and Chromium hands every press
+     inside a drag region to the window, whatever is drawn on top. Menus,
+     popovers and dialogs that reach into it carve themselves out, so they
+     can be clicked there. */
+  :global(:is([role="dialog"], [aria-modal="true"], [class*="modal"], [class*="backdrop"], [class*="popover"], [class*="dropdown"], [class*="popup"], .ctx-menu, .context-menu, .display-menu, .tray-context-menu, .sv-ctx-menu)) {
+    -webkit-app-region: no-drag;
+  }
 
   /* Toolbar — uses theme tokens with the legacy accent vars as
      fallback so existing component CSS keeps working before each
