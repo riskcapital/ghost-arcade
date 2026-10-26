@@ -24,6 +24,9 @@
   import { createAssetRefFromFile, createDurableAssetRefFromFile } from '../storage/assetRegistry';
   import { maskEditingLayerId } from '../stores/maskEditing';
   import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
+  import { isVideoFile, waitForVideoData, videoLoadFailureMessage, releaseVideoElement } from '$lib/video/videoImport';
+  import { showToast } from '../stores/errorToast';
+  import { mediaLoadErrors } from '../stores/mediaLoadErrors';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -362,7 +365,7 @@
   function getMediaType(file: File): 'image' | 'video' | 'shader' {
     const ext = file.name.toLowerCase().split('.').pop();
     if (ext === 'fs' || ext === 'isf') return 'shader';
-    if (file.type.startsWith('video/')) return 'video';
+    if (isVideoFile(file)) return 'video';
     return 'image';
   }
 
@@ -392,17 +395,12 @@
 
       // `.src=` already initiated the load. Don't call `.load()` —
       // races any pending play() on Chromium 130 (Electron 42).
-      await new Promise<void>((resolve, reject) => {
-        const onReady = () => { cleanup(); resolve(); };
-        const onError = () => { cleanup(); reject(new Error('Video load failed')); };
-        const cleanup = () => {
-          video.removeEventListener('loadeddata', onReady);
-          video.removeEventListener('error', onError);
-        };
-        video.addEventListener('loadeddata', onReady, { once: true });
-        video.addEventListener('error', onError, { once: true });
-        if (video.readyState >= 2) onReady();
-      });
+      // Bounded, so a file Chromium cannot decode is reported, not waited on.
+      const ready = await waitForVideoData(video);
+      if (!ready.ok) {
+        releaseVideoElement(video);
+        throw new Error(videoLoadFailureMessage(file.name, ready));
+      }
 
       // Autoplay the video immediately
       source.videoElement = video;
@@ -433,6 +431,7 @@
       project.setLayerSource($selectedLayerId, source);
     } catch (err) {
       console.error('Failed to load file:', err);
+      showToast(err instanceof Error ? err.message : `${file.name} could not be loaded.`, 'error');
     }
     input.value = '';
   }
@@ -447,6 +446,7 @@
       project.setLayerSource($selectedLayerId, source);
     } catch (err) {
       console.error('Failed to load file:', err);
+      showToast(err instanceof Error ? err.message : `${file.name} could not be loaded.`, 'error');
     }
   }
 
@@ -1396,6 +1396,9 @@
             ondblclick={(e) => { e.stopPropagation(); renamingLayerId = layer.id; }}
             title="Double-click to rename"
           >{layer.name}</span>
+          {#if $mediaLoadErrors[layer.id]}
+            <span class="layer-media-failed" role="img" aria-label={$mediaLoadErrors[layer.id]} title={$mediaLoadErrors[layer.id]}>⚠</span>
+          {/if}
         {/if}
 
         <button
@@ -3835,6 +3838,15 @@
 
   .layer-item.selected .layer-name {
     color: var(--ga-ink-0, #eef0f4);
+  }
+
+  /* Media that could not be loaded; the reason is in the tooltip. */
+  .layer-media-failed {
+    flex: none;
+    margin: 0 4px;
+    color: #f5a524;
+    font-size: 13px;
+    cursor: help;
   }
 
   /* Inline rename input — sits in the same flex slot as `.layer-name`

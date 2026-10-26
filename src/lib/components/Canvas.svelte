@@ -106,7 +106,16 @@
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { milkdropStore } from '../stores/milkdrop';
   import { hydraStore } from '../stores/hydra';
-  import { initStateBroadcast, destroyStateBroadcast, onRemoteShowTransition } from '$lib/sync/stateBroadcast';
+  import { initStateBroadcast, destroyStateBroadcast, onRemoteShowTransition, isStateSyncSender } from '$lib/sync/stateBroadcast';
+  import { waitForVideoData, videoLoadFailureMessage, releaseVideoElement, type VideoReadyResult } from '$lib/video/videoImport';
+  import { mediaRelinkVersion } from '../stores/missingMedia';
+  import {
+    setMediaLoadError,
+    clearMediaLoadError,
+    clearAllMediaLoadErrors,
+    mediaFileName,
+    probeAssetFailure,
+  } from '../stores/mediaLoadErrors';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startPixelMapOutput, tapPixelMapFrame } from '$lib/pixelmap/sender';
@@ -756,6 +765,65 @@
   const failedTextures = new Set<string>();
   const FAILED_TEXTURE_LOG_LIMIT = 3; // only log each bad key a few times
   const failedTextureLogCount = new Map<string, number>();
+  // Which sources (by source id) failed under each key. A layer whose media
+  // was replaced gets a new source id, so it is tried again once; a source
+  // that already failed is not retried every frame.
+  const failedTextureSources = new Map<string, Set<string>>();
+  function markTextureFailed(cacheKey: string, sourceId: string | undefined) {
+    failedTextures.add(cacheKey);
+    if (!sourceId) return;
+    const ids = failedTextureSources.get(cacheKey) ?? new Set<string>();
+    ids.add(sourceId);
+    failedTextureSources.set(cacheKey, ids);
+  }
+  /** Forget failures so media gets another try (relinked or replaced). */
+  function clearTextureFailures(cacheKey?: string) {
+    if (cacheKey === undefined) {
+      failedTextures.clear();
+      failedTextureSources.clear();
+      failedTextureLogCount.clear();
+      return;
+    }
+    failedTextures.delete(cacheKey);
+    failedTextureSources.delete(cacheKey);
+    failedTextureLogCount.delete(cacheKey);
+  }
+  // Relinking media (Project Media, or the VJ deck's Find files) points
+  // layers at files that may now load.
+  const unsubMediaRelink = mediaRelinkVersion.subscribe((version) => {
+    if (version === 0) return;
+    clearTextureFailures();
+    clearAllMediaLoadErrors();
+  });
+  onDestroy(() => unsubMediaRelink());
+
+  /**
+   * Tell the user why a layer's media did not load, and mark the layer.
+   * Editor window only: the output windows load the same files and would
+   * repeat it.
+   */
+  async function reportMediaFailure(layerId: string, source: import('../types').MediaSource, err: unknown) {
+    if (!isStateSyncSender()) return;
+    if (source.type !== 'video' && source.type !== 'image') return;
+    const name = source.name || mediaFileName(source.src);
+    const probed = await probeAssetFailure(source.src, name);
+    const own = (err as { userMessage?: string } | null)?.userMessage ?? null;
+    const message = probed
+      ?? own
+      ?? (source.type === 'video'
+        ? videoLoadFailureMessage(name, { ok: false, reason: 'error', code: null })
+        : `${name} could not be loaded. Replace it on the layer, or find it again with File › Project Media.`);
+    setMediaLoadError(layerId, message);
+  }
+
+  /** A video that could not be loaded, with what to tell the user. */
+  function videoLoadError(source: import('../types').MediaSource, result: Exclude<VideoReadyResult, { ok: true }>) {
+    const error = new Error(`Video failed to load (${result.reason})`) as Error & { userMessage?: string };
+    error.userMessage = videoLoadFailureMessage(source.name || mediaFileName(source.src), result);
+    return error;
+  }
+  /** Long enough for a large file on a slow disk; a file that cannot decode errors well before. */
+  const LAYER_VIDEO_TIMEOUT_MS = 15000;
 
   /** Bump a textureCache entry to the most-recent position so true-LRU
    *  eviction won't drop it. Map iteration order is insertion order, so
@@ -3345,6 +3413,8 @@
           : null;
       if (oldCacheKey && oldCacheKey !== textureCacheKey) {
         cleanupLayerShader(layer.id, oldCacheKey);
+        // New media on this layer: its earlier failure no longer applies.
+        clearMediaLoadError(layer.id);
         // Hold black while the replacement compiles/loads. The real
         // texture overwrites this the moment it's ready (cache assign
         // below or the async load completion); until then the layer
@@ -3395,6 +3465,11 @@
           // mapped on a layer ("clip frozen after playing for a bit").
           touchTextureCacheEntry(lookupKey);
         }
+      }
+      // A key that failed for another source (the media was replaced with
+      // the same file, or another layer uses it) gets one more try.
+      if (failedTextures.has(lookupKey) && layer.source.id && !failedTextureSources.get(lookupKey)?.has(layer.source.id)) {
+        failedTextures.delete(lookupKey);
       }
       // If not loading yet, start async load — skip entirely if a previous
       // attempt permanently failed (see failedTextures).
@@ -3689,24 +3764,15 @@
           // REUSED elements (VJ rapid clip switch), do NOT call load() —
           // it races any in-flight load + pending play() and throws
           // AbortError on Chromium 130.
-          await new Promise<void>((resolve, reject) => {
-            const v = video!;
-            const onLoaded = () => {
-              cleanup();
-              resolve();
-            };
-            const onError = () => {
-              cleanup();
-              reject(new Error('Video failed to load'));
-            };
-            const cleanup = () => {
-              v.removeEventListener('loadeddata', onLoaded);
-              v.removeEventListener('error', onError);
-            };
-            v.addEventListener('loadeddata', onLoaded, { once: true });
-            v.addEventListener('error', onError, { once: true });
-            v.load(); // Fresh element only — see big comment above.
-          });
+          // Bounded: a file Chromium cannot decode, or a load that never
+          // starts, ends here instead of holding the layer in "loading".
+          const loaded = waitForVideoData(video, { timeoutMs: LAYER_VIDEO_TIMEOUT_MS });
+          video.load(); // Fresh element only — see big comment above.
+          const loadResult = await loaded;
+          if (!loadResult.ok) {
+            releaseVideoElement(video);
+            throw videoLoadError(source, loadResult);
+          }
 
           // Store reference on the layer's source
           const currentLayers = $layers;
@@ -3716,20 +3782,12 @@
           }
         }
 
-        // Wait for video to have actual frame data
+        // Wait for video to have actual frame data (HAVE_CURRENT_DATA).
+        // This used to poll every frame for as long as the app ran when the
+        // video never decoded; it now gives up on an error or a timeout.
         if (video.readyState < 2) {
-          // HAVE_CURRENT_DATA
-          await new Promise<void>((resolve) => {
-            const checkReady = () => {
-              if (video!.readyState >= 2) {
-                resolve();
-              } else {
-                requestAnimationFrame(checkReady);
-              }
-            };
-            video!.oncanplay = () => resolve();
-            checkReady();
-          });
+          const ready = await waitForVideoData(video, { timeoutMs: LAYER_VIDEO_TIMEOUT_MS });
+          if (!ready.ok) throw videoLoadError(source, ready);
         }
 
         // Ensure video is playing
@@ -4269,6 +4327,7 @@
       if (texture) {
         textureCache.set(cacheKey, texture);
         evictTextureCache();
+        clearMediaLoadError(layerId);
         console.log('Texture loaded for layer:', layerId, 'type:', source.type);
         // Force a store update to trigger reactivity - this makes the texture appear
         // The updateTexturesSync will pick up the cached texture on next frame
@@ -4279,7 +4338,8 @@
       // stops re-triggering the load every frame. Previously a single missing
       // video file (stale blob URL, deleted project media, bad path) produced
       // 60+ "Failed to load texture: Error: Video failed to load" per second.
-      failedTextures.add(cacheKey);
+      markTextureFailed(cacheKey, source.id);
+      void reportMediaFailure(layerId, source, err);
       const n = (failedTextureLogCount.get(cacheKey) ?? 0) + 1;
       failedTextureLogCount.set(cacheKey, n);
       if (n <= FAILED_TEXTURE_LOG_LIMIT) {

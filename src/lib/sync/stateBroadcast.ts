@@ -1459,6 +1459,11 @@ export function initStateBroadcast(syncMode: 'sender' | 'receiver') {
   }
 }
 
+/** True in the editor window (the one that sends state to the outputs). */
+export function isStateSyncSender(): boolean {
+  return mode === 'sender';
+}
+
 /**
  * Check if the receiver has received its first state update.
  */

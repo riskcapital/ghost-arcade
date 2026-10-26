@@ -7,6 +7,7 @@
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
   import { showToast } from '../stores/errorToast';
+  import { isVideoFile, waitForVideoData, videoLoadFailureMessage, releaseVideoElement } from '$lib/video/videoImport';
   import type { MediaSource, ISFInputDef, ImageInputRef, JSAnimationSource, VideoPlaybackMode, MediaTrayFolder, IntegratedEffectSource, IntegratedEffectType } from '../types';
   import { generateUUID } from '../types';
   import { videoLibrary, type SavedVideo } from '../stores/videoLibrary';
@@ -1383,18 +1384,28 @@
     // iframe-canvas-as-texture pipeline doesn't care whether the HTML was
     // hand-written, exported from a tool, or AI-generated.
     if (ext === 'html' || ext === 'htm') return 'threejs';
-    if (file.type.startsWith('video/')) return 'video';
+    // MIME type, or the extension when the OS reports none (.mkv, .mov, .mxf on Windows).
+    if (isVideoFile(file)) return 'video';
     return 'image';
+  }
+
+  /** Add files one after another; one that fails does not stop the rest. */
+  async function addMediaFiles(files: Iterable<File>) {
+    for (const file of files) {
+      try {
+        await addMediaFile(file);
+      } catch (err) {
+        console.error('[MediaTray] Could not add', file.name, err);
+        showToast(`${file.name} could not be added.`, 'error');
+      }
+    }
   }
 
   async function handleDrop(e: DragEvent) {
     e.preventDefault();
     const files = e.dataTransfer?.files;
     if (!files) return;
-
-    for (const file of files) {
-      await addMediaFile(file);
-    }
+    await addMediaFiles(files);
   }
 
   function handleDragOver(e: DragEvent) {
@@ -1419,11 +1430,14 @@
       video.src = url;
 
       // `.src=` already initiated the load — don't call `.load()`.
-      await new Promise<void>((resolve) => {
-        const done = () => { video.removeEventListener('loadeddata', done); resolve(); };
-        video.addEventListener('loadeddata', done, { once: true });
-        if (video.readyState >= 2) done();
-      });
+      // Ends on a frame, an error or a timeout: a file Chromium cannot
+      // decode never reaches loadeddata, and waiting on it stalled the tray.
+      const ready = await waitForVideoData(video);
+      if (!ready.ok) {
+        releaseVideoElement(video);
+        showToast(videoLoadFailureMessage(file.name, ready), 'error');
+        return;
+      }
 
       const item: MediaItem = {
         id: generateUUID(),
@@ -1668,14 +1682,19 @@
   async function captureVideoThumbnail(video: HTMLVideoElement): Promise<string> {
     return new Promise((resolve) => {
       const capture = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 120;
-        canvas.height = 68;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.7));
-        } else {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 120;
+          canvas.height = 68;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', 0.7));
+          } else {
+            resolve('');
+          }
+        } catch {
+          // No frame to draw: the item gets no thumbnail rather than never resolving.
           resolve('');
         }
       };
@@ -1794,15 +1813,12 @@
           try { video.currentTime = 0; } catch { /* ignore */ }
 
           if (video.readyState < 2) {
-            await new Promise<void>((resolve) => {
-              const done = () => { cleanup(); resolve(); };
-              const cleanup = () => {
-                video.removeEventListener('loadeddata', done);
-                video.removeEventListener('canplaythrough', done);
-              };
-              video.addEventListener('loadeddata', done, { once: true });
-              video.addEventListener('canplaythrough', done, { once: true });
-            });
+            // Bounded: a clip that cannot decode used to hang this forever.
+            const ready = await waitForVideoData(video);
+            if (!ready.ok) {
+              showToast(videoLoadFailureMessage(item.name, ready), 'error');
+              return;
+            }
           }
 
           if (video.paused) {
@@ -4748,9 +4764,7 @@
         onchange={async (e) => {
           const input = e.target as HTMLInputElement;
           if (input.files) {
-            for (const file of input.files) {
-              await addMediaFile(file);
-            }
+            await addMediaFiles(Array.from(input.files));
           }
           input.value = '';
         }}

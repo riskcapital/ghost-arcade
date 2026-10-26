@@ -3,6 +3,7 @@
   import { get } from 'svelte/store';
   import { project, selectedLayerId } from '../stores/layers';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
+  import { isVideoFile } from '$lib/video/videoImport';
   import type { MediaSource, JSAnimationSource } from '../types';
   import { generateUUID } from '../types';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
@@ -118,7 +119,7 @@
     // this the URL is a blob: that dies at session end and the library item
     // becomes unresolvable.
     const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
-    const isVideo = file.type.startsWith('video/');
+    const isVideo = isVideoFile(file);
 
     const item: MediaSource = {
       id: generateUUID(),
