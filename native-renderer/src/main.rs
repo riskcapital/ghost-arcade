@@ -29,6 +29,7 @@ mod video_texture;
 mod native_graph_manifest;
 mod native_quality;
 mod output_present;
+mod output_window_plan;
 mod slice_presentation;
 mod paint_mask;
 mod particle_director;
@@ -115,9 +116,14 @@ use source_frames::{SlotRef, SourceFrameMode, SourceFrameStore};
 use wgpu::util::{DeviceExt, TextureBlitter, TextureBlitterBuilder};
 #[cfg(not(target_os = "macos"))]
 use winit::window::Fullscreen;
+use output_window_plan::{
+    LevelPlan, MonitorInfo, OutputWindowRequest, OutputWindowState, OutputWindowStep,
+    plan_output_window,
+};
+use winit::monitor::MonitorHandle;
 use winit::{
     application::ApplicationHandler,
-    dpi::{LogicalPosition, LogicalSize, PhysicalSize},
+    dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
     event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, NamedKey},
@@ -4501,6 +4507,11 @@ struct App {
     /// output texture at the display's size and then back at the project's.
     output_size_configured: bool,
     output_window_fullscreen: bool,
+    /// Whether the window itself is fullscreen now, and on which monitor.
+    /// `output_window_fullscreen` above is what was asked for and decides the
+    /// composite size; this is what the window is, so a detach, an Esc or a
+    /// move to another display can undo it in the right order.
+    output_window_placement: OutputWindowState,
     editor_parent_window_handle_hex: Option<String>,
     editor_parent_window_handle_platform: Option<String>,
     editor_preview_parented_window: bool,
@@ -4773,7 +4784,7 @@ fn activate_appkit_output_window(window: &Window) {
 fn activate_appkit_output_window(_window: &Window) {}
 
 #[cfg(target_os = "macos")]
-fn set_managed_output_fullscreen(window: &Window, fullscreen: bool) {
+fn set_managed_output_fullscreen(window: &Window, fullscreen: bool, _monitor: Option<MonitorHandle>) {
     // Projector output must stay in the current macOS workspace. Winit's
     // Borderless fullscreen enters an asynchronous Space transition, which can
     // leave a renderer owned by a helper process occluded behind Electron. The
@@ -4816,12 +4827,82 @@ fn set_managed_output_fullscreen(window: &Window, fullscreen: bool) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn set_managed_output_fullscreen(window: &Window, fullscreen: bool) {
+fn set_managed_output_fullscreen(window: &Window, fullscreen: bool, monitor: Option<MonitorHandle>) {
+    // An explicit monitor: `None` means the one the window is on right now,
+    // and a move on Windows has not necessarily landed yet.
     window.set_fullscreen(if fullscreen {
-        Some(Fullscreen::Borderless(None))
+        Some(Fullscreen::Borderless(monitor))
     } else {
         None
     });
+}
+
+/// The monitors winit knows, with the physical rects the placement plan
+/// matches requests against.
+fn output_window_monitors(window: &Window) -> (Vec<MonitorHandle>, Vec<MonitorInfo>) {
+    let handles: Vec<MonitorHandle> = window.available_monitors().collect();
+    let infos = handles
+        .iter()
+        .map(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            MonitorInfo {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+                scale: monitor.scale_factor(),
+            }
+        })
+        .collect();
+    (handles, infos)
+}
+
+fn apply_output_window_steps(window: &Window, steps: &[OutputWindowStep], monitors: &[MonitorHandle]) {
+    use output_window_plan::CoordinateSpace;
+    for step in steps {
+        match *step {
+            OutputWindowStep::LeaveFullscreen => set_managed_output_fullscreen(window, false, None),
+            OutputWindowStep::SetLevel(level) => window.set_window_level(match level {
+                LevelPlan::Normal => WindowLevel::Normal,
+                LevelPlan::AlwaysOnTop => WindowLevel::AlwaysOnTop,
+                LevelPlan::AlwaysOnBottom => WindowLevel::AlwaysOnBottom,
+            }),
+            OutputWindowStep::SetSize { width, height, space } => {
+                let _ = match space {
+                    CoordinateSpace::Physical => window.request_inner_size(PhysicalSize::new(width, height)),
+                    CoordinateSpace::Logical => {
+                        window.request_inner_size(LogicalSize::new(width as f64, height as f64))
+                    }
+                };
+            }
+            OutputWindowStep::SetPosition { x, y, space } => match space {
+                CoordinateSpace::Physical => window
+                    .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32)),
+                CoordinateSpace::Logical => window.set_outer_position(LogicalPosition::new(x, y)),
+            },
+            OutputWindowStep::EnterFullscreen { monitor } => set_managed_output_fullscreen(
+                window,
+                true,
+                monitor.and_then(|index| monitors.get(index).cloned()),
+            ),
+            OutputWindowStep::SetCursorVisible(visible) => window.set_cursor_visible(visible),
+            OutputWindowStep::Show => {
+                window.set_visible(true);
+                window.focus_window();
+                activate_appkit_output_window(window);
+                window.request_redraw();
+            }
+            OutputWindowStep::Hide => window.set_visible(false),
+        }
+    }
+}
+
+/// Esc, the close button and a detach from the editor all end the same way.
+fn detach_managed_output_window(window: &Window, placement: &OutputWindowState) -> OutputWindowState {
+    let plan = plan_output_window(&OutputWindowRequest::detach(), placement, &[]);
+    apply_output_window_steps(window, &plan.steps, &[]);
+    plan.state
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -4886,6 +4967,7 @@ impl App {
             output_window_attached: false,
             output_size_configured: false,
             output_window_fullscreen: false,
+            output_window_placement: OutputWindowState::default(),
             editor_parent_window_handle_hex: None,
             editor_parent_window_handle_platform: None,
             editor_preview_parented_window: false,
@@ -6963,6 +7045,14 @@ impl App {
 
     fn apply_output_window_attached(&mut self, attached: bool) {
         self.output_window_attached = attached;
+        if !attached {
+            if let Some(renderer) = self.renderer.as_ref() {
+                self.output_window_placement =
+                    detach_managed_output_window(&renderer.window, &self.output_window_placement);
+            }
+            return;
+        }
+        self.output_window_placement.attached = true;
         if let Some(renderer) = self.renderer.as_ref() {
             renderer.window.set_visible(attached);
             if attached {
@@ -6980,29 +7070,17 @@ impl App {
 
     fn apply_output_window_config(&mut self, params: &Value) {
         let config = params.get("config").unwrap_or(params);
-        let attached = bool_at(config, &["attached"])
-            .or_else(|| bool_at(config, &["visible"]))
-            .or_else(|| bool_at(config, &["enabled"]));
-        if let Some(attached) = attached {
+        let request = OutputWindowRequest::from_config(config);
+        if let Some(attached) = request.attached {
             self.output_window_attached = attached;
         }
-
-        let width = number_at(config, &["width"])
-            .or_else(|| number_at(config, &["w"]))
-            .map(|value| value.round().clamp(1.0, 32768.0) as u32);
-        let height = number_at(config, &["height"])
-            .or_else(|| number_at(config, &["h"]))
-            .map(|value| value.round().clamp(1.0, 32768.0) as u32);
-        let fullscreen_request = bool_at(config, &["fullscreen"])
-            .or_else(|| bool_at(config, &["full_screen"]))
-            .or_else(|| bool_at(config, &["borderless"]));
-        if let Some(fullscreen) = fullscreen_request {
+        if let Some(fullscreen) = request.fullscreen {
             self.output_window_fullscreen = fullscreen;
         }
         // A fullscreen output shows the project's composite at the display's
         // size; the composite itself stays the project's.
         let keep_project_size = self.output_size_configured && self.output_window_fullscreen;
-        if let (Some(width), Some(height)) = (width, height)
+        if let (Some(width), Some(height)) = (request.width, request.height)
             && !keep_project_size
         {
             self.pending_width = width;
@@ -7034,51 +7112,16 @@ impl App {
         {
             let _ = renderer.window.set_cursor_hittest(!input_transparent);
         }
-        if let Some(always_on_bottom) =
-            bool_at(config, &["always_on_bottom"]).or_else(|| bool_at(config, &["underlay"]))
-        {
-            renderer.window.set_window_level(if always_on_bottom {
-                WindowLevel::AlwaysOnBottom
-            } else {
-                WindowLevel::Normal
-            });
-        } else if let Some(always_on_top) = bool_at(config, &["always_on_top"]) {
-            renderer.window.set_window_level(if always_on_top {
-                WindowLevel::AlwaysOnTop
-            } else {
-                WindowLevel::Normal
-            });
-        }
-        if let (Some(width), Some(height)) = (width, height) {
-            let _ = renderer
-                .window
-                .request_inner_size(LogicalSize::new(width as f64, height as f64));
-        }
-        let x = number_at(config, &["x"]).or_else(|| number_at(config, &["left"]));
-        let y = number_at(config, &["y"]).or_else(|| number_at(config, &["top"]));
-        if let (Some(x), Some(y)) = (x, y) {
-            renderer
-                .window
-                .set_outer_position(LogicalPosition::new(x, y));
-        }
-        if let Some(fullscreen) = bool_at(config, &["fullscreen"])
-            .or_else(|| bool_at(config, &["full_screen"]))
-            .or_else(|| bool_at(config, &["borderless"]))
-        {
-            renderer.window.set_window_level(if fullscreen {
-                WindowLevel::AlwaysOnTop
-            } else {
-                WindowLevel::Normal
-            });
-            set_managed_output_fullscreen(&renderer.window, fullscreen);
-            renderer.window.set_cursor_visible(!fullscreen);
-        }
-        renderer.window.set_visible(self.output_window_attached);
-        if self.output_window_attached {
-            renderer.window.focus_window();
-            activate_appkit_output_window(&renderer.window);
-            renderer.window.request_redraw();
-        }
+        // Level, fullscreen, size, position and visibility, in the order that
+        // survives winit: see output_window_plan.
+        let (monitor_handles, monitors) = output_window_monitors(&renderer.window);
+        let current = OutputWindowState {
+            attached: self.output_window_attached,
+            ..self.output_window_placement
+        };
+        let plan = plan_output_window(&request, &current, &monitors);
+        apply_output_window_steps(&renderer.window, &plan.steps, &monitor_handles);
+        self.output_window_placement = plan.state;
     }
 
     fn request_auto_present(&mut self) {
@@ -19798,9 +19841,8 @@ impl ApplicationHandler<UserEvent> for App {
                 // window should detach presentation while keeping the core alive for
                 // graph sync, recording, Syphon, and the next output attach.
                 self.output_window_attached = false;
-                renderer.window.set_visible(false);
-                set_managed_output_fullscreen(&renderer.window, false);
-                renderer.window.set_cursor_visible(true);
+                self.output_window_placement =
+                    detach_managed_output_window(&renderer.window, &self.output_window_placement);
                 self.stats.swapchain_last_present_result = "detached".to_string();
                 self.stats.swapchain_last_present_error.clear();
                 event_loop.set_control_flow(ControlFlow::Wait);
@@ -19810,9 +19852,8 @@ impl ApplicationHandler<UserEvent> for App {
                     && matches!(&event.logical_key, Key::Named(NamedKey::Escape)) =>
             {
                 self.output_window_attached = false;
-                renderer.window.set_visible(false);
-                set_managed_output_fullscreen(&renderer.window, false);
-                renderer.window.set_cursor_visible(true);
+                self.output_window_placement =
+                    detach_managed_output_window(&renderer.window, &self.output_window_placement);
                 self.stats.swapchain_last_present_result = "detached".to_string();
                 self.stats.swapchain_last_present_error.clear();
                 event_loop.set_control_flow(ControlFlow::Wait);
