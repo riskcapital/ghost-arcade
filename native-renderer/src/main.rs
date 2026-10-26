@@ -4482,6 +4482,12 @@ struct App {
     /// When the output window was asked for a redraw that has not arrived
     /// yet (see `drive_frame`).
     redraw_requested_at: Option<Instant>,
+    /// A `present` arrived while frames were being drawn on schedule anyway;
+    /// the next scheduled frame draws it (see `request_present`).
+    present_pending: bool,
+    /// Refresh rate of the display the attached output window is on, which
+    /// paces the frames while it is attached (see `paced_frame_rate`).
+    output_refresh_hz: Option<f64>,
     running: bool,
     pending_width: u32,
     pending_height: u32,
@@ -4964,6 +4970,8 @@ impl App {
             target_fps: 60,
             last_redraw: Instant::now(),
             redraw_requested_at: None,
+            present_pending: false,
+            output_refresh_hz: None,
             running: false,
             pending_width: 1280,
             pending_height: 720,
@@ -5950,7 +5958,11 @@ impl App {
                 .as_ref()
                 .map(|renderer| texture_format_label(renderer.config.format).to_string())
                 .unwrap_or_else(|| "unknown".to_string()),
-            output_refresh_hz: self.target_fps,
+            output_refresh_hz: self
+                .output_refresh_hz
+                .filter(|_| self.output_window_attached)
+                .map(|hz| hz.round() as u32)
+                .unwrap_or(self.target_fps),
             output_window_attached,
             output_swapchain_ready,
             output_tearing_active: self
@@ -7107,6 +7119,7 @@ impl App {
                 renderer.window.request_redraw();
             }
         }
+        self.refresh_output_display_rate();
     }
 
     fn apply_output_window_config(&mut self, params: &Value) {
@@ -7163,6 +7176,7 @@ impl App {
         let plan = plan_output_window(&request, &current, &monitors);
         apply_output_window_steps(&renderer.window, &plan.steps, &monitor_handles);
         self.output_window_placement = plan.state;
+        self.refresh_output_display_rate();
     }
 
     fn request_auto_present(&mut self) {
@@ -7173,10 +7187,22 @@ impl App {
         self.request_present();
     }
 
+    /// The editor flushed a change. Every flush used to draw at once and
+    /// restart the frame clock from that moment, so while frames were being
+    /// drawn on schedule their timing followed the editor's flushes and their
+    /// jitter. Now an idle core draws at once, as before; one already drawing
+    /// on schedule draws the change with its next frame, or now if that frame
+    /// is due, without moving the schedule.
     fn request_present(&mut self) {
         let now = Instant::now();
-        self.last_redraw = now;
-        self.drive_frame(now);
+        let period = self.frame_duration();
+        match present_action(self.frames_scheduled(), self.last_redraw, now, period) {
+            PresentAction::RenderNow { next_redraw } => {
+                self.last_redraw = next_redraw;
+                self.drive_frame(now);
+            }
+            PresentAction::WithNextFrame => self.present_pending = true,
+        }
     }
 
     /// Draw the next frame. With the output window attached that used to be a
@@ -12619,6 +12645,7 @@ impl App {
             self.pending_render_retry = true;
             return;
         }
+        self.present_pending = false;
         let graph_budget = self.native_graph_buffer_budget_bytes();
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.allow_async_compile = self.render_clock_mode != "manual";
@@ -14586,7 +14613,40 @@ impl App {
     }
 
     fn frame_duration(&self) -> Duration {
-        Duration::from_secs_f64(1.0 / self.target_fps.max(1) as f64)
+        let refresh = if self.output_window_attached { self.output_refresh_hz } else { None };
+        Duration::from_secs_f64(1.0 / paced_frame_rate(self.target_fps, refresh))
+    }
+
+    /// Re-read the refresh rate of the display the output window is on.
+    fn refresh_output_display_rate(&mut self) {
+        self.output_refresh_hz = self
+            .renderer
+            .as_ref()
+            .and_then(|renderer| renderer.window.current_monitor())
+            .and_then(|monitor| monitor.refresh_rate_millihertz())
+            .map(|millihertz| millihertz as f64 / 1000.0);
+    }
+
+    /// Frames are wanted on a clock right now: the output window is shown,
+    /// or there is something to draw for the other outputs.
+    fn frames_scheduled(&self) -> bool {
+        self.output_window_attached
+            || (self.renderer.is_some()
+                && (
+                    // A requested frame that has not been drawn yet outranks the
+                    // idle gate. Without this an empty scene goes to sleep still
+                    // owing one clear-and-present, and the last picture stays
+                    // resident in every output surface.
+                    self.pending_render_retry
+                        || self.present_pending
+                        || self.launch_scheduler.has_pending()
+                        || !self.scene_layers.is_empty()
+                        || !self.native_graph_layers.is_empty()
+                        || !self.pending_native_graph_jobs.is_empty()
+                        || self.source_preview_dirty
+                        || self.stage3d_scene.is_some()
+                        || self.projection_sim_scene.is_some()
+                ))
     }
 
     fn apply_native_quality_policy(&mut self, params: &Value) {
@@ -19940,6 +20000,14 @@ impl ApplicationHandler<UserEvent> for App {
                 self.redraw_requested_at = None;
                 self.render();
             }
+            // On another display now, possibly at another refresh rate.
+            WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                self.output_refresh_hz = renderer
+                    .window
+                    .current_monitor()
+                    .and_then(|monitor| monitor.refresh_rate_millihertz())
+                    .map(|millihertz| millihertz as f64 / 1000.0);
+            }
             _ => {}
         }
     }
@@ -19964,22 +20032,7 @@ impl ApplicationHandler<UserEvent> for App {
         let pump_started = Instant::now();
         self.pump_native_video_decodes();
         self.media_pump_ms = pump_started.elapsed().as_secs_f64() * 1000.0;
-        let has_offscreen_work = self.renderer.is_some()
-            && (
-                // A requested frame that has not been drawn yet outranks the
-                // idle gate. Without this an empty scene goes to sleep still
-                // owing one clear-and-present, and the last picture stays
-                // resident in every output surface.
-                self.pending_render_retry
-                    || self.launch_scheduler.has_pending()
-                    || !self.scene_layers.is_empty()
-                    || !self.native_graph_layers.is_empty()
-                    || !self.pending_native_graph_jobs.is_empty()
-                    || self.source_preview_dirty
-                    || self.stage3d_scene.is_some()
-                    || self.projection_sim_scene.is_some()
-            );
-        if !self.output_window_attached && !has_offscreen_work {
+        if !self.frames_scheduled() {
             event_loop.set_control_flow(idle_flow);
             return;
         }
@@ -34192,6 +34245,50 @@ fn scheduled_frame_start(deadline: Instant, now: Instant, period: Duration) -> I
     if now.saturating_duration_since(deadline) < period { deadline } else { now }
 }
 
+/// The frame rate to draw at for a display: the whole fraction of its refresh
+/// rate nearest the target, so every frame stays on screen for the same number
+/// of refreshes. A fixed 60 dropped every sixth frame on a 50Hz projector and
+/// held frames for alternately two and three refreshes at 144Hz -- both read
+/// as stutter however fast the core is.
+fn paced_frame_rate(target_fps: u32, refresh_hz: Option<f64>) -> f64 {
+    let target = target_fps.max(1) as f64;
+    let Some(refresh) = refresh_hz.filter(|hz| hz.is_finite() && *hz >= 20.0 && *hz <= 500.0) else {
+        return target;
+    };
+    let mut best = target;
+    let mut best_error = f64::MAX;
+    for divisor in 1..=8 {
+        let rate = refresh / divisor as f64;
+        if rate < 20.0 {
+            break;
+        }
+        let error = (rate - target).abs();
+        if error < best_error - 1e-9 {
+            best = rate;
+            best_error = error;
+        }
+    }
+    best
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PresentAction {
+    RenderNow { next_redraw: Instant },
+    WithNextFrame,
+}
+
+fn present_action(frames_scheduled: bool, last_redraw: Instant, now: Instant, period: Duration) -> PresentAction {
+    if !frames_scheduled {
+        return PresentAction::RenderNow { next_redraw: now };
+    }
+    let due = last_redraw + period;
+    if now >= due {
+        PresentAction::RenderNow { next_redraw: scheduled_frame_start(due, now, period) }
+    } else {
+        PresentAction::WithNextFrame
+    }
+}
+
 /// Draw directly rather than wait on the window: it is minimised (Windows
 /// sends it no redraws), or the redraw asked for has not come for two frames.
 fn output_redraw_stalled(minimized: bool, requested_at: Instant, now: Instant, period: Duration) -> bool {
@@ -34209,6 +34306,39 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frames_are_paced_to_a_whole_fraction_of_the_output_display() {
+        use super::paced_frame_rate as rate;
+        assert_eq!(rate(60, None), 60.0);
+        assert_eq!(rate(60, Some(60.0)), 60.0);
+        assert_eq!(rate(60, Some(50.0)), 50.0); // PAL projector
+        assert!((rate(60, Some(59.94)) - 59.94).abs() < 1e-9);
+        assert_eq!(rate(60, Some(120.0)), 60.0);
+        assert_eq!(rate(60, Some(144.0)), 72.0); // every frame shown twice
+        assert_eq!(rate(60, Some(165.0)), 55.0);
+        assert_eq!(rate(60, Some(240.0)), 60.0);
+        assert_eq!(rate(30, Some(60.0)), 30.0);
+        // A nonsense report keeps the target.
+        assert_eq!(rate(60, Some(0.0)), 60.0);
+        assert_eq!(rate(60, Some(f64::NAN)), 60.0);
+    }
+
+    #[test]
+    fn an_editor_present_does_not_move_the_frame_clock() {
+        use super::{PresentAction, present_action};
+        use std::time::{Duration, Instant};
+        let period = Duration::from_millis(16);
+        let last = Instant::now();
+        // Idle core: draw now.
+        assert_eq!(present_action(false, last, last + Duration::from_millis(3), period),
+            PresentAction::RenderNow { next_redraw: last + Duration::from_millis(3) });
+        // Drawing on schedule, next frame not due: it carries the change.
+        assert_eq!(present_action(true, last, last + Duration::from_millis(3), period), PresentAction::WithNextFrame);
+        // Due: draw now, on the existing schedule rather than from now.
+        assert_eq!(present_action(true, last, last + Duration::from_millis(18), period),
+            PresentAction::RenderNow { next_redraw: last + period });
+    }
+
     #[test]
     fn a_minimised_or_silent_output_window_does_not_stop_the_core() {
         use std::time::{Duration, Instant};
