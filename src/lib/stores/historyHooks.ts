@@ -149,3 +149,16 @@ export function cancelPendingHistorySnapshot() {
 export function hasPendingHistorySnapshot(): boolean {
   return _pending !== null;
 }
+
+/**
+ * A project was replaced wholesale (opened from a file, recovered from an
+ * autosave). The undo history belongs to the project that was there before,
+ * so App.svelte resets it to the new project; without that, the first undo
+ * after opening a project brought the previous project back.
+ */
+let _onProjectReplaced: (() => void) | null = null;
+export function setProjectReplacedCallback(fn: (() => void) | null) { _onProjectReplaced = fn; }
+export function notifyProjectReplaced() {
+  cancelPendingHistorySnapshot();
+  if (_onProjectReplaced) _onProjectReplaced();
+}

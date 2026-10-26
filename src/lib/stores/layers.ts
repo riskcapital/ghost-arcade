@@ -54,6 +54,7 @@ import {
   recordDiscreteAction,
   scheduleHistorySnapshot,
   amendLastHistoryStep,
+  notifyProjectReplaced,
 } from './historyHooks';
 export {
   setHistoryCallback,
@@ -5305,10 +5306,16 @@ void main() {
     },
 
     /**
-     * Import a project from a saved JSON object.
-     * Now supports vjMode (presets), media library, and VJ clip launcher.
+     * Import a project from a saved JSON object (layers, vjMode presets,
+     * media library, VJ clip launcher and every other saved section).
+     *
+     * `options.live` marks a state-sync payload from another window: it
+     * carries only the live sections, so a section it lacks is left as it
+     * is, and it does not count as opening a project. Anything else is a
+     * project being opened.
      */
-    importProject(data: unknown, projectDir?: string, options: { reuseLiveVideos?: boolean } = {}): boolean {
+    importProject(data: unknown, projectDir?: string, options: { reuseLiveVideos?: boolean; live?: boolean } = {}): boolean {
+      const openingFile = !options.live;
       try {
         // Output windows import the editor's project on every structural
         // change. Keep each layer's playing video element when the layer and
@@ -6151,6 +6158,7 @@ void main() {
         if (importedVjMode) {
           console.log('Imported', importedVjMode.compositions.length, 'presets');
         }
+        if (openingFile) notifyProjectReplaced();
         return true;
       } catch (err) {
         console.error('Failed to import project:', err);

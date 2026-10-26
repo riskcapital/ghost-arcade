@@ -872,8 +872,9 @@ function applyProjectStatePayload(data: any, sourceLabel: string) {
         modulation: data.modulation,
       };
     }
-    // Keep each layer's playing video when the layer and its file are unchanged.
-    const importedOk = project.importProject(importPayload, undefined, { reuseLiveVideos: true });
+    // Keep each layer's playing video when the layer and its file are
+    // unchanged. Live state, not a project being opened.
+    const importedOk = project.importProject(importPayload, undefined, { reuseLiveVideos: true, live: true });
     if (!importedOk) {
       // Last-resort visibility: log what we actually received so a future
       // debug session doesn't have to add console.logs to find it. Keys

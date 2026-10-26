@@ -97,7 +97,7 @@
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
-  import { recordDiscreteAction, scheduleHistorySnapshot } from './lib/stores/historyHooks';
+  import { recordDiscreteAction, scheduleHistorySnapshot, cancelPendingHistorySnapshot, setProjectReplacedCallback } from './lib/stores/historyHooks';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { settings, outputFrozen } from './lib/stores/settings';
@@ -1118,6 +1118,11 @@
       commit: (captured) => history.record(captured as Project),
       amend: () => history.amend(get(project)),
     });
+    // Opening a project (any path: File, Open Recent, recovery, relink,
+    // package) starts its history over. Deferred to a microtask so what the
+    // opening path does right after the import is part of the starting
+    // point, not the first undo.
+    setProjectReplacedCallback(() => queueMicrotask(resetHistoryToCurrent));
 
     // Simple routing: check URL hash
     isMobile = window.location.hash === '#/mobile' || window.location.pathname.includes('mobile');
@@ -5076,7 +5081,9 @@
     // Also clear the Electron path so Save doesn't accidentally overwrite
     // the previously-loaded .gha with a fresh empty project.
     currentProjectPath = null;
-    history.clear();
+    // A fresh history whose first step is the empty project, so the first
+    // edit can be undone (clearing it left nothing to undo back to).
+    resetHistoryToCurrent();
     markAsSaved();
     clearAutosave();
   }
@@ -5202,8 +5209,16 @@
   // Initialize history with first project state
   let historyInitialized = false;
   $: if ($project && !historyInitialized) {
-    history.init($project);
+    resetHistoryToCurrent();
     historyInitialized = true;
+  }
+
+  /** Start the undo history over at the project as it is now: after a
+   *  project is opened, recovered or created, undo must not reach back into
+   *  the project that was open before. */
+  function resetHistoryToCurrent() {
+    cancelPendingHistorySnapshot();
+    history.init(get(project));
   }
 
   // Take a snapshot. Call sites record through recordDiscreteAction() (from
