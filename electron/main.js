@@ -29,6 +29,7 @@ import {
   normalizeNativePreviewRect,
 } from './native-preview-geometry.js';
 import { createJsSourceHost, JS_SOURCE_SCHEME } from './js-source-host.js';
+import { physicalOutputWindowArgs } from './output-window-placement.js';
 // License system removed in OSS build — see src/lib/stores/license.ts.
 
 // The product this build is. Studio and Pro install side by side.
@@ -8672,6 +8673,12 @@ function registerIpcHandlers() {
           detachNativeEditorPreview('native-renderer-stop');
           // Their frames have nowhere to go; the sync reopens them on restart.
           jsSourceHost.closeAll();
+        }
+        if (cmd === 'native_renderer_set_output_window' && isWin) {
+          // DIP display bounds become physical pixels here, where every
+          // display's scale is known (see output-window-placement.js).
+          return nativeRendererBroker.invokeFromRenderer(cmd, physicalOutputWindowArgs(args,
+            (rect) => screen.dipToScreenRect(null, rect)));
         }
         return nativeRendererBroker.invokeFromRenderer(cmd, args);
       }
