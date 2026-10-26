@@ -12,7 +12,8 @@ const WIDTH = 1280, HEIGHT = 720, WARM = 2, FRAMES = 8;
 // through a scene): measure at several points of the timeline and average.
 const MOMENTS: number[] = params.get('moments') ? JSON.parse(params.get('moments')!) : [0, 13, 37, 91];
 const FRAME_COUNT = Number(params.get('frames') ?? FRAMES);
-const paths: string[] = JSON.parse(decodeURIComponent(params.get('paths') ?? '[]'));
+// The list comes in the address, or (long lists, Safari) from the runner.
+let paths: string[] = params.get('paths') ? JSON.parse(params.get('paths')!) : [];
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 
 function sync(gl: WebGLRenderingContext) {
@@ -63,14 +64,25 @@ async function measure(path: string): Promise<{ path: string; ms?: number; lit?:
   }
 }
 
+/** In a browser whose console the runner cannot read (Safari in the iOS simulator), lines are posted back. */
+const report = (line: string) => {
+  console.log(line);
+  if (params.has('report')) void fetch('/__bench-result', { method: 'POST', body: line }).catch(() => {});
+};
+
+addEventListener('error', event => report('BENCH_ERROR ' + event.message));
+addEventListener('unhandledrejection', event => report('BENCH_ERROR ' + String(event.reason)));
+
 (async () => {
   void canvas;
+  if (!paths.length) paths = await (await fetch('/__bench-paths')).json();
+  report('BENCH_START ' + paths.length);
   const results = [];
   for (const path of paths) {
     const result = await measure(path);
     results.push(result);
-    console.log('BENCH_ONE ' + JSON.stringify(result));
+    report('BENCH_ONE ' + JSON.stringify(result));
     await new Promise(r => setTimeout(r, 0));
   }
-  console.log('BENCH_DONE ' + JSON.stringify(results));
+  report('BENCH_DONE ' + JSON.stringify(results));
 })();

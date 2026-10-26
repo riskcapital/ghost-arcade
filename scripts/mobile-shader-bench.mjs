@@ -4,6 +4,9 @@
 // the audio patches. Writes native-mobile/shader-gpu-cost.json (lowest of two
 // runs), then run scripts/mobile-shader-library.mjs to apply the limits.
 //   node scripts/mobile-shader-bench.mjs [--check]   (--check: compile and report only)
+//   node scripts/mobile-shader-bench.mjs --ios-simulator <udid>
+//     Compile and render every shader in Safari on a headless iOS simulator: the
+//     phone's own WebKit shader compiler. Reports only; no file is written.
 import { createServer } from 'vite';
 import { spawn } from 'node:child_process';
 import { readdirSync, readFileSync, writeFileSync, existsSync, mkdtempSync } from 'node:fs';
@@ -37,7 +40,10 @@ const only = process.argv.indexOf('--paths');
 if (only > 0) { const chosen = new Set(JSON.parse(readFileSync(process.argv[only + 1], 'utf8'))); paths.splice(0, paths.length, ...paths.filter(p => chosen.has(p))); }
 
 const port = 5199;
-const server = await createServer({ root, configFile: false, cacheDir: mkdtempSync(join(tmpdir(), 'ga-bench-vite-')), logLevel: 'error', optimizeDeps: { entries: ['scripts/mobile-shader-bench/index.html'] }, server: { port, strictPort: true } });
+// Safari in the simulator posts its lines here (its console cannot be read from outside).
+const posted = [];
+const collect = { name: 'bench-results', configureServer(dev) { dev.middlewares.use('/__bench-paths', (req, res) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(paths)); }); dev.middlewares.use('/__bench-result', (req, res) => { let body = ''; req.on('data', c => body += c); req.on('end', () => { posted.push(body); res.end('ok'); }); }); } };
+const server = await createServer({ plugins: [collect], root, configFile: false, cacheDir: mkdtempSync(join(tmpdir(), 'ga-bench-vite-')), logLevel: 'error', optimizeDeps: { entries: ['scripts/mobile-shader-bench/index.html'] }, server: { port, strictPort: true } });
 await server.listen();
 
 const electron = createRequire(import.meta.url)('electron');
@@ -75,6 +81,34 @@ function run() {
     });
     child.on('exit', () => (done ? resolveRun(done) : reject(new Error('The bench window closed before finishing.'))));
   });
+}
+
+const simulator = process.argv.indexOf('--ios-simulator');
+if (simulator > 0) {
+  const udid = process.argv[simulator + 1];
+  const simctl = (...args) => new Promise(done => spawn('xcrun', ['simctl', ...args], { stdio: 'ignore' }).on('exit', done));
+  try {
+    await simctl('boot', udid);
+    await simctl('bootstatus', udid, '-b');
+    process.stderr.write(`Rendering ${paths.length} shaders in Safari on the simulator...\n`);
+    await simctl('openurl', udid, `http://localhost:${port}/scripts/mobile-shader-bench/index.html?report=1&frames=2&moments=%5B0%2C20%5D`);
+    const started = Date.now();
+    while (!posted.length && Date.now() - started < 60_000) await new Promise(r => setTimeout(r, 500));
+    if (!posted.length) throw new Error('Safari did not start the bench page.');
+    for (const line of posted.filter(l => l.startsWith('BENCH_ERROR'))) console.log(line);
+    while (!posted.some(line => line.startsWith('BENCH_DONE')) && Date.now() - started < 20 * 60_000) await new Promise(r => setTimeout(r, 1000));
+    const results = posted.filter(line => line.startsWith('BENCH_ONE ')).map(line => JSON.parse(line.slice(10)));
+    const failed = results.filter(r => r.error);
+    for (const line of posted.filter(l => l.startsWith('BENCH_ERROR'))) console.log(line);
+    for (const r of failed) console.log(`WEBKIT ${r.path}: ${r.error}`);
+    for (const r of results.filter(r => !r.error && r.lit < 0.01)) console.log(`DARK ${r.path} (lit ${r.lit})`);
+    console.log(`WebKit (iOS simulator): ${results.length - failed.length} of ${paths.length} compile and render${posted.some(l => l.startsWith('BENCH_DONE')) ? '' : ' (timed out)'}.`);
+    process.exitCode = failed.length || results.length < paths.length ? 1 : 0;
+  } finally {
+    await simctl('terminate', udid, 'com.apple.mobilesafari');
+    await server.close();
+  }
+  process.exit();
 }
 
 try {

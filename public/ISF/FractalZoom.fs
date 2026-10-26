@@ -32,15 +32,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     float t = iTime * zoomSpeed;
 
-    // Continuous zoom
-    float zoom = exp(fract(t) * log(complexity));
 
     // Rotation
     float angle = iTime * rotationSpeed;
     mat2 rot = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
     uv = rot * uv;
 
-    uv *= zoom;
 
     // Fractal layers
     vec3 col = vec3(0.0);
@@ -48,7 +45,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     for (int i = 0; i < 8; i++) {
         float fi = float(i);
-        float layerZoom = pow(complexity, fi - floor(t));
+        // Seamless endless zoom: every layer shrinks smoothly and the next takes its place,
+        // so each keeps its size and colour across the step (level counts layers, not slots).
+        float level = floor(t) + fi - 3.0;
+        float layerZoom = pow(complexity, fi - 3.0 - fract(t));
 
         if (layerZoom < 0.1 || layerZoom > complexity * 2.0) continue;
 
@@ -63,9 +63,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         }
 
         // Layer alpha based on zoom level
-        float alpha = smoothstep(0.0, 0.3, layerZoom) * smoothstep(complexity, complexity * 0.7, layerZoom);
+        // Faded to nothing before a layer is dropped below 0.1, so none pops out.
+        float alpha = smoothstep(0.1, 0.4, layerZoom) * smoothstep(complexity, complexity * 0.7, layerZoom);
 
-        float hue = fract(fi * 0.15 + iTime * colorSpeed);
+        float hue = fract(level * 0.15 + iTime * colorSpeed);
         vec3 layerCol = hsv2rgb(vec3(hue, 0.7, pattern * brightness));
 
         col += layerCol * alpha;
