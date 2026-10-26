@@ -23,6 +23,7 @@
   import { screenActions, selectedScreenMaskId, screenMaskPlacing } from '../stores/screens';
   import ProjectorCalibrationPanel from './ProjectorCalibrationPanel.svelte';
   import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+  import { displayFingerprint, resolveSavedDisplay } from '$lib/output/displayMatch';
 
   type DisplayInfo = {
     id: number; label: string; width: number; height: number;
@@ -40,6 +41,21 @@
   let { screen, displays, openWindowIds, onOpenOnDisplay, onCloseOnDisplay, onRefreshDisplays }: Props = $props();
 
   const tsLabel = getTextureShareLabel();
+
+  // The display this Screen is routed to, found by id or, after a projector
+  // was re-plugged under a new id, by its name and size.
+  const routed = $derived(resolveSavedDisplay(displays, screen.displayId, screen.displayFingerprint));
+  // A saved display that nothing connected matches (a project from another
+  // computer, or a projector that is unplugged). Opening would otherwise land
+  // on the main display and cover the editor. An empty list means the
+  // displays could not be listed, which is not the same as missing.
+  const displayMissing = $derived(displays.length > 0 && routed.status === 'missing');
+
+  function pickDisplay(value: string) {
+    const id = value === '' ? null : parseInt(value);
+    const picked = id == null ? null : displays.find((d) => d.id === id) ?? null;
+    update({ displayId: id, displayFingerprint: picked ? displayFingerprint(picked) : null });
+  }
 
   function update(partial: Partial<OutputSlice>) {
     screenActions.update(screen.id, partial);
@@ -143,20 +159,20 @@
       <label class="field">
         <span class="lbl">Display</span>
         <select
-          value={screen.displayId ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLSelectElement).value;
-            update({ displayId: v === '' ? null : parseInt(v) });
-          }}
+          value={routed.display?.id ?? screen.displayId ?? ''}
+          onchange={(e) => pickDisplay((e.target as HTMLSelectElement).value)}
         >
           <option value="">— pick —</option>
+          {#if displayMissing && screen.displayId != null}
+            <option value={screen.displayId} disabled>{screen.displayFingerprint?.label || `Display ${screen.displayId}`} (not connected)</option>
+          {/if}
           {#each displays as d}
             <option value={d.id}>{d.label || `Display ${d.id}`} ({d.width}×{d.height}{d.isPrimary ? ' · primary' : ''})</option>
           {/each}
         </select>
         <button class="icon-btn" title="Refresh display list" onclick={onRefreshDisplays}>↻</button>
       </label>
-      {#if screen.displayId != null && displays.find(d => d.id === screen.displayId)?.isPrimary}
+      {#if routed.display?.isPrimary}
         <p class="warn-banner">
           ⚠ This is your primary display. Opening here will cover the editor. Press <kbd>Esc</kbd> in the slice window to close it.
         </p>
@@ -166,9 +182,14 @@
         {#if openWindowIds.includes(screen.id)}
           <button class="full-btn danger" onclick={() => onCloseOnDisplay(screen)}>Close on display</button>
         {:else}
-          <button class="full-btn" disabled={screen.displayId == null} onclick={() => onOpenOnDisplay(screen)}>Open on display</button>
+          <button class="full-btn" disabled={screen.displayId == null || displayMissing} onclick={() => onOpenOnDisplay(screen)}>Open on display</button>
         {/if}
       </div>
+      {#if displayMissing}
+        <p class="warn-banner">
+          ⚠ The display this Screen was routed to is not connected (a project from another computer, or a projector that was unplugged). Connect it and press ↻, or pick another display above.
+        </p>
+      {/if}
     {:else}
       <label class="field">
         <span class="lbl">Sender</span>

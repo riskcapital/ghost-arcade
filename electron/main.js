@@ -4086,14 +4086,17 @@ function registerIpcHandlers() {
       return { ok: false, error: 'sliceId required' };
     }
 
-    // Resolve the target display. Falls back to the primary display if
-    // the requested id is gone (operator unplugged a projector between
-    // configuration and open).
+    // Resolve the target display. A display that is gone (a projector
+    // unplugged since it was picked, or a project from another computer)
+    // opens nothing: falling back to the primary display covered the editor.
     let target = null;
     if (typeof displayId === 'number') {
       target = screen.getAllDisplays().find(d => d.id === displayId) || null;
     }
-    if (!target) target = screen.getPrimaryDisplay();
+    if (!target) {
+      console.warn(`[Output] slice ${sliceId}: display ${displayId} is not connected; not opening`);
+      return { ok: false, error: 'display-missing' };
+    }
 
     // Close any existing window for this slice — re-opening should
     // always present a fresh state to the operator.
@@ -5656,6 +5659,14 @@ function createMainWindow() {
     if (cfg.displayId) {
       const found = allDisplays.find(d => d.id === cfg.displayId);
       if (found) target = found;
+      else if (isSliceDisplay) {
+        // A Screen's display is not connected: open nothing rather than a
+        // fullscreen window over the editor on the primary display.
+        console.warn(`[Output] slice window: display ${cfg.displayId} is not connected; not opening`);
+        return { action: 'deny' };
+      }
+    } else if (isSliceDisplay) {
+      return { action: 'deny' };
     }
     const bounds = target.bounds;
     const fullscreen = !!cfg.fullscreen;

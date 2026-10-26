@@ -2,6 +2,7 @@
 // Manages app-wide settings including recording preferences
 
 import type { ProjectorCalibration, OverlapBand } from '../output/projectorCalibration';
+import type { DisplayFingerprint } from '../output/displayMatch';
 import { writable, get } from 'svelte/store';
 import { meshGridHasTangents } from '../utils/meshWarp';
 import { invoke, isDesktopApp } from '$lib/bridge';
@@ -311,6 +312,9 @@ export interface OutputSlice {
   /** Electron `screen.getAllDisplays()` id when targetType === 'display'.
    *  Null/undefined means the slice falls back to sender output. */
   displayId?: number | null;
+  /** What the display looked like when it was picked (name, size, scale).
+   *  Display ids change when a projector is re-plugged; this finds it again. */
+  displayFingerprint?: DisplayFingerprint | null;
   /** Output transport. 'spout' / 'syphon' = platform-native local
    *  GPU texture share (Windows / macOS); 'ndi' = network device
    *  interface, cross-machine streaming. spoutName is reused as the
@@ -626,6 +630,7 @@ export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): Ou
     cropH: s.cropH ?? 1,
     targetType: s.targetType ?? 'sender',
     displayId: s.displayId ?? null,
+    displayFingerprint: s.displayFingerprint ?? null,
     outputType: s.outputType,
     spoutName: s.spoutName ?? `ghostArcade-${s.name ?? 'Slice'}`,
     edgeBlendLeft: s.edgeBlendLeft ?? 0,
