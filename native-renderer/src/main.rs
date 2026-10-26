@@ -4473,6 +4473,9 @@ struct App {
     adapter_luid: Option<String>,
     target_fps: u32,
     last_redraw: Instant,
+    /// When the output window was asked for a redraw that has not arrived
+    /// yet (see `drive_frame`).
+    redraw_requested_at: Option<Instant>,
     running: bool,
     pending_width: u32,
     pending_height: u32,
@@ -4953,6 +4956,7 @@ impl App {
             adapter_luid: None,
             target_fps: 60,
             last_redraw: Instant::now(),
+            redraw_requested_at: None,
             running: false,
             pending_width: 1280,
             pending_height: 720,
@@ -7162,14 +7166,32 @@ impl App {
     }
 
     fn request_present(&mut self) {
+        let now = Instant::now();
+        self.last_redraw = now;
+        self.drive_frame(now);
+    }
+
+    /// Draw the next frame. With the output window attached that used to be a
+    /// redraw request only, answered by RedrawRequested. Windows sends none to
+    /// a minimised window, and since this one frame also feeds the editor
+    /// preview, the Screens and texture sharing, minimising the Live Output
+    /// stopped all of them. A minimised window, or a redraw that has not
+    /// arrived within two frames, is drawn directly instead.
+    fn drive_frame(&mut self, now: Instant) {
         if !self.output_window_attached {
-            self.last_redraw = Instant::now();
             self.render();
             return;
         }
-        if let Some(renderer) = self.renderer.as_ref() {
-            self.last_redraw = Instant::now();
+        let Some(renderer) = self.renderer.as_ref() else {
+            return;
+        };
+        let minimized = renderer.window.is_minimized().unwrap_or(false);
+        if !minimized {
             renderer.window.request_redraw();
+        }
+        let requested_at = *self.redraw_requested_at.get_or_insert(now);
+        if output_redraw_stalled(minimized, requested_at, now, self.frame_duration()) {
+            self.render();
         }
     }
 
@@ -19844,13 +19866,7 @@ impl ApplicationHandler<UserEvent> for App {
                 let next_frame_at = self.last_redraw + frame_duration;
                 let now = Instant::now();
                 if let Some(scheduled) = completed_gpu_frame_schedule(self.last_redraw, now, frame_duration, self.pending_render_retry) {
-                    if self.output_window_attached {
-                        if let Some(renderer) = self.renderer.as_ref() {
-                            renderer.window.request_redraw();
-                        }
-                    } else {
-                        self.render();
-                    }
+                    self.drive_frame(now);
                     self.last_redraw = scheduled;
                     event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_redraw + frame_duration));
                 } else {
@@ -19905,7 +19921,10 @@ impl ApplicationHandler<UserEvent> for App {
                     self.pending_height = renderer.config.height;
                 }
             }
-            WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::RedrawRequested => {
+                self.redraw_requested_at = None;
+                self.render();
+            }
             _ => {}
         }
     }
@@ -19952,13 +19971,7 @@ impl ApplicationHandler<UserEvent> for App {
         let next_frame_at = self.last_redraw + frame_duration;
         let now = Instant::now();
         if now >= next_frame_at {
-            if self.output_window_attached {
-                if let Some(renderer) = self.renderer.as_ref() {
-                    renderer.window.request_redraw();
-                }
-            } else {
-                self.render();
-            }
+            self.drive_frame(now);
             self.last_redraw = scheduled_frame_start(next_frame_at, now, frame_duration);
             event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_redraw + frame_duration));
         } else {
@@ -34149,6 +34162,12 @@ fn scheduled_frame_start(deadline: Instant, now: Instant, period: Duration) -> I
     if now.saturating_duration_since(deadline) < period { deadline } else { now }
 }
 
+/// Draw directly rather than wait on the window: it is minimised (Windows
+/// sends it no redraws), or the redraw asked for has not come for two frames.
+fn output_redraw_stalled(minimized: bool, requested_at: Instant, now: Instant, period: Duration) -> bool {
+    minimized || now.saturating_duration_since(requested_at) >= period * 2
+}
+
 fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, retry: bool) -> Option<Instant> {
     let deadline = last + period;
     if now >= deadline { Some(scheduled_frame_start(deadline, now, period)) }
@@ -34160,6 +34179,20 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_minimised_or_silent_output_window_does_not_stop_the_core() {
+        use std::time::{Duration, Instant};
+        let period = Duration::from_millis(16);
+        let asked = Instant::now();
+        // A visible window that answers within a frame is waited for.
+        assert!(!super::output_redraw_stalled(false, asked, asked + Duration::from_millis(15), period));
+        // Minimised: Windows sends no redraw, so draw now.
+        assert!(super::output_redraw_stalled(true, asked, asked, period));
+        // Two frames without the redraw arriving: draw now, and keep doing so.
+        assert!(super::output_redraw_stalled(false, asked, asked + period * 2, period));
+        assert!(super::output_redraw_stalled(false, asked, asked + period * 5, period));
+    }
+
     #[test]
     fn adapter_luids_print_high_part_first_as_presenters_parse_them() {
         assert_eq!(super::format_adapter_luid(0, 0x0001_2345), "0000000000012345");
