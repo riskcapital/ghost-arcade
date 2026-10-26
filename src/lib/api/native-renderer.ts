@@ -1866,6 +1866,9 @@ export const readNativeAudioScope = (since: number, maxFrames = 4096) =>
 /** Prepared native transactions; launcher integration must reconcile receipts before publishing UI state. */
 export async function scheduleNativeLaunch(launch: {
   id: string; lane: string; revision: number; delay_ms: number; beat?: number;
+  /** The same deadline as `delay_ms`, on the system clock both processes
+   *  share, so the core does not count the IPC time on top. */
+  due_epoch_ms?: number;
   commands: Array<RendererCommand | {type: 'set_media_source_playback'; source_id: string; uri?: string; paused?: boolean; time_seconds?: number; seek_generation?: number}>;
   expected_sources?: Record<string, {source_id: string; seek_generation?: number}>;
 }) {

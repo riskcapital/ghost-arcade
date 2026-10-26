@@ -1,7 +1,7 @@
 //! Bounded, cancellable prepared command transactions. This queue does not
 //! construct graphs or decode assets; callers must prepare those before enqueue.
 use serde_json::{json, Value};
-use std::{collections::{HashMap, HashSet, VecDeque}, time::{Duration, Instant}};
+use std::{collections::{HashMap, HashSet, VecDeque}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 const MAX_PENDING: usize = 64;
 const MAX_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LANES: usize = 128;
@@ -26,8 +26,35 @@ pub struct Scheduler {
     receipts: VecDeque<(Value, Instant)>,
     serial: u64,
 }
+/// How long until a launch is due, in ms from receipt.
+///
+/// `delay_ms` was measured by the editor before it sent the request, so a
+/// launch counted from receipt landed late by however long the IPC and the
+/// broker took -- the quantised cut fell after the beat it was set to. The
+/// editor now also sends its deadline on the system clock (`due_epoch_ms`),
+/// which both processes share; the time in transit is then already spent.
+/// The deadline is only believed while it agrees with `delay_ms` to within a
+/// second, so a wall-clock step cannot fire a launch early or seconds late.
+pub fn launch_delay_ms(args: &Value, now_epoch_ms: f64) -> Result<f64, String> {
+    let delay = args["delay_ms"].as_f64().filter(|v| v.is_finite() && *v >= 0.0 && *v <= 60000.0).ok_or("delay_ms must be within 0..60000")?;
+    if let Some(due) = args.get("due_epoch_ms").and_then(Value::as_f64).filter(|v| v.is_finite()) {
+        let remaining = due - now_epoch_ms;
+        if remaining.is_finite() && (delay - remaining).abs() <= 1000.0 {
+            return Ok(remaining.clamp(0.0, 60000.0));
+        }
+    }
+    Ok(delay)
+}
+
+fn epoch_now_ms() -> f64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
+}
+
 impl Scheduler {
     pub fn enqueue(&mut self, args: &Value, now: Instant, max_commands: usize) -> Result<Value, String> {
+        self.enqueue_at(args, now, epoch_now_ms(), max_commands)
+    }
+    pub fn enqueue_at(&mut self, args: &Value, now: Instant, now_epoch_ms: f64, max_commands: usize) -> Result<Value, String> {
         let id = args["id"].as_str().filter(|s| !s.is_empty() && s.len() <= 128).ok_or("invalid launch id")?;
         let lane = args["lane"].as_str().filter(|s| !s.is_empty() && s.len() <= 128).ok_or("invalid launch lane")?;
         let revision = args["revision"].as_u64().filter(|n| *n > 0).ok_or("invalid launch revision")?;
@@ -68,7 +95,7 @@ impl Scheduler {
             if c[field].as_str().is_none_or(|s| s.is_empty() || s.len() > 256) { return Err(format!("invalid {field}")); }
             if kind == "bind_media_source" && c["source_id"].as_str().is_none_or(|s| s.is_empty()) { return Err("invalid source_id".into()); }
         }
-        let delay = args["delay_ms"].as_f64().filter(|v| v.is_finite() && *v >= 0.0 && *v <= 60000.0).ok_or("delay_ms must be within 0..60000")?;
+        let delay = launch_delay_ms(args, now_epoch_ms)?;
         let beat = match args.get("beat") { None => None, Some(v) => Some(v.as_f64().filter(|v| v.is_finite()).ok_or("invalid launch beat")?) };
         let mut resources: HashSet<String> = commands.iter().filter_map(|c| c["layer_id"].as_str().map(|id| format!("layer:{id}"))).collect();
         if let Some(guards) = args.get("expected_sources").filter(|value| !value.is_null()) {
@@ -171,6 +198,23 @@ impl Scheduler {
         q.complete(&due[0],json!({}));
         assert!(q.enqueue(&request(1),now,100).is_err());
         assert!(!q.has_pending());
+    }
+    #[test] fn a_deadline_on_the_shared_clock_absorbs_the_time_in_transit() {
+        // Sent 500 ms ahead; it took 40 ms to arrive.
+        let mut p=request(1); p["delay_ms"]=json!(500); p["due_epoch_ms"]=json!(10_500.0);
+        assert_eq!(launch_delay_ms(&p,10_040.0).unwrap(),460.0);
+        // Without a deadline the delay counts from receipt, as before.
+        p.as_object_mut().unwrap().remove("due_epoch_ms");
+        assert_eq!(launch_delay_ms(&p,10_040.0).unwrap(),500.0);
+        // A wall clock that stepped is not believed over the measured delay.
+        p["due_epoch_ms"]=json!(10_500.0);
+        assert_eq!(launch_delay_ms(&p,50_000.0).unwrap(),500.0);
+        // Already due on arrival: fires on the next pump, never with a negative delay.
+        assert_eq!(launch_delay_ms(&p,10_600.0).unwrap(),0.0);
+        let now=Instant::now(); let mut q=Scheduler::default();
+        q.enqueue_at(&p,now,10_040.0,100).unwrap();
+        assert!(q.take_due(now+Duration::from_millis(459),None).is_empty());
+        assert_eq!(q.take_due(now+Duration::from_millis(460),None).len(),1);
     }
     #[test] fn link_requires_clock_and_obeys_changed_tempo() {
         let now=Instant::now();let mut q=Scheduler::default();let mut p=request(1);p["beat"]=json!(8);

@@ -4691,7 +4691,9 @@ if (typeof window !== 'undefined' && isDesktopApp && !new URLSearchParams(window
       const clock=launchClockPosition(performance.now());
       const delay=plan.trigger.fireBeat===undefined?plan.trigger.fireAt-performance.now():(plan.trigger.fireBeat-clock.beat)*clock.beatMs;
       if (delay<20) throw new Error('Native preparation missed the launch deadline');
-      await scheduleNativeLaunch({id:plan.trigger.id,lane:plan.lane,revision,delay_ms:delay,
+      // The deadline on the system clock too: the core counts delay_ms from
+      // receipt, which put a quantised cut late by the time in transit.
+      await scheduleNativeLaunch({id:plan.trigger.id,lane:plan.lane,revision,delay_ms:delay,due_epoch_ms:Date.now()+delay,
         ...(launchClockFollowsLink()?{beat:plan.trigger.fireBeat}:{}),
         expected_sources:Object.fromEntries(cuts.map(({row,bindingLayerId})=>[row.fadeToken===undefined?bindingLayerId:vjClipTransitionInputId(row.layerId,'out',row.fadeToken),{source_id:row.outgoing.id,seek_generation:row.outgoing._nativePlaybackSeekSeq??0}])),
         commands:cuts.flatMap(({row,bindingLayerId,incoming,uri})=>[
