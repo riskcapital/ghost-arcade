@@ -108,6 +108,7 @@
   import { hydraStore } from '../stores/hydra';
   import { initStateBroadcast, destroyStateBroadcast, onRemoteShowTransition, isStateSyncSender } from '$lib/sync/stateBroadcast';
   import { waitForVideoData, videoLoadFailureMessage, releaseVideoElement, type VideoReadyResult } from '$lib/video/videoImport';
+  import { judgeFrameCallbacks, decodedFrameCount, type FrameCallbackWindow } from '$lib/renderer/videoUploadGate';
   import { mediaRelinkVersion } from '../stores/missingMedia';
   import {
     setMediaLoadError,
@@ -3532,7 +3533,12 @@
         // texture (one video can feed several slices) remembers the last it
         // took. A paused one uploads when its position changes (a seek).
         if (layer.source.texture && ready && vEl) {
-          const frames = vEl as HTMLVideoElement & { __gaFrameSeq?: number; __gaFrameWatch?: boolean };
+          const frames = vEl as HTMLVideoElement & {
+            __gaFrameSeq?: number;
+            __gaFrameWatch?: boolean;
+            __gaFrameWindow?: FrameCallbackWindow;
+            __gaFrameWatchUnreliable?: boolean;
+          };
           if (!frames.__gaFrameWatch && typeof frames.requestVideoFrameCallback === 'function') {
             frames.__gaFrameWatch = true;
             frames.__gaFrameSeq = 1;
@@ -3542,8 +3548,28 @@
             };
             frames.requestVideoFrameCallback(onFrame);
           }
+          // These videos are not in the page, where Chromium may report
+          // frames far less often than the video plays (see
+          // videoUploadGate.ts). One whose callbacks fall behind its decoded
+          // frames uploads on every editor frame instead, as before 2.0.5.
+          if (frames.__gaFrameWatch && !frames.__gaFrameWatchUnreliable) {
+            const judged = judgeFrameCallbacks(frames.__gaFrameWindow ?? null, {
+              at: performance.now(),
+              seq: frames.__gaFrameSeq ?? 0,
+              time: frames.currentTime,
+              decoded: decodedFrameCount(frames),
+              paused: frames.paused,
+              seeking: frames.seeking,
+              rate: frames.playbackRate,
+            });
+            frames.__gaFrameWindow = judged.window;
+            if (judged.verdict === 'unreliable') {
+              frames.__gaFrameWatchUnreliable = true;
+              console.info('[Canvas] video frame callbacks lag behind playback; uploading every frame for', layer.source.name || layer.id);
+            }
+          }
           const tex = layer.source.texture as THREE.VideoTexture & { __gaSeq?: number; __gaTime?: number };
-          const watched = !!frames.__gaFrameWatch;
+          const watched = !!frames.__gaFrameWatch && !frames.__gaFrameWatchUnreliable;
           const fresh = !watched
             || tex.__gaSeq !== frames.__gaFrameSeq
             || (frames.paused && tex.__gaTime !== frames.currentTime);
