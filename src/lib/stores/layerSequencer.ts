@@ -417,13 +417,13 @@ function createLayerSequencerStore() {
     /** Restore from project save. Stops playback (no auto-start on load —
      *  would surprise the user) and resets the playhead to step 0. */
     hydrate(payload: any) {
-      if (!payload || typeof payload !== 'object') {
-        set({ ...INITIAL_STATE });
-        return;
-      }
       if (animFrameId) {
         cancelAnimationFrame(animFrameId);
         animFrameId = null;
+      }
+      if (!payload || typeof payload !== 'object') {
+        set({ ...INITIAL_STATE });
+        return;
       }
       const pattern = payload.pattern && typeof payload.pattern === 'object' && Array.isArray(payload.pattern.steps)
         ? {

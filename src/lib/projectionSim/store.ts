@@ -173,6 +173,16 @@ function createProjectionSimStore() {
       setProjectionSimSelection(null);
     },
 
+    /** Project-open restore for a file saved before the Map Sim scene was:
+     *  the scene a fresh launch starts with, not the previous project's. */
+    resetForProject() {
+      past.length = 0;
+      future.length = 0;
+      lastSnapshotAt = 0;
+      setScene(buildProjectionSimPreset('cube-pyramid') ?? createProjectionSimScene());
+      setProjectionSimSelection(null);
+    },
+
     /** Save-time serializer: runtime blob/asset URLs are session-scoped, so
      *  blank them whenever the durable AssetRef can reproduce them on load. */
     exportForProject(): ProjectionSimScene {

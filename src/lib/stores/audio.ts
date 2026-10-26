@@ -380,6 +380,38 @@ function createAudioStore() {
       }));
     },
 
+    /**
+     * The audio calibration a project saved (sensitivity, smoothing, manual
+     * BPM, per-band gain). Anything the project does not carry goes back to
+     * the default rather than keeping the previous project's value; `null`
+     * (a project from before these were saved) resets all of them.
+     */
+    restoreProjectSettings(saved: unknown) {
+      const defaults = createDefaultState();
+      const payload = (saved && typeof saved === 'object' ? saved : {}) as Record<string, any>;
+      const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+      const sensitivity = finite(payload.sensitivity) ? Math.max(0, Math.min(3, payload.sensitivity)) : defaults.sensitivity;
+      const smoothing = finite(payload.smoothing) ? payload.smoothing : defaults.smoothing;
+      const manualBPM = finite(payload.manualBPM) ? Math.max(30, Math.min(300, payload.manualBPM)) : null;
+      const bandGain = { ...defaults.bandGain };
+      if (payload.bandGain && typeof payload.bandGain === 'object') {
+        for (const band of Object.keys(bandGain) as (keyof AudioState['bandGain'])[]) {
+          const value = payload.bandGain[band];
+          if (finite(value)) bandGain[band] = Math.max(0, Math.min(3, value));
+        }
+      }
+      audioAnalyzer.setSmoothing(smoothing);
+      update(s => ({
+        ...s,
+        sensitivity,
+        smoothing,
+        manualBPM,
+        tapTimes: [],
+        bandGain,
+        ...(manualBPM !== null ? { bpm: manualBPM, bpmConfidence: 1.0 } : {}),
+      }));
+    },
+
     /** Get current state snapshot */
     getState(): AudioState {
       return get({ subscribe });

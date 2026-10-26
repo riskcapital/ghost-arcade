@@ -173,7 +173,8 @@ describe('show control project persistence', () => {
     const { project } = layers;
     await buildShowControl();
     const sync = JSON.parse(JSON.stringify(project.exportProject()));
-    expect(project.importProject(sync)).toBe(true);
+    // The relay receiver marks its payloads live (stateBroadcast.ts).
+    expect(project.importProject(sync, undefined, { live: true })).toBe(true);
     await flush();
     expect(cues.cueList.state.cues).toHaveLength(2);
   });
