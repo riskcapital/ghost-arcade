@@ -2758,6 +2758,7 @@ function startNativeEditorPreviewPump() {
     try {
       const texture = await nativePreviewTextureMetadataForPump();
       if (!isPublishableNativeOutputTexture(texture)) return;
+      syncPresenterAdapter(addon, texture.adapter_luid);
       const frame = Number(texture.frame ?? 0);
       const width = Number(texture.width ?? 0);
       const height = Number(texture.height ?? 0);
@@ -2818,11 +2819,14 @@ function startNativeEditorPreviewPump() {
       if (now - nativePreviewLastLogTime > 5000) {
         const elapsed = Math.max(0.001, (now - nativePreviewLastLogTime) / 1000);
         if (nativeDisplayLinkPump) {
-          const addonFrames = Number(addon.status?.().framesPresented ?? nativePreviewLastAddonFrameCount);
+          const addonStatus = addon.status?.() ?? {};
+          const addonFrames = Number(addonStatus.framesPresented ?? nativePreviewLastAddonFrameCount);
           const delta = Math.max(0, addonFrames - nativePreviewLastAddonFrameCount);
           nativePreviewLastAddonFrameCount = addonFrames;
           const transport = dxgiPresenter ? 'DXGI vblank' : 'display-link';
-          console.log(`[NativePreview] ${transport} presented ${delta} native frame(s) @ ${(delta / elapsed).toFixed(1)} fps`);
+          // A pump that presents nothing says why, instead of only counting.
+          const why = delta === 0 && addonStatus.pumpError ? ` (last error: ${addonStatus.pumpError})` : '';
+          console.log(`[NativePreview] ${transport} presented ${delta} native frame(s) @ ${(delta / elapsed).toFixed(1)} fps${why}`);
         } else {
           console.log(`[NativePreview] presented ${nativePreviewFrameCount} native IOSurface frame(s) @ ${(nativePreviewFrameCount / elapsed).toFixed(1)} fps`);
           nativePreviewFrameCount = 0;
@@ -3579,6 +3583,25 @@ function windowsNativeMonitorPump(addon) {
   return isWin && typeof addon?.monitorSetSharedTextureSource === 'function';
 }
 
+/** Windows: the core says which adapter its shared textures live on, and the
+ *  presenters open them by name, which only works from a device on that same
+ *  adapter. On a laptop with two GPUs the presenters' default adapter is the
+ *  integrated one while the core renders on the discrete one, and every
+ *  present failed without a word. */
+let presenterAdapterLuid = '';
+function syncPresenterAdapter(addon, luid) {
+  if (!isWin || typeof luid !== 'string' || !luid || luid === presenterAdapterLuid) return;
+  if (typeof addon?.setAdapterLuid !== 'function') return;
+  try {
+    if (addon.setAdapterLuid(luid)) {
+      presenterAdapterLuid = luid;
+      console.log(`[NativePreview] presenters open textures on the render core's adapter ${luid}`);
+    }
+  } catch {
+    // An older addon keeps its default adapter.
+  }
+}
+
 function startSliceNativePump() {
   if (sliceNativePump) return;
   const nativePump = windowsNativeMonitorPump(nativePreviewAddon || loadNativePreviewAddon());
@@ -3595,6 +3618,7 @@ function startSliceNativePump() {
       if (nativePump && ++ticks % 5 === 0) addon.monitorRestack?.();
       const state = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
       if (!state?.available || !Array.isArray(state.slices)) return;
+      syncPresenterAdapter(addon, state.adapter_luid);
       for (const entry of state.slices) {
         const sliceId = typeof entry?.id === 'string' ? entry.id : '';
         if (!sliceId || !sliceNativeAttached.has(sliceId)) continue;
@@ -3675,6 +3699,7 @@ function startDeckMonitorPump() {
       const state = await nativeRendererBroker.invoke('native_renderer_get_deck_monitor_state', {});
       if (generation !== deckMonitorPumpGeneration) return;
       if (!state?.available || !Array.isArray(state.banks)) return;
+      syncPresenterAdapter(addon, state.adapter_luid);
       for (const bank of state.banks) {
         const name = bank?.bank === 'b' ? 'deck-b' : 'deck-a';
         if (!deckMonitorAttachedNames.has(name)) continue;

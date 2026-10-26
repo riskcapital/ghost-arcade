@@ -43,6 +43,20 @@ it('publishes a Windows Screen to the native vblank pump once per texture', asyn
   expect(h.addon.monitorRestack).toHaveBeenCalled();
 });
 
+it('opens Screen textures on the render core\'s adapter', async () => {
+  // A laptop with two GPUs: the presenter's default adapter is not the one
+  // the core renders on, and a texture opens by name only on its own adapter.
+  const h = harness(true);
+  h.addon.setAdapterLuid = vi.fn(() => true);
+  h.invoke.mockResolvedValue({
+    available: true, adapter_luid: '0000000000012345',
+    slices: [{ id: 's1', shared_name: 'S1', width: 1920, height: 1080, frame: 1 }],
+  });
+  await h.tick(); await h.tick();
+  expect(h.addon.setAdapterLuid.mock.calls).toEqual([['0000000000012345']]);
+  expect(h.addon.monitorSetSharedTextureSource).toHaveBeenCalledTimes(1);
+});
+
 it('keeps presenting each new frame with an addon that has no native pump', async () => {
   const h = harness(false);
   expect(h.intervals[0]).toBeCloseTo(1000 / 30);

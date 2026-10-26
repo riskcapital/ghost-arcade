@@ -26,6 +26,7 @@
 #include <windows.h>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
+#include <dxgi1_4.h>
 #include <d3dcompiler.h>
 
 #include <algorithm>
@@ -275,6 +276,57 @@ void RefreshBackdropRegion(HWND host) {
   // On success Windows owns the region.
 }
 
+// The render core's adapter. The core creates its shared textures on the
+// adapter it renders with (high-performance on a two-GPU laptop), and a texture
+// opened by name only opens on that same adapter. A device made on the default
+// adapter -- usually the integrated GPU -- failed every OpenSharedResourceByName
+// while the editor saw a presenter that was "attached". JS publishes the
+// core's LUID from the texture metadata; every surface makes its device there.
+std::mutex g_adapterMutex;
+bool g_adapterLuidSet = false;
+LUID g_adapterLuid = {};
+std::atomic<uint64_t> g_adapterGeneration{0};
+
+bool ParseLuidHex(const std::string& hex, LUID* out) {
+  // HighPart then LowPart, 8 hex digits each (format_adapter_luid in the core).
+  if (hex.size() != 16) return false;
+  unsigned long long value = 0;
+  for (char c : hex) {
+    int digit = -1;
+    if (c >= '0' && c <= '9') digit = c - '0';
+    else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+    if (digit < 0) return false;
+    value = (value << 4) | (unsigned long long)digit;
+  }
+  out->HighPart = (LONG)(uint32_t)(value >> 32);
+  out->LowPart = (DWORD)(value & 0xffffffffULL);
+  return true;
+}
+
+bool SameLuid(const LUID& a, const LUID& b) {
+  return a.HighPart == b.HighPart && a.LowPart == b.LowPart;
+}
+
+// The published LUID, if any, and the generation it belongs to.
+bool PublishedAdapterLuid(LUID* luid, uint64_t* generation) {
+  std::lock_guard<std::mutex> lock(g_adapterMutex);
+  *generation = g_adapterGeneration.load();
+  if (!g_adapterLuidSet) return false;
+  *luid = g_adapterLuid;
+  return true;
+}
+
+// AddRef'd adapter with this LUID, or nullptr when it is not present.
+IDXGIAdapter* AdapterForLuid(const LUID& luid) {
+  IDXGIFactory4* factory = nullptr;
+  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory4), (void**)&factory)) || !factory) return nullptr;
+  IDXGIAdapter* adapter = nullptr;
+  if (FAILED(factory->EnumAdapterByLuid(luid, __uuidof(IDXGIAdapter), (void**)&adapter))) adapter = nullptr;
+  factory->Release();
+  return adapter;
+}
+
 // One presentation surface: an underlay HWND plus its swapchain.
 // The primary editor preview uses one of these; each deck monitor / slice
 // output gets its own, keyed by name.
@@ -319,7 +371,7 @@ class PreviewSurface {
     rect_ = rect;
     PositionBehind();
 
-    if (!device_ && !CreateDevice(error)) return false;
+    if (!EnsureDevice(error)) return false;
     // Prime every presenter before the first producer frame, including the
     // full editor backdrop. Otherwise startup exposes the desktop.
     if (!backingReady_ && !ClearBackdrop(error)) return false;
@@ -427,6 +479,17 @@ class PreviewSurface {
       g_auxiliaryRegions.erase(child_);
       RefreshBackdropRegion(host_);
     }
+    ReleaseDevice();
+    if (child_) {
+      DestroyWindow(child_);
+      child_ = nullptr;
+    }
+    host_ = nullptr;
+    attached_ = false;
+  }
+
+  // Everything made from the D3D11 device, and the device. The window stays.
+  void ReleaseDevice() {
     ReleaseShared();
     SafeRelease(overlayVS_);
     SafeRelease(overlayPS_);
@@ -441,19 +504,35 @@ class PreviewSurface {
     SafeRelease(rasterizer_);
     swapWidth_ = 0;
     swapHeight_ = 0;
+    if (context_) {
+      // A flip-model swapchain is only released once the context lets go of
+      // its back buffer; a new one for the same window fails until then.
+      context_->ClearState();
+      context_->Flush();
+    }
     SafeRelease(swapchain_);
     SafeRelease(context_);
     SafeRelease(device1_);
     SafeRelease(device_);
-    if (child_) {
-      DestroyWindow(child_);
-      child_ = nullptr;
-    }
-    host_ = nullptr;
-    attached_ = false;
     backingReady_ = false;
     sourceWidth_ = 0;
     sourceHeight_ = 0;
+  }
+
+  // A device on the core's adapter. Made on first use, and made again when
+  // the core turns out to render on another adapter than this device's.
+  bool EnsureDevice(std::string* error) {
+    LUID wanted = {};
+    uint64_t generation = 0;
+    const bool published = PublishedAdapterLuid(&wanted, &generation);
+    if (device_) {
+      if (generation == deviceGeneration_) return true;
+      deviceGeneration_ = generation;
+      if (!published || (deviceLuidKnown_ && SameLuid(deviceLuid_, wanted))) return true;
+      ReleaseDevice();
+    }
+    deviceGeneration_ = generation;
+    return CreateDevice(published ? &wanted : nullptr, error);
   }
 
   // Opens (or reuses) the named shared texture and blits it to the swapchain.
@@ -467,10 +546,11 @@ class PreviewSurface {
   // deadlock against any JS-side call waiting for the same mutex.
   bool Present(const std::string& sharedName, uint32_t width, uint32_t height,
                UINT syncInterval, bool allowReposition, std::string* error) {
-    if (!attached_ || !device_ || !child_) {
+    if (!attached_ || !child_) {
       *error = "preview surface is not attached";
       return false;
     }
+    if (!EnsureDevice(error)) return false;
     if (sharedName.empty()) {
       *error = "shared texture name was empty";
       return false;
@@ -550,6 +630,7 @@ class PreviewSurface {
       return false;
     }
     framesPresented_++;
+    backingReady_ = true;
     // The editor window moves/resizes without notifying us, so re-assert the
     // behind-host position periodically to keep tracking the canvas hole.
     if (allowReposition && (framesPresented_ % 30) == 0) PositionBehind();
@@ -720,20 +801,39 @@ class PreviewSurface {
     return std::string(buf);
   }
 
-  bool CreateDevice(std::string* error) {
+  bool CreateDevice(const LUID* luid, std::string* error) {
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL obtained;
+    // The core's adapter when it has been published; the default adapter
+    // until then, or if that adapter has gone (a GPU switched off).
+    IDXGIAdapter* adapter = luid ? AdapterForLuid(*luid) : nullptr;
     HRESULT hr = D3D11CreateDevice(
-        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+        adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
         levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
         &device_, &obtained, &context_);
+    SafeRelease(adapter);
     if (FAILED(hr)) {
       *error = "D3D11CreateDevice failed (hr=0x" + HexOf(hr) + ")";
       return false;
     }
+    deviceLuidKnown_ = false;
+    IDXGIDevice* dxgiDevice = nullptr;
+    if (SUCCEEDED(device_->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgiDevice)) && dxgiDevice) {
+      IDXGIAdapter* used = nullptr;
+      DXGI_ADAPTER_DESC desc = {};
+      if (SUCCEEDED(dxgiDevice->GetAdapter(&used)) && used && SUCCEEDED(used->GetDesc(&desc))) {
+        deviceLuid_ = desc.AdapterLuid;
+        deviceLuidKnown_ = true;
+      }
+      SafeRelease(used);
+      dxgiDevice->Release();
+    }
     hr = device_->QueryInterface(__uuidof(ID3D11Device1), (void**)&device1_);
     if (FAILED(hr) || !device1_) {
+      // Do not keep a half-made device: the next call would take it as ready.
+      SafeRelease(context_);
+      SafeRelease(device_);
       *error = "ID3D11Device1 is unavailable; OpenSharedResourceByName requires D3D11.1";
       return false;
     }
@@ -902,6 +1002,9 @@ class PreviewSurface {
 
   HWND host_ = nullptr;
   const bool fullHostBackdrop_;
+  uint64_t deviceGeneration_ = 0;
+  LUID deviceLuid_ = {};
+  bool deviceLuidKnown_ = false;
   HWND child_ = nullptr;
   ID3D11Device* device_ = nullptr;
   ID3D11Device1* device1_ = nullptr;
@@ -967,8 +1070,25 @@ std::atomic<bool> g_pumpRunning{false};
 std::atomic<uint64_t> g_pumpFrames{0};
 std::atomic<uint64_t> g_pumpFailures{0};
 
+// Why the pumps last failed to present. A pump that cannot open the core's
+// texture used to fail silently forever; the reason now reaches status().
+std::mutex g_pumpErrorMutex;
+std::string g_pumpLastError;
+std::string g_monitorPumpLastError;
+
+void RecordPumpError(std::string* slot, const std::string& error) {
+  std::lock_guard<std::mutex> lock(g_pumpErrorMutex);
+  *slot = error;
+}
+
+std::string PumpError(const std::string* slot) {
+  std::lock_guard<std::mutex> lock(g_pumpErrorMutex);
+  return *slot;
+}
+
 void PumpMain() {
   std::string lastError;
+  bool failing = false;
   while (g_pumpRunning.load(std::memory_order_acquire)) {
     std::string name;
     uint32_t width = 0;
@@ -1024,8 +1144,14 @@ void PumpMain() {
     }
     if (ok) {
       g_pumpFrames.fetch_add(1, std::memory_order_relaxed);
+      if (failing) {
+        RecordPumpError(&g_pumpLastError, std::string());
+        failing = false;
+      }
     } else {
       g_pumpFailures.fetch_add(1, std::memory_order_relaxed);
+      RecordPumpError(&g_pumpLastError, lastError);
+      failing = true;
       // A failed Present does not block, so without this the loop would spin a
       // core while detached or between resizes.
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -1109,6 +1235,7 @@ void MonitorPumpMain() {
           g_monitorPumpFrames.fetch_add(1, std::memory_order_relaxed);
         } else {
           g_monitorPumpFailures.fetch_add(1, std::memory_order_relaxed);
+          RecordPumpError(&g_monitorPumpLastError, entry.first + ": " + error);
           failed = true;
         }
       }
@@ -1158,6 +1285,12 @@ Napi::Object StatusObject(Napi::Env env, const PreviewSurface& surface) {
   out.Set("rectWidth", Napi::Number::New(env, surface.rect().width));
   out.Set("rectHeight", Napi::Number::New(env, surface.rect().height));
   if (!g_lastError.empty()) out.Set("error", Napi::String::New(env, g_lastError));
+  // The vblank pump's own account: frames it put on screen, presents that
+  // failed, and why the last one failed while it is still failing.
+  out.Set("pumpFrames", Napi::Number::New(env, (double)g_pumpFrames.load()));
+  out.Set("pumpFailures", Napi::Number::New(env, (double)g_pumpFailures.load()));
+  const std::string pumpError = PumpError(&g_pumpLastError);
+  if (!pumpError.empty()) out.Set("pumpError", Napi::String::New(env, pumpError));
   return out;
 }
 
@@ -1527,7 +1660,27 @@ Napi::Value MonitorPumpStatus(const Napi::CallbackInfo& info) {
     sources = g_monitorSources.size();
   }
   out.Set("sources", Napi::Number::New(env, (double)sources));
+  const std::string lastError = PumpError(&g_monitorPumpLastError);
+  if (!lastError.empty()) out.Set("lastError", Napi::String::New(env, lastError));
   return out;
+}
+
+// setAdapterLuid(hex) — the render core's adapter (16 hex digits, HighPart
+// first). Surfaces whose device is on another adapter remake it on next use.
+Napi::Value SetAdapterLuid(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  const std::string hex = info.Length() > 0 && info[0].IsString()
+                              ? info[0].As<Napi::String>().Utf8Value()
+                              : std::string();
+  LUID luid = {};
+  if (!ParseLuidHex(hex, &luid)) return Napi::Boolean::New(env, false);
+  std::lock_guard<std::mutex> lock(g_adapterMutex);
+  if (!g_adapterLuidSet || !SameLuid(g_adapterLuid, luid)) {
+    g_adapterLuid = luid;
+    g_adapterLuidSet = true;
+    g_adapterGeneration.fetch_add(1);
+  }
+  return Napi::Boolean::New(env, true);
 }
 
 // monitorRestack() — keep every deck/slice monitor directly behind its host.
@@ -1582,6 +1735,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("monitorPumpStatus", Napi::Function::New(env, MonitorPumpStatus));
   exports.Set("monitorDetach", Napi::Function::New(env, MonitorDetach));
   exports.Set("monitorRestack", Napi::Function::New(env, MonitorRestack));
+  exports.Set("setAdapterLuid", Napi::Function::New(env, SetAdapterLuid));
   exports.Set("platform", Napi::String::New(env, "win32"));
   return exports;
 }

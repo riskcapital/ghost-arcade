@@ -2786,12 +2786,23 @@ function applyBrokerCapabilityOverlay(
     nativeEditorPreview?.addonStatus?.framesPresented ??
     0,
   );
+  // Frames the presenter itself put on screen. `lastPresentedFrame` is the
+  // core frame the pump last handed over, which a Windows presenter whose
+  // device cannot open the core's texture (another adapter) never shows.
+  // Counting that as presented kept `parented` true over an empty viewport and
+  // the editor never fell back to its composite mirror.
+  const nativeEditorPreviewPresenterFrames = Number(
+    nativeEditorPreview?.addonStatus?.framesPresented ??
+    nativeEditorPreview?.framesPresented ??
+    0,
+  );
   const nativeEditorPreviewProductionReady = !!(
     editorPreviewFrameSourceReady &&
     nativeEditorPreview?.available &&
     nativeEditorPreview?.attached &&
     nativeEditorPreview?.pumpActive &&
     nativeEditorPreviewFramesPresented > 0 &&
+    nativeEditorPreviewPresenterFrames > 0 &&
     (
       nativeEditorPreview.presentation === 'underlay-zero-copy' ||
       nativeEditorPreview.mode === 'shared-texture-import-blit' ||
@@ -2805,7 +2816,7 @@ function applyBrokerCapabilityOverlay(
     presentation: nativeEditorPreview?.presentation || baseEditorPreview.presentation || 'unavailable',
     needs_underlay_lock_in: !nativeEditorPreviewProductionReady,
     production_ready: nativeEditorPreviewProductionReady,
-    parented: !!nativeEditorPreview?.attached,
+    parented: !!nativeEditorPreview?.attached && nativeEditorPreviewPresenterFrames > 0,
     source: editorPreviewFrameSourceReady ? 'core-output-composite' : (baseEditorPreview.source || 'native-unavailable'),
     single_render: editorPreviewFrameSourceReady,
     transport: nativeEditorPreview?.transport || baseEditorPreview.transport || (platform === 'darwin' ? 'iosurface' : platform === 'win32' ? 'dxgi' : 'none'),
@@ -2895,6 +2906,7 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     backend,
     backend_ready: !!status.backend_ready,
     adapter_name: status.adapter_name ?? previous.adapter_name ?? null,
+    adapter_luid: status.adapter_luid ?? previous.adapter_luid ?? null,
     // The core's own verdict, else the adapter's name (a core that predates
     // the flag): the renderer tells the user when no GPU is doing the work.
     adapter_is_software: typeof status.adapter_is_software === 'boolean'

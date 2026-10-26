@@ -896,6 +896,10 @@ struct CoreStatus {
     backend_ready: bool,
     adapter_name: Option<String>,
     adapter_is_software: bool,
+    /// Windows: the renderer adapter's LUID, 16 hex digits. Presenters in
+    /// Electron open the core's shared textures by name, which only works
+    /// from a device on this same adapter.
+    adapter_luid: Option<String>,
     native_caps: NativeGpuCaps,
     native_quality: NativeQualityState,
     width: u32,
@@ -1418,6 +1422,25 @@ struct LayerGpu {
 
 /// The GPU's memory: Metal's recommended working set (on Apple silicon a
 /// share of the unified memory), or a D3D12 adapter's own memory.
+/// LUID as written to the presenters: HighPart then LowPart, 8 hex digits each.
+fn format_adapter_luid(high: i32, low: u32) -> String {
+    format!("{:08x}{:08x}", high as u32, low)
+}
+
+fn renderer_adapter_luid(device: &wgpu::Device) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let hal_device = unsafe { device.as_hal::<wgpu::hal::api::Dx12>() }?;
+        let luid = unsafe { hal_device.raw_device().GetAdapterLuid() };
+        return Some(format_adapter_luid(luid.HighPart, luid.LowPart));
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = device;
+        None
+    }
+}
+
 fn gpu_memory_bytes(device: &wgpu::Device) -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
@@ -4447,6 +4470,7 @@ struct App {
     renderer: Option<RenderState>,
     adapter_name: Option<String>,
     adapter_is_software: bool,
+    adapter_luid: Option<String>,
     target_fps: u32,
     last_redraw: Instant,
     running: bool,
@@ -4926,6 +4950,7 @@ impl App {
             renderer: None,
             adapter_name: None,
             adapter_is_software: false,
+            adapter_luid: None,
             target_fps: 60,
             last_redraw: Instant::now(),
             running: false,
@@ -5130,6 +5155,7 @@ impl App {
             .rebase_to_caps(&renderer.native_caps.recommended_quality_tier);
         self.adapter_name = renderer.adapter_name();
         self.adapter_is_software = renderer.adapter_is_software;
+        self.adapter_luid = renderer_adapter_luid(&renderer.device);
         self.gpu_memory_bytes = gpu_memory_bytes(&renderer.device);
         self.renderer = Some(renderer);
         self.apply_video_memory_budget();
@@ -5606,6 +5632,7 @@ impl App {
             backend_ready: renderer_ready && last_frame_ok,
             adapter_name: self.adapter_name.clone(),
             adapter_is_software: self.adapter_is_software,
+            adapter_luid: self.adapter_luid.clone(),
             native_caps: self
                 .renderer
                 .as_ref()
@@ -6220,11 +6247,12 @@ impl App {
             "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot" => {
                 self.output_shared_texture_snapshot(&req.params)
             }
-            "deck_monitor_state" | "get_deck_monitor_state" => Ok(self
-                .renderer
-                .as_ref()
-                .map(RenderState::deck_monitor_metadata)
-                .unwrap_or_else(|| json!({ "available": false }))),
+            "deck_monitor_state" | "get_deck_monitor_state" => Ok(self.tag_adapter_luid(
+                self.renderer
+                    .as_ref()
+                    .map(RenderState::deck_monitor_metadata)
+                    .unwrap_or_else(|| json!({ "available": false })),
+            )),
             "set_stage3d_scene" => self.set_stage3d_scene(&req.params),
             "get_stage3d_scene_summary" => Ok(json!(self.stage3d_scene_summary.clone())),
             "set_projection_sim_scene" => self.set_projection_sim_scene(&req.params),
@@ -6434,11 +6462,12 @@ impl App {
             "set_composite_effects" => self.apply_composite_effects(&req.params),
             "set_output_stage" => self.apply_output_stage(&req.params),
             "set_slice_outputs" => self.apply_slice_outputs(&req.params),
-            "slice_output_state" | "get_slice_output_state" => Ok(self
-                .renderer
-                .as_ref()
-                .map(RenderState::slice_output_metadata)
-                .unwrap_or_else(|| json!({ "available": false }))),
+            "slice_output_state" | "get_slice_output_state" => Ok(self.tag_adapter_luid(
+                self.renderer
+                    .as_ref()
+                    .map(RenderState::slice_output_metadata)
+                    .unwrap_or_else(|| json!({ "available": false })),
+            )),
             "set_record_target" => self.apply_record_target(&req.params),
             "record_target_state" | "get_record_target_state" => Ok(self.record_target_state()),
             // Linux Screens: Electron hands over its Screen window's X11 id and
@@ -13510,9 +13539,18 @@ impl App {
         Ok(json!({ "stopped": true, "frames": frames, "duration_seconds": duration_seconds }))
     }
 
+    /// Shared-texture metadata tagged with the adapter the textures live on,
+    /// so a presenter in another process opens them on the same GPU.
+    fn tag_adapter_luid(&self, mut value: Value) -> Value {
+        if let (Some(luid), Some(map)) = (self.adapter_luid.as_ref(), value.as_object_mut()) {
+            map.insert("adapter_luid".to_string(), json!(luid));
+        }
+        value
+    }
+
     fn output_shared_texture(&self) -> Value {
         if let Some(renderer) = self.renderer.as_ref() {
-            return renderer.output_export_metadata();
+            return self.tag_adapter_luid(renderer.output_export_metadata());
         }
         json!({
             "available": false,
@@ -34122,6 +34160,13 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn adapter_luids_print_high_part_first_as_presenters_parse_them() {
+        assert_eq!(super::format_adapter_luid(0, 0x0001_2345), "0000000000012345");
+        // HighPart is signed in the Windows LUID; keep its bits as they are.
+        assert_eq!(super::format_adapter_luid(-1, 0xdead_beef), "ffffffffdeadbeef");
+    }
+
     #[test]
     fn plugin_audio_envelopes_glide_on_transients_and_settle_in_silence() {
         for fps in [30.0_f32, 60.0, 120.0] {

@@ -355,6 +355,36 @@ function nativeEditorPreviewContract(available = true, backend = 'metal', produc
 }
 
 describe('native renderer broker capability overlay', () => {
+  it('reports the editor presenter as parented only once it has put frames on screen', async () => {
+    // Windows, two GPUs: the presenter's device cannot open the core's texture,
+    // so the pump publishes core frames that never reach the screen. The
+    // editor must keep its composite-mirror fallback until real frames land.
+    const status = {
+      available: true,
+      attached: true,
+      pumpActive: true,
+      mode: 'shared-texture-import-blit',
+      presentation: 'underlay-zero-copy',
+      transport: 'dxgi',
+      lastPresentedFrame: 8,
+      framesPresented: 0,
+      addonStatus: { framesPresented: 0, pumpError: 'OpenSharedResourceByName failed' },
+    };
+    const broker = createBroker({ platform: 'win32', nativeEditorPreviewStatus: status as never });
+    broker.send = async () => coreCapabilities(
+      { shared_texture_output_export: true, native_editor_preview_frame_source: true },
+      { backend: 'd3d12' },
+    );
+    let preview = (await broker.refreshCapabilities({ requireCore: true })).native_editor_preview;
+    expect(preview.parented).toBe(false);
+    expect(preview.production_ready).toBe(false);
+
+    status.framesPresented = 3;
+    status.addonStatus = { framesPresented: 3, pumpError: '' };
+    preview = (await broker.refreshCapabilities({ requireCore: true })).native_editor_preview;
+    expect(preview.parented).toBe(true);
+  });
+
   it('promotes raw frame export plus desktop MP4 encoder into native recording readiness', async () => {
     const broker = createBroker({ encoderAvailable: true });
     broker.send = async (method: string) => {
