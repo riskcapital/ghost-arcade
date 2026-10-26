@@ -108,6 +108,7 @@
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { formatReleaseTag } from './lib/utils/compatibilityReleases';
   import { fitToolbar } from './lib/utils/toolbarFit';
+  import { fitMenuHeight } from './lib/utils/menuFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
@@ -6035,7 +6036,7 @@
             </svg>
           </button>
           {#if fileMenuOpen}
-            <div class="file-menu-dropdown">
+            <div class="file-menu-dropdown" use:fitMenuHeight>
               <button class="menu-item" onclick={newComposition}>
                 <span class="menu-icon">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -8309,7 +8310,12 @@
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
     min-width: 200px;
     z-index: 1000;
-    overflow: hidden;
+    /* Short windows: fitMenuHeight sets the exact max-height; the menu
+       scrolls past it rather than running off the bottom. */
+    max-height: calc(100vh - 96px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .menu-item {
