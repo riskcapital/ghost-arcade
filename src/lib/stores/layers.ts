@@ -6137,7 +6137,9 @@ void main() {
           };
         }
 
-        // Import media library
+        // Import media library. A file without one opens with an empty
+        // library rather than the previous project's media.
+        if (openingFile && !Array.isArray(parsed.mediaLibrary)) mediaLibrary.reset();
         if (parsed.mediaLibrary && Array.isArray(parsed.mediaLibrary)) {
           // Clear existing media and add imported items
           mediaLibrary.reset();
@@ -6556,13 +6558,22 @@ void main() {
         if ((parsed as any).synthVision) {
           try { synthVisionStore.loadSerializable((parsed as any).synthVision); }
           catch (e) { console.warn('[Import] synthVision restore failed:', e); }
+        } else if (openingFile) {
+          // A file from before this was saved: start clean, not with the
+          // previous project's performer state.
+          try { synthVisionStore.reset(); } catch (e) { console.warn('[Import] synthVision reset failed:', e); }
         }
 
         // Import user audio settings (added 1.9.1). Sensitivity /
         // smoothing / manual BPM / per-band gains. Older saves silently
         // skip — defaults already in the store from createDefaultState().
         const audioPayload = (parsed as any).audio;
-        if (audioPayload && typeof audioPayload === 'object') {
+        if (openingFile) {
+          // Every field is set, from the file or to its default, so nothing
+          // is left at what the previous project had (a manual BPM most of
+          // all: a file saved with none used to keep the last one's).
+          audioStore.restoreProjectSettings(audioPayload ?? null);
+        } else if (audioPayload && typeof audioPayload === 'object') {
           if (typeof audioPayload.sensitivity === 'number') audioStore.setSensitivity(audioPayload.sensitivity);
           if (typeof audioPayload.smoothing === 'number') audioStore.setSmoothing(audioPayload.smoothing);
           if (typeof audioPayload.manualBPM === 'number') audioStore.setManualBPM(audioPayload.manualBPM);
@@ -6578,16 +6589,21 @@ void main() {
         // Import layer step sequencer (added 1.9.3). Older saves don't
         // have the field — hydrate() resets to a clean empty pattern in
         // that case so the user gets a predictable starting state.
-        if ((parsed as any).layerSequencer) {
-          try { layerSequencer.hydrate((parsed as any).layerSequencer); }
+        // A file without one (older than 1.9.3) gets the empty pattern, not
+        // the previous project's.
+        if ((parsed as any).layerSequencer || openingFile) {
+          try { layerSequencer.hydrate((parsed as any).layerSequencer ?? null); }
           catch (e) { console.warn('[Import] layerSequencer restore failed:', e); }
         }
 
-        // Import GeoDeck (added 1.9.3). Older saves keep current store
-        // defaults.
+        // Import GeoDeck (added 1.9.3). A file without it resets to the
+        // defaults rather than keeping the previous project's scenes.
         if ((parsed as any).geoDeck) {
           try { geoDeckStore.hydrate((parsed as any).geoDeck); }
           catch (e) { console.warn('[Import] geoDeck restore failed:', e); }
+        } else if (openingFile) {
+          try { geoDeckStore.reset(); }
+          catch (e) { console.warn('[Import] geoDeck reset failed:', e); }
         }
 
         // Every media field of a layer, resolved from its AssetRef (the
@@ -6706,9 +6722,12 @@ void main() {
               && Array.isArray(importedSim.objects)
               && Array.isArray(importedSim.projectors)) {
               projectionSimScene.loadSceneFromProject(importedSim, projectDir);
+            } else if (openingFile) {
+              // A file from before the Map Sim scene was saved opens on the
+              // scene a fresh launch has, not the previous project's.
+              projectionSimScene.resetForProject();
             }
-            // No else: a project without the section keeps the store's
-            // session scene (fresh launches land on the cube-pyramid preset).
+            // Live state-sync payloads never carry the scene; they leave it.
           } catch (err) {
             console.warn('[Store] importProject: projection sim restore failed', err);
           }
@@ -6718,12 +6737,13 @@ void main() {
               // projectDir-aware so audio AssetRefs saved as siblings of the
               // .gha resolve on another machine. Never auto-plays.
               showTimeline.hydrate(importedShow, projectDir);
-            } else if ('stage3d' in (proj as any) || 'projectionSim' in (proj as any)) {
-              // Save-shaped payload (only the save/autosave exports carry the
-              // save-only sections) that has no show of its own — a
-              // pre-1.9.5 file, or a project the user never programmed.
-              // Clear, so the previous project's arrangement cannot bleed
-              // through and start firing presets over the new one.
+            } else if (openingFile || 'stage3d' in (proj as any) || 'projectionSim' in (proj as any)) {
+              // A project being opened (or any save-shaped payload: only
+              // the save/autosave exports carry the save-only sections) that
+              // has no show of its own — a pre-1.9.5 file, or a project the
+              // user never programmed. Clear, so the previous project's
+              // arrangement cannot bleed through and start firing presets
+              // over the new one.
               showTimeline.hydrate(null);
             }
             // No else: this is a LIVE STATE-SYNC payload. exportProject()
@@ -6741,7 +6761,7 @@ void main() {
             const importedShowControl = (proj as any).showControl;
             if (importedShowControl && typeof importedShowControl === 'object') {
               hydrateShowControl(importedShowControl);
-            } else if ('stage3d' in (proj as any) || 'projectionSim' in (proj as any) || 'showTimeline' in (proj as any)) {
+            } else if (openingFile || 'stage3d' in (proj as any) || 'projectionSim' in (proj as any) || 'showTimeline' in (proj as any)) {
               hydrateShowControl(null);
             }
           } catch (err) {

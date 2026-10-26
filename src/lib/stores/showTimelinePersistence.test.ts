@@ -219,7 +219,8 @@ describe('show timeline project persistence', () => {
     expect(relayPayload.project.showTimeline).toBeUndefined();
     expect(relayPayload.project.stage3d).toBeUndefined();
 
-    expect(project.importProject(relayPayload)).toBe(true);
+    // The relay receiver marks its payloads live (stateBroadcast.ts).
+    expect(project.importProject(relayPayload, undefined, { live: true })).toBe(true);
     await flushMicrotasks();
 
     const after = get(showTimeline);
