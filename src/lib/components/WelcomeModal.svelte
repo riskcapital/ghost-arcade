@@ -8,14 +8,17 @@
   export let onTour: () => void = () => {};
   export let onTemplates: () => void = () => {};
   export let onOpenProject: () => void = () => {};
+  export let onShowFromAudio: () => void = () => {};
 
   type Choice = { id: string; title: string; detail: string; run: () => void; primary?: boolean };
   const choices: Choice[] = [
     { id: 'tour', title: 'Show me around', detail: 'Short hands-on tours for VJ, projection mapping or music', run: () => onTour(), primary: true },
     { id: 'templates', title: 'Start from a template', detail: 'A deck already set up for a band, a club night, a light show or mapping', run: () => onTemplates() },
     { id: 'open', title: 'Open a project', detail: 'Carry on with a saved show', run: () => onOpenProject() },
+    { id: 'song', title: 'Make a show to a song', detail: 'Pick a song and lay your looks over it', run: () => onShowFromAudio() },
     { id: 'blank', title: 'Blank project', detail: 'Straight in, nothing set up', run: () => {} },
   ];
+  const blankChoice = choices[choices.length - 1];
 
   let ready = false;
   onMount(() => { requestAnimationFrame(() => { ready = true; }); });
@@ -33,7 +36,7 @@
       choose(choices[index]);
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      choose(choices[3]);
+      choose(blankChoice);
     }
   }
 </script>
@@ -115,6 +118,8 @@
                 <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5" /><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" /><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" /><path d="M17.25 14v6.5M14 17.25h6.5" /></svg>
               {:else if choice.id === 'open'}
                 <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1" /><path d="M3 7v11a2 2 0 0 0 2 2h12.5a2 2 0 0 0 1.9-1.4L22 12H7.5a2 2 0 0 0-1.9 1.4L3 20" /></svg>
+              {:else if choice.id === 'song'}
+                <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
               {:else}
                 <svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M12 12v6M9 15h6" /></svg>
               {/if}

@@ -54,6 +54,7 @@
   import { settings } from '../stores/settings';
   import { audioOutput, selectAudioOutput, startAudioOutputSelection } from '../audio/audioOutputDevice';
   import { isShowAudioFile } from '../audio/showAudioImport';
+  import { offerShowFromAudio, pickSongForShow } from '../show/showFromAudio';
 
   // ── End of show + output device ─────────────────────────────────────────
   // The transport lives in the store and keeps running with this panel
@@ -481,6 +482,11 @@
 
     const lane = laneAt(e);
     const files = Array.from(dt.files ?? []).filter((f) => isShowAudioFile(f.name, f.type));
+    // A song dropped on an empty show builds a show around it.
+    if (files.length === 1 && state.audioTracks.length === 0 && state.presetClips.length === 0) {
+      offerShowFromAudio(files[0]);
+      return;
+    }
     let cursor = dropTime;
     for (const file of files) {
       await showTimeline.addAudioTrackFromFile(file, { startTime: cursor, lane });
@@ -1020,6 +1026,12 @@
         <div class="lanes" style="width: {totalWidth}px">
           {#each audioLanes as lane}
             <div class="lane audio-lane" style="height: {AUDIO_LANE_HEIGHT}px">
+              {#if lane === 0 && state.audioTracks.length === 0}
+                <span class="lane-empty lane-empty-audio">
+                  Drop a song here, or
+                  <button class="lane-empty-btn" onclick={(e) => { e.stopPropagation(); pickSongForShow(); }}>build a show from a song…</button>
+                </span>
+              {/if}
               {#each state.audioTracks.filter((t) => t.lane === lane) as track (track.id)}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
@@ -1738,6 +1750,17 @@
     font-size: 11px;
     color: #55555f;
     pointer-events: none;
+  }
+  .lane-empty-audio { pointer-events: auto; color: #6b6b76; }
+  .lane-empty-btn {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: var(--ga-coral, #ff6f5e);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .t-end { max-width: 160px; }
   .t-out { max-width: 150px; }

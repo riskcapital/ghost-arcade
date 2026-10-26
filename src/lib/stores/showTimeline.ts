@@ -176,6 +176,12 @@ function createInitialState(): ShowTimelineState {
   };
 }
 
+/** Pixels per second that fit `duration` into `width` pixels, within the zoom range. */
+export function fitShowZoom(duration: number, width: number): number {
+  if (!(duration > 0) || !(width > 0)) return SHOW_DEFAULT_ZOOM;
+  return Math.max(SHOW_MIN_ZOOM, Math.min(SHOW_MAX_ZOOM, width / duration));
+}
+
 // ─── Pure arrangement maths (exported for tests) ─────────────────────────
 
 /** Content length of a show: the furthest edge of anything on it. */
@@ -999,6 +1005,10 @@ export const showTimeline = {
   setEndAction(action: ShowEndAction) {
     store.update((s) => ({ ...s, endAction: normalizeShowEndAction(action) }));
   },
+  /** Zoom so the whole show fits `width` pixels. */
+  zoomToFit(width: number) {
+    store.update((s) => ({ ...s, zoom: fitShowZoom(Math.max(s.duration, 1), width) }));
+  },
 
   // ── Transport ──────────────────────────────────────────────────────────
 
@@ -1311,6 +1321,27 @@ export const showTimeline = {
       ...s,
       presetClips: s.presetClips.map((c) => (c.id === clipId ? { ...c, transitionIn: style } : c)),
     }));
+  },
+
+  /**
+   * Replace the whole preset lane (a show laid out over a song). Clips are
+   * placed as given, sorted, and take the preset tray's transition.
+   */
+  setPresetClips(clips: Array<{ compositionId: string; startTime: number; duration: number; label?: string }>) {
+    store.update((s) => {
+      const presetClips: ShowPresetClip[] = clips
+        .filter((c) => c && typeof c.compositionId === 'string' && c.compositionId && Number(c.duration) > 0)
+        .map((c) => ({
+          id: generateUUID(),
+          compositionId: c.compositionId,
+          startTime: Math.max(0, Number(c.startTime) || 0),
+          duration: Math.max(SHOW_MIN_CLIP_SECONDS, Number(c.duration)),
+          ...defaultClipTransition(),
+          label: c.label,
+        }))
+        .sort((a, b) => a.startTime - b.startTime);
+      return withDuration({ ...s, presetClips, activeClipId: null, selection: null });
+    });
   },
 
   /** Re-flow every preset clip back-to-back from 0, keeping durations. */
