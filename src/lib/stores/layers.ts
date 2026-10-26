@@ -18,7 +18,7 @@ function identifiedEntries(raw: unknown): any[] {
     : [];
 }
 import { createLayer, createProject, createDefaultCorners, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
-import type { GroupConfig } from '../types';
+import type { GroupConfig, Surface } from '../types';
 import { instantiateEdgeEffects } from './edgeEffectPresets';
 import { buildLookEffects, lookPalette } from '../looks/edgeLooks';
 import { edgeLook } from '../looks/edgeLookCatalog';
@@ -394,6 +394,65 @@ function keepFittedMeshesOnShapes(previous: Project, next: Project): Project {
     layers[index] = { ...layer, meshGrid: meshGrid ?? null };
   });
   return layers ? { ...next, layers } : next;
+}
+
+/** Load Stage Designer surfaces into the designer. Deferred via dynamic
+ *  import + microtask so the surface module — which lazily loads here —
+ *  doesn't introduce a circular dep at module-evaluation time. */
+function hydrateSurfaceStore(surfaces: Surface[], activeSurfaceId: string | null) {
+  void import('./surface').then(({ surfaceStore }) => {
+    queueMicrotask(() => surfaceStore.hydrateFromProject(surfaces, activeSurfaceId));
+  });
+}
+
+/**
+ * Everything a project owns outside the project store, and how to put each
+ * back to a new project's state. File > New resets every one; opening a file
+ * resets each one the file does not carry (a file from an older build).
+ * Both read this one list, so they cannot drift apart: anything missing here
+ * leaked from one project into the next.
+ *
+ * Machine wiring is not project state and is left alone: the OSC and DMX
+ * listeners, the Ableton connection, the audio input device. The output
+ * stage has its own reset (settings.resetOutputStageForNewProject and
+ * settings.restoreOutputStage).
+ */
+export const PROJECT_SECTION_RESETS = {
+  vjClipLauncher: () => vjClipLauncher.reset(),
+  mediaLibrary: () => mediaLibrary.reset(),
+  modulation: () => modulationStore.clearAll(),
+  keyframes: () => keyframeTimeline.reset(),
+  macros: () => macros.reset(),
+  snapshots: () => snapshots.reset(),
+  osc: () => oscStore.resetProjectBindings(),
+  abletonBridge: () => abletonBridge.reset(),
+  dmxInput: () => dmxStore.reset(),
+  keyboard: () => keyboardStore.reset(),
+  mediaPipe: () => mediaPipeBus.reset(),
+  synthVision: () => synthVisionStore.reset(),
+  audio: () => audioStore.restoreProjectSettings(null),
+  layerSequencer: () => layerSequencer.hydrate(null),
+  geoDeck: () => geoDeckStore.reset(),
+  stage3d: () => stage3dScene.newScene(),
+  projectionSim: () => projectionSimScene.resetForProject(),
+  showTimeline: () => showTimeline.hydrate(null),
+  showControl: () => hydrateShowControl(null),
+  surfaces: () => hydrateSurfaceStore([], null),
+} as const;
+
+export type ProjectSection = keyof typeof PROJECT_SECTION_RESETS;
+
+function resetProjectSection(section: ProjectSection) {
+  try {
+    PROJECT_SECTION_RESETS[section]();
+  } catch (err) {
+    console.warn(`[Store] resetting ${section} failed:`, err);
+  }
+}
+
+/** Reset every project-owned store, as File > New does. */
+export function resetProjectOwnedStores() {
+  for (const section of Object.keys(PROJECT_SECTION_RESETS) as ProjectSection[]) resetProjectSection(section);
 }
 
 function createProjectStore() {
@@ -6044,7 +6103,8 @@ void main() {
         }
 
         const proj = parsed.project;
-        try { vjClipLauncher.reset(); } catch { /* keep importing even if VJ runtime cleanup fails */ }
+        // Keeps importing even if VJ runtime cleanup fails.
+        resetProjectSection('vjClipLauncher');
 
         // Import vjMode with compositions (presets)
         let importedVjMode: VJModeState | null = null;
@@ -6139,7 +6199,7 @@ void main() {
 
         // Import media library. A file without one opens with an empty
         // library rather than the previous project's media.
-        if (openingFile && !Array.isArray(parsed.mediaLibrary)) mediaLibrary.reset();
+        if (openingFile && !Array.isArray(parsed.mediaLibrary)) resetProjectSection('mediaLibrary');
         if (parsed.mediaLibrary && Array.isArray(parsed.mediaLibrary)) {
           // Clear existing media and add imported items
           mediaLibrary.reset();
@@ -6484,7 +6544,7 @@ void main() {
         if (Array.isArray(parsed.modulation)) {
           modulationStore.bulkLoad(parsed.modulation, { resetCaches: true });
         } else {
-          modulationStore.clearAll();
+          resetProjectSection('modulation');
         }
 
         // Import keyframe timelines
@@ -6492,7 +6552,7 @@ void main() {
           keyframeTimeline.importAll((parsed as any).keyframeTimelines);
           keyframeTimeline.restoreSettings((parsed as any).keyframeSettings);keyframeTimeline.seek(0);
         } else {
-          keyframeTimeline.reset();
+          resetProjectSection('keyframes');
         }
 
         // Import macros (8 knobs + destinations). Backward-compat tolerant:
@@ -6500,7 +6560,7 @@ void main() {
         if ((parsed as any).macros) {
           macros.hydrate((parsed as any).macros);
         } else {
-          macros.reset();
+          resetProjectSection('macros');
         }
 
         // Import snapshot bank (16 capture slots). Older saves don't have
@@ -6508,7 +6568,7 @@ void main() {
         if ((parsed as any).snapshots) {
           snapshots.hydrate((parsed as any).snapshots);
         } else {
-          snapshots.reset();
+          resetProjectSection('snapshots');
         }
 
         // Import OSC config (port + bindings + enabled flag). Older
@@ -6517,21 +6577,21 @@ void main() {
         if ((parsed as any).osc) {
           oscStore.hydrate((parsed as any).osc);
         } else {
-          oscStore.reset();
+          resetProjectSection('osc');
         }
 
         // Ableton bridge links. Older saves have none.
         if ((parsed as any).abletonBridge) {
           abletonBridge.hydrate((parsed as any).abletonBridge);
         } else {
-          abletonBridge.reset();
+          resetProjectSection('abletonBridge');
         }
 
         // Import DMX input bindings. Older saves don't carry them.
         if ((parsed as any).dmxInput) {
           dmxStore.hydrate((parsed as any).dmxInput);
         } else {
-          dmxStore.reset();
+          resetProjectSection('dmxInput');
         }
 
         // Import keyboard control bindings. Older saves don't carry them
@@ -6539,7 +6599,7 @@ void main() {
         if ((parsed as any).keyboard) {
           keyboardStore.hydrate((parsed as any).keyboard);
         } else {
-          keyboardStore.reset();
+          resetProjectSection('keyboard');
         }
 
         // Import MediaPipe bindings. Older saves don't carry them —
@@ -6548,7 +6608,7 @@ void main() {
         if ((parsed as any).mediaPipe) {
           mediaPipeBus.hydrate((parsed as any).mediaPipe);
         } else {
-          mediaPipeBus.reset();
+          resetProjectSection('mediaPipe');
         }
 
         // Import SynthVision PROJECT-ROOT state (added 1.9.1). Saves
@@ -6561,7 +6621,7 @@ void main() {
         } else if (openingFile) {
           // A file from before this was saved: start clean, not with the
           // previous project's performer state.
-          try { synthVisionStore.reset(); } catch (e) { console.warn('[Import] synthVision reset failed:', e); }
+          resetProjectSection('synthVision');
         }
 
         // Import user audio settings (added 1.9.1). Sensitivity /
@@ -6572,7 +6632,8 @@ void main() {
           // Every field is set, from the file or to its default, so nothing
           // is left at what the previous project had (a manual BPM most of
           // all: a file saved with none used to keep the last one's).
-          audioStore.restoreProjectSettings(audioPayload ?? null);
+          if (audioPayload && typeof audioPayload === 'object') audioStore.restoreProjectSettings(audioPayload);
+          else resetProjectSection('audio');
         } else if (audioPayload && typeof audioPayload === 'object') {
           if (typeof audioPayload.sensitivity === 'number') audioStore.setSensitivity(audioPayload.sensitivity);
           if (typeof audioPayload.smoothing === 'number') audioStore.setSmoothing(audioPayload.smoothing);
@@ -6591,9 +6652,11 @@ void main() {
         // that case so the user gets a predictable starting state.
         // A file without one (older than 1.9.3) gets the empty pattern, not
         // the previous project's.
-        if ((parsed as any).layerSequencer || openingFile) {
-          try { layerSequencer.hydrate((parsed as any).layerSequencer ?? null); }
+        if ((parsed as any).layerSequencer) {
+          try { layerSequencer.hydrate((parsed as any).layerSequencer); }
           catch (e) { console.warn('[Import] layerSequencer restore failed:', e); }
+        } else if (openingFile) {
+          resetProjectSection('layerSequencer');
         }
 
         // Import GeoDeck (added 1.9.3). A file without it resets to the
@@ -6602,8 +6665,7 @@ void main() {
           try { geoDeckStore.hydrate((parsed as any).geoDeck); }
           catch (e) { console.warn('[Import] geoDeck restore failed:', e); }
         } else if (openingFile) {
-          try { geoDeckStore.reset(); }
-          catch (e) { console.warn('[Import] geoDeck reset failed:', e); }
+          resetProjectSection('geoDeck');
         }
 
         // Every media field of a layer, resolved from its AssetRef (the
@@ -6711,7 +6773,7 @@ void main() {
               // State-sync payloads apply Stage 3D separately after
               // project import. Do not clear the scene in between.
             } else {
-              stage3dScene.newScene();
+              resetProjectSection('stage3d');
             }
           } catch (err) {
             console.warn('[Store] importProject: 3D scene restore failed', err);
@@ -6725,7 +6787,7 @@ void main() {
             } else if (openingFile) {
               // A file from before the Map Sim scene was saved opens on the
               // scene a fresh launch has, not the previous project's.
-              projectionSimScene.resetForProject();
+              resetProjectSection('projectionSim');
             }
             // Live state-sync payloads never carry the scene; they leave it.
           } catch (err) {
@@ -6744,7 +6806,7 @@ void main() {
               // user never programmed. Clear, so the previous project's
               // arrangement cannot bleed through and start firing presets
               // over the new one.
-              showTimeline.hydrate(null);
+              resetProjectSection('showTimeline');
             }
             // No else: this is a LIVE STATE-SYNC payload. exportProject()
             // deliberately omits every save-only section, so "absent" here
@@ -6762,7 +6824,7 @@ void main() {
             if (importedShowControl && typeof importedShowControl === 'object') {
               hydrateShowControl(importedShowControl);
             } else if (openingFile || 'stage3d' in (proj as any) || 'projectionSim' in (proj as any) || 'showTimeline' in (proj as any)) {
-              hydrateShowControl(null);
+              resetProjectSection('showControl');
             }
           } catch (err) {
             console.warn('[Store] importProject: show control restore failed', err);
@@ -6825,21 +6887,16 @@ void main() {
           }));
         }
         // Hydrate the Stage Designer surface store from the imported
-        // project. Deferred via dynamic import + microtask so the
-        // surface module — which lazily loads here — doesn't introduce
-        // a circular dep at module-evaluation time.
+        // project (see hydrateSurfaceStore).
         //
         // A project being opened always hydrates, with no surfaces if it
         // has none. Skipping that left the previous project's surfaces in
         // the store, and the store mirrors itself back into the project on
         // its next change, so they turned up in the new project too.
-        if (openingFile || importedProject.surfaces?.length) {
-          void import('./surface').then(({ surfaceStore }) => {
-            queueMicrotask(() => surfaceStore.hydrateFromProject(
-              importedProject.surfaces ?? [],
-              importedProject.activeSurfaceId ?? null,
-            ));
-          });
+        if (importedProject.surfaces?.length) {
+          hydrateSurfaceStore(importedProject.surfaces, importedProject.activeSurfaceId ?? null);
+        } else if (openingFile) {
+          resetProjectSection('surfaces');
         }
         console.log('Project imported successfully with', importedProject.layers.length, 'layers');
         if (importedVjMode) {

@@ -378,6 +378,7 @@
   import { guardAltRelease, noteAltArrow } from './lib/utils/altArrowGuard';
   import { paintMaskLayerId } from './lib/stores/paintMaskTool';
   import PaintMaskOverlay from './lib/components/PaintMaskOverlay.svelte';
+  import { resetProjectOwnedStores } from './lib/stores/layers';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
@@ -6066,24 +6067,16 @@
    *  this before building their own deck. */
   function startFreshProject(name: string) {
     project.newProject(name);
-    vjClipLauncher.reset();
-    synthVisionStore.reset();
-    mediaLibrary.reset();
-    modulationStore.clearAll();
-    // Reset macros so the new project starts with empty 8 knobs instead
-    // of inheriting the last project's destinations (would write to
-    // layers that don't exist yet, looking like ghost-mappings).
-    macros.reset();
-    // Same for snapshots — fresh project, empty 16-slot bank.
-    snapshots.reset();
-    // DMX input bindings belong to the project; the listener stays as set.
-    dmxStore.reset();
-    // Ableton links too; the connection to Live stays up.
-    abletonBridge.reset();
-    // And show control: a new project must not inherit the last one's cue
-    // list, timecode chase, schedule or projectors (a schedule left armed
-    // would start firing cues into an empty project).
-    hydrateShowControl(null);
+    // Everything else the project owns goes back to a new project's state:
+    // clips, media, modulation, keyframes, macros (whose destinations would
+    // otherwise write to layers that no longer exist), snapshots, control
+    // bindings, the sequencer, GeoDeck, audio calibration, Stage Designer
+    // surfaces, the Stage 3D and Map Sim scenes, the show timeline and the
+    // cue list (a schedule left armed would fire cues into the empty
+    // project). The same list opening an older file uses, so the two cannot
+    // drift apart. Machine wiring (OSC and DMX listeners, the Ableton
+    // connection, the audio input) stays as it is.
+    resetProjectOwnedStores();
     // Output settings are global rather than per-project, so without this a
     // new project inherits the last one's screens (the project saves
     // outputSlices and restores them, but a new project has none to overwrite
