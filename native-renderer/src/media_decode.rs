@@ -695,6 +695,23 @@ fn parse_video_duration(line: &str) -> Option<f64> {
     (parts.next().is_none() && duration.is_finite() && duration > 0.0).then_some(duration)
 }
 
+/// Fit a picture inside a longest-edge limit, keeping its shape, with even
+/// dimensions (4:2:0 video and its converters need them). None or a picture
+/// already inside the limit comes back unchanged.
+pub fn fit_video_long_edge(width: u32, height: u32, max_edge: Option<u32>) -> (u32, u32) {
+    let (width, height) = (width.max(1), height.max(1));
+    let Some(limit) = max_edge.filter(|limit| *limit > 0) else {
+        return (width, height);
+    };
+    let long = width.max(height);
+    if long <= limit {
+        return (width, height);
+    }
+    let scale = limit as f64 / long as f64;
+    let even = |edge: u32| ((((edge as f64) * scale).round() as u32) / 2 * 2).max(16);
+    (even(width), even(height))
+}
+
 pub fn spawn_native_video_stream(
     path: PathBuf,
     width: usize,
@@ -709,6 +726,9 @@ pub fn spawn_native_video_stream(
     capacity: usize,
     memory_budget: Arc<NativeVideoMemoryBudget>,
     hap_supported: bool,
+    // Longest edge the hardware decoder should output (a small slice), or
+    // None for the clip's own size. The software path decodes at width/height.
+    hardware_max_edge: Option<u32>,
     #[cfg(target_os = "windows")] video_device: Result<crate::windows_video_texture::WindowsVideoDevice, String>,
 ) -> NativeVideoStream {
     let capacity = capacity.clamp(2, NATIVE_VIDEO_PREROLL_FRAMES);
@@ -752,7 +772,7 @@ pub fn spawn_native_video_stream(
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if backend_policy != "software" {
             #[cfg(target_os = "macos")]
-            let opened = crate::hardware_video::HardwareVideoDecoder::open(&path, hap_supported);
+            let opened = crate::hardware_video::HardwareVideoDecoder::open(&path, hap_supported, hardware_max_edge);
             #[cfg(target_os = "windows")]
             let opened = (|| {
                 // Without Media Foundation (Windows N/KN) say so plainly; the
@@ -762,7 +782,7 @@ pub fn spawn_native_video_stream(
                 {
                     return Err(reason);
                 }
-                let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(&path, video_device, hap_supported)?;
+                let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(&path, video_device, hap_supported, hardware_max_edge)?;
                 // Require real decoder output before reporting hardware. Admit the
                 // bounded probe before it allocates its first GPU bridge surface.
                 let probe = decoder.probe_surface_bytes().saturating_mul(2);

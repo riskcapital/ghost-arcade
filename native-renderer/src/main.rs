@@ -93,7 +93,7 @@ use media_decode::{
     NativeVideoMemoryBudget, NativeVideoMemoryLease,
     decode_native_image_rgba, decode_native_video_frame_exact_rgba, decode_native_video_frame_rgba,
     decode_native_video_frame_window_rgba, local_media_path_from_uri, native_image_file_signature,
-    native_video_frame_bucket, native_video_frame_file_signature, spawn_native_video_stream,
+    fit_video_long_edge, native_video_frame_bucket, native_video_frame_file_signature, spawn_native_video_stream,
 };
 use particle_director::{DirectorCamera, DirectorParams, DirectorState, points_of_interest_from_grid};
 use native_graph_manifest::{
@@ -890,6 +890,10 @@ struct NativeVideoSessionStatus {
     frames_dropped: u64,
     reserved_bytes: u64,
     waiting_for_memory_bytes: u64,
+    /// The file this session decodes, so the editor can tell which media a
+    /// backend (and its fallback reason) belongs to.
+    uri: String,
+    decode_max_edge: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -4421,6 +4425,42 @@ struct NativeVideoFrameCacheEntry {
     byte_length: usize,
 }
 
+/// Longest edge a video needs on the slice it is shown on, or None when the
+/// slice fills the output (or more) and the full requested size is right.
+///
+/// 2.1.10 computed this size but only used it when the editor sent no decode
+/// size, which it always does, and the hardware decoders ignored it: a 4K clip
+/// on a small slice still decoded and held 4K frames, used up the video memory
+/// budget and stalled the other decoders.
+fn native_video_slice_edge_cap(output: (usize, usize), scale: f32) -> Option<usize> {
+    if !scale.is_finite() || scale >= 1.0 || scale <= 0.0 {
+        return None;
+    }
+    let scaled = |edge: usize| (((edge as f32 * scale) as usize) / 2 * 2).max(64);
+    Some(scaled(output.0).max(scaled(output.1)))
+}
+
+/// Whether a running session's decode size no longer suits its slice.
+///
+/// It restarts when its slice grows past what it decodes, and when the slice
+/// needs half the pixels per edge or fewer: a session usually starts before
+/// its layer is bound (at full size), and must still come down to the slice
+/// size. The gap between the two thresholds keeps a slice resized back and
+/// forth from restarting its decoder at every step. A session handed over
+/// warm from a VJ library preroll never shrinks: that would cost the instant
+/// trigger it was prepared for.
+fn native_video_decode_cap_needs_restart(
+    current: Option<usize>,
+    wanted: Option<usize>,
+    full_edge: usize,
+    allow_shrink: bool,
+) -> bool {
+    let full_edge = full_edge.max(1);
+    let current_edge = current.unwrap_or(full_edge).min(full_edge);
+    let wanted_edge = wanted.unwrap_or(full_edge).min(full_edge);
+    wanted_edge > current_edge || (allow_shrink && wanted_edge.saturating_mul(2) <= current_edge)
+}
+
 struct NativeVideoStreamState {
     start_reverse: bool,
     phase_until: Option<Instant>,
@@ -4437,6 +4477,11 @@ struct NativeVideoStreamState {
     frames_presented: u64,
     triggered_at: Option<Instant>,
     fallback_counted: bool,
+    /// Longest edge this session decodes at, set by the slice it is shown on
+    /// (None = the full requested size). See native_video_slice_edge_cap.
+    decode_max_edge: Option<usize>,
+    /// False for a session adopted warm from a library preroll.
+    decode_may_shrink: bool,
 }
 
 #[derive(Clone)]
@@ -5630,6 +5675,8 @@ impl App {
                     frames_dropped: session.stream.dropped_frames(),
                     reserved_bytes: session.stream.memory_bytes() as u64,
                     waiting_for_memory_bytes: session.stream.memory_waiting_bytes(),
+                    uri: self.media_sources.get(source_id).map(|state| state.uri.clone()).unwrap_or_default(),
+                    decode_max_edge: session.decode_max_edge,
                 }
             })
             .collect::<Vec<_>>();
@@ -18201,6 +18248,12 @@ impl App {
         let width = state.decode_width.unwrap_or(fallback_width);
         let height = state.decode_height.unwrap_or(fallback_height);
         let signature = Self::native_video_session_signature(state, width, height);
+        // A video on a small slice decodes small. The cap comes from the
+        // output size and the slice, the same for every caller, so a session
+        // only restarts when its slice grows past what it decodes.
+        let full_decode = self.native_video_decode_dimensions();
+        let full_edge = full_decode.0.max(full_decode.1);
+        let decode_max_edge = native_video_slice_edge_cap(full_decode, self.video_decode_scale(source_id));
         if let Some(session) = self.native_video_streams.get_mut(source_id) {
             if session.signature != signature && session.seek_generation == state.seek_generation {
                 let mut previous_rate_state = state.clone();
@@ -18215,7 +18268,9 @@ impl App {
         let existing_stream_state = self
             .native_video_streams
             .get(source_id)
-            .filter(|stream_state| stream_state.signature == signature)
+            .filter(|stream_state| stream_state.signature == signature
+                && !native_video_decode_cap_needs_restart(stream_state.decode_max_edge, decode_max_edge,
+                    full_edge, stream_state.decode_may_shrink))
             .map(|stream_state| (stream_state.playing, stream_state.seek_generation));
         // Prefer prepared frames to seeking a running decoder on a retrigger.
         // A column must not wait for three independent hardware seeks when
@@ -18230,6 +18285,7 @@ impl App {
                     && candidate_id.starts_with("library:")
                     && !candidate.playing
                     && candidate.signature == signature
+                    && !native_video_decode_cap_needs_restart(candidate.decode_max_edge, decode_max_edge, full_edge, false)
                     && (existing_stream_state.is_none() || candidate.stream.buffered_frames() > 0)
                     && (candidate.start_time_seconds - state.playback_time_seconds).abs() < 0.001
             })
@@ -18244,6 +18300,7 @@ impl App {
                 return;
             }
             warm.playing = playing;
+            warm.decode_may_shrink = false;
             warm.seek_generation = state.seek_generation;
             warm.last_used_frame = self.stats.frames_presented;
             warm.next_frame_at = Instant::now();
@@ -18354,7 +18411,11 @@ impl App {
             .map(|s| s.stream.memory_bytes().saturating_sub(s.stream.optional_memory_bytes() as usize)).sum();
         // The budget in force: sized to the GPU unless the user chose one.
         let budget = self.video_memory_budget.limit_bytes() as usize;
-        let frame_bytes = width.clamp(16, 4096).saturating_mul(height.clamp(16, 4096)).saturating_mul(4);
+        let (decode_width, decode_height) = fit_video_long_edge(
+            width.min(u32::MAX as usize) as u32, height.min(u32::MAX as usize) as u32,
+            decode_max_edge.map(|edge| edge.min(u32::MAX as usize) as u32));
+        let (decode_width, decode_height) = (decode_width as usize, decode_height as usize);
+        let frame_bytes = decode_width.clamp(16, 4096).saturating_mul(decode_height.clamp(16, 4096)).saturating_mul(4);
         // Speculative library preroll must never prevent an on-stage clip
         // from starting. Reclaim unused prepared sessions until the new
         // decoder has room for its minimum ring plus producer/consumer.
@@ -18387,8 +18448,8 @@ impl App {
         }
         let stream = spawn_native_video_stream(
             path,
-            width,
-            height,
+            decode_width,
+            decode_height,
             start_time,
             state.current_playback_rate(Some(self.native_graph_time_seconds())),
             state.loop_enabled,
@@ -18399,6 +18460,7 @@ impl App {
             capacity,
             self.video_memory_budget.clone(),
             self.renderer.as_ref().is_some_and(|r| r.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC)),
+            decode_max_edge.map(|edge| edge.min(u32::MAX as usize) as u32),
             #[cfg(target_os = "windows")]
             self.renderer.as_ref().ok_or_else(|| "Renderer unavailable for hardware video".to_string())
                 .and_then(|renderer| renderer.video_device.clone()),
@@ -18426,6 +18488,8 @@ impl App {
                 frames_presented: 0,
                 triggered_at: playing.then(Instant::now),
                 fallback_counted: false,
+                decode_max_edge,
+                decode_may_shrink: !source_id.starts_with("library:"),
             },
         );
         if let Some(session) = self.native_video_streams.get(source_id) {
@@ -18679,9 +18743,8 @@ impl App {
                     // Their owner explicitly releases them when the texture changes.
                     let playing = (visible_sources.contains(&source_id)
                         || source_id.starts_with("native-splat-video-")) && !state.paused;
-                    let scale = self.video_decode_scale(&source_id);
-                    let scaled = |edge: usize| (((edge as f32 * scale) as usize) / 2 * 2).max(64);
-                    self.ensure_native_video_stream(&source_id, &state, scaled(width), scaled(height), playing);
+                    // The slice's own size is applied inside, to every caller alike.
+                    self.ensure_native_video_stream(&source_id, &state, width, height, playing);
                 }
             }
             self.drain_native_video_streams();
@@ -34360,6 +34423,48 @@ mod tests {
         assert_eq!(super::format_adapter_luid(0, 0x0001_2345), "0000000000012345");
         // HighPart is signed in the Windows LUID; keep its bits as they are.
         assert_eq!(super::format_adapter_luid(-1, 0xdead_beef), "ffffffffdeadbeef");
+    }
+
+    #[test]
+    fn videos_on_small_slices_decode_at_the_slice_size() {
+        use super::{fit_video_long_edge, native_video_slice_edge_cap};
+        // A full-frame slice keeps the editor's requested size.
+        assert_eq!(native_video_slice_edge_cap((1920, 1080), 1.0), None);
+        assert_eq!(native_video_slice_edge_cap((1920, 1080), f32::NAN), None);
+        // A quarter-size slice of a 1080p output needs a 480-pixel edge.
+        let cap = native_video_slice_edge_cap((1920, 1080), 0.25);
+        assert_eq!(cap, Some(480));
+        // The decode size is the smaller of what the editor asked for and
+        // what the slice needs: a 2048x1152 request on that slice is 480x270.
+        assert_eq!(fit_video_long_edge(2048, 1152, cap.map(|edge| edge as u32)), (480, 270));
+        // A portrait clip keeps its shape and even sizes.
+        assert_eq!(fit_video_long_edge(1080, 1920, Some(480)), (270, 480));
+        assert_eq!(fit_video_long_edge(1001, 563, Some(500)), (500, 280));
+        // A request already inside the cap is unchanged.
+        assert_eq!(fit_video_long_edge(320, 180, Some(480)), (320, 180));
+        // Never a degenerate size.
+        assert_eq!(fit_video_long_edge(4096, 16, Some(64)), (64, 16));
+        // The floor keeps tiny slices decodable.
+        assert_eq!(native_video_slice_edge_cap((1920, 1080), 0.01), Some(64));
+    }
+
+    #[test]
+    fn a_session_restarts_when_its_slice_grows_or_halves_but_not_on_small_changes() {
+        use super::native_video_decode_cap_needs_restart as restart;
+        let full = 1920;
+        assert!(!restart(None, None, full, true));
+        assert!(restart(Some(480), None, full, true), "a slice grown to full frame needs the full size");
+        assert!(restart(Some(480), Some(720), full, true));
+        assert!(!restart(Some(480), Some(480), full, true));
+        // Started before its layer was bound: comes down to a quarter slice.
+        assert!(restart(None, Some(480), full, true));
+        // Small reductions keep the running decoder (no churn while dragging).
+        assert!(!restart(None, Some(1440), full, true));
+        assert!(!restart(Some(960), Some(720), full, true));
+        assert!(restart(Some(960), Some(480), full, true));
+        // A warm library session handed to a layer never shrinks.
+        assert!(!restart(None, Some(480), full, false));
+        assert!(restart(Some(480), None, full, false));
     }
 
     #[test]

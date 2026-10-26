@@ -60,23 +60,28 @@ pub enum HardwareVideoDecoder {
     Hap(HapVideoDecoder),
 }
 impl HardwareVideoDecoder {
+    /// `max_edge` scales the decoder's output down for a small slice. HAP
+    /// frames are uploaded compressed and always keep their size.
     #[cfg(target_os = "macos")]
-    pub fn open(path: &Path, hap_supported: bool) -> Result<Self, String> {
+    pub fn open(path: &Path, hap_supported: bool, max_edge: Option<u32>) -> Result<Self, String> {
         if hap_supported && let Ok(hap) = HapVideoDecoder::open(path) {
             return Ok(Self::Hap(hap));
         }
-        NativeDecoder::open(path).map(Self::Native)
+        NativeDecoder::open_scaled(path, max_edge).map(Self::Native)
     }
     #[cfg(target_os = "windows")]
     pub fn open_with_device(
         path: &Path,
         device: Result<crate::windows_video_texture::WindowsVideoDevice, String>,
         hap_supported: bool,
+        max_edge: Option<u32>,
     ) -> Result<Self, String> {
         if hap_supported && let Ok(hap) = HapVideoDecoder::open(path) {
             return Ok(Self::Hap(hap));
         }
-        NativeDecoder::open_with_device(path, &device?).map(Self::Native)
+        let mut decoder = NativeDecoder::open_with_device(path, &device?)?;
+        decoder.set_output_max_edge(max_edge);
+        Ok(Self::Native(decoder))
     }
     pub fn backend_id(&self) -> u64 {
         if matches!(self, Self::Hap(_)) { 5 } else { 1 }

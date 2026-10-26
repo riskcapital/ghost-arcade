@@ -75,6 +75,7 @@ struct RawFrame {
 unsafe extern "C" {
     fn ghost_mac_video_open(
         path: *const c_char,
+        max_edge: u32,
         metadata: *mut RawMetadata,
         error: *mut c_char,
         error_capacity: usize,
@@ -129,13 +130,21 @@ pub struct MacVideoDecoder {
 unsafe impl Send for MacVideoDecoder {}
 
 impl MacVideoDecoder {
+    #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self, String> {
+        Self::open_scaled(path, None)
+    }
+
+    /// `max_edge` asks VideoToolbox for frames no larger than that on their
+    /// longest edge (a video on a small slice). Metadata keeps the clip's own
+    /// size; decoded frames report the size they have.
+    pub fn open_scaled(path: &Path, max_edge: Option<u32>) -> Result<Self, String> {
         let path = CString::new(path.as_os_str().as_bytes())
             .map_err(|_| "Video path contains a NUL byte".to_string())?;
         let mut raw = RawMetadata::default();
         let mut error = [0; 2048];
         let decoder = unsafe {
-            ghost_mac_video_open(path.as_ptr(), &mut raw, error.as_mut_ptr(), error.len())
+            ghost_mac_video_open(path.as_ptr(), max_edge.unwrap_or(0), &mut raw, error.as_mut_ptr(), error.len())
         };
         let decoder = NonNull::new(decoder).ok_or_else(|| error_message(&error))?;
         Ok(Self {
@@ -444,6 +453,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    #[ignore = "requires Mac hardware decoder access and GHOST_TEST_H264_PATH fixture"]
+    fn hardware_h264_scales_output_for_a_small_slice() {
+        let path = std::env::var_os("GHOST_TEST_H264_PATH").expect("Set GHOST_TEST_H264_PATH");
+        let mut decoder = MacVideoDecoder::open_scaled(Path::new(&path), Some(160)).unwrap();
+        // The clip keeps its own size; only the decoded frames shrink.
+        assert_eq!((decoder.metadata().width, decoder.metadata().height), (320, 180));
+        let frame = decoder.next_frame().unwrap().unwrap();
+        assert_eq!((frame.width, frame.height), (160, 90));
+        let raw = frame._pixel_buffer.0.as_ptr();
+        assert_eq!(unsafe { (CVPixelBufferGetWidth(raw), CVPixelBufferGetHeight(raw)) }, (160, 90));
+        // A limit at or above the clip's size changes nothing.
+        let mut full = MacVideoDecoder::open_scaled(Path::new(&path), Some(4096)).unwrap();
+        let frame = full.next_frame().unwrap().unwrap();
+        assert_eq!((frame.width, frame.height), (320, 180));
     }
 
     #[test]

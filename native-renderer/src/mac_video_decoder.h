@@ -31,7 +31,10 @@ typedef struct {
     double duration_seconds;
 } GhostGpuVideoFrame;
 
+// max_edge > 0 scales decoded frames down to fit that longest edge (a video
+// shown on a small slice). The metadata keeps the clip's own size.
 GhostMacVideoDecoder *ghost_mac_video_open(const char *path,
+                                         uint32_t max_edge,
                                          GhostVideoMetadata *metadata,
                                          char *error, size_t error_capacity);
 int ghost_mac_video_seek(GhostMacVideoDecoder *decoder, double start_seconds,

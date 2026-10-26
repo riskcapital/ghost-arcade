@@ -751,6 +751,41 @@ hardwareDescribe(`${platform.label} playback through the presented shared textur
     } finally { await rpc.close(); }
   }, 40000);
 
+  it('decodes a large clip on a small slice at the slice size, and at full size once the slice grows', async () => {
+    const hdUri = join(directory, 'native-slice-sized-1080p.mp4');
+    execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+      '-i', 'color=c=0x2060d0:s=1920x1080:r=10:d=2',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-bf', '0', '-pix_fmt', 'yuv420p', hdUri,
+    ], { timeout: 20000 });
+    const rpc = core();
+    try {
+      const baseline = await start(rpc);
+      const small: Region = { x: 0.05, y: 0.05, width: 0.2, height: 0.2 };
+      const settings = { uri: hdUri, duration_seconds: 2, decode_width: 1920, decode_height: 1080 };
+      await rpc.commands([layer('video-layer', small), trigger('slice', settings), { ...bind('slice'), uri: hdUri }]);
+      // The playback command arrives before the layer is bound, so the first
+      // decoder may start at full size; it must come down to the slice size.
+      const sliced = await waitUntil<Status>(() => rpc.send('status'), status => status.native_video_sessions.some(
+        session => session.source_id === 'slice' && (session as any).decode_max_edge === 64 && session.frames_presented > 0)
+        && status.source_frame_last_upload_width <= 64, 'slice-sized playback');
+      const session = sliced.native_video_sessions.find(entry => entry.source_id === 'slice') as any;
+      // A 128x96 output: a fifth of it needs at most a 64-pixel edge.
+      expect(session.decode_max_edge).toBe(64);
+      expect(session.uri).toBe(hdUri);
+      expect(sliced.source_frame_last_upload_width).toBeLessThanOrEqual(64);
+      assertHardware(sliced, baseline, ['slice']);
+      // Growing the slice to the full output restarts the decoder at full size.
+      await rpc.commands([layer('video-layer', full)]);
+      const grown = await waitUntil<Status>(() => rpc.send('status'), status => {
+        const entry = status.native_video_sessions.find(item => item.source_id === 'slice') as any;
+        return !!entry && entry.decode_max_edge == null && entry.frames_presented > 0
+          && status.source_frame_last_upload_width === 1920;
+      }, 'full-size playback after the slice grows');
+      expect(grown.source_frame_last_upload_height).toBe(1080);
+    } finally { await rpc.close(); }
+  }, 40000);
+
   it.each(['unchanged cap', 'reduced cap', 'ample headroom'])('shares scratch memory with a newly launched live clip (%s)', async (capMode) => {
     const mediumUri = join(directory, `scratch-memory-960-${capMode.replace(' ', '-')}.mp4`);
     execFileSync('ffmpeg', [

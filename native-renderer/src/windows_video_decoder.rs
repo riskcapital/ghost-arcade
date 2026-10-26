@@ -466,6 +466,8 @@ pub struct WindowsVideoDecoder {
     ended: bool,
     queue_capacity: usize,
     pristine_prime: bool,
+    /// Longest edge of the converted frames (a video on a small slice).
+    output_max_edge: Option<u32>,
     _priority: PlaybackPriority,
     _platform: MediaPlatform,
     // This makes the decoder !Send/!Sync. Construct, operate, and drop it on
@@ -592,6 +594,7 @@ impl WindowsVideoDecoder {
             ended: false,
             queue_capacity: 2,
             pristine_prime: true,
+            output_max_edge: None,
             _priority: priority,
             _platform: platform,
             _apartment: apartment,
@@ -602,6 +605,13 @@ impl WindowsVideoDecoder {
 
     pub fn metadata(&self) -> VideoMetadata {
         self.metadata
+    }
+
+    /// Convert frames no larger than `max_edge` on their longest edge. The
+    /// GPU video processor that already converts NV12/P010 to RGB scales in
+    /// the same pass. Metadata keeps the clip's own size.
+    pub fn set_output_max_edge(&mut self, max_edge: Option<u32>) {
+        self.output_max_edge = max_edge;
     }
 
     pub fn queue_capacity(&self) -> usize {
@@ -925,9 +935,15 @@ impl WindowsVideoDecoder {
                     "Hardware video texture belongs to a different renderer adapter/device".into(),
                 );
             }
+            let (output_width, output_height) = crate::media_decode::fit_video_long_edge(
+                self.output.width, self.output.height, self.output_max_edge);
             let metadata = VideoFrameMetadata {
                 width: self.output.width,
                 height: self.output.height,
+                // Never larger than the source; fit_video_long_edge keeps a
+                // picture already inside the limit unchanged.
+                output_width: output_width.min(self.output.width),
+                output_height: output_height.min(self.output.height),
                 pixel_format: u32::from_be_bytes(if self.output.p010 {
                     *b"P010"
                 } else {

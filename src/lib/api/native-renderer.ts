@@ -776,6 +776,10 @@ export interface RendererStatus {
     waiting_for_memory_bytes: number;
     backend: string;
     fallback_reason: string;
+    /** The file this session decodes. */
+    uri?: string;
+    /** Longest decoded edge when the video is on a small slice; null = full size. */
+    decode_max_edge?: number | null;
   }>;
   native_video_sessions_armed: number;
   native_video_sessions_prerolled: number;

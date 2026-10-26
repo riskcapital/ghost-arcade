@@ -176,8 +176,13 @@ impl WindowsVideoDevice {
 
 #[derive(Clone, Copy, Debug)]
 pub struct VideoFrameMetadata {
+    /// Visible decoded size (the source rectangle).
     pub width: u32,
     pub height: u32,
+    /// Size of the converted output; smaller than width x height when the
+    /// video is shown on a small slice (the video processor scales).
+    pub output_width: u32,
+    pub output_height: u32,
     pub pixel_format: u32,
     pub color_matrix: u32,
     pub full_range: bool,
@@ -200,6 +205,7 @@ struct OutputSurface {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
     allocation_bytes: usize,
+    size: (u32, u32),
 }
 
 #[derive(Clone, Debug)]
@@ -232,6 +238,8 @@ struct ProcessorKey {
     coded_height: u32,
     width: u32,
     height: u32,
+    output_width: u32,
+    output_height: u32,
     pixel_format: u32,
     color_matrix: u32,
     full_range: bool,
@@ -416,8 +424,8 @@ impl WindowsVideoWorker {
                         Numerator: 30,
                         Denominator: 1,
                     },
-                    OutputWidth: key.width,
-                    OutputHeight: key.height,
+                    OutputWidth: key.output_width,
+                    OutputHeight: key.output_height,
                     Usage: D3D11_VIDEO_USAGE_PLAYBACK_NORMAL,
                 })
                 .map_err(|e| error("create video processor enumerator", e))?;
@@ -433,6 +441,13 @@ impl WindowsVideoWorker {
                 top: 0,
                 right: key.width as i32,
                 bottom: key.height as i32,
+            };
+            // The processor scales the visible source into the output.
+            let output_rectangle = RECT {
+                left: 0,
+                top: 0,
+                right: key.output_width as i32,
+                bottom: key.output_height as i32,
             };
             self.video_context.VideoProcessorSetStreamFrameFormat(
                 &processor,
@@ -451,12 +466,12 @@ impl WindowsVideoWorker {
                 &processor,
                 0,
                 true,
-                Some(&rectangle),
+                Some(&output_rectangle),
             );
             self.video_context.VideoProcessorSetOutputTargetRect(
                 &processor,
                 true,
-                Some(&rectangle),
+                Some(&output_rectangle),
             );
             self.video_context
                 .VideoProcessorSetStreamAlpha(&processor, 0, true, 1.0);
@@ -509,8 +524,8 @@ impl WindowsVideoWorker {
     }
 
     fn create_output(&self, processor: &Processor) -> Result<Arc<OutputSurface>, String> {
-        let width = processor.key.width;
-        let height = processor.key.height;
+        let width = processor.key.output_width;
+        let height = processor.key.output_height;
         let format = processor.output_format;
         unsafe {
             // D3D12 owns the shared allocation, with its interop state explicit.
@@ -620,6 +635,7 @@ impl WindowsVideoWorker {
                 _texture: texture,
                 view,
                 allocation_bytes: allocation.SizeInBytes.min(usize::MAX as u64) as usize,
+                size: (width, height),
             }))
         }
     }
@@ -642,6 +658,10 @@ impl WindowsVideoWorker {
         }
         if metadata.width == 0
             || metadata.height == 0
+            || metadata.output_width == 0
+            || metadata.output_height == 0
+            || metadata.output_width > metadata.width
+            || metadata.output_height > metadata.height
             || metadata.width > desc.Width
             || metadata.height > desc.Height
             || desc.MipLevels != 1
@@ -664,13 +684,20 @@ impl WindowsVideoWorker {
             coded_height: desc.Height,
             width: metadata.width,
             height: metadata.height,
+            output_width: metadata.output_width,
+            output_height: metadata.output_height,
             pixel_format: metadata.pixel_format,
             color_matrix: metadata.color_matrix,
             full_range: metadata.full_range,
         };
+        // Unused surfaces of another output size are released; ones still
+        // held stay until their frames are dropped, and are never reused.
+        let output_size = (key.output_width, key.output_height);
+        self.pool.retain(|slot| slot.size == output_size || Arc::strong_count(slot) > 1);
         self.configure(key)?;
         let processor = self.processor.as_ref().unwrap();
-        let output = if let Some(slot) = self.pool.iter().find(|slot| Arc::strong_count(slot) == 1)
+        let output = if let Some(slot) = self.pool.iter()
+            .find(|slot| slot.size == output_size && Arc::strong_count(slot) == 1)
         {
             slot.clone()
         } else {
@@ -752,8 +779,8 @@ impl WindowsVideoWorker {
             surface: output,
             fence: self.fence.clone(),
             fence_value: value,
-            width: metadata.width,
-            height: metadata.height,
+            width: metadata.output_width,
+            height: metadata.output_height,
             pixel_format: metadata.pixel_format,
             color_matrix: metadata.color_matrix,
             full_range: metadata.full_range,

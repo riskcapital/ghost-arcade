@@ -164,6 +164,8 @@ struct GhostMacVideoDecoder {
     bool reader_ended = false;
     bool range_ended = false;
     bool require_p010 = false;
+    // Longest edge of the decoded frames; 0 keeps the clip's own size.
+    uint32_t max_edge = 0;
 
     CMTime cursor_time(AVSampleCursor *cursor) const {
         // AVSampleCursor reports media time while AVAssetReader's output PTS
@@ -264,7 +266,8 @@ struct GhostMacVideoDecoder {
         frame->info.height = static_cast<uint32_t>(CVPixelBufferGetHeight(pixel));
         frame->info.pixel_format = format;
         CFTypeRef matrix = CVBufferGetAttachment(pixel, kCVImageBufferYCbCrMatrixKey, nullptr);
-        frame->info.color_matrix = matrix ? color_matrix(matrix, frame->info.height) : self->default_matrix;
+        // The SD/HD guess follows the clip's own height, not a scaled frame's.
+        frame->info.color_matrix = matrix ? color_matrix(matrix, self->metadata.height) : self->default_matrix;
         frame->info.full_range = format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
                                  format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
         frame->info.pts_seconds = CMTimeGetSeconds(pts);
@@ -273,7 +276,8 @@ struct GhostMacVideoDecoder {
         self->pending.push_back(std::move(frame));
     }
 
-    bool initialize(const char *path) {
+    bool initialize(const char *path, uint32_t requested_max_edge) {
+        max_edge = requested_max_edge;
         worker_priority.follow_current_worker();
         // Active decoder sessions serve live preview/output even while another
         // app has focus. Apple's user-initiated activity prevents App Nap;
@@ -358,11 +362,24 @@ struct GhostMacVideoDecoder {
         NSDictionary *decoder_specification = @{
             (__bridge NSString *)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: @YES,
         };
-        NSDictionary *pixel_attributes = @{
+        NSMutableDictionary *pixel_attributes = [@{
             (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: require_p010 ? @[@(p010)] : @[@(nv12), @(p010)],
             (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey: @{},
             (__bridge NSString *)kCVPixelBufferMetalCompatibilityKey: @YES,
-        };
+        } mutableCopy];
+        // A video on a small slice: VideoToolbox scales its output, so the
+        // queued surfaces (and the source frame the core keeps) are slice
+        // sized rather than, say, 4K. Same rounding as fit_video_long_edge.
+        const uint32_t long_edge = std::max(metadata.width, metadata.height);
+        if (max_edge > 0 && long_edge > max_edge) {
+            const double scale = static_cast<double>(max_edge) / static_cast<double>(long_edge);
+            const auto even = [scale](uint32_t edge) {
+                const uint32_t scaled = static_cast<uint32_t>(std::lround(edge * scale)) / 2 * 2;
+                return std::max<uint32_t>(16, scaled);
+            };
+            pixel_attributes[(__bridge NSString *)kCVPixelBufferWidthKey] = @(even(metadata.width));
+            pixel_attributes[(__bridge NSString *)kCVPixelBufferHeightKey] = @(even(metadata.height));
+        }
         VTDecompressionOutputCallbackRecord callback = { decoded, this };
         const OSStatus status = VTDecompressionSessionCreate(kCFAllocatorDefault, format,
             (__bridge CFDictionaryRef)decoder_specification, (__bridge CFDictionaryRef)pixel_attributes,
@@ -574,12 +591,12 @@ struct GhostMacVideoDecoder {
     }
 };
 
-extern "C" GhostMacVideoDecoder *ghost_mac_video_open(const char *path,
+extern "C" GhostMacVideoDecoder *ghost_mac_video_open(const char *path, uint32_t max_edge,
     GhostVideoMetadata *metadata, char *error, size_t error_capacity) {
     @autoreleasepool {
         @try {
             auto decoder = std::make_unique<GhostMacVideoDecoder>();
-            if (!decoder->initialize(path)) {
+            if (!decoder->initialize(path, max_edge)) {
                 write_error(error, error_capacity, decoder->failure);
                 return nullptr;
             }
