@@ -178,11 +178,15 @@ function sanitizeSyncedState(current: VJLayerSequencerState, payload: Partial<VJ
 }
 
 function evaluateAt(state: VJLayerSequencerState, timeSec: number): Pick<VJLayerSequencerState, 'currentStep' | 'opacityOverrides' | 'bankBOpacityOverrides'> {
-  const dur = stepDuration(state);
-  const cycle = dur * state.stepCount;
-  const wrapped = ((timeSec % cycle) + cycle) % cycle;
-  const step = Math.max(0, Math.min(state.stepCount - 1, Math.floor(wrapped / dur)));
-  const phase = (wrapped - step * dur) / dur;
+  return evaluateAtSteps(state, timeSec / stepDuration(state));
+}
+
+/** The pattern at a position counted in steps (fractional: 5.25 is a quarter
+ *  of the way through step 5). */
+function evaluateAtSteps(state: VJLayerSequencerState, positionSteps: number): Pick<VJLayerSequencerState, 'currentStep' | 'opacityOverrides' | 'bankBOpacityOverrides'> {
+  const wrapped = ((positionSteps % state.stepCount) + state.stepCount) % state.stepCount;
+  const step = Math.max(0, Math.min(state.stepCount - 1, Math.floor(wrapped)));
+  const phase = wrapped - step;
   const next = (step + 1) % state.stepCount;
   const cellsA = state.cells;
   const cellsB = state.bankBCells ?? state.cells;
@@ -206,7 +210,25 @@ function sameOpacityMap(a: Record<number, number>, b: Record<number, number>): b
 function createVJLayerSequencerStore() {
   const { subscribe, update, set } = writable<VJLayerSequencerState>({ ...INITIAL });
   let raf: number | null = null;
-  let startedAt = 0;
+  // Where the steps are, counted in steps rather than seconds. The step used
+  // to be (time since play) / (step length now), so with the tempo following
+  // live detection every BPM wobble re-scaled all the time since play and the
+  // pattern jumped around. Now a tempo or subdivision change only changes how
+  // fast the position advances from where it is, keeping the step and the
+  // fraction of it already played.
+  let anchorAt = 0;
+  let anchorSteps = 0;
+  let anchorStepSec = stepDuration(INITIAL);
+
+  function positionAt(now: number): number {
+    return anchorSteps + Math.max(0, now - anchorAt) / 1000 / anchorStepSec;
+  }
+
+  function anchor(state: VJLayerSequencerState, positionSteps: number, now: number) {
+    anchorAt = now;
+    anchorSteps = Math.max(0, positionSteps);
+    anchorStepSec = stepDuration(state);
+  }
 
   function stopLoop() {
     if (raf) cancelAnimationFrame(raf);
@@ -215,7 +237,8 @@ function createVJLayerSequencerStore() {
 
   function startLoop(transportTimeSec = 0) {
     stopLoop();
-    startedAt = performance.now() - Math.max(0, transportTimeSec) * 1000;
+    const state = get({ subscribe });
+    anchor(state, Math.max(0, transportTimeSec) / stepDuration(state), performance.now());
     raf = requestAnimationFrame(tick);
   }
 
@@ -233,7 +256,11 @@ function createVJLayerSequencerStore() {
       raf = null;
       return;
     }
-    const next = evaluateAt(state, (now - startedAt) / 1000);
+    if (Math.abs(stepDuration(state) - anchorStepSec) > 1e-9) {
+      // The tempo or subdivision changed: carry on from the current position.
+      anchor(state, positionAt(now), now);
+    }
+    const next = evaluateAtSteps(state, positionAt(now));
     if (
       next.currentStep !== state.currentStep
       || !sameOpacityMap(next.opacityOverrides, state.opacityOverrides)
@@ -351,9 +378,11 @@ function createVJLayerSequencerStore() {
       if (shouldPlay) startLoop(transportTimeSec);
       else stopLoop();
     },
+    /** The position as a time at the current tempo, which is how hydrate()
+     *  on the other side of the state sync reads it back. */
     getTransportTimeSec(): number {
       const state = get({ subscribe });
-      return state.isPlaying ? Math.max(0, (performance.now() - startedAt) / 1000) : 0;
+      return state.isPlaying ? positionAt(performance.now()) * stepDuration(state) : 0;
     },
     serialize(): VJLayerSequencerState {
       return JSON.parse(JSON.stringify(get({ subscribe }))) as VJLayerSequencerState;
