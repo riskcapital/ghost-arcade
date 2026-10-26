@@ -651,6 +651,31 @@ const NATIVE_VIDEO_RETRY_MAX: Duration = Duration::from_secs(5);
 /// How often a looping clip whose file is gone checks for it again.
 const NATIVE_VIDEO_MISSING_FILE_POLL: Duration = Duration::from_secs(1);
 
+/// The hardware decode the software fallback asks ffmpeg for. ffmpeg decodes
+/// on the GPU where it can and hands back ordinary frames, so the RGBA output
+/// is unchanged; a codec the hardware cannot do falls back to ffmpeg's own
+/// decoder. GA_NATIVE_VIDEO_HWACCEL=0 turns it off.
+fn software_fallback_hwaccel() -> Option<&'static str> {
+    if std::env::var("GA_NATIVE_VIDEO_HWACCEL").is_ok_and(|value| value == "0" || value.eq_ignore_ascii_case("off")) {
+        return None;
+    }
+    if cfg!(target_os = "macos") {
+        Some("videotoolbox")
+    } else if cfg!(target_os = "windows") {
+        Some("d3d11va")
+    } else {
+        None
+    }
+}
+
+/// Decoder and filter threads for one fallback stream. It used to be two and
+/// one: a 4K ProRes or 10-bit HEVC clip then decoded and scaled on two cores
+/// and lagged. Bounded, because a show runs several streams side by side.
+fn software_fallback_threads(cores: usize) -> (usize, usize) {
+    let cores = cores.max(1);
+    ((cores / 2).clamp(2, 6), (cores / 4).clamp(1, 4))
+}
+
 fn video_debug() -> bool {
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| std::env::var("GHOST_DEBUG_VIDEO").is_ok_and(|v| v == "1"))
@@ -868,6 +893,11 @@ pub fn spawn_native_video_stream(
         let mut segment_start = start_time_seconds.max(range_start).clamp(0.0, 3600.0);
 
         let t_origin = Instant::now();
+        // Cleared if a pass with hardware decoding yields no frame at all;
+        // the next pass then decodes in software instead.
+        let hwaccel = std::cell::Cell::new(software_fallback_hwaccel());
+        let (decode_threads, filter_threads) = software_fallback_threads(
+            thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
         let spawn_segment = |seg_start: f64| -> Result<(u32, ChildStdout), String> {
             if video_debug() {
                 eprintln!(
@@ -895,13 +925,16 @@ pub fn spawn_native_video_stream(
                 .arg("info")
                 .arg("-nostats")
                 .arg("-nostdin")
-                // Streams already run in parallel. Per-process automatic
-                // CPU-sized filter/codec pools oversubscribe a multi-layer
-                // show and buffer extra frames before the first RGBA output.
+                // Bounded rather than ffmpeg's automatic CPU-sized pools,
+                // which oversubscribe a multi-layer show and buffer extra
+                // frames before the first RGBA output.
                 .arg("-filter_threads")
-                .arg("1")
+                .arg(filter_threads.to_string())
                 .arg("-threads")
-                .arg("2");
+                .arg(decode_threads.to_string());
+            if let Some(method) = hwaccel.get() {
+                command.arg("-hwaccel").arg(method);
+            }
             if continuous_loop {
                 command.arg("-stream_loop").arg("-1");
             }
@@ -1156,6 +1189,16 @@ pub fn spawn_native_video_stream(
                 }
             }
             reap(pid);
+            if emitted_frames == 0 && path.exists() && let Some(method) = hwaccel.get() {
+                // Hardware decoding produced nothing: try ffmpeg's own decoder
+                // straight away rather than reporting the clip as broken.
+                eprintln!("[native-video] {method} decoding gave no frames for `{}`; decoding in software", path.display());
+                hwaccel.set(None);
+                if let Some((standby_pid, _)) = pending_standby.take() {
+                    reap(standby_pid);
+                }
+                continue;
+            }
             if !loop_enabled {
                 break;
             }
@@ -2702,6 +2745,23 @@ mod lifecycle_tests {
             assert_eq!(replay[0].source_time_seconds, Some(index as f64 / 30.0));
         }
     }
+    #[test]
+    fn software_fallback_uses_more_threads_but_stays_bounded() {
+        assert_eq!(super::software_fallback_threads(1), (2, 1));
+        assert_eq!(super::software_fallback_threads(8), (4, 2));
+        assert_eq!(super::software_fallback_threads(10), (5, 2));
+        assert_eq!(super::software_fallback_threads(64), (6, 4));
+    }
+
+    #[test]
+    fn software_fallback_asks_for_the_platform_hardware_decoder() {
+        let expected = if cfg!(target_os = "macos") { Some("videotoolbox") }
+            else if cfg!(target_os = "windows") { Some("d3d11va") } else { None };
+        if std::env::var_os("GA_NATIVE_VIDEO_HWACCEL").is_none() {
+            assert_eq!(super::software_fallback_hwaccel(), expected);
+        }
+    }
+
     #[test]
     fn frame_rate_comes_from_ffmpegs_stream_line() {
         assert_eq!(parse_video_fps("  Stream #0:0(und): Video: rawvideo (RGBA / 0x41424752), rgba(pc, gbr/unknown/unknown, progressive), 1024x576 [SAR 1:1 DAR 16:9], q=2-31, 566231 kb/s, 30 fps, 30 tbn (default)"), Some(30.0));
