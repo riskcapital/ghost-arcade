@@ -96,7 +96,9 @@
   if(!best)throw new Error(why||'This surface could not be mapped.');return best;}
  let framing=false,preview:HTMLVideoElement,previewCanvas:HTMLCanvasElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
  // With LiDAR the scan runs on the depth camera, so curved forms get a mesh; otherwise the plain camera.
- async function openAuto(){framing=true;message='Starting the camera…';await tick();try{autoCamera=lidar?await openLidarAutoMapCamera(previewCanvas):await openAutoMapCamera(preview,(await uprightTurn()).turn);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
+ async function openAuto(){framing=true;message='Starting the camera…';
+  // The motion permission must be asked straight from the tap, before anything else waits.
+  const held=lidar?null:await uprightTurn();await tick();try{autoCamera=lidar?await openLidarAutoMapCamera(previewCanvas):await openAutoMapCamera(preview,held?.turn??0);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
  function closeAuto(){stopRemote?.();stopRemote=undefined;autoCamera?.stop();autoCamera=undefined;framing=false;}
  async function startAuto(){
   if(!autoCamera||!automap)return;busy=true;
