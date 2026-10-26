@@ -229,13 +229,21 @@ app.commandLine.appendSwitch('high-dpi-support', '1');
 // Debug log to file (stdout doesn't always flush from background Electron)
 // In production, __dirname is inside the asar (read-only), so write to %LOCALAPPDATA%
 const _isAsar = __dirname.includes('app.asar');
-const _logDir = _isAsar
-  ? (process.platform === 'darwin'
-      ? path.join(process.env.HOME || '/tmp', 'Library', 'Logs')
-      : (process.env.LOCALAPPDATA || process.env.TEMP || '.'))
-  : path.join(__dirname, '..');
-const _logFile = path.join(_logDir, _isAsar ? 'ghost-arcade-debug.log' : 'electron-debug.log');
-fs.writeFileSync(_logFile, `=== Electron started ${new Date().toISOString()} ===\n`);
+const { debugLogLocation, rotateDebugLogs } = require('./debug-log.cjs');
+const { dir: _logDir, file: _logFile } = debugLogLocation({
+  packaged: _isAsar,
+  platform: process.platform,
+  env: process.env,
+  sourceRoot: path.join(__dirname, '..'),
+});
+// The last three launches stay readable (.log, .1.log, .2.log): a problem
+// reported after restarting the app used to be overwritten with its log.
+rotateDebugLogs(_logFile, 3);
+try {
+  fs.writeFileSync(_logFile, `=== Electron started ${new Date().toISOString()} ===\n`);
+} catch {
+  /* a read-only log folder must not stop the app */
+}
 // Buffered async log writes. The old appendFileSync-per-line blocked the
 // main thread 1-5ms per console call — IPC handling, window management,
 // and native sends all jank when logging gets busy mid-show. Lines queue
@@ -8794,6 +8802,15 @@ function registerIpcHandlers() {
       fs.appendFileSync(_logFile, `[RENDERER] ${new Date().toISOString()} ${line}\n`);
     } catch {}
     return true;
+  });
+
+  // Help and the render-core error both offer the log: show the folder with
+  // the current log selected, so the user can attach it to a report.
+  ipcMain.handle('open_log_folder', async () => {
+    _flushLogBuffer(true);
+    if (fs.existsSync(_logFile)) shell.showItemInFolder(_logFile);
+    else await shell.openPath(_logDir);
+    return { success: true, path: _logFile };
   });
 
   ipcMain.handle('report_error', async (_, args) => {
