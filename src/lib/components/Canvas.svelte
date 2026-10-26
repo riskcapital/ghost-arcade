@@ -608,7 +608,7 @@
     const currentId = mappingComposition.activeStageEffectId ?? '';
     let idx = cycle.indexOf(currentId);
     idx = idx < 0 ? 0 : (idx + 1) % cycle.length;
-    project.setMappingStageEffectActive(cycle[idx]);
+    project.setMappingStageEffectActive(cycle[idx], { history: false });
   }
 
   function applyMappingCompositionStageEffects(

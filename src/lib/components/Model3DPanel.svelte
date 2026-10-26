@@ -223,7 +223,7 @@
       onUpdate(updates);
     } else if (layer) {
       project.updateModel3DContent(layer.id, updates);
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(`model3d:${layer.id}:${Object.keys(updates).sort().join(',')}`);
     }
   }
 

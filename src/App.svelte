@@ -87,7 +87,7 @@
   import {isTypingTarget,studioModalKeyAction} from './lib/utils/studioModalKeys';
   import { isTextEntryTarget, undoShortcut } from './lib/utils/undoShortcut';
   import {createNativeSourcePreview} from './lib/sync/nativeSourcePreview';
-  import {recordDiscreteAction} from './lib/stores/historyHooks';
+  import {recordDiscreteAction,scheduleHistorySnapshot} from './lib/stores/historyHooks';
 
   // ── Interactive Studio (desktop editor) ───────────────────────────────
   let pendingPhoneCalibration='';
@@ -474,7 +474,7 @@
     resetRemotePairing,
     withPairingToken,
   } from './lib/remote/remotePairing';
-  import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType } from './lib/types';
+  import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType, Project } from './lib/types';
   import { createDefaultCorners, generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
   // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
@@ -1953,7 +1953,14 @@
     }
 
     // Wire up history recording callback for the project store
-    setHistoryCallback(() => recordHistory());
+    setHistoryCallback(recordHistory, {
+      capture: captureHistoryState,
+      commit: commitHistoryState,
+      amend: () => {
+        const state = captureHistoryState();
+        history.amend(state.project, state.keyframes, state.output);
+      },
+    });
     // Opening a project (any path: File, Open Recent, recovery, relink,
     // package) starts its history over. Deferred to a microtask so the steps
     // the opening path takes right after the import (naming the project
@@ -2366,7 +2373,7 @@
             project.update(p => ({ ...p, layers: [newLayer, ...p.layers] }));
             project.selectLayer(newLayer.id);
           }
-          recordHistory();
+          recordDiscreteAction();
         }
         return;
       }
@@ -2378,7 +2385,7 @@
         const sel = get(selectedLayer);
         if (sel) {
           project.duplicateLayer(sel.id);
-          recordHistory();
+          recordDiscreteAction();
         }
         return;
       }
@@ -2696,7 +2703,7 @@
   }
 
   function endShapeControlPointDrag() {
-    if (draggingShapeControlPointIndex !== null) recordHistory();
+    if (draggingShapeControlPointIndex !== null) recordDiscreteAction();
     draggingShapeControlPointIndex = null;
     window.removeEventListener('mousemove', handleShapeControlPointDrag);
     window.removeEventListener('mouseup', endShapeControlPointDrag);
@@ -4264,6 +4271,8 @@
           position: { x: number; y: number };
         };
         project.setCorner(layerId, corner, position);
+        // A drag on the phone: one undo step once it settles.
+        scheduleHistorySnapshot(`remote-corner:${layerId}:${corner}`);
         break;
       }
 
@@ -4275,6 +4284,7 @@
           position: { x: number; y: number };
         };
         project.setMeshPoint(layerId, row, col, position);
+        scheduleHistorySnapshot(`remote-mesh:${layerId}:${row}:${col}`);
         break;
       }
 
@@ -6155,27 +6165,41 @@
     historyInitialized = true;
   }
 
+  // Keyframe timelines and the output stage (Screens, Master Warp) live in
+  // their own stores rather than inside Project, so every step captures them
+  // alongside it; this is the only place that can see all three. Each store
+  // replaces its value on every edit rather than mutating it, so holding the
+  // three references is a complete, cheap capture.
+  type CapturedHistoryState = { project: Project; keyframes: unknown; output: ReturnType<typeof settings.captureOutputHistory> };
+  function captureHistoryState(): CapturedHistoryState {
+    return { project: get(project), keyframes: keyframeTimeline.exportAll(), output: settings.captureOutputHistory() };
+  }
+  function commitHistoryState(captured: unknown) {
+    const state = captured as CapturedHistoryState;
+    history.record(state.project, state.keyframes, state.output);
+  }
+
+  // Record a snapshot — call this AFTER discrete user actions (warp end, layer
+  // add/delete, keyframe edits, screen and mask edits, etc.). Nothing records
+  // on a store subscription, so live automation never lands in the history.
+  function recordHistory() {
+    commitHistoryState(captureHistoryState());
+  }
+
   /** Start the undo history over at the project as it is now: after a
    *  project is opened, recovered or created, undo must not reach back into
    *  the project that was open before. */
   function resetHistoryToCurrent() {
     cancelPendingHistorySnapshot();
-    history.init(get(project), keyframeTimeline.exportAll(), settings.captureOutputHistory());
-  }
-
-  // Record a snapshot — call this AFTER discrete user actions (warp end, layer
-  // add/delete, keyframe edits, screen and mask edits, etc.). Keyframe
-  // timelines and the output stage (Screens, Master Warp) live in their own
-  // stores rather than inside Project, so they are captured alongside it
-  // here; this is the only place that can see all three. Nothing records on
-  // a store subscription, so live automation never lands in the history.
-  function recordHistory() {
-    history.record(get(project), keyframeTimeline.exportAll(), settings.captureOutputHistory());
+    const state = captureHistoryState();
+    history.init(state.project, state.keyframes, state.output);
   }
 
   /** Restore a snapshot into every store it spans. */
   function applyHistorySnapshot(snapshot: HistorySnapshot) {
     project.set(snapshot.project);
+    // The multi-selection may still name a layer the step removed.
+    project.setSelectedLayerIds(get(selectedLayerIds));
     // beginHistoryRestore() stops importAll() from recording the state it is
     // restoring as a fresh undo entry (which would poison the redo stack).
     beginHistoryRestore();
@@ -6379,7 +6403,7 @@
   }
 
   function handleShapeDragEnd(_e: MouseEvent) {
-    if (isDraggingShape) recordHistory();
+    if (isDraggingShape) recordDiscreteAction();
     isDraggingShape = false;
     dragStartPos = null;
     dragStartShapePos = null;
@@ -6556,7 +6580,7 @@
 
     isLinesDrawing = false;
     linesDrawingPoints = [];
-    recordHistory();
+    recordDiscreteAction();
     // Mode stays active — user can immediately draw the next line
   }
 
@@ -6603,7 +6627,7 @@
       const hit = findClosestMaskEdge(svgX, svgY);
       if (hit) {
         project.insertMaskPoint($selectedLayer.id, hit.shapeIdx, hit.edgeIdx, hit.insertNorm);
-        recordHistory();
+        recordDiscreteAction();
       }
       return;
     }
@@ -6692,7 +6716,7 @@
         }
       }
     }
-    recordHistory();
+    recordDiscreteAction();
   }
 
   /** Right-click on empty canvas: close the current open shape. */
@@ -6704,7 +6728,7 @@
     e.preventDefault();
     e.stopPropagation();
     project.closeMaskShape($selectedLayer.id);
-    recordHistory();
+    recordDiscreteAction();
   }
 
   /** Anchor mousedown — start dragging this anchor (move x/y + carry handles).
@@ -6727,14 +6751,14 @@
       // when the user just wanted to trim one point.
       if (shape?.closed && shape.points.length <= 3) return;
       project.removeMaskPoint($selectedLayer!.id, shapeIndex, pointIndex);
-      recordHistory();
+      recordDiscreteAction();
       return;
     }
     if (mask && pointIndex === 0) {
       const shape = mask.shapes[shapeIndex];
       if (shape && !shape.closed && shape.points.length >= 3) {
         project.closeMaskShape($selectedLayer!.id);
-        recordHistory();
+        recordDiscreteAction();
         return;
       }
     }
@@ -6785,7 +6809,7 @@
   }
 
   function handleMaskAnchorDragEnd() {
-    if (draggingMaskAnchor !== null) recordHistory();
+    if (draggingMaskAnchor !== null) recordDiscreteAction();
     draggingMaskAnchor = null;
     window.removeEventListener('mousemove', handleMaskAnchorDrag);
     window.removeEventListener('mouseup', handleMaskAnchorDragEnd);
@@ -6797,7 +6821,7 @@
     e.stopPropagation();
     if (!$selectedLayer?.mask) return;
     project.removeMaskPoint($selectedLayer.id, shapeIndex, pointIndex);
-    recordHistory();
+    recordDiscreteAction();
   }
 
   /** Control-handle mousedown — drag a cpIn/cpOut handle, mirror the other side. */
@@ -6844,7 +6868,7 @@
   }
 
   function handleMaskHandleDragEnd() {
-    if (draggingMaskHandle !== null) recordHistory();
+    if (draggingMaskHandle !== null) recordDiscreteAction();
     draggingMaskHandle = null;
     window.removeEventListener('mousemove', handleMaskHandleDrag);
     window.removeEventListener('mouseup', handleMaskHandleDragEnd);
@@ -6942,7 +6966,7 @@
   }
 
   function handleVertexDragEnd(_e: MouseEvent) {
-    if (isDraggingVertex) recordHistory();
+    if (isDraggingVertex) recordDiscreteAction();
     isDraggingVertex = false;
     draggedVertexInfo = null;
   }
@@ -6968,7 +6992,7 @@
 
     points.splice(afterIndex + 1, 0, newPt);
     project.updateElementShape($selectedLinesLayer.id, $selectedLineElement.id, { points } as any);
-    recordHistory();
+    recordDiscreteAction();
   }
 
   /**
@@ -6982,7 +7006,7 @@
 
     points.splice(index, 1);
     project.updateElementShape($selectedLinesLayer.id, $selectedLineElement.id, { points } as any);
-    recordHistory();
+    recordDiscreteAction();
   }
 
   // Reactive: get vertices for selected element

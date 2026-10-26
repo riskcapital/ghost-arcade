@@ -101,7 +101,7 @@
     event.stopPropagation();
     noteAltArrow(event);
     setCorners(nudgeProjectorCorner(calibration.corners, selectedCorner, d[0], d[1], size.width, size.height));
-    scheduleHistorySnapshot();
+    scheduleHistorySnapshot(`projector-corner:${screen.id}:${selectedCorner}`);
   }
   function selectCorner(index: number) { selectedCorner = index; editor?.focus({ preventScroll: true }); }
 
@@ -129,7 +129,7 @@
     const step = (event.shiftKey ? 10 : event.altKey ? 0.1 : 1) * (event.key === 'ArrowUp' ? 1 : -1);
     noteAltArrow(event);
     setCorners(nudgeProjectorCorner(calibration.corners, index, axis === 'x' ? step : 0, axis === 'y' ? step : 0, size.width, size.height));
-    scheduleHistorySnapshot();
+    scheduleHistorySnapshot(`projector-corner:${screen.id}:${index}`);
   }
   function setCoordinate(index: number, axis: 'x' | 'y', percent: number) {
     const corners = calibration.corners.map(p => ({ ...p }));
@@ -149,7 +149,7 @@
   }
   function setBand(patch: Partial<OverlapBand>, continuous = false) {
     applyBand({ ...band, ...patch });
-    if (continuous) scheduleHistorySnapshot(); else recordDiscreteAction();
+    if (continuous) scheduleHistorySnapshot(`overlap-band:${screen.id}:${Object.keys(patch).sort().join(',')}`); else recordDiscreteAction();
   }
   function pair() {
     if (!chosenPartner || chosenPartner === screen.id || !bandValid) return;

@@ -74,7 +74,7 @@
   // settles into one step.
   function update(partial: Partial<OutputSlice>) {
     screenActions.update(screen.id, partial);
-    scheduleHistorySnapshot();
+    scheduleHistorySnapshot(`screen:${screen.id}:${Object.keys(partial).sort().join(',')}`);
   }
 
   function clampNumber(value: number, min: number, max: number) {
@@ -362,7 +362,7 @@
               <div class="range-row">
                 <span class="range-label">Feather</span>
                 <input aria-label="Mask feather" type="range" min="0" max="1" step="0.01" value={m.feather}
-                  oninput={(e) => { screenActions.updateMask(screen.id, m.id, { feather: numberFromEvent(e) }); scheduleHistorySnapshot(); }} />
+                  oninput={(e) => { screenActions.updateMask(screen.id, m.id, { feather: numberFromEvent(e) }); scheduleHistorySnapshot(`screen-mask:${screen.id}:${m.id}:feather`); }} />
                 <span class="value-wrap">
                   <input class="value-box" aria-label="Mask feather percent" type="number" min="0" max="100" step="1" value={Math.round(m.feather * 100)}
                     onchange={(e) => { screenActions.updateMask(screen.id, m.id, { feather: numberFromEvent(e) / 100 }); recordDiscreteAction(); }} />

@@ -362,7 +362,7 @@
   function setBgOpacity(value: number) {
     if (!layerId || !content) return;
     project.updateGPULayerContent(layerId, { bgOpacity: value });
-    scheduleHistorySnapshot();
+    scheduleHistorySnapshot(`gpu:${layerId}:bgOpacity`);
   }
 
   function setParam(key: string, value: any) {
@@ -373,7 +373,7 @@
     // (src/lib/audio/autoEngine.ts, src/lib/audio/modulation.ts), so
     // recording has to happen here — at the UI call site — or the
     // debounce would never quiet down while modulation is active.
-    scheduleHistorySnapshot();
+    scheduleHistorySnapshot(`gpu-param:${layerId}:${key}`);
     // Hand the same change to the keyframe timeline. autoRecord
     // is a no-op when the user hasn't armed the track; when they
     // have, every drag becomes a keyframe at the current playhead.

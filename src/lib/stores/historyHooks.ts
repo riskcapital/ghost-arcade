@@ -9,7 +9,21 @@
  * is the only place that can see every store at once.
  */
 
-// History recording callback — set from App.svelte to avoid circular imports.
+/**
+ * How App.svelte takes and stores a step. `record` snapshots the live state
+ * of every undoable store. `capture` takes the same state cheaply (store
+ * values are replaced, not mutated, on every edit, so holding references is
+ * enough) and `commit` records a state captured earlier — that is what lets
+ * an edit still waiting for its debounce become its own step when a
+ * different edit arrives before the debounce ends.
+ */
+export interface HistorySnapshotHooks {
+  capture: () => unknown;
+  commit: (captured: unknown) => void;
+  /** Fold the live state into the latest step instead of adding one. */
+  amend?: () => void;
+}
+
 // We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
 // own undo step. Previously this used setTimeout(_, 0) which coalesced rapid
 // successive actions — drawing 10 light-painting strokes in quick succession
@@ -18,9 +32,40 @@
 // pre-first-stroke state. One undo would wipe every stroke. Now each call
 // captures the project state synchronously, post-update, so undo unwinds
 // stroke-by-stroke as expected.
-let _onDiscreteAction: (() => void) | null = null;
-export function setHistoryCallback(fn: () => void) { _onDiscreteAction = fn; }
-export function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteAction(); }
+let _record: (() => void) | null = null;
+let _snapshotHooks: HistorySnapshotHooks | null = null;
+
+export function setHistoryCallback(record: () => void, snapshotHooks?: HistorySnapshotHooks) {
+  _record = record;
+  _snapshotHooks = snapshotHooks ?? null;
+}
+
+/**
+ * Record one undo step for an action that has just been applied.
+ *
+ * A debounced edit that is still waiting (a slider, a dropdown) is committed
+ * first, as the state it left, so it stays its own step instead of being
+ * folded into this one. The exception is an edit made as part of the same
+ * gesture (within GESTURE_GAP_MS), which belongs in this step.
+ */
+export function recordDiscreteAction() {
+  if (_pending) {
+    if (Date.now() - _pending.lastEditAt >= GESTURE_GAP_MS) commitPending();
+    else cancelPendingHistorySnapshot();
+  }
+  if (_record) _record();
+}
+
+/**
+ * Fold a follow-up into the step just recorded, for work an action finishes
+ * a moment later on its own: a new layer gets its default shader once that
+ * has loaded. Recording it as a step of its own meant undoing "add layer"
+ * took two presses, the first of which only removed the shader.
+ */
+export function amendLastHistoryStep() {
+  if (_snapshotHooks?.amend) _snapshotHooks.amend();
+  else if (_record) _record();
+}
 
 // ─── Debounced history for continuous edits (sliders, drags) ──────────────
 // recordDiscreteAction() above is for one-shot ops (add/remove layer, etc.)
@@ -32,30 +77,77 @@ export function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteActio
 // into one snapshot ~600ms after the last one; flushPendingHistorySnapshot()
 // commits early (called before undo/redo so an in-flight edit isn't lost or
 // merged into whatever the undo jumps back to).
+//
+// The burst is keyed. Edits with the same key (one slider, one field of one
+// layer) coalesce for as long as they keep coming. An edit with a different
+// key ends the burst: the state the burst left is committed as its own step
+// and a new burst starts. Without the key, changing a blend mode and then
+// adding a layer half a second later was one undo step. Edits less than
+// GESTURE_GAP_MS apart are one gesture whatever their keys (a slider that
+// also writes a keyframe, a handler that sets two fields one after another).
 const HISTORY_DEBOUNCE_MS = 600;
-let _historySnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+const GESTURE_GAP_MS = 50;
 
-export function scheduleHistorySnapshot() {
-  if (_historySnapshotTimer) clearTimeout(_historySnapshotTimer);
-  _historySnapshotTimer = setTimeout(() => {
-    _historySnapshotTimer = null;
-    recordDiscreteAction();
-  }, HISTORY_DEBOUNCE_MS);
+interface PendingSnapshot {
+  keys: Set<string>;
+  lastEditAt: number;
+  captured: unknown;
+  timer: ReturnType<typeof setTimeout>;
+}
+let _pending: PendingSnapshot | null = null;
+
+function captureNow(): unknown {
+  return _snapshotHooks ? _snapshotHooks.capture() : undefined;
 }
 
+function commitPending() {
+  const pending = _pending;
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  _pending = null;
+  if (_snapshotHooks) _snapshotHooks.commit(pending.captured);
+  else if (_record) _record();
+}
+
+/**
+ * Coalesce a continuous edit into one undo step, recorded ~600ms after the
+ * last edit with the same key. `key` names what is being edited (for example
+ * `layer:<id>:opacity`); call sites that pass none share one key.
+ */
+export function scheduleHistorySnapshot(key = '') {
+  const now = Date.now();
+  if (_pending && !_pending.keys.has(key) && now - _pending.lastEditAt >= GESTURE_GAP_MS) {
+    commitPending();
+  }
+  if (_pending) {
+    clearTimeout(_pending.timer);
+    _pending.keys.add(key);
+  }
+  const timer = setTimeout(commitPending, HISTORY_DEBOUNCE_MS);
+  _pending = {
+    keys: _pending?.keys ?? new Set([key]),
+    lastEditAt: now,
+    captured: captureNow(),
+    timer,
+  };
+}
+
+/** Commit any debounced edit now (before undo/redo, save, quit). */
 export function flushPendingHistorySnapshot() {
-  if (!_historySnapshotTimer) return;
-  clearTimeout(_historySnapshotTimer);
-  _historySnapshotTimer = null;
-  recordDiscreteAction();
+  commitPending();
 }
 
 /** Drop a debounced edit without recording it. Used when the whole history
  *  is reset (a project was opened or created), where it no longer applies. */
 export function cancelPendingHistorySnapshot() {
-  if (!_historySnapshotTimer) return;
-  clearTimeout(_historySnapshotTimer);
-  _historySnapshotTimer = null;
+  if (!_pending) return;
+  clearTimeout(_pending.timer);
+  _pending = null;
+}
+
+/** True while an edit is waiting for its debounce. */
+export function hasPendingHistorySnapshot(): boolean {
+  return _pending !== null;
 }
 
 /**

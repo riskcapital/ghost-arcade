@@ -369,8 +369,8 @@ function createAbletonBridge() {
     const presets = action.scope === 'global' ? get(globalStagePresets) : get(project).stagePresets ?? [];
     const preset = presets.find(p => p.id === action.presetId) ?? presets.find(p => !!action.name && p.name === action.name);
     if (!preset) return;
-    if (action.scope === 'global') project.loadStagePresetSnapshot(preset);
-    else project.loadStagePreset(preset.id);
+    if (action.scope === 'global') project.loadStagePresetSnapshot(preset, { history: false });
+    else project.loadStagePreset(preset.id, { history: false });
   }
 
   function fire(links: AbletonLink[], label: string) {

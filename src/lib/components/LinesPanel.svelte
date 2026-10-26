@@ -90,8 +90,8 @@
       onUpdate(updates);
     } else if (layerId && lc) {
       // Mapping mode
-      project.updateLayer(layerId, { linesContent: { ...lc, ...updates } });
-      scheduleHistorySnapshot();
+      project.updateLayer(layerId, { linesContent: { ...lc, ...updates } }, { history: false });
+      scheduleHistorySnapshot(`lines:${layerId}:${Object.keys(updates).sort().join(',')}`);
     }
   }
 

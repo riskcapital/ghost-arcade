@@ -31,9 +31,9 @@ function recordKeyframeAction() {
   if (isRestoringHistory()) return;
   recordDiscreteAction();
 }
-function scheduleKeyframeSnapshot() {
+function scheduleKeyframeSnapshot(key: string) {
   if (isRestoringHistory()) return;
-  scheduleHistorySnapshot();
+  scheduleHistorySnapshot(key);
 }
 
 // ─── State ───────────────────────────────────────
@@ -367,7 +367,7 @@ function createKeyframeTimelineStore() {
       // bury the undo stack under one entry per pixel of drag. A deliberate
       // single add still lands — either 600ms later, or immediately, because
       // undo/redo flush any pending snapshot before unwinding.
-      scheduleKeyframeSnapshot();
+      scheduleKeyframeSnapshot(`keyframe-add:${layerId}:${trackKey}`);
     },
 
     removeKeyframe(layerId: string, trackKey: string, time: number) {
@@ -453,7 +453,7 @@ function createKeyframeTimelineStore() {
       });
       // Dragging a keyframe along the grid calls this on every pointermove,
       // so coalesce into one undo step per drag.
-      scheduleKeyframeSnapshot();
+      scheduleKeyframeSnapshot(`keyframe-move:${layerId}:${trackKey}`);
     },
 
     updateKeyframeEasing(layerId: string, trackKey: string, time: number, easing: KeyframeEasing) {
@@ -514,7 +514,7 @@ function createKeyframeTimelineStore() {
         };
       });
       // Number spinners can fire repeatedly while held, so coalesce.
-      scheduleKeyframeSnapshot();
+      scheduleKeyframeSnapshot(`keyframe-value:${layerId}:${trackKey}:${time}`);
     },
 
     /** Select a keyframe so the inspector panel can edit its parameters. */

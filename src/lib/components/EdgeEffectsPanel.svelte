@@ -80,14 +80,14 @@
   function updateEffect(effectId: string, updates: Record<string, unknown>) {
     if (!$selectedLayer) return;
     project.updateEdgeEffect($selectedLayer.id, effectId, updates as any);
-    scheduleHistorySnapshot();
+    scheduleHistorySnapshot(`edge-effect:${$selectedLayer.id}:${effectId}:${Object.keys(updates).sort().join(',')}`);
   }
 
   function updatePart(effectId: string, kind: Kind, updates: Record<string, unknown>) {
     const effect = effectOf(effectId);
     if (!effect || !$selectedLayer) return;
     project.updateEdgeEffect($selectedLayer.id, effectId, { [kind]: { ...(effect as any)[kind], ...updates } } as any);
-    scheduleHistorySnapshot();
+    scheduleHistorySnapshot(`edge-effect:${$selectedLayer.id}:${effectId}:${kind}.${Object.keys(updates).sort().join(',')}`);
   }
 
   // Switching a type keeps what carries over: the outline's colour and

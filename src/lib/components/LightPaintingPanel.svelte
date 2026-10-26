@@ -930,7 +930,7 @@
   // also used for transient state (live-draw preview strokes, isRecording,
   // selectedStrokeId) that must never trigger history, so recording only
   // happens here, at the "this is a real setting" call sites.
-  function updateSetting(key: string, value: number | boolean | string) { if (layerId) { project.updateLightPaintingContent(layerId, { [key]: value }); scheduleHistorySnapshot(); } }
+  function updateSetting(key: string, value: number | boolean | string) { if (layerId) { project.updateLightPaintingContent(layerId, { [key]: value }); scheduleHistorySnapshot(`light-painting:${layerId}:${key}`); } }
   function reshuffleSequence() {
     if (layerId) { project.updateLightPaintingContent(layerId, { randomSequenceSeed: Math.floor(Math.random() * 1_000_000_000) }); recordDiscreteAction(); }
   }

@@ -8,6 +8,7 @@
 
 import { get } from 'svelte/store';
 import { project } from '$lib/stores/layers';
+import { recordDiscreteAction } from '$lib/stores/historyHooks';
 import { vjClipLauncher } from '$lib/stores/vjClipLauncher';
 import { generateUUID } from '$lib/types';
 import type { DirectorToolCall, DirectorToolResult } from './types';
@@ -203,6 +204,7 @@ const toolHandlers: Record<string, (input: Record<string, any>) => string> = {
     if (input.topRight) project.setCorner(ref.id, 'topRight', input.topRight);
     if (input.bottomLeft) project.setCorner(ref.id, 'bottomLeft', input.bottomLeft);
     if (input.bottomRight) project.setCorner(ref.id, 'bottomRight', input.bottomRight);
+    recordDiscreteAction();
 
     return `Set corner positions for layer "${ref.name}"`;
   },

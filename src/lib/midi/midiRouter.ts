@@ -20,6 +20,11 @@ import { audioStore } from '../stores/audio';
 import { buildNativeAnchor, needsNativeReanchor, predictNativePlayheadSeconds } from '../media/nativeTransport';
 import { createNativeVideoScratchController } from '../renderer/nativeVideoScratch';
 
+// Controller, OSC, DMX and keyboard writes are performance, not edits: they
+// must not become undo steps (a fader would fill the undo history in a
+// second and push the real edits out of it).
+const LIVE = { history: false } as const;
+
 const videoScratch = createNativeVideoScratchController(key => {
   const [scope, index] = key.split(':');
   if (scope === 'map') {
@@ -36,7 +41,7 @@ const videoScratch = createNativeVideoScratchController(key => {
     const current = layer?.source;
     if (layer?.id === index && current?.id === source.id && current.src === source.src
       && Number(current._nativePlaybackSeekSeq ?? 0) <= patch._nativePlaybackSeekSeq) {
-      project.updateLayer(layer.id, { source: { ...current, ...patch } });
+      project.updateLayer(layer.id, { source: { ...current, ...patch } }, LIVE);
     }
   } else {
     const state = get(vjClipLauncher);
@@ -372,7 +377,7 @@ class MidiRouter {
         const shouldPlay = source.isPlaying === false;
         const time = predictNativePlayheadSeconds(source);
         project.updateLayer(layer.id, { source: { ...source, isPlaying: shouldPlay,
-          _nativePlaybackTimeSeconds: time, _nativePlaybackUpdatedAtMs: performance.now() } });
+          _nativePlaybackTimeSeconds: time, _nativePlaybackUpdatedAtMs: performance.now() } }, LIVE);
         if (shouldPlay && source.audioPlayback) void video?.play().catch(() => undefined);
         else video?.pause();
       } else if (property === 'restart' && value > 0) {
@@ -384,7 +389,7 @@ class MidiRouter {
           ...source,
           isPlaying: true,
           ...buildNativeAnchor(source, startTime),
-        });
+        }, LIVE);
         if (source.audioPlayback && video) {
           try { video.currentTime = startTime; } catch { /* native stays authoritative */ }
           void video.play().catch(() => undefined);
@@ -397,7 +402,7 @@ class MidiRouter {
           // An external timeline sends this continuously; only correct once it
           // has actually drifted, or the decoder re-arms tens of times a second.
           if (needsNativeReanchor(source, target)) {
-            project.setLayerSource(layer.id, { ...source, ...buildNativeAnchor(source, target) });
+            project.setLayerSource(layer.id, { ...source, ...buildNativeAnchor(source, target) }, LIVE);
             if (source.audioPlayback && video) {
               try { video.currentTime = target; } catch { /* native stays authoritative */ }
             }
@@ -419,10 +424,10 @@ class MidiRouter {
       const current = (layer as any)[layerKey];
       if (mapping.mode === 'toggle') {
         if (typeof current !== 'boolean') return;
-        project.updateLayer(layer.id, { [layerKey]: !current });
+        project.updateLayer(layer.id, { [layerKey]: !current }, LIVE);
       } else {
         if (typeof current !== 'number' || !Number.isFinite(value)) return;
-        project.updateLayer(layer.id, { [layerKey]: value });
+        project.updateLayer(layer.id, { [layerKey]: value }, LIVE);
       }
       return;
     }
@@ -510,7 +515,7 @@ class MidiRouter {
       project.setLayerSource(layer.id, {
         ...layer.source,
         shaderValues: { ...layer.source.shaderValues, [paramName]: value },
-      });
+      }, LIVE);
       return;
     }
 
@@ -531,7 +536,7 @@ class MidiRouter {
       project.setLayerSource(layer.id, {
         ...layer.source,
         effectSource: { ...layer.source.effectSource, [paramKey]: next } as any,
-      });
+      }, LIVE);
       return;
     }
 

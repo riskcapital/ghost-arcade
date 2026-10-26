@@ -331,7 +331,7 @@
         masterHeight={$settings.output.masterCanvasHeight}
         selectedId={$selectedScreenId}
         onSelect={(id) => selectedScreenId.set(id)}
-        onChange={(id, partial) => { screenActions.update(id, partial); scheduleHistorySnapshot(); }}
+        onChange={(id, partial) => { screenActions.update(id, partial); scheduleHistorySnapshot(`screen:${id}:${Object.keys(partial).sort().join(',')}`); }}
       />
     </div>
 

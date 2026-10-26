@@ -2,7 +2,7 @@
   import VideoPlaybackDirection from './VideoPlaybackDirection.svelte';
   import VideoPlaybackModes from './VideoPlaybackModes.svelte';
   import { nativeVideoTransportSnapshot, nativeVideoLaunchTime } from '../media/nativeTransport';
-  import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers, scheduleHistorySnapshot } from '../stores/layers';
+  import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers, scheduleHistorySnapshot, recordDiscreteAction } from '../stores/layers';
 
   // updateEffectParams itself stays un-hooked in the store: the audio-reactive
   // modulation engine (src/lib/audio/autoEngine.ts, src/lib/audio/modulation.ts)
@@ -11,7 +11,19 @@
   // panel so slider/dropdown edits still get recorded.
   function updateEffectParamsTracked(layerId: string, effectId: string, params: Record<string, any>) {
     project.updateEffectParams(layerId, effectId, params);
-    scheduleHistorySnapshot();
+    scheduleHistorySnapshot(`effect-params:${layerId}:${effectId}:${Object.keys(params).sort().join(',')}`);
+  }
+  // Same for the composition effects: the Auto engine drives their params
+  // through the same store call.
+  function updateCompositionEffectParamsTracked(effectId: string, params: Record<string, any>) {
+    project.updateMappingCompositionEffectParams(effectId, params);
+    scheduleHistorySnapshot(`mapping-fx-params:${effectId}:${Object.keys(params).sort().join(',')}`);
+  }
+  // Screen FX automation settings are edits; play/pause and the hold
+  // buttons that also write here are performance and stay out of undo.
+  function updateStageAutomationSetting(updates: Parameters<typeof project.updateMappingStageEffectAutomation>[0]) {
+    project.updateMappingStageEffectAutomation(updates);
+    recordDiscreteAction();
   }
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   import { layerRenderMeshGrid } from '../utils/meshWarp';
@@ -784,7 +796,7 @@
     if (Number.isNaN(presetIndex)) return;
     const patch = applyPresetToEffect(effect as any, presetIndex);
     if (!patch) return;
-    project.updateMappingCompositionEffectParams(effect.id, patch);
+    updateCompositionEffectParamsTracked(effect.id, patch);
   }
 
   function updateCompositionColorParam(effect: Effect, meta: any) {
@@ -793,7 +805,7 @@
       const r = parseInt(hex.slice(1, 3), 16) / 255;
       const g = parseInt(hex.slice(3, 5), 16) / 255;
       const b = parseInt(hex.slice(5, 7), 16) / 255;
-      project.updateMappingCompositionEffectParams(effect.id, {
+      updateCompositionEffectParamsTracked(effect.id, {
         [meta.colorParams.r]: r,
         [meta.colorParams.g]: g,
         [meta.colorParams.b]: b,
@@ -848,7 +860,7 @@
     }
     mappingStageEffectHoldStack = [effectId];
     setMappingStageEffectHeld(effectId, true);
-    project.setMappingStageEffectActive(effectId);
+    project.setMappingStageEffectActive(effectId, { history: false });
   }
 
   function releaseMappingStageEffectHold(effectId: string) {
@@ -858,14 +870,14 @@
     mappingStageEffectHoldStack = nextStack;
 
     if (nextStack.length > 0) {
-      project.setMappingStageEffectActive(nextStack[nextStack.length - 1]);
+      project.setMappingStageEffectActive(nextStack[nextStack.length - 1], { history: false });
       return;
     }
 
     const restoreId = mappingStageEffectExists(mappingStageEffectHoldRestoreId)
       ? mappingStageEffectHoldRestoreId
       : null;
-    project.setMappingStageEffectActive(restoreId);
+    project.setMappingStageEffectActive(restoreId, { history: false });
     if (mappingStageEffectHoldRestoreAutomationPlaying) {
       project.updateMappingStageEffectAutomation({ playing: true });
     }
@@ -883,7 +895,7 @@
     mappingStageEffectHoldStack = [];
     mappingStageEffectHoldRestoreId = null;
     mappingStageEffectHoldRestoreAutomationPlaying = null;
-    if (hadHeldEffect) project.setMappingStageEffectActive(restoreId);
+    if (hadHeldEffect) project.setMappingStageEffectActive(restoreId, { history: false });
     if (hadHeldEffect && restoreAutomation) project.updateMappingStageEffectAutomation({ playing: true });
   }
 
@@ -1367,7 +1379,7 @@
                       {/if}
 
                       {#if effect.type === 'cubeLut'}
-                        <CubeLutControls lut={effect.params.cubeLut} contextKey={`mapping-comp:${effect.id}`} onChange={(cubeLut) => project.updateMappingCompositionEffectParams(effect.id, { cubeLut })} />
+                        <CubeLutControls lut={effect.params.cubeLut} contextKey={`mapping-comp:${effect.id}`} onChange={(cubeLut) => updateCompositionEffectParamsTracked(effect.id, { cubeLut })} />
                       {/if}
                       {#each [effectParamLabels[effect.type]] as paramMeta}
                         <details open>
@@ -1379,7 +1391,7 @@
                                   <span class="param-label">{meta.label}</span>
                                   <select
                                     value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
-                                    onchange={(e) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
+                                    onchange={(e) => updateCompositionEffectParamsTracked(effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
                                   >
                                     {#each meta.options as opt}
                                       <option value={opt.value}>{opt.label}</option>
@@ -1399,14 +1411,14 @@
                                 <EffectParamRow label={meta.label} value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                   min={meta.min as number} max={meta.max as number} step={meta.step as number}
                                   layerIndex={0} effectId={effect.id} paramName={paramKey} mappingComposition
-                                  onChange={(value) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: value })} />
+                                  onChange={(value) => updateCompositionEffectParamsTracked(effect.id, { [paramKey]: value })} />
                               {/if}
                             {/each}
                           {:else}
                             {#each getNumericEffectParams(effect.type) as paramKey}
                               <EffectParamRow label={paramKey} value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
                                 min={0} max={1} step={0.01} layerIndex={0} effectId={effect.id} paramName={paramKey} mappingComposition
-                                onChange={(value) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: value })} />
+                                onChange={(value) => updateCompositionEffectParamsTracked(effect.id, { [paramKey]: value })} />
                             {/each}
                           {/if}
                         </details>
@@ -1431,7 +1443,7 @@
             <select
               class="stage-auto-mode"
               value={auto.mode}
-              onchange={(e) => project.updateMappingStageEffectAutomation({ mode: (e.target as HTMLSelectElement).value as 'time' | 'beat' })}
+              onchange={(e) => updateStageAutomationSetting({ mode: (e.target as HTMLSelectElement).value as 'time' | 'beat' })}
             >
               <option value="beat">Beat</option>
               <option value="time">Time</option>
@@ -1444,7 +1456,7 @@
                 step="1"
                 class="stage-auto-interval"
                 value={auto.beats}
-                onchange={(e) => project.updateMappingStageEffectAutomation({ beats: parseInt((e.target as HTMLInputElement).value) || 4 })}
+                onchange={(e) => updateStageAutomationSetting({ beats: parseInt((e.target as HTMLInputElement).value) || 4 })}
               />
               <span class="stage-auto-unit">bts</span>
             {:else}
@@ -1455,7 +1467,7 @@
                 step="0.5"
                 class="stage-auto-interval"
                 value={auto.seconds}
-                onchange={(e) => project.updateMappingStageEffectAutomation({ seconds: parseFloat((e.target as HTMLInputElement).value) || 4 })}
+                onchange={(e) => updateStageAutomationSetting({ seconds: parseFloat((e.target as HTMLInputElement).value) || 4 })}
               />
               <span class="stage-auto-unit">sec</span>
             {/if}

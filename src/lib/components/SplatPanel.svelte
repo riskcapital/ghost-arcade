@@ -237,7 +237,7 @@
       onUpdate(normalizedUpdates);
     } else if (layer) {
       project.updateSplatContent(layer.id, normalizedUpdates);
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(`splat:${layer.id}:${Object.keys(normalizedUpdates).sort().join(',')}`);
       for (const [paramKey, value] of Object.entries(normalizedUpdates)) {
         const descriptor = SPLAT_AUTOMATABLE_PARAM_MAP.get(paramKey as keyof SplatContent & string);
         if (!descriptor || typeof value !== 'number') continue;

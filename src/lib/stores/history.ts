@@ -127,58 +127,168 @@ export interface HistorySnapshot {
  * otherwise starves the renderer when VJ clips hold live textures.
  */
 function serializeSnapshot(project: Project, keyframes: unknown, output: OutputHistoryState | null): string {
-  return JSON.stringify({ project: sanitize(project), keyframes: sanitize(keyframes), output: sanitize(output) });
+  return JSON.stringify({ project: sanitize(withoutViewState(project)), keyframes: sanitize(keyframes), output: sanitize(output) });
 }
+
+/**
+ * Which layer is selected and which groups are folded open are how the
+ * editor is being looked at, not edits. They stay out of every step: a step
+ * that differed only in them would be an undo that does nothing visible, and
+ * restoring them made undo jump the selection back to whatever was selected
+ * when the step was recorded. Undo keeps the live selection instead (see
+ * mergeProjectStep).
+ */
+function withoutViewState(project: Project): Project {
+  if (!project || typeof project !== 'object') return project;
+  const out: Record<string, unknown> = { ...(project as unknown as Record<string, unknown>) };
+  delete out.selectedLayerId;
+  if (Array.isArray(project.layers)) {
+    out.layers = project.layers.map((layer) => {
+      if (!layer || typeof layer !== 'object') return layer;
+      const hasTransport = !!layer.source && SOURCE_TRANSPORT_KEYS.some((key) => key in layer.source!);
+      if (!('groupCollapsed' in layer) && !hasTransport) return layer;
+      const { groupCollapsed: _collapsed, ...rest } = layer;
+      if (hasTransport) {
+        const source: Record<string, unknown> = { ...(layer.source as unknown as Record<string, unknown>) };
+        for (const key of SOURCE_TRANSPORT_KEYS) delete source[key];
+        (rest as Record<string, unknown>).source = source;
+      }
+      return rest;
+    });
+  }
+  return out as unknown as Project;
+}
+
+/**
+ * Playback state on a layer's media: whether it is playing and where the
+ * native decoder's clock is anchored. Pressing play or scrubbing is not an
+ * edit, so it is not part of a step, and an undo keeps the live transport
+ * (re-attached by source id, like the runtime references).
+ */
+const SOURCE_TRANSPORT_KEYS = [
+  'isPlaying',
+  '_nativePlaybackDirection',
+  '_nativePlaybackTimeSeconds',
+  '_nativePlaybackUpdatedAtMs',
+  '_nativePlaybackSeekSeq',
+  '_nativeLaunchPreparation',
+  '_lastFrameTime',
+  '_timelapseFrame',
+  '_timelapseTotalFrames',
+] as const;
 
 function parseSnapshot(json: string): { project: Project; keyframes: unknown; output: OutputHistoryState | null } {
   const parsed = JSON.parse(json) as { project: Project; keyframes: unknown; output?: OutputHistoryState | null };
   return { project: parsed.project, keyframes: parsed.keyframes ?? null, output: parsed.output ?? null };
 }
 
-function outputOf(json: string | null): OutputHistoryState | null {
-  return json ? parseSnapshot(json).output : null;
+/** Re-attach the runtime references (textures, video elements) of the live
+ *  layer whose source has the same id. */
+function hydrateLayer(layer: Project['layers'][number], liveSources: Map<string, Record<string, unknown>>) {
+  if (layer?.source) {
+    const refs = liveSources.get(layer.source.id);
+    if (refs) Object.assign(layer.source, refs);
+  }
+  return layer;
 }
 
+function liveSourceRefs(live: Project): Map<string, Record<string, unknown>> {
+  const map = new Map<string, Record<string, unknown>>();
+  for (const layer of live?.layers ?? []) {
+    if (!layer?.source) continue;
+    const refs: Record<string, unknown> = {};
+    for (const key of [...RUNTIME_KEYS, ...SOURCE_TRANSPORT_KEYS]) {
+      const val = (layer.source as any)[key];
+      if (val !== undefined) refs[key] = val;
+    }
+    if (Object.keys(refs).length > 0) map.set(layer.source.id, refs);
+  }
+  return map;
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
 /**
- * After restoring a history snapshot, re-attach runtime references
- * (textures, video elements, iframe elements) from the live project state.
- * Matches sources by their `id` field.
+ * The project an undo or redo should leave live: the step's state for what
+ * the step changed, the live state for everything else.
+ *
+ * `to` is the step being moved to and `from` the step being left. A layer
+ * (or a project field) that is the same in both was not touched by this step,
+ * so the live one is kept as it is. Replacing the whole project instead made
+ * an undo also revert whatever had changed without being recorded since: a
+ * MIDI fader, a show-control fade, a value an automation was sweeping. The
+ * live selection is kept when the selected layer still exists; otherwise the
+ * selection the step was recorded with is used.
  */
-function hydrateProject(snapshot: Project, live: Project): Project {
-  // Build a lookup of runtime refs by source id from the live project
-  const liveSourceMap = new Map<string, Record<string, unknown>>();
-  for (const layer of live.layers) {
-    if (layer.source) {
-      const refs: Record<string, unknown> = {};
-      for (const key of RUNTIME_KEYS) {
-        const val = (layer.source as any)[key];
-        if (val !== undefined) refs[key] = val;
-      }
-      if (Object.keys(refs).length > 0) {
-        liveSourceMap.set(layer.source.id, refs);
-      }
+export function mergeProjectStep(
+  live: Project,
+  to: Project,
+  from: Project | null,
+  stepSelection: string | null = null,
+): Project {
+  const liveSources = liveSourceRefs(live);
+  const liveRecord = (live ?? {}) as unknown as Record<string, unknown>;
+  const toRecord = to as unknown as Record<string, unknown>;
+  const fromRecord = (from ?? null) as unknown as Record<string, unknown> | null;
+  const out: Record<string, unknown> = {};
+
+  const keys = new Set([...Object.keys(liveRecord), ...Object.keys(toRecord), ...Object.keys(fromRecord ?? {})]);
+  keys.delete('layers');
+  keys.delete('selectedLayerId');
+  for (const key of keys) {
+    const inStep = key in toRecord || (fromRecord !== null && key in fromRecord);
+    if (!inStep) {
+      out[key] = liveRecord[key];
+    } else if (fromRecord && sameJson(toRecord[key], fromRecord[key]) && key in liveRecord) {
+      out[key] = liveRecord[key];
+    } else if (key in toRecord) {
+      out[key] = toRecord[key];
     }
   }
 
-  // Re-attach runtime refs to the restored snapshot
-  for (const layer of snapshot.layers) {
-    if (layer.source) {
-      const refs = liveSourceMap.get(layer.source.id);
-      if (refs) {
-        Object.assign(layer.source, refs);
-      }
+  const liveLayers = new Map((live?.layers ?? []).map((layer) => [layer.id, layer]));
+  const fromLayers = new Map((from?.layers ?? []).map((layer) => [layer.id, layer]));
+  const layers = (to.layers ?? []).map((layer) => {
+    const liveLayer = liveLayers.get(layer.id);
+    const fromLayer = fromLayers.get(layer.id);
+    if (liveLayer && fromLayer && sameJson(layer, fromLayer)) return liveLayer;
+    const restored = hydrateLayer(layer, liveSources);
+    if (liveLayer && 'groupCollapsed' in liveLayer) {
+      return { ...restored, groupCollapsed: liveLayer.groupCollapsed };
     }
-  }
+    return restored;
+  });
+  out.layers = layers;
 
-  return snapshot;
+  const ids = new Set(layers.map((layer) => layer.id));
+  const liveSelection = live?.selectedLayerId ?? null;
+  out.selectedLayerId = liveSelection && ids.has(liveSelection)
+    ? liveSelection
+    : stepSelection && ids.has(stepSelection) ? stepSelection : null;
+  return out as unknown as Project;
 }
 
 // ============================================================================
 
+/** One recorded step. `json` is what steps are compared and restored by;
+ *  `selectedLayerId` (the selection when it was recorded) is only a fallback
+ *  for when an undo removes the layer that is selected live. `id` is unique
+ *  per step, so "is this still the step that was saved" survives undo. */
+interface HistoryEntry {
+  id: number;
+  json: string;
+  selectedLayerId: string | null;
+}
+
 interface HistoryState {
-  past: string[];       // JSON-serialized previous states
-  future: string[];     // JSON-serialized future states
-  current: string | null;
+  past: HistoryEntry[];       // previous steps, oldest first
+  future: HistoryEntry[];     // undone steps, next first
+  current: HistoryEntry | null;
+}
+
+let nextEntryId = 1;
+function makeEntry(json: string, project: Project | null | undefined): HistoryEntry {
+  return { id: nextEntryId++, json, selectedLayerId: project?.selectedLayerId ?? null };
 }
 
 function createHistoryStore() {
@@ -191,6 +301,38 @@ function createHistoryStore() {
   // Counter-based guard to suppress recording during undo/redo
   let suppressCount = 0;
 
+  /** Move one step back (`direction` -1) or forward (+1). */
+  function step(direction: -1 | 1, liveProject: Project): HistorySnapshot | null {
+    let result: HistorySnapshot | null = null;
+    update((state) => {
+      const source = direction < 0 ? state.past : state.future;
+      if (source.length === 0) return state;
+      const target = direction < 0 ? source[source.length - 1] : source[0];
+      const leaving = state.current;
+      const parsed = parseSnapshot(target.json);
+      const left = leaving ? parseSnapshot(leaving.json) : null;
+      result = {
+        project: mergeProjectStep(liveProject, parsed.project, left?.project ?? null, target.selectedLayerId),
+        keyframes: parsed.keyframes,
+        output: parsed.output,
+        leavingOutput: left?.output ?? null,
+      };
+      if (direction < 0) {
+        return {
+          past: state.past.slice(0, -1),
+          future: leaving ? [leaving, ...state.future] : state.future,
+          current: target,
+        };
+      }
+      return {
+        past: leaving ? [...state.past, leaving] : state.past,
+        future: state.future.slice(1),
+        current: target,
+      };
+    });
+    return result;
+  }
+
   return {
     subscribe,
 
@@ -199,7 +341,7 @@ function createHistoryStore() {
       set({
         past: [],
         future: [],
-        current: serializeSnapshot(project, keyframes, output),
+        current: makeEntry(serializeSnapshot(project, keyframes, output), project),
       });
     },
 
@@ -211,7 +353,7 @@ function createHistoryStore() {
 
       update((state) => {
         // Skip if identical to current state
-        if (state.current === serialized) return state;
+        if (state.current?.json === serialized) return state;
 
         const newPast = state.current
           ? [...state.past, state.current].slice(-MAX_HISTORY_SIZE)
@@ -220,8 +362,19 @@ function createHistoryStore() {
         return {
           past: newPast,
           future: [],
-          current: serialized,
+          current: makeEntry(serialized, project),
         };
+      });
+    },
+
+    /** Replace the latest step with this state, without adding a step
+     *  (see amendLastHistoryStep). */
+    amend(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null) {
+      if (suppressCount > 0) return;
+      const serialized = serializeSnapshot(project, keyframes, output);
+      update((state) => {
+        if (!state.current || state.current.json === serialized) return state;
+        return { ...state, current: { ...state.current, json: serialized } };
       });
     },
 
@@ -229,66 +382,23 @@ function createHistoryStore() {
     suppress() { suppressCount++; },
     unsuppress() { setTimeout(() => { suppressCount = Math.max(0, suppressCount - 1); }, 50); },
 
-    // Undo — returns the previous snapshot (project hydrated with live refs)
+    /** Undo — returns the state to restore: the previous step merged onto the
+     *  live project (see mergeProjectStep). */
     undo(liveProject: Project): HistorySnapshot | null {
-      let result: HistorySnapshot | null = null;
-
-      update((state) => {
-        if (state.past.length === 0) return state;
-
-        const previousJson = state.past[state.past.length - 1];
-        const newPast = state.past.slice(0, -1);
-        const newFuture = state.current
-          ? [state.current, ...state.future]
-          : state.future;
-
-        const parsed = parseSnapshot(previousJson);
-        result = {
-          project: hydrateProject(parsed.project, liveProject),
-          keyframes: parsed.keyframes,
-          output: parsed.output,
-          leavingOutput: outputOf(state.current),
-        };
-
-        return {
-          past: newPast,
-          future: newFuture,
-          current: previousJson,
-        };
-      });
-
-      return result;
+      return step(-1, liveProject);
     },
 
-    // Redo — returns the next snapshot (project hydrated with live refs)
+    /** Redo — the next step, merged the same way. */
     redo(liveProject: Project): HistorySnapshot | null {
-      let result: HistorySnapshot | null = null;
+      return step(1, liveProject);
+    },
 
-      update((state) => {
-        if (state.future.length === 0) return state;
-
-        const nextJson = state.future[0];
-        const newFuture = state.future.slice(1);
-        const newPast = state.current
-          ? [...state.past, state.current]
-          : state.past;
-
-        const parsed = parseSnapshot(nextJson);
-        result = {
-          project: hydrateProject(parsed.project, liveProject),
-          keyframes: parsed.keyframes,
-          output: parsed.output,
-          leavingOutput: outputOf(state.current),
-        };
-
-        return {
-          past: newPast,
-          future: newFuture,
-          current: nextJson,
-        };
-      });
-
-      return result;
+    /** Id of the step the project is at now; changes with every recorded
+     *  edit, undo and redo. null before init. */
+    currentStepId(): number | null {
+      let id: number | null = null;
+      subscribe((state) => { id = state.current?.id ?? null; })();
+      return id;
     },
 
     // Clear history

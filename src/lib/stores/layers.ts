@@ -79,6 +79,7 @@ import {
   recordDiscreteAction,
   scheduleHistorySnapshot,
   notifyProjectReplaced,
+  amendLastHistoryStep,
 } from './historyHooks';
 export {
   setHistoryCallback,
@@ -87,6 +88,16 @@ export {
   flushPendingHistorySnapshot,
 } from './historyHooks';
 const selectedLayerIdsState = writable<string[]>([]);
+
+/**
+ * The debounce key of an edit (see scheduleHistorySnapshot): what kind of
+ * edit, on which target, to which fields. Edits with the same key coalesce
+ * into one undo step; a different key starts a new one.
+ */
+function editKey(scope: string, id: string, fields?: object | string): string {
+  const names = typeof fields === 'string' ? fields : fields ? Object.keys(fields).sort().join(',') : '';
+  return `${scope}:${id}:${names}`;
+}
 
 function cleanMediaSourceName(source: MediaSource): string {
   return (source.name || '').replace(/\.[^.]+$/, '').trim() || source.name || 'Media';
@@ -463,7 +474,9 @@ void main() {
           shaderValues,
           shaderImageInputs: {},
         };
-        store.setLayerSource(layerId, source);
+        // Part of adding the layer, not a step of its own.
+        store.setLayerSource(layerId, source, { history: false });
+        amendLastHistoryStep();
       } catch {
         // Silently fail
       }
@@ -1357,7 +1370,7 @@ void main() {
             : layer
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('text', layerId, updates));
     },
 
     updateTextAnimation(layerId: string, updates: Partial<TextAnimation>) {
@@ -1375,7 +1388,7 @@ void main() {
             : layer
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('text-animation', layerId, updates));
     },
 
     // Light painting methods
@@ -1403,7 +1416,7 @@ void main() {
             : layer
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('pixelfx', layerId, updates));
     },
 
     addLightPaintingStroke(layerId: string, stroke: LightPaintingStroke) {
@@ -1462,7 +1475,7 @@ void main() {
             : layer
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('stroke-brush', `${layerId}:${strokeId}`));
     },
 
     // Replace the entire points array of a stroke. Used by path-edit mode
@@ -1506,7 +1519,7 @@ void main() {
       // unconditional recordDiscreteAction() here would push a full-project
       // snapshot per pixel of drag and blow through MAX_HISTORY_SIZE almost
       // instantly.
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('stroke-points', `${layerId}:${strokeId}`));
     },
 
     clearLightPaintingStrokes(layerId: string) {
@@ -1537,7 +1550,7 @@ void main() {
             : layer
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('color', layerId, updates));
     },
 
     // ============================================================================
@@ -1797,7 +1810,7 @@ void main() {
             : layer
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('mask-feather', layerId));
     },
 
     // ============================================================================
@@ -1867,7 +1880,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('shape-point-add', layerId));
     },
 
     updateCustomShapePoint(layerId: string, pointIndex: number, point: Point2D) {
@@ -1888,7 +1901,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('shape-point', `${layerId}:${pointIndex}`));
     },
 
     removeCustomShapePoint(layerId: string, pointIndex: number) {
@@ -1978,7 +1991,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('shape-handle', `${layerId}:${pointIndex}:${handleType}`));
     },
 
     toggleCustomShapePointCurve(layerId: string, pointIndex: number) {
@@ -2251,7 +2264,7 @@ void main() {
           return { ...layer, edgeEffects: next };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('edge-radius', layerId));
     },
 
     toggleEdgeEffectsEnabled(layerId: string) {
@@ -2279,7 +2292,7 @@ void main() {
           layer.id === layerId ? { ...layer, cropRegion } : layer
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('crop', layerId));
     },
 
     updateCropRegion(layerId: string, updates: Partial<CropRegion>) {
@@ -2357,7 +2370,7 @@ void main() {
             : layer
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('shape-params', layerId, params));
     },
 
     toggleLayerShapeEnabled(layerId: string) {
@@ -2641,7 +2654,12 @@ void main() {
     },
 
     // Layer property updates
-    updateLayer(id: string, updates: Partial<Layer>) {
+    /**
+     * `options.history: false` is for live control (MIDI, OSC, DMX, show
+     * control fades): those writes are performance, not edits, and must not
+     * become undo steps or end the debounce of an edit in progress.
+     */
+    updateLayer(id: string, updates: Partial<Layer>, options: { history?: boolean } = {}) {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, ...updates } : l)),
@@ -2651,10 +2669,13 @@ void main() {
       // src/lib/audio/autoEngine.ts or src/lib/audio/modulation.ts, so this
       // won't fight the audio-reactive modulation engine. A no-op update
       // (identical project state) is naturally deduped by history.record().
-      scheduleHistorySnapshot();
+      // Keyed by layer and fields, so dragging opacity is one step and a
+      // blend-mode change right after it is another.
+      if (options.history !== false) scheduleHistorySnapshot(editKey('layer', id, updates));
     },
 
-    setLayerSource(id: string, source: MediaSource | null) {
+    /** `options.history: false` for live control, as with updateLayer. */
+    setLayerSource(id: string, source: MediaSource | null, options: { history?: boolean } = {}) {
       // Debug trace — set window.__VIDEO_DEBUG__ = true to see every
       // setLayerSource call with the caller stack so we can localize
       // which path is mutating layer.source mid-frame.
@@ -2712,7 +2733,7 @@ void main() {
           }),
         };
       });
-      recordDiscreteAction();
+      if (options.history !== false) recordDiscreteAction();
     },
 
     /** Lightweight shader value update for per-frame modulation — no history, no dispose checks */
@@ -2731,7 +2752,7 @@ void main() {
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, opacity } : l)),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('layer', id, 'opacity'));
     },
 
     setLayerBlendMode(id: string, blendMode: BlendMode) {
@@ -3073,7 +3094,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('effect', `${layerId}:${effectId}`, updates));
     },
 
     updateEffectParams(layerId: string, effectId: string, params: Partial<EffectParams>) {
@@ -3124,6 +3145,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:${effectId}`, paramName));
     },
 
     /** Set or clear the Auto playhead config for a single GPU shader-
@@ -3149,6 +3171,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:gpu`, paramKey));
     },
 
     /** Set or clear the Auto playhead config for a splat / point-cloud
@@ -3173,6 +3196,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:splat`, paramKey));
     },
 
     /** Set or clear the Auto playhead config for a single edge-effect
@@ -3205,6 +3229,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:${effectId}`, paramPath));
     },
 
     /** Set or clear the Auto playhead config for a single shader-param
@@ -3229,6 +3254,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:shader`, paramName));
     },
 
     /** Reset a layer effect's params back to the catalog defaults
@@ -3263,6 +3289,7 @@ void main() {
           keyframeTimeline.autoRecord(layerId, trackKey, value, paramName, typeof value === 'boolean' ? 'boolean' : 'number');
         }
       }
+      recordDiscreteAction();
     },
 
     // ========== Mapping Composition ==========
@@ -3335,6 +3362,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     updateMappingCompositionEffect(effectId: string, updates: Partial<Effect>) {
@@ -3350,6 +3378,7 @@ void main() {
           },
         };
       });
+      scheduleHistorySnapshot(editKey('mapping-fx', effectId, updates));
     },
 
     setMappingCompositionEffectParamAuto(effectId: string, paramName: string, auto: AutoConfig | null) {
@@ -3364,7 +3393,9 @@ void main() {
           return Object.keys(paramAuto).length ? { ...rest, paramAuto } : rest;
         }) } };
       });
-      recordDiscreteAction();
+      // Debounced like the per-layer Auto setters: the Auto rate and depth
+      // are sliders.
+      scheduleHistorySnapshot(editKey('auto', `mapping:${effectId}`, paramName));
     },
 
     updateMappingCompositionEffectParams(effectId: string, params: Partial<EffectParams>) {
@@ -3395,6 +3426,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     reorderMappingCompositionEffects(fromIndex: number, toIndex: number) {
@@ -3453,7 +3485,9 @@ void main() {
       recordDiscreteAction();
     },
 
-    setMappingStageEffectActive(effectId: string | null) {
+    /** Picking the live Screen FX is recorded; beat automation and
+     *  hold-to-flash pass `{ history: false }`, being performance. */
+    setMappingStageEffectActive(effectId: string | null, options: { history?: boolean } = {}) {
       update((p) => {
         const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
         return {
@@ -3464,6 +3498,7 @@ void main() {
           },
         };
       });
+      if (options.history !== false) recordDiscreteAction();
     },
 
     toggleMappingStageEffectInTimeline(effectId: string) {
@@ -3479,6 +3514,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     updateMappingStageEffect(effectId: string, updates: Partial<StageEffect>) {
@@ -3494,6 +3530,7 @@ void main() {
           },
         };
       });
+      scheduleHistorySnapshot(editKey('mapping-stage-fx', effectId, updates));
     },
 
     updateMappingStageEffectParam(effectId: string, key: string, value: number) {
@@ -3511,6 +3548,7 @@ void main() {
           },
         };
       });
+      scheduleHistorySnapshot(editKey('mapping-stage-fx-param', effectId, key));
     },
 
     updateMappingStageEffectAutomation(updates: Partial<SurfaceEffectAutomation>) {
@@ -3568,6 +3606,7 @@ void main() {
         ...project,
         stagePresets: [...(project.stagePresets || []), preset],
       }));
+      recordDiscreteAction();
 
       return preset.id;
     },
@@ -3585,17 +3624,22 @@ void main() {
     },
 
     /** Load a stage preset — replaces project.layers with the preset's saved layers */
-    loadStagePreset(presetId: string) {
+    /** One undo step, unless `options.history` is false (a preset fired
+     *  remotely, from Ableton, during a show). */
+    loadStagePreset(presetId: string, options: { history?: boolean } = {}) {
       const preset = (get({ subscribe }).stagePresets || []).find(
         candidate => candidate.id === presetId
       );
-      if (preset) restoreStagePresetSnapshot(preset);
+      if (!preset) return;
+      restoreStagePresetSnapshot(preset);
+      if (options.history !== false) recordDiscreteAction();
     },
 
     /** Restore an external/global Stage preset through the exact same
      * complete path as a project preset. */
-    loadStagePresetSnapshot(preset: StagePreset) {
+    loadStagePresetSnapshot(preset: StagePreset, options: { history?: boolean } = {}) {
       restoreStagePresetSnapshot(preset);
+      if (options.history !== false) recordDiscreteAction();
     },
 
     /** Delete a stage preset */
@@ -3604,6 +3648,7 @@ void main() {
         ...project,
         stagePresets: (project.stagePresets || []).filter(p => p.id !== presetId),
       }));
+      recordDiscreteAction();
     },
 
     /** Rename a stage preset */
@@ -3614,6 +3659,7 @@ void main() {
           p.id === presetId ? { ...p, name: newName } : p
         ),
       }));
+      recordDiscreteAction();
     },
 
     /** Update a stage preset's thumbnail */
@@ -3658,6 +3704,7 @@ void main() {
             : p
         ),
       }));
+      recordDiscreteAction();
     },
 
     // ========== SV Keyboard Presets ==========
@@ -3670,12 +3717,14 @@ void main() {
         ...project,
         wledControllers: [...(project.wledControllers || []), controller],
       }));
+      recordDiscreteAction();
     },
     removeWLEDController(controllerId: string) {
       update((project) => ({
         ...project,
         wledControllers: (project.wledControllers || []).filter(c => c.id !== controllerId),
       }));
+      recordDiscreteAction();
     },
     updateWLEDController(controllerId: string, fields: Partial<WLEDController>) {
       update((project) => ({
@@ -3684,7 +3733,7 @@ void main() {
           c.id === controllerId ? { ...c, ...fields, id: controllerId } : c
         ),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('wled', controllerId, fields));
     },
     // ========== Art-Net / sACN pixel mapping ==========
     updatePixelMap(fields: Partial<PixelMapConfig>) {
@@ -3695,14 +3744,14 @@ void main() {
           ...fields,
         },
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('pixel-map', '', fields));
     },
     addPixelMapFixture(fixture: PixelMapFixture) {
       update((project) => {
         const pixelMap = project.pixelMap ?? createDefaultPixelMapConfig();
         return { ...project, pixelMap: { ...pixelMap, fixtures: [...pixelMap.fixtures, fixture] } };
       });
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('pixel-map-fixture-add', fixture.id));
     },
     updatePixelMapFixture(fixtureId: string, fields: Partial<PixelMapFixture>) {
       update((project) => {
@@ -3717,7 +3766,7 @@ void main() {
           },
         };
       });
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('pixel-map-fixture', fixtureId, fields));
     },
     removePixelMapFixture(fixtureId: string) {
       update((project) => {
@@ -3730,13 +3779,14 @@ void main() {
           },
         };
       });
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('pixel-map-fixture-remove', fixtureId));
     },
     addWLEDGroup(group: WLEDGroup) {
       update((project) => ({
         ...project,
         wledGroups: [...(project.wledGroups || []), group],
       }));
+      recordDiscreteAction();
     },
     updateWLEDGroup(groupId: string, fields: Partial<WLEDGroup>) {
       update((project) => ({
@@ -3745,6 +3795,7 @@ void main() {
           group.id === groupId ? { ...group, ...fields, id: groupId } : group
         ),
       }));
+      scheduleHistorySnapshot(editKey('wled-group', groupId, fields));
     },
     removeWLEDGroup(groupId: string) {
       update((project) => ({
@@ -3756,12 +3807,14 @@ void main() {
             : effect
         ),
       }));
+      recordDiscreteAction();
     },
     addWLEDEffect(effect: WLEDEffect) {
       update((project) => ({
         ...project,
         wledEffects: [...(project.wledEffects || []), effect],
       }));
+      recordDiscreteAction();
     },
     updateWLEDEffect(effectId: string, fields: Partial<WLEDEffect>) {
       update((project) => ({
@@ -3770,12 +3823,14 @@ void main() {
           effect.id === effectId ? { ...effect, ...fields, id: effectId } : effect
         ),
       }));
+      scheduleHistorySnapshot(editKey('wled-effect', effectId, fields));
     },
     removeWLEDEffect(effectId: string) {
       update((project) => ({
         ...project,
         wledEffects: (project.wledEffects || []).filter(effect => effect.id !== effectId),
       }));
+      recordDiscreteAction();
     },
     updateWLEDEffectAutomation(fields: Partial<WLEDEffectAutomation>) {
       update((project) => ({
@@ -3790,6 +3845,8 @@ void main() {
           ...fields,
         },
       }));
+      // Play/pause is transport, not an edit.
+      if (Object.keys(fields).some((key) => key !== 'playing')) scheduleHistorySnapshot(editKey('wled-automation', '', fields));
     },
 
     saveSVKeyboardPreset(preset: SVKeyboardPreset) {
@@ -3797,6 +3854,7 @@ void main() {
         ...project,
         svKeyboardPresets: [...(project.svKeyboardPresets || []), preset],
       }));
+      recordDiscreteAction();
     },
 
     deleteSVKeyboardPreset(presetId: string) {
@@ -3804,6 +3862,7 @@ void main() {
         ...project,
         svKeyboardPresets: (project.svKeyboardPresets || []).filter(p => p.id !== presetId),
       }));
+      recordDiscreteAction();
     },
 
     renameSVKeyboardPreset(presetId: string, newName: string) {
@@ -3813,6 +3872,7 @@ void main() {
           p.id === presetId ? { ...p, name: newName } : p
         ),
       }));
+      recordDiscreteAction();
     },
 
     /** Overwrite an existing SV keyboard preset's contents (clipAssignments,
@@ -3826,6 +3886,7 @@ void main() {
           p.id === presetId ? { ...p, ...fields, id: presetId, name: p.name } : p
         ),
       }));
+      recordDiscreteAction();
     },
 
     // ========== Import Presets from Another .ghost-arcade File ==========
@@ -3857,6 +3918,7 @@ void main() {
         stagePresets: [...(project.stagePresets || []), ...presets.stagePresets],
         svKeyboardPresets: [...(project.svKeyboardPresets || []), ...presets.svKeyboardPresets],
       }));
+      recordDiscreteAction();
     },
 
     /**
@@ -4001,7 +4063,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('line-element', `${layerId}:${elementId}`, updates));
     },
 
     updateElementShape(layerId: string, elementId: string, shapeUpdates: Partial<LineShape> & Record<string, any>) {
@@ -4030,7 +4092,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('line-shape', `${layerId}:${elementId}`, shapeUpdates));
     },
 
     updateElementStroke(layerId: string, elementId: string, stroke: LineStroke | any) {
@@ -4049,7 +4111,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('line-stroke', `${layerId}:${elementId}`));
     },
 
     // Compatibility aliases for DrawingPanel (maps old drawing API to lines API)
@@ -4089,7 +4151,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('line-draw', `${layerId}:${elementId}`, updates));
     },
 
     duplicateElement(layerId: string, elementId: string) {
@@ -4258,7 +4320,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('svg', layerId, updates));
     },
 
     setSVGFillMode(layerId: string, fillMode: SVGFillMode) {
@@ -4314,7 +4376,7 @@ void main() {
           };
         }),
       }));
-      scheduleHistorySnapshot();
+      scheduleHistorySnapshot(editKey('svg', layerId, String(paramKey)));
     },
 
     resetSVGContent(layerId: string) {
@@ -5006,6 +5068,7 @@ void main() {
 
     setProjectDimensions(width: number, height: number) {
       update((project) => ({ ...project, width, height }));
+      recordDiscreteAction();
     },
 
     setProjectName(name: string) {

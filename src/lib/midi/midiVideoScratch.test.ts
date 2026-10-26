@@ -169,11 +169,12 @@ describe('MIDI native video scratch routing', () => {
   it('resumes the held native frame on Play and pauses on the next press', () => {
     midiRouter.dispatchPath('map:media:play', 1);
     expect(harness.scratch.cancel).toHaveBeenCalledWith('map:mapping-layer');
+    // Transport from a controller is live control, never an undo step.
     expect(project.updateLayer).toHaveBeenLastCalledWith('mapping-layer', { source: expect.objectContaining({
       isPlaying: true, _nativePlaybackTimeSeconds: 4, _nativePlaybackSeekSeq: 7,
-    }) });
+    }) }, { history: false });
     midiRouter.dispatchPath('map:media:play', 1);
-    expect(project.updateLayer).toHaveBeenLastCalledWith('mapping-layer', { source: expect.objectContaining({ isPlaying: false }) });
+    expect(project.updateLayer).toHaveBeenLastCalledWith('mapping-layer', { source: expect.objectContaining({ isPlaying: false }) }, { history: false });
   });
 
   it('resumes Deck B and leaves external position synchronization on its existing route', () => {
