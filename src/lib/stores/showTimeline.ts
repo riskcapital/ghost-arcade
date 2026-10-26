@@ -84,6 +84,7 @@ import {
   forgetShowAudioDecode,
   cachedShowAudioDecode,
 } from '../audio/showAudio';
+import { ShowTransportClock, readAudioClock, type AudioClockContext } from '../show/showTransportClock';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -135,6 +136,21 @@ export interface ShowTimelineState {
   zoom: number;
   snapEnabled: boolean;
   selection: ShowTimelineSelection | null;
+  /** What happens when a show that does not loop reaches its end. */
+  endAction: ShowEndAction;
+}
+
+/**
+ * What a show that does not loop does at its end:
+ *  - hold:     the transport stops on the end and the last look stays up
+ *  - rewind:   back to the start, with the opening look cued
+ *  - blackout: the outputs go to black (Blackout in the top bar)
+ */
+export type ShowEndAction = 'hold' | 'rewind' | 'blackout';
+export const SHOW_END_ACTIONS: readonly ShowEndAction[] = ['hold', 'rewind', 'blackout'];
+
+export function normalizeShowEndAction(value: unknown): ShowEndAction {
+  return SHOW_END_ACTIONS.includes(value as ShowEndAction) ? (value as ShowEndAction) : 'hold';
 }
 
 function createInitialState(): ShowTimelineState {
@@ -150,6 +166,7 @@ function createInitialState(): ShowTimelineState {
     zoom: SHOW_DEFAULT_ZOOM,
     snapEnabled: true,
     selection: null,
+    endAction: 'hold',
   };
 }
 
@@ -700,7 +717,40 @@ function syncAudioWiring(tracks: ShowAudioTrack[]): void {
 const store = writable<ShowTimelineState>(createInitialState());
 
 let rafId: number | null = null;
-let lastFrameTime = 0;
+/** The playhead's clock: the sound card while the show has audio, animation frames otherwise. */
+const transportClock = new ShowTransportClock();
+type AudioClockReader = (performanceNowMs: number) => number | null;
+const defaultAudioClockReader: AudioClockReader = (nowMs) =>
+  readAudioClock(clipAudioBus.contextIfReady() as AudioClockContext | null, nowMs);
+let audioClockReader: AudioClockReader | null = defaultAudioClockReader;
+
+/** Test seam: replace the audio clock (null = no audio clock). */
+export function setShowAudioClockReader(reader: AudioClockReader | null | 'default'): void {
+  audioClockReader = reader === 'default' ? defaultAudioClockReader : reader;
+  transportClock.reset();
+}
+
+/** True while the show has a track the audio engine is playing from. */
+function showHasAudibleTracks(s: ShowTimelineState): boolean {
+  return s.audioTracks.some((t) => !t.muted && !!t.url && t.volume > 0);
+}
+
+export type ShowTransportEvent = { type: 'start' } | { type: 'end'; action: ShowEndAction };
+type ShowTransportSink = (event: ShowTransportEvent) => void;
+let transportSink: ShowTransportSink | null = null;
+
+/** Registered by the show panel: carries out the end-of-show blackout. */
+export function setShowTransportSink(sink: ShowTransportSink | null): void {
+  transportSink = sink;
+}
+
+function notifyTransport(event: ShowTransportEvent): void {
+  try {
+    transportSink?.(event);
+  } catch (err) {
+    console.warn('[ShowTimeline] transport sink failed:', err);
+  }
+}
 /** True while an external clock (timecode chase) owns the playhead. The
  *  RAF transport stays off and play() defers to it. */
 let externalClock = false;
@@ -798,25 +848,41 @@ function tick(now: number): void {
   const s = get(store);
   if (!s.isPlaying) return;
 
-  const dt = lastFrameTime > 0 ? (now - lastFrameTime) / 1000 : 0;
-  lastFrameTime = now;
+  const audio = audioClockReader && showHasAudibleTracks(s) ? audioClockReader(now) : null;
+  let next = transportClock.advance({ frame: now / 1000, audio }, s.currentTime);
 
   const dur = s.duration;
-  let next = s.currentTime + dt;
   if (dur > 0 && next >= dur) {
     if (s.loop) {
-      next = next % dur;
+      const wrapped = ((next % dur) + dur) % dur;
+      // Keep the clock anchor: only the show time moves back by whole passes.
+      transportClock.shift(wrapped - next);
+      next = wrapped;
       applyTime(next, true); // wrap is a discontinuity for the audio bus
       rafId = requestAnimationFrame(tick);
       return;
     }
     applyTime(dur, true);
     store.update((x) => ({ ...x, isPlaying: false }));
+    transportClock.reset();
+    finishShow(s.endAction);
     return;
   }
 
   applyTime(next, false);
   rafId = requestAnimationFrame(tick);
+}
+
+/** The end of a show that does not loop. */
+function finishShow(action: ShowEndAction): void {
+  if (action === 'rewind') {
+    seekGeneration++;
+    store.update((x) => ({ ...x, isPlaying: false, currentTime: 0, activeClipId: null }));
+    publishTransition(null);
+    // Cue the opening look so the next run starts from it.
+    applyTime(0, true);
+  }
+  notifyTransport({ type: 'end', action });
 }
 
 /** Recompute duration + reselect after any structural mutation. */
@@ -891,6 +957,7 @@ export interface ShowTimelineSnapshot {
   version: number;
   isOpen: boolean;
   loop: boolean;
+  endAction?: ShowEndAction;
   zoom: number;
   snapEnabled: boolean;
   audioTracks: ShowAudioTrack[];
@@ -923,6 +990,9 @@ export const showTimeline = {
   setLoop(loop: boolean) {
     store.update((s) => ({ ...s, loop }));
   },
+  setEndAction(action: ShowEndAction) {
+    store.update((s) => ({ ...s, endAction: normalizeShowEndAction(action) }));
+  },
 
   // ── Transport ──────────────────────────────────────────────────────────
 
@@ -939,12 +1009,15 @@ export const showTimeline = {
     // refuses. Cheap and idempotent when the context is already running.
     clipAudioBus.resume();
     store.update((x) => ({ ...x, isPlaying: true }));
+    // Starting again from the very end (the show stopped there) starts over.
+    const from = !s.loop && s.currentTime >= s.duration - 1e-6 ? 0 : get(store).currentTime;
     // Re-evaluate at the current position. Fires only when the clip under
     // the playhead differs from what is loaded, so resuming from pause does
     // not reload (and visibly reset) the composition already on screen.
     // `stop()` clears activeClipId, so play-from-stop always re-fires.
-    applyTime(get(store).currentTime, true);
-    lastFrameTime = 0;
+    applyTime(from, true);
+    transportClock.reset();
+    notifyTransport({ type: 'start' });
     if (typeof requestAnimationFrame === 'function') rafId = requestAnimationFrame(tick);
   },
 
@@ -952,6 +1025,7 @@ export const showTimeline = {
     cancelRaf();
     store.update((s) => ({ ...s, isPlaying: false }));
     seekGeneration++;
+    transportClock.reset();
   },
 
   stop() {
@@ -960,6 +1034,7 @@ export const showTimeline = {
     // opening preset even if the operator hand-loaded something else.
     store.update((s) => ({ ...s, isPlaying: false, currentTime: 0, activeClipId: null }));
     seekGeneration++;
+    transportClock.reset();
     // A stop mid-blend must not leave the outgoing composition's layers
     // resident in the scene forever.
     publishTransition(null);
@@ -1020,6 +1095,8 @@ export const showTimeline = {
    */
   seek(seconds: number) {
     applyTime(seconds, true);
+    // A seek while playing carries on from the new position.
+    transportClock.reset();
   },
 
   // ── Preset clips ───────────────────────────────────────────────────────
@@ -1438,7 +1515,14 @@ export const showTimeline = {
     cancelRaf();
     releaseAllTrackElements();
     publishTransition(null);
-    store.update((s) => ({ ...createInitialState(), isOpen: s.isOpen, zoom: s.zoom, snapEnabled: s.snapEnabled }));
+    transportClock.reset();
+    store.update((s) => ({
+      ...createInitialState(),
+      isOpen: s.isOpen,
+      zoom: s.zoom,
+      snapEnabled: s.snapEnabled,
+      endAction: s.endAction,
+    }));
   },
 
   /** Total programmed length, seconds. The render modal seeds from this. */
@@ -1465,6 +1549,7 @@ export const showTimeline = {
       version: 1,
       isOpen: s.isOpen,
       loop: s.loop,
+      endAction: s.endAction,
       zoom: s.zoom,
       snapEnabled: s.snapEnabled,
       audioTracks: s.audioTracks.map((t) => ({
@@ -1523,7 +1608,9 @@ export const showTimeline = {
       zoom: Number.isFinite(zoom) ? Math.max(SHOW_MIN_ZOOM, Math.min(SHOW_MAX_ZOOM, zoom)) : SHOW_DEFAULT_ZOOM,
       snapEnabled: p.snapEnabled !== false,
       selection: null,
+      endAction: normalizeShowEndAction(p.endAction),
     });
+    transportClock.reset();
 
     syncAudioWiring(audioTracks);
     // Waveforms for tracks whose peaks did not travel (older saves).
@@ -1535,6 +1622,9 @@ export const showTimeline = {
   /** Test seam — tears the transport and audio elements down completely. */
   _resetForTest() {
     externalClock = false;
+    transportClock.reset();
+    audioClockReader = defaultAudioClockReader;
+    transportSink = null;
     cancelRaf();
     releaseAllTrackElements();
     publishTransition(null);
