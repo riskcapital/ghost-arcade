@@ -999,6 +999,31 @@ export const OUTPUT_STAGE_KEYS = [
 /** A saved output stage. Partial because a setup saved by an older build
  *  will not carry settings added since. */
 export type OutputStageSnapshot = Partial<Record<(typeof OUTPUT_STAGE_KEYS)[number], unknown>>;
+export type OutputStageKey = (typeof OUTPUT_STAGE_KEYS)[number];
+
+/**
+ * Live-performance switches in the output stage. They are never saved with a
+ * project or restored from one: opening a project must not black out the
+ * output or put a test pattern on it.
+ */
+export const OUTPUT_LIVE_KEYS = ['blackout', 'testPattern'] as const satisfies readonly OutputStageKey[];
+
+/**
+ * The output stage a project saves and restores: everything but the live
+ * switches. The Screens, the master canvas and the Master Warp are saved in
+ * their own fields (outputSlices, outputMasterCanvasWidth/Height,
+ * outputMasterWarp); the rest (dome, output rotation and crop, the
+ * single-output edge blend and the output grade) under
+ * project.outputSettings. Those used to stay in this machine's settings, so
+ * a project reopened with whatever dome or rotation the last one had left.
+ */
+export const PROJECT_OUTPUT_KEYS = OUTPUT_STAGE_KEYS.filter(
+  (key): key is Exclude<OutputStageKey, (typeof OUTPUT_LIVE_KEYS)[number]> =>
+    !(OUTPUT_LIVE_KEYS as readonly string[]).includes(key),
+);
+export const PROJECT_OUTPUT_SETTING_KEYS = PROJECT_OUTPUT_KEYS.filter(
+  (key) => key !== 'slices' && key !== 'masterCanvasWidth' && key !== 'masterCanvasHeight' && key !== 'masterWarp',
+);
 
 function createDefaultSettings(): AppSettings {
   // Find best supported format
@@ -1828,6 +1853,50 @@ function createSettingsStore() {
           // new setting existed leaves that setting alone rather than
           // blanking it to undefined.
           if (key in snapshot) output[key] = structuredClone((snapshot as any)[key]);
+        }
+        const next = { ...s, output } as unknown as AppSettings;
+        saveSettings(next);
+        return next;
+      });
+    },
+
+    /** The output settings a project saves as project.outputSettings
+     *  (PROJECT_OUTPUT_SETTING_KEYS). */
+    captureProjectOutputSettings(): OutputStageSnapshot {
+      const out = get({ subscribe }).output as unknown as Record<string, unknown>;
+      const snapshot: Record<string, unknown> = {};
+      for (const key of PROJECT_OUTPUT_SETTING_KEYS) snapshot[key] = out[key];
+      return structuredClone(snapshot) as OutputStageSnapshot;
+    },
+
+    /**
+     * Put back the output stage of a project being opened. Every one of
+     * `keys` is set: from `saved` when the project carries a usable value,
+     * otherwise from the saved default setup, otherwise the factory default.
+     * A key is never left at what the previous project set, which is how a
+     * project used to reopen looking different each time.
+     */
+    restoreOutputStage(
+      saved: OutputStageSnapshot,
+      keys: readonly OutputStageKey[],
+      defaultSetup?: OutputStageSnapshot | null,
+    ) {
+      const defaults = createDefaultSettings().output as unknown as Record<string, unknown>;
+      const usable = (value: unknown, key: OutputStageKey) => {
+        const factory = defaults[key];
+        if (value === undefined || value === null) return false;
+        if (Array.isArray(factory)) return Array.isArray(value);
+        if (factory !== null && typeof factory === 'object') return typeof value === 'object' && !Array.isArray(value);
+        if (typeof value === 'number') return typeof factory === 'number' && Number.isFinite(value);
+        return typeof value === typeof factory;
+      };
+      update(s => {
+        const output = { ...s.output } as unknown as Record<string, unknown>;
+        for (const key of keys) {
+          const value = usable((saved as any)[key], key)
+            ? (saved as any)[key]
+            : defaultSetup && usable((defaultSetup as any)[key], key) ? (defaultSetup as any)[key] : defaults[key];
+          output[key] = structuredClone(value);
         }
         const next = { ...s, output } as unknown as AppSettings;
         saveSettings(next);
