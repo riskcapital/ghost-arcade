@@ -25,9 +25,9 @@
   import { get } from 'svelte/store';
   import { project } from '../stores/layers';
   import { settings } from '../stores/settings';
-  import { recordDiscreteAction } from '../stores/historyHooks';
+  import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
-  import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { arrowDirection, classifyKeyTarget, nudgeStepPixels, projectPixelOffset } from '../utils/mappingNudge';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
   import { insetHandle, meshMoveGrip } from '../utils/warpHandleLayout';
@@ -191,32 +191,17 @@
       return;
     }
 
+    const dir = arrowDirection(e.key);
+    if (!dir || e.metaKey || e.ctrlKey) return;
+    // Sliders, lists and menus keep their arrow keys.
+    if (classifyKeyTarget(e.target as HTMLElement | null) !== 'other'
+      || classifyKeyTarget(document.activeElement as HTMLElement | null) !== 'other') return;
+    // One project pixel (Shift ten, Alt a tenth); Alt on a selected tangent
+    // moves that handle on its own instead. The warp keeps y down.
+    const tangentPicked = mode === 'mesh' && !!selectedTangent && !!selectedMeshPoint;
     const proj = get(project);
-    const step = normalizedWarpNudge(
-      proj.width,
-      proj.height,
-      get(settings).ui.warpDragGranularity,
-      e.shiftKey ? 10 : 1,
-    );
-
-    let dx = 0;
-    let dy = 0;
-    switch (e.key) {
-      case 'ArrowUp':
-        dy = -step.y;
-        break;
-      case 'ArrowDown':
-        dy = step.y;
-        break;
-      case 'ArrowLeft':
-        dx = -step.x;
-        break;
-      case 'ArrowRight':
-        dx = step.x;
-        break;
-      default:
-        return;
-    }
+    const stepPx = nudgeStepPixels(get(settings).ui.warpDragGranularity, e.shiftKey, e.altKey && !tangentPicked);
+    const { x: dx, y: dy } = projectPixelOffset(dir.x * stepPx, dir.y * stepPx, proj.width, proj.height, false);
 
     e.preventDefault();
     e.stopPropagation();
@@ -229,7 +214,7 @@
           [selectedCorner]: { x: clamp01(current.x + dx), y: clamp01(current.y + dy) },
         },
       });
-      recordDiscreteAction();
+      scheduleHistorySnapshot();
       return;
     }
 
@@ -243,7 +228,7 @@
         const t = resolveMeshTangents(meshGrid, row, col)[selectedTangent];
         const end = meshLocalToNorm(p.x + t.x, p.y + t.y);
         moveTangentEnd(meshGrid, row, col, selectedTangent, { x: end.x + dx, y: end.y + dy }, e.altKey);
-        recordDiscreteAction();
+        scheduleHistorySnapshot();
         return;
       }
       const curNorm = meshLocalToNorm(p.x, p.y);
@@ -252,12 +237,12 @@
         meshRow.map((pt, ci) => (ri === row && ci === col ? { x: next.u, y: next.v } : pt))
       );
       settings.setMasterWarp({ meshGrid: withMeshPoints(meshGrid, points) });
-      recordDiscreteAction();
+      scheduleHistorySnapshot();
       return;
     }
 
     nudgeCorners(dx, dy);
-    recordDiscreteAction();
+    scheduleHistorySnapshot();
   }
 
   onMount(() => {
