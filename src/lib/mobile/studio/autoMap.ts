@@ -9,10 +9,19 @@
  */
 import { planPatterns, decodeCaptures, fitHomography, applyHomography, type Capture, type Decoded, type PatternFrame, type PatternPlan, type UV } from './structuredLight';
 import { stripeFrameCode, STRIPE_CELL } from './structuredLightCodes';
+import type { DepthScan } from './meshMap';
 
 export type AutoMapScreen = { id: string; name: string; width: number; height: number };
 export type AutoMapLink = { request(op: 'screens' | 'show' | 'end', extra?: Record<string, unknown>): Promise<Record<string, any>> };
-export type AutoMapCamera = { turn?: number; grab(): Promise<Capture>; jpeg?(): Promise<{ image: string; width: number; height: number }> };
+export type AutoMapCamera = {
+  turn?: number;
+  grab(): Promise<Capture>;
+  jpeg?(): Promise<{ image: string; width: number; height: number }>;
+  /** Hold exposure and focus once the white frame has set them (LiDAR camera). */
+  lock?(): Promise<void>;
+  /** Depth of the scene, lined up with the photos (LiDAR camera). */
+  depth?(): Promise<DepthScan>;
+};
 export type AutoMapProjector = {
   id: string; name: string; width: number; height: number;
   corners: UV[];        // the full picture's corners in the photo, TL TR BR BL
@@ -25,6 +34,10 @@ export type AutoMapProjector = {
 export type AutoMapResult = {
   reference: { image: string; width: number; height: number };
   projectors: AutoMapProjector[];
+  /** LiDAR depth lined up with the photos, when the camera has it. */
+  depth?: DepthScan;
+  /** Why a LiDAR camera's depth is missing. */
+  depthError?: string;
 };
 
 /** Time for the projector and the camera pipeline to show the new frame. */
@@ -45,6 +58,7 @@ export async function runAutoMap(
   const projectors: AutoMapProjector[] = [];
   let brightest: Float32Array | undefined, width = 0, height = 0;
   let colour: { image: string; width: number; height: number } | undefined;
+  let depth: DepthScan | undefined, depthError: string | undefined;
   try {
     for (const [index, screen] of screens.entries()) {
       const plan = planPatterns(screen.width, screen.height, STRIPE_CELL);
@@ -55,6 +69,8 @@ export async function runAutoMap(
         await wait(settle);
         const shot = await camera.grab();
         if (step === 0 && index === 0 && camera.jpeg) colour = await camera.jpeg().catch(() => undefined);
+        // The white frame has set the exposure: keep it for every stripe that follows.
+        if (step === 0 && index === 0 && camera.lock) await camera.lock().catch(() => {});
         if (captures.length && (shot.width !== captures[0].width || shot.height !== captures[0].height)) throw new Error('The camera changed size during the capture. Keep the app open and try again.');
         captures.push(shot);
       }
@@ -78,11 +94,27 @@ export async function runAutoMap(
       } catch { /* not one plane: expected for an object */ }
       projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, corners, rmsPx, coverage: decoded.coverage, plan, decoded, white });
     }
+    // Depth last, with the projector dark so its light cannot disturb the LiDAR.
+    if (camera.depth) {
+      progress('Measuring depth', 1);
+      const last = screens[screens.length - 1];
+      await link.request('show', { screenId: last.id, frame: stripeFrameCode({ kind: 'black' }, STRIPE_CELL) });
+      await wait(settle);
+      // Without depth the flat surfaces still map: say why it is missing instead of failing the scan.
+      try {
+        const measured = await camera.depth();
+        // Depth must cover the photos' field of view: the same shape, or it is left out.
+        if (Math.abs(measured.width / measured.height - width / height) < 0.02) depth = measured;
+        else depthError = 'The depth did not line up with the photos.';
+      } catch (error) {
+        depthError = error instanceof Error ? error.message : 'The depth could not be measured.';
+      }
+    }
   } finally {
     await link.request('end').catch(() => {});
   }
   const encode = options.encode ?? lumaToJpeg;
-  return { reference: { image: colour && !options.encode ? colour.image : encode(brightest!, width, height), width, height }, projectors };
+  return { reference: { image: colour && !options.encode ? colour.image : encode(brightest!, width, height), width, height }, projectors, ...(depth ? { depth } : {}), ...(depthError ? { depthError } : {}) };
 }
 
 /** Grey photo from luma, stretched to its own range so a dim room still reads. */

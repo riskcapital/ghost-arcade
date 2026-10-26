@@ -81,6 +81,7 @@ final class StudioLiveCapture: NSObject, ARSessionDelegate, AVCaptureVideoDataOu
         ar?.pause(); ar?.delegate = nil; ar = nil
         camera?.stopRunning(); outputs.keys.forEach { $0.setSampleBufferDelegate(nil, queue: nil) }; camera = nil
         outputs.removeAll(); buffers.removeAll(); depth = nil; confidence = nil; calibrationFrame = nil; mode = ""
+        failPattern("The camera stopped.")
         generation &+= 1
     }
     private func startDepth() throws {
@@ -124,6 +125,7 @@ final class StudioLiveCapture: NSObject, ARSessionDelegate, AVCaptureVideoDataOu
         let i = frame.camera.intrinsics, r = frame.camera.imageResolution
         intrinsics = SIMD4(i[0,0] / Float(r.width), i[1,1] / Float(r.height), i[2,0] / Float(r.width), i[2,1] / Float(r.height))
         buffers["rear"] = frame.capturedImage; depth = frame.sceneDepth?.depthMap; confidence = frame.sceneDepth?.confidenceMap; sequence &+= 1
+        if !patternLuma.isEmpty || !patternDepth.isEmpty { feedPattern(frame) }
     }
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let out = output as? AVCaptureVideoDataOutput, let name = outputs[out], let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }; failure = nil; recoveryAttempts = 0; buffers[name] = buffer; sequence &+= 1
@@ -198,7 +200,7 @@ final class StudioLiveCapture: NSObject, ARSessionDelegate, AVCaptureVideoDataOu
             catch { self.stop(); self.failure = error.localizedDescription }
         }
     }
-    @objc private func background() { queue.async { self.suspended = true; self.camera?.stopRunning(); self.ar?.pause(); self.buffers.removeAll(); self.depth = nil; self.calibrationFrame = nil } }
+    @objc private func background() { queue.async { self.suspended = true; self.camera?.stopRunning(); self.ar?.pause(); self.buffers.removeAll(); self.depth = nil; self.calibrationFrame = nil; self.failPattern("The scan stopped because the app went to the background. Keep it open and scan again.") } }
     @objc private func foreground() { queue.async { self.suspended = false; self.failure = nil; self.camera?.startRunning(); if let ar = self.ar { let c = ARWorldTrackingConfiguration(); c.frameSemantics = .sceneDepth; ar.run(c) } } }
 
     func frame(_ source: String, completion: @escaping (Data?, String?) -> Void) {
@@ -285,6 +287,198 @@ final class StudioLiveCapture: NSObject, ARSessionDelegate, AVCaptureVideoDataOu
                                   "cameraToWorld": matrix]], nil)
         }
     }
+    // MARK: Pattern capture (auto-map with LiDAR)
+    // While a projector shows stripes, the web layer asks for averaged luma frames and then one
+    // averaged depth map, all from the same ARKit camera, so the photos, the depth and the lens
+    // intrinsics line up exactly. Each answer carries the camera pose, so movement shows up.
+    private struct PatternLuma { let frames: Int; let width: Int; let started: TimeInterval; var height = 0; var sum: [UInt32] = []; var count = 0; let completion: (Data?, String?) -> Void }
+    private struct PatternDepth { let frames: Int; let started: TimeInterval; var layers: [[Float]] = []; var width = 0; var height = 0; let completion: (Data?, String?) -> Void }
+    private var patternLuma: [PatternLuma] = []
+    private var patternDepth: [PatternDepth] = []
+
+    private func patternConfiguration(_ scanning: Bool) -> ARWorldTrackingConfiguration {
+        let config = ARWorldTrackingConfiguration()
+        config.frameSemantics = scanning && ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) ? [.sceneDepth, .smoothedSceneDepth] : .sceneDepth
+        // A refocus between stripe photos would blur some of them: hold focus for the scan.
+        config.isAutoFocusEnabled = !scanning
+        return config
+    }
+
+    /// Switches the running LiDAR session to scanning and reports the photo size, the lens and which way is up.
+    func patternBegin(completion: @escaping ([String: Any]?, String?) -> Void) {
+        queue.async {
+            guard let session = self.ar, self.mode == "depth", !self.suspended else { completion(nil, "Start the LiDAR camera first."); return }
+            session.run(self.patternConfiguration(true))
+            let asked = ProcessInfo.processInfo.systemUptime
+            func check(_ tries: Int) {
+                if let frame = self.calibrationFrame, frame.timestamp > asked {
+                    let k = frame.camera.intrinsics, size = frame.camera.imageResolution, t = frame.camera.transform
+                    // World up seen in the image (x right, y down) decides the clockwise turn that makes the photo upright.
+                    let upX = t.columns.0.y, upY = -t.columns.1.y
+                    let turn = abs(upX) > abs(upY) ? (upX < 0 ? 90 : 270) : (upY > 0 ? 180 : 0)
+                    completion(["width": Int(size.width), "height": Int(size.height), "turn": turn,
+                                "intrinsics": [Double(k[0,0]) / size.width, Double(k[1,1]) / size.height, Double(k[2,0]) / size.width, Double(k[2,1]) / size.height]], nil)
+                } else if tries > 80 {
+                    completion(nil, "The LiDAR camera did not start. Keep the app open and try again.")
+                } else {
+                    self.queue.asyncAfter(deadline: .now() + 0.05) { check(tries + 1) }
+                }
+            }
+            check(0)
+        }
+    }
+
+    /// Holds exposure, focus and white balance, so every stripe photo is taken the same way.
+    func patternLock(_ locked: Bool, completion: @escaping (String?) -> Void) {
+        queue.async {
+            guard let device = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera else { completion(nil); return }
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+                if locked {
+                    if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
+                    if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
+                    if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
+                } else {
+                    if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
+                    if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { device.whiteBalanceMode = .continuousAutoWhiteBalance }
+                }
+                completion(nil)
+            } catch { completion(error.localizedDescription) }
+        }
+    }
+
+    /// Back to the live depth feed: camera controls released, waiting requests answered.
+    func patternEnd(completion: @escaping () -> Void) {
+        patternLock(false) { _ in
+            self.queue.async {
+                self.failPattern("The scan stopped.")
+                if let session = self.ar, self.mode == "depth", !self.suspended { session.run(self.patternConfiguration(false)) }
+                completion()
+            }
+        }
+    }
+
+    /// `frames` camera frames averaged, scaled to `width`, as 8-bit luma in the sensor's orientation.
+    func patternLuma(frames: Int, width: Int, completion: @escaping (Data?, String?) -> Void) {
+        queue.async {
+            guard self.ar != nil, !self.suspended else { completion(nil, "The LiDAR camera is not running."); return }
+            let count = max(1, min(8, frames))
+            self.patternLuma.append(PatternLuma(frames: count, width: max(160, min(1920, width / 2 * 2)), started: ProcessInfo.processInfo.systemUptime, completion: completion))
+            self.queue.asyncAfter(deadline: .now() + 2 + Double(count) * 0.1) { self.expirePattern() }
+        }
+    }
+
+    /// The median of `frames` LiDAR depth maps, in metres (0 where no steady reading).
+    func patternDepth(frames: Int, completion: @escaping (Data?, String?) -> Void) {
+        queue.async {
+            guard self.ar != nil, !self.suspended else { completion(nil, "The LiDAR camera is not running."); return }
+            let count = max(1, min(30, frames))
+            self.patternDepth.append(PatternDepth(frames: count, started: ProcessInfo.processInfo.systemUptime, completion: completion))
+            self.queue.asyncAfter(deadline: .now() + 2 + Double(count) * 0.1) { self.expirePattern() }
+        }
+    }
+
+    private func expirePattern() {
+        let now = ProcessInfo.processInfo.systemUptime
+        patternLuma.removeAll { request in
+            guard now - request.started > 1.9 + Double(request.frames) * 0.1 else { return false }
+            request.completion(nil, "The camera stopped sending frames. Keep the app open and try again."); return true
+        }
+        patternDepth.removeAll { request in
+            guard now - request.started > 1.9 + Double(request.frames) * 0.1 else { return false }
+            request.completion(nil, "The LiDAR stopped sending depth. Keep the app open and try again."); return true
+        }
+    }
+
+    private func failPattern(_ message: String) {
+        for request in patternLuma { request.completion(nil, message) }
+        for request in patternDepth { request.completion(nil, message) }
+        patternLuma.removeAll(); patternDepth.removeAll()
+    }
+
+    private static func appendWords(_ data: inout Data, _ words: [UInt32]) {
+        for word in words { var v = word.littleEndian; withUnsafeBytes(of: &v) { data.append(contentsOf: $0) } }
+    }
+    private static func appendFloats(_ data: inout Data, _ values: [Float]) {
+        appendWords(&data, values.map { $0.bitPattern })
+    }
+    private static func poseValues(_ t: simd_float4x4) -> [Float] {
+        (0..<4).flatMap { column in (0..<4).map { row in t[column][row] } }
+    }
+
+    private func feedPattern(_ frame: ARFrame) {
+        let pose = Self.poseValues(frame.camera.transform)
+        if !patternLuma.isEmpty {
+            let image = frame.capturedImage
+            CVPixelBufferLockBaseAddress(image, .readOnly)
+            let iw = CVPixelBufferGetWidthOfPlane(image, 0), ih = CVPixelBufferGetHeightOfPlane(image, 0)
+            var source = vImage_Buffer(data: CVPixelBufferGetBaseAddressOfPlane(image, 0), height: vImagePixelCount(ih), width: vImagePixelCount(iw), rowBytes: CVPixelBufferGetBytesPerRowOfPlane(image, 0))
+            var scaled: [Int: [UInt8]] = [:]
+            for index in patternLuma.indices {
+                let w = patternLuma[index].width, h = max(2, Int((Double(ih) * Double(w) / Double(iw)).rounded()))
+                if scaled[w] == nil {
+                    var pixels = [UInt8](repeating: 0, count: w * h)
+                    let status = pixels.withUnsafeMutableBytes { target -> vImage_Error in
+                        var destination = vImage_Buffer(data: target.baseAddress, height: vImagePixelCount(h), width: vImagePixelCount(w), rowBytes: w)
+                        return vImageScale_Planar8(&source, &destination, nil, vImage_Flags(kvImageNoFlags))
+                    }
+                    if status == kvImageNoError { scaled[w] = pixels }
+                }
+                guard let pixels = scaled[w] else { continue }
+                if patternLuma[index].sum.isEmpty { patternLuma[index].sum = [UInt32](repeating: 0, count: w * h); patternLuma[index].height = h }
+                patternLuma[index].sum.withUnsafeMutableBufferPointer { sum in for i in 0..<pixels.count { sum[i] &+= UInt32(pixels[i]) } }
+                patternLuma[index].count += 1
+            }
+            CVPixelBufferUnlockBaseAddress(image, .readOnly)
+            patternLuma.removeAll { request in
+                guard request.count >= request.frames else { return false }
+                var data = Data(capacity: 84 + request.sum.count)
+                Self.appendWords(&data, [0x4741_504C, sequence, UInt32(request.width), UInt32(request.height), UInt32(request.count)]) // "GAPL"
+                Self.appendFloats(&data, pose)
+                let half = UInt32(request.count / 2), n = UInt32(request.count)
+                data.append(contentsOf: request.sum.map { UInt8(min(255, ($0 + half) / n)) })
+                request.completion(data, nil)
+                return true
+            }
+        }
+        if !patternDepth.isEmpty, let scene = frame.smoothedSceneDepth ?? frame.sceneDepth, let confidence = scene.confidenceMap {
+            let map = scene.depthMap, w = CVPixelBufferGetWidth(map), h = CVPixelBufferGetHeight(map)
+            CVPixelBufferLockBaseAddress(map, .readOnly); CVPixelBufferLockBaseAddress(confidence, .readOnly)
+            var layer = [Float](repeating: .nan, count: w * h)
+            if let dp = CVPixelBufferGetBaseAddress(map)?.assumingMemoryBound(to: Float.self), let cp = CVPixelBufferGetBaseAddress(confidence)?.assumingMemoryBound(to: UInt8.self) {
+                let ds = CVPixelBufferGetBytesPerRow(map) / 4, cs = CVPixelBufferGetBytesPerRow(confidence)
+                for y in 0..<h { for x in 0..<w {
+                    let z = dp[y * ds + x]
+                    if z.isFinite, z > 0.1, z < 12, cp[y * cs + x] >= 1 { layer[y * w + x] = z }
+                } }
+            }
+            CVPixelBufferUnlockBaseAddress(map, .readOnly); CVPixelBufferUnlockBaseAddress(confidence, .readOnly)
+            for index in patternDepth.indices { patternDepth[index].layers.append(layer); patternDepth[index].width = w; patternDepth[index].height = h }
+            let k = frame.camera.intrinsics, size = frame.camera.imageResolution
+            patternDepth.removeAll { request in
+                guard request.layers.count >= request.frames else { return false }
+                let n = request.width * request.height, need = max(1, request.frames / 2)
+                var data = Data(capacity: 100 + n * 4)
+                Self.appendWords(&data, [0x4741_5044, UInt32(request.width), UInt32(request.height), UInt32(request.layers.count), UInt32(size.width), UInt32(size.height)]) // "GAPD"
+                Self.appendFloats(&data, [k[0,0] / Float(size.width), k[1,1] / Float(size.height), k[2,0] / Float(size.width), k[2,1] / Float(size.height)])
+                Self.appendFloats(&data, pose)
+                var values = [Float](); values.reserveCapacity(request.layers.count)
+                var median = [Float](repeating: 0, count: n)
+                for i in 0..<n {
+                    values.removeAll(keepingCapacity: true)
+                    for layer in request.layers where layer[i].isFinite { values.append(layer[i]) }
+                    guard values.count >= need else { continue }
+                    values.sort()
+                    median[i] = values[values.count / 2]
+                }
+                Self.appendFloats(&data, median)
+                request.completion(data, nil)
+                return true
+            }
+        }
+    }
+
     /// Rotates a tightly packed plane by 180 degrees in place, by reversing the order of its pixels.
     static func turnHalf(_ plane: inout Data, bytesPerPixel: Int) {
         plane.withUnsafeMutableBytes { raw in
@@ -317,6 +511,18 @@ final class StudioCaptureScheme: NSObject, WKURLSchemeHandler {
         if urlSchemeTask.request.url?.host == "audio" {
             // ghostcapture://audio/frame: one analysis frame of the visuals' audio, or 204 when off.
             finish(urlSchemeTask, id: id, data: GhostAudio.shared.frameData(), error: nil); return
+        }
+        if urlSchemeTask.request.url?.host == "pattern", let url = urlSchemeTask.request.url {
+            // ghostcapture://pattern/luma?frames=3&width=1280 and ghostcapture://pattern/depth?frames=15
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let number = { (name: String, fallback: Int) in Int(query.first { $0.name == name }?.value ?? "") ?? fallback }
+            let done = { (data: Data?, error: String?) in DispatchQueue.main.async { self.finish(urlSchemeTask, id: id, data: data, error: error) } }
+            switch source {
+            case "luma": StudioLiveCapture.shared.patternLuma(frames: number("frames", 3), width: number("width", 1280), completion: done)
+            case "depth": StudioLiveCapture.shared.patternDepth(frames: number("frames", 15), completion: done)
+            default: finish(urlSchemeTask, id: id, data: nil, error: "Unknown pattern request")
+            }
+            return
         }
         guard ["front", "rear", "depth"].contains(source) else { finish(urlSchemeTask, id: id, data: nil, error: "Unknown source"); return }
         StudioLiveCapture.shared.frame(source) { data, error in DispatchQueue.main.async { self.finish(urlSchemeTask, id: id, data: data, error: error) } }

@@ -56,8 +56,21 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name:"audioPlayer",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"audioImport",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"audioRemoveTrack",returnType:CAPPluginReturnPromise),
-        CAPPluginMethod(name:"audioPhoneBroadcast",returnType:CAPPluginReturnPromise)
+        CAPPluginMethod(name:"audioPhoneBroadcast",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"patternBegin",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"patternLock",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"patternEnd",returnType:CAPPluginReturnPromise)
     ]
+    // MARK: Auto-map with LiDAR (StudioLiveCapture pattern capture)
+    @objc func patternBegin(_ call: CAPPluginCall) {
+        StudioLiveCapture.shared.patternBegin { info, error in if let info = info { call.resolve(info) } else { call.reject(error ?? "The LiDAR camera did not start.") } }
+    }
+    @objc func patternLock(_ call: CAPPluginCall) {
+        StudioLiveCapture.shared.patternLock(call.getBool("locked") ?? true) { error in if let error = error { call.reject(error) } else { call.resolve() } }
+    }
+    @objc func patternEnd(_ call: CAPPluginCall) {
+        StudioLiveCapture.shared.patternEnd { call.resolve() }
+    }
     // MARK: Audio for the visuals (GhostAudio)
     @objc func audioSetSource(_ call: CAPPluginCall) {
         guard let source = GhostAudioSource(rawValue: call.getString("source") ?? "") else { call.reject("Unknown audio source."); return }

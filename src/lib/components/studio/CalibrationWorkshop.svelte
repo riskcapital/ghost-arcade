@@ -6,9 +6,11 @@
  import {surfaceDepthQuality,homography,unitCorners,project,exportCalibration,grayPatternPlan,type Calibration,type UV,type Reference} from '../../mobile/studio/calibration';
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
+ import {openLidarAutoMapCamera} from '../../mobile/studio/lidarScan';
+ import {mapCurvedSurfaces,buildCurvedSurface,type CurvedScan,type CurvedSurface,type MeshMode} from '../../mobile/studio/meshMap';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
- function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx})=>({name,screenId,screenName,points,rmsPx}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
+ function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx,curved})=>({name,screenId,screenName,points,rmsPx,...(curved?meshPayload(curved.surface):{})}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
  export let automap:((camera:AutoMapCamera,progress:(text:string,fraction?:number)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
@@ -18,7 +20,20 @@
  let stopRemote:(()=>void)|undefined;
  /** The last stripe scan, kept so each outlined surface can be fitted on its own. */
  let scan:AutoMapProjector[]=[];
- type Mapped={surfaceId:string;name:string;screenId:string;screenName:string;points:UV[];rmsPx:number};
+ /** A curved surface found with LiDAR: which projector scan and region it came from, and its current mesh. */
+ type Curved={scan:number;region:number;surface:CurvedSurface};
+ type Mapped={surfaceId:string;name:string;screenId:string;screenName:string;points:UV[];rmsPx:number;curved?:Curved};
+ /** Per projector, the LiDAR side of the scan, kept so a surface can be rebuilt in the other mode. */
+ let curvedScans:(CurvedScan&{projector:AutoMapProjector})[]=[];
+ const round=(n:number)=>Math.round(n*1e5)/1e5;
+ const pt=(p:UV)=>({x:round(p.x),y:round(p.y)});
+ /** What the desktop needs to warp a layer onto a curved surface and hide what falls off it. */
+ function meshPayload(c:CurvedSurface){return{mode:c.mode,contentOutline:c.contentOutline.map(pt),mesh:{rows:c.mesh.rows,cols:c.mesh.cols,points:c.mesh.points.map(pt),tangents:c.mesh.tangents?.map(t=>({right:pt(t.right),down:pt(t.down)}))??null,rest:{u0:round(c.mesh.rest.u0),v0:round(c.mesh.rest.v0),u1:round(c.mesh.rest.u1),v1:round(c.mesh.rest.v1)}}};}
+ /** Wrap the surface, or match the camera's view: rebuilt from the kept scan. */
+ function setMode(m:Mapped,mode:MeshMode){if(!m.curved||m.curved.surface.mode===mode)return;const c=curvedScans[m.curved.scan];if(!c)return;
+  try{const surface=buildCurvedSurface(c.grid,c.regions[m.curved.region],{width:c.projector.width,height:c.projector.height,model:c.model},mode);
+   mapped=mapped.map(x=>x===m?{...x,points:surface.corners,rmsPx:surface.rmsPx,curved:{...m.curved!,surface}}:x);}
+  catch(e){message=e instanceof Error?e.message:'That surface could not be rebuilt.';}}
  let mapped:Mapped[]=[];
  /** Found surfaces the user has switched off: kept on the photo, not sent. */
  let skipped=new Set<string>();
@@ -79,8 +94,9 @@
  function mapOutline(outline:UV[]){let best:{projector:AutoMapProjector;points:UV[];rmsPx:number;agree:number;toProjector:number[]}|undefined,why='';
   for(const projector of scan){try{const m=mapSurface(projector,outline);if(!best||m.agree>best.agree)best={projector,...m};}catch(e){why=e instanceof Error?e.message:'';}}
   if(!best)throw new Error(why||'This surface could not be mapped.');return best;}
- let framing=false,preview:HTMLVideoElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
- async function openAuto(){framing=true;message='Starting the camera…';const held=await uprightTurn();await tick();try{autoCamera=await openAutoMapCamera(preview,held.turn);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
+ let framing=false,preview:HTMLVideoElement,previewCanvas:HTMLCanvasElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
+ // With LiDAR the scan runs on the depth camera, so curved forms get a mesh; otherwise the plain camera.
+ async function openAuto(){framing=true;message='Starting the camera…';await tick();try{autoCamera=lidar?await openLidarAutoMapCamera(previewCanvas):await openAutoMapCamera(preview,(await uprightTurn()).turn);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
  function closeAuto(){stopRemote?.();stopRemote=undefined;autoCamera?.stop();autoCamera=undefined;framing=false;}
  async function startAuto(){
   if(!autoCamera||!automap)return;busy=true;
@@ -88,15 +104,31 @@
    fraction=0;const result=await automap(autoCamera,(text,part)=>{message=text;if(part!==undefined)fraction=part;});
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
-   scan=result.projectors;mapped=[];skipped=new Set();painting=null;
+   scan=result.projectors;mapped=[];skipped=new Set();painting=null;curvedScans=[];
    // Find the flat surfaces in the scan; nobody has to tap corners.
+   const flat:{projector:AutoMapProjector;surface:Calibration['surfaces'][number];entry:Mapped}[]=[];
    for(const projector of scan)for(const found of detectSurfaces(projector,{photo:projector.white})){
-    const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:found.outline.map(p=>({x:Math.max(0,Math.min(1,p.x)),y:Math.max(0,Math.min(1,p.y))}))};
-    surfaces=[...surfaces,surface];
-    mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:found.points,rmsPx:found.rmsPx}];
+    const surface={id:crypto.randomUUID(),name:'',points:found.outline.map(p=>({x:Math.max(0,Math.min(1,p.x)),y:Math.max(0,Math.min(1,p.y))}))};
+    flat.push({projector,surface,entry:{surfaceId:surface.id,name:'',screenId:projector.id,screenName:projector.name,points:found.points,rmsPx:found.rmsPx}});
    }
+   // With depth, curved forms get a mesh, and a flat fit drawn across one gives way to it.
+   const curved:{surface:Calibration['surfaces'][number];entry:Mapped}[]=[];
+   const dropped=new Set<string>();
+   if(result.depth){
+    message='Finding curved surfaces…';fraction=1;await tick();await new Promise(r=>setTimeout(r,30));
+    for(const [index,projector] of scan.entries()){
+     const own=flat.filter(f=>f.projector===projector);
+     const found=mapCurvedSurfaces({width:projector.width,height:projector.height,cell:projector.plan.cell,decoded:projector.decoded},result.depth,own.map(f=>f.surface.points),'wrap');
+     curvedScans[index]={...found,projector};
+     found.keepFlat.forEach((keep,k)=>{if(!keep)dropped.add(own[k].surface.id);});
+     found.surfaces.forEach((c,region)=>{const surface={id:crypto.randomUUID(),name:'',points:c.outline};
+      curved.push({surface,entry:{surfaceId:surface.id,name:'',screenId:projector.id,screenName:projector.name,points:c.corners,rmsPx:c.rmsPx,curved:{scan:index,region,surface:c}}});});
+    }
+   }
+   for(const item of [...flat.filter(f=>!dropped.has(f.surface.id)),...curved]){const name=`Surface ${surfaces.length+1}`;surfaces=[...surfaces,{...item.surface,name}];mapped=[...mapped,{...item.entry,name}];}
    skipped=skipped;
-   message=surfaces.length?'':'No flat surface was found in the scan. Dim the room and try again, or trace a surface by hand.';
+   const meshes=curved.length;
+   message=surfaces.length?(result.depthError?`Depth was not measured (${result.depthError}) Curved forms were not meshed.`:''):(meshes||result.depth?'Nothing the projector lights could be mapped. Dim the room and try again, or trace a surface by hand.':'No flat surface was found in the scan. Dim the room and try again, or trace a surface by hand.');
   }catch(e){message=e instanceof Error?e.message:'Auto map failed.';}
   finally{busy=false;closeAuto();}
  }
@@ -128,12 +160,12 @@
  <header><div><small>DESKTOP TOOLS</small><h2>{automap?'Auto map':'Calibration workshop'}</h2></div><button class="quiet" onclick={onclose} disabled={busy}>Back</button></header>
  {#if automap}
  {#if framing}
-  <div class="am-stage"><video bind:this={preview} playsinline muted></video>{#if busy}<div class="am-veil"><strong>{Math.round(fraction*100)}%</strong><span>{message}</span></div>{/if}</div>
+  <div class="am-stage">{#if lidar}<canvas class="am-preview" bind:this={previewCanvas}></canvas>{:else}<video bind:this={preview} playsinline muted></video>{/if}{#if busy}<div class="am-veil"><strong>{Math.round(fraction*100)}%</strong><span>{message}</span></div>{/if}</div>
   {#if busy}
    <div class="am-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(fraction*100)}><i style:width={`${fraction*100}%`}></i></div>
    <p class="am-hint">Keep the phone still and stay out of the beam.</p>
   {:else}
-   <ul class="am-check"><li>Every surface you want is in the picture</li><li>The phone is propped so it cannot move</li><li>The room is dim</li></ul>
+   <ul class="am-check"><li>Every surface you want is in the picture</li><li>The phone is propped so it cannot move</li><li>The room is dim</li>{#if lidar}<li>Curved and organic forms get a mesh from LiDAR, within about 4 m</li>{/if}</ul>
    <div class="am-actions"><button class="primary" onclick={startAuto} disabled={!autoCamera}>Start scan</button><button class="quiet" onclick={closeAuto}>Cancel</button></div>
   {/if}
  {:else if scan.length&&reference&&painting}
@@ -153,7 +185,13 @@
    {#each scanned as s,i}{@const c=centre(s.points)}<b class="am-tag" class:off={skipped.has(s.id)} style:left={`${c.x/10}%`} style:top={`${c.y/10}%`}>{i+1}</b>{/each}
   </div>
   <div class="am-summary"><strong>{sending} of {scanned.length} surfaces</strong><span>Tap a surface to switch it off</span></div>
-  <div class="am-chips">{#each scanned as s,i}<button class="am-chip" class:on={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}><b>{i+1}</b>{skipped.has(s.id)?'Off':'On'}</button>{/each}</div>
+  <div class="am-chips">{#each scanned as s,i}{@const m=mapped.find(x=>x.surfaceId===s.id)}<button class="am-chip" class:on={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}><b>{i+1}</b>{skipped.has(s.id)?'Off':m?.curved?'Mesh':'On'}</button>{/each}</div>
+  {#each mapped.filter(m=>m.curved&&!skipped.has(m.surfaceId)) as m (m.surfaceId)}{@const n=scanned.findIndex(s=>s.id===m.surfaceId)+1}
+   <div class="am-mode" role="radiogroup" aria-label={`Surface ${n}: how the picture sits on it`}><span><b>{n}</b>Curved</span>
+    <button role="radio" aria-checked={m.curved?.surface.mode==='wrap'} class:on={m.curved?.surface.mode==='wrap'} onclick={()=>setMode(m,'wrap')}>Wrap the surface</button>
+    <button role="radio" aria-checked={m.curved?.surface.mode==='camera'} class:on={m.curved?.surface.mode==='camera'} onclick={()=>setMode(m,'camera')}>Match camera view</button>
+   </div>
+  {/each}
   <div class="am-actions">{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!sending}>Send {sending} to desktop</button>{/if}<button class="quiet" onclick={openAuto}>Scan again</button></div>
   <button class="am-painting" onclick={startPainting}><b>Painting on this wall?</b><span>Outline it and send its photo, already lined up and cropped.</span></button>
  {:else}
@@ -227,7 +265,12 @@
  .am-painting{display:grid;gap:3px;width:100%;margin-top:14px;padding:12px 14px;text-align:left;border-radius:10px;background:transparent;border:1px dashed var(--ga-line-3)}
  .am-painting b{font-size:13px;font-weight:600}.am-painting span{font-size:12px;color:var(--ga-ink-2)}
  .am-stage{position:relative;width:100%;background:#000;border-radius:10px;overflow:hidden;border:1px solid var(--ga-line-3)}
- .am-stage video{display:block;width:100%;max-height:52vh;object-fit:contain;background:#000}
+ .am-stage video,.am-stage .am-preview{display:block;width:100%;max-height:52vh;object-fit:contain;background:#000}
+ .am-mode{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px;align-items:center;margin-top:10px}
+ .am-mode span{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ga-ink-2);padding-right:4px}
+ .am-mode span b{display:grid;place-content:center;width:22px;height:22px;border-radius:50%;background:var(--ga-blue,#5278ff);color:#fff;font-size:11px}
+ .am-mode button{min-height:44px;font-size:12px;border-radius:8px;background:transparent}
+ .am-mode button.on{background:var(--ga-selection-bg);border-color:var(--ga-blue-300);color:var(--ga-ink-0)}
  .am-stage.found{touch-action:manipulation}
  .am-stage img,.am-stage svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
  .am-stage polygon{fill:var(--ga-blue-a16);stroke:var(--ga-blue-200);stroke-width:2.5}
