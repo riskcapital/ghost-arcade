@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { project, selectedLayerId, selectedLayer } from '../stores/layers';
+  import { project, selectedLayerId, selectedLayer, scheduleHistorySnapshot } from '../stores/layers';
   import { getPluginByEffectType } from '../plugins/registry';
   import type { MediaSource, IntegratedEffectSource } from '../types';
   import MilkdropPanel from './MilkdropPanel.svelte';
@@ -23,7 +23,7 @@
     return (effectSource as any)[paramKey] ?? defaultVal;
   }
 
-  function commitEffectSource(updated: IntegratedEffectSource) {
+  function commitEffectSource(updated: IntegratedEffectSource, editKey = '') {
     if (onUpdateEffectSource) {
       onUpdateEffectSource(updated);
       return;
@@ -36,7 +36,9 @@
     project.setLayerSource(layerId, {
       ...layer.source,
       effectSource: updated,
-    });
+    }, { history: false });
+    // A slider drag is one undo step, not one per tick.
+    scheduleHistorySnapshot(`plugin:${layerId}:${editKey}`);
   }
 
   // Update a single param on the current effectSource. Mapping mode writes
@@ -52,7 +54,7 @@
       [paramKey]: value,
     };
 
-    commitEffectSource(updated);
+    commitEffectSource(updated, paramKey);
   }
 
   function colorToHex(value: any, fallback: any): string {

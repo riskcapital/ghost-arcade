@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { project, selectedLayerId, selectedLayer, selectedLayerIds, layers } from '../stores/layers';
+  import { project, selectedLayerId, selectedLayer, selectedLayerIds, layers, scheduleHistorySnapshot } from '../stores/layers';
   import PluginIcon from './PluginIcon.svelte';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { mediaLibrary, type MediaItem } from '../stores/media';
@@ -2271,7 +2271,9 @@
     const source = $selectedLayer.source;
     if (source.shaderValues) {
       source.shaderValues[inputName] = value;
-      project.setLayerSource($selectedLayerId, { ...source });
+      // A slider drag is one undo step, not one per tick.
+      project.setLayerSource($selectedLayerId, { ...source }, { history: false });
+      scheduleHistorySnapshot(`shader-param:${$selectedLayerId}:${inputName}`);
     }
 
     // Keep modulation base value in sync with slider (mapping mode)
@@ -3510,7 +3512,9 @@
           ...currentSource.jsAnimation,
           paramValues: { ...selectedJSAnimation.jsAnimation.paramValues }
         }
-      });
+      }, { history: false });
+      // A slider drag is one undo step, not one per tick.
+      scheduleHistorySnapshot(`js-param:${$selectedLayerId}:${paramName}`);
     }
 
     // Send parameter update to the iframe. The iframe cache is keyed by
