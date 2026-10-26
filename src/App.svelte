@@ -85,6 +85,7 @@
   import {PhoneSessions,PHONE_SCENE_MAX_BYTES,phoneSenderId,sanitizePhoneInputs,type PhoneSceneState} from './lib/mobile/studio/phoneSessions';
   import {pickEditorClipRow,pickEditorClipSlot,pickPhoneClipSlot,isPhoneInteractiveClip} from './lib/mobile/studio/studioTargets';
   import {isTypingTarget,studioModalKeyAction} from './lib/utils/studioModalKeys';
+  import { isTextEntryTarget, undoShortcut } from './lib/utils/undoShortcut';
   import {createNativeSourcePreview} from './lib/sync/nativeSourcePreview';
   import {recordDiscreteAction} from './lib/stores/historyHooks';
 
@@ -2273,16 +2274,18 @@
         }
       }
 
-      // Undo: Ctrl+Z (works even when typing — standard behavior)
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      // Undo: Cmd/Ctrl+Z. Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y.
+      const undoKey = undoShortcut(e);
+      if (undoKey) {
+        // In a text or number field the keys undo the typing, not the project.
+        if (isTextEntryTarget(e.target)) return;
+        // The Stage 3D Designer and Map Sim have their own undo and handle
+        // these keys while they are open; running the project's undo as well
+        // undid two things at once.
+        if (showStage3D || get(workspace) === 'projection-sim') return;
         e.preventDefault();
-        handleUndo();
-        return;
-      }
-      // Redo: Ctrl+Y or Ctrl+Shift+Z
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey) || (e.key === 'Z' && e.shiftKey))) {
-        e.preventDefault();
-        handleRedo();
+        if (undoKey === 'undo') handleUndo();
+        else handleRedo();
         return;
       }
 
