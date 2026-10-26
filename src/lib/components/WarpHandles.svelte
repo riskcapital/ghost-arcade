@@ -58,10 +58,10 @@
   // The corner or edge the arrow keys move (the one pressed last). The
   // canvas's arrow-key handler in App.svelte moves it; see
   // utils/mappingNudge.ts.
-  $: pointRef = $mappingPointSelection && $mappingPointSelection.layerId === $selectedLayer?.id && !hideCorners && !nonRectShape
+  $: pointRef = $mappingPointSelection && $mappingPointSelection.layerId === $selectedLayer?.id && !nonRectShape
     ? $mappingPointSelection
     : null;
-  $: selectedCorner = pointRef?.kind === 'corner' ? pointRef.corner : null;
+  $: selectedCorner = pointRef?.kind === 'corner' && !hideCorners ? pointRef.corner : null;
   $: selectedEdge = pointRef?.kind === 'edge' && !selectionBoundsPx ? pointRef.edge : null;
 
   // Scale drag state

@@ -115,6 +115,14 @@ describe('mapping nudge: layer corners and edges', () => {
     expect(patch.corners!.topLeft).toEqual(selected.corners.topLeft);
   });
 
+  it('moves an edge of a mesh layer (its edge handles stay), not a hidden corner', () => {
+    const meshed = layer('a', { corners: rect(0.25, 0.25, 0.75, 0.75), warpMode: 'mesh', meshGrid: meshGrid(3, 3) });
+    const patch = patchOf(planMappingArrowKey(press('ArrowLeft'), state(meshed, { kind: 'edge', layerId: 'a', edge: 'left' })));
+    expect(patch.corners!.topLeft.x).toBeCloseTo(0.25 - 1 / W, 15);
+    expect(planMappingArrowKey(press('ArrowLeft'), state(meshed, { kind: 'corner', layerId: 'a', corner: 'topLeft' })))
+      .toEqual({ type: 'clear-selection' });
+  });
+
   it('moves the selected layers, groups with their children, when nothing is selected', () => {
     const layers = [
       layer('g', { type: 'group' }),
