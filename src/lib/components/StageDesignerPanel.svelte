@@ -37,6 +37,7 @@
   import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
   import { arrowDirection, classifyKeyTarget } from '../utils/mappingNudge';
   import { nudgeSlicePolygon, type SliceVertexRef } from '../utils/stageNudge';
+  import { noteAltArrow } from '../utils/altArrowGuard';
 
   // ── Canvas pan/zoom state ─────────────────────────────────
   // Mirrors the App.svelte viewport pattern: pan + zoom on a wrapper
@@ -122,6 +123,7 @@
 	      const polygon = nudgeSlicePolygon(sl.polygon, selectedVertex, offset);
 	      if (polygon) surfaceStore.updateSlice(sl.id, { polygon });
 	    }
+	    noteAltArrow(e);
 	    return true;
 	  }
 	  function onWindowKeyUp(e: KeyboardEvent) {

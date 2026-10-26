@@ -372,6 +372,7 @@
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from './lib/stores/mappingPointSelection';
   import { arrowDirection, classifyKeyTarget, planMappingArrowKey } from './lib/utils/mappingNudge';
+  import { guardAltRelease, noteAltArrow } from './lib/utils/altArrowGuard';
   import { paintMaskLayerId } from './lib/stores/paintMaskTool';
   import PaintMaskOverlay from './lib/components/PaintMaskOverlay.svelte';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
@@ -2694,8 +2695,6 @@
   // ten, Alt a tenth (Alt moves a selected curve handle on its own). A held
   // key is one undo step. See lib/utils/mappingNudge.ts. The Screens tab's
   // handles have their own keys.
-  let altNudged = false;
-
   function handleMappingKeyDown(e: KeyboardEvent) {
     if (e.key !== 'Escape' && !arrowDirection(e.key)) return;
     if (e.defaultPrevented || showInteractiveStudio) return;
@@ -2734,17 +2733,16 @@
       return;
     }
     e.preventDefault();
-    if (e.altKey) altNudged = true;
+    noteAltArrow(e);
     // updateLayer schedules one history snapshot after the last press.
     for (const { layerId, patch } of plan.patches) project.updateLayer(layerId, patch);
   }
 
   // Windows: releasing Alt on its own shows the menu bar. After Alt+arrow
-  // nudges the release is part of the nudge, so keep it from the menu.
+  // nudges (here, on the Screens tab, in the Stage Designer) the release is
+  // part of the nudge, so keep it from the menu.
   function handleMappingKeyUp(e: KeyboardEvent) {
-    if (e.key !== 'Alt') return;
-    if (altNudged) e.preventDefault();
-    altNudged = false;
+    guardAltRelease(e);
   }
 
   // Viewport pan/zoom handlers

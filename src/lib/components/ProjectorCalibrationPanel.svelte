@@ -4,6 +4,7 @@
   import { settings } from '../stores/settings';
   import { screens, screenActions } from '../stores/screens';
   import { scheduleHistorySnapshot, recordDiscreteAction } from '../stores/historyHooks';
+  import { noteAltArrow } from '../utils/altArrowGuard';
   import { screenAlignmentGridIds, setScreenAlignmentGrid, identifyScreen } from '../stores/screenOutputStatus';
   import {
     defaultProjectorCorners, defaultOverlap, inverseProjectorHomography, nudgeProjectorCorner, overlapBandValid,
@@ -98,6 +99,7 @@
     if (!d) return;
     event.preventDefault();
     event.stopPropagation();
+    noteAltArrow(event);
     setCorners(nudgeProjectorCorner(calibration.corners, selectedCorner, d[0], d[1], size.width, size.height));
     scheduleHistorySnapshot();
   }
@@ -125,6 +127,7 @@
     event.preventDefault();
     event.stopPropagation();
     const step = (event.shiftKey ? 10 : event.altKey ? 0.1 : 1) * (event.key === 'ArrowUp' ? 1 : -1);
+    noteAltArrow(event);
     setCorners(nudgeProjectorCorner(calibration.corners, index, axis === 'x' ? step : 0, axis === 'y' ? step : 0, size.width, size.height));
     scheduleHistorySnapshot();
   }
