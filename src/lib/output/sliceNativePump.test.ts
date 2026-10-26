@@ -58,7 +58,7 @@ const attach = main.slice(main.indexOf('function sliceNativeLayerRect'), main.in
 
 async function attachHarness(platform: 'win32' | 'darwin', scaleFactor: number) {
   const { nativePreviewRectToDevicePixels } = await import('../../../electron/native-preview-geometry.js');
-  const addon = { monitorAttach: vi.fn(() => true) };
+  const addon = { monitorAttach: vi.fn((_name: string, _handle: Buffer, _rect: Record<string, any>) => true) };
   const win = {
     isDestroyed: () => false,
     getNativeWindowHandle: () => Buffer.alloc(8, 1),
@@ -83,7 +83,7 @@ async function attachHarness(platform: 'win32' | 'darwin', scaleFactor: number) 
 it('sizes a Windows Screen presenter in physical pixels on a scaled display', async () => {
   const h = await attachHarness('win32', 1.5);
   expect(h.context.attachSliceNativeLayer('s1', h.win)).toBe(true);
-  const [name, , rect] = h.addon.monitorAttach.mock.calls[0];
+  const [name, , rect] = h.addon.monitorAttach.mock.calls[0]!;
   expect(name).toBe('slice:s1');
   // A 150% 4K projector: 2560x1440 DIP is the whole 3840x2160 panel.
   expect(rect).toMatchObject({ x: 0, y: 0, width: 3840, height: 2160, contentWidth: 3840, contentHeight: 2160 });
@@ -94,16 +94,16 @@ it('sizes a Windows Screen presenter in physical pixels on a scaled display', as
 it('re-sends a Windows Screen rect when its display changes scale', async () => {
   const h = await attachHarness('win32', 1);
   h.context.attachSliceNativeLayer('s1', h.win);
-  expect(h.addon.monitorAttach.mock.calls[0][2]).toMatchObject({ width: 2560, height: 1440 });
+  expect(h.addon.monitorAttach.mock.calls[0]![2]).toMatchObject({ width: 2560, height: 1440 });
   h.context.screen.getDisplayMatching.mockReturnValue({ id: 2, scaleFactor: 2 });
   h.context.refreshSliceNativeLayerRects();
   expect(h.addon.monitorAttach).toHaveBeenCalledTimes(2);
-  expect(h.addon.monitorAttach.mock.calls[1][2]).toMatchObject({ width: 5120, height: 2880 });
+  expect(h.addon.monitorAttach.mock.calls[1]![2]).toMatchObject({ width: 5120, height: 2880 });
 });
 
 it('keeps macOS Screen presenters in points', async () => {
   const h = await attachHarness('darwin', 2);
   expect(h.context.attachSliceNativeLayer('s1', h.win)).toBe(true);
-  expect(h.addon.monitorAttach.mock.calls[0][2]).toMatchObject({ width: 2560, height: 1440 });
+  expect(h.addon.monitorAttach.mock.calls[0]![2]).toMatchObject({ width: 2560, height: 1440 });
   expect(h.context.screen.getDisplayMatching).not.toHaveBeenCalled();
 });
