@@ -1,5 +1,6 @@
 import type { MediaSource } from '../types';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
+import { configureSourceVideoElement, playSourceVideoElement, sourceVideoIsMetadataOnly } from './sourceVideoElement';
 
 type VideoFactory = () => HTMLVideoElement;
 
@@ -23,22 +24,23 @@ export function restoreVideoSourceElement(
 
   const video = createVideo();
   if (videoSourceNeedsCors(source.src)) video.crossOrigin = 'anonymous';
+  configureSourceVideoElement(video);
   video.loop = false;
-  video.muted = true;
-  video.playsInline = true;
-  video.preload = 'auto';
   video.playbackRate = source.playbackRate ?? 1;
 
   source.videoElement = video;
   source.isPlaying = true;
 
+  // Beside the render core the element only reads metadata: playing it
+  // decoded every restored layer a second time.
   const playWhenReady = () => {
     if (source.videoElement !== video || source.isPlaying === false) return;
-    void video.play().catch(() => {
-      // A later canplay event retries transient Chromium autoplay/load races.
-    });
+    // A later canplay event retries transient Chromium autoplay/load races.
+    playSourceVideoElement(video);
   };
   const reportError = () => {
+    // Chromium refusing ProRes or HAP is no failure when the core plays it.
+    if (sourceVideoIsMetadataOnly()) return;
     console.warn('[VideoRestore] Failed to restore saved video source:', source.name, source.src);
   };
 

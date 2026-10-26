@@ -31,6 +31,7 @@ import { effectiveClipTransition, normalizedTransitionDuration, normalizedTransi
 import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { NATIVE_ENGINE_ONLY } from './settings';
 import { isDesktopApp } from '../bridge';
+import { configureSourceVideoElement, playSourceVideoElement, sourceVideoIsMetadataOnly } from '../media/sourceVideoElement';
 import { getActiveNativeRendererSync, armNativeLibraryVideo } from '../sync/nativeRendererSync';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 import {
@@ -861,20 +862,21 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
     if (!shouldSkipVideoCors(clip.src)) {
       videoEl.crossOrigin = 'anonymous';
     }
-    videoEl.loop = true;
-    videoEl.muted = true;
-    videoEl.playsInline = true;
-    videoEl.preload = 'auto';
+    // Every resident grid clip has one of these. Beside the render core it
+    // loads metadata only and never plays: the core decodes the clip.
+    configureSourceVideoElement(videoEl);
     videoEl.src = clip.src;
     clip.isPlaying = clip.isPlaying ?? true;
 
-    const v = videoEl;
-    const tryPlay = () => {
-      if (clip.isPlaying === false || clip.playbackMode === 'bounce' || (clip.playbackRate ?? 1) < 0) return;
-      v.play().catch(e => console.warn('[vjClipLauncher] video autoplay failed:', e));
-    };
-    if (v.readyState >= 2) tryPlay();
-    else v.addEventListener('loadeddata', tryPlay, { once: true });
+    if (!sourceVideoIsMetadataOnly()) {
+      const v = videoEl;
+      const tryPlay = () => {
+        if (clip.isPlaying === false || clip.playbackMode === 'bounce' || (clip.playbackRate ?? 1) < 0) return;
+        playSourceVideoElement(v);
+      };
+      if (v.readyState >= 2) tryPlay();
+      else v.addEventListener('loadeddata', tryPlay, { once: true });
+    }
     videoElementCache.set(clip.id, videoEl);
   }
 
@@ -1009,9 +1011,7 @@ function syncBrowserVideoAfterNativeTrigger(
       try { incomingVideo.currentTime = startSeconds; } catch { /* media may still be loading */ }
       incoming!.isPlaying = true;
       if (incoming!.playbackMode === 'bounce' || (incoming!.playbackRate ?? 1) < 0) incomingVideo.pause();
-      else if (incomingVideo.paused) {
-        incomingVideo.play().catch(() => { /* rapid retriggers can abort play */ });
-      }
+      else if (incomingVideo.paused) playSourceVideoElement(incomingVideo);
     }
 
     if (outgoing?.type === 'video' && !vjClipTransitions.referencesClip(outgoing.id)) {
@@ -1436,10 +1436,7 @@ function createVJClipLauncherStore() {
             if (!clip.src.startsWith('blob:') && !clip.src.startsWith('file:')) {
               videoEl.crossOrigin = 'anonymous';
             }
-            videoEl.loop = true;
-            videoEl.muted = true;
-            videoEl.playsInline = true;
-            videoEl.preload = 'auto';
+            configureSourceVideoElement(videoEl);
             videoEl.src = clip.src;
             // Default isPlaying to true — the layer is being triggered into
             // the deck, so playback should start. UI toggle (pause from the
@@ -1452,10 +1449,13 @@ function createVJClipLauncherStore() {
             // play() with AbortError + leaves the VideoTexture in an
             // INVALID_VALUE state on next upload (= the "horizontal lines /
             // freeze on rapid clip switch" bug).
-            const v = videoEl;
-            const tryPlay = () => v.play().catch(e => console.warn('[vjClipLauncher] video autoplay failed:', e));
-            if (v.readyState >= 2) tryPlay();
-            else v.addEventListener('loadeddata', tryPlay, { once: true });
+            // Beside the render core the element stays metadata only.
+            if (!sourceVideoIsMetadataOnly()) {
+              const v = videoEl;
+              const tryPlay = () => playSourceVideoElement(v);
+              if (v.readyState >= 2) tryPlay();
+              else v.addEventListener('loadeddata', tryPlay, { once: true });
+            }
             videoElementCache.set(clip.id, videoEl);
           }
           clip.videoElement = videoEl;

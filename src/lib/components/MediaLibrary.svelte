@@ -7,6 +7,7 @@
   import { generateUUID } from '../types';
   import { createDurableAssetRefFromFile } from '../storage/assetRegistry';
   import { isVideoFile, VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
+  import { configureSourceVideoElement, playSourceVideoElement } from '../media/sourceVideoElement';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
 
@@ -213,15 +214,12 @@
       if (prevVideo && prevVideo !== video) {
         try { prevVideo.pause(); } catch { /* ignore */ }
       }
-      video.loop = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = 'auto';
+      configureSourceVideoElement(video);
       // Restart from frame 0 on every apply — VJ semantics: clicking a
       // clip means "play this clip from the top", not "resume from
       // wherever it was last paused".
       try { video.currentTime = 0; } catch { /* ignore */ }
-      if (video.paused) video.play().catch(() => { /* AbortError on rapid re-apply is fine */ });
+      if (video.paused) playSourceVideoElement(video);
       layerSource.videoElement = video;
     }
 

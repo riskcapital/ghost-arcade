@@ -1,6 +1,7 @@
 <script lang="ts">
   import { prepareVideoImport } from '../video/videoImport';
   import { AUDIO_FILE_HINT, mediaFileKind, VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
+  import { configureSourceVideoElement } from '../media/sourceVideoElement';
   import { onMount, onDestroy, tick } from 'svelte';
   import { midiStore } from '../midi/midiStore';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
@@ -1901,10 +1902,7 @@
           if (prevVideo && prevVideo !== video) {
             try { prevVideo.pause(); } catch { /* ignore */ }
           }
-          video.loop = true;
-          video.muted = true;
-          video.playsInline = true;
-          video.preload = 'auto';
+          configureSourceVideoElement(video);
           // Restart from frame 0 on every apply — VJ semantics: clicking
           // a clip means "play this clip from the top", not "resume from
           // wherever it was last paused".

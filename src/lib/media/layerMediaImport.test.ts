@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('$lib/bridge', () => ({ get isDesktopApp() { return mocks.desktop; } }));
 vi.mock('$lib/video/videoImport', () => ({ prepareVideoImport: mocks.prepare }));
 vi.mock('$lib/storage/assetRegistry', () => ({ createDurableAssetRefFromFile: mocks.assetRef }));
+vi.mock('$lib/stores/settings', () => ({ NATIVE_ENGINE_ONLY: true }));
 
 import { createLayerMediaSource, LayerMediaRejected } from './layerMediaImport';
 
