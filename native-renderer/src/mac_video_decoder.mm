@@ -16,6 +16,7 @@
 #include <mutex>
 #include <pthread/qos.h>
 #include <string>
+#include <vector>
 
 namespace {
 // Four asynchronous submissions at a time, with a separate hard bound on
@@ -74,6 +75,123 @@ unsigned source_bit_depth(CMFormatDescriptionRef format) {
         }
     }
     return 0; // Unknown: offer the supported native formats without guessing.
+}
+
+// The parameter-set count of an 'hvcC' (VPS, SPS and PPS) or 'avcC' (SPS
+// and PPS) record, read with bounds checks.
+bool record_has_parameter_sets(bool hevc, CFDataRef record) {
+    const UInt8 *bytes = CFDataGetBytePtr(record);
+    const size_t size = static_cast<size_t>(CFDataGetLength(record));
+    size_t at = 0;
+    const auto skip_units = [&](size_t count) {
+        for (size_t i = 0; i < count; ++i) {
+            if (at + 2 > size) return false;
+            const size_t length = (static_cast<size_t>(bytes[at]) << 8) | bytes[at + 1];
+            at += 2 + length;
+            if (at > size) return false;
+        }
+        return true;
+    };
+    if (hevc) {
+        if (size < 23) return false;
+        const size_t arrays = bytes[22];
+        at = 23;
+        bool vps = false, sps = false, pps = false;
+        for (size_t i = 0; i < arrays; ++i) {
+            if (at + 3 > size) return false;
+            const unsigned type = bytes[at] & 0x3f;
+            const size_t count = (static_cast<size_t>(bytes[at + 1]) << 8) | bytes[at + 2];
+            at += 3;
+            if (!skip_units(count)) return false;
+            if (count && type == 32) vps = true;
+            if (count && type == 33) sps = true;
+            if (count && type == 34) pps = true;
+        }
+        return vps && sps && pps;
+    }
+    if (size < 7) return false;
+    const size_t sps = bytes[5] & 0x1f;
+    at = 6;
+    if (!sps || !skip_units(sps) || at >= size) return false;
+    const size_t pps = bytes[at++];
+    return pps && skip_units(pps);
+}
+
+// ffmpeg writes HEVC as 'hev1' (and some encoders write H.264 as 'avc3'):
+// the same bitstream as 'hvc1'/'avc1', except that parameter sets may also
+// appear inside the samples. VideoToolbox registers its hardware decoders
+// only under the standard tags, so such a file fell back to the slower
+// compatibility decoder. When the configuration record carries the
+// parameter sets, the track is decoded under the standard tag instead.
+// Returns a +1 format, or null to keep the original.
+CMFormatDescriptionRef standard_tag_format(CMFormatDescriptionRef format) {
+    const FourCharCode codec = CMFormatDescriptionGetMediaSubType(format);
+    const bool hevc = codec == 'hev1';
+    if (!hevc && codec != 'avc3') return nullptr;
+    CFTypeRef atoms = CMFormatDescriptionGetExtension(format,
+        kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms);
+    if (!atoms || CFGetTypeID(atoms) != CFDictionaryGetTypeID()) return nullptr;
+    CFTypeRef record = CFDictionaryGetValue(static_cast<CFDictionaryRef>(atoms),
+        hevc ? CFSTR("hvcC") : CFSTR("avcC"));
+    if (!record || CFGetTypeID(record) != CFDataGetTypeID() ||
+        !record_has_parameter_sets(hevc, static_cast<CFDataRef>(record)))
+        return nullptr;
+    const CMVideoDimensions size = CMVideoFormatDescriptionGetDimensions(format);
+    CMVideoFormatDescriptionRef standard = nullptr;
+    if (CMVideoFormatDescriptionCreate(kCFAllocatorDefault,
+            hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264, size.width, size.height,
+            CMFormatDescriptionGetExtensions(format), &standard) != noErr)
+        return nullptr;
+    return standard;
+}
+
+void copy_attachment(const void *key, const void *value, void *target) {
+    CFDictionarySetValue(static_cast<CFMutableDictionaryRef>(target), key, value);
+}
+
+// The same compressed sample (data, timing, sizes and attachments) under
+// another format description. Returns +1, or null on failure.
+CMSampleBufferRef sample_with_format(CMSampleBufferRef sample, CMFormatDescriptionRef format) {
+    CMBlockBufferRef data = CMSampleBufferGetDataBuffer(sample);
+    if (!data) return nullptr;
+    CMItemCount timing_count = 0;
+    OSStatus status = CMSampleBufferGetSampleTimingInfoArray(sample, 0, nullptr, &timing_count);
+    if (status == kCMSampleBufferError_BufferHasNoSampleTimingInfo) timing_count = 0;
+    else if (status != noErr) return nullptr;
+    std::vector<CMSampleTimingInfo> timing(static_cast<size_t>(timing_count));
+    if (timing_count && CMSampleBufferGetSampleTimingInfoArray(sample, timing_count,
+            timing.data(), &timing_count) != noErr)
+        return nullptr;
+    CMItemCount size_count = 0;
+    status = CMSampleBufferGetSampleSizeArray(sample, 0, nullptr, &size_count);
+    if (status == kCMSampleBufferError_BufferHasNoSampleSizes) size_count = 0;
+    else if (status != noErr) return nullptr;
+    std::vector<size_t> sizes(static_cast<size_t>(size_count));
+    if (size_count && CMSampleBufferGetSampleSizeArray(sample, size_count,
+            sizes.data(), &size_count) != noErr)
+        return nullptr;
+    CMSampleBufferRef result = nullptr;
+    if (CMSampleBufferCreateReady(kCFAllocatorDefault, data, format,
+            CMSampleBufferGetNumSamples(sample), timing_count,
+            timing.empty() ? nullptr : timing.data(), size_count,
+            sizes.empty() ? nullptr : sizes.data(), &result) != noErr || !result)
+        return nullptr;
+    // The reader maps each sample through the file's edit list into its
+    // output timestamp, which is what the decoder reports for the frame.
+    CMSampleBufferSetOutputPresentationTimeStamp(result,
+        CMSampleBufferGetOutputPresentationTimeStamp(sample));
+    CMPropagateAttachments(sample, result);
+    CFArrayRef from = CMSampleBufferGetSampleAttachmentsArray(sample, false);
+    CFArrayRef to = from ? CMSampleBufferGetSampleAttachmentsArray(result, true) : nullptr;
+    if (from && to) {
+        const CFIndex count = std::min(CFArrayGetCount(from), CFArrayGetCount(to));
+        for (CFIndex i = 0; i < count; ++i) {
+            CFDictionaryApplyFunction(static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(from, i)),
+                copy_attachment,
+                const_cast<void *>(CFArrayGetValueAtIndex(to, i)));
+        }
+    }
+    return result;
 }
 
 std::string unsupported_format(CMFormatDescriptionRef format) {
@@ -164,6 +282,10 @@ struct GhostMacVideoDecoder {
     bool reader_ended = false;
     bool range_ended = false;
     bool require_p010 = false;
+    // An 'hev1'/'avc3' track decoded under its standard tag: the track's own
+    // format and the retagged one the session was made with (both +1).
+    CMFormatDescriptionRef tagged_format = nullptr;
+    CMFormatDescriptionRef standard_format = nullptr;
     // Longest edge of the decoded frames; 0 keeps the clip's own size.
     uint32_t max_edge = 0;
 
@@ -199,6 +321,8 @@ struct GhostMacVideoDecoder {
             VTDecompressionSessionInvalidate(session);
             CFRelease(session);
         }
+        if (tagged_format) CFRelease(tagged_format);
+        if (standard_format) CFRelease(standard_format);
         if (playback_activity) {
             [[NSProcessInfo processInfo] endActivity:playback_activity];
             playback_activity = nil;
@@ -330,6 +454,11 @@ struct GhostMacVideoDecoder {
         if (!format) { failure = "The video track has no codec format description"; return false; }
         failure = unsupported_format(format);
         if (!failure.empty()) { CFRelease(format); return false; }
+        if (CMFormatDescriptionRef standard = standard_tag_format(format)) {
+            tagged_format = format;
+            standard_format = standard;
+            format = static_cast<CMFormatDescriptionRef>(CFRetain(standard));
+        }
         require_p010 = source_bit_depth(format) > 8;
         const CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format);
         metadata.width = static_cast<uint32_t>(std::max(0, dimensions.width));
@@ -517,6 +646,17 @@ struct GhostMacVideoDecoder {
                 break;
             }
             CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sample);
+            if (format && tagged_format && CFEqual(format, tagged_format)) {
+                CMSampleBufferRef standard = sample_with_format(sample, standard_format);
+                CFRelease(sample);
+                if (!standard) {
+                    std::lock_guard<std::mutex> lock(callback_mutex);
+                    failure = "Cannot prepare a compressed video sample for the hardware decoder";
+                    break;
+                }
+                sample = standard;
+                format = standard_format;
+            }
             if (!format || !VTDecompressionSessionCanAcceptFormatDescription(session, format)) {
                 CFRelease(sample);
                 std::lock_guard<std::mutex> lock(callback_mutex);

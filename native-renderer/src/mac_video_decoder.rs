@@ -504,6 +504,15 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires Mac hardware decoder access and GHOST_TEST_HEV1_PATH / GHOST_TEST_AVC3_PATH fixtures"]
+    fn hardware_decodes_in_band_parameter_set_tags() {
+        // The HEVC10 and H.264 fixtures remuxed as 'hev1' / 'avc3' (ffmpeg's
+        // default HEVC tag): `ffmpeg -i in.mp4 -c copy -tag:v hev1 out.mp4`.
+        check_hardware_fixture("GHOST_TEST_HEV1_PATH", u32::from_be_bytes(*b"x420"));
+        check_hardware_fixture("GHOST_TEST_AVC3_PATH", u32::from_be_bytes(*b"420v"));
+    }
+
+    #[test]
     #[ignore = "requires Mac hardware decoder access and GHOST_TEST_AUDIO_TAIL_PATH fixture"]
     fn hardware_video_duration_excludes_a_longer_audio_tail() {
         // Same 3-second H.264 fixture, muxed with an audio track longer than 3s.
