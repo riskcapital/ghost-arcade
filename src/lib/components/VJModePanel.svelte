@@ -9,6 +9,7 @@
   import { abletonLink } from '../sync/abletonLink';
   $: fitTempo = $abletonLink.enabled && $abletonLink.peers > 0 ? $abletonLink.tempo : ($audioManualBpm || $audioBpm || 120) * (1 + $launchClock.nudge * TEMPO_NUDGE_AMOUNT);
   import VJAudioOutput from './VJAudioOutput.svelte';
+  import ShowSoundtrackBar from './ShowSoundtrackBar.svelte';
   import VideoPlaybackDirection from './VideoPlaybackDirection.svelte';
   import VideoPlaybackModes from './VideoPlaybackModes.svelte';
   import { nativeVideoLaunchTime, nativeVideoTransportSnapshot } from '../media/nativeTransport';
@@ -6027,6 +6028,9 @@
                through audioStore, so toggling here flips every mode. -->
           <AudioInputPicker showWaveform={false} openUp={false} />
           {#if isDesktopApp}<VJAudioOutput />{/if}
+          <!-- The Show timeline's soundtrack, when the show has one: its
+               transport keeps running in VJ mode. -->
+          <ShowSoundtrackBar />
 
           <!-- Launch quantization. OFF = instant trigger (default); 1/4..4bar
                align launches to detected beats (or the virtual clock at the
