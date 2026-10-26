@@ -96,7 +96,7 @@
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot, resetProjectOwnedStores } from './lib/stores/layers';
   import { recordDiscreteAction, scheduleHistorySnapshot, cancelPendingHistorySnapshot, setProjectReplacedCallback, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
@@ -174,7 +174,7 @@
   import { pickSongForShow } from './lib/show/showFromAudio';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
-  import { hydrateShowControl, serializeShowControl } from './lib/show/showControlPersistence';
+  import { serializeShowControl } from './lib/show/showControlPersistence';
   import { historyVersion as stage3dHistoryVersion } from './lib/stage3d/store';
   import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './lib/stores/projectDirty';
   import { cueList } from './lib/show/cueList';
@@ -5154,22 +5154,16 @@
   function startFreshProject(name: string) {
     settings.resetOutputStageForNewProject(screenSetups.defaultSnapshot());
     project.newProject(name);
-    vjClipLauncher.reset();
-    synthVisionStore.reset();
-    mediaLibrary.reset();
-    modulationStore.clearAll();
-    // Reset macros so the new project starts with empty 8 knobs instead
-    // of inheriting the last project's destinations (would write to
-    // layers that don't exist yet, looking like ghost-mappings).
-    macros.reset();
-    // Same for snapshots — fresh project, empty 16-slot bank.
-    snapshots.reset();
-    // DMX input bindings belong to the project; the listener stays as set.
-    dmxStore.reset();
-    // A new project must not inherit the last one's cue list, timecode
-    // chase, schedule or projectors.
-    hydrateShowControl(null);
-    showTimeline.hydrate(null);
+    // Everything else the project owns goes back to a new project's state:
+    // clips, media, modulation, keyframes, macros (whose destinations would
+    // otherwise write to layers that no longer exist), snapshots, control
+    // bindings, the sequencer, GeoDeck, audio calibration, Stage Designer
+    // surfaces, the Stage 3D and Map Sim scenes, the show timeline and the
+    // cue list (a schedule left armed would fire cues into the empty
+    // project). The same list opening an older file uses, so the two cannot
+    // drift apart. Machine wiring (the OSC and DMX listeners, the audio
+    // input) stays as it is.
+    resetProjectOwnedStores();
     currentFileHandle = null; // Clear file handle for new project
     // Also clear the Electron path so Save doesn't accidentally overwrite
     // the previously-loaded .gha with a fresh empty project.

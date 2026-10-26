@@ -476,6 +476,16 @@ function createOscStore() {
       persistRuntime();
     },
 
+    /**
+     * A new project (or one saved without OSC): no bindings. The listener
+     * and the feedback target are how this machine is wired to its control
+     * surface and stay as they are, like the DMX listener.
+     */
+    resetProjectBindings() {
+      midiRouter.releaseInputs('osc:');
+      update(s => ({ ...s, bindings: [], learnTarget: null, lastMessage: null }));
+    },
+
     destroy() {
 
       this.stopOutput();
