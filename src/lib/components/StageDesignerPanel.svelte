@@ -35,6 +35,8 @@
   import { layers as projectLayers } from '../stores/layers';
   import { STAGE_TEMPLATES, type StageTemplate } from '../stores/stageTemplates';
   import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
+  import { arrowDirection, classifyKeyTarget } from '../utils/mappingNudge';
+  import { nudgeSlicePolygon, type SliceVertexRef } from '../utils/stageNudge';
 
   // ── Canvas pan/zoom state ─────────────────────────────────
   // Mirrors the App.svelte viewport pattern: pan + zoom on a wrapper
@@ -82,6 +84,48 @@
 	  function beginVertexDrag(next: VertexDrag) {
 	    surfaceStore.beginHistoryGesture();
 	    vertexDrag = next;
+	    // The anchor or handle pressed last is what the arrow keys move.
+	    selectedVertex = next.kind === 'anchor' || next.kind === 'cpIn' || next.kind === 'cpOut'
+	      ? { sliceId: next.sliceId, idx: next.idx, kind: next.kind }
+	      : null;
+	  }
+
+	  // ── Arrow keys ────────────────────────────────────────────
+	  // Move the selected anchor or handle (or, with none, the selected
+	  // slices) one surface pixel; Shift ten, Alt a tenth. A held key is
+	  // one undo step.
+	  let selectedVertex: SliceVertexRef | null = null;
+	  $: if (selectedVertex && $selectedSlice?.id !== selectedVertex.sliceId) selectedVertex = null;
+	  let nudgeGestureOpen = false;
+	  function endNudgeGesture() {
+	    if (!nudgeGestureOpen) return;
+	    nudgeGestureOpen = false;
+	    surfaceStore.endHistoryGesture();
+	  }
+	  function nudgeWithArrow(e: KeyboardEvent): boolean {
+	    const dir = arrowDirection(e.key);
+	    if (!dir || e.metaKey || e.ctrlKey || vertexDrag || tool !== 'select') return false;
+	    if (classifyKeyTarget(e.target as HTMLElement | null) !== 'other'
+	      || classifyKeyTarget(document.activeElement as HTMLElement | null) !== 'other') return false;
+	    const step = e.shiftKey ? 10 : e.altKey ? 0.1 : 1;
+	    const offset = { x: dir.x * step, y: dir.y * step };
+	    const ids = selectedVertex
+	      ? [selectedVertex.sliceId]
+	      : ($selectedSliceIds.length > 0 ? $selectedSliceIds : $selectedSlice ? [$selectedSlice.id] : []);
+	    const targets = $activeSurfaceSlices.filter(sl => ids.includes(sl.id) && !sl.locked);
+	    if (targets.length === 0) return false;
+	    if (!nudgeGestureOpen) {
+	      surfaceStore.beginHistoryGesture();
+	      nudgeGestureOpen = true;
+	    }
+	    for (const sl of targets) {
+	      const polygon = nudgeSlicePolygon(sl.polygon, selectedVertex, offset);
+	      if (polygon) surfaceStore.updateSlice(sl.id, { polygon });
+	    }
+	    return true;
+	  }
+	  function onWindowKeyUp(e: KeyboardEvent) {
+	    if (arrowDirection(e.key)) endNudgeGesture();
 	  }
 	  const DRAG_SELECT_THRESHOLD_PX = 5;
 	  let sliceDragSelect: {
@@ -278,6 +322,7 @@
           return;
         }
       }
+	      selectedVertex = null;
 	      // Click inside an already-selected slice body → start a move drag.
 	      if (!sl.locked && $selectedSliceIds.includes(sl.id) && pointInPolygon(pt, sl.polygon)) {
 	        const selectedSet = new Set($selectedSliceIds.length > 0 ? $selectedSliceIds : [sl.id]);
@@ -294,6 +339,7 @@
 	      }
 	    }
 	    if (tool === 'select') {
+	      selectedVertex = null;
 	      const hitSlice = hitTestSlices(pt);
 	      sliceDragSelect = {
 	        startSurface: pt,
@@ -548,6 +594,10 @@
       e.preventDefault();
       return;
     }
+    if (nudgeWithArrow(e)) {
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Escape') {
       if (vertexDrag) {
         surfaceStore.cancelHistoryGesture();
@@ -556,6 +606,7 @@
         return;
       }
       if (penDraft) { penDraft = null; penCursor = null; e.preventDefault(); return; }
+      if (selectedVertex) { selectedVertex = null; e.preventDefault(); return; }
       workspace.closeAll();
       return;
     }
@@ -763,10 +814,15 @@
     window.addEventListener('mousemove', onWindowMouseMove);
     window.addEventListener('mouseup', onWindowMouseUp);
     window.addEventListener('keydown', onWindowKeyDown);
+    window.addEventListener('keyup', onWindowKeyUp);
+    window.addEventListener('blur', endNudgeGesture);
     return () => {
       window.removeEventListener('mousemove', onWindowMouseMove);
       window.removeEventListener('mouseup', onWindowMouseUp);
       window.removeEventListener('keydown', onWindowKeyDown);
+      window.removeEventListener('keyup', onWindowKeyUp);
+      window.removeEventListener('blur', endNudgeGesture);
+      endNudgeGesture();
     };
   });
 
@@ -1030,7 +1086,7 @@
                     <circle
                       cx={v.cpIn.x} cy={v.cpIn.y}
                       r={3 / zoom}
-                      fill={slice.color}
+                      fill={selectedVertex?.sliceId === slice.id && selectedVertex.idx === vi && selectedVertex.kind === 'cpIn' ? '#00ff88' : slice.color}
                       opacity="0.9"
                     />
                   {/if}
@@ -1045,17 +1101,18 @@
                     <circle
                       cx={v.cpOut.x} cy={v.cpOut.y}
                       r={3 / zoom}
-                      fill={slice.color}
+                      fill={selectedVertex?.sliceId === slice.id && selectedVertex.idx === vi && selectedVertex.kind === 'cpOut' ? '#00ff88' : slice.color}
                       opacity="0.9"
                     />
                   {/if}
-                  <!-- Anchor — square so it's distinct from bezier handles -->
+                  <!-- Anchor — square so it's distinct from bezier handles.
+                       The one the arrow keys move is filled. -->
                   <rect
                     x={v.x - 4 / zoom}
                     y={v.y - 4 / zoom}
                     width={8 / zoom}
                     height={8 / zoom}
-                    fill="#0a0a0c"
+                    fill={selectedVertex?.sliceId === slice.id && selectedVertex.idx === vi && selectedVertex.kind === 'anchor' ? '#00ff88' : '#0a0a0c'}
                     stroke={slice.color}
                     stroke-width={1.5 / zoom}
                   />
