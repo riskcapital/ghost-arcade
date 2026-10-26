@@ -65,6 +65,54 @@ export {
 const selectedLayerIdsState = writable<string[]>([]);
 
 /**
+ * MediaSource fields that are runtime state, not settings: live GPU and DOM
+ * objects, transport and load errors. Fields that start with `_timelapse`
+ * (frame stepping) or `__` (render-time markers) are runtime too.
+ *
+ * The source used to be saved through a hand-kept list of fields to keep,
+ * and fields added since were silently dropped: Auto on shader params
+ * (`shaderValueAuto`), the selfie mirror, beat-synced playback and the NDI
+ * source. A saved Auto param then reopened frozen wherever its sweep
+ * happened to be at save time. Now everything is saved except this list.
+ */
+const RUNTIME_ONLY_SOURCE_FIELDS = new Set([
+  'texture',
+  'imageElement',
+  'videoElement',
+  'iframeElement',
+  'threejsCanvas',
+  'synthVisionCanvas',
+  'isPlaying',
+  'broken',
+  'brokenReason',
+  '_lastFrameTime',
+]);
+
+export function isRuntimeOnlySourceField(field: string): boolean {
+  return RUNTIME_ONLY_SOURCE_FIELDS.has(field) || field.startsWith('_timelapse') || field.startsWith('__');
+}
+
+/** A GPU texture, DOM node, stream or function: never JSON, whatever the
+ *  field is called. */
+function isLiveObject(value: unknown): boolean {
+  if (typeof value === 'function') return true;
+  if (!value || typeof value !== 'object') return false;
+  const v = value as { isTexture?: boolean; nodeType?: unknown };
+  return v.isTexture === true || typeof v.nodeType === 'number'
+    || (typeof MediaStream !== 'undefined' && value instanceof MediaStream);
+}
+
+/** A layer's media source as it is saved: every field but runtime state. */
+function exportMediaSource(source: MediaSource): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(source)) {
+    if (value === undefined || isRuntimeOnlySourceField(field) || isLiveObject(value)) continue;
+    out[field] = value;
+  }
+  return out;
+}
+
+/**
  * The debounce key of an edit (see scheduleHistorySnapshot): what kind of
  * edit, on which target, to which fields. Edits with the same key coalesce
  * into one undo step; a different key starts a new one.
@@ -4700,33 +4748,11 @@ void main() {
         groupCollapsed: layer.groupCollapsed,
       };
 
-      // Handle media source - strip texture and video element. Carry
-      // `_assetRef` so reload can recover the original disk file even if
-      // the runtime `src` is a dead blob: URL by then.
+      // Media source: everything except runtime state (see
+      // exportMediaSource). `_assetRef` rides along, so reload can recover
+      // the original disk file even if `src` is a dead blob: URL by then.
       if (layer.source) {
-        exportLayer.source = {
-          id: layer.source.id,
-          type: layer.source.type,
-          src: layer.source.src,
-          name: layer.source.name,
-          shaderCode: layer.source.shaderCode,
-          shaderInputs: layer.source.shaderInputs,
-          shaderValues: layer.source.shaderValues,
-          shaderImageInputs: layer.source.shaderImageInputs,
-          spoutSource: layer.source.spoutSource,
-          effectSource: layer.source.effectSource,
-          jsAnimation: layer.source.jsAnimation,
-          aiGenerated: layer.source.aiGenerated,
-          aiPrompt: layer.source.aiPrompt,
-          playbackMode: layer.source.playbackMode,
-          playbackRate: layer.source.playbackRate,
-          trimStart: (layer.source as any).trimStart,
-          trimEnd: (layer.source as any).trimEnd,
-          timelapseInterval: layer.source.timelapseInterval,
-          timelapseRunning: layer.source.timelapseRunning,
-          _assetRef: (layer.source as any)._assetRef,
-          // Exclude: texture, videoElement, isPlaying, iframeElement, threejsCanvas, synthVisionCanvas
-        };
+        exportLayer.source = exportMediaSource(layer.source);
       }
 
       // Handle lines content
