@@ -8600,6 +8600,22 @@
       <span class="spacer"></span>
 
       {#if $workspace === 'main'}
+        <!-- Snap: dragged points snap to other layers and the canvas edges.
+             Cmd/Ctrl while dragging overrides it for one drag. Grid lines
+             join in with the grid's own switch below. -->
+        <button
+          class="status-pill map-tool-pill snap-pill"
+          class:on={$settings.ui.gridSettings?.snapToLayers !== false}
+          aria-pressed={$settings.ui.gridSettings?.snapToLayers !== false}
+          onclick={() => settings.toggleLayerSnap()}
+          title="Snap points to other layers and the canvas edges. Hold {isMac ? 'Cmd' : 'Ctrl'} while dragging to move freely."
+        >
+          <svg class="status-pill-icon snap-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+            <path class="ga-neon-stroke" d="M5 12h6l2-5 2 5h4"/>
+            <circle class="ga-neon-fill" cx="12" cy="12" r="4"/>
+          </svg>
+          Snap
+        </button>
         <button
           class="status-pill map-tool-pill"
           class:on={$settings.ui.gridSettings?.enabled}
@@ -8629,16 +8645,13 @@
             <option value="64x64">64×64</option>
           </select>
           <button
-            class="status-pill map-tool-pill snap-pill"
+            class="status-pill map-tool-pill grid-snap-pill"
             class:on={$settings.ui.gridSettings?.snapToGrid}
+            aria-pressed={!!$settings.ui.gridSettings?.snapToGrid}
             onclick={() => settings.toggleSnap()}
             title="Snap mapping handles to grid"
           >
-            <svg class="status-pill-icon snap-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
-              <path class="ga-neon-stroke" d="M5 12h6l2-5 2 5h4"/>
-              <circle class="ga-neon-fill" cx="12" cy="12" r="4"/>
-            </svg>
-            Snap
+            Snap to grid
           </button>
         {/if}
       {/if}

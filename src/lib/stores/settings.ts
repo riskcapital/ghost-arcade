@@ -1723,6 +1723,20 @@ function createSettingsStore() {
       });
     },
 
+    /** The status bar's Snap switch: points snap to other layers and the
+     *  canvas edges. */
+    toggleLayerSnap() {
+      update(s => {
+        const grid = s.ui.gridSettings || { enabled: false, columns: 12, rows: 12, snapToGrid: false, snapToLayers: true };
+        const newSettings = {
+          ...s,
+          ui: { ...s.ui, gridSettings: { ...grid, snapToLayers: grid.snapToLayers === false } }
+        };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
     setGridDimensions(columns: number, rows: number) {
       update(s => {
         const grid = s.ui.gridSettings || { enabled: false, columns: 12, rows: 12, snapToGrid: false, snapToLayers: true };
