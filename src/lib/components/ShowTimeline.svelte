@@ -30,8 +30,11 @@
    * just collapses the tray to see the canvas, does not expect the show to
    * stop. `showTimeline.pause()` is the way to stop it.
    */
+  import { onMount } from 'svelte';
   import {
     showTimeline,
+    setShowTransportSink,
+    type ShowEndAction,
     SHOW_MIN_RULER_SECONDS,
     SHOW_MIN_ZOOM,
     SHOW_MAX_ZOOM,
@@ -48,6 +51,32 @@
   import CueListPanel from './show/CueListPanel.svelte';
   import { cueList, cueLabel } from '../show/cueList';
   import { timecodeChase } from '../show/timecode/timecodeChase';
+  import { settings } from '../stores/settings';
+
+  // ── End of show + output device ─────────────────────────────────────────
+  // The transport lives in the store and keeps running with this panel
+  // closed (and in VJ mode), so the end-of-show blackout is wired here once
+  // for the app's life rather than to the open tray.
+  let blackoutFromShow = false;
+  onMount(() => {
+    setShowTransportSink((event) => {
+      if (event.type === 'end' && event.action === 'blackout') {
+        blackoutFromShow = true;
+        settings.update((s) => ({ ...s, output: { ...s.output, blackout: true } }));
+      } else if (event.type === 'start' && blackoutFromShow) {
+        // The show blacked out at its end; starting it again lifts that.
+        blackoutFromShow = false;
+        settings.update((s) => (s.output.blackout ? { ...s, output: { ...s.output, blackout: false } } : s));
+      }
+    });
+    return () => setShowTransportSink(null);
+  });
+
+  const END_ACTION_LABELS: Record<ShowEndAction, string> = {
+    hold: 'At end: hold last look',
+    rewind: 'At end: back to start',
+    blackout: 'At end: blackout',
+  };
 
   $: state = $showTimeline;
   $: isOpen = state.isOpen;
@@ -776,6 +805,19 @@
           <path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
         </svg>
       </button>
+      {#if !state.loop}
+        <select
+          class="t-select t-end"
+          value={state.endAction}
+          onchange={(e) => showTimeline.setEndAction((e.currentTarget as HTMLSelectElement).value as ShowEndAction)}
+          title="What happens when the show reaches its end"
+          aria-label="At the end of the show"
+        >
+          {#each Object.entries(END_ACTION_LABELS) as [value, label]}
+            <option {value}>{label}</option>
+          {/each}
+        </select>
+      {/if}
 
       <span class="t-time">{formatPrecise(state.currentTime)}</span>
       <span class="t-sep">/</span>
@@ -1675,6 +1717,7 @@
     color: #55555f;
     pointer-events: none;
   }
+  .t-end { max-width: 160px; }
 
   .show-block {
     position: absolute;
