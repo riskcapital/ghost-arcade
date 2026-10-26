@@ -9,6 +9,8 @@
   import { project, selectedLayerId, selectedLayer, layers } from '../stores/layers';
   import { activeMediaTargetLayerIds } from '../media/mediaTargeting';
   import PluginIcon from './PluginIcon.svelte';
+  import VideoDecodeBadge from './VideoDecodeBadge.svelte';
+  import { clipFilePath } from '../vj/clipFiles';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
@@ -5090,6 +5092,13 @@
                 </span>
               {/if}
 
+              {#if !('shaderCode' in item) && item.type === 'video'}
+                <!-- How the render core plays this file (nothing = hardware). -->
+                <span class="video-decode-slot">
+                  <VideoDecodeBadge path={clipFilePath(item)} compact />
+                </span>
+              {/if}
+
               <!-- Loop progress overlay for videos being processed -->
               {#if loopingVideoId === item.id && loopProgress}
                 <div class="loop-progress-overlay">
@@ -6409,6 +6418,14 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .video-decode-slot {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    z-index: 2;
+    display: flex;
   }
 
   .shader-load-badge {

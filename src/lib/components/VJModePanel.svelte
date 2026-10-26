@@ -80,6 +80,9 @@
   import { showToast } from '../stores/errorToast';
   import { missingClipFiles, checkClipFiles, searchFolderForFiles, chooseReplacementFile, findFilesBeside, noteMediaRelinked } from '../stores/missingMedia';
   import { clipFilePath, clipFilePaths, fileNameOf, matchFoundFiles } from '../vj/clipFiles';
+  import VideoDecodeBadge from './VideoDecodeBadge.svelte';
+  import { checkVideoDecodes, decodeBadge, videoDecodeHealth } from '../video/videoDecodeHealth';
+  import { convertForSmoothPlayback } from '../video/playbackConversionFlow';
   import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
   import SynthVision from './SynthVision.svelte';
   import VJAudioBar from './VJAudioBar.svelte';
@@ -3875,6 +3878,18 @@
     return clipFilePaths([state.clipGrid, state.bankBClipGrid, ...others]);
   };
   const refreshMissingFiles = () => checkClipFiles(deckClipFiles());
+  // Ask the core how each clip on the decks will play (once per file), so a
+  // clip that decodes in software or cannot play is marked before it is hit.
+  let decodeCheckKey = '';
+  $: {
+    const videoPaths = clipFilePaths([$vjClipLauncher.clipGrid, $vjClipLauncher.bankBClipGrid]
+      .map((grid) => grid.map((row) => row.filter((clip) => clip?.type === 'video'))));
+    const key = videoPaths.join('\n');
+    if (key !== decodeCheckKey) {
+      decodeCheckKey = key;
+      checkVideoDecodes(videoPaths);
+    }
+  }
   onMount(() => {
     void refreshMissingFiles();
     missingFileTimer = setInterval(() => void refreshMissingFiles(), MISSING_FILE_CHECK_MS);
@@ -6290,6 +6305,11 @@
                           onpointerdown={(e) => e.stopPropagation()}
                           onclick={(e) => { e.stopPropagation(); cellContextMenu = { x: e.clientX, y: e.clientY, layer: layerIdx, column: colIdx, bank }; }}
                         >?</button>
+                      {:else if clip.type === 'video'}
+                        <span class="decode-slot">
+                          <VideoDecodeBadge path={clipFilePath(clip)} compact
+                            onopen={(e) => { cellContextMenu = { x: e.clientX, y: e.clientY, layer: layerIdx, column: colIdx, bank }; }} />
+                        </span>
                       {/if}
                       {#each ['left', 'right'] as side}
                         <span
@@ -6490,6 +6510,16 @@
             <button class="ctx-item ctx-primary" disabled={locatingFiles} onclick={searchFolderForMissingClips}>Search a folder…</button>
             <button class="ctx-item" disabled={locatingFiles} onclick={() => chooseFileForClip(ctxClip)}>Choose file…</button>
             <button class="ctx-item" onclick={() => { cellContextMenu = null; void refreshMissingFiles(); }}>Check again</button>
+          {/if}
+          {#if ctxClip?.type === 'video'}
+            {@const ctxPath = clipFilePath(ctxClip)}
+            {@const ctxDecode = ctxPath ? decodeBadge($videoDecodeHealth[ctxPath]) : null}
+            {#if ctxPath && ctxDecode}
+              <div class="ctx-item ctx-disabled ctx-note" title={$videoDecodeHealth[ctxPath]?.detail ?? ''}>{ctxDecode.title}</div>
+              {#if ctxDecode.canConvert}
+                <button class="ctx-item ctx-primary" onclick={() => { cellContextMenu = null; void convertForSmoothPlayback(ctxPath); }}>Convert for smooth playback</button>
+              {/if}
+            {/if}
           {/if}
           {#if ctxClip}
             <button class="ctx-item" onclick={openClipPreview}>Edit / Preview</button>
@@ -10666,6 +10696,14 @@
     opacity: 0.3;
     filter: grayscale(1);
   }
+  .decode-slot {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    z-index: 2;
+    display: flex;
+  }
+
   .missing-badge {
     position: absolute;
     top: 50%;
@@ -10721,7 +10759,7 @@
   }
   .missing-files-bar button:hover:not(:disabled) { background: rgba(255, 180, 84, 0.2); }
   .missing-files-bar button:disabled { opacity: 0.5; cursor: default; }
-  .ctx-note { font-size: 11px; color: #ffb454; }
+  .ctx-note { font-size: 11px; color: #ffb454; max-width: 280px; white-space: normal; line-height: 1.35; }
 
   .live-preview-header {
     width: 56px;

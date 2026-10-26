@@ -56,6 +56,8 @@
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
   import { createLayerMediaSource, LayerMediaRejected } from '../media/layerMediaImport';
+  import VideoDecodeBadge from './VideoDecodeBadge.svelte';
+  import { clipFilePath } from '../vj/clipFiles';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { nativeRendererRuntime, nativeFailedRouteLayers } from '../stores/nativeRenderer';
   import { createNativeVideoScrubber } from '../renderer/nativeVideoScrubber';
@@ -2132,6 +2134,9 @@
               {#if layer.source}
                 <span class="source-name">{layer.source.name}</span>
                 <span class="source-type">({layer.source.type})</span>
+                {#if layer.source.type === 'video'}
+                  <VideoDecodeBadge path={clipFilePath(layer.source)} />
+                {/if}
                 <label class="file-label replace-label">
                   <span class="link">Replace</span>
                   <input

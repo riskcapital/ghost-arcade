@@ -48,6 +48,7 @@ import {
 } from '$lib/stores/nativeRenderer';
 import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
 import { nativeCoreLossReason } from './nativeCoreSupervisor';
+import { noteVideoSessionBackends, videoDecodeHealth } from '$lib/video/videoDecodeHealth';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { mediaPipeSource } from '$lib/mediapipe/mediaPipeSource';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
@@ -6043,6 +6044,11 @@ export class NativeRendererSync {
   private reconcileNativeVideoDecodes(status: RendererStatus) {
     // Mapping media cannot get HAP duration from Chromium. Feed native
     // metadata back into the inspector/transport without creating undo steps.
+    // The badges on media and clips follow what live playback really uses.
+    for (const path of noteVideoSessionBackends(status.native_video_sessions)) {
+      const health = get(videoDecodeHealth)[path];
+      showToast(`${path.split(/[\\/]/).pop()} can't play: ${health?.reason ?? 'its video could not be decoded'}.`, 'error');
+    }
     const sessions = new Map((status.native_video_sessions ?? []).map(session => [session.source_id, session]));
     const patches = new Map<string, Partial<NonNullable<Layer['source']>>>();
     for (const layer of get(project).layers) {
