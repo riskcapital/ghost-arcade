@@ -1,4 +1,5 @@
 import type { ProjectorCalibration, OverlapBand } from '../output/projectorCalibration';
+import type { DisplayFingerprint } from '../output/displayAssignment';
 import { createCoalescedWriter } from '../utils/coalescedWriter';
 // Settings Store
 // Manages app-wide settings including recording preferences
@@ -317,6 +318,10 @@ export interface OutputSlice {
   /** Electron `screen.getAllDisplays()` id when targetType === 'display'.
    *  Null/undefined means the slice falls back to sender output. */
   displayId?: number | null;
+  /** The display `displayId` named when it was chosen. Windows can hand a
+   *  re-plugged projector a new id, or its old id to another display; the
+   *  fingerprint finds it again (see resolveStoredDisplay). */
+  displayFingerprint?: DisplayFingerprint | null;
   /** Output transport. 'spout' / 'syphon' = platform-native local
    *  GPU texture share (Windows / macOS); 'ndi' = network device
    *  interface, cross-machine streaming. spoutName is reused as the
@@ -639,6 +644,7 @@ export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): Ou
     cropH: s.cropH ?? 1,
     targetType: s.targetType ?? 'sender',
     displayId: s.displayId ?? null,
+    ...(s.displayFingerprint ? { displayFingerprint: s.displayFingerprint } : {}),
     outputType: s.outputType,
     spoutName: s.spoutName ?? `ghostArcade-${s.name ?? 'Slice'}`,
     edgeBlendLeft: s.edgeBlendLeft ?? 0,

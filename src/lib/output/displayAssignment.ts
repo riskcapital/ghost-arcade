@@ -203,3 +203,58 @@ export function collidingSurfaces(
   }
   return clashing;
 }
+
+/**
+ * What a display looked like when a Screen was routed to it. Windows can
+ * renumber displays when a projector is re-plugged or the GPU driver resets,
+ * so a stored id can come back pointing at a different panel -- the laptop's
+ * own screen, say, which the Screen then covers. The id alone cannot tell.
+ */
+export type DisplayFingerprint = {
+  label: string;
+  /** Physical pixels: DIP size times scale. */
+  width: number;
+  height: number;
+  scaleFactor: number;
+};
+
+export function displayFingerprint(display: DisplayInfo): DisplayFingerprint {
+  const scaleFactor = display.scaleFactor ?? 1;
+  return {
+    label: display.label,
+    width: Math.round(display.width * scaleFactor),
+    height: Math.round(display.height * scaleFactor),
+    scaleFactor,
+  };
+}
+
+function matchesFingerprint(display: DisplayInfo, fingerprint: DisplayFingerprint): boolean {
+  const own = displayFingerprint(display);
+  return own.label === fingerprint.label
+    && own.width === fingerprint.width
+    && own.height === fingerprint.height
+    && Math.abs(own.scaleFactor - fingerprint.scaleFactor) < 0.01;
+}
+
+/**
+ * The display a stored id and fingerprint mean now. The id wins while it
+ * still names the same display. If it names another one (ids swapped) or none
+ * (renumbered), the one display that matches the fingerprint is it. A display
+ * whose resolution or scale was changed on purpose no longer matches, and
+ * then the id is still the best guess. Two identical projectors match each
+ * other, so for those the id decides too.
+ */
+export function resolveStoredDisplay(
+  displays: DisplayInfo[],
+  id: number | null | undefined,
+  fingerprint: DisplayFingerprint | null | undefined,
+): DisplayInfo | null {
+  const byId = id == null ? null : displays.find((display) => display.id === id) ?? null;
+  if (!fingerprint) return byId;
+  if (byId && matchesFingerprint(byId, fingerprint)) return byId;
+  const matching = displays.filter((display) => matchesFingerprint(display, fingerprint));
+  if (matching.length === 1) return matching[0]!;
+  if (byId) return byId;
+  const sameLabel = displays.filter((display) => display.label === fingerprint.label);
+  return sameLabel.length === 1 ? sameLabel[0]! : null;
+}

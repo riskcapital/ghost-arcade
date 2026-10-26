@@ -9,9 +9,11 @@ import { describe, expect, it } from 'vitest';
 import {
   collidingSurfaces,
   displayForBounds,
+  displayFingerprint,
   isWindowed,
   liveOutputDisplay,
   resolveDisplayForSurface,
+  resolveStoredDisplay,
   surfacesDisplacedBy,
   type DisplayAssignments,
   type DisplayInfo,
@@ -165,5 +167,45 @@ describe('liveOutputDisplay', () => {
     const assignments = { ...NONE, liveOutput: 99 };
     expect(liveOutputDisplay(displays, assignments, true)?.isPrimary).toBe(false);
     expect(liveOutputDisplay([], assignments, true)).toBeNull();
+  });
+});
+
+describe('resolveStoredDisplay', () => {
+  const projector = { ...PROJECTOR, scaleFactor: 1 };
+  const laptop = { ...LAPTOP, scaleFactor: 2 };
+  const monitor = { ...MONITOR, scaleFactor: 1 };
+  const fingerprint = displayFingerprint(projector);
+
+  it('keeps the stored id while it names the same display', () => {
+    expect(resolveStoredDisplay([laptop, monitor, projector], projector.id, fingerprint)?.id).toBe(projector.id);
+  });
+
+  it('follows the projector when Windows swaps display ids', () => {
+    // After a re-plug the projector's old id belongs to the laptop panel.
+    const swapped = [{ ...laptop, id: projector.id }, monitor, { ...projector, id: 7 }];
+    expect(resolveStoredDisplay(swapped, projector.id, fingerprint)?.id).toBe(7);
+  });
+
+  it('finds a renumbered projector whose old id is gone', () => {
+    expect(resolveStoredDisplay([laptop, monitor, { ...projector, id: 9 }], projector.id, fingerprint)?.id).toBe(9);
+  });
+
+  it('keeps the id when the projector\'s resolution was changed on purpose', () => {
+    const changed = { ...projector, width: 1280, height: 720 };
+    expect(resolveStoredDisplay([laptop, monitor, changed], projector.id, fingerprint)?.id).toBe(projector.id);
+  });
+
+  it('lets the id decide between two identical projectors', () => {
+    const twin = { ...projector, id: 11, x: 6000 };
+    expect(resolveStoredDisplay([laptop, projector, twin], twin.id, displayFingerprint(twin))?.id).toBe(11);
+  });
+
+  it('works without a fingerprint, as older projects have none', () => {
+    expect(resolveStoredDisplay([laptop, projector], projector.id, null)?.id).toBe(projector.id);
+    expect(resolveStoredDisplay([laptop, projector], 99, null)).toBeNull();
+  });
+
+  it('records physical size, so a scale change reads as a different display', () => {
+    expect(displayFingerprint(laptop)).toEqual({ label: 'Built-in', width: 3024, height: 1964, scaleFactor: 2 });
   });
 });

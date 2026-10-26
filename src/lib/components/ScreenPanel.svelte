@@ -15,6 +15,7 @@
   import { screenSetups } from '../stores/screenSetups';
   import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
+  import { displayFingerprint, resolveStoredDisplay } from '../output/displayAssignment';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
   import ScreenInspector from './ScreenInspector.svelte';
 
@@ -70,11 +71,19 @@
 
   async function openOnDisplay(s: OutputSlice) {
     if (!isDesktopApp || s.displayId == null) return;
+    // Windows renumbers displays on a re-plug, and can give the projector's
+    // old id to another display. Re-resolve against what is connected now,
+    // and keep the Screen pointed at the display it was set up for.
+    await refreshDisplays();
+    const target = resolveStoredDisplay(displays, s.displayId, s.displayFingerprint);
+    if (target && (target.id !== s.displayId || !s.displayFingerprint)) {
+      screenActions.update(s.id, { displayId: target.id, displayFingerprint: displayFingerprint(target) });
+    }
     // Always use the native Screen texture. The legacy VideoFrame window
     // bypasses destination calibration, source warp and screen masks.
     try {
       const result = await invoke<{ ok: boolean; error?: string }>('output_open_slice_window', {
-        sliceId: s.id, displayId: s.displayId,
+        sliceId: s.id, displayId: target?.id ?? s.displayId,
       });
       if (!result?.ok) throw new Error(result?.error || 'Screen output could not open.');
       screenOutputError.set(null);

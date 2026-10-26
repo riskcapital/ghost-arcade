@@ -5529,6 +5529,7 @@ export interface OutputSliceShape {
   cropH: number;
   targetType?: 'sender' | 'display';
   displayId?: number | null;
+  displayFingerprint?: { label: string; width: number; height: number; scaleFactor: number } | null;
   outputType?: 'spout' | 'syphon' | 'ndi';
   spoutName: string;
   edgeBlendLeft: number;

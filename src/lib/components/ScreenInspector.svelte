@@ -22,6 +22,7 @@
   import ProjectorCalibrationPanel from './ProjectorCalibrationPanel.svelte';
   import { onMount } from 'svelte';
   import type { OutputSlice } from '../stores/settings';
+  import { displayFingerprint, resolveStoredDisplay } from '../output/displayAssignment';
   import { screenActions, selectedScreenMaskId, screenMaskPlacing } from '../stores/screens';
   import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
@@ -57,10 +58,14 @@
 
   const tsLabel = getTextureShareLabel();
 
-  // A stored display id that no connected display has. The main process
+  // The display this Screen goes to now: its stored id, or the display its
+  // fingerprint matches when Windows renumbered or swapped the ids.
+  const routedDisplay = $derived(resolveStoredDisplay(displays, screen.displayId, screen.displayFingerprint));
+
+  // A stored display that no connected display matches. The main process
   // would fall back to the primary display and cover the editor.
   const displayMissing = $derived(
-    screen.displayId != null && displays.length > 0 && !displays.some((d) => d.id === screen.displayId),
+    screen.displayId != null && displays.length > 0 && !routedDisplay,
   );
 
   // A Screen shows either a slice of the master or a Map Sim projector view.
@@ -232,10 +237,14 @@
       <label class="field">
         <span class="lbl">Display</span>
         <select
-          value={screen.displayId ?? ''}
+          value={routedDisplay?.id ?? screen.displayId ?? ''}
           onchange={(e) => {
             const v = (e.target as HTMLSelectElement).value;
-            update({ displayId: v === '' ? null : parseInt(v) });
+            const picked = v === '' ? null : displays.find((d) => d.id === parseInt(v)) ?? null;
+            update({
+              displayId: v === '' ? null : parseInt(v),
+              displayFingerprint: picked ? displayFingerprint(picked) : null,
+            });
           }}
         >
           <option value="">— pick —</option>
@@ -245,7 +254,7 @@
         </select>
         <button class="icon-btn" title="Refresh display list" onclick={onRefreshDisplays}>↻</button>
       </label>
-      {#if screen.displayId != null && displays.find(d => d.id === screen.displayId)?.isPrimary}
+      {#if screen.displayId != null && routedDisplay?.isPrimary}
         <p class="warn-banner">
           ⚠ This is your primary display. Opening here will cover the editor. Press <kbd>Esc</kbd> in the slice window to close it.
         </p>
