@@ -78,6 +78,7 @@ const LEGACY_USER_DATA_DIR = path.join(app.getPath('appData'), 'ghost-arcade');
 // query is synchronous: the renderer needs to know whether to suppress its
 // first-run prompts before its first frame.
 const { createShowStartup } = require('./show-startup.cjs');
+const { createQuitGuard } = require('./quit-guard.cjs');
 const showStartup = createShowStartup({ app });
 ipcMain.on('show_startup_session', (event) => {
   try { event.returnValue = showStartup.get(); } catch { event.returnValue = null; }
@@ -6064,6 +6065,11 @@ function registerIpcHandlers() {
   // app.relaunch schedules a fresh process for after exit;
   // app.exit(0) kills the current one without running quit handlers
   // (avoids "are you sure?" dialogs / save prompts hanging the relaunch).
+  // The editor's answer to app-quit-requested (see quit-guard.cjs).
+  ipcMain.handle('app_quit_ack', () => { quitGuard.acknowledged(); });
+  ipcMain.handle('app_quit_proceed', () => { quitGuard.proceed(); });
+  ipcMain.handle('app_quit_cancel', () => { quitGuard.cancel(); });
+
   ipcMain.handle('app_relaunch', () => {
     console.log('[IPC] app_relaunch — restarting');
     app.relaunch();
@@ -9870,9 +9876,21 @@ app.on('window-all-closed', () => {
   cleanupAndQuit();
 });
 
+// Cmd+Q, Quit in the Dock and logging out ask the editor first, so it can
+// offer to save unsaved changes (see quit-guard.cjs).
+const quitGuard = createQuitGuard({
+  ask: () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isCrashed()) return false;
+    mainWindow.webContents.send('app-quit-requested');
+    return true;
+  },
+  quit: () => cleanupAndQuit(),
+});
+
 app.on('before-quit', (event) => {
   if (!isQuitting) {
     event.preventDefault();
+    if (quitGuard.shouldHoldQuit()) return;
     cleanupAndQuit();
     return;
   }

@@ -381,10 +381,11 @@
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
-  import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback } from './lib/stores/historyHooks';
+  import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback, amendLastHistoryStep, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
+  import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './lib/stores/projectDirty';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
-  import { hydrateShowControl } from './lib/show/showControlPersistence';
+  import { hydrateShowControl, serializeShowControl } from './lib/show/showControlPersistence';
   import { cueList } from './lib/show/cueList';
   import {
     installPromptSuppression,
@@ -1288,47 +1289,71 @@
     _prevBottomTrays = open;
   }
 
-  // Unsaved changes tracking - increments on every project change, resets on save
-  let lastSavedState: string | null = null;
+  // Unsaved changes (see stores/projectDirty.ts). `savedProjectState` is the
+  // project as it was last saved or opened; null after recovering an
+  // autosave, which is not on disk until it is saved.
+  let savedProjectState: ProjectDirtySnapshot | null = null;
   let hasUnsavedChanges = false;
 
   // Close confirmation modal state
   let showCloseModal = false;
   let pendingCloseResolve: (() => void) | null = null;
+  // The close modal is answering a quit (Cmd+Q, Dock) rather than a window
+  // close, so its answer goes back to the main process.
+  let closeModalForQuit = false;
+  // The user chose Save or Don't Save: let the window close without asking.
+  let closeConfirmed = false;
 
   // Auto-save & crash recovery state
   let autosaveInterval: ReturnType<typeof setInterval> | null = null;
+  // An autosave left by an earlier session that has not been recovered or
+  // discarded yet. It is not this session's to clear.
+  let autosaveFromEarlierSession = false;
   // Projects double-clicked in the Finder / Explorer while the app runs.
   let stopProjectOpenListener: (() => void) | null = null;
   let showRecoveryModal = false;
   let recoveryTimestamp = '';
 
-  // Track project changes to detect unsaved state
-  $: {
-    // Use layer count + selected layer as a lightweight change indicator
-    // The actual comparison is done via JSON snapshot
-    const currentState = JSON.stringify({
-      layers: $project.layers.map(l => ({ id: l.id, name: l.name, type: l.type, opacity: l.opacity, visible: l.visible, corners: l.corners, contentFit: l.contentFit })),
-      name: $project.name,
-      // Map Sim edits persist in the project file now, so they must be able
-      // to dirty the project; the history counter bumps on every sim edit.
-      simEdits: $projectionSimHistoryVersion,
-      // Relinked media lives in asset refs no other field shows.
-      mediaEdits: $mediaRelinkVersion,
-    });
-    hasUnsavedChanges = lastSavedState !== null && currentState !== lastSavedState;
+  function projectDirtySnapshot(): ProjectDirtySnapshot {
+    return {
+      stepId: history.currentStepId(),
+      settings: projectSettingsSignature({
+        exported: project.exportProject() as Record<string, any>,
+        showTimeline: showTimeline.serialize(),
+        showControl: serializeShowControl(),
+      }),
+      // Map Sim edits and relinked media are counted where they happen.
+      counters: JSON.stringify([get(projectionSimHistoryVersion), get(mediaRelinkVersion)]),
+    };
+  }
+
+  /** Work out whether the project has unsaved changes, now. */
+  function refreshUnsavedChanges(): boolean {
+    // An edit still waiting for its undo debounce is a change too. (Not
+    // flushed here: the autosave tick must not split a drag in two.)
+    hasUnsavedChanges = hasPendingHistorySnapshot() || isProjectDirty(savedProjectState, projectDirtySnapshot());
+    return hasUnsavedChanges;
   }
 
   function markAsSaved() {
-    const currentState = JSON.stringify({
-      layers: get(project).layers.map(l => ({ id: l.id, name: l.name, type: l.type, opacity: l.opacity, visible: l.visible, corners: l.corners, contentFit: l.contentFit })),
-      name: get(project).name,
-      simEdits: get(projectionSimHistoryVersion),
-      mediaEdits: get(mediaRelinkVersion),
-    });
-    lastSavedState = currentState;
     hasUnsavedChanges = false;
+    // Taken a moment later: opening a project resets the undo history in a
+    // microtask queued during the import, and the saved step is that one.
+    queueMicrotask(() => {
+      flushPendingHistorySnapshot();
+      savedProjectState = projectDirtySnapshot();
+      hasUnsavedChanges = false;
+    });
   }
+
+  /** The project is not on disk as it stands (a recovered autosave). */
+  function markAsUnsaved() {
+    savedProjectState = null;
+    hasUnsavedChanges = true;
+  }
+
+  // The template picker warns before replacing a project with unsaved work.
+  $: if ($onboarding.templatesOpen) refreshUnsavedChanges();
 
   // Auto-save cleanup
   onDestroy(() => {
@@ -1375,18 +1400,22 @@
         }
       }
       project.importProjectJSON(savedData!, projectDir);
-      markAsSaved();
+      // Recovered work is not in any file yet: it stays unsaved (and keeps
+      // being autosaved) until it is saved.
+      markAsUnsaved();
       reportOpenedMedia(media);
     }
     localStorage.removeItem('ghostarcade-autosave');
     localStorage.removeItem('ghostarcade-autosave-timestamp');
     localStorage.removeItem('ghostarcade-autosave-path');
+    autosaveFromEarlierSession = false;
     showRecoveryModal = false;
   }
 
   function discardAutosave() {
     localStorage.removeItem('ghostarcade-autosave');
     localStorage.removeItem('ghostarcade-autosave-timestamp');
+    autosaveFromEarlierSession = false;
     showRecoveryModal = false;
   }
 
@@ -1395,28 +1424,70 @@
     localStorage.removeItem('ghostarcade-autosave-timestamp');
   }
 
+  /** The close (or quit) the modal was asking about goes ahead. */
+  function finishClose() {
+    closeConfirmed = true;
+    if (pendingCloseResolve) pendingCloseResolve();
+    pendingCloseResolve = null;
+    if (closeModalForQuit) {
+      closeModalForQuit = false;
+      void invoke('app_quit_proceed').catch(() => {});
+    } else {
+      window.close();
+    }
+  }
+
+  /** The close (or quit) is called off; the app keeps running. */
+  function abandonClose() {
+    if (pendingCloseResolve) pendingCloseResolve();
+    pendingCloseResolve = null;
+    if (closeModalForQuit) {
+      closeModalForQuit = false;
+      void invoke('app_quit_cancel').catch(() => {});
+    }
+  }
+
   // Close modal actions
   async function closeModalSave() {
     showCloseModal = false;
-    await saveComposition();
-    markAsSaved();
-    if (pendingCloseResolve) pendingCloseResolve();
-    pendingCloseResolve = null;
-    window.close();
+    // Only close once the project is really saved: a cancelled Save As or a
+    // failed write keeps the app open with the work still in it.
+    if (!(await saveComposition())) {
+      abandonClose();
+      return;
+    }
+    finishClose();
   }
 
   async function closeModalDiscard() {
     showCloseModal = false;
     hasUnsavedChanges = false;
-    if (pendingCloseResolve) pendingCloseResolve();
-    pendingCloseResolve = null;
-    window.close();
+    // The user chose to throw the changes away; do not offer them back.
+    if (!autosaveFromEarlierSession) clearAutosave();
+    finishClose();
   }
 
   function closeModalCancel() {
     showCloseModal = false;
-    if (pendingCloseResolve) pendingCloseResolve();
-    pendingCloseResolve = null;
+    abandonClose();
+  }
+
+  /** Cmd+Q, Quit in the Dock or logging out: the main process holds the
+   *  quit until this answers (electron/quit-guard.cjs). */
+  function handleQuitRequest() {
+    void invoke('app_quit_ack').catch(() => {});
+    if (showCloseModal) {
+      // Already asking about a window close; answer for the quit instead.
+      closeModalForQuit = true;
+      return;
+    }
+    if (closeConfirmed || promptsSuppressed() || !refreshUnsavedChanges()) {
+      if (!hasUnsavedChanges && !autosaveFromEarlierSession) clearAutosave();
+      void invoke('app_quit_proceed').catch(() => {});
+      return;
+    }
+    closeModalForQuit = true;
+    showCloseModal = true;
   }
 
   // Recording state (shared recorder)
@@ -1884,10 +1955,11 @@
     // while we show the modal; the modal's button handlers call
     // window.close() programmatically when the user makes a choice.
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (!hasUnsavedChanges || promptsSuppressed()) return;
+      if (closeConfirmed || promptsSuppressed()) return;
       // Only intercept once — if the modal is already open, let the
       // user finish their decision (and the modal handler will close).
       if (showCloseModal) return;
+      if (!refreshUnsavedChanges()) return;
       e.preventDefault();
       // Required for some browsers / Electron versions to honor
       // preventDefault and keep the window open.
@@ -1895,6 +1967,7 @@
       showCloseModal = true;
     };
     window.addEventListener('beforeunload', onBeforeUnload);
+    const stopQuitRequests = (window as any).electronAPI?.on?.('app-quit-requested', handleQuitRequest);
 
     // Background update check — first run shows cached result if any,
     // then re-fetches if it's been > 24 h since last check. Manual
@@ -2084,6 +2157,7 @@
 
     // --- Crash recovery: check for auto-saved project ---
     const savedAutosave = localStorage.getItem('ghostarcade-autosave');
+    autosaveFromEarlierSession = !!savedAutosave;
     // Show mode opens its own project; the recovery offer would sit on top
     // of the show forever. The autosave is left in place for the next
     // normal launch.
@@ -2103,6 +2177,8 @@
           const pending: string | null = await desktopApi.invoke('take_pending_project_open');
           if (!pending) return;
           showRecoveryModal = false;
+          // Opening another project passes over the recovery offer.
+          autosaveFromEarlierSession = false;
           if (!(await openProjectAtPath(pending))) alert('Failed to load project. The file may be corrupted or invalid.');
         } catch (err: any) {
           alert(`Failed to load project: ${err?.message || err}`);
@@ -2139,8 +2215,18 @@
         || (vj.blocks ?? []).some((block: any) => anyClip(block.clipGrid) || anyClip(block.bankBClipGrid));
     };
     autosaveInterval = setInterval(() => {
+      // Nothing to recover while the recovery offer is still open.
+      if (showRecoveryModal) return;
+      // Only unsaved work is worth recovering. Writing the autosave every
+      // 30 s regardless (and clearing it only on Save or New) meant nearly
+      // every launch offered to recover a project that had been saved.
+      if (!refreshUnsavedChanges()) {
+        if (!autosaveFromEarlierSession) clearAutosave();
+        return;
+      }
       const proj = get(project);
       if (proj.layers.length > 0 || hasVjClips()) {
+        autosaveFromEarlierSession = false;
         try {
           const jsonStr = project.exportProjectJSON();
           try {
@@ -2517,6 +2603,7 @@
       window.removeEventListener('pointermove', handleViewportSelectionWindowPointerMove, true);
       window.removeEventListener('pointerup', handleViewportSelectionWindowPointerUp, true);
       window.removeEventListener('beforeunload', onBeforeUnload);
+      if (typeof stopQuitRequests === 'function') stopQuitRequests();
       window.removeEventListener('hashchange', handleHashChange);
       window.removeEventListener('open-settings', handleOpenSettings);
       window.removeEventListener('open-stage3d', handleOpenStage3D);
@@ -5676,13 +5763,18 @@
     const current = get(project).name;
     if (!name || name === current || (onlyIfUntitled && current && current !== DEFAULT_PROJECT_NAME)) return;
     project.setProjectName(name);
+    // Naming the project after its file is not an edit: fold it into the
+    // current undo step, or undoing the next edit would rename it back.
+    amendLastHistoryStep();
   }
 
-  async function saveComposition() {
+  /** Save to the project's file (Save As when it has none). Resolves true
+   *  only when the project was written. */
+  async function saveComposition(): Promise<boolean> {
     await (await import('./lib/stores/settings')).flushSettings();
     if (saveInFlight) {
       console.log('[Save] suppressed — save already in flight');
-      return;
+      return false;
     }
     saveInFlight = true;
     fileMenuOpen = false;
@@ -5702,12 +5794,11 @@
             // A path the app only remembers (a recovered autosave from an
             // older version) was never chosen in a dialog: ask where to save.
             if (result?.code === 'path-not-allowed') {
-              await saveCompositionAsInner();
-              return;
+              return await saveCompositionAsInner();
             }
             if (!result?.success) {
               alert(`Save failed: ${result?.error || 'unknown error'}`);
-              return;
+              return false;
             }
             console.log('Project saved successfully:', currentProjectPath);
             // Bump to top of Recent Files and re-record with its path,
@@ -5717,14 +5808,14 @@
             recentFiles.add(currentProjectPath.split(sep).pop() || 'project.gha', currentProjectPath);
             markAsSaved();
             clearAutosave();
-            return;
+            return true;
           } catch (err: any) {
             // Don't fall through to Save As here — that pops a second dialog
             // for what was meant to be an in-place save and confused users
             // into a save loop. Surface the error instead.
             console.error('[Save] Electron save failed:', err);
             alert(`Save failed: ${err?.message || err}`);
-            return;
+            return false;
           }
         }
       }
@@ -5745,7 +5836,7 @@
           recentFiles.add(currentFileHandle.name, currentProjectPath);
           markAsSaved();
           clearAutosave();
-          return;
+          return true;
         } catch (err: any) {
           console.warn('Failed to save to existing file, showing save dialog:', err);
         }
@@ -5755,22 +5846,22 @@
       // mutex check that becomes a no-op while saveInFlight is still true,
       // so we call its inner implementation directly to avoid the guard
       // bouncing this through.
-      await saveCompositionAsInner();
+      return await saveCompositionAsInner();
     } finally {
       saveInFlight = false;
     }
   }
 
   // Save As — public entry point that takes the mutex.
-  async function saveCompositionAs() {
+  async function saveCompositionAs(): Promise<boolean> {
     if (saveInFlight) {
       console.log('[Save] Save As suppressed — save already in flight');
-      return;
+      return false;
     }
     saveInFlight = true;
     fileMenuOpen = false;
     try {
-      await saveCompositionAsInner();
+      return await saveCompositionAsInner();
     } finally {
       saveInFlight = false;
     }
@@ -5778,7 +5869,7 @@
 
   // The actual Save As work. Always shows a file picker. Caller owns the
   // mutex — split out so saveComposition can re-use it without lock thrash.
-  async function saveCompositionAsInner() {
+  async function saveCompositionAsInner(): Promise<boolean> {
     await (await import('./lib/stores/settings')).flushSettings();
     let jsonStr = await project.exportProjectJSONForSave();
     const suggestedName = `${$project.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.gha`;
@@ -5796,7 +5887,7 @@
             defaultPath: suggestedName,
             title: 'Save Project As',
           });
-          if (dialogResult?.canceled || !dialogResult?.filePath) return;
+          if (dialogResult?.canceled || !dialogResult?.filePath) return false;
           const filePath: string = dialogResult.filePath;
           nameProjectAfterFile(filePath);
           jsonStr = await project.exportProjectJSONForSave();
@@ -5807,7 +5898,7 @@
           const writeResult = await api.invoke('save_project_file', { path: filePath, content: portableJson });
           if (!writeResult?.success) {
             alert(`Save failed: ${writeResult?.error || 'unknown error'}`);
-            return;
+            return false;
           }
           currentProjectPath = filePath;
           console.log('Project saved successfully (Electron native):', filePath);
@@ -5816,7 +5907,7 @@
           recentFiles.add(filePath.split(sep).pop() || 'project.gha', filePath);
           markAsSaved();
           clearAutosave();
-          return;
+          return true;
         } catch (err: any) {
           // In Electron, do NOT fall through to the browser File System
           // Access API — that pops a second native picker on top of the
@@ -5824,7 +5915,7 @@
           // the error and let the user retry.
           console.error('[Save As] Electron save failed:', err);
           alert(`Save failed: ${err?.message || err}`);
-          return;
+          return false;
         }
       }
     }
@@ -5851,14 +5942,14 @@
         recentFiles.add(handle.name, null);
         markAsSaved();
         clearAutosave();
-        return;
+        return true;
       } catch (err: any) {
         // User cancelled or API not supported
         if (err.name !== 'AbortError') {
           console.warn('File System Access API failed, falling back to download:', err);
         } else {
           // User cancelled, don't fall back
-          return;
+          return false;
         }
       }
     }
@@ -5875,6 +5966,7 @@
     URL.revokeObjectURL(url);
     markAsSaved();
     clearAutosave();
+    return true;
   }
 
   function loadComposition() {
@@ -8934,7 +9026,9 @@
         </svg>
       </div>
       <h2 class="close-modal-title">Unsaved Changes</h2>
-      <p class="close-modal-desc">Your project has unsaved changes that will be lost if you close without saving.</p>
+      <p class="close-modal-desc">{closeModalForQuit
+        ? 'Your project has unsaved changes that will be lost if you quit without saving.'
+        : 'Your project has unsaved changes that will be lost if you close without saving.'}</p>
       <div class="close-modal-actions">
         <button class="close-modal-btn btn-save" onclick={closeModalSave}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -8942,14 +9036,14 @@
             <polyline points="17 21 17 13 7 13 7 21"/>
             <polyline points="7 3 7 8 15 8"/>
           </svg>
-          Save &amp; Close
+          {closeModalForQuit ? 'Save & Quit' : 'Save & Close'}
         </button>
         <button class="close-modal-btn btn-discard" onclick={closeModalDiscard}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
           </svg>
-          Close Without Saving
+          {closeModalForQuit ? 'Quit Without Saving' : 'Close Without Saving'}
         </button>
         <button class="close-modal-btn btn-cancel" onclick={closeModalCancel}>
           Cancel
