@@ -27,6 +27,7 @@
   import { settings } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { arrowDirection, classifyKeyTarget, nudgeStepPixels, projectPixelOffset } from '../utils/mappingNudge';
+  import { noteAltArrow } from '../utils/altArrowGuard';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
   import {
@@ -190,6 +191,7 @@
 
     e.preventDefault();
     e.stopPropagation();
+    noteAltArrow(e);
 
     if (mode === 'corners' && selectedCorner) {
       const current = corners[selectedCorner];

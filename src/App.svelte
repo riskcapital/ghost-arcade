@@ -103,6 +103,7 @@
   import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from './lib/stores/mappingPointSelection';
   import { flushPendingHistorySnapshot, scheduleHistorySnapshot } from './lib/stores/nudgeHistory';
   import { arrowDirection, classifyKeyTarget, planMappingArrowKey } from './lib/utils/mappingNudge';
+  import { guardAltRelease, noteAltArrow } from './lib/utils/altArrowGuard';
   import { releaseFormControlFocus } from './lib/utils/formFocus';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { formatReleaseTag } from './lib/utils/compatibilityReleases';
@@ -1792,8 +1793,6 @@
   // ten, Alt a tenth (Alt moves a selected curve handle on its own). A held
   // key is one undo step. See lib/utils/mappingNudge.ts. The Screens tab's
   // handles have their own keys.
-  let altNudged = false;
-
   function handleMappingKeyDown(e: KeyboardEvent) {
     if (e.key !== 'Escape' && !arrowDirection(e.key)) return;
     if (e.defaultPrevented) return;
@@ -1832,7 +1831,7 @@
       return;
     }
     e.preventDefault();
-    if (e.altKey) altNudged = true;
+    noteAltArrow(e);
     for (const { layerId, patch } of plan.patches) project.updateLayer(layerId, patch);
     // One undo step for the run: taken when the key comes up (or the
     // presses stop), not on every repeat of a held key.
@@ -1845,10 +1844,9 @@
       return;
     }
     // Windows: releasing Alt on its own shows the menu bar. After Alt+arrow
-    // nudges the release is part of the nudge, so keep it from the menu.
-    if (e.key !== 'Alt') return;
-    if (altNudged) e.preventDefault();
-    altNudged = false;
+    // nudges (here, on the Screens tab, in the Stage Designer) the release
+    // is part of the nudge, so keep it from the menu.
+    guardAltRelease(e);
   }
 
   // Viewport pan/zoom handlers
