@@ -44,6 +44,10 @@
    * Warp (meshWarp.ts): linked by default, Alt-drag unlinks, double-click
    * straightens, and the arrow keys nudge the handle clicked last (or the
    * point, once a point is clicked; Escape goes back to moving the screen).
+   *
+   * Arrow keys: the corner, mesh point or tangent clicked last moves one
+   * project pixel (Shift ten, Alt a tenth; Alt moves a selected tangent on
+   * its own); with none the whole screen moves.
    */
   import { onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
@@ -51,7 +55,7 @@
   import { project } from '../stores/layers';
   import { settings, screenMaskIsActive } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
-  import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { arrowDirection, classifyKeyTarget, nudgeStepPixels, projectPixelOffset } from '../utils/mappingNudge';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
   import {
@@ -114,6 +118,8 @@
   // handle clicked last on it.
   let selectedMeshPoint: { sliceId: string; row: number; col: number } | null = $state(null);
   let selectedTangent: MeshTangentSide | null = $state(null);
+  // Corner picked for the arrow keys on a corner-pinned screen.
+  let selectedCorner: { sliceId: string; corner: keyof WarpCorners } | null = $state(null);
 
   // ─── Snap ──────────────────────────────────────────────────────────
   function snapAxis(value: number, sliceId: string, axis: 'x' | 'y'): number {
@@ -163,9 +169,15 @@
       if (kind.kind === 'tangent') selectedTangent = kind.side;
       else if (!same) selectedTangent = null;
       selectedMeshPoint = { sliceId, row: kind.row, col: kind.col };
+      selectedCorner = null;
+    } else if (kind.kind === 'corner') {
+      selectedCorner = { sliceId, corner: kind.corner };
+      selectedMeshPoint = null;
+      selectedTangent = null;
     } else if (kind.kind !== 'mask-point' && kind.kind !== 'mask-cp') {
       selectedMeshPoint = null;
       selectedTangent = null;
+      selectedCorner = null;
     }
     selectedScreenId.set(sliceId);
     window.addEventListener('mousemove', onMouseMove);
@@ -215,6 +227,13 @@
 
     if (mode === 'corners' && slice.corners) {
       const c = slice.corners;
+      const picked = selectedCorner?.sliceId === slice.id ? selectedCorner.corner : null;
+      if (picked) {
+        screenActions.update(slice.id, {
+          corners: { ...c, [picked]: { x: c[picked].x + dx, y: c[picked].y + dy } },
+        });
+        return;
+      }
       screenActions.update(slice.id, {
         corners: {
           topLeft: { x: c.topLeft.x + dx, y: c.topLeft.y + dy },
@@ -267,51 +286,42 @@
 
   function handleKeyDown(e: KeyboardEvent) {
     if (!$selectedScreenId || isTextEditingTarget(e.target) || !ownsWarpKeys('screen')) return;
-    let dx = 0;
-    let dy = 0;
-    const proj = get(project);
-    const step = normalizedWarpNudge(
-      proj.width,
-      proj.height,
-      get(settings).ui.warpDragGranularity,
-      e.shiftKey ? 10 : 1,
-    );
 
-    switch (e.key) {
-      case 'ArrowUp':
-        dy = -step.y;
-        break;
-      case 'ArrowDown':
-        dy = step.y;
-        break;
-      case 'ArrowLeft':
-        dx = -step.x;
-        break;
-      case 'ArrowRight':
-        dx = step.x;
-        break;
-      case 'Escape':
-      case 'Enter':
-        // Ends vertex placing first; a second Escape still cancels a drag.
-        if (get(screenMaskPlacing)) {
-          e.preventDefault();
-          screenMaskPlacing.set(false);
-          return;
-        }
-        if (e.key === 'Escape') {
-          // A picked tangent handle lets go first, then the mesh point.
-          if (selectedTangent) selectedTangent = null;
-          else selectedMeshPoint = null;
-          cancelDrag();
-        }
+    if (e.key === 'Escape' || e.key === 'Enter') {
+      // Ends vertex placing first; a second Escape still cancels a drag.
+      if (get(screenMaskPlacing)) {
+        e.preventDefault();
+        screenMaskPlacing.set(false);
         return;
-      default:
-        return;
+      }
+      if (e.key === 'Escape') {
+        // A picked tangent handle lets go first, then the point or corner.
+        if (selectedTangent) selectedTangent = null;
+        else {
+          selectedMeshPoint = null;
+          selectedCorner = null;
+        }
+        cancelDrag();
+      }
+      return;
     }
+
+    const dir = arrowDirection(e.key);
+    if (!dir || e.metaKey || e.ctrlKey) return;
+    // Sliders, lists and menus keep their arrow keys.
+    if (classifyKeyTarget(e.target as HTMLElement | null) !== 'other'
+      || classifyKeyTarget(document.activeElement as HTMLElement | null) !== 'other') return;
+    const slice = $screens.find(sc => sc.id === $selectedScreenId);
+    const tangentPicked = !!selectedTangent && slice?.warpMode === 'mesh' && !!slice.meshGrid?.bezier
+      && selectedMeshPoint?.sliceId === slice.id;
+    const proj = get(project);
+    const stepPx = nudgeStepPixels(get(settings).ui.warpDragGranularity, e.shiftKey, e.altKey && !tangentPicked);
+    // Screens keep y down: screen-up is -y.
+    const offset = projectPixelOffset(dir.x * stepPx, dir.y * stepPx, proj.width, proj.height, false);
 
     e.preventDefault();
     e.stopPropagation();
-    nudgeSelectedSlice(dx, dy, e.altKey);
+    nudgeSelectedSlice(offset.x, offset.y, e.altKey && tangentPicked);
   }
 
   // Picking a screen in the panel hands it the arrow keys.
@@ -842,6 +852,7 @@
         {#each (['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as Array<keyof WarpCorners>) as cn}
           {@const cp = s.corners[cn]}
           <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'corner' && drag?.kind.corner === cn}
+            class:selected={selectedCorner?.sliceId === s.id && selectedCorner.corner === cn && drag?.kind.kind !== 'corner'}
             style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
             onmousedown={(e) => startDrag(e, s.id, { kind: 'corner', corner: cn })}>
             <span class="handle-label">{s.name} {cn}</span>
@@ -996,6 +1007,11 @@
     cursor: grabbing;
     transform: scale(1.3);
     background: #ffff00;
+  }
+  .corner-handle.selected {
+    background: #00ff88;
+    transform: scale(1.2);
+    box-shadow: 0 0 10px #00ff88, 0 0 20px rgba(0, 255, 136, 0.5);
   }
 
   /* Edge handles — same as WarpHandles edge-handle. */
