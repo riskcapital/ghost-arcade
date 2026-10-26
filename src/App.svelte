@@ -398,6 +398,7 @@
   import { mcpStore } from './lib/mcp/mcpStore';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { fitToolbar } from './lib/utils/toolbarFit';
+  import { isToolbarCaption } from './lib/utils/toolbarCaption';
   import { fitMenuHeight } from './lib/utils/menuFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import RecordingSourcePicker from './lib/components/RecordingSourcePicker.svelte';
@@ -503,12 +504,15 @@
   // Frameless window-control state (Windows/Linux, where the transparent
   // underlay window has no OS title bar).
   let winMaximized = false;
-  // Anything interactive in the toolbar must not start a window drag.
-  function isToolbarControl(target: HTMLElement | null): boolean {
-    return !!target?.closest(
-      'button, a, input, select, textarea, label, [role="button"], .dropdown, .mobile-btn-wrapper, .mobile-info-popup, .win-controls',
-    );
-  }
+  // The maximise button follows the window, whether it was maximised from
+  // here, by a double-click, a snap or the OS.
+  onMount(() => {
+    if (!isDesktopApp || isMac) return;
+    const api = (window as any).electronAPI;
+    void invoke<boolean>('win_is_maximized').then((value) => { winMaximized = !!value; }).catch(() => {});
+    const stop = api?.on?.('win-maximized-changed', (value: unknown) => { winMaximized = !!value; });
+    return () => { if (typeof stop === 'function') stop(); };
+  });
 
   function presenterPoint(point: Point2D): NativeEditorPreviewOverlayPoint {
     return { x: point.x, y: 1 - point.y };
@@ -7018,7 +7022,7 @@
         // Caption drag: empty toolbar space moves the window. The main process
         // follows the OS cursor while the button is held.
         if (!isDesktopApp || isMac || event.button !== 0) return;
-        if (isToolbarControl(event.target as HTMLElement | null)) return;
+        if (!isToolbarCaption(event.target as HTMLElement | null, event.currentTarget)) return;
         void invoke('win_drag_start');
         const end = () => {
           void invoke('win_drag_end');
@@ -7031,7 +7035,7 @@
       ondblclick={(event) => {
         // Caption double-click: maximize/restore, like a real title bar.
         if (!isDesktopApp || isMac) return;
-        if (isToolbarControl(event.target as HTMLElement | null)) return;
+        if (!isToolbarCaption(event.target as HTMLElement | null, event.currentTarget)) return;
         void invoke('win_drag_end');
         void invoke('win_maximize_toggle').then((v) => { winMaximized = !!v; });
       }}

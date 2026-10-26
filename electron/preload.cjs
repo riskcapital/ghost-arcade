@@ -203,7 +203,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress'];
+    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress', 'win-maximized-changed'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);

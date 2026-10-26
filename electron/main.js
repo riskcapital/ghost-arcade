@@ -8850,6 +8850,19 @@ function createMainWindow() {
 
   if (process.platform === 'darwin') {
     mainWindow.setWindowButtonVisibility(true);
+  } else {
+    // Frameless editor: the toolbar draws its own maximise/restore button and
+    // follows the window however it was maximised (double-click, snap, OS).
+    let lastMaximized = null;
+    const sendMaximized = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const maximized = mainWindow.isMaximized();
+      if (maximized === lastMaximized) return;
+      lastMaximized = maximized;
+      mainWindow.webContents.send('win-maximized-changed', maximized);
+    };
+    for (const event of ['maximize', 'unmaximize', 'restore', 'resize']) mainWindow.on(event, sendMaximized);
+    mainWindow.webContents.on('did-finish-load', () => { lastMaximized = null; sendMaximized(); });
   }
 
   if (process.platform === 'win32' && typeof mainWindow.hookWindowMessage === 'function') {
