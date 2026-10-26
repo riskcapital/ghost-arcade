@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { displayFingerprint, resolveSavedDisplay, savedDisplayMissing, type DisplayLike } from './displayMatch';
+import { displayFingerprint, pickLiveOutputDisplay, resolveSavedDisplay, savedDisplayMissing, type DisplayLike } from './displayMatch';
 
 const laptop: DisplayLike = { id: 1, label: 'Built-in Display', width: 1512, height: 982, isPrimary: true, scaleFactor: 2 };
 const epson: DisplayLike = { id: 2, label: 'EPSON PJ', width: 1920, height: 1080, isPrimary: false, scaleFactor: 1 };
@@ -62,5 +62,35 @@ describe('savedDisplayMissing', () => {
     expect(savedDisplayMissing([laptop], 2, displayFingerprint(epson))).toBe(true);
     expect(savedDisplayMissing([laptop, { ...epson, id: 5 }], 2, displayFingerprint(epson))).toBe(false);
     expect(savedDisplayMissing([laptop], null)).toBe(false);
+  });
+});
+
+describe('pickLiveOutputDisplay', () => {
+  it('uses the display picked for the output', () => {
+    const r = pickLiveOutputDisplay([laptop, epson, monitor], 3, displayFingerprint(monitor), { fullscreen: true });
+    expect(r).toEqual({ display: monitor, savedMissing: false });
+  });
+
+  it('follows the picked display to its new id', () => {
+    const moved = { ...monitor, id: 30 };
+    expect(pickLiveOutputDisplay([laptop, epson, moved], 3, displayFingerprint(monitor), { fullscreen: true }).display).toBe(moved);
+  });
+
+  it('falls back to the first external display, and says so, when the picked one is gone', () => {
+    const r = pickLiveOutputDisplay([laptop, epson], 3, displayFingerprint(monitor), { fullscreen: true });
+    expect(r).toEqual({ display: epson, savedMissing: true });
+  });
+
+  it('picks the first external display when nothing was picked', () => {
+    expect(pickLiveOutputDisplay([laptop, epson, monitor], null, null, { fullscreen: true }).display).toBe(epson);
+  });
+
+  it('never puts a fullscreen output on the main display', () => {
+    expect(pickLiveOutputDisplay([laptop], null, null, { fullscreen: true }).display).toBeNull();
+    expect(pickLiveOutputDisplay([laptop, epson], 1, displayFingerprint(laptop), { fullscreen: true }).display).toBe(epson);
+  });
+
+  it('lets a windowed preview use the main display when it is the only one', () => {
+    expect(pickLiveOutputDisplay([laptop], null, null, { fullscreen: false }).display).toBe(laptop);
   });
 });

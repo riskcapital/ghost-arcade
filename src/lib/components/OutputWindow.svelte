@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { invoke } from '$lib/bridge';
   import type { RenderEngine } from '../renderer/engine';
   import { settings } from '../stores/settings';
+  import { showToast } from '../stores/errorToast';
+  import { pickLiveOutputDisplay } from '$lib/output/displayMatch';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
@@ -90,12 +93,41 @@
     const reason = (event as CustomEvent).detail?.error || 'WebGPU unavailable';
     console.warn(`[Output] Zero-copy output could not start (${reason}); reopening on the standard transport.`);
     const reopen = lastZeroCopyOpen;
+    // Resolves once the window is gone.
     await invoke('close_output_window').catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 150));
     if (reopen === 'fullscreen') await openFullscreenExternal();
     else if (reopen === 'popup') await openPopup(true);
   }
   if (typeof window !== 'undefined') window.addEventListener('ghost:zero-copy-output-failed', fallBackFromZeroCopy);
+
+  /**
+   * The display the output opens on: the one picked for it (right-click on
+   * the output buttons), followed to a new id if it was re-plugged, or the
+   * first display that is not the main one. A fullscreen output never takes
+   * the main display.
+   */
+  async function chooseOutputDisplay(fullscreen: boolean): Promise<any | null> {
+    const displays: any[] = (await invoke('get_displays')) || [];
+    const out = get(settings).output;
+    const choice = pickLiveOutputDisplay(displays, out.liveOutputDisplayId, out.liveOutputDisplayFingerprint, { fullscreen });
+    if (choice.savedMissing) {
+      const wanted = out.liveOutputDisplayFingerprint?.label || 'The display picked for the output';
+      showToast(
+        choice.display
+          ? `${wanted} is not connected, so the output opened on ${choice.display.label || 'another display'}. Right-click Output Window to pick a display.`
+          : `${wanted} is not connected. Connect it, or right-click Output Window to pick another display.`,
+        'warning',
+      );
+    }
+    return choice.display;
+  }
+
+  /** A window name used once. Reusing one name ('ga-output') while the last
+   *  output was still closing handed Chromium that window back, and the new
+   *  display and fullscreen placement were ignored. */
+  function freshWindowName(): string {
+    return `ga-output-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  }
 
   // Open output window — opens a draggable window (double-click to fullscreen)
   export async function openPopup(preferExternal: boolean = true) {
@@ -105,17 +137,8 @@
     }
     const transportTag = experimentalWebRTC ? ' [WebRTC]' : '';
     try {
-      // Get available displays from Electron
-      const displays: any[] = await invoke('get_displays');
-
-      let target = displays[0]; // fallback to first display
-      if (preferExternal) {
-        // Pick the first non-primary display
-        const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
-        if (external) {
-          target = external;
-        }
-      }
+      const target = preferExternal ? await chooseOutputDisplay(false) : ((await invoke('get_displays')) as any[])?.[0];
+      if (!target) throw new Error('no display');
 
       // Open at 1280x720 centered on the target display (not full size)
       const bounds = target.bounds || target;
@@ -172,12 +195,8 @@
   //      establishes the local MessageChannel from there.
   async function openPopupZeroCopy(preferExternal: boolean) {
     try {
-      const displays: any[] = await invoke('get_displays');
-      let target = displays[0];
-      if (preferExternal) {
-        const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
-        if (external) target = external;
-      }
+      const target = preferExternal ? await chooseOutputDisplay(false) : ((await invoke('get_displays')) as any[])?.[0];
+      if (!target) throw new Error('no display');
       const bounds = target.bounds || target;
       const winW = Math.min(1280, bounds.width);
       const winH = Math.min(720, bounds.height);
@@ -185,8 +204,10 @@
       const y = bounds.y + Math.round((bounds.height - winH) / 2);
 
       // 1) Pre-stage placement config so setWindowOpenHandler knows
-      // where to put the new BrowserWindow.
+      // where to put the new BrowserWindow. Keyed by the window name.
+      const windowName = freshWindowName();
       await invoke('configure_next_output_window', {
+        name: windowName,
         displayId: target.id,
         width: winW,
         height: winH,
@@ -203,9 +224,9 @@
       // Window features hint to Chromium; Electron's setWindowOpenHandler
       // will override these anyway with overrideBrowserWindowOptions.
       const features = `popup=true,width=${winW},height=${winH},left=${x},top=${y}`;
-      const newWin = window.open(url.toString(), 'ga-output', features);
+      const newWin = window.open(url.toString(), windowName, features);
       if (!newWin) {
-        alert('Output window failed to open. Check Chromium popup-blocker behaviour.');
+        showToast('The output window could not open. Try again, or turn off Zero-copy GPU output in Settings › Performance › GPU Acceleration.', 'error');
         return;
       }
       isOpen = true;
@@ -236,22 +257,23 @@
       // config so setWindowOpenHandler picks the entire display
       // bounds and sets fullscreen:true on the BrowserWindow options.
       try {
-        const displays: any[] = await invoke('get_displays');
-        const target = displays.find((d: any) => !(d.isPrimary ?? d.primary));
+        const target = await chooseOutputDisplay(true);
         if (!target) {
           console.warn('[Output] Fullscreen output requires an external display/projector.');
           return false;
         }
+        const windowName = freshWindowName();
         await invoke('configure_next_output_window', {
+          name: windowName,
           displayId: target.id,
           fullscreen: true,
         });
         const url = new URL(window.location.href);
         url.search = '?mode=webgpu-display';
-        const newWin = window.open(url.toString(), 'ga-output', 'popup=true');
+        const newWin = window.open(url.toString(), windowName, 'popup=true');
         if (!newWin) {
-          alert('Output window failed to open. Check Chromium popup-blocker behaviour.');
-          return;
+          showToast('The output window could not open. Try again, or turn off Zero-copy GPU output in Settings › Performance › GPU Acceleration.', 'error');
+          return false;
         }
         isOpen = true;
         lastZeroCopyOpen = 'fullscreen';
@@ -266,7 +288,9 @@
     }
     const transportTag = experimentalWebRTC ? ' [WebRTC]' : '';
     try {
-      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC, experimentalZeroCopy: false });
+      const target = await chooseOutputDisplay(true);
+      if (!target) return false;
+      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC, experimentalZeroCopy: false, displayId: target.id });
       if (result && result.ok === false) {
         console.warn(`[Output] Fullscreen unavailable: ${result.error || 'no external display'}`);
         return false;
@@ -307,9 +331,25 @@
   }
 
   export function close() {
-    invoke('close_output_window').catch(() => {});
+    void closeAndWait();
+  }
+
+  /** Close the output window; resolves once it is gone. */
+  export async function closeAndWait() {
     isOpen = false;
     onClose();
+    await invoke('close_output_window').catch(() => {});
+  }
+
+  /** The display the output would open on now (for Match Resolution). */
+  export async function targetDisplayId(fullscreen: boolean): Promise<number | null> {
+    try {
+      const displays: any[] = (await invoke('get_displays')) || [];
+      const out = get(settings).output;
+      return pickLiveOutputDisplay(displays, out.liveOutputDisplayId, out.liveOutputDisplayFingerprint, { fullscreen }).display?.id ?? null;
+    } catch {
+      return null;
+    }
   }
 
   onDestroy(() => {

@@ -50,6 +50,7 @@ if (app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
 // synchronous: the renderer needs to know whether to suppress its first-run
 // prompts before its first frame.
 const { createShowStartup } = require('./show-startup.cjs');
+const { createPendingWindowConfigs, outputWindowBounds, firstExternalDisplay } = require('./output-placement.cjs');
 const showStartup = createShowStartup({ app });
 ipcMain.on('show_startup_session', (event) => {
   try { event.returnValue = showStartup.get(); } catch { event.returnValue = null; }
@@ -411,14 +412,12 @@ let projectionSimWindow = null; // Projection Simulator pop-out (?mode=projectio
 // for the renderer side and the `output_open_slice_window` /
 // `output_close_slice_window` IPC handlers below.
 const sliceWindows = new Map();
-// Placement config staged by `configure_next_output_window` IPC and
-// consumed by the next setWindowOpenHandler call for the WebGPU
-// zero-copy output window. Cleared after consumption (or after a 5s
-// timeout to avoid cross-call leakage).
-let pendingOutputWindowConfig = null;
-let pendingOutputWindowConfigTimer = null;
-// Set by setWindowOpenHandler for the window did-create-window receives next.
-let nextOutputWindowFullscreen = false;
+// Placements staged by `configure_next_output_window`, keyed by the window
+// name the editor passes to window.open and used once each (see
+// output-placement.cjs). setWindowOpenHandler resolves one into a display
+// and bounds; did-create-window then moves the hidden window there.
+const pendingOutputConfigs = createPendingWindowConfigs();
+const openedOutputPlacements = new Map();
 let sidecarProcess = null;
 let embeddedServerModule = null;
 const wledSockets = new Map();  // controllerId -> dgram.Socket
@@ -3828,23 +3827,11 @@ function registerIpcHandlers() {
   // Pre-stage placement config for the next WebGPU zero-copy output
   // window opening. Called by the editor renderer immediately before
   // `window.open('?mode=webgpu-display', ...)`. The setWindowOpenHandler
-  // (in createMainWindow) reads + clears this on the next matching open.
-  // Auto-clears after 5s if no open follows — prevents accidental
-  // staleness across user clicks.
+  // (in createMainWindow) takes the placement staged under the window name
+  // passed to window.open (config.name), once. Placements no window claims
+  // are dropped after 10s.
   ipcMain.handle('configure_next_output_window', (_, config) => {
-    pendingOutputWindowConfig = config && typeof config === 'object' ? { ...config } : null;
-    nextOutputWindowFullscreen = false;
-    if (pendingOutputWindowConfigTimer) {
-      clearTimeout(pendingOutputWindowConfigTimer);
-      pendingOutputWindowConfigTimer = null;
-    }
-    if (pendingOutputWindowConfig) {
-      pendingOutputWindowConfigTimer = setTimeout(() => {
-        pendingOutputWindowConfig = null;
-        pendingOutputWindowConfigTimer = null;
-        console.log('[Output] pending config cleared (5s timeout)');
-      }, 5000);
-    }
+    pendingOutputConfigs.stage(config);
     return true;
   });
 
@@ -3853,11 +3840,16 @@ function registerIpcHandlers() {
   // Used by the "Match Resolution" button — sets the project canvas to the
   // exact pixel dimensions of the projector / external monitor so there's
   // zero scaling between source and final output.
-  ipcMain.handle('get_output_display_info', () => {
+  ipcMain.handle('get_output_display_info', (_e, args) => {
     const primary = screen.getPrimaryDisplay();
+    const requestedId = args && typeof args.displayId === 'number' ? args.displayId : null;
+    const requested = requestedId == null ? null : screen.getAllDisplays().find(d => d.id === requestedId) || null;
     let target;
     let isExternal = false;
-    if (outputWindow && !outputWindow.isDestroyed()) {
+    if (requested) {
+      // The display the output is about to open on.
+      target = requested;
+    } else if (outputWindow && !outputWindow.isDestroyed()) {
       const bounds = outputWindow.getBounds();
       const cx = bounds.x + bounds.width / 2;
       const cy = bounds.y + bounds.height / 2;
@@ -3880,11 +3872,15 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle('close_output_window', () => {
+  // Resolves once the window is gone, so a reopen right after cannot be
+  // handed the closing window.
+  ipcMain.handle('close_output_window', async () => {
     if (outputWindow) {
-      closeOutputBrowserWindow(outputWindow);
+      const closing = outputWindow;
       outputWindow = null;
+      await closeOutputBrowserWindow(closing);
     }
+    return true;
   });
 
   // --- Display enumeration ---
@@ -3994,7 +3990,12 @@ function registerIpcHandlers() {
   ipcMain.handle('output_fullscreen_external', (_, args) => {
     const allDisplays = screen.getAllDisplays();
     const primary = screen.getPrimaryDisplay();
-    const external = allDisplays.find(d => d.id !== primary.id);
+    // The display the editor picked for the output, when it is connected and
+    // is not the main one; otherwise the first external display.
+    const requestedId = args && typeof args.displayId === 'number' ? args.displayId : null;
+    const requested = requestedId == null ? null
+      : allDisplays.find(d => d.id === requestedId && d.id !== primary.id) || null;
+    const external = requested || firstExternalDisplay(allDisplays, primary);
     if (!external) {
       return { ok: false, displayId: primary.id, isExternal: false, error: 'No external display connected' };
     }
@@ -4106,15 +4107,15 @@ function registerIpcHandlers() {
       sliceWindows.delete(sliceId);
     }
 
-    const bounds = target.bounds;
+    const bounds = outputWindowBounds(target, { fullscreen: true });
+    // Built hidden and windowed; placeOutputWindow moves it onto the
+    // display and only then makes it fullscreen.
     const win = new BrowserWindow({
-      width: bounds.width,
-      height: bounds.height,
-      x: bounds.x,
-      y: bounds.y,
+      ...bounds,
+      show: false,
       title: `Ghost Arcade Output — slice ${sliceId}`,
       frame: false,
-      fullscreen: !isMac,
+      fullscreen: false,
       // macOS: lets the projector cover the menu-bar strip (enterMacProjector).
       enableLargerThanScreen: isMac,
       autoHideMenuBar: true,
@@ -4129,11 +4130,8 @@ function registerIpcHandlers() {
         backgroundThrottling: false,
       },
     });
-    if (isMac) {
-      allowMacProjector(win);
-      setOutputFullScreen(win, true);
-    }
     win.setMenuBarVisibility(false);
+    placeOutputWindow(win, { displayId: target.id, fullscreen: true, bounds });
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
     const isDev = !app.isPackaged;
@@ -5652,48 +5650,45 @@ function createMainWindow() {
     // share the same staging IPC + handler so the slice window inherits
     // the same same-process / DOM-accessible properties that let it
     // read the editor's already-warped presentCanvas via window.opener.
-    const cfg = pendingOutputWindowConfig || {};
-    pendingOutputWindowConfig = null;
+    const frameName = typeof details.frameName === 'string' ? details.frameName : '';
+    const cfg = pendingOutputConfigs.take(frameName) || {};
     const allDisplays = screen.getAllDisplays();
-    let target = screen.getPrimaryDisplay();
-    if (cfg.displayId) {
-      const found = allDisplays.find(d => d.id === cfg.displayId);
-      if (found) target = found;
-      else if (isSliceDisplay) {
+    const primary = screen.getPrimaryDisplay();
+    // Slice windows are projector-targeted: borderless + always fullscreen
+    // matches the legacy `output_open_slice_window` behaviour. Output
+    // windows keep the framed, resizable chrome for in-app preview.
+    const isSliceWin = isSliceDisplay;
+    const fullscreen = isSliceWin || !!cfg.fullscreen;
+    let target = cfg.displayId ? allDisplays.find(d => d.id === cfg.displayId) || null : null;
+    if (!target) {
+      if (isSliceWin) {
         // A Screen's display is not connected: open nothing rather than a
         // fullscreen window over the editor on the primary display.
         console.warn(`[Output] slice window: display ${cfg.displayId} is not connected; not opening`);
         return { action: 'deny' };
       }
-    } else if (isSliceDisplay) {
-      return { action: 'deny' };
+      // A fullscreen output never falls back onto the editor's display.
+      target = fullscreen ? firstExternalDisplay(allDisplays, primary) : primary;
+      if (!target) {
+        console.warn('[Output] fullscreen output: no external display connected; not opening');
+        return { action: 'deny' };
+      }
     }
-    const bounds = target.bounds;
-    const fullscreen = !!cfg.fullscreen;
-    const winW = fullscreen ? bounds.width : Math.max(320, Math.min(8192, Math.round(cfg.width || 1280)));
-    const winH = fullscreen ? bounds.height : Math.max(240, Math.min(8192, Math.round(cfg.height || 720)));
-    const winX = fullscreen ? bounds.x : Math.round(cfg.x ?? bounds.x + (bounds.width - winW) / 2);
-    const winY = fullscreen ? bounds.y : Math.round(cfg.y ?? bounds.y + (bounds.height - winH) / 2);
-
-    // Slice windows are projector-targeted: borderless + always fullscreen
-    // matches the legacy `output_open_slice_window` behaviour. Output
-    // windows keep the framed, resizable chrome for in-app preview.
-    const isSliceWin = isSliceDisplay;
-    // did-create-window puts it into simple fullscreen on macOS.
-    nextOutputWindowFullscreen = isSliceWin || fullscreen;
+    const bounds = outputWindowBounds(target, { ...cfg, fullscreen });
+    // did-create-window moves the hidden window onto this display, shows it
+    // and then makes it fullscreen.
+    openedOutputPlacements.set(frameName, { displayId: target.id, fullscreen, bounds });
     return {
       action: 'allow',
       overrideBrowserWindowOptions: {
-        width: winW,
-        height: winH,
-        x: winX,
-        y: winY,
+        ...bounds,
+        show: false,
         title: isSliceWin ? 'Ghost Arcade Output — slice' : 'Ghost Arcade Output',
         resizable: !isSliceWin,
         // macOS fullscreen outputs are borderless projectors (enterMacProjector).
         frame: !isSliceWin && !(isMac && fullscreen),
-        enableLargerThanScreen: isMac && (isSliceWin || fullscreen),
-        fullscreen: isMac ? false : (isSliceWin ? true : fullscreen),
+        enableLargerThanScreen: isMac && fullscreen,
+        fullscreen: false,
         autoHideMenuBar: true,
         skipTaskbar: false,
         backgroundColor: '#000000',
@@ -5723,11 +5718,12 @@ function createMainWindow() {
     const isWebgpuOutput = url.includes('mode=webgpu-display');
     const isSliceDisplay = url.includes('mode=slice-display');
     if (!isWebgpuOutput && !isSliceDisplay) return;
-    const wantsFullscreen = nextOutputWindowFullscreen;
-    nextOutputWindowFullscreen = false;
-    if (wantsFullscreen && isMac) {
-      allowMacProjector(newWindow);
-      setOutputFullScreen(newWindow, true);
+    const frameName = typeof details.frameName === 'string' ? details.frameName : '';
+    const placement = openedOutputPlacements.get(frameName);
+    openedOutputPlacements.delete(frameName);
+    if (placement) placeOutputWindow(newWindow, placement);
+    else {
+      try { newWindow.show(); } catch { /* destroyed */ }
     }
     if (isSliceDisplay) {
       // Per-screen slice window opened via window.open from the editor.
@@ -6027,16 +6023,83 @@ function isOutputFullScreen(win) {
   return macProjectorWindows.has(win) || win.isFullScreen();
 }
 
-/** Close an output or slice window for certain: one that ignores close() is destroyed. */
+/**
+ * Close an output or slice window for certain: one that ignores close() is
+ * destroyed. Resolves once it is gone.
+ */
 function closeOutputBrowserWindow(win) {
-  if (!win || win.isDestroyed()) return;
-  try { win.close(); } catch { /* destroyed below */ }
-  setTimeout(() => {
-    if (!win.isDestroyed()) {
-      console.warn('[Output] window ignored close(); destroying it');
-      try { win.destroy(); } catch { /* gone */ }
+  if (!win || win.isDestroyed()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    win.once('closed', finish);
+    const timer = setTimeout(() => {
+      if (!win.isDestroyed()) {
+        console.warn('[Output] window ignored close(); destroying it');
+        try { win.destroy(); } catch { /* gone */ }
+      }
+      finish();
+    }, 1000);
+    try { win.close(); } catch { finish(); }
+  });
+}
+
+/**
+ * Put an output or Screen window on its display. The window is created
+ * hidden; it is moved onto the display, shown, and only then made
+ * fullscreen, because a window that goes fullscreen while it is being built
+ * keeps whatever display it was built on (on Windows that was often the
+ * main one). Where it ended up is checked and corrected.
+ */
+function placeOutputWindow(win, placement) {
+  if (!win || win.isDestroyed() || !placement) return;
+  const { fullscreen, bounds } = placement;
+  try {
+    win.setBounds(bounds);
+    if (fullscreen && isMac) {
+      allowMacProjector(win);
+      setOutputFullScreen(win, true);
     }
-  }, 1000);
+    win.show();
+    if (fullscreen && !isMac) win.setFullScreen(true);
+  } catch (err) {
+    console.warn('[Output] placing window failed:', err?.message || err);
+  }
+  verifyOutputPlacement(win, placement, 0);
+}
+
+function verifyOutputPlacement(win, placement, attempt) {
+  setTimeout(() => {
+    if (!win || win.isDestroyed()) return;
+    const target = screen.getAllDisplays().find(d => d.id === placement.displayId);
+    if (!target) return;
+    const actual = screen.getDisplayMatching(win.getBounds());
+    if (actual && actual.id === target.id) return;
+    console.warn(`[Output] window opened on display ${actual?.id}, not ${target.id}; moving it`);
+    try {
+      if (placement.fullscreen && isMac && macProjectorCapable.has(win)) {
+        macProjectorWindows.delete(win);
+        win.setBounds(target.bounds);
+        enterMacProjector(win);
+      } else if (placement.fullscreen) {
+        win.setFullScreen(false);
+        win.setBounds(target.bounds);
+        win.setFullScreen(true);
+      } else {
+        win.setBounds(outputWindowBounds(target, { width: placement.bounds.width, height: placement.bounds.height }));
+      }
+    } catch (err) {
+      console.warn('[Output] moving window failed:', err?.message || err);
+    }
+    // Fullscreen outputs are checked again; a window the user may be
+    // dragging elsewhere is left alone after the first correction.
+    if (attempt < 2 && placement.fullscreen) verifyOutputPlacement(win, placement, attempt + 1);
+  }, attempt === 0 ? 300 : 500);
 }
 
 function installOutputEscapeHandler(win, { closeOnEscape = false } = {}) {
@@ -6086,25 +6149,21 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     targetDisplay = allDisplays.find(d => d.id !== primary.id) || primary;
   }
 
-  const bounds = targetDisplay.bounds;
+  // Fullscreen takes the display's whole area; a window keeps its size and
+  // position when that position is on the target display.
+  const winBounds = outputWindowBounds(targetDisplay, { fullscreen, width, height, x, y });
 
-  // If fullscreen, use the display bounds
-  const winX = fullscreen ? bounds.x : Math.round(x ?? bounds.x);
-  const winY = fullscreen ? bounds.y : Math.round(y ?? bounds.y);
-  const winW = fullscreen ? bounds.width : Math.round(width || 1280);
-  const winH = fullscreen ? bounds.height : Math.round(height || 720);
-
+  // Built hidden and windowed; placeOutputWindow (below) moves it onto the
+  // display and only then makes it fullscreen.
   const win = new BrowserWindow({
-    width: winW,
-    height: winH,
-    x: winX,
-    y: winY,
+    ...winBounds,
+    show: false,
     title: 'Ghost Arcade Output',
     resizable: true,
     // macOS fullscreen: a borderless projector, entered below.
     frame: !(isMac && fullscreen),
     enableLargerThanScreen: isMac && fullscreen,
-    fullscreen: isMac ? false : fullscreen,
+    fullscreen: false,
     autoHideMenuBar: true,
     skipTaskbar: false,
     backgroundColor: '#000000',
@@ -6118,10 +6177,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     },
   });
   outputWindow = win;
-  if (fullscreen && isMac) {
-    allowMacProjector(win);
-    setOutputFullScreen(win, true);
-  }
+  placeOutputWindow(win, { displayId: targetDisplay.id, fullscreen, bounds: winBounds });
   installOutputEscapeHandler(win);
 
   // Hide menu bar for clean look
@@ -6215,7 +6271,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     }
   });
 
-  console.log(`[Output] Window created on display "${targetDisplay.label || targetDisplay.id}" at ${winX},${winY} ${winW}x${winH} fullscreen=${fullscreen}`);
+  console.log(`[Output] Window created on display "${targetDisplay.label || targetDisplay.id}" at ${winBounds.x},${winBounds.y} ${winBounds.width}x${winBounds.height} fullscreen=${fullscreen}`);
 }
 
 // ============================================================

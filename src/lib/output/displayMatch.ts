@@ -108,3 +108,36 @@ export function savedDisplayMissing(
   if (displays.length === 0) return false;
   return resolveSavedDisplay(displays, id, fingerprint).status === 'missing';
 }
+
+export type LiveOutputDisplayChoice<D extends DisplayLike> = {
+  /** Where the output opens; null when there is nowhere it may go. */
+  display: D | null;
+  /** The display picked for the output is not connected, so another was used. */
+  savedMissing: boolean;
+};
+
+/**
+ * Which display the Live Output opens on.
+ *
+ * The display picked for it (right-click on the output buttons) when it is
+ * connected; otherwise the first display that is not the main one. A
+ * fullscreen output never takes the main display, where it would cover the
+ * editor; a windowed preview falls back to it when nothing else is
+ * connected.
+ */
+export function pickLiveOutputDisplay<D extends DisplayLike>(
+  displays: D[],
+  savedId: number | null | undefined,
+  savedFingerprint: DisplayFingerprint | null | undefined,
+  options: { fullscreen: boolean },
+): LiveOutputDisplayChoice<D> {
+  const saved = resolveSavedDisplay(displays, savedId, savedFingerprint);
+  const savedMissing = saved.status === 'missing' && displays.length > 0;
+  if (saved.display && !(options.fullscreen && saved.display.isPrimary)) {
+    return { display: saved.display, savedMissing: false };
+  }
+  const external = displays.find((d) => !d.isPrimary) ?? null;
+  if (external) return { display: external, savedMissing };
+  if (options.fullscreen) return { display: null, savedMissing };
+  return { display: displays.find((d) => d.isPrimary) ?? displays[0] ?? null, savedMissing };
+}

@@ -675,6 +675,12 @@ export interface OutputSettings {
   customHeight: number;
   // Output window state (not persisted — runtime only)
   outputWindowOpen: boolean;
+  /** The display the Live Output (Output Window / Fullscreen) opens on, or
+   *  null for the first display that is not the main one. Set by
+   *  right-clicking the output buttons. The fingerprint finds it again when
+   *  its id changes. */
+  liveOutputDisplayId?: number | null;
+  liveOutputDisplayFingerprint?: DisplayFingerprint | null;
   // Projection controls
   blackout: boolean;
   testPattern: string;
@@ -1018,6 +1024,8 @@ function createDefaultSettings(): AppSettings {
       customWidth: 1920,
       customHeight: 1080,
       outputWindowOpen: false,
+      liveOutputDisplayId: null,
+      liveOutputDisplayFingerprint: null,
       blackout: false,
       testPattern: 'none',
       edgeBlendLeft: 0,
@@ -1576,6 +1584,22 @@ function createSettingsStore() {
         const newSettings = {
           ...s,
           output: { ...s.output, spoutResolution: resolution }
+        };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
+    /** Pick the display the Live Output opens on (null = automatic). */
+    setLiveOutputDisplay(display: { id: number; fingerprint: DisplayFingerprint } | null) {
+      update(s => {
+        const newSettings = {
+          ...s,
+          output: {
+            ...s.output,
+            liveOutputDisplayId: display?.id ?? null,
+            liveOutputDisplayFingerprint: display?.fingerprint ?? null,
+          },
         };
         saveSettings(newSettings);
         return newSettings;

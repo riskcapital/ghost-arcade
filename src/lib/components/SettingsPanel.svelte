@@ -265,7 +265,14 @@
     try {
       const { invoke, isDesktopApp } = await import('$lib/bridge');
       if (!isDesktopApp) { matchResLabel = 'Desktop only'; return; }
-      const info: any = await invoke('get_output_display_info');
+      // The display picked for the output (right-click Output Window), when one was.
+      let displayId: number | null = null;
+      if ($settings.output.liveOutputDisplayId != null) {
+        const { resolveSavedDisplay } = await import('$lib/output/displayMatch');
+        const displays: any[] = (await invoke('get_displays')) || [];
+        displayId = resolveSavedDisplay(displays, $settings.output.liveOutputDisplayId, $settings.output.liveOutputDisplayFingerprint).display?.id ?? null;
+      }
+      const info: any = await invoke('get_output_display_info', displayId == null ? undefined : { displayId });
       if (info?.nativeWidth && info?.nativeHeight) {
         project.setProjectDimensions(info.nativeWidth, info.nativeHeight);
         matchResLabel = `${info.label}: ${info.nativeWidth}x${info.nativeHeight}`;

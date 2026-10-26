@@ -24,6 +24,7 @@
   import Canvas from './lib/components/Canvas.svelte';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import { probeWebGPU } from './lib/renderer/webgpuCapability';
+  import { displayFingerprint, resolveSavedDisplay } from './lib/output/displayMatch';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
   import GuidedTour from './lib/components/GuidedTour.svelte';
@@ -4280,10 +4281,34 @@
     settings.setOutputWindowOpen(false);
   }
 
+  /* Right-click on the output buttons: which display the Live Output opens on. */
+  type OutputMenuDisplay = { id: number; label: string; width: number; height: number; isPrimary: boolean; scaleFactor: number };
+  let outputDisplayMenu: { x: number; y: number; displays: OutputMenuDisplay[] } | null = null;
+  async function openOutputDisplayMenu(event: MouseEvent) {
+    if (!isDesktopApp) return;
+    event.preventDefault();
+    let displays: OutputMenuDisplay[] = [];
+    try { displays = ((await invoke('get_displays')) as OutputMenuDisplay[]) || []; } catch { displays = []; }
+    outputDisplayMenu = {
+      x: Math.min(event.clientX, window.innerWidth - 260),
+      y: event.clientY,
+      displays: displays.filter((d) => !d.isPrimary),
+    };
+  }
+  function chooseOutputDisplay(display: OutputMenuDisplay | null) {
+    settings.setLiveOutputDisplay(display ? { id: display.id, fingerprint: displayFingerprint(display) } : null);
+    outputDisplayMenu = null;
+  }
+  $: outputDisplayChoice = outputDisplayMenu
+    ? resolveSavedDisplay(outputDisplayMenu.displays, $settings.output.liveOutputDisplayId, $settings.output.liveOutputDisplayFingerprint)
+    : null;
+
   async function matchOutputDisplayResolution(reason: string) {
     if (!isDesktopApp) return;
     try {
-      const info: any = await invoke('get_output_display_info');
+      // The display the output is about to open on, not just the first external one.
+      const displayId = (await outputWindow?.targetDisplayId(true)) ?? null;
+      const info: any = await invoke('get_output_display_info', displayId == null ? undefined : { displayId });
       if (!info?.nativeWidth || !info?.nativeHeight) return;
       const current = get(project);
       if (current.width === info.nativeWidth && current.height === info.nativeHeight) return;
@@ -4348,13 +4373,11 @@
     }
 
     // Fullscreen means "dedicated projector output". If a preview output
-    // window is already open, close it first so window.open does not reuse
-    // the named ga-output window and ignore the fullscreen placement.
+    // window is already open, close it first and wait until it is gone.
     if (outputIsOpen || isOutputAttached()) {
-      outputWindow.close();
       outputIsOpen = false;
       settings.setOutputWindowOpen(false);
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await outputWindow.closeAndWait();
     }
 
     if (get(settings).output.matchResolutionOnFullscreen) {
@@ -6085,7 +6108,8 @@
           class="output-btn"
           class:active={outputMode === 'window'}
           onclick={outputIsOpen ? closeOutputWindow : openOutputWindow}
-          title={outputIsOpen ? 'Close Output Window' : 'Open Output Window'}
+          oncontextmenu={openOutputDisplayMenu}
+          title={outputIsOpen ? 'Close Output Window' : 'Open Output Window (right-click to pick its display)'}
         >
           <span class="tb-long">{outputIsOpen ? 'Close Output' : 'Output Window'}</span>
           <span class="tb-short">{outputIsOpen ? 'Close Output' : 'Output'}</span>
@@ -6094,6 +6118,8 @@
           class="output-btn"
           class:active={outputMode === 'fullscreen'}
           onclick={toggleFullscreen}
+          oncontextmenu={openOutputDisplayMenu}
+          title="Fullscreen output on a projector or second display (right-click to pick which)"
         >
           Fullscreen
         </button>
@@ -7307,6 +7333,36 @@
       onClose={() => showVideoConverter = false}
     />
 
+    <!-- Which display the Live Output opens on (right-click Output Window
+         or Fullscreen). -->
+    {#if outputDisplayMenu}
+      {@const _menu = outputDisplayMenu}
+      {@const _assigned = outputDisplayChoice?.display?.id ?? null}
+      {@const _picked = $settings.output.liveOutputDisplayId != null}
+      <div class="display-menu-backdrop" onclick={() => (outputDisplayMenu = null)} oncontextmenu={(e) => { e.preventDefault(); outputDisplayMenu = null; }} role="presentation"></div>
+      <div class="display-menu" style="left:{_menu.x}px; top:{_menu.y}px;" role="menu">
+        <div class="display-menu-title">Output — display</div>
+        <button class="display-menu-item" class:checked={!_picked} onclick={() => chooseOutputDisplay(null)}>
+          <span class="display-menu-check">{!_picked ? '✓' : ''}</span>
+          Auto (first external display)
+        </button>
+        {#each _menu.displays as display (display.id)}
+          <button class="display-menu-item" class:checked={_picked && _assigned === display.id} onclick={() => chooseOutputDisplay(display)}>
+            <span class="display-menu-check">{_picked && _assigned === display.id ? '✓' : ''}</span>
+            {display.label || `Display ${display.id}`}
+            <span class="display-menu-dim">{display.width}×{display.height}</span>
+          </button>
+        {/each}
+        {#if _picked && outputDisplayChoice?.status === 'missing'}
+          <div class="display-menu-hint">
+            {$settings.output.liveOutputDisplayFingerprint?.label || 'The picked display'} is not connected; the output uses the first external display until it is.
+          </div>
+        {:else if _menu.displays.length === 0}
+          <div class="display-menu-hint">Only the main display is connected. Connect a projector or second display to choose it here.</div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Welcome screen, every launch; it waits for a recovery prompt. -->
     {#if showWelcome && !showRecoveryModal}
       <WelcomeModal
@@ -8314,6 +8370,62 @@
     flex: 1;
     justify-content: center;
     min-width: 0;
+  }
+
+  /* Display picker (right-click on the output buttons). */
+  .display-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200100;
+  }
+  .display-menu {
+    position: fixed;
+    z-index: 200101;
+    min-width: 230px;
+    max-width: 320px;
+    padding: 6px;
+    background: #14161c;
+    border: 1px solid var(--ga-blue-mute-800, #2a3550);
+    border-radius: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    font-size: 12px;
+  }
+  .display-menu-title {
+    padding: 5px 8px 7px;
+    color: #7d8595;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .display-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 8px;
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    color: #d7dbe4;
+    text-align: left;
+    cursor: pointer;
+  }
+  .display-menu-item:hover { background: var(--ga-blue-mute-800, #2a3550); }
+  .display-menu-item.checked { color: #fff; }
+  .display-menu-check {
+    width: 10px;
+    color: var(--ga-blue-300, #8fa8ff);
+  }
+  .display-menu-dim {
+    margin-left: auto;
+    color: #6c7484;
+    font-size: 10px;
+  }
+  .display-menu-hint {
+    padding: 4px 8px 6px;
+    color: #6c7484;
+    font-size: 10px;
+    line-height: 1.4;
   }
 
   .output-btn {
