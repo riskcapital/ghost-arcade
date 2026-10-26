@@ -12,7 +12,9 @@ export function getLastRawAnalysis(): AudioAnalysis | null {
 }
 
 // Audio input source configuration
-export type AudioInputType = 'none' | 'microphone' | 'file' | 'system';
+/** 'clips' = no live input; the analyser follows the app's own clip audio
+ *  (Show timeline tracks, VJ deck clips with sound). See clipAudioFollow.ts. */
+export type AudioInputType = 'none' | 'microphone' | 'file' | 'system' | 'clips';
 
 /** Minimal shape we need from MediaDeviceInfo, kept separate so the store
  *  doesn't leak the full DOM type to consumers that don't want it. */
@@ -274,6 +276,20 @@ function createAudioStore() {
       }
     },
 
+    /** Follow clip audio while no live input runs (see clipAudioFollow.ts). */
+    startClipFollow() {
+      if (get({ subscribe }).inputType !== 'none') return;
+      audioAnalyzer.startClipFollow();
+      if (!audioAnalyzer.isFollowingClips()) return;
+      update(s => ({ ...s, error: null, inputType: 'clips', isActive: true }));
+    },
+
+    /** Stop following clip audio; a live input, if one took over, is left alone. */
+    async stopClipFollow() {
+      if (get({ subscribe }).inputType !== 'clips') return;
+      await this.stop();
+    },
+
     /** Stop audio analysis */
     async stop() {
       await audioAnalyzer.stop();
@@ -282,6 +298,9 @@ function createAudioStore() {
         sensitivity: s.sensitivity,
         smoothing: s.smoothing,
         manualBPM: s.manualBPM,
+        // Band EQ is a setting, not session state: clip audio starts and
+        // stops the analyser with every show, which must not reset it.
+        bandGain: s.bandGain,
         // Keep the device list warm and the user's device preference
         // across start/stop cycles — toggling the mic off shouldn't
         // forget which device they picked.

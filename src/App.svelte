@@ -110,6 +110,9 @@
   import { startProjectionSimSceneSync } from './lib/projectionSim/sceneSync';
   import { startAutoMapHost } from './lib/projectionSim/autoMap';
   import { audioStore, audioBpm, audioManualBpm, isBeat } from './lib/stores/audio';
+  // Side effect: the analyser follows clip audio (Show timeline tracks, deck
+  // clips with sound) when no live input runs, so a show drives its looks.
+  import './lib/audio/clipAudioFollow';
   // macros.ts registers a callback with midiRouter on import so
   // `vj:macro:N:value` MIDI messages route into the macro store. Pulled in
   // here to guarantee it runs at app boot, even if the VJ panel hasn't

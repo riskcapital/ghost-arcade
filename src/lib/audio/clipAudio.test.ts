@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { ClipAudioMixer, clipAudioVoices, type ClipAudioDeckRow, type ClipAudioDeckState } from './clipAudio';
+import { get } from 'svelte/store';
+import { ClipAudioMixer, clipAudioAudible, clipAudioVoices, type ClipAudioDeckRow, type ClipAudioDeckState } from './clipAudio';
 
 const el = () => ({ muted: true, volume: 1 }) as unknown as HTMLMediaElement;
 const video = (id: string, extra: Record<string, unknown> = {}) => ({ id, type: 'video', src: `ghost-asset://localhost/${id}.mp4`, videoElement: el(), ...extra });
@@ -77,6 +78,37 @@ describe('the mixer', () => {
     expect(sources).toHaveLength(2);
     mixer.apply([]);
     expect([a.muted, b.muted]).toEqual([true, true]);
+  });
+
+  it('says when deck clips are heard, for audio reactivity', () => {
+    const { context } = fakeContext();
+    const mixer = new ClipAudioMixer(() => context);
+    mixer.setMasterMuted(false);
+    mixer.setMasterVolume(1);
+    mixer.apply([{ id: 'a', element: el(), gain: 1, pan: 0 }]);
+    expect(get(clipAudioAudible)).toBe(true);
+    mixer.apply([{ id: 'a', element: el(), gain: 0, pan: 0 }]);
+    expect(get(clipAudioAudible)).toBe(false);
+    mixer.apply([{ id: 'a', element: el(), gain: 1, pan: 0 }]);
+    mixer.setMasterMuted(true);
+    expect(get(clipAudioAudible)).toBe(false);
+    mixer.setMasterMuted(false);
+    expect(get(clipAudioAudible)).toBe(true);
+    mixer.apply([]);
+    expect(get(clipAudioAudible)).toBe(false);
+  });
+
+  it('hands out a copy of its mix for analysis once it runs', () => {
+    const { context } = fakeContext();
+    const stream = { id: 'mix' };
+    let taps = 0;
+    (context as unknown as Record<string, unknown>).createMediaStreamDestination = () => { taps++; return { stream }; };
+    const mixer = new ClipAudioMixer(() => context);
+    expect(mixer.analysisStream()).toBeNull(); // nothing routed yet
+    mixer.apply([{ id: 'a', element: el(), gain: 1, pan: 0 }]);
+    expect(mixer.analysisStream()).toBe(stream);
+    expect(mixer.analysisStream()).toBe(stream);
+    expect(taps).toBe(1);
   });
 
   it('builds nothing until a clip needs it', () => {

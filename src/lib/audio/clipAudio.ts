@@ -47,6 +47,9 @@ function savedMaster(): { volume: number; muted: boolean } {
 
 export const clipAudioMaster = writable<ClipAudioMasterState>({ ...savedMaster(), activeClips: 0, exportSilenced: false });
 
+/** True while at least one deck clip is actually heard (above zero, master not muted). */
+export const clipAudioAudible = writable(false);
+
 type Wiring = { gain: GainNode; pan: StereoPannerNode };
 /** How fast a level change lands: quick, without a click. */
 const RAMP_SECONDS = 0.02;
@@ -107,6 +110,9 @@ export class ClipAudioMixer {
   private sounding = new Set<HTMLMediaElement>();
   private level = savedMaster();
   private output = savedOutput();
+  /** Copy of the mix for audio analysis (see analysisStream). */
+  private tap: MediaStreamAudioDestinationNode | null = null;
+  private anyVoiceAudible = false;
 
   constructor(private createContext: () => AudioContext = () => new AudioContext()) {}
 
@@ -162,6 +168,34 @@ export class ClipAudioMixer {
     }
     this.sounding = wanted;
     clipAudioMaster.update((state) => (state.activeClips === wanted.size ? state : { ...state, activeClips: wanted.size }));
+    this.anyVoiceAudible = voices.some((voice) => voice.gain > 0 && wanted.has(voice.element));
+    this.publishAudible();
+  }
+
+  private publishAudible() {
+    const audible = this.anyVoiceAudible && !this.level.muted && this.level.volume > 0;
+    clipAudioAudible.update((was) => (was === audible ? was : audible));
+  }
+
+  /**
+   * The deck's mix, after the master level, as a stream. The deck has its
+   * own AudioContext, so this is how its sound reaches the audio analyser
+   * (audio/clipAudioFollow.ts) to drive audio-reactive visuals. Null until
+   * a clip has been routed.
+   */
+  analysisStream(): MediaStream | null {
+    if (!this.context || !this.master) return null;
+    if (!this.tap) {
+      try {
+        this.tap = this.context.createMediaStreamDestination();
+        this.master.connect(this.tap);
+      } catch (error) {
+        console.warn('[ClipAudio] could not tap the mix for analysis:', error);
+        this.tap = null;
+        return null;
+      }
+    }
+    return this.tap.stream;
   }
 
   private setLevel(level: { volume: number; muted: boolean }) {
@@ -169,6 +203,7 @@ export class ClipAudioMixer {
     if (this.master && this.context) this.master.gain.setTargetAtTime(level.muted ? 0 : level.volume, this.context.currentTime, RAMP_SECONDS);
     try { localStorage.setItem(MASTER_KEY, JSON.stringify(level)); } catch { /* the level still holds for this session */ }
     clipAudioMaster.update((state) => ({ ...state, ...level }));
+    this.publishAudible();
   }
   setMasterVolume(volume: number): void { this.setLevel({ ...this.level, volume: clamp(volume, 0, 1) }); }
   setMasterMuted(muted: boolean): void { this.setLevel({ ...this.level, muted }); }
