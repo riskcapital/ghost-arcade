@@ -21,7 +21,8 @@
     type SnapView,
   } from '../utils/mappingSnap';
   import { quadInverse, quadPoint } from '../utils/layerQuad';
-  import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { mappingPointSelection, selectMappingPoint } from '../stores/mappingPointSelection';
+  import { releaseFormControlFocus } from '../utils/formFocus';
   import {
     MESH_CURVE_SEGMENTS,
     meshEdgePoint,
@@ -42,8 +43,25 @@
   let dragging: { row: number; col: number } | null = null;
   let containerEl: HTMLDivElement;
 
-  // Selected point for keyboard navigation (persists after click)
-  let selectedPoint: { row: number; col: number } | null = null;
+  // The point (and on a Bezier mesh, the tangent handle) the arrow keys
+  // move: the one pressed last. App.svelte's arrow-key handler moves it;
+  // see utils/mappingNudge.ts. Only a point that exists on this layer's
+  // grid counts.
+  $: meshRef = $mappingPointSelection?.kind === 'mesh' && $mappingPointSelection.layerId === $selectedLayer?.id
+    && meshGrid?.points[$mappingPointSelection.row]?.[$mappingPointSelection.col]
+    ? $mappingPointSelection
+    : null;
+  $: selectedPoint = meshRef ? { row: meshRef.row, col: meshRef.col } : null;
+  $: selectedTangent = meshRef?.tangent && meshGrid?.bezier ? meshRef.tangent : null;
+
+  /** Select a point; pressing the selected point again keeps its handle. */
+  function selectPoint(row: number, col: number, tangent: MeshTangentSide | null = null) {
+    const layerId = $selectedLayer?.id;
+    if (!layerId) return;
+    const same = selectedPoint?.row === row && selectedPoint?.col === col;
+    const side = tangent ?? (same ? selectedTangent : null);
+    selectMappingPoint(side ? { kind: 'mesh', layerId, row, col, tangent: side } : { kind: 'mesh', layerId, row, col });
+  }
 
   // A drag moves the point from where it was at the press by the pointer's
   // travel (Shift: a tenth as far), so grabbing a point never moves it.
@@ -54,10 +72,8 @@
   let snapOutlines: SnapOutline[] = [];
   let activeSnapHit: SnapHit | null = null;
 
-  // Bezier mesh: the tangent handle being dragged, and the one the arrow
-  // keys nudge (the last handle clicked on the selected point).
+  // Bezier mesh: the tangent handle being dragged.
   let tangentDrag: { row: number; col: number; side: MeshTangentSide } | null = null;
-  let selectedTangent: MeshTangentSide | null = null;
 
   /** Store a new tangent for one handle (linked by default, Alt unlinks;
    *  see meshTangentsAfterDrag). */
@@ -81,9 +97,10 @@
     if ($selectedLayer?.locked) return;
     e.preventDefault();
     e.stopPropagation();
+    releaseFormControlFocus();
     cancelDrag(false);
     tangentDrag = { row, col, side };
-    selectedTangent = side;
+    selectPoint(row, col, side);
     beginTangentDrag(row, col, side, e.clientX, e.clientY);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
@@ -94,7 +111,7 @@
     e.preventDefault();
     cancelDrag(false);
     tangentDrag = { row, col, side };
-    selectedTangent = side;
+    selectPoint(row, col, side);
     const touch = e.touches[0];
     if (touch) beginTangentDrag(row, col, side, touch.clientX, touch.clientY);
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
@@ -209,93 +226,22 @@
     if ($selectedLayer?.locked) return;
     e.preventDefault();
     e.stopPropagation();
+    releaseFormControlFocus();
     cancelDrag(false);
     dragging = { row, col };
-    if (selectedPoint?.row !== row || selectedPoint?.col !== col) selectedTangent = null;
-    selectedPoint = { row, col };  // Set selected point for keyboard navigation
+    selectPoint(row, col);
     beginPointDrag(row, col, e.clientX, e.clientY);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   }
 
-  // Handle keyboard navigation for selected mesh point
-  function handleKeyDown(e: KeyboardEvent) {
-    if (!selectedPoint || !$selectedLayer || $selectedLayer.locked || !$selectedLayer.meshGrid) return;
-
-    const active = document.activeElement as HTMLElement | null;
-    const activeTag = active?.tagName;
-    if (
-      activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT' ||
-      active?.isContentEditable
-    ) return;
-
-    const proj = get(project);
-    const step = normalizedWarpNudge(
-      proj.width,
-      proj.height,
-      get(settings).ui.warpDragGranularity,
-      e.shiftKey ? 10 : 1,
-    );
-    const currentPos = $selectedLayer.meshGrid.points[selectedPoint.row][selectedPoint.col];
-    let dx = 0;
-    let dy = 0;
-
-    switch (e.key) {
-      case 'ArrowUp':
-        dy = step.y;
-        break;
-      case 'ArrowDown':
-        dy = -step.y;
-        break;
-      case 'ArrowLeft':
-        dx = -step.x;
-        break;
-      case 'ArrowRight':
-        dx = step.x;
-        break;
-      case 'Escape':
-        // A selected tangent handle lets go first, then the point.
-        if (selectedTangent) selectedTangent = null;
-        else selectedPoint = null;
-        return;
-      default:
-        return;
-    }
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    // With a tangent handle picked on a Bezier mesh, the arrows move the
-    // handle (Alt unlinks it from its mirror) instead of the point.
-    const grid = $selectedLayer.meshGrid;
-    if (selectedTangent && grid.bezier
-      && tangentSides(grid, selectedPoint.row, selectedPoint.col).includes(selectedTangent)) {
-      const current = resolveMeshTangents(grid, selectedPoint.row, selectedPoint.col)[selectedTangent];
-      writeTangent(selectedPoint.row, selectedPoint.col, selectedTangent,
-        { x: current.x + dx, y: current.y + dy }, e.altKey);
-      history.record(get(project));
-      return;
-    }
-
-    const newPos: Point2D = {
-      x: currentPos.x + dx,
-      y: currentPos.y + dy,
-    };
-
-    project.setMeshPoint($selectedLayer.id, selectedPoint.row, selectedPoint.col, newPos);
-    history.record(get(project));
-  }
-
-  // Set up keyboard event listener
   onMount(() => {
-    window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('blur', handleWindowBlur);
     document.addEventListener('visibilitychange', handleVisibilityChange);
   });
 
   onDestroy(() => {
     cancelDrag(false);
-    window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('blur', handleWindowBlur);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
@@ -350,8 +296,7 @@
     e.preventDefault();
     cancelDrag(false);
     dragging = { row, col };
-    if (selectedPoint?.row !== row || selectedPoint?.col !== col) selectedTangent = null;
-    selectedPoint = { row, col };
+    selectPoint(row, col);
     const touch = e.touches[0];
     if (touch) beginPointDrag(row, col, touch.clientX, touch.clientY);
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
@@ -448,7 +393,6 @@
     ? getTangentHandles(meshGrid, corners, tangentPoint)
     : [];
   $: tangentOrigin = tangentPoint && handlePositions ? handlePositions[tangentPoint.row]?.[tangentPoint.col] ?? null : null;
-  $: if (!meshGrid?.bezier) selectedTangent = null;
 </script>
 
 <div

@@ -5,6 +5,8 @@
   import { layerRenderMeshGrid } from '../utils/meshWarp';
   import { canvasToLayerUv, layerUvToCanvas } from '../utils/layerQuad';
   import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
+  import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from '../stores/mappingPointSelection';
+  import { releaseFormControlFocus } from '../utils/formFocus';
 
   // Container dimensions (set by parent)
   export let containerWidth: number = 800;
@@ -24,7 +26,19 @@
   let dragTravel: DragTravel | null = null;
   let mousePos: { x: number; y: number } = { x: 0, y: 0 };
   let hoverEdgeIndex: number = -1;
-  let selectedVertexIndex: number = -1;
+  // The vertex (or its curve handle) the arrow keys move: the one pressed
+  // last. App.svelte's arrow-key handler moves it; see utils/mappingNudge.ts.
+  $: shapeRef = $mappingPointSelection?.kind === 'shape-vertex' && $mappingPointSelection.layerId === $selectedLayer?.id
+    ? $mappingPointSelection
+    : null;
+  $: selectedVertexIndex = shapeRef ? shapeRef.index : -1;
+  $: selectedHandle = shapeRef?.handle ?? null;
+
+  function selectVertex(index: number, handle?: 'cpIn' | 'cpOut') {
+    const layerId = $selectedLayer?.id;
+    if (!layerId || index < 0) { clearMappingPointSelection(); return; }
+    selectMappingPoint(handle ? { kind: 'shape-vertex', layerId, index, handle } : { kind: 'shape-vertex', layerId, index });
+  }
   let penMode: PenMode = 'edit';
 
   const EDGE_HIT_THRESHOLD = 10; // pixels
@@ -231,7 +245,7 @@
       window.addEventListener('mouseup', handlePenDraftUp);
     } else if (penMode === 'edit') {
       // Edit mode click on empty canvas: deselect
-      selectedVertexIndex = -1;
+      clearMappingPointSelection();
     }
   }
 
@@ -327,16 +341,19 @@
       // Remove mode: click to delete point
       if (customPoints.length > 3) {
         if (selectedVertexIndex === index) {
-          selectedVertexIndex = index > 0 ? index - 1 : customPoints.length - 2;
+          selectVertex(index > 0 ? index - 1 : customPoints.length - 2);
         } else if (selectedVertexIndex > index) {
-          selectedVertexIndex--;
+          selectVertex(selectedVertexIndex - 1);
         }
         project.removeCustomShapePoint($selectedLayer.id, index);
       }
       return;
     }
 
-    selectedVertexIndex = index;
+    // The arrow keys move this vertex next, not a panel control that
+    // still has focus.
+    releaseFormControlFocus();
+    selectVertex(index);
     dragging = 'vertex';
     dragVertexIndex = index;
     beginPointDrag(index, 'vertex', e.clientX, e.clientY);
@@ -362,7 +379,8 @@
     if (!$selectedLayer || $selectedLayer.locked || !isCustom || !isClosed) return;
     e.preventDefault();
     e.stopPropagation();
-    selectedVertexIndex = index;
+    releaseFormControlFocus();
+    selectVertex(index, handleType);
     dragging = handleType;
     dragVertexIndex = index;
     beginPointDrag(index, handleType, e.clientX, e.clientY);
@@ -449,7 +467,14 @@
   }
 
   // Clear selection when layer changes
-  $: if ($selectedLayer?.id) { selectedVertexIndex = -1; penMode = 'edit'; }
+  // Only when another layer is selected: $selectedLayer changes on every
+  // project edit, and keying on it alone reset the tool and the selection
+  // after each one.
+  let penModeLayerId: string | null = null;
+  $: if (($selectedLayer?.id ?? null) !== penModeLayerId) {
+    penModeLayerId = $selectedLayer?.id ?? null;
+    penMode = 'edit';
+  }
 
   // Cleanup on destroy
   onDestroy(() => {
@@ -616,6 +641,7 @@
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
             class="cp-handle"
+            class:selected={selectedVertexIndex === i && selectedHandle === 'cpOut'}
             style="left: {cpOutPx.x}px; top: {cpOutPx.y}px;"
             on:mousedown={(e) => handleCPMouseDown(i, 'cpOut', e)}
             role="button" tabindex="-1"
@@ -627,6 +653,7 @@
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
             class="cp-handle"
+            class:selected={selectedVertexIndex === i && selectedHandle === 'cpIn'}
             style="left: {cpInPx.x}px; top: {cpInPx.y}px;"
             on:mousedown={(e) => handleCPMouseDown(i, 'cpIn', e)}
             role="button" tabindex="-1"
@@ -802,6 +829,12 @@
     cursor: grab;
     pointer-events: auto;
     z-index: 21;
+  }
+
+  .cp-handle.selected {
+    background: #00ff88;
+    transform: scale(1.4);
+    box-shadow: 0 0 8px rgba(0, 255, 136, 0.8);
   }
 
   .cp-handle:hover {

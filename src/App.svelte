@@ -100,6 +100,10 @@
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { settings, outputFrozen } from './lib/stores/settings';
   import { maskEditingLayerId } from './lib/stores/maskEditing';
+  import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from './lib/stores/mappingPointSelection';
+  import { flushPendingHistorySnapshot, scheduleHistorySnapshot } from './lib/stores/nudgeHistory';
+  import { arrowDirection, classifyKeyTarget, planMappingArrowKey } from './lib/utils/mappingNudge';
+  import { releaseFormControlFocus } from './lib/utils/formFocus';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { formatReleaseTag } from './lib/utils/compatibilityReleases';
   import { fitToolbar } from './lib/utils/toolbarFit';
@@ -1526,6 +1530,8 @@
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('keydown', handleMappingKeyDown);
+    window.addEventListener('keyup', handleMappingKeyUp);
 
     // Close file menu when clicking outside
     document.addEventListener('click', handleClickOutside);
@@ -1609,6 +1615,8 @@
       endShapeControlPointDrag();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('keydown', handleMappingKeyDown);
+      window.removeEventListener('keyup', handleMappingKeyUp);
       document.removeEventListener('click', handleClickOutside);
       viewportEl?.removeEventListener('wheel', handleViewportWheel);
       viewportResizeObserver.disconnect();
@@ -1745,6 +1753,8 @@
     e.preventDefault();
     e.stopPropagation();
     ensureActiveLayerShapeControlPoints();
+    releaseFormControlFocus();
+    selectMappingPoint({ kind: 'shape-control', layerId: $selectedLayer.id, index });
     draggingShapeControlPointIndex = index;
     window.addEventListener('mousemove', handleShapeControlPointDrag);
     window.addEventListener('mouseup', endShapeControlPointDrag);
@@ -1772,6 +1782,73 @@
     draggingShapeControlPointIndex = null;
     window.removeEventListener('mousemove', handleShapeControlPointDrag);
     window.removeEventListener('mouseup', endShapeControlPointDrag);
+  }
+
+  // ── Arrow keys on the mapping canvas ──
+  // The one owner of the arrow keys for layer points: they move the point
+  // pressed last (a corner or edge, a mesh point or tangent, a custom shape
+  // vertex or curve handle, a shape warp point, a mask point), or the
+  // selected layers when nothing is. One project pixel per press, Shift
+  // ten, Alt a tenth (Alt moves a selected curve handle on its own). A held
+  // key is one undo step. See lib/utils/mappingNudge.ts. The Screens tab's
+  // handles have their own keys.
+  let altNudged = false;
+
+  function handleMappingKeyDown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' && !arrowDirection(e.key)) return;
+    if (e.defaultPrevented) return;
+    if (get(workspace) !== 'main' || get(leftSidebarTab) === 'screens') return;
+    const layer = get(selectedLayer);
+    const proj = get(project);
+    const plan = planMappingArrowKey({
+      key: e.key,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+      target: classifyKeyTarget(e.target as HTMLElement | null),
+      focus: classifyKeyTarget(document.activeElement as HTMLElement | null),
+    }, {
+      layer,
+      layers: proj.layers,
+      selectedIds: get(selectedLayerIds),
+      selection: get(mappingPointSelection),
+      ctx: {
+        shapeWarpEditing: shapeWarpModeEnabled,
+        maskEditing: !!layer && get(maskEditingLayerId) === layer.id,
+      },
+      granularity: get(settings).ui.warpDragGranularity,
+      projectWidth: proj.width,
+      projectHeight: proj.height,
+    });
+    if (!plan) return;
+    if (plan.type === 'release-handle') {
+      selectMappingPoint(plan.selection);
+      return;
+    }
+    if (plan.type === 'clear-selection') {
+      clearMappingPointSelection();
+      if (e.key !== 'Escape') e.preventDefault();
+      return;
+    }
+    e.preventDefault();
+    if (e.altKey) altNudged = true;
+    for (const { layerId, patch } of plan.patches) project.updateLayer(layerId, patch);
+    // One undo step for the run: taken when the key comes up (or the
+    // presses stop), not on every repeat of a held key.
+    if (plan.patches.length > 0) scheduleHistorySnapshot();
+  }
+
+  function handleMappingKeyUp(e: KeyboardEvent) {
+    if (arrowDirection(e.key)) {
+      flushPendingHistorySnapshot();
+      return;
+    }
+    // Windows: releasing Alt on its own shows the menu bar. After Alt+arrow
+    // nudges the release is part of the nudge, so keep it from the menu.
+    if (e.key !== 'Alt') return;
+    if (altNudged) e.preventDefault();
+    altNudged = false;
   }
 
   // Viewport pan/zoom handlers
@@ -2029,7 +2106,7 @@
     };
 
     if (!hitLayerId && !isToggle) {
-      window.dispatchEvent(new CustomEvent('ghost-clear-warp-corner-selection'));
+      clearMappingPointSelection();
     }
     e.preventDefault();
     return true;
@@ -2096,7 +2173,7 @@
       isDragSelecting = true;
       dragSelectStart = gesture.start;
       dragSelectViewportStart = viewportClientToLocalCoords(gesture.startClientX, gesture.startClientY);
-      window.dispatchEvent(new CustomEvent('ghost-clear-warp-corner-selection'));
+      clearMappingPointSelection();
     }
 
     const current = viewportClientToCanvasCoords(e.clientX, e.clientY);
@@ -2120,7 +2197,7 @@
     if (!gesture) return false;
 
     if (!gesture.active) {
-      window.dispatchEvent(new CustomEvent('ghost-clear-warp-corner-selection'));
+      clearMappingPointSelection();
       if (gesture.hitLayerId) {
         if (gesture.isToggle) {
           const exists = gesture.initialSelection.includes(gesture.hitLayerId);
@@ -5120,6 +5197,7 @@
 
   function handleUndo() {
     fileMenuOpen = false;
+    flushPendingHistorySnapshot();
     history.suppress();
     const previousState = history.undo(get(project));
     if (previousState) {
@@ -5130,6 +5208,7 @@
 
   function handleRedo() {
     fileMenuOpen = false;
+    flushPendingHistorySnapshot();
     history.suppress();
     const nextState = history.redo(get(project));
     if (nextState) {
@@ -5643,6 +5722,8 @@
         return;
       }
     }
+    releaseFormControlFocus();
+    if ($selectedLayer) selectMappingPoint({ kind: 'mask-point', layerId: $selectedLayer.id, shapeIndex, index: pointIndex });
     draggingMaskAnchor = { shapeIndex, pointIndex };
     window.addEventListener('mousemove', handleMaskAnchorDrag);
     window.addEventListener('mouseup', handleMaskAnchorDragEnd);
@@ -5709,6 +5790,8 @@
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
+    releaseFormControlFocus();
+    if ($selectedLayer) selectMappingPoint({ kind: 'mask-point', layerId: $selectedLayer.id, shapeIndex, index: pointIndex, handle: which });
     draggingMaskHandle = { shapeIndex, pointIndex, which };
     window.addEventListener('mousemove', handleMaskHandleDrag);
     window.addEventListener('mouseup', handleMaskHandleDragEnd);
@@ -6599,12 +6682,13 @@
                   {#each layerShapeControlPoints as point, i}
                     {@const isCircleCenter = $selectedLayer.layerShape?.type === 'circle' && i === 4}
                     {@const warped = warpPointThroughCorners(warpCorners, point.x, point.y)}
+                    {@const isPicked = $mappingPointSelection?.kind === 'shape-control' && $mappingPointSelection.layerId === $selectedLayer.id && $mappingPointSelection.index === i}
                     <circle
                       cx={warped.x * canvasWidth}
                       cy={(1 - warped.y) * canvasHeight}
                       r={isCircleCenter ? 7 : 10}
-                      fill={isCircleCenter ? '#0B1220' : '#67E8F9'}
-                      stroke="#67E8F9"
+                      fill={isPicked ? '#00ff88' : isCircleCenter ? '#0B1220' : '#67E8F9'}
+                      stroke={isPicked ? '#ffffff' : '#67E8F9'}
                       stroke-width="2"
                       style="cursor: move;"
                       onmousedown={(e) => startShapeControlPointDrag(i, e)}
@@ -6962,6 +7046,7 @@
                   {@const ay = canvasToSvgY(pt.y)}
                   {@const isDragging = draggingMaskAnchor?.shapeIndex === sIdx && draggingMaskAnchor?.pointIndex === pIdx}
                   {@const isCloseTarget = !shape.closed && pIdx === 0 && shape.points.length >= 3}
+                  {@const isPicked = $mappingPointSelection?.kind === 'mask-point' && $mappingPointSelection.layerId === $selectedLayer.id && $mappingPointSelection.shapeIndex === sIdx && $mappingPointSelection.index === pIdx && !$mappingPointSelection.handle}
                   <!-- First anchor of an open shape with >=3 points is the
                        "click to close" target. Bigger + yellow rim so it's
                        obvious you can click it to finish the polygon. -->
@@ -6980,7 +7065,7 @@
                     cx={ax}
                     cy={ay}
                     r="8"
-                    fill={isDragging ? '#ff00ff' : (isCloseTarget ? '#ffd400' : '#fff')}
+                    fill={isDragging ? '#ff00ff' : isCloseTarget ? '#ffd400' : isPicked ? '#00ff88' : '#fff'}
                     stroke={isCloseTarget ? '#ffd400' : '#ff00ff'}
                     stroke-width="2"
                     style="cursor: {isCloseTarget ? 'pointer' : 'grab'};"
@@ -7005,7 +7090,7 @@
                       cx={canvasToSvgX(pt.cpIn.x)}
                       cy={canvasToSvgY(pt.cpIn.y)}
                       r="5"
-                      fill="#ff00ff"
+                      fill={$mappingPointSelection?.kind === 'mask-point' && $mappingPointSelection.layerId === $selectedLayer.id && $mappingPointSelection.shapeIndex === sIdx && $mappingPointSelection.index === pIdx && $mappingPointSelection.handle === 'cpIn' ? '#00ff88' : '#ff00ff'}
                       stroke="#fff"
                       stroke-width="1.5"
                       style="cursor: grab;"
@@ -7020,7 +7105,7 @@
                       cx={canvasToSvgX(pt.cpOut.x)}
                       cy={canvasToSvgY(pt.cpOut.y)}
                       r="5"
-                      fill="#ff00ff"
+                      fill={$mappingPointSelection?.kind === 'mask-point' && $mappingPointSelection.layerId === $selectedLayer.id && $mappingPointSelection.shapeIndex === sIdx && $mappingPointSelection.index === pIdx && $mappingPointSelection.handle === 'cpOut' ? '#00ff88' : '#ff00ff'}
                       stroke="#fff"
                       stroke-width="1.5"
                       style="cursor: grab;"
