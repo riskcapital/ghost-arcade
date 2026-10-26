@@ -48,12 +48,16 @@ it('opens Screen textures on the render core\'s adapter', async () => {
   // the core renders on, and a texture opens by name only on its own adapter.
   const h = harness(true);
   h.addon.setAdapterLuid = vi.fn(() => true);
+  h.addon.setFrameCounter = vi.fn(() => true);
   h.invoke.mockResolvedValue({
-    available: true, adapter_luid: '0000000000012345',
+    available: true, adapter_luid: '0000000000012345', frame_counter_name: 'Local\\GhostArcadeFrameCounter-7',
     slices: [{ id: 's1', shared_name: 'S1', width: 1920, height: 1080, frame: 1 }],
   });
   await h.tick(); await h.tick();
   expect(h.addon.setAdapterLuid.mock.calls).toEqual([['0000000000012345']]);
+  // And where the core publishes its completed frames, so a Screen copies
+  // each frame once rather than at every vblank of a fast display.
+  expect(h.addon.setFrameCounter.mock.calls).toEqual([['Local\\GhostArcadeFrameCounter-7']]);
   expect(h.addon.monitorSetSharedTextureSource).toHaveBeenCalledTimes(1);
 });
 

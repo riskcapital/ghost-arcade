@@ -8,6 +8,7 @@ mod audio;
 mod capabilities;
 mod compositor;
 mod compute_graph;
+mod core_frame_counter;
 mod media_decode;
 mod hap_video;
 mod hap_texture;
@@ -1423,6 +1424,7 @@ struct LayerGpu {
 /// The GPU's memory: Metal's recommended working set (on Apple silicon a
 /// share of the unified memory), or a D3D12 adapter's own memory.
 /// LUID as written to the presenters: HighPart then LowPart, 8 hex digits each.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn format_adapter_luid(high: i32, low: u32) -> String {
     format!("{:08x}{:08x}", high as u32, low)
 }
@@ -4170,6 +4172,9 @@ const NATIVE_SHADER_BATCH_SLOTS: usize = 64;
 struct RenderState {
     window: Arc<Window>,
     adapter_name: String,
+    /// Windows: the shared-memory name of the completed-frame counter
+    /// (core_frame_counter), for the presenters.
+    frame_counter_name: Option<String>,
     /// True when wgpu selected a software rasterizer (WARP) rather than a
     /// real GPU — the compatibility fallback added for machines with no
     /// usable graphics adapter. Surfaced in status so the app can tell the
@@ -4471,6 +4476,7 @@ struct App {
     adapter_name: Option<String>,
     adapter_is_software: bool,
     adapter_luid: Option<String>,
+    frame_counter_name: Option<String>,
     target_fps: u32,
     last_redraw: Instant,
     /// When the output window was asked for a redraw that has not arrived
@@ -4954,6 +4960,7 @@ impl App {
             adapter_name: None,
             adapter_is_software: false,
             adapter_luid: None,
+            frame_counter_name: None,
             target_fps: 60,
             last_redraw: Instant::now(),
             redraw_requested_at: None,
@@ -5160,6 +5167,7 @@ impl App {
         self.adapter_name = renderer.adapter_name();
         self.adapter_is_software = renderer.adapter_is_software;
         self.adapter_luid = renderer_adapter_luid(&renderer.device);
+        self.frame_counter_name = renderer.frame_counter_name.clone();
         self.gpu_memory_bytes = gpu_memory_bytes(&renderer.device);
         self.renderer = Some(renderer);
         self.apply_video_memory_budget();
@@ -6251,7 +6259,7 @@ impl App {
             "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot" => {
                 self.output_shared_texture_snapshot(&req.params)
             }
-            "deck_monitor_state" | "get_deck_monitor_state" => Ok(self.tag_adapter_luid(
+            "deck_monitor_state" | "get_deck_monitor_state" => Ok(self.tag_presenter_info(
                 self.renderer
                     .as_ref()
                     .map(RenderState::deck_monitor_metadata)
@@ -6466,7 +6474,7 @@ impl App {
             "set_composite_effects" => self.apply_composite_effects(&req.params),
             "set_output_stage" => self.apply_output_stage(&req.params),
             "set_slice_outputs" => self.apply_slice_outputs(&req.params),
-            "slice_output_state" | "get_slice_output_state" => Ok(self.tag_adapter_luid(
+            "slice_output_state" | "get_slice_output_state" => Ok(self.tag_presenter_info(
                 self.renderer
                     .as_ref()
                     .map(RenderState::slice_output_metadata)
@@ -13561,18 +13569,25 @@ impl App {
         Ok(json!({ "stopped": true, "frames": frames, "duration_seconds": duration_seconds }))
     }
 
-    /// Shared-texture metadata tagged with the adapter the textures live on,
-    /// so a presenter in another process opens them on the same GPU.
-    fn tag_adapter_luid(&self, mut value: Value) -> Value {
-        if let (Some(luid), Some(map)) = (self.adapter_luid.as_ref(), value.as_object_mut()) {
-            map.insert("adapter_luid".to_string(), json!(luid));
+    /// Shared-texture metadata tagged with what a presenter in another
+    /// process needs besides the texture: the adapter the textures live on,
+    /// so it opens them on the same GPU, and where the completed-frame count
+    /// is published, so it copies only new frames.
+    fn tag_presenter_info(&self, mut value: Value) -> Value {
+        if let Some(map) = value.as_object_mut() {
+            if let Some(luid) = self.adapter_luid.as_ref() {
+                map.insert("adapter_luid".to_string(), json!(luid));
+            }
+            if let Some(name) = self.frame_counter_name.as_ref() {
+                map.insert("frame_counter_name".to_string(), json!(name));
+            }
         }
         value
     }
 
     fn output_shared_texture(&self) -> Value {
         if let Some(renderer) = self.renderer.as_ref() {
-            return self.tag_adapter_luid(renderer.output_export_metadata());
+            return self.tag_presenter_info(renderer.output_export_metadata());
         }
         json!({
             "available": false,
@@ -20777,6 +20792,16 @@ impl RenderState {
         let (gpu_completion_tx, gpu_completion_rx) = mpsc::channel::<wgpu::SubmissionIndex>();
         let completion_device = device.clone();
         let completion_counter = Arc::clone(&gpu_frames_completed);
+        // Windows: completed frames are also published to the presenters,
+        // which skip vblanks that would only re-copy the same frame.
+        #[cfg(target_os = "windows")]
+        let frame_counter = core_frame_counter::FrameCounterPublisher::create(
+            &core_frame_counter::frame_counter_name(std::process::id()),
+        );
+        #[cfg(target_os = "windows")]
+        let frame_counter_name = frame_counter.as_ref().map(|counter| counter.name().to_string());
+        #[cfg(not(target_os = "windows"))]
+        let frame_counter_name: Option<String> = None;
         thread::Builder::new()
             .name("ghost-gpu-completion".to_string())
             .spawn(move || {
@@ -20826,7 +20851,11 @@ impl RenderState {
                             }
                         }
                     }
-                    completion_counter.fetch_add(1, Ordering::Release);
+                    let _completed = completion_counter.fetch_add(1, Ordering::Release) + 1;
+                    #[cfg(target_os = "windows")]
+                    if let Some(counter) = frame_counter.as_ref() {
+                        counter.publish(_completed);
+                    }
                     let _ = event_proxy.send_event(UserEvent::GpuFrameCompleted);
                 }
             })
@@ -20835,6 +20864,7 @@ impl RenderState {
         Ok(Self {
             window,
             adapter_name: adapter_info.name,
+            frame_counter_name,
             adapter_is_software,
             native_caps,
             surface,

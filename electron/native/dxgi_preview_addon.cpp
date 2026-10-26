@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <map>
 #include <memory>
@@ -327,6 +328,36 @@ IDXGIAdapter* AdapterForLuid(const LUID& luid) {
   return adapter;
 }
 
+// The core's completed-frame count, published in shared memory by the core
+// (native-renderer/src/core_frame_counter.rs): magic "GAFC", version, then a
+// 64-bit count at offset 8. A presenter copies the core's texture only when
+// the count has moved; without it a 144Hz panel copied and blitted the same
+// 4K frame 144 times a second for a 60fps core.
+std::mutex g_frameCounterMutex;
+std::string g_frameCounterName;
+HANDLE g_frameCounterMapping = nullptr;
+const volatile uint8_t* g_frameCounterView = nullptr;
+const uint32_t kFrameCounterMagic = 0x43464147;  // "GAFC", little-endian
+
+void CloseFrameCounterLocked() {
+  if (g_frameCounterView) UnmapViewOfFile((LPCVOID)g_frameCounterView);
+  if (g_frameCounterMapping) CloseHandle(g_frameCounterMapping);
+  g_frameCounterView = nullptr;
+  g_frameCounterMapping = nullptr;
+  g_frameCounterName.clear();
+}
+
+// 0 when there is no counter (an older core, or not published yet): then
+// every vblank presents, as before.
+uint64_t CoreFrameCounter() {
+  std::lock_guard<std::mutex> lock(g_frameCounterMutex);
+  if (!g_frameCounterView) return 0;
+  if (*(const volatile uint32_t*)g_frameCounterView != kFrameCounterMagic) return 0;
+  // An aligned 64-bit load is atomic on x64 and ARM64; the view is read-only,
+  // so no interlocked operation (they write) may touch it.
+  return (uint64_t)*(const volatile LONG64*)(g_frameCounterView + 8);
+}
+
 // One presentation surface: an underlay HWND plus its swapchain.
 // The primary editor preview uses one of these; each deck monitor / slice
 // output gets its own, keyed by name.
@@ -393,6 +424,8 @@ class PreviewSurface {
     const float black[4] = {5.0f / 255.0f, 7.0f / 255.0f, 11.0f / 255.0f, 1.0f};
     context_->ClearRenderTargetView(target, black);
     SafeRelease(target);
+    // The backdrop replaced whatever frame was on screen.
+    presentedCoreFrame_ = 0;
     if (FAILED(swapchain_->Present(0, 0))) {
       *error = "Could not present the native preview backdrop";
       return false;
@@ -656,6 +689,32 @@ class PreviewSurface {
 
   bool attached() const { return attached_; }
   uint64_t framesPresented() const { return framesPresented_; }
+
+  // Presenting now would show nothing new: the core has completed no frame
+  // since this surface last presented, and nothing about the surface or its
+  // source has changed. A count of 0 is unknown and always presents. The
+  // surface still presents at least four times a second, so nothing can
+  // leave it showing a stale frame for longer.
+  bool UpToDate(const std::string& sharedName, uint32_t width, uint32_t height,
+                uint64_t coreFrame) const {
+    if (coreFrame == 0 || coreFrame != presentedCoreFrame_) return false;
+    if (!backingReady_ || !device_ || !swapchain_ || !shared_) return false;
+    if (deviceGeneration_ != g_adapterGeneration.load()) return false;
+    if (sharedName != sharedName_ || width != sourceWidth_ || height != sourceHeight_) return false;
+    if (swapWidth_ != (std::max)(1u, hostClientW_) || swapHeight_ != (std::max)(1u, hostClientH_)) return false;
+    // The editor's canvas moved inside the window: same swapchain, new viewport.
+    if (rect_.x != presentedRect_.x || rect_.y != presentedRect_.y || rect_.width != presentedRect_.width ||
+        rect_.height != presentedRect_.height) {
+      return false;
+    }
+    return std::chrono::steady_clock::now() - presentedAt_ < std::chrono::milliseconds(250);
+  }
+
+  void MarkPresented(uint64_t coreFrame) {
+    presentedCoreFrame_ = coreFrame;
+    presentedRect_ = rect_;
+    presentedAt_ = std::chrono::steady_clock::now();
+  }
 
   // Called from the JS thread only (see Present's allowReposition note).
   void Reposition() { PositionBehind(); }
@@ -998,6 +1057,7 @@ class PreviewSurface {
     SafeRelease(sampleTex_);
     SafeRelease(shared_);
     sharedName_.clear();
+    presentedCoreFrame_ = 0;
   }
 
   HWND host_ = nullptr;
@@ -1038,6 +1098,9 @@ class PreviewSurface {
   uint32_t hostClientH_ = 0;
   uint32_t swapWidth_ = 0;
   uint32_t swapHeight_ = 0;
+  uint64_t presentedCoreFrame_ = 0;
+  Rect presentedRect_;
+  std::chrono::steady_clock::time_point presentedAt_ = {};
 };
 
 PreviewSurface g_primary;
@@ -1137,11 +1200,19 @@ void PumpMain() {
       // spinning, and let the next iteration retry.
       std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
+    const uint64_t coreFrame = CoreFrameCounter();
     bool ok = false;
+    bool upToDate = false;
     {
       std::lock_guard<std::mutex> lock(g_surfaceMutex);
-      ok = g_primary.Present(name, width, height, 0, /*allowReposition=*/false, &lastError);
+      upToDate = g_primary.UpToDate(name, width, height, coreFrame);
+      if (!upToDate) {
+        ok = g_primary.Present(name, width, height, 0, /*allowReposition=*/false, &lastError);
+        if (ok) g_primary.MarkPresented(coreFrame);
+      }
     }
+    // Nothing new since the last present: the vblank wait already paced us.
+    if (upToDate) continue;
     if (ok) {
       g_pumpFrames.fetch_add(1, std::memory_order_relaxed);
       if (failing) {
@@ -1229,6 +1300,7 @@ void MonitorPumpMain(std::string name, MonitorPump* self) {
     } else {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
+    const uint64_t coreFrame = CoreFrameCounter();
     bool failed = false;
     {
       std::lock_guard<std::mutex> lock(g_monitorMutex);
@@ -1240,7 +1312,10 @@ void MonitorPumpMain(std::string name, MonitorPump* self) {
         std::string error;
         // allowReposition=false: SetWindowPos on a window the UI thread owns
         // must not run here (see Present). JS re-asserts placement instead.
-        if (it->second->Present(current.sharedName, current.width, current.height, 0, false, &error)) {
+        if (it->second->UpToDate(current.sharedName, current.width, current.height, coreFrame)) {
+          // The core has drawn nothing new: keep the frame on screen.
+        } else if (it->second->Present(current.sharedName, current.width, current.height, 0, false, &error)) {
+          it->second->MarkPresented(coreFrame);
           g_monitorPumpFrames.fetch_add(1, std::memory_order_relaxed);
         } else {
           g_monitorPumpFailures.fetch_add(1, std::memory_order_relaxed);
@@ -1723,6 +1798,32 @@ Napi::Value SetAdapterLuid(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(env, true);
 }
 
+// setFrameCounter(name) — the core's completed-frame counter (shared memory
+// name from the core's texture metadata). Opening it lets the pumps skip
+// vblanks that would only copy the same frame again.
+Napi::Value SetFrameCounter(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  const std::string name = info.Length() > 0 && info[0].IsString()
+                               ? info[0].As<Napi::String>().Utf8Value()
+                               : std::string();
+  if (name.empty()) return Napi::Boolean::New(env, false);
+  std::lock_guard<std::mutex> lock(g_frameCounterMutex);
+  if (g_frameCounterView && name == g_frameCounterName) return Napi::Boolean::New(env, true);
+  CloseFrameCounterLocked();
+  const std::wstring wide = Widen(name);
+  HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, wide.c_str());
+  if (!mapping) return Napi::Boolean::New(env, false);
+  void* view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 16);
+  if (!view) {
+    CloseHandle(mapping);
+    return Napi::Boolean::New(env, false);
+  }
+  g_frameCounterMapping = mapping;
+  g_frameCounterView = (const volatile uint8_t*)view;
+  g_frameCounterName = name;
+  return Napi::Boolean::New(env, true);
+}
+
 // monitorRestack() — keep every deck/slice monitor directly behind its host.
 Napi::Value MonitorRestack(const Napi::CallbackInfo& info) {
   std::lock_guard<std::mutex> lock(g_monitorMutex);
@@ -1774,6 +1875,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("monitorDetach", Napi::Function::New(env, MonitorDetach));
   exports.Set("monitorRestack", Napi::Function::New(env, MonitorRestack));
   exports.Set("setAdapterLuid", Napi::Function::New(env, SetAdapterLuid));
+  exports.Set("setFrameCounter", Napi::Function::New(env, SetFrameCounter));
+  env.AddCleanupHook([]() {
+    std::lock_guard<std::mutex> lock(g_frameCounterMutex);
+    CloseFrameCounterLocked();
+  });
   exports.Set("platform", Napi::String::New(env, "win32"));
   return exports;
 }

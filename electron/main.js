@@ -2758,7 +2758,7 @@ function startNativeEditorPreviewPump() {
     try {
       const texture = await nativePreviewTextureMetadataForPump();
       if (!isPublishableNativeOutputTexture(texture)) return;
-      syncPresenterAdapter(addon, texture.adapter_luid);
+      syncPresenterCore(addon, texture);
       const frame = Number(texture.frame ?? 0);
       const width = Number(texture.width ?? 0);
       const height = Number(texture.height ?? 0);
@@ -3583,22 +3583,37 @@ function windowsNativeMonitorPump(addon) {
   return isWin && typeof addon?.monitorSetSharedTextureSource === 'function';
 }
 
-/** Windows: the core says which adapter its shared textures live on, and the
- *  presenters open them by name, which only works from a device on that same
- *  adapter. On a laptop with two GPUs the presenters' default adapter is the
- *  integrated one while the core renders on the discrete one, and every
- *  present failed without a word. */
+/** Windows: what the presenters need from the core besides each texture,
+ *  read from the core's texture metadata.
+ *  - The adapter its shared textures live on. They open by name only from a
+ *    device on that same adapter; on a laptop with two GPUs the presenters'
+ *    default adapter is the integrated one while the core renders on the
+ *    discrete one, and every present failed without a word.
+ *  - Where it publishes its completed-frame count, so a presenter on a fast
+ *    display copies each new frame once instead of at every vblank. */
 let presenterAdapterLuid = '';
-function syncPresenterAdapter(addon, luid) {
-  if (!isWin || typeof luid !== 'string' || !luid || luid === presenterAdapterLuid) return;
-  if (typeof addon?.setAdapterLuid !== 'function') return;
-  try {
-    if (addon.setAdapterLuid(luid)) {
-      presenterAdapterLuid = luid;
-      console.log(`[NativePreview] presenters open textures on the render core's adapter ${luid}`);
+let presenterFrameCounter = '';
+function syncPresenterCore(addon, info) {
+  if (!isWin || !addon) return;
+  const luid = info?.adapter_luid;
+  if (typeof luid === 'string' && luid && luid !== presenterAdapterLuid && typeof addon.setAdapterLuid === 'function') {
+    try {
+      if (addon.setAdapterLuid(luid)) {
+        presenterAdapterLuid = luid;
+        console.log(`[NativePreview] presenters open textures on the render core's adapter ${luid}`);
+      }
+    } catch {
+      // An older addon keeps its default adapter.
     }
-  } catch {
-    // An older addon keeps its default adapter.
+  }
+  const counter = info?.frame_counter_name;
+  if (typeof counter === 'string' && counter && counter !== presenterFrameCounter
+    && typeof addon.setFrameCounter === 'function') {
+    try {
+      if (addon.setFrameCounter(counter)) presenterFrameCounter = counter;
+    } catch {
+      // Without it every vblank presents, as before.
+    }
   }
 }
 
@@ -3618,7 +3633,7 @@ function startSliceNativePump() {
       if (nativePump && ++ticks % 5 === 0) addon.monitorRestack?.();
       const state = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
       if (!state?.available || !Array.isArray(state.slices)) return;
-      syncPresenterAdapter(addon, state.adapter_luid);
+      syncPresenterCore(addon, state);
       for (const entry of state.slices) {
         const sliceId = typeof entry?.id === 'string' ? entry.id : '';
         if (!sliceId || !sliceNativeAttached.has(sliceId)) continue;
@@ -3699,7 +3714,7 @@ function startDeckMonitorPump() {
       const state = await nativeRendererBroker.invoke('native_renderer_get_deck_monitor_state', {});
       if (generation !== deckMonitorPumpGeneration) return;
       if (!state?.available || !Array.isArray(state.banks)) return;
-      syncPresenterAdapter(addon, state.adapter_luid);
+      syncPresenterCore(addon, state);
       for (const bank of state.banks) {
         const name = bank?.bank === 'b' ? 'deck-b' : 'deck-a';
         if (!deckMonitorAttachedNames.has(name)) continue;
