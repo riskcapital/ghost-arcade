@@ -15,10 +15,11 @@ function harness(platform = 'win32', nativePump = false) {
     setInterval: (fn: () => Promise<void>) => { ticks.push(fn); return { unref() {} }; }, clearInterval() {},
     ipcMain: { handle: (name: string, fn: Function) => { ipc[name] = fn; } },
     mainWindow: { isDestroyed: () => false, getNativeWindowHandle: () => Buffer.alloc(8) },
-    normalizeNativePreviewRect: (r: any) => r, nativePreviewAddonRect: (r: any) => r };
+    normalizeNativePreviewRect: (r: any) => r, nativePreviewAddonRect: (r: any) => r,
+    syncPresenterAdapter: vi.fn() };
   vm.runInNewContext(pump + handlers, context);
   const attach = () => ipc.deck_monitor_attach(null, { monitors: [{ name: 'deck-a', rect: {} }, { name: 'deck-b', rect: {} }] });
-  return { addon, invoke, ticks, ipc, attach };
+  return { addon, invoke, ticks, ipc, attach, syncPresenterAdapter: context.syncPresenterAdapter };
 }
 it('attaches both Windows monitors and presents new frames even with unchanged texture names', async () => {
   const h = harness(); expect((await h.attach()).attached).toBe(true);
@@ -44,6 +45,12 @@ it('preserves Mac display-link binding without resending unchanged surfaces', as
   const h = harness('darwin'); await h.attach(); await h.ticks[0](); await h.ticks[0]();
   expect(h.addon.monitorSetIOSurface).toHaveBeenCalledTimes(2);
   expect(h.addon.monitorSetSharedTexture).not.toHaveBeenCalled();
+});
+it('opens deck textures on the adapter the core names', async () => {
+  const h = harness('win32', true); await h.attach();
+  h.invoke.mockResolvedValue({ available: true, adapter_luid: '00000000000abcde', banks: [{ bank: 'a', shared_name: 'A', width: 480, height: 270, frame: 1 }] });
+  await h.ticks[0]();
+  expect(h.syncPresenterAdapter).toHaveBeenCalledWith(h.addon, '00000000000abcde');
 });
 it('hands Windows decks to the native vblank pump once per texture, not once per frame', async () => {
   const h = harness('win32', true); await h.attach();
