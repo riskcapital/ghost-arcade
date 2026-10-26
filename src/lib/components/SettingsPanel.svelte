@@ -37,7 +37,7 @@
   import { project } from '../stores/layers';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
   import { formatReleaseTag } from '../utils/compatibilityReleases';
-  import { openExternalUrl } from '../bridge';
+  import { isMac, openExternalUrl } from '../bridge';
 
   // Version-check state for the Settings → Updates section.
   // Reads cached result on mount so the row shows last-known state
@@ -816,8 +816,8 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Snap to other layers</span>
-              <span class="label-hint">In mapping mode, snap warp handles to nearby layer edges, centers, and canvas edges. Turn off if the snap is fighting you — handles will then move pixel-by-pixel with no magnetism.</span>
+              <span class="label-text">Snap to layers and canvas edges</span>
+              <span class="label-hint">Dragged points snap to other layers and to the canvas edges. Hold {isMac ? 'Cmd' : 'Ctrl'} while dragging to move freely. Same as Snap in the status bar.</span>
             </div>
             <label class="toggle">
               <input type="checkbox" checked={$settings.ui.gridSettings?.snapToLayers !== false}
