@@ -826,7 +826,6 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
 
     initLicense().catch(e => console.warn('[SliceOutput] License init:', e));
-    initStateBroadcast('receiver');
 
     void (async () => {
       // Ask the main process whether the core is presenting this slice
@@ -853,8 +852,13 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         // beats a plain inline style and hides the layer under the page.
         document.documentElement.style.setProperty('background', 'transparent', 'important');
         document.body.style.setProperty('background', 'transparent', 'important');
+        // No state-sync receiver either: the core draws this Screen from its
+        // own copy of the scene, and a receiver here kept the editor
+        // serialising the whole project for a window that reads none of it.
         return;
       }
+      // This window renders the slice itself, from the editor's state.
+      initStateBroadcast('receiver');
       // Wait one tick so Canvas (mounted below) has appended its
       // .main-canvas to the DOM before the first frame query.
       await tick();
@@ -927,7 +931,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 </script>
 
 <div class="slice-output" class:native-presentation={nativeSlicePresentation}>
-  {#if waitingForSlice}
+  {#if waitingForSlice && !nativeSlicePresentation}
     <!-- The slice config takes one BroadcastChannel round-trip to
          arrive from the editor. Show a discrete placeholder so the
          operator knows the window is alive, not frozen. -->
