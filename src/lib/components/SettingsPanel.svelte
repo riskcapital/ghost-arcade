@@ -11,23 +11,40 @@
   import { activeThemeId, themes } from '../theming/store';
   const themesList = themes.list();
   import {
-    probeDecodeSupport,
     probeEncodeSupport,
-    formatDecodeSupport,
-    type CodecDecodeReport,
     type CodecEncodeReport,
   } from '../utils/codecProbe';
+  import { checkDecodeCapabilities, type DecodeCapabilityRow } from '../video/decodeCapabilities';
+  import { decodeBadge, videoDecodeHealth } from '../video/videoDecodeHealth';
+  import { convertForSmoothPlayback } from '../video/playbackConversionFlow';
 
   // Codec capability probe (Performance tab readout). Lazy.
-  let codecDecode: CodecDecodeReport | null = null;
   let codecEncode: CodecEncodeReport | null = null;
   let codecProbed = false;
-  async function runCodecProbe() {
+  function runCodecProbe() {
     if (codecProbed) return;
     codecProbed = true;
     codecEncode = probeEncodeSupport();
-    codecDecode = await probeDecodeSupport();
   }
+  // Video decoding as the render core sees it: one short clip per format.
+  let decodeRows: DecodeCapabilityRow[] | null = null;
+  let decodeChecking = false;
+  let decodeError = '';
+  async function runDecodeCheck() {
+    if (decodeChecking) return;
+    decodeChecking = true;
+    decodeError = '';
+    try {
+      decodeRows = await checkDecodeCapabilities();
+    } catch (error) {
+      decodeError = error instanceof Error ? error.message : String(error);
+    } finally {
+      decodeChecking = false;
+    }
+  }
+  $: slowProjectVideos = Object.entries($videoDecodeHealth)
+    .map(([path, health]) => ({ path, health, badge: decodeBadge(health) }))
+    .filter((entry) => !!entry.badge);
   import { validateAPIKey, validateLumaKey } from '../api/ai-client';
   import { updateInfo } from '../stores/updateChecker';
   import { updateModalOpen } from '../stores/uiState';
@@ -539,7 +556,7 @@
   // the data. Cheaper than probing at mount for sections the user may
   // never open.
   $: if (selectedSection === 'performance:render-quality' && !codecProbed) runCodecProbe();
-  $: if (selectedSection === 'performance:video-decoding' && !codecProbed) runCodecProbe();
+  $: if (selectedSection === 'performance:video-decoding' && !decodeRows && !decodeChecking && !decodeError && isDesktopApp) void runDecodeCheck();
   let webgpuProbedFromPanel = false;
   $: if (selectedSection === 'performance:gpu' && !webgpuProbedFromPanel) {
     webgpuProbedFromPanel = true;
@@ -2007,30 +2024,52 @@
         {/if}
         {#if selectedSection === 'performance:video-decoding'}
         <section class="settings-section">
-          <h3>Video Decoding (read-only)</h3>
+          <h3>Video Decoding</h3>
           <div class="setting-row">
             <div class="setting-label" style="flex: 1;">
-              <span class="label-hint" style="line-height: 1.7;">
-                {#if codecDecode}
-                  <strong>H.264:</strong> <span style:color={codecDecode.h264 === 'hw' ? '#4caf50' : codecDecode.h264 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.h264)}</span>
-                  &nbsp;·&nbsp;
-                  <strong>HEVC:</strong> <span style:color={codecDecode.hevc === 'hw' ? '#4caf50' : codecDecode.hevc === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.hevc)}</span>
-                  &nbsp;·&nbsp;
-                  <strong>VP9:</strong> <span style:color={codecDecode.vp9 === 'hw' ? '#4caf50' : codecDecode.vp9 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.vp9)}</span>
-                  &nbsp;·&nbsp;
-                  <strong>AV1:</strong> <span style:color={codecDecode.av1 === 'hw' ? '#4caf50' : codecDecode.av1 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.av1)}</span>
-                  <br/><br/>
-                  For best playback performance, re-encode your video clips with a codec your machine decodes in <strong style="color: #4caf50;">hardware</strong>.
-                  <a href="https://ghostarcade.live/docs/performance#video-codecs" target="_blank" rel="noopener noreferrer"
-                     style="color: #BB86FC; text-decoration: underline;">
-                    See ffmpeg recipes →
-                  </a>
-                {:else}
-                  Probing decode capabilities…
+              <div class="label-hint" style="line-height: 1.7;">
+                {#if !isDesktopApp}
+                  Video decoding is checked in the desktop app.
+                {:else if decodeChecking && !decodeRows}
+                  Checking which formats this computer decodes in hardware…
+                {:else if decodeError}
+                  Could not check video decoding: {decodeError}
+                {:else if decodeRows}
+                  <table class="decode-table">
+                    <tbody>
+                      {#each decodeRows as row (row.id)}
+                        <tr>
+                          <th scope="row">{row.label}</th>
+                          <td style:color={row.state === 'hardware' ? '#4caf50' : row.state === 'software' ? '#fbbf24' : row.state === 'failed' ? '#f87171' : '#999'}>{row.verdict}</td>
+                          <td class="decode-reason">{row.reason}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                  Hardware formats play smoothly, including in reverse. Software formats use the CPU and may lag
+                  with several layers. Convert them with File › Video Converter › <strong>Playback</strong>, or with
+                  <strong>Convert for smooth playback</strong> on the SW badge of a clip.
+                  <button class="text-btn" onclick={() => { decodeRows = null; void runDecodeCheck(); }} disabled={decodeChecking}>Check again</button>
                 {/if}
-              </span>
+              </div>
             </div>
           </div>
+          {#if slowProjectVideos.length}
+            <div class="setting-row">
+              <div class="setting-label" style="flex: 1;">
+                <span class="label-text">Videos in use that may lag</span>
+                {#each slowProjectVideos as entry (entry.path)}
+                  <div class="decode-file">
+                    <span class="file-name" translate="no" title={entry.path}>{entry.path.split(/[\\/]/).pop()}</span>
+                    <span class="label-hint">{entry.badge?.title}</span>
+                    {#if entry.badge?.canConvert}
+                      <button class="text-btn" onclick={() => void convertForSmoothPlayback(entry.path)}>Convert for smooth playback</button>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </section>
 
         {/if}
@@ -4709,6 +4748,12 @@
     cursor: pointer;
     padding: 0;
   }
+
+  .decode-table { border-collapse: collapse; margin: 0 0 8px; }
+  .decode-table th { text-align: left; font-weight: 600; padding: 1px 12px 1px 0; white-space: nowrap; }
+  .decode-table td { padding: 1px 12px 1px 0; vertical-align: top; }
+  .decode-reason { opacity: 0.7; }
+  .decode-file { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 6px; }
 
   .diagnostics {
     margin-top: 8px;

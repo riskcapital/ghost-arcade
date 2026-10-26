@@ -7,7 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createRequire } from 'node:module';
 import { closeNativeTestCore, hardwareTestPlatform as platform } from './nativeHardwareTestPlatform';
+import { checkDecodeCapabilities } from '../video/decodeCapabilities';
+
+const requireCjs = createRequire(import.meta.url);
 
 const probeDescribe = platform.runnable && !platform.linux ? describe : describe.skip;
 
@@ -100,6 +104,23 @@ probeDescribe(`${platform.label} video probe`, () => {
     const missing = await rpc.send('probe_video', { uri: file('gone.mp4') });
     expect(missing).toMatchObject({ backend: 'failed', reason: 'The file was not found' });
   });
+
+  it('reports what plays in hardware for the Settings decoding panel (not what Chromium claims)', async () => {
+    const { ensureDecodeTestClips } = requireCjs('../../../electron/decode-test-clips.cjs');
+    const ffmpegStatic: string = requireCjs('ffmpeg-static');
+    const clips = await ensureDecodeTestClips(ffmpegStatic, join(directory, 'decode-check'));
+    expect(clips.map((clip: { id: string }) => clip.id)).toEqual(expect.arrayContaining(['h264', 'hevc', 'prores', 'vp9']));
+    const rows = await checkDecodeCapabilities({
+      clips: async () => clips,
+      probe: (uri: string) => rpc.send('probe_video', { uri }),
+    });
+    const verdict = (id: string) => rows.find(row => row.id === id);
+    expect(verdict('h264')).toMatchObject({ state: 'hardware', verdict: 'Hardware' });
+    // The core never decodes VP9 in hardware, whatever Chromium says.
+    expect(verdict('vp9')).toMatchObject({ state: 'software', verdict: 'Software — may lag' });
+    expect(verdict('vp9')?.reason).toMatch(/VP9/);
+    for (const row of rows) expect(row.state).not.toBe('unknown');
+  }, 120000);
 
   it('answers status while probes run', async () => {
     const probes = Array.from({ length: 4 }, () => rpc.send('probe_video', { uri: file('h264.mp4') }));

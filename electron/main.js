@@ -8376,6 +8376,14 @@ function registerIpcHandlers() {
     }
   });
 
+  // Settings > Performance > Video Decoding: short clips in common formats
+  // for the render core to probe, so the panel reports what really plays in
+  // hardware here. Made once with the bundled ffmpeg and reused.
+  ipcMain.handle('video_decode_test_clips', async () => {
+    const dir = path.join(app.getPath('temp'), 'ghost-arcade-decode-check-v1');
+    return require('./decode-test-clips.cjs').ensureDecodeTestClips(resolveFfmpegPath(), dir);
+  });
+
   // "Convert for smooth playback" on a clip the core decodes in software:
   // the Playback preset, written beside the original (the renderer cannot
   // choose where), or under Videos/Ghost Arcade/Converted when that folder
