@@ -36,6 +36,15 @@
           <div class="shortcut-row"><kbd>{isMac ? 'Fn+Delete' : 'Backspace'}</kbd><span>Remove layer</span></div>
         </div>
         <div class="shortcut-section">
+          <h3>Mapping</h3>
+          <div class="shortcut-row"><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd><span>Move the selected point (or the layers) one pixel</span></div>
+          <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>↑</kbd><span>Ten pixels at a time</span></div>
+          <div class="shortcut-row"><kbd>Alt</kbd>+<kbd>↑</kbd><span>A tenth of a pixel</span></div>
+          <div class="shortcut-row"><kbd>Shift</kbd><span>Hold while dragging for fine movement</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd><span>Hold while dragging to move without snapping</span></div>
+          <div class="shortcut-row"><kbd>Esc</kbd><span>Let go of the selected point</span></div>
+        </div>
+        <div class="shortcut-section">
           <h3>Control &amp; View</h3>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>M</kbd><span>Toggle MIDI Learn</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>,</kbd><span>Settings</span></div>
