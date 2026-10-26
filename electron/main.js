@@ -3255,6 +3255,19 @@ ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
   }
 });
 
+// Show timeline audio: songs Chromium cannot play are converted once with
+// the bundled ffmpeg, and Render to Video gets the show's soundtrack.
+require('./show-audio.cjs').registerShowAudioIpc({
+  ipcMain,
+  spawn,
+  fs,
+  path,
+  ffmpegPath: resolveFfmpegPath,
+  pathGrants,
+  convertDir: path.join(app.getPath('userData'), 'project-assets', 'converted-audio'),
+  audioCodecArgs: (videoPath) => require('./recording-formats.cjs').recordingAudioCodecArgs(videoPath),
+});
+
 /** Finish an in-core recording. The core wrote and finalized the MP4, so the
  *  only work left here is the audio remux and a thumbnail. */
 async function stopCoreNativeRecording(rec) {

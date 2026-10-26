@@ -62,6 +62,7 @@ import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
 import { showTimeline } from '../stores/showTimeline';
+import { showMuxTracks } from '../show/showAudioExport';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
@@ -162,6 +163,9 @@ export interface OfflineRenderState {
   /** The copy the user chose in the save dialog, if they picked one.
    *  Null means "kept where it was rendered" — never an error. */
   lastOutputSavedPath: string | null;
+  /** About the show's soundtrack in the last video: included, or why not.
+   *  Null when the show has no audio. */
+  lastOutputAudioNote: string | null;
 }
 
 const INITIAL_STATE: OfflineRenderState = {
@@ -176,6 +180,7 @@ const INITIAL_STATE: OfflineRenderState = {
   lastOutputKind: null,
   lastOutputPath: null,
   lastOutputSavedPath: null,
+  lastOutputAudioNote: null,
 };
 
 export interface FrameSequenceTarget {
@@ -1353,6 +1358,8 @@ function createOfflineRenderStore() {
         setStatus('encoding');
         const encoded = await finishNativeMp4FrameEncoder(nativeMp4FrameEncoder);
         nativeMp4FrameEncoderFinished = true;
+        if (cancelRequested) { _finish('cancelled'); return false; }
+        const audioNote = await addShowSoundtrack(encoded.outputPath, settings.durationSeconds);
         update(s => ({ ...s, encodeProgress: 1 }));
         if (cancelRequested) { _finish('cancelled'); return false; }
 
@@ -1388,6 +1395,7 @@ function createOfflineRenderStore() {
           lastOutputKind: 'video',
           lastOutputPath: encoded.outputPath,
           lastOutputSavedPath: savedPath,
+          lastOutputAudioNote: audioNote,
         }));
         return true;
       }
@@ -1543,6 +1551,35 @@ function createOfflineRenderStore() {
  *  `.message` empty + the useful text in `.name` or via String(err).
  *  Earlier rev showed a blank red banner when this fired; users
  *  saw "Render failed" with no clue what to do. */
+/**
+ * Mix the show's audio tracks into a rendered video with the bundled ffmpeg
+ * (desktop). The render runs from show time 0, so the soundtrack is the
+ * show's own, looped like the show. Returns a note for the finished render,
+ * or null when the show has no audio. A failed mix leaves the silent video
+ * as it was.
+ */
+async function addShowSoundtrack(videoPath: string, renderSeconds: number): Promise<string | null> {
+  const show = get(showTimeline);
+  if (!show.audioTracks.some(t => !t.muted && t.volume > 0)) return null;
+  const tracks = showMuxTracks(show.audioTracks);
+  if (tracks.length === 0) return 'Saved without sound: the show audio is not in a file on this computer.';
+  try {
+    const result = await invoke<{ success?: boolean; error?: string }>('show_audio_mux', {
+      videoPath,
+      tracks,
+      showDuration: show.duration,
+      renderDuration: renderSeconds,
+      loop: show.loop,
+    });
+    if (result?.success) return 'The show audio is in the video.';
+    console.warn('[offlineRender] show audio mux failed:', result?.error);
+    return `Saved without sound: ${result?.error || 'the audio could not be added'}.`;
+  } catch (err) {
+    console.warn('[offlineRender] show audio mux failed:', err);
+    return `Saved without sound: ${formatErr(err)}.`;
+  }
+}
+
 export function formatErr(err: unknown): string {
   if (err && typeof err === 'object') {
     const e = err as { message?: unknown; name?: unknown; errno?: unknown };

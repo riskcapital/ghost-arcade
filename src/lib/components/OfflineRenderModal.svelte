@@ -239,7 +239,10 @@
     || !!layer.gpuLayerContent
     || !!layer.pixelFXContent
   ));
-  $: showLiveAudioWarning = liveAudioInput && (hasAudioModulation || hasAudioReactiveLayer);
+  // A show with audio drives the render's reactivity from its own tracks,
+  // at render time, whatever input is live.
+  $: showHasAudio = $showTimeline.audioTracks.some(t => !t.muted && t.volume > 0 && !!t.url);
+  $: showLiveAudioWarning = liveAudioInput && !showHasAudio && (hasAudioModulation || hasAudioReactiveLayer);
 </script>
 
 <!-- svelte:window must live at component root, not inside {#if}.
@@ -280,6 +283,9 @@
       <h3>Render complete</h3>
       <p class="success-meta">{state.lastOutputName ?? 'render'}.mp4 · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
       <video class="preview" src={state.lastOutputUrl} controls muted loop></video>
+      {#if state.lastOutputAudioNote}
+        <p class="success-hint">{state.lastOutputAudioNote}</p>
+      {/if}
       {#if state.lastOutputSavedPath}
         <p class="success-hint">Saved to</p>
         <p class="output-path" title={state.lastOutputSavedPath}>{state.lastOutputSavedPath}</p>
@@ -471,6 +477,10 @@
         {/if}
       </div>
 
+      {#if showHasAudio && !isFrameOutput && isDesktopApp}
+        <p class="audio-note">The show's audio is added to the video.</p>
+      {/if}
+
       {#if showLiveAudioWarning}
         <div class="warn-note" role="status">
           <span class="warn-icon">!</span>
@@ -478,7 +488,7 @@
             <strong>{liveAudioInputLabel} input can't be time-locked to an offline render.</strong>
             Reactive timing will follow real elapsed time, so the audio in the exported clip
             won't line up with the visuals if the render runs slower than real time.
-            Use a file audio source for frame-accurate audio reactivity.
+            For frame-accurate reactivity, put the song on the Show timeline.
           </span>
         </div>
       {/if}
@@ -806,6 +816,11 @@
   .success-hint { color: #4ade80; font-size: 12px; margin: 8px 0 0; }
   /* The full path matters more than tidiness here — a user who dismissed
      the save dialog has no other way to find the file. Wrap, don't clip. */
+  .audio-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary, #a0a0a0);
+  }
   .output-path {
     margin: 4px 0 0;
     font-size: 11px;

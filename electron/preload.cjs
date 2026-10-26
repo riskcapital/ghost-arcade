@@ -163,6 +163,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Native output live recording — main-process IOSurface capture
   'native_output_recording_start', 'native_recording_mux_audio', 'native_output_recording_stop',
   'native_recording_codecs', 'native_renderer_set_record_target', 'native_renderer_get_record_target_state',
+  // Show timeline audio: convert a song Chromium cannot play, add the
+  // soundtrack to a rendered video
+  'show_audio_prepare', 'show_audio_mux',
   'native_renderer_get_slice_output_state',
   'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN
