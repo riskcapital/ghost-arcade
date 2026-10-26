@@ -1171,19 +1171,21 @@ void StopPumpThread() {
 std::map<std::string, std::unique_ptr<PreviewSurface>> g_monitors;
 std::string g_lastError;
 
-// ── Monitor pump (Screens and deck monitors) ─────────────────────────────
+// ── Monitor pumps (Screens and deck monitors) ────────────────────────────
 // Screens were presented from a 30fps JS interval on the Electron main
 // thread: one synchronous blit + Present per Screen per tick, sharing that
 // thread with every click, drag and IPC message. With several Screens open the
 // UI and the Screens stuttered together, and no Screen could beat 30fps.
 //
-// This thread presents every monitor that has a source published by
-// monitorSetSharedTextureSource, paced by the display's vblank like the editor
-// pump above. JS only says which texture each monitor shows.
+// Each monitor with a source published by monitorSetSharedTextureSource has
+// its own thread, paced by the vblank of the display that monitor is on. One
+// shared thread paced every Screen off the first monitor's display, so a 50Hz
+// projector next to a 60Hz panel presented at 60 and juddered, and a Screen
+// on a 144Hz display was held to whatever the first one ran at.
 //
 // g_monitorMutex serialises every touch of g_monitors and of the surfaces in
 // it. The vblank wait happens outside it, and presents use syncInterval 0, so
-// a JS-thread call waits at most for one round of copies.
+// a JS-thread call waits at most for one copy.
 struct MonitorSource {
   std::string sharedName;
   uint32_t width = 0;
@@ -1191,31 +1193,37 @@ struct MonitorSource {
 };
 std::mutex g_monitorMutex;
 std::map<std::string, MonitorSource> g_monitorSources;
-std::thread g_monitorPumpThread;
-std::atomic<bool> g_monitorPumpRunning{false};
 std::atomic<uint64_t> g_monitorPumpFrames{0};
 std::atomic<uint64_t> g_monitorPumpFailures{0};
 
-void MonitorPumpMain() {
-  while (g_monitorPumpRunning.load(std::memory_order_acquire)) {
-    // Pace off the display of the first monitor that can be shown.
+struct MonitorPump {
+  std::thread thread;
+  std::atomic<bool> running{true};
+};
+// Guarded by g_monitorPumpsMutex, which is never held while joining or while
+// taking g_monitorMutex.
+std::mutex g_monitorPumpsMutex;
+std::map<std::string, std::unique_ptr<MonitorPump>> g_monitorPumps;
+
+void MonitorPumpMain(std::string name, MonitorPump* self) {
+  while (self->running.load(std::memory_order_acquire)) {
     IDXGIOutput* output = nullptr;
-    bool any = false;
+    bool showable = false;
     {
       std::lock_guard<std::mutex> lock(g_monitorMutex);
-      for (auto& entry : g_monitorSources) {
-        auto it = g_monitors.find(entry.first);
-        if (it == g_monitors.end() || !it->second->attached() || it->second->HostMinimized()) continue;
-        any = true;
+      auto it = g_monitors.find(name);
+      if (g_monitorSources.count(name) && it != g_monitors.end() && it->second->attached() &&
+          !it->second->HostMinimized()) {
+        showable = true;
         output = it->second->AcquireVBlankOutput();
-        if (output) break;
       }
     }
-    if (!any) {
+    if (!showable) {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
       continue;
     }
     if (output) {
+      // This monitor's own display decides when it presents.
       output->WaitForVBlank();
       output->Release();
     } else {
@@ -1224,18 +1232,19 @@ void MonitorPumpMain() {
     bool failed = false;
     {
       std::lock_guard<std::mutex> lock(g_monitorMutex);
-      for (auto& entry : g_monitorSources) {
-        auto it = g_monitors.find(entry.first);
-        if (it == g_monitors.end() || !it->second->attached() || it->second->HostMinimized()) continue;
-        const MonitorSource& source = entry.second;
+      auto source = g_monitorSources.find(name);
+      auto it = g_monitors.find(name);
+      if (source != g_monitorSources.end() && it != g_monitors.end() && it->second->attached() &&
+          !it->second->HostMinimized()) {
+        const MonitorSource current = source->second;
         std::string error;
         // allowReposition=false: SetWindowPos on a window the UI thread owns
         // must not run here (see Present). JS re-asserts placement instead.
-        if (it->second->Present(source.sharedName, source.width, source.height, 0, false, &error)) {
+        if (it->second->Present(current.sharedName, current.width, current.height, 0, false, &error)) {
           g_monitorPumpFrames.fetch_add(1, std::memory_order_relaxed);
         } else {
           g_monitorPumpFailures.fetch_add(1, std::memory_order_relaxed);
-          RecordPumpError(&g_monitorPumpLastError, entry.first + ": " + error);
+          RecordPumpError(&g_monitorPumpLastError, name + ": " + error);
           failed = true;
         }
       }
@@ -1245,15 +1254,44 @@ void MonitorPumpMain() {
   }
 }
 
-void StartMonitorPumpThread() {
-  if (g_monitorPumpRunning.exchange(true, std::memory_order_acq_rel)) return;
-  g_monitorPumpThread = std::thread(MonitorPumpMain);
+void StartMonitorPump(const std::string& name) {
+  std::lock_guard<std::mutex> lock(g_monitorPumpsMutex);
+  if (g_monitorPumps.count(name)) return;
+  auto pump = std::make_unique<MonitorPump>();
+  MonitorPump* raw = pump.get();
+  pump->thread = std::thread(MonitorPumpMain, name, raw);
+  g_monitorPumps[name] = std::move(pump);
 }
 
 // Never call while holding g_monitorMutex: the pump needs it to finish a round.
-void StopMonitorPumpThread() {
-  if (!g_monitorPumpRunning.exchange(false, std::memory_order_acq_rel)) return;
-  if (g_monitorPumpThread.joinable()) g_monitorPumpThread.join();
+void StopMonitorPump(const std::string& name) {
+  std::unique_ptr<MonitorPump> pump;
+  {
+    std::lock_guard<std::mutex> lock(g_monitorPumpsMutex);
+    auto it = g_monitorPumps.find(name);
+    if (it == g_monitorPumps.end()) return;
+    pump = std::move(it->second);
+    g_monitorPumps.erase(it);
+  }
+  pump->running.store(false, std::memory_order_release);
+  if (pump->thread.joinable()) pump->thread.join();
+}
+
+void StopAllMonitorPumps() {
+  std::map<std::string, std::unique_ptr<MonitorPump>> pumps;
+  {
+    std::lock_guard<std::mutex> lock(g_monitorPumpsMutex);
+    pumps.swap(g_monitorPumps);
+  }
+  for (auto& entry : pumps) entry.second->running.store(false, std::memory_order_release);
+  for (auto& entry : pumps) {
+    if (entry.second->thread.joinable()) entry.second->thread.join();
+  }
+}
+
+size_t RunningMonitorPumps() {
+  std::lock_guard<std::mutex> lock(g_monitorPumpsMutex);
+  return g_monitorPumps.size();
 }
 
 HWND HwndFromBuffer(const Napi::Value& value) {
@@ -1643,7 +1681,7 @@ Napi::Value MonitorSetSharedTextureSource(const Napi::CallbackInfo& info) {
     g_monitorSources[name] = source;
     it->second->Reposition();
   }
-  StartMonitorPumpThread();
+  StartMonitorPump(name);
   return Napi::Boolean::New(env, true);
 }
 
@@ -1651,7 +1689,9 @@ Napi::Value MonitorSetSharedTextureSource(const Napi::CallbackInfo& info) {
 Napi::Value MonitorPumpStatus(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   Napi::Object out = Napi::Object::New(env);
-  out.Set("running", Napi::Boolean::New(env, g_monitorPumpRunning.load()));
+  const size_t pumps = RunningMonitorPumps();
+  out.Set("running", Napi::Boolean::New(env, pumps > 0));
+  out.Set("pumps", Napi::Number::New(env, (double)pumps));
   out.Set("framesPresented", Napi::Number::New(env, (double)g_monitorPumpFrames.load()));
   out.Set("failures", Napi::Number::New(env, (double)g_monitorPumpFailures.load()));
   size_t sources = 0;
@@ -1695,11 +1735,9 @@ Napi::Value MonitorDetach(const Napi::CallbackInfo& info) {
   if (info.Length() < 1 || !info[0].IsString()) return Napi::Boolean::New(env, false);
   std::string name = info[0].As<Napi::String>().Utf8Value();
   bool found = false;
-  bool lastSource = false;
   {
     std::lock_guard<std::mutex> lock(g_monitorMutex);
     g_monitorSources.erase(name);
-    lastSource = g_monitorSources.empty();
     auto it = g_monitors.find(name);
     if (it != g_monitors.end()) {
       it->second->Detach();
@@ -1708,7 +1746,7 @@ Napi::Value MonitorDetach(const Napi::CallbackInfo& info) {
     }
   }
   // Outside the lock: the pump takes it to finish its round.
-  if (lastSource) StopMonitorPumpThread();
+  StopMonitorPump(name);
   return Napi::Boolean::New(env, found);
 }
 
@@ -1717,7 +1755,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("releaseReadback", Napi::Function::New(env, ghost_readback::Release));
   env.AddCleanupHook([]() { ghost_readback::capture.Reset(); });
   // A joinable std::thread left at exit terminates the process.
-  env.AddCleanupHook([]() { StopMonitorPumpThread(); });
+  env.AddCleanupHook([]() { StopAllMonitorPumps(); });
   exports.Set("stabilizeHost", Napi::Function::New(env, StabilizeHost));
   exports.Set("attach", Napi::Function::New(env, Attach));
   exports.Set("update", Napi::Function::New(env, Update));
