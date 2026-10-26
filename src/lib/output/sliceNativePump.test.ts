@@ -51,3 +51,59 @@ it('keeps presenting each new frame with an addon that has no native pump', asyn
   await h.tick();
   expect(h.addon.monitorSetSharedTexture).toHaveBeenCalledTimes(2);
 });
+
+// Attaching a Screen's presenter. The Windows presenter places its window in
+// physical pixels, while Electron sizes the Screen window in DIPs.
+const attach = main.slice(main.indexOf('function sliceNativeLayerRect'), main.indexOf('/** Linux: hand the Screen window'));
+
+async function attachHarness(platform: 'win32' | 'darwin', scaleFactor: number) {
+  const { nativePreviewRectToDevicePixels } = await import('../../../electron/native-preview-geometry.js');
+  const addon = { monitorAttach: vi.fn(() => true) };
+  const win = {
+    isDestroyed: () => false,
+    getNativeWindowHandle: () => Buffer.alloc(8, 1),
+    getContentSize: () => [2560, 1440],
+    getBounds: () => ({ x: 2560, y: 0, width: 2560, height: 1440 }),
+  };
+  const context: Record<string, any> = {
+    isWin: platform === 'win32', isMac: platform === 'darwin', Buffer, Date, Math,
+    console: { log() {}, warn() {} },
+    nativePreviewAddon: addon, loadNativePreviewAddon: () => addon,
+    nativePreviewRectToDevicePixels,
+    screen: { getDisplayMatching: vi.fn(() => ({ id: 2, scaleFactor })) },
+    sliceNativeAttached: new Set<string>(), sliceNativePending: new Set<string>(),
+    sliceWindows: new Map([['s1', win]]),
+    sliceMonitorName: (id: string) => `slice:${id}`,
+    startSliceNativePump: vi.fn(),
+  };
+  vm.runInNewContext(attach, context);
+  return { addon, win, context };
+}
+
+it('sizes a Windows Screen presenter in physical pixels on a scaled display', async () => {
+  const h = await attachHarness('win32', 1.5);
+  expect(h.context.attachSliceNativeLayer('s1', h.win)).toBe(true);
+  const [name, , rect] = h.addon.monitorAttach.mock.calls[0];
+  expect(name).toBe('slice:s1');
+  // A 150% 4K projector: 2560x1440 DIP is the whole 3840x2160 panel.
+  expect(rect).toMatchObject({ x: 0, y: 0, width: 3840, height: 2160, contentWidth: 3840, contentHeight: 2160 });
+  // The addon keeps tracking the client area after a resize or DPI change.
+  expect(rect.fillHost).toBe(true);
+});
+
+it('re-sends a Windows Screen rect when its display changes scale', async () => {
+  const h = await attachHarness('win32', 1);
+  h.context.attachSliceNativeLayer('s1', h.win);
+  expect(h.addon.monitorAttach.mock.calls[0][2]).toMatchObject({ width: 2560, height: 1440 });
+  h.context.screen.getDisplayMatching.mockReturnValue({ id: 2, scaleFactor: 2 });
+  h.context.refreshSliceNativeLayerRects();
+  expect(h.addon.monitorAttach).toHaveBeenCalledTimes(2);
+  expect(h.addon.monitorAttach.mock.calls[1][2]).toMatchObject({ width: 5120, height: 2880 });
+});
+
+it('keeps macOS Screen presenters in points', async () => {
+  const h = await attachHarness('darwin', 2);
+  expect(h.context.attachSliceNativeLayer('s1', h.win)).toBe(true);
+  expect(h.addon.monitorAttach.mock.calls[0][2]).toMatchObject({ width: 2560, height: 1440 });
+  expect(h.context.screen.getDisplayMatching).not.toHaveBeenCalled();
+});

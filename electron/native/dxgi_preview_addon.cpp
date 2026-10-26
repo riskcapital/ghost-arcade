@@ -221,6 +221,10 @@ struct Rect {
   int y = 0;
   int width = 0;
   int height = 0;
+  // Cover the host's whole client area, measured on every placement, instead
+  // of a rect the caller measured once. A Screen fills its window; this keeps
+  // it filled through resizes and DPI changes the caller never hears about.
+  bool fillHost = false;
 };
 
 Rect RectFromObject(const Napi::Object& obj) {
@@ -238,6 +242,10 @@ Rect RectFromObject(const Napi::Object& obj) {
   rect.height = readInt("height", 0);
   if (rect.width < 1) rect.width = 1;
   if (rect.height < 1) rect.height = 1;
+  if (obj.Has("fillHost")) {
+    Napi::Value v = obj.Get("fillHost");
+    rect.fillHost = v.IsBoolean() && v.As<Napi::Boolean>().Value();
+  }
   return rect;
 }
 
@@ -387,6 +395,14 @@ class PreviewSurface {
     }
     RECT client = {};
     if (!GetClientRect(host_, &client)) return;
+    if (!fullHostBackdrop_ && rect_.fillHost) {
+      // GetClientRect is in physical pixels, the unit this window is placed
+      // in, whatever the host's display scale is.
+      rect_.x = 0;
+      rect_.y = 0;
+      rect_.width = (int)(std::max)(1L, client.right - client.left);
+      rect_.height = (int)(std::max)(1L, client.bottom - client.top);
+    }
     hostClientW_ = fullHostBackdrop_ ? (uint32_t)(std::max)(1L, client.right - client.left) : (uint32_t)(std::max)(1, rect_.width);
     hostClientH_ = fullHostBackdrop_ ? (uint32_t)(std::max)(1L, client.bottom - client.top) : (uint32_t)(std::max)(1, rect_.height);
     POINT origin = {0, 0};

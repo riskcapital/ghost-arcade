@@ -3424,6 +3424,60 @@ async function probeSliceNativeAvailable() {
   }
 }
 
+/** The rectangle a Screen's presenter fills, in the units the presenter
+ *  places its window in. getContentSize is in DIPs. The macOS layer works in
+ *  points, which DIPs are; the Windows presenter places a window in physical
+ *  pixels, so on a 150% 4K projector a DIP rect covered 2560x1440 of
+ *  3840x2160 and the (transparent) Screen window showed the desktop around
+ *  it. `fillHost` asks a presenter that knows it to track the window's whole
+ *  client area itself, so a later resize or DPI change follows on its own. */
+function sliceNativeLayerRect(win) {
+  const [width, height] = win.getContentSize();
+  let scale = 1;
+  if (isWin) {
+    try {
+      scale = screen.getDisplayMatching(win.getBounds())?.scaleFactor || 1;
+    } catch {
+      scale = 1;
+    }
+  }
+  const dip = {
+    x: 0,
+    y: 0,
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+    contentX: 0,
+    contentY: 0,
+    contentWidth: Math.max(1, width),
+    contentHeight: Math.max(1, height),
+  };
+  return {
+    ...nativePreviewRectToDevicePixels(dip, scale),
+    fillHost: true,
+    generation: Date.now() & 0x7fffffff,
+  };
+}
+
+/** Re-send each Windows Screen's rect after its window or display changed
+ *  size or scale. An addon that tracks the client area itself already
+ *  follows; an older one only learns the new size from here. */
+function refreshSliceNativeLayerRects() {
+  if (!isWin) return;
+  const addon = nativePreviewAddon;
+  if (!addon || typeof addon.monitorAttach !== 'function') return;
+  for (const sliceId of sliceNativeAttached) {
+    const win = sliceWindows.get(sliceId);
+    if (!win || win.isDestroyed()) continue;
+    try {
+      const handle = win.getNativeWindowHandle();
+      if (!Buffer.isBuffer(handle) || handle.length === 0) continue;
+      addon.monitorAttach(sliceMonitorName(sliceId), handle, sliceNativeLayerRect(win));
+    } catch {
+      // The next restack or display change tries again.
+    }
+  }
+}
+
 /** Parent a native presentation layer into a slice window, filling it.
  *  Returns false when the platform or addon can't do it, in which case the
  *  slice window falls back to its own WebGL render. */
@@ -3435,18 +3489,7 @@ function attachSliceNativeLayer(sliceId, win) {
   try {
     const handle = win.getNativeWindowHandle();
     if (!Buffer.isBuffer(handle) || handle.length === 0) return false;
-    const [width, height] = win.getContentSize();
-    const rect = {
-      x: 0,
-      y: 0,
-      width: Math.max(1, width),
-      height: Math.max(1, height),
-      contentX: 0,
-      contentY: 0,
-      contentWidth: Math.max(1, width),
-      contentHeight: Math.max(1, height),
-      generation: Date.now() & 0x7fffffff,
-    };
+    const rect = sliceNativeLayerRect(win);
     if (!addon.monitorAttach(sliceMonitorName(sliceId), handle, rect)) return false;
     sliceNativeAttached.add(sliceId);
     startSliceNativePump();
@@ -7049,6 +7092,9 @@ function registerIpcHandlers() {
     }
 
     sliceWindows.set(sliceId, win);
+    // The presenter is sized in physical pixels; a resize or a move to a
+    // display with another scale has to reach it.
+    if (useNative && isWin) win.on('resize', refreshSliceNativeLayerRects);
     // Attach the native presentation layer once the page exists, so the
     // addon has a real content view to parent into.
     // Re-attach after load as a safety net; monitorAttach reuses the view
@@ -9837,6 +9883,11 @@ app.whenReady().then(async () => {
   // it) or snapped somewhere unpredictable. Now: snap the output window
   // onto a still-present display so the performer can at least see it to
   // reposition.
+  // A projector's scale or resolution changed under an open Screen (or the
+  // Screen moved to another display): its presenter must cover the new
+  // physical client area.
+  screen.on('display-metrics-changed', () => refreshSliceNativeLayerRects());
+
   screen.on('display-removed', (_ev, removedDisplay) => {
     try {
       if (!outputWindow || outputWindow.isDestroyed()) return;
