@@ -808,7 +808,7 @@ function applyProjectStatePayload(data: any, sourceLabel: string) {
         modulation: data.modulation,
       };
     }
-    const importedOk = project.importProject(importPayload);
+    const importedOk = project.importProject(importPayload, undefined, { live: true });
     if (!importedOk) {
       // Last-resort visibility: log what we actually received so a future
       // debug session doesn't have to add console.logs to find it. Keys

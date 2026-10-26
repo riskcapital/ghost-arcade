@@ -381,7 +381,7 @@
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
-  import { beginHistoryRestore, endHistoryRestore } from './lib/stores/historyHooks';
+  import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback } from './lib/stores/historyHooks';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
   import { hydrateShowControl } from './lib/show/showControlPersistence';
@@ -1954,6 +1954,11 @@
 
     // Wire up history recording callback for the project store
     setHistoryCallback(() => recordHistory());
+    // Opening a project (any path: File, Open Recent, recovery, relink,
+    // package) starts its history over. Deferred to a microtask so the steps
+    // the opening path takes right after the import (naming the project
+    // after its file) are part of the starting point, not the first undo.
+    setProjectReplacedCallback(() => queueMicrotask(resetHistoryToCurrent));
 
     // Simple routing: check URL hash
     isMobile = window.location.hash === '#/mobile' || window.location.pathname.includes('mobile');
@@ -5987,7 +5992,9 @@
     // Also clear the Electron path so Save doesn't accidentally overwrite
     // the previously-loaded .gha with a fresh empty project.
     currentProjectPath = null;
-    history.clear();
+    // A fresh history whose first step is the empty project, so the first
+    // edit can be undone (clearing it left nothing to undo back to).
+    resetHistoryToCurrent();
     markAsSaved();
     clearAutosave();
   }
@@ -6144,8 +6151,16 @@
   // Initialize history with first project state
   let historyInitialized = false;
   $: if ($project && !historyInitialized) {
-    history.init($project, keyframeTimeline.exportAll(), settings.captureOutputHistory());
+    resetHistoryToCurrent();
     historyInitialized = true;
+  }
+
+  /** Start the undo history over at the project as it is now: after a
+   *  project is opened, recovered or created, undo must not reach back into
+   *  the project that was open before. */
+  function resetHistoryToCurrent() {
+    cancelPendingHistorySnapshot();
+    history.init(get(project), keyframeTimeline.exportAll(), settings.captureOutputHistory());
   }
 
   // Record a snapshot — call this AFTER discrete user actions (warp end, layer

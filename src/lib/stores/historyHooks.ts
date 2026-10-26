@@ -50,6 +50,14 @@ export function flushPendingHistorySnapshot() {
   recordDiscreteAction();
 }
 
+/** Drop a debounced edit without recording it. Used when the whole history
+ *  is reset (a project was opened or created), where it no longer applies. */
+export function cancelPendingHistorySnapshot() {
+  if (!_historySnapshotTimer) return;
+  clearTimeout(_historySnapshotTimer);
+  _historySnapshotTimer = null;
+}
+
 /**
  * Suppress recording while a snapshot is being restored.
  *
@@ -62,3 +70,16 @@ let _restoreDepth = 0;
 export function beginHistoryRestore() { _restoreDepth += 1; }
 export function endHistoryRestore() { _restoreDepth = Math.max(0, _restoreDepth - 1); }
 export function isRestoringHistory() { return _restoreDepth > 0; }
+
+/**
+ * A project was replaced wholesale (opened from a file, recovered from an
+ * autosave). The undo history belongs to the project that was there before,
+ * so App.svelte resets it to the new project; without that, the first undo
+ * after opening a project brought the previous project back.
+ */
+let _onProjectReplaced: (() => void) | null = null;
+export function setProjectReplacedCallback(fn: (() => void) | null) { _onProjectReplaced = fn; }
+export function notifyProjectReplaced() {
+  cancelPendingHistorySnapshot();
+  if (_onProjectReplaced) _onProjectReplaced();
+}

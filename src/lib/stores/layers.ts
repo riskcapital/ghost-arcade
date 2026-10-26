@@ -78,6 +78,7 @@ import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 import {
   recordDiscreteAction,
   scheduleHistorySnapshot,
+  notifyProjectReplaced,
 } from './historyHooks';
 export {
   setHistoryCallback,
@@ -5782,7 +5783,15 @@ void main() {
      * Import a project from a saved JSON object.
      * Now supports vjMode (presets), media library, and VJ clip launcher.
      */
-    importProject(data: unknown, projectDir?: string): boolean {
+    /**
+     * Load a project payload. `options.live` marks a state-sync payload from
+     * another window: it carries only the live sections, so a section it
+     * lacks is left as it is, and it does not count as opening a project.
+     * Anything else is a project being opened, where a section the file
+     * lacks is reset rather than kept from the project open before.
+     */
+    importProject(data: unknown, projectDir?: string, options: { live?: boolean } = {}): boolean {
+      const openingFile = !options.live;
       try {
         const parsed = data as {
           version?: string;
@@ -6696,6 +6705,7 @@ void main() {
         if (importedVjMode) {
           console.log('Imported', importedVjMode.compositions.length, 'presets');
         }
+        if (openingFile) notifyProjectReplaced();
         return true;
       } catch (err) {
         console.error('Failed to import project:', err);
