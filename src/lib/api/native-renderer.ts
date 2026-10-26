@@ -832,6 +832,13 @@ export interface RendererStatus {
   last_rpc_error?: string | null;
   last_rpc_error_method?: string | null;
   last_rpc_error_at_ms?: number;
+  /** Broker-side: which core process this status describes (bumps on every
+   *  spawn) and how the previous one ended when it stopped by itself. */
+  core_instance?: number;
+  core_exited_unexpectedly?: boolean;
+  core_exit_code?: number | null;
+  core_exit_signal?: string | null;
+  core_failure_hint?: string | null;
   ffmpeg_active_video_sessions: number;
   decode_hw_frames: number;
   decode_predecode_estimate_cache_entries: number;

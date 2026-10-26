@@ -47,6 +47,7 @@ import {
   nativeFailedRouteLayers,
 } from '$lib/stores/nativeRenderer';
 import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
+import { nativeCoreLossReason } from './nativeCoreSupervisor';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { mediaPipeSource } from '$lib/mediapipe/mediaPipeSource';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
@@ -5299,6 +5300,11 @@ export class NativeRendererSync {
   private running = false;
   private startupReady = false;
   private lifecycleGeneration = 0;
+  /** Called once when the core this sync started stops or is replaced. The
+   *  owner retires this sync and starts a fresh one, which resends the scene. */
+  onCoreLost: ((reason: string) => void) | null = null;
+  private coreInstanceAtStart: number | null = null;
+  private coreLossReported = false;
   private frameId = 0;
   private pendingSync = false;
   private pendingSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -8259,6 +8265,8 @@ export class NativeRendererSync {
     if (!this.ownsLifecycle(lifecycleGeneration)) return;
     this.latestNativeStatus = startupStatus;
     this.assertNativeReady(startupStatus);
+    this.coreInstanceAtStart = Number(startupStatus?.core_instance) || null;
+    this.coreLossReported = false;
     this.syncNativeSourceFrameSize(startupStatus);
     const startupCapabilities = await getNativeRendererCapabilities().catch(() => null);
     if (!this.ownsLifecycle(lifecycleGeneration)) return;
@@ -8914,6 +8922,7 @@ export class NativeRendererSync {
       try {
         const status = await getNativeRendererStatus().catch(() => null);
         if (!status || !this.running) return;
+        if (this.noteCoreLiveness(status)) return;
 
         let readiness: RendererReadinessReport | null = null;
         if (pollReadiness) {
@@ -10992,12 +11001,25 @@ fn fs_main() -> @location(0) vec4<f32> {
     return width > 0 && height > 0 ? { width, height } : null;
   }
 
+  /** True when the core this sync started is gone; tells the owner once. */
+  private noteCoreLiveness(status: RendererStatus): boolean {
+    if (!this.running) return false;
+    if (this.coreLossReported) return true;
+    const reason = nativeCoreLossReason(status, this.coreInstanceAtStart);
+    if (!reason) return false;
+    this.coreLossReported = true;
+    console.warn(`[NativeRendererSync] render core lost: ${reason}`);
+    try { this.onCoreLost?.(reason); } catch (err) { console.warn('[NativeRendererSync] core-lost handler failed', err); }
+    return true;
+  }
+
   async logStatus() {
     if (!this.running) return;
     const [status, previewStatus] = await Promise.all([
       getNativeRendererStatus().catch(() => null),
       getNativeEditorPreviewStatus().catch(() => null),
     ]);
+    if (status && this.noteCoreLiveness(status)) return;
     if (status) {
       this.latestNativeStatus = status;
       void this.reconcileNativeLayerGeometry();

@@ -395,6 +395,54 @@ function videoFramePrefetchStatus(env = process.env, platform = process.platform
   };
 }
 
+const STATUS_DLL_NOT_FOUND = 0xC0000135;
+const STATUS_ENTRYPOINT_NOT_FOUND = 0xC0000139;
+const STATUS_DLL_INIT_FAILED = 0xC0000142;
+const STATUS_INVALID_IMAGE_FORMAT = 0xC000007B;
+const STATUS_ACCESS_VIOLATION = 0xC0000005;
+const STATUS_STACK_BUFFER_OVERRUN = 0xC0000409;
+
+/**
+ * Plain words for why the render core stopped, and what to do about it.
+ *
+ * The core used to fail in the log only: "Native render core exited
+ * (3221225781)" while the workspace waited for a frame forever. Windows
+ * reports a missing DLL as exit code 0xC0000135 before the core runs a single
+ * line, which on Windows N and KN editions means Media Foundation is absent.
+ */
+export function describeNativeCoreExit({ code = null, signal = null, platform = process.platform, spawnError = null } = {}) {
+  if (spawnError) {
+    const reason = String(spawnError?.code || spawnError?.message || spawnError);
+    return {
+      message: `The render core could not be started (${reason}).`,
+      hint: /EACCES|EPERM/i.test(reason)
+        ? 'Your security software may be blocking ghost-render-core. Allow it, then press Retry.'
+        : 'Reinstall Ghost Arcade, then press Retry.',
+      codeLabel: reason,
+    };
+  }
+  const unsigned = typeof code === 'number' && Number.isFinite(code) ? (code >>> 0) : null;
+  const hex = unsigned !== null && unsigned > 0xFFFF ? `0x${unsigned.toString(16).toUpperCase().padStart(8, '0')}` : null;
+  const codeLabel = hex ?? (unsigned !== null ? String(code) : (signal ? String(signal) : 'unknown'));
+  const message = `The render core stopped (${hex ? `code ${hex}` : unsigned !== null ? `exit code ${code}` : signal ? `signal ${signal}` : 'no exit code'}).`;
+  let hint = 'Press Retry. If it keeps stopping, update your graphics driver and send us the log.';
+  if (unsigned === STATUS_DLL_NOT_FOUND || unsigned === STATUS_ENTRYPOINT_NOT_FOUND) {
+    hint = "A Windows component the render core needs is missing. On Windows N or KN editions, install Microsoft's Media Feature Pack (Settings > Apps > Optional features). Otherwise install the latest Microsoft Visual C++ Redistributable (x64). Then restart Ghost Arcade.";
+  } else if (unsigned === STATUS_DLL_INIT_FAILED) {
+    hint = 'A Windows component failed to start. Restart your computer, then open Ghost Arcade again.';
+  } else if (unsigned === STATUS_INVALID_IMAGE_FORMAT) {
+    hint = 'The render core does not match this computer. Reinstall Ghost Arcade from ghostarcade.live.';
+  } else if (unsigned === STATUS_ACCESS_VIOLATION || unsigned === STATUS_STACK_BUFFER_OVERRUN || signal === 'SIGSEGV' || signal === 'SIGBUS') {
+    hint = 'The render core crashed. Update your graphics driver, then press Retry. If it happens again, send us the log.';
+  } else if (signal === 'SIGKILL') {
+    hint = 'The system stopped the render core, usually because memory ran out. Close other apps or lower Video memory in Settings > Performance, then press Retry.';
+  } else if (code === 101) {
+    hint = 'The render core hit an internal error. Press Retry. If it keeps happening, send us the log.';
+  }
+  void platform;
+  return { message, hint, codeLabel };
+}
+
 export function nativeRendererCommandNames() {
   return RENDERER_COMMANDS.slice();
 }
@@ -514,6 +562,21 @@ class NativeRendererBroker {
     });
     this.coreCapabilitiesConfirmed = false;
     this.coreCapabilitiesError = 'Native render core has not started';
+    // Which core process the status describes, and how the last one ended.
+    // The editor compares core_instance to notice a respawn (it must resend
+    // its scene) and reads the exit fields to explain a core that stopped.
+    this.coreInstance = 0;
+    this.coreLifecycle = {
+      core_instance: 0,
+      core_exited_unexpectedly: false,
+      core_exit_code: null,
+      core_exit_signal: null,
+      core_failure_hint: null,
+    };
+  }
+
+  withCoreLifecycle(status) {
+    return { ...status, ...this.coreLifecycle };
   }
 
   getProcessId() {
@@ -729,7 +792,7 @@ class NativeRendererBroker {
     // reliably starts inside 8s.
     const startTimeoutMs = this.platform === 'darwin' ? 8000 : 180000;
     const result = await this.send('start', args, { timeoutMs: startTimeoutMs });
-    this.lastStatus = normalizeStatus(result, this.lastStatus);
+    this.lastStatus = this.withCoreLifecycle(normalizeStatus(result, this.lastStatus));
     try {
       await this.handshakeAfterStart(result);
     } catch (err) {
@@ -1042,11 +1105,12 @@ class NativeRendererBroker {
       await this.sendIfRunning('stop', {}, { fallback: null, timeoutMs: 1000 });
     } finally {
       this.killProcess();
-      this.lastStatus = makeDefaultStatus({
+      this.coreLifecycle = { ...this.coreLifecycle, core_exited_unexpectedly: false, core_failure_hint: null };
+      this.lastStatus = this.withCoreLifecycle(makeDefaultStatus({
         backend: this.platform === 'darwin' ? 'metal' : this.platform === 'win32' ? 'd3d12' : 'vulkan',
         platform: this.platform,
         last_frame_error: 'Native render core stopped',
-      });
+      }));
       this.capabilities = makeDefaultCapabilities({
         backend: this.lastStatus.backend,
         platform: this.platform,
@@ -1065,7 +1129,7 @@ class NativeRendererBroker {
 
   async getStatus() {
     const result = await this.sendIfRunning('status', {}, { fallback: this.lastStatus, timeoutMs: 1000 });
-    this.lastStatus = normalizeStatus(result, this.lastStatus);
+    this.lastStatus = this.withCoreLifecycle(normalizeStatus(result, this.lastStatus));
     void this.recoverFromGpuFault();
     void this.retryCapabilityHandshake();
     return this.lastStatus;
@@ -2328,6 +2392,15 @@ class NativeRendererBroker {
       env: childEnv,
     });
     const child = this.child;
+    this.coreInstance += 1;
+    this.coreLifecycle = {
+      core_instance: this.coreInstance,
+      core_exited_unexpectedly: false,
+      core_exit_code: null,
+      core_exit_signal: null,
+      core_failure_hint: null,
+    };
+    this.lastStatus = this.withCoreLifecycle(this.lastStatus);
     this.stdoutBuffer = '';
     this.writeBlocked = false;
     this.child.stdout.setEncoding('utf8');
@@ -2338,27 +2411,41 @@ class NativeRendererBroker {
         console.log(`[NativeRenderer] ${line}`);
       });
     });
+    // Only a process that is still the current child reaches these: an
+    // intended stop (killProcess) clears this.child first.
     this.child.on('exit', (code, signal) => {
       if (this.child !== child) return;
-      console.log(`[NativeRenderer] exited code=${code} signal=${signal}`);
+      const failure = describeNativeCoreExit({ code, signal, platform: this.platform });
+      console.log(`[NativeRenderer] exited code=${code} signal=${signal} (${failure.codeLabel})`);
       this.child = null;
-      this.rejectPending(new Error(`Native render core exited (${code ?? signal ?? 'unknown'})`));
-      this.lastStatus = {
-        ...this.lastStatus,
-        running: false,
-        backend_ready: false,
-        last_frame_error: `Native render core exited (${code ?? signal ?? 'unknown'})`,
-      };
+      this.noteCoreFailure(failure, { code, signal });
     });
     this.child.on('error', (err) => {
       if (this.child !== child) return;
-      this.rejectPending(err);
-      this.lastStatus = {
-        ...this.lastStatus,
-        running: false,
-        backend_ready: false,
-        last_frame_error: err?.message || String(err),
-      };
+      const failure = describeNativeCoreExit({ spawnError: err, platform: this.platform });
+      console.log(`[NativeRenderer] could not run the core: ${err?.message || err}`);
+      // A failed spawn has no process to wait for.
+      if (this.child === child) this.child = null;
+      this.noteCoreFailure(failure, { code: null, signal: null });
+    });
+  }
+
+  noteCoreFailure(failure, { code, signal }) {
+    this.coreLifecycle = {
+      core_instance: this.coreInstance,
+      core_exited_unexpectedly: true,
+      core_exit_code: typeof code === 'number' ? code : null,
+      core_exit_signal: signal ?? null,
+      core_failure_hint: failure.hint,
+    };
+    this.rejectPending(new Error(`${failure.message} ${failure.hint}`));
+    this.coreCapabilitiesConfirmed = false;
+    this.coreCapabilitiesError = failure.message;
+    this.lastStatus = this.withCoreLifecycle({
+      ...this.lastStatus,
+      running: false,
+      backend_ready: false,
+      last_frame_error: failure.message,
     });
   }
 

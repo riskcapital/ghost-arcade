@@ -117,6 +117,14 @@
     effectToNativeDescriptor,
     nativeEffectPassFromDescriptor,
   } from '$lib/sync/nativeRendererSync';
+  import {
+    describeNativeCoreFailure,
+    nativeCoreRestartDelay,
+    NATIVE_CORE_RESTART_DELAYS_MS,
+    NATIVE_CORE_STABLE_RUN_MS,
+    type NativeCoreFailure,
+  } from '$lib/sync/nativeCoreSupervisor';
+  import { openLogFolder } from '$lib/utils/logFolder';
   import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
   import { NATIVE_EFFECT_PASS_LIMIT } from '$lib/renderer/nativeEffectChainPolicy';
   import {
@@ -127,8 +135,10 @@
     attachNativeEditorPreview,
     detachNativeEditorPreview,
     detachNativeRendererOutputWindow,
+    getNativeRendererStatus,
     setNativeViewportLayerInteraction,
     setNativeRendererOutputWindow,
+    stopNativeRenderer,
     updateNativeEditorPreview,
   } from '$lib/api/native-renderer';
   import { nativeRendererRuntime } from '$lib/stores/nativeRenderer';
@@ -251,6 +261,117 @@
   let nativeQualityUnsub: (() => void) | null = null;
   let lastPushedNativeQuality: string | null = null;
   let lastPushedVideoMemoryMb = -1;
+  // Render core supervision: a start that failed, or a core that stopped and
+  // used up its automatic restarts, shows here with Retry instead of leaving
+  // the workspace on "waiting for core frame source".
+  let nativeSyncLifecycleArmed = false;
+  let nativeCoreFailure: NativeCoreFailure | null = null;
+  let nativeCoreRestarting = false;
+  let nativeCoreRestartAttempt = 0;
+  let nativeCoreRestartTimer: ReturnType<typeof setTimeout> | null = null;
+  let nativeCoreStableTimer: ReturnType<typeof setTimeout> | null = null;
+  let nativeCoreRetryBusy = false;
+  let canvasDestroyed = false;
+
+  function clearNativeCoreTimers() {
+    if (nativeCoreRestartTimer) { clearTimeout(nativeCoreRestartTimer); nativeCoreRestartTimer = null; }
+    if (nativeCoreStableTimer) { clearTimeout(nativeCoreStableTimer); nativeCoreStableTimer = null; }
+  }
+
+  /** Drop a sync whose core failed or went away. The core process is left to
+   *  the broker: a fresh sync's start() respawns it when it is gone. */
+  function retireNativeRendererSync(sync: NativeRendererSync) {
+    sync.onCoreLost = null;
+    if (nativeRendererSync === sync) nativeRendererSync = null;
+    if (nativeRendererStatusTimer) {
+      clearInterval(nativeRendererStatusTimer);
+      nativeRendererStatusTimer = null;
+    }
+    void sync.stop({ stopCore: false }).catch(() => {});
+  }
+
+  /** Start a sync against the core. `restart` = a replacement for one that
+   *  failed: the core it talks to starts empty, so the scene is sent again. */
+  function bootNativeRendererSync(restart: boolean) {
+    if (canvasDestroyed) return;
+    const sync = new NativeRendererSync();
+    nativeRendererSync = sync;
+    sync.onCoreLost = (reason) => handleNativeCoreLost(sync, reason);
+    // Before start(), so the core starts with the chosen video memory.
+    lastPushedVideoMemoryMb = get(settings).performance.videoMemoryMb ?? 0;
+    void sync.setVideoMemoryBudget(lastPushedVideoMemoryMb);
+    const size = getProjectOutputSize();
+    void sync.start(size.width, size.height).then(() => {
+      if (nativeRendererSync !== sync || canvasDestroyed) return;
+      nativeCoreFailure = null;
+      nativeCoreRestarting = false;
+      console.log(`[NativeRendererSync] sync loop armed${restart ? ' (after a render core restart)' : ''}`);
+      void sync.logStatus();
+      if (nativeRendererStatusTimer) clearInterval(nativeRendererStatusTimer);
+      nativeRendererStatusTimer = setInterval(() => {
+        void nativeRendererSync?.logStatus();
+      }, 3000);
+      if (nativeCoreStableTimer) clearTimeout(nativeCoreStableTimer);
+      nativeCoreStableTimer = setTimeout(() => {
+        nativeCoreStableTimer = null;
+        nativeCoreRestartAttempt = 0;
+      }, NATIVE_CORE_STABLE_RUN_MS);
+      if (restart && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('ghost:native-output-scene-resync'));
+      }
+    }).catch(async (err) => {
+      if (nativeRendererSync !== sync || canvasDestroyed) return;
+      console.warn('[NativeRendererSync] failed to start native renderer:', err);
+      const status = await getNativeRendererStatus().catch(() => null);
+      if (nativeRendererSync !== sync || canvasDestroyed) return;
+      retireNativeRendererSync(sync);
+      nativeCoreRestarting = false;
+      nativeCoreFailure = describeNativeCoreFailure(err, status);
+    });
+  }
+
+  function handleNativeCoreLost(sync: NativeRendererSync, reason: string) {
+    if (nativeRendererSync !== sync || canvasDestroyed) return;
+    retireNativeRendererSync(sync);
+    if (nativeCoreStableTimer) { clearTimeout(nativeCoreStableTimer); nativeCoreStableTimer = null; }
+    const delay = nativeCoreRestartDelay(nativeCoreRestartAttempt);
+    if (delay === null) {
+      nativeCoreRestarting = false;
+      void getNativeRendererStatus().catch(() => null).then((status) => {
+        if (canvasDestroyed || nativeRendererSync) return;
+        nativeCoreFailure = describeNativeCoreFailure(reason, status, { stopped: true });
+      });
+      return;
+    }
+    nativeCoreRestartAttempt += 1;
+    nativeCoreRestarting = true;
+    nativeCoreFailure = null;
+    console.warn(`[NativeRendererSync] restarting the render core in ${delay} ms `
+      + `(attempt ${nativeCoreRestartAttempt}/${NATIVE_CORE_RESTART_DELAYS_MS.length}): ${reason}`);
+    if (nativeCoreRestartTimer) clearTimeout(nativeCoreRestartTimer);
+    nativeCoreRestartTimer = setTimeout(() => {
+      nativeCoreRestartTimer = null;
+      if (!canvasDestroyed && !nativeRendererSync) bootNativeRendererSync(true);
+    }, delay);
+  }
+
+  /** Retry button: a fresh core process and a fresh sync. */
+  async function retryNativeCore() {
+    if (nativeCoreRetryBusy || canvasDestroyed) return;
+    nativeCoreRetryBusy = true;
+    try {
+      clearNativeCoreTimers();
+      if (nativeRendererSync) retireNativeRendererSync(nativeRendererSync);
+      // A core that answered badly may still be running; start clean.
+      await stopNativeRenderer().catch(() => {});
+      nativeCoreFailure = null;
+      nativeCoreRestarting = true;
+      nativeCoreRestartAttempt = 0;
+      bootNativeRendererSync(true);
+    } finally {
+      nativeCoreRetryBusy = false;
+    }
+  }
 
   /*
    * Settings' Shader Quality -> the native core's quality tier. The
@@ -1583,7 +1704,8 @@
 
     function startNativeRendererSyncLifecycle(): void {
       if (!((isTauriRuntime || isElectron) && !isOsrMode && !isOutputMode)) return;
-      if (nativeRendererSync) return;
+      if (nativeSyncLifecycleArmed) return;
+      nativeSyncLifecycleArmed = true;
       /*
        * Seed the render-quality tier BEFORE start(), so the core's own default
        * ("auto", which begins at balanced/0.72) never gets a frame in edgeways.
@@ -1602,20 +1724,7 @@
         setPreferredNativeQualityPolicy(tier);
       });
 
-      nativeRendererSync = new NativeRendererSync();
-      // Before start(), so the core starts with the chosen video memory.
-      lastPushedVideoMemoryMb = get(settings).performance.videoMemoryMb ?? 0;
-      void nativeRendererSync.setVideoMemoryBudget(lastPushedVideoMemoryMb);
-      const size = getProjectOutputSize();
-      void nativeRendererSync.start(size.width, size.height).then(() => {
-        console.log('[NativeRendererSync] sync loop armed');
-        void nativeRendererSync?.logStatus();
-        nativeRendererStatusTimer = setInterval(() => {
-          void nativeRendererSync?.logStatus();
-        }, 3000);
-      }).catch((err) => {
-        console.warn('[NativeRendererSync] failed to start native renderer:', err);
-      });
+      bootNativeRendererSync(false);
 
       nativeLayersUnsub = layers.subscribe(($layers) => {
         // Route through the VJ-aware effective-layers path once it is
@@ -4173,6 +4282,8 @@
     // is a no-op and the WebGPU owner's gate stays intact).
     disposeMasterWarpOutput(canvas);
 
+    canvasDestroyed = true;
+    clearNativeCoreTimers();
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
       nativeRendererStatusTimer = null;
@@ -4229,6 +4340,7 @@
       // Canvas instances are temporary (HMR, mode changes, route remounts),
       // while the native core is app-scoped. Dispose this sync owner without
       // killing the process a replacement Canvas may already be using.
+      nativeRendererSync.onCoreLost = null;
       void nativeRendererSync.stop({ stopCore: false });
       nativeRendererSync = null;
     }
@@ -7487,13 +7599,22 @@
   $: {
     const nativeRequested = nativePrimary && !isOutputMode && !isOsrMode;
     const layerCount = $layers.length;
-    nativeEnginePendingVisible = nativeRequested && (layerCount === 0 || !nativeCorePreviewIsReady);
-    nativeEnginePendingTitle = layerCount === 0
-      ? 'Native engine ready'
-      : 'Native engine starting';
-    nativeEnginePendingDetail = layerCount === 0
-      ? 'Create a native layer to start the core graph'
-      : 'Native-only mode: waiting for core frame source';
+    nativeEnginePendingVisible = nativeRequested
+      && (layerCount === 0 || !nativeCorePreviewIsReady || !!nativeCoreFailure || nativeCoreRestarting);
+    nativeEnginePendingTitle = nativeCoreFailure
+      ? nativeCoreFailure.title
+      : nativeCoreRestarting
+        ? 'Restarting the render core'
+        : layerCount === 0
+          ? 'Native engine ready'
+          : 'Native engine starting';
+    nativeEnginePendingDetail = nativeCoreFailure
+      ? nativeCoreFailure.detail
+      : nativeCoreRestarting
+        ? `The render core stopped. Starting it again (attempt ${Math.max(1, nativeCoreRestartAttempt)} of ${NATIVE_CORE_RESTART_DELAYS_MS.length})…`
+        : layerCount === 0
+          ? 'Create a native layer to start the core graph'
+          : 'Native-only mode: waiting for core frame source';
   }
   $: if ((nativeEditorPreviewWindowEnabled || nativeEmbeddedPreviewEnabled) && nativeCorePreviewIsReady && !isOutputMode && !isOsrMode) {
     scheduleNativePreviewWindowSync('ready');
@@ -7820,8 +7941,19 @@
     <!-- Edge blend + test pattern overlay -->
     <canvas class="output-overlay" bind:this={outputOverlayCanvas}></canvas>
     {#if nativeEnginePendingVisible}
-      <div class="native-engine-pending">
-        {#if $layers.length === 0}
+      <div class="native-engine-pending" class:native-engine-pending--failed={!!nativeCoreFailure}>
+        {#if nativeCoreFailure}
+          <div class="native-engine-pending__title">{nativeEnginePendingTitle}</div>
+          <div class="native-engine-pending__detail">{nativeEnginePendingDetail}</div>
+          <div class="native-engine-pending__hint">{nativeCoreFailure.hint}</div>
+          <div class="native-engine-pending__actions">
+            <button type="button" onclick={() => { void retryNativeCore(); }} disabled={nativeCoreRetryBusy}>Retry</button>
+            <button type="button" onclick={() => { void openLogFolder(); }}>Open log</button>
+          </div>
+        {:else if nativeCoreRestarting}
+          <div class="native-engine-pending__title">{nativeEnginePendingTitle}</div>
+          <div class="native-engine-pending__detail">{nativeEnginePendingDetail}</div>
+        {:else if $layers.length === 0}
           <div class="native-engine-pending__actions">
             <button type="button" onclick={openAddLayerMenu}>Add Layer to Get Started</button>
           </div>
@@ -7994,6 +8126,18 @@
   .native-engine-pending__detail {
     font-size: 12px;
     color: rgba(232, 253, 255, 0.68);
+  }
+
+  .native-engine-pending__hint {
+    max-width: 460px;
+    margin: 0 auto;
+    font-size: 12px;
+    line-height: 1.45;
+    color: rgba(232, 253, 255, 0.86);
+  }
+
+  .native-engine-pending--failed .native-engine-pending__title {
+    color: #ffb4a8;
   }
 
   .native-engine-pending__actions {
