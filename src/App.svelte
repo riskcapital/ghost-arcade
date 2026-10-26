@@ -1796,7 +1796,10 @@
   function handleMappingKeyDown(e: KeyboardEvent) {
     if (e.key !== 'Escape' && !arrowDirection(e.key)) return;
     if (e.defaultPrevented) return;
-    if (get(workspace) !== 'main' || get(leftSidebarTab) === 'screens') return;
+    // The mapping canvas is on screen in the main workspace, and in VJ mode
+    // while the stage screens are being edited on it.
+    const canvasShown = get(workspace) === 'main' || (get(workspace) === 'vj' && get(vjStageEdit));
+    if (!canvasShown || get(leftSidebarTab) === 'screens') return;
     const layer = get(selectedLayer);
     const proj = get(project);
     const plan = planMappingArrowKey({
