@@ -2094,6 +2094,168 @@ pub fn decode_native_video_frame_window_rgba(
     Ok(frames)
 }
 
+/// What playback of a file will use, found before it plays: the editor shows
+/// "software decode, may lag" or "can't play" on the media itself instead of
+/// leaving the user to discover it on stage.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct NativeVideoProbe {
+    /// videotoolbox | media-foundation | hap-texture | ffmpeg | failed
+    pub backend: String,
+    pub hardware: bool,
+    /// Why the hardware decoder was not used (backend ffmpeg), or why the file
+    /// cannot be played (backend failed). Empty for hardware.
+    pub reason: String,
+    /// ffmpeg's description of the video stream, e.g.
+    /// "prores (HQ) (apch / 0x68637061), yuv422p10le(tv, bt709), 3840x2160".
+    pub codec: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub duration_seconds: f64,
+    /// Reverse and bounce playback need the hardware or HAP decoder.
+    pub reverse_supported: bool,
+}
+
+/// The `Stream #0:0...: Video: ...` description from ffmpeg's input listing.
+pub fn ffmpeg_video_stream_description(stderr: &str) -> Option<String> {
+    stderr.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.starts_with("Stream #") {
+            return None;
+        }
+        let (_, video) = line.split_once("Video: ")?;
+        Some(video.trim().to_string())
+    })
+}
+
+/// Width and height from an ffmpeg stream description ("..., 1920x1080 [SAR ...").
+pub fn ffmpeg_stream_dimensions(description: &str) -> Option<(u32, u32)> {
+    description.split([',', ' ']).find_map(|part| {
+        let (w, h) = part.trim().split_once('x')?;
+        let (w, h) = (w.parse::<u32>().ok()?, h.parse::<u32>().ok()?);
+        (w > 0 && h > 0).then_some((w, h))
+    })
+}
+
+/// At most two probes open decoders at a time: loading a project with many
+/// clips must not start dozens of decoders at once.
+fn probe_permit() -> impl Drop {
+    static ACTIVE: OnceLock<(Mutex<usize>, Condvar)> = OnceLock::new();
+    let (lock, wake) = ACTIVE.get_or_init(|| (Mutex::new(0), Condvar::new()));
+    let mut active = lock.lock().unwrap_or_else(|e| e.into_inner());
+    while *active >= 2 {
+        active = wake.wait(active).unwrap_or_else(|e| e.into_inner());
+    }
+    *active += 1;
+    struct Permit(&'static (Mutex<usize>, Condvar));
+    impl Drop for Permit {
+        fn drop(&mut self) {
+            let mut active = self.0.0.lock().unwrap_or_else(|e| e.into_inner());
+            *active = active.saturating_sub(1);
+            self.0.1.notify_one();
+        }
+    }
+    Permit(ACTIVE.get().expect("probe permits"))
+}
+
+/// Decide how `path` will play, the way a playback session would: the
+/// hardware (or HAP) decoder first, then ffmpeg. Blocking; run it on a worker.
+pub fn probe_native_video(
+    path: &Path,
+    hap_supported: bool,
+    #[cfg(target_os = "windows")] video_device: Result<crate::windows_video_texture::WindowsVideoDevice, String>,
+) -> NativeVideoProbe {
+    let _permit = probe_permit();
+    let mut probe = NativeVideoProbe::default();
+    if !path.is_file() {
+        probe.backend = "failed".into();
+        probe.reason = "The file was not found".into();
+        return probe;
+    }
+    let backend_policy = std::env::var("GA_NATIVE_VIDEO_BACKEND").unwrap_or_else(|_| "auto".into());
+    #[allow(unused_mut)]
+    let mut hardware_error = String::from("Hardware video decoding is not available on this platform");
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    if backend_policy != "software" {
+        #[cfg(target_os = "macos")]
+        let opened = crate::hardware_video::HardwareVideoDecoder::open(path, hap_supported, None);
+        #[cfg(target_os = "windows")]
+        let opened = (|| {
+            if let Err(reason) = crate::windows_media_foundation::availability()
+                && !(hap_supported && crate::hap_video::HapVideoDecoder::open(path).is_ok())
+            {
+                return Err(reason);
+            }
+            let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(
+                path, video_device, hap_supported, None)?;
+            // A session only reports hardware after a real decoder surface.
+            decoder.set_queue_capacity(2)?;
+            decoder.prime_hardware()?;
+            Ok(decoder)
+        })();
+        match opened {
+            Ok(decoder) => {
+                let metadata = decoder.metadata();
+                probe.backend = if decoder.backend_id() == 5 {
+                    "hap-texture".into()
+                } else {
+                    crate::hardware_video::BACKEND.into()
+                };
+                probe.hardware = true;
+                probe.reverse_supported = true;
+                probe.width = metadata.width;
+                probe.height = metadata.height;
+                probe.fps = metadata.fps;
+                probe.duration_seconds = metadata.duration_seconds;
+                return probe;
+            }
+            Err(error) => hardware_error = error,
+        }
+    }
+    let _ = hap_supported;
+    if backend_policy == "software" {
+        hardware_error = "Hardware decoding is turned off (GA_NATIVE_VIDEO_BACKEND=software)".into();
+    }
+    // The software path: can ffmpeg decode a frame of it?
+    let ffmpeg = ffmpeg_binary();
+    let mut command = Command::new(&ffmpeg);
+    command
+        .args(["-hide_banner", "-nostdin", "-i"])
+        .arg(path)
+        .args(["-map", "0:v:0", "-frames:v", "1", "-f", "null", "-"]);
+    match bounded_output(&mut command, 0) {
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if let Some(description) = ffmpeg_video_stream_description(&stderr) {
+                if let Some((width, height)) = ffmpeg_stream_dimensions(&description) {
+                    probe.width = width;
+                    probe.height = height;
+                }
+                probe.fps = parse_video_fps(&format!("Video: {description}")).unwrap_or(0.0);
+                probe.duration_seconds = stderr.lines().find_map(parse_video_duration).unwrap_or(0.0);
+                probe.codec = description;
+            }
+            if output.status.success() && !probe.codec.is_empty() {
+                probe.backend = "ffmpeg".into();
+                probe.reason = hardware_error;
+            } else {
+                probe.backend = "failed".into();
+                probe.reason = if probe.codec.is_empty() {
+                    "The file has no video that can be read".into()
+                } else {
+                    let tail = stderr.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("").trim();
+                    format!("The video could not be decoded ({tail})")
+                };
+            }
+        }
+        Err(error) => {
+            probe.backend = "failed".into();
+            probe.reason = format!("The video could not be checked: {error}");
+        }
+    }
+    probe
+}
+
 pub fn native_video_frame_bucket(time_seconds: f64) -> u64 {
     (time_seconds * NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS)
         .round()
@@ -2745,6 +2907,31 @@ mod lifecycle_tests {
             assert_eq!(replay[0].source_time_seconds, Some(index as f64 / 30.0));
         }
     }
+    #[test]
+    fn probe_reads_the_video_stream_from_ffmpeg() {
+        let stderr = "Input #0, mov,mp4, from 'a.mov':\n  Duration: 00:00:04.00, start: 0.000000, bitrate: 1 kb/s\n  \
+            Stream #0:0[0x1](und): Video: prores (HQ) (apch / 0x68637061), yuv422p10le(tv, bt709, progressive), 3840x2160, 708 kb/s, 25 fps, 25 tbr\n  \
+            Stream #0:1[0x2](und): Audio: pcm_s16le";
+        let description = super::ffmpeg_video_stream_description(stderr).unwrap();
+        assert!(description.starts_with("prores (HQ)"));
+        assert_eq!(super::ffmpeg_stream_dimensions(&description), Some((3840, 2160)));
+        assert_eq!(super::parse_video_fps(&format!("Video: {description}")), Some(25.0));
+        assert_eq!(super::ffmpeg_video_stream_description("Stream #0:1: Audio: aac"), None);
+    }
+
+    #[test]
+    fn probe_reports_a_missing_file_without_opening_a_decoder() {
+        let probe = super::probe_native_video(
+            std::path::Path::new("/nonexistent/ghost-probe.mp4"),
+            false,
+            #[cfg(target_os = "windows")]
+            Err("no device".into()),
+        );
+        assert_eq!(probe.backend, "failed");
+        assert!(!probe.hardware);
+        assert!(probe.reason.contains("not found"));
+    }
+
     #[test]
     fn software_fallback_uses_more_threads_but_stays_bounded() {
         assert_eq!(super::software_fallback_threads(1), (2, 1));

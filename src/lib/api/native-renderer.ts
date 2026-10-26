@@ -1701,6 +1701,29 @@ export async function getNativeRendererStatus() {
   return invoke<RendererStatus>('native_renderer_get_status');
 }
 
+/** How the render core will play a video file, found before it plays. */
+export interface NativeVideoProbe {
+  uri: string;
+  /** videotoolbox | media-foundation | hap-texture | ffmpeg | failed */
+  backend: string;
+  hardware: boolean;
+  /** Why software decoding is used (ffmpeg), or why it cannot play (failed). */
+  reason: string;
+  /** ffmpeg's description of the video stream (software and failed only). */
+  codec?: string;
+  width: number;
+  height: number;
+  fps: number;
+  duration_seconds: number;
+  /** Reverse and bounce playback need the hardware or HAP decoder. */
+  reverse_supported: boolean;
+}
+
+/** Null when the core is not running. `uri` is a local path or file: URL. */
+export async function probeNativeVideo(uri: string) {
+  return invoke<NativeVideoProbe | null>('native_renderer_probe_video', { uri });
+}
+
 export type NativeRendererLayerSnapshot = {
   layer_id: string;
   z_index: number;

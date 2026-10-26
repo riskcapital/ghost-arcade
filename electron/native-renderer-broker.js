@@ -328,6 +328,8 @@ const RENDERER_COMMANDS = [
   'native_renderer_start_native_recording',
   'native_renderer_stop_native_recording',
   'native_renderer_native_recording_state',
+  // How a video file will play: hardware, HAP, software (and why), or not at all.
+  'native_renderer_probe_video',
   'native_renderer_set_stage3d_scene',
   'native_renderer_get_stage3d_scene_summary',
   'native_renderer_set_projection_sim_scene',
@@ -763,6 +765,11 @@ class NativeRendererBroker {
         return this.sendIfRunning('detach_slice_window', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_native_recording_state':
         return this.sendIfRunning('native_recording_state', args, { fallback: null });
+      case 'native_renderer_probe_video':
+        // Opens a decoder (and on Windows decodes a frame); ffmpeg's check
+        // alone may take up to 10 s on a slow disk.
+        return this.sendIfRunning('probe_video', { uri: String(args?.uri ?? args?.path ?? '') },
+          { fallback: null, timeoutMs: 30000 });
       default:
         if (BROKER_UNSUPPORTED_COMMANDS.has(command)) {
           return Promise.reject(this.unsupportedError(command));

@@ -6062,6 +6062,43 @@ impl App {
         }
     }
 
+    /// Answer `probe_video` from a worker: opening a decoder (and on Windows
+    /// decoding a first frame) must not hold up rendering.
+    fn start_video_probe(&mut self, req: &RpcRequest) {
+        let id = req.id;
+        let Some(uri) = string_at(&req.params, &["uri"]).or_else(|| string_at(&req.params, &["path"])) else {
+            self.send_error(id, "probe_video requires uri");
+            return;
+        };
+        let Some(path) = local_media_path_from_uri(&uri) else {
+            self.send_ok(id, json!({
+                "uri": uri, "backend": "failed", "hardware": false,
+                "reason": "Only video files on this computer can be checked",
+            }));
+            return;
+        };
+        let hap_supported = self.renderer.as_ref()
+            .is_some_and(|r| r.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC));
+        #[cfg(target_os = "windows")]
+        let video_device = self.renderer.as_ref()
+            .ok_or_else(|| "Renderer unavailable for hardware video".to_string())
+            .and_then(|renderer| renderer.video_device.clone());
+        let responses = self.response_tx.clone();
+        thread::spawn(move || {
+            let probe = media_decode::probe_native_video(
+                &path,
+                hap_supported,
+                #[cfg(target_os = "windows")]
+                video_device,
+            );
+            let mut result = serde_json::to_value(&probe).unwrap_or_else(|_| json!({}));
+            result["uri"] = json!(uri);
+            if id != 0 {
+                let _ = responses.send(json!({ "id": id, "ok": true, "result": result }).to_string());
+            }
+        });
+    }
+
     fn send_ok(&self, id: u64, result: Value) {
         if id == 0 {
             return;
@@ -6243,6 +6280,10 @@ impl App {
         if matches!(req.method.as_str(), "frame_snapshot" | "get_frame_snapshot")
             && bool_at(&req.params, &["live_output"]).unwrap_or(false) {
             if let Err(error) = self.start_composite_preview(&req) { if req.id != 0 { self.send_error(req.id, error); } }
+            return;
+        }
+        if req.method == "probe_video" {
+            self.start_video_probe(&req);
             return;
         }
         if req.method == "prefetch_media" && string_at(&req.params, &["source_type"]).as_deref() == Some("image") {

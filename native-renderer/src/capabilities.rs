@@ -79,6 +79,8 @@ pub const CORE_RPC_METHODS: &[&str] = &[
     "start_native_recording",
     "stop_native_recording",
     "native_recording_state",
+    // How a video file will play (hardware, HAP, software, or not at all).
+    "probe_video",
     "set_output_window",
     "set_present_policy",
     "set_command_drain_policy",

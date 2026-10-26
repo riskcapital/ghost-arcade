@@ -1218,3 +1218,28 @@ describe('clip transition RPC bridge', () => {
     expect(await broker.invoke(command, args)).toEqual(result);
   });
 });
+
+describe('video probe RPC bridge', () => {
+  it('asks the core how a file will play, passing only its location, with room for a slow check', async () => {
+    const broker = createBroker();
+    broker.child = { killed: false };
+    const probe = { uri: '/show/clip.mov', backend: 'ffmpeg', hardware: false, reason: 'Interlaced video' };
+    let timeout = 0;
+    broker.send = async (method: string, args: unknown, options: { timeoutMs?: number } = {}) => {
+      expect(method).toBe('probe_video');
+      expect(args).toEqual({ uri: '/show/clip.mov' });
+      timeout = Number(options.timeoutMs);
+      return probe;
+    };
+    expect(await broker.invoke('native_renderer_probe_video', { uri: '/show/clip.mov', rgba_file: '/tmp/x' })).toEqual(probe);
+    expect(timeout).toBeGreaterThanOrEqual(15000);
+  });
+
+  it('is an IPC command the renderer may call', async () => {
+    // @ts-expect-error The Electron broker is authored as ESM JavaScript.
+    const { nativeRendererCommandNames } = await import('../../../electron/native-renderer-broker.js');
+    expect(nativeRendererCommandNames()).toContain('native_renderer_probe_video');
+    const preload = (await import('node:fs')).readFileSync('electron/preload.cjs', 'utf8');
+    expect(preload).toContain("'native_renderer_probe_video'");
+  });
+});
