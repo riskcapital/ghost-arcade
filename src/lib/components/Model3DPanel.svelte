@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { project, selectedLayer } from '../stores/layers';
+  import { project, selectedLayer, scheduleHistorySnapshot } from '../stores/layers';
   import { showLoading, hideLoading } from '../stores/loading';
   import { MODEL3D_DEFORMATIONS, MODEL3D_DEFORM_ORDER, effectiveModel3DDeformAxis, model3dDeformInfo } from '../model3d/model3dDeforms';
   import type {
@@ -221,6 +221,7 @@
       onUpdate(updates);
     } else if (layer) {
       project.updateModel3DContent(layer.id, updates);
+      scheduleHistorySnapshot(`model3d:${layer.id}:${Object.keys(updates).sort().join(',')}`);
     }
   }
 

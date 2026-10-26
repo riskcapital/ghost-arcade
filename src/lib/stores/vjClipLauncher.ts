@@ -997,7 +997,8 @@ function createVJClipLauncherStore() {
       if (clip.type === 'preset') {
         if (clip.presetId) {
           void import('./layers').then(({ project }) => {
-            project.loadComposition(clip.presetId!);
+            // A clip fired in a set is performance, not an undo step.
+            project.loadComposition(clip.presetId!, { recordHistory: false });
           }).catch((err) => {
             console.error('[VJ] preset load failed:', err);
           });

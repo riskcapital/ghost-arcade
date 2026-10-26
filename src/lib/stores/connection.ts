@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { project } from './layers';
+import { scheduleHistorySnapshot } from './historyHooks';
 import type { Point2D, WarpCorners } from '../types';
 
 interface ConnectionState {
@@ -116,6 +117,7 @@ function handleMessage(msg: { type: string; [key: string]: unknown }) {
         position: Point2D;
       };
       project.setCorner(layerId, corner, position);
+      scheduleHistorySnapshot(`remote-corner:${layerId}:${corner}`);
       break;
     }
 

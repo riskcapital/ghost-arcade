@@ -48,19 +48,30 @@ import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
 import { restoreVideoSourceElement } from '../media/videoSourceRestore';
 import { adoptLiveVideo, collectLiveVideos, unadoptedVideos } from '../sync/playbackSync';
 
-// History recording callback — set from App.svelte to avoid circular imports.
-// We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
-// own undo step. Previously this used setTimeout(_, 0) which coalesced rapid
-// successive actions — drawing 10 light-painting strokes in quick succession
-// scheduled 10 callbacks that all fired in the next tick reading the SAME
-// post-mutation project, so the undo stack only got 1 entry pointing at the
-// pre-first-stroke state. One undo would wipe every stroke. Now each call
-// captures the project state synchronously, post-update, so undo unwinds
-// stroke-by-stroke as expected.
-let _onDiscreteAction: (() => void) | null = null;
-export function setHistoryCallback(fn: () => void) { _onDiscreteAction = fn; }
-function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteAction(); }
+// History recording lives in historyHooks.ts (App.svelte installs the
+// callback); re-exported here for the panels that already import this module.
+import {
+  recordDiscreteAction,
+  scheduleHistorySnapshot,
+  amendLastHistoryStep,
+} from './historyHooks';
+export {
+  setHistoryCallback,
+  recordDiscreteAction,
+  scheduleHistorySnapshot,
+  flushPendingHistorySnapshot,
+} from './historyHooks';
 const selectedLayerIdsState = writable<string[]>([]);
+
+/**
+ * The debounce key of an edit (see scheduleHistorySnapshot): what kind of
+ * edit, on which target, to which fields. Edits with the same key coalesce
+ * into one undo step; a different key starts a new one.
+ */
+function editKey(scope: string, id: string, fields?: object | string): string {
+  const names = typeof fields === 'string' ? fields : fields ? Object.keys(fields).sort().join(',') : '';
+  return `${scope}:${id}:${names}`;
+}
 
 function cleanMediaSourceName(source: MediaSource): string {
   return (source.name || '').replace(/\.[^.]+$/, '').trim() || source.name || 'Media';
@@ -379,7 +390,9 @@ void main() {
           shaderValues,
           shaderImageInputs: {},
         };
-        store.setLayerSource(layerId, source);
+        // Part of adding the layer, not a step of its own.
+        store.setLayerSource(layerId, source, { history: false });
+        amendLastHistoryStep();
       } catch {
         // Silently fail
       }
@@ -1200,6 +1213,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot(editKey('text', layerId, updates));
     },
 
     updateTextAnimation(layerId: string, updates: Partial<TextAnimation>) {
@@ -1217,6 +1231,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot(editKey('text-animation', layerId, updates));
     },
 
     // Light painting methods
@@ -1244,6 +1259,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot(editKey('pixelfx', layerId, updates));
     },
 
     addLightPaintingStroke(layerId: string, stroke: LightPaintingStroke) {
@@ -1302,6 +1318,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot(editKey('stroke-brush', `${layerId}:${strokeId}`));
     },
 
     // Replace the entire points array of a stroke. Used by path-edit mode
@@ -1371,6 +1388,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot(editKey('color', layerId, updates));
     },
 
     // ============================================================================
@@ -1399,6 +1417,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     disableMask(layerId: string) {
@@ -1410,6 +1429,7 @@ void main() {
             : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     clearMask(layerId: string) {
@@ -1421,6 +1441,7 @@ void main() {
             : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     /**
@@ -1508,6 +1529,7 @@ void main() {
           return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
         }),
       }));
+      recordDiscreteAction();
     },
 
     /**
@@ -1614,6 +1636,7 @@ void main() {
             : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     setMaskFeather(layerId: string, feather: number) {
@@ -1625,6 +1648,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot(editKey('mask-feather', layerId));
     },
 
     // ============================================================================
@@ -1646,6 +1670,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('shape-point-add', layerId));
     },
 
     updateCustomShapePoint(layerId: string, pointIndex: number, point: Point2D) {
@@ -1666,6 +1691,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('shape-point', `${layerId}:${pointIndex}`));
     },
 
     removeCustomShapePoint(layerId: string, pointIndex: number) {
@@ -1749,6 +1775,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('shape-handle', `${layerId}:${pointIndex}:${handleType}`));
     },
 
     toggleCustomShapePointCurve(layerId: string, pointIndex: number) {
@@ -1895,6 +1922,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     // ============================================================================
@@ -1908,6 +1936,7 @@ void main() {
           layer.id === layerId ? { ...layer, cropRegion } : layer
         ),
       }));
+      scheduleHistorySnapshot(editKey('crop', layerId));
     },
 
     updateCropRegion(layerId: string, updates: Partial<CropRegion>) {
@@ -1930,6 +1959,7 @@ void main() {
           layer.id === layerId ? { ...layer, cropRegion: null } : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     // ============================================================================
@@ -1984,6 +2014,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot(editKey('shape-params', layerId, params));
     },
 
     toggleLayerShapeEnabled(layerId: string) {
@@ -1995,6 +2026,7 @@ void main() {
             : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     clearLayerShape(layerId: string) {
@@ -2004,6 +2036,7 @@ void main() {
           layer.id === layerId ? { ...layer, layerShape: null } : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     // Add/update polyline points for line shapes
@@ -2262,14 +2295,26 @@ void main() {
     },
 
     // Layer property updates
-    updateLayer(id: string, updates: Partial<Layer>) {
+    /**
+     * `options.history: false` is for live control (MIDI, OSC, DMX, show
+     * control fades) and for refreshes that change nothing: those writes
+     * are performance, not edits, and must not become undo steps or end the
+     * debounce of an edit in progress.
+     */
+    updateLayer(id: string, updates: Partial<Layer>, options: { history?: boolean } = {}) {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, ...updates } : l)),
       }));
+      // Debounced: the panels call this on every slider tick. Keyed by layer
+      // and fields, so dragging opacity is one step and a blend-mode change
+      // right after it is another. A no-op update (identical project state)
+      // is deduped by history.record().
+      if (options.history !== false) scheduleHistorySnapshot(editKey('layer', id, updates));
     },
 
-    setLayerSource(id: string, source: MediaSource | null) {
+    /** `options.history: false` for live control, as with updateLayer. */
+    setLayerSource(id: string, source: MediaSource | null, options: { history?: boolean } = {}) {
       // Debug trace — set window.__VIDEO_DEBUG__ = true to see every
       // setLayerSource call with the caller stack so we can localize
       // which path is mutating layer.source mid-frame.
@@ -2327,7 +2372,7 @@ void main() {
           }),
         };
       });
-      recordDiscreteAction();
+      if (options.history !== false) recordDiscreteAction();
     },
 
     /** Lightweight shader value update for per-frame modulation — no history, no dispose checks */
@@ -2346,6 +2391,7 @@ void main() {
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, opacity } : l)),
       }));
+      scheduleHistorySnapshot(editKey('layer', id, 'opacity'));
     },
 
     setLayerBlendMode(id: string, blendMode: BlendMode) {
@@ -2446,6 +2492,7 @@ void main() {
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, flipH: !l.flipH } : l)),
       }));
+      recordDiscreteAction();
     },
 
     toggleLayerFlipV(id: string) {
@@ -2453,6 +2500,7 @@ void main() {
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, flipV: !l.flipV } : l)),
       }));
+      recordDiscreteAction();
     },
 
     // Warp mode
@@ -2676,6 +2724,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('effect', `${layerId}:${effectId}`, updates));
     },
 
     updateEffectParams(layerId: string, effectId: string, params: Partial<EffectParams>) {
@@ -2726,6 +2775,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:${effectId}`, paramName));
     },
 
     /** Set or clear the Auto playhead config for a single GPU shader-
@@ -2751,6 +2801,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:gpu`, paramKey));
     },
 
     /** Set or clear the Auto playhead config for a splat / point-cloud
@@ -2775,6 +2826,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:splat`, paramKey));
     },
 
     /** Set or clear the Auto playhead config for a single edge-effect
@@ -2807,6 +2859,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:${effectId}`, paramPath));
     },
 
     /** Set or clear the Auto playhead config for a single shader-param
@@ -2831,6 +2884,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('auto', `${layerId}:shader`, paramName));
     },
 
     /** Reset a layer effect's params back to the catalog defaults
@@ -2865,6 +2919,7 @@ void main() {
           keyframeTimeline.autoRecord(layerId, trackKey, value, paramName, typeof value === 'boolean' ? 'boolean' : 'number');
         }
       }
+      recordDiscreteAction();
     },
 
     // ========== Mapping Composition ==========
@@ -2933,6 +2988,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     updateMappingCompositionEffect(effectId: string, updates: Partial<Effect>) {
@@ -2948,6 +3004,7 @@ void main() {
           },
         };
       });
+      scheduleHistorySnapshot(editKey('mapping-fx', effectId, updates));
     },
 
     updateMappingCompositionEffectParams(effectId: string, params: Partial<EffectParams>) {
@@ -2978,6 +3035,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     reorderMappingCompositionEffects(fromIndex: number, toIndex: number) {
@@ -3036,7 +3094,9 @@ void main() {
       recordDiscreteAction();
     },
 
-    setMappingStageEffectActive(effectId: string | null) {
+    /** Picking the live Screen FX is recorded; beat automation and
+     *  hold-to-flash pass `{ history: false }`, being performance. */
+    setMappingStageEffectActive(effectId: string | null, options: { history?: boolean } = {}) {
       update((p) => {
         const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
         return {
@@ -3047,6 +3107,7 @@ void main() {
           },
         };
       });
+      if (options.history !== false) recordDiscreteAction();
     },
 
     toggleMappingStageEffectInTimeline(effectId: string) {
@@ -3062,6 +3123,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     updateMappingStageEffect(effectId: string, updates: Partial<StageEffect>) {
@@ -3077,6 +3139,7 @@ void main() {
           },
         };
       });
+      scheduleHistorySnapshot(editKey('mapping-stage-fx', effectId, updates));
     },
 
     updateMappingStageEffectParam(effectId: string, key: string, value: number) {
@@ -3094,6 +3157,7 @@ void main() {
           },
         };
       });
+      scheduleHistorySnapshot(editKey('mapping-stage-fx-param', effectId, key));
     },
 
     updateMappingStageEffectAutomation(updates: Partial<SurfaceEffectAutomation>) {
@@ -3152,6 +3216,7 @@ void main() {
         stagePresets: [...(project.stagePresets || []), preset],
       }));
 
+      recordDiscreteAction();
       return preset.id;
     },
 
@@ -3168,17 +3233,22 @@ void main() {
     },
 
     /** Load a stage preset — replaces project.layers with the preset's saved layers */
-    loadStagePreset(presetId: string) {
+    /** One undo step, unless `options.history` is false (a preset fired
+     *  by a controller or a show during a performance). */
+    loadStagePreset(presetId: string, options: { history?: boolean } = {}) {
       const preset = (get({ subscribe }).stagePresets || []).find(
         candidate => candidate.id === presetId
       );
-      if (preset) restoreStagePresetSnapshot(preset);
+      if (!preset) return;
+      restoreStagePresetSnapshot(preset);
+      if (options.history !== false) recordDiscreteAction();
     },
 
     /** Restore an external/global Stage preset through the exact same
      * complete path as a project preset. */
-    loadStagePresetSnapshot(preset: StagePreset) {
+    loadStagePresetSnapshot(preset: StagePreset, options: { history?: boolean } = {}) {
       restoreStagePresetSnapshot(preset);
+      if (options.history !== false) recordDiscreteAction();
     },
 
     /** Delete a stage preset */
@@ -3187,6 +3257,7 @@ void main() {
         ...project,
         stagePresets: (project.stagePresets || []).filter(p => p.id !== presetId),
       }));
+      recordDiscreteAction();
     },
 
     /** Rename a stage preset */
@@ -3197,6 +3268,7 @@ void main() {
           p.id === presetId ? { ...p, name: newName } : p
         ),
       }));
+      recordDiscreteAction();
     },
 
     /** Update a stage preset's thumbnail */
@@ -3241,6 +3313,7 @@ void main() {
             : p
         ),
       }));
+      recordDiscreteAction();
     },
 
     // ========== SV Keyboard Presets ==========
@@ -3253,12 +3326,14 @@ void main() {
         ...project,
         wledControllers: [...(project.wledControllers || []), controller],
       }));
+      recordDiscreteAction();
     },
     removeWLEDController(controllerId: string) {
       update((project) => ({
         ...project,
         wledControllers: (project.wledControllers || []).filter(c => c.id !== controllerId),
       }));
+      recordDiscreteAction();
     },
     updateWLEDController(controllerId: string, fields: Partial<WLEDController>) {
       update((project) => ({
@@ -3267,6 +3342,7 @@ void main() {
           c.id === controllerId ? { ...c, ...fields, id: controllerId } : c
         ),
       }));
+      scheduleHistorySnapshot(editKey('wled', controllerId, fields));
     },
     // ========== Art-Net / sACN pixel mapping ==========
     updatePixelMap(fields: Partial<PixelMapConfig>) {
@@ -3277,12 +3353,14 @@ void main() {
           ...fields,
         },
       }));
+      scheduleHistorySnapshot(editKey('pixel-map', '', fields));
     },
     addPixelMapFixture(fixture: PixelMapFixture) {
       update((project) => {
         const pixelMap = project.pixelMap ?? createDefaultPixelMapConfig();
         return { ...project, pixelMap: { ...pixelMap, fixtures: [...pixelMap.fixtures, fixture] } };
       });
+      scheduleHistorySnapshot(editKey('pixel-map-fixture-add', fixture.id));
     },
     updatePixelMapFixture(fixtureId: string, fields: Partial<PixelMapFixture>) {
       update((project) => {
@@ -3297,6 +3375,7 @@ void main() {
           },
         };
       });
+      scheduleHistorySnapshot(editKey('pixel-map-fixture', fixtureId, fields));
     },
     removePixelMapFixture(fixtureId: string) {
       update((project) => {
@@ -3309,12 +3388,14 @@ void main() {
           },
         };
       });
+      scheduleHistorySnapshot(editKey('pixel-map-fixture-remove', fixtureId));
     },
     addWLEDGroup(group: WLEDGroup) {
       update((project) => ({
         ...project,
         wledGroups: [...(project.wledGroups || []), group],
       }));
+      recordDiscreteAction();
     },
     updateWLEDGroup(groupId: string, fields: Partial<WLEDGroup>) {
       update((project) => ({
@@ -3323,6 +3404,7 @@ void main() {
           group.id === groupId ? { ...group, ...fields, id: groupId } : group
         ),
       }));
+      scheduleHistorySnapshot(editKey('wled-group', groupId, fields));
     },
     removeWLEDGroup(groupId: string) {
       update((project) => ({
@@ -3334,12 +3416,14 @@ void main() {
             : effect
         ),
       }));
+      recordDiscreteAction();
     },
     addWLEDEffect(effect: WLEDEffect) {
       update((project) => ({
         ...project,
         wledEffects: [...(project.wledEffects || []), effect],
       }));
+      recordDiscreteAction();
     },
     updateWLEDEffect(effectId: string, fields: Partial<WLEDEffect>) {
       update((project) => ({
@@ -3348,12 +3432,14 @@ void main() {
           effect.id === effectId ? { ...effect, ...fields, id: effectId } : effect
         ),
       }));
+      scheduleHistorySnapshot(editKey('wled-effect', effectId, fields));
     },
     removeWLEDEffect(effectId: string) {
       update((project) => ({
         ...project,
         wledEffects: (project.wledEffects || []).filter(effect => effect.id !== effectId),
       }));
+      recordDiscreteAction();
     },
     updateWLEDEffectAutomation(fields: Partial<WLEDEffectAutomation>) {
       update((project) => ({
@@ -3368,6 +3454,8 @@ void main() {
           ...fields,
         },
       }));
+      // Play/pause is transport, not an edit.
+      if (Object.keys(fields).some((key) => key !== 'playing')) scheduleHistorySnapshot(editKey('wled-automation', '', fields));
     },
 
     saveSVKeyboardPreset(preset: SVKeyboardPreset) {
@@ -3375,6 +3463,7 @@ void main() {
         ...project,
         svKeyboardPresets: [...(project.svKeyboardPresets || []), preset],
       }));
+      recordDiscreteAction();
     },
 
     deleteSVKeyboardPreset(presetId: string) {
@@ -3382,6 +3471,7 @@ void main() {
         ...project,
         svKeyboardPresets: (project.svKeyboardPresets || []).filter(p => p.id !== presetId),
       }));
+      recordDiscreteAction();
     },
 
     renameSVKeyboardPreset(presetId: string, newName: string) {
@@ -3391,6 +3481,7 @@ void main() {
           p.id === presetId ? { ...p, name: newName } : p
         ),
       }));
+      recordDiscreteAction();
     },
 
     /** Overwrite an existing SV keyboard preset's contents (clipAssignments,
@@ -3404,6 +3495,7 @@ void main() {
           p.id === presetId ? { ...p, ...fields, id: presetId, name: p.name } : p
         ),
       }));
+      recordDiscreteAction();
     },
 
     // ========== Import Presets from Another .ghost-arcade File ==========
@@ -3435,6 +3527,7 @@ void main() {
         stagePresets: [...(project.stagePresets || []), ...presets.stagePresets],
         svKeyboardPresets: [...(project.svKeyboardPresets || []), ...presets.svKeyboardPresets],
       }));
+      recordDiscreteAction();
     },
 
     /**
@@ -3468,6 +3561,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     reorderEffects(layerId: string, fromIndex: number, toIndex: number) {
@@ -3481,6 +3575,7 @@ void main() {
           return { ...l, effects: newEffects };
         }),
       }));
+      recordDiscreteAction();
     },
 
     // ============================================================================
@@ -3542,6 +3637,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     selectElement(layerId: string, elementId: string | null) {
@@ -3576,6 +3672,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('line-element', `${layerId}:${elementId}`, updates));
     },
 
     updateElementShape(layerId: string, elementId: string, shapeUpdates: Partial<LineShape> & Record<string, any>) {
@@ -3604,6 +3701,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('line-shape', `${layerId}:${elementId}`, shapeUpdates));
     },
 
     updateElementStroke(layerId: string, elementId: string, stroke: LineStroke | any) {
@@ -3622,6 +3720,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('line-stroke', `${layerId}:${elementId}`));
     },
 
     // Compatibility aliases for DrawingPanel (maps old drawing API to lines API)
@@ -3661,6 +3760,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('line-draw', `${layerId}:${elementId}`, updates));
     },
 
     duplicateElement(layerId: string, elementId: string) {
@@ -3693,6 +3793,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     reorderElements(layerId: string, fromIndex: number, toIndex: number) {
@@ -3712,6 +3813,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     // Per-element mesh warp methods
@@ -3815,6 +3917,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     updateSVGContent(layerId: string, updates: Partial<SVGContent>) {
@@ -3828,6 +3931,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('svg', layerId, updates));
     },
 
     setSVGFillMode(layerId: string, fillMode: SVGFillMode) {
@@ -3841,6 +3945,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     setSVGColorMode(layerId: string, colorMode: SVGColorMode) {
@@ -3854,6 +3959,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     toggleSVGEffect(layerId: string, effectKey: keyof SVGContent) {
@@ -3869,6 +3975,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     setSVGParam(layerId: string, paramKey: keyof SVGContent, value: number | boolean | string) {
@@ -3882,6 +3989,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('svg', layerId, String(paramKey)));
     },
 
     resetSVGContent(layerId: string) {
@@ -3896,6 +4004,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     // ============================================================================
@@ -4006,6 +4115,7 @@ void main() {
         };
       });
 
+      recordDiscreteAction();
       return compositionId;
     },
 
@@ -4079,6 +4189,7 @@ void main() {
         };
       });
       console.log('[Store] updateComposition: overwrote', compositionId, updated.name);
+      recordDiscreteAction();
       return true;
     },
 
@@ -4107,6 +4218,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     /**
@@ -4125,6 +4237,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     reorderComposition(fromIndex: number, toIndex: number) {
@@ -4145,6 +4258,7 @@ void main() {
           },
         };
       });
+      recordDiscreteAction();
     },
 
     /**
@@ -4166,9 +4280,15 @@ void main() {
     },
 
     /**
-     * Load a composition into the main layers (for editing/preview)
+     * Load a composition into the main layers (for editing/preview).
+     *
+     * A user firing a preset is one undo step (like saving or editing one,
+     * see saveComposition); automated recalls (show timeline, scheduler
+     * cues, VJ clip triggers) pass `recordHistory: false` so playback does
+     * not flood the undo stack.
      */
-    loadComposition(compositionId: string, _options?: { restoreTransports?: boolean; recordHistory?: boolean }) {
+    loadComposition(compositionId: string, options?: { restoreTransports?: boolean; recordHistory?: boolean }) {
+      const recordHistory = options?.recordHistory !== false;
       // First get the composition to access Performer data
       const currentProject = get({ subscribe });
       if (!currentProject.vjMode) return;
@@ -4232,7 +4352,10 @@ void main() {
               keyframeTimeline.play();
             }
           }
+          if (recordHistory) recordDiscreteAction();
         });
+      } else if (recordHistory) {
+        recordDiscreteAction();
       }
     },
 
@@ -4525,6 +4648,7 @@ void main() {
 
     setProjectDimensions(width: number, height: number) {
       update((project) => ({ ...project, width, height }));
+      recordDiscreteAction();
     },
 
     setProjectName(name: string) {

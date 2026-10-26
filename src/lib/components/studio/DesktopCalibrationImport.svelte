@@ -3,6 +3,7 @@
  import {readMobileCalibration,type ImportedCalibration} from '../../output/mobileCalibrationImport';
  import {inverseProjectorHomography} from '../../output/projectorCalibration';
  import {project} from '../../stores/layers';
+ import {amendLastHistoryStep} from '../../stores/historyHooks';
  import {mediaLibrary} from '../../stores/media';
  import {createAssetRefFromGeneratedBlob} from '../../storage/assetRegistry';
  import {traceShapes,type TracedShape} from '../../painting/vectorize';
@@ -70,8 +71,10 @@
    // A curved surface: the picture follows it through a mesh and is masked to its edge.
    // Anything malformed falls back to the corners.
    const curved=phoneMeshLayer(surface,crop);
-   if(curved){project.updateLayer(layerId,{warpMode:'mesh',...curved});meshes++;}
-   else project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft}});
+   // Where the new layer lands is part of adding it: one undo takes both back.
+   if(curved){project.updateLayer(layerId,{warpMode:'mesh',...curved},{history:false});meshes++;}
+   else project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft}},{history:false});
+   amendLastHistoryStep();
    made++;
    // A painting arrives with its own photo, cut to land exactly on it: put that on the layer.
    const picture=pictureOf(surface);
@@ -108,7 +111,8 @@
   const [topLeft,topRight,bottomRight,bottomLeft]=shape.corners.map(p=>({x:crop.x+p.x*crop.w,y:1-(crop.y+p.y*crop.h)}));
   const id=project.addLayer(`${shape.name} (mapped)`,'media');
   if(!id){message='The layer could not be created.';return;}
-  project.updateLayer(id,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft}});
+  project.updateLayer(id,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft}},{history:false});
+  amendLastHistoryStep();
   message='A layer was created and pinned to the surface. Put a shader or video on it, check it on the wall, then save the project.';
  }
 </script>

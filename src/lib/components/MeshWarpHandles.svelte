@@ -1,6 +1,6 @@
 <script lang="ts">
   import { selectedLayer, selectedLayerIds, project, layers } from '../stores/layers';
-  import { history } from '../stores/history';
+  import { recordDiscreteAction } from '../stores/historyHooks';
   import { settings } from '../stores/settings';
   import { get } from 'svelte/store';
   import type { Point2D, MeshWarpGrid, WarpCorners } from '../types';
@@ -90,7 +90,7 @@
     const grid = layer?.meshGrid;
     if (!layer || !grid || layer.locked) return;
     project.setMeshPointTangents(layer.id, row, col, meshTangentsAfterStraighten(grid, row, col, side));
-    history.record(get(project));
+    recordDiscreteAction();
   }
 
   function handleTangentMouseDown(row: number, col: number, side: MeshTangentSide, e: MouseEvent) {
@@ -257,7 +257,7 @@
   }
 
   function cancelDrag(record = true) {
-    if (record && (dragging || tangentDrag)) history.record(get(project));
+    if (record && (dragging || tangentDrag)) recordDiscreteAction();
     dragging = null;
     tangentDrag = null;
     dragStart = null;

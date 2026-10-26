@@ -96,13 +96,13 @@
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
+  import { recordDiscreteAction, scheduleHistorySnapshot } from './lib/stores/historyHooks';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { settings, outputFrozen } from './lib/stores/settings';
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from './lib/stores/mappingPointSelection';
-  import { flushPendingHistorySnapshot, scheduleHistorySnapshot } from './lib/stores/nudgeHistory';
   import { arrowDirection, classifyKeyTarget, planMappingArrowKey } from './lib/utils/mappingNudge';
   import { guardAltRelease, noteAltArrow } from './lib/utils/altArrowGuard';
   import { releaseFormControlFocus } from './lib/utils/formFocus';
@@ -159,7 +159,7 @@
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
   import { invoke, isMac, isDesktopApp, openExternalUrl } from './lib/bridge';
-  import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType } from './lib/types';
+  import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType, Project } from './lib/types';
   import { createDefaultCorners, generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
   // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
@@ -1113,7 +1113,11 @@
     }
 
     // Wire up history recording callback for the project store
-    setHistoryCallback(() => recordHistory());
+    setHistoryCallback(recordHistory, {
+      capture: () => get(project),
+      commit: (captured) => history.record(captured as Project),
+      amend: () => history.amend(get(project)),
+    });
 
     // Simple routing: check URL hash
     isMobile = window.location.hash === '#/mobile' || window.location.pathname.includes('mobile');
@@ -1477,7 +1481,7 @@
             project.update(p => ({ ...p, layers: [newLayer, ...p.layers] }));
             project.selectLayer(newLayer.id);
           }
-          recordHistory();
+          recordDiscreteAction();
         }
         return;
       }
@@ -1489,7 +1493,7 @@
         const sel = get(selectedLayer);
         if (sel) {
           project.duplicateLayer(sel.id);
-          recordHistory();
+          recordDiscreteAction();
         }
         return;
       }
@@ -1785,7 +1789,7 @@
   }
 
   function endShapeControlPointDrag() {
-    if (draggingShapeControlPointIndex !== null) recordHistory();
+    if (draggingShapeControlPointIndex !== null) recordDiscreteAction();
     draggingShapeControlPointIndex = null;
     window.removeEventListener('mousemove', handleShapeControlPointDrag);
     window.removeEventListener('mouseup', endShapeControlPointDrag);
@@ -3344,6 +3348,8 @@
           position: { x: number; y: number };
         };
         project.setCorner(layerId, corner, position);
+        // A drag on the phone: one undo step once it settles.
+        scheduleHistorySnapshot(`remote-corner:${layerId}:${corner}`);
         break;
       }
 
@@ -3355,6 +3361,7 @@
           position: { x: number; y: number };
         };
         project.setMeshPoint(layerId, row, col, position);
+        scheduleHistorySnapshot(`remote-mesh:${layerId}:${row}:${col}`);
         break;
       }
 
@@ -3732,6 +3739,8 @@
         };
         if (layerId && effectId && params) {
           project.updateEffectParams(layerId, effectId, params);
+          // A slider on the phone: one undo step once it settles.
+          scheduleHistorySnapshot(`remote-effect:${layerId}:${effectId}:${Object.keys(params).sort().join(',')}`);
         }
         break;
       }
@@ -5197,19 +5206,31 @@
     historyInitialized = true;
   }
 
-  // Record a snapshot — call this AFTER discrete user actions (warp end, layer add/delete, etc.)
+  // Take a snapshot. Call sites record through recordDiscreteAction() (from
+  // historyHooks), which first commits an edit still waiting for its
+  // debounce as its own step. Nothing records on a store subscription, so
+  // live automation never lands in the history.
   function recordHistory() {
     history.record(get(project));
   }
 
+  /** Make an undo or redo step live. Only what the step changed is
+   *  restored (see mergeProjectStep). */
+  function applyHistoryStep(step: Project) {
+    project.set(step);
+    // The multi-selection may still name a layer the step removed.
+    project.setSelectedLayerIds(get(selectedLayerIds));
+  }
+
   function handleUndo() {
     fileMenuOpen = false;
+    // Commit any debounced-but-not-yet-recorded slider edit first, so it
+    // becomes its own undo step instead of being silently lost or merged
+    // into whatever the undo below jumps back to.
     flushPendingHistorySnapshot();
     history.suppress();
     const previousState = history.undo(get(project));
-    if (previousState) {
-      project.set(previousState);
-    }
+    if (previousState) applyHistoryStep(previousState);
     history.unsuppress();
   }
 
@@ -5218,9 +5239,7 @@
     flushPendingHistorySnapshot();
     history.suppress();
     const nextState = history.redo(get(project));
-    if (nextState) {
-      project.set(nextState);
-    }
+    if (nextState) applyHistoryStep(nextState);
     history.unsuppress();
   }
 
@@ -5373,7 +5392,7 @@
   }
 
   function handleShapeDragEnd(_e: MouseEvent) {
-    if (isDraggingShape) recordHistory();
+    if (isDraggingShape) recordDiscreteAction();
     isDraggingShape = false;
     dragStartPos = null;
     dragStartShapePos = null;
@@ -5550,7 +5569,7 @@
 
     isLinesDrawing = false;
     linesDrawingPoints = [];
-    recordHistory();
+    recordDiscreteAction();
     // Mode stays active — user can immediately draw the next line
   }
 
@@ -5594,7 +5613,7 @@
       const hit = findClosestMaskEdge(svgX, svgY);
       if (hit) {
         project.insertMaskPoint($selectedLayer.id, hit.shapeIdx, hit.edgeIdx, hit.insertNorm);
-        recordHistory();
+        recordDiscreteAction();
       }
       return;
     }
@@ -5683,7 +5702,7 @@
         }
       }
     }
-    recordHistory();
+    recordDiscreteAction();
   }
 
   /** Right-click on empty canvas: close the current open shape. */
@@ -5695,7 +5714,7 @@
     e.preventDefault();
     e.stopPropagation();
     project.closeMaskShape($selectedLayer.id);
-    recordHistory();
+    recordDiscreteAction();
   }
 
   /** Anchor mousedown — start dragging this anchor (move x/y + carry handles).
@@ -5718,14 +5737,14 @@
       // when the user just wanted to trim one point.
       if (shape?.closed && shape.points.length <= 3) return;
       project.removeMaskPoint($selectedLayer!.id, shapeIndex, pointIndex);
-      recordHistory();
+      recordDiscreteAction();
       return;
     }
     if (mask && pointIndex === 0) {
       const shape = mask.shapes[shapeIndex];
       if (shape && !shape.closed && shape.points.length >= 3) {
         project.closeMaskShape($selectedLayer!.id);
-        recordHistory();
+        recordDiscreteAction();
         return;
       }
     }
@@ -5777,7 +5796,7 @@
   }
 
   function handleMaskAnchorDragEnd() {
-    if (draggingMaskAnchor !== null) recordHistory();
+    if (draggingMaskAnchor !== null) recordDiscreteAction();
     draggingMaskAnchor = null;
     window.removeEventListener('mousemove', handleMaskAnchorDrag);
     window.removeEventListener('mouseup', handleMaskAnchorDragEnd);
@@ -5789,7 +5808,7 @@
     e.stopPropagation();
     if (!$selectedLayer?.mask) return;
     project.removeMaskPoint($selectedLayer.id, shapeIndex, pointIndex);
-    recordHistory();
+    recordDiscreteAction();
   }
 
   /** Control-handle mousedown — drag a cpIn/cpOut handle, mirror the other side. */
@@ -5837,7 +5856,7 @@
   }
 
   function handleMaskHandleDragEnd() {
-    if (draggingMaskHandle !== null) recordHistory();
+    if (draggingMaskHandle !== null) recordDiscreteAction();
     draggingMaskHandle = null;
     window.removeEventListener('mousemove', handleMaskHandleDrag);
     window.removeEventListener('mouseup', handleMaskHandleDragEnd);
@@ -5935,7 +5954,7 @@
   }
 
   function handleVertexDragEnd(_e: MouseEvent) {
-    if (isDraggingVertex) recordHistory();
+    if (isDraggingVertex) recordDiscreteAction();
     isDraggingVertex = false;
     draggedVertexInfo = null;
   }
@@ -5961,7 +5980,7 @@
 
     points.splice(afterIndex + 1, 0, newPt);
     project.updateElementShape($selectedLinesLayer.id, $selectedLineElement.id, { points } as any);
-    recordHistory();
+    recordDiscreteAction();
   }
 
   /**
@@ -5975,7 +5994,7 @@
 
     points.splice(index, 1);
     project.updateElementShape($selectedLinesLayer.id, $selectedLineElement.id, { points } as any);
-    recordHistory();
+    recordDiscreteAction();
   }
 
   // Reactive: get vertices for selected element

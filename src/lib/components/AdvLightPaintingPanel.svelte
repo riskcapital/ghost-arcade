@@ -80,13 +80,14 @@
     const layer = $selectedAdvLightPaintingLayer;
     if (!layer || !layer.advLightPaintingContent) return;
     const c = layer.advLightPaintingContent;
+    // Clearing the particles changes no setting: not an undo step.
     project.updateLayer(layer.id, {
       advLightPaintingContent: { ...c, particleCount: c.particleCount + 1 },
-    } as any);
+    } as any, { history: false });
     setTimeout(() => {
       project.updateLayer(layer.id, {
         advLightPaintingContent: { ...c, particleCount: c.particleCount },
-      } as any);
+      } as any, { history: false });
     }, 50);
   }
 

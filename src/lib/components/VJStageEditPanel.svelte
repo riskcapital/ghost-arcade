@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { project, layers } from '../stores/layers';
+  import { amendLastHistoryStep } from '../stores/historyHooks';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { activeSurface, activeSurfaceSlices, surfaceStore } from '../stores/surface';
   import { STAGE_TEMPLATES, type StageTemplate } from '../stores/stageTemplates';
@@ -49,6 +50,8 @@
       project.setCorner(id, 'topRight', { x: right, y: top });
       project.setCorner(id, 'bottomLeft', { x: left, y: bottom });
       project.setCorner(id, 'bottomRight', { x: right, y: bottom });
+      // Where a new Screen lands is part of adding it, not a step of its own.
+      amendLastHistoryStep();
     }
     const screen = get(project).layers.find(layer => layer.id === id);
     if (screen) surfaceStore.registerLiveScreenLayer(screen);

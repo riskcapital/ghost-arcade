@@ -26,7 +26,7 @@
     toggleStage3DSelection,
     setStage3DMultiSelection,
   } from '../../stage3d/store';
-  import { project } from '../../stores/layers';
+  import { project, recordDiscreteAction } from '../../stores/layers';
   import { ELEMENT_TYPES, makeUserElement } from '../../stage3d/elementTypes';
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
   import type { Stage3DVenue, UserStageElement } from '../../stage3d/types';
@@ -258,6 +258,8 @@
               ? data.project.surfaces
               : p.surfaces,
           }));
+          // Replacing the project's Screens is an undo step of its own.
+          recordDiscreteAction();
         }
         return true;
       }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { selectedLayer, project, layers, selectedLayerIds } from '../stores/layers';
-  import { history } from '../stores/history';
+  import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { settings } from '../stores/settings';
   import { get } from 'svelte/store';
   import type { WarpCorners, Point2D, Layer } from '../types';
@@ -22,7 +22,6 @@
   } from '../utils/mappingSnap';
   import { EDGE_CORNERS, dragEdge, dragPoint, rigidDragDelta, translateCorners, type PixelGrid, type WarpEdge } from '../utils/warpDrag';
   import { warpDragStepPixels, warpNudgeStepPixels } from '../utils/warpNudge';
-  import { scheduleHistorySnapshot } from '../stores/nudgeHistory';
   import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from '../stores/mappingPointSelection';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import {
@@ -503,7 +502,7 @@
   }
 
   function handleMouseUp() {
-    if (dragging) history.record(get(project));
+    if (dragging) recordDiscreteAction();
     dragging = null;
     dragTarget = null;
     dragStartPos = null;
@@ -611,7 +610,7 @@
   }
 
   function handleTouchEnd() {
-    if (dragging) history.record(get(project));
+    if (dragging) recordDiscreteAction();
     dragging = null;
     dragTarget = null;
     dragStartPos = null;

@@ -164,11 +164,12 @@
     ...$globalStagePresets.map(p => ({ ...p, _scope: 'global' as const })),
   ];
 
-  function loadStagePresetFromUI(preset: (typeof allStagePresets)[number]) {
+  // A click is an undo step; a controller trigger during a show is not.
+  function loadStagePresetFromUI(preset: (typeof allStagePresets)[number], history = true) {
     if (preset._scope === 'global') {
-      project.loadStagePresetSnapshot(preset);
+      project.loadStagePresetSnapshot(preset, { history });
     } else {
-      project.loadStagePreset(preset.id);
+      project.loadStagePreset(preset.id, { history });
     }
   }
 
@@ -181,7 +182,7 @@
     const idx = (e as CustomEvent<{ index: number }>).detail?.index;
     if (typeof idx !== 'number') return;
     const preset = allStagePresets[idx];
-    if (preset) loadStagePresetFromUI(preset);
+    if (preset) loadStagePresetFromUI(preset, false);
   };
 
   let heldStageEffects: Record<string, boolean> = {};

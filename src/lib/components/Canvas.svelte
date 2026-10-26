@@ -612,7 +612,7 @@
     const currentId = mappingComposition.activeStageEffectId ?? '';
     let idx = cycle.indexOf(currentId);
     idx = idx < 0 ? 0 : (idx + 1) % cycle.length;
-    project.setMappingStageEffectActive(cycle[idx]);
+    project.setMappingStageEffectActive(cycle[idx], { history: false });
   }
 
   function applyMappingCompositionStageEffects(
@@ -4384,8 +4384,9 @@
         clearMediaLoadError(layerId);
         console.log('Texture loaded for layer:', layerId, 'type:', source.type);
         // Force a store update to trigger reactivity - this makes the texture appear
-        // The updateTexturesSync will pick up the cached texture on next frame
-        project.updateLayer(layerId, {});
+        // The updateTexturesSync will pick up the cached texture on next frame.
+        // A texture arriving is not an edit.
+        project.updateLayer(layerId, {}, { history: false });
       }
     } catch (err) {
       // Permanent failure — mark this cacheKey as poisoned so updateTexturesSync

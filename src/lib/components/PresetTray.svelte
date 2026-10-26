@@ -50,7 +50,8 @@
       const idx = (e as CustomEvent<{ index: number }>).detail?.index;
       if (typeof idx !== 'number') return;
       const comp = $compositions[idx];
-      if (comp) loadPreset(comp.id);
+      // A controller firing a preset is performance, not an undo step.
+      if (comp) loadPreset(comp.id, false);
     };
     window.addEventListener('midi-mapping-preset', handler);
     return () => window.removeEventListener('midi-mapping-preset', handler);
@@ -109,7 +110,7 @@
     // Start from current active preset if possible
     const idx = $compositions.findIndex(c => c.id === $activeCompositionId);
     autoCurrentIndex = idx >= 0 ? idx : 0;
-    loadPreset($compositions[autoCurrentIndex].id);
+    loadPreset($compositions[autoCurrentIndex].id, false);
     autoTick(performance.now());
   }
 
@@ -138,7 +139,7 @@
       else { autoPlayStop(); return; }
     }
     autoElapsed = 0;
-    loadPreset(comps[autoCurrentIndex].id);
+    loadPreset(comps[autoCurrentIndex].id, false);
   }
 
   function autoTick(now: number) {
@@ -180,17 +181,19 @@
       const detail = (e as CustomEvent).detail as { compositionId?: string; handled?: boolean } | undefined;
       if (!detail?.compositionId) return;
       detail.handled = true;
-      loadPreset(detail.compositionId);
+      loadPreset(detail.compositionId, false);
     };
     window.addEventListener('show-recall-preset', cueHandler);
     return () => window.removeEventListener('show-recall-preset', cueHandler);
   });
 
-  function loadPreset(compId: string) {
+  // A click is an undo step; auto-play, cue-list recalls and controller
+  // triggers are playback and pass `recordHistory` false.
+  function loadPreset(compId: string, recordHistory = true) {
     const useTransition = transitionEnabled && transitionDuration > 0 && !!onBeforeLoad;
     if (!useTransition) showLoading('Loading Composition...');
     if (useTransition) onBeforeLoad!(transitionDuration, transitionType);
-    project.loadComposition(compId);
+    project.loadComposition(compId, { recordHistory });
     if (!useTransition) requestAnimationFrame(() => hideLoading());
   }
 

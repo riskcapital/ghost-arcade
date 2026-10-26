@@ -14,6 +14,11 @@ import { controlPathAsWritten, matchControlKey, normalizeControlPath } from '../
 import { releaseTempoNudgeInputs, setTempoNudgeInput, resyncLaunchClock } from '../stores/launchClock';
 import { clipAudio, clipAudioMaster } from '../audio/clipAudio';
 
+// Controller, OSC, DMX and keyboard writes are performance, not edits: they
+// must not become undo steps (a fader would fill the undo history in a
+// second and push the real edits out of it).
+const LIVE = { history: false } as const;
+
 // Prebuilt lookup: "cc:74" -> [MidiMapping, ...]
 // Rebuilt automatically when mappings change
 let lookupMap = new Map<string, MidiMapping[]>();
@@ -309,12 +314,12 @@ class MidiRouter {
 
       if (property === 'play' && value > 0) {
         const shouldPlay = video.paused || source.isPlaying === false;
-        project.setLayerSource(layer.id, { ...source, isPlaying: shouldPlay });
+        project.setLayerSource(layer.id, { ...source, isPlaying: shouldPlay }, LIVE);
         if (shouldPlay) void video.play().catch(() => undefined);
         else video.pause();
       } else if (property === 'restart' && value > 0) {
         video.currentTime = startTime;
-        project.setLayerSource(layer.id, { ...source, isPlaying: true });
+        project.setLayerSource(layer.id, { ...source, isPlaying: true }, LIVE);
         void video.play().catch(() => undefined);
       } else if (property === 'position') {
         const normalized = Math.max(0, Math.min(1, value));
@@ -329,9 +334,9 @@ class MidiRouter {
       const layerKey = matchControlKey(exactProperty, layer);
       if (mapping.mode === 'toggle') {
         const current = (layer as any)[layerKey];
-        project.updateLayer(layer.id, { [layerKey]: !current });
+        project.updateLayer(layer.id, { [layerKey]: !current }, LIVE);
       } else {
-        project.updateLayer(layer.id, { [layerKey]: value });
+        project.updateLayer(layer.id, { [layerKey]: value }, LIVE);
       }
       return;
     }
@@ -419,7 +424,7 @@ class MidiRouter {
       project.setLayerSource(layer.id, {
         ...layer.source,
         shaderValues: { ...layer.source.shaderValues, [paramName]: value },
-      });
+      }, LIVE);
       return;
     }
 
@@ -440,7 +445,7 @@ class MidiRouter {
       project.setLayerSource(layer.id, {
         ...layer.source,
         effectSource: { ...layer.source.effectSource, [paramKey]: next } as any,
-      });
+      }, LIVE);
       return;
     }
 

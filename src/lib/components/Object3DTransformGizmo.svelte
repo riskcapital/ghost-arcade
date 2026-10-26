@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { project, selectedLayer } from '../stores/layers';
+  import { project, selectedLayer, recordDiscreteAction } from '../stores/layers';
   import type { Model3DContent, SplatContent } from '../types';
 
   export let containerWidth = 1920;
@@ -66,6 +66,7 @@
     updateTransform({ [key]: current + degrees });
     mode = 'rotate';
     axis = rotationAxis;
+    recordDiscreteAction();
   }
 
   function beginDrag(event: PointerEvent, dragAxis: GizmoAxis = axis) {
@@ -143,10 +144,14 @@
 
   function endDrag(event: PointerEvent) {
     if (drag && event.pointerId !== drag.pointerId) return;
+    const hadDrag = !!drag;
     drag = null;
     window.removeEventListener('pointermove', handleDrag);
     window.removeEventListener('pointerup', endDrag);
     window.removeEventListener('pointercancel', endDrag);
+    // One undo step per drag: handleDrag() never records mid-drag, so this
+    // is where a transform change becomes undoable.
+    if (hadDrag) recordDiscreteAction();
   }
 
   function frameObject(event: MouseEvent) {
@@ -178,6 +183,7 @@
         },
       });
     }
+    recordDiscreteAction();
   }
 
   function handleKeydown(event: KeyboardEvent) {

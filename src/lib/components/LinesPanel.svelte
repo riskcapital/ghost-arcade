@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { project, selectedLayer, layers } from '../stores/layers';
+  import { project, selectedLayer, layers, scheduleHistorySnapshot } from '../stores/layers';
   import { linesStore } from '../stores/lines';
   import { generateUUID } from '../types';
   import type {
@@ -81,7 +81,8 @@
       onUpdate(updates);
     } else if (layerId && lc) {
       // Mapping mode
-      project.updateLayer(layerId, { linesContent: { ...lc, ...updates } });
+      project.updateLayer(layerId, { linesContent: { ...lc, ...updates } }, { history: false });
+      scheduleHistorySnapshot(`lines:${layerId}:${Object.keys(updates).sort().join(',')}`);
     }
   }
 

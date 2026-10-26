@@ -79,7 +79,7 @@ export const appCueExecutor: CueExecutor = {
   },
   writeValue(target, value) {
     if (target.kind === 'macro') macros.setMacroValue(`macro-${target.macro}`, value);
-    else if (target.kind === 'layerOpacity') project.updateLayer(target.layerId, { opacity: Math.max(0, Math.min(1, value)) });
+    else if (target.kind === 'layerOpacity') project.updateLayer(target.layerId, { opacity: Math.max(0, Math.min(1, value)) }, { history: false });
     else midiRouter.dispatchPath(target.path, value, { inputId: `show:${target.path}` });
   },
   timeline,
