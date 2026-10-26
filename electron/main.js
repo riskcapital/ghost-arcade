@@ -7071,8 +7071,11 @@ function registerIpcHandlers() {
       y: bounds.y,
       title: `Ghost Arcade Output — slice ${sliceId}`,
       frame: false,
-      // macOS makes it a projector just below instead (enterSliceFullscreen).
-      fullscreen: process.platform !== 'darwin',
+      // Placed on its display, then shown fullscreen, below
+      // (showOnDisplayFullscreen); macOS makes it a projector instead
+      // (enterSliceFullscreen).
+      show: isMac,
+      fullscreen: false,
       enableLargerThanScreen: isMac,
       autoHideMenuBar: true,
       skipTaskbar: false,
@@ -7091,7 +7094,8 @@ function registerIpcHandlers() {
       },
     });
     win.setMenuBarVisibility(false);
-    enterSliceFullscreen(win);
+    if (isMac) enterSliceFullscreen(win);
+    else showOnDisplayFullscreen(win, target);
     // Claim the window for native presentation before the page loads, so
     // the slice renderer's first state query already has the answer.
     const attached = useNative && (process.platform === 'linux'
@@ -9562,11 +9566,36 @@ function isOutputFullScreen(win) {
 }
 
 /** Borderless full-display screen (slice) window: a projector on macOS.
- *  Other platforms are built with `fullscreen: true` and need nothing here. */
+ *  Other platforms place it with showOnDisplayFullscreen. */
 function enterSliceFullscreen(win) {
   if (!isMac || !win || win.isDestroyed()) return;
   allowMacProjector(win);
   setOutputFullScreen(win, true);
+}
+
+/** Windows and Linux: show a hidden output window fullscreen on `display`.
+ *  A window built with `fullscreen: true` and x/y goes fullscreen on whichever
+ *  monitor it is first created on, and with displays at different scales the
+ *  constructor's DIP position does not reliably land on the target. Moving the
+ *  hidden window there first, then showing it, then going fullscreen, puts it
+ *  on the display it was meant for -- and it is checked, and moved again if
+ *  it is not. */
+function showOnDisplayFullscreen(win, display) {
+  if (!win || win.isDestroyed() || !display?.bounds) return;
+  win.setBounds(display.bounds);
+  win.show();
+  setOutputFullScreen(win, true);
+  try {
+    const landed = screen.getDisplayMatching(win.getBounds());
+    if (landed && landed.id !== display.id) {
+      console.warn(`[Output] window landed on display ${landed.id} instead of ${display.id}; moving it`);
+      setOutputFullScreen(win, false);
+      win.setBounds(display.bounds);
+      setOutputFullScreen(win, true);
+    }
+  } catch (err) {
+    console.warn('[Output] could not confirm the output window display:', err?.message || err);
+  }
 }
 
 function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false, experimentalZeroCopy = false) {
@@ -9607,10 +9636,13 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     y: winY,
     title: 'Ghost Arcade Output',
     resizable: true,
-    // macOS fullscreen: a borderless projector, entered below.
+    // macOS fullscreen: a borderless projector, entered below. Elsewhere a
+    // fullscreen output is placed hidden and then shown fullscreen on its
+    // display (showOnDisplayFullscreen).
     frame: !(isMac && fullscreen),
     enableLargerThanScreen: isMac && fullscreen,
-    fullscreen: isMac ? false : fullscreen,
+    show: isMac || !fullscreen,
+    fullscreen: false,
     autoHideMenuBar: true,
     skipTaskbar: false,
     backgroundColor: '#000000',
@@ -9627,6 +9659,8 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   if (fullscreen && isMac) {
     allowMacProjector(win);
     setOutputFullScreen(win, true);
+  } else if (fullscreen) {
+    showOnDisplayFullscreen(win, targetDisplay);
   }
 
   // Hide menu bar for clean look

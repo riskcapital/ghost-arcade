@@ -16,6 +16,8 @@ async function open(platform: 'win32'|'darwin', available = true, attach = true,
   } : {})};
   const broker = {invoke: vi.fn(async()=>({available,platform:platform==='win32'?'dxgi':'iosurface',slices:[]}))};
   const attachLayer = vi.fn(()=>attach);
+  const showOnDisplayFullscreen = vi.fn();
+  const enterSliceFullscreen = vi.fn();
   const sliceWindows = new Map();
   class Window {
     webContents = {once:vi.fn()};
@@ -33,10 +35,11 @@ async function open(platform: 'win32'|'darwin', available = true, attach = true,
     sliceNativePending:new Set(),sliceNativeAttached:new Set(),sliceWindows,
     BrowserWindow:Window,screen:{getAllDisplays:()=>[{id:5,bounds:{x:1920,y:0,width:1080,height:1920}}]},
     process:{platform,env:{}},app:{isPackaged:true},path:{join:(...s:string[])=>s.join('/')},__dirname:'/app/electron',
-    attachSliceNativeLayer:attachLayer,enterSliceFullscreen:vi.fn(),detachSliceNativeLayer:vi.fn(),console,
+    attachSliceNativeLayer:attachLayer,enterSliceFullscreen,showOnDisplayFullscreen,detachSliceNativeLayer:vi.fn(),console,
+    refreshSliceNativeLayerRects:vi.fn(),
   });
   const result = await callback(null,{sliceId:'left',displayId:5});
-  return {result,windows,attachLayer,sliceWindows,broker};
+  return {result,windows,attachLayer,sliceWindows,broker,showOnDisplayFullscreen,enterSliceFullscreen};
 }
 
 describe('native Screen output window routing',()=>{
@@ -48,10 +51,19 @@ describe('native Screen output window routing',()=>{
     expect(sliceWindows.get('left')).toBe(windows[0]);
     // macOS: a borderless projector placed over the menu-bar strip (not
     // simple fullscreen, which hides the menu bar and Dock app-wide).
+    // Windows: built hidden and not fullscreen, then placed on its display
+    // and shown fullscreen there.
     expect(windows[0].options).toMatchObject(platform==='darwin'
-      ? {frame:false,fullscreen:false,enableLargerThanScreen:true}
-      : {frame:false,fullscreen:true,enableLargerThanScreen:false});
+      ? {frame:false,fullscreen:false,enableLargerThanScreen:true,show:true}
+      : {frame:false,fullscreen:false,enableLargerThanScreen:false,show:false});
     expect(windows[0].options.simpleFullscreen).toBeUndefined();
+  });
+  it('places a Windows Screen on its display before it goes fullscreen', async()=>{
+    const {windows,showOnDisplayFullscreen,enterSliceFullscreen,attachLayer}=await open('win32');
+    expect(showOnDisplayFullscreen).toHaveBeenCalledWith(windows[0],expect.objectContaining({id:5}));
+    expect(enterSliceFullscreen).not.toHaveBeenCalled();
+    // Shown fullscreen first, so the presenter is sized to the final window.
+    expect(showOnDisplayFullscreen.mock.invocationCallOrder[0]).toBeLessThan(attachLayer.mock.invocationCallOrder[0]!);
   });
   it('does not silently open an uncalibrated fallback when the core is unavailable',async()=>{
     const {result,windows}=await open('win32',false);
@@ -69,5 +81,40 @@ describe('native Screen output window routing',()=>{
     expect(windows[0].destroy).toHaveBeenCalled();
     expect(windows[0].loadFile).not.toHaveBeenCalled();
     expect(sliceWindows.size).toBe(0);
+  });
+});
+
+const place = main.slice(main.indexOf('function showOnDisplayFullscreen'), main.indexOf('function createOutputWindow'));
+
+describe('showOnDisplayFullscreen', () => {
+  function harness(landedIds: number[]) {
+    const calls: string[] = [];
+    const win = {
+      isDestroyed: () => false,
+      setBounds: vi.fn((b: any) => calls.push(`bounds:${b.x}`)),
+      show: vi.fn(() => calls.push('show')),
+      getBounds: () => ({ x: 0, y: 0, width: 1, height: 1 }),
+    };
+    const landed = [...landedIds];
+    const context: Record<string, any> = {
+      console: { warn() {}, log() {} },
+      setOutputFullScreen: vi.fn((_w: unknown, on: boolean) => calls.push(`fullscreen:${on}`)),
+      screen: { getDisplayMatching: () => ({ id: landed.shift() }) },
+    };
+    runInNewContext(place, context);
+    return { win, calls, context };
+  }
+  const projector = { id: 5, bounds: { x: 1920, y: 0, width: 1080, height: 1920 } };
+
+  it('moves the hidden window to its display, shows it, then goes fullscreen', () => {
+    const h = harness([5]);
+    h.context.showOnDisplayFullscreen(h.win, projector);
+    expect(h.calls).toEqual(['bounds:1920', 'show', 'fullscreen:true']);
+  });
+
+  it('moves it again when it went fullscreen on another display', () => {
+    const h = harness([1]);
+    h.context.showOnDisplayFullscreen(h.win, projector);
+    expect(h.calls).toEqual(['bounds:1920', 'show', 'fullscreen:true', 'fullscreen:false', 'bounds:1920', 'fullscreen:true']);
   });
 });
