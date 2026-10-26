@@ -795,9 +795,12 @@ class NativeRendererBroker {
     // Timing out here leaves the core alive but the app stuck on NATIVE OFFLINE.
     // Vulkan has the same first-run cost: with no pipeline cache the driver
     // compiles the warm-up set before start returns, which takes far longer
-    // than Metal on a slow GPU and minutes on a software driver. Only macOS
-    // reliably starts inside 8s.
-    const startTimeoutMs = this.platform === 'darwin' ? 8000 : 180000;
+    // than Metal on a slow GPU and minutes on a software driver. macOS
+    // usually starts inside 8s, but a first launch after an update compiles
+    // its pipelines cold, and on an older Apple silicon Mac that can run past
+    // 8s: the start then failed and Retry hit the same wall. 30s costs a
+    // healthy start nothing.
+    const startTimeoutMs = this.platform === 'darwin' ? 30000 : 180000;
     const result = await this.send('start', args, { timeoutMs: startTimeoutMs });
     this.lastStatus = this.withCoreLifecycle(normalizeStatus(result, this.lastStatus));
     try {
