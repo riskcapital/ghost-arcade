@@ -5089,6 +5089,18 @@ function registerIpcHandlers() {
     return { success: true };
   });
 
+  // Show timeline audio: songs Chromium cannot play are converted once with
+  // the bundled ffmpeg (see electron/show-audio.cjs).
+  require('./show-audio.cjs').registerShowAudioIpc({
+    ipcMain,
+    spawn,
+    fs,
+    path,
+    ffmpegPath: resolveFfmpegPath,
+    pathGrants,
+    convertDir: path.join(app.getPath('userData'), 'project-assets', 'converted-audio'),
+  });
+
   ipcMain.handle('video_converter_start', async (event, args = {}) => {
     const mode = args.mode === 'sequence' ? 'sequence' : 'webm';
     const jobId = typeof args.jobId === 'string' && args.jobId ? args.jobId : `vc-${Date.now().toString(36)}`;

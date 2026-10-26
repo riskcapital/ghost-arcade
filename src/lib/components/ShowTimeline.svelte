@@ -52,6 +52,7 @@
   import { cueList, cueLabel } from '../show/cueList';
   import { timecodeChase } from '../show/timecode/timecodeChase';
   import { settings } from '../stores/settings';
+  import { isShowAudioFile } from '../audio/showAudioImport';
 
   // ── End of show + output device ─────────────────────────────────────────
   // The transport lives in the store and keeps running with this panel
@@ -477,9 +478,7 @@
     }
 
     const lane = laneAt(e);
-    const files = Array.from(dt.files ?? []).filter(
-      (f) => f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac|aif|aiff)$/i.test(f.name),
-    );
+    const files = Array.from(dt.files ?? []).filter((f) => isShowAudioFile(f.name, f.type));
     let cursor = dropTime;
     for (const file of files) {
       await showTimeline.addAudioTrackFromFile(file, { startTime: cursor, lane });

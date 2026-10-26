@@ -72,6 +72,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Native FFmpeg converter
   'video_converter_pick_webm', 'video_converter_pick_sequence_folder', 'video_converter_pick_output',
   'video_converter_start', 'video_converter_cancel', 'video_converter_reveal_path',
+  // Show timeline audio: convert a song Chromium cannot play
+  'show_audio_prepare',
   // Fast sibling-asset materialization. Copies a known-on-disk file to a
   // destination path without round-tripping its bytes through base64+IPC.
   // Saves seconds per gigabyte over save_file_binary for large videos/.glb.

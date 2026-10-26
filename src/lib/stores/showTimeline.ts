@@ -73,7 +73,6 @@ import { getPresetTransitionSettings, isTransitionStyle } from './presetTransiti
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 import { isVisualAudioManualClock } from '../audio/visualAudio';
 import {
-  createAssetRefFromFile,
   recordMissingAsset,
   resolveAssetRefForRuntime,
   type AssetRef,
@@ -84,7 +83,14 @@ import {
   forgetShowAudioDecode,
   cachedShowAudioDecode,
 } from '../audio/showAudio';
+import {
+  convertShowAudioPath,
+  prepareShowAudioFile,
+  probeMediaDuration,
+  unplayableAudioMessage,
+} from '../audio/showAudioImport';
 import { ShowTransportClock, readAudioClock, type AudioClockContext } from '../show/showTransportClock';
+import { showToast } from './errorToast';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -1331,14 +1337,19 @@ export const showTimeline = {
    */
   async addAudioTrackFromFile(file: File, opts: { startTime?: number; lane?: number } = {}): Promise<string | null> {
     if (!file) return null;
-    const { assetRef, runtimeUrl } = createAssetRefFromFile(file);
+    // Formats Chromium cannot play (AIFF, WMA …) are converted first.
+    const prepared = await prepareShowAudioFile(file);
+    if ('error' in prepared) {
+      showToast(prepared.error, 'error');
+      return null;
+    }
     return this.addAudioTrack({
-      name: file.name,
-      url: runtimeUrl,
-      assetRef,
+      name: prepared.name,
+      url: prepared.url,
+      assetRef: prepared.assetRef,
       startTime: opts.startTime ?? 0,
       lane: opts.lane,
-    });
+    }, { removeIfUnplayable: true });
   },
 
   async addAudioTrack(init: {
@@ -1348,7 +1359,7 @@ export const showTimeline = {
     startTime?: number;
     duration?: number;
     lane?: number;
-  }): Promise<string | null> {
+  }, opts: { removeIfUnplayable?: boolean } = {}): Promise<string | null> {
     const id = generateUUID();
     const state = get(store);
     const lane = init.lane ?? nextFreeLane(state.audioTracks, init.startTime ?? 0, init.duration ?? SHOW_MIN_CLIP_SECONDS);
@@ -1367,7 +1378,12 @@ export const showTimeline = {
     };
     store.update((s) => withDuration({ ...s, audioTracks: [...s.audioTracks, track], selection: { kind: 'audio', id } }));
     ensureTrackElement(track);
-    await this.analyzeAudioTrack(id);
+    const playable = await this.analyzeAudioTrack(id);
+    if (!playable && opts.removeIfUnplayable) {
+      this.removeAudioTrack(id);
+      showToast(unplayableAudioMessage(track.name), 'error');
+      return null;
+    }
     return id;
   },
 
@@ -1376,13 +1392,52 @@ export const showTimeline = {
    * repeatedly — the decode is cached per URL. Sets the timeline duration
    * to the full source length the first time it resolves.
    */
-  async analyzeAudioTrack(trackId: string): Promise<void> {
+  async analyzeAudioTrack(trackId: string): Promise<boolean> {
     const track = get(store).audioTracks.find((t) => t.id === trackId);
-    if (!track || !track.url) return;
-    if (track.sourceDuration > 0 && track.peaks?.length) return;
+    if (!track || !track.url) return false;
+    if (track.sourceDuration > 0 && track.peaks?.length) return true;
     const decoded = await decodeShowAudio(track.url);
-    if (!decoded) return;
-    const peaks = computeAudioPeaks(decoded.mono);
+    if (decoded) {
+      this.applyMeasuredLength(trackId, decoded.duration, computeAudioPeaks(decoded.mono));
+      return true;
+    }
+
+    // The decoder could not read it. A file on disk can be converted with
+    // the bundled ffmpeg (desktop); the track then plays from the copy.
+    const sourcePath = track.assetRef?.originalPath;
+    const alreadyConverted = /[\\/]converted-audio[\\/]/.test(sourcePath ?? '');
+    if (sourcePath && !alreadyConverted && typeof window !== 'undefined' && (window as any).electronAPI?.invoke) {
+      const converted = await convertShowAudioPath(sourcePath, track.name);
+      if (!('error' in converted) && get(store).audioTracks.some((t) => t.id === trackId)) {
+        forgetShowAudioDecode(track.url);
+        store.update((s) => ({
+          ...s,
+          audioTracks: s.audioTracks.map((t) => (t.id === trackId ? { ...t, url: converted.url, assetRef: converted.assetRef } : t)),
+        }));
+        const updated = get(store).audioTracks.find((t) => t.id === trackId);
+        if (updated) ensureTrackElement(updated);
+        const again = await decodeShowAudio(converted.url);
+        if (again) {
+          this.applyMeasuredLength(trackId, again.duration, computeAudioPeaks(again.mono));
+          return true;
+        }
+      }
+    }
+
+    // Still nothing to decode: the media element may play it anyway. Use
+    // its length and do without a waveform.
+    const current = get(store).audioTracks.find((t) => t.id === trackId);
+    const length = current?.url ? await probeMediaDuration(current.url) : null;
+    if (length) {
+      this.applyMeasuredLength(trackId, length, undefined);
+      return true;
+    }
+    console.warn(`[ShowTimeline] "${track.name}" could not be decoded or played.`);
+    return false;
+  },
+
+  /** Record a track's real length (and waveform) once it is known. */
+  applyMeasuredLength(trackId: string, sourceDuration: number, peaks: number[] | undefined) {
     store.update((s) => {
       const audioTracks = s.audioTracks.map((t) => {
         if (t.id !== trackId) return t;
@@ -1391,9 +1446,9 @@ export const showTimeline = {
         const grow = t.duration <= SHOW_MIN_CLIP_SECONDS + 1e-9;
         return {
           ...t,
-          sourceDuration: decoded.duration,
-          peaks,
-          duration: grow ? Math.max(SHOW_MIN_CLIP_SECONDS, decoded.duration) : t.duration,
+          sourceDuration,
+          peaks: peaks ?? t.peaks,
+          duration: grow ? Math.max(SHOW_MIN_CLIP_SECONDS, sourceDuration) : t.duration,
         };
       });
       return withDuration({ ...s, audioTracks });
