@@ -25,6 +25,7 @@
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import { probeWebGPU } from './lib/renderer/webgpuCapability';
   import { displayFingerprint, resolveSavedDisplay } from './lib/output/displayMatch';
+  import { BRIDGE_FALLBACK_MESSAGE } from './lib/renderer/bridgeWatchdog';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
   import GuidedTour from './lib/components/GuidedTour.svelte';
@@ -282,6 +283,16 @@
   let webgpuEditorAvailable = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
   void probeWebGPU().then((ok) => { webgpuEditorAvailable = ok; });
   $: editorWebGPU = !!$settings.experimental?.editorWebGPU && webgpuEditorAvailable;
+  // Set for the rest of the session when the bridge was not drawing (its
+  // watchdog fired): the bridge is removed and the WebGL canvas, which
+  // stays mounted, is shown again.
+  let editorBridgeFailed = false;
+  function handleEditorBridgeFailure(reason: string) {
+    if (editorBridgeFailed) return;
+    editorBridgeFailed = true;
+    console.warn(`[App] Editor GPU bridge fell back to WebGL (${reason})`);
+    showToast(BRIDGE_FALLBACK_MESSAGE, 'warning');
+  }
   $: if (editorWebGPU && !showStage3D && canvasComponent && webgpuBridgeComponent) {
     const source = canvasComponent.getCanvas?.();
     if (source && (source !== lastReactiveBridgeSource || webgpuBridgeComponent !== lastReactiveBridge)) {
@@ -932,7 +943,7 @@
     let _lastWiredBridge: WebGPUCanvas | null = null;
     const unsubscribeSettings = settings.subscribe((s) => {
       if (!appMounted) return;
-      if (!s.experimental?.editorWebGPU || !webgpuEditorAvailable) return;
+      if (!s.experimental?.editorWebGPU || !webgpuEditorAvailable || editorBridgeFailed) return;
       // Idempotent — only re-wire when the canvas or bridge instance
       // actually changes (component remount). Otherwise every settings
       // emit (every corner-drag frame) re-pushes the same canvas and
@@ -6484,8 +6495,10 @@
           See docs/WEBGPU_MIGRATION.md for the full roadmap.
         -->
         {#if editorWebGPU && !showStage3D}
-          <Canvas bind:this={canvasComponent} bridgeMode={true} stage3DOutput={showStage3D} />
-          <WebGPUCanvas bind:this={webgpuBridgeComponent} />
+          <Canvas bind:this={canvasComponent} bridgeMode={true} bridgeFallback={editorBridgeFailed} stage3DOutput={showStage3D} />
+          {#if !editorBridgeFailed}
+            <WebGPUCanvas bind:this={webgpuBridgeComponent} onBridgeFailure={handleEditorBridgeFailure} />
+          {/if}
         {:else}
           <Canvas bind:this={canvasComponent} stage3DOutput={showStage3D} />
         {/if}

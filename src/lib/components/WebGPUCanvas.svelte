@@ -83,6 +83,7 @@
   // notes.
   import { WebGPUFlythrough } from '$lib/renderer/webgpuFlythrough';
   import { ensureWebGPUDevice } from '$lib/renderer/webgpuShared';
+  import { createBridgeWatchdog, type BridgeFailureReason, type BridgePhase } from '$lib/renderer/bridgeWatchdog';
   import { MESH_PATCH_WGSL, packMeshTangents } from '$lib/output/meshPatchShaders';
   // Zero-copy WebGL→WebGPU primitive. Wraps `new VideoFrame()` +
   // `device.importExternalTexture()` in a try/finally so the
@@ -111,6 +112,10 @@
   // that mutation reliably). Imperative setter keeps the timing
   // explicit and race-free.
   let sourceCanvas: HTMLCanvasElement | null = null;
+
+  /** Called once if this bridge is not drawing (could not start, or no
+   *  frames reach the screen); App.svelte then shows the WebGL canvas. */
+  export let onBridgeFailure: ((reason: BridgeFailureReason) => void) | null = null;
 
   /** App.svelte calls this AFTER both components mount with the
    *  WebGL canvas DOM element from Canvas.svelte's getCanvas(). The
@@ -336,6 +341,42 @@
   let renderTimeUsEMA = 0;
   let lastFrameDim = '';
   let frameLoopErrorCount = 0;
+  // Frame-loop ticks that tried to draw; with framesPresented this tells
+  // the watchdog whether frames are reaching the screen.
+  let presentAttempts = 0;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+  function bridgePhase(): BridgePhase {
+    if (initStatus === 'error' || initStatus === 'no-webgpu') return 'failed';
+    if (initStatus === 'running' || initStatus === 'no-source') return 'presenting';
+    return 'init';
+  }
+
+  /**
+   * Give up on the bridge when it cannot start or nothing reaches the
+   * screen. Its per-frame failures are caught (so one bad frame does not
+   * kill the loop), which on some Windows machines left the workspace
+   * empty with no message at all.
+   */
+  function startBridgeWatchdog() {
+    if (watchdogTimer || !onBridgeFailure) return;
+    const watchdog = createBridgeWatchdog();
+    watchdogTimer = setInterval(() => {
+      if (disposed) return;
+      const verdict = watchdog.check({
+        now: performance.now(),
+        phase: bridgePhase(),
+        visible: typeof document === 'undefined' || document.visibilityState === 'visible',
+        attempts: presentAttempts,
+        presented: framesPresented,
+      });
+      if (!verdict) return;
+      if (watchdogTimer) clearInterval(watchdogTimer);
+      watchdogTimer = null;
+      console.warn(`[WebGPUCanvas] editor GPU bridge is not drawing (${verdict.reason}; presented ${framesPresented} of ${presentAttempts} attempts, ${framesSkipped} skipped${initError ? `, ${initError}` : ''}); falling back to WebGL`);
+      try { onBridgeFailure?.(verdict.reason); } catch (err) { console.error('[WebGPUCanvas] fallback handler failed:', err); }
+    }, 500);
+  }
 
   // Pass-through WGSL shader. No transform / colour correction here
   // — those are still done by Canvas.svelte's WebGL composite. The
@@ -1420,6 +1461,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     const tick = () => {
       if (disposed) return;
       if (initStatus === 'no-source' && sourceCanvas) initStatus = 'running';
+      if ((initStatus === 'running' || initStatus === 'no-source') && !frozen) presentAttempts++;
       // Total output freeze: skip presenting so the GPU brush compute
       // passes stop advancing. The canvas retains its last frame. RAF
       // keeps rescheduling so we resume instantly on unfreeze.
@@ -1508,6 +1550,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
   }
   onMount(async () => {
+    startBridgeWatchdog();
     await initWebGPU();
     if (initStatus === 'no-source' || initStatus === 'running') {
       startFrameLoop();
@@ -1609,6 +1652,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   onDestroy(() => {
     disposed = true;
+    if (watchdogTimer) clearInterval(watchdogTimer);
+    watchdogTimer = null;
     stopFrameLoop();
     stopOutputSharedTexturePresenter();
     // Owner-scoped: this renderer may have registered presentCanvas (live)
@@ -1637,7 +1682,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       <div class="error-title">WebGPU bridge error</div>
       <div class="error-body">{initError}</div>
       <div class="error-hint">
-        Toggle <code>experimental.editorWebGPU</code> off to fall back to WebGL only.
+        Switching to the standard WebGL view. To keep it off, turn off Settings › Performance › GPU Acceleration › Editor GPU bridge.
       </div>
     </div>
   {/if}
@@ -1699,11 +1744,5 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     font-size: 11px;
     color: var(--text-muted, #888);
     margin-top: 8px;
-  }
-  code {
-    background: rgba(255, 255, 255, 0.08);
-    padding: 1px 4px;
-    border-radius: 2px;
-    font-size: 11px;
   }
 </style>

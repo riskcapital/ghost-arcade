@@ -678,6 +678,39 @@
    *  subscription that drives startOutputPixelBroadcast / stop. */
   let outputWebRTCUnsub: (() => void) | null = null;
 
+  /**
+   * Register this WebGL editor canvas (or its master-warped derivative)
+   * with the output transports. Not in bridgeMode, where the WebGPU canvas
+   * is the present surface and registers itself, unless the bridge failed.
+   */
+  function startEditorOutputRegistration() {
+    if (isOsrMode || isOutputMode || !canvas || outputWebRTCUnsub) return;
+    const editorCanvas = canvas;
+    outputWebRTCUnsub = settings.subscribe((s) => {
+      const _perf = s?.performance;
+      reconcileMasterWarpOutput({
+        baseSource: editorCanvas,
+        // Only route through the warp pass when it would actually change
+        // the output — enabling alone (identity) stays passthrough so the
+        // zero-copy path is preserved until the operator drags a handle.
+        warpActive: masterWarpIsActive(s.output?.masterWarp),
+        zeroCopy: !!s.experimental?.outputZeroCopy,
+        webrtc: !!s.experimental?.outputWebRTC,
+        getWarp: () => get(settings).output?.masterWarp,
+        getSize: () => ({
+          w: get(settings).output?.masterCanvasWidth ?? 1920,
+          h: get(settings).output?.masterCanvasHeight ?? 1080,
+        }),
+        perf: {
+          frameRate: _perf?.outputFrameRate ?? 60,
+          maxBitrate: _perf?.outputMaxBitrate,
+          degradationPreference: _perf?.outputDegradationPreference,
+          codecPreference: _perf?.outputCodecPreference,
+        },
+      });
+    });
+  }
+
   // Output-window transforms are applied in the final WebGL pass. Keeping them
   // out of CSS avoids compositor resampling of the live projection canvas.
 
@@ -1350,7 +1383,27 @@
     // thumbnails, but the cost was paid on every paint. Any thumbnail
     // path that needed it can do an explicit one-shot render to a
     // dedicated render target.
-    engine = new RenderEngine(canvas, projW, projH, { preserveDrawingBuffer: false });
+    // A machine that cannot start WebGL (blocklisted or crashed driver,
+    // remote desktop, GPU disabled) used to leave the workspace blank with
+    // the error only in the console. Say so on the canvas instead.
+    let contextCreationMessage = '';
+    const onContextCreationError = (e: Event) => {
+      contextCreationMessage = (e as WebGLContextEvent).statusMessage || '';
+    };
+    canvas.addEventListener('webglcontextcreationerror', onContextCreationError);
+    try {
+      engine = new RenderEngine(canvas, projW, projH, { preserveDrawingBuffer: false });
+    } catch (err) {
+      const detail = contextCreationMessage || (err instanceof Error ? err.message : String(err));
+      console.error('[Canvas] WebGL could not start:', detail, err);
+      webglStartError = detail;
+      if (!isOutputMode && !isOsrMode) {
+        showToast('The workspace could not start WebGL on this computer, so nothing can be drawn. Update the graphics driver and restart Ghost Arcade.', 'error');
+      }
+      return;
+    } finally {
+      canvas.removeEventListener('webglcontextcreationerror', onContextCreationError);
+    }
     // Register with the offline-render store so its frame loop can
     // resize the engine + read the composite target each tick.
     void import('../recording/offlineRender').then(({ offlineRender }) => {
@@ -1376,7 +1429,7 @@
       // In editor WebGPU bridge mode the hidden WebGL canvas is the raw
       // source frame; WebGPUCanvas owns output-space reprojection so dome
       // and master warp are baked exactly once before capture/slicing.
-      const webgpuBridgeOwnsDome = bridgeMode && !isOutputMode && !isOsrMode && !!s.experimental?.editorWebGPU;
+      const webgpuBridgeOwnsDome = presentByBridge && !isOutputMode && !isOsrMode && !!s.experimental?.editorWebGPU;
       engine.setDomeEnabled(webgpuBridgeOwnsDome ? false : s.output.domeEnabled);
       engine.setDomeSettings({
         mode: s.output.domeMode,
@@ -1429,32 +1482,7 @@
     // master warp would silently do nothing. So skip when bridgeMode.
     // reconcileMasterWarpOutput (outputComposite) is the single registrar
     // and is itself diff-gated; it's fed from a settings subscription.
-    if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) {
-      const editorCanvas = canvas;
-      outputWebRTCUnsub = settings.subscribe((s) => {
-        const _perf = s?.performance;
-        reconcileMasterWarpOutput({
-          baseSource: editorCanvas,
-          // Only route through the warp pass when it would actually change
-          // the output — enabling alone (identity) stays passthrough so the
-          // zero-copy path is preserved until the operator drags a handle.
-          warpActive: masterWarpIsActive(s.output?.masterWarp),
-          zeroCopy: !!s.experimental?.outputZeroCopy,
-          webrtc: !!s.experimental?.outputWebRTC,
-          getWarp: () => get(settings).output?.masterWarp,
-          getSize: () => ({
-            w: get(settings).output?.masterCanvasWidth ?? 1920,
-            h: get(settings).output?.masterCanvasHeight ?? 1080,
-          }),
-          perf: {
-            frameRate: _perf?.outputFrameRate ?? 60,
-            maxBitrate: _perf?.outputMaxBitrate,
-            degradationPreference: _perf?.outputDegradationPreference,
-            codecPreference: _perf?.outputCodecPreference,
-          },
-        });
-      });
-    }
+    if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) startEditorOutputRegistration();
 
     // S4 pilot: kick off the WebGPU capability probe in parallel with the
     // rest of editor init. The probe runs even when the pilot flag is off
@@ -2296,7 +2324,7 @@
           // empty buffer → black output. No-op unless the warp is active.
           // Skip in bridgeMode — WebGPUCanvas owns the warp tick there
           // (its present canvas is the real output surface).
-          if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) {
+          if (!isOsrMode && !isOutputMode && !presentByBridge && canvas) {
             tickMasterWarpOutput(canvas);
           }
 
@@ -6653,6 +6681,21 @@
   // visible (opacity:1) by default — no behavioural change for the
   // existing WebGL-only path.
   export let bridgeMode: boolean = false;
+  /** Why WebGL could not start in this window, shown over the canvas. */
+  let webglStartError = '';
+  /** The WebGPU bridge was not drawing and has been removed (App.svelte's
+   *  watchdog fallback): this canvas is shown, owns the dome and master
+   *  warp, and feeds the outputs again, as when the bridge is off. */
+  export let bridgeFallback: boolean = false;
+  $: presentByBridge = bridgeMode && !bridgeFallback;
+  let tookOverFromBridge = false;
+  $: if (bridgeMode && bridgeFallback && engine && !tookOverFromBridge) takeOverFromBridge();
+  function takeOverFromBridge() {
+    tookOverFromBridge = true;
+    engine?.setDomeEnabled(get(settings).output.domeEnabled);
+    // After the bridge has unmounted and released the output registration.
+    setTimeout(() => startEditorOutputRegistration(), 0);
+  }
 
   // Expose actual container dimensions for warp handle alignment
   export function getContainerRect(): { x: number; y: number; width: number; height: number } {
@@ -6673,7 +6716,14 @@
 
 <div class="canvas-wrapper" class:output-mode={isOsrMode || isOutputMode} bind:this={wrapperEl}>
   <div class="canvas-container" class:output-mode={isOsrMode || isOutputMode} bind:this={containerEl}>
-    <canvas class="main-canvas" class:bridge-source={bridgeMode} bind:this={canvas}></canvas>
+    <canvas class="main-canvas" class:bridge-source={presentByBridge} bind:this={canvas}></canvas>
+    {#if webglStartError}
+      <div class="webgl-start-error" role="alert">
+        <strong>WebGL could not start</strong>
+        <span>Nothing can be drawn in this window. Update the graphics driver, then restart Ghost Arcade. On a laptop with two graphics chips, set Ghost Arcade to use the high-performance one in the system's graphics settings.</span>
+        <small>{webglStartError}</small>
+      </div>
+    {/if}
     <!-- Edge blend + test pattern overlay -->
     <canvas class="output-overlay" bind:this={outputOverlayCanvas}></canvas>
     <!-- Mapping grid mount lives in App.svelte (sibling to both this
@@ -6741,6 +6791,26 @@
   .main-canvas.bridge-source {
     opacity: 0;
   }
+
+  .webgl-start-error {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 24px;
+    text-align: center;
+    background: #111;
+    color: #d7dbe4;
+    font-size: 13px;
+    line-height: 1.5;
+    z-index: 20;
+  }
+  .webgl-start-error strong { font-size: 15px; color: #fff; }
+  .webgl-start-error span { max-width: 460px; }
+  .webgl-start-error small { color: #7d8595; font-size: 11px; overflow-wrap: anywhere; }
 
   .output-overlay {
     position: absolute;
