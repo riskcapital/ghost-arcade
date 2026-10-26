@@ -219,6 +219,26 @@ function createKeyframeTimelineStore() {
       });
     },
 
+    /**
+     * Output windows: show the editor's playback (playing flag, playhead and
+     * the values it is applying) without running a transport of their own.
+     */
+    applyRemotePlayback(remote: { isPlaying: boolean; currentTime: number; activeOverrides: Record<string, Record<string, number | boolean>> }) {
+      if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
+      }
+      update(s => ({
+        ...s,
+        config: {
+          ...s.config,
+          isPlaying: !!remote.isPlaying,
+          currentTime: Number.isFinite(remote.currentTime) ? remote.currentTime : s.config.currentTime,
+        },
+        activeOverrides: remote.activeOverrides ?? {},
+      }));
+    },
+
     seek(time: number) {
       update(s => {
         const clamped = Math.max(0, Math.min(time, s.config.duration));

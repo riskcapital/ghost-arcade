@@ -46,6 +46,7 @@ import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimatio
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
 import { restoreVideoSourceElement } from '../media/videoSourceRestore';
+import { adoptLiveVideo, collectLiveVideos, unadoptedVideos } from '../sync/playbackSync';
 
 // History recording callback — set from App.svelte to avoid circular imports.
 // We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
@@ -5175,8 +5176,16 @@ void main() {
      * Import a project from a saved JSON object.
      * Now supports vjMode (presets), media library, and VJ clip launcher.
      */
-    importProject(data: unknown, projectDir?: string): boolean {
+    importProject(data: unknown, projectDir?: string, options: { reuseLiveVideos?: boolean } = {}): boolean {
       try {
+        // Output windows import the editor's project on every structural
+        // change. Keep each layer's playing video element when the layer and
+        // its file are unchanged: a new element restarted the clip from zero
+        // (and the texture kept showing the old one).
+        const liveVideos = options.reuseLiveVideos
+          ? collectLiveVideos<HTMLVideoElement>(get(projectWritable).layers as any)
+          : null;
+        const adoptedVideos = new Set<HTMLVideoElement>();
         const parsed = data as {
           version?: string;
           project?: {
@@ -5827,7 +5836,7 @@ void main() {
         // main process has already pointed those at files that exist) with
         // the legacy path walk as the fallback. Layers and the copies of
         // layers that stage presets carry both go through this.
-        const resolveLayerMedia = (layer: any) => {
+        const resolveLayerMedia = (layer: any, reuseLive = false) => {
             // Resolve every media-path field. Prefer AssetRef so blob URLs
             // that died at session end still resolve to the originating
             // disk file (or the sibling-copy beside the .gha). Falls back
@@ -5838,6 +5847,10 @@ void main() {
                 (layer.source as any)._assetRef,
                 layer.source.src,
               );
+              if (reuseLive && liveVideos) {
+                const adopted = adoptLiveVideo(layer.id, layer.source, liveVideos);
+                if (adopted) adoptedVideos.add(adopted);
+              }
               if (isVideoSource(layer.source)) {
                 rehydrateVideoSource(layer.source);
               }
@@ -5884,7 +5897,7 @@ void main() {
           selectedLayerId: proj.selectedLayerId || null,
           layers: (proj.layers || []).map(layer => {
             const imported = this._importLayer(layer);
-            resolveLayerMedia(imported);
+            resolveLayerMedia(imported, true);
             return imported;
           }),
           mappingComposition: normalizeMappingCompositionState(proj.mappingComposition),
@@ -5904,6 +5917,16 @@ void main() {
         };
 
         set(importedProject);
+        if (liveVideos) {
+          // Videos no layer uses any more would otherwise keep decoding.
+          for (const element of unadoptedVideos(liveVideos, adoptedVideos)) {
+            try {
+              element.pause();
+              element.removeAttribute('src');
+              element.load();
+            } catch { /* already gone */ }
+          }
+        }
         selectedLayerIdsState.set(importedProject.selectedLayerId ? [importedProject.selectedLayerId] : []);
         const importedStage3d = (proj as any).stage3d;
         const incomingSyncedStage3d = (parsed as any).stage3dScene;

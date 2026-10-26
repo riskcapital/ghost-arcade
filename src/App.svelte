@@ -59,6 +59,7 @@
   import MobileApp from './lib/components/MobileApp.svelte';
   import OutputWindow from './lib/components/OutputWindow.svelte';
   import { getOutputSharedTexturePresenterStats } from './lib/sync/outputSharedTexturePresenter';
+  import { broadcastShowTransition } from './lib/sync/stateBroadcast';
   // Real "is a projector window attached" state, independent of the local
   // outputIsOpen intent flag (which resets to false on editor reload while
   // the output BrowserWindow lives on). Used to stop the Output/Fullscreen
@@ -894,9 +895,12 @@
     // Show timeline transitions. The timeline resolves progress from show
     // time; the engine blends the outgoing picture into the incoming one.
     setShowTransitionSink((transition) => {
-      canvasComponent?.getEngine()?.driveTransition(transition
+      const driven = transition
         ? { key: `${transition.fromCompositionId}>${transition.toCompositionId}`, style: transition.style, progress: transition.progress }
-        : null);
+        : null;
+      canvasComponent?.getEngine()?.driveTransition(driven);
+      // An output window that renders on its own blends the same way.
+      broadcastShowTransition(driven);
     });
     const bridgeTimeouts = new Set<ReturnType<typeof setTimeout>>();
     const scheduleBridgeTimeout = (fn: () => void, delay: number) => {

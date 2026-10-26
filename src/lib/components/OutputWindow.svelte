@@ -92,6 +92,10 @@
     zeroCopyUnavailable = true;
     const reason = (event as CustomEvent).detail?.error || 'WebGPU unavailable';
     console.warn(`[Output] Zero-copy output could not start (${reason}); reopening on the standard transport.`);
+    showToast(
+      'The output is running in compatibility mode: WebGPU could not start in its window, so it draws the show itself. It follows the editor, but a heavy show may run slower there. Updating the graphics driver can bring the faster mode back.',
+      'info',
+    );
     const reopen = lastZeroCopyOpen;
     // Resolves once the window is gone.
     await invoke('close_output_window').catch(() => {});

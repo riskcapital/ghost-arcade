@@ -17,6 +17,16 @@ import { vjLayerSequencer } from '$lib/stores/vjLayerSequencer';
 import { stage3dScene } from '$lib/stage3d/store';
 import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING } from '$lib/stage3d/types';
 import { invoke, isDesktopApp } from '$lib/bridge';
+import { layerSequencer } from '$lib/stores/layerSequencer';
+import { keyframeTimeline } from '$lib/stores/keyframeTimeline';
+import {
+  buildPlaybackState,
+  playbackSignature,
+  sampleVideoClocks,
+  videoClockSeekTarget,
+  type PlaybackStatePayload,
+  type VideoClockSample,
+} from './playbackSync';
 
 const CHANNEL_NAME = 'ghostarcade-state-sync';
 
@@ -228,7 +238,8 @@ function isExternalPreviewWindow(): boolean {
 // ============================================================
 
 interface StateMessage {
-  type: 'project-state' | 'vj-state' | 'stage3d-state' | 'stage3d-edit' | 'settings-update' | 'osr-request-state' | 'osr-alive' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen';
+  type: 'project-state' | 'vj-state' | 'stage3d-state' | 'stage3d-edit' | 'settings-update' | 'osr-request-state' | 'osr-alive' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen'
+    | 'playback-state' | 'video-clock' | 'show-transition';
   data?: any;
   timestamp: number;
 }
@@ -252,6 +263,9 @@ function sendFullState() {
     // Force the next vj-state broadcast to carry full grids — a receiver
     // that just connected mid-session may have missed earlier grid sends.
     lastSentVJStructure = null;
+    // The transports and the show transition are not part of the project.
+    sendPlaybackState(true);
+    sendShowTransition();
     publishStage3DRelayFullState();
     console.log('[StateSync] Full state sent to OSR');
   } catch (err) {
@@ -450,6 +464,69 @@ function scheduleStage3DRelaySettingsPublish(delay = 100) {
     stage3dRelaySettingsPublishTimer = null;
     publishStage3DRelaySettingsState();
   }, delay);
+}
+
+// ── Transports, show transition and video clocks (playbackSync.ts) ──
+
+let lastPlaybackSignature = '';
+let playbackFrameScheduled = false;
+
+/** Send where the layer sequencer and keyframe timeline are, if it changed. */
+function sendPlaybackState(force = false) {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+  const state = buildPlaybackState(get(layerSequencer), get(keyframeTimeline));
+  const signature = playbackSignature(state);
+  if (!force && signature === lastPlaybackSignature) return;
+  lastPlaybackSignature = signature;
+  try {
+    channel.postMessage({ type: 'playback-state', data: JSON.parse(JSON.stringify(state)), timestamp: Date.now() } satisfies StateMessage);
+  } catch (err) {
+    console.error('[StateSync] Failed to broadcast playback state:', err);
+  }
+}
+
+/** Both transports tick on animation frames: send at most once a frame. */
+function schedulePlaybackState() {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver || playbackFrameScheduled) return;
+  playbackFrameScheduled = true;
+  const flush = () => {
+    playbackFrameScheduled = false;
+    sendPlaybackState();
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+  else setTimeout(flush, 16);
+}
+
+type ShowTransitionState = { key: string; style: 'dissolve' | 'dipToBlack' | 'additive'; progress: number } | null;
+let lastShowTransition: ShowTransitionState = null;
+
+function sendShowTransition() {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+  try {
+    channel.postMessage({ type: 'show-transition', data: lastShowTransition, timestamp: Date.now() } satisfies StateMessage);
+  } catch { /* closed */ }
+}
+
+/**
+ * The Show timeline's transition at this instant (App.svelte's transition
+ * sink calls this next to driving the editor's engine), so an output that
+ * renders on its own blends the same way.
+ */
+export function broadcastShowTransition(state: ShowTransitionState): void {
+  lastShowTransition = state ? { key: state.key, style: state.style, progress: state.progress } : null;
+  sendShowTransition();
+}
+
+const VIDEO_CLOCK_MS = 250;
+
+/** Where each layer's video is, so the output can keep its copies in step. */
+function sendVideoClocks() {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+  const samples = sampleVideoClocks(get(project).layers as any, Date.now());
+  if (samples.length === 0) return;
+  try {
+    channel.postMessage({ type: 'video-clock', data: samples, timestamp: Date.now() } satisfies StateMessage);
+  } catch { /* closed */ }
 }
 
 function broadcastProjectUpdate() {
@@ -679,6 +756,13 @@ function initSender() {
   });
   unsubscribers.push(unsubVJSequencer);
 
+  // Layer sequencer + keyframe timeline: an output that renders the project
+  // itself needs their runtime state, which is not in the project.
+  unsubscribers.push(layerSequencer.subscribe(() => schedulePlaybackState()));
+  unsubscribers.push(keyframeTimeline.subscribe(() => schedulePlaybackState()));
+  const videoClockTimer = setInterval(sendVideoClocks, VIDEO_CLOCK_MS);
+  unsubscribers.push(() => clearInterval(videoClockTimer));
+
   const unsubStage3D = stage3dScene.subscribe(() => {
     // An edit that came from the Stage Sim window is already there.
     if (applyingStage3DEdit) return;
@@ -788,7 +872,8 @@ function applyProjectStatePayload(data: any, sourceLabel: string) {
         modulation: data.modulation,
       };
     }
-    const importedOk = project.importProject(importPayload);
+    // Keep each layer's playing video when the layer and its file are unchanged.
+    const importedOk = project.importProject(importPayload, undefined, { reuseLiveVideos: true });
     if (!importedOk) {
       // Last-resort visibility: log what we actually received so a future
       // debug session doesn't have to add console.logs to find it. Keys
@@ -825,12 +910,73 @@ function applyProjectStatePayload(data: any, sourceLabel: string) {
     if (data.settings?.output) {
       settings.update(s => ({ ...s, output: { ...s.output, ...data.settings.output } }));
     }
+    // The import stopped this window's sequencer and keyframe timeline;
+    // put the editor's playback straight back.
+    if (lastRemotePlayback) applyRemotePlayback(lastRemotePlayback);
     if (!receivedFirstState) {
       receivedFirstState = true;
       console.log(`[StateSync] First project state received (${sourceLabel})`);
     }
   } catch (err) {
     console.error(`[StateSync] Failed to import project state (${sourceLabel}):`, err);
+  }
+}
+
+// ── Receiver: transports, show transition and video clocks ──
+
+let lastRemotePlayback: PlaybackStatePayload | null = null;
+
+function applyRemotePlayback(state: PlaybackStatePayload) {
+  try {
+    layerSequencer.applyRemotePlayback(state.seq);
+    keyframeTimeline.applyRemotePlayback(state.kf);
+  } catch (err) {
+    console.error('[StateSync] Failed to apply playback state:', err);
+  }
+}
+
+type RemoteTransition = { key: string; style: 'dissolve' | 'dipToBlack' | 'additive'; progress: number } | null;
+let remoteTransition: RemoteTransition = null;
+const remoteTransitionListeners = new Set<(t: RemoteTransition) => void>();
+
+/**
+ * Receivers: the Show timeline transition the editor is drawing. Canvas
+ * drives its engine with it, the way App.svelte drives the editor's.
+ */
+export function onRemoteShowTransition(listener: (t: RemoteTransition) => void): () => void {
+  remoteTransitionListeners.add(listener);
+  if (remoteTransition) listener(remoteTransition);
+  return () => remoteTransitionListeners.delete(listener);
+}
+
+const lastVideoSeekAt = new WeakMap<HTMLVideoElement, number>();
+
+/** Move this window's videos to the editor's time when they drift apart. */
+function applyVideoClocks(samples: VideoClockSample[]) {
+  if (!Array.isArray(samples) || samples.length === 0) return;
+  const layers = get(project).layers as any[];
+  const now = Date.now();
+  for (const sample of samples) {
+    const layer = layers.find((l) => l.id === sample.id);
+    const source = layer?.source;
+    const el = source?.type === 'video' ? source.videoElement as HTMLVideoElement | undefined : undefined;
+    if (!el || el.readyState < 1 || !Number.isFinite(el.duration) || el.duration <= 0) continue;
+    const rangeStart = Math.max(0, Math.min(1, source.trimStart ?? 0)) * el.duration;
+    const rangeEnd = Math.max(0, Math.min(1, source.trimEnd ?? 1)) * el.duration;
+    const target = videoClockSeekTarget({
+      sample,
+      nowMs: now,
+      elementTime: el.currentTime,
+      seeking: el.seeking,
+      rangeStart,
+      rangeEnd: rangeEnd > rangeStart ? rangeEnd : el.duration,
+      lastSeekAtMs: lastVideoSeekAt.get(el) ?? null,
+    });
+    if (target == null) continue;
+    try {
+      el.currentTime = target;
+      lastVideoSeekAt.set(el, now);
+    } catch { /* not seekable yet */ }
   }
 }
 
@@ -1045,6 +1191,27 @@ function handleReceivedMessage(event: MessageEvent<StateMessage>) {
     case 'layer-patch': {
       // Lightweight corner/opacity patch — apply directly without full import
       applyLayerPatchesPayload(msg.data);
+      break;
+    }
+
+    case 'playback-state': {
+      if (msg.data?.seq && msg.data?.kf) {
+        lastRemotePlayback = msg.data as PlaybackStatePayload;
+        applyRemotePlayback(lastRemotePlayback);
+      }
+      break;
+    }
+
+    case 'video-clock': {
+      applyVideoClocks(msg.data);
+      break;
+    }
+
+    case 'show-transition': {
+      remoteTransition = (msg.data ?? null) as RemoteTransition;
+      for (const listener of remoteTransitionListeners) {
+        try { listener(remoteTransition); } catch (err) { console.warn('[StateSync] transition listener failed:', err); }
+      }
       break;
     }
 
@@ -1402,6 +1569,10 @@ export function destroyStateBroadcast() {
 
   mode = null;
   receivedFirstState = false;
+  lastRemotePlayback = null;
+  remoteTransition = null;
+  lastPlaybackSignature = '';
+  lastShowTransition = null;
   lastStage3DRelayFullTick = -1;
   lastStage3DRelayLiveTick = -1;
   lastStage3DRelaySceneTick = -1;

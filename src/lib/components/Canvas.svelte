@@ -106,7 +106,7 @@
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { milkdropStore } from '../stores/milkdrop';
   import { hydraStore } from '../stores/hydra';
-  import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
+  import { initStateBroadcast, destroyStateBroadcast, onRemoteShowTransition } from '$lib/sync/stateBroadcast';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startPixelMapOutput, tapPixelMapFrame } from '$lib/pixelmap/sender';
@@ -1348,6 +1348,9 @@
       // shows the un-modulated baseline.
       startModulationBroadcast();
     }
+    // Windows that render the project from synced state: blend Show timeline
+    // transitions the way the editor does (only receivers get these).
+    const unsubRemoteTransition = onRemoteShowTransition((t) => engine?.driveTransition(t));
 
     // ── Output source + master warp ───────────────────────────────────
     // Register this WebGL editor canvas (or its master-warped derivative)
@@ -2688,6 +2691,7 @@
     return () => {
       unsubWatermark();
       unsubDome();
+      unsubRemoteTransition();
       resizeObserver.disconnect();
       glCanvas.removeEventListener('webglcontextlost', handleContextLost);
       glCanvas.removeEventListener('webglcontextrestored', handleContextRestored);

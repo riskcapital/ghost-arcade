@@ -344,6 +344,23 @@ function createLayerSequencerStore() {
       }));
     },
 
+    /**
+     * Output windows: show the editor's playback (playing flag, step and
+     * the opacities it is applying) without running a transport of their own.
+     */
+    applyRemotePlayback(remote: { isPlaying: boolean; currentStep: number; opacityOverrides: Record<string, number> }) {
+      if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
+      }
+      update(s => ({
+        ...s,
+        isPlaying: !!remote.isPlaying,
+        currentStep: Math.max(0, Math.min(Math.round(remote.currentStep) || 0, Math.max(0, s.pattern.stepCount - 1))),
+        opacityOverrides: remote.opacityOverrides ?? {},
+      }));
+    },
+
     seekStep(index: number) {
       update(s => {
         const clamped = Math.max(0, Math.min(index, s.pattern.stepCount - 1));
