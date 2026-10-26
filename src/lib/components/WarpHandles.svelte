@@ -3,7 +3,6 @@
   import { settings } from '../stores/settings';
   import { get } from 'svelte/store';
   import type { WarpCorners, Point2D, Layer } from '../types';
-  import { onMount, onDestroy } from 'svelte';
   import {
     advanceDragTravel,
     beginDragTravel,
@@ -21,7 +20,9 @@
     type SnapView,
   } from '../utils/mappingSnap';
   import { EDGE_CORNERS, dragEdge, dragPoint, rigidDragDelta, translateCorners, type PixelGrid, type WarpEdge } from '../utils/warpDrag';
-  import { normalizedWarpNudge, warpDragStepPixels, warpNudgeStepPixels } from '../utils/warpNudge';
+  import { warpDragStepPixels, warpNudgeStepPixels } from '../utils/warpNudge';
+  import { scheduleHistorySnapshot } from '../stores/historyHooks';
+  import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from '../stores/mappingPointSelection';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { insetEdgeHandle } from '../utils/warpHandleLayout';
   import {
@@ -54,8 +55,14 @@
   let containerEl: HTMLDivElement;
   let dragStartPos: { x: number; y: number } | null = null;
   let initialCorners: WarpCorners | null = null;
-  // Selected corner for keyboard navigation (persists after click)
-  let selectedCorner: keyof WarpCorners | null = null;
+  // The corner or edge the arrow keys move (the one pressed last). The
+  // canvas's arrow-key handler in App.svelte moves it; see
+  // utils/mappingNudge.ts.
+  $: pointRef = $mappingPointSelection && $mappingPointSelection.layerId === $selectedLayer?.id && !hideCorners && !nonRectShape
+    ? $mappingPointSelection
+    : null;
+  $: selectedCorner = pointRef?.kind === 'corner' ? pointRef.corner : null;
+  $: selectedEdge = pointRef?.kind === 'edge' && !selectionBoundsPx ? pointRef.edge : null;
 
   // Scale drag state
   let scaleStartY: number = 0;
@@ -280,108 +287,10 @@
     releaseFormControlFocus();
     dragging = 'corner';
     dragTarget = corner;
-    selectedCorner = corner;  // Set selected corner for keyboard navigation
+    if ($selectedLayer) selectMappingPoint({ kind: 'corner', layerId: $selectedLayer.id, corner });
     beginCornerDrag(corner, e.clientX, e.clientY);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-  }
-
-  // Handle keyboard navigation for selected corner. Step size honors
-  // the user's `warpDragGranularity` setting so arrow-key nudges
-  // move by exactly the same amount as a snapped mouse drag — 1
-  // project pixel by default. Shift gives 10x larger steps for
-  // gross positioning.
-  function handleKeyDown(e: KeyboardEvent) {
-    if (!$selectedLayer) return;
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    const active = document.activeElement as HTMLElement | null;
-    const activeTag = active?.tagName;
-    if (
-      tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
-      activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT' ||
-      active?.isContentEditable
-    ) return;
-
-    // Resolve project-pixel step from settings — one shared helper so
-    // arrow-key nudges everywhere use the same sensitivity.
-    const proj = get(project);
-    const step = normalizedWarpNudge(
-      proj.width,
-      proj.height,
-      get(settings).ui.warpDragGranularity,
-      e.shiftKey ? 10 : 1,
-    );
-    let dx = 0;
-    let dy = 0;
-
-    switch (e.key) {
-      case 'ArrowUp':
-        dy = step.y;
-        break;
-      case 'ArrowDown':
-        dy = -step.y;
-        break;
-      case 'ArrowLeft':
-        dx = -step.x;
-        break;
-      case 'ArrowRight':
-        dx = step.x;
-        break;
-      case 'Escape':
-        selectedCorner = null;
-        fineTuneCorner = null;
-        return;
-      default:
-        return;
-    }
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (selectedCorner) {
-      if ($selectedLayer.locked) return;
-      const currentPos = $selectedLayer.corners[selectedCorner];
-      project.setCorner($selectedLayer.id, selectedCorner, {
-        x: currentPos.x + dx,
-        y: currentPos.y + dy,
-      });
-      recordDiscreteAction();
-      return;
-    }
-
-    // In mesh mode the corners are hidden and the mesh points are the shape;
-    // MeshWarpHandles nudges the selected point. Shifting the hidden corners
-    // here changed nothing on screen and left the layer offset once it went
-    // back to corner warp.
-    if ($selectedLayer.warpMode === 'mesh') return;
-
-    const ids = get(selectedLayerIds);
-    const selectedIds = ids.length ? ids : [$selectedLayer.id];
-    const allLayers = get(layers);
-    const movable = allLayers.filter(l => selectedIds.includes(l.id) && !l.locked);
-    for (const layer of movable) {
-      project.setCorner(layer.id, 'topLeft', { x: layer.corners.topLeft.x + dx, y: layer.corners.topLeft.y + dy });
-      project.setCorner(layer.id, 'topRight', { x: layer.corners.topRight.x + dx, y: layer.corners.topRight.y + dy });
-      project.setCorner(layer.id, 'bottomLeft', { x: layer.corners.bottomLeft.x + dx, y: layer.corners.bottomLeft.y + dy });
-      project.setCorner(layer.id, 'bottomRight', { x: layer.corners.bottomRight.x + dx, y: layer.corners.bottomRight.y + dy });
-    }
-    if (movable.length > 0) recordDiscreteAction();
-  }
-
-  // Set up keyboard event listener
-  onMount(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('ghost-clear-warp-corner-selection', clearCornerSelection);
-  });
-
-  onDestroy(() => {
-    window.removeEventListener('keydown', handleKeyDown);
-    window.removeEventListener('ghost-clear-warp-corner-selection', clearCornerSelection);
-  });
-
-  function clearCornerSelection() {
-    selectedCorner = null;
-    fineTuneCorner = null;
   }
 
   /** A corner drag starts from where the corner is, not from the pointer:
@@ -410,6 +319,8 @@
     releaseFormControlFocus();
     dragging = 'edge';
     dragTarget = edge;
+    if ($selectedLayer && !selectionBoundsPx) selectMappingPoint({ kind: 'edge', layerId: $selectedLayer.id, edge });
+    else clearMappingPointSelection();
 
     initialCorners = $selectedLayer ? structuredClone($selectedLayer.corners) : null;
     captureBatchInitial(true);
@@ -435,6 +346,7 @@
     releaseFormControlFocus();
     dragging = 'move';
     dragTarget = 'center';
+    clearMappingPointSelection();
     beginMoveDrag(e.clientX, e.clientY);
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -448,6 +360,7 @@
     e.stopPropagation();
     dragging = 'rotate';
     dragTarget = 'rotate';
+    clearMappingPointSelection();
 
     const rect = containerEl.getBoundingClientRect();
     // Account for zoom when storing initial position
@@ -466,6 +379,7 @@
     e.stopPropagation();
     dragging = 'scale';
     dragTarget = 'scale';
+    clearMappingPointSelection();
 
     const rect = containerEl.getBoundingClientRect();
     scaleStartY = (e.clientY - rect.top) / zoom;
@@ -644,13 +558,14 @@
     const prev = lastTapAt.get(corner) ?? 0;
     if (now - prev < DOUBLE_TAP_MS) {
       fineTuneCorner = corner;
-      selectedCorner = corner;
+      if ($selectedLayer) selectMappingPoint({ kind: 'corner', layerId: $selectedLayer.id, corner });
       lastTapAt.delete(corner);
       return;
     }
     lastTapAt.set(corner, now);
     dragging = 'corner';
     dragTarget = corner;
+    if ($selectedLayer) selectMappingPoint({ kind: 'corner', layerId: $selectedLayer.id, corner });
     const touch = e.touches[0];
     beginCornerDrag(corner, touch.clientX, touch.clientY);
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
@@ -674,7 +589,12 @@
       y: cur.y - (dyPx * step) / ph,
     };
     project.setCorner($selectedLayer.id, fineTuneCorner, next);
+    scheduleHistorySnapshot();
   }
+
+  // The pad belongs to the selected corner; Escape or a click on the
+  // canvas lets go of both.
+  $: if (fineTuneCorner && selectedCorner !== fineTuneCorner) fineTuneCorner = null;
 
   function exitFineTune() { fineTuneCorner = null; }
 
@@ -683,6 +603,7 @@
     e.preventDefault();
     dragging = 'move';
     dragTarget = 'center';
+    clearMappingPointSelection();
     const touch = e.touches[0];
     beginMoveDrag(touch.clientX, touch.clientY);
 
@@ -955,6 +876,7 @@
       <div
         class="handle edge-handle edge-{edge}"
         class:dragging={dragging === 'edge' && dragTarget === edge}
+        class:selected={selectedEdge === edge && dragging !== 'edge'}
         class:locked={$selectedLayer.locked}
         style="left: {insetEdgeHandle(pos.x, containerWidth, edge === 'left' || edge === 'right' ? 6 : 20)}px; top: {insetEdgeHandle(pos.y, containerHeight, edge === 'left' || edge === 'right' ? 20 : 6)}px;"
         onmousedown={(e) => handleEdgeMouseDown(edge as 'top' | 'bottom' | 'left' | 'right', e)}
@@ -1170,6 +1092,12 @@
   .edge-handle.dragging {
     background: #ffff00;
     transform: scale(1.15);
+  }
+
+  .edge-handle.selected {
+    background: #00ff88;
+    transform: scale(1.15);
+    box-shadow: 0 0 10px #00ff88, 0 0 20px rgba(0, 255, 136, 0.5);
   }
 
   .edge-handle.locked {
