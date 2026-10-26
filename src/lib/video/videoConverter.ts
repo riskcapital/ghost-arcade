@@ -1,6 +1,9 @@
 import { invoke, isDesktopApp } from '../bridge';
 import formats from '../../../electron/video-converter-formats.json';
-export type VideoConversionFormat = 'h264' | 'hap' | 'hap_alpha' | 'hap_q' | 'prores' | 'prores_alpha';
+export type VideoConversionFormat = 'h264' | 'playback' | 'hap' | 'hap_alpha' | 'hap_q' | 'prores' | 'prores_alpha';
+
+/** Long-edge choices for the Playback preset (default 1920). */
+export const PLAYBACK_LONG_EDGES = [1280, 1920, 2560, 3840] as const;
 export const videoConversionFormats = formats;
 
 export type VideoConversionStage =
@@ -40,12 +43,17 @@ export interface PickedSequenceFolder {
 export interface VideoConversionResult {
   outputPath: string;
   ffmpegPath?: string;
+  /** Playback preset: the source was HDR and this ffmpeg could not tone-map it. */
+  hdrSkipped?: boolean;
+  encoder?: string;
 }
 
 export interface NativeConversionOptions {
   format?: VideoConversionFormat;
   crf: number;
   preset: string;
+  /** Playback preset: the longest edge of the output. */
+  longEdge?: number;
 }
 
 let activeJobId: string | null = null;
@@ -126,6 +134,7 @@ export async function convertWebMToMp4(
       format: options.format ?? 'h264',
       crf: options.crf,
       preset: options.preset,
+      longEdge: options.longEdge,
     });
     return result;
   } finally {
@@ -160,6 +169,29 @@ export async function convertImageSequenceToMp4(
       preset: options.preset,
     });
     return result;
+  } finally {
+    stopListening?.();
+    if (activeJobId === jobId) activeJobId = null;
+  }
+}
+
+/**
+ * Convert one video to the Playback preset, written beside the original (or
+ * under Videos/Ghost Arcade/Converted when that folder is read-only). The
+ * main process picks the output path; the caller relinks to it.
+ */
+export async function convertVideoForPlayback(
+  inputPath: string,
+  onProgress?: (progress: VideoConversionProgress) => void,
+): Promise<VideoConversionResult> {
+  requireDesktop();
+  if (activeJobId) throw new Error('Another video conversion is running. Try again when it finishes.');
+  const jobId = makeJobId();
+  activeJobId = jobId;
+  const stopListening = listenForJobProgress(jobId, onProgress);
+  try {
+    onProgress?.({ jobId, stage: 'preparing', progress: 0, message: 'Preparing encoder...' });
+    return await invoke<VideoConversionResult>('video_convert_for_playback', { jobId, inputPath });
   } finally {
     stopListening?.();
     if (activeJobId === jobId) activeJobId = null;

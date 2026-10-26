@@ -8,6 +8,7 @@
     pickImageSequenceFolder,
     pickVideoOutputPath,
     pickWebMVideo,
+    PLAYBACK_LONG_EDGES,
     revealVideoOutput,
     videoConversionFormats,
     type VideoConversionFormat,
@@ -35,6 +36,7 @@
   let fps = 30;
   let crf = 18;
   let preset = 'veryfast';
+  let longEdge = 1920;
   let format: VideoConversionFormat = 'h264';
   let resultFormat: VideoConversionFormat = 'h264';
   $: outputFormat = videoConversionFormats.find(f => f.id === format)!;
@@ -203,14 +205,16 @@
     progress = { stage: mode === 'sequence' ? 'scanning' : 'preparing', progress: 0, message: 'Preparing encoder...' };
 
     try {
-      const options = { crf, preset, format };
+      const options = { crf, preset, format, longEdge };
       const result = mode === 'sequence'
         ? await convertImageSequenceToMp4(selectedSequence!.path, outputPath, fps, options, (p) => { progress = p; })
         : await convertWebMToMp4(selectedVideo!.path, outputPath, options, (p) => { progress = p; });
       resultFormat = format;
       resultPath = result.outputPath;
       resultUrl = pathToFileUrl(result.outputPath);
-      noticeMessage = `${outputFormat.label} ready.`;
+      noticeMessage = result.hdrSkipped
+        ? `${outputFormat.label} ready. This video is HDR and this FFmpeg cannot convert HDR to SDR, so its colours may look washed out.`
+        : `${outputFormat.label} ready.`;
       progress = { stage: 'complete', progress: 1, message: 'Conversion complete.', outputPath: result.outputPath };
     } catch (error: any) {
       if (isVideoConversionCancelled(error)) {
@@ -313,6 +317,14 @@
             <span>FPS</span>
             <input type="number" min="1" max="240" step="1" bind:value={fps} disabled={isConverting} />
           </label>
+        {/if}
+        {#if format === 'playback'}
+        <label class="field">
+          <span>Longest edge</span>
+          <select bind:value={longEdge} disabled={isConverting}>
+            {#each PLAYBACK_LONG_EDGES as edge}<option value={edge}>{edge} px{edge === 1920 ? ' (recommended)' : ''}</option>{/each}
+          </select>
+        </label>
         {/if}
         {#if format === 'h264'}
         <label class="field">

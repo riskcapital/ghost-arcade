@@ -1,5 +1,6 @@
 [
   { "id": "h264", "label": "H.264 / MP4", "extension": "mp4", "alpha": false, "preview": true, "description": "Compact files for sharing and general playback." },
+  { "id": "playback", "label": "Playback (smooth H.264)", "extension": "mp4", "alpha": false, "preview": true, "description": "8-bit H.264 up to 1920 px and 60 fps, which every computer decodes in hardware. HDR is converted to SDR." },
   { "id": "hap", "label": "HAP", "extension": "mov", "alpha": false, "preview": false, "description": "Independent frames for VJ playback; large files." },
   { "id": "hap_alpha", "label": "HAP Alpha", "extension": "mov", "alpha": true, "preview": false, "description": "HAP with transparency from a source that includes an alpha channel." },
   { "id": "hap_q", "label": "HAP Q", "extension": "mov", "alpha": false, "preview": false, "description": "Higher-quality HAP color; larger files, without transparency." },

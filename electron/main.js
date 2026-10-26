@@ -1878,7 +1878,26 @@ function publishVideoConverterProgress(sender, payload) {
   });
 }
 
-const { conversionFormat, conversionOutputArgs, stageConversionOutput, sequenceConcatText, probeConversionInput } = require('./video-converter-options.cjs');
+const {
+  conversionFormat, conversionOutputArgs, stageConversionOutput, sequenceConcatText, probeConversionInput,
+  probePlaybackInput, playbackCanToneMap, choosePlaybackEncoder, playbackOutputPath, PLAYBACK_DEFAULT_LONG_EDGE,
+} = require('./video-converter-options.cjs');
+
+/** Probe a source for the Playback preset: its frame rate and HDR transfer,
+ *  the H.264 encoder to use here, and whether HDR can be tone-mapped. */
+async function playbackConversionOptions(ffmpegPath, inputPath, job, longEdge) {
+  const probe = await probePlaybackInput(ffmpegPath, inputPath, job);
+  const [encoder, tonemap] = await Promise.all([
+    choosePlaybackEncoder(ffmpegPath).catch(() => 'libx264'),
+    playbackCanToneMap(ffmpegPath).catch(() => false),
+  ]);
+  const edge = clampNumber(longEdge, 320, 7680, PLAYBACK_DEFAULT_LONG_EDGE);
+  return {
+    options: { playback: { probe, encoder, tonemap, longEdge: edge } },
+    hdrSkipped: !!probe.transfer && !tonemap,
+    encoder,
+  };
+}
 
 function spawnFfmpegConversion({
   sender,
@@ -8234,7 +8253,7 @@ function registerIpcHandlers() {
       properties: ['openFile'],
       title: 'Choose Video',
       filters: [
-        { name: 'Video Files', extensions: ['webm', 'mkv', 'mov', 'mp4'] },
+        { name: 'Video Files', extensions: ['webm', 'mkv', 'mov', 'mp4', 'm4v', 'mxf', 'avi', 'mts', 'm2ts', 'mpg', 'mpeg', 'wmv'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     });
@@ -8336,12 +8355,63 @@ function registerIpcHandlers() {
         if (reservedJob.cancelled) throw new Error('Conversion cancelled.');
         input.push('-fflags', '+genpts', ...decoderArgs, '-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?');
       }
-      return await spawnFfmpegConversion({ sender: event.sender, jobId, durationSec, totalFrames, outputPath, reservedJob, ffmpegPath,
+      let outputOptions = args;
+      let hdrSkipped = false;
+      if (format.id === 'playback' && mode !== 'sequence') {
+        const playback = await playbackConversionOptions(ffmpegPath, args.inputPath, reservedJob, args.longEdge);
+        if (reservedJob.cancelled) throw new Error('Conversion cancelled.');
+        outputOptions = { ...args, ...playback.options };
+        hdrSkipped = playback.hdrSkipped;
+      }
+      const result = await spawnFfmpegConversion({ sender: event.sender, jobId, durationSec, totalFrames, outputPath, reservedJob, ffmpegPath,
         startMessage: `Converting to ${format.label}...`, completeMessage: `${format.label} conversion complete.`,
         progressMode: mode === 'sequence' ? 'frames' : 'time', cleanup, finalize: () => staged.complete(),
         args: ['-hide_banner', '-nostdin', '-n', '-progress', 'pipe:2', '-nostats', ...input,
-          ...conversionOutputArgs(format.id, args), staged.temporaryPath],
+          ...conversionOutputArgs(format.id, outputOptions), staged.temporaryPath],
       });
+      return { ...result, hdrSkipped };
+    } catch (error) {
+      if (activeVideoConverterJob === reservedJob) activeVideoConverterJob = null;
+      cleanup(); throw error;
+    }
+  });
+
+  // "Convert for smooth playback" on a clip the core decodes in software:
+  // the Playback preset, written beside the original (the renderer cannot
+  // choose where), or under Videos/Ghost Arcade/Converted when that folder
+  // is read-only. The renderer then points its layers and clips at it.
+  ipcMain.handle('video_convert_for_playback', async (event, args = {}) => {
+    if (activeVideoConverterJob) throw new Error('Another video conversion is running. Try again when it finishes.');
+    const inputPath = assertAbsolutePath(args.inputPath, 'input video path');
+    let stat = null;
+    try { stat = fs.statSync(inputPath); } catch { /* reported below */ }
+    if (!stat?.isFile()) throw new Error('The video file was not found.');
+    const jobId = typeof args.jobId === 'string' && args.jobId ? args.jobId : `vp-${Date.now().toString(36)}`;
+    let outputPath = playbackOutputPath(inputPath);
+    let staged;
+    try {
+      staged = stageConversionOutput(outputPath, 'playback');
+    } catch (error) {
+      if (!['EACCES', 'EPERM', 'EROFS'].includes(error?.code)) throw error;
+      const fallbackDir = path.join(app.getPath('videos'), 'Ghost Arcade', 'Converted');
+      outputPath = playbackOutputPath(inputPath, fallbackDir);
+      staged = stageConversionOutput(outputPath, 'playback');
+    }
+    const cleanup = () => staged.cleanup();
+    const reservedJob = { id: jobId, process: null, cancelled: false, cleanup };
+    activeVideoConverterJob = reservedJob;
+    try {
+      const ffmpegPath = resolveFfmpegPath();
+      const playback = await playbackConversionOptions(ffmpegPath, inputPath, reservedJob, args.longEdge);
+      if (reservedJob.cancelled) throw new Error('Conversion cancelled.');
+      const result = await spawnFfmpegConversion({ sender: event.sender, jobId, durationSec: 0, totalFrames: 0, outputPath, reservedJob, ffmpegPath,
+        startMessage: 'Converting for smooth playback...', completeMessage: 'Converted for smooth playback.',
+        progressMode: 'time', cleanup, finalize: () => staged.complete(),
+        args: ['-hide_banner', '-nostdin', '-n', '-progress', 'pipe:2', '-nostats', '-fflags', '+genpts',
+          '-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?',
+          ...conversionOutputArgs('playback', playback.options), staged.temporaryPath],
+      });
+      return { ...result, outputPath, hdrSkipped: playback.hdrSkipped, encoder: playback.encoder };
     } catch (error) {
       if (activeVideoConverterJob === reservedJob) activeVideoConverterJob = null;
       cleanup(); throw error;
