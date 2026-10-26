@@ -99,6 +99,7 @@ const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPat
 // The disk paths the renderer may write, copy to, or read back through
 // ghost-asset:// (see electron/path-grants.cjs).
 const mediaLocate = require('./media-locate.cjs');
+const { shouldRestoreEditorFocus, outputOnEditorDisplay } = require('./output-focus.cjs');
 const pathGrants = require('./path-grants.cjs').createPathGrants({
   // The old ghost-arcade folder's media too: projects made before the split
   // point there, and it is not copied (see electron/profile-migration.cjs).
@@ -8580,6 +8581,27 @@ function registerIpcHandlers() {
 
   for (const cmd of nativeRendererCommandNames()) {
     ipcMain.handle(cmd, async (_event, args = {}) => {
+      if (cmd === 'native_renderer_set_output_window' && process.platform === 'darwin') {
+        // The core activates its own process to raise the output window,
+        // which takes the menu bar from the editor (see output-focus.cjs).
+        const focused = BrowserWindow.getFocusedWindow();
+        const result = await nativeRendererBroker.invokeFromRenderer(cmd, args);
+        const config = args?.config ?? args;
+        const editor = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+        if (editor && focused && !focused.isDestroyed() && shouldRestoreEditorFocus({
+          platform: process.platform,
+          config,
+          editorWasFocused: true,
+          sameDisplay: outputOnEditorDisplay(screen, editor.getBounds(), config),
+        })) {
+          setTimeout(() => {
+            if (focused.isDestroyed()) return;
+            app.focus({ steal: true });
+            focused.focus();
+          }, 60);
+        }
+        return result;
+      }
       if (cmd !== 'native_renderer_start') {
         if (cmd === 'native_renderer_stop') {
           detachNativeEditorPreview('native-renderer-stop');
