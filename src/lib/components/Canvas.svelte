@@ -78,6 +78,7 @@
   let _MilkdropVisualizerCtor: typeof import('../effects/milkdropVisualizer').MilkdropVisualizer | null = null;
   let _milkdropLoadPresetPack: typeof import('../effects/milkdropPresets').loadPresetPack | null = null;
   let _milkdropPickNextPreset: typeof import('../effects/milkdropPresets').pickNextPreset | null = null;
+  let _milkdropInitialPreset: typeof import('../effects/milkdropPresets').initialPreset | null = null;
   let _AudioMotionVisualizerCtor: typeof import('../effects/audiomotionVisualizer').AudioMotionVisualizer | null = null;
   let _AnalyzerLabVisualizerCtor: typeof import('../effects/analyzerLabVisualizer').AnalyzerLabVisualizer | null = null;
   let _HandFXVisualizerCtor: typeof import('../effects/handfxVisualizer').HandFXVisualizer | null = null;
@@ -1161,6 +1162,7 @@
     milkdropLastCommandTag?: number; // for edge-triggered next/prev/random/cut/load
     milkdropLastHardCutAt?: number; // refractory to avoid every-beat cut on dense kicks
     milkdropLayerId?: string; // first layer id in the group — used for store keying
+    milkdropLockRestored?: boolean; // the layer's saved lock has been applied to the store
     renderTarget: THREE.WebGLRenderTarget;
     simulationWidth: number;
     simulationHeight: number;
@@ -1235,6 +1237,25 @@
     ctx._camCopyMat = undefined;
     ctx._camCopyMesh = undefined;
     ctx._camCopyCam = undefined;
+  }
+
+  /**
+   * Write the Milkdrop preset showing (and the lock) onto its layers, so a
+   * saved project reopens on that preset instead of a random one. The preset
+   * changes on its own while auto-evolve runs, so this is performance state:
+   * never an undo step. Layers that are not in the project (VJ deck output)
+   * are left alone.
+   */
+  function persistMilkdropState(groupedLayers: Layer[], patch: { milkdropPresetName?: string; milkdropLocked?: boolean }): void {
+    const live = get(project).layers;
+    for (const grouped of groupedLayers) {
+      const layer = live.find((l) => l.id === grouped.id);
+      const effectSource = layer?.source?.effectSource;
+      if (!layer?.source || !effectSource) continue;
+      const changed = Object.entries(patch).some(([key, value]) => (effectSource as unknown as Record<string, unknown>)[key] !== value);
+      if (!changed) continue;
+      project.updateLayer(layer.id, { source: { ...layer.source, effectSource: { ...effectSource, ...patch } } }, { history: false });
+    }
   }
 
   function disposeIntegratedEffectContext(ctx: IntegratedEffectContext): void {
@@ -5603,6 +5624,7 @@
             const pmod = await import('../effects/milkdropPresets');
             _milkdropLoadPresetPack = pmod.loadPresetPack;
             _milkdropPickNextPreset = pmod.pickNextPreset;
+            _milkdropInitialPreset = pmod.initialPreset;
           });
           continue;
         }
@@ -6277,15 +6299,31 @@
             .then((presets) => {
               effectCtx!.milkdropPresets = presets;
               effectCtx!.milkdropPresetNames = Object.keys(presets).sort();
-              const first = _milkdropPickNextPreset!(presets, null);
+              // Start on the preset the layer was saved showing.
+              const first = _milkdropInitialPreset
+                ? _milkdropInitialPreset(presets, effectSource.milkdropPresetName)
+                : _milkdropPickNextPreset!(presets, null);
               if (first) {
                 mk.loadPreset(first, presets[first], 0);
                 effectCtx!.milkdropLoadedPresetName = first;
                 effectCtx!.milkdropLastEvolveAt = performance.now();
                 if (layerId) milkdropStore.reportPreset(layerId, first);
+                persistMilkdropState(groupedLayers, { milkdropPresetName: first });
               }
             })
             .catch((e) => console.warn('[Canvas] milkdrop preset pack load failed', e));
+        }
+
+        // The lock is saved on the layer: restore it once, then keep the
+        // layer in step with the panel's lock button.
+        if (layerId) {
+          const storeLocked = !!get(milkdropStore).locked[layerId];
+          if (!effectCtx.milkdropLockRestored) {
+            effectCtx.milkdropLockRestored = true;
+            if (effectSource.milkdropLocked && !storeLocked) milkdropStore.setLocked(layerId, true);
+          } else if (storeLocked !== !!effectSource.milkdropLocked) {
+            persistMilkdropState(groupedLayers, { milkdropLocked: storeLocked });
+          }
         }
 
         const presets = effectCtx.milkdropPresets;
@@ -6334,6 +6372,7 @@
               effectCtx.milkdropLastEvolveAt = performance.now();
               effectCtx.milkdropLastEvolveBeat = getLastRawAnalysis()?.beat?.beatCount ?? 0;
               milkdropStore.reportPreset(layerId, target);
+              persistMilkdropState(groupedLayers, { milkdropPresetName: target });
             }
           }
         }
@@ -6359,6 +6398,7 @@
               effectCtx.milkdropLastEvolveAt = now;
               effectCtx.milkdropLastEvolveBeat = audio.beat.beatCount;
               if (layerId) milkdropStore.reportPreset(layerId, next);
+              persistMilkdropState(groupedLayers, { milkdropPresetName: next });
             }
           }
         }
@@ -6387,6 +6427,7 @@
               mk.loadPreset(next, presets[next], blendTime);
               effectCtx.milkdropLoadedPresetName = next;
               if (layerId) milkdropStore.reportPreset(layerId, next);
+              persistMilkdropState(groupedLayers, { milkdropPresetName: next });
             }
             effectCtx.milkdropLastEvolveAt = performance.now();
             effectCtx.milkdropLastEvolveBeat = getLastRawAnalysis()?.beat?.beatCount ?? 0;

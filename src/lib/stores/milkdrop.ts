@@ -70,6 +70,15 @@ export const milkdropStore = {
     });
   },
 
+  /** Restore a layer's saved lock without issuing a command. */
+  setLocked(layerId: string, locked: boolean): void {
+    _state.update(s => {
+      if (!!s.locked[layerId] === locked) return s;
+      s.locked[layerId] = locked;
+      return s;
+    });
+  },
+
   /** Renderer reports the currently displayed preset back to the store. */
   reportPreset(layerId: string, name: string): void {
     _state.update(s => {

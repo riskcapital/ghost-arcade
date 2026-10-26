@@ -47,6 +47,16 @@ export async function loadPresetPack(pack: MilkdropPresetPack): Promise<Record<s
   return presets;
 }
 
+/**
+ * The preset a Milkdrop layer starts on: the one it was saved showing, when
+ * the pack has it, otherwise a random one. Starting on a random preset every
+ * time made a saved project open looking different each time.
+ */
+export function initialPreset(presets: Record<string, any>, saved: string | null | undefined): string | null {
+  if (saved && Object.prototype.hasOwnProperty.call(presets, saved)) return saved;
+  return pickNextPreset(presets, null);
+}
+
 /** Pick the next preset name from a pack, optionally avoiding the current one. */
 export function pickNextPreset(presets: Record<string, any>, current: string | null): string | null {
   const names = Object.keys(presets);
