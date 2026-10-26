@@ -35,6 +35,13 @@ use windows::{
     core::{GUID, IUnknown, Interface, PCWSTR, w},
 };
 
+// Resolved at runtime, so a PC without Media Foundation still starts the core.
+use crate::windows_media_foundation::{
+    MFCreateAttributes, MFCreateDXGIDeviceManager, MFCreateMediaType, MFCreateSourceReaderFromURL,
+    MFShutdown, MFStartup,
+};
+#[cfg(test)]
+use crate::windows_media_foundation::MFCreateSample;
 pub use crate::windows_video_texture::GpuVideoFrame;
 use crate::windows_video_texture::{VideoFrameMetadata, WindowsVideoDevice, WindowsVideoWorker};
 

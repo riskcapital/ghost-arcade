@@ -16,6 +16,8 @@ mod isf_passes;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod hardware_video;
 #[cfg(target_os = "windows")]
+mod windows_media_foundation;
+#[cfg(target_os = "windows")]
 mod windows_video_decoder;
 #[cfg(target_os = "windows")]
 mod windows_video_encoder;

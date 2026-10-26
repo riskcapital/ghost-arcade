@@ -26,6 +26,11 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Direct3D12::{ID3D12Fence, D3D12_FENCE_FLAG_SHARED};
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Media::MediaFoundation::*;
+// Resolved at runtime, so a PC without Media Foundation still starts the core.
+use crate::windows_media_foundation::{
+    MFCreateAttributes, MFCreateDXGIDeviceManager, MFCreateDXGISurfaceBuffer, MFCreateMediaType,
+    MFCreateSample, MFCreateSinkWriterFromURL, MFShutdown, MFStartup,
+};
 
 /// DXGI_SHARED_RESOURCE_READ. Not re-exported by the `windows` crate's D3D11
 /// module, and the encoder only ever reads the composite.

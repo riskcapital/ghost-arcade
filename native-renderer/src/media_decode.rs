@@ -755,6 +755,13 @@ pub fn spawn_native_video_stream(
             let opened = crate::hardware_video::HardwareVideoDecoder::open(&path, hap_supported);
             #[cfg(target_os = "windows")]
             let opened = (|| {
+                // Without Media Foundation (Windows N/KN) say so plainly; the
+                // stream then plays through ffmpeg. HAP needs no Media Foundation.
+                if let Err(reason) = crate::windows_media_foundation::availability()
+                    && !(hap_supported && crate::hap_video::HapVideoDecoder::open(&path).is_ok())
+                {
+                    return Err(reason);
+                }
                 let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(&path, video_device, hap_supported)?;
                 // Require real decoder output before reporting hardware. Admit the
                 // bounded probe before it allocates its first GPU bridge surface.
