@@ -44,11 +44,16 @@ export interface MappingEditContext {
 type NudgeLayer = Pick<Layer, 'id' | 'type' | 'corners'> &
   Partial<Pick<Layer, 'locked' | 'warpMode' | 'meshGrid' | 'layerShape' | 'mask' | 'parentGroupId'>>;
 
-/** Corner and edge handles are hidden on a mesh layer and on a shaped one. */
-function showsCornerHandles(layer: NudgeLayer): boolean {
-  if (layer.type === 'mask' || layer.warpMode === 'mesh') return false;
+/** Edge handles are hidden on a shaped layer (its own outline is edited
+ *  instead); corner handles on a mesh layer too (the mesh has its own). */
+function showsEdgeHandles(layer: NudgeLayer): boolean {
+  if (layer.type === 'mask') return false;
   const shape = layer.layerShape;
   return !(shape?.enabled && shape.type && shape.type !== 'rectangle');
+}
+
+function showsCornerHandles(layer: NudgeLayer): boolean {
+  return layer.warpMode !== 'mesh' && showsEdgeHandles(layer);
 }
 
 /**
@@ -67,7 +72,7 @@ export function resolveMappingPoint(
     case 'corner':
       return showsCornerHandles(layer) && layer.corners?.[ref.corner] ? ref : null;
     case 'edge':
-      return showsCornerHandles(layer) && EDGE_CORNERS[ref.edge] ? ref : null;
+      return showsEdgeHandles(layer) && EDGE_CORNERS[ref.edge] ? ref : null;
     case 'mesh': {
       const grid = layer.meshGrid;
       if (layer.warpMode !== 'mesh' || !grid?.points[ref.row]?.[ref.col]) return null;
