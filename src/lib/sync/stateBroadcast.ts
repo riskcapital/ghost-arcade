@@ -268,6 +268,17 @@ function sendFullState() {
       timestamp: Date.now(),
     } satisfies StateMessage);
 
+    // The receivers now have these output settings. Without this the diff
+    // below compared against what was sent before a pause, so a change made
+    // during the pause and undone after it (A -> B -> A) never went out, and
+    // the outputs kept B. A queued settings send would also deliver an older
+    // value after this one.
+    lastSentOutputJson = JSON.stringify(fullStatePayload?.settings?.output);
+    if (settingsBroadcastTimer) {
+      clearTimeout(settingsBroadcastTimer);
+      settingsBroadcastTimer = null;
+    }
+
     resetLayerPatchSnapshot();
     // Force the next vj-state broadcast to carry full grids — a receiver
     // that just connected mid-session may have missed earlier grid sends.
@@ -713,13 +724,13 @@ function initSender() {
   // reopen the output window after every tweak. Diffed against the last
   // sent snapshot so non-output settings (e.g. UI prefs) don't trigger a
   // broadcast.
-  let lastOutputJson = '';
+  lastSentOutputJson = '';
   const unsubSettings = settings.subscribe(s => {
     scheduleStage3DRelaySettingsPublish();
     if (!hasActiveReceiver) return;
     const outJson = JSON.stringify(s.output);
-    if (outJson === lastOutputJson) return;
-    lastOutputJson = outJson;
+    if (outJson === lastSentOutputJson) return;
+    lastSentOutputJson = outJson;
     if (settingsBroadcastTimer) clearTimeout(settingsBroadcastTimer);
     settingsBroadcastTimer = setTimeout(() => {
       if (!channel || mode !== 'sender') return;
@@ -780,6 +791,8 @@ function startStage3DRelayActivePolling() {
 }
 
 let settingsBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+/** settings.output as the receivers last got it, as JSON. */
+let lastSentOutputJson = '';
 
 // ============================================================
 // Receiver (OSR Window)
