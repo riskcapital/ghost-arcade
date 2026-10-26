@@ -45,35 +45,77 @@ function applyShaderInjectPatches(
   return out;
 }
 
-function injectUniversalAudioPatch(glsl: string): string {
-  const last = glsl.lastIndexOf('}');
-  if (last < 0) return glsl;
-  // Elegant audio response — relies on the Milkdrop-smoothed
-  // audioBass/Mid/High/Level coming in from standaloneAudio.ts. Lots
-  // of slow brightness lift via audioLevel (smooth, no flash);
-  // audioBeat (onset envelope) gives a soft accent rather than a
-  // hard 55% pulse. The colour tilt by Bass/High is a gentle warm/
-  // cool drift toward the dominant band.
-  const patch = `
-  // Mobile augment: auto-injected smooth audio reactivity
-  // (Milkdrop-style smoothing applied upstream in standaloneAudio.ts)
+/** The band clocks a patch may use: each band's value integrated over shader time. */
+const BAND_CLOCKS = ['audioBassTime', 'audioMidTime', 'audioHighTime', 'audioLevelTime', 'audioBeatTime'] as const;
+
+/** How much the music moves a shader beyond its own audio code. */
+export type AudioMotion = { flow: number; breath: number; glow: boolean };
+/** Shaders without audio of their own breathe fully; ones with it get a lighter touch on top. */
+export function audioMotionFor(audioNative: boolean, motion?: { flow?: number; breath?: number; glow?: boolean }): AudioMotion {
+  const base = audioNative ? { flow: 0.3, breath: 0.45, glow: false } : { flow: 0.65, breath: 1, glow: true };
+  return { flow: motion?.flow ?? base.flow, breath: motion?.breath ?? base.breath, glow: motion?.glow ?? base.glow };
+}
+
+/**
+ * Smooth audio breathing for any shader, added at load. Every read of the
+ * pixel position goes through a coordinate that zooms in a touch with the
+ * bass and sways with the mids (`gaBreath.xy`, set each frame from the
+ * spring-smoothed bands), so the whole picture breathes with the music; with
+ * `glow`, brightness lifts with the level and a beat blooms softly
+ * (`gaBreath.z`) and the colour leans warm with bass, cool with highs
+ * (`gaTint`). Nothing here can jump: every input is a spring.
+ *
+ * The parser defines isf_FragNormCoord from gl_FragCoord, so replacing
+ * gl_FragCoord covers both. Shaders without a recognisable main() are left as
+ * they are.
+ */
+export function injectBreath(glsl: string, glow: boolean): string {
+  if (!/void\s+main\s*\(\s*(?:void)?\s*\)\s*\{/.test(glsl)) return glsl;
+  let out = glsl.replace(/\bgl_FragCoord\b/g, 'ga_FragCoord');
+  const declarations = '\nuniform vec4 gaBreath;\nuniform vec3 gaTint;\nvec4 ga_FragCoord;\n';
+  const precision = /precision\s+(?:highp|mediump|lowp)\s+float\s*;/.exec(out);
+  if (precision) out = out.slice(0, precision.index + precision[0].length) + declarations + out.slice(precision.index + precision[0].length);
+  else {
+    const directives = /^(?:\s*#(?:version|extension)[^\n]*\n)*/.exec(out)![0];
+    out = directives + declarations + out.slice(directives.length);
+  }
+  const main = /void\s+main\s*\(\s*(?:void)?\s*\)\s*\{/.exec(out)!;
+  const setup = `
   {
-    float _gaBeat  = clamp(audioBeat,  0.0, 1.0);
-    float _gaLevel = clamp(audioLevel, 0.0, 1.0);
-    float _gaTilt  = clamp(audioHigh - audioBass, -1.0, 1.0);
-    // Continuous brightness from the smoothed level (no strobe);
-    // beat adds a subtle ping on top, not a full flash.
-    gl_FragColor.rgb *= 1.0 + _gaLevel * 0.35 + _gaBeat * 0.12;
-    // Warm/cool drift toward the dominant band — soft mix.
-    gl_FragColor.rgb = mix(
-      gl_FragColor.rgb,
-      gl_FragColor.rgb * vec3(1.0 + audioHigh * 0.22, 1.0, 1.0 + audioBass * 0.22),
-      0.35
-    );
-    gl_FragColor.rgb += vec3(_gaTilt * 0.04, 0.0, -_gaTilt * 0.04);
+    vec2 gaC = RENDERSIZE * 0.5;
+    vec2 gaP = gl_FragCoord.xy - gaC;
+    float gaS = sin(gaBreath.y), gaK = cos(gaBreath.y);
+    gaP = vec2(gaK * gaP.x - gaS * gaP.y, gaS * gaP.x + gaK * gaP.y) / (1.0 + gaBreath.x);
+    ga_FragCoord = vec4(gaC + gaP, gl_FragCoord.zw);
   }
 `;
-  return glsl.slice(0, last) + patch + glsl.slice(last);
+  out = out.slice(0, main.index + main[0].length) + setup + out.slice(main.index + main[0].length);
+  if (glow) {
+    // ISF puts main() last, so the last brace closes it.
+    const last = out.lastIndexOf('}');
+    out = out.slice(0, last) + '\n  gl_FragColor.rgb *= (1.0 + gaBreath.z) * gaTint;\n' + out.slice(last);
+  }
+  return out;
+}
+
+/**
+ * How fast shader time runs against real time: 1 at a song's usual energy,
+ * faster in loud passages and slower in quiet ones, within 0.55..2.
+ * `depth` is the shader's flow, `moved` the Audio response (0 with no live source).
+ */
+export function flowRate(depth: number, moved: number, audioFlow = 0.5): number {
+  return Math.max(0.55, Math.min(2, 1 + depth * moved * 2 * (audioFlow - 0.5)));
+}
+
+/** Declares any band clock a patch uses (the parser does not know them). */
+export function declareBandClocks(glsl: string): string {
+  const used = BAND_CLOCKS.filter(name => new RegExp(`\\b${name}\\b`).test(glsl) && !new RegExp(`uniform\\s+float\\s+${name}\\b`).test(glsl));
+  if (!used.length) return glsl;
+  const declarations = used.map(name => `uniform float ${name};`).join('\n') + '\n';
+  const precision = /precision\s+(?:highp|mediump|lowp)\s+float\s*;/.exec(glsl);
+  if (!precision) return declarations + glsl;
+  const at = precision.index + precision[0].length;
+  return glsl.slice(0, at) + '\n' + declarations + glsl.slice(at);
 }
 
 const VERTEX_SHADER = `
@@ -125,6 +167,9 @@ interface UniformLoc {
   audioBeatPhase: WebGLUniformLocation | null;
   audioBPM: WebGLUniformLocation | null;
   audioSpectralCentroid: WebGLUniformLocation | null;
+  bandClocks: (WebGLUniformLocation | null)[];
+  gaBreath: WebGLUniformLocation | null;
+  gaTint: WebGLUniformLocation | null;
   audioFFT: WebGLUniformLocation | null;
   audioWaveform: WebGLUniformLocation | null;
   inputs: Map<string, WebGLUniformLocation | null>;
@@ -189,6 +234,11 @@ export class StandaloneRenderer {
   private clipSpeed = 1;
   private clipIntensity = 1;
   private scaledTime = 0;
+  // The music's hold on this shader (see audioMotionFor) and the band clocks:
+  // each band integrated over shader time, so music can speed motion up
+  // without ever moving its phase backwards or by a jump.
+  private motion: AudioMotion = audioMotionFor(false);
+  private bandTimes = new Float64Array(BAND_CLOCKS.length);
   // Effect chain — passes applied after the layer's source shader runs.
   // The renderer ping-pongs two FBOs sized to the canvas, so adding /
   // removing effects mid-frame is cheap (no reallocation unless the
@@ -234,6 +284,7 @@ export class StandaloneRenderer {
     source: string,
     audioNative = true,
     audioInject?: { match: RegExp; replace: string }[],
+    motion?: { flow?: number; breath?: number; glow?: boolean },
   ): Promise<void> {
     const parsed: ParsedISF = parseISF(source);
     let frag = parsed.fragmentShader;
@@ -244,13 +295,10 @@ export class StandaloneRenderer {
       frag = frag.replace(/^\s*#extension GL_OES_standard_derivatives[^\n]*\n/gm, '');
       frag = '#extension GL_OES_standard_derivatives : enable\n' + frag;
     }
-    if (!audioNative) {
-      if (audioInject && audioInject.length > 0) {
-        frag = applyShaderInjectPatches(frag, audioInject);
-      } else {
-        frag = injectUniversalAudioPatch(frag);
-      }
-    }
+    // Per-shader patches hook the shader's own motion; every shader then breathes with the music.
+    this.motion = audioMotionFor(audioNative, motion);
+    if (audioInject && audioInject.length > 0) frag = applyShaderInjectPatches(frag, audioInject);
+    frag = declareBandClocks(injectBreath(frag, this.motion.glow));
     let program = this.sourcePrograms.get(frag);
     if (!program) {
       program = this.compile(VERTEX_SHADER, frag);
@@ -275,6 +323,7 @@ export class StandaloneRenderer {
     this.startTime = performance.now();
     this.frameIndex = 0;
     this.scaledTime = 0;
+    this.bandTimes.fill(0);
   }
 
   setShaderImage(source: HTMLImageElement | HTMLVideoElement | null) {
@@ -304,6 +353,7 @@ export class StandaloneRenderer {
     this.lastFrameTime = this.startTime;
     this.frameIndex = 0;
     this.scaledTime = 0;
+    this.bandTimes.fill(0);
   }
 
   clearSource(): void {
@@ -427,7 +477,17 @@ export class StandaloneRenderer {
     // clipSpeed lets the user freeze (0), slow-mo (0.5), or rocket (2+)
     // the shader without jumping its animation phase when they twiddle
     // the slider mid-set.
-    this.scaledTime += dt * this.clipSpeed;
+    // The flow clock: loud passages run the animation faster and quiet ones
+    // slower, from a very slow energy spring. Speed changes, phase never jumps.
+    const a = this.audio;
+    const ai = this.clipIntensity;
+    // Only a live source moves the picture; with audio off every shader runs exactly as written.
+    const moved = a.listening ? ai : 0;
+    const flow = flowRate(this.motion.flow, moved, a.audioFlow ?? 0.5);
+    const step = dt * this.clipSpeed;
+    this.scaledTime += step * flow;
+    const bands = [a.audioBass, a.audioMid, a.audioHigh, a.audioLevel, a.audioBeat];
+    for (let i = 0; i < bands.length; i++) this.bandTimes[i] += step * Math.max(0, bands[i]) * ai;
     const time = this.scaledTime;
 
     this.resize();
@@ -485,8 +545,6 @@ export class StandaloneRenderer {
     // up to 2 for an exaggerated mix. Beat keeps its 0..1 clamp so an
     // intensity boost can't push it above the threshold shaders test
     // against.
-    const a = this.audio;
-    const ai = this.clipIntensity;
     if (L.audioBass) gl.uniform1f(L.audioBass, a.audioBass * ai);
     if (L.audioMid) gl.uniform1f(L.audioMid, a.audioMid * ai);
     if (L.audioHigh) gl.uniform1f(L.audioHigh, a.audioHigh * ai);
@@ -496,6 +554,16 @@ export class StandaloneRenderer {
     if (L.audioBeatPhase) gl.uniform1f(L.audioBeatPhase, ai > 0 ? a.audioBeatPhase ?? 0 : 0);
     if (L.audioBPM) gl.uniform1f(L.audioBPM, ai > 0 ? a.audioBPM ?? 0 : 0);
     if (L.audioSpectralCentroid) gl.uniform1f(L.audioSpectralCentroid, ai > 0 ? a.audioSpectralCentroid ?? 0 : 0);
+    L.bandClocks.forEach((location, i) => { if (location) gl.uniform1f(location, this.bandTimes[i]); });
+    // Breathing (injectBreath): zoom with bass and a beat, sway with the mids
+    // around their usual level, glow with the level; tint warm/cool.
+    const breath = this.motion.breath * moved;
+    if (L.gaBreath) gl.uniform4f(L.gaBreath,
+      breath * (0.035 * a.audioBass + 0.018 * a.audioBeat),
+      breath * 0.03 * (a.audioMid - 0.45),
+      this.motion.glow ? moved * (0.3 * (a.audioLevel - 0.3) + 0.12 * a.audioBeat) : 0,
+      0);
+    if (L.gaTint) gl.uniform3f(L.gaTint, 1 + 0.07 * moved * a.audioBass, 1, 1 + 0.07 * moved * a.audioHigh);
 
     // Audio samplers — stub textures bound on slots 0/1. The picked
     // ship-as-is shaders don't read these (they use scalars), but the
@@ -790,6 +858,9 @@ export class StandaloneRenderer {
       audioBeatPhase: gl.getUniformLocation(program, 'audioBeatPhase'),
       audioBPM: gl.getUniformLocation(program, 'audioBPM'),
       audioSpectralCentroid: gl.getUniformLocation(program, 'audioSpectralCentroid'),
+      bandClocks: BAND_CLOCKS.map(name => gl.getUniformLocation(program, name)),
+      gaBreath: gl.getUniformLocation(program, 'gaBreath'),
+      gaTint: gl.getUniformLocation(program, 'gaTint'),
       audioFFT: gl.getUniformLocation(program, 'audioFFT'),
       audioWaveform: gl.getUniformLocation(program, 'audioWaveform'),
       inputs: inputLocs,

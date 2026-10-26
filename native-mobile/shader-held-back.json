@@ -1,0 +1,16 @@
+{
+ "reason": "Left out by the 2026-10-11 measurement (5 ms or more). The 2026-10-25 bench (scripts/mobile-shader-bench.mjs) measures them light, with real pictures, at 8 points of their timelines; the old tool is gone, so they stay out until checked on a phone.",
+ "paths": [
+  "ISF/67_ParticleSupernova.fs",
+  "ISF/AR-StrangeAttractor.fs",
+  "ISF/FireEmber.fs",
+  "ISF/LeWittPyramid.fs",
+  "ISF/NestedCubes.fs",
+  "ISF/SM-PongArena.fs",
+  "ISF/SM-VineCrawl.fs",
+  "ISF/VoronoiTerrainFlyover.fs",
+  "ISF/cube shaders/3D_10_ShatteredCube.fs",
+  "ISF/cube shaders/3D_19_AbstractPillars.fs",
+  "ISF/cube shaders/3D_20_MoltenCore.fs"
+ ]
+}

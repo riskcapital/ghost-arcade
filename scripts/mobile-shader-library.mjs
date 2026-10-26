@@ -8,14 +8,18 @@ const {estimateShaderLoadRating}=await import('data:text/javascript;base64,'+Buf
 // Heavy shaders the mobile app still ships. They stay in the library and the engine renders them
 // at a reduced internal scale and step count instead of excluding them (see engine.ts).
 const budgeted={'ISF/GA-GhostFX.fs':{scale:.6,detail:.7}};
-// Measured GPU time per frame (native-mobile/shader-gpu-cost.json). The static
-// rating above reads the source; this is what the shader actually costs. At or
-// over REMOVE_MS a shader lags on every phone and is left out. From BUDGET_MS
-// up it stays, drawn at a reduced internal size.
-const REMOVE_MS=5,BUDGET_MS=2,measured=JSON.parse(readFileSync(join(root,'native-mobile/shader-gpu-cost.json'),'utf8')).ms;
-// Featured shaders over the limit stay in the library at a much smaller size.
-const keptOverLimit={'ISF/Featured-sentinels.fs':{scale:.4,detail:.7},'ISF/Featured-quantumchamber.fs':{scale:.5,detail:.7},'ISF/Featured-tide.fs':{scale:.5,detail:.7}};
-const measuredBudget=path=>{const ms=measured[path];if(ms===undefined)return null;if(ms>=REMOVE_MS)return keptOverLimit[path]??'remove';return ms>=BUDGET_MS?{scale:.7,detail:.85}:null;};
+// Measured GPU time per 720p frame (native-mobile/shader-gpu-cost.json, from
+// scripts/mobile-shader-bench.mjs on an M1 Max; phones are about 5-7x slower).
+// The static rating above reads the source; this is what the shader costs.
+// Up to TARGET_MS a shader draws at full size. Above it, it is drawn smaller,
+// at the scale that brings it back to TARGET_MS, down to MIN_SCALE: below that
+// a shader looks soft and still lags, so it is left out (over REMOVE_MS).
+// A shader without a measurement is reported: run the bench first.
+const TARGET_MS=.9,MIN_SCALE=.6,REMOVE_MS=TARGET_MS/(MIN_SCALE*MIN_SCALE),measured=JSON.parse(readFileSync(join(root,'native-mobile/shader-gpu-cost.json'),'utf8')).ms;
+// Left out by an earlier measurement that the current bench disputes: out until checked on a phone.
+const heldBack=new Set(JSON.parse(readFileSync(join(root,'native-mobile/shader-held-back.json'),'utf8')).paths);
+const measuredBudget=path=>{if(heldBack.has(path))return 'remove';const ms=measured[path];if(ms===undefined){console.warn(`Not measured: ${path}. Run scripts/mobile-shader-bench.mjs.`);return null;}if(ms<=TARGET_MS)return null;if(ms>REMOVE_MS)return 'remove';
+ return {scale:Math.max(MIN_SCALE,Math.floor(Math.sqrt(TARGET_MS/ms)*20)/20),detail:.85};};
 const paths=[],heavy=[],kept=[];let noThumbnail=0,imageSource=0;
 function visit(dir){for(const e of readdirSync(dir,{withFileTypes:true})){const file=join(dir,e.name);if(e.isDirectory()){if(e.name!=='thumbnails')visit(file);continue;}if(!e.name.endsWith('.fs'))continue;
  const path='ISF/'+relative(folder,file).replaceAll('\\','/'),thumb=path.slice(4,-3).replaceAll('/','_')+'.jpg';
@@ -30,5 +34,5 @@ writeFileSync(join(root,'src/lib/mobile/studio/shaderAvailability.ts'),'// Gener
 console.log(`Mobile library: ${paths.length} thumbnail-backed generators; excluded ${noThumbnail} without thumbnails and ${imageSource} image-source shaders.`);
 
 writeFileSync(join(root,'src/lib/mobile/studio/shaderPerformance.ts'),'// Generated from static code cost and measured GPU cost (native-mobile/shader-gpu-cost.json).\nexport const mobileHeavyShaderPaths = new Set<string>('+JSON.stringify(heavy.map(s=>s.path),null,2)+');\n/** Heavy shaders kept on mobile: internal render scale and raymarch detail multipliers. */\nexport const mobileShaderBudgets: Record<string, { scale: number; detail: number }> = '+JSON.stringify(Object.fromEntries(kept.map(s=>[s.path,s.budget])),null,2)+';\n/** Shaders stripped from the mobile release (native-mobile/release-exclusions.json). A saved set may still name them. */\nexport const mobileRemovedShaderPaths = new Set<string>('+JSON.stringify([...excluded].sort(),null,2)+');\n');
-writeFileSync(join(root,'native-mobile/shader-performance-audit.json'),JSON.stringify({method:`Static code cost: high/extreme excluded, comments ignored. Measured GPU cost: ${REMOVE_MS} ms and over excluded, ${BUDGET_MS} ms and over drawn smaller.`,retained:paths.length,budgeted:kept,excluded:heavy},null,2)+'\n');
+writeFileSync(join(root,'native-mobile/shader-performance-audit.json'),JSON.stringify({method:`Static code cost: high/extreme excluded, comments ignored. Measured GPU cost: over ${REMOVE_MS.toFixed(2)} ms excluded; over ${TARGET_MS} ms drawn smaller, at the scale that brings it to ${TARGET_MS} ms (at least ${MIN_SCALE}).`,retained:paths.length,budgeted:kept,excluded:heavy},null,2)+'\n');
 console.log(`Performance: ${heavy.length} high/extreme cost shaders excluded from mobile; ${kept.length} kept at a reduced render budget.`);

@@ -28,7 +28,7 @@ export class ShaderAudition {
     const source = await shaderSource(id);
     if (this.dead || request !== this.request) return false;
     this.renderer ??= new StandaloneRenderer(this.canvas);
-    await this.renderer.loadShaderSource(source, shader.audioNative, shader.audioInject);
+    await this.renderer.loadShaderSource(source, shader.audioNative, shader.audioInject, shader.motion);
     if (this.dead || request !== this.request) return false;
     this.current = id;
     if (!this.raf) this.loop();

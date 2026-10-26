@@ -722,7 +722,7 @@
       const url = encodeURI(`${import.meta.env.BASE_URL}${s.path}`);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`${url} → ${res.status}`);
-      await renderer.loadShaderSource(await res.text(), s.audioNative, s.audioInject);
+      await renderer.loadShaderSource(await res.text(), s.audioNative, s.audioInject, s.motion);
     } catch (e) {
       console.warn('[StandaloneApp] shader load failed', shaderId, e);
     }

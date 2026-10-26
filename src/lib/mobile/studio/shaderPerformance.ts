@@ -1,22 +1,35 @@
 // Generated from static code cost and measured GPU cost (native-mobile/shader-gpu-cost.json).
 export const mobileHeavyShaderPaths = new Set<string>([
   "ISF/15_NeuralNetwork.fs",
+  "ISF/16_AtomicOrbital.fs",
+  "ISF/36_ConstellationMap.fs",
+  "ISF/37_TorusKnot.fs",
   "ISF/39_TensorField.fs",
   "ISF/42_GyroscopicRings.fs",
+  "ISF/44_Oscilloscope.fs",
   "ISF/51_SacredGeometryCathedral.fs",
   "ISF/52_ChaoticOrbitalMesh.fs",
+  "ISF/54_ShatteredLattice.fs",
   "ISF/56_ConnectedCubes.fs",
   "ISF/61_SingularityCollapse.fs",
   "ISF/67_ParticleSupernova.fs",
+  "ISF/68_MoebiusPortal.fs",
+  "ISF/70_LiquidMetal.fs",
   "ISF/71_CosmicSpine.fs",
   "ISF/72_ShatteredReality.fs",
+  "ISF/78_PlasmaVortex.fs",
+  "ISF/79_FractalFoldExplorer.fs",
+  "ISF/83_CosineCaveMarcher.fs",
+  "ISF/AR-DoublePendulum.fs",
   "ISF/AR-Ferrofluid.fs",
+  "ISF/AR-FrequencyTerrain.fs",
   "ISF/AR-GeodesicBloom.fs",
   "ISF/AR-Lissajous.fs",
   "ISF/AR-MobiusStrip.fs",
   "ISF/AR-StrangeAttractor.fs",
   "ISF/AR-WaveformHelix.fs",
   "ISF/AbyssalHelix.fs",
+  "ISF/AstralCrystal.fs",
   "ISF/AstralJellyfish.fs",
   "ISF/DM-NodeNetwork.fs",
   "ISF/DM-ParticleVortex.fs",
@@ -24,10 +37,17 @@ export const mobileHeavyShaderPaths = new Set<string>([
   "ISF/DM-Starfield.fs",
   "ISF/DeepMetalBlobs.fs",
   "ISF/DimensionalRift.fs",
+  "ISF/Featured-aurora.fs",
+  "ISF/Featured-murmur.fs",
+  "ISF/Featured-sentinels.fs",
+  "ISF/Featured-tide.fs",
   "ISF/FireEmber.fs",
+  "ISF/FractalVoronoiBloom.fs",
   "ISF/InfiniteGrid.fs",
   "ISF/LeWittPyramid.fs",
+  "ISF/LithoponicErosion.fs",
   "ISF/MirrorRealm.fs",
+  "ISF/MoltenVoronoiCore.fs",
   "ISF/NestedCubes.fs",
   "ISF/OrganicMetal.fs",
   "ISF/OssiferousRadiolaria.fs",
@@ -42,6 +62,7 @@ export const mobileHeavyShaderPaths = new Set<string>([
   "ISF/SolLeWittCubes.fs",
   "ISF/StellarNursery.fs",
   "ISF/ThreeBody.fs",
+  "ISF/VoronoiCrystalExtrusion.fs",
   "ISF/VoronoiTerrainFlyover.fs",
   "ISF/VoronoiWarpDrive.fs",
   "ISF/crystal-dimension.fs",
@@ -50,6 +71,7 @@ export const mobileHeavyShaderPaths = new Set<string>([
   "ISF/cube shaders/3D_03_WireframeGeo.fs",
   "ISF/cube shaders/3D_04_CubeField.fs",
   "ISF/cube shaders/3D_05_NeonCubes.fs",
+  "ISF/cube shaders/3D_07_FluidCube.fs",
   "ISF/cube shaders/3D_08_OrganicSculpt.fs",
   "ISF/cube shaders/3D_10_ShatteredCube.fs",
   "ISF/cube shaders/3D_11_InfiniteHall.fs",
@@ -69,183 +91,103 @@ export const mobileHeavyShaderPaths = new Set<string>([
 /** Heavy shaders kept on mobile: internal render scale and raymarch detail multipliers. */
 export const mobileShaderBudgets: Record<string, { scale: number; detail: number }> = {
   "ISF/11_RadialShards.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/16_AtomicOrbital.fs": {
-    "scale": 0.7,
+    "scale": 0.8,
     "detail": 0.85
   },
   "ISF/23_StarCluster.fs": {
+    "scale": 0.6,
+    "detail": 0.85
+  },
+  "ISF/25_PlasmaTendrils.fs": {
     "scale": 0.7,
     "detail": 0.85
   },
-  "ISF/36_ConstellationMap.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/37_TorusKnot.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/44_Oscilloscope.fs": {
-    "scale": 0.7,
+  "ISF/38_ParticleCollider.fs": {
+    "scale": 0.85,
     "detail": 0.85
   },
   "ISF/48_PlasmaContainment.fs": {
-    "scale": 0.7,
+    "scale": 0.75,
     "detail": 0.85
   },
-  "ISF/54_ShatteredLattice.fs": {
-    "scale": 0.7,
+  "ISF/80_ResonantWaveWeb.fs": {
+    "scale": 0.9,
     "detail": 0.85
   },
-  "ISF/62_HypercubeTesseract.fs": {
-    "scale": 0.7,
+  "ISF/81_FlowFieldMosaic.fs": {
+    "scale": 0.9,
     "detail": 0.85
   },
-  "ISF/70_LiquidMetal.fs": {
-    "scale": 0.7,
+  "ISF/82_SineVortexField.fs": {
+    "scale": 0.8,
     "detail": 0.85
   },
-  "ISF/78_PlasmaVortex.fs": {
-    "scale": 0.7,
+  "ISF/AR-CrystalGrowth.fs": {
+    "scale": 0.75,
     "detail": 0.85
   },
   "ISF/AR-DisplacementSphere.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/AR-FrequencyTerrain.fs": {
-    "scale": 0.7,
+    "scale": 0.8,
     "detail": 0.85
   },
   "ISF/AR-SmokeTendrils.fs": {
-    "scale": 0.7,
+    "scale": 0.6,
     "detail": 0.85
   },
   "ISF/AR-WaveletDecomp.fs": {
-    "scale": 0.7,
+    "scale": 0.85,
     "detail": 0.85
   },
-  "ISF/AstralCrystal.fs": {
+  "ISF/DM-AuroraBorealis.fs": {
     "scale": 0.7,
     "detail": 0.85
   },
   "ISF/DM-DNAHelix.fs": {
-    "scale": 0.7,
+    "scale": 0.8,
     "detail": 0.85
   },
-  "ISF/DM-FireParticles.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/EmberCloud.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/Featured-aurora.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/Featured-chrysalis.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/Featured-murmur.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/Featured-prism.fs": {
-    "scale": 0.7,
+  "ISF/Featured-pulse.fs": {
+    "scale": 0.85,
     "detail": 0.85
   },
   "ISF/Featured-quantumchamber.fs": {
-    "scale": 0.5,
-    "detail": 0.7
-  },
-  "ISF/Featured-sentinels.fs": {
-    "scale": 0.4,
-    "detail": 0.7
-  },
-  "ISF/Featured-tide.fs": {
-    "scale": 0.5,
-    "detail": 0.7
+    "scale": 0.6,
+    "detail": 0.85
   },
   "ISF/GA-GhostFX.fs": {
     "scale": 0.6,
     "detail": 0.7
   },
   "ISF/LiquidDepth.fs": {
-    "scale": 0.7,
+    "scale": 0.6,
     "detail": 0.85
   },
-  "ISF/MetalParticles.fs": {
-    "scale": 0.7,
+  "ISF/NeuralVoronoiMatrix.fs": {
+    "scale": 0.85,
     "detail": 0.85
   },
-  "ISF/ParticleSwarm.fs": {
-    "scale": 0.7,
+  "ISF/PlasmaCalligraphy.fs": {
+    "scale": 0.95,
     "detail": 0.85
   },
-  "ISF/SM-AsymmetricLightning.fs": {
-    "scale": 0.7,
+  "ISF/SM-ErosionGrowth.fs": {
+    "scale": 0.95,
     "detail": 0.85
   },
-  "ISF/SM-Fireflies.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/SM-MagneticFilings.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/SM-ParticleNodes.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/SM-SmokeChamber.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/SM-SpiderWeb.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/SacredGeometry.fs": {
-    "scale": 0.7,
+  "ISF/cube shaders/3D_09_CrystalCluster.fs": {
+    "scale": 0.9,
     "detail": 0.85
   },
   "ISF/cube shaders/3D_12_PlasmaSphere.fs": {
-    "scale": 0.7,
+    "scale": 0.9,
     "detail": 0.85
   },
-  "ISF/cube shaders/ROOM_03_LavaLampDepth.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/cube shaders/ROOM_04_FireflyGarden.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/cube shaders/ROOM_08_ElectricTendrils.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/cube shaders/ROOM_09_LiquidChrome.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/cube shaders/ROOM_10_JellyfishFloat.fs": {
-    "scale": 0.7,
+  "ISF/cube shaders/ROOM_02_SmokeLayers.fs": {
+    "scale": 0.8,
     "detail": 0.85
   },
   "ISF/cube shaders/ROOM_17_SporeCloud.fs": {
-    "scale": 0.7,
-    "detail": 0.85
-  },
-  "ISF/gpt.fs": {
-    "scale": 0.7,
+    "scale": 0.9,
     "detail": 0.85
   }
 };

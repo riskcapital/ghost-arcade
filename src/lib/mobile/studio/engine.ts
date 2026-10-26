@@ -224,7 +224,7 @@ export class StudioEngine {
     try {
       if(p.native){s.params=clip.kind==='depth'?depthInputs:[];} else if (p.source) {
         const shader = findShader(clip.shaderId!)!;
-        await s.renderer.loadShaderSource(p.source, shader.audioNative, shader.audioInject);
+        await s.renderer.loadShaderSource(p.source, shader.audioNative, shader.audioInject, shader.motion);
         if (this.dead || s.generation !== generation) return false;
         if (p.media instanceof HTMLVideoElement) await p.media.play();
         if (this.dead || s.generation !== generation) { this.disposePrepared(p); return false; }

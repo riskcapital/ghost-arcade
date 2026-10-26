@@ -13,12 +13,24 @@ export interface MobileShader {
   defaults?: Record<string, number | boolean | number[]>;
   requiresImage?: boolean;
   /**
-   * Audio-reactivity injection patches applied at load time when
-   * `audioNative` is false. Each pattern matches a line in the .fs and
-   * gets replaced with the patched version. Keep the matches tight so
-   * they don't accidentally rewrite unrelated code.
+   * Audio-reactivity injection patches applied at load time. Each pattern
+   * matches a line in the .fs and gets replaced with the patched version.
+   * Keep the matches tight so they don't accidentally rewrite unrelated code.
+   *
+   * Never multiply TIME by an audio value: the animation would lurch by
+   * seconds whenever the music changes. To make music speed something up,
+   * add a band clock (audioBassTime, audioMidTime, audioHighTime,
+   * audioLevelTime, audioBeatTime: the band's value integrated over time):
+   * `(TIME + audioBassTime * 1.5) * speed`, never `TIME * speed * (1.0 + audioBass * 1.5)`.
    */
   audioInject?: { match: RegExp; replace: string }[];
+  /**
+   * How much the music moves this shader beyond its own audio code (both 0..1+):
+   * `flow` speeds the whole animation up in loud passages and eases it in quiet
+   * ones; `breath` sways and zooms the picture gently with bass and mids.
+   * `glow` lifts brightness with the level. Defaults depend on `audioNative`.
+   */
+  motion?: { flow?: number; breath?: number; glow?: boolean };
 }
 
 export const MOBILE_SHADERS: MobileShader[] = [
@@ -38,7 +50,8 @@ export const MOBILE_SHADERS: MobileShader[] = [
   {id:'featured-drift',path:'ISF/Featured-drift.fs',name:'Drift',category:'visual',audioNative:false},
   {id:'featured-aurora',path:'ISF/Featured-aurora.fs',name:'Aurora',category:'visual',audioNative:false},
   {id:'featured-chladniplate',path:'ISF/Featured-chladniplate.fs',name:'Chladniplate',category:'visual',audioNative:false},
-  {id:'ga-ghostfx',path:'ISF/GA-GhostFX.fs',name:'GhostFX',category:'audio',audioNative:true},
+  // GhostFX steers its own velocity clock with the music: no flow on top.
+  {id:'ga-ghostfx',path:'ISF/GA-GhostFX.fs',name:'GhostFX',category:'audio',audioNative:true,motion:{flow:0,breath:0.4}},
   // ── SHIP-AS-IS — already audio-reactive ────────────────────────────
   { id: 'ar-frequency-rings',     path: 'ISF/AR-FrequencyRings.fs',                 name: 'Frequency Rings',  category: 'audio', audioNative: true },
   { id: 'ar-cymatic-patterns',    path: 'ISF/AR-CymaticPatterns.fs',                name: 'Cymatic Patterns', category: 'audio', audioNative: true },
@@ -81,8 +94,8 @@ export const MOBILE_SHADERS: MobileShader[] = [
     name: 'Plasma Flow', category: 'fluid', audioNative: false,
     audioInject: [
       // Speed swells smoothly with bass; hue shifts on beat accents.
-      { match: /float t = TIME \* speed;/, replace: 'float t = TIME * speed * (1.0 + audioBass * 1.5);' },
-      { match: /v \* hueRange \+ hueOffset \+ t/, replace: 'v * hueRange + (hueOffset + audioBeat * 0.1) + t' },
+      { match: /float t = TIME \* speed;/, replace: 'float t = (TIME + audioBassTime * 1.5) * speed;' },
+      { match: /v \* hueRange \+ hueOffset \+ t/, replace: 'v * hueRange + (hueOffset + audioBeat * 0.06) + t' },
     ],
   },
   {
@@ -92,7 +105,7 @@ export const MOBILE_SHADERS: MobileShader[] = [
       // Rotation accelerates with mids (continuous smooth swell);
       // each beat adds a small rotational kick. Reads as "the
       // kaleidoscope is dancing with the music."
-      { match: /a \+= TIME \* rotationSpeed;/, replace: 'a += TIME * rotationSpeed * (1.0 + audioMid * 2.0) + audioBeat * 0.3;' },
+      { match: /a \+= TIME \* rotationSpeed;/, replace: 'a += (TIME + audioMidTime * 2.0) * rotationSpeed + audioBeat * 0.12;' },
     ],
   },
   {
@@ -109,7 +122,7 @@ export const MOBILE_SHADERS: MobileShader[] = [
     id: 'dm-liquid-metal', path: 'ISF/DM-LiquidMetal.fs',
     name: 'Liquid Metal', category: 'fluid', audioNative: false,
     audioInject: [
-      { match: /float t = TIME \* speed;/, replace: 'float t = TIME * speed * (1.0 + audioBass * 0.4);' },
+      { match: /float t = TIME \* speed;/, replace: 'float t = (TIME + audioBassTime * 0.4) * speed;' },
       { match: /\(dx \+ dy\) \* 10\.0 \* reflectivity/, replace: '(dx + dy) * 10.0 * (reflectivity + audioHigh * 0.3)' },
     ],
   },
@@ -120,14 +133,14 @@ export const MOBILE_SHADERS: MobileShader[] = [
       // Tunnel-rush speed — bass accelerates you through the tunnel.
       // Smoothed bass means it's a slow swell into the drop, not a
       // jagged stutter.
-      { match: /float t = TIME \* speed;/, replace: 'float t = TIME * speed * (1.0 + audioBass * 2.0);' },
+      { match: /float t = TIME \* speed;/, replace: 'float t = (TIME + audioBassTime * 2.0) * speed;' },
     ],
   },
   {
     id: 'dm-neon-lines', path: 'ISF/DM-NeonLines.fs',
     name: 'Neon Lines', category: 'pattern', audioNative: false,
     audioInject: [
-      { match: /float t = TIME \* speed;/, replace: 'float t = TIME * speed * (1.0 + audioMid * 0.8);' },
+      { match: /float t = TIME \* speed;/, replace: 'float t = (TIME + audioMidTime * 0.8) * speed;' },
       // Lines thicken on bright transients — feels like an EQ
       // sweep when treble rises.
       { match: /smoothstep\(lineWidth, lineWidth \* 0\.3, dist\)/, replace: 'smoothstep(lineWidth * (1.0 + audioHigh * 0.6), lineWidth * 0.3, dist)' },
@@ -139,7 +152,7 @@ export const MOBILE_SHADERS: MobileShader[] = [
     audioInject: [
       // Pulse rate jumps on every beat — fireflies "wink" with the
       // kick. Glow radius swells with bass.
-      { match: /sin\(TIME \* pulseRate \+ pulsePhase\)/, replace: 'sin(TIME * pulseRate * (1.0 + audioBeat * 1.5) + pulsePhase)' },
+      { match: /sin\(TIME \* pulseRate \+ pulsePhase\)/, replace: 'sin((TIME + audioBeatTime * 1.5) * pulseRate + pulsePhase)' },
       { match: /glowRadius \* pulse \/ \(dist \+ 0\.001\)/, replace: 'glowRadius * (1.0 + audioBass * 0.8) * pulse / (dist + 0.001)' },
     ],
   },
@@ -161,7 +174,7 @@ export const MOBILE_SHADERS: MobileShader[] = [
       // equivalent: bass accelerates `t * speed` so balls bounce
       // FASTER on the drops — visually equivalent to "stronger
       // gravity pulling them through the bounces."
-      { match: /float t = TIME \* speed;/, replace: 'float t = TIME * speed * (1.0 + audioBass * 1.2);' },
+      { match: /float t = TIME \* speed;/, replace: 'float t = (TIME + audioBassTime * 1.2) * speed;' },
     ],
   },
   {
@@ -172,7 +185,7 @@ export const MOBILE_SHADERS: MobileShader[] = [
       // when the kick hits. /g flag so both the breath sin() and the
       // sub-feature heartbeat pow(sin()) get the same modulator and
       // stay in sync.
-      { match: /sin\(t \* breathRate \* 3\.14159\)/g, replace: 'sin(t * breathRate * (1.0 + audioBeat * 1.0) * 3.14159)' },
+      { match: /float t = TIME \* speed;/, replace: 'float t = (TIME + audioBeatTime) * speed;' },
     ],
   }
 ];
@@ -2346,6 +2359,7 @@ MOBILE_SHADERS.push(...[
     "name": "Wave Matrix",
     "category": "generator",
     "audioNative": true,
+    "motion": { "breath": 0 },
     "defaults": {
       "speed": 0.24,
       "waveFrequency": 2.215,
@@ -2404,6 +2418,7 @@ MOBILE_SHADERS.push(...[
     "name": "Geometric Wall",
     "category": "generator",
     "audioNative": true,
+    "motion": { "breath": 0 },
     "defaults": {
       "speed": 1,
       "pattern": 4,
