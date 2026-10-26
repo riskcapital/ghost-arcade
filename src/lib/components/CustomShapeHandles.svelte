@@ -277,6 +277,8 @@
     const layerId = $selectedLayer.id;
 
     if (draft.insertOnEdge) {
+      // The selected vertex keeps its selection past the new one.
+      if (selectedVertexIndex > draft.edgeIndex) selectVertex(selectedVertexIndex + 1, selectedHandle ?? undefined);
       project.insertCustomShapePoint(layerId, draft.edgeIndex, draft.anchor);
       if (draft.isCurve) {
         const newIdx = draft.edgeIndex + 1;
@@ -462,10 +464,9 @@
     project.toggleCustomShapePointCurve($selectedLayer.id, index);
   }
 
-  // Clear selection when layer changes
-  // Only when another layer is selected: $selectedLayer changes on every
-  // project edit, and keying on it alone reset the tool and the selection
-  // after each one.
+  // Back to the Select tool when another layer is selected, and only then:
+  // $selectedLayer changes on every project edit, and keying on it alone
+  // reset the tool and the selected vertex after each one.
   let penModeLayerId: string | null = null;
   $: if (($selectedLayer?.id ?? null) !== penModeLayerId) {
     penModeLayerId = $selectedLayer?.id ?? null;
