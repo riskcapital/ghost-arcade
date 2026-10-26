@@ -122,6 +122,9 @@ interface UniformLoc {
   audioHigh: WebGLUniformLocation | null;
   audioLevel: WebGLUniformLocation | null;
   audioBeat: WebGLUniformLocation | null;
+  audioBeatPhase: WebGLUniformLocation | null;
+  audioBPM: WebGLUniformLocation | null;
+  audioSpectralCentroid: WebGLUniformLocation | null;
   audioFFT: WebGLUniformLocation | null;
   audioWaveform: WebGLUniformLocation | null;
   inputs: Map<string, WebGLUniformLocation | null>;
@@ -489,6 +492,10 @@ export class StandaloneRenderer {
     if (L.audioHigh) gl.uniform1f(L.audioHigh, a.audioHigh * ai);
     if (L.audioLevel) gl.uniform1f(L.audioLevel, a.audioLevel * ai);
     if (L.audioBeat) gl.uniform1f(L.audioBeat, Math.min(1, a.audioBeat * ai));
+    // Timing and timbre are facts about the music, not amounts, so Audio response does not scale them.
+    if (L.audioBeatPhase) gl.uniform1f(L.audioBeatPhase, ai > 0 ? a.audioBeatPhase ?? 0 : 0);
+    if (L.audioBPM) gl.uniform1f(L.audioBPM, ai > 0 ? a.audioBPM ?? 0 : 0);
+    if (L.audioSpectralCentroid) gl.uniform1f(L.audioSpectralCentroid, ai > 0 ? a.audioSpectralCentroid ?? 0 : 0);
 
     // Audio samplers — stub textures bound on slots 0/1. The picked
     // ship-as-is shaders don't read these (they use scalars), but the
@@ -780,6 +787,9 @@ export class StandaloneRenderer {
       audioHigh: gl.getUniformLocation(program, 'audioHigh'),
       audioLevel: gl.getUniformLocation(program, 'audioLevel'),
       audioBeat: gl.getUniformLocation(program, 'audioBeat'),
+      audioBeatPhase: gl.getUniformLocation(program, 'audioBeatPhase'),
+      audioBPM: gl.getUniformLocation(program, 'audioBPM'),
+      audioSpectralCentroid: gl.getUniformLocation(program, 'audioSpectralCentroid'),
       audioFFT: gl.getUniformLocation(program, 'audioFFT'),
       audioWaveform: gl.getUniformLocation(program, 'audioWaveform'),
       inputs: inputLocs,

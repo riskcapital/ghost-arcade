@@ -24,6 +24,7 @@
   import type { ParamModulation } from '../../audio/modulationControls';
   import { getVisualAudioSnapshot } from '../../audio/visualAudio';
   import { StandaloneAudio } from '../../mobile/standaloneAudio';
+  import { hasNativeAudio, nativeAudioSource } from '../../mobile/nativeAudio';
   import { InteractiveProgram } from '../../mobile/studio/interactiveProgram';
   import {
     defaultInteractive,
@@ -752,7 +753,9 @@
     }
     try {
       mobileAudio ??= new StandaloneAudio();
-      await mobileAudio.start();
+      // Follow the source Studio already listens to (its player, phone audio), else the microphone.
+      const current = hasNativeAudio() ? nativeAudioSource() : 'off';
+      await mobileAudio.startSource(current === 'off' ? 'mic' : current);
       audioOn = true;
     } catch (e) {
       say((e as Error).message);

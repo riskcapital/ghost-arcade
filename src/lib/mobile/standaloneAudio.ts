@@ -19,6 +19,13 @@
 // `audioBeat * 0.55`, etc.) keep the same value range they expect.
 // `audioBeat` keeps its onset-envelope behaviour (still smooth enough
 // at 0.9 decay ≈ 250ms).
+//
+// On the iPhone and iPad app the spectrum and waveform come from the native
+// analyser (nativeAudio.ts), which matches the AnalyserNode byte for byte, so
+// the same smoothing runs on the microphone, the app's player or other apps'
+// sound. Elsewhere the web microphone feeds an AnalyserNode as before.
+
+import { acquireNativeAudio, AUDIO_BINS, hasNativeAudio, type AudioSourceKind, type NativeAudioHandle } from './nativeAudio';
 
 export interface AudioUniforms {
   spectrum?: Uint8Array<ArrayBuffer>;
@@ -28,6 +35,12 @@ export interface AudioUniforms {
   audioHigh: number;
   audioLevel: number;
   audioBeat: number;
+  /** 0..1 through the current beat, once a tempo is detected. */
+  audioBeatPhase?: number;
+  /** Detected tempo, 0 until there are enough beats. */
+  audioBPM?: number;
+  /** Brightness of the sound, 0 (dark) .. 1 (bright). */
+  audioSpectralCentroid?: number;
 }
 
 /** Milkdrop-style smoother for one band. Maintains a fast short-term
@@ -89,15 +102,54 @@ export const SILENT_AUDIO: AudioUniforms = {
   audioHigh: 0,
   audioLevel: 0,
   audioBeat: 0,
+  audioBeatPhase: 0,
+  audioBPM: 0,
+  audioSpectralCentroid: 0,
 };
+
+/** Tempo from beat times (ms), as the desktop analyser estimates it: the median
+ *  interval between 60 and 200 BPM, eased toward small changes. 0 when unsure. */
+export function estimateBpm(beatTimes: readonly number[], previous: number): number {
+  if (beatTimes.length < 4) return 0;
+  const intervals: number[] = [];
+  for (let i = 1; i < beatTimes.length; i++) {
+    const interval = beatTimes[i] - beatTimes[i - 1];
+    if (interval >= 300 && interval <= 1000) intervals.push(interval);
+  }
+  if (intervals.length < 3) return previous;
+  intervals.sort((a, b) => a - b);
+  const raw = 60000 / intervals[Math.floor(intervals.length / 2)];
+  return previous === 0 || Math.abs(raw - previous) > 10 ? Math.round(raw) : Math.round(previous * 0.8 + raw * 0.2);
+}
+
+/** Spectral centroid of a byte spectrum (-100..-30 dB), normalised like the desktop's. */
+export function spectralCentroid(spectrum: ArrayLike<number>): number {
+  let weighted = 0, total = 0;
+  for (let i = 0; i < spectrum.length; i++) {
+    const db = -100 + (spectrum[i] * 70) / 255;
+    const magnitude = Math.max(0, (db + 90) / 80);
+    weighted += i * magnitude;
+    total += magnitude;
+  }
+  return total > 0 ? weighted / total / Math.max(1, spectrum.length) : 0;
+}
 
 export class StandaloneAudio {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
+  private node: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
   private wave = new Uint8Array(new ArrayBuffer(1024));
   private freq: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(0));
+  private native: NativeAudioHandle | null = null;
+  /** Where the sound comes from; 'off' until started. */
+  public source: AudioSourceKind = 'off';
+  /** True while the source is delivering sound (the player is playing, the broadcast is sending). */
+  public arriving = false;
+  /** Unsmoothed loudness 0..1, for a level meter (the uniforms are normalised to the song). */
+  public rawLevel = 0;
+  private beatTimes: number[] = [];
+  private bpm = 0;
 
   // Beat detection: envelope follower on the bass band.
   // When the bass exceeds (running average * threshold), pop a beat that
@@ -123,7 +175,27 @@ export class StandaloneAudio {
   public uniforms: AudioUniforms = { ...SILENT_AUDIO };
   public ready = false;
 
+  /** The microphone. On the iPhone and iPad app other apps' music keeps playing. */
   async start(): Promise<void> {
+    return this.startSource('mic');
+  }
+
+  /** Listen to `source`: 'mic' everywhere; 'player' and 'phone' on the iPhone and iPad app. */
+  async startSource(source: AudioSourceKind): Promise<void> {
+    if (source === 'off') { this.stop(); return; }
+    if (this.ready && this.source === source) return;
+    if (hasNativeAudio()) {
+      // Take the new source before letting go of the old one, so the shared native source never switches off in between.
+      const handle = await acquireNativeAudio(source);
+      this.stop();
+      this.native = handle;
+      this.freq = new Uint8Array(new ArrayBuffer(AUDIO_BINS));
+      this.wave.fill(128);
+      this.source = source;
+      this.ready = true;
+      return;
+    }
+    if (source !== 'mic') throw new Error('This audio source needs the iPhone or iPad app.');
     if (this.ready) return;
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -138,18 +210,27 @@ export class StandaloneAudio {
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 1024;
     this.analyser.smoothingTimeConstant = 0.7;
-    this.source = this.ctx.createMediaStreamSource(this.stream);
-    this.source.connect(this.analyser);
+    this.node = this.ctx.createMediaStreamSource(this.stream);
+    this.node.connect(this.analyser);
     this.freq = new Uint8Array(new ArrayBuffer(this.analyser.frequencyBinCount));
+    this.source = 'mic';
     this.ready = true;
   }
 
   /** Pull one frame of audio and update the uniforms.
    *  Call from your render loop — cheap, allocates nothing. */
   update(now = performance.now()): void {
-    if (!this.analyser || !this.ready) return;
-    this.analyser.getByteFrequencyData(this.freq);
-    this.analyser.getByteTimeDomainData(this.wave);
+    if (!this.ready) return;
+    if (this.native) {
+      const frame = this.native.frame();
+      if (frame) { this.freq.set(frame.spectrum); this.wave.set(frame.waveform); }
+      else { this.freq.fill(0); this.wave.fill(128); }
+      this.arriving = !!frame?.arriving;
+    } else if (this.analyser) {
+      this.analyser.getByteFrequencyData(this.freq);
+      this.analyser.getByteTimeDomainData(this.wave);
+      this.arriving = true;
+    } else return;
     this.uniforms.spectrum = this.freq;
     this.uniforms.waveform = this.wave;
 
@@ -173,6 +254,7 @@ export class StandaloneAudio {
     const mid = midSum / ((42 - 5) * 255);
     const high = highSum / ((256 - 42) * 255);
     const level = (bass + mid + high) / 3;
+    this.rawLevel = level;
 
     // Drive the band-followers with the raw band values. Each
     // follower internally maintains an asymmetric short average + a
@@ -198,6 +280,9 @@ export class StandaloneAudio {
     ) {
       this.beatStrength = 1;
       this.lastBeatTime = now;
+      this.beatTimes.push(now);
+      if (this.beatTimes.length > 17) this.beatTimes.shift();
+      this.bpm = estimateBpm(this.beatTimes, this.bpm);
     } else {
       this.beatStrength *= 0.9; // ~250ms decay
     }
@@ -210,28 +295,44 @@ export class StandaloneAudio {
     this.uniforms.audioHigh = ratioToUnit(this.highF.smoothed);
     this.uniforms.audioLevel = ratioToUnit(this.levelF.smoothed);
     this.uniforms.audioBeat = this.beatStrength;
+    // A tempo goes stale after four seconds without a beat.
+    if (now - this.lastBeatTime > 4000) { this.bpm = 0; this.beatTimes = []; }
+    const interval = this.bpm > 0 ? 60000 / this.bpm : 0;
+    this.uniforms.audioBPM = this.bpm;
+    this.uniforms.audioBeatPhase = interval > 0 ? ((now - this.lastBeatTime) % interval) / interval : 0;
+    this.uniforms.audioSpectralCentroid = spectralCentroid(this.freq);
   }
 
   stop(): void {
+    this.native?.release();
+    this.native = null;
+    this.source = 'off';
+    this.arriving = false;
+    this.rawLevel = 0;
     if (this.stream) {
       for (const t of this.stream.getTracks()) t.stop();
       this.stream = null;
     }
-    this.source?.disconnect();
+    this.node?.disconnect();
     this.analyser?.disconnect();
     this.ctx?.close().catch(() => { /* ignore close races */ });
-    this.source = null;
+    this.node = null;
     this.analyser = null;
     this.ctx = null;
     this.ready = false;
     this.uniforms = { ...SILENT_AUDIO };
-    // Reset smoothing state so reconnecting the mic doesn't carry
-    // the prior song's long-baseline normalisation forward.
+    this.resetSmoothing();
+  }
+
+  /** Forget the last source's levels so a new one doesn't inherit its normalisation. */
+  private resetSmoothing(): void {
     this.bassF.reset();
     this.midF.reset();
     this.highF.reset();
     this.levelF.reset();
     this.bassEnv = this.bassAvg = this.beatStrength = 0;
     this.lastUpdate = 0;
+    this.beatTimes = [];
+    this.bpm = 0;
   }
 }

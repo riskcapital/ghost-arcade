@@ -50,8 +50,56 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name:"deleteScan",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"shareFile",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"haptic",returnType:CAPPluginReturnPromise),
-        CAPPluginMethod(name:"openAppSettings",returnType:CAPPluginReturnPromise)
+        CAPPluginMethod(name:"openAppSettings",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"audioSetSource",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"audioStatus",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"audioPlayer",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"audioImport",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"audioRemoveTrack",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"audioPhoneBroadcast",returnType:CAPPluginReturnPromise)
     ]
+    // MARK: Audio for the visuals (GhostAudio)
+    @objc func audioSetSource(_ call: CAPPluginCall) {
+        guard let source = GhostAudioSource(rawValue: call.getString("source") ?? "") else { call.reject("Unknown audio source."); return }
+        GhostAudio.shared.setSource(source) { error in
+            if let error = error { call.reject(error) } else { call.resolve(GhostAudio.shared.status()) }
+        }
+    }
+    @objc func audioStatus(_ call: CAPPluginCall) { DispatchQueue.main.async { call.resolve(GhostAudio.shared.status()) } }
+    @objc func audioPlayer(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            do {
+                try GhostAudio.shared.playerCommand(call.getString("action") ?? "", id: call.getString("id"), position: call.getDouble("position"), loop: call.getBool("loop"))
+                call.resolve(GhostAudio.shared.status())
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func audioRemoveTrack(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { GhostAudio.shared.removeTrack(id: call.getString("id") ?? ""); call.resolve(GhostAudio.shared.status()) }
+    }
+    @objc func audioImport(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController, host.viewIfLoaded?.window != nil, host.presentedViewController == nil else { call.reject("Close the current native tool first."); return }
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio, .movie], asCopy: true)
+            picker.allowsMultipleSelection = true
+            let delegate = AudioImportDelegate { urls in
+                guard !urls.isEmpty else { var status = GhostAudio.shared.status(); status["added"] = 0; status["skipped"] = [String](); call.resolve(status); return }
+                GhostAudio.shared.importFiles(urls) { added, skipped in
+                    var status = GhostAudio.shared.status(); status["added"] = added; status["skipped"] = skipped; call.resolve(status)
+                }
+            }
+            picker.delegate = delegate
+            AudioImportDelegate.active = delegate
+            host.present(picker, animated: true)
+        }
+    }
+    @objc func audioPhoneBroadcast(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let view = self.bridge?.viewController?.view else { call.reject("Not ready yet."); return }
+            GhostAudio.shared.presentBroadcastPicker(in: view)
+            call.resolve()
+        }
+    }
     @objc func shareInteractiveScene(_ call: CAPPluginCall) { sharePreparation(call, schema: "ghost-interactive", prefix: "Interactive") }
     @objc func shareCalibrationPreparation(_ call: CAPPluginCall) { sharePreparation(call, schema: "ghost-calibration", prefix: "Calibration") }
     private func sharePreparation(_ call: CAPPluginCall, schema: String, prefix: String) {
@@ -231,6 +279,16 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func scanPairingCode(_ call:CAPPluginCall){permission(call){let tool=PairingScannerViewController();tool.onDone={url in call.resolve(["url":url ?? "", "cancelled":url == nil])};self.present(tool)}}
     @objc func openDualCamera(_ call:CAPPluginCall){guard AVCaptureMultiCamSession.isMultiCamSupported else{call.reject("Simultaneous front/rear capture is not supported on this device.");return};permission(call){let tool=DualCameraViewController();tool.onDone={shots in call.resolve(["shots":shots])};self.present(tool)}}
     private func present(_ controller:UIViewController){let nav=UINavigationController(rootViewController:controller);nav.modalPresentationStyle = .fullScreen;nav.overrideUserInterfaceStyle = .dark;let appearance=UINavigationBarAppearance();appearance.configureWithOpaqueBackground();appearance.backgroundColor=UIColor(red:0.035,green:0.045,blue:0.06,alpha:1);appearance.titleTextAttributes=[.foregroundColor:UIColor.white];nav.navigationBar.standardAppearance=appearance;nav.navigationBar.scrollEdgeAppearance=appearance;nav.navigationBar.tintColor=UIColor(red:0.55,green:0.7,blue:1,alpha:1);bridge?.viewController?.present(nav,animated:true)}
+}
+
+/// Hands picked audio files to GhostAudio; kept alive while its picker is up.
+private final class AudioImportDelegate: NSObject, UIDocumentPickerDelegate {
+    static var active: AudioImportDelegate?
+    private var done: (([URL]) -> Void)?
+    init(_ done: @escaping ([URL]) -> Void) { self.done = done }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finish(urls) }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish([]) }
+    private func finish(_ urls: [URL]) { let done = self.done; self.done = nil; done?(urls); Self.active = nil }
 }
 
 /// Reports a share outcome exactly once. If the sheet goes away without calling back

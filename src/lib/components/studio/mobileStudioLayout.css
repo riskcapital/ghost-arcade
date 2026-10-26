@@ -121,7 +121,7 @@
 .studio[data-layout][data-layout] .master-bar .tempo > label {gap:0;}
 .studio[data-layout][data-layout] .master-bar .tempo-open {display:inline-flex;align-items:center;gap:5px;min-width:56px;font-size:10px;letter-spacing:1px;}
 .studio[data-layout][data-layout] .master-bar .tempo-open span {font-size:13px;letter-spacing:0;line-height:1;transform:translateY(-2px);}
-.studio[data-layout] .tempo-sheet {position:fixed;z-index:30;width:min(320px,calc(100vw - 20px));box-sizing:border-box;padding:6px 12px 12px;display:grid;gap:10px;background:var(--ga-inspector-bg);border:1px solid var(--ga-line-3);border-radius:10px;box-shadow:0 -8px 32px #000b;}
+.studio[data-layout] .tempo-sheet {position:fixed;z-index:30;max-height:calc(100dvh - var(--sheet-bottom, 60px) - 12px);overflow-y:auto;width:min(320px,calc(100vw - 20px));box-sizing:border-box;padding:6px 12px 12px;display:grid;gap:10px;background:var(--ga-inspector-bg);border:1px solid var(--ga-line-3);border-radius:10px;box-shadow:0 -8px 32px #000b;}
 .studio[data-layout] .tempo-sheet header {display:flex;align-items:center;justify-content:space-between;min-height:44px;}
 .studio[data-layout] .tempo-sheet header strong {font-size:11px;letter-spacing:.08em;color:var(--ga-ink-1);}
 .studio[data-layout][data-layout] .tempo-sheet header .icon-button {min-width:44px;min-height:44px;background:none;border:0;}
@@ -224,3 +224,25 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 .studio[data-layout][data-layout] .app-header .flux-live {min-height:30px;height:30px;padding:0 9px;border-radius:15px;}
 .studio[data-layout][data-layout] .app-header .flux-live.scramble:active {border-color:var(--ga-blue-300);background:var(--ga-selection-bg);color:var(--ga-ink-0);}
 .studio[data-layout='phone'][data-layout] .app-header .brand-wordmark {max-width:96px;width:96px;}
+.studio[data-layout] .audio-quick {display:flex;gap:6px;align-items:stretch;}
+.studio[data-layout] .audio-quick .mic-toggle {flex:1;}
+.studio[data-layout][data-layout] .audio-quick .audio-change {margin:4px 0 8px;min-height:44px;padding:0 12px;font-size:12px;color:var(--ga-ink-1);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
+.studio[data-layout] .audio-sources {display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;}
+.studio[data-layout][data-layout] .audio-sources button {min-height:44px;font-size:12px;font-weight:600;color:var(--ga-ink-1);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
+.studio[data-layout][data-layout] .audio-sources button.active {background:var(--ga-selection-bg);border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
+.studio[data-layout] .audio-meter {height:4px;border-radius:2px;background:var(--ga-line-2);overflow:hidden;}
+.studio[data-layout] .audio-meter i {display:block;height:100%;background:var(--ga-selection-line);transition:width .2s linear;}
+.studio[data-layout] .audio-transport {display:grid;grid-template-columns:repeat(3,44px) minmax(0,1fr);gap:4px;}
+.studio[data-layout][data-layout] .audio-transport button {min-height:44px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
+.studio[data-layout][data-layout] .audio-transport button.active {background:var(--ga-selection-bg);border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
+.studio[data-layout] .audio-tracks {list-style:none;margin:0;padding:0;max-height:180px;overflow-y:auto;display:grid;gap:2px;}
+.studio[data-layout] .audio-tracks li {display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:stretch;border-radius:6px;}
+.studio[data-layout] .audio-tracks li.current {background:var(--ga-selection-bg);}
+.studio[data-layout][data-layout] .audio-tracks button {min-height:44px;background:none;border:0;color:var(--ga-ink-0);}
+.studio[data-layout][data-layout] .audio-tracks .track {display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px;text-align:left;font-size:12px;}
+.studio[data-layout] .audio-tracks .track span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.studio[data-layout] .audio-tracks .track small {flex:none;font-size:11px;color:var(--ga-ink-2);font-variant-numeric:tabular-nums;}
+.studio[data-layout][data-layout] .audio-tracks .remove {display:flex;align-items:center;justify-content:center;color:var(--ga-ink-2);}
+.studio[data-layout][data-layout] .audio-action {display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;font-size:12px;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
+.studio[data-layout][data-layout] .tempo-sheet .audio-status {color:var(--ga-ink-1);}
+.studio[data-layout][data-layout] .tempo-sheet .audio-status.live {color:var(--ga-selection-ink);}

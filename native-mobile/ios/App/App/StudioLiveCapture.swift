@@ -314,6 +314,10 @@ final class StudioCaptureScheme: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
         let id = ObjectIdentifier(urlSchemeTask); tasks.insert(id)
         let source = urlSchemeTask.request.url?.lastPathComponent ?? ""
+        if urlSchemeTask.request.url?.host == "audio" {
+            // ghostcapture://audio/frame: one analysis frame of the visuals' audio, or 204 when off.
+            finish(urlSchemeTask, id: id, data: GhostAudio.shared.frameData(), error: nil); return
+        }
         guard ["front", "rear", "depth"].contains(source) else { finish(urlSchemeTask, id: id, data: nil, error: "Unknown source"); return }
         StudioLiveCapture.shared.frame(source) { data, error in DispatchQueue.main.async { self.finish(urlSchemeTask, id: id, data: data, error: error) } }
     }

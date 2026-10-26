@@ -8,6 +8,7 @@ import {defaultFlux,fluxEffect,type FluxState} from './flux';
 import { StandaloneRenderer } from '../standaloneRenderer';
 import { findShader } from '../standaloneShaderList';
 import { StandaloneAudio, SILENT_AUDIO } from '../standaloneAudio';
+import type { AudioSourceKind } from '../nativeAudio';
 import { parseISF, type ISFInput } from '../../isf/parser';
 import { StudioCompositor, type TextureInput } from './compositor';
 import { getAsset } from './assets';
@@ -309,13 +310,21 @@ export class StudioEngine {
     if (v && Number.isFinite(v.duration)) v.currentTime = Math.min(v.duration, Math.max(0, position));
   }
   async microphone(enabled: boolean) {
-    if (enabled) {
-      await this.audio.start();
-      this.mic = true;
-    } else {
+    await this.audioSource(enabled ? 'mic' : 'off');
+  }
+  /** Where Audio response listens: the microphone, the app's player or other apps' sound (iPhone and iPad app). */
+  async audioSource(source: AudioSourceKind) {
+    if (source === 'off') {
       this.audio.stop();
       this.mic = false;
+    } else {
+      await this.audio.startSource(source);
+      this.mic = true;
     }
+  }
+  /** What the visuals hear: the source, whether sound is arriving, and its level 0..1. */
+  get audioMeter() {
+    return { source: this.audio.source, arriving: this.mic && this.audio.arriving, level: this.mic ? this.audio.rawLevel : 0, bpm: this.mic ? this.audio.uniforms.audioBPM ?? 0 : 0 };
   }
   start() {
     const loop = (now: number) => {

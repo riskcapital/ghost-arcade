@@ -237,12 +237,13 @@
   let fluxPerform=false;
   import PerformanceMixer from "./PerformanceMixer.svelte";
   import LookControls from "./LookControls.svelte";
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
 
   function sliderFill(value: number, min: number, max: number): number {
     return max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
   }
   import Icon from './StudioIcon.svelte';
+  import { audioPlayer, hasNativeAudio, importAudioTracks, nativeAudioStatus, removeAudioTrack, startPhoneAudio, type AudioSourceKind, type NativeAudioStatus, type PlayerAction } from '../../mobile/nativeAudio';
   import StudioDecks from './StudioDecks.svelte';
   import { StudioEngine } from '../../mobile/studio/engine';
   import { keepAwake } from '../../mobile/studio/wakeLock';
@@ -310,6 +311,7 @@
     frozen = false,
     mic = false,
     micBusy = false,
+    audioSource: AudioSourceKind = 'off',
     testGrid = false;
   let output: HTMLCanvasElement, preview: HTMLDivElement, mediaInput: HTMLInputElement, setInput: HTMLInputElement;
   let engine: StudioEngine | undefined,
@@ -882,18 +884,81 @@
     taps = [...taps.slice(-5), now];
     if (taps.length > 1) setBpm(Math.round(60000 / ((now - taps[0]) / (taps.length - 1))));
   }
-  async function toggleMic() {
-    if (micBusy) return;
+  // Audio response listens to one source. The iPhone and iPad app also offer its own
+  // player and other apps' sound (through a screen broadcast); elsewhere only the microphone.
+  const nativeAudio = hasNativeAudio();
+  const audioSources: { id: AudioSourceKind; label: string }[] = nativeAudio
+    ? [{ id: 'off', label: 'Off' }, { id: 'mic', label: 'Mic' }, { id: 'player', label: 'Player' }, { id: 'phone', label: 'Phone' }]
+    : [{ id: 'off', label: 'Off' }, { id: 'mic', label: 'Mic' }];
+  const audioNames: Record<AudioSourceKind, string> = { off: 'Audio off', mic: 'Microphone', player: 'Player', phone: 'Phone audio' };
+  const AUDIO_PREFERENCE = 'ghost-arcade.studio.audio-source';
+  function preferredAudio(): Exclude<AudioSourceKind, 'off'> {
+    try { const value = localStorage.getItem(AUDIO_PREFERENCE); if (value === 'player' || value === 'phone') return nativeAudio ? value : 'mic'; } catch { /* storage unavailable */ }
+    return 'mic';
+  }
+  let audioState: NativeAudioStatus | null = null;
+  let audioMeter = { source: 'off' as AudioSourceKind, arriving: false, level: 0, bpm: 0 };
+  $: mic = audioSource !== 'off';
+  async function chooseAudio(next: AudioSourceKind) {
+    if (micBusy || next === audioSource) return;
     micBusy = true;
     try {
-      await engine?.microphone(!mic);
-      mic = !mic;
-    } catch {
-      error = 'Microphone access was not available. Check microphone permission in Settings.';
+      await engine?.audioSource(next);
+      audioSource = next;
+      if (next !== 'off') try { localStorage.setItem(AUDIO_PREFERENCE, next); } catch { /* storage unavailable */ }
+      if (nativeAudio) audioState = await nativeAudioStatus().catch(() => audioState);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '';
+      error = next === 'mic' ? message || 'Microphone access was not available. Check microphone permission in Settings.' : message || 'That audio source could not start.';
     } finally {
       micBusy = false;
     }
   }
+  /** The quick switch in Controls: off, or back to the source last used. */
+  function toggleMic() {
+    void chooseAudio(audioSource === 'off' ? preferredAudio() : 'off');
+  }
+  async function audioCommand(task: () => Promise<NativeAudioStatus | void>, failure: string) {
+    try {
+      const status = await task();
+      if (status) audioState = status;
+    } catch (e) {
+      error = (e instanceof Error && e.message) || failure;
+    }
+  }
+  const playerCommand = (action: PlayerAction, options: { id?: string; position?: number; loop?: boolean } = {}) =>
+    audioCommand(() => audioPlayer(action, options), 'The player could not do that.');
+  async function addAudioTracks() {
+    await audioCommand(async () => {
+      const status = await importAudioTracks();
+      if (status.skipped?.length) flash(`Could not add ${status.skipped.join(', ')}. Pick audio files or videos with sound.`, null, 6000);
+      else if (status.added) flash(status.added === 1 ? 'Added 1 track.' : `Added ${status.added} tracks.`);
+      return status;
+    }, 'Could not add those files.');
+  }
+  const formatTrackTime = (seconds = 0) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+  $: phoneHint = audioSource !== 'phone'
+    ? ''
+    : audioMeter.arriving
+      ? 'Hearing other apps. Play anything and the visuals follow it.'
+      : audioState?.phoneSilentFor == null
+        ? 'Not started yet. Tap Start phone audio, choose Ghost Arcade Audio and tap Start Broadcast.'
+        : 'No sound right now. Play music in another app, or start phone audio again if the broadcast stopped.';
+  // While the sheet is open, keep the meter, player position and broadcast status fresh.
+  let audioWatch: ReturnType<typeof setInterval> | undefined;
+  function watchAudio(open: boolean) {
+    clearInterval(audioWatch);
+    audioWatch = undefined;
+    if (!open) return;
+    const refresh = () => {
+      if (engine) audioMeter = engine.audioMeter;
+      if (nativeAudio && (audioSource === 'player' || audioSource === 'phone')) void nativeAudioStatus().then(status => { audioState = status; }, () => {});
+    };
+    refresh();
+    audioWatch = setInterval(refresh, 250);
+  }
+  $: watchAudio(tempoOpen);
+  onDestroy(() => clearInterval(audioWatch));
   function setFrozen() {
     frozen = !frozen;
     if (engine) engine.frozen = frozen;
@@ -1166,7 +1231,7 @@
     next.frozen = frozen; next.blackout = blackout; next.testGrid = testGrid; next.flux = flux;
     engine = next;
     next.start();
-    if (mic) void next.microphone(true).catch(() => { mic = false; });
+    if (audioSource !== 'off') void next.audioSource(audioSource).catch(() => { audioSource = 'off'; });
   }
   async function restartVisuals(freshCanvas: boolean) {
     if (visualsRestarting) return;
@@ -1331,7 +1396,7 @@
                 oninput={(e) => patchLayer({ intensity: Number(e.currentTarget.value) })}
               /><output>{layer.intensity.toFixed(2)}</output></label
             >
-            <button class="mic-toggle inline" class:active={mic} aria-pressed={mic} disabled={micBusy} onclick={toggleMic}><Icon name="mic" size={18} /><span>{mic ? 'Microphone on' : 'Microphone off'}</span></button>
+            <div class="audio-quick"><button class="mic-toggle inline" class:active={mic} aria-pressed={mic} disabled={micBusy} onclick={toggleMic}><Icon name="mic" size={18} /><span>{mic ? `Listening: ${audioNames[audioSource]}` : 'Audio off'}</span></button>{#if nativeAudio}<button class="audio-change" onclick={toggleTempo}>Source</button>{/if}</div>
             {#each groupedParams.pinned as p}{@render shaderParam(p)}{/each}
             {#key controlSourceKey}
               {#each groupedParams.groups as group}<details class="param-group" open={params.length<=10 || (!groupedParams.pinned.length && group.id==='look')}><summary>{group.label}<span>{group.params.length}</span></summary>{#each group.params as p}{@render shaderParam(p)}{/each}</details>{/each}
@@ -1829,15 +1894,41 @@
       {/if}
   </main>
   {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
-  {#if tempoOpen}<div class="sheet-scrim" data-sheet-scrim role="presentation" onclick={(e) => { if (e.target === e.currentTarget) tempoOpen = false; }}><div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px`}>
+  {#if tempoOpen}<div class="sheet-scrim" data-sheet-scrim role="presentation" onclick={(e) => { if (e.target === e.currentTarget) tempoOpen = false; }}><div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px;--sheet-bottom:${tempoAnchor.bottom}px`}>
     <header><strong>TEMPO AND AUDIO</strong><button class="icon-button" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}><Icon name="close" size={18} /></button></header>
     <div class="tempo-sheet-row">
       <button class="tap" onclick={tap}>Tap tempo</button>
       <div class="beat-dots" aria-hidden="true">{#each [0, 1, 2, 3] as n}<i class:lit={beat === n}></i>{/each}</div>
       <output>{show.bpm} BPM</output>
     </div>
-    <button class="mic-toggle" class:active={mic} aria-pressed={mic} disabled={micBusy} onclick={toggleMic} aria-label={mic ? 'Disable microphone' : 'Enable microphone'}><Icon name="mic" size={18} /><span>{mic ? 'Microphone on' : 'Microphone off'}</span></button>
-    <p>Tap in time to set the tempo. The microphone drives Audio response on every clip.</p>
+    <div class="audio-sources" role="radiogroup" aria-label="Audio source">
+      {#each audioSources as option (option.id)}<button role="radio" aria-checked={audioSource === option.id} class:active={audioSource === option.id} disabled={micBusy} onclick={() => chooseAudio(option.id)}>{option.label}</button>{/each}
+    </div>
+    {#if audioSource !== 'off'}<div class="audio-meter" aria-hidden="true"><i style:width={`${Math.round(Math.min(1, audioMeter.level / 0.6) * 100)}%`}></i></div>
+      {#if audioMeter.bpm > 0 && Math.abs(audioMeter.bpm - show.bpm) >= 1}<button class="audio-action" onclick={() => setBpm(audioMeter.bpm)}>Use {audioMeter.bpm} BPM from the music</button>{/if}{/if}
+    {#if audioSource === 'mic'}
+      <p>Listens to the room.{nativeAudio ? ' Music playing in other apps keeps playing.' : ''}</p>
+    {:else if audioSource === 'player'}
+      <div class="audio-transport">
+        <button aria-label="Previous track" onclick={() => playerCommand('previous')}><Icon name="left" size={18} /></button>
+        <button aria-label={audioState?.playing ? 'Pause' : 'Play'} disabled={!audioState?.tracks.length} onclick={() => playerCommand(audioState?.playing ? 'pause' : 'play')}><Icon name={audioState?.playing ? 'pause' : 'play'} size={18} /></button>
+        <button aria-label="Next track" onclick={() => playerCommand('next')}><Icon name="right" size={18} /></button>
+        <button class="loop" class:active={audioState?.loop} aria-pressed={!!audioState?.loop} onclick={() => playerCommand('loop', { loop: !audioState?.loop })}>Loop</button>
+      </div>
+      {#if audioState?.tracks.length}<ul class="audio-tracks">
+        {#each audioState.tracks as track (track.id)}<li class:current={track.id === audioState.trackId}>
+          <button class="track" onclick={() => playerCommand('play', { id: track.id, position: 0 })}><span>{track.name}</span><small>{track.id === audioState.trackId && audioState.position != null ? `${formatTrackTime(audioState.position)} / ` : ''}{formatTrackTime(track.duration)}</small></button>
+          <button class="remove" aria-label={`Remove ${track.name}`} onclick={() => audioCommand(() => removeAudioTrack(track.id), 'Could not remove that track.')}><Icon name="close" size={14} /></button>
+        </li>{/each}
+      </ul>{:else}<p>Add songs or videos from Files. The visuals follow what plays here.</p>{/if}
+      <button class="audio-action" onclick={addAudioTracks}><Icon name="plus" size={16} /><span>Add audio or video</span></button>
+    {:else if audioSource === 'phone'}
+      <p class="audio-status" class:live={audioMeter.arriving} role="status">{phoneHint}</p>
+      <button class="audio-action" onclick={() => audioCommand(startPhoneAudio, 'Phone audio could not start.')}><span>Start phone audio</span></button>
+      <p>Phone audio uses a screen broadcast that only sends sound to Ghost Arcade. Stop it from the red pill at the top of the screen. Apple Music and other copy-protected audio arrives silent; use Mic for those.</p>
+    {:else}
+      <p>Tap in time to set the tempo. Pick a source and Audio response drives every clip.</p>
+    {/if}
   </div></div>{/if}
   <footer class="master-bar" bind:this={footerEl}>
     {#if show.dualDeck}<div class="mobile-decks">
