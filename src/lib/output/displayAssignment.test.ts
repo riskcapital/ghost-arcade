@@ -10,6 +10,7 @@ import {
   collidingSurfaces,
   displayForBounds,
   isWindowed,
+  liveOutputDisplay,
   resolveDisplayForSurface,
   surfacesDisplacedBy,
   type DisplayAssignments,
@@ -138,5 +139,31 @@ describe('one external screen, another surface pinned to it', () => {
   it('and they take turns on it', () => {
     const assignments = { ...NONE, stageSim: PROJECTOR.id };
     expect(surfacesDisplacedBy(displays, assignments, 'liveOutput', ['stageSim'])).toEqual(['stageSim']);
+  });
+});
+
+describe('liveOutputDisplay', () => {
+  const displays = [LAPTOP, MONITOR, PROJECTOR];
+
+  it('opens Live Output on the display assigned to it, not the first external one', () => {
+    // The OS lists the monitor before the projector; the show is pinned to the projector.
+    const assignments = { ...NONE, liveOutput: PROJECTOR.id };
+    expect(liveOutputDisplay(displays, assignments, true)?.id).toBe(PROJECTOR.id);
+  });
+
+  it('keeps clear of a display a sim has claimed when on auto', () => {
+    const assignments = { ...NONE, stageSim: MONITOR.id };
+    expect(liveOutputDisplay(displays, assignments, true)?.id).toBe(PROJECTOR.id);
+  });
+
+  it('stays on the primary for a windowed preview', () => {
+    const assignments = { ...NONE, liveOutput: PROJECTOR.id };
+    expect(liveOutputDisplay(displays, assignments, false)?.id).toBe(LAPTOP.id);
+  });
+
+  it('falls back to auto when the assigned display is gone', () => {
+    const assignments = { ...NONE, liveOutput: 99 };
+    expect(liveOutputDisplay(displays, assignments, true)?.isPrimary).toBe(false);
+    expect(liveOutputDisplay([], assignments, true)).toBeNull();
   });
 });

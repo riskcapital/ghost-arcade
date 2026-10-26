@@ -126,6 +126,24 @@ export function resolveDisplayForSurface(
   return primary;
 }
 
+/**
+ * The display Live Output opens on. `preferExternal` false keeps it on the
+ * primary (a windowed preview beside the editor); otherwise the assignment
+ * from the Live Output display menu decides, and auto spreads it like the
+ * sims. The native output used to take the first non-primary display the OS
+ * listed, whatever had been chosen for it.
+ */
+export function liveOutputDisplay(
+  displays: DisplayInfo[],
+  assignments: Partial<DisplayAssignments> | null | undefined,
+  preferExternal: boolean,
+): DisplayInfo | null {
+  if (!displays.length) return null;
+  const primary = displays.find((display) => display.isPrimary) ?? displays[0];
+  if (!preferExternal) return primary;
+  return resolveDisplayForSurface(displays, assignments, 'liveOutput') ?? primary;
+}
+
 /** Which display a window at these bounds is sitting on, by centre point. */
 export function displayForBounds(
   displays: DisplayInfo[],

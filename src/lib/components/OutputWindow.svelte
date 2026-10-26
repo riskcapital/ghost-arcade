@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { resolveDisplayForSurface } from '$lib/output/displayAssignment';
+  import { liveOutputDisplay, resolveDisplayForSurface } from '$lib/output/displayAssignment';
   import { invoke, isDesktopApp, isMac, isWindows } from '$lib/bridge';
   import {
     getNativeRendererCapabilities,
@@ -110,15 +110,9 @@
     try {
       // Get available displays from Electron
       const displays: any[] = await invoke('get_displays');
-
-      let target = displays[0]; // fallback to first display
-      if (preferExternal) {
-        // Pick the first non-primary display
-        const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
-        if (external) {
-          target = external;
-        }
-      }
+      // The display assigned to Live Output (or auto), like the sims.
+      const target: any = liveOutputDisplay(displays, get(settings).output.displayAssignments, preferExternal)
+        ?? displays[0];
 
       // Open at 1280x720 centered on the target display (not full size)
       const bounds = target.bounds || target;
@@ -247,11 +241,11 @@
     const mark = (step: string) => marks.push(`${step} ${Math.round(performance.now() - openedAt)}ms`);
     try {
       const displays: any[] = await invoke('get_displays');
-      let target = displays[0];
-      if (preferExternal) {
-        const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
-        if (external) target = external;
-      }
+      // The display chosen for Live Output in its display menu, or auto. This
+      // used to be the first non-primary display the OS listed, whatever had
+      // been assigned.
+      const target: any = liveOutputDisplay(displays, get(settings).output.displayAssignments, preferExternal)
+        ?? displays[0];
 
       const bounds = target?.bounds || target || { x: 100, y: 100, width: 1280, height: 720 };
       const displayX = bounds.x ?? 100;
@@ -525,8 +519,8 @@
       // bounds and sets fullscreen:true on the BrowserWindow options.
       try {
         const displays: any[] = await invoke('get_displays');
-        const primary = displays.find((d: any) => d.isPrimary ?? d.primary) || displays[0];
-        const target = displays.find((d: any) => !(d.isPrimary ?? d.primary)) || primary;
+        const target: any = liveOutputDisplay(displays, get(settings).output.displayAssignments, true)
+          ?? displays[0];
         await invoke('configure_next_output_window', {
           displayId: target.id,
           fullscreen: true,

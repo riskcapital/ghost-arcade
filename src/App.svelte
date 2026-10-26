@@ -5384,6 +5384,8 @@
       return;
     }
     if (outputWindow) {
+      // Take the screen from a sim holding it, as Stage Sim and Map Sim do.
+      await yieldDisplayFor('liveOutput');
       const opened = await outputWindow.openPopup();
       outputIsOpen = !!opened;
       outputMode = opened ? 'window' : 'embedded';
@@ -5421,6 +5423,7 @@
         return;
       }
       if (outputWindow) {
+        await yieldDisplayFor('liveOutput');
         const opened = await outputWindow.openFullscreenExternal();
         outputIsOpen = !!opened;
         outputMode = opened ? 'fullscreen' : 'embedded';
