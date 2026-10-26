@@ -27,6 +27,7 @@
   import { getNativeRendererCapabilities } from '$lib/api/native-renderer';
   import { get } from 'svelte/store';
   import { prepareVideoImport } from '../video/videoImport';
+  import { AUDIO_FILE_HINT, mediaFileKind, VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, vjCrossfader, vjSlice, MAX_VJ_COLUMNS, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { liveOutput, toggleOutputFullscreen, openOutputDisplayMenu } from '../stores/liveOutput';
@@ -2837,17 +2838,15 @@
   let vjMediaFileInput: HTMLInputElement | null = null;
   let vjMediaDragOver = false;
 
-  function vjMediaGetType(file: File): 'video' | 'image' | 'shader' | null {
-    const n = file.name.toLowerCase();
-    if (file.type.startsWith('video/') || /\.(mp4|webm|mov|mkv|avi|m4v)$/i.test(n)) return 'video';
-    if (file.type.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(n)) return 'image';
-    if (/\.(fs|isf)$/i.test(n)) return 'shader';
-    return null;
+  function vjMediaGetType(file: File): 'video' | 'image' | 'shader' | 'audio' | null {
+    const kind = mediaFileKind(file);
+    return kind === 'video' || kind === 'image' || kind === 'shader' || kind === 'audio' ? kind : null;
   }
 
   async function vjAddMediaFile(file: File): Promise<MediaItem | null> {
     const kind = vjMediaGetType(file);
-    if (!kind) { console.warn('[VJ Media] Unsupported file type:', file.name); return null; }
+    if (kind === 'audio') { showToast(`${file.name}: ${AUDIO_FILE_HINT}`, 'warning'); return null; }
+    if (!kind) { showToast(`${file.name}: this file type can't be a clip. Use a video, an image or an .fs shader.`, 'warning'); return null; }
     // Capture both runtime URL and durable AssetRef so VJ media library entries
     // survive save/reload (the blob URL alone won't).
     const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
@@ -6679,7 +6678,7 @@
             <input
               type="file"
               bind:this={vjMediaFileInput}
-              accept={vjMediaTab === 'videos' ? 'video/*' : 'image/*'}
+              accept={vjMediaTab === 'videos' ? VIDEO_FILE_ACCEPT : 'image/*'}
               multiple
               style="display:none;"
               onchange={vjHandleMediaFilePick}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { prepareVideoImport } from '../video/videoImport';
+  import { AUDIO_FILE_HINT, mediaFileKind, VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
   import { onMount, onDestroy, tick } from 'svelte';
   import { midiStore } from '../midi/midiStore';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
@@ -1588,16 +1589,15 @@
     generateMissingThumbnails();
   });
 
-  function getMediaType(file: File): 'image' | 'video' | 'shader' | 'threejs' {
-    const ext = file.name.toLowerCase().split('.').pop();
-    if (ext === 'fs' || ext === 'isf') return 'shader';
+  function getMediaType(file: File): 'image' | 'video' | 'shader' | 'threejs' | 'audio' | null {
+    const kind = mediaFileKind(file);
     // .html / .htm files are treated as Three.js / p5.js animation sources.
     // The loader will read the file as text and embed it as htmlCode; the
     // iframe-canvas-as-texture pipeline doesn't care whether the HTML was
     // hand-written, exported from a tool, or AI-generated.
-    if (ext === 'html' || ext === 'htm') return 'threejs';
-    if (file.type.startsWith('video/')) return 'video';
-    return 'image';
+    if (kind === 'html') return 'threejs';
+    if (kind === 'unknown') return null;
+    return kind;
   }
 
   async function handleDrop(e: DragEvent) {
@@ -1618,8 +1618,16 @@
     // Capture both the runtime URL AND a durable AssetRef. The blob URL dies
     // at session end; the AssetRef carries the absolute disk path so reload
     // works even without the .gha sibling-copy (Electron Save As).
-    const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
     const mediaType = getMediaType(file);
+    if (mediaType === 'audio') {
+      showToast(`${file.name}: ${AUDIO_FILE_HINT}`, 'warning');
+      return;
+    }
+    if (!mediaType) {
+      showToast(`${file.name}: this file type can't be added. Use a video, an image, an .fs shader or an .html animation.`, 'warning');
+      return;
+    }
+    const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
 
     if (mediaType === 'video') {
       const video = document.createElement('video');
@@ -1907,7 +1915,11 @@
           // element to load or play before binding the layer; that put a
           // 1-2 second HTML-media stall directly in the trigger path.
           source.isPlaying = true;
-          source.durationSeconds = Number.isFinite(video.duration) ? video.duration : undefined;
+          // Chromium has no duration for formats it cannot decode (ProRes,
+          // HAP); keep the one the import read with ffmpeg.
+          source.durationSeconds = Number.isFinite(video.duration) && video.duration > 0
+            ? video.duration
+            : (item as MediaItem).durationSeconds;
           source._nativePlaybackTimeSeconds = 0;
           source._nativePlaybackUpdatedAtMs = performance.now();
           source._nativePlaybackSeekSeq = 1;
@@ -5265,7 +5277,7 @@
       Add Files
       <input
         type="file"
-        accept="image/*,video/*,.fs,.isf,.html,.htm"
+        accept={`image/*,${VIDEO_FILE_ACCEPT},.fs,.isf,.html,.htm`}
         multiple
         onchange={async (e) => {
           const input = e.target as HTMLInputElement;

@@ -32,7 +32,7 @@
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
   import type { BlendMode, MediaSource, Effect, EffectType, ContentFitMode, VideoPlaybackMode, StageEffectType, Layer } from '../types';
-  import { createDefaultMappingCompositionState, generateUUID, VJ_MIX_SOURCE_INDEX } from '../types';
+  import { createDefaultMappingCompositionState, VJ_MIX_SOURCE_INDEX } from '../types';
   import { onDestroy, onMount } from 'svelte';
   // ShapeType import removed — Lines layer uses pen tools instead of shape library
   import { getDefaultEffectParams } from '../renderer/effects';
@@ -54,7 +54,8 @@
   import SourceCropModal from './SourceCropModal.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
-  import { createDurableAssetRefFromFile } from '../storage/assetRegistry';
+  import { VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
+  import { createLayerMediaSource, LayerMediaRejected } from '../media/layerMediaImport';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { nativeRendererRuntime, nativeFailedRouteLayers } from '../stores/nativeRenderer';
   import { createNativeVideoScrubber } from '../renderer/nativeVideoScrubber';
@@ -634,98 +635,29 @@
   }
   // ─── End Video Timeline ────────────────────────────────────────────
 
-  function getMediaType(file: File): 'image' | 'video' | 'shader' {
-    const ext = file.name.toLowerCase().split('.').pop();
-    if (ext === 'fs' || ext === 'isf') return 'shader';
-    if (file.type.startsWith('video/')) return 'video';
-    return 'image';
-  }
-
-  async function createMediaSource(file: File): Promise<MediaSource> {
-    // Capture both runtime URL and durable AssetRef so this layer's source
-    // survives save+reload (the blob URL alone won't).
-    const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
-    const mediaType = getMediaType(file);
-
-    const source: MediaSource = {
-      id: generateUUID(),
-      type: mediaType,
-      src: url,
-      name: file.name,
-      _assetRef: assetRef,
-    };
-
-    if (mediaType === 'video') {
-      const video = document.createElement('video');
-      // crossOrigin BEFORE src — order matters on Chromium 130.
-      video.crossOrigin = 'anonymous';
-      video.loop = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = 'auto';
-      video.src = url;
-
-      // `.src=` already initiated the load. Don't call `.load()` —
-      // races any pending play() on Chromium 130 (Electron 42).
-      await new Promise<void>((resolve, reject) => {
-        const onReady = () => { cleanup(); resolve(); };
-        const onError = () => { cleanup(); reject(new Error('Video load failed')); };
-        const cleanup = () => {
-          video.removeEventListener('loadeddata', onReady);
-          video.removeEventListener('error', onError);
-        };
-        video.addEventListener('loadeddata', onReady, { once: true });
-        video.addEventListener('error', onError, { once: true });
-        if (video.readyState >= 2) onReady();
-      });
-
-      // Autoplay the video immediately
-      source.videoElement = video;
-      source.isPlaying = true;
-      source.durationSeconds = Number.isFinite(video.duration) ? video.duration : undefined;
-      source._nativePlaybackTimeSeconds = 0;
-      source._nativePlaybackUpdatedAtMs = performance.now();
-      source._nativePlaybackSeekSeq = 1;
-      try {
-        await video.play();
-      } catch (err) {
-        console.warn('Autoplay blocked, user interaction required:', err);
-        source.isPlaying = false;
-      }
-    } else if (mediaType === 'shader') {
-      // Read shader source code
-      const shaderCode = await file.text();
-      source.shaderCode = shaderCode;
+  async function applyLayerMediaFile(file: File) {
+    const layerId = $selectedLayerId;
+    if (!layerId) return;
+    try {
+      project.setLayerSource(layerId, await createLayerMediaSource(file));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      const severity = err instanceof LayerMediaRejected ? err.severity : 'error';
+      showToast(`${file.name}: ${reason || 'could not be loaded.'}`, severity);
     }
-
-    return source;
   }
 
   async function handleFileSelect(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (!file || !$selectedLayerId) return;
-
-    try {
-      const source = await createMediaSource(file);
-      project.setLayerSource($selectedLayerId, source);
-    } catch (err) {
-      console.error('Failed to load file:', err);
-    }
+    if (file) await applyLayerMediaFile(file);
     input.value = '';
   }
 
   async function handleDrop(e: DragEvent) {
     e.preventDefault();
     const file = e.dataTransfer?.files?.[0];
-    if (!file || !$selectedLayerId) return;
-
-    try {
-      const source = await createMediaSource(file);
-      project.setLayerSource($selectedLayerId, source);
-    } catch (err) {
-      console.error('Failed to load file:', err);
-    }
+    if (file) await applyLayerMediaFile(file);
   }
 
   function handleDragOver(e: DragEvent) {
@@ -1944,13 +1876,13 @@
                 <span class="source-type">({layer.source.type})</span>
                 <label class="file-label replace-label">
                   <span class="link">Replace</span>
-                  <input type="file" accept=".fs,.isf,image/*,video/*" onchange={handleFileSelect} style="display: none;" />
+                  <input type="file" accept={`.fs,.isf,image/*,${VIDEO_FILE_ACCEPT}`} onchange={handleFileSelect} style="display: none;" />
                 </label>
               {:else}
                 <span>Drop shader here for group</span>
                 <label class="file-label">
                   or <span class="link">browse</span>
-                  <input type="file" accept=".fs,.isf,image/*,video/*" onchange={handleFileSelect} style="display: none;" />
+                  <input type="file" accept={`.fs,.isf,image/*,${VIDEO_FILE_ACCEPT}`} onchange={handleFileSelect} style="display: none;" />
                 </label>
               {/if}
             </div>
@@ -2204,7 +2136,7 @@
                   <span class="link">Replace</span>
                   <input
                     type="file"
-                    accept="image/*,video/*,.fs,.isf"
+                    accept={`image/*,${VIDEO_FILE_ACCEPT},.fs,.isf`}
                     onchange={handleFileSelect}
                     style="display: none;"
                   />
@@ -2215,7 +2147,7 @@
                   or <span class="link">browse</span>
                   <input
                     type="file"
-                    accept="image/*,video/*,.fs,.isf"
+                    accept={`image/*,${VIDEO_FILE_ACCEPT},.fs,.isf`}
                     onchange={handleFileSelect}
                     style="display: none;"
                   />

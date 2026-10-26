@@ -14,6 +14,7 @@
   import type { PixelFXMode, PixelFXContent, Layer } from '../types';
   import type { MediaItem } from '../stores/media';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
+  import { isVideoFile } from '../media/mediaFileKind';
   import NumericInput from './NumericInput.svelte';
 
   $: layer = $selectedLayer;
@@ -137,7 +138,7 @@
     // Capture an AssetRef so save/reload restores the source. Without it the
     // blob URL dies on session end and the layer comes back with a dead src.
     const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
-    const isVideo = file.type.startsWith('video/');
+    const isVideo = isVideoFile(file);
     project.updatePixelFXContent(layerId, {
       sourceType: isVideo ? 'video' : 'image',
       sourceUrl: url,

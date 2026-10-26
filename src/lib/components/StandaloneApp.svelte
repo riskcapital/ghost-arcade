@@ -72,6 +72,7 @@
   } from '../mobile/standaloneEffects';
   import { EFFECT_PARAM_DEFS, type EffectParamDef } from '../effects/effectParamDefs';
   import { cornersToMatrix3d, type Pt } from '../mobile/standaloneHomography';
+  import { isVideoFile } from '../media/mediaFileKind';
 
   export let onSwitchMode: () => void;
 
@@ -770,7 +771,7 @@
     pendingMediaLayer = null;
     input.value = '';
     if (!file || layerIndex === null) return;
-    const kind: MediaKind = file.type.startsWith('video/') ? 'video' : 'image';
+    const kind: MediaKind = isVideoFile(file) ? 'video' : 'image';
     const url = URL.createObjectURL(file);
     try {
       let el: HTMLImageElement | HTMLVideoElement;

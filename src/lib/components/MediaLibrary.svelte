@@ -6,6 +6,7 @@
   import type { MediaSource, JSAnimationSource } from '../types';
   import { generateUUID } from '../types';
   import { createDurableAssetRefFromFile } from '../storage/assetRegistry';
+  import { isVideoFile, VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
 
@@ -119,7 +120,7 @@
     // this the URL is a blob: that dies at session end and the library item
     // becomes unresolvable.
     const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
-    const isVideo = file.type.startsWith('video/');
+    const isVideo = isVideoFile(file);
 
     const item: MediaSource = {
       id: generateUUID(),
@@ -311,7 +312,7 @@
   // JS animation items are available via libraryItems filtered by type === 'threejs' || 'p5js'
 
   // Accept type for file input
-  $: acceptType = activeTab === 'images' ? 'image/*' : activeTab === 'videos' ? 'video/*' : activeTab === 'js' ? '.html' : '.fs,.isf';
+  $: acceptType = activeTab === 'images' ? 'image/*' : activeTab === 'videos' ? VIDEO_FILE_ACCEPT : activeTab === 'js' ? '.html' : '.fs,.isf';
 
   // Handle AI-generated content
   function handleAIGenerated(event: CustomEvent<{ item: MediaSource }>) {
