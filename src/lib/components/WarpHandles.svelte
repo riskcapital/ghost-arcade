@@ -4,8 +4,24 @@
   import { get } from 'svelte/store';
   import type { WarpCorners, Point2D, Layer } from '../types';
   import { onMount, onDestroy } from 'svelte';
-  import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
-  import { normalizedWarpNudge, warpNudgeStepPixels } from '../utils/warpNudge';
+  import {
+    advanceDragTravel,
+    beginDragTravel,
+    beginSnapSession,
+    collectSnapOutlines,
+    dragTravelNormalized,
+    dragTravelPx,
+    layerSnapOutline,
+    snapExcludedLayerIds,
+    type DragTravel,
+    type SnapConfig,
+    type SnapHit,
+    type SnapOutline,
+    type SnapSession,
+    type SnapView,
+  } from '../utils/mappingSnap';
+  import { EDGE_CORNERS, dragEdge, dragPoint, rigidDragDelta, translateCorners, type PixelGrid, type WarpEdge } from '../utils/warpDrag';
+  import { normalizedWarpNudge, warpDragStepPixels, warpNudgeStepPixels } from '../utils/warpNudge';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { insetEdgeHandle } from '../utils/warpHandleLayout';
   import {
@@ -45,8 +61,15 @@
   let scaleStartY: number = 0;
   let scaleInitialCorners: WarpCorners | null = null;
 
-  // Active cross-layer snap target for visual feedback
-  let activeSnapTarget: SnapTarget | null = null;
+  // Drag state: where the dragged points were at the press, how far the
+  // pointer has moved since (Shift: a tenth as far), and what they snap to.
+  let dragTravel: DragTravel | null = null;
+  let dragStartCorner: Point2D | null = null;
+  let moveSnapPoints: Point2D[] = [];
+  let snapSession: SnapSession | null = null;
+  // Other layers' outlines, drawn while dragging, and the snap being shown.
+  let snapOutlines: SnapOutline[] = [];
+  let activeSnapHit: SnapHit | null = null;
 
   // Multi-select: store initial corners for selected layers during batch transforms.
   let batchInitialCorners: Map<string, WarpCorners> = new Map();
@@ -161,79 +184,62 @@
       : null;
   }
 
-  // Movement delta for arrow keys (normalized coordinates)
-  const MOVE_DELTA = 0.005;  // Small step
-  const MOVE_DELTA_LARGE = 0.02;  // Large step with Shift
-
-  // Edge snap threshold (normalized coords, ~2% of canvas)
-  const SNAP_THRESHOLD = 0.02;
-
-  // Snap a normalized value to 0 or 1 if within threshold
-  function snapToEdge(val: number): number {
-    if (Math.abs(val) < SNAP_THRESHOLD) return 0;
-    if (Math.abs(val - 1) < SNAP_THRESHOLD) return 1;
-    return val;
-  }
-
-  // Snap a normalized value to the nearest grid line if within threshold
-  function snapToGrid(val: number, divisions: number): number {
-    const gridSnap = Math.round(val * divisions) / divisions;
-    const gridThreshold = Math.min(SNAP_THRESHOLD, 0.5 / divisions);
-    if (Math.abs(val - gridSnap) < gridThreshold) return gridSnap;
-    return val;
-  }
-
-  // Snap a Point2D to other layers, canvas edges, optionally to grid,
-  // AND (new) to the project's pixel grid so projectionists can hit
-  // exact target pixels with the mouse. Pixel snap is the lowest-
-  // priority step — runs after cross-layer / grid / edge snaps so it
-  // refines the already-snapped result without overriding a stronger
-  // match.
-  function snapPoint(p: Point2D): Point2D {
-    let { x, y } = p;
-
-    // Cross-layer snap (highest priority)
+  // ─── Snapping (see utils/mappingSnap.ts) ───────────────────────────
+  // The Snap switch covers other layers and the canvas edges; grid lines
+  // join in while the grid is shown with grid snap on.
+  function snapConfig(): SnapConfig {
     const grid = get(settings).ui.gridSettings;
-    const snapToLayersEnabled = grid?.snapToLayers !== false; // default true
-    if (snapToLayersEnabled && $selectedLayer) {
-      const crossSnap = findSnapTarget({ x, y }, get(layers), $selectedLayer.id);
-      if (crossSnap.snapped && crossSnap.target) {
-        activeSnapTarget = crossSnap.target;
-        return pixelSnap(crossSnap.point);
-      }
-    }
-    activeSnapTarget = null;
-
-    // Grid snap
-    if (grid?.snapToGrid && grid.enabled) {
-      x = snapToGrid(x, grid.columns);
-      y = snapToGrid(y, grid.rows);
-    }
-    // Canvas edge snap (overrides grid snap if near boundary)
-    x = snapToEdge(x);
-    y = snapToEdge(y);
-    return pixelSnap({ x, y });
+    const magnet = grid?.snapToLayers !== false;
+    return {
+      layers: magnet,
+      canvasEdges: magnet,
+      grid: grid?.enabled && grid.snapToGrid ? { columns: grid.columns, rows: grid.rows } : null,
+    };
   }
 
-  /** Snap a normalized 0..1 coord to the project's pixel grid, per
-   *  the user's `warpDragGranularity` setting. Bypasses cleanly when
-   *  the user picks 'free' OR when fine-tune mode is engaged (the
-   *  user is actively nudging with arrow keys, where the caller
-   *  already passed an exact pixel-aligned target). */
-  function pixelSnap(p: Point2D): Point2D {
-    const granularity = get(settings).ui.warpDragGranularity ?? '1px';
-    if (granularity === 'free') return p;
-    const step =
-      granularity === 'sub'  ? 0.5 :
-      granularity === '5px'  ? 5 :
-      granularity === '10px' ? 10 : 1;
+  function snapView(): SnapView {
+    return { width: containerWidth, height: containerHeight, zoom };
+  }
+
+  /** Mouse drags land on the project's pixels (warpDragGranularity). */
+  function pixelGrid(): PixelGrid {
     const proj = get(project);
-    const pw = Math.max(1, proj.width);
-    const ph = Math.max(1, proj.height);
-    return {
-      x: Math.round(p.x * pw / step) * step / pw,
-      y: Math.round(p.y * ph / step) * step / ph,
-    };
+    return { width: proj.width, height: proj.height, stepPx: warpDragStepPixels(get(settings).ui.warpDragGranularity) };
+  }
+
+  /** Start snapping the points this drag moves. */
+  function startSnap(points: Point2D[] | null) {
+    const all = get(layers);
+    const excluded = snapExcludedLayerIds(all, $selectedLayer?.id, get(selectedLayerIds));
+    snapOutlines = collectSnapOutlines(all, excluded);
+    snapSession = points && points.length > 0 ? beginSnapSession(points, snapOutlines, snapConfig(), snapView()) : null;
+    activeSnapHit = null;
+  }
+
+  function startTravel(clientX: number, clientY: number) {
+    dragTravel = beginDragTravel(clientX, clientY);
+  }
+
+  /** Pointer travel since the press, as a canvas offset (y up). */
+  function travelTo(clientX: number, clientY: number, fine: boolean): { offset: Point2D; px: number } {
+    dragTravel = advanceDragTravel(dragTravel ?? beginDragTravel(clientX, clientY), clientX, clientY, fine);
+    return { offset: dragTravelNormalized(dragTravel, snapView(), true), px: dragTravelPx(dragTravel) };
+  }
+
+  /** Cmd (Mac) or Ctrl (Windows) held: move freely, no snapping. */
+  function snapBypassed(e: MouseEvent | TouchEvent): boolean {
+    return e.metaKey || e.ctrlKey;
+  }
+
+  /** The points a whole-layer move snaps with: the outline as drawn. */
+  function moveSnapPointsFor(layer: Layer): Point2D[] {
+    const outline = layerSnapOutline(layer);
+    if (outline) return outline.corners;
+    if (layer.type === 'group') {
+      const c = layer.corners;
+      return [c.topLeft, c.topRight, c.bottomRight, c.bottomLeft];
+    }
+    return [];
   }
 
   // Convert normalized (0-1) to pixel coordinates
@@ -241,14 +247,6 @@
     return {
       x: point.x * containerWidth,
       y: (1 - point.y) * containerHeight, // Flip Y for screen coords
-    };
-  }
-
-  // Convert pixel to normalized coordinates (no clamping - allow off-screen)
-  function toNormalized(x: number, y: number): Point2D {
-    return {
-      x: x / containerWidth,
-      y: 1 - y / containerHeight,
     };
   }
 
@@ -283,6 +281,7 @@
     dragging = 'corner';
     dragTarget = corner;
     selectedCorner = corner;  // Set selected corner for keyboard navigation
+    beginCornerDrag(corner, e.clientX, e.clientY);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   }
@@ -385,22 +384,44 @@
     fineTuneCorner = null;
   }
 
+  /** A corner drag starts from where the corner is, not from the pointer:
+   *  a corner on the canvas edge is drawn inset, and grabbing it used to
+   *  pull the corner up to 10 px onto the pointer. */
+  function beginCornerDrag(corner: keyof WarpCorners, clientX: number, clientY: number) {
+    const start = $selectedLayer?.corners[corner];
+    dragStartCorner = start ? { x: start.x, y: start.y } : null;
+    startTravel(clientX, clientY);
+    startSnap(dragStartCorner ? [dragStartCorner] : null);
+  }
+
+  function beginMoveDrag(clientX: number, clientY: number) {
+    initialCorners = $selectedLayer ? structuredClone($selectedLayer.corners) : null;
+    captureBatchInitial();
+    moveSnapPoints = $selectedLayer ? moveSnapPointsFor($selectedLayer) : [];
+    startTravel(clientX, clientY);
+    startSnap(moveSnapPoints);
+  }
+
   // Handle edge drag (moves both corners on that edge)
   function handleEdgeMouseDown(edge: 'top' | 'bottom' | 'left' | 'right', e: MouseEvent) {
     if ($selectedLayer?.locked) return;
     e.preventDefault();
     e.stopPropagation();
+    releaseFormControlFocus();
     dragging = 'edge';
     dragTarget = edge;
 
-    const rect = containerEl.getBoundingClientRect();
-    // Account for zoom when storing initial position
-    dragStartPos = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
     initialCorners = $selectedLayer ? structuredClone($selectedLayer.corners) : null;
     captureBatchInitial(true);
     batchEdgeBounds = batchInitialCorners.size > 1
       ? getCornersBounds(batchInitialCorners.values())
       : null;
+    startTravel(e.clientX, e.clientY);
+    // The edge's two corners snap; a mesh or shaped layer is not drawn by
+    // its corners, so its edge drags stay free.
+    const [a, b] = EDGE_CORNERS[edge];
+    const snapsCorners = !!initialCorners && !batchEdgeBounds && !hideCorners && !nonRectShape;
+    startSnap(snapsCorners && initialCorners ? [initialCorners[a], initialCorners[b]] : null);
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
@@ -414,12 +435,7 @@
     releaseFormControlFocus();
     dragging = 'move';
     dragTarget = 'center';
-
-    const rect = containerEl.getBoundingClientRect();
-    // Account for zoom when storing initial position
-    dragStartPos = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
-    initialCorners = $selectedLayer ? structuredClone($selectedLayer.corners) : null;
-    captureBatchInitial();
+    beginMoveDrag(e.clientX, e.clientY);
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
@@ -461,88 +477,47 @@
     window.addEventListener('mouseup', handleMouseUp);
   }
 
+  /** Corner, edge and move drags: start position plus pointer travel,
+   *  snapped as one piece (utils/warpDrag.ts). */
+  function dragTo(clientX: number, clientY: number, fine: boolean, bypass: boolean) {
+    if (!dragging || !$selectedLayer) return;
+    const travel = travelTo(clientX, clientY, fine);
+    if (dragging === 'corner' && dragTarget && dragStartCorner) {
+      const { point, hit } = dragPoint(snapSession, dragStartCorner, travel.offset, travel.px, bypass, pixelGrid());
+      activeSnapHit = hit;
+      project.setCorner($selectedLayer.id, dragTarget as keyof WarpCorners, point);
+    } else if (dragging === 'edge' && dragTarget && initialCorners) {
+      const edge = dragTarget as WarpEdge;
+      if (batchEdgeBounds && batchInitialCorners.size > 1) {
+        applyBatchEdgeScale(edge, travel.offset.x, travel.offset.y);
+        return;
+      }
+      const { corners, hit } = dragEdge(snapSession, initialCorners, edge, travel.offset, travel.px, bypass, pixelGrid());
+      activeSnapHit = hit;
+      project.setCorners($selectedLayer.id, corners);
+    } else if (dragging === 'move' && initialCorners) {
+      // The layer moves as one piece; so does the rest of a multi-selection.
+      const { delta, hit } = rigidDragDelta(snapSession, moveSnapPoints, travel.offset, travel.px, bypass, pixelGrid());
+      activeSnapHit = hit;
+      project.setCorners($selectedLayer.id, translateCorners(initialCorners, delta));
+      applyBatchDelta(delta.x, delta.y);
+    }
+  }
+
   function handleMouseMove(e: MouseEvent) {
     if (!dragging || !$selectedLayer || !containerEl) return;
+
+    if (dragging === 'corner' || dragging === 'edge' || dragging === 'move') {
+      dragTo(e.clientX, e.clientY, e.shiftKey, snapBypassed(e));
+      return;
+    }
 
     const rect = containerEl.getBoundingClientRect();
     // Account for zoom transform when converting mouse position
     const x = (e.clientX - rect.left) / zoom;
     const y = (e.clientY - rect.top) / zoom;
 
-    if (dragging === 'corner' && dragTarget) {
-      const normalized = snapPoint(toNormalized(x, y));
-      project.setCorner($selectedLayer.id, dragTarget as keyof WarpCorners, normalized);
-    } else if (dragging === 'edge' && dragTarget && dragStartPos && initialCorners) {
-      const dx = (x - dragStartPos.x) / containerWidth;
-      const dy = -(y - dragStartPos.y) / containerHeight; // Flip Y
-
-      const edge = dragTarget as 'top' | 'bottom' | 'left' | 'right';
-      if (batchEdgeBounds && batchInitialCorners.size > 1) {
-        applyBatchEdgeScale(edge, dx, dy);
-        return;
-      }
-      const newCorners = structuredClone(initialCorners);
-
-      // Move both corners on the edge (no clamping - allow off-screen)
-      if (edge === 'top') {
-        newCorners.topLeft.x = initialCorners.topLeft.x + dx;
-        newCorners.topLeft.y = initialCorners.topLeft.y + dy;
-        newCorners.topRight.x = initialCorners.topRight.x + dx;
-        newCorners.topRight.y = initialCorners.topRight.y + dy;
-      } else if (edge === 'bottom') {
-        newCorners.bottomLeft.x = initialCorners.bottomLeft.x + dx;
-        newCorners.bottomLeft.y = initialCorners.bottomLeft.y + dy;
-        newCorners.bottomRight.x = initialCorners.bottomRight.x + dx;
-        newCorners.bottomRight.y = initialCorners.bottomRight.y + dy;
-      } else if (edge === 'left') {
-        newCorners.topLeft.x = initialCorners.topLeft.x + dx;
-        newCorners.topLeft.y = initialCorners.topLeft.y + dy;
-        newCorners.bottomLeft.x = initialCorners.bottomLeft.x + dx;
-        newCorners.bottomLeft.y = initialCorners.bottomLeft.y + dy;
-      } else if (edge === 'right') {
-        newCorners.topRight.x = initialCorners.topRight.x + dx;
-        newCorners.topRight.y = initialCorners.topRight.y + dy;
-        newCorners.bottomRight.x = initialCorners.bottomRight.x + dx;
-        newCorners.bottomRight.y = initialCorners.bottomRight.y + dy;
-      }
-
-      // Snap and update all corners at once
-      project.setCorner($selectedLayer.id, 'topLeft', snapPoint(newCorners.topLeft));
-      project.setCorner($selectedLayer.id, 'topRight', snapPoint(newCorners.topRight));
-      project.setCorner($selectedLayer.id, 'bottomLeft', snapPoint(newCorners.bottomLeft));
-      project.setCorner($selectedLayer.id, 'bottomRight', snapPoint(newCorners.bottomRight));
-    } else if (dragging === 'move' && dragStartPos && initialCorners) {
-      // Move all 4 corners together (no clamping - allow off-screen)
-      const dx = (x - dragStartPos.x) / containerWidth;
-      const dy = -(y - dragStartPos.y) / containerHeight;
-
-      const newCorners: WarpCorners = {
-        topLeft: {
-          x: initialCorners.topLeft.x + dx,
-          y: initialCorners.topLeft.y + dy
-        },
-        topRight: {
-          x: initialCorners.topRight.x + dx,
-          y: initialCorners.topRight.y + dy
-        },
-        bottomLeft: {
-          x: initialCorners.bottomLeft.x + dx,
-          y: initialCorners.bottomLeft.y + dy
-        },
-        bottomRight: {
-          x: initialCorners.bottomRight.x + dx,
-          y: initialCorners.bottomRight.y + dy
-        },
-      };
-
-      project.setCorner($selectedLayer.id, 'topLeft', snapPoint(newCorners.topLeft));
-      project.setCorner($selectedLayer.id, 'topRight', snapPoint(newCorners.topRight));
-      project.setCorner($selectedLayer.id, 'bottomLeft', snapPoint(newCorners.bottomLeft));
-      project.setCorner($selectedLayer.id, 'bottomRight', snapPoint(newCorners.bottomRight));
-
-      // Batch move: apply same delta to all other selected layers
-      applyBatchDelta(dx, dy);
-    } else if (dragging === 'rotate' && dragStartPos && initialCorners) {
+    if (dragging === 'rotate' && dragStartPos && initialCorners) {
       // Calculate rotation based on angle from center
       const center = getCenter(initialCorners);
       const centerPixel = toPixel(center);
@@ -613,6 +588,15 @@
     }
   }
 
+  function clearDragSnap() {
+    dragTravel = null;
+    dragStartCorner = null;
+    moveSnapPoints = [];
+    snapSession = null;
+    snapOutlines = [];
+    activeSnapHit = null;
+  }
+
   function handleMouseUp() {
     if (dragging) recordDiscreteAction();
     dragging = null;
@@ -623,7 +607,7 @@
     scaleInitialCorners = null;
     batchScaleCenter = null;
     batchEdgeBounds = null;
-    activeSnapTarget = null;
+    clearDragSnap();
     batchInitialCorners.clear();
     window.removeEventListener('mousemove', handleMouseMove);
     window.removeEventListener('mouseup', handleMouseUp);
@@ -667,6 +651,8 @@
     lastTapAt.set(corner, now);
     dragging = 'corner';
     dragTarget = corner;
+    const touch = e.touches[0];
+    beginCornerDrag(corner, touch.clientX, touch.clientY);
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd);
   }
@@ -697,13 +683,8 @@
     e.preventDefault();
     dragging = 'move';
     dragTarget = 'center';
-
-    const rect = containerEl.getBoundingClientRect();
     const touch = e.touches[0];
-    // Account for zoom when storing initial position
-    dragStartPos = { x: (touch.clientX - rect.left) / zoom, y: (touch.clientY - rect.top) / zoom };
-    initialCorners = $selectedLayer ? structuredClone($selectedLayer.corners) : null;
-    captureBatchInitial();
+    beginMoveDrag(touch.clientX, touch.clientY);
 
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd);
@@ -712,47 +693,9 @@
   function handleTouchMove(e: TouchEvent) {
     if (!dragging || !$selectedLayer || !containerEl) return;
     e.preventDefault();
-
     const touch = e.touches[0];
-    const rect = containerEl.getBoundingClientRect();
-    // Account for zoom transform when converting touch position
-    const x = (touch.clientX - rect.left) / zoom;
-    const y = (touch.clientY - rect.top) / zoom;
-
-    if (dragging === 'corner' && dragTarget) {
-      const normalized = snapPoint(toNormalized(x, y));
-      project.setCorner($selectedLayer.id, dragTarget as keyof WarpCorners, normalized);
-    } else if (dragging === 'move' && dragStartPos && initialCorners) {
-      const dx = (x - dragStartPos.x) / containerWidth;
-      const dy = -(y - dragStartPos.y) / containerHeight;
-
-      const newCorners: WarpCorners = {
-        topLeft: {
-          x: initialCorners.topLeft.x + dx,
-          y: initialCorners.topLeft.y + dy
-        },
-        topRight: {
-          x: initialCorners.topRight.x + dx,
-          y: initialCorners.topRight.y + dy
-        },
-        bottomLeft: {
-          x: initialCorners.bottomLeft.x + dx,
-          y: initialCorners.bottomLeft.y + dy
-        },
-        bottomRight: {
-          x: initialCorners.bottomRight.x + dx,
-          y: initialCorners.bottomRight.y + dy
-        },
-      };
-
-      project.setCorner($selectedLayer.id, 'topLeft', snapPoint(newCorners.topLeft));
-      project.setCorner($selectedLayer.id, 'topRight', snapPoint(newCorners.topRight));
-      project.setCorner($selectedLayer.id, 'bottomLeft', snapPoint(newCorners.bottomLeft));
-      project.setCorner($selectedLayer.id, 'bottomRight', snapPoint(newCorners.bottomRight));
-
-      // Batch move: apply same delta to all other selected layers
-      applyBatchDelta(dx, dy);
-    }
+    if (!touch) return;
+    dragTo(touch.clientX, touch.clientY, false, false);
   }
 
   function handleTouchEnd() {
@@ -761,7 +704,7 @@
     dragTarget = null;
     dragStartPos = null;
     initialCorners = null;
-    activeSnapTarget = null;
+    clearDragSnap();
     batchScaleCenter = null;
     batchInitialCorners.clear();
     window.removeEventListener('touchmove', handleTouchMove);
@@ -921,15 +864,11 @@
         />
       {/if}
 
-      <!-- Other layers' outlines (shown while dragging for spatial context) -->
-      {#if dragging && $selectedLayer}
-        {#each getOtherLayerOutlines(get(layers), $selectedLayer.id) as outline}
-          {@const c0 = toPixel(outline.corners[0])}
-          {@const c1 = toPixel(outline.corners[1])}
-          {@const c2 = toPixel(outline.corners[2])}
-          {@const c3 = toPixel(outline.corners[3])}
+      <!-- Other layers' outlines while dragging: what the drag can snap to -->
+      {#if dragging}
+        {#each snapOutlines as outline (outline.layerId)}
           <polygon
-            points="{c0.x},{c0.y} {c1.x},{c1.y} {c2.x},{c2.y} {c3.x},{c3.y}"
+            points={outline.path.map((p) => { const px = toPixel(p); return `${px.x},${px.y}`; }).join(' ')}
             fill="none"
             stroke="var(--ga-blue-a28)"
             stroke-width="1"
@@ -938,16 +877,23 @@
         {/each}
       {/if}
 
-      <!-- Cross-layer snap indicator -->
-      {#if activeSnapTarget}
-        {@const snapPx = toPixel(activeSnapTarget.point)}
-        {#if activeSnapTarget.type === 'corner'}
+      <!-- Snap indicator -->
+      {#if activeSnapHit}
+        {@const snapPx = toPixel(activeSnapHit.point)}
+        {#if activeSnapHit.kind === 'corner'}
           <circle cx={snapPx.x} cy={snapPx.y} r="8" fill="none" stroke="#00ff88" stroke-width="2.5" class="snap-indicator" />
           <circle cx={snapPx.x} cy={snapPx.y} r="3" fill="#00ff88" />
-        {:else}
+        {:else if activeSnapHit.kind === 'edge'}
           <circle cx={snapPx.x} cy={snapPx.y} r="6" fill="none" stroke="#00ff88" stroke-width="2" class="snap-indicator" />
           <line x1={snapPx.x - 8} y1={snapPx.y} x2={snapPx.x + 8} y2={snapPx.y} stroke="#00ff88" stroke-width="1.5" />
           <line x1={snapPx.x} y1={snapPx.y - 8} x2={snapPx.x} y2={snapPx.y + 8} stroke="#00ff88" stroke-width="1.5" />
+        {:else}
+          {#if activeSnapHit.lineX !== undefined}
+            <line x1={activeSnapHit.lineX * containerWidth} y1="0" x2={activeSnapHit.lineX * containerWidth} y2={containerHeight} stroke="#00ff88" stroke-width="1" stroke-dasharray="6,4" opacity="0.8" />
+          {/if}
+          {#if activeSnapHit.lineY !== undefined}
+            <line x1="0" y1={(1 - activeSnapHit.lineY) * containerHeight} x2={containerWidth} y2={(1 - activeSnapHit.lineY) * containerHeight} stroke="#00ff88" stroke-width="1" stroke-dasharray="6,4" opacity="0.8" />
+          {/if}
         {/if}
       {/if}
 

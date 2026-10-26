@@ -2,7 +2,9 @@
   import { selectedLayer, project } from '../stores/layers';
   import type { Point2D, BezierPoint } from '../types';
   import { onDestroy } from 'svelte';
-  import { evaluateMeshGrid, invertLayerMesh, layerRenderMeshGrid } from '../utils/meshWarp';
+  import { layerRenderMeshGrid } from '../utils/meshWarp';
+  import { canvasToLayerUv, layerUvToCanvas } from '../utils/layerQuad';
+  import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
 
   // Container dimensions (set by parent)
   export let containerWidth: number = 800;
@@ -14,6 +16,12 @@
 
   let dragging: DragTarget = null;
   let dragVertexIndex: number = -1;
+  // A drag moves the vertex (or curve handle) from where it was at the
+  // press by the pointer's travel, Shift a tenth as far. Vertices never
+  // snap: they go exactly where they are dragged.
+  let dragStartPoint: BezierPoint | null = null;
+  let dragStartCanvas: Point2D | null = null;
+  let dragTravel: DragTravel | null = null;
   let mousePos: { x: number; y: number } = { x: 0, y: 0 };
   let hoverEdgeIndex: number = -1;
   let selectedVertexIndex: number = -1;
@@ -58,69 +66,14 @@
 
   let toPixel: (point: Point2D) => { x: number; y: number };
   $: toPixel = (point: Point2D): { x: number; y: number } => {
-    const { topLeft: tl, topRight: tr, bottomLeft: bl, bottomRight: br } = corners;
-    const m = renderMesh ? evaluateMeshGrid(renderMesh, point.x, point.y) : point;
-    const u = m.x, v = m.y;
-    const topX = tl.x + (tr.x - tl.x) * u;
-    const topY = tl.y + (tr.y - tl.y) * u;
-    const botX = bl.x + (br.x - bl.x) * u;
-    const botY = bl.y + (br.y - bl.y) * u;
-    const wx = botX + (topX - botX) * v;
-    const wy = botY + (topY - botY) * v;
-    return { x: wx * containerWidth, y: (1 - wy) * containerHeight };
+    const c = layerUvToCanvas(corners, renderMesh, point);
+    return { x: c.x * containerWidth, y: (1 - c.y) * containerHeight };
   };
 
   // Pixel → layer UV: back through the corner pin, then the mesh.
   function toNormalized(px: number, py: number): Point2D {
-    const local = toQuadLocal(px, py);
-    if (!renderMesh) return local;
-    const hit = invertLayerMesh(renderMesh, local);
-    if (hit) return hit;
-    // Off the mesh (a point dragged past its edge): solve the mesh map,
-    // which continues outward past a fitted mesh, from the nearest guess.
-    let u = local.x, v = local.y;
-    const h = 1e-4;
-    for (let i = 0; i < 12; i++) {
-      const p = evaluateMeshGrid(renderMesh, u, v);
-      const ex = local.x - p.x, ey = local.y - p.y;
-      if (ex * ex + ey * ey < 1e-14) break;
-      const pu = evaluateMeshGrid(renderMesh, u + h, v);
-      const pv = evaluateMeshGrid(renderMesh, u, v + h);
-      const a = (pu.x - p.x) / h, b = (pv.x - p.x) / h, c = (pu.y - p.y) / h, d = (pv.y - p.y) / h;
-      const det = a * d - b * c;
-      if (Math.abs(det) < 1e-10) return local;
-      u += (ex * d - ey * b) / det;
-      v += (a * ey - c * ex) / det;
-    }
-    return Number.isFinite(u) && Number.isFinite(v) ? { x: u, y: v } : local;
-  }
-
-  // Inverse bilinear: pixel → quad-local position (0-1) via Newton-Raphson iteration
-  function toQuadLocal(px: number, py: number): Point2D {
-    const { topLeft: tl, topRight: tr, bottomLeft: bl, bottomRight: br } = corners;
-    const tx = px / containerWidth;
-    const ty = 1 - py / containerHeight;
-    let u = 0.5, v = 0.5;
-    for (let i = 0; i < 8; i++) {
-      const topX = tl.x + (tr.x - tl.x) * u;
-      const topY = tl.y + (tr.y - tl.y) * u;
-      const botX = bl.x + (br.x - bl.x) * u;
-      const botY = bl.y + (br.y - bl.y) * u;
-      const px2 = botX + (topX - botX) * v;
-      const py2 = botY + (topY - botY) * v;
-      const ex = tx - px2, ey = ty - py2;
-      const dTopU = tr.x - tl.x, dTopUy = tr.y - tl.y;
-      const dBotU = br.x - bl.x, dBotUy = br.y - bl.y;
-      const dxdu = (dBotU + (dTopU - dBotU) * v);
-      const dydu = (dBotUy + (dTopUy - dBotUy) * v);
-      const dxdv = topX - botX;
-      const dydv = topY - botY;
-      const det = dxdu * dydv - dydu * dxdv;
-      if (Math.abs(det) < 1e-8) break;
-      u += (ex * dydv - ey * dxdv) / det;
-      v += (dxdu * ey - dydu * ex) / det;
-    }
-    return { x: u, y: v };
+    const canvas = { x: px / containerWidth, y: 1 - py / containerHeight };
+    return canvasToLayerUv(corners, renderMesh, canvas) ?? canvas;
   }
 
   // Distance from point to line segment
@@ -387,8 +340,22 @@
     selectedVertexIndex = index;
     dragging = 'vertex';
     dragVertexIndex = index;
+    beginPointDrag(index, 'vertex', e.clientX, e.clientY);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  function beginPointDrag(index: number, target: Exclude<DragTarget, null>, clientX: number, clientY: number) {
+    const pt = customPoints[index];
+    const at = !pt ? null : target === 'vertex' ? pt : pt[target];
+    if (!pt || !at) return;
+    dragStartPoint = {
+      x: pt.x, y: pt.y,
+      cpIn: pt.cpIn ? { ...pt.cpIn } : undefined,
+      cpOut: pt.cpOut ? { ...pt.cpOut } : undefined,
+    };
+    dragStartCanvas = layerUvToCanvas(corners, renderMesh, at);
+    dragTravel = beginDragTravel(clientX, clientY);
   }
 
   // Control handle mousedown
@@ -399,38 +366,39 @@
     selectedVertexIndex = index;
     dragging = handleType;
     dragVertexIndex = index;
+    beginPointDrag(index, handleType, e.clientX, e.clientY);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   }
 
   function handleMouseMove(e: MouseEvent) {
-    if (!dragging || !$selectedLayer || dragVertexIndex < 0) return;
+    if (!dragging || !$selectedLayer || dragVertexIndex < 0 || !dragStartPoint || !dragStartCanvas || !dragTravel) return;
 
-    const container = document.querySelector('.custom-shape-handles') as HTMLElement;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const px = (e.clientX - rect.left) / zoom;
-    const py = (e.clientY - rect.top) / zoom;
-    const norm = toNormalized(px, py);
+    dragTravel = advanceDragTravel(dragTravel, e.clientX, e.clientY, e.shiftKey);
+    const travel = dragTravelNormalized(dragTravel, { width: containerWidth, height: containerHeight, zoom }, true);
+    const norm = canvasToLayerUv(corners, renderMesh, {
+      x: dragStartCanvas.x + travel.x,
+      y: dragStartCanvas.y + travel.y,
+    });
+    if (!norm) return;
+    const start = dragStartPoint;
 
     if (dragging === 'vertex') {
       // Move vertex + its handles together
-      const pt = customPoints[dragVertexIndex];
-      const dx = norm.x - pt.x;
-      const dy = norm.y - pt.y;
-      const updated: BezierPoint = { ...pt, x: norm.x, y: norm.y };
-      if (pt.cpIn) updated.cpIn = { x: pt.cpIn.x + dx, y: pt.cpIn.y + dy };
-      if (pt.cpOut) updated.cpOut = { x: pt.cpOut.x + dx, y: pt.cpOut.y + dy };
+      const dx = norm.x - start.x;
+      const dy = norm.y - start.y;
+      const updated: BezierPoint = { ...customPoints[dragVertexIndex], x: norm.x, y: norm.y };
+      if (start.cpIn) updated.cpIn = { x: start.cpIn.x + dx, y: start.cpIn.y + dy };
+      if (start.cpOut) updated.cpOut = { x: start.cpOut.x + dx, y: start.cpOut.y + dy };
       project.updateCustomShapePoint($selectedLayer.id, dragVertexIndex, updated);
     } else if (dragging === 'cpIn' || dragging === 'cpOut') {
       project.updateCustomShapeHandle($selectedLayer.id, dragVertexIndex, dragging, norm);
       // Mirror the other handle (symmetric) unless Alt is held
       if (!e.altKey) {
-        const pt = customPoints[dragVertexIndex];
         const mirrorType = dragging === 'cpIn' ? 'cpOut' : 'cpIn';
         const mirror: Point2D = {
-          x: 2 * pt.x - norm.x,
-          y: 2 * pt.y - norm.y,
+          x: 2 * start.x - norm.x,
+          y: 2 * start.y - norm.y,
         };
         project.updateCustomShapeHandle($selectedLayer.id, dragVertexIndex, mirrorType, mirror);
       }
@@ -442,6 +410,9 @@
       dragging = null;
       dragVertexIndex = -1;
     }
+    dragStartPoint = null;
+    dragStartCanvas = null;
+    dragTravel = null;
     window.removeEventListener('mousemove', handleMouseMove);
     window.removeEventListener('mouseup', handleMouseUp);
   }

@@ -2789,6 +2789,14 @@ void main() {
       }));
     },
 
+    /** All four corners in one update (a drag moving the whole quad). */
+    setCorners(id: string, corners: WarpCorners) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => (l.id === id ? { ...l, corners } : l)),
+      }));
+    },
+
     resetCorners(id: string) {
       update((project) => ({
         ...project,
