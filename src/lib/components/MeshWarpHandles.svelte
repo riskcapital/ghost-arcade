@@ -1,11 +1,26 @@
 <script lang="ts">
-  import { selectedLayer, project, layers } from '../stores/layers';
+  import { selectedLayer, selectedLayerIds, project, layers } from '../stores/layers';
   import { history } from '../stores/history';
   import { settings } from '../stores/settings';
   import { get } from 'svelte/store';
   import type { Point2D, MeshWarpGrid, WarpCorners } from '../types';
   import { onMount, onDestroy } from 'svelte';
-  import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
+  import {
+    advanceDragTravel,
+    beginDragTravel,
+    beginSnapSession,
+    collectSnapOutlines,
+    dragTravelNormalized,
+    dragTravelPx,
+    snapExcludedLayerIds,
+    snapPoint,
+    type DragTravel,
+    type SnapHit,
+    type SnapOutline,
+    type SnapSession,
+    type SnapView,
+  } from '../utils/mappingSnap';
+  import { quadInverse, quadPoint } from '../utils/layerQuad';
   import { normalizedWarpNudge } from '../utils/warpNudge';
   import {
     MESH_CURVE_SEGMENTS,
@@ -30,8 +45,14 @@
   // Selected point for keyboard navigation (persists after click)
   let selectedPoint: { row: number; col: number } | null = null;
 
-  // Active cross-layer snap target for visual feedback
-  let activeSnapTarget: SnapTarget | null = null;
+  // A drag moves the point from where it was at the press by the pointer's
+  // travel (Shift: a tenth as far), so grabbing a point never moves it.
+  // Boundary points snap to the other layers' outlines and the canvas edges.
+  let dragStart: Point2D | null = null;
+  let dragTravel: DragTravel | null = null;
+  let snapSession: SnapSession | null = null;
+  let snapOutlines: SnapOutline[] = [];
+  let activeSnapHit: SnapHit | null = null;
 
   // Bezier mesh: the tangent handle being dragged, and the one the arrow
   // keys nudge (the last handle clicked on the selected point).
@@ -63,6 +84,7 @@
     cancelDrag(false);
     tangentDrag = { row, col, side };
     selectedTangent = side;
+    beginTangentDrag(row, col, side, e.clientX, e.clientY);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   }
@@ -73,16 +95,82 @@
     cancelDrag(false);
     tangentDrag = { row, col, side };
     selectedTangent = side;
+    const touch = e.touches[0];
+    if (touch) beginTangentDrag(row, col, side, touch.clientX, touch.clientY);
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd);
   }
 
-  function dragTangentTo(x: number, y: number, unlink: boolean) {
-    if (!tangentDrag || !$selectedLayer?.meshGrid) return;
+  /** A tangent drag starts at the handle's end, wherever it is drawn. */
+  function beginTangentDrag(row: number, col: number, side: MeshTangentSide, clientX: number, clientY: number) {
+    const layer = $selectedLayer;
+    const grid = layer?.meshGrid;
+    const point = grid?.points[row]?.[col];
+    if (!layer || !grid || !point) return;
+    const t = resolveMeshTangents(grid, row, col)[side];
+    dragStart = quadPoint(layer.corners, point.x + t.x, point.y + t.y);
+    dragTravel = beginDragTravel(clientX, clientY);
+  }
+
+  function dragTangentTo(clientX: number, clientY: number, fine: boolean, unlink: boolean) {
+    if (!tangentDrag || !$selectedLayer?.meshGrid || !dragStart) return;
     const { row, col, side } = tangentDrag;
-    const local = pixelToMeshPoint(x, y, $selectedLayer.corners);
-    const point = $selectedLayer.meshGrid.points[row][col];
+    const point = $selectedLayer.meshGrid.points[row]?.[col];
+    if (!point) return;
+    const end = add(dragStart, travelTo(clientX, clientY, fine).offset);
+    const local = quadInverse($selectedLayer.corners, end);
+    if (!local) return;
     writeTangent(row, col, side, { x: local.x - point.x, y: local.y - point.y }, unlink);
+  }
+
+  const add = (p: Point2D, d: Point2D): Point2D => ({ x: p.x + d.x, y: p.y + d.y });
+
+  function snapView(): SnapView {
+    return { width: containerWidth, height: containerHeight, zoom };
+  }
+
+  /** Pointer travel since the press, as a canvas offset (y up). */
+  function travelTo(clientX: number, clientY: number, fine: boolean): { offset: Point2D; px: number } {
+    dragTravel = advanceDragTravel(dragTravel ?? beginDragTravel(clientX, clientY), clientX, clientY, fine);
+    return { offset: dragTravelNormalized(dragTravel, snapView(), true), px: dragTravelPx(dragTravel) };
+  }
+
+  /** Start dragging a mesh point: from where it is, snapping it to other
+   *  layers and the canvas edges when it is on the mesh's outline. */
+  function beginPointDrag(row: number, col: number, clientX: number, clientY: number) {
+    const layer = $selectedLayer;
+    const point = layer?.meshGrid?.points[row]?.[col];
+    if (!layer || !point) return;
+    dragStart = quadPoint(layer.corners, point.x, point.y);
+    dragTravel = beginDragTravel(clientX, clientY);
+    activeSnapHit = null;
+    if (!isBoundaryPoint(row, col)) {
+      snapOutlines = [];
+      snapSession = null;
+      return;
+    }
+    const grid = get(settings).ui.gridSettings;
+    const magnet = grid?.snapToLayers !== false;
+    const all = get(layers);
+    snapOutlines = collectSnapOutlines(all, snapExcludedLayerIds(all, layer.id, get(selectedLayerIds)));
+    snapSession = beginSnapSession([dragStart], snapOutlines, {
+      layers: magnet,
+      canvasEdges: magnet,
+      grid: grid?.enabled && grid.snapToGrid ? { columns: grid.columns, rows: grid.rows } : null,
+    }, snapView());
+  }
+
+  function dragPointTo(clientX: number, clientY: number, fine: boolean, bypass: boolean) {
+    if (!dragging || !$selectedLayer || !dragStart) return;
+    const travel = travelTo(clientX, clientY, fine);
+    let target = add(dragStart, travel.offset);
+    if (snapSession) {
+      const snapped = snapPoint(snapSession, target, travel.px, bypass);
+      target = snapped.point;
+      activeSnapHit = snapped.hit;
+    }
+    const local = quadInverse($selectedLayer.corners, target);
+    if (local) project.setMeshPoint($selectedLayer.id, dragging.row, dragging.col, local);
   }
 
   // Check if a mesh grid point is on the boundary (edge or corner of grid)
@@ -117,55 +205,6 @@
     };
   }
 
-  // Convert screen pixel position back to mesh local coordinates (0-1)
-  // Given corners and screen position, find the local u,v in the mesh
-  function pixelToMeshPoint(pixelX: number, pixelY: number, corners: WarpCorners): Point2D {
-    // Convert pixel to normalized screen coords
-    const screenX = pixelX / containerWidth;
-    const screenY = 1 - pixelY / containerHeight;
-
-    // Inverse bilinear interpolation - find u,v such that bilinear(u,v) = screenX,screenY
-    // This is complex for arbitrary quads, so we use iterative refinement
-    let u = 0.5;
-    let v = 0.5;
-
-    for (let i = 0; i < 10; i++) {
-      // Calculate current position from u,v
-      const topX = corners.topLeft.x + (corners.topRight.x - corners.topLeft.x) * u;
-      const topY = corners.topLeft.y + (corners.topRight.y - corners.topLeft.y) * u;
-      const bottomX = corners.bottomLeft.x + (corners.bottomRight.x - corners.bottomLeft.x) * u;
-      const bottomY = corners.bottomLeft.y + (corners.bottomRight.y - corners.bottomLeft.y) * u;
-      const currentX = bottomX + (topX - bottomX) * v;
-      const currentY = bottomY + (topY - bottomY) * v;
-
-      // Calculate error
-      const errorX = screenX - currentX;
-      const errorY = screenY - currentY;
-
-      if (Math.abs(errorX) < 0.001 && Math.abs(errorY) < 0.001) break;
-
-      // Calculate partial derivatives (Jacobian)
-      const dxdu = (corners.topRight.x - corners.topLeft.x) * v +
-                   (corners.bottomRight.x - corners.bottomLeft.x) * (1 - v);
-      const dxdv = (topX - bottomX);
-      const dydu = (corners.topRight.y - corners.topLeft.y) * v +
-                   (corners.bottomRight.y - corners.bottomLeft.y) * (1 - v);
-      const dydv = (topY - bottomY);
-
-      // Solve for du, dv using inverse Jacobian
-      const det = dxdu * dydv - dxdv * dydu;
-      if (Math.abs(det) < 0.0001) break;
-
-      const du = (dydv * errorX - dxdv * errorY) / det;
-      const dv = (-dydu * errorX + dxdu * errorY) / det;
-
-      u = u + du;
-      v = v + dv;
-    }
-
-    return { x: u, y: v };
-  }
-
   function handleMouseDown(row: number, col: number, e: MouseEvent) {
     if ($selectedLayer?.locked) return;
     e.preventDefault();
@@ -174,6 +213,7 @@
     dragging = { row, col };
     if (selectedPoint?.row !== row || selectedPoint?.col !== col) selectedTangent = null;
     selectedPoint = { row, col };  // Set selected point for keyboard navigation
+    beginPointDrag(row, col, e.clientX, e.clientY);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   }
@@ -274,7 +314,11 @@
     if (record && (dragging || tangentDrag)) history.record(get(project));
     dragging = null;
     tangentDrag = null;
-    activeSnapTarget = null;
+    dragStart = null;
+    dragTravel = null;
+    snapSession = null;
+    snapOutlines = [];
+    activeSnapHit = null;
     removeMouseDragListeners();
     removeTouchDragListeners();
   }
@@ -290,44 +334,11 @@
   function handleMouseMove(e: MouseEvent) {
     if (!$selectedLayer || !containerEl) return;
     if (tangentDrag) {
-      const rect = containerEl.getBoundingClientRect();
-      dragTangentTo((e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom, e.altKey);
+      dragTangentTo(e.clientX, e.clientY, e.shiftKey, e.altKey);
       return;
     }
-    if (!dragging) return;
-
-    const rect = containerEl.getBoundingClientRect();
-    // Account for zoom transform when converting mouse position
-    const x = (e.clientX - rect.left) / zoom;
-    const y = (e.clientY - rect.top) / zoom;
-
-    // Convert screen position back to mesh-local coordinates using corner warp
-    const warpCorners = $selectedLayer.corners;
-    let meshLocal = pixelToMeshPoint(x, y, warpCorners);
-
-    // Cross-layer snap for boundary mesh points
-    const grid = get(settings).ui.gridSettings;
-    const snapEnabled = grid?.snapToLayers !== false;
-    if (snapEnabled && isBoundaryPoint(dragging.row, dragging.col)) {
-      // Convert the mesh point to normalized screen coords for snap comparison
-      const screenPos = meshPointToPixel(meshLocal, warpCorners);
-      const normalized = { x: screenPos.x / containerWidth, y: 1 - screenPos.y / containerHeight };
-
-      const crossSnap = findSnapTarget(normalized, get(layers), $selectedLayer.id);
-      if (crossSnap.snapped && crossSnap.target) {
-        // Convert snapped normalized position back to mesh-local coords
-        const snappedPxX = crossSnap.point.x * containerWidth;
-        const snappedPxY = (1 - crossSnap.point.y) * containerHeight;
-        meshLocal = pixelToMeshPoint(snappedPxX, snappedPxY, warpCorners);
-        activeSnapTarget = crossSnap.target;
-      } else {
-        activeSnapTarget = null;
-      }
-    } else {
-      activeSnapTarget = null;
-    }
-
-    project.setMeshPoint($selectedLayer.id, dragging.row, dragging.col, meshLocal);
+    // Shift: fine drag. Cmd/Ctrl: no snapping.
+    dragPointTo(e.clientX, e.clientY, e.shiftKey, e.metaKey || e.ctrlKey);
   }
 
   function handleMouseUp() {
@@ -339,6 +350,10 @@
     e.preventDefault();
     cancelDrag(false);
     dragging = { row, col };
+    if (selectedPoint?.row !== row || selectedPoint?.col !== col) selectedTangent = null;
+    selectedPoint = { row, col };
+    const touch = e.touches[0];
+    if (touch) beginPointDrag(row, col, touch.clientX, touch.clientY);
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd);
   }
@@ -346,43 +361,13 @@
   function handleTouchMove(e: TouchEvent) {
     if ((!dragging && !tangentDrag) || !$selectedLayer || !containerEl) return;
     e.preventDefault();
-
     const touch = e.touches[0];
-    const rect = containerEl.getBoundingClientRect();
+    if (!touch) return;
     if (tangentDrag) {
-      dragTangentTo((touch.clientX - rect.left) / zoom, (touch.clientY - rect.top) / zoom, false);
+      dragTangentTo(touch.clientX, touch.clientY, false, false);
       return;
     }
-    if (!dragging) return;
-    // Account for zoom transform when converting touch position
-    const x = (touch.clientX - rect.left) / zoom;
-    const y = (touch.clientY - rect.top) / zoom;
-
-    // Convert screen position back to mesh-local coordinates using corner warp
-    const warpCorners = $selectedLayer.corners;
-    let meshLocal = pixelToMeshPoint(x, y, warpCorners);
-
-    // Cross-layer snap for boundary mesh points
-    const grid = get(settings).ui.gridSettings;
-    const snapEnabled = grid?.snapToLayers !== false;
-    if (snapEnabled && isBoundaryPoint(dragging.row, dragging.col)) {
-      const screenPos = meshPointToPixel(meshLocal, warpCorners);
-      const normalized = { x: screenPos.x / containerWidth, y: 1 - screenPos.y / containerHeight };
-
-      const crossSnap = findSnapTarget(normalized, get(layers), $selectedLayer.id);
-      if (crossSnap.snapped && crossSnap.target) {
-        const snappedPxX = crossSnap.point.x * containerWidth;
-        const snappedPxY = (1 - crossSnap.point.y) * containerHeight;
-        meshLocal = pixelToMeshPoint(snappedPxX, snappedPxY, warpCorners);
-        activeSnapTarget = crossSnap.target;
-      } else {
-        activeSnapTarget = null;
-      }
-    } else {
-      activeSnapTarget = null;
-    }
-
-    project.setMeshPoint($selectedLayer.id, dragging.row, dragging.col, meshLocal);
+    dragPointTo(touch.clientX, touch.clientY, false, false);
   }
 
   function handleTouchEnd() {
@@ -500,19 +485,11 @@
         {/each}
       {/if}
 
-      <!-- Other layers' outlines (shown while dragging boundary points) -->
-      {#if dragging && isBoundaryPoint(dragging.row, dragging.col) && $selectedLayer}
-        {#each getOtherLayerOutlines(get(layers), $selectedLayer.id) as outline}
-          {@const c0x = outline.corners[0].x * containerWidth}
-          {@const c0y = (1 - outline.corners[0].y) * containerHeight}
-          {@const c1x = outline.corners[1].x * containerWidth}
-          {@const c1y = (1 - outline.corners[1].y) * containerHeight}
-          {@const c2x = outline.corners[2].x * containerWidth}
-          {@const c2y = (1 - outline.corners[2].y) * containerHeight}
-          {@const c3x = outline.corners[3].x * containerWidth}
-          {@const c3y = (1 - outline.corners[3].y) * containerHeight}
+      <!-- Other layers' outlines while dragging a boundary point: what it can snap to -->
+      {#if dragging}
+        {#each snapOutlines as outline (outline.layerId)}
           <polygon
-            points="{c0x},{c0y} {c1x},{c1y} {c2x},{c2y} {c3x},{c3y}"
+            points={outline.path.map((p) => `${p.x * containerWidth},${(1 - p.y) * containerHeight}`).join(' ')}
             fill="none"
             stroke="rgba(100, 200, 255, 0.3)"
             stroke-width="1"
@@ -521,17 +498,24 @@
         {/each}
       {/if}
 
-      <!-- Cross-layer snap indicator -->
-      {#if activeSnapTarget}
-        {@const snapPxX = activeSnapTarget.point.x * containerWidth}
-        {@const snapPxY = (1 - activeSnapTarget.point.y) * containerHeight}
-        {#if activeSnapTarget.type === 'corner'}
+      <!-- Snap indicator -->
+      {#if activeSnapHit}
+        {@const snapPxX = activeSnapHit.point.x * containerWidth}
+        {@const snapPxY = (1 - activeSnapHit.point.y) * containerHeight}
+        {#if activeSnapHit.kind === 'corner'}
           <circle cx={snapPxX} cy={snapPxY} r="8" fill="none" stroke="#00ff88" stroke-width="2.5" class="snap-indicator" />
           <circle cx={snapPxX} cy={snapPxY} r="3" fill="#00ff88" />
-        {:else}
+        {:else if activeSnapHit.kind === 'edge'}
           <circle cx={snapPxX} cy={snapPxY} r="6" fill="none" stroke="#00ff88" stroke-width="2" class="snap-indicator" />
           <line x1={snapPxX - 8} y1={snapPxY} x2={snapPxX + 8} y2={snapPxY} stroke="#00ff88" stroke-width="1.5" />
           <line x1={snapPxX} y1={snapPxY - 8} x2={snapPxX} y2={snapPxY + 8} stroke="#00ff88" stroke-width="1.5" />
+        {:else}
+          {#if activeSnapHit.lineX !== undefined}
+            <line x1={activeSnapHit.lineX * containerWidth} y1="0" x2={activeSnapHit.lineX * containerWidth} y2={containerHeight} stroke="#00ff88" stroke-width="1" stroke-dasharray="6,4" opacity="0.8" />
+          {/if}
+          {#if activeSnapHit.lineY !== undefined}
+            <line x1="0" y1={(1 - activeSnapHit.lineY) * containerHeight} x2={containerWidth} y2={(1 - activeSnapHit.lineY) * containerHeight} stroke="#00ff88" stroke-width="1" stroke-dasharray="6,4" opacity="0.8" />
+          {/if}
         {/if}
       {/if}
     </svg>

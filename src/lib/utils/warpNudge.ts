@@ -24,3 +24,8 @@ export function normalizedWarpNudge(
     y: step / Math.max(1, projectHeight),
   };
 }
+
+/** The project-pixel grid a mouse drag lands on, or null for 'free'. */
+export function warpDragStepPixels(granularity: WarpGranularity | undefined): number | null {
+  return granularity === 'free' ? null : warpNudgeStepPixels(granularity);
+}
