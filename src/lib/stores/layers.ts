@@ -6808,10 +6808,15 @@ void main() {
         // project. Deferred via dynamic import + microtask so the
         // surface module — which lazily loads here — doesn't introduce
         // a circular dep at module-evaluation time.
-        if (importedProject.surfaces?.length) {
+        //
+        // A project being opened always hydrates, with no surfaces if it
+        // has none. Skipping that left the previous project's surfaces in
+        // the store, and the store mirrors itself back into the project on
+        // its next change, so they turned up in the new project too.
+        if (openingFile || importedProject.surfaces?.length) {
           void import('./surface').then(({ surfaceStore }) => {
             queueMicrotask(() => surfaceStore.hydrateFromProject(
-              importedProject.surfaces!,
+              importedProject.surfaces ?? [],
               importedProject.activeSurfaceId ?? null,
             ));
           });

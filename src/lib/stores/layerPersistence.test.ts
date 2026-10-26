@@ -2226,3 +2226,25 @@ describe('VJ crossfader position', () => {
     stop();
   });
 });
+
+describe('Stage Designer surfaces belong to the project that is open', () => {
+  const surface = (id: string, name: string) => ({ id, name, width: 1920, height: 1080, slices: [] });
+  const payload = (extra: Record<string, unknown>) => ({
+    version: '2.1.10',
+    project: { id: 'stage', name: 'Stage', width: 1920, height: 1080, layers: [], ...extra },
+  });
+
+  it('opens a project with no surfaces with none, not the previous project\'s', async () => {
+    const { surfaceStore } = await import('./surface');
+    expect(layers.project.importProject(payload({ surfaces: [surface('surf-a', 'Stage A')], activeSurfaceId: 'surf-a' }))).toBe(true);
+    await vi.waitFor(() => expect(get(surfaceStore).surfaces.map((s) => s.id)).toEqual(['surf-a']));
+
+    expect(layers.project.importProject(payload({}))).toBe(true);
+    await vi.waitFor(() => expect(get(surfaceStore).surfaces).toEqual([]));
+    expect(get(surfaceStore).activeSurfaceId).toBeNull();
+    // The store mirrors itself into the project on its next change; the old
+    // surfaces must not come back with it.
+    surfaceStore.createSurface('New stage');
+    await vi.waitFor(() => expect((get(layers.project).surfaces ?? []).map((s: any) => s.name)).toEqual(['New stage']));
+  });
+});
