@@ -25,6 +25,7 @@
   import { get } from 'svelte/store';
   import { project } from '../stores/layers';
   import { settings } from '../stores/settings';
+  import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { arrowDirection, classifyKeyTarget, nudgeStepPixels, projectPixelOffset } from '../utils/mappingNudge';
   import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
@@ -133,12 +134,19 @@
     removeDragListeners();
   }
 
-  function onMouseUp() {
+  /** A drag ends as one undo step (history skips it if nothing moved). */
+  function endDrag() {
+    const wasDragging = drag !== null;
     cancelDrag();
+    if (wasDragging) recordDiscreteAction();
+  }
+
+  function onMouseUp() {
+    endDrag();
   }
 
   function onVisibilityChange() {
-    if (document.hidden) cancelDrag();
+    if (document.hidden) endDrag();
   }
 
   function isTextEditingTarget(target: EventTarget | null) {
@@ -175,7 +183,7 @@
         selectedCorner = null;
         selectedMeshPoint = null;
       }
-      cancelDrag();
+      endDrag();
       return;
     }
 
@@ -194,7 +202,15 @@
     e.preventDefault();
     e.stopPropagation();
     noteAltArrow(e);
+    nudgeWarp(dx, dy, e.altKey);
+    // A held key is one undo step, taken when it comes up (App.svelte
+    // flushes on arrow keyup) or once the presses stop.
+    scheduleHistorySnapshot('master-warp-nudge');
+  }
 
+  /** Arrow-key nudge: the picked corner, mesh point or tangent handle (Alt
+   *  unlinks a handle), or the whole warp when nothing is picked. */
+  function nudgeWarp(dx: number, dy: number, alt: boolean) {
     if (mode === 'corners' && selectedCorner) {
       const current = corners[selectedCorner];
       settings.setMasterWarp({
@@ -215,7 +231,7 @@
       if (selectedTangent && meshGrid.bezier && meshTangentSides(meshGrid, row, col).includes(selectedTangent)) {
         const t = resolveMeshTangents(meshGrid, row, col)[selectedTangent];
         const end = meshLocalToNorm(p.x + t.x, p.y + t.y);
-        moveTangentEnd(meshGrid, row, col, selectedTangent, { x: end.x + dx, y: end.y + dy }, e.altKey);
+        moveTangentEnd(meshGrid, row, col, selectedTangent, { x: end.x + dx, y: end.y + dy }, alt);
         return;
       }
       const curNorm = meshLocalToNorm(p.x, p.y);
@@ -232,14 +248,14 @@
 
   onMount(() => {
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('blur', cancelDrag);
+    window.addEventListener('blur', endDrag);
     document.addEventListener('visibilitychange', onVisibilityChange);
   });
 
   onDestroy(() => {
     cancelDrag();
     window.removeEventListener('keydown', handleKeyDown);
-    window.removeEventListener('blur', cancelDrag);
+    window.removeEventListener('blur', endDrag);
     document.removeEventListener('visibilitychange', onVisibilityChange);
   });
 
@@ -261,6 +277,7 @@
     const grid = meshGrid;
     if (!grid) return;
     settings.setMasterWarp({ meshGrid: withMeshPointTangents(grid, row, col, meshTangentsAfterStraighten(grid, row, col, side)) });
+    recordDiscreteAction();
   }
 
   function onMouseMove(e: MouseEvent) {

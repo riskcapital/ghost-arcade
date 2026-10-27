@@ -1025,6 +1025,16 @@ export const PROJECT_OUTPUT_SETTING_KEYS = PROJECT_OUTPUT_KEYS.filter(
   (key) => key !== 'slices' && key !== 'masterCanvasWidth' && key !== 'masterCanvasHeight' && key !== 'masterWarp',
 );
 
+/**
+ * The part of the output stage that undo covers: the Screens (crop, warp,
+ * masks, calibration, blend, grade) and the Master Warp, the geometry an
+ * operator drags on the canvas. Blackout and the test pattern are
+ * live-performance switches and stay out, so an undo can never flip a
+ * blackout; so do the dome and the output grade, which are set, not
+ * sculpted.
+ */
+export const OUTPUT_HISTORY_KEYS = ['slices', 'masterWarp'] as const satisfies readonly OutputStageKey[];
+
 function createDefaultSettings(): AppSettings {
   // Find best supported format
   const supported = getSupportedFormats().filter(f => f.supported);
@@ -1842,6 +1852,16 @@ function createSettingsStore() {
       const snapshot: Record<string, unknown> = {};
       for (const key of OUTPUT_STAGE_KEYS) snapshot[key] = out[key];
       return structuredClone(snapshot) as OutputStageSnapshot;
+    },
+
+    /** The undoable part of the output stage (OUTPUT_HISTORY_KEYS). Not
+     *  cloned: history serializes it on the spot, and the store replaces
+     *  these values on every edit rather than mutating them. */
+    captureOutputHistory(): OutputStageSnapshot {
+      const out = get({ subscribe }).output as unknown as Record<string, unknown>;
+      const snapshot: Record<string, unknown> = {};
+      for (const key of OUTPUT_HISTORY_KEYS) snapshot[key] = out[key];
+      return snapshot as OutputStageSnapshot;
     },
 
     /** Apply a snapshot taken by captureOutputStage. */

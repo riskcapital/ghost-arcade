@@ -37,6 +37,7 @@ import type { BezierPoint, Point2D } from '../types';
 import { maxOutputSlices } from './license';
 import type { Effect, EffectType } from '../types';
 import { getDefaultEffectParams } from '../renderer/effects';
+import { recordDiscreteAction } from './historyHooks';
 
 // Derived store mirroring $settings.output.slices. Components subscribe
 // to this for reactive screen-list updates.
@@ -133,6 +134,10 @@ function clamp01(value: number): number {
 }
 
 // ─── Lifecycle ─────────────────────────────────────────────────────────
+// Every discrete action records one undo step. update(), updateMask(),
+// updateMaskPoint() and setMaskPointHandles() do not: drags and sliders call
+// them continuously and record where the gesture ends (the canvas handles at
+// mouseup, the inspector debounced).
 export const screenActions = {
   /** Add a new screen. Defaults to a full-canvas rectangle; the operator
    *  drags the warp handles to position it. Returns the new screen's id
@@ -155,6 +160,7 @@ export const screenActions = {
       resized.push(createDefaultSlice(id, name, name, (count - 1) / count, 1 / count));
       return resized;
     });
+    recordDiscreteAction();
     return id;
   },
 
@@ -168,6 +174,7 @@ export const screenActions = {
         ? filtered.map((sc, i) => sc.projectorCalibration?.enabled || sc.overlapBand?.enabled ? sc : ({ ...sc, cropX: i / count, cropW: 1 / count }))
         : [];
     });
+    recordDiscreteAction();
     const sel = get(selectedScreenId);
     if (sel === screenId) selectedScreenId.set(null);
   },
@@ -193,6 +200,7 @@ export const screenActions = {
       };
       return [...slices, copy];
     });
+    recordDiscreteAction();
     return id;
   },
 
@@ -212,6 +220,7 @@ export const screenActions = {
       arr.splice(toIdx, 0, moved);
       return arr;
     });
+    recordDiscreteAction();
   },
 
   /** Apply a layout preset — replaces the current screens. Used by
@@ -241,6 +250,7 @@ export const screenActions = {
       ];
     }
     update(() => next.slice(0, max));
+    recordDiscreteAction();
   },
 
   // ─── Warp mode flip ───────────────────────────────────────────────────
@@ -255,6 +265,7 @@ export const screenActions = {
     if (mode === 'corners' && !s.corners) patch.corners = cornersFromRect(s);
     if (mode === 'mesh' && !s.meshGrid) patch.meshGrid = meshFromRect(s);
     this.update(screenId, patch);
+    recordDiscreteAction();
   },
 
   /** Reset corners / mesh to a flat rect so the screen visually
@@ -268,6 +279,7 @@ export const screenActions = {
       corners: cornersFromRect(s),
       meshGrid: { ...meshFromRect(s), ...bezier },
     });
+    recordDiscreteAction();
   },
 
   /** Bezier mesh: curved cell edges shaped by per-point tangent handles.
@@ -276,6 +288,7 @@ export const screenActions = {
     const s = get(screens).find(sc => sc.id === screenId);
     if (!s?.meshGrid) return;
     this.update(screenId, { meshGrid: { ...s.meshGrid, bezier } });
+    recordDiscreteAction();
   },
 
   // ─── Effect chain ─────────────────────────────────────────────────────
@@ -345,6 +358,7 @@ export const screenActions = {
       invert: false,
     };
     this.update(screenId, { masks: [...cloneMasks(s.masks), mask] });
+    recordDiscreteAction();
     selectedScreenMaskId.set(id);
     screenMaskPlacing.set(true);
     return id;
@@ -354,6 +368,7 @@ export const screenActions = {
     const s = get(screens).find(sc => sc.id === screenId);
     if (!s) return;
     this.update(screenId, { masks: cloneMasks(s.masks).filter(m => m.id !== maskId) });
+    recordDiscreteAction();
     if (get(selectedScreenMaskId) === maskId) {
       selectedScreenMaskId.set(null);
       screenMaskPlacing.set(false);
@@ -401,6 +416,7 @@ export const screenActions = {
         return { ...m, points };
       }),
     });
+    recordDiscreteAction();
   },
 
   /** Set or clear the curve handles of one vertex. A side passed as null
@@ -434,7 +450,8 @@ export const screenActions = {
     if (!mask || !p) return;
     if (p.cpIn || p.cpOut) {
       this.setMaskPointHandles(screenId, maskId, index, { cpIn: null, cpOut: null });
-        return;
+      recordDiscreteAction();
+      return;
     }
     const count = mask.points.length;
     const prev = mask.points[(index - 1 + count) % count];
@@ -445,6 +462,7 @@ export const screenActions = {
       cpIn: { x: p.x - dx, y: p.y - dy },
       cpOut: { x: p.x + dx, y: p.y + dy },
     });
+    recordDiscreteAction();
   },
 
   /** Append a vertex, or insert it before `index` (edge midpoint
@@ -461,6 +479,7 @@ export const screenActions = {
         return { ...m, points };
       }),
     });
+    recordDiscreteAction();
   },
 
   /** Move a vertex. Its curve handles travel with it, so the curve keeps
@@ -490,6 +509,7 @@ export const screenActions = {
         ? { ...m, points: m.points.filter((_, i) => i !== index) }
         : m)),
     });
+    recordDiscreteAction();
   },
   // Per-Screen output-warp actions removed — geometric warping is now
   // done globally by the Master Warp; a Screen is just a rect slice.

@@ -12,6 +12,7 @@
   import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
   import { settings, identityOutputMesh, masterWarpIsActive, type OutputSettings, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
+  import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { displayFingerprint, resolveSavedDisplay } from '$lib/output/displayMatch';
   import { showToast } from '../stores/errorToast';
@@ -228,6 +229,7 @@
     } else {
       settings.setMasterWarp({ enabled: false });
     }
+    recordDiscreteAction();
   }
   function setMasterMode(mode: 'corners' | 'mesh') {
     // Mesh needs a control lattice to show handles, so seed an identity
@@ -238,6 +240,7 @@
     } else {
       settings.setMasterWarp({ mode });
     }
+    recordDiscreteAction();
   }
   function resetMasterWarp() {
     // Back to identity. Corners: clear so nothing is stored (handles
@@ -247,12 +250,14 @@
       const bezier = masterWarp.meshGrid?.bezier ? { bezier: true } : {};
       settings.setMasterWarp({ meshGrid: { ...identityOutputMesh(), ...bezier } });
     } else settings.setMasterWarp({ corners: undefined });
+    recordDiscreteAction();
   }
   /** Bezier mesh: curved cell edges shaped by tangent handles on the
    *  selected point. Off keeps the tangents but renders straight. */
   function setMasterBezier(bezier: boolean) {
     if (!masterWarp.meshGrid) return;
     settings.setMasterWarp({ meshGrid: { ...masterWarp.meshGrid, bezier } });
+    recordDiscreteAction();
   }
 
   // ─── Dome projection ────────────────────────────────────────────────
@@ -350,7 +355,7 @@
         masterHeight={$settings.output.masterCanvasHeight}
         selectedId={$selectedScreenId}
         onSelect={(id) => selectedScreenId.set(id)}
-        onChange={(id, partial) => screenActions.update(id, partial)}
+        onChange={(id, partial) => { screenActions.update(id, partial); scheduleHistorySnapshot(`screen:${id}:${Object.keys(partial).sort().join(',')}`); }}
       />
     </div>
 
@@ -391,7 +396,7 @@
             class="row-enable"
             checked={s.enabled}
             onclick={(e) => e.stopPropagation()}
-            onchange={(e) => screenActions.update(s.id, { enabled: (e.target as HTMLInputElement).checked })}
+            onchange={(e) => { screenActions.update(s.id, { enabled: (e.target as HTMLInputElement).checked }); recordDiscreteAction(); }}
           />
           <span class="row-name">{s.name}</span>
           <span class="row-target">

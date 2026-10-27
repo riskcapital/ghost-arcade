@@ -1,5 +1,6 @@
 <script lang="ts">
   import { screenSetups } from '../stores/screenSetups';
+  import { recordDiscreteAction } from '../stores/historyHooks';
   let name = '';
   let feedback = '';
   function perform(action: () => unknown, message: string) {
@@ -23,7 +24,7 @@
     <div class="entry">
       <strong>{entry.name}</strong><span>{entry.summary}</span>
       <div class="actions">
-        <button onclick={() => perform(() => screenSetups.load(entry.id), `Loaded ${entry.name}.`)}>Load</button>
+        <button onclick={() => perform(() => { screenSetups.load(entry.id); recordDiscreteAction(); }, `Loaded ${entry.name}.`)}>Load</button>
         <button onclick={() => perform(() => screenSetups.setDefaultFromSaved(entry.id), `Default: ${entry.name}.`)}>Default</button>
         <button aria-label={`Delete ${entry.name}`} onclick={() => perform(() => screenSetups.remove(entry.id), 'Setup removed.')}>Delete</button>
       </div>

@@ -47,13 +47,15 @@
    *
    * Arrow keys: the corner, mesh point or tangent clicked last moves one
    * project pixel (Shift ten, Alt a tenth; Alt moves a selected tangent on
-   * its own); with none the whole screen moves.
+   * its own); with none the whole screen moves. A held key is one undo step,
+   * and so is a whole drag.
    */
   import { onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
   import type { OutputSlice, ScreenMask } from '../stores/settings';
   import { project } from '../stores/layers';
   import { settings, screenMaskIsActive } from '../stores/settings';
+  import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { arrowDirection, classifyKeyTarget, nudgeStepPixels, projectPixelOffset } from '../utils/mappingNudge';
   import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
@@ -198,12 +200,19 @@
     removeDragListeners();
   }
 
-  function onMouseUp(_e: MouseEvent) {
+  /** A drag ends as one undo step (history skips it if nothing moved). */
+  function endDrag() {
+    const wasDragging = drag !== null;
     cancelDrag();
+    if (wasDragging) recordDiscreteAction();
+  }
+
+  function onMouseUp(_e: MouseEvent) {
+    endDrag();
   }
 
   function onVisibilityChange() {
-    if (document.hidden) cancelDrag();
+    if (document.hidden) endDrag();
   }
 
   function isTextEditingTarget(target: EventTarget | null): boolean {
@@ -286,6 +295,7 @@
     const grid = $screens.find(s => s.id === sliceId)?.meshGrid;
     if (!grid) return;
     screenActions.update(sliceId, { meshGrid: withMeshPointTangents(grid, row, col, meshTangentsAfterStraighten(grid, row, col, side)) });
+    recordDiscreteAction();
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -305,7 +315,7 @@
           selectedMeshPoint = null;
           selectedCorner = null;
         }
-        cancelDrag();
+        endDrag();
       }
       return;
     }
@@ -327,6 +337,9 @@
     e.stopPropagation();
     noteAltArrow(e);
     nudgeSelectedSlice(offset.x, offset.y, e.altKey && tangentPicked);
+    // A held key is one step, taken when it comes up (App.svelte flushes on
+    // arrow keyup) or once the presses stop.
+    scheduleHistorySnapshot(`screen-nudge:${$selectedScreenId}`);
   }
 
   // Picking a screen in the panel hands it the arrow keys.
@@ -347,7 +360,7 @@
   });
 
   function handleWindowBlur() {
-    cancelDrag();
+    endDrag();
   }
 
   // ─── Mouse-move dispatcher ────────────────────────────────────────

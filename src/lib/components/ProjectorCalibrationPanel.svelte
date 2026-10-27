@@ -1,13 +1,18 @@
 <script lang="ts">
   import type { OutputSlice } from '../stores/settings';
   import { screens, screenActions } from '../stores/screens';
+  import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { defaultProjectorCorners, defaultOverlap, inverseProjectorHomography } from '../output/projectorCalibration';
   let { screen }: { screen: OutputSlice } = $props();
   let partner = $state('');
   const calibration = $derived(screen.projectorCalibration ?? { enabled: false, corners: defaultProjectorCorners() });
   const band = $derived(screen.overlapBand ?? defaultOverlap());
   const valid = $derived(!!inverseProjectorHomography(calibration.corners));
-  function update(p: Partial<OutputSlice>) { screenActions.update(screen.id, p); }
+  // Undoable: typing in a field settles into one step, a corner drag is one.
+  function update(p: Partial<OutputSlice>) {
+    screenActions.update(screen.id, p);
+    scheduleHistorySnapshot(`screen:${screen.id}:${Object.keys(p).sort().join(',')}`);
+  }
   function coordinate(index: number, axis: 'x'|'y', value: number) {
     if (!Number.isFinite(value)) return;
     const corners = calibration.corners.map(p => ({...p}));
@@ -24,7 +29,7 @@
       corners[index] = {x:Math.max(-1,Math.min(2,(e.clientX-box.left)/box.width*1.2-0.1)), y:Math.max(-1,Math.min(2,(e.clientY-box.top)/box.height*1.2-0.1))};
       update({projectorCalibration:{...calibration,corners}});
     };
-    const end = () => { target.removeEventListener('pointermove',move); target.removeEventListener('pointerup',end); target.removeEventListener('pointercancel',end); };
+    const end = () => { target.removeEventListener('pointermove',move); target.removeEventListener('pointerup',end); target.removeEventListener('pointercancel',end); recordDiscreteAction(); };
     target.addEventListener('pointermove',move); target.addEventListener('pointerup',end); target.addEventListener('pointercancel',end);
   }
   function pair() {
@@ -35,6 +40,7 @@
     const base={cropY:0,cropH:1,warpMode:'rect' as const,edgeBlendLeft:0,edgeBlendRight:0,edgeBlendTop:0,edgeBlendBottom:0};
     screenActions.update(left,{...base,cropX:0,cropW:end,overlapBand:{...band,enabled:true,side:'left'}});
     screenActions.update(right,{...base,cropX:start,cropW:1-start,overlapBand:{...band,enabled:true,side:'right'}});
+    recordDiscreteAction();
   }
 </script>
 <section class="calibration">

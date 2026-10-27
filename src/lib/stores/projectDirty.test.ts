@@ -19,6 +19,7 @@ let keyframes: typeof import('./keyframeTimeline');
 let settingsModule: typeof import('./settings');
 let macrosModule: typeof import('./macros');
 let appHistory: typeof import('./appHistory');
+let screens: typeof import('./screens');
 
 function installDomShim(): void {
   const storage = new Map<string, string>();
@@ -150,6 +151,7 @@ describe('with the real stores', () => {
     settingsModule = await import('./settings');
     macrosModule = await import('./macros');
     appHistory = await import('./appHistory');
+    screens = await import('./screens');
   });
 
   const snapshot = (): ProjectDirtySnapshot => ({
@@ -228,11 +230,21 @@ describe('with the real stores', () => {
     expect(dirty(saved)).toBe(false);
   });
 
-  it('counts Screens, which undo does not cover', () => {
+  it('counts a Screen edit, and is clean again once it is undone', () => {
+    const saved = snapshot();
+    screens.screenActions.add();
+    expect(dirty(saved)).toBe(true);
+    undo();
+    expect(dirty(saved)).toBe(false);
+  });
+
+  it('counts a Screen change made without a step (a Stage 3D sync)', () => {
     const saved = snapshot();
     const slices = get(settingsModule.settings).output.slices;
     settingsModule.settings.update((s) => ({ ...s, output: { ...s.output, slices: [...slices, { id: 'screen-x' } as any] } }));
     expect(dirty(saved)).toBe(true);
+    expect(get(historyModule.history).past).toHaveLength(0);
     settingsModule.settings.update((s) => ({ ...s, output: { ...s.output, slices } }));
+    expect(dirty(saved)).toBe(false);
   });
 });

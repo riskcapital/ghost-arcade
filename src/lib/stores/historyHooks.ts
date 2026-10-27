@@ -157,10 +157,11 @@ export function hasPendingHistorySnapshot(): boolean {
 /**
  * Suppress recording while a step is being restored.
  *
- * Undo and redo put keyframes back with keyframeTimeline.importAll(), and
- * the keyframe store records its own edits; without this guard a restore
- * could record the state it just applied as a NEW step, poisoning the redo
- * stack and making a second undo a no-op.
+ * Undo and redo put keyframes back with keyframeTimeline.importAll() and the
+ * Screens with settings.applyOutputStage(). The keyframe store records its
+ * own edits; without this guard a restore could record the state it just
+ * applied as a NEW step, poisoning the redo stack and making a second undo
+ * a no-op.
  */
 let _restoreDepth = 0;
 export function beginHistoryRestore() { _restoreDepth += 1; }
