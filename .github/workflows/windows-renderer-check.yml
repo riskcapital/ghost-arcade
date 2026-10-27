@@ -12,6 +12,9 @@ on:
       - 'electron/video-converter-*'
       - 'scripts/ensure-windows-ffmpeg.mjs'
       - 'build-resources/windows-ffmpeg.json'
+      - '.cargo/**'
+      - 'scripts/windows-core-imports.mjs'
+      - 'scripts/native-core-start-check.mjs'
       - 'build-resources/beforePack.cjs'
       - 'build-resources/afterPack.cjs'
       - 'electron-builder.yml'
@@ -55,6 +58,39 @@ jobs:
         working-directory: electron/native
       - name: Test the Screen and deck monitor pumps
         run: npx vitest run src/lib/output/sliceNativePump.test.ts src/lib/renderer/deckMonitorPump.test.ts src/lib/output/slicePresentation.test.ts
+  core-starts-anywhere:
+    # The release core must start on any Windows 10 or 11 PC. Built the way
+    # the release builds it (npm run native:build: cargo --release plus the
+    # DXC DLLs beside it), then its import table is checked and it is started.
+    # The C runtime is linked in (.cargo/config.toml) and Media Foundation is
+    # loaded on first use, so neither the Visual C++ Redistributable nor the
+    # Media Feature Pack is needed. A hosted runner has the Redistributable
+    # installed, so the import check is what proves it; starting the core
+    # proves the static runtime works.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: windows-core-release-${{ hashFiles('native-renderer/Cargo.lock', '.cargo/config.toml') }}
+      - name: Build the render core as the release does
+        run: npm run native:build
+      - name: Check what the core needs to start
+        run: node scripts/windows-core-imports.mjs native-renderer/target/release/ghost-render-core.exe --info native-renderer/target/release/dxcompiler.dll native-renderer/target/release/dxil.dll
+      - name: Start the core
+        run: node scripts/native-core-start-check.mjs
+      - name: Test the import check
+        run: npx vitest run src/lib/renderer/windowsCoreImports.test.ts src/lib/renderer/nativeCoreExit.test.ts
   compile-and-unit-tests:
     runs-on: windows-2022
     steps:

@@ -133,6 +133,15 @@ jobs:
       - name: Build native render core
         run: npm run native:build
 
+      # The core must start on any Windows 10 or 11 PC: no Visual C++ runtime
+      # (linked in, see .cargo/config.toml) and no Media Foundation import
+      # (Windows N and KN editions lack it). A missing DLL stops it with
+      # 0xC0000135 before it can report anything.
+      - name: Check the render core starts without extra Windows components
+        run: |
+          node scripts/windows-core-imports.mjs native-renderer/target/release/ghost-render-core.exe --info native-renderer/target/release/dxcompiler.dll native-renderer/target/release/dxil.dll
+          node scripts/native-core-start-check.mjs
+
       - name: Build Electron (Windows NSIS, signed via Azure Trusted Signing)
         # --publish never disables electron-builder's auto-publish step. With
         # GH_TOKEN in env it would otherwise try to push assets to the SOURCE

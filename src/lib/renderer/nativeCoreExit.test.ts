@@ -32,10 +32,12 @@ function brokerFor(executable: string) {
 }
 
 describe('render core exit reporting', () => {
-  it('names a missing Windows DLL and points at the Media Feature Pack', () => {
+  it('names a missing Windows DLL and points at Windows updates', () => {
     const failure = describeNativeCoreExit({ code: 3221225781, signal: null, platform: 'win32' });
     expect(failure.message).toContain('0xC0000135');
-    expect(failure.hint).toContain('Media Feature Pack');
+    expect(failure.hint).toContain('Windows updates');
+    // The core needs neither any more, so the hint must not send people after them.
+    expect(failure.hint).not.toMatch(/Visual C\+\+|Media Feature Pack/);
     // Node reports the same NTSTATUS as a negative number on some paths.
     expect(describeNativeCoreExit({ code: -1073741515, platform: 'win32' }).message).toContain('0xC0000135');
   });
