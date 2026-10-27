@@ -47,14 +47,15 @@ export function liveSetupWords(platform: LivePlatform, versions: string[] | null
   const major = liveMajor(newest);
   const mac = platform === 'mac';
 
+  // Live 12 renamed Preferences to Settings, on both platforms; the menu is
+  // "Live" on macOS and "Options" on Windows.
+  const menuName = mac ? 'Live' : 'Options';
   let menu: string[];
   let menuAlternative: string | null = null;
-  if (mac) {
-    menu = ['Live', 'Settings…'];
-  } else if (major !== null && major >= 12) {
-    menu = ['Options', 'Settings…'];
+  if (major !== null && major >= 12) {
+    menu = [menuName, 'Settings…'];
   } else {
-    menu = ['Options', 'Preferences…'];
+    menu = [menuName, 'Preferences…'];
     if (major === null) menuAlternative = 'Settings… in Live 12';
   }
 

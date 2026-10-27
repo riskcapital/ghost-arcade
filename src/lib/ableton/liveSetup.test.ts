@@ -17,11 +17,12 @@ describe('Live setup words', () => {
     expect(twelve.version).toBe('Live 12.1.5');
   });
 
-  it('macOS: Live → Settings, with the Cmd shortcut', () => {
+  it('macOS: Live → Preferences before Live 12, Settings after, with the Cmd shortcut', () => {
     const mac = liveSetupWords('mac', ['10.1.43']);
-    expect(mac.menu).toEqual(['Live', 'Settings…']);
+    expect(mac.menu).toEqual(['Live', 'Preferences…']);
     expect(mac.shortcut).toEqual(['⌘', ',']);
     expect(mac.tab).toBe('Link / MIDI');
+    expect(liveSetupWords('mac', ['12.1']).menu).toEqual(['Live', 'Settings…']);
   });
 
   it('no Live found: names both spellings', () => {

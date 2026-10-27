@@ -164,7 +164,10 @@ function decodeXml(value) {
 function installedLiveVersions(app) {
   const versions = [];
   for (const folder of livePreferenceFolders(app)) {
-    const match = folder.split(/[\\/]/).map((part) => /^Live (\d+(?:\.\d+)*)/.exec(part)).find(Boolean);
+    // The nearest "Live x.y" folder is Live's own (…\Live 10.1.43\Preferences
+    // on Windows, …/Live 12.1 on macOS), not a user folder above it that
+    // happens to be called "Live 2024".
+    const match = folder.split(/[\\/]/).reverse().map((part) => /^Live (\d+(?:\.\d+)*)/.exec(part)).find(Boolean);
     if (match && !versions.includes(match[1])) versions.push(match[1]);
   }
   return versions;
