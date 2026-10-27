@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Start the built render core, ask it for its status, and shut it down.
  *

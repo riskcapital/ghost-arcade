@@ -72,12 +72,26 @@ describe('render core imports on Windows', () => {
     expect(coreImportProblems(['KERNEL32.dll', 'USER32.dll', 'd3d12.dll', 'dxgi.dll', 'ole32.dll', 'msvcrt.dll', 'ntdll.dll'])).toEqual([]);
   });
 
-  it('fails a core that needs the Visual C++ runtime', () => {
-    for (const name of ['VCRUNTIME140.dll', 'vcruntime140_1.dll', 'MSVCP140.dll', 'ucrtbase.dll', 'api-ms-win-crt-runtime-l1-1-0.dll', 'VCRUNTIME140D.dll']) {
-      const problems = coreImportProblems(['KERNEL32.dll', name]);
+  it('fails a core that needs the Visual C++ Redistributable', () => {
+    for (const name of ['VCRUNTIME140.dll', 'vcruntime140_1.dll', 'MSVCP140.dll', 'VCRUNTIME140D.dll', 'ucrtbased.dll']) {
+      const problems = coreImportProblems(['KERNEL32.dll', 'api-ms-win-crt-heap-l1-1-0.dll', name]);
       expect(problems, name).toHaveLength(1);
       expect(problems[0]).toContain('Visual C++ Redistributable');
     }
+  });
+
+  it('fails a core that stopped building the C runtime in', () => {
+    // The Universal C runtime ships with Windows 10 and 11, so this alone
+    // would still start; it means +crt-static was lost.
+    for (const name of ['ucrtbase.dll', 'api-ms-win-crt-runtime-l1-1-0.dll']) {
+      const problems = coreImportProblems(['KERNEL32.dll', name]);
+      expect(problems, name).toHaveLength(1);
+      expect(problems[0]).toContain('+crt-static');
+    }
+  });
+
+  it('allows the Windows API sets that are not the C runtime', () => {
+    expect(coreImportProblems(['api-ms-win-core-synch-l1-2-0.dll', 'api-ms-win-core-winrt-error-l1-1-0.dll', 'combase.dll'])).toEqual([]);
   });
 
   it('fails a core that imports Media Foundation, which N and KN editions lack', () => {
