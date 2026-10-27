@@ -56,6 +56,7 @@
   import { settings, screenMaskIsActive } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { arrowDirection, classifyKeyTarget, nudgeStepPixels, projectPixelOffset } from '../utils/mappingNudge';
+  import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
   import { noteAltArrow } from '../utils/altArrowGuard';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
@@ -108,10 +109,13 @@
   let drag: {
     sliceId: string;
     kind: DragKind;
-    startClientX: number;
-    startClientY: number;
     startSlice: OutputSlice;
   } | null = $state(null);
+
+  // Pointer travel since the press (Shift: a tenth as far). Every drag
+  // moves its points from where they were by this, so a grab never moves
+  // them.
+  let dragTravel: DragTravel | null = null;
 
   let containerEl: HTMLDivElement | null = $state(null);
 
@@ -153,8 +157,6 @@
     drag = {
       sliceId,
       kind,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
       // Deep-clone the slice's mutable warp data so we can apply
       // deltas to the snapshot, not to a moving target.
       startSlice: {
@@ -181,6 +183,7 @@
       selectedCorner = null;
     }
     selectedScreenId.set(sliceId);
+    dragTravel = beginDragTravel(e.clientX, e.clientY);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   }
@@ -350,12 +353,12 @@
   // ─── Mouse-move dispatcher ────────────────────────────────────────
   function onMouseMove(e: MouseEvent) {
     if (!drag) return;
-    // Convert raw clientX/Y delta into normalized 0..1 against the
-    // container. Zoom-correct so dragging feels 1:1 with screen px
-    // even when the viewport is zoomed in. Same recipe as
-    // WarpHandles:367-373.
-    const dxN = ((e.clientX - drag.startClientX) / zoom) / Math.max(1, containerWidth);
-    const dyN = ((e.clientY - drag.startClientY) / zoom) / Math.max(1, containerHeight);
+    // Pointer travel since the press, normalized 0..1 against the
+    // container and zoom-corrected so dragging feels 1:1 with screen px
+    // even when the viewport is zoomed in. Shift moves a tenth as far.
+    // Screens keep y down.
+    dragTravel = advanceDragTravel(dragTravel ?? beginDragTravel(e.clientX, e.clientY), e.clientX, e.clientY, e.shiftKey);
+    const { x: dxN, y: dyN } = dragTravelNormalized(dragTravel, { width: containerWidth, height: containerHeight, zoom }, false);
     const k = drag.kind;
     const id = drag.sliceId;
     const init = drag.startSlice;

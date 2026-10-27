@@ -37,6 +37,7 @@
   import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
   import { arrowDirection, classifyKeyTarget } from '../utils/mappingNudge';
   import { nudgeSlicePolygon, type SliceVertexRef } from '../utils/stageNudge';
+  import { advanceDragTravel, beginDragTravel, type DragTravel } from '../utils/mappingSnap';
   import { noteAltArrow } from '../utils/altArrowGuard';
 
   // ── Canvas pan/zoom state ─────────────────────────────────
@@ -82,9 +83,19 @@
 	    | { kind: 'sliceRotate'; sliceId: string; centroid: Point2D; startAngle: number; startPolygon: BezierPoint[] }
 	    | { kind: 'sliceScale';  sliceId: string; centroid: Point2D; startDist: number; startPolygon: BezierPoint[] };
 	  let vertexDrag: VertexDrag | null = null;
-	  function beginVertexDrag(next: VertexDrag) {
+	  // An anchor, handle or slice move drag moves the points from where they
+	  // were at the press by the pointer's travel (Shift: a tenth as far), so
+	  // grabbing an anchor off its centre never moves it.
+	  let vertexDragTravel: DragTravel | null = null;
+	  let vertexDragStart: BezierPoint[] | null = null;
+	  function beginVertexDrag(next: VertexDrag, e?: MouseEvent) {
 	    surfaceStore.beginHistoryGesture();
 	    vertexDrag = next;
+	    vertexDragTravel = e ? beginDragTravel(e.clientX, e.clientY) : null;
+	    const slice = next.kind === 'anchor' || next.kind === 'cpIn' || next.kind === 'cpOut'
+	      ? $activeSurfaceSlices.find(sl => sl.id === next.sliceId)
+	      : null;
+	    vertexDragStart = slice ? clonePolygon(slice.polygon) : null;
 	    // The anchor or handle pressed last is what the arrow keys move.
 	    selectedVertex = next.kind === 'anchor' || next.kind === 'cpIn' || next.kind === 'cpOut'
 	      ? { sliceId: next.sliceId, idx: next.idx, kind: next.kind }
@@ -254,6 +265,21 @@
     return { x: localX, y: localY };
   }
 
+  /** The anchor or curve handle of the selected slice under `pt` (handles
+   *  first, so a handle on top of an anchor still wins). */
+  function vertexUnder(pt: Point2D | null): VertexDrag | null {
+    const sl = $selectedSlice;
+    if (!pt || !sl) return null;
+    const hitR = 8 / zoom;
+    for (let idx = 0; idx < sl.polygon.length; idx++) {
+      const v = sl.polygon[idx];
+      if (v.cpIn && Math.hypot(v.cpIn.x - pt.x, v.cpIn.y - pt.y) < hitR) return { kind: 'cpIn', sliceId: sl.id, idx };
+      if (v.cpOut && Math.hypot(v.cpOut.x - pt.x, v.cpOut.y - pt.y) < hitR) return { kind: 'cpOut', sliceId: sl.id, idx };
+      if (Math.hypot(v.x - pt.x, v.y - pt.y) < hitR) return { kind: 'anchor', sliceId: sl.id, idx };
+    }
+    return null;
+  }
+
   // ── Mouse handling ─────────────────────────────────────────
   // The canvas is a single big mousedown target — we dispatch based on
   // the active tool, modifier keys, and what (if anything) was hit
@@ -261,8 +287,12 @@
   // mouseup are wired on the window so a fast drag that escapes the
   // canvas bounds doesn't lose tracking.
   function onCanvasMouseDown(e: MouseEvent) {
-    // Pan: middle button or shift+left, regardless of tool.
-    if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+    // Pan: middle button or shift+left, regardless of tool. Shift on an
+    // anchor or handle of the selected slice drags it finely instead.
+    const shiftGrab = e.button === 0 && e.shiftKey && tool === 'select'
+      ? vertexUnder(screenToSurface(e.clientX, e.clientY))
+      : null;
+    if (e.button === 1 || (e.button === 0 && e.shiftKey && !shiftGrab)) {
       isPanning = true;
       panStart = { x: e.clientX, y: e.clientY, px: panX, py: panY };
       e.preventDefault();
@@ -303,27 +333,13 @@
 	    // selected slice body for moving, then pending click/marquee select.
 	    if (tool === 'select' && $selectedSlice) {
 	      const sl = $selectedSlice;
-	      const hitR = 8 / zoom;
-      for (let idx = 0; idx < sl.polygon.length; idx++) {
-        const v = sl.polygon[idx];
-        // Handles only show while selected; check them first so a
-        // handle on top of an anchor still wins.
-        if (v.cpIn && Math.hypot(v.cpIn.x - pt.x, v.cpIn.y - pt.y) < hitR) {
-          beginVertexDrag({ kind: 'cpIn', sliceId: sl.id, idx });
-          e.preventDefault();
-          return;
-        }
-        if (v.cpOut && Math.hypot(v.cpOut.x - pt.x, v.cpOut.y - pt.y) < hitR) {
-          beginVertexDrag({ kind: 'cpOut', sliceId: sl.id, idx });
-          e.preventDefault();
-          return;
-        }
-        if (Math.hypot(v.x - pt.x, v.y - pt.y) < hitR) {
-          beginVertexDrag({ kind: 'anchor', sliceId: sl.id, idx });
-          e.preventDefault();
-          return;
-        }
-      }
+	      // Handles only show while selected.
+	      const grabbed = vertexUnder(pt);
+	      if (grabbed) {
+	        beginVertexDrag(grabbed, e);
+	        e.preventDefault();
+	        return;
+	      }
 	      selectedVertex = null;
 	      // Click inside an already-selected slice body → start a move drag.
 	      if (!sl.locked && $selectedSliceIds.includes(sl.id) && pointInPolygon(pt, sl.polygon)) {
@@ -335,7 +351,7 @@
 	          kind: 'sliceMove', sliceId: sl.id,
 	          startMouse: pt,
 	          startPolygons,
-	        });
+	        }, e);
 	        e.preventDefault();
 	        return;
 	      }
@@ -407,9 +423,12 @@
     }
 
 	    if (vertexDrag) {
+	      // Pointer travel since the press in surface pixels (Shift: a tenth).
+	      vertexDragTravel = advanceDragTravel(vertexDragTravel ?? beginDragTravel(e.clientX, e.clientY), e.clientX, e.clientY, e.shiftKey);
+	      const travel = { x: vertexDragTravel.x / zoom, y: vertexDragTravel.y / zoom };
 	      if (vertexDrag.kind === 'sliceMove') {
-	        const dx = pt.x - vertexDrag.startMouse.x;
-	        const dy = pt.y - vertexDrag.startMouse.y;
+	        const dx = travel.x;
+	        const dy = travel.y;
 	        for (const item of vertexDrag.startPolygons) {
 	          const moved: BezierPoint[] = item.polygon.map(p => ({
 	            x: p.x + dx, y: p.y + dy,
@@ -460,33 +479,12 @@
         });
         surfaceStore.updateSlice(vertexDrag.sliceId, { polygon: next });
       } else {
-        // Single-vertex / single-handle drag. Reach into the slice
-        // store; pull out the polygon, patch the one field, write back.
-        // Local alias so TS keeps the narrow type inside the .map cb
-        // (kind: 'anchor' | 'cpIn' | 'cpOut' — all have `idx`).
-        const drag = vertexDrag;
-        const slice = ($activeSurfaceSlices.find(x => x.id === drag.sliceId));
-        if (slice) {
-          const next = slice.polygon.map((v, i) => {
-            if (i !== drag.idx) return v;
-            if (drag.kind === 'anchor') {
-              // Move the anchor and its handles together (preserve
-              // local-relative handle offsets so the curve shape is
-              // preserved under translation).
-              const dx = pt.x - v.x;
-              const dy = pt.y - v.y;
-              return {
-                x: pt.x, y: pt.y,
-                cpIn:  v.cpIn  ? { x: v.cpIn.x  + dx, y: v.cpIn.y  + dy } : undefined,
-                cpOut: v.cpOut ? { x: v.cpOut.x + dx, y: v.cpOut.y + dy } : undefined,
-              };
-            }
-            if (drag.kind === 'cpIn')  return { ...v, cpIn:  { x: pt.x, y: pt.y } };
-            if (drag.kind === 'cpOut') return { ...v, cpOut: { x: pt.x, y: pt.y } };
-            return v;
-          });
-          surfaceStore.updateSlice(drag.sliceId, { polygon: next });
-        }
+        // Single anchor or handle: moved from where it was at the press
+        // (an anchor carries its handles), the same move as the arrow keys.
+        const next = vertexDragStart
+          ? nudgeSlicePolygon(vertexDragStart, { idx: vertexDrag.idx, kind: vertexDrag.kind }, travel)
+          : null;
+        if (next) surfaceStore.updateSlice(vertexDrag.sliceId, { polygon: next });
       }
     }
   }
@@ -517,6 +515,8 @@
 	    penPulling = null;
 	    if (vertexDrag) surfaceStore.endHistoryGesture();
 	    vertexDrag = null;
+	    vertexDragTravel = null;
+	    vertexDragStart = null;
 	  }
 
   /** Ray-cast point-in-polygon test for hit-detecting slice bodies.

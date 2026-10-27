@@ -27,6 +27,7 @@
   import { settings } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { arrowDirection, classifyKeyTarget, nudgeStepPixels, projectPixelOffset } from '../utils/mappingNudge';
+  import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
   import { noteAltArrow } from '../utils/altArrowGuard';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
@@ -72,11 +73,13 @@
 
   let drag: {
     kind: DragKind;
-    startClientX: number;
-    startClientY: number;
     startCorners: WarpCorners;
     startMesh: MeshWarpGrid | null;
   } | null = $state(null);
+  // Pointer travel since the press (Shift: a tenth as far). Every drag
+  // moves its points from where they were by this, so a grab never moves
+  // them.
+  let dragTravel: DragTravel | null = null;
   let selectedCorner: keyof WarpCorners | null = $state(null);
   let selectedMeshPoint: { row: number; col: number } | null = $state(null);
   // Bezier mesh: the tangent handle the arrow keys nudge (the last one
@@ -109,13 +112,12 @@
     }
     drag = {
       kind,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
       startCorners: { ...corners, topLeft: { ...corners.topLeft }, topRight: { ...corners.topRight }, bottomLeft: { ...corners.bottomLeft }, bottomRight: { ...corners.bottomRight } },
       // Manual deep-copy (not structuredClone — it throws DataCloneError
       // on some nested store values), tangents included.
       startMesh: meshGrid ? cloneMeshGrid(meshGrid) : null,
     };
+    dragTravel = beginDragTravel(e.clientX, e.clientY);
     if ((window as any).__MWARP_DEBUG__ === true) console.log('[mwarp] handle drag start', kind, { enabled: warp.enabled, mode });
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
@@ -263,9 +265,10 @@
 
   function onMouseMove(e: MouseEvent) {
     if (!drag) return;
-    // Zoom-corrected normalized delta — same recipe as ScreenWarpHandles.
-    const dxN = ((e.clientX - drag.startClientX) / zoom) / Math.max(1, containerWidth);
-    const dyN = ((e.clientY - drag.startClientY) / zoom) / Math.max(1, containerHeight);
+    // Zoom-corrected pointer travel since the press, y down — same recipe
+    // as ScreenWarpHandles. Shift moves a tenth as far.
+    dragTravel = advanceDragTravel(dragTravel ?? beginDragTravel(e.clientX, e.clientY), e.clientX, e.clientY, e.shiftKey);
+    const { x: dxN, y: dyN } = dragTravelNormalized(dragTravel, { width: containerWidth, height: containerHeight, zoom }, false);
     const k = drag.kind;
 
     if (k.kind === 'corner') {
