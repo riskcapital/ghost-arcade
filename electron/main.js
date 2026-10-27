@@ -53,6 +53,17 @@ if (!app.isPackaged && process.env.GA_USER_DATA_DIR) {
   app.setPath('userData', process.env.GA_USER_DATA_DIR);
 }
 
+// One copy runs at a time; the lock belongs to the userData folder, so it is
+// taken right after any override above. On Windows, double-clicking a project
+// while the app is open starts a second process: it hands the file to the
+// running copy ('second-instance' below) and quits, without rotating that
+// copy's log, migrating settings or recording path grants on the way out.
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  console.log('[Main] Another instance is running — handing over and quitting');
+  app.quit();
+}
+
 // Pro's data folder and keychain key are named after its productName in
 // package.json ("Ghost Arcade Pro"). Every earlier version, and Ghost Arcade
 // Studio, keep theirs under the code package's name, "ghost-arcade". On its
@@ -61,7 +72,7 @@ if (!app.isPackaged && process.env.GA_USER_DATA_DIR) {
 const LEGACY_USER_DATA_DIR = path.join(app.getPath('appData'), 'ghost-arcade');
 {
   const from = !app.isPackaged ? process.env.GA_PROFILE_MIGRATE_FROM : LEGACY_USER_DATA_DIR;
-  if (from) {
+  if (from && isPrimaryInstance) {
     try {
       require('./profile-migration.cjs').migrateProfile({
         from,
@@ -238,9 +249,12 @@ const { dir: _logDir, file: _logFile } = debugLogLocation({
 });
 // The last three launches stay readable (.log, .1.log, .2.log): a problem
 // reported after restarting the app used to be overwritten with its log.
-rotateDebugLogs(_logFile, 3);
+// A second instance only adds a line to the running copy's log.
+if (isPrimaryInstance) rotateDebugLogs(_logFile, 3);
 try {
-  fs.writeFileSync(_logFile, `=== Electron started ${new Date().toISOString()} ===\n`);
+  const header = `=== Electron started ${new Date().toISOString()}${isPrimaryInstance ? '' : ' (second instance, handing over)'} ===\n`;
+  if (isPrimaryInstance) fs.writeFileSync(_logFile, header);
+  else fs.appendFileSync(_logFile, header);
 } catch {
   /* a read-only log folder must not stop the app */
 }
@@ -7483,7 +7497,7 @@ function registerIpcHandlers() {
       const temp = `${filePath}.saving-${process.pid}`;
       try {
         fs.writeFileSync(temp, content, 'utf8');
-        fs.renameSync(temp, filePath);
+        await require('./replace-file.cjs').replaceFile(temp, filePath);
       } catch (err) {
         try { fs.unlinkSync(temp); } catch { /* never written */ }
         throw err;
@@ -9906,14 +9920,8 @@ app.on('open-file', (event, filePath) => {
   event.preventDefault();
   queueProjectOpen(filePath);
 });
-queueProjectOpen(projectFileFromArgs(process.argv));
-
-// Ensure only one instance runs at a time
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  console.log('[Main] Another instance is running — quitting');
-  app.quit();
-}
+// A second instance's file is opened by the running copy instead.
+if (isPrimaryInstance) queueProjectOpen(projectFileFromArgs(process.argv));
 
 app.on('second-instance', (_event, argv) => {
   // Focus existing window when user tries to launch a second instance

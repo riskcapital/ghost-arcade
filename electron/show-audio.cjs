@@ -168,7 +168,8 @@ function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants
         loop: args.loop === true,
         audioCodecArgs: audioCodecArgs(videoPath),
       }));
-      fs.renameSync(muxedPath, videoPath);
+      // The render may still be open in a preview on Windows.
+      await require('./replace-file.cjs').replaceFile(muxedPath, videoPath, { fs });
       return { success: true, outputPath: videoPath };
     } catch (err) {
       try { fs.rmSync(muxedPath, { force: true }); } catch { /* best effort */ }
