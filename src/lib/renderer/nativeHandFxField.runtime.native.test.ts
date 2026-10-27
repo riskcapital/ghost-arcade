@@ -270,7 +270,10 @@ describe('HandFX body and face modes (runtime, real core)', () => {
     await stage.run(2.5);
     const moving = await stage.picture('bodyswarm-moving');
     // A still body holds its particles close; a moving one throws them wide.
-    expect(moving.coverage).toBeGreaterThan(still.coverage * 1.25);
+    // The stage runs on wall-clock time, so how far they get depends on the
+    // machine's frame timing: over 1.25x on the Mac it was written on, about
+    // 1.18x on a Windows RTX 4070, before and after the 2.1.10 core changes.
+    expect(moving.coverage).toBeGreaterThan(still.coverage * 1.1);
   }, 30000);
 
   itLive('bodyflow lights up where the body stirs the field', async () => {

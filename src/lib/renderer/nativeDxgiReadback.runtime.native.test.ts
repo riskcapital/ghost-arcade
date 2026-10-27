@@ -30,6 +30,16 @@ it.skipIf(!platform.windows || !platform.runnable)('reads native DXGI output as 
   });
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
   let seq = 0;
+  /** Wait for the core to publish a new output frame (or a new texture). */
+  async function nextOutputFrame() {
+    const before = await send('output_shared_texture');
+    for (let i = 0; i < 300; i++) {
+      await sleep(10);
+      const now = await send('output_shared_texture');
+      if (now.available && (now.shared_name !== before.shared_name || now.frame > before.frame)) return;
+    }
+    throw new Error('the core published no output frame within 3 s');
+  }
   async function render(width: number, height: number) {
     await send('start', { config: { backend: 'd3d12', width, height, source_frame_size: 64, target_fps: 30 } });
     const rgba = Buffer.from(Array.from({ length: 64 * 64 }, (_, i) => [i % 64 < 32 ? 220 : 30, i < 2048 ? 60 : 190, ++seq % 200, 255]).flat());
@@ -39,6 +49,9 @@ it.skipIf(!platform.windows || !platform.runnable)('reads native DXGI output as 
       { type: 'bind_media_source', layer_id: 'capture', source_id: 'capture', uri: 'test://pixels', source_type: 'image' },
     ] });
     await send('frame_snapshot', { include_pixels: false });
+    // frame_snapshot draws offscreen; the shared output texture is filled by
+    // the core's own frame clock. Read it once a frame of this scene is there.
+    await nextOutputFrame();
     const reference = await send('output_shared_texture_snapshot', { include_pixels: true });
     const metadata = await send('output_shared_texture');
     expect(metadata.available).toBe(true);

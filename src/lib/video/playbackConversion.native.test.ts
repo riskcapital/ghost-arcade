@@ -67,7 +67,7 @@ describe('Playback preset', () => {
   });
 
   it('names the copy beside the original without overwriting anything', () => {
-    const taken = new Set(['/show/clip-playback.mp4']);
+    const taken = new Set([path.join('/show', 'clip-playback.mp4')]);
     expect(options.playbackOutputPath('/show/clip.mov', '/show', (p: string) => taken.has(p))).toBe(path.join('/show', 'clip-playback-2.mp4'));
     expect(options.playbackOutputPath('/show/clip-playback.mp4', '/show', () => false)).toBe(path.join('/show', 'clip-playback.mp4'));
   });

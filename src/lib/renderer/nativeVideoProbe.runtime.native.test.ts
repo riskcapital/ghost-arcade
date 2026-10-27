@@ -92,7 +92,9 @@ probeDescribe(`${platform.label} video probe`, () => {
     expect(probe.backend).toBe('ffmpeg');
     expect(probe.hardware).toBe(false);
     expect(probe.reverse_supported).toBe(false);
-    expect(probe.reason).toMatch(/alpha|transparen/i);
+    // macOS's decoder takes ProRes but not its alpha; Windows' hardware
+    // decoder takes no ProRes at all, so the codec is the reason there.
+    expect(probe.reason).toMatch(platform.windows ? /compatibility decoder|alpha|transparen/i : /alpha|transparen/i);
     expect(probe.codec).toMatch(/^prores/);
     expect([probe.width, probe.height]).toEqual([64, 64]);
   });
