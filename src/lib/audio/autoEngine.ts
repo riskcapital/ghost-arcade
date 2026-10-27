@@ -35,6 +35,7 @@
 import { get } from 'svelte/store';
 import { project } from '../stores/layers';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { runAsLiveControl } from '../stores/historyHooks';
 import type { AutoConfig, Layer, Effect } from '../types';
 
 // ─────────────────────────────────────────────────────────────────
@@ -82,6 +83,12 @@ export function isAutoEngineRunning(): boolean {
 
 function tick(now: number) {
   rafId = requestAnimationFrame(tick);
+  // Auto performs: nothing it writes is an undo step, except a recording
+  // into an armed keyframe track (one step per take).
+  runAsLiveControl(() => autoStep(now));
+}
+
+function autoStep(now: number) {
   const dt = lastTime === 0 ? 0 : (now - lastTime) / 1000;
   lastTime = now;
   // Skip the first frame (dt=0 means undefined motion) and skip

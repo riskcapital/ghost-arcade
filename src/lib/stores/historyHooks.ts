@@ -52,7 +52,8 @@ export function setHistoryCallback(record: () => void, snapshotHooks?: HistorySn
 export function recordDiscreteAction() {
   if (_liveControlDepth > 0) return;
   if (_pending) {
-    if (Date.now() - _pending.lastEditAt >= GESTURE_GAP_MS) commitPending();
+    // A recording take is never folded into an edit, however close they are.
+    if (_pending.keys.has(RECORDING_TAKE) || Date.now() - _pending.lastEditAt >= GESTURE_GAP_MS) commitPending();
     else cancelPendingHistorySnapshot();
   }
   if (_record) _record();
@@ -90,6 +91,7 @@ export function amendLastHistoryStep() {
 // also writes a keyframe, a handler that sets two fields one after another).
 const HISTORY_DEBOUNCE_MS = 600;
 const GESTURE_GAP_MS = 50;
+const RECORDING_TAKE = '\u0000recording-take';
 
 interface PendingSnapshot {
   keys: Set<string>;
@@ -119,9 +121,30 @@ function commitPending() {
  */
 export function scheduleHistorySnapshot(key = '') {
   if (_liveControlDepth > 0) return;
+  schedule(key);
+}
+
+/**
+ * Values a controller or an automation engine records into tracks armed for
+ * keyframes. The whole take is one step: it is committed once recording has
+ * paused for HISTORY_DEBOUNCE_MS, when the timeline stops or a track is
+ * disarmed (endRecordingTake), before undo and redo, and the moment an edit
+ * of the user's arrives, so the two never share a step.
+ */
+export function scheduleRecordingTakeSnapshot() {
+  schedule(RECORDING_TAKE);
+}
+
+/** End a recording take now, if one is waiting. */
+export function endRecordingTake() {
+  if (_pending?.keys.has(RECORDING_TAKE)) commitPending();
+}
+
+function schedule(key: string) {
   const now = Date.now();
-  if (_pending && !_pending.keys.has(key) && now - _pending.lastEditAt >= GESTURE_GAP_MS) {
-    commitPending();
+  if (_pending && !_pending.keys.has(key)) {
+    const take = key === RECORDING_TAKE || _pending.keys.has(RECORDING_TAKE);
+    if (take || now - _pending.lastEditAt >= GESTURE_GAP_MS) commitPending();
   }
   if (_pending) {
     clearTimeout(_pending.timer);
@@ -169,12 +192,13 @@ export function endHistoryRestore() { _restoreDepth = Math.max(0, _restoreDepth 
 export function isRestoringHistory() { return _restoreDepth > 0; }
 
 /**
- * Live control: controller, OSC, DMX, keyboard, gesture and show-control
- * writes (everything midiRouter dispatches). They are performance, not
- * edits, and never become undo steps, whatever they reach: a write to an
- * armed keyframe track still adds its keyframe, but no step. Nothing is
- * recorded while `fn` runs, and an edit waiting for its debounce is left
- * waiting.
+ * Live control and automation: controllers, OSC, DMX, keyboard, gestures and
+ * show control (everything midiRouter dispatches), macro knobs, and the
+ * automation engines (Auto, audio and LFO modulation, performance pads).
+ * They perform, changing values many times a second, so nothing they write
+ * becomes an undo step and an edit waiting for its debounce is left waiting.
+ * The one undoable thing they make is a recording into an armed keyframe
+ * track: a whole take is one step (scheduleRecordingTakeSnapshot).
  */
 let _liveControlDepth = 0;
 export function runAsLiveControl<T>(fn: () => T): T {
@@ -185,6 +209,7 @@ export function runAsLiveControl<T>(fn: () => T): T {
     _liveControlDepth -= 1;
   }
 }
+export function isLiveControl(): boolean { return _liveControlDepth > 0; }
 
 /**
  * A project was replaced wholesale (opened from a file, recovered from an

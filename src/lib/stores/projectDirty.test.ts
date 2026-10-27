@@ -221,9 +221,14 @@ describe('with the real stores', () => {
     expect(dirty(saved)).toBe(false);
   });
 
-  it('counts keyframes written without a step (an armed track under live control)', () => {
+  it('counts keyframes changed without a step', () => {
     const saved = snapshot();
-    hooks.runAsLiveControl(() => keyframes.keyframeTimeline.addKeyframe('a', 'opacity', 0, 0.5));
+    hooks.beginHistoryRestore();
+    try {
+      keyframes.keyframeTimeline.addKeyframe('a', 'opacity', 0, 0.5);
+    } finally {
+      hooks.endHistoryRestore();
+    }
     expect(dirty(saved)).toBe(true);
     expect(get(historyModule.history).past).toHaveLength(0);
     keyframes.keyframeTimeline.reset();

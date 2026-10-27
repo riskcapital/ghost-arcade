@@ -289,7 +289,7 @@ describe('keyframe edits on the shared undo timeline', () => {
     expect(steps()).toBe(before);
   });
 
-  it('records no step for keyframes live control writes to an armed track', async () => {
+  it('records a controller recording into an armed track as one step of its own', async () => {
     const { midiRouter } = await import('../midi/midiRouter');
     layers.project.replaceLayerEffects('a', [{ id: 'fx', type: 'blur' as any, enabled: true, params: { amount: 0.25 } as any, opacity: 1 } as any]);
     appHistory.resetHistoryToCurrent();
@@ -300,15 +300,17 @@ describe('keyframe edits on the shared undo timeline', () => {
     kf.keyframeTimeline.toggleArmed('a', 'fx:fx:amount');
     midiRouter.dispatchPath('map:effect:fx:amount', 0.7, { layerId: 'a' });
     hooks.flushPendingHistorySnapshot();
-    // The armed track still takes the keyframe; the controller made no step.
-    const fxValues = () => kf.keyframeTimeline.getTrack('a', 'fx:fx:amount')?.keyframes.map((k) => k.value);
+    // The armed track takes the keyframe, and the recording is its own step.
+    const fxValues = () => kf.keyframeTimeline.getTrack('a', 'fx:fx:amount')?.keyframes.map((k) => k.value) ?? [];
     expect(fxValues()).toEqual([0.7]);
-    expect(steps()).toBe(1);
+    expect(steps()).toBe(2);
 
-    // Undoing the edit before it takes back that edit only, on the same layer.
+    // One undo takes back the recording only, the next the edit before it.
+    appHistory.undoHistory();
+    expect(fxValues()).toEqual([]);
+    expect(opacityTimes()).toEqual([1]);
     appHistory.undoHistory();
     expect(opacityTimes()).toEqual([]);
-    expect(fxValues()).toEqual([0.7]);
   });
 
   it('starts the history over on open, keyframes included in the baseline', async () => {

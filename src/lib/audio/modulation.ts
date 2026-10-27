@@ -7,6 +7,7 @@ import { writable } from 'svelte/store';
 import { audioStore, type AudioState } from '../stores/audio';
 import { getVisualAudioSnapshot } from './visualAudio';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { runAsLiveControl } from '../stores/historyHooks';
 import type { ISFInput } from '../isf/parser';
 
 // Callback for applying modulated values to mapping mode layers
@@ -985,7 +986,9 @@ class ModulationEngine {
       return;
     }
 
-    this.applyModulations();
+    // Modulation performs: nothing it writes is an undo step, except a
+    // recording into an armed keyframe track (one step per take).
+    runAsLiveControl(() => this.applyModulations());
     this.animFrameId = requestAnimationFrame(this.tick);
   };
 

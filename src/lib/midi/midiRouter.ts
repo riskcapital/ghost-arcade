@@ -234,8 +234,9 @@ class MidiRouter {
 
   private dispatch(path: string, value: number, mapping: MidiMapping, inputId?: string, layerId?: string) {
     // Everything that reaches the router (controllers, OSC, DMX, keyboard,
-    // gestures, show control) is performance: nothing it changes becomes an
-    // undo step, a write to an armed keyframe track included.
+    // gestures, show control, macro knobs) is performance: nothing it
+    // changes becomes an undo step, except a recording into an armed
+    // keyframe track, which is one step per take.
     runAsLiveControl(() => this.dispatchLive(path, value, mapping, inputId, layerId));
   }
 
