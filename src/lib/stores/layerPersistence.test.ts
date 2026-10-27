@@ -590,7 +590,7 @@ describe('Layer persistence', () => {
       id: 'src-camera', type: 'webcam', src: 'live://webcam/cam-1', name: 'Camera',
       mirrorX: true, liveSourceType: 'webcam', liveSourceSessionId: 'session-9',
     };
-    const ndi = { id: 'src-ndi', type: 'ndi', src: 'ndi://Stage', name: 'NDI', ndiSource: { name: 'STAGE (Resolume)' }, playbackSyncBeats: 8 };
+    const ndi = { id: 'src-ndi', type: 'ndi', src: 'ndi://Stage', name: 'NDI', ndiSource: { name: 'STAGE (Media Server)' }, playbackSyncBeats: 8 };
     const make = (id: string, src: any) => ({ ...types.createLayer(id, id, 'media'), source: src });
     const payload = { version: '2.1.10', project: { id: 'sources', name: 'Sources', width: 1920, height: 1080,
       layers: [make('shader', shader), make('camera', camera), make('ndi', ndi)] } };
@@ -602,7 +602,7 @@ describe('Layer persistence', () => {
     expect(byId('camera').mirrorX).toBe(true);
     expect(byId('camera').liveSourceType).toBe('webcam');
     expect(byId('camera').liveSourceSessionId).toBeUndefined();
-    expect(byId('ndi').ndiSource).toEqual({ name: 'STAGE (Resolume)' });
+    expect(byId('ndi').ndiSource).toEqual({ name: 'STAGE (Media Server)' });
     expect(byId('ndi').playbackSyncBeats).toBe(8);
   });
 
