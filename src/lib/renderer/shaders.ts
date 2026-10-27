@@ -2,6 +2,11 @@
 
 export const warpVertexShader = /* glsl */ `
   varying vec2 vUv;
+  // Where the vertex sits in the layer's corner-pinned frame before any mesh
+  // warp. A Custom Shape is cut there, so the mesh warps the content inside
+  // the shape and never the outline. Equals uv in corner mode.
+  attribute vec2 shapeUv;
+  varying vec2 vShapeUv;
 
   // Corner positions in normalized space (0-1)
   uniform vec2 uTopLeft;
@@ -19,6 +24,7 @@ export const warpVertexShader = /* glsl */ `
 
   void main() {
     vUv = uv;
+    vShapeUv = uUseMeshPosition ? shapeUv : uv;
 
     vec2 clipPos;
 
@@ -81,6 +87,7 @@ export const textureFragmentShader = /* glsl */ `
   uniform vec4 uCustomShapeBBox;    // vec4(minX, minY, maxX, maxY) of the polygon
   uniform int uCustomShapeInvert;   // 0=normal (show inside shape), 1=invert (show outside / cutout)
   varying vec2 vUv;
+  varying vec2 vShapeUv;
 
   vec2 rotate2D(vec2 p, float angle) {
     float c = cos(angle);
@@ -348,16 +355,21 @@ export const textureFragmentShader = /* glsl */ `
       mask = feather > 0.001 ? 1.0 - smoothstep(-feather, 0.0, dist) : (dist < 0.0 ? 1.0 : 0.0);
     }
 
-    // Custom shape polygon mask (evaluated in UV space so it warps with geometry).
+    // Custom shape polygon mask, evaluated in the layer's corner-pinned frame
+    // (vShapeUv): a mesh warp moves the content inside the shape, never the
+    // outline you drew.
     // Feather is one-sided: only fades the INSIDE edge. Outside the polygon is
     // always fully transparent — no outward bleed.
     // When uCustomShapeInvert==1, we flip the mask so the polygon punches a hole
     // (cutout / negative space) and the area OUTSIDE the polygon shows the layer.
     if (uCustomShapeEnabled == 1 && uCustomShapePointCount >= 3) {
-      float inside = customPointInPolygon(layerUv);
+      vec2 shapeUv = vShapeUv;
+      if (uFlipH) shapeUv.x = 1.0 - shapeUv.x;
+      if (uFlipV) shapeUv.y = 1.0 - shapeUv.y;
+      float inside = customPointInPolygon(shapeUv);
       float customMask;
       if (feather > 0.001 && inside > 0.5) {
-        float dist = customDistToEdge(layerUv);
+        float dist = customDistToEdge(shapeUv);
         customMask = smoothstep(0.0, feather, dist);
       } else {
         customMask = inside;

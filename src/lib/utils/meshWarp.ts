@@ -310,6 +310,21 @@ export function invertLayerMesh(grid: MeshWarpGrid, q: Point2D): Point2D | null 
  * off they stay on the grid for later but the cells render straight, on the
  * same path as a mesh that never had them.
  */
+/**
+ * The mesh a layer's outline follows on the canvas. A Custom Shape keeps the
+ * outline you drew: the mesh warps the content inside it, never the shape,
+ * so the outline is placed by the corners alone. Every other outline (the
+ * layer's edge, a round or star shape) is the surface and bends with it.
+ * Use this for anything that draws or snaps to the outline; content uses
+ * layerRenderMeshGrid.
+ */
+export function layerOutlineMeshGrid(
+  layer: Pick<Layer, 'warpMode' | 'meshGrid' | 'layerShape'>,
+): MeshWarpGrid | null {
+  if (layer.layerShape?.enabled && layer.layerShape.type === 'custom') return null;
+  return layerRenderMeshGrid(layer);
+}
+
 export function layerRenderMeshGrid(
   layer: Pick<Layer, 'warpMode' | 'meshGrid'>,
 ): MeshWarpGrid | null {

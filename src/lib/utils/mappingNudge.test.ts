@@ -13,7 +13,6 @@ import {
   type MappingPointRef,
 } from './mappingNudge';
 import { layerUvToCanvas, quadPoint } from './layerQuad';
-import { layerRenderMeshGrid } from './meshWarp';
 
 type TestLayer = MappingKeyState['layers'][number];
 
@@ -196,11 +195,12 @@ describe('mapping nudge: custom shape vertices', () => {
       params: { customClosed: true, customPoints: [{ x: 0.1, y: 0.1 }, vertex, { x: 0.9, y: 0.2 }] },
     } as TestLayer['layerShape'],
   });
-  const mesh = layerRenderMeshGrid({ warpMode: 'mesh', meshGrid: shaped.meshGrid! });
-  const drawn = (p: Point2D) => layerUvToCanvas(corners, mesh, p);
+  // The layer has a warped mesh, but a Custom Shape's outline is drawn
+  // through the corners only: the mesh warps the content inside it.
+  const drawn = (p: Point2D) => layerUvToCanvas(corners, null, p);
   const ref: MappingPointRef = { kind: 'shape-vertex', layerId: 's', index: 1 };
 
-  it('moves the vertex one project pixel on the canvas, through the mesh and corners, with its handles', () => {
+  it('moves the vertex one project pixel on the canvas, through the corners (not the mesh), with its handles', () => {
     const patch = patchOf(planMappingArrowKey(press('ArrowRight'), state(shaped, ref)));
     const moved = (patch.layerShape!.params.customPoints as BezierPoint[])[1];
     const before = drawn(vertex);

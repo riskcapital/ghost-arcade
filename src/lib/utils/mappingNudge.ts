@@ -1,7 +1,7 @@
 import type { BezierPoint, Layer, MaskShape, MeshPointTangents, Point2D, WarpCorners } from '../types';
 import { layerUvToCanvas, canvasToLayerUv, quadInverse, quadPoint } from './layerQuad';
 import {
-  layerRenderMeshGrid,
+  layerOutlineMeshGrid,
   meshTangentSides,
   meshTangentsAfterDrag,
   resolveMeshTangents,
@@ -234,12 +234,13 @@ export function nudgeMappingPoint(
       return { meshGrid: withMeshPoints(grid, points) };
     }
     case 'shape-vertex': {
-      // Vertices are in layer UV and drawn through the mesh and corners.
+      // Vertices are in layer UV, drawn through the corners: a mesh warps
+      // the content inside a Custom Shape, not its outline.
       const shape = layer.layerShape;
       const points = (shape?.params?.customPoints ?? []) as BezierPoint[];
       const point = points[ref.index];
       if (!shape || !point) return null;
-      const mesh = layerRenderMeshGrid({ warpMode: layer.warpMode ?? 'corners', meshGrid: layer.meshGrid ?? null });
+      const mesh = layerOutlineMeshGrid({ warpMode: layer.warpMode ?? 'corners', meshGrid: layer.meshGrid ?? null, layerShape: shape });
       const from = ref.handle ? point[ref.handle] : point;
       if (!from) return null;
       const to = canvasToLayerUv(layer.corners, mesh, add(layerUvToCanvas(layer.corners, mesh, from), offset));
