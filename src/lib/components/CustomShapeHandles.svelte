@@ -2,7 +2,7 @@
   import { selectedLayer, project } from '../stores/layers';
   import type { Point2D, BezierPoint } from '../types';
   import { onDestroy } from 'svelte';
-  import { layerRenderMeshGrid } from '../utils/meshWarp';
+  import { layerOutlineMeshGrid } from '../utils/meshWarp';
   import { canvasToLayerUv, layerUvToCanvas } from '../utils/layerQuad';
   import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
   import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from '../stores/mappingPointSelection';
@@ -72,10 +72,10 @@
   // markup re-run when the editor canvas resizes or the corners move;
   // otherwise the handles stay at the old pixel size after e.g. opening the
   // Stage Designer, and a drag makes the shape jump.
-  // The mesh the layer renders with: the shape is cut in layer UV before
-  // the mesh bends it, so its handles go through the mesh too and stay on
-  // the outline the output shows.
-  $: renderMesh = $selectedLayer ? layerRenderMeshGrid($selectedLayer) : null;
+  // The outline stays where it was drawn: a mesh warps the content inside a
+  // Custom Shape, not the shape, so the handles go through the corners only
+  // (layerOutlineMeshGrid gives no mesh here).
+  $: renderMesh = $selectedLayer ? layerOutlineMeshGrid($selectedLayer) : null;
 
   let toPixel: (point: Point2D) => { x: number; y: number };
   $: toPixel = (point: Point2D): { x: number; y: number } => {

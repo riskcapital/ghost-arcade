@@ -1,5 +1,5 @@
 import type { BezierPoint, Layer, Point2D } from '../types';
-import { layerRenderMeshGrid } from './meshWarp';
+import { layerOutlineMeshGrid } from './meshWarp';
 import { layerUvToCanvas } from './layerQuad';
 
 /**
@@ -127,7 +127,7 @@ function cubicAt(a: Point2D, c1: Point2D, c2: Point2D, b: Point2D, t: number): P
  */
 export function layerSnapOutline(layer: SnapLayer): SnapOutline | null {
   if (!layer.corners || layer.type === 'group' || layer.type === 'mask') return null;
-  const mesh = layer.meshGrid ? layerRenderMeshGrid({ warpMode: layer.warpMode ?? 'corners', meshGrid: layer.meshGrid }) : null;
+  const mesh = layer.meshGrid ? layerOutlineMeshGrid({ warpMode: layer.warpMode ?? 'corners', meshGrid: layer.meshGrid, layerShape: layer.layerShape ?? null }) : null;
   const map = (uv: Point2D) => layerUvToCanvas(layer.corners, mesh, uv);
   const shape = layer.layerShape;
   if (shape?.enabled && shape.type && shape.type !== 'rectangle') {

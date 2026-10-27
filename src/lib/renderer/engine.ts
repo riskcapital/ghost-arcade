@@ -769,6 +769,14 @@ export class RenderEngine {
     const restUv = meshHasRest(meshGrid);
     const uvs = geometry.attributes.uv as THREE.BufferAttribute | undefined;
     const uvTouched = (geometry.userData as { restUv?: boolean }).restUv === true;
+    // Each vertex's place in the corner-pinned frame before the corner pin:
+    // the layer shader cuts a Custom Shape there (vShapeUv), so the mesh
+    // warps the content inside the shape and leaves the outline alone.
+    let shapeUvs = geometry.attributes.shapeUv as THREE.BufferAttribute | undefined;
+    if (!shapeUvs || shapeUvs.count !== positions.count) {
+      shapeUvs = new THREE.BufferAttribute(new Float32Array(positions.count * 2), 2);
+      geometry.setAttribute('shapeUv', shapeUvs);
+    }
 
     for (let i = 0; i < positions.count; i++) {
       // Get original UV coordinates (0-1) from stored array
@@ -780,6 +788,7 @@ export class RenderEngine {
       // grid itself, y up (row 0 at the top): bilinear for straight cells,
       // the Coons patch of a Bezier cell otherwise.
       const { x: meshX, y: meshY } = evaluateMeshByRows(meshGrid, uvX, 1 - uvY);
+      shapeUvs.setXY(i, meshX, meshY);
       if (uvs && (restUv || uvTouched)) {
         const layerUv = meshDomainToLayerUv(meshGrid, uvX, 1 - uvY);
         uvs.setXY(i, layerUv.x, layerUv.y);
@@ -800,6 +809,7 @@ export class RenderEngine {
     }
 
     positions.needsUpdate = true;
+    shapeUvs.needsUpdate = true;
     if (uvs && (restUv || uvTouched)) {
       uvs.needsUpdate = true;
       (geometry.userData as { restUv?: boolean }).restUv = restUv;

@@ -485,14 +485,14 @@ describe('Bezier mesh bulging past its corner quad', () => {
   }, 60000);
 });
 
-describe('Layer shape on a straight mesh', () => {
-  itIfNativeCore('cuts the shape in the layer UV the mesh bends, as its Edge Effect outline is', async () => {
+describe('Custom Shape on a straight mesh', () => {
+  itIfNativeCore('keeps a Custom Shape where it was drawn while the mesh warps the content inside', async () => {
     // A custom triangle (compositor local UV, y down) on a 3x3 mesh whose
-    // centre is pulled down. The shape has to travel with the mesh, like the
-    // outline the Edge Effects draw on: its base drops below the unwarped
-    // base (y up 0.15 -> 0.06 at u 0.5) and its apex drops from 0.85 to 0.76.
-    // It used to be cut in the unwarped quad UV, so the content stayed at the
-    // unwarped triangle while the Edge Effects followed the warp.
+    // centre is pulled down. The mesh would move the triangle's base from
+    // y up 0.15 to 0.06 and its apex from 0.85 to 0.76 at u 0.5, but a Custom
+    // Shape is the outline you drew: the content warps inside it and the
+    // triangle stays put, as do its handles and Edge Effect outline
+    // (layerOutlineMeshGrid).
     const rpc = createNativeRpc();
     try {
       await startCore(rpc);
@@ -518,10 +518,11 @@ describe('Layer shape on a straight mesh', () => {
       await expect.poll(async () => red(await snapshot(rpc), 0.3), { timeout: 5000, interval: 30 }).toBeGreaterThan(200);
       await rpc.send('frame_snapshot', {});
       const shot = await snapshot(rpc);
-      // Below the unwarped base, inside the warped one: content.
-      expect(red(shot, 0.1)).toBeGreaterThan(200);
-      // Under the unwarped apex, above the warped one: nothing.
-      expect(red(shot, 0.8)).toBeLessThan(32);
+      // Below the drawn base, where the mesh would have moved it: nothing.
+      expect(red(shot, 0.1)).toBeLessThan(32);
+      // Under the drawn apex, above where the mesh would have moved it:
+      // content, since the shape did not move.
+      expect(red(shot, 0.8)).toBeGreaterThan(200);
     } finally { await rpc.close(); }
   }, 60000);
 });

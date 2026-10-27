@@ -5,7 +5,7 @@
 
 import type { EdgeEffect, EdgeEffectsConfig, Layer, Point2D } from '../types';
 import { getShapeVertices } from '../types';
-import { evaluateMeshGrid, layerRenderMeshGrid } from '../utils/meshWarp';
+import { evaluateMeshGrid, layerOutlineMeshGrid } from '../utils/meshWarp';
 import { DEFAULT_DRAWING_STYLE, resolveDrawingStyle, type DrawingStyle } from './drawingStyle';
 import { edgeTypeDef, isKnownEdgeType } from './edgeEffectCatalog';
 import { buildEdgeOutline, layerUvToOutput, type EdgeOutline } from './edgeEffectGeometry';
@@ -149,7 +149,7 @@ export function edgeEffectOutline(
     ? getShapeVertices(layer.layerShape)
     : [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
   if (uvVertices.length < 3 || !layer.corners) return [];
-  const mesh = layerRenderMeshGrid(layer);
+  const mesh = layerOutlineMeshGrid(layer);
   if (mesh) {
     const perEdge = Math.max(1, Math.floor(EDGE_OUTLINE_MAX_POINTS / uvVertices.length));
     const dense: Point2D[] = [];

@@ -126,6 +126,10 @@ beforeAll(async () => {
 });
 
 type Snapshot = { width: number; height: number; bytes: Buffer; red: number; green: number; blue: number };
+// How far a colour channel must change for content to count as moved, and
+// how little for it to count as still (gradient steps plus rounding).
+const SHIFT_MOVED = 10;
+const SHIFT_STILL = 6;
 
 async function snapshot(rpc: NativeRpc): Promise<Snapshot> {
   const frame = await rpc.send('frame_snapshot', { include_pixels: true });
@@ -263,43 +267,48 @@ describe('mesh fitted to a Custom Shape on the native core', () => {
     } finally { await rpc.close(); }
   }, 60000);
 
-  itIfNativeCore('moves the shape with the fitted mesh point next to it', async () => {
+  itIfNativeCore('keeps the shape where it was drawn and warps the content inside it', async () => {
     const rpc = createNativeRpc();
     try {
       await startCore(rpc);
       const layer = shapedLayer(square);
+      layer.contentFit = 'stretch';
       const { grid } = fittedMeshGrid(layer.layerShape, 3, 3, 'shape');
       const points = grid.points.map((row) => row.map((p) => ({ ...p })));
       // Pull the top-right point up and to the right.
       points[0][2] = { x: points[0][2].x + 0.12, y: points[0][2].y + 0.1 };
       const warped = withMeshPoints(grid, points);
       const shot = await render(rpc, layer, warped);
+      const plain = await render(rpc, layer, null);
 
-      // The shape's top-right corner lands where the mesh sends it.
-      const corner = evaluateMeshGrid(warped, 0.6, 0.7);
-      expect(corner.x).toBeGreaterThan(0.69);
-      expect(corner.y).toBeGreaterThan(0.77);
-      const inside = evaluateMeshGrid(warped, 0.57, 0.67);
-      expect(at(shot, inside.x, inside.y, shot.blue), 'just inside the moved corner').toBeGreaterThan(100);
-      // That spot was outside the unwarped square.
-      expect(inside.x > 0.6 || inside.y > 0.7).toBe(true);
-      // The opposite corner stays put, and the content there is unchanged.
+      // The outline is the one drawn: where the mesh sends the square's
+      // corner, past the square, stays empty.
+      const pulled = evaluateMeshGrid(warped, 0.57, 0.67);
+      expect(pulled.x > 0.6 || pulled.y > 0.7).toBe(true);
+      expect(at(shot, pulled.x, pulled.y, shot.blue), 'past the drawn corner').toBeLessThan(40);
+      // The square is still filled up to its corner, and its far corner and
+      // edges are where they were.
+      expect(at(shot, 0.58, 0.68, shot.blue), 'just inside the drawn corner').toBeGreaterThan(100);
       expect(at(shot, 0.27, 0.32, shot.blue)).toBeGreaterThan(100);
       expect(at(shot, 0.23, 0.28, shot.blue)).toBeLessThan(40);
-      // Content moves with the shape: the colour at the moved corner is the
-      // colour the square had at its corner (the gradient's red and green).
-      const plain = await render(rpc, layer, null);
-      const sourceCorner = { r: at(plain, 0.57, 0.67, plain.red), g: at(plain, 0.57, 0.67, plain.green) };
-      expect(Math.abs(at(shot, inside.x, inside.y, shot.red) - sourceCorner.r)).toBeLessThanOrEqual(12);
-      expect(Math.abs(at(shot, inside.x, inside.y, shot.green) - sourceCorner.g)).toBeLessThanOrEqual(12);
+      expect(at(shot, 0.62, 0.5, shot.blue), 'right of the drawn edge').toBeLessThan(40);
+      // The content moved inside it: near the pulled corner the square shows
+      // the picture from further in (less red, less green), while the far
+      // corner shows what it showed before.
+      const shift = (x: number, y: number) => Math.max(
+        Math.abs(at(shot, x, y, shot.red) - at(plain, x, y, plain.red)),
+        Math.abs(at(shot, x, y, shot.green) - at(plain, x, y, plain.green)));
+      expect(shift(0.55, 0.65), 'content near the pulled corner').toBeGreaterThan(SHIFT_MOVED);
+      expect(shift(0.28, 0.33), 'content at the far corner').toBeLessThanOrEqual(SHIFT_STILL);
     } finally { await rpc.close(); }
   }, 60000);
 
-  itIfNativeCore('bulges a circle where an outline mesh border point is pulled out', async () => {
+  itIfNativeCore('keeps a circle round when an outline mesh border point is pulled out', async () => {
     const rpc = createNativeRpc();
     try {
       await startCore(rpc);
       const layer = shapedLayer(circle(0.45, 0.5, 0.2));
+      layer.contentFit = 'stretch';
       const { grid, fitted } = fittedMeshGrid(layer.layerShape, 4, 4, 'outline');
       expect(fitted).toBe('outline');
       // The border point nearest the circle's right side.
@@ -312,12 +321,17 @@ describe('mesh fitted to a Custom Shape on the native core', () => {
       const points = grid.points.map((row) => row.map((p) => ({ ...p })));
       points[best.r][best.c] = { x: points[best.r][best.c].x + 0.12, y: points[best.r][best.c].y };
       const shot = await render(rpc, layer, withMeshPoints(grid, points));
+      const plain = await render(rpc, layer, null);
       const pulled = grid.rest![best.r][best.c];
-      // Past the circle's old edge, toward the pulled point: now covered.
-      expect(at(shot, pulled.x + 0.05, pulled.y, shot.blue)).toBeGreaterThan(100);
-      // The far side of the circle has not moved.
+      // Past the circle's edge, toward the pulled point: still empty.
+      expect(at(shot, pulled.x + 0.05, pulled.y, shot.blue)).toBeLessThan(40);
+      // The circle is still filled to its edge on both sides.
+      expect(at(shot, pulled.x - 0.02, pulled.y, shot.blue)).toBeGreaterThan(100);
       expect(at(shot, 0.27, 0.5, shot.blue)).toBeGreaterThan(100);
       expect(at(shot, 0.23, 0.5, shot.blue)).toBeLessThan(40);
+      // The content inside moved toward the pulled point.
+      const dRed = Math.abs(at(shot, pulled.x - 0.04, pulled.y, shot.red) - at(plain, pulled.x - 0.04, pulled.y, plain.red));
+      expect(dRed, 'content near the pulled point').toBeGreaterThan(SHIFT_MOVED);
     } finally { await rpc.close(); }
   }, 60000);
 });

@@ -3886,14 +3886,17 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // A Bezier layer's shape and mask are cut in the layer's own UV
         // before the mesh bends it, as the editor texture and the Edge
         // Effect outline are, so they follow the surface into a bulge.
-        // A non-rectangular shape does the same on a straight mesh: cut in
-        // quad UV, the content stayed at the unwarped shape while its Edge
-        // Effects followed the warp. A plain rectangle keeps quad UV there,
-        // so its anti-aliased edge stays one output pixel wide in cells the
-        // mesh squeezes or stretches.
+        // A round, star or polygon shape does the same on a straight mesh:
+        // it is the surface. A Custom Shape is the opposite: it is the
+        // outline you drew, and the mesh warps the content inside it, so it
+        // is cut in quad UV whatever the mesh does (the editor's handles and
+        // Edge Effect outline skip the mesh for it too, layerOutlineMeshGrid).
+        // A plain rectangle keeps quad UV, so its anti-aliased edge stays one
+        // output pixel wide in cells the mesh squeezes or stretches.
         let mask_uv = select(local.yz, mesh_sample.yz, bezier_mesh);
         let shaped = layers[layer_index].shape.x > 0.5;
-        let shape_uv = select(mask_uv, mesh_sample.yz, shaped);
+        let custom_shape = i32(floor(layers[layer_index].shape.x + 0.5)) == 6;
+        let shape_uv = select(select(mask_uv, mesh_sample.yz, shaped), local.yz, custom_shape);
         let shape_sample = native_layer_shape(shape_uv, layer_index);
         let polygon_mask = native_polygon_mask(mask_uv, layer_index)
           * native_paint_mask(mesh_sample.yz, layer_index);

@@ -20,7 +20,7 @@
 
 import type { Layer, LayerShape, Point2D } from '../types';
 import { layerShapeCorners } from '../types';
-import { evaluateMeshGrid, layerRenderMeshGrid } from '../utils/meshWarp';
+import { evaluateMeshGrid, layerOutlineMeshGrid } from '../utils/meshWarp';
 
 export const EDGE_MAX_SEGMENTS = 512;
 export const EDGE_MAX_CORNERS = 64;
@@ -170,11 +170,12 @@ function layerOutlinePieces(shape: LayerShape | null | undefined): { pieces: UvP
 
 type LayerGeometryInput = Pick<Layer, 'layerShape' | 'corners' | 'warpMode' | 'meshGrid'>;
 
-/** Layer UV (y up) to output pixels (y up), through the mesh and the corner pin. */
+/** Layer UV (y up) to output pixels (y up), through the mesh the outline
+ *  follows (none for a Custom Shape) and the corner pin. */
 export function layerUvToOutput(layer: LayerGeometryInput, width: number, height: number): ((uv: Point2D) => Point2D) | null {
   const c = layer.corners;
   if (!c) return null;
-  const mesh = layerRenderMeshGrid(layer);
+  const mesh = layerOutlineMeshGrid(layer);
   return (uv: Point2D) => {
     const m = mesh ? evaluateMeshGrid(mesh, uv.x, uv.y) : uv;
     const topX = c.topLeft.x + (c.topRight.x - c.topLeft.x) * m.x;
@@ -452,7 +453,7 @@ export function buildEdgeOutline(
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
   const cornerRadius = Math.max(0, Number(options.cornerRadius) || 0);
-  const mesh = layerRenderMeshGrid(layer);
+  const mesh = layerOutlineMeshGrid(layer);
   const key = JSON.stringify([layer.layerShape ?? null, layer.corners ?? null, mesh, w, h, cornerRadius]);
   if (outlineCache.has(key)) return outlineCache.get(key)!;
   const outline = computeEdgeOutline(layer, w, h, cornerRadius);
@@ -465,7 +466,7 @@ function computeEdgeOutline(layer: LayerGeometryInput, w: number, h: number, cor
   const source = layerOutlinePieces(layer.layerShape);
   const map = layerUvToOutput(layer, w, h);
   if (!source || !map) return null;
-  const mesh = layerRenderMeshGrid(layer);
+  const mesh = layerOutlineMeshGrid(layer);
   const meshSplits = mesh ? 2 * Math.max(mesh.rows - 1, mesh.cols - 1) : 1;
 
   let tolerance = EDGE_FLATTEN_TOLERANCE_PX;
