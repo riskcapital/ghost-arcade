@@ -410,7 +410,8 @@ const STATUS_STACK_BUFFER_OVERRUN = 0xC0000409;
  * The core used to fail in the log only: "Native render core exited
  * (3221225781)" while the workspace waited for a frame forever. Windows
  * reports a missing DLL as exit code 0xC0000135 before the core runs a single
- * line, which on Windows N and KN editions means Media Foundation is absent.
+ * line. That used to mean Media Foundation (absent on Windows N and KN
+ * editions) or the Visual C++ runtime; the core now needs neither to start.
  */
 export function describeNativeCoreExit({ code = null, signal = null, platform = process.platform, spawnError = null } = {}) {
   if (spawnError) {
@@ -429,7 +430,11 @@ export function describeNativeCoreExit({ code = null, signal = null, platform = 
   const message = `The render core stopped (${hex ? `code ${hex}` : unsigned !== null ? `exit code ${code}` : signal ? `signal ${signal}` : 'no exit code'}).`;
   let hint = 'Press Retry. If it keeps stopping, update your graphics driver and send us the log.';
   if (unsigned === STATUS_DLL_NOT_FOUND || unsigned === STATUS_ENTRYPOINT_NOT_FOUND) {
-    hint = "A Windows component the render core needs is missing. On Windows N or KN editions, install Microsoft's Media Feature Pack (Settings > Apps > Optional features). Otherwise install the latest Microsoft Visual C++ Redistributable (x64). Then restart Ghost Arcade.";
+    // The core links the C runtime in and loads Media Foundation on first use
+    // (scripts/windows-core-imports.mjs checks both), so what is left is a
+    // damaged or very out-of-date Windows, or a core blocked by security
+    // software.
+    hint = 'A Windows file the render core needs is missing. Install the latest Windows updates and restart your computer. If it still stops, reinstall Ghost Arcade and send us the log.';
   } else if (unsigned === STATUS_DLL_INIT_FAILED) {
     hint = 'A Windows component failed to start. Restart your computer, then open Ghost Arcade again.';
   } else if (unsigned === STATUS_INVALID_IMAGE_FORMAT) {

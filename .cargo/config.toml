@@ -1,0 +1,16 @@
+# Windows: link the C runtime into the render core.
+#
+# Built the default way, ghost-render-core.exe imports VCRUNTIME140.dll and the
+# Universal CRT, so a PC without the Visual C++ Redistributable refused to
+# start it (0xC0000135) and the app showed no picture. Linking the runtime in
+# removes that requirement. scripts/windows-core-imports.mjs checks the result
+# in CI and in the release build.
+#
+# Cargo reads this file when it runs anywhere inside the repo, which is how
+# scripts/build-native-core.mjs and the workflows run it. A RUSTFLAGS
+# environment variable would replace these flags, so none of them set one.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
