@@ -5,7 +5,7 @@ describe('clip files', () => {
   it('reads the path out of an app or file URL', () => {
     expect(localPathFromUrl('ghost-asset://localhost/Users/me/My%20Show/a%231.mov')).toBe('/Users/me/My Show/a#1.mov');
     expect(localPathFromUrl('file:///Users/me/a.mov')).toBe('/Users/me/a.mov');
-    expect(localPathFromUrl('ghost-asset://localhost/C:/shows/a.mov')).toBe('C:/shows/a.mov');
+    expect(localPathFromUrl('ghost-asset://localhost/C:/shows/a.mov')).toBe('C:\\shows\\a.mov');
     expect(localPathFromUrl('blob:http://localhost/1')).toBeNull();
     expect(localPathFromUrl('https://example.com/a.mov')).toBeNull();
     expect(localPathFromUrl('ghost-asset://localhost/%E0%A4%A')).toBeNull();
@@ -42,4 +42,12 @@ describe('shader clips', () => {
   it('still check a video clip', () => {
     expect(clipFilePath({ type: 'video', src: 'ghost-asset://localhost/Users/me/clip.mov' })).toBe('/Users/me/clip.mov');
   });
+});
+
+it('names a Windows file the same however the clip got it', () => {
+  const picked = clipFilePath({ type: 'video', src: 'blob:http://localhost/1', _assetRef: { kind: 'local-file', originalPath: 'c:\\Shows\\a.mov' } as never });
+  const reopened = clipFilePath({ type: 'video', src: 'ghost-asset://localhost/C:/Shows/a.mov' });
+  expect(picked).toBe('C:\\Shows\\a.mov');
+  expect(reopened).toBe(picked);
+  expect(clipFilePath({ type: 'video', src: 'ghost-asset://localhost/Users/me/a.mov' })).toBe('/Users/me/a.mov');
 });

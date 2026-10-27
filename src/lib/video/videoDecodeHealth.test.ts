@@ -73,6 +73,15 @@ describe('video decode health', () => {
     expect(get(videoDecodeHealth)['/show/b.mov']).toBeUndefined();
   });
 
+  it('shows no badge while playing clips hold the video memory, and asks again next time', async () => {
+    const busy = vi.fn(async (uri: string) => ({ uri, backend: 'busy', hardware: false, reason: 'Video memory is in use by playing clips',
+      width: 0, height: 0, fps: 0, duration_seconds: 0, reverse_supported: false }));
+    await checkVideoDecode('/show/busy.mov', { probe: busy });
+    expect(get(videoDecodeHealth)['/show/busy.mov']).toBeUndefined();
+    await checkVideoDecode('/show/busy.mov', { probe: busy });
+    expect(busy).toHaveBeenCalledTimes(2);
+  });
+
   it('follows live playback, which can still fall back after the probe', () => {
     videoDecodeHealth.set({ '/show/c.mp4': decodeHealthFromProbe({ backend: 'videotoolbox', hardware: true, reason: '', reverse_supported: true }) });
     const failed = noteVideoSessionBackends([
@@ -93,7 +102,8 @@ describe('video decode health', () => {
 
   it('maps media URIs to file paths', () => {
     expect(videoPathFromUri('ghost-asset://localhost/Users/a/My%20Show/clip.mov')).toBe('/Users/a/My Show/clip.mov');
-    expect(videoPathFromUri('file:///C:/shows/a.mov')).toBe('C:/shows/a.mov');
+    expect(videoPathFromUri('file:///C:/shows/a.mov')).toBe('C:\\shows\\a.mov');
+    expect(videoPathFromUri('c:/shows/a.mov')).toBe('C:\\shows\\a.mov');
     expect(videoPathFromUri('C:\\shows\\a.mov')).toBe('C:\\shows\\a.mov');
     expect(videoPathFromUri('blob:abc')).toBeNull();
   });

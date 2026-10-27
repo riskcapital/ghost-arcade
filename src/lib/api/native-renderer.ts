@@ -1704,7 +1704,8 @@ export async function getNativeRendererStatus() {
 /** How the render core will play a video file, found before it plays. */
 export interface NativeVideoProbe {
   uri: string;
-  /** videotoolbox | media-foundation | hap-texture | ffmpeg | failed */
+  /** videotoolbox | media-foundation | hap-texture | ffmpeg | failed, or
+   *  busy: playing clips held the video memory, so no answer yet. */
   backend: string;
   hardware: boolean;
   /** Why software decoding is used (ffmpeg), or why it cannot play (failed). */

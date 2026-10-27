@@ -11,7 +11,7 @@
 import { writable, get } from 'svelte/store';
 import { isDesktopApp } from '$lib/bridge';
 import { probeNativeVideo, type NativeVideoProbe } from '$lib/api/native-renderer';
-import { localPathFromUrl } from '$lib/vj/clipFiles';
+import { canonicalLocalPath, localPathFromUrl } from '$lib/vj/clipFiles';
 
 export type VideoDecodeState = 'checking' | 'hardware' | 'software' | 'failed';
 
@@ -119,7 +119,7 @@ export function videoPathFromUri(uri: string | null | undefined): string | null 
   if (!value) return null;
   const fromUrl = localPathFromUrl(value);
   if (fromUrl) return fromUrl;
-  if (value.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(value)) return value;
+  if (value.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(value)) return canonicalLocalPath(value);
   return null;
 }
 
@@ -161,8 +161,9 @@ export function checkVideoDecode(path: string | null | undefined, options: { for
   if (!known) setHealth(path, { state: 'checking', backend: '', reason: '', detail: '', reverseSupported: false });
   const job = probe(path)
     .then((result) => {
-      if (!result) {
-        // The core is not running yet: forget the check so it runs again.
+      // No answer yet: the core is not running, or playing clips held the
+      // video memory the check needs. Forget it so the next check runs again.
+      if (!result || result.backend === 'busy') {
         if (get(videoDecodeHealth)[path]?.state === 'checking') setHealth(path, null);
         return null;
       }
