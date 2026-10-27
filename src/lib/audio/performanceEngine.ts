@@ -5,6 +5,7 @@
 
 import { writable, get } from 'svelte/store';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { runAsLiveControl } from '../stores/historyHooks';
 
 // XY Pad state - maps to two shader parameters
 export interface XYPadState {
@@ -136,7 +137,12 @@ function createPerformanceStore() {
   let strobeEnd = 0;
   let frozenParams: Map<string, Record<string, any>> = new Map();
 
+  // Performance pads perform: nothing they write is an undo step.
   function tick() {
+    runAsLiveControl(performanceStep);
+  }
+
+  function performanceStep() {
     if (!isRunning) return;
 
     update(state => {

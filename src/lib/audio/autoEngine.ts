@@ -39,6 +39,7 @@ import { launchClockPosition } from '../stores/launchClock';
 import { project } from '../stores/layers';
 import { vjClipLauncher, vjClipLauncherNow } from '../stores/vjClipLauncher';
 import { showToast } from '../stores/errorToast';
+import { runAsLiveControl } from '../stores/historyHooks';
 import type { AutoConfig, Layer, Effect } from '../types';
 
 // ─────────────────────────────────────────────────────────────────
@@ -69,6 +70,12 @@ function reportAutoFailure(id: string, name: string, error: unknown) {
 
 function tick(now: number) {
   rafId = requestAnimationFrame(tick);
+  // Auto performs: nothing it writes is an undo step, except a recording
+  // into an armed keyframe track (one step per take).
+  runAsLiveControl(() => autoStep(now));
+}
+
+function autoStep(now: number) {
   const dt = lastTime === 0 ? 0 : (now - lastTime) / 1000;
   lastTime = now;
   if (dt <= 0 || !Number.isFinite(dt)) return;

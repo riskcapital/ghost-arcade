@@ -15,6 +15,9 @@ import { evaluateTrack } from '../keyframes/easing';
 import {
   recordDiscreteAction,
   scheduleHistorySnapshot,
+  scheduleRecordingTakeSnapshot,
+  endRecordingTake,
+  isLiveControl,
   isRestoringHistory,
 } from './historyHooks';
 
@@ -29,11 +32,15 @@ import {
  */
 function recordKeyframeAction() {
   if (isRestoringHistory()) return;
-  recordDiscreteAction();
+  if (isLiveControl()) scheduleRecordingTakeSnapshot();
+  else recordDiscreteAction();
 }
 function scheduleKeyframeSnapshot(key: string) {
   if (isRestoringHistory()) return;
-  scheduleHistorySnapshot(key);
+  // A controller or an automation engine writing into an armed track is
+  // recording: the whole take is one step.
+  if (isLiveControl()) scheduleRecordingTakeSnapshot();
+  else scheduleHistorySnapshot(key);
 }
 
 // ─── State ───────────────────────────────────────
@@ -129,7 +136,8 @@ function tick(now: number) {
       newTime = newTime % state.config.duration;
     } else {
       newTime = state.config.duration;
-      // Stop playback
+      // Stop playback, which ends a recording take.
+      endRecordingTake();
       _storeRef!.update(s => ({
         ...s,
         config: { ...s.config, isPlaying: false, currentTime: newTime },
@@ -219,6 +227,8 @@ function createKeyframeTimelineStore() {
     },
 
     pause() {
+      // Stopping the timeline ends a recording take: one undo step.
+      endRecordingTake();
       update(s => {
         if (animFrameId) {
           cancelAnimationFrame(animFrameId);
@@ -229,6 +239,8 @@ function createKeyframeTimelineStore() {
     },
 
     stop() {
+      // Stopping the timeline ends a recording take: one undo step.
+      endRecordingTake();
       update(s => {
         if (animFrameId) {
           cancelAnimationFrame(animFrameId);
@@ -584,6 +596,7 @@ function createKeyframeTimelineStore() {
 
     // ── Auto-keyframe (arm/disarm) ──
     toggleArmed(layerId: string, trackKey: string) {
+      endRecordingTake();
       update(s => {
         const armKey = `${layerId}:${trackKey}`;
         const armed = { ...s.armedTracks };

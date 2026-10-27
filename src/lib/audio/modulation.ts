@@ -11,6 +11,7 @@ import { vjClipLauncher } from '../stores/vjClipLauncher';
 import type { ISFInput } from '../isf/parser';
 
 import { modulationHandlers } from './modulationHandlers';
+import { runAsLiveControl } from '../stores/historyHooks';
 export { registerCompositionModulationHandlers, registerMappingLayerCallbacks } from './modulationHandlers';
 
 import { DEFAULT_MOD, defaultModRange, hasModRange, computeModulatedValue, isAudioDrivenMod, clamp01, legacySignal, type ModSource, type ModTarget, type ParamModulation } from './modulationControls';
@@ -1026,7 +1027,9 @@ class ModulationEngine {
       return;
     }
 
-    this.applyModulations();
+    // Modulation performs: nothing it writes is an undo step, except a
+    // recording into an armed keyframe track (one step per take).
+    runAsLiveControl(() => this.applyModulations());
     this.animFrameId = requestAnimationFrame(this.tick);
   };
 

@@ -19,6 +19,7 @@ import { controlPathAsWritten, isVideoScratchPath, matchControlKey, normalizeCon
 import { audioStore } from '../stores/audio';
 import { buildNativeAnchor, needsNativeReanchor, predictNativePlayheadSeconds } from '../media/nativeTransport';
 import { createNativeVideoScratchController } from '../renderer/nativeVideoScratch';
+import { runAsLiveControl } from '../stores/historyHooks';
 
 // Controller, OSC, DMX and keyboard writes are performance, not edits: they
 // must not become undo steps (a fader would fill the undo history in a
@@ -262,6 +263,14 @@ class MidiRouter {
   }
 
   private dispatch(path: string, value: number, mapping: MidiMapping, inputId?: string, layerId?: string) {
+    // Everything that reaches the router (controllers, OSC, DMX, keyboard,
+    // gestures, show control, Ableton, macro knobs) is performance: nothing
+    // it changes becomes an undo step, except a recording into an armed
+    // keyframe track, which is one step per take.
+    runAsLiveControl(() => this.dispatchLive(path, value, mapping, inputId, layerId));
+  }
+
+  private dispatchLive(path: string, value: number, mapping: MidiMapping, inputId?: string, layerId?: string) {
     // Keywords match on the lowercased path; names (params, effects,
     // groups) are read from `names`, which keeps the spelling.
     const names = controlPathAsWritten(path).split(':');

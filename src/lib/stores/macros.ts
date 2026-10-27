@@ -6,6 +6,7 @@
 import { applyMacroAssignments, macroTargetKey, normalizeMacroAssignment, type MacroAssignment, type MacroTarget } from './macroAssignments';
 import { writable, get } from 'svelte/store';
 import { registerMacroValueSetter } from '../midi/midiRouter';
+import { runAsLiveControl } from './historyHooks';
 import { audioStore } from './audio';
 import type { Effect, EffectType, EffectParams } from '../types';
 import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
@@ -141,7 +142,10 @@ function createMacrosStore() {
         ...s,
         macros: s.macros.map(m => m.id === macroId ? { ...m, value: v } : m),
       }));
-      applyMacroAssignments(get({ subscribe }).macros.find(m => m.id === macroId)?.assignments ?? [], v);
+      // A macro knob performs, whether turned by hand, a controller or its
+      // pulse: what it drives is never an undo step, except a recording into
+      // an armed keyframe track (one step per take).
+      runAsLiveControl(() => applyMacroAssignments(get({ subscribe }).macros.find(m => m.id === macroId)?.assignments ?? [], v));
     },
 
     assignParameter(macroId: string, input: MacroAssignment) {
