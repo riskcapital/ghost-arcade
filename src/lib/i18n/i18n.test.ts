@@ -31,6 +31,19 @@ describe('interface translation', () => {
     expect(patterns.some((p) => p.regex.test('anything at all'))).toBe(false);
   });
 
+  it('never lets a short pattern swallow a sentence', () => {
+    const loose = { '{0} layer{1}': '{0} capa{1}', '{0}: audio files are not layers. {1}': '{0}: los archivos de audio no son capas. {1}' };
+    const loosePatterns = buildPatterns(loose);
+    expect(translateText('12 layers', loose, loosePatterns)).toBe('12 capas');
+    expect(translateText('Audio files are not layers, drop them on the Show timeline', loose, loosePatterns)).toBeNull();
+  });
+
+  it('tries the most specific pattern first, whatever the pack order', () => {
+    const loose = { '{0} layer{1}': '{0} capa{1}', '{0}: audio files are not layers. {1}': '{0}: los archivos de audio no son capas. {1}' };
+    expect(translateText('song.wav: audio files are not layers. Drop it on the timeline.', loose, buildPatterns(loose)))
+      .toBe('song.wav: los archivos de audio no son capas. Drop it on the timeline.');
+  });
+
   it('falls back to English for an unknown language code', () => {
     expect(normalizeLanguage('xx')).toBe('en');
     expect(normalizeLanguage('ja')).toBe('ja');

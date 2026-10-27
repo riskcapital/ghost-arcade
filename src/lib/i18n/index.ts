@@ -59,7 +59,7 @@ export function resetLanguageToEnglish(): void {
 // ─── Dictionary lookup ───────────────────────────────────────────────────
 
 type Pack = Record<string, string>;
-interface Pattern { regex: RegExp; out: string }
+interface Pattern { regex: RegExp; out: string; letters: number }
 
 const packs = import.meta.glob<{ default: Pack }>('./locales/*.json');
 let dictionary: Pack = {};
@@ -86,7 +86,13 @@ export function translateText(source: string, pack: Pack = dictionary, packPatte
     if (hit !== undefined) return fill(hit, numbers);
   }
   if (source.length <= 160) {
+    const letters = source.replace(/[^A-Za-z]/g, '').length;
     for (const pattern of packPatterns) {
+      // A pattern's own words must be at least a quarter of the text, so
+      // "{0} layer{1}" fills "12 layers" but never a whole sentence that
+      // happens to contain " layer". Patterns come most specific first, so
+      // the rest are weaker still.
+      if (pattern.letters * 4 < letters) break;
       const match = pattern.regex.exec(source);
       if (match) return fill(pattern.out, match.slice(1));
     }
@@ -99,11 +105,14 @@ export function buildPatterns(pack: Pack): Pattern[] {
   for (const [source, translation] of Object.entries(pack)) {
     if (!source.includes('{0}')) continue;
     // A pattern needs real words around its gaps, or it would match anything.
-    if (source.replace(/\{\d+\}/g, '').replace(/[^A-Za-z]/g, '').length < 3) continue;
+    const letters = source.replace(/\{\d+\}/g, '').replace(/[^A-Za-z]/g, '').length;
+    if (letters < 3) continue;
     const body = source.split(/\{\d+\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('(.+?)');
-    out.push({ regex: new RegExp(`^${body}$`), out: translation });
+    out.push({ regex: new RegExp(`^${body}$`), out: translation, letters });
   }
-  return out;
+  // Most specific first: the entry written for a sentence wins over a short
+  // one that also fits it, whatever order the pack lists them in.
+  return out.sort((a, b) => b.letters - a.letters);
 }
 
 function lookup(text: string): string | null {
