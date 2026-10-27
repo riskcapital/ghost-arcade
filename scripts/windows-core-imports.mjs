@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Windows: check which DLLs the render core needs before it can start.
  *
@@ -6,8 +5,10 @@
  * a single line. One missing DLL ends the process with 0xC0000135, and the app
  * shows no picture. The core has to start on every Windows 10 and 11 PC, so it
  * must not import:
- *   - the Visual C++ runtime (vcruntime, msvcp, ucrtbase, api-ms-win-crt-*).
- *     It is linked in instead; see .cargo/config.toml.
+ *   - the C runtime as DLLs. vcruntime and msvcp come only with the Visual C++
+ *     Redistributable; the Universal C runtime (ucrtbase, api-ms-win-crt-*) is
+ *     part of Windows 10 and 11. The core links both in (.cargo/config.toml),
+ *     so importing either means that setting was lost.
  *   - Media Foundation (mfplat, mfreadwrite, mf). Windows N and KN editions
  *     ship without it, so the core loads it on first use; see
  *     native-renderer/src/windows_media_foundation.rs.
@@ -17,7 +18,9 @@
  * Exits 1 when the core imports any of those. Files after --info (such as the
  * DXC DLLs that sit beside the core) are only listed in the log.
  *
- * Reads the PE file directly, so it needs no Visual Studio tools.
+ * Reads the PE file directly, so it needs no Visual Studio tools. No #! line:
+ * a test imports this file, and on a Windows checkout (CRLF) Vite fails to
+ * strip one.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -92,15 +95,24 @@ export function readPeImports(buffer) {
   return { machine: MACHINES[machine] ?? `0x${machine.toString(16)}`, imports, delayed };
 }
 
-const RUNTIME = [/^(vcruntime|msvcp|concrt|vccorlib)\d+.*\.dll$/i, /^ucrtbased?\.dll$/i, /^api-ms-win-crt-/i];
+// Installed only by the Visual C++ Redistributable (or, for the debug
+// builds, by Visual Studio).
+const REDISTRIBUTABLE = [/^(vcruntime|msvcp|concrt|vccorlib)\d+.*\.dll$/i, /^ucrtbased\.dll$/i];
+// The Universal C runtime: part of Windows 10 and 11.
+const UNIVERSAL_CRT = [/^ucrtbase\.dll$/i, /^api-ms-win-crt-/i];
 const MEDIA_FOUNDATION = /^(mfplat|mfreadwrite|mf|mfcore|evr)\.dll$/i;
+const matching = (imports, patterns) => imports.filter((name) => patterns.some((pattern) => pattern.test(name)));
+const STATIC_HINT = 'Check that .cargo/config.toml still sets +crt-static and that RUSTFLAGS is not set.';
 
 /** Plain reasons the core would not start on some PCs; empty when it is fine. */
 export function coreImportProblems(imports) {
   const problems = [];
-  const runtime = imports.filter((name) => RUNTIME.some((pattern) => pattern.test(name)));
-  if (runtime.length) {
-    problems.push(`imports the Visual C++ runtime (${runtime.join(', ')}), so it will not start on a PC without the Visual C++ Redistributable. Check that .cargo/config.toml still sets +crt-static and that RUSTFLAGS is not set.`);
+  const redistributable = matching(imports, REDISTRIBUTABLE);
+  const universal = matching(imports, UNIVERSAL_CRT);
+  if (redistributable.length) {
+    problems.push(`imports the Visual C++ runtime (${redistributable.join(', ')}), so it will not start on a PC without the Visual C++ Redistributable. ${STATIC_HINT}`);
+  } else if (universal.length) {
+    problems.push(`links the C runtime as DLLs (${universal.join(', ')}) instead of building it in. ${STATIC_HINT}`);
   }
   const media = imports.filter((name) => MEDIA_FOUNDATION.test(name));
   if (media.length) {
@@ -127,8 +139,10 @@ function main(argv) {
   const problems = coreImportProblems(describe(core));
   for (const file of extras) {
     if (!existsSync(file)) { console.log(`[core-imports] ${path.basename(file)} is not there`); continue; }
-    const runtime = describe(file).filter((name) => RUNTIME.some((pattern) => pattern.test(name)));
-    if (runtime.length) console.log(`[core-imports]   note: ${path.basename(file)} needs the Visual C++ runtime (${runtime.join(', ')})`);
+    const imports = describe(file);
+    const redistributable = matching(imports, REDISTRIBUTABLE);
+    if (redistributable.length) console.log(`[core-imports]   note: ${path.basename(file)} needs the Visual C++ Redistributable (${redistributable.join(', ')})`);
+    else if (matching(imports, UNIVERSAL_CRT).length) console.log(`[core-imports]   ${path.basename(file)} uses the Universal C runtime, which is part of Windows 10 and 11`);
   }
   if (problems.length) {
     for (const problem of problems) console.error(`[core-imports] FAIL: ${path.basename(core)} ${problem}`);
