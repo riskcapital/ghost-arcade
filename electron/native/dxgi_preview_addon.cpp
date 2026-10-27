@@ -1855,8 +1855,13 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("readSharedTexturePixels", Napi::Function::New(env, ghost_readback::Read));
   exports.Set("releaseReadback", Napi::Function::New(env, ghost_readback::Release));
   env.AddCleanupHook([]() { ghost_readback::capture.Reset(); });
-  // A joinable std::thread left at exit terminates the process.
-  env.AddCleanupHook([]() { StopAllMonitorPumps(); });
+  // A joinable std::thread left at exit terminates the process: the editor
+  // preview's pump as much as the monitors', when the app quits without
+  // stopPump or detach having run.
+  env.AddCleanupHook([]() {
+    StopPumpThread();
+    StopAllMonitorPumps();
+  });
   exports.Set("stabilizeHost", Napi::Function::New(env, StabilizeHost));
   exports.Set("attach", Napi::Function::New(env, Attach));
   exports.Set("update", Napi::Function::New(env, Update));
