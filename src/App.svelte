@@ -104,6 +104,8 @@
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from './lib/stores/mappingPointSelection';
   import { arrowDirection, classifyKeyTarget, planMappingArrowKey } from './lib/utils/mappingNudge';
+  import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from './lib/utils/mappingSnap';
+  import { dragCanvasPoint, dragQuadPoint, moveBezierAnchor, moveBezierHandle } from './lib/utils/warpDrag';
   import { guardAltRelease, noteAltArrow } from './lib/utils/altArrowGuard';
   import { releaseFormControlFocus } from './lib/utils/formFocus';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
@@ -376,6 +378,9 @@
   // -- Bezier handle dragging --
   // Tracks which cpIn/cpOut handle is being dragged.
   let draggingMaskHandle: { shapeIndex: number; pointIndex: number; which: 'cpIn' | 'cpOut' } | null = null;
+  // The mask point as it was at the press. A drag moves it from there by
+  // the pointer's travel (pointDragTravel), so grabbing it never moves it.
+  let maskDragStart: BezierPoint | null = null;
   // -- Pen-tool draft --
   // While the user is mid-mousedown on empty canvas we hold the future anchor
   // here and watch for drag distance > DRAG_BEND_THRESHOLD to decide between
@@ -406,6 +411,11 @@
 
   let shapeWarpModeEnabled = false;
   let draggingShapeControlPointIndex: number | null = null;
+  // The shape warp point (layer UV) as it was at the press.
+  let shapeControlDragStart: Point2D | null = null;
+  // Pointer travel of a shape warp or mask point drag since the press
+  // (Shift: a tenth as far; see utils/mappingSnap.ts).
+  let pointDragTravel: DragTravel | null = null;
   let shapeWarpOverlayEl: SVGSVGElement;
   let layerShapeControlPoints: Point2D[] = [];
 
@@ -1854,6 +1864,13 @@
     project.initShapeControlPoints($selectedLayer.id, getDefaultLayerShapeControlPoints(shapeType));
   }
 
+  /** Pointer travel since the press of a shape warp or mask point drag, as
+   *  a canvas offset (y up). Shift moves the point a tenth as far. */
+  function pointTravelTo(e: MouseEvent): Point2D {
+    pointDragTravel = advanceDragTravel(pointDragTravel ?? beginDragTravel(e.clientX, e.clientY), e.clientX, e.clientY, e.shiftKey);
+    return dragTravelNormalized(pointDragTravel, { width: canvasWidth, height: canvasHeight, zoom: viewportZoom }, true);
+  }
+
   function startShapeControlPointDrag(index: number, e: MouseEvent) {
     if (!$selectedLayer || !$selectedLayer.layerShape) return;
     e.preventDefault();
@@ -1862,30 +1879,31 @@
     releaseFormControlFocus();
     selectMappingPoint({ kind: 'shape-control', layerId: $selectedLayer.id, index });
     draggingShapeControlPointIndex = index;
+    // The drag starts from where the point is, not from the pointer.
+    const start = get(selectedLayer)?.layerShape?.controlPoints?.[index];
+    shapeControlDragStart = start ? { x: start.x, y: start.y } : null;
+    pointDragTravel = beginDragTravel(e.clientX, e.clientY);
     window.addEventListener('mousemove', handleShapeControlPointDrag);
     window.addEventListener('mouseup', endShapeControlPointDrag);
   }
 
   function handleShapeControlPointDrag(e: MouseEvent) {
-    if (draggingShapeControlPointIndex === null || !$selectedLayer || !$selectedLayer.layerShape || !shapeWarpOverlayEl) return;
-    const rect = shapeWarpOverlayEl.getBoundingClientRect();
-    // Get canvas-normalized coords from mouse position
-    const canvasNormX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const canvasNormY = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
-
-    // Inverse-transform through layer corners to get local UV coords
+    if (draggingShapeControlPointIndex === null || !$selectedLayer || !$selectedLayer.layerShape || !shapeControlDragStart) return;
+    // Moved where it is drawn (through the layer's corners) and mapped
+    // back, so it follows the pointer and stays on the layer.
+    const travel = pointTravelTo(e);
     const corners = $selectedLayer.corners;
-    if (corners) {
-      const local = inverseBilinearCorners(corners, canvasNormX, canvasNormY);
-      project.setShapeControlPoint($selectedLayer.id, draggingShapeControlPointIndex, local);
-    } else {
-      project.setShapeControlPoint($selectedLayer.id, draggingShapeControlPointIndex, { x: canvasNormX, y: canvasNormY });
-    }
+    const next = corners
+      ? dragQuadPoint(corners, shapeControlDragStart, travel)
+      : dragCanvasPoint(shapeControlDragStart, travel);
+    if (next) project.setShapeControlPoint($selectedLayer.id, draggingShapeControlPointIndex, next);
   }
 
   function endShapeControlPointDrag() {
     if (draggingShapeControlPointIndex !== null) recordDiscreteAction();
     draggingShapeControlPointIndex = null;
+    shapeControlDragStart = null;
+    pointDragTravel = null;
     window.removeEventListener('mousemove', handleShapeControlPointDrag);
     window.removeEventListener('mouseup', endShapeControlPointDrag);
   }
@@ -5853,6 +5871,7 @@
     releaseFormControlFocus();
     if ($selectedLayer) selectMappingPoint({ kind: 'mask-point', layerId: $selectedLayer.id, shapeIndex, index: pointIndex });
     draggingMaskAnchor = { shapeIndex, pointIndex };
+    beginMaskPointDrag(shapeIndex, pointIndex, e);
     window.addEventListener('mousemove', handleMaskAnchorDrag);
     window.addEventListener('mouseup', handleMaskAnchorDragEnd);
   }
@@ -5880,26 +5899,33 @@
     }
   }
 
+  /** A mask point or handle drag starts from where the point is: the
+   *  point moves by the pointer's travel (Shift: a tenth as far), so
+   *  grabbing it off its centre never moves it. */
+  function beginMaskPointDrag(shapeIndex: number, pointIndex: number, e: MouseEvent) {
+    const pt = get(selectedLayer)?.mask?.shapes[shapeIndex]?.points[pointIndex];
+    maskDragStart = pt
+      ? { ...pt, ...(pt.cpIn ? { cpIn: { ...pt.cpIn } } : {}), ...(pt.cpOut ? { cpOut: { ...pt.cpOut } } : {}) }
+      : null;
+    pointDragTravel = beginDragTravel(e.clientX, e.clientY);
+  }
+
+  function endMaskPointDrag() {
+    maskDragStart = null;
+    pointDragTravel = null;
+  }
+
   function handleMaskAnchorDrag(e: MouseEvent) {
-    if (!draggingMaskAnchor || !$selectedLayer?.mask) return;
-    const coords = mouseToCanvasCoords(e);
-    const newX = Math.max(0, Math.min(1, coords.x));
-    const newY = Math.max(0, Math.min(1, coords.y));
-    const shape = $selectedLayer.mask.shapes[draggingMaskAnchor.shapeIndex];
-    if (!shape) return;
-    const pt = shape.points[draggingMaskAnchor.pointIndex];
-    if (!pt) return;
-    const dx = newX - pt.x;
-    const dy = newY - pt.y;
-    const partial: Partial<BezierPoint> = { x: newX, y: newY };
-    if (pt.cpIn) partial.cpIn = { x: pt.cpIn.x + dx, y: pt.cpIn.y + dy };
-    if (pt.cpOut) partial.cpOut = { x: pt.cpOut.x + dx, y: pt.cpOut.y + dy };
-    project.updateMaskPoint($selectedLayer.id, draggingMaskAnchor.shapeIndex, draggingMaskAnchor.pointIndex, partial);
+    if (!draggingMaskAnchor || !$selectedLayer?.mask || !maskDragStart) return;
+    // The point and its curve handles move together, kept on the canvas.
+    const moved = moveBezierAnchor(maskDragStart, dragCanvasPoint(maskDragStart, pointTravelTo(e)));
+    project.updateMaskPoint($selectedLayer.id, draggingMaskAnchor.shapeIndex, draggingMaskAnchor.pointIndex, moved);
   }
 
   function handleMaskAnchorDragEnd() {
     if (draggingMaskAnchor !== null) recordDiscreteAction();
     draggingMaskAnchor = null;
+    endMaskPointDrag();
     window.removeEventListener('mousemove', handleMaskAnchorDrag);
     window.removeEventListener('mouseup', handleMaskAnchorDragEnd);
   }
@@ -5921,45 +5947,27 @@
     releaseFormControlFocus();
     if ($selectedLayer) selectMappingPoint({ kind: 'mask-point', layerId: $selectedLayer.id, shapeIndex, index: pointIndex, handle: which });
     draggingMaskHandle = { shapeIndex, pointIndex, which };
+    beginMaskPointDrag(shapeIndex, pointIndex, e);
     window.addEventListener('mousemove', handleMaskHandleDrag);
     window.addEventListener('mouseup', handleMaskHandleDragEnd);
   }
 
   function handleMaskHandleDrag(e: MouseEvent) {
-    if (!draggingMaskHandle || !$selectedLayer?.mask) return;
-    const coords = mouseToCanvasCoords(e);
-    const newPos: Point2D = {
-      x: Math.max(0, Math.min(1, coords.x)),
-      y: Math.max(0, Math.min(1, coords.y)),
-    };
-    project.setMaskPointHandle(
-      $selectedLayer.id,
-      draggingMaskHandle.shapeIndex,
-      draggingMaskHandle.pointIndex,
-      draggingMaskHandle.which,
-      newPos
-    );
-    // Mirror the opposite handle unless Alt is held (matches CustomShapeHandles).
-    if (!e.altKey) {
-      const shape = $selectedLayer.mask.shapes[draggingMaskHandle.shapeIndex];
-      const pt = shape?.points[draggingMaskHandle.pointIndex];
-      if (pt) {
-        const mirrorWhich: 'cpIn' | 'cpOut' = draggingMaskHandle.which === 'cpIn' ? 'cpOut' : 'cpIn';
-        const mirror: Point2D = { x: 2 * pt.x - newPos.x, y: 2 * pt.y - newPos.y };
-        project.setMaskPointHandle(
-          $selectedLayer.id,
-          draggingMaskHandle.shapeIndex,
-          draggingMaskHandle.pointIndex,
-          mirrorWhich,
-          mirror
-        );
-      }
-    }
+    if (!draggingMaskHandle || !$selectedLayer?.mask || !maskDragStart) return;
+    const { shapeIndex, pointIndex, which } = draggingMaskHandle;
+    const start = maskDragStart[which];
+    const pt = $selectedLayer.mask.shapes[shapeIndex]?.points[pointIndex];
+    if (!start || !pt) return;
+    // The handle is kept on the canvas; the opposite one mirrors through
+    // the point unless Alt is held (matches CustomShapeHandles).
+    const moved = moveBezierHandle(pt, which, dragCanvasPoint(start, pointTravelTo(e)), e.altKey);
+    project.updateMaskPoint($selectedLayer.id, shapeIndex, pointIndex, moved);
   }
 
   function handleMaskHandleDragEnd() {
     if (draggingMaskHandle !== null) recordDiscreteAction();
     draggingMaskHandle = null;
+    endMaskPointDrag();
     window.removeEventListener('mousemove', handleMaskHandleDrag);
     window.removeEventListener('mouseup', handleMaskHandleDragEnd);
   }

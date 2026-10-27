@@ -10,7 +10,15 @@ import {
   type MeshTangentSide,
 } from './meshWarp';
 import { warpNudgeStepPixels, type WarpGranularity } from './warpNudge';
-import { EDGE_CORNERS, translateCorners, type WarpEdge } from './warpDrag';
+import {
+  EDGE_CORNERS,
+  dragCanvasPoint,
+  dragQuadPoint,
+  moveBezierAnchor,
+  moveBezierHandle,
+  translateCorners,
+  type WarpEdge,
+} from './warpDrag';
 
 /**
  * Arrow keys on the mapping canvas.
@@ -184,25 +192,6 @@ export function arrowKeysFree(press: { metaKey: boolean; ctrlKey: boolean; targe
 // ─── Moving points ────────────────────────────────────────────────────────
 
 const add = (p: Point2D, d: Point2D): Point2D => ({ x: p.x + d.x, y: p.y + d.y });
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-
-function moveBezierPoint(point: BezierPoint, to: Point2D): BezierPoint {
-  const dx = to.x - point.x;
-  const dy = to.y - point.y;
-  const next: BezierPoint = { ...point, x: to.x, y: to.y };
-  if (point.cpIn) next.cpIn = { x: point.cpIn.x + dx, y: point.cpIn.y + dy };
-  if (point.cpOut) next.cpOut = { x: point.cpOut.x + dx, y: point.cpOut.y + dy };
-  return next;
-}
-
-/** A curve handle moved to `to`; its partner mirrors through the point
- *  unless `unlink`. */
-function moveBezierHandle(point: BezierPoint, handle: 'cpIn' | 'cpOut', to: Point2D, unlink: boolean): BezierPoint {
-  const other = handle === 'cpIn' ? 'cpOut' : 'cpIn';
-  const next: BezierPoint = { ...point, [handle]: to };
-  if (!unlink && point[other]) next[other] = { x: 2 * point.x - to.x, y: 2 * point.y - to.y };
-  return next;
-}
 
 /**
  * The change one arrow press makes to the selected point, as a layer patch
@@ -255,7 +244,7 @@ export function nudgeMappingPoint(
       if (!from) return null;
       const to = canvasToLayerUv(layer.corners, mesh, add(layerUvToCanvas(layer.corners, mesh, from), offset));
       if (!to) return null;
-      const moved = ref.handle ? moveBezierHandle(point, ref.handle, to, unlink) : moveBezierPoint(point, to);
+      const moved = ref.handle ? moveBezierHandle(point, ref.handle, to, unlink) : moveBezierAnchor(point, to);
       return {
         layerShape: {
           ...shape,
@@ -269,9 +258,8 @@ export function nudgeMappingPoint(
       const shape = layer.layerShape;
       const p = shape?.controlPoints?.[ref.index];
       if (!shape?.controlPoints || !p) return null;
-      const local = quadInverse(layer.corners, add(quadPoint(layer.corners, p.x, p.y), offset));
-      if (!local) return null;
-      const next = { x: clamp01(local.x), y: clamp01(local.y) };
+      const next = dragQuadPoint(layer.corners, p, offset);
+      if (!next) return null;
       return { layerShape: { ...shape, controlPoints: shape.controlPoints.map((q, i) => (i === ref.index ? next : q)) } };
     }
     case 'mask-point': {
@@ -282,8 +270,8 @@ export function nudgeMappingPoint(
       if (!mask || !shape || !point) return null;
       const from = ref.handle ? point[ref.handle] : point;
       if (!from) return null;
-      const to = { x: clamp01(from.x + offset.x), y: clamp01(from.y + offset.y) };
-      const moved = ref.handle ? moveBezierHandle(point, ref.handle, to, unlink) : moveBezierPoint(point, to);
+      const to = dragCanvasPoint(from, offset);
+      const moved = ref.handle ? moveBezierHandle(point, ref.handle, to, unlink) : moveBezierAnchor(point, to);
       const shapes: MaskShape[] = mask.shapes.map((s, si) => (si !== ref.shapeIndex ? s : {
         ...s,
         points: s.points.map((p, pi) => (pi === ref.index ? moved : p)),

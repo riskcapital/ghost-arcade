@@ -1,4 +1,5 @@
-import type { Point2D, WarpCorners } from '../types';
+import type { BezierPoint, Point2D, WarpCorners } from '../types';
+import { quadInverse, quadPoint } from './layerQuad';
 import { quantizeNormalized, snapPoint, snapPoints, type SnapHit, type SnapSession } from './mappingSnap';
 
 /**
@@ -105,4 +106,46 @@ export function translateCorners(c: WarpCorners, d: Point2D): WarpCorners {
     bottomLeft: add(c.bottomLeft, d),
     bottomRight: add(c.bottomRight, d),
   };
+}
+
+// ─── Points that do not snap ──────────────────────────────────────────────
+// Mask points and shape warp points follow the pointer's travel from where
+// they were at the press too (see DragTravel in mappingSnap.ts: Shift moves
+// a tenth as far), so grabbing one off its centre never moves it.
+
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+/** A point that lives on the canvas (a layer mask point or curve handle):
+ *  where it was plus the travel, kept on the canvas. */
+export function dragCanvasPoint(start: Point2D, travel: Point2D): Point2D {
+  return { x: clamp01(start.x + travel.x), y: clamp01(start.y + travel.y) };
+}
+
+/**
+ * A point in layer UV drawn through the corner pin (a shape warp point).
+ * It is moved where it is drawn and mapped back, so it crosses the screen
+ * with the pointer however the layer is warped, and stays on the layer.
+ * Null when the quad is folded flat there.
+ */
+export function dragQuadPoint(corners: WarpCorners, startUv: Point2D, travel: Point2D): Point2D | null {
+  const local = quadInverse(corners, add(quadPoint(corners, startUv.x, startUv.y), travel));
+  return local ? { x: clamp01(local.x), y: clamp01(local.y) } : null;
+}
+
+/** A curve point moved to `to`, its handles keeping their offsets. */
+export function moveBezierAnchor(point: BezierPoint, to: Point2D): BezierPoint {
+  const d = { x: to.x - point.x, y: to.y - point.y };
+  const next: BezierPoint = { ...point, x: to.x, y: to.y };
+  if (point.cpIn) next.cpIn = add(point.cpIn, d);
+  if (point.cpOut) next.cpOut = add(point.cpOut, d);
+  return next;
+}
+
+/** A curve handle moved to `to`; its partner mirrors through the point
+ *  unless `unlink`. */
+export function moveBezierHandle(point: BezierPoint, handle: 'cpIn' | 'cpOut', to: Point2D, unlink: boolean): BezierPoint {
+  const other = handle === 'cpIn' ? 'cpOut' : 'cpIn';
+  const next: BezierPoint = { ...point, [handle]: to };
+  if (!unlink && point[other]) next[other] = { x: 2 * point.x - to.x, y: 2 * point.y - to.y };
+  return next;
 }
