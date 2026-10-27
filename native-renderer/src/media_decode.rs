@@ -2099,7 +2099,8 @@ pub fn decode_native_video_frame_window_rgba(
 /// leaving the user to discover it on stage.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct NativeVideoProbe {
-    /// videotoolbox | media-foundation | hap-texture | ffmpeg | failed
+    /// videotoolbox | media-foundation | hap-texture | ffmpeg | failed, or
+    /// busy: playing clips held the video memory budget, so check again later.
     pub backend: String,
     pub hardware: bool,
     /// Why the hardware decoder was not used (backend ffmpeg), or why the file
@@ -2137,6 +2138,51 @@ pub fn ffmpeg_stream_dimensions(description: &str) -> Option<(u32, u32)> {
     })
 }
 
+/// How long a probe waits for room in the video memory budget before it
+/// answers "busy" instead.
+#[cfg(target_os = "windows")]
+const PROBE_MEMORY_WAIT: Duration = Duration::from_secs(3);
+#[cfg(target_os = "windows")]
+const PROBE_MEMORY_BUSY: &str = "Video memory is in use by playing clips; checked again later";
+
+/// Reserve `bytes` against the video memory budget, waiting up to `wait` for
+/// playing clips to release enough. Unlike playback, a probe must answer.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn reserve_video_memory_within(lease: &NativeVideoMemoryLease, bytes: u64, wait: Duration) -> bool {
+    let deadline = Instant::now() + wait;
+    loop {
+        if lease.try_resize(bytes) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Run a probe on one of two shared workers. Opening a project with many
+/// clips queues their checks rather than starting a thread for each.
+pub fn spawn_probe(job: impl FnOnce() + Send + 'static) {
+    type Job = Box<dyn FnOnce() + Send>;
+    static QUEUE: OnceLock<Mutex<std::sync::mpsc::Sender<Job>>> = OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<Job>();
+        let receiver = Arc::new(Mutex::new(receiver));
+        for index in 0..2 {
+            let receiver = receiver.clone();
+            let _ = thread::Builder::new().name(format!("video-probe-{index}")).spawn(move || loop {
+                let job = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                let Ok(job) = job else { break };
+                // A probe that panics must not take its worker with it.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+            });
+        }
+        Mutex::new(sender)
+    });
+    let _ = queue.lock().unwrap_or_else(|e| e.into_inner()).send(Box::new(job));
+}
+
 /// At most two probes open decoders at a time: loading a project with many
 /// clips must not start dozens of decoders at once.
 fn probe_permit() -> impl Drop {
@@ -2164,6 +2210,7 @@ pub fn probe_native_video(
     path: &Path,
     hap_supported: bool,
     #[cfg(target_os = "windows")] video_device: Result<crate::windows_video_texture::WindowsVideoDevice, String>,
+    #[cfg(target_os = "windows")] video_memory: Option<Arc<NativeVideoMemoryBudget>>,
 ) -> NativeVideoProbe {
     let _permit = probe_permit();
     let mut probe = NativeVideoProbe::default();
@@ -2175,6 +2222,10 @@ pub fn probe_native_video(
     let backend_policy = std::env::var("GA_NATIVE_VIDEO_BACKEND").unwrap_or_else(|_| "auto".into());
     #[allow(unused_mut)]
     let mut hardware_error = String::from("Hardware video decoding is not available on this platform");
+    // Held until the probe returns: the primed decoder's surfaces count
+    // against the budget playing clips share.
+    #[cfg(target_os = "windows")]
+    let mut _probe_lease: Option<Arc<NativeVideoMemoryLease>> = None;
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     if backend_policy != "software" {
         #[cfg(target_os = "macos")]
@@ -2188,6 +2239,16 @@ pub fn probe_native_video(
             }
             let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(
                 path, video_device, hap_supported, None)?;
+            // Priming allocates real decoder surfaces: admit them against the
+            // video memory budget first, as a playback session does, so
+            // checking a project's clips cannot push playing ones past it.
+            if let Some(budget) = video_memory.as_ref() {
+                let lease = budget.lease();
+                if !reserve_video_memory_within(&lease, decoder.probe_surface_bytes().saturating_mul(2), PROBE_MEMORY_WAIT) {
+                    return Err(PROBE_MEMORY_BUSY.to_string());
+                }
+                _probe_lease = Some(lease);
+            }
             // A session only reports hardware after a real decoder surface.
             decoder.set_queue_capacity(2)?;
             decoder.prime_hardware()?;
@@ -2207,6 +2268,12 @@ pub fn probe_native_video(
                 probe.height = metadata.height;
                 probe.fps = metadata.fps;
                 probe.duration_seconds = metadata.duration_seconds;
+                return probe;
+            }
+            #[cfg(target_os = "windows")]
+            Err(error) if error == PROBE_MEMORY_BUSY => {
+                probe.backend = "busy".into();
+                probe.reason = error;
                 return probe;
             }
             Err(error) => hardware_error = error,
@@ -2926,10 +2993,44 @@ mod lifecycle_tests {
             false,
             #[cfg(target_os = "windows")]
             Err("no device".into()),
+            #[cfg(target_os = "windows")]
+            None,
         );
         assert_eq!(probe.backend, "failed");
         assert!(!probe.hardware);
         assert!(probe.reason.contains("not found"));
+    }
+
+    #[test]
+    fn a_probe_waits_a_little_for_video_memory_then_gives_up() {
+        let budget = std::sync::Arc::new(super::NativeVideoMemoryBudget::new(100));
+        let playing = budget.lease();
+        assert!(super::reserve_video_memory_within(&playing, 80, std::time::Duration::ZERO));
+        let probe = budget.lease();
+        let started = std::time::Instant::now();
+        assert!(!super::reserve_video_memory_within(&probe, 40, std::time::Duration::from_millis(30)));
+        assert!(started.elapsed() >= std::time::Duration::from_millis(30));
+        drop(playing);
+        assert!(super::reserve_video_memory_within(&probe, 40, std::time::Duration::ZERO));
+    }
+
+    #[test]
+    fn probes_queue_on_shared_workers() {
+        let (done, results) = std::sync::mpsc::channel();
+        for index in 0..6 {
+            let done = done.clone();
+            super::spawn_probe(move || {
+                let _ = done.send((index, std::thread::current().name().map(str::to_string)));
+            });
+        }
+        // One that panics leaves its worker running for the rest.
+        super::spawn_probe(|| panic!("probe failed"));
+        let done2 = done.clone();
+        super::spawn_probe(move || { let _ = done2.send((99, std::thread::current().name().map(str::to_string))); });
+        let mut seen: Vec<_> = (0..7).map(|_| results.recv_timeout(std::time::Duration::from_secs(5)).unwrap()).collect();
+        seen.sort();
+        assert_eq!(seen.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4, 5, 99]);
+        assert!(seen.iter().all(|(_, name)| name.as_deref().is_some_and(|n| n.starts_with("video-probe-"))));
     }
 
     #[test]

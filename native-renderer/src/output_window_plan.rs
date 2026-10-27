@@ -247,11 +247,33 @@ pub(super) fn plan_output_window(
     }
 
     if !stays_fullscreen {
-        if let (Some(width), Some(height)) = (request.width, request.height) {
-            steps.push(OutputWindowStep::SetSize { width, height, space });
-        }
-        if let (Some(x), Some(y)) = (request.x, request.y) {
-            steps.push(OutputWindowStep::SetPosition { x, y, space });
+        let size = match (request.width, request.height) {
+            (Some(width), Some(height)) => Some(OutputWindowStep::SetSize { width, height, space }),
+            _ => None,
+        };
+        let position = match (request.x, request.y) {
+            (Some(x), Some(y)) => Some(OutputWindowStep::SetPosition { x, y, space }),
+            _ => None,
+        };
+        match space {
+            // In physical pixels, move first. On Windows a window moved onto a
+            // display with another scale is resized by the system to keep its
+            // logical size, so a size set before the move would not survive
+            // it: 1920x1080 asked for on a 100% projector from a 150% panel
+            // arrived as 1280x720. Size after the move, then move again to
+            // the asked-for corner in case that resize shifted it.
+            CoordinateSpace::Physical => {
+                steps.extend(position);
+                if let Some(size) = size {
+                    steps.push(size);
+                    steps.extend(position);
+                }
+            }
+            // A logical size is kept across scales, so the order is free.
+            CoordinateSpace::Logical => {
+                steps.extend(size);
+                steps.extend(position);
+            }
         }
     }
 
@@ -342,6 +364,26 @@ mod tests {
         );
         assert_eq!(*plan.steps.last().unwrap(), OutputWindowStep::Show);
         assert!(!plan.state.fullscreen);
+    }
+
+    #[test]
+    fn a_physical_window_is_sized_after_it_reaches_its_display() {
+        // From the 150% panel to a 1920x1080 window on the 100% projector:
+        // sized before the move, Windows would rescale it to 1280x720.
+        let current = OutputWindowState { attached: true, fullscreen: false, fullscreen_monitor: None };
+        let request = OutputWindowRequest::from_config(&json!({
+            "attached": true, "fullscreen": false, "x": 3840, "y": 0, "width": 1920, "height": 1080,
+            "coordinate_space": "physical",
+        }));
+        let plan = plan_output_window(&request, &current, &MONITORS);
+        let moves: Vec<usize> = plan.steps.iter().enumerate()
+            .filter(|(_, s)| matches!(s, OutputWindowStep::SetPosition { .. }))
+            .map(|(i, _)| i)
+            .collect();
+        let size = index_of(&plan.steps, |s| matches!(s, OutputWindowStep::SetSize { .. }));
+        assert_eq!(moves.len(), 2);
+        assert!(moves[0] < size && size < moves[1]);
+        assert_eq!(plan.steps[moves[1]], OutputWindowStep::SetPosition { x: 3840.0, y: 0.0, space: CoordinateSpace::Physical });
     }
 
     #[test]

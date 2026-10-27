@@ -16,6 +16,8 @@ mod isf_passes;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod hardware_video;
 #[cfg(target_os = "windows")]
+mod windows_display_rate;
+#[cfg(target_os = "windows")]
 mod windows_media_foundation;
 #[cfg(target_os = "windows")]
 mod windows_video_decoder;
@@ -6083,13 +6085,17 @@ impl App {
         let video_device = self.renderer.as_ref()
             .ok_or_else(|| "Renderer unavailable for hardware video".to_string())
             .and_then(|renderer| renderer.video_device.clone());
+        #[cfg(target_os = "windows")]
+        let video_memory = Some(self.video_memory_budget.clone());
         let responses = self.response_tx.clone();
-        thread::spawn(move || {
+        media_decode::spawn_probe(move || {
             let probe = media_decode::probe_native_video(
                 &path,
                 hap_supported,
                 #[cfg(target_os = "windows")]
                 video_device,
+                #[cfg(target_os = "windows")]
+                video_memory,
             );
             let mut result = serde_json::to_value(&probe).unwrap_or_else(|_| json!({}));
             result["uri"] = json!(uri);
@@ -14713,8 +14719,7 @@ impl App {
             .renderer
             .as_ref()
             .and_then(|renderer| renderer.window.current_monitor())
-            .and_then(|monitor| monitor.refresh_rate_millihertz())
-            .map(|millihertz| millihertz as f64 / 1000.0);
+            .and_then(|monitor| monitor_refresh_hz(&monitor));
     }
 
     /// Frames are wanted on a clock right now: the output window is shown,
@@ -20108,11 +20113,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             // On another display now, possibly at another refresh rate.
             WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                self.output_refresh_hz = renderer
-                    .window
-                    .current_monitor()
-                    .and_then(|monitor| monitor.refresh_rate_millihertz())
-                    .map(|millihertz| millihertz as f64 / 1000.0);
+                self.output_refresh_hz = renderer.window.current_monitor().and_then(|monitor| monitor_refresh_hz(&monitor));
             }
             _ => {}
         }
@@ -34349,6 +34350,20 @@ fn present_mode_label(mode: wgpu::PresentMode) -> &'static str {
 // Rebase after a whole missed interval, so a stall never causes catch-up bursts.
 fn scheduled_frame_start(deadline: Instant, now: Instant, period: Duration) -> Instant {
     if now.saturating_duration_since(deadline) < period { deadline } else { now }
+}
+
+/// A display's refresh rate in Hz. On Windows winit's figure is a whole
+/// number (a 59.94 Hz display reads as 59), so the exact one is asked for
+/// first; macOS and Linux already report fractional rates.
+fn monitor_refresh_hz(monitor: &MonitorHandle) -> Option<f64> {
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::MonitorHandleExtWindows;
+        if let Some(hz) = windows_display_rate::exact_refresh_hz(&monitor.native_id()) {
+            return Some(hz);
+        }
+    }
+    monitor.refresh_rate_millihertz().map(|millihertz| millihertz as f64 / 1000.0)
 }
 
 /// The frame rate to draw at for a display: the whole fraction of its refresh
