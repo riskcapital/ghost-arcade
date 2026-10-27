@@ -156,3 +156,27 @@ describe('the round text the page shows translates as a whole', () => {
     expect(translateText('Converting for smooth playback (7%)', packs.fr, buildPatterns(packs.fr))).toBe('Conversion pour une lecture fluide (7 %)');
   });
 });
+
+/**
+ * Every language pack has an entry for every interface string in
+ * source.json: a translation, or the English text itself where a string
+ * stays English in that language (brand names, units, words spelled the same).
+ * After changing interface text, run `node scripts/i18n-extract.mjs` and add
+ * the new strings to all six packs.
+ */
+describe('language packs cover all interface text', () => {
+  for (const code of CODES) {
+    it(`${code} has an entry for every string`, () => {
+      const missing = [...source].filter((s) => !(s in packs[code]));
+      expect(missing, `${missing.length} interface strings have no ${code} entry`).toEqual([]);
+    });
+  }
+
+  it('keeps every placeholder in every entry', () => {
+    const placeholders = (s: string) => (s.match(/\{\d+\}/g) ?? []).sort().join(',');
+    for (const code of CODES) {
+      const broken = Object.entries(packs[code]).filter(([en, out]) => source.has(en) && placeholders(en) !== placeholders(out));
+      expect(broken, code).toEqual([]);
+    }
+  });
+});
