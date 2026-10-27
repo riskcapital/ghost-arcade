@@ -7,7 +7,7 @@
  * after opening brought the previous project back. New cleared the history to
  * nothing, so the first edit after it could not be undone at all.
  *
- * The harness wires history as App.svelte does.
+ * The harness wires history with App.svelte's own wiring (appHistory.ts).
  */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,7 @@ let layers: typeof import('./layers');
 let types: typeof import('../types');
 let historyModule: typeof import('./history');
 let hooks: typeof import('./historyHooks');
+let appHistory: typeof import('./appHistory');
 
 function installDomShim(): void {
   const storage = new Map<string, string>();
@@ -71,19 +72,11 @@ beforeAll(async () => {
   types = await import('../types');
   historyModule = await import('./history');
   hooks = await import('./historyHooks');
+  appHistory = await import('./appHistory');
 });
 
-const record = () => historyModule.history.record(get(layers.project));
-function resetHistory() {
-  hooks.cancelPendingHistorySnapshot();
-  historyModule.history.init(get(layers.project));
-}
-function undo() {
-  hooks.flushPendingHistorySnapshot();
-  const step = historyModule.history.undo(get(layers.project));
-  if (step) layers.project.set(step);
-  return !!step;
-}
+const resetHistory = () => appHistory.resetHistoryToCurrent();
+const undo = () => appHistory.undoHistory();
 const steps = () => get(historyModule.history).past.length;
 
 async function openProject(name: string, layerList: any[] = []) {
@@ -93,12 +86,7 @@ async function openProject(name: string, layerList: any[] = []) {
 }
 
 beforeEach(async () => {
-  hooks.setHistoryCallback(record, {
-    capture: () => get(layers.project),
-    commit: (captured) => historyModule.history.record(captured as any),
-    amend: () => historyModule.history.amend(get(layers.project)),
-  });
-  hooks.setProjectReplacedCallback(() => queueMicrotask(resetHistory));
+  appHistory.wireAppHistory();
   await openProject('first', [types.createLayer('a', 'A', 'color')]);
 });
 

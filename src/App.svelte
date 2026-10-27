@@ -96,8 +96,9 @@
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot, resetProjectOwnedStores } from './lib/stores/layers';
-  import { recordDiscreteAction, scheduleHistorySnapshot, cancelPendingHistorySnapshot, setProjectReplacedCallback, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, flushPendingHistorySnapshot, resetProjectOwnedStores } from './lib/stores/layers';
+  import { recordDiscreteAction, scheduleHistorySnapshot, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
+  import { wireAppHistory, resetHistoryToCurrent, undoHistory, redoHistory } from './lib/stores/appHistory';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { settings, outputFrozen } from './lib/stores/settings';
@@ -161,7 +162,7 @@
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
   import { invoke, isMac, isDesktopApp, openExternalUrl } from './lib/bridge';
-  import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType, Project } from './lib/types';
+  import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType } from './lib/types';
   import { createDefaultCorners, generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
   // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
@@ -1198,17 +1199,9 @@
       setTimeout(() => splash.remove(), 600);
     }
 
-    // Wire up history recording callback for the project store
-    setHistoryCallback(recordHistory, {
-      capture: () => get(project),
-      commit: (captured) => history.record(captured as Project),
-      amend: () => history.amend(get(project)),
-    });
-    // Opening a project (any path: File, Open Recent, recovery, relink,
-    // package) starts its history over. Deferred to a microtask so what the
-    // opening path does right after the import is part of the starting
-    // point, not the first undo.
-    setProjectReplacedCallback(() => queueMicrotask(resetHistoryToCurrent));
+    // Wire up undo history recording, and its reset when a project is
+    // opened (appHistory.ts).
+    wireAppHistory();
 
     // Simple routing: check URL hash
     isMobile = window.location.hash === '#/mobile' || window.location.pathname.includes('mobile');
@@ -5318,49 +5311,17 @@
     historyInitialized = true;
   }
 
-  /** Start the undo history over at the project as it is now: after a
-   *  project is opened, recovered or created, undo must not reach back into
-   *  the project that was open before. */
-  function resetHistoryToCurrent() {
-    cancelPendingHistorySnapshot();
-    history.init(get(project));
-  }
-
-  // Take a snapshot. Call sites record through recordDiscreteAction() (from
-  // historyHooks), which first commits an edit still waiting for its
-  // debounce as its own step. Nothing records on a store subscription, so
-  // live automation never lands in the history.
-  function recordHistory() {
-    history.record(get(project));
-  }
-
-  /** Make an undo or redo step live. Only what the step changed is
-   *  restored (see mergeProjectStep). */
-  function applyHistoryStep(step: Project) {
-    project.set(step);
-    // The multi-selection may still name a layer the step removed.
-    project.setSelectedLayerIds(get(selectedLayerIds));
-  }
-
+  // A step spans the project and the keyframe timelines beside it; undo
+  // and redo restore only what the step changed (appHistory.ts). A
+  // debounced edit still waiting is committed as its own step first.
   function handleUndo() {
     fileMenuOpen = false;
-    // Commit any debounced-but-not-yet-recorded slider edit first, so it
-    // becomes its own undo step instead of being silently lost or merged
-    // into whatever the undo below jumps back to.
-    flushPendingHistorySnapshot();
-    history.suppress();
-    const previousState = history.undo(get(project));
-    if (previousState) applyHistoryStep(previousState);
-    history.unsuppress();
+    undoHistory();
   }
 
   function handleRedo() {
     fileMenuOpen = false;
-    flushPendingHistorySnapshot();
-    history.suppress();
-    const nextState = history.redo(get(project));
-    if (nextState) applyHistoryStep(nextState);
-    history.unsuppress();
+    redoHistory();
   }
 
   // Close file menu when clicking outside

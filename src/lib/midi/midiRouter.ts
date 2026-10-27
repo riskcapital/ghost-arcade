@@ -13,6 +13,7 @@ import { getPluginByEffectType } from '../plugins/registry';
 import { controlPathAsWritten, matchControlKey, normalizeControlPath } from '../control/controlPaths';
 import { releaseTempoNudgeInputs, setTempoNudgeInput, resyncLaunchClock } from '../stores/launchClock';
 import { clipAudio, clipAudioMaster } from '../audio/clipAudio';
+import { runAsLiveControl } from '../stores/historyHooks';
 
 // Controller, OSC, DMX and keyboard writes are performance, not edits: they
 // must not become undo steps (a fader would fill the undo history in a
@@ -232,6 +233,13 @@ class MidiRouter {
   }
 
   private dispatch(path: string, value: number, mapping: MidiMapping, inputId?: string, layerId?: string) {
+    // Everything that reaches the router (controllers, OSC, DMX, keyboard,
+    // gestures, show control) is performance: nothing it changes becomes an
+    // undo step, a write to an armed keyframe track included.
+    runAsLiveControl(() => this.dispatchLive(path, value, mapping, inputId, layerId));
+  }
+
+  private dispatchLive(path: string, value: number, mapping: MidiMapping, inputId?: string, layerId?: string) {
     // Keywords match on the lowercased path; names (params, effects,
     // groups) are read from `names`, which keeps the spelling.
     const names = controlPathAsWritten(path).split(':');

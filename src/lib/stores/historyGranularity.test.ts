@@ -8,7 +8,7 @@
  * fades) wrote undo steps or was reverted by them; and adding a layer took
  * two undos.
  *
- * The harness wires history exactly as App.svelte does.
+ * The harness wires history with App.svelte's own wiring (appHistory.ts).
  */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,7 @@ let layers: typeof import('./layers');
 let types: typeof import('../types');
 let historyModule: typeof import('./history');
 let hooks: typeof import('./historyHooks');
+let appHistory: typeof import('./appHistory');
 let stageEffects: typeof import('./stageEffects');
 
 function installDomShim(): void {
@@ -73,35 +74,15 @@ beforeAll(async () => {
   types = await import('../types');
   historyModule = await import('./history');
   hooks = await import('./historyHooks');
+  appHistory = await import('./appHistory');
   stageEffects = await import('./stageEffects');
 });
 
 // ── App.svelte's wiring ────────────────────────────────────────────────
-function resetHistory() {
-  hooks.cancelPendingHistorySnapshot();
-  historyModule.history.init(get(layers.project));
-}
-function wireHistory() {
-  hooks.setHistoryCallback(() => historyModule.history.record(get(layers.project)), {
-    capture: () => get(layers.project),
-    commit: (captured) => historyModule.history.record(captured as any),
-    amend: () => historyModule.history.amend(get(layers.project)),
-  });
-}
-function apply(step: import('../types').Project | null) {
-  if (!step) return false;
-  layers.project.set(step);
-  layers.project.setSelectedLayerIds(get(layers.selectedLayerIds));
-  return true;
-}
-function undo() {
-  hooks.flushPendingHistorySnapshot();
-  return apply(historyModule.history.undo(get(layers.project)));
-}
-function redo() {
-  hooks.flushPendingHistorySnapshot();
-  return apply(historyModule.history.redo(get(layers.project)));
-}
+const resetHistory = () => appHistory.resetHistoryToCurrent();
+const wireHistory = () => appHistory.wireAppHistory();
+const undo = () => appHistory.undoHistory();
+const redo = () => appHistory.redoHistory();
 const steps = () => get(historyModule.history).past.length;
 const layerById = (id: string) => get(layers.project).layers.find((l) => l.id === id);
 
@@ -122,6 +103,7 @@ afterEach(() => {
   vi.useRealTimers();
   hooks.cancelPendingHistorySnapshot();
   hooks.setHistoryCallback(() => {});
+  hooks.setProjectReplacedCallback(null);
 });
 
 describe('a debounced edit is its own step', () => {

@@ -85,14 +85,49 @@ function sanitize(value: unknown, ancestors: WeakSet<object> = new WeakSet()): u
   return out;
 }
 
+/** Keyframe timelines as keyframeTimeline.exportAll() gives them. */
+export type KeyframeHistoryState = Array<{ layerId: string; tracks: unknown[] }>;
+
 /**
- * Serialize a Project into a JSON snapshot for history. sanitize() strips all
- * runtime refs (textures, DOM elements) BEFORE JSON.stringify sees them, so
- * no toJSON() hooks run — avoiding the "Unable to serialize Texture." flood
- * that otherwise starves the renderer when VJ clips hold live textures.
+ * What an undo or redo makes live.
+ *
+ * Keyframe timelines live in their own store (stores/keyframeTimeline.ts),
+ * not inside `Project`; the project only gains a `keyframeTimelines` field
+ * at save time. So every step carries them beside the project, on the one
+ * shared timeline: a keyframe and the layer edit beside it unwind in the
+ * order they happened.
+ *
+ * As with the project, only what the step changed comes back: `keyframes`
+ * is null when the step did not touch them.
  */
-function serializeSnapshot(project: Project): string {
-  return JSON.stringify(sanitize(withoutViewState(project)));
+export interface HistorySnapshot {
+  project: Project;
+  /** The timelines to make live (keyframeTimeline.importAll), or null. */
+  keyframes: KeyframeHistoryState | null;
+}
+
+/**
+ * Serialize a step for history. sanitize() strips all runtime refs
+ * (textures, DOM elements) BEFORE JSON.stringify sees them, so no toJSON()
+ * hooks run — avoiding the "Unable to serialize Texture." flood that
+ * otherwise starves the renderer when VJ clips hold live textures.
+ */
+function serializeSnapshot(project: Project, keyframes: unknown): string {
+  return JSON.stringify({
+    project: sanitize(withoutViewState(project)),
+    keyframes: sanitize(keyframes ?? null),
+  });
+}
+
+interface ParsedStep {
+  project: Project;
+  /** null when the step was recorded without keyframes. */
+  keyframes: unknown;
+}
+
+function parseSnapshot(json: string): ParsedStep {
+  const parsed = JSON.parse(json) as { project: Project; keyframes?: unknown };
+  return { project: parsed.project, keyframes: parsed.keyframes ?? null };
 }
 
 /**
@@ -223,6 +258,79 @@ export function mergeProjectStep(
   return out as unknown as Project;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+function byKey<T>(list: unknown, key: string): Map<unknown, T> {
+  const map = new Map<unknown, T>();
+  if (!Array.isArray(list)) return map;
+  for (const item of list) if (isRecord(item)) map.set(item[key], item as T);
+  return map;
+}
+
+/**
+ * A list of records keyed by `idKey` (keyframe tracks) as an undo or redo
+ * should leave it: an item that is the same in `to` and `from` was not
+ * touched by the step and keeps its live state (present or not); one the
+ * step changed comes back as the step has it. Items on neither step (made
+ * without a step since) are kept.
+ */
+function mergeById(live: unknown, to: unknown[], from: unknown, idKey: string): unknown[] {
+  const liveById = byKey<Record<string, unknown>>(live, idKey);
+  const fromById = byKey<Record<string, unknown>>(from, idKey);
+  const inStep = new Set<unknown>();
+  const out: unknown[] = [];
+  for (const item of to) {
+    if (!isRecord(item)) continue;
+    inStep.add(item[idKey]);
+    const before = fromById.get(item[idKey]);
+    const now = liveById.get(item[idKey]);
+    if (before && sameJson(item, before)) {
+      if (now) out.push(now);
+    } else {
+      out.push(item);
+    }
+  }
+  for (const [id, item] of liveById) {
+    if (!inStep.has(id) && !fromById.has(id)) out.push(item);
+  }
+  return out;
+}
+
+/**
+ * The keyframe timelines an undo or redo should leave live, or null when the
+ * step did not change them (or was recorded without them, which must never
+ * wipe the live keyframes).
+ *
+ * Merged per track like mergeProjectStep merges layers: a track the step did
+ * not change keeps its live keyframes, so undoing a keyframe edit takes back
+ * that edit and not the keyframes another track gained since without a step
+ * (an armed track under live control).
+ */
+export function mergeKeyframeStep(live: unknown, to: unknown, from: unknown): KeyframeHistoryState | null {
+  if (!Array.isArray(to)) return null;
+  if (!Array.isArray(from)) return to as KeyframeHistoryState;
+  if (sameJson(to, from)) return null;
+  const toById = byKey<Record<string, unknown>>(to, 'layerId');
+  const fromById = byKey<Record<string, unknown>>(from, 'layerId');
+  const liveById = byKey<Record<string, unknown>>(live, 'layerId');
+  const out: KeyframeHistoryState = [];
+  for (const layerId of new Set([...toById.keys(), ...liveById.keys()])) {
+    const step = toById.get(layerId);
+    const now = liveById.get(layerId);
+    const before = fromById.get(layerId);
+    if ((step && before && sameJson(step, before)) || (!step && !before)) {
+      // Not touched by this step (or made since without one): as it is live.
+      if (now) out.push(now as KeyframeHistoryState[number]);
+      continue;
+    }
+    const stepTracks = Array.isArray(step?.tracks) ? step.tracks as unknown[] : [];
+    const tracks = mergeById(now?.tracks, stepTracks, before?.tracks ?? [], 'key');
+    if (step || tracks.length > 0) out.push({ ...(now ?? step), layerId, tracks } as KeyframeHistoryState[number]);
+  }
+  return sameJson(out, live) ? null : out;
+}
+
 // ============================================================================
 
 /** One recorded step. `json` is what steps are compared and restored by;
@@ -233,6 +341,12 @@ interface HistoryEntry {
   id: number;
   json: string;
   selectedLayerId: string | null;
+}
+
+/** The live state an undo or redo is merged onto. */
+interface HistoryLiveState {
+  project: Project;
+  keyframes: unknown;
 }
 
 interface HistoryState {
@@ -256,18 +370,22 @@ function createHistoryStore() {
   // Counter-based guard to suppress recording during undo/redo
   let suppressCount = 0;
 
-  /** Move one step back (`direction` -1) or forward (+1). Returns the
-   *  project to make live (see mergeProjectStep). */
-  function step(direction: -1 | 1, liveProject: Project): Project | null {
-    let result: Project | null = null;
+  /** Move one step back (`direction` -1) or forward (+1). Returns what to
+   *  make live: the step merged onto the live state of each store it spans
+   *  (see mergeProjectStep and mergeKeyframeStep). */
+  function step(direction: -1 | 1, live: HistoryLiveState): HistorySnapshot | null {
+    let result: HistorySnapshot | null = null;
     update((state) => {
       const source = direction < 0 ? state.past : state.future;
       if (source.length === 0) return state;
       const target = direction < 0 ? source[source.length - 1] : source[0];
       const leaving = state.current;
-      const parsed = JSON.parse(target.json) as Project;
-      const left = leaving ? JSON.parse(leaving.json) as Project : null;
-      result = mergeProjectStep(liveProject, parsed, left, target.selectedLayerId);
+      const parsed = parseSnapshot(target.json);
+      const left = leaving ? parseSnapshot(leaving.json) : null;
+      result = {
+        project: mergeProjectStep(live.project, parsed.project, left?.project ?? null, target.selectedLayerId),
+        keyframes: mergeKeyframeStep(live.keyframes, parsed.keyframes, left ? left.keyframes : null),
+      };
       if (direction < 0) {
         return {
           past: state.past.slice(0, -1),
@@ -287,20 +405,20 @@ function createHistoryStore() {
   return {
     subscribe,
 
-    // Initialize with a project state
-    init(project: Project) {
+    // Initialize with a project state (and the keyframes beside it)
+    init(project: Project, keyframes: unknown = null) {
       set({
         past: [],
         future: [],
-        current: makeEntry(serializeSnapshot(project), project),
+        current: makeEntry(serializeSnapshot(project, keyframes), project),
       });
     },
 
     // Record a new state (called after discrete user actions)
-    record(project: Project) {
+    record(project: Project, keyframes: unknown = null) {
       if (suppressCount > 0) return;
 
-      const serialized = serializeSnapshot(project);
+      const serialized = serializeSnapshot(project, keyframes);
 
       update((state) => {
         // Skip if identical to current state
@@ -320,9 +438,9 @@ function createHistoryStore() {
 
     /** Replace the latest step with this state, without adding a step
      *  (see amendLastHistoryStep). */
-    amend(project: Project) {
+    amend(project: Project, keyframes: unknown = null) {
       if (suppressCount > 0) return;
-      const serialized = serializeSnapshot(project);
+      const serialized = serializeSnapshot(project, keyframes);
       update((state) => {
         if (!state.current || state.current.json === serialized) return state;
         return { ...state, current: { ...state.current, json: serialized } };
@@ -333,15 +451,15 @@ function createHistoryStore() {
     suppress() { suppressCount++; },
     unsuppress() { setTimeout(() => { suppressCount = Math.max(0, suppressCount - 1); }, 50); },
 
-    /** Undo — returns the project to restore: the previous step merged onto
-     *  the live project (see mergeProjectStep). */
-    undo(liveProject: Project): Project | null {
-      return step(-1, liveProject);
+    /** Undo — returns what to restore: the previous step merged onto the
+     *  live state. */
+    undo(liveProject: Project, liveKeyframes: unknown = null): HistorySnapshot | null {
+      return step(-1, { project: liveProject, keyframes: liveKeyframes });
     },
 
     /** Redo — the next step, merged the same way. */
-    redo(liveProject: Project): Project | null {
-      return step(1, liveProject);
+    redo(liveProject: Project, liveKeyframes: unknown = null): HistorySnapshot | null {
+      return step(1, { project: liveProject, keyframes: liveKeyframes });
     },
 
     /** Id of the step the project is at now; changes with every recorded

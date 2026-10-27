@@ -18,6 +18,7 @@ let hooks: typeof import('./historyHooks');
 let keyframes: typeof import('./keyframeTimeline');
 let settingsModule: typeof import('./settings');
 let macrosModule: typeof import('./macros');
+let appHistory: typeof import('./appHistory');
 
 function installDomShim(): void {
   const storage = new Map<string, string>();
@@ -148,9 +149,9 @@ describe('with the real stores', () => {
     keyframes = await import('./keyframeTimeline');
     settingsModule = await import('./settings');
     macrosModule = await import('./macros');
+    appHistory = await import('./appHistory');
   });
 
-  const capture = () => get(layers.project);
   const snapshot = (): ProjectDirtySnapshot => ({
     stepId: historyModule.history.currentStepId(),
     settings: projectSettingsSignature({ exported: layers.project.exportProject() as any }),
@@ -160,26 +161,20 @@ describe('with the real stores', () => {
     hooks.flushPendingHistorySnapshot();
     return isProjectDirty(saved, snapshot());
   };
-  const undo = () => {
-    hooks.flushPendingHistorySnapshot();
-    const step = historyModule.history.undo(get(layers.project));
-    if (step) layers.project.set(step);
-  };
+  const undo = () => appHistory.undoHistory();
 
   beforeEach(() => {
-    hooks.setHistoryCallback(() => historyModule.history.record(capture()), {
-      capture,
-      commit: (c: any) => historyModule.history.record(c),
-    });
+    appHistory.wireAppHistory();
     const layer = types.createLayer('a', 'A', 'color');
     layer.effects = [{ id: 'fx', type: 'blur' as any, enabled: true, params: { amount: 0.2 } as any, opacity: 1 }];
     expect(layers.project.importProject({ version: '1.9.3', project: { id: 'p', name: 'P', width: 1920, height: 1080, layers: [layer] } })).toBe(true);
-    historyModule.history.init(capture());
+    appHistory.resetHistoryToCurrent();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     hooks.setHistoryCallback(() => {});
+    hooks.setProjectReplacedCallback(null);
   });
 
   it('counts an effect param edit, even before its undo step is recorded', () => {
@@ -215,12 +210,26 @@ describe('with the real stores', () => {
     settingsModule.settings.setDomeEnabled(!get(settingsModule.settings).output.domeEnabled);
   });
 
-  it('counts keyframes and Screens, which undo does not cover', () => {
+  it('counts a keyframe edit, and is clean again once it is undone', () => {
     const saved = snapshot();
     keyframes.keyframeTimeline.addKeyframe('a', 'opacity', 0, 0.5);
     expect(dirty(saved)).toBe(true);
+    undo();
+    expect(keyframes.keyframeTimeline.exportAll()).toEqual([]);
+    expect(dirty(saved)).toBe(false);
+  });
+
+  it('counts keyframes written without a step (an armed track under live control)', () => {
+    const saved = snapshot();
+    hooks.runAsLiveControl(() => keyframes.keyframeTimeline.addKeyframe('a', 'opacity', 0, 0.5));
+    expect(dirty(saved)).toBe(true);
+    expect(get(historyModule.history).past).toHaveLength(0);
     keyframes.keyframeTimeline.reset();
     expect(dirty(saved)).toBe(false);
+  });
+
+  it('counts Screens, which undo does not cover', () => {
+    const saved = snapshot();
     const slices = get(settingsModule.settings).output.slices;
     settingsModule.settings.update((s) => ({ ...s, output: { ...s.output, slices: [...slices, { id: 'screen-x' } as any] } }));
     expect(dirty(saved)).toBe(true);

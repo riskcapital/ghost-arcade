@@ -12,6 +12,30 @@ import type {
   KeyframeTimelineConfig,
 } from '../types';
 import { evaluateTrack } from '../keyframes/easing';
+import {
+  recordDiscreteAction,
+  scheduleHistorySnapshot,
+  isRestoringHistory,
+} from './historyHooks';
+
+/**
+ * Keyframe edits are undoable.
+ *
+ * Timelines live in this store rather than inside `Project`, so every undo
+ * step carries them beside the project (appHistory.ts captures them and
+ * history.ts stores them). These two helpers are what tells it a step is
+ * due. Both are inert while a step is being restored: importAll() runs
+ * during undo/redo and must not record what it just applied. Playback
+ * (play, seek, the per-frame tick) changes no timeline and records nothing.
+ */
+function recordKeyframeAction() {
+  if (isRestoringHistory()) return;
+  recordDiscreteAction();
+}
+function scheduleKeyframeSnapshot(key: string) {
+  if (isRestoringHistory()) return;
+  scheduleHistorySnapshot(key);
+}
 
 // ─── State ───────────────────────────────────────
 
@@ -302,6 +326,7 @@ function createKeyframeTimelineStore() {
           timelines: { ...s.timelines, [layerId]: { ...timeline, tracks } },
         };
       });
+      recordKeyframeAction();
     },
 
     // ── Keyframe management ──
@@ -358,6 +383,12 @@ function createKeyframeTimelineStore() {
           activeOverrides: newOverrides,
         };
       });
+      // Debounced rather than immediate: autoRecord() funnels every armed
+      // slider tick through here, so a step per call would bury the undo
+      // stack under one entry per pixel of drag. A single add still lands as
+      // its own step: 600ms later, when a different edit comes, or before an
+      // undo.
+      scheduleKeyframeSnapshot(`keyframe-add:${layerId}:${trackKey}`);
     },
 
     removeKeyframe(layerId: string, trackKey: string, time: number) {
@@ -405,6 +436,7 @@ function createKeyframeTimelineStore() {
           selectedKeyframe: cleared,
         };
       });
+      recordKeyframeAction();
     },
 
     moveKeyframe(layerId: string, trackKey: string, fromTime: number, toTime: number) {
@@ -440,6 +472,9 @@ function createKeyframeTimelineStore() {
 
         return { ...s, timelines: newTimelines, activeOverrides: newOverrides, selectedKeyframe: newSel };
       });
+      // Dragging a keyframe along the grid calls this on every pointermove:
+      // one undo step per drag.
+      scheduleKeyframeSnapshot(`keyframe-move:${layerId}:${trackKey}`);
     },
 
     updateKeyframeEasing(layerId: string, trackKey: string, time: number, easing: KeyframeEasing) {
@@ -462,6 +497,7 @@ function createKeyframeTimelineStore() {
           timelines: { ...s.timelines, [layerId]: { ...timeline, tracks } },
         };
       });
+      recordKeyframeAction();
     },
 
     /**
@@ -498,6 +534,8 @@ function createKeyframeTimelineStore() {
           activeOverrides: evaluateAll(newTimelines, s.config.currentTime),
         };
       });
+      // Number spinners can fire repeatedly while held, so coalesce.
+      scheduleKeyframeSnapshot(`keyframe-value:${layerId}:${trackKey}:${time}`);
     },
 
     /** Select a keyframe so the inspector panel can edit its parameters. */
@@ -531,7 +569,20 @@ function createKeyframeTimelineStore() {
           })),
         };
       }
-      update(s => ({ ...s, timelines }));
+      update(s => {
+        // An undo can take away the selected keyframe, and the values the
+        // timelines put on the layers change with them.
+        const sel = s.selectedKeyframe;
+        const track = sel ? timelines[sel.layerId]?.tracks.find(t => t.key === sel.trackKey) : undefined;
+        const selected = !!sel && !!track
+          && [...track.keyframes, ...track.boolKeyframes].some(k => Math.abs(k.time - sel.time) < 0.001);
+        return {
+          ...s,
+          timelines,
+          activeOverrides: evaluateAll(timelines, s.config.currentTime),
+          selectedKeyframe: selected ? sel : null,
+        };
+      });
     },
 
     // ── Utilities ──
@@ -600,6 +651,7 @@ function createKeyframeTimelineStore() {
         };
       });
       console.log('[KF Store] clearAll done');
+      recordKeyframeAction();
     },
 
     clearLayer(layerId: string) {
@@ -616,6 +668,7 @@ function createKeyframeTimelineStore() {
           activeOverrides: evaluateAll(rest, s.config.currentTime),
         };
       });
+      recordKeyframeAction();
     },
 
     reset() {

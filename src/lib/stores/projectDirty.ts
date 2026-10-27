@@ -8,17 +8,19 @@
  * the edits were lost.
  *
  * A change is now detected two ways:
- *  - Everything undo covers (every layer and project field): the undo step
- *    the project is at differs from the one it was at when saved. Undoing
- *    back to the saved step makes the project clean again. Live control and
- *    automation never record a step, so a show that was only played does
- *    not count as changed.
- *  - The parts of the project undo does not cover (keyframes, the output
- *    stage, Stage Designer surfaces, media folders and library, VJ clip
- *    grid, modulation, macros, control bindings, snapshots, sequencer,
- *    audio calibration, show timeline and cue list): a signature of their
+ *  - Everything undo covers (every layer and project field, and the
+ *    keyframes): the undo step the project is at differs from the one it
+ *    was at when saved. Undoing back to the saved step makes the project
+ *    clean again. Live control and automation never record a step, so a
+ *    show that was only played does not count as changed.
+ *  - The parts of the project undo does not cover (the output stage, Stage
+ *    Designer surfaces, media folders and library, VJ clip grid,
+ *    modulation, macros, control bindings, snapshots, sequencer, audio
+ *    calibration, show timeline and cue list): a signature of their
  *    settings, leaving out what changes while performing (macro values,
- *    active clips, playheads, panel visibility).
+ *    active clips, playheads, panel visibility). The keyframes are in it
+ *    too: an armed track under live control writes keyframes without a
+ *    step, and they are still unsaved.
  */
 
 export interface ProjectDirtySnapshot {

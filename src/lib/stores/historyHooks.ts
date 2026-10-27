@@ -3,10 +3,11 @@
  * undoable edits.
  *
  * This lives in its own module rather than in layers.ts so that modules
- * layers.ts imports (and panels that only need the hooks) can record
- * without an import cycle.
+ * layers.ts imports (keyframeTimeline.ts, screens.ts, and panels that only
+ * need the hooks) can record without an import cycle.
  *
- * The actual snapshot is taken by App.svelte (via setHistoryCallback).
+ * The actual snapshot is taken by appHistory.ts (installed by App.svelte via
+ * setHistoryCallback), which sees every store a step spans.
  */
 
 /**
@@ -49,6 +50,7 @@ export function setHistoryCallback(record: () => void, snapshotHooks?: HistorySn
  * gesture (within GESTURE_GAP_MS), which belongs in this step.
  */
 export function recordDiscreteAction() {
+  if (_liveControlDepth > 0) return;
   if (_pending) {
     if (Date.now() - _pending.lastEditAt >= GESTURE_GAP_MS) commitPending();
     else cancelPendingHistorySnapshot();
@@ -63,6 +65,7 @@ export function recordDiscreteAction() {
  * took two presses, the first of which only removed the shader.
  */
 export function amendLastHistoryStep() {
+  if (_liveControlDepth > 0) return;
   if (_snapshotHooks?.amend) _snapshotHooks.amend();
   else if (_record) _record();
 }
@@ -115,6 +118,7 @@ function commitPending() {
  * `layer:<id>:opacity`); call sites that pass none share one key.
  */
 export function scheduleHistorySnapshot(key = '') {
+  if (_liveControlDepth > 0) return;
   const now = Date.now();
   if (_pending && !_pending.keys.has(key) && now - _pending.lastEditAt >= GESTURE_GAP_MS) {
     commitPending();
@@ -148,6 +152,37 @@ export function cancelPendingHistorySnapshot() {
 /** True while an edit is waiting for its debounce. */
 export function hasPendingHistorySnapshot(): boolean {
   return _pending !== null;
+}
+
+/**
+ * Suppress recording while a step is being restored.
+ *
+ * Undo and redo put keyframes back with keyframeTimeline.importAll(), and
+ * the keyframe store records its own edits; without this guard a restore
+ * could record the state it just applied as a NEW step, poisoning the redo
+ * stack and making a second undo a no-op.
+ */
+let _restoreDepth = 0;
+export function beginHistoryRestore() { _restoreDepth += 1; }
+export function endHistoryRestore() { _restoreDepth = Math.max(0, _restoreDepth - 1); }
+export function isRestoringHistory() { return _restoreDepth > 0; }
+
+/**
+ * Live control: controller, OSC, DMX, keyboard, gesture and show-control
+ * writes (everything midiRouter dispatches). They are performance, not
+ * edits, and never become undo steps, whatever they reach: a write to an
+ * armed keyframe track still adds its keyframe, but no step. Nothing is
+ * recorded while `fn` runs, and an edit waiting for its debounce is left
+ * waiting.
+ */
+let _liveControlDepth = 0;
+export function runAsLiveControl<T>(fn: () => T): T {
+  _liveControlDepth += 1;
+  try {
+    return fn();
+  } finally {
+    _liveControlDepth -= 1;
+  }
 }
 
 /**
