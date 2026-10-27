@@ -78,8 +78,11 @@ asarUnpack:
 
 # ─── File Associations ─────────────────────────────────────────────────────
 fileAssociations:
+  # Pro's own handler name (Windows ProgID). 2.x and Studio register
+  # "Ghost Arcade Project"; the 2.x uninstaller that Pro's installer runs
+  # deletes that handler, which would leave .gha opening nothing.
   - ext: gha
-    name: "Ghost Arcade Project"
+    name: "GhostArcadePro.Project"
     description: "Ghost Arcade Project File"
     role: Editor
 

@@ -24,7 +24,10 @@
       ; A full uninstall (no --updated or --keep-shortcuts, which are for an
       ; in-place upgrade), so the old shortcuts go too. App data is kept.
       ExecWait '$R4 /S /KEEP_APP_DATA _?=$R3' $R5
+      ; Only when it finished: an uninstall that stopped part way still
+      ; needs its uninstaller.
       ${ifNot} ${Errors}
+      ${andIf} $R5 == 0
         ; Run in place (_?=), the uninstaller cannot delete itself.
         Delete "$R3\Uninstall Ghost Arcade.exe"
         RMDir "$R3"
