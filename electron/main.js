@@ -55,13 +55,14 @@ if (!app.isPackaged && process.env.GA_USER_DATA_DIR) {
 
 // One copy runs at a time; the lock belongs to the userData folder, so it is
 // taken right after any override above. On Windows, double-clicking a project
-// while the app is open starts a second process: it hands the file to the
-// running copy ('second-instance' below) and quits, without rotating that
-// copy's log, migrating settings or recording path grants on the way out.
+// while the app is open starts a second process. Asking for the lock already
+// hands its arguments to the running copy ('second-instance' below), so it
+// exits here. app.quit() would first run the rest of start-up: rotating the
+// running copy's log, migrating settings, starting servers and addons.
 const isPrimaryInstance = app.requestSingleInstanceLock();
 if (!isPrimaryInstance) {
   console.log('[Main] Another instance is running — handing over and quitting');
-  app.quit();
+  app.exit(0);
 }
 
 // Pro's data folder and keychain key are named after its productName in
@@ -72,7 +73,7 @@ if (!isPrimaryInstance) {
 const LEGACY_USER_DATA_DIR = path.join(app.getPath('appData'), 'ghost-arcade');
 {
   const from = !app.isPackaged ? process.env.GA_PROFILE_MIGRATE_FROM : LEGACY_USER_DATA_DIR;
-  if (from && isPrimaryInstance) {
+  if (from) {
     try {
       require('./profile-migration.cjs').migrateProfile({
         from,
@@ -249,12 +250,9 @@ const { dir: _logDir, file: _logFile } = debugLogLocation({
 });
 // The last three launches stay readable (.log, .1.log, .2.log): a problem
 // reported after restarting the app used to be overwritten with its log.
-// A second instance only adds a line to the running copy's log.
-if (isPrimaryInstance) rotateDebugLogs(_logFile, 3);
+rotateDebugLogs(_logFile, 3);
 try {
-  const header = `=== Electron started ${new Date().toISOString()}${isPrimaryInstance ? '' : ' (second instance, handing over)'} ===\n`;
-  if (isPrimaryInstance) fs.writeFileSync(_logFile, header);
-  else fs.appendFileSync(_logFile, header);
+  fs.writeFileSync(_logFile, `=== Electron started ${new Date().toISOString()} ===\n`);
 } catch {
   /* a read-only log folder must not stop the app */
 }
@@ -9920,8 +9918,7 @@ app.on('open-file', (event, filePath) => {
   event.preventDefault();
   queueProjectOpen(filePath);
 });
-// A second instance's file is opened by the running copy instead.
-if (isPrimaryInstance) queueProjectOpen(projectFileFromArgs(process.argv));
+queueProjectOpen(projectFileFromArgs(process.argv));
 
 app.on('second-instance', (_event, argv) => {
   // Focus existing window when user tries to launch a second instance
@@ -9930,7 +9927,9 @@ app.on('second-instance', (_event, argv) => {
     mainWindow.focus();
   }
   // Launched by double-clicking a project: open it in this window.
-  queueProjectOpen(projectFileFromArgs(argv));
+  const projectFile = projectFileFromArgs(argv);
+  console.log(`[Main] Another launch handed over${projectFile ? ` ${projectFile}` : ''}`);
+  queueProjectOpen(projectFile);
 });
 
 app.whenReady().then(async () => {
