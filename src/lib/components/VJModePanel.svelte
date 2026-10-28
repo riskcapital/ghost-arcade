@@ -1219,7 +1219,11 @@
       namePrefix: 'VJ Recording',
       onDurationUpdate: (s) => { vjRecordingDuration = s; },
       onComplete: () => { vjIsRecording = false; vjRecorderHandle = null; },
-      onError: (err) => { alert('Failed to start recording: ' + err.message); },
+      onError: (err) => {
+        vjIsRecording = false;
+        vjRecorderHandle = null;
+        alert('Failed to start recording: ' + err.message);
+      },
     });
     if (vjRecorderHandle) {
       vjIsRecording = true;
