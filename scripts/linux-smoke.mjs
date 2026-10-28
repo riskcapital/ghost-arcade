@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, waitForTarget, sleep } from './linux-smoke-cdp.mjs';
-import { stepHandshake, stepComposite } from './linux-smoke-steps.mjs';
+import { answerLaunchScreens, stepHandshake, stepComposite } from './linux-smoke-steps.mjs';
 import { stepScreen, stepCalibration } from './linux-smoke-screens.mjs';
 import { stepInteractive } from './linux-smoke-live.mjs';
 import { stepRecording, stepVj } from './linux-smoke-show.mjs';
@@ -177,7 +177,13 @@ async function main() {
     log(`could not reach the app window: ${error.message}`);
   }
   if (c) {
-    for (const step of wanted) await runStep(step, c);
+    for (const step of wanted) {
+      // The graphics check opens when the editor learns the adapter is
+      // software, which on a slow machine can be after step a. Answer it
+      // wherever it turns up, as a person would, before the next step clicks.
+      if (step.id !== 'a') await answerLaunchScreens(c).catch((error) => log(`  launch screens: ${error.message}`));
+      await runStep(step, c);
+    }
     fs.writeFileSync(path.join(outDir, 'renderer-console.log'), c.consoleLines.join('\n'));
     c.close();
   }

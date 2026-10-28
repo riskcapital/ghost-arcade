@@ -157,7 +157,6 @@ export const stepComposite = {
   id: 'b', title: 'A shader layer shows a non-black composite in the editor',
   async run(t) {
     const { c } = t;
-    await answerLaunchScreens(c);
     await addLayer(c, 'GPU Shader');
     const rows = await c.eval("document.body.innerText.includes('Properties (Media)')");
     t.check('GPU Shader layer was added and selected', rows, 'inspector shows the layer properties');
