@@ -1,6 +1,6 @@
 {
   "name": "Boot to a blank project",
-  "description": "The app starts, the welcome screen offers the four choices, Blank project leaves a black output and nothing logs an error.",
+  "description": "The app starts, the welcome screen offers the five choices, Blank project leaves a black output and nothing logs an error.",
   "steps": [
     { "label": "Welcome screen is showing", "expect": { "text.contains": { "selector": ".welcome-start-title", "pattern": "How would you like to start", "within": 10 } } },
     { "do": "app.start", "choice": "blank", "wait": 2 },
