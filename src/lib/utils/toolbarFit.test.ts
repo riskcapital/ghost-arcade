@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { toolbarScale } from './toolbarFit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fitToolbar, toolbarScale } from './toolbarFit';
 
 const measure = (room: number, scalable = 1500, fixed = 200) => ({ room, fixed, scalable });
 
@@ -66,5 +66,57 @@ describe('toolbarScale', () => {
   it('treats nothing to scale as full size', () => {
     expect(toolbarScale({ room: 800, fixed: 100, scalable: 0 }, 0.7)).toBe(1);
     expect(toolbarScale({ room: 0, fixed: 100, scalable: 1000 }, 0.7)).toBe(1);
+  });
+});
+
+describe('fitToolbar', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A bar with a fixed File group and two scaled groups, too wide for its window. */
+  function toolbar(log: string[]) {
+    const element = (width: number, children: unknown[] = [], attributes: string[] = []) => ({
+      children,
+      style: { setProperty() {}, removeProperty() {} },
+      hasAttribute: (name: string) => attributes.includes(name),
+      getBoundingClientRect: () => ({ width }),
+    });
+    const classes = new Set<string>();
+    const groups = [
+      element(120, [element(120)], ['data-tb-fixed']),
+      element(500, [element(100), element(100), element(100), element(100), element(100)]),
+      element(400, [element(200), element(200)]),
+    ];
+    const header = {
+      ...element(0, groups),
+      parentElement: element(900),
+      classList: {
+        add: (...names: string[]) => { names.forEach((name) => classes.add(name)); log.push(`add ${names.join(' ')}`); },
+        remove: (...names: string[]) => { names.forEach((name) => classes.delete(name)); log.push(`remove ${names.join(' ')}`); },
+      },
+      get offsetWidth() { log.push('layout'); return 900; },
+    };
+    return { header: header as unknown as HTMLElement, classes };
+  }
+
+  it('stretches the centre buttons back before transitions return', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    vi.stubGlobal('getComputedStyle', () => ({ display: 'flex', position: 'static', paddingLeft: '14px', paddingRight: '14px', columnGap: '10px' }));
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} });
+
+    const log: string[] = [];
+    const { header, classes } = toolbar(log);
+    const fit = fitToolbar(header);
+    while (frames.length) frames.shift()!(0);
+
+    // Measured with transitions held. The stretch comes back and is laid out
+    // before they return: animated back in, it resized the buttons, which
+    // fitted the bar again, over and over.
+    expect(log[0]).toBe('add tb-still tb-measuring');
+    expect(log.slice(log.indexOf('remove tb-measuring'))).toEqual(['remove tb-measuring', 'layout', 'remove tb-still']);
+    expect(classes.size).toBe(0);
+    fit.destroy();
   });
 });

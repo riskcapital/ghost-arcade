@@ -9492,9 +9492,10 @@
   }
 
   /* fitToolbar (lib/utils/toolbarFit.ts) measures the groups at full size
-     with this class on: no transitions, and the centre buttons at their own
-     width rather than stretched over the spare room. */
-  .toolbar:global(.tb-measuring) :global(*) {
+     with tb-measuring on (the centre buttons at their own width rather than
+     stretched over the spare room) and holds transitions with tb-still until
+     the buttons are stretched again. */
+  .toolbar:global(.tb-still) :global(*) {
     transition: none !important;
   }
   .toolbar:global(.tb-measuring) .toolbar-center > :global(*) {
