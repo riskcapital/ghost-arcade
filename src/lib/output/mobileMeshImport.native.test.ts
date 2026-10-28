@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { rpcDeadlineScale } from '../renderer/nativeHardwareTestPlatform';
 import type { Layer } from '../types';
 import { layerRenderMeshGrid } from '../utils/meshWarp';
 import { phoneMeshLayer, type PhoneMesh } from './mobileMeshImport';
@@ -179,7 +180,7 @@ describe('a curved surface from the phone on the native core', () => {
         { type: 'present' },
       ] });
       const centre = F(0.5, 0.5);
-      await expect.poll(async () => { const s = await snapshot(rpc); return pixel(s, centre, s.blue); }, { timeout: 5000, interval: 30, message: 'the layer must show' }).toBeGreaterThan(100);
+      await expect.poll(async () => { const s = await snapshot(rpc); return pixel(s, centre, s.blue); }, { timeout: 5000 * rpcDeadlineScale, interval: 30, message: 'the layer must show' }).toBeGreaterThan(100);
       const shot = await snapshot(rpc);
       // Inside the surface: the colour says which part of the picture landed there.
       for (const [u, v] of [[0.5, 0.5], [0.4, 0.35], [0.62, 0.42], [0.5, 0.68], [0.36, 0.5]]) {

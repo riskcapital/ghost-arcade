@@ -149,7 +149,7 @@ describe('composition FX run as a post-composite pass on the native core', () =>
     } finally {
       await rpc.close();
     }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 });
 
 
@@ -178,7 +178,7 @@ itIfNativeCore('renders group effects after children and applies group opacity o
     await expect.poll(async () => {
       await rpc.send('frame_snapshot', {});
       return (await rpc.send('get_source_frame_readiness', { source_id: 'group-parent' })).ready;
-    }, { timeout: 5000, interval: 20 }).toBe(true);
+    }, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toBe(true);
     await rpc.send('submit_commands', { commands: [
       { type: 'upsert_layer', layer_id: 'group-display', z_index: 0, opacity: 1, blend_mode: 'normal', corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } } },
       { type: 'bind_media_source', layer_id: 'group-display', source_id: 'group-parent', uri: 'group-test://output', source_type: 'image' },
@@ -192,7 +192,7 @@ itIfNativeCore('renders group effects after children and applies group opacity o
       const pixel = [...bytes.subarray((16 * Number(frame.width) + 16) * 4, (16 * Number(frame.width) + 16) * 4 + 4)];
       if (String(frame.format).toLowerCase().startsWith('bgra')) [pixel[0], pixel[2]] = [pixel[2], pixel[0]];
       return Math.abs(pixel[0] - 64) <= 2 && pixel[1] <= 2 && Math.abs(pixel[2] - 64) <= 2 && pixel[3] === 255;
-    }, { timeout: 5000, interval: 20 }).toBe(true);
+    }, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toBe(true);
     // Two mapped slices share one resident group producer inside one output.
     // The readers intentionally sort before the producer lexically.
     await rpc.send('submit_commands', { commands: [
@@ -217,9 +217,9 @@ itIfNativeCore('renders group effects after children and applies group opacity o
         const offset = (16 * Number(frame.width) + x) * 4;
         return [...bytes.subarray(offset, offset + 4)];
       });
-    }, { timeout: 5000, interval: 20 }).toEqual([[64, 0, 64, 255], [64, 0, 64, 255]]);
+    }, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toEqual([[64, 0, 64, 255], [64, 0, 64, 255]]);
   } finally { await rpc.close(); }
-}, 60000);
+}, 60000 * rpcDeadlineScale);
 
 itIfNativeCore('retains VJ composition FX with the mix graph and shares their processed frame with stage slices', async () => {
   const rpc = createNativeRpc();
@@ -249,12 +249,12 @@ itIfNativeCore('retains VJ composition FX with the mix graph and shares their pr
       if (String(frame.format).toLowerCase().startsWith('bgra')) [p[0], p[2]] = [p[2], p[0]];
       return p;
     };
-    await expect.poll(pixel, { timeout: 5000, interval: 20 }).toEqual([0, 255, 255, 255]);
+    await expect.poll(pixel, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toEqual([0, 255, 255, 255]);
     for (const [mixAmount, expected] of [[0, [255, 0, 0, 255]], [0.25, [191, 64, 64, 255]]] as const) {
       const partial = buildNativeEffectPassChainGraph({ sourceId: 'review-mix', targetSourceId: 'review-fx',
         effects: [{ effect: 'invert', amount: 1, mix: mixAmount }], width: 32, height: 32, time: 0, frameIndex: 0 });
       await rpc.send('submit_commands', { commands: [{ ...producer(true), effect_graph: composeNativeGraphs(mix.config, partial.config) }] });
-      await expect.poll(pixel, { timeout: 5000, interval: 20 }).toEqual([...expected]);
+      await expect.poll(pixel, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toEqual([...expected]);
     }
     await rpc.send('submit_commands', { commands: [producer(true)] });
     const reader = buildVJMixGraph({ outputSourceId: 'review-slice', width: 32, height: 32, time: 0, frameIndex: 0,
@@ -266,11 +266,11 @@ itIfNativeCore('retains VJ composition FX with the mix graph and shares their pr
       { type: 'set_layer_visibility', layer_id: 'stage-reader', visible: true },
       { type: 'set_native_graph_layer', layer_id: 'stage-reader', kind: 'vj-mix', instrument_source_id: 'review-slice', composite_source_id: 'review-slice', effect_graph: reader.config, params: {} },
     ] });
-    await expect.poll(pixel, { timeout: 5000, interval: 20 }).toEqual([0, 255, 255, 255]);
+    await expect.poll(pixel, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toEqual([0, 255, 255, 255]);
     await rpc.send('submit_commands', { commands: [producer(false)] });
-    await expect.poll(pixel, { timeout: 5000, interval: 20 }).toEqual([255, 0, 0, 255]);
+    await expect.poll(pixel, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toEqual([255, 0, 0, 255]);
   } finally { await rpc.close(); }
-}, 60000);
+}, 60000 * rpcDeadlineScale);
 
 itIfNativeCore('keeps warped mesh cells opaque across concave bends and distant grid cells', async () => {
   const rpc = createNativeRpc();
@@ -304,10 +304,10 @@ itIfNativeCore('keeps warped mesh cells opaque across concave bends and distant 
           if (bytes[offset + (bgra ? 2 : 0)] < 250 || bytes[offset + (bgra ? 0 : 2)] > 5) exposed++;
         }
         return exposed;
-      }, { timeout: 3000, interval: 30, message: `${size}x${size} mesh must not expose the blue layer` }).toBe(0);
+      }, { timeout: 3000 * rpcDeadlineScale, interval: 30, message: `${size}x${size} mesh must not expose the blue layer` }).toBe(0);
     }
   } finally { await rpc.close(); }
-}, 60000);
+}, 60000 * rpcDeadlineScale);
 
 itIfNativeCore('does not paint an affine duplicate outside a folded corner-warp surface', async () => {
   const rpc = createNativeRpc();
@@ -328,6 +328,6 @@ itIfNativeCore('does not paint an affine duplicate outside a folded corner-warp 
       // (0.60,0.45) is inside the fallback triangle but outside the actual
       // bilinear patch (negative inverse discriminant). The top still draws.
       return [redAt(38, 28), redAt(32, 3)];
-    }, { timeout: 3000, interval: 30 }).toEqual([0, 255]);
+    }, { timeout: 3000 * rpcDeadlineScale, interval: 30 }).toEqual([0, 255]);
   } finally { await rpc.close(); }
-}, 60000);
+}, 60000 * rpcDeadlineScale);
