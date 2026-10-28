@@ -106,10 +106,14 @@ export const stepOutputAndQuit = {
         t.number('x11OutputPicture', `meanLuma=${shown.meanLuma} nonBlack=${shown.nonBlackFraction}`);
         t.check('Output Window shows the picture on the display', shown.nonBlackFraction > 0.02, JSON.stringify(shown));
       }
+      // Opening the fullscreen output waits on the core between frames: 23 s
+      // on a runner at 0.7 fps. Pressing Fullscreen again before it is up
+      // would open it a second time instead of leaving.
       await c.clickElement(el.button('Fullscreen'));
       const size = rootSize();
+      const fullBy = Date.now() + 60000;
       let full = null;
-      for (let i = 0; i < 30; i++) {
+      while (Date.now() < fullBy) {
         await sleep(500);
         full = findWindows(OUTPUT_TITLE).map((entry) => ({ ...windowInfo(entry), state: windowState(entry) })).find((info) => info?.viewable && info.width === size?.width && info.height === size?.height) || null;
         if (full) break;
@@ -134,8 +138,8 @@ export const stepOutputAndQuit = {
     const leaving = Date.now();
     let closed = false;
     let last = null;
-    while (!closed && Date.now() - leaving < 30000) { await sleep(500); last = await outputStatus(c); closed = !last.attached; }
-    t.number('outputClose', closed ? `${round((Date.now() - leaving) / 1000, 1)} s` : 'still attached after 30 s');
+    while (!closed && Date.now() - leaving < 60000) { await sleep(500); last = await outputStatus(c); closed = !last.attached; }
+    t.number('outputClose', closed ? `${round((Date.now() - leaving) / 1000, 1)} s` : 'still attached after 60 s');
     t.check('leaving fullscreen closes the output', closed, closed ? '' : JSON.stringify(last));
 
     if (t.args.attach || t.args.keepOpen) { t.skip('quit: attached to an app this run did not start'); return; }

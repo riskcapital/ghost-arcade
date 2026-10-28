@@ -134,7 +134,12 @@ export const stepHandshake = {
     t.check('core is running with a ready backend', status?.running === true && status?.backend_ready === true, `running=${status?.running} backend_ready=${status?.backend_ready} error=${status?.last_frame_error || ''}`);
     if (t.isLinux) {
       t.check('backend is Vulkan', String(status?.backend).toLowerCase() === 'vulkan', String(status?.backend));
-      const slices = await rpc(c, 'native_renderer_get_slice_output_state');
+      // A core busy with its first frames can miss a request; ask again.
+      let slices = null;
+      for (let i = 0; i < 10 && !slices; i++) {
+        slices = await rpc(c, 'native_renderer_get_slice_output_state');
+        if (!slices) await sleep(2000);
+      }
       t.number('screenPresentation', `${slices?.platform} available=${slices?.available}${slices?.reason ? ` (${slices.reason})` : ''}`);
       t.check('core can present Screens on X11', slices?.available === true && slices?.platform === 'x11', JSON.stringify(slices)?.slice(0, 300));
       t.number('editorPreviewExport', caps?.output_shared_texture_export?.platform);
