@@ -2426,6 +2426,13 @@ class NativeRendererBroker {
         console.log(`[NativeRenderer] ${line}`);
       });
     });
+    // A write that races the core's exit fails with EPIPE. The request's own
+    // write callback rejects it and the 'exit' handler reports the death, so
+    // the pipe's error event only needs a listener; without one it throws.
+    this.child.stdin.on('error', (err) => {
+      if (this.child !== child) return;
+      console.log(`[NativeRenderer] could not write to the core: ${err?.message || err}`);
+    });
     // Only a process that is still the current child reaches these: an
     // intended stop (killProcess) clears this.child first.
     this.child.on('exit', (code, signal) => {
