@@ -132,7 +132,7 @@ async function recordTake(t, seconds, profile) {
   const started = Date.now();
   let recording = false;
   // A refused take says so (alert) within a few seconds; a real one shows Stop Rec.
-  while (Date.now() - started < 15000 && c.dialogs.length === dialogsBefore) {
+  while (Date.now() - started < seconds * 1000 + 15000 && c.dialogs.length === dialogsBefore) {
     recording = await c.exists("document.querySelector('.stop-rec-btn')");
     if (recording && Date.now() - started > seconds * 1000) break;
     await sleep(400);

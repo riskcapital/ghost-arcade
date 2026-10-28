@@ -47,10 +47,11 @@ export const stepClipAudio = {
       if (Number(status?.native_video_frame_decodes) > 3) break;
       await sleep(1000);
     }
-    // A software core finishes a frame every second or two, so allow it a few.
+    // A software core finishes a frame every one to three seconds, and the
+    // clip advances with the frames it draws, so allow it a good many.
     const first = await rpc(c, 'native_renderer_get_output_shared_texture_snapshot', { include_pixels: false }, 120000);
     let second = first;
-    const changeBy = Date.now() + 20000;
+    const changeBy = Date.now() + 60000;
     while (Date.now() < changeBy && second?.checksum === first?.checksum) {
       await sleep(2500);
       second = await rpc(c, 'native_renderer_get_output_shared_texture_snapshot', { include_pixels: false }, 120000);
