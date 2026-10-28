@@ -11,6 +11,7 @@ const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
 // How long a failed write to the core waits for the core's exit, which names
 // the reason, before the request is rejected with the write error itself.
 const WRITE_FAILURE_EXIT_GRACE_MS = 1000;
+const HANDSHAKE_FAILED = 'Native render core capabilities handshake failed';
 // One core stall trips every in-flight RPC at once. Roll those up instead of
 // emitting a line per failure for a condition the operator cannot act on.
 const TRANSIENT_RPC_FAILURE_LOG_WINDOW_MS = 5000;
@@ -817,7 +818,7 @@ class NativeRendererBroker {
       this.lastStatus = {
         ...this.lastStatus,
         backend_ready: false,
-        last_frame_error: `Native render core capabilities handshake failed: ${err?.message || String(err)}`,
+        last_frame_error: `${HANDSHAKE_FAILED}: ${err?.message || String(err)}`,
       };
     }
     return this.lastStatus;
@@ -846,7 +847,17 @@ class NativeRendererBroker {
     const deadline = Date.now() + patienceMs;
     for (;;) {
       try {
-        return await this.refreshCapabilities({ requireCore: true });
+        const capabilities = await this.refreshCapabilities({ requireCore: true });
+        // A routine capabilities poll (the editor's panels ask too) that timed
+        // out while this handshake was still waiting marked the backend not
+        // ready. The handshake has answered since; returning that stale
+        // verdict from start() left the editor's sync, which starts once,
+        // failed for the session with the composite black.
+        if (this.lastStatus?.backend_ready === false
+          && String(this.lastStatus.last_frame_error || '').startsWith(HANDSHAKE_FAILED)) {
+          this.lastStatus = normalizeStatus(startResult, this.lastStatus);
+        }
+        return capabilities;
       } catch (err) {
         const slow = /timed out/i.test(err?.message || String(err));
         const alive = !!(this.child && !this.child.killed);
@@ -1296,7 +1307,7 @@ class NativeRendererBroker {
         running: !!(this.child && !this.child.killed),
         core_capabilities_confirmed: false,
         core_capabilities_error: this.coreCapabilitiesError,
-        notes: [`Native render core capabilities handshake failed: ${this.coreCapabilitiesError}`],
+        notes: [`${HANDSHAKE_FAILED}: ${this.coreCapabilitiesError}`],
       });
       this.lastStatus = {
         ...this.lastStatus,
