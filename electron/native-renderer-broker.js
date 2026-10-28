@@ -8,6 +8,9 @@ const require = createRequire(import.meta.url);
 const COMMAND_PREFIX = 'native_renderer_';
 const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
 const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
+// How long a failed write to the core waits for the core's exit, which names
+// the reason, before the request is rejected with the write error itself.
+const WRITE_FAILURE_EXIT_GRACE_MS = 1000;
 // One core stall trips every in-flight RPC at once. Roll those up instead of
 // emitting a line per failure for a condition the operator cannot act on.
 const TRANSIENT_RPC_FAILURE_LOG_WINDOW_MS = 5000;
@@ -2133,7 +2136,14 @@ class NativeRendererBroker {
       item.payload = null;
       const writable = child.stdin.write(payload, err => {
         if (!err || this.child !== child) return;
-        this.finishPending(item.id)?.reject(err);
+        // A broken pipe means the core is going. Its exit handler rejects
+        // every pending request with the reason ("render core stopped (exit
+        // code 101)"), which says far more than EPIPE, so let the exit arrive
+        // first and fall back to the write error only if the core lives on.
+        const fallback = setTimeout(() => {
+          if (this.child === child) this.finishPending(item.id)?.reject(err);
+        }, WRITE_FAILURE_EXIT_GRACE_MS);
+        fallback.unref?.();
       });
       if (writable === false) {
         this.writeBlocked = true;
