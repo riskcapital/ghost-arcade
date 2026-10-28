@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import type { BezierPoint, Layer, MeshWarpGrid } from '../types';
 import { evaluateMeshGrid, withMeshPoints } from '../utils/meshWarp';
 import { fittedMeshGrid } from '../utils/meshShapeFit';
@@ -206,7 +207,7 @@ async function render(rpc: NativeRpc, layer: Layer, mesh: MeshWarpGrid | null): 
   await expect.poll(async () => {
     const shot = await snapshot(rpc);
     return at(shot, 0.42, 0.5, shot.blue);
-  }, { timeout: 5000, interval: 30, message: 'the shaped layer must show' }).toBeGreaterThan(100);
+  }, { timeout: 5000 * rpcDeadlineScale, interval: 30, message: 'the shaped layer must show' }).toBeGreaterThan(100);
   return snapshot(rpc);
 }
 

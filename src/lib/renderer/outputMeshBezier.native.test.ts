@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { closeNativeTestCore, gpuTestPlatform as platform } from './nativeHardwareTestPlatform';
+import { closeNativeTestCore, gpuTestPlatform as platform, rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import type { MeshPointTangents, MeshWarpGrid } from '../types';
 import { evaluateMeshByRows } from '../utils/meshWarp';
 
@@ -204,7 +204,7 @@ async function startWithRedLayer(rpc: ReturnType<typeof core>, corners: Command)
     { type: 'set_layer_visibility', layer_id: 'red', visible: true },
   ]);
   await expect.poll(async () => redAt(frameOf(await rpc.send('frame_snapshot', { include_pixels: true })), SIZE / 2, SIZE - 4),
-    { timeout: 8000, interval: 30 }).toBeGreaterThan(200);
+    { timeout: 8000 * rpcDeadlineScale, interval: 30 }).toBeGreaterThan(200);
 }
 
 /** Pixels whose colour differs by more than rounding (2 levels). */

@@ -34,9 +34,39 @@ export async function pageImage(c) {
   return { image, scale: image.width / cssWidth, png: Buffer.from(shot.data, 'base64') };
 }
 
-export const dismissWelcome = async (c) => {
-  if (await c.exists(el.button('Get started'))) { await c.clickElement(el.button('Get started')); await sleep(400); }
-};
+/** True once the element exists and no transition still moves it or an ancestor. */
+const settled = (expression) => `(()=>{const e=${expression}; if(!e) return false;`
+  + ' return !document.getAnimations().some(a=>a.playState===\'running\'&&a.effect?.target?.contains?.(e)&&Number.isFinite(a.effect.getComputedTiming().endTime));})()';
+
+const GPU_NOTICE = "document.querySelector('.gpu-notice.ready')";
+const BLANK_PROJECT = "[...document.querySelectorAll('.welcome.ready .choice')].find(b=>b.querySelector('.choice-title')?.textContent.trim()==='Blank project')";
+
+/**
+ * Answer the screens a fresh launch opens on, the way a person would. On
+ * Linux with a software rasterizer (the CI runner's llvmpipe) the graphics
+ * check comes first and the welcome screen waits behind it. Returns which
+ * of the two were shown.
+ */
+export async function answerLaunchScreens(c, { gpuNoticeWaitMs = 0, welcomeWaitMs = 0 } = {}) {
+  const shown = { gpuNotice: false, welcome: false };
+  if (gpuNoticeWaitMs) await c.waitFor(GPU_NOTICE, gpuNoticeWaitMs, 'graphics check').catch(() => null);
+  if (await c.exists(GPU_NOTICE)) {
+    shown.gpuNotice = true;
+    const proceed = el.button('Continue in software', GPU_NOTICE);
+    await c.waitFor(settled(proceed), 5000, 'graphics check to settle');
+    await c.clickElement(proceed);
+    await c.waitFor("!document.querySelector('.gpu-notice')", 5000, 'graphics check to close');
+    welcomeWaitMs = Math.max(welcomeWaitMs, 5000);
+  }
+  if (welcomeWaitMs) await c.waitFor(BLANK_PROJECT, welcomeWaitMs, 'welcome screen').catch(() => null);
+  if (await c.exists(BLANK_PROJECT)) {
+    shown.welcome = true;
+    await c.waitFor(settled(BLANK_PROJECT), 5000, 'welcome screen to settle');
+    await c.clickElement(BLANK_PROJECT);
+    await c.waitFor("!document.querySelector('.welcome')", 5000, 'welcome screen to close');
+  }
+  return shown;
+}
 
 export async function openTab(c, name) {
   await c.clickElement(el.button(name));
@@ -104,13 +134,25 @@ export const stepHandshake = {
     t.check('core is running with a ready backend', status?.running === true && status?.backend_ready === true, `running=${status?.running} backend_ready=${status?.backend_ready} error=${status?.last_frame_error || ''}`);
     if (t.isLinux) {
       t.check('backend is Vulkan', String(status?.backend).toLowerCase() === 'vulkan', String(status?.backend));
-      const slices = await rpc(c, 'native_renderer_get_slice_output_state');
+      // A core busy with its first frames can miss a request; ask again.
+      let slices = null;
+      for (let i = 0; i < 10 && !slices; i++) {
+        slices = await rpc(c, 'native_renderer_get_slice_output_state');
+        if (!slices) await sleep(2000);
+      }
       t.number('screenPresentation', `${slices?.platform} available=${slices?.available}${slices?.reason ? ` (${slices.reason})` : ''}`);
       t.check('core can present Screens on X11', slices?.available === true && slices?.platform === 'x11', JSON.stringify(slices)?.slice(0, 300));
       t.number('editorPreviewExport', caps?.output_shared_texture_export?.platform);
     }
     t.shared.caps = caps;
-    await dismissWelcome(c);
+    // A fresh profile opens on the welcome screen. On a software adapter the
+    // Linux graphics check comes first, once the core has named the adapter.
+    const softwareLinux = t.isLinux && status?.adapter_is_software === true;
+    const fresh = !t.args.attach;
+    const screens = await answerLaunchScreens(c, { gpuNoticeWaitMs: fresh && softwareLinux ? 30000 : 0, welcomeWaitMs: fresh ? 15000 : 0 });
+    t.number('launchScreens', `graphics check ${screens.gpuNotice ? 'shown' : 'not shown'}, welcome ${screens.welcome ? 'shown' : 'not shown'}`);
+    if (fresh && softwareLinux) t.check('software adapter: the graphics check says so and lets the session go on', screens.gpuNotice);
+    t.check('launch screens are answered and nothing covers the editor', !(await c.exists("document.querySelector('.gpu-notice, .welcome')")));
     await t.shot('a-editor');
   },
 };
@@ -120,7 +162,6 @@ export const stepComposite = {
   id: 'b', title: 'A shader layer shows a non-black composite in the editor',
   async run(t) {
     const { c } = t;
-    await dismissWelcome(c);
     await addLayer(c, 'GPU Shader');
     const rows = await c.eval("document.body.innerText.includes('Properties (Media)')");
     t.check('GPU Shader layer was added and selected', rows, 'inspector shows the layer properties');

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import type { EdgeEffect, Layer, MeshPointTangents, MeshWarpGrid, WarpCorners } from '../types';
 import { evaluateMeshGrid } from '../utils/meshWarp';
 import { buildEdgeEffectContext, nativeEdgeEffectPayload } from '../drawing/edgeEffects';
@@ -230,7 +231,7 @@ describe('Bezier mesh warp on the native core', () => {
       await expect.poll(async () => {
         const shot = await snapshot(rpc);
         return channel(shot, SIZE / 2, SIZE - 8, shot.red) > 127 && channel(shot, SIZE / 2, 4, shot.red) < 32;
-      }, { timeout: 5000, interval: 30, message: 'the red layer must show below the sagging edge and not above it' }).toBe(true);
+      }, { timeout: 5000 * rpcDeadlineScale, interval: 30, message: 'the red layer must show below the sagging edge and not above it' }).toBe(true);
 
       const shot = await snapshot(rpc);
       const samples: Array<[number, number]> = [];
@@ -263,7 +264,7 @@ describe('Bezier mesh warp on the native core', () => {
       await expect.poll(async () => {
         const shot = await snapshot(rpc);
         return channel(shot, SIZE / 2, Math.round(SIZE * 0.5), shot.red) > 127 && channel(shot, SIZE / 2, 4, shot.red) < 32;
-      }, { timeout: 5000, interval: 30 }).toBe(true);
+      }, { timeout: 5000 * rpcDeadlineScale, interval: 30 }).toBe(true);
 
       const shot = await snapshot(rpc);
       for (const px of SAMPLE_COLUMNS) {
@@ -297,7 +298,7 @@ describe('Bezier mesh warp on the native core', () => {
       await expect.poll(async () => {
         const shot = await snapshot(rpc);
         return channel(shot, SIZE / 2, SIZE / 2, shot.blue);
-      }, { timeout: 5000, interval: 30 }).toBeGreaterThan(100);
+      }, { timeout: 5000 * rpcDeadlineScale, interval: 30 }).toBeGreaterThan(100);
       const plain = await snapshot(rpc);
 
       const differingPixels = (a: Snapshot, b: Snapshot) => {
@@ -406,7 +407,7 @@ describe('Bezier mesh bulging past its corner quad', () => {
       await expect.poll(async () => {
         const shot = await snapshot(rpc);
         return channel(shot, SIZE / 2, SIZE / 2, shot.red);
-      }, { timeout: 5000, interval: 30 }).toBeGreaterThan(200);
+      }, { timeout: 5000 * rpcDeadlineScale, interval: 30 }).toBeGreaterThan(200);
       const content = await snapshot(rpc);
 
       const columns = SAMPLE_COLUMNS.filter((px) => px > 0.22 * SIZE && px < 0.78 * SIZE);
@@ -515,7 +516,7 @@ describe('Custom Shape on a straight mesh', () => {
       ] });
       const red = (shot: Snapshot, yUp: number) => channel(shot, SIZE / 2, Math.floor((1 - yUp) * SIZE), shot.red);
       // Inside both triangles: the warp and shape have landed.
-      await expect.poll(async () => red(await snapshot(rpc), 0.3), { timeout: 5000, interval: 30 }).toBeGreaterThan(200);
+      await expect.poll(async () => red(await snapshot(rpc), 0.3), { timeout: 5000 * rpcDeadlineScale, interval: 30 }).toBeGreaterThan(200);
       await rpc.send('frame_snapshot', {});
       const shot = await snapshot(rpc);
       // Below the drawn base, where the mesh would have moved it: nothing.

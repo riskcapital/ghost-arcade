@@ -391,7 +391,11 @@
       namePrefix: 'Preset Recording',
       onDurationUpdate: (s) => { recordingDuration = s; },
       onComplete: () => { isRecording = false; recorderHandle = null; },
-      onError: (err) => { alert('Failed to start recording: ' + err.message); },
+      onError: (err) => {
+        isRecording = false;
+        recorderHandle = null;
+        alert('Failed to start recording: ' + err.message);
+      },
     });
     if (recorderHandle) {
       isRecording = true;

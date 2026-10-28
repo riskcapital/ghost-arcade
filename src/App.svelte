@@ -1520,7 +1520,13 @@
       namePrefix: 'Recording',
       onDurationUpdate: (s) => { recordingDuration = s; },
       onComplete: () => { isRecording = false; recorderHandle = null; },
-      onError: (err) => { alert('Failed to start recording: ' + err.message); },
+      // A take the core refuses fails after the button has already flipped
+      // to Stop Rec, so put it back before saying why.
+      onError: (err) => {
+        isRecording = false;
+        recorderHandle = null;
+        alert('Failed to start recording: ' + err.message);
+      },
     });
     if (recorderHandle) {
       isRecording = true;

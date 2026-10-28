@@ -1366,7 +1366,12 @@ async function captureLiveMp4Frame(args = {}, clockOwned = false) {
     job.captureBusy = true;
     try {
       const { createNativeFrameSink } = require('./native-frame-stream.cjs');
-      job.frameSink ??= await createNativeFrameSink({ write: chunk => writeEncoderStdin(job, chunk, job.writtenFrames, 'Native live frame') });
+      // Wait as long as the broker lets the core take over the request: on a
+      // software adapter that is several times the GPU budget.
+      job.frameSink ??= await createNativeFrameSink({
+        write: chunk => writeEncoderStdin(job, chunk, job.writtenFrames, 'Native live frame'),
+        timeoutMs: 15000 * nativeRendererBroker.rpcTimeoutScale(),
+      });
       const snapshot = await job.frameSink.capture(job.frameBytes * (to - from + 1),
         sink => nativeRendererBroker.invoke('native_renderer_stream_output_frame', {
           ...sink, width: job.width, height: job.height, copies: to - from + 1,
@@ -3441,12 +3446,7 @@ async function probeSliceNativeAvailable() {
   if (process.platform === 'linux') {
     // No addon on Linux: the core presents Screens itself, into an X11 child
     // window, and says whether it can.
-    try {
-      const probe = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
-      return !!probe?.available && probe?.platform === 'x11';
-    } catch {
-      return false;
-    }
+    return coreCanPresentSlices((probe) => !!probe?.available && probe?.platform === 'x11');
   }
   // Screens were macOS-only: probe, attach and pump were all gated on darwin
   // or on monitorSetIOSurface, so on Windows every Screen window fell back to
@@ -3460,12 +3460,29 @@ async function probeSliceNativeAvailable() {
   const addon = nativePreviewAddon || loadNativePreviewAddon();
   const setter = isWin ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
   if (!addon || typeof addon.monitorAttach !== 'function' || typeof addon[setter] !== 'function') return false;
+  return coreCanPresentSlices((probe) => !!probe?.available);
+}
+
+// The core's last answer, per core process. Whether it can present Screens
+// does not change while it runs, and a busy core (a software adapter draws a
+// frame every second or two) can miss the probe's deadline. Read as "no",
+// that miss opened Linux Screens on the uncalibrated fallback and refused
+// them on macOS and Windows.
+let sliceNativeLastAnswer = { coreInstance: -1, available: false };
+
+async function coreCanPresentSlices(accepts) {
+  const coreInstance = nativeRendererBroker.coreInstance;
+  let probe = null;
   try {
-    const probe = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
-    return !!probe?.available;
+    probe = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
   } catch {
-    return false;
+    probe = null;
   }
+  if (probe) {
+    sliceNativeLastAnswer = { coreInstance, available: accepts(probe) };
+    return sliceNativeLastAnswer.available;
+  }
+  return sliceNativeLastAnswer.coreInstance === coreInstance && sliceNativeLastAnswer.available;
 }
 
 /** The rectangle a Screen's presenter fills, in the units the presenter

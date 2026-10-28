@@ -2,7 +2,7 @@ import { projectorCalibrationUniforms, inverseProjectorHomography } from '../out
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { closeNativeTestCore, gpuTestPlatform as platform } from './nativeHardwareTestPlatform';
+import { closeNativeTestCore, gpuTestPlatform as platform, rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import { screenMaskAlpha } from '../stores/screenMaskGeometry';
 import type { ScreenMask } from '../stores/settings';
 
@@ -359,7 +359,7 @@ suite('Native screen masks', () => {
       await expect.poll(async () => {
         const frame = await rpc.send('frame_snapshot', { include_pixels: true });
         return pixel(frame, 64, 64);
-      }, { timeout: 8000, interval: 30 }).toEqual([255, 255, 255]);
+      }, { timeout: 8000 * rpcDeadlineScale, interval: 30 }).toEqual([255, 255, 255]);
 
       const masks = [
         // Keep the middle of the frame with a wide feather...
@@ -482,7 +482,7 @@ suite('Native screen masks', () => {
         { type: 'set_layer_visibility', layer_id: 'white', visible: true },
       ]);
       await expect.poll(async () => pixel(await rpc.send('frame_snapshot', { include_pixels: true }), 64, 64),
-        { timeout: 8000, interval: 30 }).toEqual([255, 255, 255]);
+        { timeout: 8000 * rpcDeadlineScale, interval: 30 }).toEqual([255, 255, 255]);
 
       // Hard edge: the cut follows the cubic to the pixel.
       await rpc.send('set_slice_outputs', { slices: [slice('hard', { masks: nativeScreenMasks([arch(0)]) })] });
@@ -569,7 +569,7 @@ suite('Native screen masks', () => {
         { type: 'set_layer_visibility', layer_id: 'white', visible: true },
       ]);
       await expect.poll(async () => pixel(await rpc.send('frame_snapshot', { include_pixels: true }), 64, 64),
-        { timeout: 8000, interval: 30 }).toEqual([255, 255, 255]);
+        { timeout: 8000 * rpcDeadlineScale, interval: 30 }).toEqual([255, 255, 255]);
       await rpc.send('set_slice_outputs', { slices: [
         slice('flat', { masks: nativeScreenMasks(editorMasks) }),
         slice('pinned', { warpMode: 'corners', masks: nativeScreenMasks(editorMasks), corners: {

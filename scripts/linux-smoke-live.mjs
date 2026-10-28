@@ -132,7 +132,7 @@ async function recordTake(t, seconds, profile) {
   const started = Date.now();
   let recording = false;
   // A refused take says so (alert) within a few seconds; a real one shows Stop Rec.
-  while (Date.now() - started < 15000 && c.dialogs.length === dialogsBefore) {
+  while (Date.now() - started < seconds * 1000 + 15000 && c.dialogs.length === dialogsBefore) {
     recording = await c.exists("document.querySelector('.stop-rec-btn')");
     if (recording && Date.now() - started > seconds * 1000) break;
     await sleep(400);
@@ -141,19 +141,26 @@ async function recordTake(t, seconds, profile) {
   if (recording && c.dialogs.length === dialogsBefore) {
     await c.clickElement("document.querySelector('.stop-rec-btn')");
   }
-  // Finishing the file takes a while on a slow machine.
+  // The button is idle again at once, but the take is only over when its
+  // file can be read or the app has said why there is none. On a software
+  // adapter that takes a while: the encoder waits on frames the core draws
+  // every second or two, and a take that gets none says so only when the
+  // first one times out.
   let file = null;
-  const deadline = Date.now() + 90000;
+  let probe = null;
+  const deadline = Date.now() + 150000;
   while (Date.now() < deadline) {
-    await sleep(1000);
-    const fresh = recordingFiles(profile).filter((entry) => !before.has(entry));
-    const idle = await c.exists("document.querySelector('button.rec-btn')");
-    if (fresh.length && idle) { file = fresh.sort((x, y) => fs.statSync(y).mtimeMs - fs.statSync(x).mtimeMs)[0]; break; }
-    if (idle && (c.dialogs.length > dialogsBefore || Date.now() - started > 25000) && !fresh.length) break;
+    await sleep(2000);
+    const fresh = recordingFiles(profile).filter((entry) => !before.has(entry) && fs.existsSync(entry));
+    if (fresh.length) {
+      file = fresh.sort((x, y) => fs.statSync(y).mtimeMs - fs.statSync(x).mtimeMs)[0];
+      probe = probeVideo(file);
+      if (Number(probe?.frames) > 0) break;
+    }
+    if (c.dialogs.length > dialogsBefore) break;
   }
-  await sleep(1500);
   const message = c.dialogs.slice(dialogsBefore).map((dialog) => dialog.message).join(' | ');
-  return { file, probe: file ? probeVideo(file) : null, message, stuck: await c.exists("document.querySelector('.stop-rec-btn')") };
+  return { file, probe, message, stuck: await c.exists("document.querySelector('.stop-rec-btn')") };
 }
 
 export { recordTake, recordingFiles, findTool };

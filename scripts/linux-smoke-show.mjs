@@ -53,10 +53,16 @@ export const stepRecording = {
     await sleep(400);
 
     await chooseRecordSource(c, '[data-rec-source="composition"]');
-    // At about one frame a second a short take holds a frame or none.
-    const slow = (await measuredFps(c, 3000)).fps < 5;
-    t.number('takeSeconds', slow ? '13 (slow core)' : '6 and 4');
-    const program = await recordTake(t, slow ? 13 : 6, profile);
+    // A take on a software core must last long enough for its first frames
+    // to arrive: about ten of the core's frames, so 15 s at 1.5 s a frame
+    // and 30 s at 3 s. A take stopped before any frame says so and leaves
+    // no file, which is right, but tests nothing.
+    const fps = await measuredFps(c, 3000);
+    const slow = fps.fps < 5;
+    const frameSeconds = fps.frames > 0 ? fps.frameMs / 1000 : 4;
+    const slowTake = Math.min(45, Math.max(13, Math.ceil(frameSeconds * 10)));
+    t.number('takeSeconds', slow ? `${slowTake} (slow core, ${round(frameSeconds, 1)} s a frame)` : '6 and 4');
+    const program = await recordTake(t, slow ? slowTake : 6, profile);
     const probe = program.probe;
     t.number('programTake', probe ? `${probe.frames} frames, ${probe.width}x${probe.height} ${probe.codec}, ${round(probe.duration, 1)} s, ${Math.round(probe.bytes / 1024)} kB` : `no file${program.message ? ` (${program.message})` : ''}`);
     t.check('program recording produced a video file', !!program.file, program.file ? path.basename(program.file) : program.message || 'no new .mp4 in the profile or temp folders');
@@ -72,7 +78,7 @@ export const stepRecording = {
     for (const [kind, selector] of [['layer', '[data-rec-source^="layer:"]'], ['screen', '[data-rec-source^="screen:"]']]) {
       const label = await chooseRecordSource(c, selector);
       if (!label) { t.note(`no ${kind} recording source is listed`); continue; }
-      const take = await recordTake(t, slow ? 13 : 4, profile);
+      const take = await recordTake(t, slow ? slowTake : 4, profile);
       const frames = Number(take.probe?.frames || 0);
       const outcome = frames > 0 ? `records (${frames} frames, ${take.probe.width}x${take.probe.height})`
         : take.message ? `refused: "${take.message}"` : take.file ? 'left a file with no frames and no message' : 'nothing happened and nothing was said';

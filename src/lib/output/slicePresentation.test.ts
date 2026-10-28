@@ -8,13 +8,18 @@ const main = readFileSync('electron/main.js', 'utf8');
 const probe = main.slice(main.indexOf('async function probeSliceNativeAvailable()'), main.indexOf('/** Parent a native presentation layer'));
 const handler = main.slice(main.indexOf("  ipcMain.handle('output_open_slice_window'"), main.indexOf("  ipcMain.handle('output_close_slice_window'"));
 
-async function open(platform: 'win32'|'darwin', available = true, attach = true, setter = true) {
+type Harness = {available?: boolean; attach?: boolean; setter?: boolean; probes?: Array<object|null>};
+
+function harness(platform: 'win32'|'darwin', {available = true, attach = true, setter = true, probes}: Harness = {}) {
   let callback: any;
   const windows: any[] = [];
   const addon = {monitorAttach: vi.fn(), ...(setter ? {
     [platform === 'win32' ? 'monitorSetSharedTexture' : 'monitorSetIOSurface']: vi.fn(),
   } : {})};
-  const broker = {invoke: vi.fn(async()=>({available,platform:platform==='win32'?'dxgi':'iosurface',slices:[]}))};
+  // `probes`: the core's answers in turn; null is a probe it did not answer in time.
+  const broker = {coreInstance: 1, invoke: vi.fn(async()=>(probes
+    ? probes.shift() ?? null
+    : {available,platform:platform==='win32'?'dxgi':'iosurface',slices:[]}))};
   const attachLayer = vi.fn(()=>attach);
   const showOnDisplayFullscreen = vi.fn();
   const enterSliceFullscreen = vi.fn();
@@ -38,8 +43,14 @@ async function open(platform: 'win32'|'darwin', available = true, attach = true,
     attachSliceNativeLayer:attachLayer,enterSliceFullscreen,showOnDisplayFullscreen,detachSliceNativeLayer:vi.fn(),console,
     refreshSliceNativeLayerRects:vi.fn(),
   });
-  const result = await callback(null,{sliceId:'left',displayId:5});
-  return {result,windows,attachLayer,sliceWindows,broker,showOnDisplayFullscreen,enterSliceFullscreen};
+  const openScreen = (sliceId: string) => callback(null,{sliceId,displayId:5});
+  return {openScreen,windows,attachLayer,sliceWindows,broker,showOnDisplayFullscreen,enterSliceFullscreen};
+}
+
+async function open(platform: 'win32'|'darwin', available = true, attach = true, setter = true) {
+  const h = harness(platform, {available, attach, setter});
+  const result = await h.openScreen('left');
+  return {result, ...h};
 }
 
 describe('native Screen output window routing',()=>{
@@ -69,6 +80,23 @@ describe('native Screen output window routing',()=>{
     const {result,windows}=await open('win32',false);
     expect(result.ok).toBe(false);
     expect(windows).toHaveLength(0);
+  });
+  it('keeps the core\'s last answer when a busy core misses the probe',async()=>{
+    const answer = {available:true,platform:'dxgi',slices:[]};
+    const h = harness('win32',{probes:[answer,null,null]});
+    expect((await h.openScreen('left')).ok).toBe(true);
+    // A software adapter draws a frame every second or two and answers late.
+    expect((await h.openScreen('right')).ok).toBe(true);
+    expect(h.windows[1].options.transparent).toBe(true);
+    // A restarted core has not answered yet: its predecessor's answer does not count.
+    h.broker.coreInstance = 2;
+    expect((await h.openScreen('centre')).ok).toBe(false);
+    expect(h.windows).toHaveLength(2);
+  });
+  it('does not take an unanswered probe for a yes',async()=>{
+    const h = harness('win32',{probes:[null]});
+    expect((await h.openScreen('left')).ok).toBe(false);
+    expect(h.windows).toHaveLength(0);
   });
   it('requires the Windows named-texture setter, not just monitorAttach',async()=>{
     const {result,windows}=await open('win32',true,true,false);

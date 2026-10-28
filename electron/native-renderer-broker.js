@@ -8,6 +8,10 @@ const require = createRequire(import.meta.url);
 const COMMAND_PREFIX = 'native_renderer_';
 const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
 const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
+// How long a failed write to the core waits for the core's exit, which names
+// the reason, before the request is rejected with the write error itself.
+const WRITE_FAILURE_EXIT_GRACE_MS = 1000;
+const HANDSHAKE_FAILED = 'Native render core capabilities handshake failed';
 // One core stall trips every in-flight RPC at once. Roll those up instead of
 // emitting a line per failure for a condition the operator cannot act on.
 const TRANSIENT_RPC_FAILURE_LOG_WINDOW_MS = 5000;
@@ -814,7 +818,7 @@ class NativeRendererBroker {
       this.lastStatus = {
         ...this.lastStatus,
         backend_ready: false,
-        last_frame_error: `Native render core capabilities handshake failed: ${err?.message || String(err)}`,
+        last_frame_error: `${HANDSHAKE_FAILED}: ${err?.message || String(err)}`,
       };
     }
     return this.lastStatus;
@@ -843,7 +847,17 @@ class NativeRendererBroker {
     const deadline = Date.now() + patienceMs;
     for (;;) {
       try {
-        return await this.refreshCapabilities({ requireCore: true });
+        const capabilities = await this.refreshCapabilities({ requireCore: true });
+        // A routine capabilities poll (the editor's panels ask too) that timed
+        // out while this handshake was still waiting marked the backend not
+        // ready. The handshake has answered since; returning that stale
+        // verdict from start() left the editor's sync, which starts once,
+        // failed for the session with the composite black.
+        if (this.lastStatus?.backend_ready === false
+          && String(this.lastStatus.last_frame_error || '').startsWith(HANDSHAKE_FAILED)) {
+          this.lastStatus = normalizeStatus(startResult, this.lastStatus);
+        }
+        return capabilities;
       } catch (err) {
         const slow = /timed out/i.test(err?.message || String(err));
         const alive = !!(this.child && !this.child.killed);
@@ -1293,7 +1307,7 @@ class NativeRendererBroker {
         running: !!(this.child && !this.child.killed),
         core_capabilities_confirmed: false,
         core_capabilities_error: this.coreCapabilitiesError,
-        notes: [`Native render core capabilities handshake failed: ${this.coreCapabilitiesError}`],
+        notes: [`${HANDSHAKE_FAILED}: ${this.coreCapabilitiesError}`],
       });
       this.lastStatus = {
         ...this.lastStatus,
@@ -2133,7 +2147,14 @@ class NativeRendererBroker {
       item.payload = null;
       const writable = child.stdin.write(payload, err => {
         if (!err || this.child !== child) return;
-        this.finishPending(item.id)?.reject(err);
+        // A broken pipe means the core is going. Its exit handler rejects
+        // every pending request with the reason ("render core stopped (exit
+        // code 101)"), which says far more than EPIPE, so let the exit arrive
+        // first and fall back to the write error only if the core lives on.
+        const fallback = setTimeout(() => {
+          if (this.child === child) this.finishPending(item.id)?.reject(err);
+        }, WRITE_FAILURE_EXIT_GRACE_MS);
+        fallback.unref?.();
       });
       if (writable === false) {
         this.writeBlocked = true;
@@ -2425,6 +2446,13 @@ class NativeRendererBroker {
       String(chunk).split(/\r?\n/).filter(Boolean).forEach((line) => {
         console.log(`[NativeRenderer] ${line}`);
       });
+    });
+    // A write that races the core's exit fails with EPIPE. The request's own
+    // write callback rejects it and the 'exit' handler reports the death, so
+    // the pipe's error event only needs a listener; without one it throws.
+    this.child.stdin.on('error', (err) => {
+      if (this.child !== child) return;
+      console.log(`[NativeRenderer] could not write to the core: ${err?.message || err}`);
     });
     // Only a process that is still the current child reaches these: an
     // intended stop (killProcess) clears this.child first.

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import { parseCubeLut } from '../color/cubeLut';
 import { buildNativeCubeLutGraph, buildNativeCubeLutPrecompileCommand } from './nativeCubeLut';
 const nativeCoreBin = join(process.cwd(), 'native-renderer/target/release', process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core');
@@ -172,7 +173,7 @@ nativeIt('keeps LUT tables resident across coalesced queues and restores them af
     await expect.poll(async () => {
       await rpc.send('frame_snapshot', { include_pixels: false });
       return (await rpc.send('get_source_frame_readiness', { source_id: 'resident-output' })).ready;
-    }, { timeout: 3000, interval: 20 }).toBe(true);
+    }, { timeout: 3000 * rpcDeadlineScale, interval: 20 }).toBe(true);
     await rpc.send('submit_commands', { commands: [{ type: 'bind_media_source', layer_id: 'lut-resident', source_id: 'resident-output', uri: 'lut-test://output', source_type: 'image' }] });
     async function center() {
       const snapshot = await rpc.send('frame_snapshot', { include_pixels: true });
@@ -181,7 +182,7 @@ nativeIt('keeps LUT tables resident across coalesced queues and restores them af
       if (String(snapshot.format).toLowerCase().startsWith('bgra')) [pixel[0], pixel[2]] = [pixel[2], pixel[0]];
       return pixel;
     }
-    await expect.poll(center, { timeout: 3000, interval: 20 }).toEqual([0, 255, 0, 255]);
+    await expect.poll(center, { timeout: 3000 * rpcDeadlineScale, interval: 20 }).toEqual([0, 255, 0, 255]);
     const cache = new NativeLutResidency();
     cache.prepare([command]).finish(true);
     for (let i = 0; i < 4; i++) {
@@ -190,7 +191,7 @@ nativeIt('keeps LUT tables resident across coalesced queues and restores them af
       const result = await rpc.send('submit_commands', { commands: next.commands });
       expect(result.dropped).toBe(0);
       next.finish(true);
-      await expect.poll(center, { timeout: 3000, interval: 20 }).toEqual([0, 255, 0, 255]);
+      await expect.poll(center, { timeout: 3000 * rpcDeadlineScale, interval: 20 }).toEqual([0, 255, 0, 255]);
     }
     await rpc.send('clear_runtime_caches', { config: { clear_native_graph_buffers: true } });
     const missing = await rpc.send('submit_commands', { commands: [reference] });
@@ -198,11 +199,11 @@ nativeIt('keeps LUT tables resident across coalesced queues and restores them af
     cache.reset();
     const restored = await rpc.send('submit_commands', { commands: cache.prepare([command]).commands });
     expect(restored.dropped).toBe(0);
-    await expect.poll(center, { timeout: 3000, interval: 20 }).toEqual([0, 255, 0, 255]);
+    await expect.poll(center, { timeout: 3000 * rpcDeadlineScale, interval: 20 }).toEqual([0, 255, 0, 255]);
     // Post-composite pass uses its own source/target bindings and resident table.
     const composition = buildCompositeEffectPassChainGraph({ sourceId: 'comp-in', targetSourceId: 'comp-out', effects: [{ effect: 'cube-lut', params: { lutHandle: handle, amount: 1 } }] });
     const applied = await rpc.send('submit_commands', { commands: [{ type: 'queue_compute_graph', ...composition.config }] });
     expect(applied.dropped).toBe(0);
-    await expect.poll(center, { timeout: 3000, interval: 20 }).toEqual([0, 0, 255, 255]);
+    await expect.poll(center, { timeout: 3000 * rpcDeadlineScale, interval: 20 }).toEqual([0, 0, 255, 255]);
   } finally { await rpc.close(); }
 }, 60000);
