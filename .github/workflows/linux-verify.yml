@@ -148,9 +148,12 @@ jobs:
               pending.delete(message.id);
             }
           });
+          // After answering start the core compiles its first pipelines and
+          // answers nothing else until they are done: minutes on a slow
+          // software driver. The app's broker allows 180 s for the same reason.
           const send = (method, params = {}) => new Promise((resolve, reject) => {
             const id = nextId++;
-            const timer = setTimeout(() => reject(new Error(`${method} timed out`)), 20000);
+            const timer = setTimeout(() => reject(new Error(`${method} timed out`)), 180000);
             pending.set(id, (message) => { clearTimeout(timer); resolve(message); });
             child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
           });
