@@ -32,6 +32,12 @@
         Delete "$R3\Uninstall Ghost Arcade.exe"
         RMDir "$R3"
       ${endIf}
+      ; The old uninstaller deletes the .gha handler Pro shares with it
+      ; (electron-builder.yml), which would leave project files opening
+      ; nothing. Register Pro's again.
+      !ifmacrodef registerFileAssociations
+        !insertmacro registerFileAssociations
+      !endif
     ${endIf}
   ${endIf}
 !macroend

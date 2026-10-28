@@ -78,11 +78,13 @@ asarUnpack:
 
 # ─── File Associations ─────────────────────────────────────────────────────
 fileAssociations:
-  # Pro's own handler name (Windows ProgID). 2.x and Studio register
-  # "Ghost Arcade Project"; the 2.x uninstaller that Pro's installer runs
-  # deletes that handler, which would leave .gha opening nothing.
+  # The handler name (Windows ProgID) 1.9, 2.x and Studio also use. Pro's
+  # per-user handler of the same name is the one Windows opens .gha files
+  # with, even beside an all-users 1.9 install; under a name of its own,
+  # Windows kept opening them with 1.9. The 2.x uninstaller that Pro's
+  # installer runs deletes this handler, so installer.nsh registers it again.
   - ext: gha
-    name: "GhostArcadePro.Project"
+    name: "Ghost Arcade Project"
     description: "Ghost Arcade Project File"
     role: Editor
 
