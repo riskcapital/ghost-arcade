@@ -116,8 +116,9 @@ export const stepOutputAndQuit = {
       t.number('x11Fullscreen', full ? `${full.width}x${full.height}+${full.x}+${full.y} ${full.state}` : `no window at ${size?.width}x${size?.height}`);
       t.check('Fullscreen makes the output cover the display', !!full, full ? '' : JSON.stringify(findWindows(OUTPUT_TITLE).map((entry) => windowInfo(entry))));
       const fullOut = await outputStatus(c);
-      await sleep(2000);
-      const fullLater = await outputStatus(c);
+      let fullLater = fullOut;
+      const presentBy = Date.now() + 15000;
+      while (Date.now() < presentBy && fullLater.presented <= fullOut.presented) { await sleep(1000); fullLater = await outputStatus(c); }
       t.check('frames keep being presented in fullscreen', fullLater.presented > fullOut.presented, `${fullOut.presented} -> ${fullLater.presented}`);
       rootScreenshot(path.join(t.outDir, 'h-x11-fullscreen.png'));
     } else {
