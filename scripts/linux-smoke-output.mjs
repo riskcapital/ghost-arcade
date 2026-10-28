@@ -32,7 +32,9 @@ export const stepClipAudio = {
     await sleep(300);
     await dropFile(c, "document.querySelector('.media-content[aria-label=\"Media drop zone\"]')", clip);
     await c.waitFor(`!!(${item})`, 90000, 'clip under the Vid tab');
-    await c.clickElement(el.byTitle('Select layer 2 on Deck A'));
+    // Layer 1 is the top of the deck. On layer 2 the clip would play under
+    // step g's opaque TestBars and never reach the output.
+    await c.clickElement(el.byTitle('Select layer 1 on Deck A'));
     await c.clickElement(item);
     const cell = "[...document.querySelectorAll('.clip-cell.has-clip')].find(e=>e.textContent.includes('g2-tone-clip'))";
     await c.waitFor(`!!(${cell})`, 20000, 'clip in the grid');
@@ -45,9 +47,14 @@ export const stepClipAudio = {
       if (Number(status?.native_video_frame_decodes) > 3) break;
       await sleep(1000);
     }
+    // A software core finishes a frame every second or two, so allow it a few.
     const first = await rpc(c, 'native_renderer_get_output_shared_texture_snapshot', { include_pixels: false }, 120000);
-    await sleep(2500);
-    const second = await rpc(c, 'native_renderer_get_output_shared_texture_snapshot', { include_pixels: false }, 120000);
+    let second = first;
+    const changeBy = Date.now() + 20000;
+    while (Date.now() < changeBy && second?.checksum === first?.checksum) {
+      await sleep(2500);
+      second = await rpc(c, 'native_renderer_get_output_shared_texture_snapshot', { include_pixels: false }, 120000);
+    }
     const after = await rpc(c, 'native_renderer_get_status');
     t.number('videoDecode', `${after?.native_video_frame_decodes} frames decoded (${after?.native_video_software_frames} software, ${after?.native_video_hardware_frames} hardware), failures ${after?.native_video_frame_decode_failures}, last error "${after?.native_video_frame_decode_last_error}"`);
     t.check('the core decodes the video clip', Number(after?.native_video_frame_decodes) > 3, `${after?.native_video_frame_decodes} frames`);
@@ -120,10 +127,14 @@ export const stepOutputAndQuit = {
       t.check('output stays attached in fullscreen', (await outputStatus(c)).attached);
     }
     // In the native build the Fullscreen button, pressed again, closes the output.
+    // Detaching waits for the core between frames: seconds on a software adapter.
     await c.clickElement(el.button('Fullscreen'));
+    const leaving = Date.now();
     let closed = false;
-    for (let i = 0; i < 20 && !closed; i++) { await sleep(500); closed = !(await outputStatus(c)).attached; }
-    t.check('leaving fullscreen closes the output', closed);
+    let last = null;
+    while (!closed && Date.now() - leaving < 30000) { await sleep(500); last = await outputStatus(c); closed = !last.attached; }
+    t.number('outputClose', closed ? `${round((Date.now() - leaving) / 1000, 1)} s` : 'still attached after 30 s');
+    t.check('leaving fullscreen closes the output', closed, closed ? '' : JSON.stringify(last));
 
     if (t.args.attach || t.args.keepOpen) { t.skip('quit: attached to an app this run did not start'); return; }
     const before = t.descendants();

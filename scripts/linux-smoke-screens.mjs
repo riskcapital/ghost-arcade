@@ -49,6 +49,9 @@ export async function addDisplayScreen(c) {
 export async function openScreen(c, name, known = []) {
   await openTab(c, 'Screens');
   await selectScreen(c, name);
+  // A window that closed on its own (Esc) reaches the panel at its next
+  // two-second poll; until then the button still reads "Close on display".
+  await c.waitFor(`!!(${el.buttonStarting('Open on display')})`, 10000, '"Open on display"');
   await c.clickElement(el.buttonStarting('Open on display'));
   const deadline = Date.now() + 45000;
   let id = null;
