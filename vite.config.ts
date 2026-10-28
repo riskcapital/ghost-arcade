@@ -56,9 +56,23 @@ function threejsBundlesPlugin(): Plugin {
   };
 }
 
+// The loading screen in index.html is plain markup so it paints before any
+// script has loaded. Its wordmark is inlined here from the same file the
+// welcome screen imports, so the two can never drift apart.
+function wordmarkPlugin(): Plugin {
+  const file = resolve(__dirname, 'src/lib/brand/wordmark.svg');
+  return {
+    name: 'ghost-arcade-wordmark',
+    transformIndexHtml: {
+      order: 'pre',
+      handler: (html) => html.replace('<!-- wordmark -->', readFileSync(file, 'utf-8').trim()),
+    },
+  };
+}
+
 export default defineConfig({
   cacheDir: '.vite-legacy-cache',
-  plugins: [svelte(), threejsBundlesPlugin()],
+  plugins: [svelte(), threejsBundlesPlugin(), wordmarkPlugin()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     // Bridge for legacy CJS deps that reference Node's `global` (e.g.
