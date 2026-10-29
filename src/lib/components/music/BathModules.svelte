@@ -7,7 +7,7 @@
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { BOWL_PARAMS, DRONE_PARAMS, bowlNotes, chordName, chordNotes, keyLabel } from '../../music/studioSets';
   import { noteName } from '../../music/noteEvents';
-  import { playChord, releaseBowl, releaseChord, strikeBowl } from '../../music/musicRuntime';
+  import { releaseBowl, releaseChords, strikeBowl, toggleChord } from '../../music/musicRuntime';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
@@ -39,8 +39,7 @@
   }
 
   function chordPress(degree: number) {
-    if (t.chord === degree) releaseChord();
-    else playChord(degree, s.velocity);
+    toggleChord(degree, s.velocity);
   }
 
   // ── XY ──
@@ -149,10 +148,15 @@
     </div>
   </StudioModule>
 {:else}
-  <StudioModule title="CHORDS" subtitle="{keyLabel(s.key)} · tap to hold, tap again to let go">
+  <StudioModule title="CHORDS" subtitle="{keyLabel(s.key)} · tap to layer, tap again to let go">
+    {#snippet head()}
+      {#if t.chords.length}
+        <button class="clear" onclick={releaseChords}>LET GO</button>
+      {/if}
+    {/snippet}
     <div class="chords">
       {#each chords as c (c.degree)}
-        <button class="chord" class:on={t.chord === c.degree} onclick={() => chordPress(c.degree)}>{c.name}</button>
+        <button class="chord" class:on={t.chords.includes(c.degree)} aria-pressed={t.chords.includes(c.degree)} onclick={() => chordPress(c.degree)}>{c.name}</button>
       {/each}
     </div>
   </StudioModule>
@@ -201,6 +205,19 @@
     border: 2px solid var(--studio-accent);
     background: var(--studio-accent-soft);
     box-shadow: 0 0 18px var(--studio-accent);
+  }
+  .clear {
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--studio-edge);
+    background: transparent;
+    color: var(--studio-ink);
+    border-radius: var(--studio-radius);
+    font: inherit;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    cursor: pointer;
   }
   .chords { flex: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .chord {

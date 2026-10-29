@@ -219,6 +219,21 @@ export function controlSources(set: StudioSet): string[] {
     : [...DRUM_VOICES.map((v: DrumVoice) => `cv:drum.${v}`), 'cv:acid.cutoff', 'cv:acid.level'];
 }
 
+const DRUM_NAMES: Record<string, string> = {
+  kick: 'Kick', snare: 'Snare', clap: 'Clap', hatClosed: 'Hat', hatOpen: 'Open hat', tom: 'Tom', rim: 'Rim', crash: 'Crash',
+};
+
+/** What a control output is called, for "driven by" labels. */
+export function sourceLabel(jack: string): string {
+  const name = jack.replace(/^cv:|^audio:/, '');
+  if (name.startsWith('drum.')) return DRUM_NAMES[name.slice(5)] ?? name.slice(5);
+  const labels: Record<string, string> = {
+    'xy.x': 'XY X', 'xy.y': 'XY Y', 'drone.level': 'Drone', 'bowls.ring': 'Bowls',
+    'acid.cutoff': 'Acid cutoff', 'acid.level': 'Acid',
+  };
+  return labels[name] ?? name;
+}
+
 export function jackKind(jack: string): JackKind | null {
   if (jack.startsWith('audio:') || jack === 'fx:in') return 'audio';
   if (jack.startsWith('cv:') || jack.startsWith('dest:')) return 'control';

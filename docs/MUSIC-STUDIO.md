@@ -179,6 +179,16 @@ plugged input to move its cable, or drop it on nothing to unplug it. Cables
 pass behind the output frame so they never cover the picture, and every
 knob, the key, the acid row, mutes and cables save with the project.
 
+Chord pads layer: each holds until tapped again, all built from the key, and a
+key change re-voices the held chords. The keyboards mark the key's notes.
+
+**Berlin glitch visuals** (`public/ISF/BG-*.fs`, category Glitch): slit-scan,
+threshold, grain, scanlines, kick strobe and datamosh, black and white, each
+reacting to the drums. Each Visual layers row picks one and shows what drives
+it. **Load jam** sets up a techno beat, the acid line, four layers (threshold
+bed, slit-scan on the acid filter, scanlines on the hats, strobe on the kick)
+and the cables, and starts it.
+
 **Scenes** capture the beat, the looping take and the VJ column and launch
 them together on the next bar.
 

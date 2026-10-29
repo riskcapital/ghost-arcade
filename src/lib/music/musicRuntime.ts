@@ -277,30 +277,50 @@ function releaseMidi(): void {
 
 // ── Chords and bowls ────────────────────────────────────────────────────
 
-let chord: { degree: number; notes: number[] } | null = null;
+/** Chords held on the drone, by scale degree. Several can ring at once. */
+const chords = new Map<number, { notes: number[]; velocity: number }>();
 
-/** Play a scale-locked chord on the drone. It holds until the next chord or a release. */
-export function playChord(degree: number, velocity = 0.8): void {
-  ensureMusicRuntime();
-  const s = get(musicStudio);
-  const notes = chordNotes(s.key, degree, 48);
-  const previous = chord;
-  chord = { degree, notes };
-  for (const note of notes) {
-    if (!previous?.notes.includes(note)) playNote('drone', note, velocity, 'screen');
-  }
-  // Notes the chords share keep ringing; the rest let go.
-  for (const note of previous?.notes ?? []) {
-    if (!notes.includes(note)) releaseNote('drone', note, 'screen');
-  }
-  musicTransport.update((t) => ({ ...t, chord: degree }));
+function publishChords(): void {
+  musicTransport.update((t) => ({ ...t, chords: [...chords.keys()].sort((x, y) => x - y) }));
 }
 
-export function releaseChord(): void {
+function holdChord(degree: number, velocity: number): void {
+  const notes = chordNotes(get(musicStudio).key, degree, 48);
+  chords.set(degree, { notes, velocity });
+  // A note another held chord already plays is counted, not restarted.
+  for (const note of notes) playNote('drone', note, velocity, 'screen');
+}
+
+function letGoOfChord(degree: number): void {
+  const chord = chords.get(degree);
   if (!chord) return;
+  chords.delete(degree);
   for (const note of chord.notes) releaseNote('drone', note, 'screen');
-  chord = null;
-  musicTransport.update((t) => ({ ...t, chord: null }));
+}
+
+/**
+ * Tap a chord pad: a chord not held starts and keeps ringing, a held one
+ * lets go. Chords layer, and every one is built from the key.
+ */
+export function toggleChord(degree: number, velocity = 0.8): void {
+  ensureMusicRuntime();
+  if (chords.has(degree)) letGoOfChord(degree);
+  else holdChord(degree, velocity);
+  publishChords();
+}
+
+/** Let go of every held chord. */
+export function releaseChords(): void {
+  for (const degree of [...chords.keys()]) letGoOfChord(degree);
+  publishChords();
+}
+
+/** A new key re-voices the held chords so they stay in it. */
+function revoiceChords(): void {
+  const held = [...chords.entries()];
+  for (const [degree] of held) letGoOfChord(degree);
+  for (const [degree, chord] of held) holdChord(degree, chord.velocity);
+  publishChords();
 }
 
 /** Strike one of the five bowls, tuned to the key. Holding keeps it lit; it rings on regardless. */
@@ -731,7 +751,7 @@ function writeNoteInputs(): void {
  */
 function stopEverything(): void {
   cancelQueuedScene();
-  releaseChord();
+  releaseChords();
   if (recorder.recording) stopRecording();
   if (sequencer) stopSequencer();
   stopTake();
@@ -739,6 +759,7 @@ function stopEverything(): void {
 }
 
 let wasOpen = false;
+let lastKey = '';
 
 /** Start listening to the studio's settings. Safe to call repeatedly. */
 export function ensureMusicRuntime(): void {
@@ -752,6 +773,11 @@ export function ensureMusicRuntime(): void {
     wasOpen = s.isOpen;
     audio.setSynthPatch(s.synthPatch);
     audio.setKeysPatch(s.keysPatch);
+    const keySig = `${s.key.root}:${s.key.scale}`;
+    if (keySig !== lastKey) {
+      lastKey = keySig;
+      if (chords.size) revoiceChords();
+    }
     const volumes = morphedVolumes(s);
     for (const id of INSTRUMENTS) audio.setVolume(id, volumes[id]);
     audio.setParams(soundParams(s));

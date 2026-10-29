@@ -276,6 +276,9 @@ function createMusicStudioStore() {
       update((s) => ({ ...s, drumMutes: s.drumMutes.includes(voice) ? s.drumMutes.filter((v) => v !== voice) : [...s.drumMutes, voice] })),
     connectCable: (cable: Cable) =>
       update((s) => ({ ...s, cables: { ...s.cables, [s.set]: connect(s.cables[s.set], cable) } })),
+    /** Replace a set's cables (a jam setup). */
+    setCables: (studioSet: StudioSet, cables: Cable[]) =>
+      update((s) => ({ ...s, cables: { ...s.cables, [studioSet]: cables.reduce(connect, [] as Cable[]) } })),
     disconnectCable: (id: string) =>
       update((s) => ({ ...s, cables: { ...s.cables, [s.set]: disconnect(s.cables[s.set], id) } })),
 
@@ -391,8 +394,8 @@ export interface MusicTransportState {
   takeProgress: number;
   /** `${instrument}:${note}` of every sounding note. */
   held: Set<string>;
-  /** Scale degree of the chord the drone is holding, or null. */
-  chord: number | null;
+  /** Scale degrees of the chords the drone is holding. */
+  chords: number[];
 }
 
-export const musicTransport = writable<MusicTransportState>({ step: -1, takeProgress: 0, held: new Set(), chord: null });
+export const musicTransport = writable<MusicTransportState>({ step: -1, takeProgress: 0, held: new Set(), chords: [] });

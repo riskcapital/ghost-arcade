@@ -4981,6 +4981,90 @@
       "featured": false,
       "defaultLoad": true,
       "enabled": true
+    },
+    {
+      "file": "BG-SlitScan.fs",
+      "tier": "demo",
+      "category": "Glitch",
+      "tags": [
+        "notes",
+        "music",
+        "glitch"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "BG-Grain.fs",
+      "tier": "demo",
+      "category": "Glitch",
+      "tags": [
+        "notes",
+        "music",
+        "glitch"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "BG-Scanlines.fs",
+      "tier": "demo",
+      "category": "Glitch",
+      "tags": [
+        "notes",
+        "music",
+        "glitch"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "BG-KickStrobe.fs",
+      "tier": "demo",
+      "category": "Glitch",
+      "tags": [
+        "notes",
+        "music",
+        "glitch"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "BG-Threshold.fs",
+      "tier": "demo",
+      "category": "Glitch",
+      "tags": [
+        "notes",
+        "music",
+        "glitch"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "BG-Datamosh.fs",
+      "tier": "demo",
+      "category": "Glitch",
+      "tags": [
+        "notes",
+        "music",
+        "glitch"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
     }
   ]
 }

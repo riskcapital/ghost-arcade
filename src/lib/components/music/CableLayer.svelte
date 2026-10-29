@@ -18,8 +18,6 @@
 
   let drawn = $state<Drawn[]>([]);
   let live = $state<{ d: string; color: string } | null>(null);
-  /** The output frame, which cables pass behind so they never cover the picture. */
-  let hole = $state<{ x: number; y: number; w: number; h: number } | null>(null);
   let frame: number | null = null;
   let signature = '';
 
@@ -62,13 +60,9 @@
       const a = centre(drag.from, origin);
       if (a) nextLive = { d: path(a[0], a[1], drag.x - origin.left, drag.y - origin.top), color: '#f0a43a' };
     }
-    const frameEl = root.querySelector<HTMLElement>('.frame');
-    const fr = frameEl?.getBoundingClientRect();
-    const nextHole = fr ? { x: fr.left - origin.left, y: fr.top - origin.top, w: fr.width, h: fr.height } : null;
-    const sig = next.map((n) => n.d).join('|') + (nextLive?.d ?? '') + (nextHole ? `${nextHole.x},${nextHole.y},${nextHole.w},${nextHole.h}` : '');
+    const sig = next.map((n) => n.d).join('|') + (nextLive?.d ?? '');
     if (sig === signature) return;
     signature = sig;
-    hole = nextHole;
     drawn = next;
     live = nextLive;
   }
@@ -98,13 +92,7 @@
 <svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => cableDrag.set(null)} />
 
 <svg class="cables" aria-hidden="true">
-  <defs>
-    <mask id="studio-cable-mask" maskUnits="userSpaceOnUse" x="-10000" y="-10000" width="30000" height="30000">
-      <rect x="-10000" y="-10000" width="30000" height="30000" fill="white" />
-      {#if hole}<rect x={hole.x} y={hole.y} width={hole.w} height={hole.h} rx="4" fill="black" />{/if}
-    </mask>
-  </defs>
-  <g mask="url(#studio-cable-mask)">
+  <g>
   {#each drawn as c (c.id)}
     <path d={c.d} class="shadow" />
     <path d={c.d} stroke={c.color} class="cable" />

@@ -4,7 +4,9 @@
    * visual layers. Rendered in pieces by `part` for the set's layout.
    */
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
-  import { ACID_PARAMS, ACID_RANGE } from '../../music/studioSets';
+  import { ACID_PARAMS, ACID_RANGE, sourceLabel } from '../../music/studioSets';
+  import { GLITCH_SHADERS, setLayerVisual } from '../../music/noteShaders';
+  import { loadBerlinJam } from '../../music/jams';
   import { DRUM_LABELS, DRUM_NOTES, DRUM_VOICES, noteName } from '../../music/noteEvents';
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
   import StudioModule from './StudioModule.svelte';
@@ -19,6 +21,18 @@
   const layers = $derived($vjClipLauncher.layerStates);
 
   const SHORT: Record<string, string> = { hatClosed: 'Hat', hatOpen: 'O-hat' };
+
+  function drivenBy(layer: number): string {
+    const cable = s.cables[s.set].find((c) => c.to === `dest:layer:${layer}`);
+    return cable ? `${sourceLabel(cable.from)} → pulse` : 'Always on';
+  }
+
+  function pickVisual(layer: number, e: Event) {
+    const el = e.target as HTMLSelectElement;
+    const visual = GLITCH_SHADERS.find((g) => g.file === el.value);
+    if (visual) void setLayerVisual(layer, visual.file, visual.name);
+    el.value = '';
+  }
 
   /** Click height on an acid step sets its pitch; the top of the bar is two octaves up. */
   function setAcidNote(e: PointerEvent, index: number) {
@@ -89,13 +103,19 @@
   </StudioModule>
 {:else}
   <StudioModule title="VISUAL LAYERS" subtitle="Deck A · patch any hit into a layer" grow>
+    {#snippet head()}
+      <button class="jam" onclick={() => void loadBerlinJam()} title="Load a techno beat, the acid line, four glitch layers and their cables, and start it">LOAD JAM</button>
+    {/snippet}
     <div class="layers">
       {#each layers as layer, i (i)}
         <div class="layer" class:muted={layer.mute}>
           <button class="toggle" class:on={!layer.mute} onclick={() => vjClipLauncher.toggleLayerMute(i, 'A')} aria-pressed={!layer.mute} aria-label="Layer {i + 1} on"></button>
           <div class="layer-name">
-            <span class="ln">L{i + 1}</span>
-            <span class="clip">{layer.activeClip?.name ?? 'Empty'}</span>
+            <span class="ln">L{i + 1} · {drivenBy(i)}</span>
+            <select class="visual" value="" onchange={(e) => pickVisual(i, e)} aria-label="Visual for layer {i + 1}">
+              <option value="" disabled>{layer.activeClip?.name ?? 'Empty'}</option>
+              {#each GLITCH_SHADERS as g (g.file)}<option value={g.file}>{g.name}</option>{/each}
+            </select>
           </div>
           <input
             class="opacity"
@@ -180,7 +200,30 @@
   .toggle.on { background: var(--studio-ink); border-color: var(--studio-ink); }
   .layer-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .ln { font-size: 10px; font-weight: 800; letter-spacing: 0.1em; color: var(--studio-muted); }
-  .clip { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .layer.muted .clip { color: var(--studio-muted); }
+  .visual {
+    width: 100%;
+    height: 24px;
+    margin-top: 2px;
+    border: 1px solid var(--studio-edge);
+    background: var(--studio-slot);
+    color: var(--studio-ink);
+    border-radius: var(--studio-radius);
+    font: inherit;
+    font-weight: 700;
+  }
+  .layer.muted .visual { color: var(--studio-muted); }
+  .jam {
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid var(--studio-accent);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent);
+    border-radius: var(--studio-radius);
+    font: inherit;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+  }
   .opacity { flex: 0 0 110px; width: 110px; }
 </style>
