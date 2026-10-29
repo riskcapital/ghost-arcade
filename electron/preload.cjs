@@ -192,6 +192,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Windows/Linux, so the toolbar drives min/maximize/close over IPC.
   'win_minimize', 'win_maximize_toggle', 'win_is_maximized', 'win_close',
   'win_drag_start', 'win_drag_end',
+  // Public sketches from the p5.js Web Editor (p5-editor-import.cjs)
+  'p5_editor_list_sketches', 'p5_editor_get_sketch',
 ]);
 
 // Expose a bridge that mirrors Tauri's invoke() API

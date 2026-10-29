@@ -597,6 +597,21 @@ function extractISFInputs(code: string): AIGenerationResult['metadata'] {
   }
 }
 
+/** "numParticles", "num_particles" and "NUM_PARTICLES" all read "Num Particles". */
+export function paramLabel(name: string): string {
+  const constant = name === name.toUpperCase();
+  return name
+    .replace(/_+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .trim()
+    .split(/\s+/)
+    .map((word) => {
+      const w = constant ? word.toLowerCase() : word;
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    })
+    .join(' ');
+}
+
 /**
  * Extract JS animation parameters from window.shaderParams object
  * Returns an array of parameter definitions compatible with JSAnimationSource.params
@@ -683,8 +698,11 @@ export function extractJSParams(code: string): Array<{
         }
       }
 
-      // Create human-readable label from camelCase name
-      const label = name.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+      // The range always holds the starting value: a sketch's `hue = 200`
+      // is in degrees, not the 0–1 the name suggests.
+      if (type === 'number' && max !== undefined && (defaultValue as number) > max) {
+        max = (defaultValue as number) * 2;
+      }
 
       params.push({
         name,
@@ -692,7 +710,7 @@ export function extractJSParams(code: string): Array<{
         default: defaultValue,
         min,
         max,
-        label
+        label: paramLabel(name)
       });
     }
 
