@@ -25,6 +25,7 @@ import {
   DRUM_NOTES,
   DRUM_VOICES,
   HeldNotes,
+  INSTRUMENTS,
   noteBus,
   noteOff,
   noteOn,
@@ -41,6 +42,14 @@ import { attachMusicKeyboard, musicKeysArmed } from './musicKeyboard';
 import { DRUM_CHANNEL, MusicMidiInput, type MidiNoteMessage } from './midiNotes';
 import { musicStudio, musicTransport, nextTakeName, type MusicStudioState } from './musicStudioStore';
 import { captureScene, dominantColumn, nextSceneName, sceneLaunchActions, type PlayingNow } from './scenes';
+import { macros } from '../stores/macros';
+import {
+  ACID_STEPS,
+  bowlNotes,
+  chordNotes,
+  instrumentsThroughFx,
+  snapToScale,
+} from './studioSets';
 
 /** How far ahead the sequencer and replay schedule, in seconds. */
 const LOOKAHEAD_SECONDS = 0.12;
@@ -166,6 +175,12 @@ export function panic(): void {
   musicTransport.update((s) => ({ ...s, held: new Set() }));
 }
 
+/** With scale lock on, the drone and bowls never play a note outside the key. */
+function lockToKey(instrument: InstrumentId, note: number): number {
+  const s = get(musicStudio);
+  return s.scaleLock && (instrument === 'drone' || instrument === 'bowls') ? snapToScale(note, s.key) : note;
+}
+
 // ── Letter keys ─────────────────────────────────────────────────────────
 
 function keyboardNoteOn(note: number, code: string): void {
@@ -176,6 +191,7 @@ function keyboardNoteOn(note: number, code: string): void {
     if (pad === null) return;
     pitch = DRUM_NOTES[DRUM_VOICES[pad]];
   }
+  pitch = lockToKey(s.instrument, pitch);
   keyboardNotes.set(code, { instrument: s.instrument, note: pitch });
   playNote(s.instrument, pitch, s.velocity, 'keyboard');
 }
@@ -227,23 +243,25 @@ function onMidi(message: MidiNoteMessage): void {
   // Channel 10 plays the kit, as on any GM device; other channels play the selected instrument.
   const selected = get(musicStudio).instrument;
   const instrument: InstrumentId = message.channel === DRUM_CHANNEL ? 'drums' : selected;
-  const key = heldKey(instrument, message.note);
   if (message.kind === 'on') {
+    const note = lockToKey(instrument, message.note);
+    const key = heldKey(instrument, note);
     midiHeld.add(key);
     midiSustained.delete(key);
-    playNote(instrument, message.note, message.velocity, 'midi');
+    playNote(instrument, note, message.velocity, 'midi');
     return;
   }
-  // Note-offs are matched to whichever instrument started the note.
-  const startedAs = [...midiHeld].find((k) => k.endsWith(`:${message.note}`)) ?? key;
+  const key = heldKey(instrument, lockToKey(instrument, message.note));
+  // Note-offs are matched to whichever instrument (and snapped note) started the note.
+  const startedAs = midiHeld.has(key) ? key : [...midiHeld].find((k) => k.endsWith(`:${message.note}`)) ?? key;
   midiHeld.delete(startedAs);
-  const [inst] = startedAs.split(':');
+  const [inst, startedNote] = startedAs.split(':');
   if (inst === 'drums') return;
   if (sustainDown) {
     midiSustained.add(startedAs);
     return;
   }
-  releaseNote(inst as InstrumentId, message.note, 'midi');
+  releaseNote(inst as InstrumentId, Number(startedNote), 'midi');
 }
 
 function releaseMidi(): void {
@@ -255,6 +273,46 @@ function releaseMidi(): void {
     const [instrument, note] = key.split(':');
     if (instrument !== 'drums') releaseNote(instrument as InstrumentId, Number(note), 'midi');
   }
+}
+
+// ── Chords and bowls ────────────────────────────────────────────────────
+
+let chord: { degree: number; notes: number[] } | null = null;
+
+/** Play a scale-locked chord on the drone. It holds until the next chord or a release. */
+export function playChord(degree: number, velocity = 0.8): void {
+  ensureMusicRuntime();
+  const s = get(musicStudio);
+  const notes = chordNotes(s.key, degree, 48);
+  const previous = chord;
+  chord = { degree, notes };
+  for (const note of notes) {
+    if (!previous?.notes.includes(note)) playNote('drone', note, velocity, 'screen');
+  }
+  // Notes the chords share keep ringing; the rest let go.
+  for (const note of previous?.notes ?? []) {
+    if (!notes.includes(note)) releaseNote('drone', note, 'screen');
+  }
+  musicTransport.update((t) => ({ ...t, chord: degree }));
+}
+
+export function releaseChord(): void {
+  if (!chord) return;
+  for (const note of chord.notes) releaseNote('drone', note, 'screen');
+  chord = null;
+  musicTransport.update((t) => ({ ...t, chord: null }));
+}
+
+/** Strike one of the five bowls, tuned to the key. Holding keeps it lit; it rings on regardless. */
+export function strikeBowl(index: number, velocity = 0.85): number | null {
+  const note = bowlNotes(get(musicStudio).key)[index];
+  if (note === undefined) return null;
+  playNote('bowls', note, velocity, 'screen');
+  return note;
+}
+
+export function releaseBowl(note: number): void {
+  releaseNote('bowls', note, 'screen');
 }
 
 // ── Sequencer ───────────────────────────────────────────────────────────
@@ -272,6 +330,8 @@ export function startSequencer(): void {
 
 export function stopSequencer(): void {
   sequencer = null;
+  if (acidHeld !== null) send(noteOff('acid', acidHeld, 'sequencer', audio.peekNow() ?? 0));
+  acidHeld = null;
   musicStudio.setTransport({ sequencerPlaying: false });
   musicTransport.update((s) => ({ ...s, step: -1 }));
 }
@@ -286,12 +346,46 @@ function scheduleSequencer(): void {
   if (beat - sequencer.scheduledBeat > 1 || sequencer.scheduledBeat - beat > 2) sequencer.scheduledBeat = beat;
   const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
   if (horizon <= sequencer.scheduledBeat) return;
+  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000);
   for (const step of stepsBetween(s.pattern, sequencer.scheduledBeat, horizon)) {
-    const time = Math.max(now, now + ((step.beat - beat) * beatMs) / 1000);
-    send(noteOn('drums', step.note, step.velocity, 'sequencer', time));
+    if (s.drumMutes.includes(step.voice)) continue;
+    send(noteOn('drums', step.note, step.velocity, 'sequencer', timeAt(step.beat)));
   }
+  if (s.set === 'berlin') scheduleAcid(sequencer.scheduledBeat, horizon, timeAt);
   sequencer.scheduledBeat = horizon;
   if (s.recording && patternHasHits(s.pattern)) sequencer.usedInTake = true;
+}
+
+/** Root of the acid row: C2. */
+const ACID_ROOT = 36;
+let acidHeld: number | null = null;
+
+/** The acid row plays sixteenths with the beat; a glide ties into the next note. */
+function scheduleAcid(fromBeat: number, toBeat: number, timeAt: (beat: number) => number): void {
+  const steps = get(musicStudio).acidSteps;
+  for (let k = Math.ceil(fromBeat * 4 - 1e-9); k < toBeat * 4; k++) {
+    const beatPos = k / 4;
+    const step = steps[((k % ACID_STEPS) + ACID_STEPS) % ACID_STEPS];
+    const time = timeAt(beatPos);
+    if (step.note === null) {
+      if (acidHeld !== null) send(noteOff('acid', acidHeld, 'sequencer', time));
+      acidHeld = null;
+      continue;
+    }
+    const note = ACID_ROOT + step.note;
+    const previous = acidHeld;
+    if (previous !== null && !step.glide) send(noteOff('acid', previous, 'sequencer', time));
+    send(noteOn('acid', note, step.accent ? 1 : 0.75, 'sequencer', time));
+    // A glide keeps the voice: the old note ends as the new one slides in.
+    if (previous !== null && step.glide && previous !== note) send(noteOff('acid', previous, 'sequencer', time));
+    acidHeld = note;
+    // Untied notes end before the next sixteenth.
+    const next = steps[(((k + 1) % ACID_STEPS) + ACID_STEPS) % ACID_STEPS];
+    if (!(next.glide && next.note !== null)) {
+      send(noteOff('acid', note, 'sequencer', timeAt(beatPos + 0.16)));
+      acidHeld = null;
+    }
+  }
 }
 
 // ── Recording ───────────────────────────────────────────────────────────
@@ -479,6 +573,7 @@ function frame(): void {
     // One last write after the visuals go quiet leaves the clips at rest.
     if (active || visualsWereActive) writeNoteInputs();
     visualsWereActive = active;
+    routeControlCables();
     publishTransport(now);
   }
   const s = get(musicStudio);
@@ -495,6 +590,84 @@ function publishTransport(now: number): void {
   if (t.step !== step || Math.abs(t.takeProgress - progress) > 0.002) {
     musicTransport.set({ ...t, step, takeProgress: progress });
   }
+}
+
+// ── Control cables ──────────────────────────────────────────────────────
+
+/** Layers a cable is pulsing, with the opacity to put back when it is unplugged. */
+const pulsedLayers = new Map<number, number>();
+const lastSent = new Map<string, number>();
+
+/** The current 0-1 value of a control output. */
+function controlValue(jack: string, params: Record<string, number>): number {
+  const name = jack.slice(3);
+  if (name === 'xy.x' || name === 'xy.y') return params[name] ?? 0.5;
+  if (name === 'drone.level') return visuals.instrumentLevel('drone');
+  if (name === 'bowls.ring') return visuals.instrumentLevel('bowls');
+  if (name === 'acid.level') return visuals.instrumentLevel('acid');
+  if (name === 'acid.cutoff') return Math.min(1, (params['acid.cutoff'] ?? 0.35) * (0.4 + 0.6 * visuals.instrumentLevel('acid')) * 1.6);
+  if (name.startsWith('drum.')) return visuals.drumLevel(name.slice(5) as DrumVoice);
+  return 0;
+}
+
+function routeControlCables(): void {
+  const s = get(musicStudio);
+  const cables = s.studioView ? s.cables[s.set] : [];
+  const live = new Set<number>();
+  for (const cable of cables) {
+    if (!cable.from.startsWith('cv:')) continue;
+    const value = controlValue(cable.from, s.params);
+    const previous = lastSent.get(cable.to);
+    if (previous !== undefined && Math.abs(previous - value) < 0.004) {
+      if (cable.to.startsWith('dest:layer:')) live.add(Number(cable.to.slice(11)));
+      continue;
+    }
+    lastSent.set(cable.to, value);
+    if (cable.to.startsWith('dest:macro:')) {
+      macros.setMacroValue(cable.to.slice(11), value);
+    } else if (cable.to.startsWith('dest:layer:')) {
+      const layer = Number(cable.to.slice(11));
+      live.add(layer);
+      if (!pulsedLayers.has(layer)) pulsedLayers.set(layer, get(vjClipLauncher).layerStates[layer]?.opacity ?? 1);
+      // A pulse: dim between hits, full on the hit.
+      vjClipLauncher.setLayerOpacity(layer, (pulsedLayers.get(layer) ?? 1) * (0.08 + 0.92 * value), 'A');
+    }
+  }
+  for (const [layer, base] of pulsedLayers) {
+    if (live.has(layer)) continue;
+    pulsedLayers.delete(layer);
+    lastSent.delete(`dest:layer:${layer}`);
+    vjClipLauncher.setLayerOpacity(layer, base, 'A');
+  }
+  for (const key of [...lastSent.keys()]) {
+    if (!cables.some((c) => c.to === key)) lastSent.delete(key);
+  }
+}
+
+/**
+ * The knobs as the sound engine hears them: the XY pad morphs the drone
+ * against the bowls (X) and opens the space (Y) on top of the knob settings.
+ */
+function soundParams(s: MusicStudioState): Record<string, number> {
+  if (s.set !== 'bath') return s.params;
+  const y = s.params['xy.y'] ?? 0.5;
+  const clamp = (v: number) => Math.max(0, Math.min(1, v));
+  return {
+    ...s.params,
+    'fx.reverb.mix': clamp((s.params['fx.reverb.mix'] ?? 0.5) + (y - 0.5) * 0.7),
+    'fx.shimmer.mix': clamp((s.params['fx.shimmer.mix'] ?? 0.35) + (y - 0.5) * 0.6),
+    'fx.reverb.space': clamp((s.params['fx.reverb.space'] ?? 0.85) + (y - 0.5) * 0.3),
+  };
+}
+
+function morphedVolumes(s: MusicStudioState): Record<InstrumentId, number> {
+  if (s.set !== 'bath') return s.volumes;
+  const x = s.params['xy.x'] ?? 0.5;
+  return {
+    ...s.volumes,
+    drone: s.volumes.drone * Math.min(1, 2 * (1 - x)),
+    bowls: s.volumes.bowls * Math.min(1, 2 * x),
+  };
 }
 
 // ── Shader clips ────────────────────────────────────────────────────────
@@ -558,6 +731,7 @@ function writeNoteInputs(): void {
  */
 function stopEverything(): void {
   cancelQueuedScene();
+  releaseChord();
   if (recorder.recording) stopRecording();
   if (sequencer) stopSequencer();
   stopTake();
@@ -578,7 +752,10 @@ export function ensureMusicRuntime(): void {
     wasOpen = s.isOpen;
     audio.setSynthPatch(s.synthPatch);
     audio.setKeysPatch(s.keysPatch);
-    for (const id of ['synth', 'keys', 'drums'] as InstrumentId[]) audio.setVolume(id, s.volumes[id]);
+    const volumes = morphedVolumes(s);
+    for (const id of INSTRUMENTS) audio.setVolume(id, volumes[id]);
+    audio.setParams(soundParams(s));
+    audio.setRouting(s.set, instrumentsThroughFx(s.cables[s.set]));
     audio.setMasterVolume(s.masterVolume);
     visuals.setSettings(s.visuals);
     syncKeyboard(s);

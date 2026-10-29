@@ -14,6 +14,7 @@
     onchange,
     title = '',
     midiPath = '',
+    hideLabel = false,
   }: {
     label: string;
     value: number;
@@ -25,6 +26,8 @@
     onchange: (value: number) => void;
     title?: string;
     midiPath?: string;
+    /** Keep the label for screen readers but do not print it (a row of identical knobs). */
+    hideLabel?: boolean;
   } = $props();
 
   const span = $derived(max - min);
@@ -41,7 +44,7 @@
   function onPointerDown(e: PointerEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     drag = { y: e.clientY, start: value, fine: e.shiftKey };
   }
 
@@ -98,7 +101,7 @@
   >
     <span class="pointer" style="transform: rotate({angle}deg)"></span>
   </button>
-  <span class="knob-label">{label}</span>
+  {#if !hideLabel}<span class="knob-label">{label}</span>{/if}
 </div>
 
 <style>

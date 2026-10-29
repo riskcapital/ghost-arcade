@@ -8,6 +8,9 @@ export const INSTRUMENT_LABELS: Record<InstrumentId, string> = {
   synth: 'Synth',
   keys: 'Keys',
   drums: 'Drums',
+  drone: 'Drone',
+  bowls: 'Bowls',
+  acid: 'Acid',
 };
 
 export type SynthPatch = 'pad' | 'pluck' | 'bass' | 'lead';

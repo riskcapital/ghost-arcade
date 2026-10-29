@@ -8,7 +8,7 @@
 
 import { DRUM_NOTES, DRUM_VOICES, type DrumVoice } from './noteEvents';
 
-export const PATTERN_LENGTHS = [8, 16, 32] as const;
+export const PATTERN_LENGTHS = [8, 16, 32, 64] as const;
 export type PatternLength = (typeof PATTERN_LENGTHS)[number];
 
 /** Sixteenth-note steps. */

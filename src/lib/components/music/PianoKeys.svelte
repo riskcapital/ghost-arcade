@@ -44,7 +44,7 @@
     const note = noteUnder(e);
     if (note === null) return;
     e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     pressed.set(e.pointerId, note);
     screenNoteOn(e.pointerId, note);
   }

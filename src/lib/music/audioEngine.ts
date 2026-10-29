@@ -13,8 +13,10 @@
  */
 
 import { audioAnalyzer } from '../audio/analyzer';
-import type { DrumVoice, InstrumentId, NoteEvent } from './noteEvents';
+import { INSTRUMENTS, type DrumVoice, type InstrumentId, type NoteEvent } from './noteEvents';
 import type { KeysPatch, SynthPatch } from './instruments';
+import { FxRack } from './fxRack';
+import { defaultParams, type StudioSet } from './studioSets';
 
 interface SubtractivePatch {
   osc1: OscillatorType;
@@ -71,8 +73,18 @@ export class MusicAudioEngine {
 
   private synthPatch: SynthPatch = 'pad';
   private keysPatch: KeysPatch = 'epiano';
-  private volumes: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9 };
+  private volumes: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75 };
   private masterVolume = 0.85;
+  /** Every Studio knob, "module.param" -> 0-1. */
+  private params: Record<string, number> = defaultParams();
+  private racks: Partial<Record<StudioSet, FxRack>> = {};
+  private activeSet: StudioSet = 'bath';
+  private throughFx = new Set<InstrumentId>();
+  private droneLfo: { osc: OscillatorNode; depth: GainNode } | null = null;
+  private droneVoices = new Set<{ filter: BiquadFilterNode; shimmer: GainNode; air: GainNode; note: number }>();
+  private acid: { osc: OscillatorNode; filter: BiquadFilterNode; amp: GainNode; note: number } | null = null;
+  /** Pitch factor of the drum being played, from its mixer tune knob. */
+  private drumRate = 1;
 
   /** The music clock, in seconds. Creates the audio graph on first use. */
   now(): number {
@@ -102,12 +114,64 @@ export class MusicAudioEngine {
     if (this.masterGain && this.ctx) this.masterGain.gain.setTargetAtTime(this.masterVolume, this.ctx.currentTime, 0.02);
   }
 
+  /** Update the Studio knobs. Live drone voices and the racks follow at once. */
+  setParams(params: Record<string, number>): void {
+    this.params = params;
+    if (!this.ctx) return;
+    for (const rack of Object.values(this.racks)) rack?.setParams(params);
+    const t = this.ctx.currentTime;
+    if (this.droneLfo) {
+      const motion = params['drone.motion'] ?? 0.6;
+      this.droneLfo.osc.frequency.setTargetAtTime(0.03 + motion * 0.35, t, 0.2);
+      this.droneLfo.depth.gain.setTargetAtTime(motion * 900, t, 0.2);
+    }
+    for (const v of this.droneVoices) {
+      v.filter.frequency.setTargetAtTime(this.droneCutoff(v.note), t, 0.15);
+      v.shimmer.gain.setTargetAtTime((params['drone.shimmer'] ?? 0.5) * 0.35, t, 0.2);
+      v.air.gain.setTargetAtTime((params['drone.air'] ?? 0.25) * 0.05, t, 0.2);
+    }
+    if (this.acid) this.acid.filter.Q.setTargetAtTime(1 + (params['acid.reso'] ?? 0.75) * 20, t, 0.02);
+  }
+
+  /** Which set's rack is in use, and which instruments its cables send through it. */
+  setRouting(set: StudioSet, throughFx: Set<InstrumentId>): void {
+    this.activeSet = set;
+    this.throughFx = new Set(throughFx);
+    if (this.ctx) this.applyRouting();
+  }
+
+  private applyRouting(): void {
+    if (!this.ctx || !this.bus || !this.masterGain) return;
+    let rack = this.racks[this.activeSet];
+    if (!rack) {
+      rack = new FxRack(this.ctx, this.activeSet);
+      rack.setParams(this.params);
+      rack.output.connect(this.masterGain);
+      this.racks[this.activeSet] = rack;
+    }
+    for (const id of INSTRUMENTS) {
+      const bus = this.bus[id];
+      try { bus.disconnect(); } catch { /* not connected */ }
+      bus.connect(this.throughFx.has(id) ? rack.input : this.masterGain);
+    }
+  }
+
   /** Play one event at its own time (or now, if that has passed). */
   play(event: NoteEvent): void {
     const ctx = this.ensure();
     const time = Math.max(ctx.currentTime, Number.isFinite(event.time) ? event.time : 0);
     if (event.instrument === 'drums') {
       if (event.type === 'on' && event.drum) this.playDrum(event.drum, event.velocity, time);
+      return;
+    }
+    if (event.instrument === 'bowls') {
+      // A bowl rings out on its own; letting go does not stop it.
+      if (event.type === 'on') this.strikeBowl(event.note, event.velocity, time);
+      return;
+    }
+    if (event.instrument === 'acid') {
+      if (event.type === 'on') this.acidOn(event.note, event.velocity, time);
+      else if (this.acid?.note === event.note) this.acidOff(time);
       return;
     }
     const key = `${event.instrument}:${event.note}`;
@@ -127,7 +191,9 @@ export class MusicAudioEngine {
     this.stealIfFull(event.instrument, time);
     const voice = event.instrument === 'synth'
       ? this.synthVoice(key, event.note, event.velocity, time)
-      : this.keysVoice(key, event.note, event.velocity, time);
+      : event.instrument === 'drone'
+        ? this.droneVoice(key, event.note, event.velocity, time)
+        : this.keysVoice(key, event.note, event.velocity, time);
     this.voices.set(key, voice);
   }
 
@@ -137,6 +203,7 @@ export class MusicAudioEngine {
     const t = this.ctx.currentTime;
     for (const voice of this.voices.values()) voice.release(t);
     this.voices.clear();
+    this.acidOff(t);
   }
 
   dispose(): void {
@@ -172,7 +239,7 @@ export class MusicAudioEngine {
     this.masterGain = master;
     this.output = compressor;
     const bus = {} as Record<InstrumentId, GainNode>;
-    for (const id of ['synth', 'keys', 'drums'] as InstrumentId[]) {
+    for (const id of INSTRUMENTS) {
       const g = ctx.createGain();
       g.gain.value = this.volumes[id];
       g.connect(master);
@@ -180,6 +247,7 @@ export class MusicAudioEngine {
     }
     this.bus = bus;
     this.noise = makeNoise(ctx);
+    this.applyRouting();
     this.syncAnalyserTap();
     this.unsubscribeGraph = audioAnalyzer.onGraphChange(() => this.syncAnalyserTap());
     return ctx;
@@ -340,10 +408,14 @@ export class MusicAudioEngine {
   private playDrum(voice: DrumVoice, velocity: number, time: number): void {
     const ctx = this.ctx!;
     const out = this.bus!.drums;
-    const level = velocityGain(velocity);
+    const p = this.params;
+    const level = velocityGain(velocity) * (p[`mix.${voice}.level`] ?? 0.8) * 1.25;
+    const cents = ((p[`mix.${voice}.tune`] ?? 0.5) - 0.5) * 1200;
+    this.drumRate = Math.pow(2, cents / 1200);
     switch (voice) {
       case 'kick': {
         const osc = ctx.createOscillator();
+        osc.detune.value = cents;
         osc.type = 'sine';
         osc.frequency.setValueAtTime(160, time);
         osc.frequency.exponentialRampToValueAtTime(42, time + 0.14);
@@ -357,6 +429,7 @@ export class MusicAudioEngine {
       }
       case 'snare': {
         const osc = ctx.createOscillator();
+        osc.detune.value = cents;
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(220, time);
         osc.frequency.exponentialRampToValueAtTime(160, time + 0.08);
@@ -389,6 +462,7 @@ export class MusicAudioEngine {
       }
       case 'tom': {
         const osc = ctx.createOscillator();
+        osc.detune.value = cents;
         osc.type = 'sine';
         osc.frequency.setValueAtTime(210, time);
         osc.frequency.exponentialRampToValueAtTime(110, time + 0.3);
@@ -400,6 +474,7 @@ export class MusicAudioEngine {
       }
       case 'rim': {
         const osc = ctx.createOscillator();
+        osc.detune.value = cents;
         osc.type = 'square';
         osc.frequency.value = 820;
         const filter = ctx.createBiquadFilter();
@@ -418,14 +493,201 @@ export class MusicAudioEngine {
     }
   }
 
+  private droneCutoff(note: number): number {
+    const tone = this.params['drone.tone'] ?? 0.35;
+    return Math.min(12000, 180 + tone * tone * 5000 + midiToHz(note) * 0.5);
+  }
+
+  /** A slow pad: detuned saws, a sub, shimmer an octave and a twelfth up, a touch of air. */
+  private droneVoice(key: string, note: number, velocity: number, time: number): MelodicVoice {
+    const ctx = this.ctx!;
+    const p = this.params;
+    if (!this.droneLfo) {
+      const osc = ctx.createOscillator();
+      osc.frequency.value = 0.03 + (p['drone.motion'] ?? 0.6) * 0.35;
+      const depth = ctx.createGain();
+      depth.gain.value = (p['drone.motion'] ?? 0.6) * 900;
+      osc.connect(depth);
+      osc.start();
+      this.droneLfo = { osc, depth };
+    }
+    const freq = midiToHz(note);
+    const detune = (p['drone.detune'] ?? 0.25) * 22;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 0.7;
+    filter.frequency.value = this.droneCutoff(note);
+    this.droneLfo.depth.connect(filter.frequency);
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = (Math.random() * 2 - 1) * (p['drone.width'] ?? 0.8) * 0.8;
+    const amp = ctx.createGain();
+    const sources: AudioScheduledSourceNode[] = [];
+    for (const cents of [-detune, 0, detune]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = freq;
+      o.detune.value = cents;
+      const g = ctx.createGain();
+      g.gain.value = 0.22;
+      o.connect(g).connect(filter);
+      sources.push(o);
+    }
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.value = freq / 2;
+    const subGain = ctx.createGain();
+    subGain.gain.value = (p['drone.depth'] ?? 0.6) * 0.5;
+    sub.connect(subGain).connect(amp);
+    sources.push(sub);
+    const shimmer = ctx.createGain();
+    shimmer.gain.value = (p['drone.shimmer'] ?? 0.5) * 0.35;
+    for (const ratio of [2, 3]) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = freq * ratio;
+      o.detune.value = ratio === 3 ? 4 : -3;
+      o.connect(shimmer);
+      sources.push(o);
+    }
+    shimmer.connect(amp);
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.noise;
+    noise.loop = true;
+    const airFilter = ctx.createBiquadFilter();
+    airFilter.type = 'bandpass';
+    airFilter.frequency.value = 6000;
+    airFilter.Q.value = 0.6;
+    const air = ctx.createGain();
+    air.gain.value = (p['drone.air'] ?? 0.25) * 0.05;
+    noise.connect(airFilter).connect(air).connect(amp);
+    sources.push(noise);
+    filter.connect(amp);
+    amp.connect(panner).connect(this.bus!.drone);
+    const peak = velocityGain(velocity) * 0.32;
+    const swell = 0.4 + (p['drone.swell'] ?? 0.55) * 6;
+    amp.gain.setValueAtTime(0, time);
+    amp.gain.linearRampToValueAtTime(peak, time + swell);
+    for (const src of sources) src.start(time);
+    const handle = { filter, shimmer, air, note };
+    this.droneVoices.add(handle);
+    const stopAll = (at: number) => {
+      for (const src of sources) { try { src.stop(at); } catch { /* stopped */ } }
+      setTimeout(() => {
+        this.droneVoices.delete(handle);
+        try { amp.disconnect(); this.droneLfo?.depth.disconnect(filter.frequency); } catch { /* gone */ }
+      }, Math.max(0, (at - ctx.currentTime) * 1000 + 100));
+    };
+    const release = 1.5 + (p['drone.swell'] ?? 0.55) * 5;
+    return {
+      key,
+      startedAt: time,
+      release: (at) => {
+        holdAt(amp.gain, at);
+        amp.gain.setTargetAtTime(0, at, release / 4);
+        stopAll(at + release * 1.5 + 0.1);
+      },
+      kill: (at) => {
+        holdAt(amp.gain, at);
+        amp.gain.linearRampToValueAtTime(0, at + 0.05);
+        stopAll(at + 0.1);
+      },
+    };
+  }
+
+  /** A singing bowl: inharmonic partials, each a slowly beating pair, ringing for seconds. */
+  private strikeBowl(note: number, velocity: number, time: number): void {
+    const ctx = this.ctx!;
+    const p = this.params;
+    const freq = midiToHz(note);
+    const ring = 2 + (p['bowls.ring'] ?? 0.7) * 18;
+    const tone = p['bowls.tone'] ?? 0.5;
+    const spread = (p['bowls.spread'] ?? 0.5) * 3;
+    const out = ctx.createGain();
+    out.gain.value = velocityGain(velocity) * 0.3;
+    out.connect(this.bus!.bowls);
+    const partials: Array<[number, number, number]> = [[1, 1, 1], [2.76, 0.45 + tone * 0.4, 0.7], [5.4, 0.15 + tone * 0.4, 0.45], [8.93, tone * 0.25, 0.3]];
+    let longest = 0;
+    for (const [ratio, level, decayShare] of partials) {
+      const decay = ring * decayShare;
+      longest = Math.max(longest, decay);
+      for (const beat of [-spread / 2, spread / 2]) {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.value = freq * ratio + beat * ratio;
+        const g = envelope(ctx, time, level * 0.5, 0.004, decay);
+        o.connect(g).connect(out);
+        o.start(time);
+        o.stop(time + decay + 0.1);
+      }
+    }
+    setTimeout(() => { try { out.disconnect(); } catch { /* gone */ } }, (time - ctx.currentTime + longest + 0.5) * 1000);
+  }
+
+  /** The acid line: one voice, a resonant filter swept by an accented envelope, glide between tied notes. */
+  private acidOn(note: number, velocity: number, time: number): void {
+    const ctx = this.ctx!;
+    const p = this.params;
+    const freq = midiToHz(note);
+    const accent = velocity > 0.9 ? 1 : 0;
+    const cutoff = 60 + Math.pow(p['acid.cutoff'] ?? 0.35, 2) * 3500;
+    const env = (p['acid.env'] ?? 0.6) * (3000 + accent * (p['acid.accent'] ?? 0.7) * 4000);
+    const decay = 0.06 + (p['acid.decay'] ?? 0.35) * 0.6;
+    if (this.acid) {
+      // Tied to the step before: slide the pitch and keep the voice.
+      const v = this.acid;
+      v.osc.frequency.cancelScheduledValues(time);
+      v.osc.frequency.setValueAtTime(midiToHz(v.note), time);
+      v.osc.frequency.exponentialRampToValueAtTime(freq, time + 0.06);
+      v.note = note;
+      v.filter.frequency.cancelScheduledValues(time);
+      v.filter.frequency.setValueAtTime(cutoff + env * 0.5, time);
+      v.filter.frequency.setTargetAtTime(cutoff, time, decay / 3);
+      return;
+    }
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, time);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 1 + (p['acid.reso'] ?? 0.75) * 20;
+    filter.frequency.setValueAtTime(cutoff + env, time);
+    filter.frequency.setTargetAtTime(cutoff, time + 0.005, decay / 3);
+    const drive = ctx.createWaveShaper();
+    const amount = 1 + (p['acid.drive'] ?? 0.4) * 8;
+    const curve = new Float32Array(512);
+    for (let i = 0; i < curve.length; i++) {
+      const x = (i / 511) * 2 - 1;
+      curve[i] = Math.tanh(x * amount) / Math.tanh(amount);
+    }
+    drive.curve = curve;
+    const amp = ctx.createGain();
+    const level = (0.28 + accent * 0.12) * velocityGain(velocity);
+    amp.gain.setValueAtTime(0, time);
+    amp.gain.linearRampToValueAtTime(level, time + 0.004);
+    osc.connect(filter).connect(drive).connect(amp).connect(this.bus!.acid);
+    osc.start(time);
+    this.acid = { osc, filter, amp, note };
+  }
+
+  private acidOff(time: number): void {
+    const v = this.acid;
+    if (!v) return;
+    this.acid = null;
+    holdAt(v.amp.gain, time);
+    v.amp.gain.setTargetAtTime(0, time, 0.015);
+    try { v.osc.stop(time + 0.15); } catch { /* stopped */ }
+    v.osc.onended = () => { try { v.amp.disconnect(); } catch { /* gone */ } };
+  }
+
   /** A filtered burst of noise with an exponential tail. Returns its gain, for choking. */
   private noiseHit(time: number, level: number, decay: number, type: BiquadFilterType, freq: number, out: AudioNode): GainNode {
     const ctx = this.ctx!;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
+    src.playbackRate.value = this.drumRate;
     const filter = ctx.createBiquadFilter();
     filter.type = type;
-    filter.frequency.value = freq;
+    filter.frequency.value = freq * this.drumRate;
     const amp = envelope(ctx, time, level, 0.001, decay);
     src.connect(filter).connect(amp).connect(out);
     src.start(time);

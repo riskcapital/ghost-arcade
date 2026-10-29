@@ -45,6 +45,9 @@ export const DEFAULT_VISUAL_SETTINGS: Record<InstrumentId, NoteVisualSettings> =
   synth: { mode: 'fade', attack: 0.02, decay: 0.4, sustain: 0.65, release: 0.9, linger: 8, growth: 0.06 },
   keys: { mode: 'fade', attack: 0.005, decay: 0.7, sustain: 0.35, release: 0.6, linger: 8, growth: 0.05 },
   drums: { mode: 'fade', attack: 0.002, decay: 0.2, sustain: 0, release: 0.35, linger: 4, growth: 0.04 },
+  drone: { mode: 'build', attack: 1.5, decay: 2, sustain: 0.8, release: 4, linger: 14, growth: 0.08 },
+  bowls: { mode: 'fade', attack: 0.01, decay: 3, sustain: 0.2, release: 6, linger: 18, growth: 0.07 },
+  acid: { mode: 'fade', attack: 0.003, decay: 0.15, sustain: 0.4, release: 0.25, linger: 6, growth: 0.03 },
 };
 
 /** Melodic voices a shader can see at once. */
@@ -154,11 +157,11 @@ export class NoteVisualState {
     DRUM_VOICES.map((v) => [v, { fade: 0, build: 0 }]),
   ) as Record<DrumVoice, Modes>;
 
-  constructor(settings: Record<InstrumentId, NoteVisualSettings> = DEFAULT_VISUAL_SETTINGS) {
+  constructor(settings: Partial<Record<InstrumentId, NoteVisualSettings>> = DEFAULT_VISUAL_SETTINGS) {
     this.settings = cloneSettings(settings);
   }
 
-  setSettings(settings: Record<InstrumentId, NoteVisualSettings>): void {
+  setSettings(settings: Partial<Record<InstrumentId, NoteVisualSettings>>): void {
     this.settings = cloneSettings(settings);
   }
 
@@ -266,6 +269,26 @@ export class NoteVisualState {
     return out;
   }
 
+  /** How bright one instrument's voices are right now, 0-1 (for patching it to a visual). */
+  instrumentLevel(instrument: InstrumentId): number {
+    let level = 0;
+    for (const voice of this.voices) {
+      if (!voice || voice.instrument !== instrument) continue;
+      const s = this.settings[instrument];
+      const env = s.mode === 'build'
+        ? buildEnvelope(s, voice.onTime, voice.offTime, this.clock)
+        : fadeEnvelope(s, voice.onTime, voice.offTime, this.clock);
+      level += voice.velocity * env;
+    }
+    return Math.min(1, level);
+  }
+
+  /** One kit voice's envelope at the current clock (for patching a drum to a visual). */
+  drumLevel(voice: DrumVoice): number {
+    const d = this.drums[voice];
+    return this.settings.drums.mode === 'build' ? d.build : d.fade;
+  }
+
   private flushDue(time: number): void {
     while (this.pending.length && this.pending[0].time <= time) this.apply(this.pending.shift()!);
   }
@@ -367,10 +390,8 @@ export class NoteVisualState {
   }
 }
 
-function cloneSettings(settings: Record<InstrumentId, NoteVisualSettings>): Record<InstrumentId, NoteVisualSettings> {
-  return {
-    synth: { ...DEFAULT_VISUAL_SETTINGS.synth, ...settings.synth },
-    keys: { ...DEFAULT_VISUAL_SETTINGS.keys, ...settings.keys },
-    drums: { ...DEFAULT_VISUAL_SETTINGS.drums, ...settings.drums },
-  };
+function cloneSettings(settings: Partial<Record<InstrumentId, NoteVisualSettings>>): Record<InstrumentId, NoteVisualSettings> {
+  return Object.fromEntries(
+    (Object.keys(DEFAULT_VISUAL_SETTINGS) as InstrumentId[]).map((id) => [id, { ...DEFAULT_VISUAL_SETTINGS[id], ...settings[id] }]),
+  ) as Record<InstrumentId, NoteVisualSettings>;
 }

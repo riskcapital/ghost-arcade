@@ -25,9 +25,26 @@ import {
 } from './drumPattern';
 import { normalizeTake, type Take } from './recording';
 import { normalizeScene, type MusicScene } from './scenes';
+import {
+  SCALES,
+  STUDIO_SETS,
+  connect,
+  defaultAcidSteps,
+  defaultCables,
+  defaultParams,
+  disconnect,
+  normalizeAcidSteps,
+  normalizeCables,
+  normalizeParams,
+  type AcidStep,
+  type Cable,
+  type MusicKey,
+  type ScaleId,
+  type StudioSet,
+} from './studioSets';
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
-import type { DrumVoice } from './noteEvents';
+import { DRUM_VOICES, type DrumVoice } from './noteEvents';
 
 export const MUSIC_STUDIO_SCHEMA = 1;
 
@@ -43,16 +60,17 @@ export interface MusicStudioProjectState {
   pattern: DrumPattern;
   takes: Take[];
   scenes: MusicScene[];
-  /** The Studio view's panel style. */
-  skin: StudioSkin;
+  /** Which instrument set the Studio view shows. */
+  set: StudioSet;
+  /** Every Studio knob, "module.param" -> 0-1. */
+  params: Record<string, number>;
+  key: MusicKey;
+  /** Letter keys and MIDI snap to the key for the drone and bowls. */
+  scaleLock: boolean;
+  acidSteps: AcidStep[];
+  drumMutes: DrumVoice[];
+  cables: Record<StudioSet, Cable[]>;
 }
-
-export type StudioSkin = 'bath' | 'berlin';
-
-export const STUDIO_SKINS: { id: StudioSkin; label: string }[] = [
-  { id: 'bath', label: 'Sound bath' },
-  { id: 'berlin', label: 'Berlin' },
-];
 
 export interface MusicStudioState extends MusicStudioProjectState {
   isOpen: boolean;
@@ -103,19 +121,21 @@ function loadKeyboardSize(): KeyboardSize {
 }
 
 function cloneVisuals(visuals: Record<InstrumentId, NoteVisualSettings>): Record<InstrumentId, NoteVisualSettings> {
-  return {
-    synth: { ...visuals.synth },
-    keys: { ...visuals.keys },
-    drums: { ...visuals.drums },
-  };
+  return perInstrument((id) => ({ ...visuals[id] }));
 }
+
+function perInstrument<T>(make: (id: InstrumentId) => T): Record<InstrumentId, T> {
+  return Object.fromEntries(INSTRUMENTS.map((id) => [id, make(id)])) as Record<InstrumentId, T>;
+}
+
+const DEFAULT_VOLUMES: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75 };
 
 export function defaultProjectState(): MusicStudioProjectState {
   return {
     instrument: 'synth',
     synthPatch: 'pad',
     keysPatch: 'epiano',
-    volumes: { synth: 0.8, keys: 0.8, drums: 0.9 },
+    volumes: { ...DEFAULT_VOLUMES },
     masterVolume: 0.85,
     visuals: cloneVisuals(DEFAULT_VISUAL_SETTINGS),
     octave: DEFAULT_OCTAVE,
@@ -123,7 +143,13 @@ export function defaultProjectState(): MusicStudioProjectState {
     pattern: starterPattern(),
     takes: [],
     scenes: [],
-    skin: 'bath',
+    set: 'bath',
+    params: defaultParams(),
+    key: { root: 2, scale: 'dorian' },
+    scaleLock: true,
+    acidSteps: defaultAcidSteps(),
+    drumMutes: [],
+    cables: defaultCables(),
   };
 }
 
@@ -171,23 +197,30 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     instrument: INSTRUMENTS.includes(input.instrument as InstrumentId) ? (input.instrument as InstrumentId) : d.instrument,
     synthPatch: SYNTH_PATCHES.some((p) => p.id === input.synthPatch) ? (input.synthPatch as SynthPatch) : d.synthPatch,
     keysPatch: KEYS_PATCHES.some((p) => p.id === input.keysPatch) ? (input.keysPatch as KeysPatch) : d.keysPatch,
-    volumes: {
-      synth: clamp01(volumes.synth, d.volumes.synth),
-      keys: clamp01(volumes.keys, d.volumes.keys),
-      drums: clamp01(volumes.drums, d.volumes.drums),
-    },
+    volumes: perInstrument((id) => clamp01(volumes[id], d.volumes[id])),
     masterVolume: clamp01(input.masterVolume, d.masterVolume),
-    visuals: {
-      synth: normalizeVisual(visuals.synth, d.visuals.synth),
-      keys: normalizeVisual(visuals.keys, d.visuals.keys),
-      drums: normalizeVisual(visuals.drums, d.visuals.drums),
-    },
+    visuals: perInstrument((id) => normalizeVisual(visuals[id], d.visuals[id])),
     octave: clampOctave(Number.isFinite(Number(input.octave)) ? Number(input.octave) : d.octave),
     velocity: Math.max(0.05, clamp01(input.velocity, d.velocity)),
     pattern: input.pattern ? normalizePattern(input.pattern) : d.pattern,
     takes,
     scenes,
-    skin: STUDIO_SKINS.some((k) => k.id === input.skin) ? (input.skin as StudioSkin) : d.skin,
+    set: STUDIO_SETS.some((k) => k.id === input.set) ? (input.set as StudioSet) : d.set,
+    params: input.params ? normalizeParams(input.params) : d.params,
+    key: normalizeKey(input.key, d.key),
+    scaleLock: input.scaleLock === undefined ? d.scaleLock : input.scaleLock === true,
+    acidSteps: normalizeAcidSteps(input.acidSteps),
+    drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
+    cables: input.cables ? normalizeCables(input.cables) : d.cables,
+  };
+}
+
+function normalizeKey(raw: unknown, fallback: MusicKey): MusicKey {
+  const k = (raw && typeof raw === 'object' ? raw : {}) as Partial<MusicKey>;
+  const root = Number(k.root);
+  return {
+    root: Number.isInteger(root) && root >= 0 && root < 12 ? root : fallback.root,
+    scale: k.scale && k.scale in SCALES ? (k.scale as ScaleId) : fallback.scale,
   };
 }
 
@@ -232,7 +265,19 @@ function createMusicStudioStore() {
     toggleOpen: () => update((s) => ({ ...s, isOpen: !s.isOpen, studioView: false })),
     /** Show the full-screen Studio view, or go back to the tray. The studio stays open either way. */
     setStudioView: (studioView: boolean) => set({ studioView, isOpen: true }),
-    setSkin: (skin: StudioSkin) => set({ skin }),
+    setSet: (studioSet: StudioSet) => set({ set: studioSet }),
+    setParam: (key: string, value: number) =>
+      update((s) => (key in s.params ? { ...s, params: { ...s.params, [key]: Math.max(0, Math.min(1, value)) } } : s)),
+    setKey: (key: MusicKey) => set({ key }),
+    setScaleLock: (scaleLock: boolean) => set({ scaleLock }),
+    setAcidStep: (index: number, patch: Partial<AcidStep>) =>
+      update((s) => ({ ...s, acidSteps: s.acidSteps.map((st, i) => (i === index ? { ...st, ...patch } : st)) })),
+    toggleDrumMute: (voice: DrumVoice) =>
+      update((s) => ({ ...s, drumMutes: s.drumMutes.includes(voice) ? s.drumMutes.filter((v) => v !== voice) : [...s.drumMutes, voice] })),
+    connectCable: (cable: Cable) =>
+      update((s) => ({ ...s, cables: { ...s.cables, [s.set]: connect(s.cables[s.set], cable) } })),
+    disconnectCable: (id: string) =>
+      update((s) => ({ ...s, cables: { ...s.cables, [s.set]: disconnect(s.cables[s.set], id) } })),
 
     setInstrument: (instrument: InstrumentId) => set({ instrument }),
     setSynthPatch: (synthPatch: SynthPatch) => set({ synthPatch }),
@@ -310,7 +355,13 @@ function createMusicStudioStore() {
         pattern: normalizePattern(s.pattern),
         takes: s.takes.map((t) => ({ ...t, events: t.events.map((e) => ({ ...e })), pattern: t.pattern ? normalizePattern(t.pattern) : null })),
         scenes: s.scenes.map((sc) => ({ ...sc, pattern: sc.pattern ? normalizePattern(sc.pattern) : null })),
-        skin: s.skin,
+        set: s.set,
+        params: { ...s.params },
+        key: { ...s.key },
+        scaleLock: s.scaleLock,
+        acidSteps: s.acidSteps.map((st) => ({ ...st })),
+        drumMutes: [...s.drumMutes],
+        cables: { bath: s.cables.bath.map((c) => ({ ...c })), berlin: s.cables.berlin.map((c) => ({ ...c })) },
       };
     },
 
@@ -340,6 +391,8 @@ export interface MusicTransportState {
   takeProgress: number;
   /** `${instrument}:${note}` of every sounding note. */
   held: Set<string>;
+  /** Scale degree of the chord the drone is holding, or null. */
+  chord: number | null;
 }
 
-export const musicTransport = writable<MusicTransportState>({ step: -1, takeProgress: 0, held: new Set() });
+export const musicTransport = writable<MusicTransportState>({ step: -1, takeProgress: 0, held: new Set(), chord: null });

@@ -146,6 +146,42 @@ missing and drops malformed events. The MIDI input choice is per computer and
 kept in local storage. Live state relayed between windows never touches the
 studio, so a song keeps playing.
 
+## Studio view (`components/music/StudioView.svelte`)
+
+The **Studio** button in the music tray turns VJ mode into one full-screen
+instrument. The live output stays in the middle (the view hands the native
+preview its frame; VJ mode hides behind it) and the set's modules sit around
+it. **Tray view** goes back with the music playing; **Exit** stops it.
+
+Two sets, one look (black panels, walnut cheeks, amber):
+
+- **Sound bath**: Drone (8 knobs, played by chords or keys), Bowls (five
+  bowls tuned to the key), XY Space (X morphs drone against bowls, Y opens the
+  reverb and shimmer), Chords (eight scale-locked chords that hold until the
+  next), Play (compact keys and the note-visual mode), FX (shimmer, tape,
+  delay, reverb), Macros, Beat.
+- **Berlin**: Drums (a mixer with tune, level, mute and a jack per voice),
+  Acid (a resonant bass line with its own 16-step note row, accents and
+  glides, playing with the beat), Visual layers (deck A layers with opacity
+  and a jack each), FX (drive, bitcrush, dub delay, gated reverb), Macros,
+  Beat (up to 64 steps).
+
+The key and scale (top bar) tune the chords and bowls; **Lock** snaps the
+drone and bowls to the key from the letter keys and MIDI.
+
+**Cables** (`studioSets.ts`, `CableLayer.svelte`): drag from an output jack to
+an input. Sound jacks send an instrument through the FX rack (unpatched
+instruments play dry). Control jacks carry a 0-1 signal (the XY pad, the drone
+or bowl level, each drum voice's hits, the acid filter) into a macro knob
+(turning it, so its visual effects move) or a VJ layer (pulsing its opacity
+with the hits, so the hats can flash one layer and the kick another). Drag a
+plugged input to move its cable, or drop it on nothing to unplug it. Cables
+pass behind the output frame so they never cover the picture, and every
+knob, the key, the acid row, mutes and cables save with the project.
+
+**Scenes** capture the beat, the looping take and the VJ column and launch
+them together on the next bar.
+
 ## Phases
 
 1. **Done**: instruments (synth, keys, drum kit), letter / on-screen / MIDI
@@ -160,6 +196,8 @@ studio, so a song keeps playing.
    - A dedicated low-latency note channel to the render core (a small
      per-frame `set_note_state` command and a `NOTES[16]` uniform block), for
      more voices and less per-frame traffic than clip inputs.
-   - Thumbnails for the note shaders; a few more shaders.
+   - More drum kits (909, minimal, lo-fi, organic) and pattern chains.
+   - Glitch visual packs for the Berlin set (grain, slit-scan, threshold, datamosh).
+   - Loop slots per instrument and an arrangement timeline.
 3. **Later**: per-take editing (quantize, trim, overdub), more instruments
    and sample kits, MIDI out to hardware, exporting a take as a MIDI file.

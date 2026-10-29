@@ -73,7 +73,9 @@ function playSomething(): void {
   s.toggleStep('crash', 3);
   s.addTake(JSON.parse(JSON.stringify(take)));
   s.addScene({ id: 'scene-a', name: 'Arrival', pattern: null, beat: true, takeId: 'take-a', vjColumn: 2 });
-  s.setSkin('berlin');
+  s.setSet('berlin');
+  s.setParam('drone.tone', 0.9);
+  s.connectCable({ id: 'c1', from: 'cv:drum.hatClosed', to: 'dest:layer:1' });
 }
 
 describe('music studio in the project file', () => {
@@ -93,7 +95,9 @@ describe('music studio in the project file', () => {
     expect(s.pattern.tracks.crash[3]).toBeGreaterThan(0);
     expect(s.takes).toEqual([take]);
     expect(s.scenes).toEqual([{ id: 'scene-a', name: 'Arrival', pattern: null, beat: true, takeId: 'take-a', vjColumn: 2 }]);
-    expect(s.skin).toBe('berlin');
+    expect(s.set).toBe('berlin');
+    expect(s.params['drone.tone']).toBe(0.9);
+    expect(s.cables.berlin).toContainEqual({ id: 'c1', from: 'cv:drum.hatClosed', to: 'dest:layer:1' });
   });
 
   it('opens an older file with a fresh studio, not the last project\'s', () => {
@@ -105,7 +109,8 @@ describe('music studio in the project file', () => {
     expect(s.instrument).toBe('synth');
     expect(s.visuals.keys.mode).toBe('fade');
     expect(s.scenes).toHaveLength(0);
-    expect(s.skin).toBe('bath');
+    expect(s.set).toBe('bath');
+    expect(s.params['drone.tone']).toBe(0.35);
   });
 
   it('leaves the studio alone for live state relayed from another window', () => {
