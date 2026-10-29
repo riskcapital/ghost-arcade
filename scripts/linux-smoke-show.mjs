@@ -119,8 +119,11 @@ export const stepVj = {
     await c.waitFor("document.querySelectorAll('.clip-cell').length>0 && document.querySelectorAll('.media-item').length>3", 60000, 'VJ grid and media library');
     await c.clickElement(trayItem('TestBars'));
     await c.waitFor(`!!(${clipCell('TestBars')})`, 15000, 'TestBars clip in the grid');
+    // Wait for the picture to move off what was showing before the launch:
+    // a slow core can hold the previous step's frame steady for a while.
+    const beforeLaunch = await programMean(c);
     await c.clickElement(clipCell('TestBars'));
-    const deckA = await settledMean(c);
+    const deckA = await settledMean(c, beforeLaunch);
     t.number('deckA', `TestBars mean rgb ${deckA.rgb} luma ${deckA.luma}`);
     t.check('launching a clip puts a picture on the output', deckA.luma > 0.05, JSON.stringify(deckA));
 
