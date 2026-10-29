@@ -4942,6 +4942,9 @@
       if ((layer.source.type === 'threejs' || layer.source.type === 'p5js') && layer.source.jsAnimation) {
         const jsContext = getJSAnimationContext(layer.source.id);
         if (jsContext) {
+          // New code under the same source (an edited sketch, an undo):
+          // the page restarts with it, keeping its texture.
+          jsContext.follow(layer.source.jsAnimation);
           jsContext.updateTexture();
           followContextTexture(layer, lookupKey, jsContext.texture);
         }

@@ -207,6 +207,12 @@ export interface JSAnimationContext {
    * and everything holding them stay valid while the page restarts.
    */
   restart: (jsAnimation: JSAnimationSource) => void;
+  /**
+   * Restarts the page when `jsAnimation` holds other code than it runs. A
+   * source keeps its id when its code changes (the sketch editor, undo and
+   * redo), so whatever plays it calls this with the code it holds now.
+   */
+  follow: (jsAnimation: JSAnimationSource) => void;
   /** True once the page built from `htmlCode` has loaded and is running. */
   runs: (htmlCode: string) => boolean;
   /** Uncaught errors the page has thrown so far. */
@@ -344,6 +350,10 @@ export function createJSAnimationContext(
     context.animationType = next.animationType;
   };
 
+  const follow = (next: JSAnimationSource) => {
+    if (next.htmlCode !== runningHtml) restart(next);
+  };
+
   const runs = (htmlCode: string) => htmlCode === runningHtml && loadedUrl === blobUrl;
 
   const readErrors = (): JSAnimationPageError[] => {
@@ -376,6 +386,7 @@ export function createJSAnimationContext(
     updateTexture,
     updateParams,
     restart,
+    follow,
     runs,
     readErrors,
     dispose
