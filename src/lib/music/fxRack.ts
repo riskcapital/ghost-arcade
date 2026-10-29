@@ -13,7 +13,7 @@ interface Unit {
 }
 
 /** A unit with a dry path and a wet path, crossfaded by its "mix" knob. */
-function wetDry(ctx: AudioContext, wetIn: AudioNode, wetOut: AudioNode): { input: GainNode; output: GainNode; mix: (v: number) => void } {
+export function wetDry(ctx: AudioContext, wetIn: AudioNode, wetOut: AudioNode): { input: GainNode; output: GainNode; mix: (v: number) => void } {
   const input = ctx.createGain();
   const output = ctx.createGain();
   const dry = ctx.createGain();
@@ -34,7 +34,7 @@ function wetDry(ctx: AudioContext, wetIn: AudioNode, wetOut: AudioNode): { input
 }
 
 /** A decaying stereo noise burst: the impulse response of a room. */
-function impulse(ctx: AudioContext, seconds: number, decay: number, bright: number, gateAt = 1): AudioBuffer {
+export function impulse(ctx: AudioContext, seconds: number, decay: number, bright: number, gateAt = 1): AudioBuffer {
   const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
   const buffer = ctx.createBuffer(2, length, ctx.sampleRate);
   for (let c = 0; c < 2; c++) {
@@ -188,7 +188,7 @@ function crushUnit(ctx: AudioContext): Unit {
   };
 }
 
-function softClip(amount: number): Float32Array<ArrayBuffer> {
+export function softClip(amount: number): Float32Array<ArrayBuffer> {
   const curve = new Float32Array(1024);
   const norm = Math.tanh(amount);
   for (let i = 0; i < curve.length; i++) {

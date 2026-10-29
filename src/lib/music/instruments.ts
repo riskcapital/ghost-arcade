@@ -11,6 +11,7 @@ export const INSTRUMENT_LABELS: Record<InstrumentId, string> = {
   drone: 'Drone',
   bowls: 'Bowls',
   acid: 'Acid',
+  xy: 'XY tone',
 };
 
 export type SynthPatch = 'pad' | 'pluck' | 'bass' | 'lead';

@@ -594,6 +594,7 @@ function frame(): void {
     if (active || visualsWereActive) writeNoteInputs();
     visualsWereActive = active;
     routeControlCables();
+    syncMacroFx();
     publishTransport(now);
   }
   const s = get(musicStudio);
@@ -628,6 +629,21 @@ function controlValue(jack: string, params: Record<string, number>): number {
   if (name === 'acid.cutoff') return Math.min(1, (params['acid.cutoff'] ?? 0.35) * (0.4 + 0.6 * visuals.instrumentLevel('acid')) * 1.6);
   if (name.startsWith('drum.')) return visuals.drumLevel(name.slice(5) as DrumVoice);
   return 0;
+}
+
+let macroSyncAt = 0;
+
+/** Hand the macros' sound effects their knob values (and the tempo, for synced delays). */
+function syncMacroFx(force = false): void {
+  const now = performance.now();
+  if (!force && now - macroSyncAt < 250) return;
+  macroSyncAt = now;
+  const s = get(musicStudio);
+  const values = new Map(get(macros).macros.map((m) => [m.id, m.value]));
+  audio.setMacroFx(
+    get(macros).macros.map((m) => ({ macroValue: values.get(m.id) ?? 0, effects: s.macroFx[m.id] ?? [] })),
+    launchClockTempo(),
+  );
 }
 
 function routeControlCables(): void {
@@ -759,6 +775,7 @@ function stopEverything(): void {
 }
 
 let wasOpen = false;
+let macroSubscribed = false;
 let lastKey = '';
 
 /** Start listening to the studio's settings. Safe to call repeatedly. */
@@ -782,9 +799,15 @@ export function ensureMusicRuntime(): void {
     for (const id of INSTRUMENTS) audio.setVolume(id, volumes[id]);
     audio.setParams(soundParams(s));
     audio.setRouting(s.set, instrumentsThroughFx(s.cables[s.set]));
+    syncMacroFx(true);
     audio.setMasterVolume(s.masterVolume);
     visuals.setSettings(s.visuals);
     syncKeyboard(s);
+    if (!macroSubscribed) {
+      macroSubscribed = true;
+      // A turned macro moves its sound at once, not on the next quarter second.
+      macros.subscribe(() => syncMacroFx(true));
+    }
     if (s.isOpen && !midi) {
       // MIDI keeps playing once the studio has been opened, panel shown or not.
       midi = new MusicMidiInput(onMidi);

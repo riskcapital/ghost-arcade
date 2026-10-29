@@ -8,6 +8,7 @@
   import { FX_RACKS } from '../../music/studioSets';
   import { macros } from '../../stores/macros';
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
+  import { macroEditorId } from '../../music/studioUi';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
@@ -44,11 +45,12 @@
     <div class="macro-grid" class:compact={columns < 8} style="grid-template-columns: repeat({columns}, minmax(0, 1fr))">
       {#each $macros.macros as m (m.id)}
         {@const cable = macroCable(m.id)}
+        {@const count = m.effects.length + (s.macroFx[m.id]?.length ?? 0)}
         <div class="macro">
           <StudioKnob label={m.name} value={m.value} size={columns < 8 ? 28 : 44} format={(v) => `${Math.round(v * 100)}%`} onchange={(v) => macros.setMacroValue(m.id, v)} midiPath="vj:macro:{m.id.replace('macro-', '')}:value" />
-          {#if columns >= 8}
-            <span class="macro-detail">{cable ? 'patched' : m.effects.length ? `${m.effects.length} FX` : 'no FX'}</span>
-          {/if}
+          <button class="fx-btn" class:has={count > 0} class:open={$macroEditorId === m.id} onclick={() => macroEditorId.set($macroEditorId === m.id ? null : m.id)} title="Sound and visual effects on {m.name}{cable ? ' (patched)' : ''}">
+            FX{count ? ` ${count}` : ''}
+          </button>
           <StudioJack id="dest:macro:{m.id}" title="Turn {m.name} with a control signal" />
         </div>
       {/each}
@@ -72,7 +74,21 @@
   .macro-grid { display: grid; gap: 8px 4px; }
   .macro-grid.compact { gap: 4px; }
   .macro { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-  .macro-detail { font-size: 9px; color: var(--studio-muted); }
+  .fx-btn {
+    height: 18px;
+    padding: 0 7px;
+    border: 1px solid var(--studio-edge);
+    background: transparent;
+    color: var(--studio-muted);
+    border-radius: var(--studio-radius);
+    font: inherit;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+  }
+  .fx-btn.has { color: var(--studio-ink); }
+  .fx-btn.open { border-color: var(--studio-accent); color: var(--studio-accent); }
   .bay {
     width: 48px;
     box-sizing: border-box;

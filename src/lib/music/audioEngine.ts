@@ -16,6 +16,7 @@ import { audioAnalyzer } from '../audio/analyzer';
 import { INSTRUMENTS, type DrumVoice, type InstrumentId, type NoteEvent } from './noteEvents';
 import type { KeysPatch, SynthPatch } from './instruments';
 import { FxRack } from './fxRack';
+import { MacroFxChain, type MacroFxSlot } from './macroFxAudio';
 import { defaultParams, type StudioSet } from './studioSets';
 
 interface SubtractivePatch {
@@ -73,7 +74,7 @@ export class MusicAudioEngine {
 
   private synthPatch: SynthPatch = 'pad';
   private keysPatch: KeysPatch = 'epiano';
-  private volumes: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75 };
+  private volumes: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75, xy: 0.7 };
   private masterVolume = 0.85;
   /** Every Studio knob, "module.param" -> 0-1. */
   private params: Record<string, number> = defaultParams();
@@ -83,6 +84,10 @@ export class MusicAudioEngine {
   private droneLfo: { osc: OscillatorNode; depth: GainNode } | null = null;
   private droneVoices = new Set<{ filter: BiquadFilterNode; shimmer: GainNode; air: GainNode; note: number }>();
   private acid: { osc: OscillatorNode; filter: BiquadFilterNode; amp: GainNode; note: number } | null = null;
+  private xyTone: { oscs: OscillatorNode[]; filter: BiquadFilterNode; amp: GainNode; note: number } | null = null;
+  private macroChain: MacroFxChain | null = null;
+  private macroSlots: MacroFxSlot[] = [];
+  private tempo = 120;
   /** Pitch factor of the drum being played, from its mixer tune knob. */
   private drumRate = 1;
 
@@ -131,6 +136,14 @@ export class MusicAudioEngine {
       v.air.gain.setTargetAtTime((params['drone.air'] ?? 0.25) * 0.05, t, 0.2);
     }
     if (this.acid) this.acid.filter.Q.setTargetAtTime(1 + (params['acid.reso'] ?? 0.75) * 20, t, 0.02);
+    if (this.xyTone) this.xyTone.filter.frequency.setTargetAtTime(this.xyCutoff(), t, 0.03);
+  }
+
+  /** The macros' sound effects and how far each macro is turned. */
+  setMacroFx(slots: MacroFxSlot[], tempo: number): void {
+    this.macroSlots = slots;
+    this.tempo = tempo;
+    this.macroChain?.sync(slots, tempo);
   }
 
   /** Which set's rack is in use, and which instruments its cables send through it. */
@@ -169,6 +182,11 @@ export class MusicAudioEngine {
       if (event.type === 'on') this.strikeBowl(event.note, event.velocity, time);
       return;
     }
+    if (event.instrument === 'xy') {
+      if (event.type === 'on') this.xyOn(event.note, event.velocity, time);
+      else if (this.xyTone?.note === event.note) this.xyOff(time);
+      return;
+    }
     if (event.instrument === 'acid') {
       if (event.type === 'on') this.acidOn(event.note, event.velocity, time);
       else if (this.acid?.note === event.note) this.acidOff(time);
@@ -204,6 +222,7 @@ export class MusicAudioEngine {
     for (const voice of this.voices.values()) voice.release(t);
     this.voices.clear();
     this.acidOff(t);
+    this.xyOff(t);
   }
 
   dispose(): void {
@@ -234,7 +253,11 @@ export class MusicAudioEngine {
     compressor.ratio.value = 4;
     compressor.attack.value = 0.004;
     compressor.release.value = 0.2;
-    master.connect(compressor);
+    // The macros' sound effects sit between the mix and the bus compressor.
+    this.macroChain = new MacroFxChain(ctx);
+    master.connect(this.macroChain.input);
+    this.macroChain.output.connect(compressor);
+    this.macroChain.sync(this.macroSlots, this.tempo);
     compressor.connect(ctx.destination);
     this.masterGain = master;
     this.output = compressor;
@@ -667,6 +690,61 @@ export class MusicAudioEngine {
     osc.connect(filter).connect(drive).connect(amp).connect(this.bus!.acid);
     osc.start(time);
     this.acid = { osc, filter, amp, note };
+  }
+
+  private xyCutoff(): number {
+    return 250 + Math.pow(this.params['xy.y'] ?? 0.5, 2) * 7000;
+  }
+
+  /** The XY pad's own voice: a soft gliding tone, brighter towards the top of the pad. */
+  private xyOn(note: number, velocity: number, time: number): void {
+    const ctx = this.ctx!;
+    const freq = midiToHz(note);
+    if (this.xyTone) {
+      for (const [i, o] of this.xyTone.oscs.entries()) {
+        o.frequency.cancelScheduledValues(time);
+        o.frequency.setTargetAtTime(freq * (i === 1 ? 2 : 1), time, 0.06);
+      }
+      this.xyTone.note = note;
+      return;
+    }
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 2;
+    filter.frequency.value = this.xyCutoff();
+    const amp = ctx.createGain();
+    amp.gain.setValueAtTime(0, time);
+    amp.gain.linearRampToValueAtTime(velocityGain(velocity) * 0.28, time + 0.08);
+    const vibrato = ctx.createOscillator();
+    vibrato.frequency.value = 5.2;
+    const vibratoDepth = ctx.createGain();
+    vibratoDepth.gain.value = 6;
+    vibrato.connect(vibratoDepth);
+    const oscs = (['triangle', 'sine'] as OscillatorType[]).map((type, i) => {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.value = freq * (i === 1 ? 2 : 1);
+      vibratoDepth.connect(o.detune);
+      const g = ctx.createGain();
+      g.gain.value = i === 1 ? 0.3 : 1;
+      o.connect(g).connect(filter);
+      o.start(time);
+      return o;
+    });
+    vibrato.start(time);
+    oscs.push(vibrato);
+    filter.connect(amp).connect(this.bus!.xy);
+    this.xyTone = { oscs, filter, amp, note };
+  }
+
+  private xyOff(time: number): void {
+    const v = this.xyTone;
+    if (!v) return;
+    this.xyTone = null;
+    holdAt(v.amp.gain, time);
+    v.amp.gain.setTargetAtTime(0, time, 0.25);
+    for (const o of v.oscs) { try { o.stop(time + 1.5); } catch { /* stopped */ } }
+    v.oscs[0].onended = () => { try { v.amp.disconnect(); } catch { /* gone */ } };
   }
 
   private acidOff(time: number): void {

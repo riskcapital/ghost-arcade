@@ -5,9 +5,9 @@
    * can place each where the set's layout puts it.
    */
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
-  import { BOWL_PARAMS, DRONE_PARAMS, bowlNotes, chordName, chordNotes, keyLabel } from '../../music/studioSets';
+  import { BOWL_PARAMS, DRONE_PARAMS, bowlNotes, chordName, chordNotes, keyLabel, scaleNote } from '../../music/studioSets';
   import { noteName } from '../../music/noteEvents';
-  import { releaseBowl, releaseChords, strikeBowl, toggleChord } from '../../music/musicRuntime';
+  import { playNote, releaseBowl, releaseChords, releaseNote, strikeBowl, toggleChord } from '../../music/musicRuntime';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
@@ -46,6 +46,20 @@
   let pad = $state<HTMLElement | null>(null);
   let trail = $state<Array<{ x: number; y: number }>>([]);
   let dragging = false;
+  /** The note the pad is sounding while touched. */
+  let xyNote: number | null = null;
+  /** Two octaves of the key across the pad's width. */
+  const XY_STEPS = 14;
+
+  function xyPlay(x: number, y: number) {
+    const note = scaleNote(s.key, Math.round(x * XY_STEPS), 48);
+    if (note === xyNote) return;
+    const previous = xyNote;
+    xyNote = note;
+    // The new note first, so the voice glides instead of restarting.
+    playNote('xy', note, 0.45 + y * 0.55, 'screen');
+    if (previous !== null) releaseNote('xy', previous, 'screen');
+  }
 
   function xyAt(e: PointerEvent) {
     if (!pad) return;
@@ -55,6 +69,7 @@
     musicStudio.setParam('xy.x', x);
     musicStudio.setParam('xy.y', y);
     trail = [...trail.slice(-10), { x, y }];
+    xyPlay(x, y);
   }
 
   function xyDown(e: PointerEvent) {
@@ -70,6 +85,8 @@
 
   function xyUp() {
     dragging = false;
+    if (xyNote !== null) releaseNote('xy', xyNote, 'screen');
+    xyNote = null;
   }
 </script>
 
@@ -111,8 +128,9 @@
     </div>
   </StudioModule>
 {:else if part === 'xy'}
-  <StudioModule title="XY · SPACE" subtitle="Drone ↔ bowls · near ↔ vast" grow>
+  <StudioModule title="XY · SPACE" subtitle="Touch to play · drone ↔ bowls · near ↔ vast" grow>
     {#snippet head()}
+      <StudioJack id="audio:xy" label="Out" title="XY tone" />
       <StudioJack id="cv:xy.x" label="X" />
       <StudioJack id="cv:xy.y" label="Y" />
     {/snippet}

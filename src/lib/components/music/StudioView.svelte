@@ -34,6 +34,7 @@
   import BerlinModules from './BerlinModules.svelte';
   import RackModules from './RackModules.svelte';
   import CableLayer from './CableLayer.svelte';
+  import MacroEditor from './MacroEditor.svelte';
   import PianoKeys from './PianoKeys.svelte';
   import DrumPads from './DrumPads.svelte';
   import StepGrid from './StepGrid.svelte';
@@ -295,6 +296,7 @@
     {/if}
 
     <CableLayer {root} />
+    <MacroEditor />
   </div>
 {/if}
 

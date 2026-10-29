@@ -189,6 +189,17 @@ it. **Load jam** sets up a techno beat, the acid line, four layers (threshold
 bed, slit-scan on the acid filter, scanlines on the hats, strobe on the kick)
 and the cables, and starts it.
 
+**Macro effects** (`macroFx.ts`, `macroFxAudio.ts`, `MacroEditor.svelte`): the
+FX button on a macro opens its effects. Sound: delay (beat-synced, ping-pong),
+filter, reverb, chorus, phaser, bitcrush, drive, stutter and auto-pan on the
+studio's mix; every parameter has a set value and a Macro amount, so turning
+the macro sweeps it. Picture: visual effects from the app's catalog, which the
+macro fades in. Both belong to the macro, apart from composition, layer and
+clip effects, and save with the project.
+
+**XY tone**: touching the XY pad plays a gliding tone in the key (X picks the
+note, Y brightens it) as well as moving the space; it has its own sound jack.
+
 **Scenes** capture the beat, the looping take and the VJ column and launch
 them together on the next bar.
 

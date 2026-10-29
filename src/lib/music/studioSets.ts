@@ -208,7 +208,7 @@ export interface Cable {
 
 /** Instruments with a sound output jack in each set. */
 export const AUDIO_SOURCES: Record<StudioSet, InstrumentId[]> = {
-  bath: ['drone', 'bowls', 'synth', 'keys'],
+  bath: ['drone', 'bowls', 'xy', 'synth', 'keys'],
   berlin: ['drums', 'acid', 'synth', 'keys'],
 };
 

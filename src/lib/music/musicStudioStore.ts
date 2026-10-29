@@ -25,6 +25,7 @@ import {
 } from './drumPattern';
 import { normalizeTake, type Take } from './recording';
 import { normalizeScene, type MusicScene } from './scenes';
+import { createMacroFx, normalizeMacroFx, type MacroFxInstance, type MacroFxParam, type MacroFxType } from './macroFx';
 import {
   SCALES,
   STUDIO_SETS,
@@ -70,6 +71,8 @@ export interface MusicStudioProjectState {
   acidSteps: AcidStep[];
   drumMutes: DrumVoice[];
   cables: Record<StudioSet, Cable[]>;
+  /** Sound effects on each macro knob, by macro id. */
+  macroFx: Record<string, MacroFxInstance[]>;
 }
 
 export interface MusicStudioState extends MusicStudioProjectState {
@@ -128,7 +131,7 @@ function perInstrument<T>(make: (id: InstrumentId) => T): Record<InstrumentId, T
   return Object.fromEntries(INSTRUMENTS.map((id) => [id, make(id)])) as Record<InstrumentId, T>;
 }
 
-const DEFAULT_VOLUMES: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75 };
+const DEFAULT_VOLUMES: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75, xy: 0.7 };
 
 export function defaultProjectState(): MusicStudioProjectState {
   return {
@@ -150,6 +153,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     acidSteps: defaultAcidSteps(),
     drumMutes: [],
     cables: defaultCables(),
+    macroFx: {},
   };
 }
 
@@ -212,6 +216,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     acidSteps: normalizeAcidSteps(input.acidSteps),
     drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
     cables: input.cables ? normalizeCables(input.cables) : d.cables,
+    macroFx: normalizeMacroFx(input.macroFx),
   };
 }
 
@@ -276,6 +281,26 @@ function createMusicStudioStore() {
       update((s) => ({ ...s, drumMutes: s.drumMutes.includes(voice) ? s.drumMutes.filter((v) => v !== voice) : [...s.drumMutes, voice] })),
     connectCable: (cable: Cable) =>
       update((s) => ({ ...s, cables: { ...s.cables, [s.set]: connect(s.cables[s.set], cable) } })),
+    addMacroFx: (macroId: string, id: string, type: MacroFxType) =>
+      update((s) => ({ ...s, macroFx: { ...s.macroFx, [macroId]: [...(s.macroFx[macroId] ?? []), createMacroFx(id, type)] } })),
+    removeMacroFx: (macroId: string, id: string) =>
+      update((s) => ({ ...s, macroFx: { ...s.macroFx, [macroId]: (s.macroFx[macroId] ?? []).filter((fx) => fx.id !== id) } })),
+    toggleMacroFx: (macroId: string, id: string) =>
+      update((s) => ({ ...s, macroFx: { ...s.macroFx, [macroId]: (s.macroFx[macroId] ?? []).map((fx) => (fx.id === id ? { ...fx, enabled: !fx.enabled } : fx)) } })),
+    setMacroFxParam: (macroId: string, id: string, key: string, patch: Partial<MacroFxParam>) =>
+      update((s) => ({
+        ...s,
+        macroFx: {
+          ...s.macroFx,
+          [macroId]: (s.macroFx[macroId] ?? []).map((fx) => {
+            if (fx.id !== id || !fx.params[key]) return fx;
+            const next = { ...fx.params[key], ...patch };
+            next.value = Math.max(0, Math.min(1, next.value));
+            next.depth = Math.max(-1, Math.min(1, next.depth));
+            return { ...fx, params: { ...fx.params, [key]: next } };
+          }),
+        },
+      })),
     /** Replace a set's cables (a jam setup). */
     setCables: (studioSet: StudioSet, cables: Cable[]) =>
       update((s) => ({ ...s, cables: { ...s.cables, [studioSet]: cables.reduce(connect, [] as Cable[]) } })),
@@ -365,6 +390,7 @@ function createMusicStudioStore() {
         acidSteps: s.acidSteps.map((st) => ({ ...st })),
         drumMutes: [...s.drumMutes],
         cables: { bath: s.cables.bath.map((c) => ({ ...c })), berlin: s.cables.berlin.map((c) => ({ ...c })) },
+        macroFx: JSON.parse(JSON.stringify(s.macroFx)),
       };
     },
 
