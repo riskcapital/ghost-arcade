@@ -24,7 +24,7 @@ import {
   type PatternLength,
 } from './drumPattern';
 import { normalizeTake, type Take } from './recording';
-import { DEFAULT_OCTAVE, clampOctave } from './keyboardLayout';
+import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import type { DrumVoice } from './noteEvents';
 
@@ -49,6 +49,8 @@ export interface MusicStudioState extends MusicStudioProjectState {
   keysArmed: boolean;
   /** MIDI input id, '' for every input. Machine wiring, kept per computer. */
   midiInput: string;
+  /** How much of the piano the panel shows. A view preference, kept per computer. */
+  keyboardSize: KeyboardSize;
   sequencerPlaying: boolean;
   recording: boolean;
   /** performance.now() when recording started, for the timer. */
@@ -63,19 +65,25 @@ export interface MusicStudioProjectSection extends MusicStudioProjectState {
 }
 
 const MIDI_INPUT_KEY = 'ghostarcade-music-midi-input';
+const KEYBOARD_SIZE_KEY = 'ghostarcade-music-keyboard-size';
 
-function loadMidiInput(): string {
+function loadPref(key: string): string {
   try {
-    return localStorage.getItem(MIDI_INPUT_KEY) ?? '';
+    return localStorage.getItem(key) ?? '';
   } catch {
     return '';
   }
 }
 
-function saveMidiInput(id: string): void {
+function savePref(key: string, value: string): void {
   try {
-    localStorage.setItem(MIDI_INPUT_KEY, id);
+    localStorage.setItem(key, value);
   } catch { /* private mode / no storage: the choice lasts the session */ }
+}
+
+function loadKeyboardSize(): KeyboardSize {
+  const saved = loadPref(KEYBOARD_SIZE_KEY);
+  return KEYBOARD_SIZES.some((k) => k.id === saved) ? (saved as KeyboardSize) : 'compact';
 }
 
 function cloneVisuals(visuals: Record<InstrumentId, NoteVisualSettings>): Record<InstrumentId, NoteVisualSettings> {
@@ -163,7 +171,8 @@ function initialState(): MusicStudioState {
     ...defaultProjectState(),
     isOpen: false,
     keysArmed: true,
-    midiInput: loadMidiInput(),
+    midiInput: loadPref(MIDI_INPUT_KEY),
+    keyboardSize: loadKeyboardSize(),
     sequencerPlaying: false,
     recording: false,
     recordingSince: null,
@@ -215,8 +224,12 @@ function createMusicStudioStore() {
     shiftVelocity: (delta: number) => update((s) => ({ ...s, velocity: Math.max(0.05, clamp01(s.velocity + delta, s.velocity)) })),
     setKeysArmed: (keysArmed: boolean) => set({ keysArmed }),
     setMidiInput: (midiInput: string) => {
-      saveMidiInput(midiInput);
+      savePref(MIDI_INPUT_KEY, midiInput);
       set({ midiInput });
+    },
+    setKeyboardSize: (keyboardSize: KeyboardSize) => {
+      savePref(KEYBOARD_SIZE_KEY, keyboardSize);
+      set({ keyboardSize });
     },
 
     toggleStep: (voice: DrumVoice, step: number, velocity?: number) =>

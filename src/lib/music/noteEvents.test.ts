@@ -15,6 +15,7 @@ import {
   drumPadForKey,
   keyForNote,
   keyboardAction,
+  keyboardRange,
   noteForKey,
 } from './keyboardLayout';
 
@@ -111,6 +112,15 @@ describe('letter keyboard', () => {
   it('keeps notes inside the MIDI range at the top octave', () => {
     expect(noteForKey('KeyA', 9)).toBe(120);
     expect(noteForKey('Quote', 9)).toBeNull();
+  });
+
+  it('shows two octaves, four octaves or the full piano on screen', () => {
+    expect(keyboardRange('compact', 4)).toEqual({ low: 60, high: 84 });
+    expect(keyboardRange('wide', 4)).toEqual({ low: 48, high: 96 });
+    expect(keyboardRange('full', 4)).toEqual({ low: 21, high: 108 });
+    // Ranges stay inside MIDI at the ends of the octave range.
+    expect(keyboardRange('wide', 0)).toEqual({ low: 0, high: 48 });
+    expect(keyboardRange('compact', 8)).toEqual({ low: 103, high: 127 });
   });
 
   it('plays the eight drum pads from the home row', () => {

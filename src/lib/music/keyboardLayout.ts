@@ -71,6 +71,25 @@ export function keyForNote(note: number, octave: number): string | null {
   return null;
 }
 
+export type KeyboardSize = 'compact' | 'wide' | 'full';
+
+export const KEYBOARD_SIZES: { id: KeyboardSize; label: string; title: string }[] = [
+  { id: 'compact', label: '2 oct', title: 'Two octaves from the keyboard octave' },
+  { id: 'wide', label: '4 oct', title: 'Four octaves around the keyboard octave' },
+  { id: 'full', label: '88', title: 'A full 88-key piano' },
+];
+
+/** Lowest and highest note the on-screen keyboard shows. */
+export function keyboardRange(size: KeyboardSize, octave: number): { low: number; high: number } {
+  if (size === 'full') return { low: 21, high: 108 };
+  const base = octaveBaseNote(clampOctave(octave));
+  // The wide view starts an octave below so the letter keys sit in its middle.
+  const low = size === 'wide' ? base - 12 : base;
+  const span = size === 'wide' ? 48 : 24;
+  const clampedLow = Math.max(0, Math.min(127 - span, low));
+  return { low: clampedLow, high: clampedLow + span };
+}
+
 export function clampOctave(octave: number): number {
   return Math.max(MIN_OCTAVE, Math.min(MAX_OCTAVE, Math.round(octave)));
 }

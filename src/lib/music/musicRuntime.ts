@@ -480,11 +480,29 @@ function writeNoteInputs(): void {
 
 // ── Lifecycle ───────────────────────────────────────────────────────────
 
+/**
+ * Closing the studio stops it: a take being recorded is kept, then the beat,
+ * replay and every sounding note stop. Minimizing the panel keeps playing.
+ */
+function stopEverything(): void {
+  if (recorder.recording) stopRecording();
+  if (sequencer) stopSequencer();
+  stopTake();
+  panic();
+}
+
+let wasOpen = false;
+
 /** Start listening to the studio's settings. Safe to call repeatedly. */
 export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
   musicStudio.subscribe((s) => {
+    if (wasOpen && !s.isOpen) {
+      wasOpen = false;
+      stopEverything();
+    }
+    wasOpen = s.isOpen;
     audio.setSynthPatch(s.synthPatch);
     audio.setKeysPatch(s.keysPatch);
     for (const id of ['synth', 'keys', 'drums'] as InstrumentId[]) audio.setVolume(id, s.volumes[id]);

@@ -14,7 +14,7 @@
     type InstrumentId,
   } from '../../music/noteEvents';
   import { INSTRUMENT_LABELS, KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from '../../music/instruments';
-  import { DRUM_PAD_KEYS, PIANO_KEY_LABELS, keyForNote, octaveBaseNote } from '../../music/keyboardLayout';
+  import { DRUM_PAD_KEYS, KEYBOARD_SIZES, PIANO_KEY_LABELS, keyForNote, keyboardRange, octaveBaseNote } from '../../music/keyboardLayout';
   import { PATTERN_LENGTHS, type PatternLength } from '../../music/drumPattern';
   import { takeNoteCount } from '../../music/recording';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
@@ -42,9 +42,6 @@
     { file: 'NR-BeatGrid.fs', name: 'Beat Grid' },
   ];
 
-  /** Two octaves of on-screen keys from the keyboard's octave. */
-  const KEY_SPAN = 25;
-
   let minimized = false;
   let elapsed = 0;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
@@ -52,8 +49,12 @@
   $: s = $musicStudio;
   $: transport = $musicTransport;
   $: base = octaveBaseNote(s.octave);
-  $: pianoNotes = Array.from({ length: KEY_SPAN }, (_, i) => base + i).filter((n) => n <= 127);
+  $: range = keyboardRange(s.keyboardSize, s.octave);
+  $: pianoNotes = Array.from({ length: range.high - range.low + 1 }, (_, i) => range.low + i);
   $: whiteNotes = pianoNotes.filter((n) => !isBlackKey(n));
+  $: blackWidth = (100 / whiteNotes.length) * 0.62;
+  // Four octaves and the full piano take the whole width of the panel.
+  $: pianoWide = s.instrument !== 'drums' && s.keyboardSize !== 'compact';
   $: visual = s.visuals[s.instrument];
   $: steps = Array.from({ length: s.pattern.steps }, (_, i) => i);
   $: stepCell = s.pattern.steps > 16 ? 16 : 22;
@@ -72,6 +73,8 @@
 
   onDestroy(() => {
     if (elapsedTimer) clearInterval(elapsedTimer);
+    // Leaving VJ mode closes the studio, which stops it and frees the letter keys.
+    musicStudio.close();
   });
 
   function held(instrument: InstrumentId, note: number): boolean {
@@ -241,11 +244,6 @@
         <input type="checkbox" checked={s.keysArmed} onchange={() => musicStudio.setKeysArmed(!s.keysArmed)} />
         Letter keys
       </label>
-      <div class="stepper" title="Octave (Z / X)">
-        <button onclick={() => musicStudio.shiftOctave(-1)} aria-label="Octave down">−</button>
-        <span>{noteName(base)}</span>
-        <button onclick={() => musicStudio.shiftOctave(1)} aria-label="Octave up">+</button>
-      </div>
       <label class="inline" title="Velocity for keys and pads (C / V)">
         Vel
         <input type="range" min="0.05" max="1" step="0.05" value={s.velocity}
@@ -271,8 +269,27 @@
     </div>
 
     {#if !minimized}
-      <div class="music-body">
+      <div class="music-body" class:wide={pianoWide}>
         <section class="play">
+          {#if s.instrument !== 'drums'}
+            <div class="row-head">
+              <span class="label">Keys</span>
+              <div class="stepper" title="Octave of the letter keys (Z / X)">
+                <button onclick={() => musicStudio.shiftOctave(-1)} aria-label="Octave down">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>
+                </button>
+                <span>{noteName(base)}</span>
+                <button onclick={() => musicStudio.shiftOctave(1)} aria-label="Octave up">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+                </button>
+              </div>
+              <div class="seg small" role="group" aria-label="Keyboard size">
+                {#each KEYBOARD_SIZES as size}
+                  <button class:on={s.keyboardSize === size.id} onclick={() => musicStudio.setKeyboardSize(size.id)} title={size.title}>{size.label}</button>
+                {/each}
+              </div>
+            </div>
+          {/if}
           {#if s.instrument === 'drums'}
             <div class="pads">
               {#each DRUM_VOICES as voice, i}
@@ -283,7 +300,7 @@
               {/each}
             </div>
           {:else}
-            <div class="piano" role="group" aria-label="On-screen keys"
+            <div class="piano" role="group" aria-label="On-screen keys" style="--black-w: {blackWidth}%"
               onpointerdown={onKeysDown} onpointermove={onKeysMove} onpointerup={onKeysUp} onpointercancel={onKeysUp}>
               {#each whiteNotes as note (note)}
                 <div class="white" class:lit={held(s.instrument, note)} data-note={note}>
@@ -416,6 +433,7 @@
     user-select: none;
   }
   .music-tray.minimized { flex: 0 0 auto; }
+  .music-tray:has(.music-body.wide) { flex-basis: 400px; }
 
   .music-head {
     height: 40px;
@@ -484,6 +502,7 @@
   .tool.rec.on { font-family: var(--ga-font-mono, ui-monospace); }
 
   .stepper { display: inline-flex; align-items: center; gap: 2px; }
+  .stepper svg { width: 13px; height: 13px; }
   .stepper span { min-width: 30px; text-align: center; font-family: var(--ga-font-mono, ui-monospace); color: var(--ga-ink-0, #eef0f4); }
   .stepper button, .icon {
     width: 24px;
@@ -526,6 +545,12 @@
     overflow: auto;
   }
   .music-body > section + section { border-left: 1px solid var(--ga-line, rgba(255,255,255,.07)); }
+  /* Wide keyboards get their own row across the panel, beat and visuals below. */
+  .music-body.wide { grid-template-columns: auto minmax(280px, 1fr); grid-template-rows: 150px minmax(0, 1fr); }
+  .music-body.wide > .play { grid-column: 1 / -1; display: flex; flex-direction: column; border-bottom: 1px solid var(--ga-line, rgba(255,255,255,.07)); }
+  .music-body.wide > .play + section { border-left: 0; }
+  .play { display: flex; flex-direction: column; }
+  .play .piano { flex: 1; }
 
   .label { color: var(--ga-ink-2, #5e6571); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
   .row-head { display: flex; align-items: center; gap: 10px; height: 24px; margin-bottom: 8px; }
@@ -537,17 +562,16 @@
 
   /* ── On-screen keys ── */
   .piano {
-    --black-w: 4.2%;
     position: relative;
-    height: 100%;
-    min-height: 120px;
+    min-height: 96px;
     display: flex;
     touch-action: none;
   }
   .white {
     flex: 1;
+    min-width: 0;
     position: relative;
-    margin-right: 2px;
+    margin-right: 1px;
     border-radius: 0 0 3px 3px;
     background: #d9dce2;
     display: flex;
@@ -586,7 +610,7 @@
   .white.lit kbd, .white.lit .c { color: #fff; }
   .black.lit kbd { color: var(--ga-panel, #0b0d11); }
 
-  .pads { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; height: 100%; min-height: 120px; }
+  .pads { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; flex: 1; min-height: 120px; }
   .pad {
     border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
     background: var(--ga-slot, #050607);
