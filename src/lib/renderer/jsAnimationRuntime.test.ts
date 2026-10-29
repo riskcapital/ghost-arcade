@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { iframePage, jsAnimationIframeHtml } from './js-animation';
+import { iframePage, jsAnimationIframeHtml, pageAudioFrom } from './js-animation';
+import type { VisualAudioState } from '../audio/visualAudio';
 
 const p5Page = `<!DOCTYPE html>
 <html>
@@ -35,6 +36,15 @@ describe('the page an iframe plays', () => {
     expect(jsAnimationIframeHtml('<html><head></head><body><canvas></canvas></body></html>')).not.toContain('p5.min.js');
   });
 
+  it('gives the page a silent window.ghostAudio before any of its code runs', () => {
+    const html = jsAnimationIframeHtml(p5Page);
+    const at = html.indexOf('window.ghostAudio={');
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(html.indexOf('function setup()'));
+    expect(html).toContain('"bass":0');
+    expect(html).toContain('"active":false');
+  });
+
   it('maps error lines back to the page as written, and none inside its own shims', () => {
     const page = iframePage({ animationType: 'p5js', htmlCode: p5Page });
     for (const needle of ['createCanvas', '<html>', '</body>']) {
@@ -52,3 +62,19 @@ describe('the page an iframe plays', () => {
   });
 });
 
+describe('the show\'s audio for pages', () => {
+  const quiet: VisualAudioState = {
+    isActive: true, bands: {} as VisualAudioState['bands'], level: 0.5, energy: 0, peak: 0, bass: 0.2, bassFast: 0.8,
+    mid: 2, treble: Number.NaN, high: -1, sub: 0, lowMid: 0, highMid: 0, air: 0, presence: 0, kick: 1, snare: 0,
+    beat: 0.4, beatPhase: 0.25, lfoBeat: 0, lfoHalf: 0, lfoBar: 0, centroid: 0.3, bpm: 128,
+  };
+
+  it('keeps every value but bpm between 0 and 1, and the bass quick to answer', () => {
+    const { bass, ...rest } = pageAudioFrom(quiet);
+    expect(bass).toBeCloseTo(0.72);
+    expect(rest).toEqual({
+      level: 0.5, mid: 1, treble: 0, high: 0, beat: 0.4, beatPhase: 0.25, bpm: 128,
+      centroid: 0.3, kick: 1, snare: 0, active: true,
+    });
+  });
+});

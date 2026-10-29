@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import type { JSAnimationSource } from '../types';
 import { singlePlayableDocument, type SketchPlace } from '../p5sketch/wrapSketch';
+import { getVisualAudioSnapshot, type VisualAudioState } from '../audio/visualAudio';
 
 /**
  * Inject runtime shims into user-supplied Three.js / p5.js HTML before
@@ -32,6 +33,9 @@ import { singlePlayableDocument, type SketchPlace } from '../p5sketch/wrapSketch
  *
  * 4) Error capture — uncaught errors are kept on the page, so the sketch
  *    editor can show them with the file and line the author wrote.
+ *
+ * 5) window.ghostAudio — the show's audio, all 0 until the layer plays and
+ *    the first analysis arrives (see pageAudioFrom).
  *
  * Shims are inserted as early as possible — first inside <head> if it
  * exists, else first inside <body>, else prepended to the document.
@@ -64,7 +68,7 @@ function injectIframeRuntimeShims(html: string): { html: string; layout: ShimLay
   // that imports 'three', so injecting at the very start of <head> is correct.
   const shims = [
     ERROR_CAPTURE_SHIM,
-    '<script>(function(){try{Object.defineProperty(window,"devicePixelRatio",{value:1,configurable:true});}catch(e){}})();</script>',
+    `<script>(function(){try{Object.defineProperty(window,"devicePixelRatio",{value:1,configurable:true});}catch(e){}window.ghostAudio=${JSON.stringify(SILENT_PAGE_AUDIO)};})();</script>`,
     `<script type="importmap">{"imports":{"three":"${threeUrl}","three/":"${threeUrl.replace(/three\.module\.min\.js$/, '')}"}}</script>`,
     wantsP5 ? `<script src="${p5Url}"></script>` : '',
   ].filter(Boolean).join('\n');
@@ -81,6 +85,61 @@ function injectIframeRuntimeShims(html: string): { html: string; layout: ShimLay
     };
   }
   return { html: shims + '\n' + html, layout: { afterLine: 0, shimLines } };
+}
+
+/**
+ * The show's audio as a page reads it, as `window.ghostAudio`: every value
+ * from 0 to 1 except bpm, and all 0 while nothing plays.
+ */
+export interface PageAudio {
+  level: number;
+  bass: number;
+  mid: number;
+  treble: number;
+  high: number;
+  beat: number;
+  beatPhase: number;
+  bpm: number;
+  centroid: number;
+  kick: number;
+  snare: number;
+  active: boolean;
+}
+
+const SILENT_PAGE_AUDIO: PageAudio = {
+  level: 0, bass: 0, mid: 0, treble: 0, high: 0, beat: 0, beatPhase: 0, bpm: 0, centroid: 0, kick: 0, snare: 0, active: false,
+};
+
+function clampFinite(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Number.isFinite(value) ? value : 0));
+}
+
+export function pageAudioFrom(audio: VisualAudioState): PageAudio {
+  return {
+    level: clampFinite(audio.level, 0, 1),
+    bass: Math.max(clampFinite(audio.bass, 0, 1), clampFinite(audio.bassFast * 0.9, 0, 1)),
+    mid: clampFinite(audio.mid, 0, 1),
+    treble: clampFinite(audio.treble, 0, 1),
+    high: clampFinite(audio.high, 0, 1),
+    beat: clampFinite(audio.beat, 0, 1),
+    beatPhase: clampFinite(audio.beatPhase, 0, 1),
+    bpm: clampFinite(audio.bpm, 0, 300),
+    centroid: clampFinite(audio.centroid, 0, 1),
+    kick: clampFinite(audio.kick, 0, 1),
+    snare: clampFinite(audio.snare, 0, 1),
+    active: !!audio.isActive,
+  };
+}
+
+/** Pages hear the show about 30 times a second; every page shares one reading. */
+const PAGE_AUDIO_MS = 33;
+let pageAudio: { at: number; value: Readonly<PageAudio> } | null = null;
+
+function currentPageAudio(now: number): Readonly<PageAudio> {
+  if (!pageAudio || now - pageAudio.at >= PAGE_AUDIO_MS) {
+    pageAudio = { at: now, value: Object.freeze(pageAudioFrom(getVisualAudioSnapshot())) };
+  }
+  return pageAudio.value;
 }
 
 /** Where the shims went: after line `afterLine` of the page, `shimLines` long. */
@@ -232,11 +291,21 @@ export function createJSAnimationContext(
   // iframe replaces its canvas (rare — happens on resize in some
   // demos). On change, rebind `texture.image` to the new one.
   let lastBoundIframeCanvas: HTMLCanvasElement | null = null;
+  let lastAudio: { page: Window; value: Readonly<PageAudio> } | null = null;
 
   const updateTexture = () => {
     try {
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
       if (!iframeDoc) return;
+
+      const pageWindow = iframe.contentWindow as (Window & { ghostAudio?: Readonly<PageAudio> }) | null;
+      if (pageWindow) {
+        const audio = currentPageAudio(performance.now());
+        if (lastAudio?.page !== pageWindow || lastAudio.value !== audio) {
+          pageWindow.ghostAudio = audio;
+          lastAudio = { page: pageWindow, value: audio };
+        }
+      }
 
       const iframeCanvas = iframeDoc.querySelector('canvas') as HTMLCanvasElement | null;
       if (!iframeCanvas || iframeCanvas.width <= 0 || iframeCanvas.height <= 0) return;
