@@ -24,6 +24,7 @@ import {
   type PatternLength,
 } from './drumPattern';
 import { normalizeTake, type Take } from './recording';
+import { normalizeScene, type MusicScene } from './scenes';
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import type { DrumVoice } from './noteEvents';
@@ -41,7 +42,17 @@ export interface MusicStudioProjectState {
   velocity: number;
   pattern: DrumPattern;
   takes: Take[];
+  scenes: MusicScene[];
+  /** The Studio view's panel style. */
+  skin: StudioSkin;
 }
+
+export type StudioSkin = 'bath' | 'berlin';
+
+export const STUDIO_SKINS: { id: StudioSkin; label: string }[] = [
+  { id: 'bath', label: 'Sound bath' },
+  { id: 'berlin', label: 'Berlin' },
+];
 
 export interface MusicStudioState extends MusicStudioProjectState {
   isOpen: boolean;
@@ -57,6 +68,11 @@ export interface MusicStudioState extends MusicStudioProjectState {
   recordingSince: number | null;
   playingTakeId: string | null;
   loopTake: boolean;
+  /** The full-screen Studio view is showing (it opens the studio too). */
+  studioView: boolean;
+  /** Scene playing, and the one waiting for the next bar. */
+  sceneId: string | null;
+  queuedSceneId: string | null;
 }
 
 /** The saved section of a project file. */
@@ -106,6 +122,8 @@ export function defaultProjectState(): MusicStudioProjectState {
     velocity: 0.8,
     pattern: starterPattern(),
     takes: [],
+    scenes: [],
+    skin: 'bath',
   };
 }
 
@@ -144,6 +162,11 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     const take = normalizeTake(t);
     if (take && !takes.some((x) => x.id === take.id)) takes.push(take);
   }
+  const scenes: MusicScene[] = [];
+  for (const raw of Array.isArray(input.scenes) ? input.scenes : []) {
+    const scene = normalizeScene(raw);
+    if (scene && !scenes.some((x) => x.id === scene.id)) scenes.push(scene);
+  }
   return {
     instrument: INSTRUMENTS.includes(input.instrument as InstrumentId) ? (input.instrument as InstrumentId) : d.instrument,
     synthPatch: SYNTH_PATCHES.some((p) => p.id === input.synthPatch) ? (input.synthPatch as SynthPatch) : d.synthPatch,
@@ -163,6 +186,8 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     velocity: Math.max(0.05, clamp01(input.velocity, d.velocity)),
     pattern: input.pattern ? normalizePattern(input.pattern) : d.pattern,
     takes,
+    scenes,
+    skin: STUDIO_SKINS.some((k) => k.id === input.skin) ? (input.skin as StudioSkin) : d.skin,
   };
 }
 
@@ -178,6 +203,9 @@ function initialState(): MusicStudioState {
     recordingSince: null,
     playingTakeId: null,
     loopTake: false,
+    studioView: false,
+    sceneId: null,
+    queuedSceneId: null,
   };
 }
 
@@ -200,8 +228,11 @@ function createMusicStudioStore() {
     subscribe,
 
     open: () => set({ isOpen: true }),
-    close: () => set({ isOpen: false }),
-    toggleOpen: () => update((s) => ({ ...s, isOpen: !s.isOpen })),
+    close: () => set({ isOpen: false, studioView: false }),
+    toggleOpen: () => update((s) => ({ ...s, isOpen: !s.isOpen, studioView: false })),
+    /** Show the full-screen Studio view, or go back to the tray. The studio stays open either way. */
+    setStudioView: (studioView: boolean) => set({ studioView, isOpen: true }),
+    setSkin: (skin: StudioSkin) => set({ skin }),
 
     setInstrument: (instrument: InstrumentId) => set({ instrument }),
     setSynthPatch: (synthPatch: SynthPatch) => set({ synthPatch }),
@@ -239,7 +270,7 @@ function createMusicStudioStore() {
     clearPattern: () => update((s) => ({ ...s, pattern: clearPattern(s.pattern) })),
     setPattern: (pattern: DrumPattern) => set({ pattern: normalizePattern(pattern) }),
 
-    setTransport: (patch: Partial<Pick<MusicStudioState, 'sequencerPlaying' | 'recording' | 'recordingSince' | 'playingTakeId' | 'loopTake'>>) =>
+    setTransport: (patch: Partial<Pick<MusicStudioState, 'sequencerPlaying' | 'recording' | 'recordingSince' | 'playingTakeId' | 'loopTake' | 'sceneId' | 'queuedSceneId'>>) =>
       set(patch),
 
     addTake: (take: Take) => update((s) => ({ ...s, takes: [...s.takes, take] })),
@@ -250,6 +281,17 @@ function createMusicStudioStore() {
         ...s,
         takes: s.takes.filter((t) => t.id !== id),
         playingTakeId: s.playingTakeId === id ? null : s.playingTakeId,
+      })),
+
+    addScene: (scene: MusicScene) => update((s) => ({ ...s, scenes: [...s.scenes, scene] })),
+    updateScene: (id: string, patch: Partial<Omit<MusicScene, 'id'>>) =>
+      update((s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.id === id ? { ...sc, ...patch } : sc)) })),
+    removeScene: (id: string) =>
+      update((s) => ({
+        ...s,
+        scenes: s.scenes.filter((sc) => sc.id !== id),
+        sceneId: s.sceneId === id ? null : s.sceneId,
+        queuedSceneId: s.queuedSceneId === id ? null : s.queuedSceneId,
       })),
 
     /** The project section. */
@@ -267,6 +309,8 @@ function createMusicStudioStore() {
         velocity: s.velocity,
         pattern: normalizePattern(s.pattern),
         takes: s.takes.map((t) => ({ ...t, events: t.events.map((e) => ({ ...e })), pattern: t.pattern ? normalizePattern(t.pattern) : null })),
+        scenes: s.scenes.map((sc) => ({ ...sc, pattern: sc.pattern ? normalizePattern(sc.pattern) : null })),
+        skin: s.skin,
       };
     },
 
@@ -280,6 +324,8 @@ function createMusicStudioStore() {
         recording: false,
         recordingSince: null,
         playingTakeId: null,
+        sceneId: null,
+        queuedSceneId: null,
       }));
     },
   };

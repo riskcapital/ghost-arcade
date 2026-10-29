@@ -17,7 +17,7 @@
 
 import { get } from 'svelte/store';
 import { vjClipLauncher, type VJDeck } from '../stores/vjClipLauncher';
-import { launchClockPosition, launchClockTempo } from '../stores/launchClock';
+import { launchClockPosition, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
 import { parseISF } from '../isf/parser';
 import { generateUUID } from '../utils/uuid';
 import { MusicAudioEngine } from './audioEngine';
@@ -40,6 +40,7 @@ import { drumPadForKey } from './keyboardLayout';
 import { attachMusicKeyboard, musicKeysArmed } from './musicKeyboard';
 import { DRUM_CHANNEL, MusicMidiInput, type MidiNoteMessage } from './midiNotes';
 import { musicStudio, musicTransport, nextTakeName, type MusicStudioState } from './musicStudioStore';
+import { captureScene, dominantColumn, nextSceneName, sceneLaunchActions, type PlayingNow } from './scenes';
 
 /** How far ahead the sequencer and replay schedule, in seconds. */
 const LOOKAHEAD_SECONDS = 0.12;
@@ -372,6 +373,77 @@ function scheduleReplay(): void {
   if (!loop && now >= origin + take.length) stopTake();
 }
 
+// ── Scenes ──────────────────────────────────────────────────────────────
+
+/** Beats per bar for scene launches. */
+const SCENE_GRID_BEATS = 4;
+let sceneTimer: ReturnType<typeof setTimeout> | null = null;
+
+function playingNow(): PlayingNow {
+  const s = get(musicStudio);
+  const launcher = get(vjClipLauncher);
+  return {
+    pattern: s.pattern,
+    beat: s.sequencerPlaying,
+    takeId: s.playingTakeId,
+    vjColumn: dominantColumn(launcher.layerStates.map((ls) => (ls?.activeClip ? ls.activeColumn : null))),
+  };
+}
+
+/** Save what is playing (beat, loop, visuals) as a new scene. */
+export function captureCurrentScene(): void {
+  const s = get(musicStudio);
+  musicStudio.addScene(captureScene(generateUUID(), nextSceneName(s.scenes), playingNow()));
+}
+
+/**
+ * Launch a scene on the next bar. With nothing playing there is nothing to
+ * keep in time with, so it starts at once. Launching the queued scene again
+ * starts it at once too.
+ */
+export function launchScene(id: string): void {
+  ensureMusicRuntime();
+  const s = get(musicStudio);
+  if (!s.scenes.some((sc) => sc.id === id)) return;
+  const now = playingNow();
+  const idle = !now.beat && !now.takeId;
+  if (sceneTimer) clearTimeout(sceneTimer);
+  sceneTimer = null;
+  if (idle || s.queuedSceneId === id) {
+    applyScene(id);
+    return;
+  }
+  musicStudio.setTransport({ queuedSceneId: id });
+  const wait = Math.max(0, nextLaunchBoundary(SCENE_GRID_BEATS) - performance.now());
+  sceneTimer = setTimeout(() => {
+    sceneTimer = null;
+    applyScene(id);
+  }, wait);
+}
+
+function applyScene(id: string): void {
+  const s = get(musicStudio);
+  const scene = s.scenes.find((sc) => sc.id === id);
+  musicStudio.setTransport({ queuedSceneId: null });
+  if (!scene) return;
+  const takeIds = new Set(s.takes.map((t) => t.id));
+  for (const action of sceneLaunchActions(scene, playingNow(), takeIds)) {
+    if (action.kind === 'pattern') musicStudio.setPattern(action.pattern);
+    else if (action.kind === 'beat') (action.play ? startSequencer : stopSequencer)();
+    else if (action.kind === 'take') {
+      if (action.takeId) playTake(action.takeId, true);
+      else stopTake();
+    } else vjClipLauncher.triggerColumnNow(action.column, 'A');
+  }
+  musicStudio.setTransport({ sceneId: id });
+}
+
+function cancelQueuedScene(): void {
+  if (sceneTimer) clearTimeout(sceneTimer);
+  sceneTimer = null;
+  musicStudio.setTransport({ queuedSceneId: null, sceneId: null });
+}
+
 // ── Clocks ──────────────────────────────────────────────────────────────
 
 function ensureScheduler(): void {
@@ -485,6 +557,7 @@ function writeNoteInputs(): void {
  * replay and every sounding note stop. Minimizing the panel keeps playing.
  */
 function stopEverything(): void {
+  cancelQueuedScene();
   if (recorder.recording) stopRecording();
   if (sequencer) stopSequencer();
   stopTake();

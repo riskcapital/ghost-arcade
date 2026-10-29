@@ -72,6 +72,8 @@ function playSomething(): void {
   s.setVisualMode('keys', 'build');
   s.toggleStep('crash', 3);
   s.addTake(JSON.parse(JSON.stringify(take)));
+  s.addScene({ id: 'scene-a', name: 'Arrival', pattern: null, beat: true, takeId: 'take-a', vjColumn: 2 });
+  s.setSkin('berlin');
 }
 
 describe('music studio in the project file', () => {
@@ -90,6 +92,8 @@ describe('music studio in the project file', () => {
     expect(s.visuals.keys.mode).toBe('build');
     expect(s.pattern.tracks.crash[3]).toBeGreaterThan(0);
     expect(s.takes).toEqual([take]);
+    expect(s.scenes).toEqual([{ id: 'scene-a', name: 'Arrival', pattern: null, beat: true, takeId: 'take-a', vjColumn: 2 }]);
+    expect(s.skin).toBe('berlin');
   });
 
   it('opens an older file with a fresh studio, not the last project\'s', () => {
@@ -100,6 +104,8 @@ describe('music studio in the project file', () => {
     expect(s.takes).toHaveLength(0);
     expect(s.instrument).toBe('synth');
     expect(s.visuals.keys.mode).toBe('fade');
+    expect(s.scenes).toHaveLength(0);
+    expect(s.skin).toBe('bath');
   });
 
   it('leaves the studio alone for live state relayed from another window', () => {

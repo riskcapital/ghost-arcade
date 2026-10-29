@@ -95,6 +95,7 @@
   import { abletonConnected } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   import VJMusicStudio from './music/VJMusicStudio.svelte';
+  import StudioView from './music/StudioView.svelte';
   import { musicStudio } from '../music/musicStudioStore';
   import { isNoteDrivenInput } from '../music/noteVisuals';
   // VJAudioBar import retained for fallback / type compatibility but the
@@ -596,7 +597,8 @@
     return () => { cancelled = true; };
   });
   $: if (nativePreviewActive) {
-    if ($vjClipLauncher.isOpen && !$vjStageEdit && previewContainerEl) {
+    // The Studio view claims the preview for its own frame while it is up.
+    if ($vjClipLauncher.isOpen && !$vjStageEdit && !$musicStudio.studioView && previewContainerEl) {
       if ($nativePreviewHostEl !== previewContainerEl) nativePreviewHostEl.set(previewContainerEl);
     } else if ($nativePreviewHostEl === previewContainerEl) {
       nativePreviewHostEl.set(null);
@@ -638,7 +640,8 @@
 
   $: deckMonitorsVisible = nativeEngineActive
     && $vjClipLauncher.isOpen
-    && $vjClipLauncher.crossfaderEnabled;
+    && $vjClipLauncher.crossfaderEnabled
+    && !$musicStudio.studioView;
 
   // With no presenter to import the monitors' shared textures, the panel
   // reads each deck back from the core into a canvas of its own.
@@ -4336,6 +4339,7 @@
     class:native-underlay={nativePreviewActive}
     class:mac-titlebar-offset={isMac}
     class:stage-edit-hidden={$vjStageEdit}
+    class:studio-view-open={$musicStudio.studioView}
   >
     <!-- Header -->
     <div
@@ -7059,6 +7063,7 @@
 
     <VJLayerSequencer />
     <VJMusicStudio />
+    <StudioView nativePreview={nativePreviewActive} />
 </div>
 {/if}
 
