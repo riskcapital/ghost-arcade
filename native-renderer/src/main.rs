@@ -4651,6 +4651,8 @@ struct App {
     submitted_intervals_ms: VecDeque<f64>,
     last_submission_at: Option<Instant>,
     media_pump_ms: f64,
+    /// When launches and video sessions last advanced (see pump_frame_media).
+    last_frame_service: Instant,
     native_video_frame_signatures: HashMap<String, String>,
     native_video_frame_cache: HashMap<String, NativeVideoFrameCacheEntry>,
     native_video_frame_cache_order: VecDeque<String>,
@@ -5099,6 +5101,7 @@ impl App {
             submitted_intervals_ms: VecDeque::new(),
             last_submission_at: None,
             media_pump_ms: 0.0,
+            last_frame_service: Instant::now(),
             native_video_frame_signatures: HashMap::new(),
             native_video_frame_cache: HashMap::new(),
             native_video_frame_cache_order: VecDeque::new(),
@@ -20012,6 +20015,18 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Rpc(req) => {
                 self.handle_rpc(event_loop, req);
+                // winit calls about_to_wait, where frames and video advance,
+                // only once its queue is empty. On a slow machine the editor's
+                // steady RPCs kept it busy, and a playing clip froze on its
+                // first frame. Turn the frame clock between RPCs too.
+                if self.running && self.last_frame_service.elapsed() >= self.frame_duration() {
+                    if self.output_window_attached {
+                        // The window is drawn just below; only media here.
+                        self.pump_frame_media();
+                    } else {
+                        let _ = self.service_frame();
+                    }
+                }
                 // A stream of RPCs must not indefinitely postpone the window redraw event.
                 // Service output between bounded transactions, after all their mutations.
                 if self.running && self.output_window_attached
@@ -20134,23 +20149,39 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
 
-        let frame_duration = self.frame_duration();
+        match self.service_frame() {
+            Some(wake_at) => event_loop.set_control_flow(ControlFlow::WaitUntil(wake_at)),
+            None => event_loop.set_control_flow(idle_flow),
+        }
+    }
+}
+
+impl App {
+    /// Scheduled launches and video sessions advance with the frame clock.
+    fn pump_frame_media(&mut self) {
+        self.last_frame_service = Instant::now();
         self.pump_scheduled_launches();
         let pump_started = Instant::now();
         self.pump_native_video_decodes();
         self.media_pump_ms = pump_started.elapsed().as_secs_f64() * 1000.0;
+    }
+
+    /// One turn of the frame clock: media, then the frame when it is due.
+    /// Returns when the next frame is due, or None when nothing is scheduled.
+    fn service_frame(&mut self) -> Option<Instant> {
+        let frame_duration = self.frame_duration();
+        self.pump_frame_media();
         if !self.frames_scheduled() {
-            event_loop.set_control_flow(idle_flow);
-            return;
+            return None;
         }
         let next_frame_at = self.last_redraw + frame_duration;
         let now = Instant::now();
         if now >= next_frame_at {
             self.drive_frame(now);
             self.last_redraw = scheduled_frame_start(next_frame_at, now, frame_duration);
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_redraw + frame_duration));
+            Some(self.last_redraw + frame_duration)
         } else {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_at));
+            Some(next_frame_at)
         }
     }
 }
