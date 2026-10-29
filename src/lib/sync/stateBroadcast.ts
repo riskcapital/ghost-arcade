@@ -91,6 +91,10 @@ function stripLayerSourceForSignature(source: any): any {
     iframeElement: _iframeElement,
     ...rest
   } = source;
+  // A p5.js sketch kept as files changes its wrapped page whenever one of
+  // them changes (the page carries a fingerprint of every file), so the
+  // files, which can run to megabytes, need not be read on every update.
+  if (rest.jsAnimation?.sketch) rest.jsAnimation = { ...rest.jsAnimation, sketch: undefined };
   return rest;
 }
 
