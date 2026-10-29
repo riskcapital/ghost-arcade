@@ -30,6 +30,7 @@ import { writable, get, derived } from 'svelte/store';
 import { midiRouter } from '../midi/midiRouter';
 import { generateUUID } from '../utils/uuid';
 import { synthVisionStore } from '../stores/synthVision';
+import { musicKeyboardClaims } from '../music/musicKeyboard';
 
 export type KeyActionMode = 'trigger' | 'toggle' | 'momentary' | 'nudge';
 
@@ -212,6 +213,8 @@ function createKeyboardStore() {
     // The visible Performer surface owns its displayed keyboard. Keep
     // learn mode above this guard so users can still remap a key there.
     if (get(synthVisionStore).keyboardActive) return;
+    // The music studio's armed letter keys play notes instead.
+    if (musicKeyboardClaims(e)) return;
 
     // The focused video timeline owns frame stepping. Learn mode still takes
     // priority above, and mappings remain active for other controls and keys.
@@ -266,6 +269,7 @@ function createKeyboardStore() {
     }
     if (MODIFIER_CODES.has(e.code)) return;
     if (get(synthVisionStore).keyboardActive) return;
+    if (musicKeyboardClaims(e)) return;
     if (isEditableTarget() || isNativeVideoFrameKey(e)) return;
     const state = get({ subscribe });
     for (const b of state.bindings) {

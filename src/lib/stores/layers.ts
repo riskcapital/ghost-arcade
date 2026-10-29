@@ -34,6 +34,7 @@ import { showToast } from './errorToast';
 import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
+import { musicStudio } from '../music/musicStudioStore';
 import { surfaceStore } from './surface';
 import { migrateStageLayerCorners } from '../utils/stageTextureOrientation';
 import { createPaintMask, migratePaintMask, PAINT_MASK_MAX_STROKES } from '../utils/paintMask';
@@ -432,6 +433,7 @@ export const PROJECT_SECTION_RESETS = {
   synthVision: () => synthVisionStore.reset(),
   audio: () => audioStore.restoreProjectSettings(null),
   layerSequencer: () => layerSequencer.hydrate(null),
+  musicStudio: () => musicStudio.hydrate(null),
   geoDeck: () => geoDeckStore.reset(),
   stage3d: () => stage3dScene.newScene(),
   projectionSim: () => projectionSimScene.resetForProject(),
@@ -5708,6 +5710,9 @@ void main() {
         // missing — meant the user's sequencer pattern survived an in-app
         // session but was lost the moment they reopened the .gha.
         layerSequencer: layerSequencer.serialize(),
+        // Music studio: instruments, note-visual behaviour, the beat pattern
+        // and recorded takes, so a song replays from the project file.
+        musicStudio: musicStudio.serialize(),
         // Include GeoDeck (geo performer) state — scene slots, modulation
         // routes, current form/sliders. Lives at project root because the
         // performer state is part of the composition the user is building.
@@ -6657,6 +6662,18 @@ void main() {
           catch (e) { console.warn('[Import] layerSequencer restore failed:', e); }
         } else if (openingFile) {
           resetProjectSection('layerSequencer');
+        }
+
+        // Music studio. Only a file (or recovery) sets it: a live sync payload
+        // must not stop the song playing here. A file from before the studio
+        // existed opens with a fresh one.
+        if (openingFile) {
+          if ((parsed as any).musicStudio) {
+            try { musicStudio.hydrate((parsed as any).musicStudio); }
+            catch (e) { console.warn('[Import] musicStudio restore failed:', e); }
+          } else {
+            resetProjectSection('musicStudio');
+          }
         }
 
         // Import GeoDeck (added 1.9.3). A file without it resets to the

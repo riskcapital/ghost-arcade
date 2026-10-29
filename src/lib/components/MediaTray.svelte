@@ -990,7 +990,7 @@
       cats.set(cat, (cats.get(cat) || 0) + 1);
     }
     // Sort: put common categories in a stable order
-    const ORDER = ['Visual', 'Generator', 'Audio Reactive', 'Simulation', '3D Room', 'Uncategorized'];
+    const ORDER = ['Visual', 'Generator', 'Audio Reactive', 'Note Reactive', 'Simulation', '3D Room', 'Uncategorized'];
     return [...cats.entries()]
       .sort((a, b) => {
         const ai = ORDER.indexOf(a[0]);

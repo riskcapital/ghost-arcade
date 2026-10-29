@@ -4929,6 +4929,58 @@
       "featured": true,
       "defaultLoad": true,
       "enabled": true
+    },
+    {
+      "file": "NR-NoteBloom.fs",
+      "tier": "demo",
+      "category": "Note Reactive",
+      "tags": [
+        "notes",
+        "music"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "NR-ChordRings.fs",
+      "tier": "demo",
+      "category": "Note Reactive",
+      "tags": [
+        "notes",
+        "music"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "NR-BeatGrid.fs",
+      "tier": "demo",
+      "category": "Note Reactive",
+      "tags": [
+        "notes",
+        "music"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "NR-NoteInk.fs",
+      "tier": "demo",
+      "category": "Note Reactive",
+      "tags": [
+        "notes",
+        "music"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
     }
   ]
 }

@@ -94,6 +94,9 @@
   import AbletonCountdown from './ableton/AbletonCountdown.svelte';
   import { abletonConnected } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
+  import VJMusicStudio from './music/VJMusicStudio.svelte';
+  import { musicStudio } from '../music/musicStudioStore';
+  import { isNoteDrivenInput } from '../music/noteVisuals';
   // VJAudioBar import retained for fallback / type compatibility but the
   // standalone strip below the header was dropped — its contents are now
   // inline in the header (single source of truth, no second tap/tempo row).
@@ -1484,7 +1487,8 @@
     if (selectedLayerIndex === null) return [];
     // Reference activeClipId to make this reactive to clip changes
     void activeClipId;
-    return getActiveShaderInputs(selectedLayerIndex);
+    // Note inputs are played by the music studio every frame, not set by hand.
+    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME));
   })();
 
   // Audio-ready badge: true if current shader uses audio uniforms
@@ -6007,6 +6011,20 @@
               Sequencer
             </button>
 
+            <button
+              class="vj-seq-toggle-btn dock-labelled-btn"
+              class:active={$musicStudio.isOpen}
+              onclick={() => musicStudio.toggleOpen()}
+              title="Music studio: play instruments and beats that drive note-reactive visuals"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="14" rx="1.5"/>
+                <path d="M8 5v9M12 5v9M16 5v9"/>
+                <path d="M8 14v5M12 14v5M16 14v5" stroke-width="1.2"/>
+              </svg>
+              Music
+            </button>
+
             {#if $vjClipLauncher.isLive}
               <button
                 class="ab-toggle-btn dock-labelled-btn"
@@ -7040,6 +7058,7 @@
     </div>
 
     <VJLayerSequencer />
+    <VJMusicStudio />
 </div>
 {/if}
 
