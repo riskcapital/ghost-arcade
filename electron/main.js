@@ -7329,7 +7329,10 @@ function registerIpcHandlers() {
       const url = new URL(rawUrl);
       const isGhostArcade = url.hostname === 'ghostarcade.live' || url.hostname === 'www.ghostarcade.live';
       const isReleaseRepo = url.hostname === 'github.com' && url.pathname.startsWith('/riskcapital/ghost-arcade-releases/');
-      if (url.protocol !== 'https:' || (!isGhostArcade && !isReleaseRepo)) {
+      // The sketch editor's learning links: the p5.js reference, The Nature
+      // of Code and The Coding Train.
+      const isLearning = ['p5js.org', 'natureofcode.com', 'thecodingtrain.com'].includes(url.hostname.replace(/^www\./, ''));
+      if (url.protocol !== 'https:' || (!isGhostArcade && !isReleaseRepo && !isLearning)) {
         throw new Error('URL is not allowed');
       }
       await shell.openExternal(url.toString());

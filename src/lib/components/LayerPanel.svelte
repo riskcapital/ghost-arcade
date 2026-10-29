@@ -66,6 +66,7 @@
   import { paintBrush, paintMaskLayerId, PAINT_BRUSH_SIZE_MAX, PAINT_BRUSH_SIZE_MIN } from '../stores/paintMaskTool';
   import { nativeUnsupportedEffectTypes, nativeUnsupportedSourceReason } from '../sync/nativeRendererSync';
   import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
+  import { openSketchEditor } from '../sketchEditor/sketchEditorStore';
   import MapSurfaceControls from './MapSurfaceControls.svelte';
 
   /** Which non-group layers offer the VJ Source select. See the call site. */
@@ -2142,6 +2143,9 @@
                 <span class="source-type">({layer.source.type})</span>
                 {#if layer.source.type === 'video'}
                   <VideoDecodeBadge path={clipFilePath(layer.source)} />
+                {/if}
+                {#if layer.source.jsAnimation?.animationType === 'p5js'}
+                  <button class="edit-code-link" onclick={() => openSketchEditor({ layerId: layer.id })}>Edit code</button>
                 {/if}
                 <label class="file-label replace-label">
                   <span class="link">Replace</span>
@@ -4749,6 +4753,19 @@
     text-decoration: underline;
     text-decoration-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
     text-underline-offset: 2px;
+  }
+
+  .edit-code-link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-right: 10px;
+    color: var(--ga-ink-0, #eef0f4);
+    text-decoration: underline;
+    text-decoration-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    text-underline-offset: 2px;
+    font: inherit;
+    cursor: pointer;
   }
 
   .property-row {

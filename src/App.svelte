@@ -377,6 +377,7 @@
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
+  import { sketchEditorTarget } from './lib/sketchEditor/sketchEditorStore';
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from './lib/stores/mappingPointSelection';
   import { arrowDirection, classifyKeyTarget, planMappingArrowKey } from './lib/utils/mappingNudge';
@@ -8931,6 +8932,16 @@
          has to find the installer file themselves. -->
     {#if $updateModalOpen}
       <UpdateModal open={true} onClose={() => updateModalOpen.set(false)} />
+    {/if}
+
+    <!-- The p5.js sketch editor, opened from a sketch layer or a tray item.
+         Loaded on first use, so the code editor is not part of start-up. -->
+    {#if $sketchEditorTarget}
+      {#key $sketchEditorTarget}
+        {#await import('./lib/sketchEditor/SketchEditor.svelte') then { default: SketchEditor }}
+          <SketchEditor target={$sketchEditorTarget} />
+        {/await}
+      {/key}
     {/if}
 
     <!-- Settings Panel — output transforms now read from $settings.output -->

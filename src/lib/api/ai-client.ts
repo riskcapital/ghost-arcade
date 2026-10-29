@@ -453,7 +453,13 @@ Return ONLY the complete HTML. No markdown, no code fences, no explanations.`
 /**
  * Call Claude API (Anthropic)
  */
-async function callClaude(apiKey: string, systemPrompt: string, userPrompt: string, model: string = 'claude-sonnet-4-6'): Promise<string> {
+/** A reply's text, and whether it stopped at the token limit before it was finished. */
+export interface AIReply {
+  text: string;
+  truncated: boolean;
+}
+
+async function callClaude(apiKey: string, systemPrompt: string, userPrompt: string, model: string = 'claude-sonnet-4-6', maxTokens = 50000): Promise<AIReply> {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -464,7 +470,7 @@ async function callClaude(apiKey: string, systemPrompt: string, userPrompt: stri
     },
     body: JSON.stringify({
       model,
-      max_tokens: 50000,
+      max_tokens: maxTokens,
       system: systemPrompt,
       messages: [
         { role: 'user', content: userPrompt }
@@ -478,13 +484,19 @@ async function callClaude(apiKey: string, systemPrompt: string, userPrompt: stri
   }
 
   const data = await response.json();
-  return data.content[0]?.text || '';
+  // Models that think put a thinking block before the text, so the reply is
+  // every text block, not the first block.
+  const blocks: Array<{ type?: string; text?: string }> = Array.isArray(data.content) ? data.content : [];
+  return {
+    text: blocks.filter((b) => b.type === 'text').map((b) => b.text ?? '').join(''),
+    truncated: data.stop_reason === 'max_tokens',
+  };
 }
 
 /**
  * Call Gemini API (Google)
  */
-async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string, model: string = 'gemini-3.5-flash'): Promise<string> {
+async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string, model: string = 'gemini-3.5-flash', maxTokens = 8192): Promise<AIReply> {
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST',
     headers: {
@@ -501,7 +513,7 @@ async function callGemini(apiKey: string, systemPrompt: string, userPrompt: stri
         }
       ],
       generationConfig: {
-        maxOutputTokens: 8192,
+        maxOutputTokens: maxTokens,
         temperature: 0.7
       }
     })
@@ -513,7 +525,12 @@ async function callGemini(apiKey: string, systemPrompt: string, userPrompt: stri
   }
 
   const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const candidate = data.candidates?.[0];
+  const parts: Array<{ text?: string; thought?: boolean }> = candidate?.content?.parts ?? [];
+  return {
+    text: parts.filter((p) => !p.thought).map((p) => p.text ?? '').join(''),
+    truncated: candidate?.finishReason === 'MAX_TOKENS',
+  };
 }
 
 /**
@@ -720,6 +737,28 @@ export function extractJSParams(code: string): Array<{
   }
 }
 
+export interface AICompletionRequest {
+  provider: AIProvider;
+  apiKey: string;
+  model?: string;
+  system: string;
+  prompt: string;
+  maxTokens?: number;
+}
+
+/**
+ * One reply from the user's chosen provider, as plain text. For features that
+ * write their own prompts, such as the sketch editor's learning actions.
+ * `truncated` is set when the reply hit the token limit before it finished.
+ */
+export async function completeWithAI(request: AICompletionRequest): Promise<AIReply> {
+  const { provider, apiKey, model, system, prompt, maxTokens = 16000 } = request;
+  if (!apiKey) throw new Error('API key is required');
+  return provider === 'claude'
+    ? callClaude(apiKey, system, prompt, model || undefined, maxTokens)
+    : callGemini(apiKey, system, prompt, model || undefined, maxTokens);
+}
+
 /**
  * Main generation function
  */
@@ -767,9 +806,9 @@ Lean into what p5.js does best: agents with memory, expressive strokes, typograp
     let response: string;
 
     if (provider === 'claude') {
-      response = await callClaude(apiKey, systemPrompt, userPrompt, model);
+      response = (await callClaude(apiKey, systemPrompt, userPrompt, model)).text;
     } else {
-      response = await callGemini(apiKey, systemPrompt, userPrompt, model);
+      response = (await callGemini(apiKey, systemPrompt, userPrompt, model)).text;
     }
 
     const code = extractCode(response, generationType);
