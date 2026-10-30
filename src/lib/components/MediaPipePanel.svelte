@@ -22,6 +22,7 @@
 
   $: state = $mediaPipeStore;
   $: frame = state.frame;
+  $: usedByHandFx = state.consumers.some(c => c.startsWith('handfx'));
 
   // ── Camera preview + landmark overlay ──────────────────────────────
   let previewWrap: HTMLDivElement | null = null;
@@ -166,10 +167,12 @@
 
   // ── Actions ────────────────────────────────────────────────────────
   async function start() {
-    await mediaPipeStore.start({
-      deviceId: pickedDeviceId || undefined,
-      useGesture, mirror, numHands, trackBody, trackFace,
-    });
+    try {
+      await mediaPipeStore.start({
+        deviceId: pickedDeviceId || undefined,
+        useGesture, mirror, numHands, trackBody, trackFace,
+      });
+    } catch { /* shown through state.error */ }
   }
   async function stop() { await mediaPipeStore.stop(); }
   function removeBinding(id: string) { mediaPipeBus.remove(id); }
@@ -178,7 +181,11 @@
   // Body and face rows only appear while that tracking is on, so the list stays short.
   const isFace = (id: string) => id.startsWith('face.');
   const isBody = (id: string) => /^(body|arm|arms|wrist|stance|head)\./.test(id);
-  $: continuousSignals = SIGNAL_DEFS.filter(s => s.kind === 'continuous' && (trackFace || !isFace(s.id)) && (trackBody || !isBody(s.id)));
+  // While running, follow what the camera actually tracks (a HandFX layer may have started it).
+  $: runOpts = state.running ? mediaPipeStore.source.getOpts() : null;
+  $: showFace = runOpts ? runOpts.trackFace : trackFace;
+  $: showBody = runOpts ? runOpts.trackBody : trackBody;
+  $: continuousSignals = SIGNAL_DEFS.filter(s => s.kind === 'continuous' && (showFace || !isFace(s.id)) && (showBody || !isBody(s.id)));
   $: gestureSignals    = SIGNAL_DEFS.filter(s => s.kind === 'categorical');
 
   function fmt(v: number): string {
@@ -237,6 +244,9 @@
         {state.starting ? 'Starting…' : 'Enable MediaPipe'}
       </button>
     </div>
+    {#if state.heldOff && usedByHandFx}
+      <div class="mp-hint">The camera is off. HandFX layers wait until you enable it again.</div>
+    {/if}
     <div class="mp-hint">
       Hands, and Body and Face when ticked, are tracked in the background from models that ship with the app. Each extra model costs some frame rate.
     </div>
@@ -246,6 +256,9 @@
       <span class="mp-active-name">Running</span>
       <button class="mp-btn small" onclick={stop}>Stop</button>
     </div>
+    {#if usedByHandFx}
+      <div class="mp-hint">In use by HandFX. Stop turns the camera off for HandFX layers too.</div>
+    {/if}
 
     <!-- Camera preview + landmark overlay -->
     <div class="mp-preview" bind:this={previewWrap}>

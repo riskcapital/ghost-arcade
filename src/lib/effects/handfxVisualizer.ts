@@ -25,12 +25,14 @@
 // snappier than raw landmarks AND rock-steady when the hand is still.
 // `smoothing` param trades the two (0 = raw, 1 = heavy filtering).
 //
-// We do NOT stop the MediaPipe worker on dispose — other UI (debug
-// overlay, future gesture broadcasters) may be sharing the camera.
+// Each visualizer holds the shared camera while it lives and lets go on
+// dispose; the camera stops once nothing else holds it.
 
 import * as THREE from 'three';
 import { mediaPipeSource } from '../mediapipe/mediaPipeSource';
 import type { SignalFrame } from '../mediapipe/signals';
+
+let visualizerCount = 0;
 
 export type HandFXMode = 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts' | 'bridge' | 'orbit' | 'lasers';
 export type HandFXColorMode = 'rainbow' | 'coral' | 'white' | 'cyan';
@@ -221,14 +223,10 @@ export class HandFXVisualizer {
   // Render-loop clock for the curl-noise flow field.
   private lastFrameTime = 0;
 
-  // Camera state. cameraStarting prevents double-start while the
-  // permission prompt is open or the worker is still initialising.
-  // cameraAttempted gates retry after a failed start: without it, the
-  // setParams call on every render frame would see effectSource's
-  // cameraOn=true and trigger start() → fail → retry forever, which
-  // shows up as the macOS camera indicator strobing on and off.
-  private cameraStarting = false;
-  private cameraAttempted = false;
+  // Camera state. setParams runs every render frame, so a failed start
+  // must not retry at once (the camera light would strobe): the source
+  // makes automatic starts wait after a failure.
+  private readonly cameraConsumer = `handfx-visualizer-${++visualizerCount}`;
   private cameraError: string | null = null;
 
   constructor(width: number, height: number) {
@@ -275,12 +273,11 @@ export class HandFXVisualizer {
   setParams(p: Partial<HandFXParams>): void {
     Object.assign(this.params, p);
     // Visibility only affects compositing; live hand input always runs.
-    if (!mediaPipeSource.isRunning() && !this.cameraStarting && !this.cameraAttempted) {
-      this.cameraStarting = true;
-      this.cameraAttempted = true;
+    mediaPipeSource.acquire(this.cameraConsumer);
+    if (!mediaPipeSource.isRunning() && !mediaPipeSource.isStarting() && mediaPipeSource.canAutoStart()) {
       mediaPipeSource.start().catch((error) => {
         this.cameraError = error?.message ?? String(error);
-      }).finally(() => { this.cameraStarting = false; });
+      });
     }
   }
 
@@ -314,6 +311,7 @@ export class HandFXVisualizer {
 
   dispose(): void {
     try { this.unsubscribe?.(); } catch {}
+    mediaPipeSource.release(this.cameraConsumer);
     try { this.canvas.remove(); } catch {}
     this.texture.dispose();
     this.material.dispose();

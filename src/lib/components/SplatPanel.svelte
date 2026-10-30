@@ -1,3 +1,23 @@
+<script lang="ts" module>
+  import { get as getStore } from 'svelte/store';
+  import { project as projectStore } from '../stores/layers';
+
+  /** Blob URLs this panel made (splat files and video textures), with the
+   *  file name behind each. Keyed by URL rather than by panel: one panel
+   *  edits whichever layer or clip is selected, so loading a new file frees
+   *  only the URL that layer was using. */
+  const splatBlobNames = new Map<string, string>();
+
+  /** Revoke a URL this panel made once no layer shows it any more. */
+  function releaseSplatBlobUrl(url: string | null | undefined): void {
+    if (!url || !splatBlobNames.has(url)) return;
+    const layers = getStore(projectStore)?.layers ?? [];
+    if (layers.some((l) => l.splatContent?.filePath === url || l.splatContent?.texturePath === url)) return;
+    splatBlobNames.delete(url);
+    URL.revokeObjectURL(url);
+  }
+</script>
+
 <script lang="ts">
   import { project, selectedLayer, scheduleHistorySnapshot } from '../stores/layers';
   import type {
@@ -275,12 +295,9 @@
     return value.toFixed(3);
   }
 
-  // Track blob URLs for cleanup and display filename
-  let currentBlobUrl: string | null = null;
-  let currentFileName: string = '';
   // Blob URLs stay alive for the lifetime of their layer. Panel teardown happens
   // during normal mode switches and must not invalidate an otherwise live source.
-  let currentTextureBlobUrl: string | null = null;
+  // They are tracked per URL in splatBlobNames (module scope).
 
   function frameObject() {
     doUpdate({
@@ -352,12 +369,12 @@
     const ext = file.name.split('.').pop()?.toLowerCase();
 
     try {
+      // The URL this layer (or clip) shows now; other layers keep theirs.
+      const previousUrl = sc?.filePath;
       if (ext === 'splat') {
         // Native .splat format — create blob URL, Canvas will detect by extension
-        if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
         const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
-        currentBlobUrl = blobUrl;
-        currentFileName = file.name;
+        splatBlobNames.set(blobUrl, file.name);
         // Store the original filename so Canvas can detect .splat format
         doUpdate({
           filePath: blobUrl,
@@ -366,13 +383,12 @@
           _originalFileName: file.name,
           _assetRef: assetRef,
         } as any);
+        if (previousUrl !== blobUrl) releaseSplatBlobUrl(previousUrl);
       } else {
         // PLY parsing and GPU upload are owned by Canvas. Parsing here used to
         // load every large file twice and dismissed the loader before upload.
-        if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
         const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
-        currentBlobUrl = blobUrl;
-        currentFileName = file.name;
+        splatBlobNames.set(blobUrl, file.name);
 
         const updates: Partial<SplatContent> = {
           filePath: blobUrl,
@@ -383,6 +399,7 @@
         };
 
         doUpdate(updates);
+        if (previousUrl !== blobUrl) releaseSplatBlobUrl(previousUrl);
       }
     } catch (err) {
       console.error('Failed to load splat file:', err);
@@ -390,7 +407,8 @@
   }
 
   // Display-friendly filename (extract from blob URL or show stored name)
-  $: displayFileName = currentFileName || (sc?.filePath?.startsWith('blob:') ? 'Loaded File' : sc?.filePath || '');
+  $: displayFileName = (sc?.filePath ? splatBlobNames.get(sc.filePath) : undefined)
+    || (sc?.filePath?.startsWith('blob:') ? 'Loaded File' : sc?.filePath || '');
 </script>
 
 {#snippet splatModButton(paramKey: keyof SplatContent)}
@@ -514,15 +532,19 @@
                       // For video, use blob URL for better performance, plus
                       // capture an AssetRef so the texture survives reload
                       // (blob URLs die at session end).
-                      if (currentTextureBlobUrl) URL.revokeObjectURL(currentTextureBlobUrl);
+                      const previousTexture = sc.texturePath;
                       const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
-                      currentTextureBlobUrl = blobUrl;
+                      splatBlobNames.set(blobUrl, file.name);
                       doUpdate({ texturePath: blobUrl, _textureAssetRef: assetRef } as any);
+                      if (previousTexture !== blobUrl) releaseSplatBlobUrl(previousTexture);
                     } else {
                       // For images, embed as data URL (small assets) AND keep
                       // the AssetRef so the original disk path is recoverable
                       // if the user re-uses the same image elsewhere.
-                      const { assetRef } = createAssetRefFromFile(file);
+                      const previousTexture = sc.texturePath;
+                      const { assetRef, runtimeUrl } = createAssetRefFromFile(file);
+                      // Only the ref is kept; the image goes inline below.
+                      URL.revokeObjectURL(runtimeUrl);
                       const reader = new FileReader();
                       reader.onload = () => {
                         const dataUrl = reader.result as string;
@@ -530,6 +552,7 @@
                         // doesn't have to copy the image — it's already inline.
                         const refWithData = { ...assetRef, kind: 'embedded' as const, dataUrl };
                         doUpdate({ texturePath: dataUrl, _textureAssetRef: refWithData } as any);
+                        releaseSplatBlobUrl(previousTexture);
                       };
                       reader.readAsDataURL(file);
                     }

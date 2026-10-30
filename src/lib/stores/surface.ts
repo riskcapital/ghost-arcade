@@ -464,14 +464,20 @@ function createSurfaceStore() {
   }
 
   function mutateWithHistory(mutator: (state: SurfaceState) => SurfaceState) {
-    const before = cloneState(get({ subscribe }));
-    let changed = false;
-    update(state => {
-      const next = mutator(state);
-      changed = !statesMatch(state, next);
-      return next;
-    });
-    if (changed && !gestureStart) pushUndo(before);
+    const current = get({ subscribe });
+    // Mid-gesture the start state is already saved and history is written
+    // once at the end, so skip the per-move clone and compare.
+    if (gestureStart) {
+      const next = mutator(current);
+      if (next !== current) set(next);
+      return;
+    }
+    const before = cloneState(current);
+    const next = mutator(current);
+    if (next === current) return;
+    const changed = !statesMatch(current, next);
+    set(next);
+    if (changed) pushUndo(before);
   }
 
   function makeEmptySurface(name: string, width: number, height: number): Surface {
@@ -691,6 +697,28 @@ function createSurfaceStore() {
       const sliceId = this.addSlice(polygon, layer.name);
       if (sliceId) this.bindSliceSource(sliceId, { kind: 'layer', layerId: layer.id });
       return sliceId;
+    },
+
+    /** Patch several slices of the active surface in one store write
+     *  (one undo step outside a gesture). Used by multi-slice drags. */
+    updateSlices(updates: ReadonlyArray<{ sliceId: string; patch: Partial<SurfaceSlice> }>) {
+      if (updates.length === 0) return;
+      const patches = new Map<string, Partial<SurfaceSlice>>();
+      for (const { sliceId, patch } of updates) patches.set(sliceId, { ...patches.get(sliceId), ...patch });
+      mutateWithHistory(s => ({
+        ...s,
+        surfaces: s.surfaces.map(surface =>
+          surface.id === s.activeSurfaceId
+            ? {
+                ...surface,
+                slices: surface.slices.map(sl => {
+                  const patch = patches.get(sl.id);
+                  return patch ? { ...sl, ...patch } : sl;
+                }),
+              }
+            : surface
+        ),
+      }));
     },
 
     updateSlice(sliceId: string, patch: Partial<SurfaceSlice>) {

@@ -69,6 +69,13 @@ interface PreparedShaderState {
 
 const SHADER_SWITCH_FADE_MS = 360;
 const PREPARED_SHADER_MAX_AGE_MS = 45_000;
+// Wait after a failed camera request: 2 s, doubling, at most 30 s.
+const CAMERA_RETRY_BASE_MS = 2_000;
+const CAMERA_RETRY_MAX_MS = 30_000;
+
+function stopMediaStream(stream: MediaStream): void {
+  try { stream.getTracks().forEach((track) => track.stop()); } catch { /* */ }
+}
 
 const SHADER_SWITCH_BLEND_WGSL = /* wgsl */`
 struct FadeUniform {
@@ -154,6 +161,16 @@ export class GpuLayerRenderer {
   // distinguish.
   private cameraStream: MediaStream | null = null;
   private cameraDeviceId: string = '';
+  // getUserMedia is asked once per device until it answers. A newer
+  // request, a release or dispose bumps the generation so a late stream
+  // is stopped instead of adopted. A failure (denied, no device) waits
+  // before asking again, longer each time.
+  private cameraRequestGen = 0;
+  private cameraPendingDeviceId: string | null = null;
+  private cameraFailedDeviceId: string | null = null;
+  private cameraFailures = 0;
+  private cameraRetryAt = 0;
+  private disposed = false;
 
   // Spout / Syphon receiver — owns its own polling loop + raw-bytes
   // frame buffer. Lazily created when the user picks a Spout source;
@@ -407,8 +424,10 @@ export class GpuLayerRenderer {
     // The camera + spout sources are stateful — when the user switches
     // AWAY from one, release its resources so we don't leave a webcam
     // light on or a Spout receiver polling in the background.
-    if (this.cameraStream && (!src || src.type !== 'camera')) {
-      this.releaseCamera();
+    if (!src || src.type !== 'camera') {
+      if (this.cameraStream || this.cameraPendingDeviceId !== null) this.releaseCamera();
+      // Picking the camera again later asks right away.
+      this.clearCameraBackoff();
     }
     if (this.spoutReceiver && (!src || src.type !== 'spout')) {
       this.spoutReceiver.dispose();
@@ -514,10 +533,10 @@ export class GpuLayerRenderer {
       // the video hasn't decoded a frame yet (it just samples whatever
       // is in the buffer, which is the placeholder until ready).
       const deviceId = src.deviceId || '';
-      if (!this.cameraStream || this.cameraDeviceId !== deviceId) {
-        this.startCamera(deviceId);
+      if (this.shouldRequestCamera(deviceId)) {
+        void this.startCamera(deviceId);
       }
-      if (this.cachedVideoEl && this.cameraStream) {
+      if (this.cachedVideoEl && this.cameraStream && this.cameraDeviceId === deviceId) {
         this.impl.setSource(this.cachedVideoEl);
         this.lastResolvedSourceKey = `camera:${deviceId || 'default'}`;
       }
@@ -577,12 +596,21 @@ export class GpuLayerRenderer {
       } catch { /* */ }
       this.cachedVideoSrc = '';
     }
+    const gen = ++this.cameraRequestGen;
+    this.cameraPendingDeviceId = deviceId;
     try {
       const constraints: MediaStreamConstraints = {
         video: deviceId ? { deviceId: { exact: deviceId } } : true,
         audio: false,
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (gen !== this.cameraRequestGen || this.disposed) {
+        // Superseded, released or disposed while waiting: do not keep it.
+        stopMediaStream(stream);
+        return;
+      }
+      this.cameraPendingDeviceId = null;
+      this.clearCameraBackoff();
       this.cameraStream = stream;
       this.cameraDeviceId = deviceId;
       const v = this.cachedVideoEl ?? document.createElement('video');
@@ -594,16 +622,40 @@ export class GpuLayerRenderer {
       this.cachedVideoEl = v;
       try { await v.play(); } catch { /* autoplay policy delay; will start when allowed */ }
     } catch (err: any) {
-      console.warn('[gpuLayerRenderer] getUserMedia failed:', err?.message || err);
+      if (gen !== this.cameraRequestGen) return;
+      this.cameraPendingDeviceId = null;
       this.cameraStream = null;
       this.cameraDeviceId = '';
+      this.cameraFailures = this.cameraFailedDeviceId === deviceId ? this.cameraFailures + 1 : 1;
+      this.cameraFailedDeviceId = deviceId;
+      const waitMs = Math.min(CAMERA_RETRY_MAX_MS, CAMERA_RETRY_BASE_MS * 2 ** (this.cameraFailures - 1));
+      this.cameraRetryAt = performance.now() + waitMs;
+      console.warn(`[gpuLayerRenderer] getUserMedia failed (asking again in ${Math.round(waitMs / 1000)} s):`, err?.message || err);
     }
   }
 
-  /** Stop all webcam tracks + detach from the video element. */
+  /** True when this frame should ask for the camera. */
+  private shouldRequestCamera(deviceId: string): boolean {
+    if (this.disposed) return false;
+    if (this.cameraStream && this.cameraDeviceId === deviceId) return false;
+    if (this.cameraPendingDeviceId === deviceId) return false;
+    if (this.cameraFailedDeviceId === deviceId && performance.now() < this.cameraRetryAt) return false;
+    return true;
+  }
+
+  private clearCameraBackoff(): void {
+    this.cameraFailedDeviceId = null;
+    this.cameraFailures = 0;
+    this.cameraRetryAt = 0;
+  }
+
+  /** Stop all webcam tracks + detach from the video element. Also
+   *  invalidates a request still waiting for its stream. */
   private releaseCamera(): void {
+    this.cameraRequestGen += 1;
+    this.cameraPendingDeviceId = null;
     if (this.cameraStream) {
-      try { this.cameraStream.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+      stopMediaStream(this.cameraStream);
       this.cameraStream = null;
     }
     this.cameraDeviceId = '';
@@ -899,6 +951,7 @@ export class GpuLayerRenderer {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.disposeImpl();
     this.disposePreparedShader();
     this.releaseCamera();

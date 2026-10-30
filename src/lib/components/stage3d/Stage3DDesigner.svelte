@@ -656,6 +656,9 @@
   });
   onDestroy(() => {
     window.removeEventListener('keydown', onKeydown);
+    // The stage renderer outlives this view; leave nothing selected for
+    // its shortcuts to act on once the view is gone.
+    setStage3DSelection(null);
     removeDomFullscreenListener?.();
     removeDomFullscreenListener = null;
     removeStageFullscreenListener?.();

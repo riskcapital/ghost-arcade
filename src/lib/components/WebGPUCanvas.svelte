@@ -70,7 +70,7 @@
   import { WebGPUPaintDrip } from '$lib/renderer/webgpuPaintDrip';
   import { WebGPUAdvLightPaint } from '$lib/renderer/webgpuAdvLightPaint';
   import { WebGPUStrokeParticles, collectGPUStrokes } from '$lib/renderer/webgpuStrokeParticles';
-  import { setGPUBrushCanvas } from '$lib/lightpainting/gpuBrushBridge';
+  import { getGPUBrushCanvas, setGPUBrushCanvas } from '$lib/lightpainting/gpuBrushBridge';
   import { WebGPUPixelParticles } from '$lib/renderer/webgpuPixelParticles';
   // Dedicated renderer for pixel-fx layers in `flythrough` mode.
   // Routed separately from the standard WebGPUPixelParticles because
@@ -131,7 +131,8 @@
   // changes AND when init/source state transitions (those aren't settings
   // events, so the subscription alone wouldn't catch them).
   function reconcileOutputRegistration(): void {
-    if (isOutputMode || isOsrMode) return;
+    // An init that finishes after unmount must not register an output.
+    if (disposed || isOutputMode || isOsrMode) return;
     const webgpuLive = initStatus === 'running' || initStatus === 'no-source';
     // When WebGPU is live, the master warp is baked into presentCanvas by
     // the present shader (see updateWarpUniform + SHADER_WGSL), so the
@@ -670,7 +671,11 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       setTimeout(() => {
         if (disposed) return;
         void initWebGPU().then(() => {
-          if (!disposed && (initStatus === 'running' || initStatus === 'no-source')) startFrameLoop();
+          if (disposed) {
+            releaseDeviceResources();
+            return;
+          }
+          if (initStatus === 'running' || initStatus === 'no-source') startFrameLoop();
         });
       }, 0);
     });
@@ -686,7 +691,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     advPaint = null;
     try { strokeParticles?.dispose?.(); } catch { /* */ }
     strokeParticles = null;
-    setGPUBrushCanvas(null);
+    // Leave the bridge alone if a newer mount already put its canvas there.
+    if (getGPUBrushCanvas() === brushCanvas) setGPUBrushCanvas(null);
     try { brushCtx?.unconfigure?.(); } catch { /* */ }
     brushCanvas = null; brushCtx = null;
     for (const r of pixelFXRenderers.values()) { try { r.dispose?.(); } catch { /* */ } }
@@ -1505,6 +1511,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   onMount(async () => {
     await initWebGPU();
+    // Unmounted while WebGPU was starting: onDestroy already ran, so free
+    // what init made and attach no listeners or subscriptions.
+    if (disposed) {
+      releaseDeviceResources();
+      return;
+    }
     if (initStatus === 'no-source' || initStatus === 'running') {
       startFrameLoop();
     }

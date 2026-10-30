@@ -588,6 +588,10 @@ function ledMaterialUniforms(): Record<string, THREE.IUniform> {
   };
 }
 
+/** Keys are ignored once render() has not run for this long. Generous
+ *  enough for low editor frame-rate caps. */
+const STAGE_KEYS_IDLE_MS = 1000;
+
 const FIT_INDEX: Record<NonNullable<Stage3DScreenOverride['displayFit']>, number> = {
   stretch: 0, contain: 1, cover: 2,
 };
@@ -720,6 +724,9 @@ export class Stage3DRenderer {
   private directDrag: DirectDragState | null = null;
   private pendingClickPointerUpCleanup: (() => void) | null = null;
   private selectionUnsub: (() => void) | null = null;
+  /** Last time render() ran. The renderer outlives the Stage 3D view, so
+   *  its window-level shortcuts only act while it is still drawing. */
+  private lastRenderAt = Number.NEGATIVE_INFINITY;
   /** Atmosphere FX rig — rebuilt per venue, ticked every render(). */
   private atmosphereRig: AtmosphereRig | null = null;
   private lastAtmoTime: number | null = null;
@@ -909,6 +916,7 @@ export class Stage3DRenderer {
      *  program and the outputs: deck mix, composition effects, Flux. */
     masterIsProgram = false,
   ): void {
+    this.lastRenderAt = performance.now();
     this.ensureRenderTargets(renderer);
     const clockIsManual = typeof clockTimeSeconds === 'number' && Number.isFinite(clockTimeSeconds);
     const renderClockTime = clockIsManual ? Math.max(0, clockTimeSeconds) : performance.now() * 0.001;
@@ -2845,9 +2853,19 @@ export class Stage3DRenderer {
     }
   }
 
+  /** True while the Stage 3D view is live: the canvas is in the page and
+   *  render() ran within the last second (the host stops calling it when
+   *  the view closes, but keeps this renderer). */
+  isViewActive(now = performance.now()): boolean {
+    return this.canvas.isConnected && now - this.lastRenderAt < STAGE_KEYS_IDLE_MS;
+  }
+
   private onKeyDown(event: KeyboardEvent): void {
+    // Closed view: Delete / D / W... belong to whatever editor is showing.
+    if (!this.isViewActive()) return;
     const tag = (event.target as HTMLElement | null)?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if ((event.target as HTMLElement | null)?.isContentEditable) return;
     const k = event.key.toLowerCase();
     if (k === 'w' || k === 'g') { this.setGizmoMode('translate'); }
     else if (k === 'e' || k === 'r') { this.setGizmoMode('rotate'); }

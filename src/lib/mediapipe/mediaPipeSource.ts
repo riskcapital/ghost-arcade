@@ -6,6 +6,11 @@
 //                 begin RAF loop. Resolves when the worker reports ready.
 //   stop()      — tear down RAF, worker, camera.
 //
+// Consumers (the MediaPipe panel, each HandFX layer) hold the camera with
+// acquire() and let go with release(). The camera stops a moment after the
+// last one lets go. A hold given a time limit lapses unless renewed, for
+// callers that ask on every frame and have no teardown of their own.
+//
 // Frame loop: each animation frame we draw the video into an
 // OffscreenCanvas, grab an ImageBitmap, transfer it to the worker.
 // Throttled to a target FPS so the worker isn't perpetually behind on
@@ -22,6 +27,20 @@ import type { WorkerHandResult } from './mediaPipeWorker';
 import { invoke, isElectron } from '$lib/bridge';
 
 const CAMERA_FIRST_FRAME_TIMEOUT_MS = 8000;
+/** How long the camera stays on after the last consumer lets go. */
+export const MEDIAPIPE_STOP_GRACE_MS = 2500;
+/** How long automatic starts wait after a failed start with the same options. */
+export const MEDIAPIPE_RETRY_AFTER_FAILURE_MS = 10_000;
+
+export interface MediaPipeRunState {
+  running: boolean;
+  starting: boolean;
+  error: string | null;
+  /** Who is holding the camera, e.g. 'panel' or 'handfx-layers'. */
+  consumers: string[];
+  /** Turned off from the panel while other consumers still want it. */
+  heldOff: boolean;
+}
 
 export interface MediaPipeStartOptions {
   /** Specific camera device id, or empty for default. */
@@ -117,6 +136,15 @@ export class MediaPipeSource {
   private pendingStart: Promise<void> | null = null;
   private frameCounter = 0;
   private startToken = 0;
+  // Consumer id -> time its hold lapses (Infinity until release()).
+  private holders = new Map<string, number>();
+  private stopTimer: ReturnType<typeof setTimeout> | null = null;
+  private lapseTimer: ReturnType<typeof setTimeout> | null = null;
+  private heldOff = false;
+  private lastFailure: { at: number; key: string } | null = null;
+  private watchingDevices = false;
+  private stateListeners = new Set<(state: MediaPipeRunState) => void>();
+  private lastStateKey = '';
 
   /** The preview and inference must use the same selfie convention. */
   isMirrored(): boolean { return this.opts.mirror; }
@@ -126,19 +154,27 @@ export class MediaPipeSource {
    *  same opts is a no-op; with different opts, stops and restarts. */
   async start(opts: MediaPipeStartOptions = {}): Promise<void> {
     const next: Required<MediaPipeStartOptions> = { ...DEFAULT_OPTS, ...opts };
+    this.heldOff = false;
     // Render sync can request startup every frame while camera/model loading
     // is pending. Join that attempt instead of launching another camera/worker.
     if (this.pendingStart) return this.pendingStart;
     if (this.running && optsEqual(this.opts, next)) return;
     if (this.running) await this.stop();
     const token = ++this.startToken;
-    this.pendingStart = this._startInternal(next, token).finally(() => { this.pendingStart = null; });
-    return this.pendingStart;
+    const pending: Promise<void> = this._startInternal(next, token).finally(() => {
+      if (this.pendingStart === pending) this.pendingStart = null;
+      this.emitState();
+    });
+    this.pendingStart = pending;
+    this.emitState();
+    return pending;
   }
 
   /** Stop everything. Safe to call when not running. */
   async stop(): Promise<void> {
     this.startToken++;
+    this.pendingStart = null;
+    if (this.stopTimer !== null) { clearTimeout(this.stopTimer); this.stopTimer = null; }
     this.running = false;
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null; }
     if (this.worker) {
@@ -162,6 +198,7 @@ export class MediaPipeSource {
     this.framesInFlight = 0;
     this.lastFrame = EMPTY_SIGNAL_FRAME;
     this.lastGestureByHand = { 'gesture.right': '', 'gesture.left': '' };
+    this.emitState();
   }
 
   subscribe(cb: GestureListener): () => void {
@@ -175,6 +212,109 @@ export class MediaPipeSource {
   getLastFrame(): SignalFrame { return this.lastFrame; }
   getVideoElement(): HTMLVideoElement | null { return this.video; }
   getOpts(): Required<MediaPipeStartOptions> { return this.opts; }
+
+  // ── Consumers ────────────────────────────────────────────────────────
+
+  /** Count `consumer` as using the camera. Does not start it. With `ttlMs`
+   *  the hold lapses unless acquire() is called again within that time. */
+  acquire(consumer: string, ttlMs?: number): void {
+    const isNew = !this.holders.has(consumer);
+    const timed = typeof ttlMs === 'number' && ttlMs > 0;
+    this.holders.set(consumer, timed ? performance.now() + ttlMs : Infinity);
+    if (this.stopTimer !== null) { clearTimeout(this.stopTimer); this.stopTimer = null; }
+    if (timed && this.lapseTimer === null) this.scheduleLapse();
+    if (isNew) this.emitState();
+  }
+
+  /** Stop counting `consumer`. The camera stops a moment after the last one goes. */
+  release(consumer: string): void {
+    if (!this.holders.delete(consumer)) return;
+    this.afterRelease();
+  }
+
+  getConsumers(): string[] { return [...this.holders.keys()]; }
+
+  /** Turn the camera off now, for every consumer. Consumers that still hold
+   *  it do not start it again until start() is called directly. */
+  async turnOff(consumer?: string): Promise<void> {
+    if (consumer) this.holders.delete(consumer);
+    this.heldOff = this.holders.size > 0;
+    await this.stop();
+  }
+
+  /** Whether an automatic start (HandFX) may try now: not while turned off
+   *  from the panel, and not within 10 s of a failed start with the same
+   *  options. A camera plugged in or removed clears the wait. */
+  canAutoStart(opts: MediaPipeStartOptions = {}): boolean {
+    if (this.heldOff) return false;
+    const failure = this.lastFailure;
+    if (!failure || failure.key !== optsKey({ ...DEFAULT_OPTS, ...opts })) return true;
+    return performance.now() - failure.at >= MEDIAPIPE_RETRY_AFTER_FAILURE_MS;
+  }
+
+  /** Running state for UI; called now and on every change. */
+  subscribeState(cb: (state: MediaPipeRunState) => void): () => void {
+    this.stateListeners.add(cb);
+    cb(this.runState());
+    return () => { this.stateListeners.delete(cb); };
+  }
+
+  private runState(): MediaPipeRunState {
+    return {
+      running: this.running,
+      starting: this.pendingStart !== null,
+      error: this.error,
+      consumers: [...this.holders.keys()],
+      heldOff: this.heldOff,
+    };
+  }
+
+  private emitState(): void {
+    const state = this.runState();
+    const key = JSON.stringify(state);
+    if (key === this.lastStateKey) return;
+    this.lastStateKey = key;
+    for (const cb of this.stateListeners) {
+      try { cb(state); } catch (err) { console.warn('[MediaPipe] state listener threw', err); }
+    }
+  }
+
+  private afterRelease(): void {
+    if (this.holders.size === 0) {
+      this.heldOff = false;
+      if (this.stopTimer !== null) clearTimeout(this.stopTimer);
+      this.stopTimer = setTimeout(() => {
+        this.stopTimer = null;
+        if (this.holders.size === 0 && (this.running || this.pendingStart)) void this.stop();
+      }, MEDIAPIPE_STOP_GRACE_MS);
+    }
+    this.emitState();
+  }
+
+  private scheduleLapse(): void {
+    let next = Infinity;
+    for (const at of this.holders.values()) next = Math.min(next, at);
+    if (!Number.isFinite(next)) return;
+    this.lapseTimer = setTimeout(() => {
+      this.lapseTimer = null;
+      const now = performance.now();
+      let lapsed = false;
+      for (const [id, at] of this.holders) {
+        if (at <= now) { this.holders.delete(id); lapsed = true; }
+      }
+      if (lapsed) this.afterRelease();
+      this.scheduleLapse();
+    }, Math.max(0, next - performance.now()));
+  }
+
+  private noteFailure(opts: Required<MediaPipeStartOptions>): void {
+    this.lastFailure = { at: performance.now(), key: optsKey(opts) };
+    if (this.watchingDevices) return;
+    const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+    if (!devices?.addEventListener) return;
+    this.watchingDevices = true;
+    devices.addEventListener('devicechange', () => { this.lastFailure = null; });
+  }
 
   // ── Internal ─────────────────────────────────────────────────────────
 
@@ -322,9 +462,14 @@ export class MediaPipeSource {
         this._pumpFrame();
       };
       this.rafId = requestAnimationFrame(tick);
+      this.lastFailure = null;
+      this.emitState();
     } catch (err: any) {
-      this.error = String(err?.message || err);
       disposeLocals();
+      // A start that was cancelled meanwhile must not stop the newer one.
+      if (isStale()) return;
+      this.error = String(err?.message || err);
+      this.noteFailure(opts);
       await this.stop();
       throw err;
     }
@@ -409,6 +554,7 @@ export class MediaPipeSource {
       this.framesInFlight = Math.max(0, this.framesInFlight - 1);
       this.error = msg.message;
       console.warn('[MediaPipe] worker error', msg.message);
+      this.emitState();
     }
   }
 }
@@ -417,6 +563,10 @@ function optsEqual(a: Required<MediaPipeStartOptions>, b: Required<MediaPipeStar
   return a.deviceId === b.deviceId && a.useGesture === b.useGesture && a.mirror === b.mirror
     && a.targetFps === b.targetFps && a.numHands === b.numHands
     && a.trackBody === b.trackBody && a.trackFace === b.trackFace;
+}
+
+function optsKey(o: Required<MediaPipeStartOptions>): string {
+  return [o.deviceId, o.useGesture, o.mirror, o.targetFps, o.numHands, o.trackBody, o.trackFace].join('|');
 }
 
 export const mediaPipeSource = new MediaPipeSource();

@@ -97,7 +97,9 @@ export class HydraVisualizer {
       detectAudio: false,
       makeGlobal: false,
       enableStreamCapture: false,
-      autoLoop: true,  // hydra drives its own RAF that calls render()
+      // No internal rAF: hydra's loop has no stop handle, so it would
+      // keep rendering after dispose. step() ticks it instead.
+      autoLoop: false,
     });
 
     // Replace the missing audio object (hydra leaves it undefined when
@@ -149,10 +151,10 @@ export class HydraVisualizer {
 
   /**
    * Feed the audio stub from the latest AudioAnalysis (or zero it when no
-   * audio is running). Hydra's render loop is already ticking via its own
-   * RAF; we only need to keep `a.fft` fresh and blit each frame.
+   * audio is running), then advance hydra one frame. `dt` is in seconds.
    */
-  step(_dt: number, audio: VisualAudioState | null): void {
+  step(dt: number, audio: VisualAudioState | null): void {
+    if (!this.hydra) return;
     const k = this.params.sensitivity;
     if (audio?.isActive && audio?.bands) {
       const b = audio.bands;
@@ -167,6 +169,8 @@ export class HydraVisualizer {
       for (let i = 0; i < this.audioStub.fft.length; i++) this.audioStub.fft[i] = 0;
       this.audioStub.vol = 0;
     }
+    const dtMs = Number.isFinite(dt) ? Math.max(0, dt) * 1000 : 0;
+    try { this.hydra.tick(dtMs); } catch (e) { console.warn('[Hydra] tick failed', e); }
   }
 
   render(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget): void {
@@ -184,8 +188,16 @@ export class HydraVisualizer {
   }
 
   dispose(): void {
-    try { this.hydra.hush?.(); } catch {}
-    try { this.hydra = null; } catch {}
+    const hydra = this.hydra;
+    this.hydra = null;
+    this.compiledSketch = null;
+    if (hydra) {
+      const gl: WebGLRenderingContext | null = hydra.regl?._gl ?? null;
+      try { hydra.hush?.(); } catch { /* best effort */ }
+      // Free every GL object regl made, then give the context back.
+      try { hydra.regl?.destroy?.(); } catch { /* best effort */ }
+      try { gl?.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* already lost */ }
+    }
     this.texture.dispose();
     this.material.dispose();
     this.quad.geometry.dispose();
