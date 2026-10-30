@@ -9,7 +9,7 @@
  * the selected media layer in mapping).
  */
 
-import { derived, get } from 'svelte/store';
+import { derived, get, readable, type Readable } from 'svelte/store';
 import { vjClipLauncher, type VJClipLauncherState, type VJDeck } from '../stores/vjClipLauncher';
 import { project } from '../stores/layers';
 import { generateUUID } from '../utils/uuid';
@@ -34,6 +34,19 @@ export type StudioTarget =
 
 type LauncherState = VJClipLauncherState;
 
+// One normalized copy per stored source object, so an unchanged instance
+// reads as the same value and the studio's panels do not redraw for nothing.
+const normalized = new WeakMap<object, Required<StudioPluginSource>>();
+function studioSourceOf(raw: unknown): Required<StudioPluginSource> {
+  if (!raw || typeof raw !== 'object') return normalizeStudioSource(raw);
+  let source = normalized.get(raw);
+  if (!source) {
+    source = normalizeStudioSource(raw);
+    normalized.set(raw, source);
+  }
+  return source;
+}
+
 function findVjTarget(state: LauncherState): StudioTarget | null {
   const decks: [VJDeck, typeof state.clipGrid, typeof state.layerStates][] = [
     ['A', state.clipGrid, state.layerStates],
@@ -42,7 +55,7 @@ function findVjTarget(state: LauncherState): StudioTarget | null {
   const at = (deck: VJDeck, grid: typeof state.clipGrid, layer: number, column: number, playing: boolean): StudioTarget | null => {
     const clip = grid[layer]?.[column];
     if (!clip || clip.type !== 'effect' || !isStudioSource(clip.effectSource)) return null;
-    return { kind: 'vj', deck, layer, column, playing, source: normalizeStudioSource(clip.effectSource) };
+    return { kind: 'vj', deck, layer, column, playing, source: studioSourceOf(clip.effectSource) };
   };
   const playingColumn = (grid: typeof state.clipGrid, states: typeof state.layerStates, layer: number): number | null => {
     const active = states[layer]?.activeClip;
@@ -82,7 +95,7 @@ function findVjTarget(state: LauncherState): StudioTarget | null {
 function findLayerTarget(layers: Layer[], selectedId: string | null | undefined): StudioTarget | null {
   const asTarget = (layer: Layer | undefined): StudioTarget | null =>
     layer && isStudioSource(layer.source?.effectSource)
-      ? { kind: 'layer', layerId: layer.id, name: layer.name, source: normalizeStudioSource(layer.source?.effectSource) }
+      ? { kind: 'layer', layerId: layer.id, name: layer.name, source: studioSourceOf(layer.source?.effectSource) }
       : null;
   return asTarget(layers.find((l) => l.id === selectedId)) ?? layers.map(asTarget).find(Boolean) ?? null;
 }
@@ -91,9 +104,35 @@ function findTarget(state: LauncherState, layers: Layer[], selectedId: string | 
   return state.isOpen ? findVjTarget(state) : findLayerTarget(layers, selectedId);
 }
 
+function sameTarget(a: StudioTarget | null, b: StudioTarget | null): boolean {
+  if (!a || !b) return a === b;
+  if (a.source !== b.source) return false;
+  if (a.kind === 'vj' && b.kind === 'vj') return a.deck === b.deck && a.layer === b.layer && a.column === b.column && a.playing === b.playing;
+  if (a.kind === 'layer' && b.kind === 'layer') return a.layerId === b.layerId && a.name === b.name;
+  return false;
+}
+
+/** Pass a value on only when it changes (the project and the deck update every frame while performing). */
+function distinct<T>(source: Readable<T>, same: (a: T, b: T) => boolean, initial: T): Readable<T> {
+  return readable<T>(initial, (set) => {
+    let last = initial;
+    let first = true;
+    return source.subscribe((value) => {
+      if (!first && same(last, value)) return;
+      first = false;
+      last = value;
+      set(value);
+    });
+  });
+}
+
 /** The instance the studio plays to now, or null. */
-export const studioTarget = derived([vjClipLauncher, project], ([$launcher, $project]) =>
-  findTarget($launcher, $project.layers as Layer[], $project.selectedLayerId),
+export const studioTarget = distinct(
+  derived([vjClipLauncher, project], ([$launcher, $project]) =>
+    findTarget($launcher, $project.layers as Layer[], $project.selectedLayerId),
+  ),
+  sameTarget,
+  null as StudioTarget | null,
 );
 
 export function studioTargetNow(): StudioTarget | null {
@@ -101,21 +140,24 @@ export function studioTargetNow(): StudioTarget | null {
   return findTarget(get(vjClipLauncher), p.layers as Layer[], p.selectedLayerId);
 }
 
-function write(target: StudioTarget, next: Required<StudioPluginSource>): void {
+function write(target: StudioTarget, next: Required<StudioPluginSource>, gesture?: string): void {
   if (target.kind === 'vj') {
     vjClipLauncher.updateClipEffectSource(target.layer, target.column, next, target.deck);
     return;
   }
   const layer = (get(project).layers as Layer[]).find((l) => l.id === target.layerId);
   if (!layer?.source) return;
-  project.setLayerSource(target.layerId, { ...layer.source, effectSource: next } as MediaSource);
+  project.setLayerSource(target.layerId, { ...layer.source, effectSource: next } as MediaSource, { gesture });
 }
 
-/** Change the instance the studio plays to. Returns false when there is none. */
-export function editStudio(change: (source: Required<StudioPluginSource>) => Required<StudioPluginSource>): boolean {
+/**
+ * Change the instance the studio plays to. Returns false when there is none.
+ * `gesture` names a continuous edit (a knob turn), which is one undo step.
+ */
+export function editStudio(change: (source: Required<StudioPluginSource>) => Required<StudioPluginSource>, gesture?: string): boolean {
   const target = studioTargetNow();
   if (!target) return false;
-  write(target, normalizeStudioSource(change(target.source)));
+  write(target, normalizeStudioSource(change(target.source)), gesture);
   return true;
 }
 
@@ -180,11 +222,11 @@ export function addStudioVoice(file: string, source: VoiceSourceId): boolean {
   }));
 }
 
-export function setStudioVoice(index: number, patch: Partial<StudioVoice>): boolean {
+export function setStudioVoice(index: number, patch: Partial<StudioVoice>, gesture?: string): boolean {
   return editStudio((s) => ({
     ...s,
     musicVoices: s.musicVoices.map((v, i) => (i === index ? { ...v, ...patch, params: { ...v.params, ...(patch.params ?? {}) } } : v)),
-  }));
+  }), gesture);
 }
 
 /** Swap a voice's shader, keeping what it follows and its level; its look starts fresh. */

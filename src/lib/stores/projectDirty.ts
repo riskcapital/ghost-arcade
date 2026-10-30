@@ -15,7 +15,8 @@
  *    so a show that was only played does not count as changed.
  *  - The parts of the project undo does not cover (output settings, media
  *    library, VJ clip grid, modulation, macros, control bindings, snapshots,
- *    sequencer, audio calibration, show timeline and cue list): a signature
+ *    sequencer, audio calibration, show timeline and cue list, the music
+ *    studio and its clips' voices): a signature
  *    of their settings, leaving out what changes while performing (macro
  *    values, active clips, playheads, panel visibility).
  */
@@ -45,9 +46,26 @@ const omit = (value: unknown, keys: readonly string[]) => {
   return out;
 };
 
-const clipIdentity = (clip: any) => (clip ? { id: clip.id, type: clip.type, name: clip.name } : null);
+// A clip's identity. A Music Studio clip's scene and voices count too: only
+// editing writes them (other plugins' settings move under live control).
+const clipIdentity = (clip: any) => {
+  if (!clip) return null;
+  const identity: Record<string, unknown> = { id: clip.id, type: clip.type, name: clip.name };
+  if (clip.effectSource?.effectType === 'music-studio') identity.studio = clip.effectSource;
+  return identity;
+};
 const gridIdentity = (grid: unknown) =>
   Array.isArray(grid) ? grid.map((row) => (Array.isArray(row) ? row.map(clipIdentity) : [])) : [];
+
+/** The music studio's section, less what playing it moves (knobs, octave,
+ *  velocity, drum mutes, mixer mute and solo). */
+const studioIdentity = (studio: any) => {
+  if (!studio || typeof studio !== 'object') return null;
+  const mixer = studio.mixer && typeof studio.mixer === 'object'
+    ? Object.fromEntries(Object.entries(studio.mixer).map(([id, strip]) => [id, omit(strip, ['mute', 'solo'])]))
+    : null;
+  return { ...(omit(studio, ['params', 'octave', 'velocity', 'drumMutes', 'mixer']) as object), mixer };
+};
 
 /**
  * A stable signature of the project settings undo does not cover. Equal
@@ -87,6 +105,7 @@ export function projectSettingsSignature({ exported, showTimeline, showControl }
       : [],
     osc: exported?.osc ?? null,
     ableton: omit(exported?.abletonBridge ?? null, ['linkedCounts']),
+    musicStudio: studioIdentity(exported?.musicStudio),
     dmx: exported?.dmxInput ?? null,
     keyboard: exported?.keyboard ?? null,
     mediaPipe: exported?.mediaPipe ?? null,

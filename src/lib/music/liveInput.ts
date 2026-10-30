@@ -38,6 +38,8 @@ export class LiveInput {
   private buffer: Float32Array<ArrayBuffer> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ctx: AudioContext | null = null;
+  /** Bumped by every stop(), so a start still waiting for the input knows it was cancelled. */
+  private generation = 0;
   private readonly tracker: InputTracker;
 
   constructor(
@@ -62,9 +64,14 @@ export class LiveInput {
     this.tracker.setSettings({ sensitivity });
   }
 
-  /** Open `deviceId` ('' for the default input) into `into`. Throws with a readable message. */
-  async start(ctx: AudioContext, deviceId: string, into: AudioNode): Promise<void> {
+  /**
+   * Open `deviceId` ('' for the default input) into `into`. Throws with a
+   * readable message. Resolves false when a stop() or another start() came
+   * while it waited (the studio closed, the device changed): nothing opens.
+   */
+  async start(ctx: AudioContext, deviceId: string, into: AudioNode): Promise<boolean> {
     this.stop();
+    const generation = this.generation;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -82,6 +89,10 @@ export class LiveInput {
       if (name === 'NotFoundError' || name === 'OverconstrainedError') throw new Error('That audio input is not connected.');
       throw new Error('The audio input could not be opened.');
     }
+    if (generation !== this.generation) {
+      stream.getTracks().forEach((t) => t.stop());
+      return false;
+    }
     this.ctx = ctx;
     this.stream = stream;
     this.source = ctx.createMediaStreamSource(stream);
@@ -97,9 +108,11 @@ export class LiveInput {
       this.onLost();
     });
     this.timer = setInterval(() => this.poll(), POLL_MS);
+    return true;
   }
 
   stop(): void {
+    this.generation++;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     try { this.source?.disconnect(); } catch { /* gone */ }

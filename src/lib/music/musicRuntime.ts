@@ -1132,7 +1132,10 @@ function publishLoopRec(beat: number): void {
     ? { phase: beat < loopRec.startBeat ? 'count' : 'rec', startBeat: loopRec.startBeat, endBeat: loopRec.endBeat, beat }
     : LOOP_REC_OFF;
   const t = get(musicTransport);
-  if (t.loopRec.phase === next.phase && t.loopRec.endBeat === next.endBeat && t.loopRec.startBeat === next.startBeat && Math.abs(t.loopRec.beat - next.beat) < 0.02) return;
+  // What it shows is whole beats to go (counting in) and bars to go: publish
+  // when those change, not every frame (a dozen panels read the transport).
+  const left = (r: MusicTransportState['loopRec']) => `${Math.ceil(r.startBeat - r.beat)}:${r.endBeat === null ? '' : Math.ceil(r.endBeat - r.beat)}`;
+  if (t.loopRec.phase === next.phase && t.loopRec.endBeat === next.endBeat && t.loopRec.startBeat === next.startBeat && left(t.loopRec) === left(next)) return;
   musicTransport.set({ ...t, loopRec: next });
 }
 
@@ -1344,8 +1347,20 @@ function frame(): void {
     syncMacroFx();
     publishTransport(now);
     if (loopRec) publishLoopRec(launchClockPosition().beat);
+  } else if (studioHostsLive() > 0) {
+    // No audio yet (the studio has not been opened this session): a studio
+    // clip or layer still follows the clock. Only the beat moves; nothing
+    // is sounding, so there is nothing else to advance.
+    const { beat, beatMs } = launchClockPosition();
+    voices.advance(-Infinity, { beat, beatSeconds: beatMs / 1000 });
+    studioDriven.clear();
+    studioVisualTick.update((n) => n + 1);
   }
   const s = get(musicStudio);
+  // A store write above can already have queued the next frame (a studio
+  // instance's scene sync wakes the loop): never queue a second one, or the
+  // loop doubles every frame.
+  if (frameHandle !== null) return;
   if (s.isOpen || sequencer || replay || loopSlots.size || loopRec || visualsWereActive || studioHostsLive() > 0) frameHandle = requestAnimationFrame(frame);
 }
 
@@ -1567,7 +1582,8 @@ function writeNoteInputs(notes: boolean): void {
  * replay and every sounding note stop. Minimizing the panel keeps playing.
  */
 function stopEverything(): void {
-  if (liveInput?.running) stopLiveInput();
+  // Also cancels an input still waiting to open (its permission prompt up).
+  if (liveInput) stopLiveInput();
   cancelQueuedScene();
   cancelLoopRecord();
   stopAllLoops();
@@ -1656,8 +1672,8 @@ export async function startLiveInput(): Promise<void> {
   }, () => musicStudio.setInputStatus(false, 'The audio input was disconnected.'));
   try {
     const ctx = audioContextForInput();
-    await liveInput.start(ctx, s.inputDevice, audio.inputChannel());
-    musicStudio.setInputStatus(true);
+    // False: stopped, or started again, while it waited. That call owns the status.
+    if (await liveInput.start(ctx, s.inputDevice, audio.inputChannel())) musicStudio.setInputStatus(true);
   } catch (err) {
     musicStudio.setInputStatus(false, err instanceof Error ? err.message : 'The audio input could not be opened.');
   }

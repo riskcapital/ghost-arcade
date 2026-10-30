@@ -85,9 +85,12 @@ export class LevelHits {
     return null;
   }
 
-  reset(): void {
+  /** Forget the track. True when a note was still sounding (its off is owed). */
+  reset(): boolean {
+    const was = this.sounding;
     this.floor = 0;
     this.sounding = false;
     this.lastTime = null;
+    return was;
   }
 }

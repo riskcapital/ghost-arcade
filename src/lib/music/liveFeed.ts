@@ -48,16 +48,20 @@ function onLevel(track: number, level: number): void {
 function sync(): void {
   const studio = get(musicStudio);
   const bridge = get(abletonBridge);
-  const on = studio.liveControl && bridge.connected;
+  // Only while the studio is open: closed, nothing plays (and Live stops streaming levels).
+  const on = studio.isOpen && studio.liveControl && bridge.connected;
   const mapped = on ? mappedTracks(bridge.tracks, studio.liveRoles) : [];
   const noteTracks = mapped.filter((m) => bridge.tracks[m.index]?.midi).map((m) => m.index);
   const levelTracks = mapped.filter((m) => !bridge.tracks[m.index]?.midi).map((m) => m.index);
   const key = JSON.stringify(mapped.map((m) => [m.index, m.role, bridge.tracks[m.index]?.midi]));
   if (key === feedKey) return;
   feedKey = key;
+  const previous = roles;
   roles = new Map(mapped.map((m) => [m.index, m.role]));
   for (const [track, tracker] of hits) if (!levelTracks.includes(track)) {
-    tracker.reset();
+    // A track let go mid-hit ends its note, or its voice stays lit.
+    const role = previous.get(track);
+    if (tracker.reset() && role) pushOutsideNote('off', LEVEL_NOTE, 0, role);
     hits.delete(track);
   }
   abletonBridge.setStudioFeed(mapped.length ? { noteTracks, levelTracks, onNotes, onLevel } : null);

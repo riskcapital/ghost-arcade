@@ -54,7 +54,8 @@
     return (effectSource as any)[paramKey] ?? defaultVal;
   }
 
-  function commitEffectSource(updated: IntegratedEffectSource) {
+  /** `gesture` names a continuous edit (a slider drag): it is one undo step. */
+  function commitEffectSource(updated: IntegratedEffectSource, gesture?: string) {
     if (onUpdateEffectSource) {
       onUpdateEffectSource(updated);
       return;
@@ -67,12 +68,12 @@
     project.setLayerSource(layerId, {
       ...layer.source,
       effectSource: updated,
-    });
+    }, { gesture });
   }
 
   // Update a single param on the current effectSource. Mapping mode writes
   // through project.setLayerSource; VJ mode supplies onUpdateEffectSource.
-  function setParam(paramKey: string, value: any) {
+  function setParam(paramKey: string, value: any, gesture?: string) {
     if (!effectSource) return;
 
     const base = onUpdateEffectSource
@@ -83,7 +84,7 @@
       [paramKey]: value,
     };
 
-    commitEffectSource(updated);
+    commitEffectSource(updated, gesture);
   }
 
   function changeMovement(direction: -1 | 1 | 'random') {
@@ -202,7 +203,7 @@
       />
     {/if}
     {#if effectSource.effectType === 'music-studio'}
-      <MusicStudioPanel source={effectSource} onchange={(next) => commitEffectSource(next as IntegratedEffectSource)} />
+      <MusicStudioPanel source={effectSource} onchange={(next, gesture) => commitEffectSource(next as IntegratedEffectSource, gesture)} />
     {/if}
 
     {#if effectSource.effectType === 'ghostfx' || effectSource.effectType === 'handfx'}
@@ -287,7 +288,7 @@
               max={def.max}
               step={def.step}
               value={getVal(def.param, def.default)}
-              oninput={(e) => setParam(def.param, parseFloat((e.target as HTMLInputElement).value))}
+              oninput={(e) => setParam(def.param, parseFloat((e.target as HTMLInputElement).value), def.param)}
               data-midi-path={`${midiPrefix}:${def.param}`}
               data-midi-label={def.name}
               data-midi-min={def.min ?? 0}
@@ -302,7 +303,7 @@
             <input
               type="color"
               value={colorToHex(getVal(def.param, def.default), def.default)}
-              oninput={(e) => setParam(def.param, hexToRgbArray((e.target as HTMLInputElement).value))}
+              oninput={(e) => setParam(def.param, hexToRgbArray((e.target as HTMLInputElement).value), def.param)}
               data-midi-path={`${midiPrefix}:${def.param}`}
               data-midi-label={def.name}
             />

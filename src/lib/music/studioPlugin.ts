@@ -211,22 +211,30 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
 /** Bumped every frame while an instance is showing, so the renderer picks up the voices' new signals. */
 export const studioVisualTick = writable(0);
 
+/** Bumped when a voice's shader has loaded: its controls can show and the scene resyncs. Panels watch this, not the frame tick. */
+export const studioCodeTick = writable(0);
+
 const codeCache = new Map<string, string>();
 const loading = new Set<string>();
+/** Files that would not load: not asked for again (every scene sync would). */
+const missing = new Set<string>();
 
 /** Voice shader code, fetched on first use; the scene resyncs when it arrives. */
 export function studioVoiceCode(file: string): string | undefined {
   const cached = codeCache.get(file);
   if (cached !== undefined) return cached;
-  if (!loading.has(file) && typeof fetch !== 'undefined' && /^VX-[A-Za-z0-9_-]+\.fs$/.test(file)) {
+  if (!loading.has(file) && !missing.has(file) && typeof fetch !== 'undefined' && /^VX-[A-Za-z0-9_-]+\.fs$/.test(file)) {
     loading.add(file);
     fetch(`./ISF/${encodeURIComponent(file)}`)
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
       .then((code) => {
         codeCache.set(file, code);
-        studioVisualTick.update((n) => n + 1);
+        studioCodeTick.update((n) => n + 1);
       })
-      .catch((err) => console.warn('[Music Studio] could not load', file, err))
+      .catch((err) => {
+        missing.add(file);
+        console.warn('[Music Studio] could not load', file, err);
+      })
       .finally(() => loading.delete(file));
   }
   return undefined;

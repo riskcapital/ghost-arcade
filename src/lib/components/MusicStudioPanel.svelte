@@ -15,7 +15,7 @@
   import {
     MAX_STUDIO_VOICES,
     normalizeStudioSource,
-    studioVisualTick,
+    studioCodeTick,
     studioVoiceCode,
     studioVoicesFromScene,
     type StudioPluginSource,
@@ -28,7 +28,8 @@
     showOpen = true,
   }: {
     source: unknown;
-    onchange: (next: Required<StudioPluginSource>) => void;
+    /** `gesture` names a continuous edit (a slider drag), which is one undo step. */
+    onchange: (next: Required<StudioPluginSource>, gesture?: string) => void;
     /** Offer to open the studio (not inside the studio itself). */
     showOpen?: boolean;
   } = $props();
@@ -38,7 +39,7 @@
 
   // Look knobs appear once a voice's shader has loaded.
   let tick = $state(0);
-  const unsub = studioVisualTick.subscribe((n) => (tick = n));
+  const unsub = studioCodeTick.subscribe((n) => (tick = n));
   onDestroy(unsub);
 
   const LOOK_SKIP = new Set(['vxSource', 'vxAuto', 'ink', 'accent']);
@@ -49,8 +50,8 @@
     return shaderInputs(code).filter((i) => (i.TYPE === 'float' || i.TYPE === 'long') && !LOOK_SKIP.has(i.NAME) && !isVoiceDrivenInput(i.NAME));
   }
 
-  function emit(next: Partial<Required<StudioPluginSource>>) {
-    onchange(normalizeStudioSource({ ...studio, ...next }));
+  function emit(next: Partial<Required<StudioPluginSource>>, gesture?: string) {
+    onchange(normalizeStudioSource({ ...studio, ...next }), gesture);
   }
 
   function loadScene(id: string) {
@@ -58,8 +59,8 @@
     if (scene) emit({ musicSceneId: scene.id, musicSet: scene.set, musicVoices: studioVoicesFromScene(scene.voices) });
   }
 
-  function setVoice(index: number, patch: Partial<StudioVoice>) {
-    emit({ musicVoices: studio.musicVoices.map((v, i) => (i === index ? { ...v, ...patch, params: { ...v.params, ...(patch.params ?? {}) } } : v)) });
+  function setVoice(index: number, patch: Partial<StudioVoice>, gesture?: string) {
+    emit({ musicVoices: studio.musicVoices.map((v, i) => (i === index ? { ...v, ...patch, params: { ...v.params, ...(patch.params ?? {}) } } : v)) }, gesture);
   }
 
   function replaceVoice(index: number, file: string) {
@@ -132,7 +133,7 @@
         <div class="msp-look">
           <label class="msp-param">
             <span>Level</span>
-            <input type="range" min="0" max="1" step="0.01" value={voice.level} oninput={(e) => setVoice(i, { level: +(e.target as HTMLInputElement).value })} />
+            <input type="range" min="0" max="1" step="0.01" value={voice.level} oninput={(e) => setVoice(i, { level: +(e.target as HTMLInputElement).value }, `voice:${i}:level`)} />
             <span class="msp-val">{Math.round(voice.level * 100)}%</span>
           </label>
           {#each looks(voice.file) as input (input.NAME)}
@@ -142,7 +143,7 @@
             <label class="msp-param">
               <span>{input.LABEL ?? input.NAME}</span>
               <input type="range" {min} {max} step={input.TYPE === 'long' || max - min > 4 ? 1 : (max - min) / 100} {value}
-                oninput={(e) => setVoice(i, { params: { [input.NAME]: +(e.target as HTMLInputElement).value } })} />
+                oninput={(e) => setVoice(i, { params: { [input.NAME]: +(e.target as HTMLInputElement).value } }, `voice:${i}:${input.NAME}`)} />
               <span class="msp-val">{Number.isInteger(value) ? value : value.toFixed(2)}</span>
             </label>
           {/each}
