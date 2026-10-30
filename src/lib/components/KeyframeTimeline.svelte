@@ -237,7 +237,7 @@
     class="kf-toggle"
     class:active={isOpen}
     onclick={() => keyframeTimeline.toggleOpen()}
-    title="Keyframe Timeline"
+    title="Keyframe timeline"
   >
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <line x1="2" y1="12" x2="22" y2="12"/>
@@ -256,7 +256,7 @@
   <div data-help-page="show-timeline" class="kf-tray" class:embedded>
     <div class="kf-header-btns">
       <button class="kf-clear" onclick={() => { console.log('[KF Timeline] Clear All clicked'); showClearConfirm = true; }} title="Clear all keyframes">
-        Clear All
+        Clear all
       </button>
       <button class="kf-close" onclick={() => keyframeTimeline.setOpen(false)} title="Close timeline">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -332,11 +332,11 @@
     {#if showClearConfirm}
       <div class="kf-modal-backdrop" onclick={() => showClearConfirm = false}>
         <div class="kf-modal" onclick={(e) => e.stopPropagation()}>
-          <h3>Clear All Keyframes?</h3>
-          <p>This will remove ALL keyframes from ALL layers. This cannot be undone.</p>
+          <h3>Clear all keyframes?</h3>
+          <p>This will remove all keyframes from all layers. This cannot be undone.</p>
           <div class="kf-modal-btns">
             <button class="kf-modal-cancel" onclick={() => showClearConfirm = false}>Cancel</button>
-            <button class="kf-modal-confirm" onclick={confirmClearAll}>Clear All</button>
+            <button class="kf-modal-confirm" onclick={confirmClearAll}>Clear all</button>
           </div>
         </div>
       </div>
@@ -354,25 +354,26 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: linear-gradient(135deg, #0d0d10, #111114);
-    border: 1px solid #444;
-    color: var(--text-primary, #ddd);
-    font-size: 13px;
-    font-weight: 600;
-    padding: 8px 16px;
-    border-radius: 20px;
+    background: var(--ga-bar, #111114);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #ddd);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
+    border-radius: var(--ga-r-pill, 999px);
     cursor: pointer;
     transition: all 0.2s ease;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
     font-family: inherit;
   }
   .kf-toggle:hover {
-    border-color: var(--ga-coral, #ff6f5e);
-    box-shadow: 0 4px 30px color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
   .kf-toggle.active {
-    border-color: var(--ga-coral, #ff6f5e);
-    background: linear-gradient(135deg, #1a2020, #201515);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .kf-tray {
@@ -382,8 +383,8 @@
     right: 0;
     height: 300px;
     z-index: 90;
-    background: rgba(10, 10, 14, 0.98);
-    border-top: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent);
+    background: var(--ga-panel, #0a0a0e);
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     display: flex;
     flex-direction: column;
     animation: slideUp 0.2s ease-out;
@@ -401,41 +402,38 @@
     align-items: center;
   }
   .kf-clear {
-    background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 35%, transparent);
-    color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff);
-    font-size: 11px;
-    font-weight: 600;
-    padding: 5px 10px;
-    border-radius: 4px;
+    height: var(--ga-control-h, 26px);
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #aaa);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 4px);
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     transition: all 0.15s;
     font-family: inherit;
   }
   .kf-clear:hover {
-    background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 25%, transparent);
-    color: #fff;
+    border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 55%, transparent);
+    color: var(--ga-rec, #ff4438);
   }
   .kf-close {
-    width: 26px;
-    height: 26px;
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, var(--ga-coral, #ff6f5e), color-mix(in srgb, var(--ga-coral, #ff6f5e) 70%, #000000));
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    border-radius: 4px;
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #aaa);
+    border-radius: var(--ga-r-hard, 4px);
     cursor: pointer;
-    box-shadow: 0 2px 8px color-mix(in srgb, var(--ga-coral, #ff6f5e) 40%, transparent);
     transition: all 0.15s;
   }
   .kf-close:hover {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff), var(--ga-coral, #ff6f5e));
-    box-shadow: 0 2px 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 60%, transparent);
-    transform: scale(1.05);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-0, #fff);
   }
 
   .kf-body {
@@ -448,73 +446,77 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 6px 12px;
-    background: #121217;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    font-size: 12px;
-    color: #bbb;
+    min-height: 36px;
+    padding: 4px 12px;
+    background: var(--ga-card, #121217);
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #bbb);
     flex: 0 0 auto;
   }
   .kfi-label {
     flex: 0 0 auto;
-    padding-right: 8px;
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    padding-right: 12px;
+    border-right: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
+  /* Gold matches the keyframe diamonds on the grid. */
   .kfi-label-title {
     color: #FFD96B;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-size: 11px;
+    font-weight: var(--ga-weight-control, 600);
+    font-size: var(--ga-text-control, 12px);
   }
   .kfi-field {
     display: flex;
     align-items: center;
     gap: 6px;
   }
-  .kfi-field > span { color: rgba(255,255,255,0.55); }
+  .kfi-field > span { color: var(--ga-ink-2, #888); }
   .kfi-field input[type="number"],
   .kfi-field select {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
-    color: var(--text-primary, #e8e8e8);
-    font-size: 12px;
-    padding: 3px 6px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-0, #e8e8e8);
+    font-size: var(--ga-text-control, 12px);
+    padding: 0 6px;
     width: 72px;
     outline: none;
   }
+  .kfi-field input[type="number"] { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .kfi-field-wide input[type="number"] { width: 96px; }
   .kfi-field select { width: auto; }
   .kfi-field input:focus,
-  .kfi-field select:focus { border-color: rgba(92, 225, 230, 0.5); }
+  .kfi-field select:focus { border-color: var(--ga-focus, #8aa4ff); }
   .kfi-field input[type="checkbox"] {
     width: 14px;
     height: 14px;
     cursor: pointer;
   }
-  .kfi-unit { color: rgba(255,255,255,0.35); }
+  .kfi-unit { color: var(--ga-ink-2, #888); }
   .kfi-delete {
     margin-left: auto;
-    background: rgba(255, 71, 87, 0.1);
-    border: 1px solid rgba(255, 71, 87, 0.4);
-    color: #FF4757;
-    font-size: 12px;
-    padding: 3px 10px;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm, 22px);
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--ga-rec, #ff4757) 40%, transparent);
+    color: var(--ga-rec, #FF4757);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
   }
-  .kfi-delete:hover { background: rgba(255, 71, 87, 0.2); }
+  .kfi-delete:hover { background: color-mix(in srgb, var(--ga-rec, #ff4757) 14%, transparent); }
   .kfi-close {
     background: none;
     border: none;
-    color: rgba(255,255,255,0.5);
-    font-size: 17px;
+    color: var(--ga-ink-2, #888);
+    font-size: 16px;
     cursor: pointer;
     padding: 2px 6px;
     line-height: 1;
   }
-  .kfi-close:hover { color: #fff; }
+  .kfi-close:hover { color: var(--ga-ink-0, #fff); }
 
   @keyframes slideUp {
     from { transform: translateY(100%); }
@@ -532,58 +534,57 @@
     justify-content: center;
   }
   .kf-modal {
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 40%, transparent);
-    border-radius: 8px;
-    padding: 20px 24px;
+    background: var(--ga-raise, #14141a);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 8px);
+    padding: 16px 20px;
     max-width: 380px;
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.8);
   }
   .kf-modal h3 {
-    margin: 0 0 10px 0;
-    color: var(--ga-coral, #ff6f5e);
-    font-size: 15px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    margin: 0 0 8px 0;
+    color: var(--ga-ink-0, #fff);
+    font-size: var(--ga-text-heading, 16px);
+    font-weight: var(--ga-weight-title, 650);
   }
   .kf-modal p {
     margin: 0 0 16px 0;
-    color: var(--text-secondary, #aaa);
-    font-size: 13px;
+    color: var(--ga-ink-1, #aaa);
+    font-size: var(--ga-text-body, 13px);
     line-height: 1.5;
   }
   .kf-modal-btns {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     justify-content: flex-end;
   }
   .kf-modal-cancel {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: var(--text-primary, #ccc);
-    padding: 6px 14px;
-    border-radius: 4px;
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #ccc);
+    padding: 0 12px;
+    border-radius: var(--ga-r-soft, 6px);
+    font-size: var(--ga-text-control, 12px);
     cursor: pointer;
     font-family: inherit;
-    font-weight: 600;
+    font-weight: var(--ga-weight-control, 600);
   }
-  .kf-modal-cancel:hover { background: rgba(255, 255, 255, 0.1); }
+  .kf-modal-cancel:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
   .kf-modal-confirm {
-    /* Destructive "Clear All" — stays danger red on purpose. */
-    background: linear-gradient(135deg, #FF6B6B, #FF4757);
-    border: 1px solid rgba(255, 107, 107, 0.6);
+    /* Destructive: record red on purpose. */
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-rec, #FF4757);
+    border: 1px solid var(--ga-rec, #FF4757);
     color: #fff;
-    padding: 6px 14px;
-    border-radius: 4px;
-    font-size: 12px;
+    padding: 0 12px;
+    border-radius: var(--ga-r-soft, 6px);
+    font-size: var(--ga-text-control, 12px);
     cursor: pointer;
     font-family: inherit;
     font-weight: 700;
-    box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4);
   }
   .kf-modal-confirm:hover {
-    box-shadow: 0 2px 12px rgba(255, 107, 107, 0.6);
+    filter: brightness(1.1);
   }
 </style>

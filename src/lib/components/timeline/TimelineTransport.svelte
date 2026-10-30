@@ -63,10 +63,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 4px 8px;
-    padding-right: 140px; /* reserve space for Clear All + Close buttons */
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-    background: rgba(10, 10, 14, 0.95);
+    min-height: 38px;
+    padding: 4px 12px;
+    padding-right: 140px; /* reserve space for Clear all + Close buttons */
+    border-bottom: 1px solid var(--ga-line, rgba(255,255,255,0.07));
+    background: var(--ga-bar, #0a0a0e);
     gap: 8px;
     flex-shrink: 0;
   }
@@ -77,40 +78,41 @@
   }
   .transport-btn {
     background: none;
-    border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-muted, #888);
-    width: 26px;
-    height: 26px;
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
+    color: var(--ga-ink-1, #888);
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    border-radius: var(--ga-r-hard, 4px);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 0;
   }
-  .transport-btn:hover { color: #fff; border-color: rgba(255,255,255,0.2); }
-  .transport-btn.active { color: var(--ga-coral, #ff6f5e); border-color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 40%, transparent); }
+  .transport-btn:hover:not(.active) { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255,255,255,0.24)); }
+  .transport-btn.active { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); }
   .time-display {
-    font-family: var(--font-jetbrains), monospace;
-    font-size: 13px;
-    color: var(--text-primary, #ccc);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-0, #ccc);
     min-width: 55px;
     text-align: center;
   }
-  .time-sep { color: #444; font-size: 12px; }
+  .time-sep { color: var(--ga-ink-3, #444); font-size: var(--ga-text-control, 12px); }
   .duration-select, .layer-select {
-    background: rgba(0,0,0,0.4);
-    border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-secondary, #aaa);
-    font-size: 11px;
-    border-radius: 3px;
-    padding: 2px 4px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, rgba(0,0,0,0.4));
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
+    color: var(--ga-ink-0, #aaa);
+    font-size: var(--ga-text-control, 12px);
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 6px;
     outline: none;
   }
   .layer-select { max-width: 160px; }
   .transport-label {
-    font-size: 11px;
-    color: #666;
-    text-transform: uppercase;
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-2, #666);
+    margin-right: 2px;
   }
 </style>

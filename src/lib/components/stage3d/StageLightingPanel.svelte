@@ -30,9 +30,9 @@
   const paletteOptions: { value: Stage3DAtmosphere['beamPalette']; label: string }[] = [
     { value: 'screen', label: 'Screen palette' },
     { value: 'custom', label: 'Custom color' },
-    { value: 'cyan-magenta', label: 'Cyan / Magenta' },
-    { value: 'amber-blue', label: 'Amber / Blue' },
-    { value: 'rainbow', label: 'RGB Combo' },
+    { value: 'cyan-magenta', label: 'Cyan / magenta' },
+    { value: 'amber-blue', label: 'Amber / blue' },
+    { value: 'rainbow', label: 'RGB combo' },
     { value: 'white', label: 'White / CTO' },
   ];
   const beamPatterns: { value: Stage3DAtmosphere['beamPattern']; label: string }[] = [
@@ -135,8 +135,8 @@
 
   <div class="sub-head">
     <span>Key light</span>
-    <button class="mini" onclick={resetKeyPosition} title="Restore venue position">↺ pos</button>
-    <button class="mini" onclick={resetKeyColor} title="Restore venue colour">↺ col</button>
+    <button class="mini" onclick={resetKeyPosition} title="Restore venue position">↺ Position</button>
+    <button class="mini" onclick={resetKeyColor} title="Restore venue color">↺ Color</button>
   </div>
 
   {#each [['X', 0], ['Y', 1], ['Z', 2]] as [label, idx]}
@@ -150,7 +150,7 @@
   {/each}
 
   <label class="row truss-row">
-    <span>Key colour</span>
+    <span>Key color</span>
     <input type="color"
       value={lighting.keyColor || '#ffffff'}
       oninput={(e) => patch('keyColor', (e.target as HTMLInputElement).value)} />
@@ -161,13 +161,13 @@
     <span>Shadows</span>
     <input type="checkbox" checked={lighting.shadows}
       onchange={(e) => patch('shadows', (e.target as HTMLInputElement).checked)} />
-    <span class="val">{lighting.shadows ? 'on' : 'off'}</span>
+    <span class="val">{lighting.shadows ? 'On' : 'Off'}</span>
   </label>
 
   <div class="divider"></div>
 
   <label class="row truss-row">
-    <span>Truss colour</span>
+    <span>Truss color</span>
     <input type="color"
       value={lighting.trussColor || '#9aa3ad'}
       oninput={(e) => patch('trussColor', (e.target as HTMLInputElement).value)} />
@@ -187,7 +187,7 @@
     <span>Enabled</span>
     <input type="checkbox" checked={atmosphere.beams}
       onchange={(e) => patchFx('beams', (e.target as HTMLInputElement).checked)} />
-    <span class="val">{atmosphere.beams ? 'on' : 'off'}</span>
+    <span class="val">{atmosphere.beams ? 'On' : 'Off'}</span>
   </label>
 
   <label class="row">
@@ -236,7 +236,7 @@
     <span>Enabled</span>
     <input type="checkbox" checked={atmosphere.haze}
       onchange={(e) => patchFx('haze', (e.target as HTMLInputElement).checked)} />
-    <span class="val">{atmosphere.haze ? 'on' : 'off'}</span>
+    <span class="val">{atmosphere.haze ? 'On' : 'Off'}</span>
   </label>
 
   <label class="row">
@@ -254,7 +254,7 @@
     <span>Enabled</span>
     <input type="checkbox" checked={atmosphere.lasers}
       onchange={(e) => patchFx('lasers', (e.target as HTMLInputElement).checked)} />
-    <span class="val">{atmosphere.lasers ? 'on' : 'off'}</span>
+    <span class="val">{atmosphere.lasers ? 'On' : 'Off'}</span>
   </label>
 
   <label class="row">
@@ -303,7 +303,7 @@
     <span>Enabled</span>
     <input type="checkbox" checked={atmosphere.strips}
       onchange={(e) => patchFx('strips', (e.target as HTMLInputElement).checked)} />
-    <span class="val">{atmosphere.strips ? 'on' : 'off'}</span>
+    <span class="val">{atmosphere.strips ? 'On' : 'Off'}</span>
   </label>
 
   <label class="row">
@@ -331,7 +331,7 @@
   .lighting {
     display: flex;
     flex-direction: column;
-    gap: 9px;
+    gap: 4px;
     width: 100%;
     min-width: 0;
     padding: 4px 0 8px;
@@ -339,75 +339,83 @@
     box-sizing: border-box;
   }
   .lighting * { box-sizing: border-box; min-width: 0; }
+  /* Eyebrows (docs/DESIGN-SYSTEM.md). */
   .head, .sub-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    font-size: 11px;
+    min-height: 22px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.22em;
-    color: #8a93a3;
-    margin-bottom: 2px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
   }
-  .sub-head { color: #6c7280; }
-  .reset {
+  .sub-head { margin-top: 2px; }
+  .reset,
+  .mini {
+    height: var(--ga-control-h-sm, 22px);
     font: inherit;
-    font-size: 11px;
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #c4ccd8;
-    padding: 3px 8px;
-    border-radius: 5px;
-    cursor: pointer;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
     text-transform: none;
-    letter-spacing: 0.04em;
+    background: transparent;
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 8px;
+    cursor: pointer;
+    white-space: nowrap;
   }
-  .reset:hover { color: #4af2ff; border-color: #4af2ff; }
+  .reset:hover,
+  .mini:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .mini { padding: 0 6px; }
   .divider {
     height: 1px;
-    background: rgba(255, 255, 255, 0.06);
-    margin: 3px 0;
+    background: var(--ga-line-1);
+    margin: 6px 0;
   }
   .divider.strong {
-    background: rgba(74, 242, 255, 0.16);
-    margin: 8px 0 5px;
+    background: var(--ga-line-2);
+    margin: 10px 0 6px;
   }
   .row {
     display: grid;
     grid-template-columns: minmax(78px, 0.9fr) minmax(72px, 1fr) minmax(42px, auto);
     align-items: center;
     gap: 8px;
-    font-size: 12px;
-    color: #c4ccd8;
+    min-height: var(--ga-control-h, 26px);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1);
   }
   .row input[type=range] {
     -webkit-appearance: none;
     width: 100%;
     height: 3px;
     border-radius: 3px;
-    background: rgba(255, 255, 255, 0.14);
+    background: var(--ga-line-3);
     outline: none;
   }
   .row input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 13px; height: 13px;
     border-radius: 50%;
-    background: #4af2ff;
+    background: var(--ga-selection-line);
     cursor: pointer;
-    box-shadow: 0 0 8px rgba(74, 242, 255, 0.6);
   }
   .row input[type=range]::-moz-range-thumb {
     width: 13px; height: 13px;
     border: none; border-radius: 50%;
-    background: #4af2ff;
+    background: var(--ga-selection-line);
     cursor: pointer;
   }
   .val {
     text-align: right;
-    font-family: 'Geist Mono', monospace;
-    font-size: 11px;
-    color: #4af2ff;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1);
   }
   .truss-row {
     grid-template-columns: minmax(78px, 0.9fr) minmax(72px, 1fr) 28px;
@@ -419,25 +427,25 @@
   .select-row select {
     width: 100%;
     min-width: 0;
-    height: 28px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 5px;
-    background: #10131a;
-    color: #e9edf4;
+    height: var(--ga-control-h, 26px);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
     padding: 0 7px;
   }
   .select-row select:focus {
     outline: none;
-    border-color: #4af2ff;
+    border-color: var(--ga-selection-line);
   }
   .truss-row input[type=color],
   .color-row input[type=color] {
     width: 100%;
-    height: 26px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 5px;
+    height: var(--ga-control-h-sm, 22px);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     background: none;
     cursor: pointer;
     padding: 2px;
@@ -448,19 +456,7 @@
   .toggle-row input[type=checkbox] {
     width: 16px;
     height: 16px;
-    accent-color: #4af2ff;
+    accent-color: var(--ga-selection-line);
     cursor: pointer;
   }
-  .mini {
-    font: inherit;
-    font-size: 11px;
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #c4ccd8;
-    border-radius: 5px;
-    height: 22px;
-    cursor: pointer;
-    padding: 0 6px;
-  }
-  .mini:hover { color: #4af2ff; border-color: #4af2ff; }
 </style>

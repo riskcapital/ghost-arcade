@@ -144,7 +144,7 @@
   />
 {/snippet}
 
-<StudioModule title="VISUALS" grow>
+<StudioModule title="Visuals" grow>
   {#snippet head()}
     <select class="scene" value="" onchange={pickScene} aria-label="Load a visual scene" title="Load a stack of voices for this set">
       <option value="" disabled>Load scene…</option>
@@ -174,14 +174,14 @@
           <select class="follows" value={voiceSourceIndex(row.source)} disabled={!row.voice} onchange={(e) => setVoiceValue(i, VOICE_SOURCE_INPUT, +(e.target as HTMLSelectElement).value)} aria-label="Sound row {i + 1} follows" title="The sound this visual follows">
             {#each VOICE_SOURCES as src, si}<option value={si}>{src.label}</option>{/each}
           </select>
-          <button class="auto" class:on={row.voice && row.auto} disabled={!row.voice} onclick={() => setVoiceValue(i, VOICE_AUTO_INPUT, !row.auto)} aria-pressed={row.auto} title={row.auto ? 'Shows only while its sound plays' : 'Always shows'}>AUTO</button>
+          <button class="auto studio-btn" class:on={row.voice && row.auto} disabled={!row.voice} onclick={() => setVoiceValue(i, VOICE_AUTO_INPUT, !row.auto)} aria-pressed={row.auto} title={row.auto ? 'Shows only while its sound plays' : 'Always shows'}>Auto</button>
           <StudioJack id="dest:layer:{i}" title="Pulse row {i + 1} with a control signal" />
         </div>
         {#if row.voice}
           <div class="controls">
             {#each row.looks.slice(0, MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, row, input)}{/each}
             <StudioKnob label="Level" title="How much of this row shows" value={layer.opacity} defaultValue={1} size={20} format={levelFormat} onchange={(v) => vjClipLauncher.setLayerOpacity(i, v, 'A')} />
-            <button class="more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for row {i + 1}" title="All controls and colours">
+            <button class="more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for row {i + 1}" title="All controls and colors">
               <svg viewBox="0 0 12 12" aria-hidden="true"><path d={open === i ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
             </button>
           </div>
@@ -191,7 +191,7 @@
               {#each row.colors as input (input.NAME)}
                 <label class="swatch" title={input.LABEL ?? input.NAME}>
                   <input type="color" value={hex(row.values[input.NAME] ?? input.DEFAULT)} oninput={(e) => setVoiceValue(i, input.NAME, fromHex((e.target as HTMLInputElement).value))} />
-                  <span>{input.LABEL ?? input.NAME}</span>
+                  <span class="ga-eyebrow legend">{input.LABEL ?? input.NAME}</span>
                 </label>
               {/each}
             </div>
@@ -200,7 +200,7 @@
       </div>
     {/each}
     {#if deck.layerStates.length < 8}
-      <button class="add" onclick={() => vjClipLauncher.addLayer()} title="Add a row to deck A">+ ROW</button>
+      <button class="add studio-btn dashed" onclick={() => vjClipLauncher.addLayer()} title="Add a row to deck A">+ Row</button>
     {/if}
   </div>
 </StudioModule>
@@ -208,7 +208,6 @@
 <style>
   .voices { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
   .voice { padding: 4px 0; border-bottom: 1px solid var(--studio-edge-soft); }
-  .voice select { height: 22px; font-size: 11px; }
   .voice:last-of-type { border-bottom: 0; }
   .voice.muted .controls, .voice.muted .pick { opacity: 0.45; }
   .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -227,30 +226,17 @@
     background: color-mix(in srgb, var(--studio-accent) calc(25% + var(--a) * 75%), transparent);
     box-shadow: 0 0 calc(var(--a) * 8px) var(--studio-accent);
   }
-  .num { flex: 0 0 12px; font-family: var(--ga-font-mono, ui-monospace); font-size: 10px; color: var(--studio-muted); text-align: center; }
+  .num { flex: 0 0 12px; font-family: var(--ga-font-mono, ui-monospace); font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); text-align: center; }
   .pick { flex: 1 1 0; min-width: 0; }
   .follows { flex: 1 1 0; min-width: 0; color: var(--studio-muted); }
   .follows:disabled, .auto:disabled { opacity: 0.4; }
-  .auto {
-    flex: 0 0 auto;
-    height: 22px;
-    padding: 0 6px;
-    border: 1px solid var(--studio-edge);
-    background: transparent;
-    color: var(--studio-muted);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-  }
-  .auto.on { border-color: var(--studio-accent); color: var(--studio-accent); }
+  .line .auto { flex: 0 0 auto; padding: 0 7px; font-size: var(--ga-text-meta, 11px); }
+  .line .auto:not(.on) { color: var(--studio-muted); }
   .controls { display: flex; align-items: flex-end; justify-content: space-between; gap: 4px; padding: 3px 0 0 21px; }
   .controls :global(.knob-wrap), .all :global(.knob-wrap) { gap: 1px; min-width: 0; flex: 1 1 0; }
   .all :global(.knob-wrap) { flex: 0 0 52px; }
   /* Long control names stay on one line under their knob. */
-  .controls :global(.knob-label), .all :global(.knob-label) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 8px; }
+  .controls :global(.knob-label), .all :global(.knob-label) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .more {
     align-self: center;
     width: 22px;
@@ -267,22 +253,7 @@
   .more svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .more.on, .more:hover { color: var(--studio-ink); border-color: var(--studio-edge); }
   .all { display: flex; flex-wrap: wrap; gap: 8px 6px; padding: 8px 0 2px 21px; }
-  .swatch { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; font-size: 9px; font-weight: 700; color: var(--studio-muted); text-transform: uppercase; letter-spacing: 0.06em; cursor: pointer; }
+  .swatch { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
   .swatch input { width: 30px; height: 24px; padding: 0; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); background: transparent; cursor: pointer; }
-  .add {
-    align-self: flex-start;
-    margin-top: 6px;
-    height: 22px;
-    padding: 0 8px;
-    border: 1px dashed var(--studio-edge);
-    background: transparent;
-    color: var(--studio-muted);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-  }
-  .scene { height: 22px; font-size: 11px; }
+  .add { align-self: flex-start; margin-top: 6px; }
 </style>

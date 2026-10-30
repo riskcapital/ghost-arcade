@@ -155,7 +155,7 @@
   .shortcut-overlay-close:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
   .shortcut-overlay-title {
     margin: 0 0 18px;
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 600;
     color: var(--ga-blue-200);
   }

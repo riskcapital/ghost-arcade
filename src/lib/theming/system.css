@@ -1,0 +1,155 @@
+/* Ghost Arcade design system: the shared scale every surface draws from.
+
+   Loaded after studio-skin.css, for every theme. The rules are written up in
+   docs/DESIGN-SYSTEM.md; this file holds the tokens and the few shared
+   primitives (eyebrow labels, the mode switch, top-bar controls). */
+
+:root {
+  /* ── Type scale ────────────────────────────────────────────────────
+     Eight steps, each with one job. Nothing in the chrome sits between them. */
+  --ga-text-micro: 9px;    /* faceplate legends under knobs, count badges */
+  --ga-text-eyebrow: 10px; /* uppercase section labels (the only caps in the UI) */
+  --ga-text-meta: 11px;    /* hints, secondary text, values in dense rows */
+  --ga-text-control: 12px; /* buttons, fields and tabs inside panels */
+  --ga-text-body: 13px;    /* body text, top-bar controls, menu items */
+  --ga-text-title: 14px;   /* panel titles, emphasised rows */
+  --ga-text-heading: 16px; /* dialog titles */
+  --ga-text-display: 20px; /* page and modal headers */
+
+  --ga-weight-body: 500;
+  --ga-weight-control: 600;
+  --ga-weight-title: 650;
+  --ga-eyebrow-tracking: 0.08em;
+
+  /* The older names, kept in step. */
+  --ga-type-body: var(--ga-text-body);
+  --ga-type-control: var(--ga-text-control);
+  --ga-type-caption: var(--ga-text-meta);
+  --ga-type-title: var(--ga-text-title);
+
+  /* ── Sizes ─────────────────────────────────────────────────────────
+     The top bar is the same in every mode; controls inside panels share
+     two heights. */
+  --ga-bar-h: 48px;
+  --ga-bar-control-h: 30px;
+  --ga-bar-gap: 6px;
+  --ga-bar-group-gap: 14px;
+  --ga-control-h: 26px;
+  --ga-control-h-sm: 22px;
+
+  /* ── Token spellings ───────────────────────────────────────────────
+     Themes write --ga-ink0 / --ga-line2; much of the chrome asks for
+     --ga-ink-0 / --ga-line-2. Without these, every one of those reads fell
+     back to a cool grey that matched no theme. */
+  --ga-ink-0: var(--ga-ink0);
+  --ga-ink-1: var(--ga-ink1);
+  --ga-ink-2: var(--ga-ink2);
+  --ga-ink-3: var(--ga-ink3);
+  --ga-line-1: var(--ga-line);
+  --ga-line-2: var(--ga-line2);
+  --ga-line-3: var(--ga-line3);
+  --ga-border: var(--ga-line2);
+  --ga-surface-2: var(--ga-sub);
+  --ga-surface-3: var(--ga-raise);
+  --ga-live: var(--ga-green);
+
+  /* Spacing steps. */
+  --ga-space-1: 4px;
+  --ga-space-2: 6px;
+  --ga-space-3: 8px;
+  --ga-space-4: 12px;
+  --ga-space-5: 16px;
+  --ga-space-6: 24px;
+}
+
+/* ── Eyebrow: the one uppercase style ───────────────────────────────── */
+.ga-eyebrow {
+  font-size: var(--ga-text-eyebrow);
+  font-weight: 700;
+  letter-spacing: var(--ga-eyebrow-tracking);
+  text-transform: uppercase;
+  color: var(--ga-ink-2, #89857e);
+  line-height: 1.2;
+}
+
+/* ── Mode switch ────────────────────────────────────────────────────
+   The same two-way control at the right end of the mapping toolbar and the
+   VJ header, so moving between modes always happens in one place. */
+.ga-mode-switch {
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--ga-bar-control-h);
+  padding: 2px;
+  gap: 2px;
+  box-sizing: border-box;
+  background: var(--ga-slot, #060504);
+  border: 1px solid var(--ga-line-2, var(--ga-line2, rgba(245, 236, 222, 0.13)));
+  border-radius: var(--ga-r-soft, 8px);
+  flex: 0 0 auto;
+}
+.ga-mode-switch > button {
+  min-width: 52px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: calc(var(--ga-r-soft, 8px) - 2px);
+  background: transparent;
+  color: var(--ga-ink-1, #ada9a2);
+  font: inherit;
+  font-size: var(--ga-text-body);
+  font-weight: var(--ga-weight-control);
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.ga-mode-switch > button:hover:not(.active) {
+  color: var(--ga-ink-0, #f2ede4);
+  background: rgba(255, 255, 255, 0.05);
+}
+.ga-mode-switch > button.active {
+  background: var(--ga-raise, #26221c);
+  color: var(--ga-ink-0, #f2ede4);
+  box-shadow: inset 0 0 0 1px var(--ga-line-3, var(--ga-line3, rgba(245, 236, 222, 0.24)));
+  cursor: default;
+}
+.ga-mode-switch > button:focus-visible {
+  outline: 2px solid var(--ga-focus, #8aa4ff);
+  outline-offset: 1px;
+}
+
+/* ── Segmented control (Mix / Stage / Map and the like) ─────────────── */
+.ga-segmented {
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--ga-bar-control-h);
+  padding: 2px;
+  gap: 2px;
+  box-sizing: border-box;
+  background: var(--ga-slot, #060504);
+  border: 1px solid var(--ga-line-2, var(--ga-line2, rgba(245, 236, 222, 0.13)));
+  border-radius: var(--ga-r-hard, 5px);
+}
+.ga-segmented > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+  background: transparent;
+  color: var(--ga-ink-1, #ada9a2);
+  font: inherit;
+  font-size: var(--ga-text-body);
+  font-weight: var(--ga-weight-control);
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ga-segmented > button:hover:not(.active) { color: var(--ga-ink-0, #f2ede4); background: rgba(255, 255, 255, 0.05); }
+.ga-segmented > button.active {
+  background: var(--ga-selection-bg, #1f3170);
+  color: var(--ga-selection-ink, #e0e8ff);
+  box-shadow: inset 0 0 0 1px var(--ga-selection-line, #5278ff);
+}

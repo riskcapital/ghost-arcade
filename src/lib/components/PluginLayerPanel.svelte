@@ -210,13 +210,13 @@
     {/if}
     {#if effectSource.effectType === 'ghostfx'}
       <div class="handfx-guide">
-        <span class="handfx-eyebrow">AUDIO / MOTION / LIGHT</span>
+        <span class="handfx-eyebrow">Audio / motion / light</span>
         <p>Choose a movement, then shape its motion and light. Audio follows the app’s connected input; visuals keep moving in silence.</p>
       </div>
     {/if}
     {#if effectSource.effectType === 'handfx'}
       <div class="handfx-guide">
-        <span class="handfx-eyebrow">{HAND_FX_BODY_MODES.includes(getVal('handfxMode', 'bridge')) ? 'BODY PERFORMANCE' : HAND_FX_FACE_MODES.includes(getVal('handfxMode', 'bridge')) ? 'FACE PERFORMANCE' : 'HAND PERFORMANCE'}</span>
+        <span class="handfx-eyebrow">{HAND_FX_BODY_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Body performance' : HAND_FX_FACE_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Face performance' : 'Hand performance'}</span>
         <p role="status">{handStatus}</p>
         <p>{getVal('handfxInput', 'live') === 'demo' ? 'Rehearsal plays a virtual performer. Switch to Live camera to perform.' : HAND_FX_BODY_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Step back so the camera sees your whole body. Show Camera and Camera Opacity control the camera background; tracking stays on.' : HAND_FX_FACE_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Face the camera. Show Camera and Camera Opacity control the camera background; tracking stays on.' : 'Bring your hands into view. Show Camera and Camera Opacity control the selfie background; tracking stays on.'}</p>
         <p class="handfx-gesture">{gestureGuides[getVal('handfxMode', 'bridge')] ?? 'Move your hands to shape the visual. Layer it over video using Add or Screen blend.'}</p>
@@ -270,7 +270,7 @@
               data-midi-step={1}
               data-midi-mode="toggle"
             >
-              {getVal(def.param, def.default) ? 'ON' : 'OFF'}
+              {getVal(def.param, def.default) ? 'On' : 'Off'}
             </button>
           </div>
 
@@ -311,21 +311,22 @@
 {/if}
 
 <style>
-  .movement-nav { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 12px 0; }
-  .movement-nav button { min-height: 40px; min-width: 0; padding: 6px; border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; background: var(--ga-blue-mute-800); color: #dce9fa; font: inherit; font-size: 12px; cursor: pointer; }
-  .movement-nav button:hover { background: var(--ga-blue-700); border-color: var(--ga-blue-mute-300); }
-  .movement-nav button:focus-visible { outline: 2px solid var(--ga-blue-200); outline-offset: 2px; }
-  .handfx-guide { padding: 14px; margin: 10px 0 16px; border: 1px solid var(--ga-blue-mute-600); border-radius: 10px; background: linear-gradient(135deg, var(--ga-blue-800), var(--ga-blue-900)); }
-  .handfx-eyebrow { color: var(--ga-blue-200); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
-  .handfx-guide p { color: #bac8dc; font-size: 12px; line-height: 1.5; margin: 8px 0 0; }
-  .handfx-guide .handfx-gesture { color: #e1edff; }
-  .control-row select { box-sizing: border-box; min-width: 0; max-width: 100%; text-overflow: ellipsis; width: 100%; min-height: 34px; padding: 6px 9px; color: #e1edff; background: var(--ga-blue-900); border: 1px solid var(--ga-blue-mute-600); border-radius: 7px; font: inherit; font-size: 12px; }
+  .movement-nav { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin: 12px 12px 0; }
+  .movement-nav button { height: var(--ga-control-h); min-width: 0; padding: 0 6px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); background: var(--ga-sub); color: var(--ga-ink-1); font: inherit; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer; white-space: nowrap; }
+  .movement-nav button:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .movement-nav button:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
+  .handfx-guide { padding: 10px 12px; margin: 12px 12px 4px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-soft); background: var(--ga-card); }
+  /* Eyebrow section label, same as every layer editor. */
+  .handfx-eyebrow { color: var(--ga-ink-2); font-size: var(--ga-text-eyebrow); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking); text-transform: uppercase; }
+  .handfx-guide p { color: var(--ga-ink-1); font-size: var(--ga-text-control); line-height: 1.5; margin: 6px 0 0; }
+  .handfx-guide .handfx-gesture { color: var(--ga-ink-0); }
+  .control-row select { box-sizing: border-box; min-width: 0; max-width: 100%; text-overflow: ellipsis; width: 100%; height: var(--ga-control-h); padding: 0 8px; color: var(--ga-ink-0); background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); font: inherit; font-size: var(--ga-text-control); }
 
   .panel-empty {
     padding: 20px;
     text-align: center;
-    color: #555;
-    font-size: 12px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-control);
   }
 
   .plugin-panel {
@@ -344,133 +345,126 @@
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    background: linear-gradient(90deg, #111118, var(--ga-blue-900));
-    border-bottom: 1px solid var(--ga-blue-mute-800);
+    background: var(--ga-panel);
+    border-bottom: 1px solid var(--ga-line-1);
   }
 
   .header-icon {
-    font-size: 21px;
+    font-size: 20px;
+    color: var(--ga-icon);
   }
 
   .header-text {
     min-width: 0;
     display: flex;
     flex-direction: column;
+    gap: 1px;
   }
 
   .header-title {
-    font-weight: 700;
-    font-size: 14px;
-    color: var(--text-primary, #eee);
-    letter-spacing: 0.3px;
+    font-weight: var(--ga-weight-title);
+    font-size: var(--ga-text-title);
+    color: var(--ga-ink-0);
   }
 
   .header-version {
-    font-size: 10px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
   }
 
   /* ── Powered-by credit badge ── */
   .powered-by {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 5px 12px;
-    background: rgba(255, 107, 107, 0.04);
-    border-bottom: 1px solid rgba(255, 107, 107, 0.10);
-    font-size: 10px;
-    color: #666;
+    gap: 6px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--ga-line-1);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     line-height: 1.3;
     flex-wrap: wrap;
   }
   .pb-label {
-    color: #555;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-size: 9px;
+    letter-spacing: var(--ga-eyebrow-tracking);
+    font-size: var(--ga-text-micro);
+    font-weight: 700;
   }
   .pb-engine {
-    color: var(--accent-secondary, #FF8585);
-    font-weight: 600;
+    color: var(--ga-ink-0);
+    font-weight: var(--ga-weight-control);
     text-decoration: none;
   }
   a.pb-engine:hover {
-    color: var(--accent-primary, #FF6B6B);
+    color: var(--ga-ink-0);
     text-decoration: underline;
   }
   .pb-authors {
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
   }
   .pb-license {
     margin-left: auto;
     padding: 1px 5px;
-    background: rgba(255, 107, 107, 0.10);
-    border: 1px solid rgba(255, 107, 107, 0.20);
-    color: var(--accent-secondary, #FF8585);
-    border-radius: 2px;
-    font-size: 9px;
-    letter-spacing: 0.3px;
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-micro);
   }
 
   /* ── Controls ── */
   .controls {
     display: flex;
     flex-direction: column;
-    padding: 6px;
-    gap: 2px;
+    padding: 8px 12px 12px;
+    gap: 8px;
   }
 
   .control-row {
     min-width: 0;
     box-sizing: border-box;
-    padding: 5px 8px;
-    border-radius: 4px;
-  }
-
-  .control-row:hover {
-    background: rgba(255, 255, 255, 0.02);
   }
 
   .label {
     display: block;
-    font-size: 10px;
-    color: #777;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1);
     margin-bottom: 4px;
   }
 
   /* ── Select buttons ── */
   .select-row {
     display: flex;
-    gap: 3px;
+    gap: 4px;
     flex-wrap: wrap;
   }
 
   .sel-btn {
     flex: 1;
     min-width: 0;
+    min-height: var(--ga-control-h-sm);
     overflow-wrap: anywhere;
     white-space: normal;
-    padding: 4px 6px;
-    background: var(--bg-tertiary, #1a1a22);
-    border: 1px solid #333;
-    border-radius: 3px;
-    color: var(--text-muted, #888);
-    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     transition: all 0.12s;
   }
 
-  .sel-btn:hover {
-    background: var(--ga-blue-mute-800);
-    color: var(--text-primary, #ddd);
+  .sel-btn:hover:not(.active) {
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
   }
 
   .sel-btn.active {
-    background: linear-gradient(135deg, #1e1040, #2a1560);
-    border-color: #BB86FC;
-    color: #d4b8ff;
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
   }
 
   /* ── Toggle button ── */
@@ -485,22 +479,28 @@
   }
 
   .toggle-btn {
-    padding: 3px 14px;
-    background: var(--bg-tertiary, #1a1a22);
-    border: 1px solid #333;
-    border-radius: 3px;
-    color: #666;
-    font-size: 11px;
-    font-weight: 600;
+    min-width: 44px;
+    height: var(--ga-control-h-sm);
+    padding: 0 10px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     transition: all 0.12s;
-    letter-spacing: 0.3px;
+  }
+
+  .toggle-btn:hover:not(.active) {
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
   }
 
   .toggle-btn.active {
-    background: #0d3320;
-    border-color: #22c55e;
-    color: #4ade80;
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
   }
 
   /* ── Slider ── */
@@ -508,7 +508,7 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
   }
 
   .slider-row .label {
@@ -522,7 +522,7 @@
     width: 0;
     height: 18px;
     -webkit-appearance: none;
-    background: var(--ga-blue-mute-800);
+    background: var(--ga-slot);
     border-radius: 2px;
     cursor: pointer;
   }
@@ -531,17 +531,34 @@
     -webkit-appearance: none;
     width: 10px;
     height: 10px;
-    background: #BB86FC;
+    background: var(--ga-selection-line);
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 0 4px rgba(187, 134, 252, 0.4);
   }
 
   .val {
-    font-size: 10px;
-    color: #666;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1);
     min-width: 36px;
     text-align: right;
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .color-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .color-row .label { margin-bottom: 0; }
+  .color-row input[type="color"] {
+    width: 36px;
+    height: var(--ga-control-h-sm);
+    padding: 0;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    background: transparent;
+    cursor: pointer;
   }
 </style>

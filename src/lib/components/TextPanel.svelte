@@ -53,7 +53,7 @@
 
 {#if layer && tc}
   <div data-help-page="layers" class="text-panel">
-    <h3>Text Layer</h3>
+    <h3>Text layer</h3>
 
     <!-- Text Input -->
     <div class="section">
@@ -69,7 +69,7 @@
           value={tc.text}
           oninput={(e) => project.updateTextContent(layer.id, { text: (e.target as HTMLTextAreaElement).value })}
           rows={3}
-          placeholder="Enter text..."
+          placeholder="Enter text…"
         ></textarea>
       {/if}
     </div>
@@ -153,7 +153,7 @@
       </div>
 
       <div class="property-row">
-        <label>Line Height</label>
+        <label>Line height</label>
         <input
           type="range" min="0.5" max="3" step="0.05"
           value={tc.lineHeight}
@@ -186,7 +186,7 @@
       </div>
 
       <div class="property-row">
-        <label>Stroke W</label>
+        <label>Stroke width</label>
         <input
           type="range" min="0" max="20" step="0.5"
           value={tc.strokeWidth}
@@ -280,7 +280,7 @@
         </div>
 
         <div class="property-row">
-          <label>Extrude Color</label>
+          <label>Extrude color</label>
           <input
             type="color"
             value={tc.extrudeColor}
@@ -319,7 +319,7 @@
         </div>
 
         <div class="property-row">
-          <label>Light Angle</label>
+          <label>Light angle</label>
           <input
             type="range" min="0" max="360" step="1"
             value={tc.lightAngle}
@@ -434,161 +434,177 @@
 {/if}
 
 <style>
-  .long-text { display: flex; gap: 8px; align-items: flex-start; padding: 8px; font-size: 11px; line-height: 1.4; border-radius: 4px; color: var(--ga-ink-2, #a9b2bd); background: var(--ga-surface-2, rgba(255,255,255,.05)); }
+  .long-text { display: flex; gap: 8px; align-items: flex-start; padding: 8px; font-size: var(--ga-text-meta); line-height: 1.4; border-radius: var(--ga-r-hard); color: var(--ga-ink-1); background: var(--ga-card); border: 1px solid var(--ga-line-1); }
   .long-text span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .long-text button { flex: none; }
+  .long-text button { flex: none; height: var(--ga-control-h-sm); padding: 0 10px; background: var(--ga-sub); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); color: var(--ga-ink-1); font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer; }
+  .long-text button:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .text-panel {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 8px;
+    padding: 12px;
     overflow-y: auto;
     max-height: 100%;
-    font-size: 12px;
-    color: var(--text-primary, #ccc);
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-0);
   }
 
   h3 {
-    margin: 0 0 6px 0;
-    font-size: 14px;
-    color: #fff;
-    border-bottom: 1px solid #444;
-    padding-bottom: 4px;
+    margin: 0 0 8px 0;
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0);
   }
 
   .section {
-    background: #0d0d14;
-    border-radius: 4px;
-    padding: 6px;
-    margin-bottom: 4px;
+    padding: 12px 0;
+    border-top: 1px solid var(--ga-line-1);
   }
 
+  /* Eyebrow section label, same as every layer editor. */
   .section-label {
     display: block;
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
+    letter-spacing: var(--ga-eyebrow-tracking);
+    margin-bottom: 8px;
   }
 
   .text-input {
     width: 100%;
-    background: #111;
-    border: 1px solid #333;
-    color: #fff;
-    padding: 6px;
-    font-size: 13px;
-    border-radius: 3px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    padding: 6px 8px;
+    font-size: var(--ga-text-body);
+    border-radius: var(--ga-r-hard);
     resize: vertical;
     font-family: inherit;
     box-sizing: border-box;
   }
 
   .text-input:focus {
-    border-color: #ff00aa;
+    border-color: var(--ga-focus);
     outline: none;
   }
 
   .property-row {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 3px;
+    gap: 8px;
+    min-height: var(--ga-control-h);
+    margin-bottom: 2px;
   }
 
   .property-row > label {
-    min-width: 55px;
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    width: 84px;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1);
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
+
+  .property-row > label:has(input) { width: auto; color: var(--ga-ink-0); cursor: pointer; }
 
   .property-row input[type="range"] {
     flex: 1;
+    min-width: 0;
     height: 4px;
-    accent-color: #ff00aa;
+    accent-color: var(--ga-slider-fill, var(--ga-blue));
   }
 
   .property-row input[type="color"] {
-    width: 28px;
-    height: 22px;
-    border: 1px solid #444;
+    width: 36px;
+    height: var(--ga-control-h-sm);
+    border: 1px solid var(--ga-line-2);
     background: none;
     cursor: pointer;
     padding: 0;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard);
   }
 
   .property-row select {
     flex: 1;
-    background: #111;
-    border: 1px solid #333;
-    color: var(--text-primary, #ccc);
-    padding: 2px 4px;
-    font-size: 11px;
-    border-radius: 3px;
+    min-width: 0;
+    height: var(--ga-control-h);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    padding: 0 8px;
+    font-size: var(--ga-text-control);
+    border-radius: var(--ga-r-hard);
   }
 
   .value {
-    min-width: 38px;
+    min-width: 40px;
     text-align: right;
-    font-size: 10px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
   }
 
   .button-group {
     display: flex;
     gap: 2px;
+    padding: 2px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
   }
 
   .button-group button {
-    background: #222;
-    border: 1px solid #444;
-    color: var(--text-secondary, #aaa);
-    padding: 2px 8px;
-    font-size: 11px;
+    min-width: 32px;
+    height: calc(var(--ga-control-h) - 6px);
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--ga-ink-1);
+    padding: 0 8px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    border-radius: 2px;
+    border-radius: calc(var(--ga-r-hard) - 1px);
+  }
+
+  .button-group button:hover:not(.active) {
+    color: var(--ga-ink-0);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .button-group button.active {
-    background: #ff00aa;
-    color: #fff;
-    border-color: #ff00aa;
-  }
-
-  .button-group button:hover {
-    background: #333;
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    border-color: var(--ga-selection-line);
   }
 
   .btn-small {
-    background: #222;
-    border: 1px solid #444;
-    color: var(--text-secondary, #aaa);
-    padding: 1px 6px;
-    font-size: 10px;
+    height: var(--ga-control-h-sm);
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    padding: 0 10px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    border-radius: 2px;
+    border-radius: var(--ga-r-hard);
   }
 
   .btn-small:hover {
-    background: #333;
-  }
-
-  .animation-section select {
-    font-size: 11px;
+    color: var(--ga-ink-0);
+    border-color: var(--ga-line-3);
   }
 
   .anim-description {
-    font-size: 10px;
-    color: #666;
-    font-style: italic;
-    padding: 2px 6px;
+    font-size: var(--ga-text-meta);
+    line-height: 1.45;
+    color: var(--ga-ink-2);
+    padding: 0 0 8px;
   }
 
   .property-row input[type="checkbox"] {
-    accent-color: #ff00aa;
+    accent-color: var(--ga-selection-line);
   }
 </style>

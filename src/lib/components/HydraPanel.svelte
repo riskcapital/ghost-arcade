@@ -95,7 +95,7 @@
 
   <!-- Now-playing -->
   <div class="hy-now">
-    <span class="hy-now-label">NOW</span>
+    <span class="hy-now-label">Now</span>
     <span class="hy-now-name" title={currentPresetName}>{currentPresetName || '—'}</span>
     {#if currentPresetName}
       <button
@@ -160,40 +160,41 @@
   .hy-panel {
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, #0e0a1a, #0a0612);
-    border-bottom: 1px solid var(--ga-blue-mute-800);
-    padding: 8px;
-    gap: 6px;
+    background: var(--ga-panel);
+    border-bottom: 1px solid var(--ga-line-1);
+    padding: 12px;
+    gap: 8px;
     max-height: 460px;
   }
   .hy-transport { display: flex; gap: 4px; }
   .hy-btn {
     flex: 1;
-    padding: 5px 0;
-    background: #15101e;
-    border: 1px solid rgba(255, 107, 107, 0.20);
-    border-radius: 3px;
-    color: var(--accent-secondary, #FF8585);
-    font-size: 12px;
-    font-weight: 700;
+    height: var(--ga-control-h);
+    padding: 0;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     transition: all 0.12s;
   }
-  .hy-btn:hover { background: #20162e; color: var(--accent-primary, #FF6B6B); border-color: rgba(255, 107, 107, 0.55); }
+  .hy-btn:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
 
   .hy-hotkey-hint {
-    font-size: 10px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     text-align: center;
-    letter-spacing: 0.4px;
+    margin-top: -2px;
   }
   .hy-hotkey-hint kbd {
-    background: var(--ga-blue-900);
-    border: 1px solid #2a2235;
-    color: var(--text-secondary, #aaa);
-    border-radius: 3px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard);
     padding: 1px 5px;
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     margin: 0 2px;
   }
@@ -201,34 +202,42 @@
   .hy-now {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: #060410;
-    border-radius: 3px;
-    padding: 4px 8px;
+    gap: 8px;
+    min-height: var(--ga-control-h);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-1);
+    border-radius: var(--ga-r-hard);
+    padding: 2px 4px 2px 8px;
   }
+  /* Eyebrow label, same as every layer editor. */
   .hy-now-label {
-    font-size: 10px;
-    color: #555;
-    letter-spacing: 0.6px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
+    text-transform: uppercase;
+    letter-spacing: var(--ga-eyebrow-tracking);
   }
   .hy-now-name {
     flex: 1;
-    font-size: 12px;
-    color: var(--accent-secondary, #FF8585);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-0);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .hy-fav-btn, .hy-fav-only {
+    height: var(--ga-control-h-sm);
     background: transparent;
-    border: 1px solid #333;
-    color: #555;
-    font-size: 12px;
-    padding: 2px 6px;
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-control);
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
   }
+  .hy-fav-only { height: var(--ga-control-h); }
+  .hy-fav-btn:hover, .hy-fav-only:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .hy-fav-btn.active, .hy-fav-only.active {
     color: #fcd34d;
     border-color: #92681f;
@@ -236,28 +245,31 @@
   }
 
   .hy-by {
-    font-size: 10px;
-    color: #555;
-    padding: 0 2px;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
+    margin-top: -4px;
   }
 
   .hy-code-toggle {
+    align-self: flex-start;
+    height: var(--ga-control-h-sm);
     background: transparent;
-    border: 1px dashed rgba(255, 107, 107, 0.20);
-    color: var(--text-muted, #888);
-    font-size: 10px;
-    padding: 3px 6px;
-    border-radius: 3px;
+    border: 1px dashed var(--ga-line-2);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
   }
-  .hy-code-toggle:hover { color: var(--accent-secondary, #FF8585); border-color: rgba(255, 107, 107, 0.45); }
+  .hy-code-toggle:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .hy-code {
-    font-size: 10.5px;
-    color: #b8a8d4;
-    background: #060410;
-    border: 1px solid #1a1428;
-    border-radius: 3px;
-    padding: 5px 7px;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    padding: 6px 8px;
     margin: 0;
     overflow-x: auto;
     white-space: pre-wrap;
@@ -268,59 +280,62 @@
   .hy-filter { display: flex; gap: 4px; }
   .hy-filter input[type="text"] {
     flex: 1;
-    background: #0a0612;
-    border: 1px solid #2a2235;
-    color: var(--text-primary, #ddd);
-    padding: 4px 6px;
-    border-radius: 3px;
-    font-size: 11px;
+    min-width: 0;
+    height: var(--ga-control-h);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
     outline: none;
   }
-  .hy-filter input[type="text"]:focus { border-color: var(--accent-primary, #FF6B6B); }
+  .hy-filter input[type="text"]:focus { border-color: var(--ga-focus); }
 
   .hy-list {
     overflow-y: auto;
     flex: 1;
-    background: #060410;
-    border: 1px solid #1a1428;
-    border-radius: 3px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     min-height: 100px;
     max-height: 200px;
   }
   .hy-row {
     display: flex;
     align-items: center;
-    padding: 3px 6px;
+    min-height: var(--ga-control-h-sm);
+    padding: 0 4px 0 8px;
     cursor: pointer;
     gap: 4px;
-    border-bottom: 1px solid #110a1c;
+    border-bottom: 1px solid var(--ga-line-1);
   }
-  .hy-row:hover { background: var(--ga-blue-900); }
-  .hy-row.active { background: rgba(255, 107, 107, 0.15); }
-  .hy-row.active .hy-row-name { color: #fff; }
+  .hy-row:hover { background: var(--ga-card); }
+  .hy-row.active { background: var(--ga-selection-bg); box-shadow: inset 2px 0 0 var(--ga-selection-line); }
+  .hy-row.active .hy-row-name { color: var(--ga-selection-ink); }
   .hy-row-name {
     flex: 1;
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .hy-row-fav {
     background: transparent;
     border: none;
-    color: #555;
+    color: var(--ga-ink-3);
     font-size: 13px;
     padding: 0 4px;
     cursor: pointer;
   }
+  .hy-row-fav:hover { color: var(--ga-ink-1); }
   .hy-row-fav.active { color: #fcd34d; }
 
   .hy-empty {
     padding: 12px;
     text-align: center;
-    font-size: 11px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
   }
 </style>

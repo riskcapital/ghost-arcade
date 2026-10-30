@@ -81,11 +81,6 @@ export const ARCADE_THEME: Theme = {
 [data-theme="arcade"] {
   --ga-accent-gradient: linear-gradient(135deg, #f6fafd 0%, #cfdde9 42%, #92aabf 100%);
 }
-html[data-theme="arcade"] .vj-btn {
-  background: var(--ga-accent-gradient) !important;
-  border-color: rgba(214,228,240,.65) !important;
-  color: var(--ga-blue-mute-800) !important;
-}
 html[data-theme="arcade"] input[type="checkbox"]:checked {
   background: var(--ga-selection-line, var(--ga-blue-500)) !important;
 }
@@ -93,10 +88,6 @@ html[data-theme="arcade"] .toggle input:checked + .toggle-slider::before {
   background: var(--ga-accent-gradient) !important;
 }
 html[data-theme="arcade"] .paint-sheet-handle {
-  background: var(--ga-accent-gradient) !important;
-}
-html[data-theme="arcade"] .layer-item.selected::before,
-html[data-theme="arcade"] .layer-item.active::before {
   background: var(--ga-accent-gradient) !important;
 }
 `,

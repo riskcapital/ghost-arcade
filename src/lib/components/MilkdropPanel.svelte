@@ -110,7 +110,7 @@
     <button class="mk-btn" title="Previous preset" onclick={() => fire('prev')}>◀</button>
     <button class="mk-btn" title="Random preset (R)" onclick={() => fire('random')}>🎲</button>
     <button class="mk-btn" title="Next preset (D)" onclick={() => fire('next')}>▶</button>
-    <button class="mk-btn cut" title="Hard cut now (instant blend)" onclick={() => fire('cut')}>CUT</button>
+    <button class="mk-btn cut" title="Hard cut now (instant blend)" onclick={() => fire('cut')}>Cut</button>
     <button
       class="mk-btn lock"
       class:active={locked}
@@ -122,7 +122,7 @@
 
   <!-- Now-playing -->
   <div class="mk-now">
-    <span class="mk-now-label">NOW</span>
+    <span class="mk-now-label">Now</span>
     <span class="mk-now-name" title={currentPresetName}>{currentPresetName || '—'}</span>
     {#if currentPresetName}
       <button
@@ -185,47 +185,42 @@
   .mk-panel {
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, #0e0a1a, #0a0612);
-    border-bottom: 1px solid var(--ga-blue-mute-800);
-    padding: 8px;
+    background: var(--ga-panel);
+    border-bottom: 1px solid var(--ga-line-1);
+    padding: 12px;
     gap: 8px;
     max-height: 360px;
   }
-  .mk-transport {
-    display: flex;
-    gap: 4px;
-  }
+  .mk-transport { display: flex; gap: 4px; }
   .mk-btn {
     flex: 1;
-    padding: 5px 0;
-    background: var(--ga-blue-800);
-    border: 1px solid #3a2960;
-    border-radius: 3px;
-    color: var(--ga-blue-200);
-    font-size: 12px;
-    font-weight: 700;
+    height: var(--ga-control-h);
+    padding: 0;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     transition: all 0.12s;
   }
-  .mk-btn:hover { background: var(--ga-blue-700); color: #fff; }
-  .mk-btn.cut { background: #3a0d2a; border-color: #8a1f5e; color: #ff80c0; }
-  .mk-btn.cut:hover { background: #5a153f; }
-  .mk-btn.lock.active { background: #0d3320; border-color: #22c55e; color: #4ade80; }
+  .mk-btn:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .mk-btn.lock.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
 
   .mk-hotkey-hint {
-    font-size: 10px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     text-align: center;
-    letter-spacing: 0.4px;
-    margin-top: -4px;
+    margin-top: -2px;
   }
   .mk-hotkey-hint kbd {
-    background: var(--ga-blue-900);
-    border: 1px solid #2a2235;
-    color: var(--text-secondary, #aaa);
-    border-radius: 3px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard);
     padding: 1px 5px;
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     margin: 0 2px;
   }
@@ -233,100 +228,108 @@
   .mk-now {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: #060410;
-    border-radius: 3px;
-    padding: 4px 8px;
+    gap: 8px;
+    min-height: var(--ga-control-h);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-1);
+    border-radius: var(--ga-r-hard);
+    padding: 2px 4px 2px 8px;
   }
+  /* Eyebrow label, same as every layer editor. */
   .mk-now-label {
-    font-size: 10px;
-    color: #555;
-    letter-spacing: 0.6px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
+    text-transform: uppercase;
+    letter-spacing: var(--ga-eyebrow-tracking);
   }
   .mk-now-name {
     flex: 1;
-    font-size: 12px;
-    color: #d4b8ff;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-0);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .mk-fav-btn, .mk-fav-only {
+    height: var(--ga-control-h-sm);
     background: transparent;
-    border: 1px solid #333;
-    color: #555;
-    font-size: 12px;
-    padding: 2px 6px;
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-control);
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
   }
+  .mk-fav-only { height: var(--ga-control-h); }
+  .mk-fav-btn:hover, .mk-fav-only:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .mk-fav-btn.active, .mk-fav-only.active {
     color: #fcd34d;
     border-color: #92681f;
     background: #2a1f08;
   }
 
-  .mk-filter {
-    display: flex;
-    gap: 4px;
-  }
+  .mk-filter { display: flex; gap: 4px; }
   .mk-filter input[type="text"] {
     flex: 1;
-    background: #0a0612;
-    border: 1px solid #2a2235;
-    color: var(--text-primary, #ddd);
-    padding: 4px 6px;
-    border-radius: 3px;
-    font-size: 11px;
+    min-width: 0;
+    height: var(--ga-control-h);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
     outline: none;
   }
-  .mk-filter input[type="text"]:focus { border-color: #6938aa; }
+  .mk-filter input[type="text"]:focus { border-color: var(--ga-focus); }
 
   .mk-list {
     overflow-y: auto;
     flex: 1;
-    background: #060410;
-    border: 1px solid #1a1428;
-    border-radius: 3px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     min-height: 100px;
     max-height: 220px;
   }
   .mk-row {
     display: flex;
     align-items: center;
-    padding: 3px 6px;
+    min-height: var(--ga-control-h-sm);
+    padding: 0 4px 0 8px;
     cursor: pointer;
     gap: 4px;
-    border-bottom: 1px solid #110a1c;
+    border-bottom: 1px solid var(--ga-line-1);
   }
-  .mk-row:hover { background: var(--ga-blue-900); }
-  .mk-row.active { background: #2a1560; }
-  .mk-row.active .mk-row-name { color: #fff; }
+  .mk-row:hover { background: var(--ga-card); }
+  .mk-row.active { background: var(--ga-selection-bg); box-shadow: inset 2px 0 0 var(--ga-selection-line); }
+  .mk-row.active .mk-row-name { color: var(--ga-selection-ink); }
   .mk-row-name {
     flex: 1;
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .mk-row-fav {
     background: transparent;
     border: none;
-    color: #555;
+    color: var(--ga-ink-3);
     font-size: 13px;
     padding: 0 4px;
     cursor: pointer;
   }
+  .mk-row-fav:hover { color: var(--ga-ink-1); }
   .mk-row-fav.active { color: #fcd34d; }
 
   .mk-empty {
     padding: 12px;
     text-align: center;
-    font-size: 11px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
   }
-  .mk-empty.err { color: #f87171; }
+  .mk-empty.err { color: var(--ga-rec); }
 </style>

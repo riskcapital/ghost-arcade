@@ -98,17 +98,17 @@
 </div>
 
 <style>
-  .tm { display: flex; flex-direction: column; gap: 6px; }
+  .tm { display: flex; flex-direction: column; gap: 4px; }
   .tm-head { display: flex; align-items: center; }
-  .tm-gap { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--ga-line, rgba(255,255,255,.08)); }
-  .tm-switch { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ga-ink-1, #e8ecf1); cursor: pointer; }
-  .tm-sub { color: var(--ga-ink-2, #a9b2bd); }
-  .tm-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 40px; align-items: center; gap: 8px; font-size: 11px; color: var(--ga-ink-2, #a9b2bd); }
-  .tm-row select { grid-column: 2 / 4; min-width: 0; }
+  .tm-gap { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--ga-line-1); }
+  .tm-switch { display: flex; align-items: center; gap: 6px; min-height: var(--ga-control-h-sm); font-size: var(--ga-text-control); color: var(--ga-ink-0); cursor: pointer; }
+  .tm-sub { color: var(--ga-ink-1); }
+  .tm-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) 40px; align-items: center; gap: 8px; min-height: var(--ga-control-h); font-size: var(--ga-text-control); color: var(--ga-ink-1); }
+  .tm-row select { grid-column: 2 / 4; min-width: 0; height: var(--ga-control-h); padding: 0 8px; font-size: var(--ga-text-control); border-radius: var(--ga-r-hard); }
   .tm-row input[type="range"] { width: 100%; min-width: 0; }
-  .tm-row em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; color: var(--ga-ink-1, #e8ecf1); }
-  .tm-hint { margin: 0; font-size: 11px; line-height: 1.35; color: var(--ga-ink-3, #7d8794); }
-  .tm-file { position: relative; display: inline-flex; align-self: flex-start; align-items: center; margin-top: 4px; padding: 5px 10px; font-size: 11px; border-radius: 4px; cursor: pointer; color: var(--ga-ink-1, #e8ecf1); background: var(--ga-surface-2, rgba(255,255,255,.06)); border: 1px solid var(--ga-line, rgba(255,255,255,.1)); }
-  .tm-file:hover { background: var(--ga-surface-3, rgba(255,255,255,.1)); }
+  .tm-row em { font-style: normal; text-align: right; font-size: var(--ga-text-meta); font-variant-numeric: tabular-nums; color: var(--ga-ink-1); }
+  .tm-hint { margin: 0 0 2px; font-size: var(--ga-text-meta); line-height: 1.4; color: var(--ga-ink-2); }
+  .tm-file { position: relative; display: inline-flex; align-self: flex-start; align-items: center; height: var(--ga-control-h); margin-top: 6px; padding: 0 10px; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); border-radius: var(--ga-r-hard); cursor: pointer; color: var(--ga-ink-1); background: var(--ga-sub); border: 1px solid var(--ga-line-2); }
+  .tm-file:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .tm-file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 </style>

@@ -45,30 +45,30 @@
     'identity': [],
     'depth-shift': [
       { label: 'Depth',     min: 0,    max: 3,    step: 0.01, idx: 0 },
-      { label: 'Auto-spin Speed', min: -2,  max: 2, step: 0.01, idx: 2 },
-      { label: 'Spin Axis (0=Y, 1=X)', min: 0, max: 1, step: 1, idx: 3 },
+      { label: 'Auto-spin speed', min: -2,  max: 2, step: 0.01, idx: 2 },
+      { label: 'Spin axis (0=Y, 1=X)', min: 0, max: 1, step: 1, idx: 3 },
     ],
     'sand-fall': [
-      { label: 'Fall Speed',min: 0.05, max: 3,    step: 0.01, idx: 0 },
+      { label: 'Fall speed',min: 0.05, max: 3,    step: 0.01, idx: 0 },
       { label: 'Floor Y',   min: -1.5, max: 1.5,  step: 0.01, idx: 1 },
-      { label: 'X Drift',   min: 0,    max: 0.2,  step: 0.001, idx: 2 },
+      { label: 'X drift',   min: 0,    max: 0.2,  step: 0.001, idx: 2 },
       { label: 'Density',   min: 0.05, max: 1,    step: 0.01, idx: 3 },
     ],
     'scatter': [
-      { label: 'Wobble Amp',min: 0,    max: 0.3,  step: 0.005, idx: 0 },
+      { label: 'Wobble amp',min: 0,    max: 0.3,  step: 0.005, idx: 0 },
       { label: 'Recovery',  min: 0,    max: 5,    step: 0.05, idx: 1 },
-      { label: 'Noise Freq',min: 0.5,  max: 30,   step: 0.5,  idx: 2 },
+      { label: 'Noise freq',min: 0.5,  max: 30,   step: 0.5,  idx: 2 },
     ],
     'halftone': [
-      { label: 'Cell Size', min: 0.003,max: 0.05, step: 0.001,idx: 0 },
+      { label: 'Cell size', min: 0.003,max: 0.05, step: 0.001,idx: 0 },
     ],
     'stipple-noise': [
-      { label: 'Wobble Amp',min: 0,    max: 0.05, step: 0.001, idx: 0 },
-      { label: 'Wobble Freq',min: 5,   max: 100,  step: 1,     idx: 1 },
+      { label: 'Wobble amp',min: 0,    max: 0.05, step: 0.001, idx: 0 },
+      { label: 'Wobble freq',min: 5,   max: 100,  step: 1,     idx: 1 },
     ],
     'dissolve': [
       { label: 'Spread',    min: 0,    max: 4,    step: 0.05, idx: 0 },
-      { label: 'Cycle Speed',min: 0.05,max: 3,    step: 0.05, idx: 1 },
+      { label: 'Cycle speed',min: 0.05,max: 3,    step: 0.05, idx: 1 },
       { label: 'Swirl',     min: -3,   max: 3,    step: 0.05, idx: 2 },
     ],
     // Flythrough mode doesn't use the generic knobs[] — all its
@@ -93,12 +93,12 @@
   };
 
   const MODES: { id: PixelFXMode; label: string; hint: string }[] = [
-    { id: 'depth-shift',   label: 'Depth Shift',  hint: 'Pixels displaced by luminance into Z. Use camera Yaw/Pitch (or Auto-spin) to view from any angle. Optional movable light source for shading.' },
+    { id: 'depth-shift',   label: 'Depth shift',  hint: 'Pixels displaced by luminance into Z. Use camera Yaw/Pitch (or Auto-spin) to view from any angle. Optional movable light source for shading.' },
     { id: 'flythrough',    label: 'Flythrough',   hint: 'Endless point-cloud tunnel: the source is replicated into N slabs along Z and the camera flies through them on a loop. Optional worm/brush-stroke topology where particles trail along their velocity vectors. Pair with curl-noise flow for fluid swirls through the tunnel.' },
-    { id: 'sand-fall',     label: 'Sand Fall',    hint: 'Continuous rain of pixel-grains from anchor down to floor. Each grain has its own phase so the stream looks granular and never stops.' },
+    { id: 'sand-fall',     label: 'Sand fall',    hint: 'Continuous rain of pixel-grains from anchor down to floor. Each grain has its own phase so the stream looks granular and never stops.' },
     { id: 'scatter',       label: 'Scatter',      hint: 'Pixels wobble around their anchor following a noise field. Image holds shape but constantly trembles.' },
     { id: 'halftone',      label: 'Halftone',     hint: 'Snap to a coarse grid; dot size scales with luminance. Print-style stipple.' },
-    { id: 'stipple-noise', label: 'Stipple Ink',  hint: 'Tight micro-wobble around anchor. Hand-drawn ink stipple animation.' },
+    { id: 'stipple-noise', label: 'Stipple ink',  hint: 'Tight micro-wobble around anchor. Hand-drawn ink stipple animation.' },
     { id: 'dissolve',      label: 'Dissolve',     hint: 'Continuously cycling swirl-and-fade. Particles loop from anchor outward and back.' },
     { id: 'identity',      label: 'Identity',     hint: 'Pixels at their anchor with subtle shimmer. Use camera controls to frame as a static 3D image.' },
   ];
@@ -159,11 +159,11 @@
         <span class="src-now">{selectedMedia.name}</span>
       {:else if content.sourceType === 'layer' && content.sourceLayerId}
         {@const sl = mediaLayers.find((l) => l.id === content.sourceLayerId)}
-        <span class="src-now">layer · {sl?.name ?? '?'}</span>
+        <span class="src-now">Layer · {sl?.name ?? '?'}</span>
       {:else if content.sourceUrl}
-        <span class="src-now">file</span>
+        <span class="src-now">File</span>
       {:else}
-        <span class="src-now empty">no source</span>
+        <span class="src-now empty">No source</span>
       {/if}
     </div>
 
@@ -172,7 +172,7 @@
          source. Image and video supported (videos pump per-frame so
          playback comes through). -->
     <div class="src-section">
-      <label class="src-section-label">Media Library</label>
+      <label class="src-section-label">Media library</label>
       {#if libraryItems.length === 0}
         <div class="hint mini">No media in your library yet. Drop images/videos onto the Media Tray to add them, or use the file picker below.</div>
       {:else}
@@ -231,7 +231,7 @@
       <div class="source-row">
         <button class="src-btn" onclick={pickFile}>
           {#if content.sourceUrl && content.sourceType !== 'layer' && content.sourceType !== 'media'}
-            <span class="src-status ok">●</span> {content.sourceType.toUpperCase()} loaded
+            <span class="src-status ok">●</span> {content.sourceType.charAt(0).toUpperCase() + content.sourceType.slice(1)} loaded
           {:else}
             <span class="src-status">○</span> Pick file…
           {/if}
@@ -291,7 +291,7 @@
         min={0} max={1} step={0.01}
         on:input={(e) => patch({ opacity: e.detail })} />
       <NumericInput
-        label="Anchor Jitter"
+        label="Anchor jitter"
         value={content.anchorJitter}
         min={0} max={1} step={0.01}
         on:input={(e) => patch({ anchorJitter: e.detail })} />
@@ -305,7 +305,7 @@
       <NumericInput label="FOV" value={content.fovDeg} min={20} max={100} step={1}
         displayValue={(v) => `${v.toFixed(0)}°`}
         on:input={(e) => patch({ fovDeg: e.detail })} />
-      <NumericInput label="Distance (Zoom)" value={content.cameraZ} min={0.5} max={8} step={0.05}
+      <NumericInput label="Distance (zoom)" value={content.cameraZ} min={0.5} max={8} step={0.05}
         on:input={(e) => patch({ cameraZ: e.detail })} />
       <NumericInput label="Yaw" value={content.cameraYaw ?? 0} min={-180} max={180} step={1}
         displayValue={(v) => `${v.toFixed(0)}°`}
@@ -319,7 +319,7 @@
         on:input={(e) => patch({ panY: e.detail })} />
       <button class="reset-cam" type="button"
         onclick={() => patch({ fovDeg: 50, cameraZ: 2.2, cameraYaw: 0, cameraPitch: 0, panX: 0, panY: 0 })}>
-        Reset Camera
+        Reset camera
       </button>
     </div>
 
@@ -353,7 +353,7 @@
           <input type="checkbox"
             checked={content.lightEnabled ?? false}
             onchange={(e) => patch({ lightEnabled: (e.target as HTMLInputElement).checked })} />
-          <span>{(content.lightEnabled ?? false) ? 'on' : 'off'}</span>
+          <span>{(content.lightEnabled ?? false) ? 'On' : 'Off'}</span>
         </label>
       </div>
       {#if content.lightEnabled}
@@ -368,7 +368,7 @@
             on:input={(e) => patch({ lightIntensity: e.detail })} />
           <NumericInput label="Ambient" value={content.lightAmbient ?? 0.25} min={0} max={1} step={0.01}
             on:input={(e) => patch({ lightAmbient: e.detail })} />
-          <NumericInput label="Surface Strength" value={content.lightHeightStrength ?? 1.5} min={0} max={4} step={0.01}
+          <NumericInput label="Surface strength" value={content.lightHeightStrength ?? 1.5} min={0} max={4} step={0.01}
             on:input={(e) => patch({ lightHeightStrength: e.detail })} />
         </div>
       {/if}
@@ -383,15 +383,15 @@
     {#if content.mode === 'flythrough'}
       <div class="sec-label sub">Flythrough — Camera Motion</div>
       <div class="slider-col">
-        <NumericInput label="Fly Speed"
+        <NumericInput label="Fly speed"
           value={content.flythroughFlySpeed ?? 0.8}
           min={-2} max={6} step={0.05}
           on:input={(e) => patch({ flythroughFlySpeed: e.detail })} />
-        <NumericInput label="Tunnel Depth"
+        <NumericInput label="Tunnel depth"
           value={content.flythroughTunnelDepth ?? 2.0}
           min={0.5} max={6} step={0.05}
           on:input={(e) => patch({ flythroughTunnelDepth: e.detail })} />
-        <NumericInput label="Slab Count"
+        <NumericInput label="Slab count"
           value={content.flythroughSlabCount ?? 4}
           min={2} max={8} step={1}
           displayValue={(v) => `${Math.round(v)} slabs`}
@@ -408,7 +408,7 @@
         <button class="mode-btn"
           class:active={(content.flythroughTopology ?? 'strokes') === 'strokes'}
           onclick={() => patch({ flythroughTopology: 'strokes' })}>
-          Worm Strokes
+          Worm strokes
         </button>
       </div>
       <div class="hint">
@@ -418,11 +418,11 @@
 
       {#if (content.flythroughTopology ?? 'strokes') === 'strokes'}
         <div class="slider-col">
-          <NumericInput label="Stroke Length"
+          <NumericInput label="Stroke length"
             value={content.flythroughStrokeLength ?? 0.08}
             min={0.01} max={0.4} step={0.005}
             on:input={(e) => patch({ flythroughStrokeLength: e.detail })} />
-          <NumericInput label="Stroke Width"
+          <NumericInput label="Stroke width"
             value={content.flythroughStrokeWidth ?? 0.006}
             min={0.001} max={0.05} step={0.0005}
             on:input={(e) => patch({ flythroughStrokeWidth: e.detail })} />
@@ -431,19 +431,19 @@
 
       <div class="sec-label sub">Flow & Anchor</div>
       <div class="slider-col">
-        <NumericInput label="Flow Strength"
+        <NumericInput label="Flow strength"
           value={content.flythroughFlowStrength ?? 0.4}
           min={0} max={2} step={0.01}
           on:input={(e) => patch({ flythroughFlowStrength: e.detail })} />
-        <NumericInput label="Flow Scale"
+        <NumericInput label="Flow scale"
           value={content.flythroughFlowScale ?? 2.0}
           min={0.5} max={8} step={0.05}
           on:input={(e) => patch({ flythroughFlowScale: e.detail })} />
-        <NumericInput label="Anchor Pull"
+        <NumericInput label="Anchor pull"
           value={content.flythroughAnchorPull ?? 1.2}
           min={0} max={3} step={0.01}
           on:input={(e) => patch({ flythroughAnchorPull: e.detail })} />
-        <NumericInput label="Depth Strength"
+        <NumericInput label="Depth strength"
           value={content.flythroughDepthStrength ?? 0.5}
           min={0} max={1.5} step={0.01}
           on:input={(e) => patch({ flythroughDepthStrength: e.detail })} />
@@ -459,7 +459,7 @@
         <button class="mode-btn"
           class:active={(content.flythroughDepthSource ?? 'luminance') === 'inverse-luminance'}
           onclick={() => patch({ flythroughDepthSource: 'inverse-luminance' })}>
-          Inverse Luma
+          Inverse luma
         </button>
         <button class="mode-btn"
           class:active={(content.flythroughDepthSource ?? 'luminance') === 'edge-density'}
@@ -474,12 +474,12 @@
           <input type="checkbox"
             checked={content.flythroughAudioReactive ?? false}
             onchange={(e) => patch({ flythroughAudioReactive: (e.target as HTMLInputElement).checked })} />
-          <span>{(content.flythroughAudioReactive ?? false) ? 'on' : 'off'}</span>
+          <span>{(content.flythroughAudioReactive ?? false) ? 'On' : 'Off'}</span>
         </label>
       </div>
       {#if content.flythroughAudioReactive}
         <div class="hint">
-          Bass modulates Fly Speed; treble modulates Flow Strength. Your configured
+          Bass modulates Fly speed; treble modulates Flow strength. Your configured
           values stay the no-audio baseline.
         </div>
       {/if}
@@ -490,14 +490,16 @@
 {/if}
 
 <style>
-  .pfx-panel { padding: 8px 12px; color: #d4d8e0; font-size: 13px; }
-  .sec-label { text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; opacity: 0.7; margin: 12px 0 6px; display: flex; align-items: center; gap: 6px; }
+  .pfx-panel { padding: 12px; color: var(--ga-ink-0); font-size: var(--ga-text-body); }
+  /* Eyebrow section label, same as every layer editor. */
+  .sec-label { text-transform: uppercase; font-size: var(--ga-text-eyebrow); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking); color: var(--ga-ink-2); margin: 16px 0 8px; display: flex; align-items: center; gap: 6px; min-height: var(--ga-control-h-sm); }
+  .pfx-panel > .sec-label:first-child { margin-top: 0; }
   .sec-label.sub { margin-top: 16px; }
   .src-section { margin-bottom: 10px; }
-  .src-section-label { display: block; font-size: 11px; opacity: 0.6; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
-  .src-select { width: 100%; background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-600); color: #d4d8e0; padding: 6px 8px; border-radius: 3px; font-size: 12.5px; cursor: pointer; }
-  .src-select:focus { outline: none; border-color: var(--ga-blue-300); }
-  .hint.mini { margin-top: 4px; padding: 4px 6px; font-size: 11px; }
+  .src-section-label { display: block; font-size: var(--ga-text-meta); color: var(--ga-ink-2); margin-bottom: 4px; }
+  .src-select { width: 100%; height: var(--ga-control-h); background: var(--ga-slot); border: 1px solid var(--ga-line-2); color: var(--ga-ink-0); padding: 0 8px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-control); cursor: pointer; }
+  .src-select:focus { outline: none; border-color: var(--ga-focus); }
+  .hint.mini { margin-top: 4px; padding: 4px 6px; font-size: var(--ga-text-meta); }
   .source-row { display: flex; gap: 6px; align-items: center; }
 
   /* Media library thumbnail grid */
@@ -507,42 +509,42 @@
     gap: 4px;
     max-height: 220px;
     overflow-y: auto;
-    padding: 2px;
-    background: var(--ga-blue-900);
-    border: 1px solid var(--ga-blue-mute-800);
-    border-radius: 4px;
+    padding: 4px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
   }
   .media-cell {
     position: relative;
-    background: var(--ga-blue-mute-800);
-    border: 1px solid var(--ga-blue-mute-800);
-    border-radius: 3px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-1);
+    border-radius: var(--ga-r-hard);
     padding: 0;
     cursor: pointer;
     overflow: hidden;
     aspect-ratio: 1;
     display: flex;
     flex-direction: column;
-    transition: transform 0.06s, border-color 0.06s;
+    transition: border-color 0.06s;
   }
-  .media-cell:hover { border-color: var(--ga-blue-mute-600); transform: translateY(-1px); }
-  .media-cell.active { border-color: var(--ga-blue-300); box-shadow: 0 0 0 1px var(--ga-blue-a28); }
+  .media-cell:hover { border-color: var(--ga-line-3); }
+  .media-cell.active { border-color: var(--ga-selection-line); box-shadow: 0 0 0 1px var(--ga-selection-line); }
   .media-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
   .video-placeholder {
-    background: var(--ga-blue-mute-800);
-    color: var(--ga-blue-300);
+    background: var(--ga-card);
+    color: var(--ga-ink-2);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 23px;
+    font-size: 20px;
     width: 100%; height: 100%;
   }
   .media-cell-label {
     position: absolute;
     left: 0; right: 0; bottom: 0;
     background: linear-gradient(transparent, rgba(0,0,0,0.85));
-    color: #d4d8e0;
-    font-size: 10px;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-eyebrow);
     padding: 12px 4px 3px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -551,22 +553,22 @@
   }
   .media-broken-badge {
     position: absolute; top: 2px; right: 2px;
-    background: #c33;
+    background: var(--ga-rec);
     color: #fff;
     width: 14px; height: 14px;
     border-radius: 50%;
-    font-size: 10px; font-weight: bold;
+    font-size: var(--ga-text-eyebrow); font-weight: 700;
     display: flex; align-items: center; justify-content: center;
   }
   .src-now {
     margin-left: auto;
-    font-size: 10.5px;
-    font-weight: 400;
-    opacity: 0.85;
-    color: var(--ga-blue-300);
-    background: var(--ga-blue-a08);
+    font-size: var(--ga-text-meta);
+    font-weight: 500;
+    color: var(--ga-ink-0);
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
     padding: 1px 6px;
-    border-radius: 8px;
+    border-radius: var(--ga-r-hard);
     text-transform: none;
     letter-spacing: 0;
     max-width: 140px;
@@ -574,26 +576,26 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .src-now.empty { color: #6b7280; background: transparent; opacity: 0.55; }
-  .src-btn { flex: 1; background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-600); color: #d4d8e0; padding: 8px 10px; border-radius: 4px; cursor: pointer; text-align: left; font-size: 13px; }
-  .src-btn:hover { background: var(--ga-blue-mute-800); }
-  .src-status { display: inline-block; width: 12px; opacity: 0.6; }
-  .src-status.ok { color: var(--ga-blue-300); opacity: 1; }
-  .mini-btn { background: transparent; border: 1px solid var(--ga-blue-mute-600); color: var(--text-secondary, #aaa); width: 26px; height: 26px; border-radius: 4px; cursor: pointer; font-size: 15px; }
-  .mini-btn:hover { background: var(--ga-blue-mute-800); color: #fff; }
+  .src-now.empty { color: var(--ga-ink-2); background: transparent; border-color: transparent; }
+  .src-btn { flex: 1; height: var(--ga-control-h); background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1); padding: 0 10px; border-radius: var(--ga-r-hard); cursor: pointer; text-align: left; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); }
+  .src-btn:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .src-status { display: inline-block; width: 12px; color: var(--ga-ink-2); }
+  .src-status.ok { color: var(--ga-live); }
+  .mini-btn { background: transparent; border: 1px solid var(--ga-line-2); color: var(--ga-ink-2); width: var(--ga-control-h); height: var(--ga-control-h); border-radius: var(--ga-r-hard); cursor: pointer; font-size: 14px; }
+  .mini-btn:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-  .mode-btn { background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-800); color: #b0b6c0; padding: 6px 8px; border-radius: 3px; cursor: pointer; font-size: 12px; transition: all 0.1s; }
-  .mode-btn:hover { background: var(--ga-blue-mute-800); color: #fff; }
-  .mode-btn.active { background: linear-gradient(135deg, var(--ga-blue-600) 0%, var(--ga-blue-mute-800) 100%); border-color: var(--ga-blue-300); color: var(--ga-blue-100); }
-  .hint { margin-top: 6px; padding: 6px 8px; background: var(--ga-blue-900); border-left: 2px solid var(--ga-blue-300); font-size: 11.5px; color: #8a96a6; line-height: 1.4; border-radius: 0 3px 3px 0; }
+  .mode-btn { height: var(--ga-control-h); background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1); padding: 0 8px; border-radius: var(--ga-r-hard); cursor: pointer; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); transition: all 0.1s; }
+  .mode-btn:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .mode-btn.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
+  .hint { margin-top: 6px; padding: 6px 8px; background: var(--ga-card); border-left: 2px solid var(--ga-line-3); font-size: var(--ga-text-meta); color: var(--ga-ink-2); line-height: 1.4; border-radius: 0 var(--ga-r-hard) var(--ga-r-hard) 0; }
   .slider-col { display: flex; flex-direction: column; gap: 8px; }
-  .toggle-inline { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11px; opacity: 0.8; cursor: pointer; }
-  .toggle-inline input { accent-color: var(--ga-blue-300); }
-  .reset-cam { background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-800); color: #b0b6c0; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; margin-top: 4px; }
-  .reset-cam:hover { background: var(--ga-blue-mute-800); color: #fff; border-color: var(--ga-blue-mute-600); }
+  .toggle-inline { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: var(--ga-text-control); font-weight: 500; color: var(--ga-ink-1); text-transform: none; letter-spacing: 0; cursor: pointer; }
+  .toggle-inline input { accent-color: var(--ga-selection-line); }
+  .reset-cam { align-self: flex-start; height: var(--ga-control-h-sm); background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1); padding: 0 10px; border-radius: var(--ga-r-hard); cursor: pointer; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); margin-top: 2px; }
+  .reset-cam:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .sc { display: flex; flex-direction: column; gap: 2px; }
-  .sc label { font-size: 11.5px; opacity: 0.85; display: flex; justify-content: space-between; }
-  .sc label b { color: var(--ga-blue-300); font-weight: 500; font-variant-numeric: tabular-nums; }
-  .sc input[type="range"] { width: 100%; accent-color: var(--ga-blue-300); }
-  .empty { padding: 24px; text-align: center; opacity: 0.5; font-size: 13px; }
+  .sc label { font-size: var(--ga-text-control); color: var(--ga-ink-1); display: flex; justify-content: space-between; }
+  .sc label b { color: var(--ga-ink-0); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .sc input[type="range"] { width: 100%; accent-color: var(--ga-slider-fill, var(--ga-blue)); }
+  .empty { padding: 24px; text-align: center; color: var(--ga-ink-2); font-size: var(--ga-text-body); }
 </style>

@@ -562,7 +562,7 @@
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 17px;
+    font-size: 16px;
     cursor: pointer;
     padding: 0 4px;
   }

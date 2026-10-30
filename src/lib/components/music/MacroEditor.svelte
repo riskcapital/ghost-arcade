@@ -52,17 +52,17 @@
   <aside class="editor" aria-label="{macro.name} effects">
     <header>
       <div class="title">
-        <span class="kicker">MACRO</span>
+        <span class="ga-eyebrow">Macro</span>
         <h2>{macro.name}</h2>
       </div>
       <StudioKnob label="Amount" value={macro.value} size={44} format={(v) => `${Math.round(v * 100)}%`} onchange={(v) => macros.setMacroValue(macro.id, v)} />
-      <button class="close" onclick={() => macroEditorId.set(null)} aria-label="Close macro effects">×</button>
+      <button class="close" onclick={() => macroEditorId.set(null)} aria-label="Close macro effects"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
     </header>
 
     <div class="scroll">
       <section>
         <div class="section-head">
-          <h3>SOUND</h3>
+          <h3 class="ga-eyebrow">Sound</h3>
           <select value="" onchange={addSound} aria-label="Add a sound effect">
             <option value="" disabled>Add sound effect…</option>
             {#each MACRO_FX as def (def.type)}<option value={def.type}>{def.label}</option>{/each}
@@ -73,8 +73,8 @@
           <div class="fx" class:off={!fx.enabled}>
             <div class="fx-head">
               <button class="power" class:on={fx.enabled} onclick={() => musicStudio.toggleMacroFx(macro.id, fx.id)} aria-pressed={fx.enabled} aria-label="{def.label} on"></button>
-              <span class="fx-name">{def.label.toUpperCase()}</span>
-              <button class="remove" onclick={() => musicStudio.removeMacroFx(macro.id, fx.id)} aria-label="Remove {def.label}">×</button>
+              <span class="fx-name">{def.label}</span>
+              <button class="remove" onclick={() => musicStudio.removeMacroFx(macro.id, fx.id)} aria-label="Remove {def.label}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             </div>
             <div class="params">
               {#each def.params as pd (pd.key)}
@@ -94,7 +94,7 @@
 
       <section>
         <div class="section-head">
-          <h3>PICTURE</h3>
+          <h3 class="ga-eyebrow">Picture</h3>
           <select value="" onchange={addPicture} aria-label="Add a visual effect">
             <option value="" disabled>Add visual effect…</option>
             {#each categories as category}
@@ -110,8 +110,8 @@
           <div class="fx" class:off={!effect.enabled}>
             <div class="fx-head">
               <button class="power" class:on={effect.enabled} onclick={() => macros.toggleEffect(macro.id, effect.id)} aria-pressed={effect.enabled} aria-label="{label(effect.type)} on"></button>
-              <span class="fx-name">{label(effect.type).toUpperCase()}</span>
-              <button class="remove" onclick={() => macros.removeEffect(macro.id, effect.id)} aria-label="Remove {label(effect.type)}">×</button>
+              <span class="fx-name">{label(effect.type)}</span>
+              <button class="remove" onclick={() => macros.removeEffect(macro.id, effect.id)} aria-label="Remove {label(effect.type)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             </div>
             <div class="params">
               {#each sliderDefs(effect.type) as d (d.param)}
@@ -131,7 +131,7 @@
 <style>
   .editor {
     position: absolute;
-    top: 52px;
+    top: var(--ga-bar-h, 48px);
     right: 0;
     bottom: 0;
     width: 460px;
@@ -150,36 +150,30 @@
     border-bottom: 1px solid var(--studio-edge-soft);
   }
   .title { flex: 1; }
-  .kicker { font-size: 10px; font-weight: 800; letter-spacing: 0.18em; color: var(--studio-accent); }
-  h2 { margin: 2px 0 0; font-size: 18px; letter-spacing: 0.12em; }
+  h2 { margin: 2px 0 0; font-size: var(--ga-text-heading, 16px); font-weight: var(--ga-weight-title, 650); }
   .close {
-    width: 30px;
-    height: 30px;
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    padding: 0;
+    display: grid;
+    place-items: center;
     border: 1px solid var(--studio-edge);
     background: transparent;
-    color: var(--studio-ink);
+    color: var(--studio-ink-1);
     border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 16px;
     cursor: pointer;
   }
+  .close:hover { color: var(--studio-ink); border-color: var(--studio-muted); }
+  .close svg { width: 14px; height: 14px; }
   .scroll { flex: 1; overflow: auto; padding: 6px 16px 16px; }
   section { padding-top: 10px; }
   .section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-  h3 { margin: 0; font-size: 11px; letter-spacing: 0.18em; color: var(--studio-muted); flex: 1; }
-  select {
-    height: 26px;
-    border: 1px solid var(--studio-edge);
-    background: var(--studio-slot);
-    color: var(--studio-ink);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 12px;
-  }
+  h3 { margin: 0; flex: 1; }
+  .section-head select { height: var(--ga-control-h, 26px); }
   .fx { padding: 8px 0 10px; border-top: 1px solid var(--studio-edge-soft); }
   .fx.off { opacity: 0.5; }
   .fx-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .fx-name { flex: 1; font-size: 12px; font-weight: 800; letter-spacing: 0.12em; }
+  .fx-name { flex: 1; font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-title, 650); }
   .power {
     width: 14px;
     height: 14px;
@@ -194,15 +188,17 @@
     width: 22px;
     height: 22px;
     padding: 0;
+    display: grid;
+    place-items: center;
     border: 0;
     background: transparent;
     color: var(--studio-muted);
-    font: inherit;
-    font-size: 15px;
     cursor: pointer;
   }
+  .remove:hover { color: var(--studio-ink); }
+  .remove svg { width: 12px; height: 12px; }
   .params { display: flex; flex-wrap: wrap; gap: 10px 6px; }
   .param { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 72px; }
   .now { font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; color: var(--studio-muted); text-align: center; }
-  .empty { margin: 4px 0 8px; color: var(--studio-muted); font-size: 12px; line-height: 1.5; }
+  .empty { margin: 4px 0 8px; color: var(--studio-muted); font-size: var(--ga-text-meta, 11px); line-height: 1.5; }
 </style>

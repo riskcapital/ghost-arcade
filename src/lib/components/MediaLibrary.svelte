@@ -745,7 +745,7 @@
      .library-header h3 below. Just raises the weight there. */
   .library-header h3 {
     font-weight: 800;
-    font-size: 19px;
+    font-size: 20px;
     color: var(--ga-ink-0, #eef0f4);
   }
 
@@ -922,7 +922,7 @@
     border: none;
     border-radius: 50%;
     color: #ff4444;
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.15s;
@@ -1041,7 +1041,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: color 0.14s, border-color 0.14s;
@@ -1096,7 +1096,7 @@
     background: none;
     border: none;
     color: rgba(255, 255, 255, 0.5);
-    font-size: 17px;
+    font-size: 16px;
     line-height: 1;
     cursor: pointer;
     padding: 2px 6px;

@@ -31,7 +31,7 @@
     align-items: center;
     gap: 12px;
     padding: 10px 0;
-    border-bottom: 1px solid #161618;
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
   .show-settings :global(.sc-label) {
     display: flex;
@@ -40,28 +40,31 @@
     flex: 1;
     min-width: 0;
   }
-  .show-settings :global(.sc-title) { font-size: 14px; color: var(--text-primary, #eee); }
-  .show-settings :global(.sc-hint) { font-size: 12px; color: #777; }
+  .show-settings :global(.sc-title) { font-size: var(--ga-text-body, 13px); font-weight: var(--ga-weight-body, 500); color: var(--ga-ink-0, #eee); }
+  .show-settings :global(.sc-hint) { font-size: var(--ga-text-meta, 11px); line-height: 1.45; color: var(--ga-ink-2, #777); }
+  /* Sub-headings: eyebrow. */
   .show-settings :global(.sc-sub) {
-    margin: 14px 0 4px;
-    font-size: 12px;
-    font-weight: 600;
+    margin: 16px 0 4px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #9a9aa6;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2, #9a9aa6);
   }
   .show-settings :global(select),
   .show-settings :global(input[type='text']),
   .show-settings :global(input[type='number']),
   .show-settings :global(input[type='time']),
   .show-settings :global(input[type='date']) {
-    background: #09090c;
-    border: 1px solid #33333a;
-    border-radius: 4px;
-    color: #e7e7eb;
-    padding: 5px 7px;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    background: var(--ga-slot, #09090c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 4px);
+    color: var(--ga-ink-0, #e7e7eb);
+    padding: 0 8px;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
   }
   .show-settings :global(input[type='checkbox']) { width: 16px; height: 16px; cursor: pointer; }
 </style>

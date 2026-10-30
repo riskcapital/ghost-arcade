@@ -4,7 +4,7 @@
    * rows (kick bottom left, as on a pad controller) and the shots above.
    * Velocity comes from pressure where the screen reports it, otherwise
    * from where the pad is hit: higher up is harder. Several fingers play at
-   * once. Note repeat keeps a held pad playing on the beat grid, and REC
+   * once. Note repeat keeps a held pad playing on the beat grid, and Rec
    * records the pads into the beat grid as they are played.
    */
   import { DRUM_LABELS, DRUM_NOTES, type DrumVoice } from '../../music/noteEvents';
@@ -14,7 +14,7 @@
   import { REPEAT_RATES, padDown, padUp, toggleLoopRecord, type PadSound } from '../../music/musicRuntime';
   import StudioModule from './StudioModule.svelte';
 
-  let { title = 'PADS' }: { title?: string } = $props();
+  let { title = 'Pads' }: { title?: string } = $props();
 
   interface Pad {
     sound: PadSound;
@@ -77,16 +77,16 @@
 
 <StudioModule {title} led={recording}>
   {#snippet head()}
-    <button class="rec" class:on={recording} class:count={t.loopRec.phase === 'count'} onclick={toggleLoopRecord} aria-pressed={recording} title={recording ? 'Stop recording on the next bar' : 'Record into the beat from the next bar'}>
-      <span class="dot"></span>REC
+    <button class="loop-rec" class:on={recording} class:count={t.loopRec.phase === 'count'} onclick={toggleLoopRecord} aria-pressed={recording} title={recording ? 'Stop recording on the next bar' : 'Record into the beat from the next bar'}>
+      <span class="dot"></span>Rec
     </button>
-    <button class="text-btn small" class:on={full} aria-pressed={full} onclick={() => (full = !full)} title="Every hit at full velocity">FULL</button>
-    <button class="text-btn small" class:on={repeat} aria-pressed={repeat} onclick={() => (repeat = !repeat)} title="Hold a pad to repeat it on the beat">REPEAT</button>
+    <button class="studio-btn" class:on={full} aria-pressed={full} onclick={() => (full = !full)} title="Every hit at full velocity">Full</button>
+    <button class="studio-btn" class:on={repeat} aria-pressed={repeat} onclick={() => (repeat = !repeat)} title="Hold a pad to repeat it on the beat">Repeat</button>
     <select bind:value={rate} disabled={!repeat} aria-label="Repeat rate">
       {#each REPEAT_RATES as r}<option value={r.id}>{r.id}</option>{/each}
     </select>
   {/snippet}
-  <div class="pads" title="Higher on a pad hits harder. REC writes the pads into the beat.">
+  <div class="pads" title="Higher on a pad hits harder. Rec writes the pads into the beat.">
     {#each PADS as pad, i (pad.held)}
       <button
         class="pad"
@@ -127,8 +127,8 @@
     color: var(--studio-muted);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 10px;
-    font-weight: 650;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
     text-align: left;
     cursor: pointer;
     touch-action: none;
@@ -140,27 +140,4 @@
   kbd { position: absolute; right: 5px; bottom: 3px; font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; color: var(--studio-muted); pointer-events: none; }
   .pad.lit { background: var(--studio-accent); border-color: var(--studio-accent); color: var(--studio-on-accent); transition: none; }
   .pad.lit kbd { color: var(--studio-on-accent); }
-  .rec {
-    height: 22px;
-    padding: 0 8px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    border: 1px solid var(--studio-edge);
-    background: transparent;
-    color: var(--studio-ink);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-  }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ga-rec, #ff3b30); opacity: 0.55; }
-  .rec.on { border-color: var(--ga-rec, #ff3b30); color: var(--ga-rec, #ff3b30); }
-  .rec.on .dot { opacity: 1; }
-  .rec.count .dot { animation: blink 0.5s steps(2, jump-none) infinite; }
-  @keyframes blink { 50% { opacity: 0.2; } }
-  .text-btn.on { border-color: var(--studio-accent); color: var(--studio-accent); }
-  select { height: 22px; }
 </style>

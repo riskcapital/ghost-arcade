@@ -19,7 +19,7 @@
 <svelte:window onblur={release} onkeyup={(e) => setTempoNudgeInput(`panel-tempo:key:${e.code}`, 0)} />
 <div data-help-page="midi-audio" class="tempo-controls" title={following ? 'Ableton Link controls tempo and phase' : 'Bend the local beat clock or set a new downbeat'}>
   <div class="nudge-group">
-  <span class="nudge-label">NUDGE</span>
+  <span class="nudge-label">Nudge</span>
   {#each [-1, 1] as direction}
     <button disabled={following} class:active={$launchClock.nudge === direction}
       aria-label={direction < 0 ? 'Hold to slow tempo' : 'Hold to speed up tempo'}
@@ -35,15 +35,16 @@
   </div>
   <button disabled={following} onclick={() => resyncLaunchClock()}
     aria-label="Resync phrase" title={following ? 'Disabled while following Ableton Link' : 'Make now the downbeat; restart BPM-synced video and align synced LFOs'}
-    data-midi-path="vj:tempo:resync" data-midi-label="Phrase resync" data-midi-mode="toggle">RESYNC</button>
+    data-midi-path="vj:tempo:resync" data-midi-label="Phrase resync" data-midi-mode="toggle">Resync</button>
 </div>
 <style>
-  .tempo-controls { display: flex; align-items: center; gap: 4px; }
-  .nudge-group { display: flex; align-items: center; height: 28px; box-sizing: border-box; border: 1px solid #444; border-radius: 4px; background: #222; overflow: hidden; }
-  .nudge-label { padding: 0 5px; font-size: 10px; color: #aaa; }
-  button { height: 28px; padding: 0 6px; border: 1px solid #444; background: #222; color: #ccc; border-radius: 4px; font-size: 10px; cursor: pointer; white-space: nowrap; }
-  .nudge-group button { width: 24px; height: 26px; padding: 0; border: 0; border-left: 1px solid #444; border-radius: 0; font-size: 15px; }
-  button:focus-visible { outline: 2px solid #bb86fc; outline-offset: -2px; }
-  button.active { border-color: #46d18a; color: #b4ffcf; background: #183225; }
+  .tempo-controls { display: flex; align-items: center; gap: 6px; }
+  .nudge-group { display: flex; align-items: center; height: var(--ga-bar-control-h, 30px); box-sizing: border-box; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px); background: var(--ga-card, #16140f); overflow: hidden; }
+  .nudge-label { padding: 0 8px; font-size: var(--ga-text-control, 12px); font-weight: 600; color: var(--ga-ink-2); }
+  button { height: var(--ga-bar-control-h, 30px); padding: 0 12px; border: 1px solid var(--ga-line-2); background: var(--ga-card, #16140f); color: var(--ga-ink-0); border-radius: var(--ga-r-hard, 5px); font: inherit; font-size: var(--ga-text-body, 13px); font-weight: 600; cursor: pointer; white-space: nowrap; }
+  button:hover:not(:disabled) { border-color: var(--ga-line-3); }
+  .nudge-group button { width: 28px; height: 100%; padding: 0; border: 0; border-left: 1px solid var(--ga-line-2); border-radius: 0; font-size: var(--ga-text-title, 14px); }
+  button:focus-visible { outline: 2px solid var(--ga-focus, #8aa4ff); outline-offset: -2px; }
+  button.active { border-color: var(--ga-selection-line); color: var(--ga-selection-ink); background: var(--ga-selection-bg); }
   button:disabled { opacity: 0.4; cursor: default; }
 </style>

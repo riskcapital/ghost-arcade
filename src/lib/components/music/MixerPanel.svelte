@@ -84,13 +84,13 @@
         {#if id === 'input'}
           <div class="input-head">
             <button class="power" class:on={s.inputOn} aria-pressed={s.inputOn} onclick={toggleInput} title={s.inputOn ? 'Stop listening to the input' : 'Listen to the input'}>
-              <span class="led" class:on={s.inputOn}></span>{s.inputOn ? 'ON' : 'OFF'}
+              <span class="led" class:on={s.inputOn}></span>{s.inputOn ? 'On' : 'Off'}
             </button>
             <select aria-label="Audio input" value={s.inputDevice} onchange={(e) => void chooseDevice((e.target as HTMLSelectElement).value)}>
               <option value="">Default input</option>
               {#each devices as d (d.id)}<option value={d.id}>{d.label}</option>{/each}
             </select>
-            <label class="field">
+            <label class="labelled">
               <span>Feeds</span>
               <select aria-label="What the visuals see the input as" value={s.liveInput.role} onchange={(e) => musicStudio.setLiveInput({ role: (e.target as HTMLSelectElement).value as VoiceSourceId })}>
                 {#each VOICE_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
@@ -98,7 +98,7 @@
             </label>
             <div class="row">
               <StudioKnob label="Sens" value={s.liveInput.sensitivity} defaultValue={0.5} size={22} title="How quietly you can play and still trigger the visuals" onchange={(v) => musicStudio.setLiveInput({ sensitivity: v })} />
-              <button class="chip" class:on={s.liveInput.monitor} aria-pressed={s.liveInput.monitor} onclick={() => musicStudio.setLiveInput({ monitor: !s.liveInput.monitor })} title="Hear the input through the mix. Off, it only drives the visuals.">MON</button>
+              <button class="chip" class:on={s.liveInput.monitor} aria-pressed={s.liveInput.monitor} onclick={() => musicStudio.setLiveInput({ monitor: !s.liveInput.monitor })} title="Hear the input through the mix. Off, it only drives the visuals.">Monitor</button>
             </div>
             {#if s.inputError}<span class="error" role="alert">{s.inputError}</span>{/if}
           </div>
@@ -150,21 +150,22 @@
   }
   .strip.input { width: 168px; border-color: var(--studio-edge); }
   .strip.off { opacity: 0.4; }
-  .name { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--studio-ink); }
+  /* Strip names are eyebrows, in the panel's ink. */
+  .name { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; white-space: nowrap; color: var(--studio-ink); }
   .eq { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
   .strip.input .eq { grid-template-columns: repeat(4, 1fr); }
   .ms { display: flex; gap: 4px; }
   .chip {
     min-width: 26px;
-    height: 22px;
+    height: var(--ga-control-h-sm, 22px);
     padding: 0 6px;
     border: 1px solid var(--studio-edge);
     background: var(--studio-slot);
     color: var(--studio-muted);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 10px;
-    font-weight: 700;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
   .chip.on { color: var(--studio-on-accent); background: var(--studio-accent); border-color: var(--studio-accent); }
@@ -172,23 +173,14 @@
   .level { flex: 1; min-height: 80px; display: flex; gap: 4px; align-items: stretch; }
   .meter { width: 5px; background: var(--studio-slot); border: 1px solid var(--studio-edge-soft); border-radius: 2px; position: relative; margin: 6px 0; overflow: hidden; }
   .meter-fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--studio-accent); transition: height 60ms linear; }
-  .meter-fill.hot { background: #e5483a; }
+  .meter-fill.hot { background: var(--ga-rec, #e5483a); }
   .input-head { width: 100%; display: flex; flex-direction: column; gap: 6px; }
-  .input-head select {
-    width: 100%;
-    height: 24px;
-    background: var(--studio-slot);
-    color: var(--studio-ink);
-    border: 1px solid var(--studio-edge);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 11px;
-  }
-  .field { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--studio-muted); }
-  .field select { flex: 1; }
+  .input-head select { width: 100%; min-width: 0; }
+  .labelled { display: flex; align-items: center; gap: 6px; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
+  .labelled select { flex: 1; }
   .row { display: flex; align-items: center; justify-content: space-between; }
   .power {
-    height: 24px;
+    height: var(--ga-control-h-sm, 22px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -198,13 +190,12 @@
     color: var(--studio-ink);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
   .power.on { border-color: var(--studio-accent); color: var(--studio-accent); }
   .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-edge); }
   .led.on { background: var(--studio-accent); box-shadow: 0 0 8px var(--studio-accent); }
-  .error { font-size: 10px; color: #e5483a; }
+  .error { font-size: var(--ga-text-meta, 11px); color: var(--ga-rec, #e5483a); }
 </style>

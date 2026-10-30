@@ -4441,11 +4441,13 @@
       <div class="header-stage-slot">
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
-          <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">STAGE</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Mapping presets and live clips on the shared map. Rows hold presets that stack with opacity and blend modes, or clips that play on any surface whose Source is that row">MAP</button>
+          <div class="ga-segmented" role="group" aria-label="Output routing">
+            <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} aria-pressed={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">Mix</button>
+            <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} aria-pressed={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">Stage</button>
+            <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} aria-pressed={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Mapping presets and live clips on the shared map. Rows hold presets that stack with opacity and blend modes, or clips that play on any surface whose Source is that row">Map</button>
+          </div>
           {#if $vjClipLauncher.mapMode}
-            <button class="stage-mix-btn vj-looks-btn" class:active={showVjLooks} onclick={() => (showVjLooks = !showVjLooks)}
+            <button class="minimize-btn stage-sim-btn vj-looks-btn" class:active={showVjLooks} aria-pressed={showVjLooks} onclick={() => (showVjLooks = !showVjLooks)}
               title="One-click beat-synced looks for the shapes on the map"><LooksIcon size={14} /> Looks</button>
           {/if}
         </div>
@@ -4494,6 +4496,22 @@
             <path d="M21.5 7.5v11" />
           </svg>
         </button>
+        <!-- Same glyph mapping mode's Stage Sim button uses, so the two
+             modes read as the same destination. -->
+        <button class="minimize-btn stage-sim-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open Stage Simulator" aria-label="Open Stage Simulator">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 16.4 12 12l8 4.4-8 4.5-8-4.5Z" />
+            <path d="M7.2 14.7V8.6L12 5.5l4.8 3.1v6.1" />
+            <path d="M7.2 8.6 12 11.5l4.8-2.9" />
+            <path d="M12 5.5v6" />
+          </svg>
+          Stage Sim
+        </button>
+        <button class="minimize-btn stage-sim-btn" onclick={openLiveStageEditor} title="Edit live 2D stage screens, warp, and VJ routing" aria-label="Edit live 2D stage">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
+          Stage Edit
+        </button>
+        <span class="vj-divider" aria-hidden="true"></span>
         <div class="rec-split">
         {#if vjIsRecording}
           <div class="vj-recording-indicator">
@@ -4514,11 +4532,12 @@
             class="vj-rec-btn"
             onclick={vjStartRecording}
             title="Record Output"
+            aria-label="Record output"
             data-midi-path="vj:rec"
             data-midi-label="Record Output"
             data-midi-mode="toggle"
           >
-            ● REC
+            ●
           </button>
         {/if}
         {#if nativeEngineActive}
@@ -4526,27 +4545,16 @@
         {/if}
         </div>
 
-        <!-- Same glyph mapping mode's Stage Sim button uses, so the two
-             modes read as the same destination. -->
-        <button class="minimize-btn stage-sim-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open Stage Simulator" aria-label="Open Stage Simulator">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 16.4 12 12l8 4.4-8 4.5-8-4.5Z" />
-            <path d="M7.2 14.7V8.6L12 5.5l4.8 3.1v6.1" />
-            <path d="M7.2 8.6 12 11.5l4.8-2.9" />
-            <path d="M12 5.5v6" />
-          </svg>
-          Stage Sim
-        </button>
-        <button class="minimize-btn stage-sim-btn" onclick={openLiveStageEditor} title="Edit live 2D stage screens, warp, and VJ routing" aria-label="Edit live 2D stage">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
-          Stage Edit
-        </button>
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="exit-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output">Exit VJ</button>
+        <!-- Mode switch: the same control, in the same place, in mapping mode. -->
+        <div class="ga-mode-switch" role="group" aria-label="Mode">
+          <button onclick={handleExitVJClick} aria-pressed="false" title="Exit VJ and stop live output">Mapping</button>
+          <button class="active" aria-pressed="true" title="VJ">VJ</button>
+        </div>
         {#if isDesktopApp && !isMac}
           <!-- Frameless window controls, mirroring the mapping-mode toolbar's
                top-right cluster (App.svelte). VJ mode hides the mapping
@@ -7163,7 +7171,7 @@
 />
 
 <style>
-  .stage-effect-description { font-size: 12px; line-height: 1.5; color: var(--text-secondary, #aab2c2); margin: 0 0 10px; }
+  .stage-effect-description { font-size: var(--ga-text-control, 12px); line-height: 1.5; color: var(--ga-ink-1, #ada9a2); margin: 0 0 10px; }
   .clip-overrides { margin: 8px 12px 12px; border: 1px solid var(--ga-line-2, #303540); border-radius: 7px; }
   .clip-overrides summary { padding: 9px 12px; cursor: pointer; color: var(--ga-ink-1, #adb3bf); font-size: 12px; font-weight: 600; }
   .clip-overrides summary span { float: right; font-size: 10px; font-weight: 400; opacity: .75; }
@@ -7177,14 +7185,16 @@
   .launch-option-row input { flex:0 0 auto; }
 
   .vt-cues { margin: 8px 0; }
-  .vt-cues-label { font-size: 10px; color: #aaa; margin-bottom: 5px; }
+  .vt-cues-label { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--ga-ink-2, #89857e); margin-bottom: 6px; }
   .vt-cue-pads { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; }
   .vt-cue-slot { display: flex; flex-direction: column; gap: 2px; }
-  .vt-cue-pad { min-width: 0; padding: 7px 0; border: 1px solid #555; border-radius: 4px; background: #252525; color: #ccc; cursor: pointer; }
-  .vt-cue-pad.saved { background: #153b38; border-color: #40baa7; color: #c9fff3; }
-  .vt-cue-clear { padding: 0; border: none; background: transparent; color: #aaa; cursor: pointer; }
+  .vt-cue-pad { min-width: 0; height: var(--ga-control-h, 26px); padding: 0; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); background: var(--ga-card, #16140f); color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-control, 12px); font-weight: 600; cursor: pointer; }
+  .vt-cue-pad:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
+  .vt-cue-pad.saved { background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff); }
+  .vt-cue-clear { padding: 0; border: none; background: transparent; color: var(--ga-ink-2, #89857e); cursor: pointer; }
+  .vt-cue-clear:hover:not(:disabled) { color: var(--ga-rec, #ff3b30); }
   .vt-cue-clear:disabled { opacity: 0.2; cursor: default; }
-  .vt-cues p { margin: 4px 0; color: #999; font-size: 10px; }
+  .vt-cues p { margin: 4px 0; color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); }
 
   .effect-chain-warning { color: #f4c46a; font-size: 11px; line-height: 1.5; padding: 6px 8px; }
   /* VJ Overlay */
@@ -7196,12 +7206,12 @@
     display: flex;
     flex-direction: column;
     transition: bottom 0.2s ease-out;
-    --vj-header-h: 58px;
+    --vj-header-h: 48px;
     --vj-header-pad-x: 12px;
-    --vj-header-gap: 8px;
+    --vj-header-gap: 6px;
     --vj-half-gap: 4px;
     --vj-meter-gap: 6px;
-    --vj-right-gap: 4px;
+    --vj-right-gap: 6px;
     --vj-control-h: 30px;
     --vj-icon-btn: 30px;
     --vj-header-font: 13px;
@@ -7210,9 +7220,9 @@
     --vj-file-pad-x: 10px;
     --vj-master-slider-w: 58px;
     --vj-logo-h: 26px;
-    --vj-macro-slot: 46px;
-    --vj-macro-knob: 34px;
-    --vj-macro-bank-w: 382px;
+    --vj-macro-slot: 44px;
+    --vj-macro-knob: 26px;
+    --vj-macro-bank-w: 368px;
     --vj-macro-gap: 0px;
     --vj-macro-name-font: 9px;
     --vj-snap-font: 12px;
@@ -7236,103 +7246,50 @@
   }
   .header-stage {
     display: flex;
+    align-items: center;
+    gap: var(--ga-bar-gap, 6px);
     flex: 0 0 auto;
-    border-radius: 6px;
-    overflow: hidden;
-    border: 1px solid #444;
     z-index: 2;
   }
 
-  .stage-mix-btn {
-    height: var(--vj-control-h);
-    padding: 0 var(--vj-stage-pad-x);
-    background: #1a1a1a;
-    border: none;
-    color: var(--text-muted, #888);
-    font-size: var(--vj-header-font);
-    font-weight: 700;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .stage-mix-btn:first-child {
-    border-right: 1px solid #444;
-  }
-
-  .stage-mix-btn:hover {
-    color: #fff;
-    background: #2a2a2a;
-  }
-
-  .stage-mix-btn.active {
-    background: #f90;
-    color: #000;
-  }
-
-  /* ===== A/B Crossfader toggle (right cluster) =====
-     Slot-in icon-button — same height (32px) and visual weight as the
-     other right-cluster controls so it reads as one tidy grid. The
-     gradient/glow stays for the active state so it remains the most
-     distinctive toggle in the row. */
-  .ab-toggle-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: var(--vj-control-h);
-    padding: 0 calc(var(--vj-stage-pad-x) - 2px);
-    border-radius: var(--ga-r-hard, 2px);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
-    background: transparent;
-    color: var(--ga-ink-1, #b8bdc6);
-    font-size: var(--vj-header-font);
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
-    flex: 0 0 auto;
-  }
-  .ab-toggle-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.30);
-    color: var(--ga-ink-0, #eef0f4);
-  }
-  .ab-toggle-btn.active {
-    background: linear-gradient(135deg, #FF8577, var(--ga-blue-200));
-    color: #0a0a0a;
-    border-color: transparent;
-    box-shadow: 0 0 12px rgba(255, 133, 119, 0.45);
-  }
-  .ab-toggle-glyph {
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-  }
-  .ab-toggle-label {
-    text-transform: uppercase;
-  }
+  /* ===== Deck toolbar toggles: Sequencer, Music, Split deck A/B =====
+     Same chip as the dock's tempo controls: card face, hairline, sentence
+     case. On is the selection colour, as for every other toggle. */
+  .ab-toggle-btn,
   .vj-seq-toggle-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: var(--vj-icon-btn);
     height: var(--vj-control-h);
-    padding: 0;
-    border-radius: var(--ga-r-hard, 2px);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
-    background: transparent;
-    color: var(--ga-ink-1, #b8bdc6);
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-1, #ada9a2);
+    font-family: inherit;
+    font-size: var(--vj-header-font);
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
     flex: 0 0 auto;
   }
+  .ab-toggle-btn:hover,
   .vj-seq-toggle-btn:hover {
-    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
-    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4));
-    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
   }
+  .ab-toggle-btn.active,
   .vj-seq-toggle-btn.active {
-    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
-    border-color: var(--ga-coral, #ff6f5e);
-    box-shadow: 0 0 12px var(--ga-coral-glow, rgba(255,111,94,.35));
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
+  }
+  .ab-toggle-btn:focus-visible,
+  .vj-seq-toggle-btn:focus-visible {
+    outline: 2px solid var(--ga-focus, #8aa4ff);
+    outline-offset: 1px;
   }
 
   /* ===== Dual decks (crossfader on) ===== */
@@ -7351,27 +7308,26 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    border: 1px solid #2a2a2a;
-    border-radius: 8px;
-    background: #0c0c10;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-soft, 8px);
+    background: var(--ga-void, #0a0908);
     padding: 8px;
     transition: border-color 0.18s, box-shadow 0.18s;
   }
   .deck-wrapper.deck-a { border-top: 2px solid color-mix(in srgb, var(--ga-blue-200) 55%, transparent); }
   .deck-wrapper.deck-b { border-top: 2px solid rgba(255, 133, 119, 0.55); }
   .deck-wrapper.focused {
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 12px 32px rgba(0, 0, 0, 0.45);
-    border-color: #555;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
+  /* Eyebrow, in the deck's own colour. */
   .deck-label {
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
-    letter-spacing: 0.18em;
-    color: var(--text-muted, #888);
-    padding: 2px 6px;
-    border-radius: 3px;
-    background: rgba(255, 255, 255, 0.04);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    line-height: 1.2;
+    color: var(--ga-ink-2, #89857e);
   }
   /* Deck name and LIVE share the pinned corner above the layer controls. */
   .deck-corner-header {
@@ -7392,9 +7348,12 @@
     right: 0;
   }
   .deck-corner-live {
-    font-size: 10px;
-    font-weight: 600;
-    color: #666;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    line-height: 1.2;
+    color: var(--ga-ink-2, #89857e);
   }
   /* The header fills the wrapper's top padding so rows scrolling up
      cannot show above it. */
@@ -7414,9 +7373,9 @@
     align-items: center;
     gap: 8px;
     padding: 12px 8px;
-    background: linear-gradient(180deg, #0a0a0e, #0e0e14);
-    border: 1px solid #2a2a2a;
-    border-radius: 8px;
+    background: var(--ga-bar, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-soft, 8px);
   }
   .xfade-mod-row {
     width: 100%;
@@ -7426,11 +7385,13 @@
     gap: 3px;
     margin-bottom: 1px;
   }
+  /* Faceplate legends on the fader strip. */
   .xfade-mod-label {
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    color: rgba(148, 163, 184, 0.72);
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
     line-height: 1;
   }
   .crossfader-strip .mod-source-chip.xfade-mod-chip {
@@ -7457,17 +7418,17 @@
   }
   .cut-btn {
     width: 44px;
-    height: 22px;
-    border: 1px solid #444;
-    background: var(--ga-blue-900);
-    color: var(--text-secondary, #aaa);
-    border-radius: 4px;
-    font-size: 14px;
+    height: var(--ga-control-h-sm, 22px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-1, #ada9a2);
+    border-radius: var(--ga-r-hard, 5px);
+    font-size: var(--ga-text-control, 12px);
     line-height: 1;
     cursor: pointer;
     transition: background 0.12s, border-color 0.12s, color 0.12s;
   }
-  .cut-btn:hover { background: var(--ga-blue-mute-800); color: #fff; }
+  .cut-btn:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
   .cut-btn.cut-a.active { background: var(--ga-blue-200); color: #000; border-color: var(--ga-blue-200); }
   .cut-btn.cut-b.active { background: #FF8577; color: #000; border-color: #FF8577; }
 
@@ -7506,7 +7467,7 @@
     padding: 0;
     background: transparent;
     opacity: 0;
-    accent-color: var(--accent-primary, #BB86FC);
+    accent-color: var(--ga-selection-line, #5278ff);
     cursor: pointer;
   }
   .xfade-vertical-rail {
@@ -7605,12 +7566,12 @@
 
   .xfade-readout {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
-    color: var(--accent-primary, #BB86FC);
-    letter-spacing: 0.05em;
+    font-size: var(--ga-text-meta, 11px);
+    font-variant-numeric: tabular-nums;
+    color: var(--ga-ink-1, #ada9a2);
     padding: 2px 6px;
-    background: rgba(187, 134, 252, 0.08);
-    border-radius: 3px;
+    background: var(--ga-slot, #060504);
+    border-radius: var(--ga-r-hard, 5px);
   }
 
   .xfade-time-control {
@@ -7619,31 +7580,30 @@
     flex-direction: column;
     gap: 3px;
     align-items: center;
-    color: rgba(148, 163, 184, 0.72);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
     line-height: 1;
   }
 
   .xfade-select {
     width: 76px;
-    padding: 4px 6px;
-    background: var(--ga-blue-900);
-    border: 1px solid #333;
-    border-radius: 4px;
-    color: var(--text-primary, #ddd);
-    font-size: 11px;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 6px;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
     cursor: pointer;
     text-align: center;
   }
-  .xfade-select:hover { border-color: #555; }
-  .xfade-select.xfade-curve { color: var(--text-secondary, #aaa); }
-  .xfade-select.xfade-time {
-    color: var(--ga-blue-100);
-  }
+  .xfade-select:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
 
   /* When dual decks are active, individual deck-wrappers handle their own
      horizontal + vertical scroll so the vertical fader between them stays
@@ -7653,7 +7613,7 @@
   .deck-wrapper {
     overflow: auto;
     position: relative;       /* anchor for the .scroll-hint arrow below */
-    --vj-deck-bg: #0c0c10;
+    --vj-deck-bg: var(--ga-void, #0a0908);
   }
 
   /* Lock cell + column-trigger widths inside dual-deck mode so the two
@@ -7692,13 +7652,13 @@
     height: 10px;            /* horizontal — the part users actually see */
   }
   .deck-wrapper::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--ga-line-1, rgba(245, 236, 222, 0.07));
     border-radius: 5px;
   }
   .deck-wrapper.deck-a::-webkit-scrollbar-thumb {
     background: color-mix(in srgb, var(--ga-blue-200) 55%, transparent);
     border-radius: 5px;
-    border: 2px solid #0c0c10;
+    border: 2px solid var(--vj-deck-bg);
   }
   .deck-wrapper.deck-a::-webkit-scrollbar-thumb:hover {
     background: color-mix(in srgb, var(--ga-blue-200) 85%, transparent);
@@ -7706,7 +7666,7 @@
   .deck-wrapper.deck-b::-webkit-scrollbar-thumb {
     background: rgba(255, 133, 119, 0.55);
     border-radius: 5px;
-    border: 2px solid #0c0c10;
+    border: 2px solid var(--vj-deck-bg);
   }
   .deck-wrapper.deck-b::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 133, 119, 0.85);
@@ -7755,12 +7715,12 @@
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
     position: relative;
-    gap: var(--vj-header-gap);
+    gap: var(--ga-bar-group-gap, 14px);
     min-height: var(--vj-header-h);
     box-sizing: border-box;
-    padding: 6px var(--vj-header-pad-x);
-    background: #141414;
-    border-bottom: 1px solid #333;
+    padding: 0 var(--vj-header-pad-x);
+    background: var(--ga-bar, #100f0d);
+    border-bottom: 1px solid var(--ga-line-2);
     flex-shrink: 0;
     overflow: visible;
     font-size: var(--vj-header-font);
@@ -7903,25 +7863,25 @@
 
   .vj-file-menu-container { position: relative; margin-right: var(--vj-half-gap); }
   .vj-file-menu-btn {
-    display: flex; align-items: center; gap: 4px;
-    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-primary, #ddd); font-size: var(--vj-header-font); height: var(--vj-control-h); padding: 0 var(--vj-file-pad-x); border-radius: 4px; cursor: pointer;
+    display: flex; align-items: center; gap: 7px;
+    background: var(--ga-card, #16140f); border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0); font-size: var(--vj-header-font); font-weight: 600; height: var(--vj-control-h); padding: 0 12px; border-radius: var(--ga-r-hard, 5px); cursor: pointer;
   }
-  .vj-file-menu-btn:hover, .vj-file-menu-btn.active { background: rgba(255,255,255,0.14); color: #fff; }
+  .vj-file-menu-btn:hover, .vj-file-menu-btn.active { border-color: var(--ga-line-3); color: var(--ga-ink-0); }
   .vj-file-menu-dropdown {
     position: absolute; top: 100%; left: 0; margin-top: 4px;
-    background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; border-radius: 6px;
+    background: var(--ga-card, #16140f); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-soft, 8px);
     min-width: 220px; padding: 4px 0; z-index: 10000;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
   .vj-menu-item {
     display: flex; justify-content: space-between; align-items: center;
-    width: 100%; background: none; border: none; color: var(--text-primary, #ddd);
-    font-size: 13px; padding: 7px 14px; cursor: pointer; text-align: left;
+    width: 100%; background: none; border: none; color: var(--ga-ink-0);
+    font-size: var(--ga-text-body, 13px); padding: 7px 14px; cursor: pointer; text-align: left;
   }
-  .vj-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
-  .vj-menu-sc { color: #666; font-size: 11px; margin-left: 16px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
-  .vj-menu-sep { height: 1px; background: #333; margin: 4px 0; }
+  .vj-menu-item:hover { background: rgba(255,255,255,0.06); color: var(--ga-ink-0); }
+  .vj-menu-sc { color: var(--ga-ink-2); font-size: var(--ga-text-meta, 11px); margin-left: 16px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
+  .vj-menu-sep { height: 1px; background: var(--ga-line-1); margin: 4px 0; }
 
   @keyframes blink {
     0%, 100% { opacity: 1; }
@@ -7937,13 +7897,13 @@
     align-items: center;
     gap: var(--vj-meter-gap);
     padding-left: var(--vj-file-pad-x);
-    border-left: 1px solid #333;
+    border-left: 1px solid var(--ga-line-2);
   }
 
   .master-label {
     font-size: var(--vj-label-font);
-    font-weight: 800;
-    color: #999;
+    font-weight: 700;
+    color: var(--ga-ink-2);
     width: 10px;
     text-align: center;
   }
@@ -7968,7 +7928,8 @@
 
   .master-value {
     font-size: calc(var(--vj-header-font) - 1px);
-    color: var(--text-muted, #888);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    color: var(--ga-ink-1);
     min-width: 32px;
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -8026,16 +7987,17 @@
   .vj-rec-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    width: var(--vj-icon-btn);
     height: var(--vj-control-h);
-    padding: 0 var(--vj-file-pad-x);
+    padding: 0;
     background: transparent;
     border: 1px solid rgba(255, 68, 56, 0.4);
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: var(--ga-r-hard, 5px);
     color: var(--ga-rec, #ff4438);
     font-size: var(--vj-header-font);
     font-weight: 700;
-    letter-spacing: 0.04em;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
     white-space: nowrap;
@@ -8112,10 +8074,10 @@
     width: var(--vj-icon-btn);
     height: var(--vj-control-h);
     padding: 0;
-    background: transparent;
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
-    color: var(--ga-ink-1, #b8bdc6);
-    border-radius: var(--ga-r-hard, 2px);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
     display: inline-flex;
@@ -8125,29 +8087,13 @@
   }
 
   .minimize-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.30);
-    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
   }
-
-  .exit-btn {
-    height: var(--vj-control-h);
-    background: transparent;
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
-    color: var(--ga-ink-1, #b8bdc6);
-    padding: 0 calc(var(--vj-file-pad-x) + 2px);
-    border-radius: var(--ga-r-hard, 2px);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-    font-size: var(--vj-header-font);
-    font-weight: 600;
-    flex: 0 0 auto;
-  }
-
-  .exit-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.30);
-    color: var(--ga-ink-0, #eef0f4);
+  .minimize-btn.active {
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
   }
 
   .vj-header :is(button, select) {
@@ -8165,31 +8111,42 @@
     gap: 6px;
   }
 
-  .vj-header .stage-mix-btn {
+  .vj-header .ga-segmented {
+    height: var(--vj-control-h);
+  }
+  .vj-header .ga-segmented > button {
     font-size: var(--vj-header-font);
     padding: 0 var(--vj-stage-pad-x);
+  }
+  /* A hairline between groups, as in the mapping toolbar. */
+  .vj-divider {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: var(--ga-line-2);
   }
 
   @media (min-width: 1800px) {
     .vj-overlay {
-      --vj-header-h: 64px;
-      --vj-header-pad-x: 18px;
-      --vj-header-gap: 10px;
+      --vj-header-h: 48px;
+      --vj-header-pad-x: 12px;
+      --vj-header-gap: 6px;
       --vj-half-gap: 5px;
       --vj-meter-gap: 8px;
-      --vj-control-h: 34px;
-      --vj-icon-btn: 34px;
-      --vj-header-font: 14px;
-      --vj-label-font: 12px;
-      --vj-stage-pad-x: 16px;
+      --vj-control-h: 30px;
+      --vj-icon-btn: 30px;
+      --vj-header-font: 13px;
+      --vj-label-font: 11px;
+      --vj-stage-pad-x: 14px;
       --vj-file-pad-x: 12px;
       --vj-master-slider-w: 72px;
-      --vj-logo-h: 28px;
-      --vj-macro-slot: 50px;
-      --vj-macro-knob: 36px;
-      --vj-macro-bank-w: 421px;
+      --vj-logo-h: 26px;
+      --vj-macro-slot: 46px;
+      --vj-macro-knob: 28px;
+      --vj-macro-bank-w: 384px;
       --vj-macro-gap: 1px;
-      --vj-macro-name-font: 10px;
+      --vj-macro-name-font: 9px;
       --vj-snap-font: 12px;
       --vj-snap-pad-x: 10px;
       --vj-aip-chevron-w: 16px;
@@ -8200,7 +8157,7 @@
 
   @media (max-width: 1500px) {
     .vj-overlay {
-      --vj-header-h: 54px;
+      --vj-header-h: 48px;
       --vj-header-pad-x: 8px;
       --vj-header-gap: 5px;
       --vj-half-gap: 3px;
@@ -8214,11 +8171,11 @@
       --vj-file-pad-x: 8px;
       --vj-master-slider-w: 44px;
       --vj-logo-h: 24px;
-      --vj-macro-slot: 36px;
-      --vj-macro-knob: 28px;
-      --vj-macro-bank-w: 296px;
+      --vj-macro-slot: 40px;
+      --vj-macro-knob: 24px;
+      --vj-macro-bank-w: 336px;
       --vj-macro-gap: 0px;
-      --vj-macro-name-font: 8px;
+      --vj-macro-name-font: 9px;
       --vj-snap-font: 11px;
       --vj-snap-pad-x: 8px;
       --vj-aip-chevron-w: 13px;
@@ -8245,8 +8202,8 @@
       --vj-stage-pad-x: 7px;
       --vj-file-pad-x: 6px;
       --vj-master-slider-w: 40px;
-      --vj-macro-slot: 34px;
-      --vj-macro-bank-w: 280px;
+      --vj-macro-slot: 38px;
+      --vj-macro-bank-w: 320px;
       --vj-aip-chevron-w: 12px;
       --vj-amp-bar-w: 3px;
     }
@@ -8292,7 +8249,7 @@
     display: flex;
     align-items: stretch;
     padding: 8px;
-    background: #0a0a0a;
+    background: var(--ga-void, #0a0908);
     gap: 8px;
     min-height: 150px;
   }
@@ -8302,9 +8259,9 @@
   .preview-resize-handle {
     flex-shrink: 0;
     height: 6px;
-    background: #1a1a1a;
-    border-top: 1px solid #333;
-    border-bottom: 1px solid #333;
+    background: var(--ga-bar, #100f0d);
+    border-top: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     cursor: ns-resize;
     display: flex;
     align-items: center;
@@ -8314,38 +8271,39 @@
 
   .preview-resize-handle:hover,
   .preview-resize-handle:active {
-    background: #2a2a2a;
+    background: var(--ga-sub, #1e1b16);
   }
 
   .resize-grip {
     width: 40px;
     height: 2px;
-    background: #555;
+    background: var(--ga-line-3, rgba(245, 236, 222, 0.24));
     border-radius: 1px;
   }
 
   .preview-resize-handle:hover .resize-grip {
-    background: #888;
+    background: var(--ga-ink-2, #89857e);
   }
 
   /* LEFT: Effects Panel */
   .effects-panel-vj {
     width: 270px;
     flex-shrink: 0;
-    background: #0d1015;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--ga-panel, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 6px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 
+  /* Comp / Layer / Clip / Stage: a segmented track across the panel top. */
   .effects-tabs {
     display: flex;
-    min-height: 36px;
-    background: var(--ga-blue-900);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+    gap: 2px;
+    padding: 4px;
+    background: var(--ga-bar, #100f0d);
+    border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
   }
 
   .fx-tab {
@@ -8354,25 +8312,30 @@
     align-items: center;
     justify-content: center;
     gap: 5px;
-    padding: 9px 6px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 6px;
     background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: rgba(238, 240, 244, 0.62);
-    font-size: 12px;
-    font-weight: 700;
+    border: 1px solid transparent;
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+    color: var(--ga-ink-1, #ada9a2);
+    font-family: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
+    text-transform: none;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
 
-  .fx-tab:hover {
-    color: var(--text-primary, #ddd);
+  .fx-tab:hover:not(.active) {
+    color: var(--ga-ink-0, #f2ede4);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .fx-tab.active {
-    color: var(--accent-primary, #BB86FC);
-    border-bottom-color: var(--accent-primary, #BB86FC);
-    background: rgba(187, 134, 252, 0.05);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
   }
 
   .fx-tab svg {
@@ -8388,22 +8351,25 @@
   }
 
   .effects-panel-content::-webkit-scrollbar { width: 4px; }
-  .effects-panel-content::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .effects-panel-content::-webkit-scrollbar-thumb { background: var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: 2px; }
 
   .effects-info {
     margin-bottom: 8px;
   }
 
+  /* Eyebrow: LAYER 1 FX, COMPOSITION FX, STAGE FX. */
   .effects-info-label {
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
-    color: var(--accent-primary, #BB86FC);
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    line-height: 1.2;
+    color: var(--ga-ink-2, #89857e);
   }
 
   .effects-info-hint {
-    font-size: 10px;
-    color: #555;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #89857e);
     margin: 2px 0 0;
   }
 
@@ -8417,24 +8383,25 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1, #ada9a2);
   }
 
   .add-effect-btn {
-    background: rgba(187, 134, 252, 0.1);
-    border: 1px solid rgba(187, 134, 252, 0.3);
-    color: var(--accent-primary, #BB86FC);
-    padding: 3px 10px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 5px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s;
   }
   .add-effect-btn:hover {
-    background: rgba(187, 134, 252, 0.2);
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   /* Stage Effects tab — its own +Add row with a picker + button.
@@ -8443,22 +8410,24 @@
      of effect than the layer/clip post-fx). */
   .stage-fx-add {
     display: flex;
+    align-items: center;
     gap: 6px;
-    padding: 8px 6px;
-    border-bottom: 1px solid #1d1d22;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
     margin-bottom: 6px;
   }
   .stage-fx-select {
     flex: 1;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    border-radius: 4px;
-    padding: 5px 8px;
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 8px;
+    font-size: var(--ga-text-control, 12px);
   }
   .stage-fx-select:focus {
-    border-color: var(--ga-blue-300);
+    border-color: var(--ga-focus, #8aa4ff);
     outline: none;
   }
   .stage-fx-icon {
@@ -8471,57 +8440,56 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 8px;
-    background: linear-gradient(180deg, var(--ga-blue-a08), color-mix(in srgb, var(--ga-blue-400) 2%, transparent));
-    border-bottom: 1px solid var(--ga-blue-a16);
+    padding: 6px 0;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
     margin-bottom: 4px;
   }
   .stage-auto-play {
-    width: 30px; height: 26px;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--ga-blue-300);
-    border-radius: 4px;
-    font-size: 14px;
+    width: 30px; height: var(--ga-control-h, 26px);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+    border-radius: var(--ga-r-hard, 5px);
+    font-size: var(--ga-text-control, 12px);
     cursor: pointer;
   }
-  .stage-auto-play:hover { background: var(--ga-blue-a16); border-color: var(--ga-blue-300); }
+  .stage-auto-play:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
   .stage-auto-play.playing {
-    background: var(--ga-blue-300);
-    color: #0a0a0c;
-    border-color: var(--ga-blue-300);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
   }
   .stage-auto-mode {
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    border-radius: 4px;
-    padding: 3px 5px;
-    font-size: 12px;
-    height: 26px;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 6px;
+    font-size: var(--ga-text-control, 12px);
+    height: var(--ga-control-h, 26px);
   }
   .stage-auto-interval {
     width: 48px;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    border-radius: 4px;
-    padding: 3px 5px;
-    font-size: 12px;
+    box-sizing: border-box;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 6px;
+    font-size: var(--ga-text-control, 12px);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    height: 26px;
+    height: var(--ga-control-h, 26px);
   }
   .stage-auto-unit {
-    color: var(--text-muted, #888);
-    font-size: 11px;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta, 11px);
   }
   /* ── Stage Effects: live-radio + cycle toggle on each row ── */
   .effect-live-radio {
     width: 22px; height: 22px;
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     background: transparent;
-    color: #555;
+    color: var(--ga-ink-2, #89857e);
     border-radius: 50%;
     cursor: pointer;
     font-size: 13px;
@@ -8608,32 +8576,31 @@
   }
 
   .effect-live-radio:hover {
-    border-color: var(--ga-blue-300);
-    color: var(--text-secondary, #aaa);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
   }
   .effect-live-radio.active {
-    color: var(--ga-blue-300);
-    border-color: var(--ga-blue-300);
-    background: var(--ga-blue-a16);
-    box-shadow: 0 0 8px var(--ga-blue-a28);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
   }
   .effect-cycle-toggle {
     background: transparent;
     border: 1px solid transparent;
-    color: #555;
+    color: var(--ga-ink-2, #89857e);
     border-radius: 3px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
     padding: 2px 4px;
   }
-  .effect-cycle-toggle:hover { color: var(--text-secondary, #aaa); border-color: #2a2a30; }
+  .effect-cycle-toggle:hover { color: var(--ga-ink-0, #f2ede4); border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)); }
   .effect-cycle-toggle.included {
-    color: var(--ga-blue-300);
-    border-color: var(--ga-blue-a28);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
   }
   .effect-item.live {
-    background: color-mix(in srgb, var(--ga-blue-400) 4%, transparent);
-    border-left: 2px solid var(--ga-blue-300);
+    background: color-mix(in srgb, var(--ga-selection-bg, #1f3170) 35%, var(--ga-card, #16140f));
+    border-left: 2px solid var(--ga-selection-line, #5278ff);
   }
 
   .effects-list {
@@ -8643,10 +8610,10 @@
   }
 
   .effect-item {
-    background: var(--bg-primary, #0d0d10);
-    border-radius: 6px;
+    background: var(--ga-card, #16140f);
+    border-radius: var(--ga-r-hard, 5px);
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
 
   .effect-item.native-pending {
@@ -8669,25 +8636,25 @@
     transition: background 0.1s;
   }
 
-  .effect-header:hover { background: var(--bg-secondary, #111114); }
+  .effect-header:hover { background: var(--ga-sub, #1e1b16); }
 
   .effect-toggle {
     background: none;
     border: none;
-    color: var(--accent-primary, #BB86FC);
-    font-size: 13px;
+    color: var(--ga-selection-line, #5278ff);
+    font-size: var(--ga-text-body, 13px);
     cursor: pointer;
     padding: 2px;
     width: 18px;
     text-align: center;
   }
 
-  .effect-toggle:not(.active) { color: #555; }
+  .effect-toggle:not(.active) { color: var(--ga-ink-2, #89857e); }
 
   .effect-name {
     flex: 1;
-    font-size: 12px;
-    color: var(--text-primary, #ddd);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-0, #f2ede4);
     text-transform: capitalize;
     font-weight: 500;
     overflow: hidden;
@@ -8703,7 +8670,7 @@
     border-radius: 3px;
     padding: 2px 5px;
     font-size: 9px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     line-height: 1;
   }
@@ -8727,15 +8694,15 @@
 
   .effect-expand {
     font-size: 9px;
-    color: #666;
+    color: var(--ga-ink-2, #89857e);
     padding: 2px;
   }
 
   .effect-delete {
     background: none;
     border: none;
-    color: #555;
-    font-size: 17px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: 16px;
     cursor: pointer;
     padding: 2px;
     opacity: 0;
@@ -8743,12 +8710,12 @@
   }
 
   .effect-header:hover .effect-delete { opacity: 1; }
-  .effect-delete:hover { color: #ff4444; }
+  .effect-delete:hover { color: var(--ga-rec, #ff3b30); }
 
   .effect-params {
     padding: 8px 12px 10px;
-    background: rgba(22, 22, 26, 0.8);
-    border-top: 1px solid rgba(187, 134, 252, 0.1);
+    background: var(--ga-slot, #060504);
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -8758,13 +8725,13 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 11px;
-    color: #999;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #ada9a2);
     padding: 6px 0;
   }
 
   .param-row + .param-row {
-    border-top: 1px solid rgba(255, 255, 255, 0.03);
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
 
   .param-row .param-name,
@@ -8772,14 +8739,13 @@
     width: 56px;
     flex-shrink: 0;
     font-weight: 500;
-    color: var(--text-secondary, #aaa);
-    letter-spacing: 0.2px;
+    color: var(--ga-ink-1, #ada9a2);
   }
 
   .param-row input[type="range"] {
     flex: 1;
     height: 6px;
-    accent-color: var(--accent-primary, #BB86FC);
+    accent-color: var(--ga-selection-line, #5278ff);
     border-radius: 3px;
     cursor: pointer;
   }
@@ -8792,22 +8758,22 @@
   .param-value {
     width: 38px;
     text-align: right;
-    color: #777;
+    color: var(--ga-ink-2, #89857e);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
     font-variant-numeric: tabular-nums;
   }
 
   .no-effects {
-    color: rgba(157, 177, 201, 0.78);
-    font-size: 14px;
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-meta, 11px);
     text-align: center;
     padding: 28px 12px;
     line-height: 1.45;
   }
 
   .no-params {
-    color: #555;
+    color: var(--ga-ink-2, #89857e);
     font-style: italic;
   }
 
@@ -8828,7 +8794,7 @@
     aspect-ratio: 16 / 9;
     max-width: 100%;
     background: #000;
-    border: 2px solid #333;
+    border: 2px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 4px;
     overflow: hidden;
   }
@@ -8927,10 +8893,11 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    color: rgba(226, 231, 240, 0.78);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 8px;
-    letter-spacing: 0;
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
     pointer-events: none;
   }
 
@@ -8939,10 +8906,11 @@
     place-items: center;
     width: 18px;
     height: 16px;
-    color: #fff;
+    color: var(--ga-ink-0, #f2ede4);
     background: rgba(0, 0, 0, 0.72);
-    border: 1px solid rgba(255, 255, 255, 0.24);
-    font-size: 10px;
+    border: 1px solid var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    border-radius: 3px;
+    letter-spacing: 0;
     line-height: 1;
   }
 
@@ -8972,7 +8940,7 @@
   }
   .stage-preview-guides { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
   .stage-preview-guides polygon { fill:color-mix(in srgb, var(--ga-blue-600) 7%, transparent); stroke:var(--ga-blue-300); stroke-width:1.2; stroke-dasharray:5 3; vector-effect:non-scaling-stroke; }
-  .stage-preview-empty { position:absolute; inset:auto 12px 12px; text-align:center; color:#b9c9df; font-size:11px; pointer-events:none; }
+  .stage-preview-empty { position:absolute; inset:auto 12px 12px; text-align:center; color:var(--ga-ink-1, #ada9a2); font-size:var(--ga-text-meta, 11px); pointer-events:none; }
 
   .preview-canvas {
     width: 100%;
@@ -8981,17 +8949,20 @@
     background: #000;
   }
 
+  /* Eyebrow over the picture, on a dark chip so it reads over any frame. */
   .preview-label {
     position: absolute;
     top: 8px;
     left: 8px;
-    font-size: 10px;
-    font-weight: 600;
-    color: #555;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    line-height: 1.2;
+    color: var(--ga-ink-2, #89857e);
     background: rgba(0, 0, 0, 0.6);
     padding: 2px 6px;
     border-radius: 3px;
-    letter-spacing: 0.5px;
   }
 
   /* Sits directly under the OUTPUT PREVIEW label. Amber rather than the
@@ -9001,14 +8972,13 @@
     position: absolute;
     top: 28px;
     left: 8px;
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
     font-weight: 600;
     color: #ffb000;
     background: rgba(0, 0, 0, 0.72);
     border: 1px solid rgba(255, 176, 0, 0.45);
     padding: 2px 6px;
     border-radius: 3px;
-    letter-spacing: 0.4px;
     pointer-events: auto;
     cursor: help;
     max-width: calc(100% - 16px);
@@ -9106,7 +9076,7 @@
 
   .media-tray-tab-label {
     font-size: 9px;
-    font-weight: 800;
+    font-weight: 700;
     line-height: 1;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -9153,9 +9123,9 @@
   }
 
   .shader-params-panel {
-    background: #111;
-    border: 1px solid #161618;
-    border-radius: 4px;
+    background: var(--ga-panel, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: 6px;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -9166,16 +9136,23 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 10px;
-    background: #181818;
-    border-bottom: 1px solid #161618;
+    gap: 6px;
+    min-height: 32px;
+    box-sizing: border-box;
+    padding: 0 6px 0 10px;
+    background: var(--ga-bar, #100f0d);
+    border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     flex-shrink: 0;
   }
 
+  /* The clip's name, as the panel's eyebrow. */
   .shader-params-overlay-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--accent-primary, #BB86FC);
+    min-width: 0;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -9185,13 +9162,14 @@
   }
 
   .shader-params-layer-badge {
-    font-size: 9px;
+    font-size: var(--ga-text-micro, 9px);
     padding: 1px 4px;
-    background: var(--accent-primary, #BB86FC)30;
-    border: 1px solid var(--accent-primary, #BB86FC)50;
+    background: var(--ga-sub, #1e1b16);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 3px;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--ga-ink-1, #ada9a2);
     font-weight: 700;
+    letter-spacing: 0;
   }
 
   .js-animation-badge {
@@ -9204,8 +9182,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #777;
-    font-size: 10px;
+    color: var(--ga-ink-2, #89857e);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
     font-variant-numeric: tabular-nums;
   }
 
@@ -9213,9 +9192,9 @@
     width: 42px;
     height: 24px;
     padding: 2px;
-    border: 1px solid #333;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 3px;
-    background: var(--bg-primary, #0d0d10);
+    background: var(--ga-slot, #060504);
     cursor: pointer;
   }
 
@@ -9223,53 +9202,51 @@
   .js-select-param {
     width: 100%;
     box-sizing: border-box;
-    height: 26px;
+    height: var(--ga-control-h, 26px);
     padding: 0 8px;
-    background: #0d0d10;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 4px;
-    color: var(--ga-ink-0, #eef0f4);
-    font-size: 12px;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-control, 12px);
   }
   .js-text-param:focus,
-  .js-select-param:focus { outline: none; border-color: var(--accent-primary, #BB86FC); }
+  .js-select-param:focus { outline: none; border-color: var(--ga-focus, #8aa4ff); }
   .js-no-params {
     padding: 14px 10px;
-    color: #666;
-    font-size: 11px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta, 11px);
     text-align: center;
   }
 
   .shader-params-close {
     background: none;
     border: none;
-    color: #666;
-    font-size: 17px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: 16px;
     cursor: pointer;
     padding: 0 2px;
     line-height: 1;
   }
 
   .shader-params-close:hover {
-    color: #ff4444;
+    color: var(--ga-rec, #ff3b30);
   }
 
-  /* ↺ Reset-all-params button. Cyan to read as recoverable + tonal-
-     match the LayerPanel effect-reset button. Sits to the left of
-     the close × button in the shader-params header. */
+  /* ↺ Reset-all-params button, to the left of the close ×. */
   .shader-params-reset {
     background: none;
     border: none;
-    color: var(--ga-blue-200);
-    font-size: 15px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-title, 14px);
     cursor: pointer;
     padding: 0 6px;
     line-height: 1;
-    opacity: 0.6;
+    margin-left: auto;
     margin-right: 2px;
   }
   .shader-params-reset:hover {
-    opacity: 1;
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .shader-params-panel-list {
@@ -9282,7 +9259,7 @@
   }
 
   .shader-params-panel-list::-webkit-scrollbar { width: 4px; }
-  .shader-params-panel-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .shader-params-panel-list::-webkit-scrollbar-thumb { background: var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: 2px; }
 
   /* Bottom Section: Grid + Media Tray */
   .vj-bottom {
@@ -9665,7 +9642,7 @@
   }
 
   .layer-num {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     color: var(--text-muted, #888);
   }
@@ -10552,7 +10529,7 @@
     border: 1px dashed #505665;
     border-radius: 4px;
     color: #666;
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 300;
     cursor: pointer;
     transition: all 0.15s;
@@ -10637,7 +10614,7 @@
 
   .live-preview-empty {
     color: #333;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .live-indicator-dot {
@@ -11101,7 +11078,7 @@
   }
 
   .cpm-title {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
   }
 
@@ -11827,7 +11804,7 @@
     border: 0;
     border-radius: 0;
     color: var(--text-primary, #ccc);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     display: flex;

@@ -51,7 +51,7 @@
 </script>
 
 {#if part === 'bass'}
-  <StudioModule title="DUB BASS" subtitle="Play it on the keys" led={bassSounding}>
+  <StudioModule title="Dub bass" subtitle="Play it on the keys" led={bassSounding}>
     {#snippet head()}
       <StudioJack id="cv:dubbass.level" label="Level" title="Dub bass level, as a control signal" />
       <StudioJack id="audio:dubbass" label="Out" title="Dub bass sound" />
@@ -63,7 +63,7 @@
     </div>
   </StudioModule>
 {:else if part === 'siren'}
-  <StudioModule title="SIREN" subtitle="Hold to wail" led={sirenSounding}>
+  <StudioModule title="Siren" subtitle="Hold to wail" led={sirenSounding}>
     {#snippet head()}
       <StudioJack id="cv:siren.level" label="Level" title="Siren level, as a control signal" />
       <StudioJack id="audio:siren" label="Out" title="Siren sound" />
@@ -77,8 +77,8 @@
           onpointerup={holdUp}
           onpointercancel={holdUp}
           aria-label="Hold the siren"
-        >HOLD</button>
-        <button class="latch" class:on={latched} aria-pressed={latched} onclick={toggleLatch}>LATCH</button>
+        >Hold</button>
+        <button class="latch" class:on={latched} aria-pressed={latched} onclick={toggleLatch}>Latch</button>
       </div>
       <div class="knob-row grow">
         {#each SIREN_PARAMS as p (p.key)}
@@ -88,7 +88,7 @@
     </div>
   </StudioModule>
 {:else}
-  <StudioModule title="SHOTS" subtitle="Fire them into the echo" grow>
+  <StudioModule title="Shots" subtitle="Fire them into the echo" grow>
     {#snippet head()}
       <StudioJack id="cv:shots.level" label="Level" title="Shots, as a control signal" />
       <StudioJack id="audio:shots" label="Out" title="Shot sounds" />
@@ -120,14 +120,13 @@
     color: var(--studio-ink);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     touch-action: none;
   }
   .hold { height: 40px; }
-  .latch { height: 22px; color: var(--studio-muted); }
+  .latch { height: var(--ga-control-h-sm, 22px); color: var(--studio-muted); }
   .hold.on { border-color: var(--studio-accent); background: var(--studio-accent); color: var(--studio-on-accent); box-shadow: 0 0 14px var(--studio-accent-soft); }
   .latch.on { border-color: var(--studio-accent); color: var(--studio-accent); }
   .shots { flex: 1; min-height: 0; display: flex; gap: 10px; }
@@ -140,8 +139,8 @@
     color: var(--studio-ink);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 11px;
-    font-weight: 600;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

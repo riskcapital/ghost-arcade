@@ -102,11 +102,11 @@
     <!-- Header -->
     <div class="seq-header">
       <div class="seq-header-left">
-        <span class="seq-title">SEQUENCER</span>
+        <span class="seq-title">Sequencer</span>
         <select class="seq-select" value={config.presetMode} onchange={onPresetChange}>
           <option value="custom">Custom</option>
           <option value="snake">Snake</option>
-          <option value="everyOther">Every Other</option>
+          <option value="everyOther">Every other</option>
           <option value="random">Random</option>
         </select>
         {#if config.presetMode === 'random'}
@@ -155,7 +155,7 @@
         </div>
         {#if config.timingMode === 'beat'}
           <input class="seq-input seq-bpm" type="number" min="30" max="300" value={config.bpm} onchange={onBPMChange} title="BPM" />
-          <button class="seq-btn seq-tap" onclick={tapTempo} title="Tap tempo">TAP</button>
+          <button class="seq-btn seq-tap" onclick={tapTempo} title="Tap tempo">Tap</button>
           <select class="seq-select seq-sub" value={config.subdivision} onchange={onSubdivisionChange}>
             <option value={1}>1/4</option>
             <option value={2}>1/8</option>
@@ -206,7 +206,7 @@
             {@const isContinuous = !!pattern.continuousLayers?.[layer.id]}
             <!-- Layer name (sticky left) + continuous-mode toggle -->
             <div class="seq-layer-label" title={layer.name}>
-              <span class="seq-layer-dot" style="background: {layer.visible ? 'var(--ga-coral, #ff6f5e)' : '#333'}"></span>
+              <span class="seq-layer-dot" style="background: {layer.visible ? 'var(--ga-coral, #ff6f5e)' : 'var(--ga-ink-3, #333)'}"></span>
               <button
                 class="seq-cont-btn"
                 class:active={isContinuous}
@@ -252,23 +252,24 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: linear-gradient(135deg, #0d0d10, #111114);
-    border: 1px solid #444;
-    color: var(--text-primary, #ddd);
-    padding: 8px 16px;
-    border-radius: 20px;
+    background: var(--ga-bar, #111114);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #ddd);
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
+    border-radius: var(--ga-r-pill, 999px);
     cursor: pointer;
     transition: all 0.2s ease;
     z-index: 100;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     font-family: inherit;
   }
-  .seq-toggle:hover { border-color: var(--ga-coral, #ff6f5e); box-shadow: 0 4px 30px color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent); }
-  .seq-toggle.open { border-color: var(--ga-coral, #ff6f5e); background: linear-gradient(135deg, #1a2020, #201515); }
-  .toggle-icon { font-size: 11px; color: var(--text-muted, #888); }
-  .toggle-label { font-size: 13px; font-weight: 600; }
+  .seq-toggle:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
+  .seq-toggle.open { border-color: var(--ga-selection-line, #5278ff); background: var(--ga-selection-bg, #1f3170); color: var(--ga-selection-ink, #e0e8ff); }
+  .toggle-icon { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #888); }
+  .toggle-label { font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); }
 
   /* ═══════════════════════════════════
      TRAY PANEL
@@ -277,8 +278,8 @@
     position: fixed;
     bottom: var(--ga-bottom-rail-offset, 74px); left: 0; right: 0;
     height: 280px;
-    background: var(--bg-primary, #0a0a0c);
-    border-top: 1px solid #333;
+    background: var(--ga-panel, #0a0a0c);
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     z-index: 90;
     display: flex;
     flex-direction: column;
@@ -294,68 +295,84 @@
      ═══════════════════════════════════ */
   .seq-header {
     display: flex; align-items: center;
-    padding: 6px 16px; gap: 12px;
-    border-bottom: 1px solid #161618;
-    background: var(--bg-primary, #0d0d10); flex-shrink: 0;
+    min-height: 40px;
+    padding: 6px 12px; gap: 12px;
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    background: var(--ga-bar, #0d0d10); flex-shrink: 0;
   }
   .seq-header-left, .seq-header-center, .seq-header-right {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 6px;
   }
   .seq-header-left { flex: 1; }
   .seq-header-center { flex: 0 0 auto; }
   .seq-header-right { flex: 1; justify-content: flex-end; }
-  .seq-title { font-size: 12px; font-weight: 700; color: var(--ga-coral, #ff6f5e); letter-spacing: 1px; margin-right: 4px; }
-  .seq-steps-label { font-size: 11px; color: #666; }
+  /* Eyebrow. */
+  .seq-title {
+    font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; color: var(--ga-ink-2, #888);
+    text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); margin-right: 6px;
+  }
+  .seq-steps-label { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #666); }
 
   /* ═══════════════════════════════════
      CONTROLS
      ═══════════════════════════════════ */
   .seq-select {
-    background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; color: var(--text-primary, #ccc);
-    padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer; font-family: inherit;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #1a1a1e); border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)); color: var(--ga-ink-0, #ccc);
+    padding: 0 6px; border-radius: var(--ga-r-hard, 4px); font-size: var(--ga-text-control, 12px); cursor: pointer; font-family: inherit;
   }
-  .seq-select:hover { border-color: var(--ga-coral, #ff6f5e); }
+  .seq-select:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
   .seq-input {
-    background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; color: var(--text-primary, #ccc);
-    padding: 3px 6px; border-radius: 4px; font-size: 12px; font-family: inherit;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #1a1a1e); border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)); color: var(--ga-ink-0, #ccc);
+    padding: 0 6px; border-radius: var(--ga-r-hard, 4px); font-size: var(--ga-text-control, 12px); font-family: inherit;
   }
-  .seq-input:focus { border-color: var(--ga-coral, #ff6f5e); outline: none; }
-  .seq-bpm { width: 50px; text-align: center; }
-  .seq-density { width: 60px; padding: 0; height: 16px; accent-color: var(--ga-coral, #ff6f5e); }
+  .seq-input:focus { border-color: var(--ga-focus, #8aa4ff); outline: none; }
+  .seq-bpm { width: 50px; text-align: center; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
+  .seq-density { width: 60px; padding: 0; height: 16px; accent-color: var(--ga-selection-line, #5278ff); }
   .seq-btn {
     display: flex; align-items: center; justify-content: center;
-    width: 28px; height: 24px; background: var(--bg-tertiary, #1a1a1e); border: 1px solid #444;
-    border-radius: 4px; color: var(--text-primary, #ccc); cursor: pointer; transition: all 0.15s;
+    width: var(--ga-control-h, 26px); height: var(--ga-control-h, 26px); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 4px); color: var(--ga-ink-1, #ccc); cursor: pointer; transition: all 0.15s;
     font-family: inherit; padding: 0;
   }
-  .seq-btn:hover { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent); border-color: var(--ga-coral, #ff6f5e); color: var(--ga-coral, #ff6f5e); }
-  .seq-play { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent); border-color: var(--ga-coral, #ff6f5e); color: var(--ga-coral, #ff6f5e); }
-  .seq-play:hover { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 35%, transparent); }
-  .seq-tap { font-size: 10px; font-weight: 700; width: auto; padding: 0 8px; letter-spacing: 0.5px; }
-  .seq-clear { opacity: 0.6; }
+  .seq-btn:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); color: var(--ga-ink-0, #fff); }
+  .seq-play { color: var(--ga-ink-0, #fff); }
+  .seq-tap { font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); width: auto; padding: 0 8px; }
+  .seq-clear { opacity: 0.7; }
   .seq-clear:hover { opacity: 1; }
-  .seq-loop-label { display: flex; align-items: center; gap: 3px; cursor: pointer; color: var(--text-muted, #888); font-size: 12px; }
+  .seq-loop-label {
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    width: var(--ga-control-h, 26px); height: var(--ga-control-h, 26px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)); border-radius: var(--ga-r-hard, 4px);
+    color: var(--ga-ink-2, #888);
+  }
+  .seq-loop-label:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); color: var(--ga-ink-0, #fff); }
+  .seq-loop-label:has(input:checked) {
+    background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff);
+  }
   .seq-loop-label input { display: none; }
-  .seq-loop-label input:checked ~ svg { color: var(--ga-coral, #ff6f5e); }
   .seq-step-display {
-    font-size: 13px; color: var(--ga-coral, #ff6f5e); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    min-width: 40px; text-align: center; font-weight: 700;
+    font-size: var(--ga-text-control, 12px); color: var(--ga-ink-0, #fff); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    min-width: 40px; text-align: center; font-weight: 600;
   }
-  .seq-step-sep { color: #555; }
-  .seq-timing-toggle { display: flex; border: 1px solid #333; border-radius: 4px; overflow: hidden; }
+  .seq-step-sep { color: var(--ga-ink-3, #555); }
+  .seq-timing-toggle {
+    display: flex; height: var(--ga-control-h, 26px); padding: 2px; gap: 2px; box-sizing: border-box;
+    background: var(--ga-slot, #060504); border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)); border-radius: var(--ga-r-hard, 4px);
+  }
   .seq-timing-btn {
-    padding: 3px 8px; font-size: 11px; background: var(--bg-tertiary, #1a1a1e); border: none;
-    color: var(--text-muted, #888); cursor: pointer; transition: all 0.15s; font-family: inherit; font-weight: 600;
+    padding: 0 8px; font-size: var(--ga-text-control, 12px); background: transparent; border: none; border-radius: calc(var(--ga-r-hard, 4px) - 1px);
+    color: var(--ga-ink-1, #888); cursor: pointer; transition: all 0.15s; font-family: inherit; font-weight: var(--ga-weight-control, 600);
   }
-  .seq-timing-btn:first-child { border-right: 1px solid #333; }
-  .seq-timing-btn.active { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent); color: var(--ga-coral, #ff6f5e); }
-  .seq-timing-btn:hover:not(.active) { background: #222; color: var(--text-secondary, #aaa); }
+  .seq-timing-btn.active { background: var(--ga-selection-bg, #1f3170); color: var(--ga-selection-ink, #e0e8ff); box-shadow: inset 0 0 0 1px var(--ga-selection-line, #5278ff); }
+  .seq-timing-btn:hover:not(.active) { color: var(--ga-ink-0, #fff); }
   .seq-xfade-label {
-    display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted, #888); cursor: pointer;
+    display: flex; align-items: center; gap: 6px; font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); color: var(--ga-ink-1, #888); cursor: pointer;
   }
-  .seq-xfade-label input[type="checkbox"] { accent-color: var(--ga-coral, #ff6f5e); width: 12px; height: 12px; }
-  .seq-xfade-dur { width: 52px; }
-  .seq-sub { width: 48px; }
+  .seq-xfade-label input[type="checkbox"] { accent-color: var(--ga-selection-line, #5278ff); width: 12px; height: 12px; margin: 0; }
+  .seq-xfade-dur { width: 56px; }
+  .seq-sub { width: 52px; }
 
   /* ═══════════════════════════════════
      HORIZONTAL GRID
@@ -366,10 +383,10 @@
   }
   .seq-grid-container::-webkit-scrollbar { width: 6px; height: 6px; }
   .seq-grid-container::-webkit-scrollbar-track { background: transparent; }
-  .seq-grid-container::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-  .seq-grid-container::-webkit-scrollbar-thumb:hover { background: #555; }
+  .seq-grid-container::-webkit-scrollbar-thumb { background: var(--ga-line-2, #333); border-radius: 3px; }
+  .seq-grid-container::-webkit-scrollbar-thumb:hover { background: var(--ga-line-3, #555); }
 
-  .seq-empty { color: #666; font-size: 13px; padding: 24px; text-align: center; }
+  .seq-empty { color: var(--ga-ink-2, #666); font-size: var(--ga-text-meta, 11px); padding: 24px; text-align: center; }
 
   .seq-grid {
     display: grid;
@@ -380,29 +397,29 @@
   /* Top-left corner cell */
   .seq-corner {
     position: sticky; left: 0; top: 0; z-index: 3;
-    background: var(--bg-primary, #0a0a0c);
+    background: var(--ga-panel, #0a0a0c);
   }
 
   /* Step number headers (top row) */
   .seq-step-header {
     display: flex; align-items: center; justify-content: center;
-    font-size: 10px; font-weight: 600; color: #555;
+    font-size: var(--ga-text-eyebrow, 10px); font-weight: 600; color: var(--ga-ink-2, #555);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     position: sticky; top: 0; z-index: 2;
-    background: var(--bg-primary, #0a0a0c);
+    background: var(--ga-panel, #0a0a0c);
   }
   .seq-step-header.current {
-    color: #4CAF50; font-weight: 700;
+    color: var(--ga-green, #4CAF50); font-weight: 700;
   }
 
   /* Layer name labels (left column) */
   .seq-layer-label {
     display: flex; align-items: center; gap: 5px;
     padding: 0 6px;
-    font-size: 11px; color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-1, #aaa);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     position: sticky; left: 0; z-index: 1;
-    background: var(--bg-primary, #0a0a0c);
+    background: var(--ga-panel, #0a0a0c);
     border-radius: 3px;
   }
 
@@ -410,31 +427,28 @@
     width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
   }
 
-  /* Continuous-mode (∞) toggle, lives inside .seq-layer-label between
-     the visibility dot and the layer name. Active state mirrors the
-     accent used for continuous cells (cyan) so the row visually signals
-     "this layer is in continuous mode" at a glance. */
+  /* Continuous-mode (∞) toggle between the visibility dot and the name. */
   .seq-cont-btn {
     flex-shrink: 0;
     width: 14px; height: 14px;
     padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
-    border: 1px solid rgba(255,255,255,0.12);
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
     border-radius: 3px;
     background: transparent;
-    color: #555;
-    font-size: 11px; line-height: 1;
+    color: var(--ga-ink-3, #555);
+    font-size: var(--ga-text-meta, 11px); line-height: 1;
     cursor: pointer;
     transition: color 0.08s, border-color 0.08s, background 0.08s;
   }
   .seq-cont-btn:hover {
-    color: var(--text-secondary, #aaa);
-    border-color: var(--ga-blue-a45);
+    color: var(--ga-ink-1, #aaa);
+    border-color: var(--ga-line-3, rgba(255,255,255,0.24));
   }
   .seq-cont-btn.active {
-    color: var(--ga-blue-300);
-    border-color: var(--ga-blue-a45);
-    background: var(--ga-blue-a08);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
   }
 
   .seq-layer-name {
@@ -444,9 +458,7 @@
     min-width: 0;
   }
 
-  /* Continuous rows get a faint cyan tint on their cells so the user
-     can see at a glance which rows are gating alpha vs. fully gating
-     the layer. Keeps the active/current accents distinct. */
+  /* Continuous rows: blue cells, so alpha-gating rows read apart. */
   .seq-cell.continuous {
     border-color: var(--ga-blue-a16);
   }
@@ -464,16 +476,16 @@
      ═══════════════════════════════════ */
   .seq-cell {
     width: 26px; height: 24px;
-    border: 1px solid rgba(255,255,255,0.05);
+    border: 1px solid var(--ga-line, rgba(255,255,255,0.07));
     border-radius: 3px;
-    background: var(--bg-tertiary, #161618);
+    background: var(--ga-card, #161618);
     cursor: pointer;
     transition: background 0.06s, border-color 0.06s, box-shadow 0.06s;
     padding: 0;
   }
   .seq-cell:hover {
-    border-color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 30%, transparent);
-    background: #1e1e22;
+    border-color: var(--ga-line-3, rgba(255,255,255,0.24));
+    background: var(--ga-sub, #1e1e22);
   }
   .seq-cell.active {
     background: var(--ga-coral, #ff6f5e);
@@ -483,13 +495,14 @@
   .seq-cell.active:hover {
     background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff);
   }
+  /* Current step: the playhead green. */
   .seq-cell.current {
-    border-color: rgba(76,175,80,0.35);
-    background: rgba(76,175,80,0.08);
+    border-color: color-mix(in srgb, var(--ga-green, #4caf50) 35%, transparent);
+    background: color-mix(in srgb, var(--ga-green, #4caf50) 8%, transparent);
   }
   .seq-cell.current.active {
-    background: #43A047;
-    border-color: rgba(76,175,80,0.6);
-    box-shadow: 0 0 10px rgba(76,175,80,0.5);
+    background: var(--ga-green, #43A047);
+    border-color: color-mix(in srgb, var(--ga-green, #4caf50) 60%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--ga-green, #4caf50) 50%, transparent);
   }
 </style>

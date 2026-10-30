@@ -4600,7 +4600,7 @@
     background: transparent;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 15px;
+    font-size: 14px;
     padding: 8px 4px;
     cursor: pointer;
   }
@@ -4616,7 +4616,7 @@
   .connect-subtitle {
     color: var(--text-muted, #888);
     margin-bottom: 16px;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .connect-screen p {
@@ -4633,7 +4633,7 @@
 
   .connecting-indicator p {
     color: var(--accent-primary, #BB86FC);
-    font-size: 15px;
+    font-size: 14px;
     margin: 0;
   }
 
@@ -4661,7 +4661,7 @@
 
   .connect-form input {
     padding: 14px;
-    font-size: 17px;
+    font-size: 16px;
     background: #333;
     border: 1px solid #444;
     border-radius: 8px;
@@ -4672,7 +4672,7 @@
 
   .connect-form button {
     padding: 14px;
-    font-size: 17px;
+    font-size: 16px;
     background: #BB86FC;
     color: #000;
     border: none;
@@ -4697,7 +4697,7 @@
     margin-top: 32px;
     text-align: center;
     color: #666;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   /* ── PWA Install Banner ── */
@@ -4755,7 +4755,7 @@
     color: #000;
     border: none;
     border-radius: 8px;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -4787,7 +4787,7 @@
     background: none;
     border: none;
     color: rgba(255, 255, 255, 0.3);
-    font-size: 19px;
+    font-size: 20px;
     cursor: pointer;
     padding: 4px;
     line-height: 1;
@@ -5106,7 +5106,7 @@
 
   .no-layers {
     color: #666;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   /* Quick Controls — single 45/45/10 row.
@@ -5471,7 +5471,7 @@
 
   .media-library-header h3 {
     margin: 0;
-    font-size: 17px;
+    font-size: 16px;
     color: var(--accent-primary, #BB86FC);
   }
 
@@ -5494,7 +5494,7 @@
     color: #666;
     text-align: center;
     margin-top: 40px;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .media-section {
@@ -5624,7 +5624,7 @@
 
   .media-name {
     flex: 1;
-    font-size: 15px;
+    font-size: 14px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -5639,7 +5639,7 @@
 
   .layer-target {
     color: var(--accent-primary, #BB86FC);
-    font-size: 15px;
+    font-size: 14px;
     margin: 0;
     padding: 10px;
     background: #333;
@@ -5688,7 +5688,7 @@
     border: 2px solid #555;
     border-radius: 8px;
     color: var(--text-muted, #888);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -5809,7 +5809,7 @@
     border: none;
     border-radius: 4px;
     color: #ff8888;
-    font-size: 17px;
+    font-size: 16px;
     font-weight: bold;
     cursor: pointer;
     display: flex;
@@ -6191,7 +6191,7 @@
 
   .effects-header h3 {
     margin: 0;
-    font-size: 17px;
+    font-size: 16px;
     color: #a78bfa;
   }
 
@@ -6277,7 +6277,7 @@
 
   .shape-current-row strong {
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .shape-current-actions {
@@ -6375,7 +6375,7 @@
     background: none;
     border: none;
     color: #666;
-    font-size: 17px;
+    font-size: 16px;
     cursor: pointer;
     padding: 0;
     display: flex;
@@ -6390,7 +6390,7 @@
 
   .effect-name {
     flex: 1;
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-primary, #eee);
     text-transform: capitalize;
   }
@@ -6408,7 +6408,7 @@
     border: none;
     border-radius: 4px;
     color: #ff8888;
-    font-size: 19px;
+    font-size: 20px;
     font-weight: bold;
     cursor: pointer;
     display: flex;
@@ -6500,7 +6500,7 @@
     color: #666;
     text-align: center;
     padding: 24px;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   /* Add Effect Section */
@@ -6661,7 +6661,7 @@
     align-items: center;
     justify-content: center;
     color: rgba(255,255,255,0.45);
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -6831,7 +6831,7 @@
     border: 1px solid rgba(255,255,255,0.14);
     background: var(--ga-blue-900);
     color: rgba(255,255,255,0.86);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
   }
 
@@ -7037,7 +7037,7 @@
     transform: translate(-50%, -50%);
     text-align: center;
     color: #555;
-    font-size: 15px;
+    font-size: 14px;
   }
   .paint-empty .hint { font-size: 12px; color: #444; margin-top: 6px; }
 
@@ -7071,7 +7071,7 @@
   }
   .paint-sheet-title {
     color: var(--text-primary, #eee);
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 600;
     margin-bottom: 12px;
   }

@@ -162,8 +162,8 @@
   {/each}
 
   <div class="prow">
-    <button class="tbtn" onclick={duplicate}>⧉ Duplicate</button>
-    <button class="tbtn danger" onclick={remove}>🗑 Delete</button>
+    <button class="tbtn" onclick={duplicate}>Duplicate</button>
+    <button class="tbtn danger" onclick={remove}>Delete</button>
   </div>
 </div>
 {:else}
@@ -173,82 +173,83 @@
 <style>
   .props-body { display: flex; flex-direction: column; gap: 4px; }
   .ptitle {
-    font-size: 16px;
-    font-weight: 600;
-    color: #fff;
-    margin-bottom: 14px;
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
+    color: var(--ga-ink-0);
+    margin-bottom: 12px;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
   }
   .badge {
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: #4af2ff;
-    background: rgba(74, 242, 255, 0.1);
-    padding: 3px 7px;
-    border-radius: 4px;
-    border: 1px solid rgba(74, 242, 255, 0.3);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
+    background: var(--ga-sub);
+    padding: 2px 6px;
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2);
   }
-  .field { margin-bottom: 13px; }
+  .field { margin-bottom: 12px; }
   .field label {
     display: flex;
     justify-content: space-between;
-    font-size: 12.5px;
-    color: #c4ccd8;
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1);
     margin-bottom: 6px;
   }
   .field label .v {
-    color: #4af2ff;
-    font-family: 'Geist Mono', monospace;
-    font-size: 12px;
+    color: var(--ga-ink-0);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
   }
   .field input[type=range] {
     -webkit-appearance: none;
     width: 100%;
     height: 3px;
     border-radius: 3px;
-    background: rgba(255, 255, 255, 0.14);
+    background: var(--ga-line-3);
     outline: none;
   }
   .field input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 13px; height: 13px;
     border-radius: 50%;
-    background: #4af2ff;
+    background: var(--ga-selection-line);
     cursor: pointer;
-    box-shadow: 0 0 8px rgba(74, 242, 255, 0.6);
   }
   .field input[type=range]::-moz-range-thumb {
     width: 13px; height: 13px;
     border: none; border-radius: 50%;
-    background: #4af2ff;
+    background: var(--ga-selection-line);
     cursor: pointer;
   }
   .field input[type=color] {
-    width: 100%; height: 30px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 7px;
+    width: 100%; height: var(--ga-control-h, 26px);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     background: none;
     cursor: pointer;
     padding: 2px;
   }
   .field select {
     width: 100%;
-    height: 31px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 7px;
-    background: #10131a;
-    color: #e9edf4;
+    height: var(--ga-control-h, 26px);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--ga-text-control, 12px);
     padding: 0 8px;
     cursor: pointer;
   }
   .field select:focus {
     outline: none;
-    border-color: #4af2ff;
+    border-color: var(--ga-selection-line);
   }
   .xyz {
     display: grid;
@@ -256,41 +257,47 @@
     gap: 6px;
   }
   .xyz input {
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
     font: inherit;
-    font-family: 'Geist Mono', monospace;
-    font-size: 12px;
-    background: #10131a;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-    color: #e9edf4;
-    padding: 6px 7px;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-control, 12px);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0);
+    padding: 0 6px;
     text-align: center;
     min-width: 0;
   }
   .xyz.lab-row { margin-top: 3px; }
   .xyz .lab {
-    font-size: 10px;
-    color: #8a93a3;
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-align: center;
-    letter-spacing: 0.1em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
-  .prow { display: flex; gap: 7px; margin-top: 6px; }
+  .prow { display: flex; gap: 6px; margin-top: 6px; }
   .tbtn {
     flex: 1;
-    font: inherit; font-size: 12.5px;
-    color: #e9edf4;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    padding: 9px;
+    height: var(--ga-control-h, 26px);
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-0);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 8px;
     cursor: pointer;
     text-align: center;
   }
-  .tbtn:hover { border-color: #4af2ff; color: #4af2ff; }
-  .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
+  .tbtn:hover { border-color: var(--ga-line-3); }
+  .tbtn.danger:hover { border-color: var(--ga-rec, #ff3b30) !important; color: var(--ga-rec, #ff3b30) !important; }
   .missing {
-    color: #8a93a3;
-    font-size: 13.5px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-body, 13px);
     padding: 12px;
     text-align: center;
   }

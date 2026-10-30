@@ -166,10 +166,10 @@
           title: 'Play to the music',
           body: 'Tempo drives launches, beat effects and audio-synced looks.',
           bullets: [
-            'TAP: tap along to set the tempo',
-            'DETECT TEMPO: follow the music coming into your audio input',
-            'QUANT: set it to 1 BAR and the clips you click wait for the next bar',
-            'NUDGE: push the beat earlier or later to line it up with the band',
+            'Tap: tap along to set the tempo',
+            'Detect tempo: follow the music coming into your audio input',
+            'Quantize: set it to 1 bar and the clips you click wait for the next bar',
+            'Nudge: push the beat earlier or later to line it up with the band',
           ],
           targets: ['.bpm-tap-widget'],
         },
@@ -329,8 +329,8 @@
           title: 'Set the tempo',
           body: 'Beat-synced launches and effects follow this tempo.',
           bullets: [
-            'TAP: tap along to set it by hand',
-            'DETECT TEMPO: follow the music coming into your audio input',
+            'Tap: tap along to set it by hand',
+            'Detect tempo: follow the music coming into your audio input',
             'Or let your DAW set it, which is the next step',
           ],
           targets: ['.bpm-tap-widget'],
@@ -645,7 +645,7 @@
   .tour-bullets li {
     position: relative;
     padding-left: 16px;
-    font-size: 12.5px;
+    font-size: 13px;
     line-height: 1.45;
     color: #c4cbd8;
   }
@@ -669,9 +669,9 @@
   }
   .tour-eyebrow {
     margin: 0;
-    font-size: 10.5px;
-    font-weight: 650;
-    letter-spacing: 0.16em;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
     color: var(--ga-blue-200, #a8bcff);
   }
@@ -689,7 +689,7 @@
 
   h2 {
     margin: 0 0 8px;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     letter-spacing: -0.01em;
     color: #f4f6fb;
@@ -703,7 +703,7 @@
 
   button {
     font: inherit;
-    font-size: 12.5px;
+    font-size: 13px;
     cursor: pointer;
   }
   .tour-action {
@@ -806,7 +806,7 @@
     stroke-linejoin: round;
   }
   .tour-path-text { display: grid; gap: 2px; }
-  .tour-path-name { font-size: 13.5px; font-weight: 650; color: #f1f4fa; }
+  .tour-path-name { font-size: 13px; font-weight: 650; color: #f1f4fa; }
   .tour-path-detail { font-size: 12px; color: #98a1b3; }
   .tour-chevron {
     width: 15px;

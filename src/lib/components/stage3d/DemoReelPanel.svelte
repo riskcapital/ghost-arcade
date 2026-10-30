@@ -163,7 +163,7 @@
 
 <div data-help-page="stage-simulator" class="reel-panel">
   <div class="reel-head">
-    <span class="reel-title">🎬 Demo Reel</span>
+    <span class="reel-title">Demo reel</span>
     <span class="reel-total">{shots.length} shot{shots.length === 1 ? '' : 's'} · {fmtSec(totalSec)}</span>
     <div class="reel-spacer"></div>
     {#if previewing}
@@ -172,7 +172,7 @@
       <button class="rbtn" onclick={startPreview} disabled={shots.length === 0 || rendering}>▶ Preview</button>
     {/if}
     <button class="rbtn primary" onclick={renderReel} disabled={shots.length === 0 || rendering}>
-      {rendering ? 'Rendering…' : '⬤ Render Reel'}
+      {rendering ? 'Rendering…' : 'Render reel'}
     </button>
     <button class="rbtn" onclick={onClose} title="Close panel">✕</button>
   </div>
@@ -223,7 +223,7 @@
           <span class="tpl-icon">{tpl.icon}</span>{tpl.label}
         </button>
       {/each}
-      <button class="tpl-card save" onclick={() => saveShot('static')}>＋ Save Shot (current view)</button>
+      <button class="tpl-card save" onclick={() => saveShot('static')}>+ Save shot (current view)</button>
     </div>
 
     <!-- Sequence strip -->
@@ -233,7 +233,7 @@
       ondrop={(e) => onStripDrop(e, shots.length)}
     >
       {#if shots.length === 0}
-        <div class="strip-empty">Drag a camera move here — or set up your stage and hit “Save Shot”.</div>
+        <div class="strip-empty">Drag a camera move here — or set up your stage and hit “Save shot”.</div>
       {/if}
       {#each shots as shot, i (shot.id)}
         <div
@@ -290,14 +290,14 @@
         </label>
         <button class="rbtn wide" onclick={() => recaptureShot(selectedShot!)}
           title="Re-save this shot's camera + stage look from the current view">
-          ⟳ Update from current view
+          Update from current view
         </button>
       {:else}
         <div class="insp-empty">Select a shot to edit it.</div>
       {/if}
 
       <div class="insp-divider"></div>
-      <div class="insp-head">Output</div>
+      <div class="insp-head eyebrow">Output</div>
       <label class="insp-row">
         <span>Res</span>
         <select
@@ -365,40 +365,53 @@
   .reel-panel {
     position: absolute;
     left: 0; right: 0; bottom: 0;
-    background: rgba(12, 13, 20, 0.96);
-    border-top: 1px solid var(--ga-blue-mute-800);
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 96%, transparent);
+    border-top: 1px solid var(--ga-line-2);
     z-index: 30;
     display: flex;
     flex-direction: column;
     max-height: 46vh;
-    color: #cfd3e0;
-    font-size: 13px;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-control, 12px);
   }
   .reel-head {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--ga-blue-mute-800);
+    display: flex; align-items: center; gap: 6px;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--ga-line-2);
   }
-  .reel-title { font-weight: 700; letter-spacing: 0.4px; }
-  .reel-total { color: #8a8fa3; }
+  .reel-title { font-size: var(--ga-text-title, 14px); font-weight: var(--ga-weight-title, 650); margin-right: 6px; }
+  .reel-total { color: var(--ga-ink-2); font-size: var(--ga-text-meta, 11px); }
   .reel-spacer { flex: 1; }
   .rbtn {
-    background: var(--ga-blue-mute-800); color: #cfd3e0;
-    border: 1px solid var(--ga-blue-mute-800); border-radius: 6px;
-    padding: 5px 10px; cursor: pointer; font-size: 13px;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    background: var(--ga-card); color: var(--ga-ink-0);
+    border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px);
+    padding: 0 10px; cursor: pointer;
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    white-space: nowrap;
   }
-  .rbtn:hover:not(:disabled) { background: var(--ga-blue-mute-800); }
+  .rbtn:hover:not(:disabled) { border-color: var(--ga-line-3); }
   .rbtn:disabled { opacity: 0.45; cursor: default; }
-  .rbtn.primary { background: #3b2a63; border-color: var(--ga-blue-600); }
-  .rbtn.primary:hover:not(:disabled) { background: #4a3580; }
+  .rbtn.primary {
+    background: var(--ga-accent-gradient, var(--ga-ink-0));
+    border-color: var(--ga-violet-line, var(--ga-line-3));
+    color: var(--ga-void, #0a0908);
+    border-radius: var(--ga-r-soft, 8px);
+  }
+  .rbtn.primary:hover:not(:disabled) { filter: brightness(1.06); }
   .rbtn.wide { width: 100%; margin-top: 6px; }
   .reel-progress {
     display: flex; align-items: center; gap: 10px;
     padding: 6px 12px;
-    background: var(--ga-blue-900);
-    border-bottom: 1px solid var(--ga-blue-mute-800);
+    background: var(--ga-card);
+    border-bottom: 1px solid var(--ga-line-2);
   }
-  .reel-progress.error { color: #ff7a7a; }
+  .reel-progress.error { color: var(--ga-rec, #ff3b30); }
   .reel-progress progress { flex: 1; height: 8px; }
   .reel-body {
     display: grid;
@@ -407,26 +420,34 @@
     min-height: 0;
   }
   .tray {
-    border-right: 1px solid var(--ga-blue-mute-800);
+    border-right: 1px solid var(--ga-line-2);
     padding: 8px;
     overflow-y: auto;
     display: flex; flex-direction: column; gap: 4px;
   }
   .tray-head {
-    color: #8a8fa3; text-transform: uppercase; font-size: 11px;
-    letter-spacing: 0.8px; margin-bottom: 4px;
+    color: var(--ga-ink-2);
+    text-transform: uppercase;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    margin-bottom: 4px;
     display: flex; justify-content: space-between;
   }
-  .tray-hint { text-transform: none; letter-spacing: 0; opacity: 0.7; }
+  .tray-hint { text-transform: none; letter-spacing: 0; font-weight: 500; }
   .tpl-card {
     display: flex; align-items: center; gap: 8px;
-    background: var(--ga-blue-900); color: #cfd3e0;
-    border: 1px solid var(--ga-blue-mute-800); border-radius: 6px;
-    padding: 6px 8px; cursor: grab; font-size: 13px;
+    min-height: var(--ga-control-h, 26px);
+    background: var(--ga-card); color: var(--ga-ink-0);
+    border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px);
+    padding: 3px 8px; cursor: grab;
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     text-align: left;
   }
-  .tpl-card:hover { background: var(--ga-blue-mute-800); border-color: var(--ga-blue-mute-600); }
-  .tpl-card.save { border-style: dashed; color: #9fa6c0; margin-top: 6px; cursor: pointer; }
+  .tpl-card:hover { border-color: var(--ga-line-3); }
+  .tpl-card.save { border-style: dashed; color: var(--ga-ink-1); margin-top: 6px; cursor: pointer; }
   .tpl-icon { width: 16px; text-align: center; }
   .strip {
     display: flex; align-items: stretch; gap: 8px;
@@ -436,54 +457,66 @@
   }
   .strip-empty {
     display: flex; align-items: center; justify-content: center;
-    flex: 1; color: #6b7088; border: 1px dashed var(--ga-blue-mute-800);
-    border-radius: 8px; padding: 18px; font-size: 13px;
+    flex: 1; color: var(--ga-ink-2); border: 1px dashed var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px); padding: 18px; font-size: var(--ga-text-meta, 11px);
   }
   .shot-card {
     position: relative;
     display: flex; flex-direction: column;
     width: 150px; flex: 0 0 150px;
-    background: var(--ga-blue-900); border: 1px solid var(--ga-blue-mute-800); border-radius: 8px;
+    background: var(--ga-card); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-tile, 7px);
     cursor: grab; overflow: hidden;
   }
-  .shot-card.selected { border-color: #BB86FC; }
-  .shot-card.drag-over { border-color: #4af2ff; }
-  .shot-thumb { width: 100%; height: 72px; object-fit: cover; background: #0a0b12; }
+  .shot-card.selected { border-color: var(--ga-selection-line); box-shadow: inset 0 0 0 1px var(--ga-selection-line); }
+  .shot-card.drag-over { border-color: var(--ga-line-3); }
+  .shot-thumb { width: 100%; height: 72px; object-fit: cover; background: var(--ga-slot); }
   .shot-thumb.placeholder {
     display: flex; align-items: center; justify-content: center;
-    font-size: 27px; color: var(--ga-blue-mute-600);
+    font-size: 27px; color: var(--ga-ink-3);
   }
   .shot-meta { display: flex; flex-direction: column; padding: 5px 7px; gap: 2px; }
-  .shot-name { font-weight: 600; font-size: 12px; }
-  .shot-move { color: #8a8fa3; font-size: 11px; }
+  .shot-name { font-weight: 600; font-size: var(--ga-text-control, 12px); }
+  .shot-move { color: var(--ga-ink-2); font-size: var(--ga-text-meta, 11px); }
   .shot-del {
     position: absolute; top: 3px; right: 3px;
-    background: rgba(10, 11, 17, 0.75); color: #9aa;
-    border: none; border-radius: 4px; cursor: pointer;
-    width: 18px; height: 18px; font-size: 11px; line-height: 1;
+    background: color-mix(in srgb, var(--ga-void, #0a0908) 75%, transparent); color: var(--ga-ink-1);
+    border: none; border-radius: var(--ga-r-hard, 5px); cursor: pointer;
+    width: 18px; height: 18px; font-size: var(--ga-text-meta, 11px); line-height: 1;
   }
-  .shot-del:hover { color: #ff7a7a; }
+  .shot-del:hover { color: var(--ga-rec, #ff3b30); }
   .inspector {
-    border-left: 1px solid var(--ga-blue-mute-800);
+    border-left: 1px solid var(--ga-line-2);
     padding: 10px;
     overflow-y: auto;
     display: flex; flex-direction: column; gap: 6px;
   }
   .insp-head {
-    font-weight: 700; font-size: 12px; letter-spacing: 0.5px;
-    color: #9fa6c0; text-transform: uppercase;
+    font-weight: var(--ga-weight-title, 650);
+    font-size: var(--ga-text-title, 14px);
+    color: var(--ga-ink-0);
   }
-  .insp-empty { color: #6b7088; padding: 8px 0; }
-  .insp-divider { border-top: 1px solid var(--ga-blue-mute-800); margin: 8px 0 4px; }
+  .insp-head.eyebrow {
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
+    text-transform: uppercase;
+  }
+  .insp-empty { color: var(--ga-ink-2); padding: 8px 0; font-size: var(--ga-text-meta, 11px); }
+  .insp-divider { border-top: 1px solid var(--ga-line-2); margin: 8px 0 4px; }
   .insp-row {
     display: flex; align-items: center; gap: 8px;
   }
-  .insp-row span:first-child { width: 58px; color: #8a8fa3; }
+  .insp-row span:first-child { width: 58px; color: var(--ga-ink-1); }
   .insp-row select, .insp-row input {
     flex: 1; min-width: 0;
-    background: #10121c; color: #cfd3e0;
-    border: 1px solid var(--ga-blue-mute-800); border-radius: 5px;
-    padding: 4px 6px; font-size: 13px;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    background: var(--ga-slot); color: var(--ga-ink-0);
+    border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px);
+    padding: 0 6px;
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
   }
-  .insp-row .unit { width: auto; color: #6b7088; }
+  .insp-row .unit { width: auto; color: var(--ga-ink-2); }
 </style>

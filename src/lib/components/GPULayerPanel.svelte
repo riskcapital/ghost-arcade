@@ -416,7 +416,7 @@
       <div class="sec-label sub">Layer</div>
       <div class="slider-col">
         <NumericInput
-          label="Background Opacity"
+          label="Background opacity"
           value={content.bgOpacity ?? 1.0}
           min={0}
           max={1}
@@ -654,90 +654,94 @@
 {/if}
 
 <style>
-  .gpu-panel { padding: 8px 12px; color: #d4d8e0; font-size: 13px; }
-  .sec-label { text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; opacity: 0.7; margin: 12px 0 6px; display: flex; align-items: center; gap: 6px; }
-  .sec-label.sub { margin-top: 14px; }
-  .active-name { margin-left: auto; font-size: 11.5px; color: var(--ga-blue-300); opacity: 0.95; text-transform: none; letter-spacing: 0; }
-  .shader-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  .gpu-panel { padding: 12px; color: var(--ga-ink-0); font-size: var(--ga-text-body); }
+  /* Eyebrow section label, same as every layer editor. */
+  .sec-label { text-transform: uppercase; font-size: var(--ga-text-eyebrow); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking); color: var(--ga-ink-2); margin: 16px 0 8px; display: flex; align-items: center; gap: 6px; }
+  .gpu-panel > .sec-label:first-child { margin-top: 0; }
+  .sec-label.sub { margin-top: 16px; }
+  .active-name { margin-left: auto; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); color: var(--ga-ink-0); text-transform: none; letter-spacing: 0; }
+  .shader-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
   .shader-btn {
-    background: var(--ga-blue-mute-800);
-    border: 1px solid var(--ga-blue-mute-800);
-    color: #b0b6c0;
-    padding: 8px 10px;
-    border-radius: 4px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    padding: 6px 8px;
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
     text-align: left;
-    transition: all 0.08s;
+    transition: border-color 0.08s, color 0.08s, background 0.08s;
   }
-  .shader-btn:hover { background: var(--ga-blue-mute-800); color: #fff; border-color: var(--ga-blue-mute-600); }
-  .shader-btn.active { background: linear-gradient(135deg, var(--ga-blue-600) 0%, var(--ga-blue-mute-800) 100%); border-color: var(--ga-blue-300); color: var(--ga-blue-100); }
-  .shader-btn-label { font-size: 13px; font-weight: 500; }
-  .shader-btn-cat { font-size: 10.5px; opacity: 0.7; margin-top: 2px; }
+  .shader-btn:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .shader-btn.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
+  .shader-btn-label { font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); }
+  .shader-btn-cat { font-size: var(--ga-text-meta); color: var(--ga-ink-2); margin-top: 1px; }
+  .shader-btn.active .shader-btn-cat { color: inherit; opacity: 0.75; }
   .slider-col { display: flex; flex-direction: column; gap: 8px; }
-  .toggle-row { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
-  .toggle-row input { accent-color: var(--ga-blue-300); }
-  .select-row { display: flex; flex-direction: column; gap: 3px; }
-  .select-row label { font-size: 11.5px; opacity: 0.85; }
+  .toggle-row { display: flex; align-items: center; gap: 8px; min-height: var(--ga-control-h-sm); font-size: var(--ga-text-control); color: var(--ga-ink-1); cursor: pointer; }
+  .toggle-row input { accent-color: var(--ga-selection-line); }
+  .select-row { display: flex; flex-direction: column; gap: 4px; }
+  .select-row label { font-size: var(--ga-text-control); color: var(--ga-ink-1); }
   .select-row select {
-    background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-600); color: #d4d8e0;
-    padding: 6px 8px; border-radius: 3px; font-size: 12.5px; cursor: pointer;
+    height: var(--ga-control-h); background: var(--ga-slot); border: 1px solid var(--ga-line-2); color: var(--ga-ink-0);
+    padding: 0 8px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-control); cursor: pointer;
   }
-  .select-row select:focus { outline: none; border-color: var(--ga-blue-300); }
-  .color-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .color-row label { font-size: 11.5px; opacity: 0.85; }
+  .select-row select:focus { outline: none; border-color: var(--ga-focus); }
+  .color-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ga-control-h); }
+  .color-row label { font-size: var(--ga-text-control); color: var(--ga-ink-1); }
   .color-row input[type="color"] {
-    width: 36px; height: 22px; padding: 0; border: 1px solid var(--ga-blue-mute-600); border-radius: 3px; cursor: pointer; background: transparent;
+    width: 36px; height: var(--ga-control-h-sm); padding: 0; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); cursor: pointer; background: transparent;
   }
   /* Media-source picker */
-  .src-active { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-  .src-active-label { font-size: 11.5px; opacity: 0.85; }
-  .src-now { margin-left: auto; font-size: 10.5px; color: var(--ga-blue-300); background: var(--ga-blue-a08); padding: 1px 6px; border-radius: 8px; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .src-now.empty { color: #6b7280; background: transparent; opacity: 0.55; }
-  .src-now.awaiting { color: #fbbf24; background: rgba(251, 191, 36, 0.10); opacity: 1; }
+  .src-active { display: flex; align-items: center; gap: 6px; min-height: var(--ga-control-h-sm); margin-bottom: 6px; }
+  .src-active-label { font-size: var(--ga-text-control); color: var(--ga-ink-1); }
+  .src-now { margin-left: auto; font-size: var(--ga-text-meta); color: var(--ga-ink-0); background: var(--ga-sub); border: 1px solid var(--ga-line-2); padding: 1px 6px; border-radius: var(--ga-r-hard); max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .src-now.empty { color: var(--ga-ink-2); background: transparent; border-color: transparent; }
+  .src-now.awaiting { color: #fbbf24; background: rgba(251, 191, 36, 0.10); border-color: rgba(251, 191, 36, 0.28); }
   .src-error {
     margin-top: 6px;
     padding: 6px 8px;
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     line-height: 1.35;
     color: #ffb4a8;
     background: rgba(255, 80, 60, 0.08);
     border: 1px solid rgba(255, 80, 60, 0.28);
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard);
   }
 
-  .src-awaiting-hint { font-size: 10.5px; line-height: 1.35; color: #d1a54a; opacity: 0.9; margin: -2px 0 7px; }
-  .mini-x { background: transparent; border: 1px solid var(--ga-blue-mute-600); color: var(--text-secondary, #aaa); width: 22px; height: 22px; border-radius: 3px; cursor: pointer; font-size: 14px; }
-  .mini-x:hover { background: var(--ga-blue-mute-800); color: #fff; }
-  .src-select { width: 100%; background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-600); color: #d4d8e0; padding: 5px 8px; border-radius: 3px; font-size: 12px; cursor: pointer; margin-top: 6px; }
-  .src-select option:disabled { color: #6b7280; }
-  .live-sources { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--ga-blue-mute-800); display: flex; flex-direction: column; gap: 0; }
-  .live-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; color: #8a96a6; opacity: 0.8; margin-bottom: 4px; }
-  .mini-action.wide { width: 100%; background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-800); color: #b0b6c0; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; margin-top: 6px; }
-  .mini-action.wide:hover { background: var(--ga-blue-mute-800); color: #fff; border-color: var(--ga-blue-mute-600); }
-  .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px; max-height: 200px; overflow-y: auto; padding: 2px; background: var(--ga-blue-900); border: 1px solid var(--ga-blue-mute-800); border-radius: 4px; }
-  .media-cell { position: relative; background: var(--ga-blue-mute-800); border: 1px solid var(--ga-blue-mute-800); border-radius: 3px; padding: 0; cursor: pointer; overflow: hidden; aspect-ratio: 1; display: flex; flex-direction: column; }
-  .media-cell:hover { border-color: var(--ga-blue-mute-600); }
-  .media-cell.active { border-color: var(--ga-blue-300); box-shadow: 0 0 0 1px var(--ga-blue-a28); }
+  .src-awaiting-hint { font-size: var(--ga-text-meta); line-height: 1.35; color: #d1a54a; margin: -2px 0 8px; }
+  .mini-x { background: transparent; border: 1px solid var(--ga-line-2); color: var(--ga-ink-2); width: var(--ga-control-h-sm); height: var(--ga-control-h-sm); border-radius: var(--ga-r-hard); cursor: pointer; font-size: 14px; }
+  .mini-x:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .src-select { width: 100%; height: var(--ga-control-h); background: var(--ga-slot); border: 1px solid var(--ga-line-2); color: var(--ga-ink-0); padding: 0 8px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-control); cursor: pointer; margin-top: 6px; }
+  .src-select option:disabled { color: var(--ga-ink-3); }
+  .live-sources { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--ga-line-2); display: flex; flex-direction: column; gap: 0; }
+  .live-label { font-size: var(--ga-text-eyebrow); font-weight: 700; text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking); color: var(--ga-ink-2); margin-bottom: 4px; }
+  .mini-action.wide { width: 100%; height: var(--ga-control-h); background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1); padding: 0 10px; border-radius: var(--ga-r-hard); cursor: pointer; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); margin-top: 6px; }
+  .mini-action.wide:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px; max-height: 200px; overflow-y: auto; padding: 4px; margin-top: 6px; background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); }
+  .media-cell { position: relative; background: var(--ga-card); border: 1px solid var(--ga-line-1); border-radius: var(--ga-r-hard); padding: 0; cursor: pointer; overflow: hidden; aspect-ratio: 1; display: flex; flex-direction: column; }
+  .media-cell:hover { border-color: var(--ga-line-3); }
+  .media-cell.active { border-color: var(--ga-selection-line); box-shadow: 0 0 0 1px var(--ga-selection-line); }
   .media-cell:disabled { cursor: not-allowed; opacity: 0.48; filter: grayscale(0.55); }
-  .media-cell:disabled:hover { border-color: var(--ga-blue-mute-800); }
+  .media-cell:disabled:hover { border-color: var(--ga-line-1); }
   .media-cell.native-pending::after { content: ''; position: absolute; inset: 0; background: rgba(5, 7, 10, 0.28); pointer-events: none; }
   .native-badge {
     position: absolute;
     top: 4px;
     right: 4px;
     z-index: 1;
-    border: 1px solid rgba(167, 139, 250, 0.55);
-    background: rgba(18, 14, 30, 0.88);
-    color: var(--ga-blue-200);
-    border-radius: 3px;
-    font-size: 9px;
+    border: 1px solid var(--ga-line-3);
+    background: rgba(10, 9, 8, 0.88);
+    color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-micro);
+    font-weight: 700;
     line-height: 1;
     padding: 3px 4px;
     text-transform: uppercase;
-    letter-spacing: 0.25px;
+    letter-spacing: var(--ga-eyebrow-tracking);
   }
   .media-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .video-placeholder { background: var(--ga-blue-mute-800); color: var(--ga-blue-300); display: flex; align-items: center; justify-content: center; font-size: 19px; width: 100%; height: 100%; }
-  .media-cell-label { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,0.85)); color: #d4d8e0; font-size: 10px; padding: 10px 4px 3px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; text-align: left; }
-  .empty { padding: 24px; text-align: center; opacity: 0.5; font-size: 13px; }
+  .video-placeholder { background: var(--ga-card); color: var(--ga-ink-2); display: flex; align-items: center; justify-content: center; font-size: 20px; width: 100%; height: 100%; }
+  .media-cell-label { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,0.85)); color: var(--ga-ink-0); font-size: var(--ga-text-eyebrow); padding: 10px 4px 3px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; text-align: left; }
+  .empty { padding: 24px; text-align: center; color: var(--ga-ink-2); font-size: var(--ga-text-body); }
 </style>

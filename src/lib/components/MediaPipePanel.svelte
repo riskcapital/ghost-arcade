@@ -209,7 +209,7 @@
 <section data-help-page="midi-audio" class="mp-panel">
   <header class="mp-head">
     <span class="mp-title">MediaPipe</span>
-    <span class="mp-sub">camera gesture input · powered by @mediapipe/tasks-vision · Apache-2.0</span>
+    <span class="mp-sub">Camera gesture input · powered by @mediapipe/tasks-vision · Apache-2.0</span>
   </header>
 
   {#if !state.running}
@@ -318,77 +318,85 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px;
-    background: #0a0a0d;
-    border: 1px solid rgba(255, 107, 107, 0.10);
-    border-radius: 6px;
+    padding: 12px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft);
+    color: var(--ga-ink-0);
   }
-  .mp-head { display: flex; flex-direction: column; }
-  .mp-title { font-size: 12px; color: var(--accent-secondary, #FF8585); letter-spacing: 0.6px; text-transform: uppercase; font-weight: 700; }
-  .mp-sub   { font-size: 10px; color: #555; }
+  .mp-head { display: flex; flex-direction: column; gap: 2px; }
+  /* Eyebrow section label, same as every layer editor. */
+  .mp-title { font-size: var(--ga-text-eyebrow); color: var(--ga-ink-2); letter-spacing: var(--ga-eyebrow-tracking); text-transform: uppercase; font-weight: 700; }
+  .mp-sub   { font-size: var(--ga-text-meta); color: var(--ga-ink-2); }
 
   .mp-row { display: flex; align-items: center; gap: 8px; }
-  .mp-row-inline { gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--text-secondary, #aaa); }
-  .mp-row-inline label { display: flex; gap: 4px; align-items: center; cursor: pointer; }
-  .mp-lbl { font-size: 10px; color: #777; width: 60px; }
+  .mp-row-inline { gap: 12px; flex-wrap: wrap; font-size: var(--ga-text-control); color: var(--ga-ink-1); }
+  .mp-row-inline label { display: flex; gap: 6px; align-items: center; min-height: var(--ga-control-h-sm); cursor: pointer; }
+  .mp-lbl { font-size: var(--ga-text-control); color: var(--ga-ink-1); width: 60px; flex-shrink: 0; }
 
   select {
-    background: var(--bg-primary, #050507);
-    border: 1px solid #2a1a35;
-    color: var(--text-primary, #ddd);
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 11px;
+    height: var(--ga-control-h);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
     outline: none;
   }
-  select:focus { border-color: var(--accent-primary, #FF6B6B); }
+  .mp-row > select { flex: 1; min-width: 0; }
+  .mp-row-inline select { height: var(--ga-control-h-sm); padding: 0 4px; }
+  select:focus { border-color: var(--ga-focus); }
 
   .mp-actions { display: flex; gap: 4px; }
   .mp-btn {
-    padding: 5px 10px;
-    background: #15101e;
-    border: 1px solid rgba(255, 107, 107, 0.20);
-    border-radius: 3px;
-    color: var(--accent-secondary, #FF8585);
-    font-size: 12px;
-    font-weight: 600;
+    height: var(--ga-control-h);
+    padding: 0 10px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     transition: all 0.12s;
   }
-  .mp-btn:hover:not(:disabled) { background: #20162e; border-color: rgba(255, 107, 107, 0.55); color: var(--accent-primary, #FF6B6B); }
+  .mp-btn:hover:not(:disabled) { border-color: var(--ga-line-3); color: var(--ga-ink-0); }
   .mp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .mp-btn.primary { background: rgba(255, 107, 107, 0.10); }
-  .mp-btn.small { padding: 3px 8px; font-size: 11px; }
+  .mp-btn.primary { background: var(--ga-accent-gradient, var(--ga-violet)); border-color: transparent; color: var(--ga-blue-800); border-radius: var(--ga-r-soft); font-weight: 700; }
+  .mp-btn.primary:hover:not(:disabled) { color: var(--ga-blue-800); border-color: transparent; filter: brightness(1.06); }
+  .mp-btn.small { height: var(--ga-control-h-sm); padding: 0 8px; }
 
-  .mp-hint { font-size: 10px; color: #666; line-height: 1.45; }
-  .mp-err { font-size: 11px; color: #f87171; padding: 6px 8px; background: rgba(248, 113, 113, 0.08); border-radius: 3px; }
+  .mp-hint { font-size: var(--ga-text-meta); color: var(--ga-ink-2); line-height: 1.45; }
+  .mp-err { font-size: var(--ga-text-meta); color: #f87171; padding: 6px 8px; background: rgba(248, 113, 113, 0.08); border-radius: var(--ga-r-hard); }
 
   .mp-active {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: rgba(255, 107, 107, 0.06);
-    border: 1px solid rgba(255, 107, 107, 0.20);
-    border-radius: 3px;
-    padding: 4px 8px;
+    gap: 8px;
+    min-height: var(--ga-control-h);
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    padding: 2px 2px 2px 8px;
   }
   .mp-dot {
     width: 6px; height: 6px;
-    background: var(--accent-primary, #FF6B6B);
+    background: var(--ga-live);
     border-radius: 50%;
-    box-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--ga-live) 60%, transparent);
     animation: mpDot 2s infinite;
   }
   @keyframes mpDot { 0%,100%{opacity:1} 50%{opacity:.35} }
-  .mp-active-name { flex: 1; font-size: 11px; color: var(--accent-secondary, #FF8585); }
+  .mp-active-name { flex: 1; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); color: var(--ga-ink-0); }
 
   .mp-preview {
     position: relative;
     width: 100%;
     aspect-ratio: 4 / 3;
     background: #000;
-    border: 1px solid #1a1428;
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     overflow: hidden;
   }
   .mp-overlay {
@@ -403,101 +411,103 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    background: #060410;
-    border: 1px solid #1a1428;
-    border-radius: 3px;
-    padding: 6px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    padding: 8px;
   }
   .mp-signals-head {
-    font-size: 9px;
-    color: #555;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.6px;
-    padding-bottom: 2px;
+    letter-spacing: var(--ga-eyebrow-tracking);
+    padding-bottom: 4px;
   }
   .mp-signal-row {
     display: grid;
     grid-template-columns: 100px 1fr 36px;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
   }
-  .mp-sig-id   { color: var(--text-muted, #888); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mp-sig-val  { color: var(--text-secondary, #aaa); text-align: right; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
-  .mp-sig-gest { color: #555; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); grid-column: 2 / -1; }
-  .mp-sig-gest.active { color: var(--accent-primary, #FF6B6B); font-weight: 700; }
+  .mp-sig-id   { color: var(--ga-ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mp-sig-val  { color: var(--ga-ink-1); text-align: right; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-variant-numeric: tabular-nums; }
+  .mp-sig-gest { color: var(--ga-ink-3); grid-column: 2 / -1; }
+  .mp-sig-gest.active { color: var(--ga-ink-0); font-weight: 700; }
 
   .mp-meter {
     height: 6px;
-    background: var(--ga-blue-900);
+    background: var(--ga-card);
     border-radius: 2px;
     overflow: hidden;
   }
   .mp-meter-bar {
     height: 100%;
-    background: linear-gradient(to right, #5a2a4a, var(--accent-primary, #FF6B6B));
+    background: var(--ga-selection-line);
     transition: width 0.05s linear;
   }
 
   .mp-bindings {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    background: #060410;
-    border: 1px solid #1a1428;
-    border-radius: 3px;
-    padding: 6px 8px;
+    gap: 6px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    padding: 8px;
   }
   .mp-bindings-head {
     display: flex;
     justify-content: space-between;
-    font-size: 9px;
-    color: #555;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.6px;
+    letter-spacing: var(--ga-eyebrow-tracking);
   }
-  .mp-bindings-count { color: var(--text-muted, #888); }
+  .mp-bindings-count { color: var(--ga-ink-1); }
   .mp-bindings-empty {
-    font-size: 11px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     line-height: 1.45;
-    padding: 4px 0;
   }
+  .mp-bindings-empty strong { color: var(--ga-ink-1); font-weight: 600; }
   .mp-binding {
     display: grid;
     grid-template-columns: minmax(0, 1.2fr) 14px minmax(0, 1.4fr) 60px 18px;
     gap: 6px;
     align-items: center;
-    font-size: 11px;
-    padding: 3px 0;
-    border-bottom: 1px solid #110a1c;
+    min-height: var(--ga-control-h-sm);
+    font-size: var(--ga-text-meta);
+    border-bottom: 1px solid var(--ga-line-1);
   }
-  .mp-bind-sig  { color: var(--text-secondary, #aaa); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mp-bind-arr  { color: #444; text-align: center; }
-  .mp-bind-path { color: var(--text-primary, #ddd); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mp-bind-sig  { color: var(--ga-ink-1); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mp-bind-arr  { color: var(--ga-ink-3); text-align: center; }
+  .mp-bind-path { color: var(--ga-ink-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mp-bind-meter {
     height: 4px;
-    background: var(--ga-blue-900);
+    background: var(--ga-card);
     border-radius: 2px;
     overflow: hidden;
   }
   .mp-bind-meter-bar {
     height: 100%;
-    background: linear-gradient(to right, #5a2a4a, var(--accent-primary, #FF6B6B));
+    background: var(--ga-selection-line);
     transition: width 0.05s linear;
   }
   .mp-bind-del  {
     background: transparent;
     border: none;
-    color: #555;
+    color: var(--ga-ink-2);
     cursor: pointer;
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1;
     padding: 0;
   }
-  .mp-bind-del:hover { color: #f87171; }
+  .mp-bind-del:hover { color: var(--ga-rec); }
 
-  .mp-bind-actions { display: flex; gap: 4px; flex-wrap: wrap; padding: 2px 0; }
-  .mp-btn.ghost { background: transparent; color: var(--text-muted, #888); border-color: #2a1a35; }
-  .mp-btn.ghost:hover:not(:disabled) { color: var(--text-secondary, #aaa); }
+  .mp-bind-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+  .mp-btn.ghost { background: transparent; color: var(--ga-ink-2); }
+  .mp-btn.ghost:hover:not(:disabled) { color: var(--ga-rec); border-color: color-mix(in srgb, var(--ga-rec) 45%, transparent); }
 </style>

@@ -5,7 +5,11 @@
    glance: Sound bath is deep blue glass and gold, Berlin is black, hairlines
    and red, Dub is deep green and amber, Analog is a matte black panel with
    cream legends, aluminium knobs and orange. A face is any element with the
-   `face` class inside a `set-*` studio. */
+   `face` class inside a `set-*` studio.
+
+   Type follows the app: sentence case on everything you press, and caps
+   only as eyebrows (module titles, section names) and the 9px legends under
+   knobs and jacks. */
 .studio-tokens {
   --studio-ground: var(--ga-void, #0a0908);
   --studio-panel: var(--ga-panel, #100f0d);
@@ -14,6 +18,8 @@
   --studio-edge: var(--ga-line2, rgba(245, 236, 222, 0.13));
   --studio-edge-soft: var(--ga-line, rgba(245, 236, 222, 0.07));
   --studio-ink: var(--ga-ink0, #f2ede4);
+  /* Resting button text: secondary ink in the chrome, the face's ink on a face. */
+  --studio-ink-1: var(--ga-ink1, #ada9a2);
   --studio-muted: var(--ga-ink2, #89857e);
   --studio-accent: var(--ga-blue, #5278ff);
   --studio-accent-soft: var(--ga-blue-a16, rgba(82, 120, 255, 0.16));
@@ -23,12 +29,11 @@
   --studio-pointer: var(--studio-ink);
   --studio-radius: var(--ga-r-hard, 5px);
   --studio-title-font: var(--ga-font-ui, system-ui, sans-serif);
-  --studio-title-tracking: 0.12em;
   --studio-gap: 10px;
 
   color: var(--studio-ink);
   font-family: var(--ga-font-ui, system-ui, sans-serif);
-  font-size: var(--ga-type-control, 12px);
+  font-size: var(--ga-text-control, 12px);
   font-weight: var(--ga-font-ui-weight, 500);
 }
 
@@ -89,7 +94,6 @@
   --studio-knob-edge: rgba(255, 255, 255, 0.7);
   --studio-radius: 0px;
   --studio-title-font: var(--ga-font-mono, ui-monospace, monospace);
-  --studio-title-tracking: 0.2em;
   --mk-white: #f4f4f4;
   --mk-black: #000000;
   font-family: var(--ga-font-mono, ui-monospace, monospace);
@@ -132,46 +136,167 @@
   --mk-black: #111111;
 }
 
+/* On a face, buttons read in the face's own ink. */
+.studio-tokens .face {
+  --studio-ink-1: var(--studio-ink);
+}
+
+/* ── Type ── */
+
+/* Eyebrows are the app's .ga-eyebrow, in the face's ink and type. */
+.studio-tokens .ga-eyebrow {
+  font-family: var(--studio-title-font);
+  color: var(--studio-muted);
+  white-space: nowrap;
+}
+/* The 9px legend, for labels that sit under a control like a knob's. */
+.studio-tokens .ga-eyebrow.legend { font-size: var(--ga-text-micro, 9px); }
+
 /* ── Controls the studio's modules share ── */
 .studio-tokens select {
-  height: 24px;
-  padding: 0 4px;
+  height: var(--ga-control-h-sm, 22px);
+  padding: 0 6px;
   border: 1px solid var(--studio-edge);
   background: var(--studio-slot);
   color: var(--studio-ink);
   border-radius: var(--studio-radius);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--ga-text-control, 12px);
 }
-.studio-tokens .seg { display: inline-flex; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); overflow: hidden; }
+
+/* Segmented choice on a face (Fade / Build, keyboard size). The chrome uses
+   the app's .ga-segmented; this one keeps the face's accent. */
+.studio-tokens .seg {
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--ga-control-h, 26px);
+  padding: 2px;
+  gap: 2px;
+  box-sizing: border-box;
+  background: var(--studio-slot);
+  border: 1px solid var(--studio-edge);
+  border-radius: var(--studio-radius);
+}
 .studio-tokens .seg button {
-  height: 26px;
-  padding: 0 11px;
+  padding: 0 10px;
   border: 0;
+  border-radius: max(0px, calc(var(--studio-radius) - 2px));
   background: transparent;
   color: var(--studio-muted);
   font: inherit;
-  font-weight: 650;
+  font-size: var(--ga-text-control, 12px);
+  font-weight: var(--ga-weight-control, 600);
+  letter-spacing: 0;
+  white-space: nowrap;
   cursor: pointer;
 }
-.studio-tokens .seg.small button { height: 22px; padding: 0 8px; font-size: 11px; }
-.studio-tokens .seg button + button { border-left: 1px solid var(--studio-edge); }
-.studio-tokens .seg button.on { background: var(--studio-accent-soft); color: var(--studio-accent); }
+.studio-tokens .seg.small { height: var(--ga-control-h-sm, 22px); padding: 1px; gap: 1px; }
+.studio-tokens .seg.small button { padding: 0 8px; }
+.studio-tokens .seg button:hover:not(.on) { color: var(--studio-ink); }
+.studio-tokens .seg button.on {
+  background: var(--studio-accent-soft);
+  color: var(--studio-accent);
+  box-shadow: inset 0 0 0 1px var(--studio-accent);
+}
+
+/* The app's segmented control at panel sizes. */
+.studio-tokens .ga-segmented.compact { height: var(--ga-control-h, 26px); }
+.studio-tokens .ga-segmented.small { height: var(--ga-control-h-sm, 22px); padding: 1px; gap: 1px; }
+.studio-tokens .ga-segmented:is(.compact, .small) > button { padding: 0 10px; font-size: var(--ga-text-control, 12px); }
+.studio-tokens .ga-segmented.small > button { padding: 0 8px; }
+
+/* Chrome buttons: the app's own button skin gives their colours. */
 .studio-tokens .text-btn {
-  height: 28px;
-  padding: 0 11px;
+  height: var(--ga-control-h, 26px);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 1px solid var(--studio-edge);
   background: var(--studio-cell);
   color: var(--studio-ink);
   border-radius: var(--studio-radius);
   font: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: var(--ga-text-control, 12px);
+  font-weight: var(--ga-weight-control, 600);
+  letter-spacing: 0;
+  white-space: nowrap;
   cursor: pointer;
 }
 .studio-tokens .text-btn:hover { border-color: var(--ga-line3, rgba(245, 236, 222, 0.24)); }
-.studio-tokens .text-btn.small { height: 22px; padding: 0 8px; font-size: 10px; }
+.studio-tokens .text-btn.small { height: var(--ga-control-h-sm, 22px); padding: 0 8px; }
+
+/* Buttons on a face: the face's edge, ink and accent. */
+.studio-tokens .studio-btn {
+  height: var(--ga-control-h-sm, 22px);
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--studio-edge);
+  background: transparent;
+  color: var(--studio-ink-1);
+  border-radius: var(--studio-radius);
+  font: inherit;
+  font-size: var(--ga-text-control, 12px);
+  font-weight: var(--ga-weight-control, 600);
+  letter-spacing: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.studio-tokens .studio-btn:hover:not(:disabled) { color: var(--studio-ink); border-color: var(--studio-muted); }
+.studio-tokens .studio-btn.on { color: var(--studio-accent); border-color: var(--studio-accent); background: var(--studio-accent-soft); }
+.studio-tokens .studio-btn:disabled { opacity: 0.4; cursor: default; }
+.studio-tokens .studio-btn.dashed { border-style: dashed; color: var(--studio-muted); }
+
+/* Kill: the record red, as on the VJ header's kill. */
+.studio-tokens .kill-btn {
+  height: var(--ga-control-h, 26px);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--ga-rec, #ff3b30) 45%, transparent);
+  background: color-mix(in srgb, var(--ga-rec, #ff3b30) 12%, transparent);
+  color: var(--ga-rec, #ff3b30);
+  border-radius: var(--ga-r-hard, 5px);
+  font: inherit;
+  font-size: var(--ga-text-control, 12px);
+  font-weight: var(--ga-weight-control, 600);
+  letter-spacing: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.studio-tokens .kill-btn:hover { background: color-mix(in srgb, var(--ga-rec, #ff3b30) 24%, transparent); border-color: var(--ga-rec, #ff3b30); }
+
+/* Loop record (the session's recorder and the pads). */
+.studio-tokens .loop-rec {
+  height: var(--ga-control-h-sm, 22px);
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--studio-edge);
+  background: transparent;
+  color: var(--studio-ink-1);
+  border-radius: var(--studio-radius);
+  font: inherit;
+  font-size: var(--ga-text-control, 12px);
+  font-weight: var(--ga-weight-control, 600);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.studio-tokens .loop-rec .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ga-rec, #ff3b30); opacity: 0.55; }
+.studio-tokens .loop-rec:is(.on, .count) { border-color: var(--ga-rec, #ff3b30); color: var(--ga-rec, #ff3b30); }
+.studio-tokens .loop-rec.on .dot { opacity: 1; }
+.studio-tokens .loop-rec.count .dot { animation: studio-blink 0.5s steps(2, jump-none) infinite; }
+@keyframes studio-blink { 50% { opacity: 0.2; } }
+
 .studio-tokens .stepper { display: inline-flex; align-items: center; gap: 4px; }
 .studio-tokens .stepper span { min-width: 28px; text-align: center; font-family: var(--ga-font-mono, ui-monospace); }
 .studio-tokens .stepper button,
@@ -197,15 +322,23 @@
   color: var(--studio-ink);
   border-radius: var(--studio-radius);
   cursor: pointer;
-  width: 32px;
-  height: 28px;
+  width: var(--ga-control-h, 26px);
+  height: var(--ga-control-h, 26px);
 }
-.studio-tokens .transport.mini { width: 26px; height: 22px; }
+.studio-tokens .transport.mini { width: 26px; height: var(--ga-control-h-sm, 22px); }
 .studio-tokens .transport svg { width: 11px; height: 11px; fill: currentColor; }
 .studio-tokens .transport.mini svg { width: 10px; height: 10px; }
 .studio-tokens .transport.on { border-color: var(--studio-accent); background: var(--studio-accent-soft); color: var(--studio-accent); }
 .studio-tokens .transport.rec svg { fill: var(--ga-rec, #ff3b30); }
 .studio-tokens .transport.rec.on { border-color: var(--ga-rec, #ff3b30); background: transparent; }
 .studio-tokens .muted { color: var(--studio-muted); }
-.studio-tokens .check { display: inline-flex; align-items: center; gap: 5px; color: var(--studio-muted); }
-.studio-tokens .check input { accent-color: var(--studio-accent); }
+.studio-tokens .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--studio-ink-1);
+  font-size: var(--ga-text-control, 12px);
+  font-weight: var(--ga-weight-control, 600);
+  white-space: nowrap;
+}
+.studio-tokens .check input { accent-color: var(--studio-accent); margin: 0; }

@@ -51,7 +51,7 @@
     </select>
   </div>
   {#if sourceValue !== 'own'}
-    <p class="surface-hint">Plays the live VJ picture here while VJ is live, in MAP and STAGE.</p>
+    <p class="surface-hint">Plays the live VJ picture here while VJ is live, in Map and Stage.</p>
   {/if}
 {/if}
 
@@ -78,55 +78,58 @@
 {/if}
 
 <style>
+  /* Same grid as the inspector's property rows (76px label column). */
   .surface-row {
     display: grid;
-    grid-template-columns: 84px minmax(0, 1fr);
+    grid-template-columns: 76px minmax(0, 1fr);
     align-items: center;
-    gap: 8px;
-    margin-bottom: 7px;
+    gap: 6px;
+    min-height: var(--ga-control-h, 26px);
+    margin-bottom: 6px;
   }
   .surface-row label,
   .surface-label {
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13.5px;
-    font-weight: 500;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-body, 500);
   }
   .surface-row select {
     min-width: 0;
-    height: 32px;
+    height: var(--ga-control-h, 26px);
     background: transparent;
     color: var(--ga-ink-0, #eef0f4);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     padding: 0 8px;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 14px;
+    font-size: var(--ga-text-control, 12px);
   }
   .surface-state {
-    font-size: 13px;
+    font-size: var(--ga-text-control, 12px);
     color: var(--ga-ink-0, #eef0f4);
   }
   .surface-state.detached {
     color: #f0b35a;
   }
   .surface-hint {
-    font-size: 12px;
-    color: #777;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #777);
     margin: -2px 0 8px;
-    line-height: 1.4;
+    line-height: 1.45;
   }
   .surface-actions {
     display: flex;
     gap: 6px;
-    margin: 0 0 10px 92px;
+    margin: 0 0 8px 82px;
   }
   .surface-actions button {
     flex: 1;
-    height: 28px;
+    height: var(--ga-control-h, 26px);
     background: transparent;
     color: var(--ga-ink-0, #eef0f4);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 12.5px;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
   .surface-actions button:hover {

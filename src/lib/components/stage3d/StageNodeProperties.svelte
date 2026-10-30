@@ -19,10 +19,17 @@
   // screen is a spherical sector on the dome interior.
   $: isDomeVenue = ($stage3dScene.venue ?? 'festival') === 'sphere';
   const domeModes: { value: NonNullable<Stage3DScreenOverride['domeMapping']>; label: string }[] = [
-    { value: 'wrap', label: 'stretch' },
-    { value: 'domemaster', label: 'domemaster' },
-    { value: 'equirect', label: 'equirect' },
+    { value: 'wrap', label: 'Stretch' },
+    { value: 'domemaster', label: 'Domemaster' },
+    { value: 'equirect', label: 'Equirect' },
   ];
+  // Shown names for the stored option values.
+  const OPTION_LABELS: Record<string, string> = {
+    led: 'LED', projection: 'Projection', clean: 'Clean',
+    stretch: 'Stretch', contain: 'Contain', cover: 'Cover',
+    none: 'None', 'bezel-glow': 'Bezel glow', 'soft-border': 'Soft border',
+    scanlines: 'Scanlines', 'pixel-grid': 'Pixel grid',
+  };
   const domeDefaults = {
     domePanX: 0,
     domePanY: 0,
@@ -164,7 +171,7 @@
     <div class="pill-row">
       {#each ['led', 'projection', 'clean'] as f}
         <button class="pill" class:active={(override.finish ?? 'led') === f}
-          onclick={() => patch('finish', f as Stage3DScreenOverride['finish'])}>{f}</button>
+          onclick={() => patch('finish', f as Stage3DScreenOverride['finish'])}>{OPTION_LABELS[f] ?? f}</button>
       {/each}
     </div>
   </section>
@@ -174,7 +181,7 @@
     <div class="pill-row">
       {#each ['stretch', 'contain', 'cover'] as f}
         <button class="pill" class:active={(override.displayFit ?? 'stretch') === f}
-          onclick={() => patch('displayFit', f as Stage3DScreenOverride['displayFit'])}>{f}</button>
+          onclick={() => patch('displayFit', f as Stage3DScreenOverride['displayFit'])}>{OPTION_LABELS[f] ?? f}</button>
       {/each}
     </div>
   </section>
@@ -188,13 +195,13 @@
           onclick={() => patch('domeMapping', mode.value)}>{mode.label}</button>
       {/each}
     </div>
-    <p class="hint">stretch = flat content projected over the spherical cap. domemaster / equirect consume the editor's Dome Projection output so dome-formatted content lands correctly.</p>
+    <p class="hint">Stretch: flat content projected over the spherical cap. Domemaster and equirect use the editor's Dome Projection output so dome-formatted content lands correctly.</p>
   </section>
 
   <section class="prop-section">
     <div class="section-title-row">
       <h4>Dome tuning</h4>
-      <button class="mini-reset" onclick={resetDomeTuning}>reset</button>
+      <button class="mini-reset" onclick={resetDomeTuning}>Reset</button>
     </div>
     <label class="slider-row">
       <span>Center X</span>
@@ -240,7 +247,7 @@
     <div class="pill-row pill-wrap">
       {#each ['none', 'bezel-glow', 'soft-border', 'scanlines', 'pixel-grid'] as e}
         <button class="pill" class:active={(override.edgeEffect ?? 'none') === e}
-          onclick={() => patch('edgeEffect', e as Stage3DScreenOverride['edgeEffect'])}>{e}</button>
+          onclick={() => patch('edgeEffect', e as Stage3DScreenOverride['edgeEffect'])}>{OPTION_LABELS[e] ?? e}</button>
       {/each}
     </div>
   </section>
@@ -255,10 +262,10 @@
   .props {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 16px;
     width: 100%;
     min-width: 0;
-    padding: 8px 0;
+    padding: 4px 0;
     overflow: hidden;
     box-sizing: border-box;
   }
@@ -266,34 +273,35 @@
   .props-head { display: flex; align-items: center; gap: 8px; }
   .layer-name {
     flex: 1;
-    color: #fff;
-    font-size: 15px;
-    font-weight: 600;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
   }
   .badge {
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
-    background: rgba(187, 134, 252, 0.16);
-    color: #BB86FC;
-    padding: 3px 7px;
-    border-radius: 4px;
-    border: 1px solid rgba(187, 134, 252, 0.3);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    background: var(--ga-sub);
+    color: var(--ga-ink-2);
+    padding: 2px 6px;
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2);
   }
   .hint {
     margin: 0;
-    font-size: 12px;
-    color: #888;
-    line-height: 1.4;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2);
+    line-height: 1.45;
   }
-  .missing { color: #888; font-size: 13px; padding: 12px; text-align: center; }
+  .missing { color: var(--ga-ink-2); font-size: var(--ga-text-body, 13px); padding: 12px; text-align: center; }
   .prop-section h4 {
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.7px;
-    color: #888;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
     margin: 0 0 6px 0;
-    font-weight: 500;
   }
   .section-title-row {
     display: flex;
@@ -304,38 +312,44 @@
   }
   .section-title-row h4 { margin: 0; }
   .mini-reset {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    color: #aaa;
-    padding: 3px 7px;
-    border-radius: 5px;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
-  .mini-reset:hover { color: #fff; border-color: rgba(187, 134, 252, 0.45); }
+  .mini-reset:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .vec3-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .prop-axis {
     display: flex; align-items: center;
-    background: #14161e; border: 1px solid #2a2c36;
-    border-radius: 6px; padding: 4px 6px; gap: 4px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot); border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px); padding: 0 6px; gap: 4px;
   }
-  .axis-label { font-size: 11px; color: #888; font-weight: 600; }
+  .axis-label { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2); font-weight: 600; }
   .prop-axis input[type=number] {
-    flex: 1; background: transparent; border: none; color: #fff;
-    font-size: 13px; width: 100%; min-width: 0;
+    flex: 1; background: transparent !important; border: none !important; color: var(--ga-ink-0);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-control, 12px); width: 100%; min-width: 0; padding: 0;
+    box-shadow: none !important;
   }
   .prop-axis input[type=number]:focus { outline: none; }
   .slider-row {
     display: grid; grid-template-columns: minmax(68px, 0.9fr) minmax(72px, 1fr) minmax(40px, auto);
-    align-items: center; gap: 6px; font-size: 12px; color: #ccc;
-    margin-bottom: 6px;
+    align-items: center; gap: 6px;
+    min-height: var(--ga-control-h, 26px);
+    font-size: var(--ga-text-control, 12px); color: var(--ga-ink-1);
   }
-  .slider-row input[type=range] { accent-color: #BB86FC; width: 100%; }
+  .slider-row input[type=range] { accent-color: var(--ga-selection-line); width: 100%; }
   .slider-val {
     text-align: right; font-variant-numeric: tabular-nums;
-    color: #888; font-size: 11px;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    color: var(--ga-ink-1); font-size: var(--ga-text-meta, 11px);
   }
   .pill-row {
     display: grid;
@@ -347,27 +361,36 @@
   .pill-row.pill-wrap { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pill-row.pill-wrap .pill:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .pill {
-    background: #14161e; border: 1px solid #2a2c36; color: #aaa;
-    padding: 5px 5px; border-radius: 6px;
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.25px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-card); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1);
+    padding: 0 6px; border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer; white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .pill.active { background: #BB86FC; color: #1a1a1f; border-color: #BB86FC; }
+  .pill:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .pill.active {
+    background: var(--ga-selection-bg) !important;
+    color: var(--ga-selection-ink) !important;
+    border-color: var(--ga-selection-line) !important;
+  }
   .reset-btn {
-    background: rgba(255, 110, 110, 0.12);
-    border: 1px solid rgba(255, 110, 110, 0.3);
-    color: #ff8e8e;
-    padding: 8px;
-    border-radius: 8px;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
+    min-height: var(--ga-control-h, 26px);
+    background: color-mix(in srgb, var(--ga-rec, #ff3b30) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-rec, #ff3b30) 35%, transparent);
+    color: var(--ga-rec, #ff3b30);
+    padding: 4px 10px;
+    border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
-    margin-top: 8px;
+    margin-top: 4px;
     white-space: normal;
     line-height: 1.25;
   }
-  .reset-btn:hover { background: rgba(255, 110, 110, 0.2); }
+  .reset-btn:hover { background: color-mix(in srgb, var(--ga-rec, #ff3b30) 18%, transparent); }
 </style>

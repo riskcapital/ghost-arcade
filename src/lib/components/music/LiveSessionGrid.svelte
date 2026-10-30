@@ -59,7 +59,7 @@
       <button class="btn" onclick={guessAll} title="Give tracks without a sound the one their name suggests (Kick, Bass, Pads…)">Match by name</button>
     </div>
     <div class="grid" style="grid-template-columns: 132px repeat({live.tracks.length}, minmax(110px, 1fr));">
-      <span class="corner">SCENES</span>
+      <span class="corner ga-eyebrow">Scenes</span>
       {#each live.tracks as track, t (t)}
         <div class="head" style="--clip: {liveColor(track.color)}">
           <div class="head-top">
@@ -104,16 +104,16 @@
 {/if}
 
 <style>
-  .waiting { padding: 18px 4px; color: var(--studio-muted); font-size: 12px; max-width: 520px; }
+  .waiting { padding: 18px 4px; color: var(--studio-muted); font-size: var(--ga-text-control, 12px); line-height: 1.5; max-width: 520px; }
   .waiting p { margin: 0 0 6px; }
-  .waiting .title { color: var(--studio-ink); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; }
-  .error { color: #e5483a; }
+  .waiting .title { color: var(--studio-ink); font-weight: var(--ga-weight-title, 650); font-size: var(--ga-text-body, 13px); }
+  .error { color: var(--ga-rec, #e5483a); }
   .live { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
   .transport { display: flex; align-items: center; gap: 6px; }
   .spacer { flex: 1; }
-  .readout { font-size: 11px; color: var(--studio-muted); font-variant-numeric: tabular-nums; margin-left: 6px; }
+  .readout { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); font-variant-numeric: tabular-nums; margin-left: 6px; }
   .btn {
-    height: 24px;
+    height: var(--ga-control-h, 26px);
     padding: 0 10px;
     display: inline-flex;
     align-items: center;
@@ -123,13 +123,15 @@
     color: var(--studio-ink);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 11px;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
+  .btn:hover { border-color: var(--studio-muted); }
   .btn.on { border-color: var(--studio-accent); color: var(--studio-accent); }
   .btn svg, .scene svg, .stop svg { width: 10px; height: 10px; fill: currentColor; flex: 0 0 auto; }
   .grid { flex: 1; min-height: 0; overflow: auto; display: grid; gap: 3px; align-content: start; }
-  .corner { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--studio-muted); align-self: end; padding: 0 0 4px 2px; }
+  .corner { align-self: end; padding: 0 0 4px 2px; }
   .head {
     display: flex;
     flex-direction: column;
@@ -141,7 +143,7 @@
     min-width: 0;
   }
   .head-top { display: flex; align-items: center; gap: 4px; min-width: 0; }
-  .track-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
+  .track-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); }
   .stop { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--studio-muted); cursor: pointer; display: grid; place-items: center; }
   .stop:hover { color: var(--studio-ink); }
   .head select {
@@ -152,7 +154,7 @@
     border: 1px solid var(--studio-edge-soft);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
   }
   .scene, .clip {
     height: 28px;

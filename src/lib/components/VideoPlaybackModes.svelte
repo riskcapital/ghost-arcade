@@ -45,24 +45,25 @@
     gap: 4px;
   }
   button {
-    min-height: 28px;
+    height: var(--ga-control-h, 26px);
     min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 4px;
-    padding: 4px 2px;
-    border: 1px solid rgba(255, 255, 255, .08);
+    padding: 0 4px;
+    border: 1px solid var(--ga-line-2);
     border-radius: var(--ga-r-hard, 5px);
-    background: rgba(255, 255, 255, .05);
-    color: var(--text-secondary, #b7bbc5);
+    background: var(--ga-sub);
+    color: var(--ga-ink-1);
     font: inherit;
-    font-size: var(--ga-type-control, 12px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     white-space: nowrap;
     cursor: pointer;
     transition: background .15s, border-color .15s, color .15s;
   }
-  button:hover { background: rgba(255, 255, 255, .1); color: var(--text-primary, #eee); }
+  button:hover:not(.active) { border-color: var(--ga-line-3); color: var(--ga-ink-0); }
   button:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
   button.active {
     background: var(--ga-selection-bg, var(--ga-blue-700));
@@ -77,8 +78,8 @@
     align-items: center;
     gap: 5px;
     min-width: 76px;
-    color: var(--text-secondary, #b7bbc5);
-    font-size: var(--ga-type-caption, 11px);
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta, 11px);
     white-space: nowrap;
   }
 </style>

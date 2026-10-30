@@ -46,10 +46,9 @@
     background: rgba(10, 8, 2, 0.78);
     border: 1px solid #e0a33a;
     color: #f6d9a2;
-    font-family: var(--ga-font-ui, Inter, system-ui, sans-serif);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.04em;
     pointer-events: none;
   }
   .label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -63,7 +62,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-family: var(--ga-font-mono, 'JetBrains Mono', monospace);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
   }
   .countdown.last { animation: pulse 0.25s steps(2) infinite; }
   @keyframes pulse { 50% { border-color: #fff; } }

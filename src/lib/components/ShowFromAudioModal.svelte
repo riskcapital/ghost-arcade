@@ -356,7 +356,7 @@
     font-size: 13px;
     outline: none;
   }
-  h2 { margin: 0 0 14px; font-size: 17px; font-weight: 650; }
+  h2 { margin: 0 0 14px; font-size: 16px; font-weight: 650; }
   .sfa-muted { color: var(--text-secondary, #a0a0a0); margin: 8px 0; }
   .sfa-note { color: #f6c453; margin: 10px 0 0; font-size: 12px; }
   .sfa-error { color: #ff8a7a; margin: 10px 0; }

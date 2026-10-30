@@ -5706,7 +5706,7 @@ void main() {
   .sv-logo {
     font-family: 'Orbitron', sans-serif;
     font-weight: 900;
-    font-size: 15px;
+    font-size: 14px;
     letter-spacing: 3px;
     color: var(--sv-c);
     text-shadow: 0 0 10px rgba(187,134,252,.3);
@@ -5772,13 +5772,13 @@ void main() {
   }
   .sv-bpm-val {
     font-family: 'Orbitron', sans-serif;
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 700;
     color: var(--sv-c);
     line-height: 1;
   }
   .sv-bpm-lbl {
-    font-size: 8px;
+    font-size: 9px;
     opacity: .3;
     letter-spacing: 1px;
   }
@@ -5878,7 +5878,7 @@ void main() {
     border: 1px solid rgba(255,0,170,.3);
     color: var(--sv-m);
     font-family: 'Orbitron', sans-serif;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     cursor: pointer;
     transition: all .1s;
@@ -6222,7 +6222,7 @@ void main() {
   }
   .sv-layer-letter {
     font-family: 'Orbitron', sans-serif;
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 900;
     color: var(--sv-c);
   }
@@ -6355,7 +6355,7 @@ void main() {
   }
   .sv-clip-key {
     font-family: 'Orbitron', sans-serif;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     color: rgba(255,255,255,.45);
     line-height: 1;
@@ -6376,7 +6376,7 @@ void main() {
   .sv-clip-btn.assigned .sv-clip-name { opacity: .85; color: var(--sv-y); }
   .sv-clip-btn.assigned .sv-clip-desc { color: var(--sv-y); }
   .sv-clip-name {
-    font-size: 8px;
+    font-size: 9px;
     opacity: .55;
     text-align: center;
     overflow: hidden;
@@ -6387,7 +6387,7 @@ void main() {
   }
   .sv-clip-btn.on .sv-clip-name { opacity: .85; }
   .sv-clip-desc {
-    font-size: 7px;
+    font-size: 9px;
     opacity: .4;
     text-align: center;
     overflow: hidden;
@@ -6474,7 +6474,7 @@ void main() {
     background: rgba(255,255,255,.05);
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.6);
-    font-size: 17px;
+    font-size: 16px;
     cursor: pointer;
     transition: all .1s;
     border-radius: 4px;
@@ -6520,7 +6520,7 @@ void main() {
     50% { box-shadow: 0 0 24px rgba(187,134,252,.4); }
   }
   .sv-shader-mix-icon {
-    font-size: 19px;
+    font-size: 20px;
     color: #BB86FC;
   }
   .sv-shader-mix-label {
@@ -6572,7 +6572,7 @@ void main() {
   }
   .sv-cam-icon {
     font-family: 'Orbitron', sans-serif;
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--sv-g);
   }
@@ -6719,7 +6719,7 @@ void main() {
     border: 1px solid rgba(105,240,174,.15);
     border-radius: 3px;
     color: rgba(255,255,255,.5);
-    font-size: 8px;
+    font-size: 9px;
     cursor: pointer;
     transition: all .08s;
   }
@@ -7213,7 +7213,7 @@ void main() {
     letter-spacing: 1px;
   }
   .sv-spacefx-desc {
-    font-size: 8px;
+    font-size: 9px;
     opacity: .4;
     text-transform: uppercase;
     letter-spacing: .5px;
@@ -7235,7 +7235,7 @@ void main() {
     position: absolute;
     bottom: 2px;
     right: 3px;
-    font-size: 7px;
+    font-size: 9px;
     opacity: .5;
     letter-spacing: .5px;
   }

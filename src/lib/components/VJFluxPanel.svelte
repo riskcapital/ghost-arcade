@@ -159,12 +159,15 @@
             </div>
           {/if}
         </div>
-        <button class="chip" class:on={flux.latch} aria-pressed={flux.latch} onclick={toggleStay}
-          title="Keep Flux on after you let go" data-midi-path="vj:flux:on" data-midi-label="Flux stay on" data-midi-mode="toggle">Stay on</button>
       </div>
       <div class="stage">
         <div class="pad">
-          <span class="title" aria-hidden="true">FLUX <i class:live></i></span>
+          <!-- The pad's own header: its name and the latch that belongs to it. -->
+          <div class="pad-head">
+            <span class="title" aria-hidden="true">Flux <i class:live></i></span>
+            <button class="chip" class:on={flux.latch} aria-pressed={flux.latch} onclick={toggleStay}
+              title="Keep Flux on after you let go" data-midi-path="vj:flux:on" data-midi-label="Flux stay on" data-midi-mode="toggle">Stay on</button>
+          </div>
           <FluxPad value={flux} onchange={change} playHint="Drag to play" emptyHint="Pick effects with FX" />
         </div>
         <div class="drawer" class:open={fxOpen} aria-hidden={!fxOpen} inert={!fxOpen}>
@@ -196,12 +199,14 @@
     {:else}
       <button class="rnd tall" class:flash={scrambled} onclick={rnd} title="Scramble every playing shader and effect (Tab)"
         aria-label="Randomize settings" data-midi-path="vj:flux:rnd" data-midi-label="Randomize" data-midi-mode="toggle">RND</button>
-      <button class="chip tall" class:on={flux.latch} aria-pressed={flux.latch} onclick={toggleStay} title="Flux on or off (widen the window for the pad)">FLUX</button>
+      <button class="chip tall" class:on={flux.latch} aria-pressed={flux.latch} onclick={toggleStay} title="Flux on or off (widen the window for the pad)">Flux</button>
     {/if}
   </div>
 {/if}
 
 <style>
+  /* One button family for the whole panel: 26px, hairline, sentence case;
+     the chosen state uses the selection colours. */
   .vj-flux {
     position: absolute;
     top: 0;
@@ -211,72 +216,117 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px;
+    padding: 8px;
     box-sizing: border-box;
-    background: #0d1015;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--ga-panel, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 6px;
     min-height: 0;
     overflow: hidden;
   }
   .vj-flux.reversed { left: auto; right: 0; }
   /* A skinny panel keeps every control, a little tighter. */
-  .vj-flux.narrow { padding: 8px; gap: 6px; }
-  .vj-flux.narrow .head { gap: 4px; }
-  .vj-flux.narrow .randomize .rnd { letter-spacing: 0; padding: 6px 4px; }
-  .vj-flux.narrow .chip { padding: 6px 5px; }
-  .vj-flux.narrow .modules { gap: 3px; }
-  .vj-flux.narrow .modules button { font-size: 9px; padding: 0 1px; }
-  .vj-flux.compact { padding: 6px; align-items: stretch; }
+  .vj-flux.narrow { gap: 6px; }
+  .vj-flux.narrow .randomize .rnd { padding: 0 6px; }
+  .vj-flux.narrow .chip { padding: 0 6px; }
+  .vj-flux.narrow .modules { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .vj-flux.narrow .modules button { font-size: var(--ga-text-meta, 11px); }
+  .vj-flux.compact { padding: 6px; gap: 6px; align-items: stretch; }
   .head { display: flex; align-items: center; gap: 6px; position: relative; }
-  .title { position: absolute; top: 7px; left: 8px; z-index: 5; pointer-events: none; font: 600 10px/1 var(--ga-font-mono, ui-monospace, monospace); letter-spacing: 0.14em; color: rgba(201, 207, 219, 0.7); }
-  .title i { display: inline-block; width: 7px; height: 7px; margin-left: 3px; border-radius: 50%; background: #3a3f4b; vertical-align: 1px; }
-  .title i.live { background: var(--ga-green, #3ddc84); box-shadow: 0 0 6px var(--ga-green, #3ddc84); }
   button, select {
-    background: #161a22; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 4px;
-    color: #d7dbe4; font-family: inherit; font-size: 11px; font-weight: 500; line-height: 1; padding: 6px 8px; cursor: pointer;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    padding: 0 10px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font-family: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
   }
-  button:hover { border-color: rgba(255, 255, 255, 0.28); }
-  .chip.on, .modules button.on, .gear.on, .fx.on, .options button.on { background: var(--ga-blue-900, #18234d); border-color: var(--ga-blue-400, #5278ff); color: #fff; }
+  button:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
+  .chip.on, .modules button.on, .gear.on, .fx.on, .options button.on {
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
+  }
+  /* Randomize and its options read as one split button. */
   .randomize { flex: 1; min-width: 0; display: flex; }
   .randomize .rnd {
-    flex: 1; min-width: 0; border-radius: 4px 0 0 4px; font-weight: 700; letter-spacing: 0.04em;
-    border-color: rgba(187, 134, 252, 0.55); color: #e6d4ff; transition: background 0.15s;
+    flex: 1; min-width: 0; border-radius: var(--ga-r-hard, 5px) 0 0 var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .randomize .gear { flex: none; padding: 0 7px; border-radius: 0 4px 4px 0; border-left: none; border-color: rgba(187, 134, 252, 0.55); color: #cdb8f0; display: flex; align-items: center; }
-  .randomize.flash .rnd { background: rgba(187, 134, 252, 0.45); }
+  .randomize .gear {
+    flex: none; width: var(--ga-control-h, 26px); padding: 0; border-left: none;
+    border-radius: 0 var(--ga-r-hard, 5px) var(--ga-r-hard, 5px) 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .randomize.flash .rnd, .rnd.tall.flash { background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff); }
   .options {
-    position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 6; display: flex; gap: 4px; padding: 5px;
-    background: #10131a; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 5px; box-shadow: 0 8px 24px #000a;
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 6; display: flex; gap: 4px; padding: 4px;
+    background: var(--ga-sub, #1e1b16); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
   }
-  .options button { flex: 1; padding: 7px 4px; }
-  .rnd.tall { font-weight: 700; border-color: rgba(187, 134, 252, 0.55); color: #e6d4ff; transition: background 0.15s; }
-  .rnd.tall.flash { background: rgba(187, 134, 252, 0.45); }
-  .tall { flex: 1; writing-mode: vertical-rl; text-orientation: mixed; padding: 6px 0; }
+  .options button { flex: 1; min-width: 0; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tall { flex: 1; height: auto; writing-mode: vertical-rl; text-orientation: mixed; padding: 6px 0; }
+  .rnd.tall { color: var(--ga-ink-0, #f2ede4); }
   /* The pad fills the panel; the effect picker slides up over its lower part. */
-  .stage { position: relative; flex: 1; min-height: 90px; border-radius: 5px; overflow: hidden; }
+  .stage { position: relative; flex: 1; min-height: 90px; border-radius: var(--ga-r-hard, 5px); overflow: hidden; }
   .pad {
-    position: absolute; inset: 0; border-radius: 5px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12);
+    position: absolute; inset: 0; border-radius: var(--ga-r-hard, 5px); overflow: hidden;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     background:
-      linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px) 0 0 / 25% 25%,
-      linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px) 0 0 / 25% 25%,
-      radial-gradient(circle at 50% 100%, rgba(82, 120, 255, 0.16), transparent 70%), #07090d;
+      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px) 0 0 / 25% 25%,
+      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px) 0 0 / 25% 25%,
+      radial-gradient(circle at 50% 100%, var(--ga-blue-a16, rgba(82, 120, 255, 0.16)), transparent 70%),
+      var(--ga-slot, #060504);
   }
+  .pad-head {
+    position: absolute; top: 4px; left: 8px; right: 4px; z-index: 5;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    pointer-events: none;
+  }
+  .pad-head .chip { pointer-events: auto; height: var(--ga-control-h-sm, 22px); padding: 0 8px; }
+  .vj-flux.narrow .pad-head .chip { padding: 0 6px; }
+  /* Eyebrow: the panel's one uppercase label. */
+  .title {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; line-height: 1;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
+  }
+  .title i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ga-ink-3, #39342c); }
+  .title i.live { background: var(--ga-green, #46d18a); box-shadow: 0 0 6px var(--ga-green, #46d18a); }
   .drawer {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; max-height: 100%; overflow-y: auto;
     display: flex; flex-direction: column; gap: 6px; padding: 8px;
-    background: rgba(13, 16, 21, 0.96); border-top: 1px solid rgba(255, 255, 255, 0.14);
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 96%, transparent);
+    border-top: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     transform: translateY(102%); transition: transform 0.22s ease; scrollbar-width: thin;
   }
   .drawer.open { transform: translateY(0); }
-  .modules { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 26px; gap: 4px; }
-  .modules button { height: 26px; padding: 0 3px; font-size: 10px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .modules { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .modules button { padding: 0 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row { display: flex; gap: 6px; }
   .row select { flex: 1; min-width: 0; }
   .foot { display: flex; align-items: center; gap: 8px; }
-  .foot label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 11px; color: #9aa0ac; white-space: nowrap; }
-  .foot input { flex: 1; min-width: 0; accent-color: var(--ga-blue-400, #5278ff); }
-  .fx { flex: none; font-weight: 700; letter-spacing: 0.06em; display: flex; align-items: center; gap: 4px; }
-  .fx b { font-size: 9px; min-width: 14px; height: 14px; line-height: 14px; border-radius: 7px; background: var(--ga-blue-400, #5278ff); color: #fff; }
+  .foot label {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+    font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-body, 500);
+    color: var(--ga-ink-1, #ada9a2); white-space: nowrap;
+  }
+  .foot input { flex: 1; min-width: 0; accent-color: var(--ga-selection-line, #5278ff); }
+  .fx { flex: none; display: flex; align-items: center; gap: 6px; }
+  /* Count badge on the FX button. */
+  .fx b {
+    min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px;
+    font-size: var(--ga-text-micro, 9px); font-weight: 700; line-height: 14px; text-align: center;
+    background: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff);
+  }
 </style>

@@ -138,15 +138,17 @@
     flex-direction: column;
     gap: 6px;
     margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 10px;
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
 
   .vt-section-title {
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: #777;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    line-height: 1.2;
+    color: var(--ga-ink-2, #89857e);
     margin-bottom: 2px;
   }
 
@@ -155,32 +157,37 @@
     grid-template-columns: 56px 1fr 44px;
     align-items: center;
     gap: 8px;
+    min-height: var(--ga-control-h-sm, 22px);
   }
 
   .vt-tf-label {
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #ada9a2);
   }
 
   .vt-tf-num {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
-    color: var(--ga-blue-300);
+    font-size: var(--ga-text-meta, 11px);
+    font-variant-numeric: tabular-nums;
+    color: var(--ga-ink-1, #ada9a2);
     text-align: right;
   }
 
   .vt-tf-row input[type="range"] {
     width: 100%;
-    accent-color: var(--ga-blue-300);
+    accent-color: var(--ga-slider-fill, var(--ga-selection-line, #5278ff));
   }
 
   .vt-tf-select {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--text-primary, #ddd);
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 11px;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 5px);
+    font-family: inherit;
+    font-size: var(--ga-text-control, 12px);
     cursor: pointer;
     width: 100%;
   }
@@ -193,37 +200,36 @@
     grid-template-columns: 56px 1fr;
   }
 
-  .vt-toggle-btn {
-    width: 100%;
-    height: 24px;
-    border-radius: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--text-secondary, #aaa);
-    font-size: 11px;
-    font-weight: 700;
+  .vt-toggle-btn,
+  .vt-tf-reset {
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-1, #ada9a2);
+    font-family: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
 
+  .vt-toggle-btn { width: 100%; }
+
+  .vt-toggle-btn:hover:not(.active),
+  .vt-tf-reset:hover {
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
+  }
+
   .vt-toggle-btn.active {
-    border-color: var(--ga-blue-a45);
-    background: var(--ga-blue-a16);
-    color: var(--ga-blue-300);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .vt-tf-reset {
     margin-top: 4px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--text-secondary, #aaa);
-    padding: 5px;
-    border-radius: 3px;
-    font-size: 11px;
-    cursor: pointer;
-  }
-
-  .vt-tf-reset:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
   }
 </style>

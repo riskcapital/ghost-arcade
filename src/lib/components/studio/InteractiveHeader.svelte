@@ -27,8 +27,7 @@
 </script>
 
 <header>
-  <div>
-    <small>GHOST ARCADE / INTERACTIVE</small>
+  <div class="header-title">
     <h2>Interactive Studio <span class="engine-badge">{engineLabel}</span></h2>
   </div>
   <div class="header-actions">

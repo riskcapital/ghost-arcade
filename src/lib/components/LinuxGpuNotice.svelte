@@ -196,16 +196,16 @@
   }
   .eyebrow, .legacy-eyebrow {
     margin: 0 0 3px;
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 650;
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: #ffc58a;
   }
-  h2 { margin: 0; font-size: 21px; line-height: 1.25; font-weight: 700; letter-spacing: -0.01em; color: #f4f6fb; }
+  h2 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; letter-spacing: -0.01em; color: #f4f6fb; }
   h3 { margin: 0 0 10px; font-size: 13px; font-weight: 650; color: #e9edf5; }
 
-  .finding { margin: 0 0 10px; font-size: 13.5px; line-height: 1.55; color: #c3cad8; }
+  .finding { margin: 0 0 10px; font-size: 13px; line-height: 1.55; color: #c3cad8; }
   .adapter {
     display: flex;
     align-items: center;
@@ -228,7 +228,7 @@
     height: 22px;
     margin-top: 1px;
     border-radius: 7px;
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 700;
     color: #e9edf5;
     background: rgba(255, 255, 255, 0.06);
@@ -262,8 +262,8 @@
   }
   .legacy.solo { border-color: rgba(143, 180, 255, 0.55); box-shadow: 0 10px 34px rgba(80, 110, 255, 0.16); }
   .legacy .legacy-eyebrow { color: var(--ga-blue-200, #a8bcff); }
-  .legacy h3 { margin: 0 0 4px; font-size: 14.5px; color: #f1f4fa; }
-  .legacy p { margin: 0; font-size: 12.5px; line-height: 1.5; color: #aab3c4; }
+  .legacy h3 { margin: 0 0 4px; font-size: 14px; color: #f1f4fa; }
+  .legacy p { margin: 0; font-size: 13px; line-height: 1.5; color: #aab3c4; }
   .legacy-actions { display: grid; gap: 7px; justify-items: stretch; }
 
   button {
@@ -272,7 +272,7 @@
     justify-content: center;
     gap: 6px;
     font: inherit;
-    font-size: 12.5px;
+    font-size: 13px;
     padding: 8px 13px;
     border-radius: 9px;
     border: 1px solid rgba(255, 255, 255, 0.14);

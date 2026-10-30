@@ -558,7 +558,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--vj-macro-gap, 1px);
-    padding: 4px 4px 1px;
+    padding: 0 4px;
     width: var(--vj-macro-bank-w, auto);
     box-sizing: border-box;
     justify-content: center;
@@ -568,10 +568,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
-    flex: 0 0 var(--vj-macro-slot, 46px);
-    width: var(--vj-macro-slot, 46px);
-    min-height: calc(var(--vj-macro-knob, 34px) + 16px);
+    gap: 1px;
+    flex: 0 0 var(--vj-macro-slot, 40px);
+    width: var(--vj-macro-slot, 40px);
+    min-height: calc(var(--vj-macro-knob, 26px) + 11px);
   }
   .macro-slot.learning .macro-knob {
     box-shadow: 0 0 0 2px rgba(187, 134, 252, 0.6), 0 0 14px rgba(187, 134, 252, 0.45);
@@ -581,8 +581,8 @@
     position: relative;
     width: var(--vj-macro-knob, 34px);
     height: var(--vj-macro-knob, 34px);
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2);
     border-radius: 50%;
     cursor: ns-resize;
     padding: 0;
@@ -593,8 +593,7 @@
     touch-action: none;
   }
   .macro-knob:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.18);
+    border-color: var(--ga-line-3);
   }
 
   .macro-svg {
@@ -608,28 +607,29 @@
   .macro-pointer {
     display: none;
     position: absolute;
-    top: 5px;
+    top: 4px;
     left: 50%;
     z-index: 2;
     width: 2px;
-    height: 12px;
+    /* From near the rim to the centre, whatever size the knob is. */
+    height: calc(var(--vj-macro-knob, 26px) / 2 - 5px);
     margin-left: -1px;
     border-radius: 999px;
-    transform-origin: 50% 12px;
+    transform-origin: 50% 100%;
     pointer-events: none;
   }
 
   .macro-dest-count {
     position: absolute;
-    top: -2px;
-    right: -2px;
-    min-width: 17px;
-    height: 17px;
+    top: -3px;
+    right: -4px;
+    min-width: 13px;
+    height: 13px;
     padding: 0 3px;
     background: var(--macro-color);
     color: #000;
-    font-size: 12px;
-    font-weight: 800;
+    font-size: 9px;
+    font-weight: 700;
     border-radius: 7px;
     display: flex;
     align-items: center;
@@ -641,10 +641,11 @@
   .macro-name {
     background: none;
     border: none;
-    color: rgba(238, 240, 244, 0.52);
+    color: var(--ga-ink-2);
     font-size: var(--vj-macro-name-font, 9px);
     font-weight: 700;
-    letter-spacing: 0.03em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
     padding: 0 2px;
     cursor: pointer;
     max-width: var(--vj-macro-slot, 46px);
@@ -653,7 +654,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .macro-name:hover { color: var(--text-primary, #ccc); }
+  .macro-name:hover { color: var(--ga-ink-0); }
 
   .macro-name-input {
     width: var(--vj-macro-slot, 46px);
@@ -693,7 +694,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: #fff;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.06em;
     padding: 4px 8px;
@@ -716,7 +717,7 @@
     border: none;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
-    font-size: 17px;
+    font-size: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -920,7 +921,7 @@
   .macro-fx-handle {
     cursor: grab;
     color: #555;
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1;
     padding: 0 2px;
     user-select: none;
@@ -1095,7 +1096,7 @@
     border: none;
     color: #BB86FC;
     cursor: pointer;
-    font-size: 17px;
+    font-size: 16px;
     line-height: 1;
     padding: 0;
   }
@@ -1142,7 +1143,7 @@
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 17px;
+    font-size: 16px;
     line-height: 1;
     cursor: pointer;
     padding: 0;
@@ -1154,22 +1155,22 @@
   }
 
   :global(html[data-theme="arcade"]) .macro-slot {
-    gap: 4px;
+    gap: 3px;
   }
 
   :global(html[data-theme="arcade"]) .macro-knob {
-    width: 42px;
-    height: 42px;
+    width: var(--vj-macro-knob, 26px);
+    height: var(--vj-macro-knob, 26px);
     background:
       radial-gradient(circle at 50% 48%, #1a1814 0 45%, #090807 46% 62%, transparent 63%),
       conic-gradient(from 210deg, #28231b 0 75%, #0c0b09 75% 100%);
     border: 1px solid #050403;
     box-shadow:
-      inset 0 2px 4px rgba(255, 255, 255, 0.10),
-      inset 0 -5px 8px rgba(0, 0, 0, 0.80),
-      0 0 0 3px #342b20,
-      0 0 0 4px rgba(245, 236, 222, 0.11),
-      0 7px 15px rgba(0, 0, 0, 0.65);
+      inset 0 1px 3px rgba(255, 255, 255, 0.10),
+      inset 0 -4px 6px rgba(0, 0, 0, 0.80),
+      0 0 0 2px #342b20,
+      0 0 0 3px rgba(245, 236, 222, 0.11),
+      0 4px 10px rgba(0, 0, 0, 0.6);
   }
 
   :global(html[data-theme="arcade"]) .macro-knob:hover {
@@ -1178,18 +1179,18 @@
       conic-gradient(from 210deg, #3a2f22 0 75%, #0f0d0a 75% 100%);
     border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50));
     box-shadow:
-      inset 0 2px 4px rgba(255, 255, 255, 0.12),
-      inset 0 -5px 8px rgba(0, 0, 0, 0.80),
-      0 0 0 3px #3b2f22,
-      0 0 0 4px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
-      0 0 14px color-mix(in srgb, var(--ga-coral, #ff6f5e) 25%, transparent),
-      0 7px 15px rgba(0, 0, 0, 0.65);
+      inset 0 1px 3px rgba(255, 255, 255, 0.12),
+      inset 0 -4px 6px rgba(0, 0, 0, 0.80),
+      0 0 0 2px #3b2f22,
+      0 0 0 3px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
+      0 0 10px color-mix(in srgb, var(--ga-coral, #ff6f5e) 25%, transparent),
+      0 4px 10px rgba(0, 0, 0, 0.6);
   }
 
   :global(html[data-theme="arcade"]) .macro-knob::before {
     content: "";
     position: absolute;
-    inset: 5px;
+    inset: 4px;
     border-radius: 50%;
     background:
       radial-gradient(circle at 38% 28%, rgba(255, 255, 255, 0.10), transparent 26%),
@@ -1220,9 +1221,7 @@
   }
 
   :global(html[data-theme="arcade"]) .macro-name {
-    color: rgba(238, 240, 244, 0.50);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    letter-spacing: 0.04em;
+    color: var(--ga-ink-2);
   }
 
   :global(html[data-theme="arcade"]) .macro-name:hover {

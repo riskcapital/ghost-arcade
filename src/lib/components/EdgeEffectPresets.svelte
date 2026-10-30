@@ -116,18 +116,21 @@
 </details>
 
 <style>
-  .edge-presets { margin: 4px 8px 8px; font-size: 12px; color: #b9c0cd; }
-  summary { cursor: pointer; width: fit-content; padding: 4px 9px; border: 1px solid #343944; border-radius: 6px; background: var(--ga-blue-900); font-size: 11px; }
-  summary:hover, .edge-presets[open] > summary { color: #e4ecff; background: var(--ga-blue-700); border-color: var(--ga-blue-600); }
-  .tray { padding: 10px; margin-top: 6px; border: 1px solid #343944; border-radius: 8px; background: #11151d; }
-  label { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
-  select, input { width: 100%; box-sizing: border-box; min-width: 0; padding: 7px 8px; background: #090c12; color: #e1e6ef; border: 1px solid #343944; border-radius: 5px; font: inherit; }
+  .edge-presets { margin: 4px 0 8px; font-size: var(--ga-text-control); color: var(--ga-ink-1); }
+  summary { cursor: pointer; width: fit-content; display: flex; align-items: center; height: var(--ga-control-h-sm); padding: 0 10px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); background: var(--ga-card); font-weight: var(--ga-weight-control); }
+  summary:hover, .edge-presets[open] > summary { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .tray { padding: 10px; margin-top: 6px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-soft); background: var(--ga-card); }
+  label { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; font-size: var(--ga-text-meta); color: var(--ga-ink-2); }
+  select, input { width: 100%; box-sizing: border-box; min-width: 0; height: var(--ga-control-h); padding: 0 8px; background: var(--ga-slot); color: var(--ga-ink-0); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); font: inherit; font-size: var(--ga-text-control); }
   .actions, form { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; margin-top: 10px; }
-  button { border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; padding: 6px 9px; background: var(--ga-blue-mute-800); color: #e1e6ef; font: inherit; cursor: pointer; }
-  .primary { background: var(--ga-blue-700); border-color: var(--ga-blue-600); }
+  button { height: var(--ga-control-h); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); padding: 0 10px; background: var(--ga-sub); color: var(--ga-ink-1); font: inherit; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer; }
+  button:hover:not(:disabled) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .primary { background: var(--ga-accent-gradient, var(--ga-violet)); border-color: transparent; color: var(--ga-blue-800); border-radius: var(--ga-r-soft); font-weight: 700; }
+  .primary:hover:not(:disabled) { color: var(--ga-blue-800); filter: brightness(1.06); }
   .delete { margin-left: auto; }
+  .delete:hover:not(:disabled) { color: var(--ga-rec); border-color: color-mix(in srgb, var(--ga-rec) 45%, transparent); }
   button:disabled { opacity: .4; cursor: default; }
-  p { font-size: 11px; line-height: 1.5; margin: 8px 0 0; overflow-wrap: anywhere; }
-  .summary { color: #d7dce6; }
-  :is(summary, button, input, select):focus-visible { outline: 2px solid var(--ga-blue-300); outline-offset: 2px; }
+  p { font-size: var(--ga-text-meta); line-height: 1.5; margin: 8px 0 0; color: var(--ga-ink-2); overflow-wrap: anywhere; }
+  .summary { color: var(--ga-ink-1); }
+  :is(summary, button, input, select):focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
 </style>

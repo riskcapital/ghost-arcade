@@ -280,9 +280,9 @@
   <!-- XY Pad -->
   <div class="xy-pad-wrapper">
     <div class="xy-pad-header">
-      <span class="pad-title">PERFORMANCE PAD</span>
+      <span class="pad-title">Performance pad</span>
       <span class="pad-status" class:active={$performanceStore.isActive}>
-        {$performanceStore.isActive ? 'LIVE' : 'READY'}
+        {$performanceStore.isActive ? 'Live' : 'Ready'}
       </span>
     </div>
 
@@ -318,7 +318,7 @@
             }
           }}
         >
-          <option value="">-- none --</option>
+          <option value="">None</option>
           {#each bindableParams as p}
             <option value={p.name}>{p.label}</option>
           {/each}
@@ -334,7 +334,7 @@
             performanceStore.bindPadParam('y', val || null);
           }}
         >
-          <option value="">-- none --</option>
+          <option value="">None</option>
           {#each bindableParams as p}
             <option value={p.name}>{p.label}</option>
           {/each}
@@ -404,38 +404,40 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 2px 6px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    color: rgba(255, 255, 255, 0.5);
+    padding: 2px 6px 4px;
   }
 
+  /* Eyebrow. */
   .pad-title {
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
   }
 
   .pad-status {
-    font-size: 9px;
-    padding: 1px 5px;
-    border-radius: 3px;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
+    padding: 1px 6px;
+    border-radius: var(--ga-r-hard, 5px);
     background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.3);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .pad-status.active {
-    background: rgba(187, 134, 252, 0.15);
-    color: #BB86FC;
+    background: color-mix(in srgb, var(--ga-live, #46d18a) 16%, transparent);
+    color: var(--ga-live, #46d18a);
   }
 
   .xy-pad-area {
     flex: 1;
-    border: 1px solid rgba(187, 134, 252, 0.2);
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     overflow: hidden;
     cursor: crosshair;
     min-height: 100px;
-    background: #080810;
+    background: var(--ga-slot, #060504);
     position: relative;
   }
 
@@ -462,10 +464,13 @@
     min-width: 0;
   }
 
+  /* Legends: the eyebrow style at 9px. */
   .axis-label {
-    font-size: 9px;
+    font-size: var(--ga-text-micro, 9px);
     font-weight: 700;
-    color: rgba(187, 134, 252, 0.6);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
     min-width: 16px;
     text-align: center;
   }
@@ -473,17 +478,19 @@
   .axis-select {
     flex: 1;
     min-width: 0;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
-    color: var(--text-primary, #ccc);
-    font-size: 9px;
-    padding: 2px 3px;
+    height: var(--ga-control-h-sm, 22px);
+    box-sizing: border-box;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-meta, 11px);
+    padding: 0 4px;
     cursor: pointer;
   }
 
   .axis-select:hover {
-    border-color: rgba(187, 134, 252, 0.3);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .momentum-ctrl {
@@ -497,7 +504,7 @@
     height: 12px;
     -webkit-appearance: none;
     appearance: none;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 3px;
     cursor: pointer;
   }
@@ -506,7 +513,7 @@
     -webkit-appearance: none;
     width: 8px;
     height: 12px;
-    background: #BB86FC;
+    background: var(--ga-selection-line, #5278ff);
     border-radius: 2px;
     cursor: pointer;
   }
@@ -526,11 +533,11 @@
     position: relative;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid color-mix(in srgb, var(--trigger-color) 30%, transparent);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     color: var(--trigger-color);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.05em;
+    font-family: inherit;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 700;
     padding: 8px 4px;
     cursor: pointer;
     overflow: hidden;

@@ -215,7 +215,7 @@
   }
 
   .clip-type-icon {
-    font-size: 15px;
+    font-size: 14px;
     color: rgba(255, 255, 255, 0.4);
     line-height: 1;
   }
@@ -226,7 +226,7 @@
   }
 
   .clip-name {
-    font-size: 8px;
+    font-size: 9px;
     color: rgba(255, 255, 255, 0.5);
     text-align: center;
     overflow: hidden;
@@ -248,7 +248,7 @@
   }
 
   .clip-grid.tablet .clip-type-icon {
-    font-size: 19px;
+    font-size: 20px;
   }
 
   .clip-grid.tablet .layer-label {

@@ -47,7 +47,7 @@
     { type: 'electric', label: 'Electric' },
     { type: 'fire', label: 'Fire' },
     { type: 'snake', label: 'Snake' },
-    { type: 'multiTail', label: 'Multi-Tail' },
+    { type: 'multiTail', label: 'Multi-tail' },
     { type: 'pulse', label: 'Pulse' },
     { type: 'scanner', label: 'Scanner' },
     { type: 'rainbow', label: 'Rainbow' },
@@ -339,7 +339,7 @@
     <div class="lp-tabs">
       <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>Draw</button>
       <button class:active={activeTab === 'stroke'} onclick={() => activeTab = 'stroke'}>Stroke</button>
-      <button class:active={activeTab === 'animation'} onclick={() => activeTab = 'animation'}>Anim</button>
+      <button class:active={activeTab === 'animation'} onclick={() => activeTab = 'animation'}>Animation</button>
       <button class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>Settings</button>
     </div>
 
@@ -359,7 +359,7 @@
           </button>
           <button class="tool-btn" class:active={toolMode === 'pointClick'} onclick={() => setToolMode('pointClick')}>
             <span class="tool-icon">&#8889;</span>
-            <span class="tool-label">Point-Click</span>
+            <span class="tool-label">Point-click</span>
           </button>
         </div>
 
@@ -378,7 +378,7 @@
           <div class="sec-label">Point-Click Settings</div>
           <div class="slider-col">
             <div class="sc">
-              <label>Corner Style</label>
+              <label>Corner style</label>
               <select class="inline-select" value="sharp">
                 <option value="sharp">Sharp</option>
                 <option value="rounded">Rounded</option>
@@ -386,7 +386,7 @@
               </select>
             </div>
             <div class="sc">
-              <label>Corner Radius <b>0</b></label>
+              <label>Corner radius <b>0</b></label>
               <input type="range" min="0" max="50" step="1" value="0" />
             </div>
           </div>
@@ -394,7 +394,7 @@
         {/if}
 
         {#if toolMode === 'select'}
-          <div class="drawing-hint">Click elements on canvas to select. Use Freehand or Point-Click to draw new lines.</div>
+          <div class="drawing-hint">Click elements on canvas to select. Use Freehand or Point-click to draw new lines.</div>
         {/if}
 
       <!-- ============ TAB 2: STROKE EFFECTS ============ -->
@@ -500,7 +500,7 @@
           {:else if selectedEl.stroke.type === 'dotted'}
             <div class="sec-label">Dot Options</div>
             <div class="control-row">
-              <span class="control-label">Dot Size</span>
+              <span class="control-label">Dot size</span>
               <input type="range" min="0.01" max="0.5" step="0.01" value={selectedEl.stroke.dotSize}
                 oninput={(e) => updateStrokeProp('dotSize', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.dotSize.toFixed(2)}</span>
@@ -527,7 +527,7 @@
           {:else if selectedEl.stroke.type === 'glow'}
             <div class="sec-label">Glow Options</div>
             <div class="control-row">
-              <span class="control-label">Glow Size</span>
+              <span class="control-label">Glow size</span>
               <input type="range" min="1" max="100" step="1" value={selectedEl.stroke.glowSize}
                 oninput={(e) => updateStrokeProp('glowSize', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.glowSize}</span>
@@ -548,19 +548,19 @@
           {:else if selectedEl.stroke.type === 'neon'}
             <div class="sec-label">Neon Options</div>
             <div class="control-row">
-              <span class="control-label">Glow Size</span>
+              <span class="control-label">Glow size</span>
               <input type="range" min="1" max="100" step="1" value={selectedEl.stroke.glowSize}
                 oninput={(e) => updateStrokeProp('glowSize', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.glowSize}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Flicker Spd</span>
+              <span class="control-label">Flicker speed</span>
               <input type="range" min="0" max="5" step="0.1" value={selectedEl.stroke.flickerSpeed}
                 oninput={(e) => updateStrokeProp('flickerSpeed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.flickerSpeed.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Flicker Int</span>
+              <span class="control-label">Flicker amount</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.flickerIntensity}
                 oninput={(e) => updateStrokeProp('flickerIntensity', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.flickerIntensity.toFixed(2)}</span>
@@ -624,9 +624,9 @@
             </div>
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.stroke.tailFade}
-                onchange={(e) => updateStrokeProp('tailFade', (e.target as HTMLInputElement).checked)} /> Tail Fade</label>
+                onchange={(e) => updateStrokeProp('tailFade', (e.target as HTMLInputElement).checked)} /> Tail fade</label>
               <label><input type="checkbox" checked={selectedEl.stroke.headGlow}
-                onchange={(e) => updateStrokeProp('headGlow', (e.target as HTMLInputElement).checked)} /> Head Glow</label>
+                onchange={(e) => updateStrokeProp('headGlow', (e.target as HTMLInputElement).checked)} /> Head glow</label>
               <label><input type="checkbox" checked={selectedEl.stroke.bidirectional}
                 onchange={(e) => updateStrokeProp('bidirectional', (e.target as HTMLInputElement).checked)} /> Bidir</label>
             </div>
@@ -640,7 +640,7 @@
               <span class="control-value">{selectedEl.stroke.tailCount}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Tail Len</span>
+              <span class="control-label">Tail length</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.tailLength}
                 oninput={(e) => updateStrokeProp('tailLength', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.tailLength.toFixed(2)}</span>
@@ -659,17 +659,17 @@
             </div>
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.stroke.tailFade}
-                onchange={(e) => updateStrokeProp('tailFade', (e.target as HTMLInputElement).checked)} /> Tail Fade</label>
+                onchange={(e) => updateStrokeProp('tailFade', (e.target as HTMLInputElement).checked)} /> Tail fade</label>
               <label><input type="checkbox" checked={selectedEl.stroke.headGlow}
-                onchange={(e) => updateStrokeProp('headGlow', (e.target as HTMLInputElement).checked)} /> Head Glow</label>
+                onchange={(e) => updateStrokeProp('headGlow', (e.target as HTMLInputElement).checked)} /> Head glow</label>
             </div>
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.stroke.colorShift}
-                onchange={(e) => updateStrokeProp('colorShift', (e.target as HTMLInputElement).checked)} /> Color Shift</label>
+                onchange={(e) => updateStrokeProp('colorShift', (e.target as HTMLInputElement).checked)} /> Color shift</label>
             </div>
             {#if selectedEl.stroke.colorShift}
               <div class="control-row">
-                <span class="control-label">Shift Amt</span>
+                <span class="control-label">Shift amount</span>
                 <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.colorShiftAmount}
                   oninput={(e) => updateStrokeProp('colorShiftAmount', parseFloat((e.target as HTMLInputElement).value))} />
                 <span class="control-value">{selectedEl.stroke.colorShiftAmount.toFixed(2)}</span>
@@ -691,7 +691,7 @@
               <span class="control-value">{selectedEl.stroke.speed.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Fade Len</span>
+              <span class="control-label">Fade length</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.fadeLength}
                 oninput={(e) => updateStrokeProp('fadeLength', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.fadeLength.toFixed(2)}</span>
@@ -709,7 +709,7 @@
           {:else if selectedEl.stroke.type === 'scanner'}
             <div class="sec-label">Scanner Options</div>
             <div class="control-row">
-              <span class="control-label">Beam W</span>
+              <span class="control-label">Beam width</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.beamWidth}
                 oninput={(e) => updateStrokeProp('beamWidth', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.beamWidth.toFixed(2)}</span>
@@ -784,13 +784,13 @@
               <span class="control-value">{selectedEl.stroke.depth.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Edge Light</span>
+              <span class="control-label">Edge light</span>
               <input type="range" min="0" max="2" step="0.1" value={selectedEl.stroke.edgeLight}
                 oninput={(e) => updateStrokeProp('edgeLight', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.edgeLight.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Edge Color</span>
+              <span class="control-label">Edge color</span>
               <input
                 type="color"
                 value={rgbaToHex(selectedEl.stroke.edgeLightColor)}
@@ -868,12 +868,12 @@
           {#if animEl.drawAnimation.enabled}
             <div class="slider-col">
               <div class="sc">
-                <label>Draw Speed <b>{animEl.drawAnimation.drawSpeed.toFixed(1)}</b></label>
+                <label>Draw speed <b>{animEl.drawAnimation.drawSpeed.toFixed(1)}</b></label>
                 <input type="range" min="0.1" max="10" step="0.1" value={animEl.drawAnimation.drawSpeed}
                   oninput={(e) => updateSelectedDrawAnimation({ drawSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
               <div class="sc">
-                <label>Trail Length <b>{animEl.drawAnimation.trailLength.toFixed(2)}</b></label>
+                <label>Trail length <b>{animEl.drawAnimation.trailLength.toFixed(2)}</b></label>
                 <input type="range" min="0" max="1" step="0.01" value={animEl.drawAnimation.trailLength}
                   oninput={(e) => updateSelectedDrawAnimation({ trailLength: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
@@ -885,7 +885,7 @@
                 onchange={(e) => updateSelectedDrawAnimation({ loopMode: (e.target as HTMLSelectElement).value as LineLoopMode })}>
                 <option value="once">Once</option>
                 <option value="loop">Loop</option>
-                <option value="pingpong">Ping-Pong</option>
+                <option value="pingpong">Ping-pong</option>
                 <option value="continuous">Continuous</option>
               </select>
             </div>
@@ -900,20 +900,20 @@
               <select value={animEl.drawAnimation.easing}
                 onchange={(e) => updateSelectedDrawAnimation({ easing: (e.target as HTMLSelectElement).value as LineDrawAnimation['easing'] })}>
                 <option value="linear">Linear</option>
-                <option value="easeIn">Ease In</option>
-                <option value="easeOut">Ease Out</option>
-                <option value="easeInOut">Ease In/Out</option>
+                <option value="easeIn">Ease in</option>
+                <option value="easeOut">Ease out</option>
+                <option value="easeInOut">Ease in/out</option>
               </select>
             </div>
 
             <div class="slider-col">
               <div class="sc">
-                <label title="Softens the leading edge of the draw into a fade">Head Feather <b>{(animEl.drawAnimation.headFeather ?? 0).toFixed(2)}</b></label>
+                <label title="Softens the leading edge of the draw into a fade">Head feather <b>{(animEl.drawAnimation.headFeather ?? 0).toFixed(2)}</b></label>
                 <input type="range" min="0" max="1" step="0.01" value={animEl.drawAnimation.headFeather ?? 0}
                   oninput={(e) => updateSelectedDrawAnimation({ headFeather: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
               <div class="sc">
-                <label title="Thins the line toward the leading edge">Head Taper <b>{(animEl.drawAnimation.headTaper ?? 0).toFixed(2)}</b></label>
+                <label title="Thins the line toward the leading edge">Head taper <b>{(animEl.drawAnimation.headTaper ?? 0).toFixed(2)}</b></label>
                 <input type="range" min="0" max="1" step="0.01" value={animEl.drawAnimation.headTaper ?? 0}
                   oninput={(e) => updateSelectedDrawAnimation({ headTaper: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
@@ -944,7 +944,7 @@
               <option value="shimmer">Shimmer</option>
               <option value="spin">Spin</option>
               <option value="orbit">Orbit</option>
-              <option value="audioPulse">Audio Pulse</option>
+              <option value="audioPulse">Audio pulse</option>
             </select>
           </div>
           {#if motionFx.mode !== 'none'}
@@ -1006,7 +1006,7 @@
         <div class="sec-label">Layer Animation</div>
         <div class="slider-col">
           <div class="sc">
-            <label>Global Speed <b>{(lc.globalDrawSpeed).toFixed(1)}x</b></label>
+            <label>Global speed <b>{(lc.globalDrawSpeed).toFixed(1)}x</b></label>
             <input type="range" min="0.1" max="5" step="0.1" value={lc.globalDrawSpeed}
               oninput={(e) => updateContent({ globalDrawSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
           </div>
@@ -1017,18 +1017,18 @@
           <select value={lc.staggerMode}
             onchange={(e) => updateContent({ staggerMode: (e.target as HTMLSelectElement).value as LinesContent['staggerMode'] })}>
             <option value="simultaneous">Simultaneous</option>
-            <option value="sequential">Sequential (One at a time)</option>
-            <option value="cascade">Cascade (Staggered start)</option>
-            <option value="solo">Solo (Draw on/off)</option>
+            <option value="sequential">Sequential (one at a time)</option>
+            <option value="cascade">Cascade (staggered start)</option>
+            <option value="solo">Solo (draw on/off)</option>
             <option value="random">Random</option>
-            <option value="wave">Wave (Sliding window)</option>
+            <option value="wave">Wave (sliding window)</option>
           </select>
         </div>
 
         {#if lc.staggerMode === 'cascade' || lc.staggerMode === 'sequential' || lc.staggerMode === 'solo' || lc.staggerMode === 'random' || lc.staggerMode === 'wave'}
           <div class="slider-col">
             <div class="sc">
-              <label>Stagger Delay <b>{lc.staggerDelay}ms</b></label>
+              <label>Stagger delay <b>{lc.staggerDelay}ms</b></label>
               <input type="range" min="0" max="2000" step="50" value={lc.staggerDelay}
                 oninput={(e) => updateContent({ staggerDelay: parseInt((e.target as HTMLInputElement).value) })} />
             </div>
@@ -1038,7 +1038,7 @@
         {#if lc.staggerMode === 'wave'}
           <div class="slider-col">
             <div class="sc">
-              <label>Wave Window Size <b>{lc.waveWindowSize ?? 3}</b></label>
+              <label>Wave window size <b>{lc.waveWindowSize ?? 3}</b></label>
               <input type="range" min="1" max="12" step="1" value={lc.waveWindowSize ?? 3}
                 oninput={(e) => updateContent({ waveWindowSize: parseInt((e.target as HTMLInputElement).value) })} />
             </div>
@@ -1054,7 +1054,7 @@
       {:else if activeTab === 'settings'}
         <div class="sec-label">Elements</div>
         {#if elements.length === 0}
-          <div class="empty-msg">No elements yet. Use Draw Tools to add lines.</div>
+          <div class="empty-msg">No elements yet. Use the Draw tab to add lines.</div>
         {:else}
           <div class="elements-list">
             {#each elements as el}
@@ -1082,7 +1082,7 @@
 
         <div class="sec-label">Layer Settings</div>
         <div class="control-row">
-          <span class="control-label">BG Color</span>
+          <span class="control-label">Background</span>
           <input type="color"
             value={rgbaToHex(lc.backgroundColor)}
             oninput={(e) => {
@@ -1126,7 +1126,7 @@
             Lines reveal a shared shader/video underneath — like looking through line-shaped windows.
           </div>
           <div class="control-row">
-            <span class="control-label">Source Layer</span>
+            <span class="control-label">Source layer</span>
             <select class="param-select"
               value={lc.sharedShaderSourceId ?? ''}
               onchange={(e) => updateContent({ sharedShaderSourceId: (e.target as HTMLSelectElement).value })}>
@@ -1152,17 +1152,17 @@
 <style>
   .lines-panel {
     width: 100%;
-    background: #141416;
+    background: var(--ga-panel);
     display: flex;
     flex-direction: column;
     overflow: hidden;
     flex: 1;
-    color: var(--text-primary, #eee);
-    font-size: 14px;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-body);
   }
 
   .lines-panel.compact {
-    font-size: 12px;
+    font-size: var(--ga-text-control);
   }
 
   /* Header */
@@ -1170,231 +1170,240 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 12px 8px;
-    border-bottom: 1px solid #161618;
+    padding: 12px 12px 8px;
   }
-  .lp-title { font-size: 14px; font-weight: 700; color: #BB86FC; letter-spacing: 0.5px; }
+  .lp-title { font-size: var(--ga-text-title); font-weight: var(--ga-weight-title); color: var(--ga-ink-0); }
   .el-badge {
-    background: #BB86FC; color: #000; font-size: 10px; font-weight: 700;
-    padding: 1px 5px; border-radius: 8px;
+    min-width: 18px; text-align: center;
+    background: var(--ga-sub); color: var(--ga-ink-1); border: 1px solid var(--ga-line-2);
+    font-size: var(--ga-text-micro); font-weight: 700; font-variant-numeric: tabular-nums;
+    padding: 1px 5px; border-radius: var(--ga-r-hard);
   }
 
-  /* Tabs */
-  .lp-tabs { display: flex; border-bottom: 1px solid #161618; flex-shrink: 0; }
-  .lp-tabs button {
-    flex: 1; background: none; border: none; color: #666;
-    padding: 7px 4px; font-size: 12px; font-weight: 600; cursor: pointer;
-    border-bottom: 2px solid transparent;
+  /* Tabs: the shared segmented look */
+  .lp-tabs {
+    display: flex; gap: 2px; flex-shrink: 0;
+    margin: 0 12px 4px; padding: 2px;
+    background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard);
   }
-  .lp-tabs button:hover { color: var(--text-secondary, #aaa); }
-  .lp-tabs button.active { color: #BB86FC; border-bottom-color: #BB86FC; }
+  .lp-tabs button {
+    flex: 1; height: calc(var(--ga-control-h) - 4px); background: none; border: none; color: var(--ga-ink-1);
+    padding: 0 4px; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer;
+    border-radius: calc(var(--ga-r-hard) - 1px);
+  }
+  .lp-tabs button:hover:not(.active) { color: var(--ga-ink-0); background: rgba(255, 255, 255, 0.05); }
+  .lp-tabs button.active { color: var(--ga-selection-ink); background: var(--ga-selection-bg); box-shadow: inset 0 0 0 1px var(--ga-selection-line); }
 
   /* Content */
-  .lp-content { padding: 8px 12px; overflow-y: auto; flex: 1; }
+  .lp-content { padding: 8px 12px 12px; overflow-y: auto; flex: 1; }
 
-  /* Section labels */
+  /* Eyebrow section label, same as every layer editor. */
   .sec-label {
     display: flex; align-items: center; justify-content: space-between;
-    font-size: 12px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
-    margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #222;
+    font-size: var(--ga-text-eyebrow); font-weight: 700; color: var(--ga-ink-2); text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking);
+    margin: 16px 0 8px; padding-top: 12px; border-top: 1px solid var(--ga-line-1);
   }
-  .sec-label:first-child { margin-top: 0; }
+  .sec-label:first-child { margin-top: 4px; padding-top: 0; border-top: 0; }
 
   /* Tool grid */
   .tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
   .tool-btn {
     display: flex; flex-direction: column; align-items: center; gap: 4px;
-    padding: 8px 4px; background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-secondary, #aaa);
-    border-radius: 6px; cursor: pointer; text-align: center;
+    padding: 8px 4px; background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard); cursor: pointer; text-align: center;
     transition: all 0.15s;
   }
-  .tool-btn:hover { background: var(--bg-tertiary, #161618); color: var(--text-primary, #eee); border-color: #555; }
-  .tool-btn.active { background: rgba(187, 134, 252, 0.1); color: #BB86FC; border-color: #BB86FC; }
-  .tool-icon { font-size: 19px; line-height: 1; }
-  .tool-label { font-size: 10px; }
-  .tool-btn.active .tool-label { color: #BB86FC; }
+  .tool-btn:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .tool-btn.active { background: var(--ga-selection-bg); color: var(--ga-selection-ink); border-color: var(--ga-selection-line); }
+  .tool-icon { font-size: 20px; line-height: 1; }
+  .tool-label { font-size: var(--ga-text-meta); font-weight: var(--ga-weight-control); }
+  .tool-btn.active .tool-label { color: var(--ga-selection-ink); }
 
   /* Drawing hint */
   .drawing-hint {
     padding: 6px 8px; margin: 6px 0;
-    font-size: 11px; color: #BB86FC;
-    background: rgba(187, 134, 252, 0.06);
-    border: 1px solid rgba(187, 134, 252, 0.15);
-    border-radius: 4px;
+    font-size: var(--ga-text-meta); line-height: 1.4; color: var(--ga-ink-2);
+    background: var(--ga-card);
+    border-left: 2px solid var(--ga-line-3);
+    border-radius: 0 var(--ga-r-hard) var(--ga-r-hard) 0;
   }
 
   /* Control rows */
   .control-row {
-    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px; min-height: var(--ga-control-h); margin-bottom: 4px;
   }
   .control-label {
-    width: 70px; font-size: 12px; color: var(--text-muted, #888); flex-shrink: 0;
+    width: 84px; font-size: var(--ga-text-control); color: var(--ga-ink-1); flex-shrink: 0;
   }
   .control-row input[type="range"] {
-    flex: 1; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
+    flex: 1; min-width: 0; height: 4px; appearance: none; background: var(--ga-line-2); border-radius: 2px; outline: none;
   }
   .control-row input[type="range"]::-webkit-slider-thumb {
     appearance: none; width: 14px; height: 14px; border-radius: 50%;
-    background: #BB86FC; cursor: pointer; border: 2px solid #141416;
+    background: var(--ga-selection-line); cursor: pointer; border: 2px solid var(--ga-panel);
   }
   .control-row input[type="color"] {
-    width: 40px; height: 24px; border: none; border-radius: 4px; cursor: pointer; padding: 0;
+    width: 40px; height: var(--ga-control-h-sm); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); cursor: pointer; padding: 0;
   }
   .control-row select, .inline-select {
-    flex: 1; background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
-    padding: 4px 8px; border-radius: 4px; font-size: 12px;
+    flex: 1; min-width: 0; height: var(--ga-control-h); background: var(--ga-slot); color: var(--ga-ink-0); border: 1px solid var(--ga-line-2);
+    padding: 0 8px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-control);
   }
   .control-value {
-    width: 45px; text-align: right; font-size: 11px; color: #666; flex-shrink: 0;
+    width: 45px; text-align: right; font-size: var(--ga-text-meta); color: var(--ga-ink-1); font-variant-numeric: tabular-nums; flex-shrink: 0;
   }
 
   /* Full-width slider column */
   .slider-col { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
   .sc { display: flex; flex-direction: column; }
   .sc label {
-    font-size: 12px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
+    font-size: var(--ga-text-control); color: var(--ga-ink-1); margin-bottom: 4px; display: flex; align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
+  .sc label b { color: var(--ga-ink-0); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: var(--ga-text-meta); font-weight: 400; font-variant-numeric: tabular-nums; margin-left: auto; }
   .sc select {
-    background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
-    padding: 4px 8px; border-radius: 4px; font-size: 12px;
+    height: var(--ga-control-h); background: var(--ga-slot); color: var(--ga-ink-0); border: 1px solid var(--ga-line-2);
+    padding: 0 8px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-control);
   }
   .sc input[type="range"] {
-    width: 100%; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
+    width: 100%; height: 4px; appearance: none; background: var(--ga-line-2); border-radius: 2px; outline: none;
   }
   .sc input[type="range"]::-webkit-slider-thumb {
     appearance: none; width: 14px; height: 14px; border-radius: 50%;
-    background: #BB86FC; cursor: pointer; border: 2px solid #141416;
+    background: var(--ga-selection-line); cursor: pointer; border: 2px solid var(--ga-panel);
   }
 
   /* Check row */
-  .check-row { display: flex; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
-  .check-row label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #bbb; cursor: pointer; }
-  .check-row input[type="checkbox"] { accent-color: #BB86FC; width: 13px; height: 13px; }
+  .check-row { display: flex; gap: 12px; min-height: var(--ga-control-h-sm); margin-bottom: 8px; flex-wrap: wrap; }
+  .check-row label { display: flex; align-items: center; gap: 6px; font-size: var(--ga-text-control); color: var(--ga-ink-1); cursor: pointer; }
+  .check-row input[type="checkbox"] { accent-color: var(--ga-selection-line); width: 13px; height: 13px; }
 
   /* Text input */
   .text-input {
-    flex: 1; background: #222; color: var(--text-primary, #eee); border: 1px solid #444;
-    padding: 4px 8px; border-radius: 4px; font-size: 12px; outline: none;
+    flex: 1; height: var(--ga-control-h); background: var(--ga-slot); color: var(--ga-ink-0); border: 1px solid var(--ga-line-2);
+    padding: 0 8px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-control); outline: none;
   }
-  .text-input:focus { border-color: #BB86FC; }
+  .text-input:focus { border-color: var(--ga-focus); }
 
   /* Elements list */
   .elements-list { max-height: 260px; overflow-y: auto; margin-bottom: 8px; }
   .element-row {
-    display: flex; align-items: center; gap: 6px; padding: 5px 8px;
-    border: 1px solid #222; border-radius: 5px; margin-bottom: 4px;
+    display: flex; align-items: center; gap: 6px; min-height: var(--ga-control-h); padding: 4px 8px;
+    border: 1px solid var(--ga-line-1); border-radius: var(--ga-r-hard); margin-bottom: 4px;
     cursor: pointer; transition: all 0.1s;
   }
-  .element-row:hover { background: var(--bg-primary, #0d0d10); border-color: #333; }
-  .element-row.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; }
+  .element-row:hover { background: var(--ga-card); border-color: var(--ga-line-2); }
+  .element-row.selected { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); }
   .el-info { flex: 1; min-width: 0; }
-  .el-name { display: block; font-size: 13px; color: var(--text-primary, #ddd); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .el-meta { display: block; font-size: 11px; color: #666; }
+  .el-name { display: block; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); color: var(--ga-ink-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .element-row.selected .el-name { color: var(--ga-selection-ink); }
+  .el-meta { display: block; font-size: var(--ga-text-meta); color: var(--ga-ink-2); }
 
   .icon-btn {
-    background: none; border: 1px solid transparent; color: #666;
-    font-size: 13px; cursor: pointer; padding: 2px 4px; border-radius: 3px;
+    background: none; border: 1px solid transparent; color: var(--ga-ink-2);
+    font-size: 13px; cursor: pointer; padding: 2px 4px; border-radius: var(--ga-r-hard);
     line-height: 1; flex-shrink: 0;
   }
-  .icon-btn:hover { color: var(--text-primary, #ddd); background: rgba(255,255,255,0.05); }
+  .icon-btn:hover { color: var(--ga-ink-0); background: rgba(255,255,255,0.05); }
   .icon-btn.off { opacity: 0.4; }
-  .icon-btn.on { color: #BB86FC; }
-  .icon-btn.del:hover { color: #ff5555; background: rgba(255,85,85,0.1); border-color: rgba(255,85,85,0.3); }
+  .icon-btn.on { color: var(--ga-selection-ink); }
+  .icon-btn.del:hover { color: var(--ga-rec); background: color-mix(in srgb, var(--ga-rec) 10%, transparent); border-color: color-mix(in srgb, var(--ga-rec) 30%, transparent); }
 
   /* Empty state */
-  .empty-msg { text-align: center; color: #555; font-size: 13px; padding: 20px; }
+  .empty-msg { text-align: center; color: var(--ga-ink-2); font-size: var(--ga-text-control); padding: 20px; }
 
   /* Elements strip — always visible above tabs */
   .elements-strip {
-    border-bottom: 1px solid #1a1a1e;
-    background: var(--bg-primary, #0d0d10);
+    margin: 0 12px 8px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    background: var(--ga-card);
   }
+  /* Collapsible eyebrow header */
   .strip-toggle {
-    width: 100%;
-    background: none; border: none; color: var(--text-muted, #888);
-    font-size: 11px; font-weight: 600; text-align: left;
-    padding: 5px 12px; cursor: pointer;
-    text-transform: uppercase; letter-spacing: 0.3px;
+    width: 100%; height: var(--ga-control-h-sm);
+    background: none; border: none; color: var(--ga-ink-2);
+    font-size: var(--ga-text-eyebrow); font-weight: 700; text-align: left;
+    padding: 0 8px; cursor: pointer;
+    text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking);
   }
-  .strip-toggle:hover { color: #bbb; }
+  .strip-toggle:hover { color: var(--ga-ink-1); }
   .elements-strip-list {
     max-height: 120px; overflow-y: auto;
-    padding: 0 8px 6px;
+    padding: 0 4px 4px;
     display: flex; flex-direction: column; gap: 2px;
   }
   .strip-el {
     display: flex; align-items: center; gap: 6px;
-    padding: 3px 8px; background: #141416;
-    border: 1px solid #222; border-radius: 4px;
-    cursor: pointer; font-size: 12px; color: #bbb;
+    min-height: var(--ga-control-h-sm); padding: 0 8px; background: var(--ga-panel);
+    border: 1px solid var(--ga-line-1); border-radius: var(--ga-r-hard);
+    cursor: pointer; font-size: var(--ga-text-control); color: var(--ga-ink-1);
     text-align: left;
   }
-  .strip-el:hover { background: var(--bg-tertiary, #1a1a1e); border-color: #333; }
-  .strip-el.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; color: var(--text-primary, #eee); }
-  .strip-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
-  .strip-type { font-size: 10px; color: #666; flex-shrink: 0; }
+  .strip-el:hover { color: var(--ga-ink-0); border-color: var(--ga-line-2); }
+  .strip-el.selected { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
+  .strip-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--ga-text-control); }
+  .strip-type { font-size: var(--ga-text-meta); color: var(--ga-ink-2); flex-shrink: 0; }
   .strip-del {
-    background: none; border: none; color: #555; font-size: 11px;
+    background: none; border: none; color: var(--ga-ink-2); font-size: var(--ga-text-meta);
     cursor: pointer; padding: 0 2px; line-height: 1; flex-shrink: 0;
   }
-  .strip-del:hover { color: #ff5555; }
+  .strip-del:hover { color: var(--ga-rec); }
 
   /* Apply to all button */
   .apply-all-btn {
-    width: 100%; padding: 6px 12px; margin: 8px 0;
-    background: rgba(187, 134, 252, 0.1);
-    border: 1px solid rgba(187, 134, 252, 0.25);
-    color: #BB86FC; border-radius: 4px;
-    font-size: 12px; font-weight: 600; cursor: pointer;
+    width: 100%; height: var(--ga-control-h); padding: 0 12px; margin: 8px 0;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1); border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer;
   }
   .apply-all-btn:hover {
-    background: rgba(187, 134, 252, 0.2);
-    border-color: rgba(187, 134, 252, 0.4);
+    color: var(--ga-ink-0);
+    border-color: var(--ga-line-3);
   }
 
   /* Draw Animation scope: all lines or the selected one */
   .scope-toggle {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
-    margin: 2px 0 8px; border: 1px solid #333; border-radius: 4px; overflow: hidden;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px;
+    margin: 2px 0 8px; padding: 2px; background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard);
   }
   .scope-toggle button {
-    padding: 4px 8px; font-size: 11px; background: transparent; color: #999;
-    border: none; cursor: pointer;
+    height: calc(var(--ga-control-h) - 6px); padding: 0 8px; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); background: transparent; color: var(--ga-ink-1);
+    border: none; border-radius: calc(var(--ga-r-hard) - 1px); cursor: pointer;
   }
-  .scope-toggle button + button { border-left: 1px solid #333; }
-  .scope-toggle button.active { background: rgba(187, 134, 252, 0.16); color: #BB86FC; font-weight: 600; }
+  .scope-toggle button:hover:not(.active):not(:disabled) { color: var(--ga-ink-0); background: rgba(255, 255, 255, 0.05); }
+  .scope-toggle button.active { background: var(--ga-selection-bg); color: var(--ga-selection-ink); box-shadow: inset 0 0 0 1px var(--ga-selection-line); }
   .scope-toggle button:disabled { opacity: 0.4; cursor: default; }
 
   /* Reset animations button */
   .reset-btn {
-    width: 100%; padding: 5px 12px; margin: 6px 0;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid #333; color: #999;
-    border-radius: 4px; font-size: 12px; cursor: pointer;
+    width: 100%; height: var(--ga-control-h); padding: 0 12px; margin: 6px 0;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2); color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard); font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer;
   }
-  .reset-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary, #eee); border-color: #555; }
+  .reset-btn:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
 
   /* Animation status */
   .anim-status {
-    font-size: 11px; color: #BB86FC;
+    font-size: var(--ga-text-meta); color: var(--ga-ink-1);
     padding: 4px 0 6px; margin-bottom: 4px;
-    border-bottom: 1px solid #222;
-    text-align: center; font-weight: 600;
+    border-bottom: 1px solid var(--ga-line-1);
+    text-align: center; font-weight: var(--ga-weight-control);
   }
 
   /* Toggle row */
   .toggle-row {
-    display: flex; align-items: center; gap: 8px;
-    cursor: pointer; font-size: 13px; color: var(--text-primary, #ccc);
+    display: flex; align-items: center; gap: 8px; min-height: var(--ga-control-h-sm);
+    cursor: pointer; font-size: var(--ga-text-control); color: var(--ga-ink-0);
   }
   .toggle-row input[type="checkbox"] {
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line);
   }
 
   /* Hint text */
   .hint-text {
-    font-size: 11px; color: var(--text-muted, #888);
-    padding: 2px 0 4px; line-height: 1.35;
+    font-size: var(--ga-text-meta); color: var(--ga-ink-2);
+    padding: 2px 0 4px; line-height: 1.4;
   }
 </style>

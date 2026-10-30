@@ -449,7 +449,7 @@
   }
   .modal-head h2 {
     margin: 0;
-    font-size: 15px;
+    font-size: 14px;
     letter-spacing: 2px;
     color: var(--ga-blue-300);
     font-weight: 600;
@@ -457,7 +457,7 @@
   .modal-head p {
     margin: 4px 0 0;
     color: var(--text-muted, #888);
-    font-size: 11.5px;
+    font-size: 12px;
   }
   .close-btn {
     width: 32px;
@@ -466,7 +466,7 @@
     background: transparent;
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
-    font-size: 19px;
+    font-size: 20px;
     line-height: 1;
     cursor: pointer;
     display: inline-flex;

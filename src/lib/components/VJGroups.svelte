@@ -63,22 +63,30 @@
   </div>
 </div>
 <style>
-  .launches { margin-top: 8px; font-size: 11px; color: #aebdd5; }
-  .columns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-  .columns button { min-width: 26px; }
-  .columns button.queued { background: var(--ga-blue-700); border-color: var(--ga-blue-300); }
-  .groups { position: relative; font-size: 12px; }
-  .groups-trigger { cursor: pointer; list-style: none; padding: 7px 10px; border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; color: #c8d0dd; background: #15181d; }
-  .groups-trigger.active { background: var(--ga-blue-700); border-color: var(--ga-blue-600); }
-  .tray { position: fixed; inset: auto; margin: 0; box-sizing: border-box; color: #d6dfef; font-size: 12px; width: 356px; max-width: calc(100vw - 16px); max-height: min(65vh, 480px); overflow-y: auto; white-space: normal; padding: 12px; border: 1px solid var(--ga-blue-mute-600); border-radius: 9px; background: #11151d; box-shadow: 0 10px 30px #0009; }
-  p { color: #9ea9ba; font-size: 11px; margin: 7px 0; }
-  .group { border-top: 1px solid var(--ga-blue-mute-800); padding: 9px 0; }
-  .head, .controls, .create { display: flex; gap: 7px; align-items: center; }
-  .head { margin-bottom: 7px; }
+  .groups { position: relative; font-size: var(--ga-text-control, 12px); }
+  .groups-trigger { cursor: pointer; list-style: none; height: var(--ga-control-h, 26px); padding: 0 10px; box-sizing: border-box; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); color: var(--ga-ink-1, #ada9a2); background: var(--ga-card, #16140f); font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); }
+  .groups-trigger:hover:not(.active) { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
+  .groups-trigger.active { background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff); }
+  .tray { position: fixed; inset: auto; margin: 0; box-sizing: border-box; color: var(--ga-ink-0, #f2ede4); font-size: var(--ga-text-control, 12px); width: 356px; max-width: calc(100vw - 16px); max-height: min(65vh, 480px); overflow-y: auto; white-space: normal; padding: 12px; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-soft, 8px); background: var(--ga-card, #16140f); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); }
+  .tray > strong { display: block; font-size: var(--ga-text-title, 14px); font-weight: var(--ga-weight-title, 650); }
+  p { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); line-height: 1.45; margin: 6px 0 10px; }
+  .group { border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07)); padding: 10px 0; }
+  .head, .controls, .create { display: flex; gap: 6px; align-items: center; }
+  .head { margin-bottom: 6px; }
   .head input { flex: 1; min-width: 0; }
-  .controls input { flex: 1; min-width: 0; accent-color: var(--ga-blue-500); }
-  .controls span { width: 34px; font-variant-numeric: tabular-nums; }
-  input, select, button { border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; color: #d6dfef; background: var(--ga-blue-mute-800); padding: 4px 6px; font-size: 12px; }
-  button { cursor: pointer; } button:disabled { opacity: .4; cursor: default; }
-  .create { margin-top: 9px; }
+  .head span { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); font-variant-numeric: tabular-nums; }
+  .controls input { flex: 1; min-width: 0; accent-color: var(--ga-slider-fill, var(--ga-selection-line, #5278ff)); }
+  .controls span { width: 34px; text-align: right; color: var(--ga-ink-1, #ada9a2); font: var(--ga-text-meta, 11px) var(--ga-font-mono, monospace); font-variant-numeric: tabular-nums; }
+  input, select, button { height: var(--ga-control-h, 26px); box-sizing: border-box; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); color: var(--ga-ink-0, #f2ede4); background: var(--ga-slot, #060504); padding: 0 8px; font-family: inherit; font-size: var(--ga-text-control, 12px); }
+  input[type="range"] { height: auto; padding: 0; border: 0; background: transparent; }
+  button { cursor: pointer; background: var(--ga-card, #16140f); color: var(--ga-ink-1, #ada9a2); font-weight: var(--ga-weight-control, 600); }
+  button:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
+  button:disabled { opacity: .4; cursor: default; }
+  .head button { width: var(--ga-control-h, 26px); padding: 0; flex: none; }
+  .launches { margin-top: 8px; font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #89857e); }
+  .columns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .columns button { height: var(--ga-control-h-sm, 22px); min-width: 26px; padding: 0 6px; font-variant-numeric: tabular-nums; }
+  .columns button.queued { background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff); }
+  .create { margin-top: 10px; }
+  .create label { display: flex; align-items: center; gap: 6px; color: var(--ga-ink-1, #ada9a2); }
 </style>

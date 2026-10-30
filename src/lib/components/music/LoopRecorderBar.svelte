@@ -68,7 +68,7 @@
 
 <div class="bar" class:compact>
   <button
-    class="rec"
+    class="loop-rec"
     class:on={rec.phase === 'rec'}
     class:count={rec.phase === 'count'}
     onclick={toggleLoopRecord}
@@ -76,11 +76,11 @@
     title={rec.phase === 'off' ? 'Record a loop from the next bar' : rec.phase === 'count' ? 'Cancel the recording' : 'Stop on the next bar line and keep the loop'}
   >
     <span class="dot"></span>
-    {#if rec.phase === 'count'}IN {barsLeft}{:else if rec.phase === 'rec'}REC{rec.endBeat !== null ? ` ${barsLeft}` : ''}{:else}REC{/if}
+    {#if rec.phase === 'count'}In {barsLeft}{:else if rec.phase === 'rec'}Rec{rec.endBeat !== null ? ` ${barsLeft}` : ''}{:else}Rec{/if}
   </button>
-  <div class="seg small" role="group" aria-label="Bars to record">
+  <div class="ga-segmented small" role="group" aria-label="Bars to record">
     {#each RECORD_LENGTHS as bars}
-      <button class:on={s.recordLength === bars} onclick={() => musicStudio.setRecordLength(bars as RecordLength)} title={bars ? `Record ${bars} bar${bars === 1 ? '' : 's'}` : 'Record until stopped'}>{bars || 'Free'}</button>
+      <button class:active={s.recordLength === bars} aria-pressed={s.recordLength === bars} onclick={() => musicStudio.setRecordLength(bars as RecordLength)} title={bars ? `Record ${bars} bar${bars === 1 ? '' : 's'}` : 'Record until stopped'}>{bars || 'Free'}</button>
     {/each}
   </div>
   {#if !compact}
@@ -88,38 +88,16 @@
       {#each QUANTIZE_GRIDS as g}<option value={g.id}>{g.id === 'off' ? 'No snap' : `Snap ${g.label}`}</option>{/each}
     </select>
   {/if}
-  <button class="text-btn small" onclick={capture} title="Keep what you just played as a loop, without having recorded it">CAPTURE</button>
+  <button class="text-btn small" onclick={capture} title="Keep what you just played as a loop, without having recorded it">Capture</button>
   <span class="divider"></span>
-  <button class="text-btn small" onclick={exportPlaying} title="Save the beat and the playing loops as a MIDI file">MIDI OUT</button>
-  <button class="text-btn small" onclick={() => fileInput?.click()} title="Add clips to the session from a MIDI file">MIDI IN</button>
+  <button class="text-btn small" onclick={exportPlaying} title="Save the beat and the playing loops as a MIDI file">MIDI out</button>
+  <button class="text-btn small" onclick={() => fileInput?.click()} title="Add clips to the session from a MIDI file">MIDI in</button>
   <input bind:this={fileInput} type="file" accept=".mid,.midi,audio/midi" hidden onchange={importFile} />
 </div>
 
 <style>
   .bar { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-  .divider { width: 1px; height: 16px; background: var(--studio-edge-soft); }
-  .rec {
-    height: 22px;
-    min-width: 58px;
-    padding: 0 8px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    border: 1px solid var(--studio-edge);
-    background: transparent;
-    color: var(--studio-ink);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    font-variant-numeric: tabular-nums;
-    cursor: pointer;
-  }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ga-rec, #ff3b30); opacity: 0.55; }
-  .rec.on, .rec.count { border-color: var(--ga-rec, #ff3b30); color: var(--ga-rec, #ff3b30); }
-  .rec.on .dot { opacity: 1; }
-  .rec.count .dot { animation: blink 0.5s steps(2, jump-none) infinite; }
-  @keyframes blink { 50% { opacity: 0.2; } }
-  select { height: 22px; font-size: 11px; }
+  .divider { width: 1px; height: 16px; margin: 0 2px; background: var(--studio-edge-soft); }
+  /* Wide enough for "Rec 4" and "In 2", so the bar does not shift while recording. */
+  .loop-rec { min-width: 60px; }
 </style>

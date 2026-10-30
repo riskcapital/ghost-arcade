@@ -46,7 +46,7 @@
     letter-spacing: -0.5px;
   }
   .tagline {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     margin: 0 0 36px 0;
     text-align: center;
@@ -73,7 +73,7 @@
     background: linear-gradient(135deg, rgba(187, 134, 252, 0.12), rgba(105, 240, 174, 0.06));
   }
   .mode-title {
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 600;
     margin-bottom: 4px;
   }

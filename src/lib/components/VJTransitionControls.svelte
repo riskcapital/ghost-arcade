@@ -11,7 +11,7 @@
   let draftContext = contextKey;
   export let onChange: (patch: { duration?: number | null; style?: CrossfaderTransition | null }) => void;
   const styles: [CrossfaderTransition, string][] = [
-    ['dissolve', 'Dissolve'], ['wipe', 'Wipe'], ['rgb-split', 'RGB Split'],
+    ['dissolve', 'Dissolve'], ['wipe', 'Wipe'], ['rgb-split', 'RGB split'],
     ['cube', 'Cube'], ['shatter', 'Shatter'], ['halftone', 'Halftone'],
     ['glitch', 'Glitch'], ['liquid', 'Liquid'], ['strobe', 'Strobe'], ['slide', 'Slide'],
   ];
@@ -107,16 +107,17 @@
 </section>
 
 <style>
-  .transition-controls { margin: 10px 0 12px; padding: 12px; border: 1px solid var(--ga-line-2, #303540); border-radius: var(--ga-r-soft, 8px); background: var(--ga-card, #16191f); }
-  h4 { margin: 0 0 12px; font-size: var(--ga-type-caption, 11px); font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--ga-ink-1, #adb3bf); }
-  .duration-row, .style-row { display: flex; align-items: center; gap: 8px; font-size: var(--ga-type-control, 12px); line-height: 1.4; }
+  /* A flat section with an eyebrow, like the rest of the layer and clip settings. */
+  .transition-controls { margin: 0; padding: 10px 12px 12px; border: 0; border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07)); background: transparent; }
+  h4 { margin: 0 0 8px; font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); line-height: 1.2; color: var(--ga-ink-2, #89857e); }
+  .duration-row, .style-row { display: flex; align-items: center; gap: 8px; min-height: var(--ga-control-h, 26px); font-size: var(--ga-text-control, 12px); line-height: 1.4; color: var(--ga-ink-1, #ada9a2); }
   .duration-row label, .style-row select { flex: 1; }
-  .duration-row span { color: var(--ga-ink-1, #adb3bf); }
+  .duration-row span { color: var(--ga-ink-2, #89857e); }
   input[type="text"] { width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
-  input[type="text"], select { min-width: 0; min-height: 30px; box-sizing: border-box; padding: 5px 8px; font: inherit; color: var(--ga-ink-0, #eef0f4); background: var(--ga-slot, #101218); border: 1px solid var(--ga-line-2, #303540); border-radius: var(--ga-r-hard, 5px); }
-  .duration-slider { width: 100%; margin: 10px 0 12px; accent-color: var(--ga-selection-line, var(--ga-blue-500)); }
-  .inherit { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; font-size: var(--ga-type-control, 12px); }
-  p { margin: 10px 0 0; font-size: var(--ga-type-caption, 11px); line-height: 1.45; color: var(--ga-ink-1, #adb3bf); }
+  input[type="text"], select { min-width: 0; height: var(--ga-control-h, 26px); box-sizing: border-box; padding: 0 8px; font: inherit; color: var(--ga-ink-0, #f2ede4); background: var(--ga-slot, #060504); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); }
+  .duration-slider { width: 100%; margin: 8px 0 10px; accent-color: var(--ga-selection-line, var(--ga-blue-500)); }
+  .inherit { display: flex; align-items: center; gap: 8px; min-height: var(--ga-control-h, 26px); margin-bottom: 6px; font-size: var(--ga-text-control, 12px); color: var(--ga-ink-1, #ada9a2); }
+  p { margin: 8px 0 0; font-size: var(--ga-text-meta, 11px); line-height: 1.45; color: var(--ga-ink-2, #89857e); }
   .duration-error { color: #e0b29d; }
   input[aria-invalid="true"] { border-color: #c88d74; }
   input:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }

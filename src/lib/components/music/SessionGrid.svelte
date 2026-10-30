@@ -88,7 +88,7 @@
       <span class="name">{track.label}</span>
       {#if !compact}<span class="voice">{voiceLabel(track.id)}</span>{/if}
       {#if track.id === 'beats' && !compact}
-        <button class="mini-btn" onclick={saveBeat} title="Keep the beat in the grid as a new clip">SAVE</button>
+        <button class="mini-btn studio-btn" onclick={saveBeat} title="Keep the beat in the grid as a new clip">Save</button>
       {/if}
       <button class="stop" disabled={!trackActive(track.id)} onclick={() => stopTrack(track.id)} aria-label="Stop {track.label}" title="Stop {track.label.toLowerCase()}">
         <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
@@ -140,7 +140,7 @@
       {/if}
     {/each}
   {/each}
-  <button class="add-row" onclick={() => musicStudio.addSessionRow()} title="Add a row">+ ROW</button>
+  <button class="add-row studio-btn dashed" onclick={() => musicStudio.addSessionRow()} title="Add a row">+ Row</button>
 </div>
 
 <style>
@@ -166,8 +166,9 @@
     background: var(--studio-panel);
     border-bottom: 1px solid var(--studio-edge-soft);
   }
-  .name { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
-  .voice { flex: 1; min-width: 0; font-size: 10px; color: var(--studio-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Track names are eyebrows, in the panel's ink. */
+  .name { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; white-space: nowrap; }
+  .voice { flex: 1; min-width: 0; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .compact .name { flex: 1; }
   .stop,
   .edit,
@@ -185,19 +186,7 @@
   .stop { width: 20px; height: 20px; }
   .stop:disabled { color: var(--studio-edge); border-color: var(--studio-edge-soft); cursor: default; }
   .stop svg { width: 9px; height: 9px; fill: currentColor; }
-  .mini-btn {
-    height: 20px;
-    padding: 0 6px;
-    border: 1px solid var(--studio-edge);
-    background: transparent;
-    color: var(--studio-muted);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-  }
+  .head .mini-btn { height: 20px; padding: 0 6px; font-size: var(--ga-text-meta, 11px); }
   .row-go {
     gap: 0;
     grid-template-columns: 1fr 1fr;
@@ -260,22 +249,8 @@
     cursor: pointer;
   }
   .empty select:hover { border-color: var(--studio-edge); color: var(--studio-ink); }
-  .add-row {
-    grid-column: 1 / -1;
-    justify-self: start;
-    height: 22px;
-    padding: 0 8px;
-    border: 1px dashed var(--studio-edge);
-    background: transparent;
-    color: var(--studio-muted);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-  }
+  .add-row { grid-column: 1 / -1; justify-self: start; }
   .compact { grid-template-columns: 24px repeat(var(--tracks), minmax(0, 1fr)); gap: 3px 4px; grid-auto-rows: 23px; }
-  .compact .clip { font-size: 10px; padding: 0 4px; }
+  .compact .clip { padding: 0 4px; }
   .compact .clip svg { display: none; }
 </style>

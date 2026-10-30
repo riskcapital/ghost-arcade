@@ -627,7 +627,7 @@
     cursor: grab;
     display: flex; align-items: center; justify-content: center;
     color: #f0a35e;
-    font-size: 19px; line-height: 1;
+    font-size: 20px; line-height: 1;
   }
   .move-handle:hover { background: rgba(240, 163, 94, 0.2); }
   .move-handle.dragging { cursor: grabbing; background: rgba(255, 255, 0, 0.2); border-color: #ffff00; color: #ffff00; }

@@ -55,16 +55,18 @@
   .chase-banner {
     position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
     display: flex; align-items: center; gap: 10px;
-    background: rgba(255, 79, 216, 0.92); color: #fff; font-size: 12px; font-weight: 600;
+    background: rgba(255, 79, 216, 0.92); color: #fff; font-size: var(--ga-text-control, 12px); font-weight: 600;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     padding: 4px 5px 4px 12px; border-radius: 14px; white-space: nowrap;
   }
   .chase-badges-done {
     pointer-events: auto; background: #fff; color: #b0158f; border: 0; border-radius: 10px;
-    font-size: 12px; font-weight: 700; padding: 3px 10px; cursor: pointer;
+    font-size: var(--ga-text-control, 12px); font-weight: 700; padding: 3px 10px; cursor: pointer;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
   }
   .chase-badge {
     position: absolute; transform: translate(-50%, -50%); min-width: 22px; height: 22px; padding: 0 5px;
-    border-radius: 11px; background: #ff4fd8; color: #fff; font: 700 12px/22px system-ui, sans-serif;
+    border-radius: 11px; background: #ff4fd8; color: #fff; font: 700 12px/22px var(--ga-font-mono, ui-monospace, monospace);
     text-align: center; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6);
   }
 </style>

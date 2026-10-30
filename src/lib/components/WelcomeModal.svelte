@@ -286,7 +286,7 @@
   }
   .welcome-start-title {
     margin: 0 0 18px;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 650;
     color: #e9edf5;
   }

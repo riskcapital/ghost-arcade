@@ -15,6 +15,8 @@ import './lib/theming/fonts.css';
 // Same file as the mobile app, so both share one scale.
 import './lib/mobile/studio/blueScale.css';
 import './lib/theming/studio-skin.css';
+// The design system's tokens and shared primitives. See docs/DESIGN-SYSTEM.md.
+import './lib/theming/system.css';
 import { installRangeProgressSync } from './lib/theming/rangeProgress';
 
 installRangeProgressSync();

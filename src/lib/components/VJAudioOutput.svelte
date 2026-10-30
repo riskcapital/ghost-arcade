@@ -43,11 +43,11 @@
     const timer = setInterval(() => { if (opened) void refresh(); }, 1500); return () => { clearInterval(timer); unsubscribe(); }; });
 </script>
 <div data-help-page="midi-audio" class="audio-output">
-  <button class="output-button" class:muted={$nativeAudioMaster.muted} aria-expanded={opened} onclick={open} title="Clip audio output and master volume">OUT <span>{$nativeAudioMaster.muted ? 'Muted' : `${Math.round($nativeAudioMaster.volume * 100)}%`}</span></button>
+  <button class="output-button" class:muted={$nativeAudioMaster.muted} aria-expanded={opened} onclick={open} title="Clip audio output and master volume">Out <span>{$nativeAudioMaster.muted ? 'Muted' : `${Math.round($nativeAudioMaster.volume * 100)}%`}</span></button>
     <div bind:this={tray} popover="auto" class="output-panel" role="group" aria-label="Clip audio output"
       style:left="{left}px" style:top="{top}px" style:max-height="calc(100vh - {top + 8}px)"
       ontoggle={e => opened = (e as ToggleEvent).newState === 'open'}>
-      <div class="panel-heading">Clip audio <button aria-label="Close audio output" onclick={() => tray.hidePopover()}>×</button></div>
+      <div class="panel-heading">Clip audio <button class="close" aria-label="Close audio output" onclick={() => tray.hidePopover()}>×</button></div>
       <label>Output device<select value={device} disabled={busy} onchange={e => selectDevice(e.currentTarget.value)}><option value="default">System default</option>{#each devices as name}<option value={name}>{name}</option>{/each}</select></label>
       <label>Master volume <span>{Math.round($nativeAudioMaster.volume * 100)}%</span><input aria-label="Master audio volume" data-midi-path="vj:master:audioVolume" data-midi-label="Master audio volume" data-midi-min="0" data-midi-max="1" type="range" min="0" max="1" step=".01" value={$nativeAudioMaster.volume} oninput={e => nativeAudioMaster.update(v => ({ ...v, volume: +e.currentTarget.value }))} /></label>
       <button data-midi-path="vj:master:audioMute" data-midi-label="Master audio mute" data-midi-mode="toggle" class:active={$nativeAudioMaster.muted} aria-pressed={$nativeAudioMaster.muted} onclick={() => nativeAudioMaster.update(v => ({ ...v, muted: !v.muted }))}>{$nativeAudioMaster.muted ? 'Unmute audio' : 'Mute audio'}</button>
@@ -58,16 +58,22 @@
     </div>
 </div>
 <style>
-  .audio-output { position: relative; font-size: 12px; }
-  button, select { min-height: 28px; border: 1px solid #34383f; border-radius: 5px; background: #121419; color: #dce0e7; font: inherit; padding: 4px 8px; }
-  .output-button { display: flex; gap: 6px; align-items: center; white-space: nowrap; letter-spacing: 0.08em; font-weight: 700; font-size: 11px; }
-  .output-button span { color: #969eab; font-size: 11px; font-weight: 500; letter-spacing: 0; }
-  .status { color: #969eab; font-size: 11px; }
-  .muted, .active { background: var(--ga-blue-700); border-color: var(--ga-blue-500); }
-  .output-panel { color: #dce0e7; font-size: 12px; position: fixed; margin: 0; inset: auto; overflow-y: auto; width: 280px; max-width: calc(100vw - 16px); padding: 14px; border: 1px solid var(--ga-blue-mute-600); border-radius: 8px; background: #111318; box-shadow: 0 12px 36px #0009; }
-  .panel-heading { display: flex; justify-content: space-between; align-items: center; font-weight: 650; margin-bottom: 12px; }
-  label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0; }
-  select, input { width: 100%; accent-color: var(--ga-blue-500); }
-  p { margin: 10px 0 0; line-height: 1.4; overflow-wrap: anywhere; }
-  .error { color: #e6b77a; font-size: 11px; }
+  .audio-output { position: relative; font-size: var(--ga-text-control, 12px); }
+  button, select { height: var(--vj-control-h, var(--ga-control-h, 26px)); box-sizing: border-box; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); background: var(--ga-card, #16140f); color: var(--ga-ink-1, #ada9a2); font: inherit; font-weight: var(--ga-weight-control, 600); padding: 0 10px; cursor: pointer; }
+  button:hover:not(.muted):not(.active) { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
+  .output-button { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+  .output-button span { color: var(--ga-ink-2, #89857e); font-family: var(--ga-font-mono, ui-monospace, monospace); font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-body, 500); font-variant-numeric: tabular-nums; }
+  .muted, .active { background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff); }
+  .muted span { color: inherit; }
+  .status { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); }
+  .output-panel { color: var(--ga-ink-0, #f2ede4); font-size: var(--ga-text-control, 12px); position: fixed; margin: 0; inset: auto; overflow-y: auto; width: 280px; max-width: calc(100vw - 16px); padding: 12px; box-sizing: border-box; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-soft, 8px); background: var(--ga-card, #16140f); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); }
+  .output-panel button, .output-panel select { height: var(--ga-control-h, 26px); }
+  .panel-heading { display: flex; justify-content: space-between; align-items: center; font-size: var(--ga-text-title, 14px); font-weight: var(--ga-weight-title, 650); margin-bottom: 8px; }
+  .output-panel .close { width: 22px; height: 22px; padding: 0; border-color: transparent; background: transparent; font-size: var(--ga-text-title, 14px); }
+  label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin: 10px 0; color: var(--ga-ink-1, #ada9a2); }
+  label span { font-family: var(--ga-font-mono, ui-monospace, monospace); font-size: var(--ga-text-meta, 11px); font-variant-numeric: tabular-nums; }
+  select, input { width: 100%; accent-color: var(--ga-slider-fill, var(--ga-selection-line, #5278ff)); }
+  select { color: var(--ga-ink-0, #f2ede4); font-weight: var(--ga-weight-body, 500); padding: 0 8px; }
+  p { margin: 8px 0 0; line-height: 1.45; overflow-wrap: anywhere; }
+  .error { color: #e6b77a; font-size: var(--ga-text-meta, 11px); }
 </style>

@@ -506,16 +506,16 @@
 </div>
 
 <style>
-  .epr-macro { max-width: 85px; min-width: 0; border: 1px solid var(--ga-blue-mute-600); border-radius: 5px; background: var(--ga-blue-800); color: #cbd9f5; font-size: 10px; padding: 2px; }
+  .epr-macro { max-width: 85px; min-width: 0; height: var(--ga-control-h-sm); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); background: var(--ga-slot); color: var(--ga-ink-1); font-size: var(--ga-text-meta); padding: 0 4px; }
 
-  .expression-error { font-size: 11px; line-height: 1.4; color: #e0b29d; }
-  input[aria-invalid="true"] { border-color: #c88d74; }
+  .expression-error { font-size: var(--ga-text-meta); line-height: 1.4; color: var(--ga-rec); }
+  input[aria-invalid="true"] { border-color: var(--ga-rec); }
   .epr {
     display: flex;
     flex-direction: column;
     gap: 4px;
     padding: 6px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid var(--ga-line-1);
   }
   .epr:last-child { border-bottom: none; }
   .epr.button-only {
@@ -555,20 +555,23 @@
        leaves the slider track full width. */
     flex: 1 1 auto;
     min-width: 70px;
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .epr-source {
     flex: 0 0 auto;
-    background: #0f0f10;
-    color: var(--text-muted, #888);
-    border: 1px solid #444;
-    border-radius: 3px;
-    padding: 1px 7px;
-    font-size: 11px;
+    height: var(--ga-control-h-sm);
+    background: var(--ga-slot);
+    color: var(--ga-ink-2);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    padding: 0 7px;
+    font: inherit;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
     max-width: 76px;
     cursor: pointer;
     white-space: nowrap;
@@ -577,8 +580,8 @@
     transition: border-color 0.12s, color 0.12s, background 0.12s;
   }
   .epr-source:hover {
-    border-color: #888;
-    color: #ccc;
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
   }
   .epr-source.active {
     border-color: #ff00ff;
@@ -601,7 +604,7 @@
     font-variant-numeric: tabular-nums;
     cursor: text;
     padding: 1px 6px;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard);
     text-align: right;
   }
   .epr-value:hover {
@@ -611,15 +614,15 @@
   .epr-edit {
     flex: 0 0 auto;
     width: 56px;
-    background: #0f1219;
-    border: 1px solid var(--ga-blue-300);
-    color: #e0e7ef;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-focus);
+    color: var(--ga-ink-0);
     font: inherit;
     font-size: 12px;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     padding: 1px 6px;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard);
     text-align: right;
     outline: none;
   }

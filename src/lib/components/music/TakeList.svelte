@@ -64,14 +64,15 @@
   }
   .name {
     width: 96px;
-    height: 24px;
+    height: var(--ga-control-h-sm, 22px);
     padding: 0 6px;
     border: 1px solid transparent;
     background: transparent;
     color: var(--mk-ink, var(--ga-ink-0, #eef0f4));
     border-radius: var(--mk-radius, var(--ga-r-hard, 2px));
     font: inherit;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
   }
   .name:hover, .name:focus { border-color: var(--mk-line, var(--ga-line-2, rgba(255,255,255,.12))); }
   .playing .name { color: var(--mk-accent, var(--ga-coral, #ff6f5e)); }
@@ -84,8 +85,8 @@
   .progress { width: 48px; height: 2px; background: var(--mk-line, var(--ga-line-2, rgba(255,255,255,.12))); }
   .progress span { display: block; height: 100%; background: var(--mk-accent, var(--ga-coral, #ff6f5e)); }
   .icon {
-    width: 24px;
-    height: 24px;
+    width: var(--ga-control-h-sm, 22px);
+    height: var(--ga-control-h-sm, 22px);
     padding: 0;
     display: inline-flex;
     align-items: center;
@@ -96,9 +97,9 @@
     border-radius: var(--mk-radius, var(--ga-r-hard, 2px));
     cursor: pointer;
   }
-  .icon svg { width: 13px; height: 13px; fill: currentColor; }
+  .icon svg { width: 12px; height: 12px; fill: currentColor; }
   .icon svg[fill="none"] { fill: none; }
   .icon:hover { color: var(--mk-ink, var(--ga-ink-0, #eef0f4)); }
   .icon.on { color: var(--mk-accent, var(--ga-coral, #ff6f5e)); border-color: var(--mk-accent, var(--ga-coral, #ff6f5e)); }
-  .empty { margin: 6px 0; color: var(--mk-muted, var(--ga-ink-2, #5e6571)); font-size: 12px; }
+  .empty { margin: 6px 0; color: var(--mk-muted, var(--ga-ink-2)); font-size: var(--ga-text-meta, 11px); }
 </style>

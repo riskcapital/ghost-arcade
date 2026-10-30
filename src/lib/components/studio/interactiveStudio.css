@@ -23,20 +23,20 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 12px;
-  background: #0c111a;
-  border-bottom: 1px solid var(--ga-blue-700);
+  padding: 6px 14px;
+  background: var(--ga-card);
+  border-bottom: 1px solid var(--ga-line-2);
 }
 .interactive-workspace .workspace-status > span {
-  font-size: 11px;
-  font-weight: 650;
+  font-size: var(--ga-text-control, 12px);
+  font-weight: 600;
 }
 .interactive-workspace .workspace-status small {
   display: block;
   letter-spacing: 0;
-  font-size: 10px;
+  font-size: var(--ga-text-meta, 11px);
   margin-top: 2px;
-  color: #aebbc9;
+  color: var(--ga-ink-2);
 }
 .interactive-workspace .workspace-status .live {
   background: none !important;
@@ -67,12 +67,13 @@
   color: var(--starter-color);
 }
 .interactive-workspace .starter strong {
-  font-size: 13px;
+  font-size: var(--ga-text-body, 13px);
+  font-weight: 600;
 }
 .interactive-workspace .starter span {
-  font-size: 11px;
+  font-size: var(--ga-text-meta, 11px);
   line-height: 1.45;
-  color: #adbac9;
+  color: var(--ga-ink-2);
 }
 .interactive-workspace .saved-heading {
   margin-top: 22px;
@@ -94,8 +95,8 @@
   justify-content: space-between;
 }
 .interactive-workspace .draft-status {
-  font-size: 11px;
-  color: #9fc9b1;
+  font-size: var(--ga-text-meta, 11px);
+  color: var(--ga-green, #46d18a);
 }
 .interactive-workspace .transport button:not(:where(.param *, .mt *, .studio-timeline *)) {
   display: grid;
@@ -138,14 +139,14 @@
   display: grid;
   place-items: center;
   pointer-events: none;
-  color: #acbacb;
-  font-size: 12px;
+  color: var(--ga-ink-1);
+  font-size: var(--ga-text-control, 12px);
 }
 .interactive-workspace {
   --accent: var(--ga-selection-line, var(--ga-blue-300));
   background: var(--ga-inspector-bg, var(--ga-card, #15171b));
   color: var(--ga-ink-0, #e4e8ee);
-  font: 12px/1.5 system-ui;
+  font: var(--ga-text-control, 12px) / 1.5 var(--ga-font-ui, system-ui, sans-serif);
   padding: 0;
   min-width: 0;
   /* Rows: title bar, output strip (phone), stage + inspector, keyframe timeline.
@@ -170,37 +171,50 @@
 .interactive-workspace.studio-fullscreen aside:not(:where(.param *, .mt *, .studio-timeline *)) {
   max-height: none;
 }
+/* Title bar: the same bar as the app top bar (48px, 30px controls, 13px). */
 .interactive-workspace > header {
   display: flex;
-  gap: 16px;
+  gap: var(--ga-bar-group-gap, 14px);
   justify-content: space-between;
   align-items: center;
-  padding: 14px 18px;
+  box-sizing: border-box;
+  min-height: var(--ga-bar-h, 48px);
+  padding: 0 14px;
+  background: var(--ga-bar, transparent);
   border-bottom: 1px solid var(--ga-line-2, #34383f);
 }
 .interactive-workspace h2:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 18px;
-  font-weight: 650;
-  margin: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--ga-text-title, 14px);
+  font-weight: var(--ga-weight-title, 650);
+  margin: 0;
 }
 .interactive-workspace .engine-badge {
-  font-size: 9px;
-  color: var(--ga-blue-200);
-  font-weight: 500;
-  border: 1px solid var(--ga-blue-mute-600);
-  padding: 3px 5px;
-  border-radius: 3px;
-  vertical-align: middle;
+  font-size: var(--ga-text-eyebrow, 10px);
+  color: var(--ga-ink-1);
+  font-weight: 600;
+  border: 1px solid var(--ga-line-2);
+  padding: 2px 6px;
+  border-radius: var(--ga-r-hard, 5px);
 }
 .interactive-workspace small:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 9px;
-  letter-spacing: 0.1em;
+  font-size: var(--ga-text-meta, 11px);
+  letter-spacing: 0;
   color: var(--ga-ink-2, #99a7b9);
 }
 .interactive-workspace .header-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--ga-bar-gap, 6px);
   align-items: center;
+}
+.interactive-workspace:not(.handheld) > header .header-actions button {
+  min-height: 0;
+  height: var(--ga-bar-control-h, 30px);
+  padding: 0 12px;
+  font-size: var(--ga-text-body, 13px);
+  font-weight: var(--ga-weight-control, 600);
 }
 .interactive-workspace .layout {
   display: grid;
@@ -228,7 +242,7 @@
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 4px;
-  padding: 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--ga-line-2, #34383f);
 }
 .interactive-workspace .inspector-body {
@@ -271,9 +285,9 @@
   aspect-ratio: var(--stage-aspect, 16 / 9);
   position: relative;
   touch-action: none;
-  background: #03060c;
+  background: var(--ga-slot, #03060c);
   overflow: hidden;
-  border: 1px solid var(--ga-blue-700);
+  border: 1px solid var(--ga-line-2);
 }
 .interactive-workspace .stage canvas,
 .interactive-workspace .stage svg {
@@ -290,8 +304,8 @@
 }
 .interactive-workspace .emitter text {
   fill: #a6e9ef;
-  font: 10px system-ui;
-  letter-spacing: 1px;
+  font: 700 10px var(--ga-font-ui, system-ui);
+  letter-spacing: 0.08em;
 }
 .interactive-workspace .stage polygon {
   fill: var(--ga-blue-a08);
@@ -319,7 +333,7 @@
   gap: 12px;
   padding: 10px 0;
   color: var(--ga-ink-2, #8998ad);
-  font-size: 10px;
+  font-size: var(--ga-text-meta, 11px);
 }
 .interactive-workspace .canvas-footer .stage-source {
   text-align: right;
@@ -332,14 +346,14 @@
   margin: 2px 0 10px;
 }
 .interactive-workspace .panel-heading strong {
-  font-size: 12px;
+  font-size: var(--ga-text-title, 14px);
+  font-weight: var(--ga-weight-title, 650);
 }
 .interactive-workspace .panel-heading > span,
 .interactive-workspace .order:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font:
-    10px ui-monospace,
-    monospace;
-  color: #8290a5;
+  font-family: var(--ga-font-mono, ui-monospace, monospace);
+  font-size: var(--ga-text-meta, 11px);
+  color: var(--ga-ink-2);
 }
 .interactive-workspace .effect-list {
   display: grid;
@@ -350,8 +364,8 @@
   align-items: center;
   gap: 7px;
   border: 1px solid var(--ga-line-2, #34383f);
-  border-radius: 4px;
-  padding: 3px 8px;
+  border-radius: var(--ga-r-hard, 5px);
+  padding: 2px 8px;
   background: var(--ga-slot, var(--ga-blue-900));
 }
 .interactive-workspace .effect-card.active {
@@ -374,12 +388,12 @@
   white-space: nowrap;
 }
 .interactive-workspace .effect-title small {
-  font-size: 9px;
+  font-size: var(--ga-text-meta, 11px);
   letter-spacing: 0;
 }
 .interactive-workspace .grip:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 17px;
-  color: #687587;
+  font-size: 16px;
+  color: var(--ga-ink-3);
   cursor: grab;
 }
 .interactive-workspace .effect-detail {
@@ -392,14 +406,16 @@
   gap: 4px;
 }
 .interactive-workspace .mini-tools button {
-  min-height: 26px;
-  padding: 2px 8px;
+  min-height: var(--ga-control-h-sm, 22px);
+  padding: 0 7px;
 }
+/* Eyebrow (docs/DESIGN-SYSTEM.md). */
 .interactive-workspace .group-label {
-  font-size: 9px;
-  letter-spacing: 0.13em;
+  font-size: var(--ga-text-eyebrow, 10px);
+  font-weight: 700;
+  letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   text-transform: uppercase;
-  color: var(--ga-blue-300);
+  color: var(--ga-ink-2);
   margin: 18px 0 8px;
   border-bottom: 1px solid var(--ga-line-2, #34383f);
   padding-bottom: 6px;
@@ -428,19 +444,20 @@
   margin: 5px 0;
 }
 .interactive-workspace .danger:not(:where(.param *, .mt *, .studio-timeline *)) {
-  color: #ffa69b;
+  color: var(--ga-rec, #ff3b30);
 }
 .interactive-workspace .ignite:not(:where(.param *, .mt *, .studio-timeline *)) {
   color: #ffae70;
 }
 .interactive-workspace .live:not(:where(.param *, .mt *, .studio-timeline *)) {
-  color: #b6f7bd !important;
-  border-color: #518657 !important;
-  background: #193326 !important;
+  color: var(--ga-green, #46d18a) !important;
+  border-color: color-mix(in srgb, var(--ga-green, #46d18a) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--ga-green, #46d18a) 14%, transparent) !important;
 }
 .interactive-workspace .active:not(:where(.param *, .mt *, .studio-timeline *)) {
   background: var(--ga-selection-bg, var(--ga-blue-700));
   border-color: var(--accent);
+  color: var(--ga-selection-ink, inherit);
 }
 .interactive-workspace button:not(:where(.param *, .mt *, .studio-timeline *)),
 .interactive-workspace input:not(:where(.param *, .mt *, .studio-timeline *)),
@@ -454,15 +471,19 @@
 .interactive-workspace select:not(:where(.param *, .mt *, .studio-timeline *)),
 .interactive-workspace
   input:not([type='range']):not([type='checkbox']):not(:where(.param *, .mt *, .studio-timeline *)) {
-  min-height: 34px;
-  padding: 6px 9px;
-  border: 1px solid var(--ga-line-3, #404955);
+  min-height: var(--ga-control-h, 26px);
+  padding: 3px 9px;
+  border: 1px solid var(--ga-line-2, #404955);
   background: var(--ga-hardware-bg, var(--ga-slot, var(--ga-blue-mute-800)));
   border-radius: var(--ga-r-hard, 4px);
 }
 .interactive-workspace button:not(:where(.param *, .mt *, .studio-timeline *)) {
   touch-action: manipulation;
   cursor: pointer;
+  font-weight: var(--ga-weight-control, 600);
+}
+.interactive-workspace button:hover:not(:disabled):not(.active):not(:where(.param *, .mt *, .studio-timeline *)) {
+  border-color: var(--ga-line-3);
 }
 .interactive-workspace button:disabled:not(:where(.param *, .mt *, .studio-timeline *)) {
   opacity: 0.4;
@@ -471,12 +492,13 @@
 .interactive-workspace button:focus-visible:not(:where(.param *, .mt *, .studio-timeline *)),
 .interactive-workspace input:focus-visible:not(:where(.param *, .mt *, .studio-timeline *)),
 .interactive-workspace select:focus-visible:not(:where(.param *, .mt *, .studio-timeline *)) {
-  outline: 2px solid var(--ga-blue-200);
+  outline: 2px solid var(--ga-focus, var(--ga-blue-200));
   outline-offset: 2px;
 }
 .interactive-workspace label:not(:where(.param *, .mt *, .studio-timeline *)) {
   display: block;
-  font-size: 11px;
+  font-size: var(--ga-text-meta, 11px);
+  color: var(--ga-ink-1);
   margin: 12px 0;
 }
 .interactive-workspace label > input:not([type='checkbox']):not(:where(.param *, .mt *, .studio-timeline *)),
@@ -486,7 +508,7 @@
   margin-top: 4px;
 }
 .interactive-workspace input[type='range']:not(:where(.param *, .mt *, .studio-timeline *)) {
-  height: 36px;
+  height: var(--ga-control-h, 26px);
   accent-color: var(--accent);
   touch-action: none;
 }
@@ -498,12 +520,12 @@
 }
 .interactive-workspace .hint:not(:where(.param *, .mt *, .studio-timeline *)),
 .interactive-workspace .empty:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 10px;
+  font-size: var(--ga-text-meta, 11px);
   color: var(--ga-ink-2, #99a7ba);
 }
 .interactive-workspace p[role='status']:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 11px;
-  color: var(--ga-blue-200);
+  font-size: var(--ga-text-meta, 11px);
+  color: var(--ga-ink-1);
   margin: 0;
   overflow-wrap: anywhere;
 }
@@ -525,7 +547,7 @@
 }
 @media (max-width: 850px) {
   .interactive-workspace > header {
-    padding: 10px;
+    padding: 8px 10px;
     flex-wrap: wrap;
     gap: 8px;
   }
@@ -533,9 +555,6 @@
     flex: 1;
     justify-content: flex-end;
     flex-wrap: wrap;
-  }
-  .interactive-workspace h2:not(:where(.param *, .mt *, .studio-timeline *)) {
-    font-size: 16px;
   }
   .interactive-workspace .layout {
     grid-template-columns: 1fr;
@@ -559,7 +578,7 @@
   }
   .interactive-workspace aside:not(:where(.param *, .mt *, .studio-timeline *)) {
     border-left: 0;
-    border-top: 1px solid #34383f;
+    border-top: 1px solid var(--ga-line-2, #34383f);
   }
   .interactive-workspace .inspector-tabs {
     position: sticky;
@@ -613,7 +632,7 @@
   display: none;
 }
 .interactive-workspace.handheld h2:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 15px;
+  font-size: 14px;
 }
 .interactive-workspace.handheld .engine-badge,
 .interactive-workspace.handheld .fullscreen-action {
@@ -848,8 +867,8 @@
   top: max(12px, env(safe-area-inset-top));
   right: 12px;
   z-index: 20;
-  background: #111b !important;
-  border: 1px solid #8894a3 !important;
+  background: color-mix(in srgb, var(--ga-card, #111) 75%, transparent) !important;
+  border: 1px solid var(--ga-line-3) !important;
   min-height: 44px;
 }
 .interactive-workspace.handheld .touch-tool {
@@ -996,6 +1015,29 @@
   user-select: none;
   -webkit-user-select: none;
 }
+/* Select / Draw / Play: one segmented track, as elsewhere in the app. */
+.interactive-workspace:not(.handheld) .canvas-toolbar .segmented {
+  gap: 2px;
+  padding: 2px;
+  background: var(--ga-slot);
+  border: 1px solid var(--ga-line-2);
+  border-radius: var(--ga-r-hard, 5px);
+}
+.interactive-workspace:not(.handheld) .canvas-toolbar .segmented button {
+  min-height: var(--ga-control-h-sm, 22px);
+  border-color: transparent;
+  background: transparent;
+  color: var(--ga-ink-1);
+}
+.interactive-workspace:not(.handheld) .canvas-toolbar .segmented button:hover:not(.active) {
+  color: var(--ga-ink-0);
+  border-color: transparent;
+}
+.interactive-workspace:not(.handheld) .canvas-toolbar .segmented button.active {
+  background: var(--ga-selection-bg);
+  border-color: var(--ga-selection-line);
+  color: var(--ga-selection-ink);
+}
 .interactive-workspace .canvas-toolbar .transport-gap {
   width: 6px;
 }
@@ -1084,7 +1126,7 @@
   width: 100%;
   min-height: 44px;
   margin: 0 0 8px;
-  border: 1px solid var(--ga-line-3, #ffffff33);
+  border: 1px solid var(--ga-line-2, #ffffff33);
   border-radius: var(--ga-r-hard, 4px);
   background: var(--ga-slot, #10151c);
   color: inherit;

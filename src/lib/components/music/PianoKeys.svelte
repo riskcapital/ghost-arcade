@@ -112,7 +112,7 @@
     gap: 2px;
   }
   /* Pressed white keys darken toward the accent; the accent can be near white. */
-  .white.lit { background: color-mix(in srgb, var(--mk-accent, var(--ga-coral, #ff6f5e)) 45%, #2a313c); }
+  .white.lit { background: color-mix(in srgb, var(--mk-accent, var(--ga-coral, #ff6f5e)) 45%, var(--mk-black, #15181e)); }
   .black {
     position: absolute;
     top: 0;
@@ -150,9 +150,10 @@
     font-weight: 700;
     pointer-events: none;
   }
-  .white kbd { color: #5e6571; }
-  .black kbd { color: #9aa0ac; }
-  .c { color: #8a909c; font-size: 9px; pointer-events: none; }
+  /* Legends printed on the keys, in the face's key colours. */
+  .white kbd { color: color-mix(in srgb, var(--mk-black, #15181e) 62%, var(--mk-white, #d9dce2)); }
+  .black kbd { color: color-mix(in srgb, var(--mk-white, #d9dce2) 62%, var(--mk-black, #15181e)); }
+  .c { color: color-mix(in srgb, var(--mk-black, #15181e) 48%, var(--mk-white, #d9dce2)); font-size: var(--ga-text-micro, 9px); pointer-events: none; }
   .white.lit kbd, .white.lit .c { color: #fff; }
-  .black.lit kbd { color: #0b0d11; }
+  .black.lit kbd { color: var(--mk-on-accent, #0b0d11); }
 </style>

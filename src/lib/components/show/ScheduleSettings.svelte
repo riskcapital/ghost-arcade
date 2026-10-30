@@ -190,11 +190,11 @@
   .sch-panel { display: flex; flex-direction: column; gap: 4px; }
   .sch-now {
     padding: 8px 10px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    background: rgba(0, 0, 0, 0.3);
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot, rgba(0, 0, 0, 0.3));
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #aaa);
     margin: 4px 0 8px;
   }
   .sch-entry {
@@ -203,36 +203,42 @@
     flex-wrap: wrap;
     gap: 8px;
     padding: 6px 0;
-    border-bottom: 1px solid #161618;
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
   .sch-days { display: flex; gap: 2px; }
   .sch-day {
-    font-size: 11px;
-    padding: 4px 6px;
-    border-radius: 4px;
-    border: 1px solid #33333a;
-    background: #09090c;
-    color: #777;
+    height: var(--ga-control-h-sm, 22px);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard, 4px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: var(--ga-slot, #09090c);
+    color: var(--ga-ink-2, #777);
     cursor: pointer;
   }
-  .sch-day.on { color: #fff; border-color: #BB86FC; background: rgba(187, 134, 252, 0.18); }
-  .sch-all { margin-left: 4px; color: #aaa; }
-  .sch-time { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #888; }
+  .sch-day:hover:not(.on) { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
+  .sch-day.on { color: var(--ga-selection-ink, #e0e8ff); border-color: var(--ga-selection-line, #5278ff); background: var(--ga-selection-bg, #1f3170); }
+  .sch-all { margin-left: 4px; color: var(--ga-ink-1, #aaa); }
+  .sch-time { display: inline-flex; align-items: center; gap: 6px; font-size: var(--ga-text-control, 12px); color: var(--ga-ink-2, #888); }
   .sch-note { flex: 1; min-width: 80px; }
-  .sch-remove { background: none; border: none; color: #888; font-size: 16px; cursor: pointer; margin-left: auto; }
-  .sch-remove:hover { color: #fff; }
+  .sch-remove { background: none; border: none; color: var(--ga-ink-2, #888); font-size: 16px; cursor: pointer; margin-left: auto; }
+  .sch-remove:hover { color: var(--ga-rec, #ff4438); }
   .sch-add {
     align-self: flex-start;
     margin: 6px 0;
-    font-size: 12px;
-    padding: 5px 10px;
-    border-radius: 4px;
-    border: 1px solid #33333a;
-    background: #15151b;
-    color: #ddd;
+    height: var(--ga-control-h, 26px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 4px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ga-ink-0, #ddd);
     cursor: pointer;
   }
-  .sch-inline { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
+  .sch-add:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
+  .sch-inline { display: flex; align-items: center; gap: 6px; font-size: var(--ga-text-control, 12px); color: var(--ga-ink-2, #888); }
   .sch-inline input[type='number'] { width: 56px; }
-  .sch-log { margin: 0; padding-left: 18px; font-size: 12px; color: #888; }
+  .sch-log { margin: 0; padding-left: 18px; font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #888); }
 </style>

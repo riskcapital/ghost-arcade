@@ -106,14 +106,14 @@
     margin: 0;
     width: 100%;
     height: 100%;
-    background: #05070b;
+    background: var(--ga-void, #05070b);
     overflow: hidden;
   }
 
   .projection-sim-window {
     position: fixed;
     inset: 0;
-    background: #05070b;
+    background: var(--ga-void, #05070b);
     overflow: hidden;
   }
 

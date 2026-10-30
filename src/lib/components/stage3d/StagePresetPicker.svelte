@@ -63,11 +63,11 @@
     max-width: 640px;
     max-height: 85vh;
     overflow-y: auto;
-    background: #0c0e16;
-    border: 1px solid #2a2c36;
-    border-radius: 16px;
+    background: var(--ga-panel);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
     padding: 20px;
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   header {
     display: flex;
@@ -75,14 +75,14 @@
     justify-content: space-between;
     margin-bottom: 16px;
   }
-  h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  h2 { margin: 0; font-size: 16px; font-weight: 600; }
   .close-x {
-    background: var(--ga-blue-mute-800);
-    border: none;
-    color: #fff;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
     width: 30px;
     height: 30px;
-    border-radius: 15px;
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
   .picker-grid {
@@ -91,12 +91,12 @@
     gap: 12px;
   }
   .preset-card {
-    background: #14161e;
-    border: 1px solid #2a2c36;
-    border-radius: 12px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-tile, 7px);
     padding: 12px;
     text-align: left;
-    color: #fff;
+    color: var(--ga-ink-0);
     cursor: pointer;
     display: flex;
     flex-direction: column;
@@ -104,12 +104,12 @@
     gap: 6px;
     transition: transform 0.1s ease-out, border-color 0.15s ease-out;
   }
-  .preset-card:hover { border-color: #BB86FC; transform: translateY(-2px); }
+  .preset-card:hover { border-color: var(--ga-selection-line); transform: translateY(-2px); }
   .preset-card:active { transform: scale(0.98); }
   .thumb {
     width: 100%;
     aspect-ratio: 16 / 10;
-    border-radius: 8px;
+    border-radius: var(--ga-r-hard, 5px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -117,7 +117,7 @@
   }
   .thumb.empty {
     background: var(--ga-blue-mute-800);
-    border: 1px dashed #3a3c46;
+    border: 1px dashed var(--ga-line-3);
   }
   .thumb-letter, .thumb-glyph {
     font-size: 37px;
@@ -125,14 +125,14 @@
     color: rgba(255, 255, 255, 0.85);
     text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
   }
-  .thumb-glyph { color: #666; font-weight: 300; font-size: 45px; }
+  .thumb-glyph { color: var(--ga-ink-3); font-weight: 300; font-size: 45px; }
   .preset-name {
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
   }
   .preset-desc {
-    font-size: 12px;
-    color: #999;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2);
     line-height: 1.4;
   }
 </style>

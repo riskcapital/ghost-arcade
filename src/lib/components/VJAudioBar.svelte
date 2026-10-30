@@ -90,7 +90,7 @@
 
     <!-- Sensitivity -->
     <div class="audio-section">
-      <span class="sens-label">SENS</span>
+      <span class="sens-label">Sens</span>
       <input
         type="range"
         min="0.2"
@@ -110,8 +110,8 @@
     align-items: center;
     gap: 12px;
     padding: 6px 20px;
-    background: #111;
-    border-bottom: 1px solid #161618;
+    background: var(--ga-panel, #100f0d);
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
     flex-shrink: 0;
     min-height: 36px;
   }
@@ -122,45 +122,9 @@
     gap: 6px;
   }
 
-  .audio-source-group {
-    display: flex;
-    gap: 2px;
-  }
-
-  .audio-src-btn {
-    padding: 4px 10px;
-    border: 1px solid #444;
-    background: var(--bg-primary, #0d0d10);
-    color: var(--text-muted, #888);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .audio-src-btn:first-child {
-    border-radius: 4px 0 0 4px;
-  }
-
-  .audio-src-btn:last-of-type {
-    border-radius: 0 4px 4px 0;
-  }
-
-  .audio-src-btn:hover {
-    border-color: #666;
-    color: var(--text-primary, #ccc);
-  }
-
-  .audio-src-btn.active {
-    background: #1a3a1a;
-    border-color: #22c55e;
-    color: #22c55e;
-  }
-
   .audio-error {
     color: #f44;
-    font-size: 11px;
+    font-size: var(--ga-text-meta, 11px);
   }
 
   /* FFT Bars */
@@ -179,7 +143,6 @@
   .fft-bar {
     width: 4px;
     min-height: 1px;
-    background: #BB86FC;
     border-radius: 1px;
     transition: height 0.05s ease-out;
   }
@@ -191,10 +154,14 @@
   .fft-bar:nth-child(5) { background: var(--ga-blue-400); }
   .fft-bar:nth-child(6) { background: #a855f7; }
 
-  .fft-label {
-    font-size: 9px;
-    color: #555;
-    letter-spacing: 0.5px;
+  /* Legends: the eyebrow style. */
+  .fft-label,
+  .sens-label {
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
   }
 
   /* BPM */
@@ -202,62 +169,12 @@
     gap: 6px;
   }
 
-  .tap-btn {
-    padding: 3px 10px;
-    border: 1px solid #444;
-    border-radius: 3px;
-    background: var(--bg-primary, #0d0d10);
-    color: var(--text-secondary, #aaa);
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.1s;
-  }
-
-  .tap-btn:hover {
-    border-color: #BB86FC;
-    color: #BB86FC;
-  }
-
-  .tap-btn:active {
-    background: #BB86FC;
-    color: #000;
-  }
-
-  .bpm-display {
-    font-size: 14px;
-    font-weight: 700;
-    color: #555;
-    font-variant-numeric: tabular-nums;
-    min-width: 70px;
-  }
-
-  .bpm-display.confident {
-    color: #BB86FC;
-  }
-
-  .bpm-clear {
-    padding: 2px 6px;
-    border: 1px solid #444;
-    border-radius: 3px;
-    background: transparent;
-    color: #666;
-    font-size: 9px;
-    font-weight: 700;
-    cursor: pointer;
-  }
-
-  .bpm-clear:hover {
-    color: var(--text-secondary, #aaa);
-    border-color: #666;
-  }
-
   /* Beat Dot */
   .beat-dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #333;
+    background: var(--ga-ink-3, #39342c);
     transition: background 0.05s;
   }
 
@@ -267,15 +184,9 @@
   }
 
   /* Sensitivity */
-  .sens-label {
-    font-size: 9px;
-    color: #555;
-    letter-spacing: 0.5px;
-  }
-
   .sens-slider {
     width: 50px;
     height: 3px;
-    accent-color: #BB86FC;
+    accent-color: var(--ga-slider-fill, var(--ga-selection-line, #5278ff));
   }
 </style>

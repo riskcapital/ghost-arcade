@@ -155,42 +155,44 @@
     flex-wrap: wrap;
     gap: 4px 6px;
     padding: 4px 6px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 4px;
+    border: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    border-radius: var(--ga-r-hard, 4px);
     background: rgba(255, 255, 255, 0.02);
-    font-size: 11px;
+    font-size: var(--ga-text-meta, 11px);
   }
   .ca-kind {
-    color: var(--text-secondary, #aaa);
+    color: var(--ga-ink-1, #aaa);
     font-weight: 600;
     min-width: 92px;
   }
   select, input {
-    background: rgba(0, 0, 0, 0.4);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--text-primary, #ddd);
-    font-size: 11px;
-    border-radius: 3px;
-    padding: 2px 4px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, rgba(0, 0, 0, 0.4));
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #ddd);
+    font-size: var(--ga-text-meta, 11px);
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 6px;
     font-family: inherit;
     min-width: 0;
   }
-  input[type='number'] { width: 54px; }
+  input[type='number'] { width: 54px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .ca-wide { flex: 1 1 120px; max-width: 200px; }
-  .ca-path { font-family: var(--font-jetbrains), monospace; }
+  .ca-path { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .ca-path.invalid { border-color: #d9534f; }
+  /* The input code value is upper-case hex; not a label. */
   .ca-code { width: 36px; text-transform: uppercase; }
-  .ca-field { display: inline-flex; align-items: center; gap: 3px; color: var(--text-muted, #888); }
-  .ca-unit { color: var(--text-muted, #888); }
+  .ca-field { display: inline-flex; align-items: center; gap: 4px; color: var(--ga-ink-2, #888); }
+  .ca-unit { color: var(--ga-ink-2, #888); }
   .ca-remove {
     margin-left: auto;
     background: none;
     border: none;
-    color: var(--text-muted, #888);
-    font-size: 15px;
+    color: var(--ga-ink-2, #888);
+    font-size: 14px;
     line-height: 1;
     cursor: pointer;
     padding: 0 3px;
   }
-  .ca-remove:hover { color: #fff; }
+  .ca-remove:hover { color: var(--ga-rec, #ff4438); }
 </style>

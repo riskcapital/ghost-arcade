@@ -52,12 +52,12 @@
   <div data-help-page="clip-launcher" class="vj-seq-tray" class:minimized={state.minimized}>
     <div class="vj-seq-head">
       <div class="vj-seq-left">
-        <span class="vj-seq-title">LAYER SEQUENCER</span>
+        <span class="vj-seq-title">Layer sequencer</span>
         {#if !splitDeck}
           <select value={state.presetMode} onchange={(e) => onPresetChange(e, 'A')} title="Pattern">
             <option value="custom">Custom</option>
             <option value="snake">Snake</option>
-            <option value="everyOther">Every Other</option>
+            <option value="everyOther">Every other</option>
             <option value="random">Random</option>
           </select>
         {/if}
@@ -88,7 +88,7 @@
           class:on={state.syncToMaster}
           onclick={() => vjLayerSequencer.updateConfig({ syncToMaster: !state.syncToMaster })}
           title={state.syncToMaster ? 'BPM follows the master clock — click to unlock' : 'Sync BPM to the master clock'}
-        >SYNC</button>
+        >Sync</button>
         <label class:locked={state.syncToMaster}>
           BPM
           <input
@@ -145,11 +145,11 @@
           <section class="vj-seq-deck" class:deck-a={deck === 'A'} class:deck-b={deck === 'B'}>
             {#if splitDeck}
               <div class="vj-seq-deck-head">
-                <span class="vj-seq-deck-title">DECK {deck}</span>
+                <span class="vj-seq-deck-title">Deck {deck}</span>
                 <select value={deckPresetMode(deck)} onchange={(e) => onPresetChange(e, deck)} title="Deck {deck} pattern">
                   <option value="custom">Custom</option>
                   <option value="snake">Snake</option>
-                  <option value="everyOther">Every Other</option>
+                  <option value="everyOther">Every other</option>
                   <option value="random">Random</option>
                 </select>
                 <button class="vj-seq-deck-clear" onclick={() => vjLayerSequencer.clear(deck)} title="Clear Deck {deck} sequence">
@@ -220,34 +220,36 @@
   .vj-seq-left { flex: 1; }
   .vj-seq-right { flex: 1; justify-content: flex-end; }
   .vj-seq-title {
-    color: var(--ga-coral, #ff6f5e);
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: .08em;
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
+    white-space: nowrap;
   }
   select,
   input {
-    height: 24px;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
     border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
     background: var(--ga-slot, #050607);
     color: var(--ga-ink-0, #eef0f4);
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: var(--ga-r-hard, 5px);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
   }
   input { width: 52px; padding: 0 6px; }
   .vj-seq-transport button {
     width: 28px;
-    height: 24px;
+    height: var(--ga-control-h, 26px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border: 1px solid var(--ga-coral-line, rgba(255,111,94,.4));
     background: var(--ga-coral-soft, rgba(255,111,94,.11));
     color: var(--ga-coral, #ff6f5e);
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
+  .vj-seq-transport button:hover { border-color: var(--ga-coral, #ff6f5e); }
   .vj-seq-transport svg {
     width: 13px;
     height: 13px;
@@ -259,40 +261,45 @@
     min-width: 42px;
     color: var(--ga-ink-1, #9aa0ac);
     font-family: var(--ga-font-mono, ui-monospace);
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
+    font-variant-numeric: tabular-nums;
   }
-  .vj-seq-check {
+  .vj-seq-check,
+  .vj-seq-right > label {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
   }
   .vj-seq-check input {
     width: 12px;
     height: 12px;
-    accent-color: var(--ga-coral, #ff6f5e);
+    accent-color: var(--ga-selection-line, #5278ff);
   }
   .vj-seq-xfade-dur {
     width: 54px;
   }
   .sync-btn {
-    height: 24px;
-    padding: 0 8px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 10px;
     border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
-    background: var(--ga-slot, #050607);
+    background: var(--ga-card, #16140f);
     color: var(--ga-ink-1, #9aa0ac);
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: var(--ga-r-hard, 5px);
     font: inherit;
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: .06em;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
+  .sync-btn:hover:not(.on) {
+    border-color: var(--ga-line-3, rgba(255,255,255,.24));
+    color: var(--ga-ink-0, #eef0f4);
+  }
   .sync-btn.on {
-    border-color: var(--ga-coral, #ff6f5e);
-    background: var(--ga-coral-soft, rgba(255,111,94,.11));
-    color: var(--ga-coral, #ff6f5e);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
   .vj-seq-right label.locked input {
     opacity: 0.55;
@@ -300,18 +307,18 @@
   }
   .vj-seq-min {
     width: 26px;
-    height: 24px;
+    height: var(--ga-control-h, 26px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
     background: transparent;
     color: var(--ga-ink-1, #9aa0ac);
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
   .vj-seq-min:hover {
-    border-color: var(--ga-coral-line, rgba(255,111,94,.4));
+    border-color: var(--ga-line-3, rgba(255,255,255,.24));
     color: var(--ga-ink-0, #eef0f4);
   }
   .vj-seq-min svg {
@@ -347,27 +354,26 @@
   }
   .vj-seq-deck-title {
     min-width: 54px;
-    font-size: 11px;
-    font-weight: 900;
-    letter-spacing: 0.12em;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: 700;
   }
   .deck-a .vj-seq-deck-title { color: var(--ga-blue-200); }
   .deck-b .vj-seq-deck-title { color: #FF8577; }
   .vj-seq-deck-clear {
     width: 26px;
-    height: 24px;
+    height: var(--ga-control-h, 26px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
     background: var(--ga-slot, #050607);
     color: var(--ga-ink-1, #9aa0ac);
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
   .vj-seq-deck-clear:hover {
     color: var(--ga-ink-0, #eef0f4);
-    border-color: var(--ga-coral-line, rgba(255,111,94,.4));
+    border-color: var(--ga-line-3, rgba(255,255,255,.24));
   }
   .vj-seq-deck-clear svg {
     width: 13px;
@@ -402,8 +408,8 @@
   .layer-label {
     gap: 6px;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 12px;
-    font-weight: 700;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
   }
   .layer-dot {
     width: 7px;
