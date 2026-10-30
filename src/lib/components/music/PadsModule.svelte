@@ -1,7 +1,9 @@
 <script lang="ts">
   /**
    * Sixteen pads for finger and touch drumming: the kit on the bottom two
-   * rows (kick bottom left, as on a pad controller) and the shots above.
+   * rows (kick bottom left, as on a pad controller) and the set's eight FX
+   * pads above, each holding any sound from the library (Sounds chooses
+   * them). An atmosphere starts on one press and stops on the next.
    * Velocity comes from pressure where the screen reports it, otherwise
    * from where the pad is hit: higher up is harder. Several fingers play at
    * once. Note repeat keeps a held pad playing on the beat grid, and Rec
@@ -12,9 +14,13 @@
   import { SHOT_NAMES } from '../../music/dubSounds';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { REPEAT_RATES, padDown, padUp, toggleLoopRecord, type PadSound } from '../../music/musicRuntime';
+  import { SHOT_PARAMS } from '../../music/studioSets';
+  import { soundById, soundGroups } from '../../music/sounds/library';
   import StudioModule from './StudioModule.svelte';
+  import StudioKnob from './StudioKnob.svelte';
 
-  let { title = 'Pads' }: { title?: string } = $props();
+  /** `drums`: the kit's two rows under the FX pads (off: the FX pads alone). */
+  let { title = 'Pads', drums = true }: { title?: string; drums?: boolean } = $props();
 
   interface Pad {
     sound: PadSound;
@@ -30,12 +36,18 @@
   const shot = (index: number): Pad => ({ sound: { kind: 'shot', index }, label: SHOT_NAMES[index], held: `shots:${60 + index}` });
 
   /** Top row first. */
-  const PADS: Pad[] = [
+  const ALL_PADS: Pad[] = [
     shot(4), shot(5), shot(6), shot(7),
     shot(0), shot(1), shot(2), shot(3),
     kit('hatClosed'), kit('hatOpen'), kit('tom'), kit('crash'),
     kit('kick'), kit('snare'), kit('clap'), kit('rim'),
   ];
+  const PADS = $derived(drums ? ALL_PADS : ALL_PADS.slice(0, 8));
+
+  /** The sound on an FX pad in the current set. */
+  const padSound = (index: number) => soundById(s.fxPads[s.set][index]);
+  const groups = soundGroups();
+  let choosing = $state(false);
 
   let full = $state(false);
   let repeat = $state(false);
@@ -56,6 +68,7 @@
   }
 
   function down(e: PointerEvent, index: number) {
+    if (choosing && PADS[index].sound.kind === 'shot') return;
     e.preventDefault();
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture?.(e.pointerId);
@@ -75,8 +88,9 @@
   const isDown = (index: number) => Object.values(pressed).includes(index);
 </script>
 
-<StudioModule {title} led={recording}>
+<StudioModule {title} led={drums && recording}>
   {#snippet head()}
+    {#if drums}
     <button class="loop-rec" class:on={recording} class:count={t.loopRec.phase === 'count'} onclick={toggleLoopRecord} aria-pressed={recording} title={recording ? 'Stop recording on the next bar' : 'Record into the beat from the next bar'}>
       <span class="dot"></span>Rec
     </button>
@@ -85,24 +99,55 @@
     <select bind:value={rate} disabled={!repeat} aria-label="Repeat rate">
       {#each REPEAT_RATES as r}<option value={r.id}>{r.id}</option>{/each}
     </select>
+    {/if}
+    <button class="studio-btn" class:on={choosing} aria-pressed={choosing} onclick={() => (choosing = !choosing)} title="Choose the sound on each FX pad">Sounds</button>
   {/snippet}
-  <div class="pads" title="Higher on a pad hits harder. Rec writes the pads into the beat.">
+  <div class="pads" class:short={!drums} title={choosing ? 'Tap an FX pad to choose its sound' : 'Higher on a pad hits harder. Rec writes the pads into the beat.'}>
     {#each PADS as pad, i (pad.held)}
+      {@const fx = pad.sound.kind === 'shot' ? padSound(pad.sound.index) : undefined}
+      {@const label = pad.sound.kind === 'shot' ? (fx?.name ?? SHOT_NAMES[pad.sound.index] ?? 'Empty') : pad.label}
       <button
         class="pad"
         class:kit={pad.sound.kind === 'drum'}
+        class:choosing={choosing && pad.sound.kind === 'shot'}
         class:lit={t.held.has(pad.held) || isDown(i)}
         onpointerdown={(e) => down(e, i)}
         onpointerup={up}
         onpointercancel={up}
         onlostpointercapture={up}
-        aria-label={pad.label}
+        aria-label={label}
+        title={fx?.blurb ?? ''}
       >
-        <span class="label">{pad.label}</span>
+        <span class="label">{label}</span>
+        {#if fx?.kind === 'loop'}
+          <svg class="loop" viewBox="0 0 16 16" aria-label="Plays until pressed again"><path d="M4 5h6a3 3 0 0 1 0 6H6M4 5l2-2M4 5l2 2" /></svg>
+        {/if}
         {#if pad.key}<kbd>{pad.key}</kbd>{/if}
+        {#if choosing && pad.sound.kind === 'shot'}
+          {@const index = pad.sound.index}
+          <select
+            class="choose"
+            value={s.fxPads[s.set][index]}
+            onchange={(e) => musicStudio.setFxPad(index, (e.target as HTMLSelectElement).value)}
+            aria-label="Sound on pad {i + 1}"
+          >
+            {#each groups as group (group.category)}
+              <optgroup label={group.label}>
+                {#each group.sounds as sound (sound.id)}<option value={sound.id}>{sound.name}</option>{/each}
+              </optgroup>
+            {/each}
+          </select>
+        {/if}
       </button>
     {/each}
   </div>
+  {#if choosing}
+    <div class="knob-row">
+      {#each SHOT_PARAMS as p (p.key)}
+        <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={26} onchange={(v) => musicStudio.setParam(p.key, v)} />
+      {/each}
+    </div>
+  {/if}
 </StudioModule>
 
 <style>
@@ -140,4 +185,10 @@
   kbd { position: absolute; right: 5px; bottom: 3px; font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; color: var(--studio-muted); pointer-events: none; }
   .pad.lit { background: var(--studio-accent); border-color: var(--studio-accent); color: var(--studio-on-accent); transition: none; }
   .pad.lit kbd { color: var(--studio-on-accent); }
+  .pads.short { min-height: 76px; }
+  .loop { position: absolute; right: 4px; top: 4px; width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.8; pointer-events: none; }
+  .pad.choosing { border-style: dashed; border-color: var(--studio-accent); color: var(--studio-ink); }
+  /* An invisible menu over the pad: tapping it opens the sound list. */
+  .choose { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  .knob-row { display: flex; justify-content: space-around; padding-top: 6px; }
 </style>

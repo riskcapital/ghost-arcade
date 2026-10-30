@@ -53,7 +53,7 @@ export const SIREN_PARAMS = defs('siren', [
   ['pitch', 'Pitch', 0.55], ['rate', 'Rate', 0.45], ['depth', 'Depth', 0.6], ['shape', 'Shape', 0.2],
 ]);
 
-export const SHOT_PARAMS = defs('shots', [['size', 'Size', 0.5], ['tail', 'Tail', 0.5]]);
+export const SHOT_PARAMS = defs('shots', [['size', 'Size', 0.5], ['tail', 'Tail', 0.5], ['tone', 'Tone', 0.5]]);
 
 export const ANALOG_PARAMS = defs('analog', [
   ['wave1', 'Wave', 0], ['tune1', 'Tune', 0.5], ['wave2', 'Wave', 0.34], ['tune2', 'Tune', 0.5],

@@ -92,6 +92,58 @@ stays there becomes a new note; a note ends 6 dB under the gate. The notes go
 straight to the visual voices (`pushOutsideNote`) and never play a studio
 instrument.
 
+### The sound library (`sounds/`, `soundSlots.ts`)
+
+Every sound a bowl or an FX pad can play lives in one library
+(`sounds/library.ts`), in five groups: bowls and bells (struck, pitched,
+ringing: singing and crystal bowls, gong, temple and tubular bells, wind
+chimes, kalimba, handpan, glass harmonica, music box, tongue drum, marimba),
+dub (the eight original shots plus air horn, rewind, dub stab, spring
+crash, siren rise, melodica, vinyl stop), risers and drops (timed in bars at
+the tempo and landing on the next bar line), impacts, and atmospheres
+(textures that start on one press and stop on the next: rain, wind, ocean,
+crackle, night, fire, radio, underwater, heartbeat, choir breath, hum). Each
+is plain Web Audio built from `time` on whatever context it is given
+(`sounds/kit.ts`), so the same code plays live and renders offline.
+
+**Bowls**: each of the five bowls has its own sound and octave
+(**Sounds** in the bowls module), or a whole bowl set at once (Singing,
+Crystal, Temple, Garden, Glass, Mallets). Ring, Tone and Spread work on every
+bowl sound (Ring at its default is each sound's natural length).
+
+**FX pads**: each set has eight pads, each holding any library sound
+(**Sounds** in the pads module, with Size, Tail and Tone). A one-shot holds
+its note for as long as it sounds, so a voice following "Shots and siren"
+builds with a riser and falls with a drop. A project saved before pads could
+be chosen keeps the original eight shots on every set.
+
+**Drone**: the drone's sound is a pad patch (`sounds/padPatches.ts`): Warm
+(the original), Choir, Strings, Glass, Shimmer, Breath, Harmonium, Dark
+matter. All eight drone knobs work on every patch.
+
+### Playing with a band (`bandFx.ts`, `keyFinder.ts`, `components/music/BandPanel.svelte`)
+
+The **Band** tab treats the live input as the band (feed it the desk's aux
+send) and works it the way a dub engineer works the desk. Only effects come
+back from the studio; the band's dry sound stays on the band's desk.
+
+- **Echo**: a tape-like echo in time with the tempo (1/8, dotted 1/8, 1/4,
+  dotted 1/4, 1/2). **Throw** opens the send fully while held and the
+  repeats run on after; **Send** sets a steady amount; **Repeats** and
+  **Tone** shape the tail. The echo washes into the reverb a little.
+- **Reverb**: a long, soft room. **Wash** opens it fully while held.
+- **Freeze**: holds the last moment of sound (the band and the studio) as
+  a texture: short overlapping grains read from random points of that
+  moment, an octave down, as played or an octave up, until it is let go.
+  An audio worklet (`freezeWorklet.ts`) keeps the last four seconds.
+- **Key**: **Listen** weighs the pitched notes coming in (the live input and
+  Live's MIDI clips; level hits from Live's audio tracks do not count)
+  against the major and minor key profiles, and shows the key it hears and
+  how sure it is. **Use key** puts the studio in it, so the bowls, chords,
+  drone, dub stab and tuned pads play along.
+
+Kill and closing the studio let the throw, the wash and the freeze go.
+
 ### Ableton Live in control (`liveControl.ts`, `liveFeed.ts`, `components/music/LiveSessionGrid.svelte`)
 
 **Ableton Live** in the Session tab hands the studio to Live: the studio's

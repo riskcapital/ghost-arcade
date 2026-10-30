@@ -11,12 +11,20 @@
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
+  import { BOWL_KITS, bowlSlotNotes } from '../../music/soundSlots';
+  import { PAD_PATCHES, padPatchById, soundById, soundGroups } from '../../music/sounds/library';
 
   let { part }: { part: 'drone' | 'bowls' | 'xy' | 'chords' } = $props();
 
   const s = $derived($musicStudio);
   const t = $derived($musicTransport);
-  const bowls = $derived(bowlNotes(s.key));
+  // Each bowl's note: its note in the key, moved by the octave chosen for it.
+  const bowls = $derived(bowlSlotNotes(bowlNotes(s.key), s.bowlSlots));
+  /** Struck sounds only: what a bowl can hold. */
+  const bowlGroups = soundGroups((sound) => sound.kind === 'strike');
+  let choosingBowls = $state(false);
+  const bowlKit = $derived(BOWL_KITS.find((k) => k.slots.every((slot, i) => slot.sound === s.bowlSlots[i]?.sound && slot.octave === s.bowlSlots[i]?.octave))?.id ?? '');
+  const patch = $derived(padPatchById(s.dronePatch));
   const chords = $derived(Array.from({ length: 8 }, (_, degree) => ({ degree, name: chordName(chordNotes(s.key, degree)) })));
   const droneSounding = $derived([...t.held].some((k) => k.startsWith('drone:')));
 
@@ -93,6 +101,11 @@
 {#if part === 'drone'}
   <StudioModule title="Drone" subtitle={keyLabel(s.key)} led={droneSounding}>
     {#snippet head()}
+      {#if PAD_PATCHES.length}
+        <select class="patch" value={s.dronePatch} onchange={(e) => musicStudio.setDronePatch((e.target as HTMLSelectElement).value)} aria-label="Drone sound" title={patch?.blurb ?? 'The drone\'s sound'}>
+          {#each PAD_PATCHES as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+        </select>
+      {/if}
       <StudioJack id="cv:drone.level" label="Level" title="Drone level, as a control signal" />
       <StudioJack id="audio:drone" label="Out" title="Drone sound" />
     {/snippet}
@@ -105,6 +118,11 @@
 {:else if part === 'bowls'}
   <StudioModule title="Bowls" subtitle="Strike, or hold">
     {#snippet head()}
+      <select class="patch" value={bowlKit} onchange={(e) => { const kit = BOWL_KITS.find((k) => k.id === (e.target as HTMLSelectElement).value); if (kit) musicStudio.setBowlSlots(kit.slots); }} aria-label="Bowl set" title="Put a ready-made set of sounds on the five bowls">
+        {#if !bowlKit}<option value="">Your own</option>{/if}
+        {#each BOWL_KITS as k (k.id)}<option value={k.id}>{k.name}</option>{/each}
+      </select>
+      <button class="studio-btn" class:on={choosingBowls} aria-pressed={choosingBowls} onclick={() => (choosingBowls = !choosingBowls)} title="Choose each bowl's sound and octave">Sounds</button>
       <StudioJack id="cv:bowls.ring" label="Ring" title="Bowl ring, as a control signal" />
       <StudioJack id="audio:bowls" label="Out" title="Bowl sound" />
     {/snippet}
@@ -117,8 +135,33 @@
           onpointerdown={(e) => bowlDown(e, i)}
           onpointerup={bowlUp}
           onpointercancel={bowlUp}
-          aria-label="Bowl {noteName(note)}"
+          aria-label="Bowl {noteName(note)}, {soundById(s.bowlSlots[i]?.sound)?.name ?? 'bowl'}"
+          title={soundById(s.bowlSlots[i]?.sound)?.blurb ?? ''}
         >{noteName(note)}</button>
+      {/each}
+    </div>
+    <div class="bowl-names">
+      {#each bowls as _note, i (i)}
+        {@const slot = s.bowlSlots[i]}
+        <div class="bowl-name">
+          {#if choosingBowls}
+            <select value={slot.sound} onchange={(e) => musicStudio.setBowlSlot(i, { sound: (e.target as HTMLSelectElement).value })} aria-label="Sound of bowl {i + 1}">
+              {#if !soundById(slot.sound)}<option value={slot.sound}>{slot.sound}</option>{/if}
+              {#each bowlGroups as group (group.category)}
+                <optgroup label={group.label}>
+                  {#each group.sounds as sound (sound.id)}<option value={sound.id}>{sound.name}</option>{/each}
+                </optgroup>
+              {/each}
+            </select>
+            <div class="octave" role="group" aria-label="Octave of bowl {i + 1}">
+              <button onclick={() => musicStudio.setBowlSlot(i, { octave: slot.octave - 1 })} disabled={slot.octave <= -2} aria-label="Octave down">−</button>
+              <span>{slot.octave > 0 ? `+${slot.octave}` : slot.octave}</span>
+              <button onclick={() => musicStudio.setBowlSlot(i, { octave: slot.octave + 1 })} disabled={slot.octave >= 2} aria-label="Octave up">+</button>
+            </div>
+          {:else}
+            <span>{soundById(slot.sound)?.name ?? 'Bowl'}</span>
+          {/if}
+        </div>
       {/each}
     </div>
     <div class="knob-row">
@@ -197,6 +240,15 @@
     touch-action: none;
     transition: box-shadow 0.4s ease-out;
   }
+  .bowl-names { display: flex; justify-content: space-around; gap: 4px; padding: 2px 0 6px; }
+  .bowl-name { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: var(--ga-text-micro, 9px); color: var(--studio-muted); text-align: center; }
+  .bowl-name > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bowl-name select { width: 100%; min-width: 0; font-size: var(--ga-text-micro, 9px); }
+  .octave { display: flex; align-items: center; gap: 2px; font-family: var(--ga-font-mono, ui-monospace); }
+  .octave button { width: 16px; height: 16px; padding: 0; border: 1px solid var(--studio-edge-soft); background: transparent; color: var(--studio-muted); border-radius: 3px; line-height: 1; cursor: pointer; }
+  .octave button:disabled { opacity: 0.35; cursor: default; }
+  .octave span { min-width: 14px; text-align: center; }
+  .patch { max-width: 112px; }
   .bowl.lit { box-shadow: 0 0 26px var(--ga-blue-a45, rgba(82, 120, 255, 0.45)); border-color: var(--studio-accent); }
   .xy {
     position: relative;

@@ -71,6 +71,21 @@ import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
 import { defaultLiveInput, defaultStrip, normalizeLiveInput, normalizeMixer, type ChannelId, type ChannelStrip, type LiveInputSettings, type MixerState } from './mixer';
 import { normalizeLiveRoles, type LiveRoles } from './liveControl';
+import {
+  BOWL_COUNT,
+  FX_PAD_COUNT,
+  defaultBandFx,
+  defaultBowlSlots,
+  defaultFxPads,
+  DEFAULT_DRONE_PATCH,
+  normalizeBandFx,
+  normalizeBowlSlots,
+  normalizeDronePatch,
+  normalizeFxPads,
+  type BandFxSettings,
+  type BowlSlot,
+  type FxPads,
+} from './soundSlots';
 import type { VoiceSourceId } from './visualVoices';
 
 export const MUSIC_STUDIO_SCHEMA = 1;
@@ -112,6 +127,14 @@ export interface MusicStudioProjectState {
   liveControl: boolean;
   /** Live track name -> the sound it feeds the visual voices as. */
   liveRoles: LiveRoles;
+  /** The sound and octave of each of the five bowls. */
+  bowlSlots: BowlSlot[];
+  /** The sound on each of a set's eight FX pads. */
+  fxPads: FxPads;
+  /** The drone's sound (sounds/padPatches.ts). */
+  dronePatch: string;
+  /** The live input's echo, reverb and freeze. */
+  bandFx: BandFxSettings;
 }
 
 export interface MusicStudioState extends MusicStudioProjectState {
@@ -211,6 +234,10 @@ export function defaultProjectState(): MusicStudioProjectState {
     liveInput: defaultLiveInput(),
     liveControl: false,
     liveRoles: {},
+    bowlSlots: defaultBowlSlots(),
+    fxPads: defaultFxPads(),
+    dronePatch: DEFAULT_DRONE_PATCH,
+    bandFx: defaultBandFx(),
   };
 }
 
@@ -281,6 +308,10 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     liveInput: normalizeLiveInput(input.liveInput),
     liveControl: input.liveControl === true,
     liveRoles: normalizeLiveRoles(input.liveRoles),
+    bowlSlots: normalizeBowlSlots(input.bowlSlots),
+    fxPads: normalizeFxPads(input.fxPads),
+    dronePatch: normalizeDronePatch(input.dronePatch),
+    bandFx: normalizeBandFx(input.bandFx),
   };
 }
 
@@ -417,6 +448,24 @@ function createMusicStudioStore() {
     },
     setInputStatus: (inputOn: boolean, inputError: string | null = null) => set({ inputOn, inputError }),
     setLiveControl: (liveControl: boolean) => set({ liveControl }),
+    /** Put a sound on one bowl (and move it up or down octaves). */
+    setBowlSlot: (index: number, patch: Partial<BowlSlot>) =>
+      update((s) => {
+        if (index < 0 || index >= BOWL_COUNT) return s;
+        const bowlSlots = normalizeBowlSlots(s.bowlSlots.map((slot, i) => (i === index ? { ...slot, ...patch } : slot)));
+        return { ...s, bowlSlots };
+      }),
+    /** All five bowls at once (a bowl set). */
+    setBowlSlots: (slots: BowlSlot[]) => update((s) => ({ ...s, bowlSlots: normalizeBowlSlots(slots) })),
+    /** Put a sound on one of the current set's FX pads. */
+    setFxPad: (index: number, sound: string) =>
+      update((s) => {
+        if (index < 0 || index >= FX_PAD_COUNT) return s;
+        const pads = s.fxPads[s.set].map((id, i) => (i === index ? sound : id));
+        return { ...s, fxPads: normalizeFxPads({ ...s.fxPads, [s.set]: pads }) };
+      }),
+    setDronePatch: (dronePatch: string) => set({ dronePatch: normalizeDronePatch(dronePatch) }),
+    setBandFx: (patch: Partial<BandFxSettings>) => update((s) => ({ ...s, bandFx: normalizeBandFx({ ...s.bandFx, ...patch }) })),
     setLiveRole: (track: string, role: VoiceSourceId | null) =>
       update((s) => {
         const liveRoles = { ...s.liveRoles };
@@ -528,6 +577,10 @@ function createMusicStudioStore() {
         liveInput: { ...s.liveInput },
         liveControl: s.liveControl,
         liveRoles: { ...s.liveRoles },
+        bowlSlots: s.bowlSlots.map((slot) => ({ ...slot })),
+        fxPads: { bath: [...s.fxPads.bath], berlin: [...s.fxPads.berlin], dub: [...s.fxPads.dub], analog: [...s.fxPads.analog] },
+        dronePatch: s.dronePatch,
+        bandFx: { ...s.bandFx },
       };
     },
 
