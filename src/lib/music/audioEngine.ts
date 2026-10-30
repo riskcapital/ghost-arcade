@@ -241,6 +241,10 @@ export class MusicAudioEngine {
    */
   setRouting(set: StudioSet, throughFx: Set<InstrumentId>): void {
     const changed = set !== this.activeSet;
+    // Called on every studio change (a knob turn too): rewiring the strips
+    // when nothing moved would click, so only a real change rewires.
+    const same = !changed && throughFx.size === this.throughFx.size && [...throughFx].every((id) => this.throughFx.has(id));
+    if (same && this.racks[this.activeSet]) return;
     this.activeSet = set;
     this.throughFx = new Set(throughFx);
     if (changed) this.retireRacks(SET_CHANGE_FADE_SECONDS);
@@ -281,6 +285,8 @@ export class MusicAudioEngine {
 
   /** The mixer's strips, and which channels are in play (for solo). */
   setMixer(mixer: MixerState, channels: readonly ChannelId[]): void {
+    // Also called on every studio change; the mixer is replaced, never edited in place.
+    if (mixer === this.mixer && channels.length === this.mixerChannels.length && channels.every((id, i) => id === this.mixerChannels[i])) return;
     this.mixer = mixer;
     this.mixerChannels = channels;
     this.applyMixer();

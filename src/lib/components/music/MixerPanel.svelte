@@ -29,7 +29,10 @@
       // Meters at about thirty frames a second are plenty, and cheaper.
       if (t - last > 33) {
         last = t;
-        levels = channelLevels(channels);
+        const next = channelLevels(channels);
+        // Redraw only when a meter visibly moves (silence costs nothing).
+        if (Object.keys(next).some((id) => Math.abs((next[id as ChannelId] ?? 0) - (levels[id as ChannelId] ?? 0)) > 0.01)
+          || Object.keys(levels).some((id) => !(id in next))) levels = next;
       }
       frame = requestAnimationFrame(tick);
     };

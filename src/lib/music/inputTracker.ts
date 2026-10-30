@@ -59,6 +59,9 @@ export function rmsDb(samples: ArrayLike<number>, from = 0): number {
   return rms > 1e-6 ? 20 * Math.log10(rms) : -120;
 }
 
+// Reused between calls: the tracker runs this about 80 times a second.
+let nsdfBuffer = new Float32Array(0);
+
 /** The fundamental of a block in Hz, or null when it is not clearly pitched. */
 export function detectPitch(samples: ArrayLike<number>, sampleRate: number): { hz: number; clarity: number } | null {
   const size = Math.min(samples.length, PITCH_WINDOW);
@@ -66,11 +69,14 @@ export function detectPitch(samples: ArrayLike<number>, sampleRate: number): { h
   const minLag = Math.max(2, Math.floor(sampleRate / MAX_HZ));
   const maxLag = Math.min(Math.floor(size / 2), Math.ceil(sampleRate / MIN_HZ));
   if (maxLag <= minLag + 2) return null;
-  const nsdf = new Float32Array(maxLag + 2);
+  if (nsdfBuffer.length < maxLag + 2) nsdfBuffer = new Float32Array(maxLag + 2);
+  const nsdf = nsdfBuffer;
+  // Every other sample pair: each lag keeps its full resolution, at half the
+  // work (the window still holds two periods of the lowest note).
   for (let lag = 0; lag <= maxLag + 1; lag++) {
     let acf = 0;
     let energy = 0;
-    for (let i = start; i < start + size - lag; i++) {
+    for (let i = start, end = start + size - lag; i < end; i += 2) {
       const a = samples[i];
       const b = samples[i + lag];
       acf += a * b;
@@ -155,13 +161,16 @@ export class InputTracker {
     // The floor follows a decaying string down (90 dB a second) and jumps up with the signal.
     this.floorDb = Math.max(db, this.floorDb - 90 * dt);
 
-    const pitch = db > gate ? detectPitch(samples, sampleRate) : null;
-    const pitchNote = pitch ? hzToMidi(pitch.hz) : null;
+    // Pitch only on a hit or under a held note: the rest of the time it is not used.
+    const pitchNote = (): number | null => {
+      const pitch = db > gate ? detectPitch(samples, sampleRate) : null;
+      return pitch ? hzToMidi(pitch.hz) : null;
+    };
 
     const velocity = Math.max(0.15, Math.min(1, (db - gate) / Math.max(6, -gate * 0.75)));
     if (db > gate && rise >= HIT_RISE_DB && time - this.lastHit >= REFRACTORY_SECONDS) {
       this.lastHit = time;
-      const note = pitchNote ?? this.lastPitch;
+      const note = pitchNote() ?? this.lastPitch;
       if (this.sounding !== null) out.push({ type: 'off', note: this.sounding, velocity: 0 });
       out.push({ type: 'on', note, velocity });
       this.sounding = note;
@@ -177,18 +186,23 @@ export class InputTracker {
       return out;
     }
 
+    if (this.sounding === null) {
+      this.candidate = null;
+      return out;
+    }
     // A held note sliding to a new pitch that sticks.
-    if (this.sounding !== null && pitchNote !== null && pitchNote !== this.sounding) {
-      if (this.candidate?.note === pitchNote) this.candidate.steps++;
-      else this.candidate = { note: pitchNote, steps: 1 };
+    const held = pitchNote();
+    if (held !== null && held !== this.sounding) {
+      if (this.candidate?.note === held) this.candidate.steps++;
+      else this.candidate = { note: held, steps: 1 };
       if (this.candidate.steps >= LEGATO_STEPS) {
         out.push({ type: 'off', note: this.sounding, velocity: 0 });
-        out.push({ type: 'on', note: pitchNote, velocity });
-        this.sounding = pitchNote;
-        this.lastPitch = pitchNote;
+        out.push({ type: 'on', note: held, velocity });
+        this.sounding = held;
+        this.lastPitch = held;
         this.candidate = null;
       }
-    } else if (pitchNote === this.sounding) {
+    } else if (held === this.sounding) {
       this.candidate = null;
     }
     return out;

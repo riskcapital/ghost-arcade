@@ -123,6 +123,44 @@ describe('music studio in the project file', () => {
     expect(s.takes.length).toBeGreaterThan(0);
   });
 
+  it('keeps the mixer, the live input and Live control', () => {
+    const s = studio.musicStudio;
+    s.setStrip('drums', { low: 6, pan: -0.5 });
+    s.setLiveInput({ role: 'bass', sensitivity: 0.8, monitor: false });
+    s.setLiveControl(true);
+    s.setLiveRole('Bass', 'bass');
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    s.hydrate(null);
+    expect(get(s).liveControl).toBe(false);
+    expect(layers.project.importProject(saved)).toBe(true);
+    const after = get(s);
+    expect(after.mixer.drums).toMatchObject({ low: 6, pan: -0.5 });
+    expect(after.liveInput).toMatchObject({ role: 'bass', sensitivity: 0.8, monitor: false });
+    expect(after.liveControl).toBe(true);
+    expect(after.liveRoles).toEqual({ Bass: 'bass' });
+  });
+
+  it('keeps a Music Studio layer and a Music Studio clip, voices and all', async () => {
+    const { vjClipLauncher } = await import('../stores/vjClipLauncher');
+    const source = {
+      effectType: 'music-studio',
+      musicSet: 'dub',
+      musicSceneId: null,
+      musicVoices: [{ file: 'VX-Scope.fs', source: 'lead', auto: false, level: 0.4, params: { scale: 2 } }],
+    };
+    const layerId = layers.project.addLayer('Studio', 'media')!;
+    layers.project.setLayerSource(layerId, { id: 'studio-src', type: 'effect', name: 'Music Studio', src: 'plugin://musicstudio', effectSource: source } as any);
+    vjClipLauncher.setClip(0, 1, { id: 'studio-clip', type: 'effect', name: 'Music Studio', src: 'plugin://musicstudio', effectSource: source } as any, 'A');
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+
+    expect(layers.project.importProject({ version: '1.9.5', project: { id: 'p', name: 'Show', width: 1920, height: 1080, layers: [] } })).toBe(true);
+    expect(layers.project.importProject(saved)).toBe(true);
+
+    const layer = get(layers.project).layers.find((l) => l.id === layerId);
+    expect(layer?.source?.effectSource).toEqual(source);
+    expect(get(vjClipLauncher).clipGrid[0][1]?.effectSource).toEqual(source);
+  });
+
   it('File > New resets the studio', () => {
     playSomething();
     layers.PROJECT_SECTION_RESETS.musicStudio();

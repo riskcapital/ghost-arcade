@@ -2787,8 +2787,12 @@ void main() {
       if (options.history !== false) scheduleHistorySnapshot(editKey('layer', id, updates));
     },
 
-    /** `options.history: false` for live control, as with updateLayer. */
-    setLayerSource(id: string, source: MediaSource | null, options: { history?: boolean } = {}) {
+    /**
+     * `options.history: false` for live control, as with updateLayer.
+     * `options.gesture` names a continuous edit (a slider, a knob): its
+     * changes coalesce into one undo step, as updateLayer's do.
+     */
+    setLayerSource(id: string, source: MediaSource | null, options: { history?: boolean; gesture?: string } = {}) {
       // Debug trace — set window.__VIDEO_DEBUG__ = true to see every
       // setLayerSource call with the caller stack so we can localize
       // which path is mutating layer.source mid-frame.
@@ -2846,7 +2850,9 @@ void main() {
           }),
         };
       });
-      if (options.history !== false) recordDiscreteAction();
+      if (options.history === false) return;
+      if (options.gesture) scheduleHistorySnapshot(editKey('source', id, options.gesture));
+      else recordDiscreteAction();
     },
 
     /** Lightweight shader value update for per-frame modulation — no history, no dispose checks */

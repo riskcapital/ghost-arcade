@@ -126,7 +126,7 @@
   } from '$lib/sync/nativeCoreSupervisor';
   import { openLogFolder } from '$lib/utils/logFolder';
   import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
-  import { expandStudioLayers, noteStudioHosts, studioRenderInputs, studioVisualTick } from '$lib/music/studioPlugin';
+  import { expandStudioLayers, noteStudioHosts, studioCodeTick, studioRenderInputs, studioVisualTick } from '$lib/music/studioPlugin';
   import { wakeStudioVisuals } from '$lib/music/musicRuntime';
 
   /** Music Studio clips and layers reach the core as their voices plus a mix (music/studioPlugin.ts). */
@@ -397,7 +397,6 @@
   } as const;
 
   let nativeLayersUnsub: (() => void) | null = null;
-  let nativeStudioTickUnsub: (() => void) | null = null;
   let nativeProjectUnsub: (() => void) | null = null;
   let nativeInteractionRaf: number | null = null;
   const nativeInteractionSignatures = new Map<string, string>();
@@ -2247,7 +2246,8 @@
       });
       nativeLayersSyncRef = () => scheduleNativeLayersSync();
       // Music Studio instances: their voices' signals move every frame.
-      nativeStudioTickUnsub = studioVisualTick.subscribe(() => scheduleNativeLayersSync());
+      const studioFrameUnsub = studioVisualTick.subscribe(() => scheduleNativeLayersSync());
+      const studioCodeUnsub = studioCodeTick.subscribe(() => scheduleNativeLayersSync());
       // ── Stage FX driver (native mode) ──
       // When the native core owns the frame, the WebGL animate() loop
       // never runs — so nothing was ticking the stage-effect engines
@@ -2370,6 +2370,10 @@
         nativeKeyframeUnsub();
         nativeCompositionXfadeUnsub();
         nativePerformerWorldUnsub();
+        studioFrameUnsub();
+        studioCodeUnsub();
+        // No scene is showing a studio now, so its frame loop can rest.
+        noteStudioHosts(0);
         if (stageFxNativeRaf !== null) {
           cancelAnimationFrame(stageFxNativeRaf);
           stageFxNativeRaf = null;
@@ -4305,8 +4309,6 @@
       nativeLayersUnsub();
       nativeLayersUnsub = null;
     }
-    nativeStudioTickUnsub?.();
-    nativeStudioTickUnsub = null;
     if (nativeQualityUnsub) {
       nativeQualityUnsub();
       nativeQualityUnsub = null;

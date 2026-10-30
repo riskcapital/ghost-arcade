@@ -90,6 +90,12 @@ describe('projectSettingsSignature', () => {
     audio: { sensitivity: 1, smoothing: 0.3, manualBPM: null, bandGain: {} },
     layerSequencer: { isOpen: false, pattern: { steps: [] }, config: { rate: 1 } },
     geoDeck: { scale: 0.5, sceneSlots: [], modRoutes: [] },
+    musicStudio: {
+      set: 'berlin', params: { energy: 0.5 }, octave: 0, velocity: 0.8, drumMutes: [],
+      pattern: { steps: 16, kick: [true] }, takes: [] as any[],
+      mixer: { drums: { low: 0, mid: 0, high: 0, pan: 0, mute: false, solo: false } },
+      liveControl: false,
+    },
   });
   const sig = (exported: any, showTimeline: unknown = { isOpen: false, zoom: 1, loop: false, audioTracks: [{ id: 't', url: 'blob:a' }], presetClips: [] }, showControl: unknown = { cues: { cues: [] } }) =>
     projectSettingsSignature({ exported, showTimeline, showControl });
@@ -106,6 +112,12 @@ describe('projectSettingsSignature', () => {
     played.layerSequencer.isOpen = true;
     played.geoDeck.scale = 0.9;
     played.mediaLibrary[0].src = 'ghost-asset://clip.mp4';
+    played.musicStudio.params.energy = 0.9;
+    played.musicStudio.octave = 1;
+    played.musicStudio.velocity = 1;
+    played.musicStudio.drumMutes = ['kick'] as any;
+    played.musicStudio.mixer.drums.mute = true;
+    played.musicStudio.mixer.drums.solo = true;
     expect(sig(played, { isOpen: true, zoom: 3, loop: false, audioTracks: [{ id: 't', url: 'ghost-asset://a' }], presetClips: [] })).toBe(before);
   });
 
@@ -122,6 +134,10 @@ describe('projectSettingsSignature', () => {
       (p) => { p.audio.manualBPM = 128; },
       (p) => { p.layerSequencer.pattern.steps.push({ layers: { a: true } }); },
       (p) => { p.keyframeSettings.duration = 60; },
+      (p) => { p.musicStudio.pattern.kick = [false]; },
+      (p) => { p.musicStudio.takes.push({ id: 't1', events: [] }); },
+      (p) => { p.musicStudio.mixer.drums.low = 6; },
+      (p) => { p.musicStudio.liveControl = true; },
     ];
     for (const edit of edits) {
       const changed = base();
@@ -129,6 +145,17 @@ describe('projectSettingsSignature', () => {
       expect(sig(changed), edit.toString()).not.toBe(before);
     }
     expect(sig(base(), undefined, { cues: { cues: [{ id: 'q1' }] } })).not.toBe(before);
+  });
+
+  it("counts a Music Studio clip's voices, not other plugins' live settings", () => {
+    const withClip = (effectSource: any) => {
+      const p = base();
+      p.vjClipLauncher.blocks[0].clipGrid[0][1] = { id: 'c2', type: 'effect', name: 'Plugin', effectSource } as any;
+      return sig(p);
+    };
+    const voices = (level: number) => ({ effectType: 'music-studio', musicSet: 'dub', musicSceneId: null, musicVoices: [{ file: 'VX-Scope.fs', source: 'lead', auto: true, level, params: {} }] });
+    expect(withClip(voices(1))).not.toBe(withClip(voices(0.5)));
+    expect(withClip({ effectType: 'ghostfx', amount: 0.2 })).toBe(withClip({ effectType: 'ghostfx', amount: 0.9 }));
   });
 });
 
@@ -208,5 +235,31 @@ describe('with the real stores', () => {
     settingsModule.settings.setDomeEnabled(!get(settingsModule.settings).output.domeEnabled);
     expect(dirty(saved)).toBe(true);
     settingsModule.settings.setDomeEnabled(!get(settingsModule.settings).output.domeEnabled);
+  });
+
+  it("makes a slider drag on a plugin layer one undo step, and a discrete edit its own", () => {
+    vi.useFakeTimers();
+    const studio = (level: number, file = 'VX-Scope.fs') => ({
+      id: 'src', type: 'effect', name: 'Music Studio', src: 'plugin://musicstudio',
+      effectSource: { effectType: 'music-studio', musicSet: 'dub', musicSceneId: null, musicVoices: [{ file, source: 'lead', auto: true, level, params: {} }] },
+    }) as any;
+    const level = () => (get(layers.project).layers[0].source as any).effectSource.musicVoices[0].level;
+    const file = () => (get(layers.project).layers[0].source as any).effectSource.musicVoices[0].file;
+    layers.project.setLayerSource('a', studio(1));
+    vi.advanceTimersByTime(100);
+    // A drag: many updates, one gesture.
+    for (let i = 1; i <= 30; i++) {
+      layers.project.setLayerSource('a', studio(1 - i / 60), { gesture: 'voice:0:level' });
+      vi.advanceTimersByTime(16);
+    }
+    vi.advanceTimersByTime(700);
+    // Then a discrete edit.
+    layers.project.setLayerSource('a', studio(0.5, 'VX-Smoke.fs'));
+    expect(file()).toBe('VX-Smoke.fs');
+    undo();
+    expect(file()).toBe('VX-Scope.fs');
+    expect(level()).toBe(0.5);
+    undo();
+    expect(level()).toBe(1);
   });
 });

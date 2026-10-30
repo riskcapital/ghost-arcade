@@ -11,7 +11,7 @@
   import { STUDIO_SETS } from '../../music/studioSets';
   import { VOICE_SOURCES, isVoiceDrivenInput, type VoiceSourceId } from '../../music/visualVoices';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
-  import { MAX_STUDIO_VOICES, studioRenderInputs, studioVisualTick, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
+  import { MAX_STUDIO_VOICES, studioCodeTick, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
     loadSceneIntoStudio,
@@ -54,14 +54,16 @@
   // How strongly each voice's sound plays now, for its light.
   let frame = 0;
   function tick() {
-    activity = voices.map((v) => {
+    const next = voices.map((v) => {
       const d = studioRenderInputs.driven(v.source, v.auto);
       return Math.min(1, (0.25 + 0.75 * (d.vxEnv ?? 0)) * (d.vxPresence ?? 1));
     });
+    // Only repaint the lights when one has visibly changed.
+    if (next.length !== activity.length || next.some((a, i) => Math.abs(a - activity[i]) > 0.01)) activity = next;
     frame = requestAnimationFrame(tick);
   }
   frame = requestAnimationFrame(tick);
-  const unsub = studioVisualTick.subscribe((n) => (codeTick = n));
+  const unsub = studioCodeTick.subscribe((n) => (codeTick = n));
   onDestroy(() => {
     cancelAnimationFrame(frame);
     unsub();
@@ -106,7 +108,7 @@
     defaultValue={Number(input.DEFAULT ?? input.MIN ?? 0)}
     size={20}
     format={valueFormat(input)}
-    onchange={(v) => setStudioVoice(i, { params: { [input.NAME]: input.TYPE === 'long' || (input.MAX ?? 1) - (input.MIN ?? 0) > 4 ? Math.round(v) : v } })}
+    onchange={(v) => setStudioVoice(i, { params: { [input.NAME]: input.TYPE === 'long' || (input.MAX ?? 1) - (input.MIN ?? 0) > 4 ? Math.round(v) : v } }, `voice:${i}:${input.NAME}`)}
   />
 {/snippet}
 
@@ -151,7 +153,7 @@
           </div>
           <div class="controls">
             {#each all.slice(0, MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
-            <StudioKnob label="Level" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} onchange={(v) => setStudioVoice(i, { level: v })} />
+            <StudioKnob label="Level" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
             {#if all.length > MAIN_CONTROLS}
               <button class="icon more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for voice {i + 1}" title="All controls">
                 <svg viewBox="0 0 12 12" aria-hidden="true"><path d={open === i ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
