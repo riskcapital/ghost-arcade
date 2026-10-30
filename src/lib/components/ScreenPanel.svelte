@@ -860,7 +860,8 @@
     color: var(--ga-green, #46d18a);
   }
 
-  /* Collapsible rig sections: sentence-case headers you can press. */
+  /* Collapsible rig sections. The summary keeps the app-wide disclosure
+     style (an eyebrow with a chevron); this only sets its box. */
   .master-details {
     margin-top: 8px;
     padding: 0 8px;
@@ -870,28 +871,14 @@
   }
   .master-details[open] { padding-bottom: 8px; }
   .master-details summary {
-    display: flex;
-    align-items: center;
     min-height: 30px;
-    cursor: pointer;
-    font-size: var(--ga-text-control, 12px);
-    font-weight: var(--ga-weight-control, 600);
-    color: var(--ga-ink-1, #888);
-    user-select: none;
+    padding: 0;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #888);
   }
-  .master-details summary::before {
-    content: '';
-    width: 0;
-    height: 0;
-    margin-right: 8px;
-    border-left: 4px solid currentColor;
-    border-top: 3.5px solid transparent;
-    border-bottom: 3.5px solid transparent;
-    opacity: 0.7;
-    transition: transform 0.12s;
-  }
-  .master-details[open] summary::before { transform: rotate(90deg); }
-  .master-details summary::-webkit-details-marker { display: none; }
   .master-details summary:hover { color: var(--ga-ink-0, #eef0f4); }
   .master-row {
     display: flex;

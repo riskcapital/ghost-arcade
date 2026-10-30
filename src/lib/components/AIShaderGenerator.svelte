@@ -209,7 +209,7 @@
 
 <div data-help-page="ai-generation" class="ai-generator">
   <div class="header">
-    <h3>{isEditMode ? 'Edit AI Content' : 'AI Content Generator'}</h3>
+    <h3>{isEditMode ? 'Edit AI content' : 'AI content generator'}</h3>
     <button aria-label="Close shader generator" class="btn-close" onclick={() => dispatch('close')}>×</button>
   </div>
 
@@ -289,9 +289,9 @@
   </div>
 
   <details class="advanced-options">
-    <summary>Advanced Options</summary>
+    <summary>Advanced options</summary>
     <div class="advanced-content">
-      <label>Additional Context (optional)</label>
+      <label>Additional context (optional)</label>
       <textarea
         bind:value={additionalContext}
         placeholder="Any specific requirements, color schemes, or technical details..."
@@ -305,7 +305,7 @@
   {/if}
 
   <button
-    class="btn-generate"
+    class="btn-generate primary-btn"
     onclick={handleGenerate}
     disabled={isGenerating || !description.trim()}
   >
@@ -323,12 +323,12 @@
 
 <style>
   .ai-generator {
-    background: var(--bg-primary, #0d0d10);
-    border-radius: 8px;
-    padding: 16px;
+    background: var(--ga-panel, #0d0d10);
+    border-radius: var(--ga-r-soft, 7px);
+    padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
 
   .header {
@@ -339,90 +339,92 @@
 
   .header h3 {
     margin: 0;
-    font-size: 14px;
-    font-weight: 600;
     flex: 1;
-    background: linear-gradient(90deg, #BB86FC, #A78BFA);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .btn-close {
     background: none;
     border: none;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2, #89857e);
     cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
+    width: var(--ga-control-h-sm, 22px);
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0;
+    border-radius: var(--ga-r-hard, 3px);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
+    font-size: var(--ga-text-heading);
     line-height: 1;
   }
 
   .btn-close:hover {
-    background: #333;
-    color: #fff;
+    background: var(--ga-raise, #26221c);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .ai-status-bar {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px;
-    background: var(--bg-secondary, #111114);
-    border-radius: 6px;
-    border: 1px solid #222;
-    font-size: 12px;
+    padding: 4px 4px 4px 8px;
+    background: var(--ga-card, #111114);
+    border-radius: var(--ga-r-hard, 3px);
+    border: 1px solid var(--ga-line-1, rgba(255, 255, 255, 0.07));
+    font-size: var(--ga-text-meta);
   }
 
   .ai-provider-badge {
-    background: #BB86FC33;
-    color: #BB86FC;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-weight: 500;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    background: var(--ga-raise, #26221c);
+    color: var(--ga-ink-1, #9aa0ac);
+    padding: 2px 6px;
+    border-radius: var(--ga-r-hard, 3px);
+    font-weight: var(--ga-weight-control);
+    font-size: var(--ga-text-meta);
   }
 
   .ai-key-ok {
-    color: #22c55e;
-    font-size: 11px;
+    color: var(--ga-live, #22c55e);
+    font-size: var(--ga-text-meta);
   }
 
   .ai-key-missing {
-    color: #ef4444;
-    font-size: 11px;
+    color: var(--ga-rec, #ef4444);
+    font-size: var(--ga-text-meta);
   }
 
   .btn-configure {
     margin-left: auto;
+    height: var(--ga-control-h-sm, 22px);
     background: none;
-    border: 1px solid #444;
-    color: var(--text-muted, #888);
-    padding: 3px 8px;
-    font-size: 11px;
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    padding: 0 8px;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
   }
 
   .btn-configure:hover {
-    color: #fff;
-    border-color: #BB86FC;
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
+  /* Field labels: eyebrows. */
   .generation-type label,
-  .description-section label {
-    font-size: 12px;
-    color: var(--text-muted, #888);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 6px;
+  .description-section label,
+  .advanced-content label {
     display: block;
+    margin-bottom: 6px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
   }
 
   .type-tabs {
@@ -432,14 +434,16 @@
 
   .type-tab {
     flex: 1;
-    padding: 10px 8px;
-    background: var(--bg-secondary, #111114);
-    border: 1px solid #333;
-    color: var(--text-muted, #888);
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
+    background: var(--ga-card, #111114);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    border-radius: 6px;
-    transition: all 0.15s;
+    border-radius: var(--ga-r-hard, 3px);
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -447,15 +451,14 @@
   }
 
   .type-tab:hover {
-    background: var(--bg-tertiary, #161618);
-    border-color: #444;
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .type-tab.active {
-    background: #333;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .type-tab svg {
@@ -468,37 +471,37 @@
 
   textarea {
     width: 100%;
-    background: var(--bg-secondary, #111114);
-    border: 1px solid #333;
-    border-radius: 6px;
-    padding: 10px 12px;
-    color: #fff;
-    font-size: 14px;
+    box-sizing: border-box;
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 8px 10px;
+    color: var(--ga-ink-0, #eef0f4);
+    font-size: var(--ga-text-body);
     font-family: inherit;
     resize: vertical;
-    min-height: 70px;
+    min-height: 64px;
   }
 
   textarea:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: var(--ga-focus, #8aa4ff);
   }
 
   textarea::placeholder {
-    color: #555;
+    color: var(--ga-ink-3, #3a404a);
   }
 
   .examples {
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    flex-wrap: wrap;
   }
 
   .examples-label {
-    font-size: 12px;
-    color: #666;
-    padding-top: 4px;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
+    line-height: var(--ga-control-h-sm, 22px);
   }
 
   .example-chips {
@@ -506,86 +509,81 @@
     flex-wrap: wrap;
     gap: 4px;
     flex: 1;
+    min-width: 0;
   }
 
   .example-chip {
-    padding: 4px 8px;
-    background: var(--bg-secondary, #111114);
-    border: 1px solid #333;
-    border-radius: 12px;
-    color: var(--text-muted, #888);
-    font-size: 11px;
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 8px;
+    background: var(--ga-card, #111114);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-meta);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s, color 0.15s;
   }
 
   .example-chip:hover {
-    background: var(--bg-tertiary, #161618);
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .advanced-options {
-    font-size: 13px;
-    color: #666;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   .advanced-options summary {
     cursor: pointer;
-    padding: 6px 0;
+    padding: 4px 0;
+    font-weight: var(--ga-weight-control);
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .advanced-options summary:hover {
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .advanced-content {
     padding-top: 8px;
   }
 
-  .advanced-content label {
-    font-size: 12px;
-    color: var(--text-muted, #888);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 6px;
-    display: block;
-  }
-
   .error-message {
-    background: #ef444433;
-    border: 1px solid #ef4444;
-    border-radius: 4px;
-    padding: 8px 12px;
-    color: #ef4444;
-    font-size: 13px;
+    background: color-mix(in srgb, var(--ga-rec, #ef4444) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-rec, #ef4444) 60%, transparent);
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 8px 10px;
+    color: var(--ga-rec, #ef4444);
+    font-size: var(--ga-text-control);
   }
 
+  /* The panel's one primary action (.primary-btn takes the theme's look). */
   .btn-generate {
-    padding: 12px 16px;
-    background: linear-gradient(135deg, #BB86FC, #A78BFA);
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
+    background: var(--ga-violet, #9b87f5);
     border: none;
-    border-radius: 6px;
-    color: #000;
-    font-size: 14px;
-    font-weight: 600;
+    border-radius: var(--ga-r-soft, 7px);
+    color: var(--ga-blue-800, #0b0d11);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: filter 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .btn-generate:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px var(--ga-blue-a28);
+    filter: brightness(1.06);
   }
 
   .btn-generate:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    transform: none;
   }
 
   .spinner {

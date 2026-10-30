@@ -191,7 +191,7 @@
   cursor: pointer;
 }
 .studio-tokens .seg.small { height: var(--ga-control-h-sm, 22px); padding: 1px; gap: 1px; }
-.studio-tokens .seg.small button { padding: 0 8px; }
+.studio-tokens .seg.small button { padding: 0 7px; }
 .studio-tokens .seg button:hover:not(.on) { color: var(--studio-ink); }
 .studio-tokens .seg button.on {
   background: var(--studio-accent-soft);

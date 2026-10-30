@@ -1197,6 +1197,13 @@
 
   // Blend modes (shared order; see BLEND_MODE_ORDER in types)
   const blendModes = BLEND_MODE_ORDER;
+  /** Menu text for a blend mode id, as in the mapping layer panel: 'color-dodge' -> 'Color dodge'. */
+  const BLEND_MODE_NAMES: Partial<Record<string, string>> = { hardlight: 'Hard light', softlight: 'Soft light' };
+  function blendModeName(mode: string | undefined): string {
+    if (!mode) return '';
+    const words = BLEND_MODE_NAMES[mode] ?? mode.replace(/-/g, ' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
 
 
   // Shader library
@@ -4711,7 +4718,7 @@
                    of which workspace is open. -->
               {#if !$activeSurface}
                 <div class="no-effects">
-                  Build a stage first (open STAGE → draw slices → Apply Stage), then add effects here to animate your slice layers.
+                  Build a stage first (open Stage → draw slices → Apply Stage), then add effects here to animate your slice layers.
                 </div>
               {:else}
                 {@const effects = $activeSurface.effects ?? []}
@@ -4911,7 +4918,7 @@
                 {#if effectsTab === 'clip' && transitionLayer.activeClip && transitionLayer.activeColumn !== null}
                   <details class="clip-overrides" data-help-page="clip-launcher">
                     <summary>Clip overrides <span class:custom={hasClipOverrides(transitionLayer.activeClip)}>{hasClipOverrides(transitionLayer.activeClip) ? 'Custom' : 'Default'}</span></summary>
-                    <p>Fader Start, column protection and transitions use the layer settings unless overridden here. Trigger mode belongs to this clip.</p>
+                    <p>Fader start, column protection and transitions use the layer settings unless overridden here. Trigger mode belongs to this clip.</p>
                   <VJClipLaunchOptions clip={transitionLayer.activeClip}
                     onChange={(patch) => vjClipLauncher.setClipLaunchOptions(selectedLayerIndex!, transitionLayer.activeColumn!, patch, paramDeck)} />
                   <label class="launch-option-row">
@@ -4991,7 +4998,7 @@
                                 </select>
                               </div>
                               <div class="param-row">
-                                <button class="btn-small" onclick={() => applyVJPreset(effect)}>Apply Preset</button>
+                                <button class="btn-small" onclick={() => applyVJPreset(effect)}>Apply preset</button>
                               </div>
                             </details>
                           {/if}
@@ -5030,7 +5037,7 @@
                                     <select
                                       value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                       onchange={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLSelectElement).value))}
-                                      style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;">
+                                      style="flex:1; height:var(--ga-control-h-sm, 22px); background:var(--ga-slot, #060504); color:var(--ga-ink-0, #f2ede4); border:1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius:var(--ga-r-hard, 5px); padding:0 4px; font-size:var(--ga-text-control, 12px);">
                                       {#each meta.options as opt}
                                         <option value={opt.value}>{opt.label}</option>
                                       {/each}
@@ -5055,7 +5062,7 @@
                                           updateEffectParam(effect.id, meta.colorParams.b, b);
                                         }
                                       }}
-                                      style="flex:0 0 40px; height:22px; padding:0; border:1px solid #444; border-radius:3px; cursor:pointer;" />
+                                      style="flex:0 0 40px; height:22px; padding:0; border:1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius:3px; cursor:pointer;" />
                                   </div>
                                 {:else if effectsTab === 'composition' || ((effectsTab === 'layer' || effectsTab === 'clip') && selectedLayerIndex !== null)}
                                   <EffectParamRow
@@ -5359,7 +5366,7 @@
                             data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:shader:{input.NAME}"
                             data-midi-label="{input.LABEL || input.NAME}"
                             data-midi-discrete="true">
-                            {getShaderParamValue(selectedLayerIndex!, input.NAME, 0) > 0.5 ? 'ON' : 'OFF'}
+                            {getShaderParamValue(selectedLayerIndex!, input.NAME, 0) > 0.5 ? 'On' : 'Off'}
                           </button>
                         </div>
                       {:else if input.TYPE === 'long' && input.VALUES && input.LABELS}
@@ -5479,7 +5486,7 @@
                             data-midi-label={param.label || param.name}
                             data-midi-discrete="true"
                           >
-                            {Boolean(currentValue) ? 'ON' : 'OFF'}
+                            {Boolean(currentValue) ? 'On' : 'Off'}
                           </button>
                         </div>
                       {:else if param.type === 'color'}
@@ -6013,7 +6020,7 @@
               class="vj-seq-toggle-btn dock-labelled-btn"
               class:active={$vjLayerSequencer.isOpen}
               onclick={() => vjLayerSequencer.toggleOpen()}
-              title="Layer Sequencer"
+              title="Layer sequencer"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
@@ -6086,7 +6093,7 @@
                align launches to detected beats (or the virtual clock at the
                current BPM when audio is off). -->
           <div class="dock-quant" title="Launch quantize — clips and columns fire together on the next selected beat boundary">
-            <span class="dock-quant-label">QUANT</span>
+            <span class="dock-quant-label">Quantize</span>
             <select
               class="dock-quant-select"
               aria-label="Launch quantization"
@@ -6096,12 +6103,12 @@
               data-midi-label="Launch Quantize"
               data-midi-discrete="true"
             >
-              <option value="off">OFF</option>
+              <option value="off">Off</option>
               <option value="1/4">1/4</option>
               <option value="1/2">1/2</option>
-              <option value="1bar">1 BAR</option>
-              <option value="2bar">2 BAR</option>
-              <option value="4bar">4 BAR</option>
+              <option value="1bar">1 bar</option>
+              <option value="2bar">2 bars</option>
+              <option value="4bar">4 bars</option>
             </select>
             <!-- Queued launches: a badge on the box's corner, so it never
                  widens the bar and pushes the controls onto another line. -->
@@ -6113,7 +6120,7 @@
           </div>
           <button class="dock-ableton" class:connected={$abletonConnected} onclick={() => (abletonBridgeOpen = true)} title={$abletonConnected ? 'Ableton Live connected — link scenes and clips to visuals' : 'Link Ableton Live scenes and clips to visuals'} aria-label="Open Ableton bridge">
             <span class="dock-ableton-dot" aria-hidden="true"></span>
-            ABLETON
+            Ableton
           </button>
         </div>
 
@@ -6262,7 +6269,7 @@
                 <div class="layer-bottom-row">
                 <select
                   aria-label="Blend mode for layer {layerIdx + 1} on Deck {bank}"
-                  title={states[layerIdx].blendMode}
+                  title={blendModeName(states[layerIdx].blendMode)}
                   class="blend-select"
                   value={states[layerIdx].blendMode}
                   onchange={(e) => handleLayerBlendChange(layerIdx, e, bank)}
@@ -6272,7 +6279,7 @@
                   data-midi-discrete="true"
                 >
                   {#each blendModes as mode}
-                    <option value={mode}>{mode}</option>
+                    <option value={mode}>{blendModeName(mode)}</option>
                   {/each}
                 </select>
                 <VJLayerSettings layer={states[layerIdx]} index={layerIdx} deck={bank} columns={$deckColumnCount} />
@@ -6577,11 +6584,11 @@
         <div class="ctx-backdrop" onclick={closeBlockContextMenu}></div>
         <div class="ctx-menu" style="left:{blockContextMenu.x}px;top:{blockContextMenu.y}px">
           <button class="ctx-item ctx-primary" onclick={blockMenuSaveProject}>
-            Save Project<span class="ctx-shortcut">Ctrl+S</span>
+            Save project<span class="ctx-shortcut">Ctrl+S</span>
           </button>
           <div class="ctx-separator"></div>
-          <button class="ctx-item" onclick={blockMenuRename}>Rename Block</button>
-          <button class="ctx-item" onclick={blockMenuDuplicate}>Duplicate Block</button>
+          <button class="ctx-item" onclick={blockMenuRename}>Rename block</button>
+          <button class="ctx-item" onclick={blockMenuDuplicate}>Duplicate block</button>
           {#if $vjClipLauncher.blocks.length > 1}
             <div class="ctx-separator"></div>
             <div class="ctx-merge">
@@ -6596,7 +6603,7 @@
               </div>
             </div>
             <div class="ctx-separator"></div>
-            <button class="ctx-item ctx-danger" onclick={blockMenuDelete}>Delete Block</button>
+            <button class="ctx-item ctx-danger" onclick={blockMenuDelete}>Delete block</button>
           {/if}
         </div>
       {/if}
@@ -6606,15 +6613,15 @@
         <div class="ctx-backdrop" onclick={closeStageContextMenu}></div>
         <div class="ctx-menu" style="left:{stageContextMenu.x}px;top:{stageContextMenu.y}px">
           <button class="ctx-item ctx-primary" onclick={stageMenuUpdate}>
-            Update Preset
+            Update preset
           </button>
-          <button class="ctx-item" onclick={stageMenuRename}>Rename Preset</button>
+          <button class="ctx-item" onclick={stageMenuRename}>Rename preset</button>
           <div class="ctx-separator"></div>
           <button class="ctx-item" onclick={stageMenuSaveProject}>
-            Save Project<span class="ctx-shortcut">Ctrl+S</span>
+            Save project<span class="ctx-shortcut">Ctrl+S</span>
           </button>
           <div class="ctx-separator"></div>
-          <button class="ctx-item ctx-danger" onclick={stageMenuDelete}>Delete Preset</button>
+          <button class="ctx-item ctx-danger" onclick={stageMenuDelete}>Delete preset</button>
         </div>
       {/if}
 
@@ -7180,7 +7187,7 @@
   .clip-overrides > p { margin: 10px 12px; color: var(--ga-ink-1, #adb3bf); font-size: 11px; line-height: 1.5; }
 
   .beat-fit-warning { margin: 6px 0; padding: 7px 9px; border: 1px solid #80612d; border-radius: 5px; color: #e6c888; font-size: 11px; line-height: 1.4; }
-  .launch-option-row { display:flex; gap:9px; align-items:center; min-height:34px; padding:6px 10px;
+  .launch-option-row { display:flex; gap:9px; align-items:center; min-height:34px; padding:6px 12px;
     font-size:var(--ga-type-control, 12px); line-height:1.4; color:var(--ga-ink-0, #eef0f4); }
   .launch-option-row input { flex:0 0 auto; }
 
@@ -9270,25 +9277,28 @@
     min-height: 200px;
   }
 
-  /* Compact controls wrap as groups on narrow decks; popovers stay unclipped. */
+  /* The deck bars (blocks row and this dock) use the top bar's control
+     size, so their own chips match the tempo widgets that sit in them:
+     30px, 13px, 600. Compact controls wrap as groups on narrow decks;
+     popovers stay unclipped. */
   .vj-dock {
     flex-wrap: wrap;
     white-space: nowrap;
-    --vj-header-font: 11px;
-    --vj-control-h: 28px;
+    --vj-header-font: var(--ga-text-body, 13px);
+    --vj-control-h: var(--ga-bar-control-h, 30px);
     --vj-meter-gap: 4px;
     --vj-right-gap: 4px;
     margin-bottom: 8px;
-    border-radius: 6px;
+    border-radius: var(--ga-r-soft, 8px);
     display: flex;
     align-items: center;
     justify-content: flex-start;
     gap: 8px;
     flex: 0 0 auto;
     box-sizing: border-box;
-    padding: 5px var(--vj-header-pad-x);
-    background: #141414;
-    border-top: 1px solid #333;
+    padding: 6px 8px;
+    background: var(--ga-bar, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     /* Popovers open upward out of this bar, so it can't clip them. */
     overflow: visible;
     position: relative;
@@ -9304,69 +9314,77 @@
   }
   .vj-dock-tools {
     flex-wrap: nowrap;
-    --vj-header-font: 11px;
-    --vj-control-h: 28px;
-    --vj-right-gap: 4px;
+    --vj-header-font: var(--ga-text-body, 13px);
+    --vj-control-h: var(--ga-bar-control-h, 30px);
     margin-left: auto;
-    gap: var(--vj-right-gap);
+    gap: var(--ga-bar-gap, 6px);
     flex: 0 0 auto;
   }
+  /* Quantize: label and field in one chip, like Nudge beside it. */
   .dock-quant {
     position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 calc(var(--vj-file-pad-x) - 4px);
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
+    gap: 8px;
+    box-sizing: border-box;
+    padding: 0 3px 0 10px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     height: var(--vj-control-h);
   }
+  .dock-quant:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
   .dock-ableton {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
+    box-sizing: border-box;
     height: var(--vj-control-h);
-    padding: 0 calc(var(--vj-file-pad-x) - 4px);
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
-    color: var(--ga-ink-1, #9aa0ac);
-    font-size: var(--vj-label-font);
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    padding: 0 12px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font-family: inherit;
+    font-size: var(--vj-header-font);
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
     cursor: pointer;
   }
-  .dock-ableton:hover { color: var(--ga-ink-0, #eef0f4); border-color: rgba(255, 255, 255, 0.2); }
-  .dock-ableton-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); }
+  .dock-ableton:hover { color: var(--ga-ink-0, #f2ede4); border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
+  .dock-ableton:focus-visible { outline: 2px solid var(--ga-focus, #8aa4ff); outline-offset: 1px; }
+  .dock-ableton-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ga-ink-3, #39342c); }
   .dock-ableton.connected .dock-ableton-dot { background: var(--ga-live, #46d18a); }
   .dock-quant-label {
-    font-size: var(--vj-label-font);
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-2, #89857e);
   }
   .dock-quant-select {
-    background: #000;
-    color: var(--ga-ink-0, #eef0f4);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 3px;
+    height: calc(var(--vj-control-h) - 8px);
+    box-sizing: border-box;
+    background: var(--ga-slot, #060504);
+    color: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    font-family: inherit;
     font-size: var(--vj-header-font);
-    font-weight: 700;
-    padding: 2px 4px;
+    font-weight: var(--ga-weight-control, 600);
+    padding: 0 6px;
     cursor: pointer;
   }
-  /* Labelled dock buttons — icon + word, sized like the other dock chips. */
+  .dock-quant-select:focus-visible { outline: 2px solid var(--ga-focus, #8aa4ff); outline-offset: 1px; }
+  /* Labelled toolbar buttons: icon + word, sized like the other chips. */
   .dock-labelled-btn {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     width: auto;
     height: var(--vj-control-h);
-    padding: 0 10px;
+    padding: 0 12px;
     font-size: var(--vj-header-font);
-    font-weight: 600;
-    letter-spacing: 0.01em;
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
     white-space: nowrap;
   }
   .dock-quant-pending {
@@ -9446,31 +9464,32 @@
   /* Media tray stays right; only the grid internals flip */
 
   /* Layer select icon */
+  /* Layer select: the same 20px strip button as lock / A / settings. */
   .layer-select-icon {
     width: 20px;
     height: 20px;
-    background: #222;
-    border: 1px solid #444;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 3px;
-    color: #666;
+    color: var(--ga-ink-1, #ada9a2);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 0;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
     flex-shrink: 0;
   }
 
   .layer-select-icon:hover {
-    border-color: var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .layer-select-icon.selected {
-    background: var(--accent-primary, #BB86FC)20;
-    border-color: var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   /* Grid Section */
@@ -9481,9 +9500,9 @@
     /* The block tabs and deck toolbar stay put; only the deck scrolls. */
     overflow: hidden;
     min-height: 0;
-    background: #0e0e0e;
+    background: var(--ga-void, #0a0908);
     padding: 12px;
-    --vj-deck-bg: #0e0e0e;
+    --vj-deck-bg: var(--ga-void, #0a0908);
   }
 
   .deck-scroll {
@@ -9564,7 +9583,7 @@
     margin-bottom: 8px;
     position: sticky;
     top: 0;
-    background: var(--vj-deck-bg, #0e0e0e);
+    background: var(--vj-deck-bg, #0a0908);
     z-index: 10;
     padding-bottom: 8px;
     min-width: 100%;
@@ -9582,21 +9601,23 @@
     flex: 1 1 0;
     min-width: 76px;
     box-sizing: border-box;
-    height: 28px;
-    background: #222;
-    border: 1px solid #444;
-    border-radius: 4px;
-    color: var(--text-muted, #888);
-    font-size: 12px;
-    font-weight: 600;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font-family: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    font-variant-numeric: tabular-nums;
     cursor: pointer;
-    transition: all 0.1s;
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
   }
 
   .column-trigger:hover {
-    background: var(--accent-primary, #BB86FC);
-    border-color: var(--accent-primary, #BB86FC);
-    color: #000;
+    background: var(--ga-sub, #1e1b16);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .layer-row {
@@ -9613,16 +9634,16 @@
   .grid-section.reversed .layer-row { flex-direction: row-reverse; }
 
   .layer-row.selected .layer-controls {
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   .layer-controls {
     width: 150px;
     flex-shrink: 0;
     box-sizing: border-box;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 6px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     padding: 8px;
     display: flex;
     flex-direction: column;
@@ -9632,7 +9653,7 @@
   }
 
   .layer-controls:hover {
-    border-color: #444;
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .layer-header {
@@ -9642,71 +9663,75 @@
   }
 
   .layer-num {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
+    font-variant-numeric: tabular-nums;
+    color: var(--ga-ink-1, #ada9a2);
   }
+  .layer-row.selected .layer-num { color: var(--ga-ink-0, #f2ede4); }
 
   .layer-buttons {
     display: flex;
     gap: 2px;
   }
 
+  /* S / M / stop: the same 20px strip button as lock / A / settings.
+     Solo amber and mute red keep their mixer meaning. */
   .layer-btn {
     width: 20px;
     height: 20px;
-    border: none;
+    padding: 0;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 3px;
-    font-size: 10px;
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-2, #89857e);
+    font-family: inherit;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
+    line-height: 1;
     cursor: pointer;
-    transition: all 0.1s;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
   }
 
-  .layer-btn.solo {
-    background: #333;
-    color: #666;
+  .layer-btn:hover:not(:disabled) {
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .layer-btn.solo:hover {
-    background: #444;
     color: #FFD54F;
   }
 
   .layer-btn.solo.active {
     background: #FFD54F;
+    border-color: #FFD54F;
     color: #000;
   }
 
-  .layer-btn.mute {
-    background: #333;
-    color: #666;
-  }
-
   .layer-btn.mute:hover {
-    background: #444;
-    color: #ff4444;
+    color: var(--ga-rec, #ff3b30);
   }
 
   .layer-btn.mute.active {
-    background: #ff4444;
+    background: var(--ga-rec, #ff3b30);
+    border-color: var(--ga-rec, #ff3b30);
     color: #fff;
   }
 
-  .layer-btn.stop {
-    background: #333;
-    color: #666;
+  .layer-btn.stop:hover:not(:disabled) {
+    background: var(--ga-rec, #ff3b30);
+    border-color: var(--ga-rec, #ff3b30);
+    color: #fff;
   }
 
-  .layer-btn.stop:hover {
-    background: #ff4444;
-    color: #fff;
+  .layer-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
   .opacity-slider {
     width: 100%;
     height: 18px;
-    accent-color: var(--accent-primary, #BB86FC);
+    accent-color: var(--ga-selection-line, #5278ff);
     cursor: pointer;
     -webkit-appearance: none;
     appearance: none;
@@ -9719,7 +9744,7 @@
   .opacity-slider::-webkit-slider-runnable-track {
     width: 100%;
     height: 8px;
-    background: #000000;
+    background: var(--ga-slot, #060504);
     border-radius: 4px;
     cursor: pointer;
   }
@@ -9729,17 +9754,14 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--accent-primary, #BB86FC);
+    background: var(--ga-selection-line, #5278ff);
     cursor: pointer;
-    border: 2px solid #111;
+    border: 2px solid var(--ga-slot, #060504);
     margin-top: -5px;
-    box-shadow: 0 0 4px rgba(187, 134, 252, 0.4);
   }
 
   .opacity-slider::-webkit-slider-thumb:hover {
-    background: var(--ga-blue-100);
-    transform: scale(1.2);
-    box-shadow: 0 0 8px rgba(187, 134, 252, 0.6);
+    background: var(--ga-selection-ink, #e0e8ff);
   }
 
   .layer-bottom-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
@@ -9749,16 +9771,19 @@
     min-width: 0;
     width: 0;
     height: 20px;
-    background-color: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    color: var(--text-secondary, #aaa);
-    padding: 0 2px;
+    background-color: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+    padding: 0 4px;
     border-radius: 3px;
-    font-size: 10px;
+    font-family: inherit;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 500;
     cursor: pointer;
   }
+  .blend-select:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
 
-  /* Clip Cells */
+  /* Clip Cells: sunken pads. A playing clip is lit in full ink. */
   .clip-cell {
     flex: 1 1 0;
     align-self: flex-start;
@@ -9766,27 +9791,32 @@
     min-width: 76px;
     min-height: 60px;
     box-sizing: border-box;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 4px;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     overflow: hidden;
     cursor: pointer;
-    transition: all 0.1s;
+    transition: border-color 0.1s, box-shadow 0.1s, background 0.1s;
     position: relative;
     contain: layout paint;
   }
 
   .clip-cell:hover {
-    border-color: #555;
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .clip-cell.has-clip:hover {
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--ga-ink-2, #89857e);
+  }
+
+  .clip-cell:focus-visible {
+    outline: 2px solid var(--ga-focus, #8aa4ff);
+    outline-offset: 1px;
   }
 
   .clip-cell.active {
-    border-color: var(--accent-primary, #BB86FC);
-    box-shadow: 0 0 12px rgba(187, 134, 252, 0.4);
+    border-color: var(--ga-ink-0, #f2ede4);
+    box-shadow: 0 0 0 1px var(--ga-ink-0, #f2ede4), 0 0 12px color-mix(in srgb, var(--ga-ink-0, #f2ede4) 30%, transparent);
   }
 
   /* Queued (waiting to fire on the next quantize boundary). Pulses the
@@ -9800,7 +9830,7 @@
   .clip-cell.queued.active {
     /* If the queued clip happens to be the currently-playing one,
        blend the two glows so it reads as "armed to re-trigger". */
-    box-shadow: 0 0 14px rgba(249, 115, 22, 0.55), 0 0 12px rgba(187, 134, 252, 0.4);
+    box-shadow: 0 0 14px rgba(249, 115, 22, 0.55), 0 0 12px color-mix(in srgb, var(--ga-ink-0, #f2ede4) 30%, transparent);
   }
   @keyframes cellQueuedPulse {
     0%, 100% { box-shadow: 0 0 6px rgba(249, 115, 22, 0.45); }
@@ -9808,8 +9838,8 @@
   }
 
   .clip-cell.dragover {
-    border-color: var(--accent-primary, #BB86FC);
-    background: var(--ga-blue-mute-800);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: color-mix(in srgb, var(--ga-selection-bg, #1f3170) 60%, transparent);
   }
 
   /* Wrong-mode cells: preset clips while in MIX/STAGE, or non-preset
@@ -9852,7 +9882,7 @@
      mode matches again. */
   .clip-cell.wrong-mode.active {
     box-shadow: none;
-    border-color: #333;
+    border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
   }
 
   .clip-content {
@@ -9929,10 +9959,11 @@
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 2px 4px;
+    padding: 2px 5px;
     background: rgba(0, 0, 0, 0.8);
-    font-size: 9px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-meta, 11px);
+    line-height: 1.3;
+    color: var(--ga-ink-1, #ada9a2);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -9946,7 +9977,7 @@
     right: 2px;
     width: 16px;
     height: 16px;
-    background: rgba(255, 50, 50, 0.9);
+    background: var(--ga-rec, #ff3b30);
     border: none;
     border-radius: 50%;
     color: #fff;
@@ -9980,10 +10011,11 @@
     gap: 4px;
   }
   .ctx-merge-label {
-    font-size: 10px;
-    letter-spacing: 0.04em;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
-    color: #888;
+    color: var(--ga-ink-2, #89857e);
   }
   .ctx-merge-row {
     display: flex;
@@ -9992,32 +10024,37 @@
   .ctx-merge-row select {
     flex: 1;
     min-width: 110px;
-    font-size: 12px;
-    background: #111;
-    color: #ddd;
-    border: 1px solid #333;
-    border-radius: 3px;
-    padding: 2px 4px;
+    height: var(--ga-control-h-sm, 22px);
+    font-size: var(--ga-text-control, 12px);
+    background: var(--ga-slot, #060504);
+    color: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 4px;
   }
   .ctx-merge-btn {
-    font-size: 12px;
-    padding: 2px 10px;
-    border-radius: 3px;
-    border: 1px solid var(--ga-blue-300, #6b8cff);
-    background: transparent;
-    color: var(--ga-blue-300, #6b8cff);
+    height: var(--ga-control-h-sm, 22px);
+    font-family: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-sub, #1e1b16);
+    color: var(--ga-ink-0, #f2ede4);
     cursor: pointer;
   }
+  .ctx-merge-btn:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
   .ctx-merge-btn:disabled { opacity: 0.4; cursor: default; }
   .ctx-menu {
     position: fixed;
     z-index: 1000;
-    background: var(--bg-tertiary, #1a1a1e);
-    border: 1px solid #333;
-    border-radius: 4px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     padding: 4px 0;
     min-width: 100px;
-    box-shadow: 0 4px 12px rgba(0,0,0,.5);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   }
   .ctx-item {
     display: block;
@@ -10025,43 +10062,43 @@
     padding: 6px 14px;
     background: none;
     border: none;
-    color: var(--text-primary, #ccc);
-    font-size: 12px;
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-body, 13px);
+    font-weight: 500;
     text-align: left;
     cursor: pointer;
     font-family: inherit;
   }
   .ctx-item:hover {
-    background: rgba(255,255,255,.08);
-    color: #fff;
+    background: var(--ga-sub, #1e1b16);
+    color: var(--ga-ink-0, #f2ede4);
   }
-  .ctx-danger { color: #ff6b6b; }
-  .ctx-danger:hover { background: rgba(255,80,80,.12); color: #ff4444; }
-  .ctx-disabled { color: #555; cursor: default; }
-  .ctx-disabled:hover { background: none; color: #555; }
-  /* Highlighted "primary" menu item — used for the most-likely action like
-     "Save Project" or "Update Preset" so it stands out in the menu. */
+  .ctx-danger { color: var(--ga-rec, #ff3b30); }
+  .ctx-danger:hover { background: color-mix(in srgb, var(--ga-rec, #ff3b30) 14%, transparent); color: var(--ga-rec, #ff3b30); }
+  .ctx-disabled { color: var(--ga-ink-2, #89857e); cursor: default; }
+  .ctx-disabled:hover { background: none; color: var(--ga-ink-2, #89857e); }
+  /* The most likely action ("Save project", "Update preset"), set in the
+     stronger weight so it leads the menu. */
   .ctx-primary {
-    color: #FF8577;
-    font-weight: 700;
+    color: var(--ga-ink-0, #f2ede4);
+    font-weight: var(--ga-weight-control, 600);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 14px;
   }
   .ctx-primary:hover {
-    background: rgba(255, 133, 119, 0.12);
-    color: #ffa899;
+    background: var(--ga-sub, #1e1b16);
   }
   .ctx-shortcut {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #89857e);
     font-weight: 400;
   }
   .ctx-separator {
     height: 1px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--ga-line-1, rgba(245, 236, 222, 0.07));
     margin: 4px 0;
   }
 
@@ -10369,28 +10406,32 @@
   .media-list::-webkit-scrollbar-track,
   .grid-section::-webkit-scrollbar-track,
   .deck-scroll::-webkit-scrollbar-track {
-    background: #141414;
+    background: var(--ga-bar, #100f0d);
   }
 
   .media-list::-webkit-scrollbar-thumb,
   .grid-section::-webkit-scrollbar-thumb,
   .deck-scroll::-webkit-scrollbar-thumb {
-    background: #333;
+    background: var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 3px;
   }
 
   .media-list::-webkit-scrollbar-thumb:hover,
   .grid-section::-webkit-scrollbar-thumb:hover,
   .deck-scroll::-webkit-scrollbar-thumb:hover {
-    background: #444;
+    background: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
-  /* Blocks Tab Bar */
+  /* Blocks Tab Bar: the deck's top bar. Same face, padding and control
+     size as the dock under it, so the two read as one pair. */
   .blocks-tab-bar {
-    background: #08090b;
-    border: 1px solid #24262b;
-    border-radius: 7px;
-    min-height: 42px;
+    --vj-header-font: var(--ga-text-body, 13px);
+    --vj-control-h: var(--ga-bar-control-h, 30px);
+    background: var(--ga-bar, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-soft, 8px);
+    min-height: 44px;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -10400,6 +10441,7 @@
 
   .blocks-tabs {
     display: flex;
+    align-items: center;
     gap: 4px;
     flex: 1;
     min-width: 0;
@@ -10422,11 +10464,11 @@
   }
 
   .blocks-tabs::-webkit-scrollbar-track {
-    background: #141414;
+    background: var(--ga-bar, #100f0d);
   }
 
   .blocks-tabs::-webkit-scrollbar-thumb {
-    background: #333;
+    background: var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 2px;
   }
 
@@ -10434,53 +10476,65 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 4px;
+    height: var(--vj-control-h);
+    box-sizing: border-box;
+    padding: 0 12px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
     white-space: nowrap;
     min-width: 80px;
+    flex: 0 0 auto;
   }
 
   .block-tab:hover {
-    background: var(--bg-secondary, #111114);
-    border-color: #444;
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+  }
+
+  .block-tab:hover .block-name {
+    color: var(--ga-ink-0, #f2ede4);
+  }
+
+  .block-tab:focus-visible {
+    outline: 2px solid var(--ga-focus, #8aa4ff);
+    outline-offset: 1px;
   }
 
   .block-tab.active {
-    background: var(--accent-primary, #BB86FC);
-    border-color: var(--accent-primary, #BB86FC);
-    color: #000;
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .block-tab.active .block-name {
-    color: #000;
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .block-tab.dragover {
-    border-color: var(--accent-primary, #BB86FC);
-    box-shadow: 0 0 0 1px rgba(187, 134, 252, 0.55), 0 0 12px rgba(187, 134, 252, 0.22);
+    border-color: var(--ga-selection-line, #5278ff);
+    box-shadow: 0 0 0 1px var(--ga-selection-line, #5278ff);
     transform: translateY(-1px);
   }
 
   .block-name {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--vj-header-font);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1, #ada9a2);
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .block-name-input {
-    background: #111;
-    border: 1px solid var(--accent-primary, #BB86FC);
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-focus, #8aa4ff);
     border-radius: 3px;
-    color: #fff;
-    font-size: 12px;
-    font-weight: 600;
+    color: var(--ga-ink-0, #f2ede4);
+    font-family: inherit;
+    font-size: var(--vj-header-font);
+    font-weight: var(--ga-weight-control, 600);
     padding: 2px 6px;
     width: 80px;
     outline: none;
@@ -10489,8 +10543,8 @@
   .block-delete-btn {
     background: none;
     border: none;
-    color: #666;
-    font-size: 13px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-body, 13px);
     font-weight: 700;
     cursor: pointer;
     padding: 0;
@@ -10500,7 +10554,7 @@
     text-align: center;
     border-radius: 50%;
     opacity: 0;
-    transition: all 0.1s;
+    transition: opacity 0.1s, background 0.1s, color 0.1s;
   }
 
   .block-tab:hover .block-delete-btn {
@@ -10508,41 +10562,44 @@
   }
 
   .block-delete-btn:hover {
-    background: rgba(255, 68, 68, 0.3);
-    color: #ff4444;
+    background: color-mix(in srgb, var(--ga-rec, #ff3b30) 25%, transparent);
+    color: var(--ga-rec, #ff3b30);
   }
 
   .block-tab.active .block-delete-btn {
-    color: #333;
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .block-tab.active .block-delete-btn:hover {
-    background: rgba(0, 0, 0, 0.2);
-    color: #000;
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
+  /* Add block: a dashed slot where the next tab will go. */
   .add-block-btn {
-    width: 80px;
-    align-self: stretch;
-    min-height: 30px;
-    background: #222;
-    border: 1px dashed #505665;
-    border-radius: 4px;
-    color: #666;
-    font-size: 20px;
-    font-weight: 300;
+    width: 36px;
+    height: var(--vj-control-h);
+    box-sizing: border-box;
+    background: transparent;
+    border: 1px dashed var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0;
   }
 
   .add-block-btn:hover {
-    background: #333;
-    border-color: var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    background: var(--ga-card, #16140f);
+    border-color: var(--ga-ink-2, #89857e);
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   /* Layer Live Preview */
@@ -10551,9 +10608,9 @@
     height: 42px;
     flex-shrink: 0;
     box-sizing: border-box;
-    background: #0a0a0a;
-    border: 2px solid #222;
-    border-radius: 4px;
+    background: var(--ga-slot, #060504);
+    border: 2px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+    border-radius: var(--ga-r-hard, 5px);
     overflow: hidden;
     position: relative;
     display: flex;
@@ -10566,9 +10623,9 @@
     cursor: grabbing;
   }
 
+  /* Lit in full ink while the layer plays, like its playing cell. */
   .layer-live-preview.has-clip {
-    border-color: var(--accent-primary, #BB86FC);
-    box-shadow: 0 0 8px rgba(187, 134, 252, 0.3);
+    border-color: color-mix(in srgb, var(--ga-ink-0, #f2ede4) 70%, transparent);
   }
 
   .live-preview-thumb {
@@ -10613,8 +10670,8 @@
   }
 
   .live-preview-empty {
-    color: #333;
-    font-size: 14px;
+    color: var(--ga-ink-3, #39342c);
+    font-size: var(--ga-text-title, 14px);
   }
 
   .live-indicator-dot {
@@ -10623,7 +10680,7 @@
     right: 3px;
     width: 6px;
     height: 6px;
-    background: #ff3333;
+    background: var(--ga-rec, #ff3b30);
     border-radius: 50%;
     animation: blink 1s infinite;
   }
@@ -10639,17 +10696,17 @@
 
   .layer-row.dragging {
     opacity: 0.5;
-    background: var(--bg-primary, #0d0d10);
+    background: var(--ga-void, #0a0908);
   }
 
   .layer-row.drag-over {
-    border-top: 2px solid var(--accent-primary, #BB86FC);
+    border-top: 2px solid var(--ga-selection-line, #5278ff);
     margin-top: -2px;
   }
 
   /* Moving a row down: it lands after the row under the pointer. */
   .layer-row.drag-over-below {
-    border-bottom: 2px solid var(--accent-primary, #BB86FC);
+    border-bottom: 2px solid var(--ga-selection-line, #5278ff);
     margin-bottom: -2px;
   }
 
@@ -10657,17 +10714,17 @@
   .layer-number {
     position: absolute;
     z-index: 2;
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
     line-height: 1;
-    color: #fff;
+    color: var(--ga-ink-0, #f2ede4);
     background: rgba(0, 0, 0, 0.6);
     border-radius: 3px;
     padding: 2px 3px;
     pointer-events: none;
   }
   .layer-grip { top: 2px; left: 2px; opacity: 0.75; }
-  .layer-number { bottom: 2px; left: 2px; font-weight: 600; }
-  .layer-live-preview:hover .layer-grip { opacity: 1; background: var(--accent-primary, #BB86FC); color: #000; }
+  .layer-number { bottom: 2px; left: 2px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .layer-live-preview:hover .layer-grip { opacity: 1; background: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff); }
 
   /* Corner handles for filling a row with a clip. */
   .fill-handle {
@@ -10678,18 +10735,18 @@
     z-index: 4;
     cursor: ew-resize;
     opacity: 0;
-    background: var(--accent-primary, #BB86FC);
+    background: var(--ga-selection-line, #5278ff);
     touch-action: none;
   }
   .fill-handle.left { left: 0; border-top-right-radius: 8px; }
   .fill-handle.right { right: 0; border-top-left-radius: 8px; }
   .clip-cell:hover .fill-handle,
   .clip-cell.fill-source .fill-handle { opacity: 0.9; }
-  .clip-cell.fill-source { border-color: var(--accent-primary, #BB86FC); }
+  .clip-cell.fill-source { border-color: var(--ga-selection-line, #5278ff); }
   .clip-cell.fill-target {
-    border-color: var(--accent-primary, #BB86FC);
-    box-shadow: inset 0 0 0 2px var(--accent-primary, #BB86FC);
-    background: color-mix(in srgb, var(--accent-primary, #BB86FC) 18%, transparent);
+    border-color: var(--ga-selection-line, #5278ff);
+    box-shadow: inset 0 0 0 2px var(--ga-selection-line, #5278ff);
+    background: color-mix(in srgb, var(--ga-selection-bg, #1f3170) 50%, transparent);
   }
 
   /* A clip whose file is not on disk. */
@@ -10767,13 +10824,20 @@
   .missing-files-bar button:disabled { opacity: 0.5; cursor: default; }
   .ctx-note { font-size: 11px; color: #ffb454; max-width: 280px; white-space: normal; line-height: 1.35; }
 
+  /* Eyebrow over the live thumbnails. */
   .live-preview-header {
     width: 56px;
     flex-shrink: 0;
     box-sizing: border-box;
-    font-size: 10px;
-    font-weight: 600;
-    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    line-height: 1.2;
+    color: var(--ga-ink-2, #89857e);
     text-align: center;
     padding: 4px 0;
   }
@@ -11061,10 +11125,10 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: #141418;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    color: #e8e8ea;
+    background: var(--ga-panel, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-soft, 8px);
+    color: var(--ga-ink-0, #f2ede4);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   }
 
@@ -11074,12 +11138,12 @@
     justify-content: space-between;
     flex: 0 0 auto;
     padding: 14px 18px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
   }
 
   .cpm-title {
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--ga-text-heading, 16px);
+    font-weight: var(--ga-weight-title, 650);
   }
 
   .cpm-close {
@@ -11089,15 +11153,15 @@
     align-items: center;
     justify-content: center;
     background: transparent;
-    color: var(--text-secondary, #aaa);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 4px;
+    color: var(--ga-ink-1, #ada9a2);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
 
   .cpm-close:hover {
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.3);
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .cpm-body {
@@ -11110,16 +11174,17 @@
   .cpm-empty {
     padding: 40px;
     text-align: center;
-    color: var(--text-muted, #888);
-    font-size: 14px;
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-body, 13px);
   }
 
   .cpm-section-title {
     padding: 16px 18px 6px;
-    color: var(--text-muted, #888);
-    font-size: 12px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1.1px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .cpm-grid {
@@ -11134,25 +11199,25 @@
     flex-direction: column;
     gap: 8px;
     padding: 8px;
-    background: #1c1c22;
+    background: var(--ga-card, #16140f);
     color: inherit;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-tile, 7px);
     cursor: pointer;
     text-align: left;
     transition: border-color 120ms, background 120ms;
   }
 
   .cpm-card:hover {
-    background: var(--ga-blue-mute-800);
-    border-color: #BB86FC;
+    background: var(--ga-sub, #1e1b16);
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   .cpm-thumb {
     width: 100%;
     aspect-ratio: 16 / 9;
     object-fit: cover;
-    background: #08080a;
+    background: var(--ga-slot, #060504);
     border-radius: 4px;
   }
 
@@ -11160,8 +11225,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-muted, #777);
-    font-size: 12px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-control, 12px);
   }
 
   .cpm-name,
@@ -11186,8 +11251,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-primary, #ddd);
-    font-size: 13px;
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-body, 13px);
   }
 
   /* ========== Audio Control Bar ========== */
@@ -11230,8 +11295,8 @@
   }
 
   .shader-param.modulated {
-    border-left-color: #a855f7;
-    background: rgba(168, 85, 247, 0.05);
+    border-left-color: var(--ga-violet, #9b87f5);
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
     border-radius: 0 4px 4px 0;
   }
 
@@ -11244,23 +11309,25 @@
   }
 
   .shader-param-name {
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #ada9a2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
   }
 
+  /* Same chip as the mapping media tray's shader params. */
   .mod-source-chip {
-    font-size: 10px;
-    padding: 1px 8px;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 3px;
-    color: #666;
+    font-family: inherit;
+    font-size: var(--ga-text-meta, 11px);
+    padding: 2px 8px;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
     cursor: pointer;
-    max-width: 78px;
+    max-width: 85px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -11268,19 +11335,19 @@
   }
 
   .mod-source-chip:hover {
-    border-color: #777;
-    color: #bbb;
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-1, #ada9a2);
   }
 
   .mod-source-chip.active {
-    border-color: #a855f7;
-    color: #a855f7;
-    background: var(--ga-blue-mute-800);
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    color: var(--ga-violet, #9b87f5);
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
   }
 
   .mod-source-chip.open {
-    border-color: #a855f7;
-    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.35);
+    border-color: var(--ga-violet, #9b87f5);
+    box-shadow: 0 0 0 1px var(--ga-violet-line, rgba(155, 135, 245, 0.36));
   }
 
   .shader-param-slider {
@@ -11305,7 +11372,7 @@
   .param-slider {
     width: 100%;
     height: 3px;
-    accent-color: var(--accent-primary, #BB86FC);
+    accent-color: var(--ga-violet, #9b87f5);
   }
 
   /* ─── Auto-mode slippers (overlay on slider track) ─── */
@@ -11379,10 +11446,11 @@
   }
 
   .param-val {
-    font-size: 10px;
-    color: #555;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #89857e);
     font-variant-numeric: tabular-nums;
-    min-width: 32px;
+    min-width: 36px;
     text-align: right;
   }
 
@@ -11391,21 +11459,29 @@
   }
 
   .bool-toggle {
-    padding: 2px 10px;
-    border: 1px solid #333;
-    border-radius: 3px;
-    background: var(--bg-primary, #0d0d10);
-    color: #666;
-    font-size: 10px;
-    font-weight: 700;
+    height: var(--ga-control-h-sm, 22px);
+    min-width: 48px;
+    padding: 0 10px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-1, #ada9a2);
+    font-family: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
-    transition: all 0.1s;
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
+  }
+
+  .bool-toggle:hover {
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .bool-toggle.on {
-    background: #1a3a1a;
-    border-color: #22c55e;
-    color: #22c55e;
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .shader-param-select {
@@ -11414,12 +11490,13 @@
 
   .long-select {
     width: 100%;
-    font-size: 11px;
-    padding: 5px 8px;
-    background-color: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 3px;
-    color: var(--text-secondary, #aaa);
+    height: var(--ga-control-h, 26px);
+    font-size: var(--ga-text-control, 12px);
+    padding: 0 8px;
+    background-color: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .audio-ready-badge {
@@ -11436,7 +11513,7 @@
   }
 
   .audio-warn {
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
     color: #f59e0b;
     background: rgba(245, 158, 11, 0.08);
     border: 1px solid rgba(245, 158, 11, 0.2);
@@ -11518,8 +11595,8 @@
   .performer-resize-handle {
     flex-shrink: 0;
     height: 8px;
-    background: #111;
-    border-bottom: 1px solid #333;
+    background: var(--ga-bar, #100f0d);
+    border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     cursor: ns-resize;
     display: flex;
     align-items: center;
@@ -11530,18 +11607,18 @@
 
   .performer-resize-handle:hover,
   .performer-resize-handle:active {
-    background: #222;
+    background: var(--ga-sub, #1e1b16);
   }
 
   .performer-resize-handle .resize-grip {
     width: 48px;
     height: 3px;
-    background: #555;
+    background: var(--ga-line-3, rgba(245, 236, 222, 0.24));
     border-radius: 2px;
   }
 
   .performer-resize-handle:hover .resize-grip {
-    background: #999;
+    background: var(--ga-ink-2, #89857e);
   }
   .performer-overlay.hidden {
     pointer-events: none;
@@ -11636,28 +11713,29 @@
 
   /* Splat / Model3D param panel details sections */
   .shader-params-panel details {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
 
+  /* Section eyebrows. */
   .shader-params-panel summary {
-    padding: 6px 8px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary, #aaa);
+    padding: 8px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    color: var(--ga-ink-2, #89857e);
     cursor: pointer;
     user-select: none;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .shader-params-panel summary:hover {
-    color: var(--text-primary, #ddd);
+    color: var(--ga-ink-1, #ada9a2);
     background: rgba(255, 255, 255, 0.03);
   }
 
   .shader-params-panel details[open] summary {
-    color: #bb86fc;
-    border-bottom: 1px solid rgba(187, 134, 252, 0.1);
+    color: var(--ga-ink-1, #ada9a2);
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
 
   .shader-params-panel details > div {
@@ -11666,12 +11744,13 @@
 
   .shader-params-panel .param-row select {
     flex: 1;
-    background-color: #1a1a1e;
-    border: 1px solid #333;
-    color: var(--text-primary, #ccc);
-    border-radius: 3px;
-    font-size: 12px;
-    padding: 2px 4px;
+    height: var(--ga-control-h-sm, 22px);
+    background-color: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
+    border-radius: var(--ga-r-hard, 5px);
+    font-size: var(--ga-text-control, 12px);
+    padding: 0 4px;
   }
 
   .splat-params-panel {
@@ -11766,13 +11845,14 @@
   }
 
   /* ── Grid Dimension Controls ── */
+  /* Rows / Cols steppers: built like the Nudge group in the same bar. */
   .grid-dimension-controls {
     display: flex;
     align-items: center;
     flex-shrink: 0;
     gap: 6px;
-    padding: 0 6px 0 0;
-    border-right: 1px solid #34363c;
+    padding: 0 8px 0 0;
+    border-right: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     margin: 0;
   }
 
@@ -11781,30 +11861,37 @@
     box-sizing: border-box;
     align-items: center;
     gap: 0;
-    height: 28px;
-    border: 1px solid #34363c;
-    border-radius: 4px;
-    background: #1b1b1b;
+    height: var(--vj-control-h, 30px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card, #16140f);
     overflow: hidden;
   }
 
+  .dim-group:hover {
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+  }
+
   .dim-label {
-    font-size: 10px;
-    color: var(--text-muted, #888);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-2, #89857e);
+    letter-spacing: 0;
+    text-transform: none;
     margin-right: 0;
-    padding: 0 5px;
+    padding: 0 8px;
   }
 
   .dim-btn {
-    width: 22px;
-    height: 26px;
-    background: #222;
+    width: 28px;
+    height: 100%;
+    background: transparent;
     border: 0;
+    border-left: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 0;
-    color: var(--text-primary, #ccc);
-    font-size: 14px;
+    color: var(--ga-ink-0, #f2ede4);
+    font-family: inherit;
+    font-size: var(--ga-text-title, 14px);
     font-weight: 600;
     cursor: pointer;
     display: flex;
@@ -11815,23 +11902,27 @@
   }
 
   .dim-btn:hover {
-    background: var(--accent-primary, #BB86FC);
-    border-color: var(--accent-primary, #BB86FC);
-    color: #000;
+    background: var(--ga-sub, #1e1b16);
   }
 
   .dim-btn:focus-visible {
-    outline: 2px solid var(--accent-primary, #BB86FC);
+    outline: 2px solid var(--ga-focus, #8aa4ff);
     outline-offset: -2px;
   }
 
   .dim-value {
-    font-size: 13px;
-    color: #fff;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--ga-text-body, 13px);
+    color: var(--ga-ink-0, #f2ede4);
     font-weight: 600;
-    min-width: 16px;
+    min-width: 24px;
     font-variant-numeric: tabular-nums;
     text-align: center;
+    border-left: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-slot, #060504);
   }
 
   .stage-toggle {
@@ -11864,18 +11955,19 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 20px;
-    border-top: 1px solid #333;
-    border-bottom: 1px solid #333;
-    background: #141414;
+    padding: 6px 12px;
+    border-top: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-bar, #100f0d);
     flex-shrink: 0;
   }
 
   .stage-presets-label {
-    font-size: 11px;
-    color: #f90;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    color: var(--ga-ink-2, #89857e);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     flex-shrink: 0;
   }
 
@@ -11892,26 +11984,26 @@
     align-items: center;
     gap: 2px;
     padding: 4px 8px;
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 4px;
-    color: var(--text-secondary, #aaa);
-    font-size: 11px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-meta, 11px);
     cursor: pointer;
     flex-shrink: 0;
     min-width: 60px;
-    transition: all 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
 
   .stage-preset-btn:hover {
-    border-color: #f90;
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .stage-preset-btn.active {
-    border-color: #f90;
-    background: #2a1a00;
-    color: #f90;
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .stage-preset-thumb {
@@ -11929,49 +12021,51 @@
   }
   .stage-preset-name-input {
     width: 70px;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid var(--ga-blue-300);
-    color: #fff;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-focus, #8aa4ff);
+    color: var(--ga-ink-0, #f2ede4);
     border-radius: 3px;
     padding: 1px 4px;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
     font-family: inherit;
     outline: none;
   }
 
   .stage-preset-save-btn {
-    padding: 4px 10px;
-    background: #222;
-    border: 1px dashed #555;
-    border-radius: 4px;
-    color: var(--text-muted, #888);
-    font-size: 11px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 10px;
+    background: transparent;
+    border: 1px dashed var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     flex-shrink: 0;
   }
 
   .stage-preset-save-btn:hover {
-    border-color: #f90;
-    color: #f90;
+    border-color: var(--ga-ink-2, #89857e);
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   /* Update-active-preset button — outlined cyan, distinct from
      "+ Save" so the destructive overwrite isn't reached by muscle
      memory. Filled on hover to confirm intent. */
   .stage-preset-update-btn {
-    padding: 4px 10px;
-    background: transparent;
-    border: 1px solid var(--ga-blue-300);
-    border-radius: 4px;
-    color: var(--ga-blue-300);
-    font-size: 11px;
-    font-weight: 600;
+    height: var(--ga-control-h, 26px);
+    padding: 0 10px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     flex-shrink: 0;
   }
   .stage-preset-update-btn:hover {
-    background: var(--ga-blue-a16);
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .stage-scope-toggle {
@@ -12229,12 +12323,12 @@
   .video-controls-panel {
     margin: 0;
     padding: 8px;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--ga-card, #16140f);
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
   .vt-playback-options { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-  .vt-playback-options .vt-speed { height: 28px; border-radius: 5px; }
+  .vt-playback-options .vt-speed { height: var(--ga-control-h, 26px); border-radius: var(--ga-r-hard, 5px); }
   .vt-transport {
     display: flex;
     flex-wrap: wrap;
@@ -12243,12 +12337,13 @@
     margin-bottom: 8px;
   }
   .vt-btn {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-primary, #ccc);
-    border: none;
-    width: 28px;
-    height: 28px;
-    border-radius: 4px;
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-1, #ada9a2);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    padding: 0;
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -12256,37 +12351,39 @@
     transition: background 0.15s, color 0.15s;
     flex-shrink: 0;
   }
-  .vt-btn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+  .vt-btn:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
   .vt-btn:disabled { opacity: 0.4; cursor: wait; }
   .vt-play {
-    background: var(--accent-primary, #BB86FC);
-    color: #111;
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
-  .vt-play:hover { background: #CF6EFF; color: #000; }
+  .vt-play:hover:not(:disabled) { border-color: var(--ga-selection-ink, #e0e8ff); color: var(--ga-selection-ink, #e0e8ff); }
   .vt-time {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-2, #89857e);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     margin-left: 4px;
     flex: 1;
     white-space: nowrap;
   }
   .vt-speed {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-secondary, #aaa);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
-    font-size: 12px;
-    padding: 2px 4px;
+    background: var(--ga-slot, #060504);
+    color: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    font-size: var(--ga-text-control, 12px);
+    padding: 0 6px;
     cursor: pointer;
     flex-shrink: 0;
   }
-  .vt-speed:hover { border-color: rgba(255, 255, 255, 0.25); }
+  .vt-speed:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
 
   .vt-timeline {
     position: relative;
     height: 24px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--ga-slot, #060504);
+    box-shadow: inset 0 0 0 1px var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: 3px;
     cursor: pointer;
     margin-bottom: 8px;
@@ -12308,9 +12405,9 @@
     position: absolute;
     top: 0;
     height: 100%;
-    background: rgba(187, 134, 252, 0.15);
-    border-top: 2px solid rgba(187, 134, 252, 0.35);
-    border-bottom: 2px solid rgba(187, 134, 252, 0.35);
+    background: color-mix(in srgb, var(--ga-selection-bg, #1f3170) 55%, transparent);
+    border-top: 2px solid color-mix(in srgb, var(--ga-selection-line, #5278ff) 60%, transparent);
+    border-bottom: 2px solid color-mix(in srgb, var(--ga-selection-line, #5278ff) 60%, transparent);
     pointer-events: none;
     z-index: 1;
   }
@@ -12319,8 +12416,8 @@
     top: -2px;
     width: 2px;
     height: calc(100% + 4px);
-    background: var(--accent-primary, #BB86FC);
-    box-shadow: 0 0 4px rgba(187, 134, 252, 0.6);
+    background: var(--ga-ink-0, #f2ede4);
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
     z-index: 3;
     pointer-events: none;
     transform: translateX(-1px);
@@ -12344,11 +12441,11 @@
     transform: translateX(-50%);
     width: 2px;
     height: 50%;
-    background: rgba(187, 134, 252, 0.7);
+    background: var(--ga-selection-line, #5278ff);
     border-radius: 1px;
   }
-  .vt-trim-handle:hover { background: rgba(187, 134, 252, 0.25); }
-  .vt-trim-handle:hover::after { background: var(--accent-primary, #BB86FC); }
+  .vt-trim-handle:hover { background: color-mix(in srgb, var(--ga-selection-line, #5278ff) 30%, transparent); }
+  .vt-trim-handle:hover::after { background: var(--ga-selection-ink, #e0e8ff); }
 
 
   /* Per-clip transform section — sits below the trim/playback row.
@@ -12359,13 +12456,14 @@
     gap: 6px;
     margin-top: 8px;
     padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
   .vt-section-title {
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: #777;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2, #89857e);
     margin-bottom: 2px;
   }
   .vt-tf-row {
@@ -12375,18 +12473,19 @@
     gap: 8px;
   }
   .vt-tf-label {
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #ada9a2);
   }
   .vt-tf-num {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
-    color: var(--ga-blue-300);
+    font-size: var(--ga-text-meta, 11px);
+    font-variant-numeric: tabular-nums;
+    color: var(--ga-ink-1, #ada9a2);
     text-align: right;
   }
   .vt-tf-row input[type="range"] {
     width: 100%;
-    accent-color: var(--ga-blue-300);
+    accent-color: var(--ga-selection-line, #5278ff);
   }
   .vt-tf-select {
     background: rgba(255, 255, 255, 0.05);
@@ -12403,30 +12502,25 @@
   }
   .vt-toggle-btn {
     width: 100%;
-    height: 24px;
-    border-radius: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--text-secondary, #aaa);
-    font-size: 11px;
-    font-weight: 700;
+    height: var(--ga-control-h-sm, 22px);
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-1, #ada9a2);
+    font-family: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
+  .vt-toggle-btn:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
   .vt-toggle-btn.active {
-    border-color: var(--ga-blue-a45);
-    background: var(--ga-blue-a16);
-    color: var(--ga-blue-300);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
-  .vt-audio .vt-toggle-btn.active {
-    border-color: var(--ga-blue-500);
-    background: var(--ga-blue-700);
-    color: #e0e8ff;
-  }
-  .vt-audio input[type="range"] { accent-color: var(--ga-blue-500); }
-  .vt-audio .vt-tf-num { color: #dce3f3; }
   .vt-audio-note {
-    font-size: 10px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #89857e);
     font-style: italic;
   }
   .vt-tf-reset {

@@ -301,7 +301,7 @@
         <span></span>
       </label>
       <strong class="card-title">Output</strong>
-      <span class="state" class:live={liveState === 'LIVE'} class:blackout={liveState === 'BLACKOUT'}>{liveState}</span>
+      <span class="state" class:live={liveState === 'LIVE'} class:blackout={liveState === 'BLACKOUT'}>{liveState.charAt(0) + liveState.slice(1).toLowerCase()}</span>
       <button
         class="blackout-button"
         class:active={blackout}
@@ -705,9 +705,9 @@
   }
 
   .pm-card {
-    background: #111116;
-    border: 1px solid #2a2a30;
-    border-radius: 6px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
     overflow: hidden;
   }
 
@@ -717,8 +717,8 @@
     gap: 8px;
     align-items: center;
     padding: 10px 12px;
-    background: #15151b;
-    border-bottom: 1px solid #24242a;
+    background: var(--ga-sub);
+    border-bottom: 1px solid var(--ga-line-2);
   }
 
   .editor-header {
@@ -726,7 +726,7 @@
   }
 
   .card-title {
-    color: #e7e7eb;
+    color: var(--ga-ink-0);
     font-size: 13px;
   }
 
@@ -745,15 +745,15 @@
     min-width: 0;
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid #33333a;
-    border-radius: 4px;
-    background: #09090c;
-    color: #e7e7eb;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
     padding: 7px 8px;
   }
 
   .field-grid input:disabled {
-    color: #6f6f79;
+    color: var(--ga-ink-3);
   }
 
   .name-input {
@@ -781,7 +781,7 @@
     width: 26px;
     height: 14px;
     border-radius: 7px;
-    background: #3b3b42;
+    background: var(--ga-raise);
     position: relative;
     pointer-events: none;
   }
@@ -794,7 +794,7 @@
     left: 2px;
     top: 2px;
     border-radius: 50%;
-    background: #aaa;
+    background: var(--ga-ink-1);
     transition: transform 120ms, background 120ms;
   }
 
@@ -808,18 +808,17 @@
   }
 
   .state {
-    color: #686873;
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
-    letter-spacing: 0.08em;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
   }
 
   .state.live {
-    color: #4ade80;
+    color: var(--ga-green, #46d18a);
   }
 
   .state.blackout {
-    color: #ff6b6b;
+    color: var(--ga-rec, #ff3b30);
   }
 
   .blackout-button,
@@ -828,10 +827,10 @@
   .tool-row button,
   .test-patterns button,
   .panel-tabs button {
-    border: 1px solid #323239;
-    border-radius: 4px;
-    background: #141419;
-    color: #8c8c96;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     cursor: pointer;
     font-size: 12px;
   }
@@ -841,20 +840,20 @@
   }
 
   .blackout-button.active {
-    border-color: #ff6b6b;
-    color: #ff6b6b;
+    border-color: var(--ga-rec, #ff3b30);
+    color: var(--ga-rec, #ff3b30);
     background: rgba(255, 107, 107, 0.1);
   }
 
   .remove-button {
     width: 28px;
     height: 28px;
-    color: #888;
+    color: var(--ga-ink-2);
   }
 
   .remove-button:hover {
-    border-color: #ff6b6b;
-    color: #ff6b6b;
+    border-color: var(--ga-rec, #ff3b30);
+    color: var(--ga-rec, #ff3b30);
   }
 
   .output-grid,
@@ -872,10 +871,8 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    color: #858590;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta, 11px);
   }
 
   .output-grid .wide {
@@ -891,7 +888,7 @@
     text-transform: none !important;
     letter-spacing: 0 !important;
     font-size: 12px !important;
-    color: #aaa !important;
+    color: var(--ga-ink-1) !important;
   }
 
   .output-grid .check-option {
@@ -907,8 +904,8 @@
     flex-wrap: wrap;
     gap: 6px 14px;
     padding: 8px 12px 10px;
-    border-top: 1px solid #202026;
-    color: #777781;
+    border-top: 1px solid var(--ga-line-1);
+    color: var(--ga-ink-2);
     font-size: 11px;
   }
 
@@ -924,7 +921,7 @@
 
   .error-text,
   .issue {
-    color: #ff8a8a;
+    color: var(--ga-rec, #ff3b30);
   }
 
   .list-title {
@@ -932,11 +929,11 @@
     align-items: center;
     justify-content: space-between;
     margin-top: 6px;
-    color: #777781;
-    font-size: 10px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .add-button {
@@ -954,12 +951,12 @@
   }
 
   .empty {
-    color: #70707a;
+    color: var(--ga-ink-2);
     font-size: 11px;
     line-height: 1.45;
     padding: 10px 12px;
-    border: 1px dashed #2a2a30;
-    border-radius: 6px;
+    border: 1px dashed var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
   }
 
   .fixture-list {
@@ -973,14 +970,14 @@
     gap: 8px;
     align-items: center;
     padding: 7px 10px 7px 0;
-    border: 1px solid #2a2a30;
-    border-radius: 5px;
-    background: #111116;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
     cursor: pointer;
   }
 
   .fixture-row:hover {
-    border-color: #3a3a44;
+    border-color: var(--ga-line-3);
   }
 
   .fixture-row.selected {
@@ -989,7 +986,7 @@
   }
 
   .fixture-name {
-    color: #e7e7eb;
+    color: var(--ga-ink-0);
     font-size: 12px;
     font-weight: 600;
     overflow: hidden;
@@ -998,7 +995,7 @@
   }
 
   .fixture-summary {
-    color: #858590;
+    color: var(--ga-ink-2);
     font-size: 11px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1006,11 +1003,9 @@
   }
 
   .badge {
-    color: #686873;
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 600;
   }
 
   .badge.warn {
@@ -1018,7 +1013,7 @@
   }
 
   .badge.danger {
-    color: #ff6b6b;
+    color: var(--ga-rec, #ff3b30);
   }
 
   .patch-note,
@@ -1030,15 +1025,15 @@
   }
 
   .patch-note {
-    color: #777781;
+    color: var(--ga-ink-2);
   }
 
   .panel-tabs {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     padding: 0 12px;
-    border-top: 1px solid #202026;
-    border-bottom: 1px solid #202026;
+    border-top: 1px solid var(--ga-line-1);
+    border-bottom: 1px solid var(--ga-line-1);
   }
 
   .panel-tabs button {
@@ -1074,7 +1069,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    color: #aaa;
+    color: var(--ga-ink-1);
     font-size: 12px;
   }
 
@@ -1087,8 +1082,8 @@
     width: 100%;
     aspect-ratio: 16 / 7;
     max-height: 260px;
-    border: 1px solid #34343b;
-    background: #0d0d10;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-slot);
     cursor: default;
     touch-action: none;
   }
@@ -1101,7 +1096,7 @@
     display: flex;
     justify-content: space-between;
     gap: 10px;
-    color: #6f6f79;
+    color: var(--ga-ink-3);
     font-size: 10px;
     padding: 5px 1px 8px;
   }
@@ -1120,11 +1115,11 @@
 
   .subsection-title {
     margin: 3px 0 8px;
-    color: #777781;
+    color: var(--ga-ink-2);
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .range-grid {
@@ -1139,7 +1134,7 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    color: #aaa;
+    color: var(--ga-ink-1);
     font-size: 11px;
   }
 
@@ -1170,7 +1165,7 @@
   }
 
   .section-note {
-    color: #70707a;
+    color: var(--ga-ink-2);
     font-size: 11px;
     line-height: 1.45;
     margin: 12px 0 0;
@@ -1193,7 +1188,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    color: #aaa;
+    color: var(--ga-ink-1);
     font-size: 12px;
     margin-top: 12px;
   }
@@ -1201,20 +1196,20 @@
   .test-color input {
     width: 54px;
     height: 32px;
-    border: 1px solid #33333a;
-    background: #09090c;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-slot);
   }
 
   .conflicts {
     border: 1px solid rgba(255, 107, 107, 0.45);
     background: rgba(255, 107, 107, 0.07);
-    border-radius: 5px;
+    border-radius: var(--ga-r-hard, 5px);
     padding: 8px 10px;
   }
 
   .conflicts p {
     margin: 0;
-    color: #ff8a8a;
+    color: var(--ga-rec, #ff3b30);
     font-size: 11px;
     line-height: 1.5;
   }
@@ -1230,16 +1225,16 @@
     gap: 8px;
     align-items: center;
     font-size: 11px;
-    color: #aaa;
+    color: var(--ga-ink-1);
   }
 
   .usage-label {
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    color: #cfcfd6;
+    color: var(--ga-ink-1);
   }
 
   .usage-target {
-    color: #777781;
+    color: var(--ga-ink-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1248,8 +1243,8 @@
   .usage-bar {
     position: relative;
     height: 10px;
-    border: 1px solid #2c2c33;
-    background: #0d0d11;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-slot);
     border-radius: 2px;
     overflow: hidden;
   }
@@ -1259,7 +1254,7 @@
     top: 0;
     bottom: 0;
     background: var(--ga-blue-a45);
-    border-right: 1px solid #0d0d11;
+    border-right: 1px solid var(--ga-slot);
   }
 
   .usage-span.disabled {
@@ -1277,7 +1272,7 @@
 
   .usage-row.overlap .usage-count,
   .usage-row.overlap .usage-label {
-    color: #ff8a8a;
+    color: var(--ga-rec, #ff3b30);
   }
 
   @media (max-width: 720px) {

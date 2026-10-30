@@ -1637,7 +1637,6 @@ html[data-theme="arcade"] :is(
   input[type="search"],
   textarea,
   select,
-  .field,
   .selbox
 ) {
   background-color: var(--ga-slot, #060504) !important;

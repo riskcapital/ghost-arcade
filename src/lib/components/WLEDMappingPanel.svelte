@@ -266,7 +266,7 @@
       aria-label="Controller name"
     />
     <span class:live={controller.enabled} class="controller-state">
-      {controller.enabled ? 'LIVE' : 'OFF'}
+      {controller.enabled ? 'Live' : 'Off'}
     </span>
     <button class="remove-button" onclick={onRemove} title="Remove controller">×</button>
   </header>
@@ -573,9 +573,9 @@
 
 <style>
   .wled-card {
-    background: #111116;
-    border: 1px solid #2a2a30;
-    border-radius: 6px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
     margin-bottom: 12px;
     overflow: hidden;
   }
@@ -586,8 +586,8 @@
     gap: 8px;
     align-items: center;
     padding: 10px 12px;
-    background: #15151b;
-    border-bottom: 1px solid #24242a;
+    background: var(--ga-sub);
+    border-bottom: 1px solid var(--ga-line-2);
   }
 
   input, select, button {
@@ -601,10 +601,10 @@
     min-width: 0;
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid #33333a;
-    border-radius: 4px;
-    background: #09090c;
-    color: #e7e7eb;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
     padding: 7px 8px;
   }
 
@@ -628,7 +628,7 @@
     width: 26px;
     height: 14px;
     border-radius: 7px;
-    background: #3b3b42;
+    background: var(--ga-raise);
     position: relative;
   }
 
@@ -640,7 +640,7 @@
     left: 2px;
     top: 2px;
     border-radius: 50%;
-    background: #aaa;
+    background: var(--ga-ink-1);
     transition: transform 120ms, background 120ms;
   }
 
@@ -654,29 +654,28 @@
   }
 
   .controller-state {
-    color: #686873;
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
-    letter-spacing: 0.08em;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
   }
 
   .controller-state.live {
-    color: #4ade80;
+    color: var(--ga-green, #46d18a);
   }
 
   .remove-button {
     width: 28px;
     height: 28px;
-    border: 1px solid #33333a;
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     background: transparent;
-    color: #888;
+    color: var(--ga-ink-2);
     cursor: pointer;
   }
 
   .remove-button:hover {
-    border-color: #ff6b6b;
-    color: #ff6b6b;
+    border-color: var(--ga-rec, #ff3b30);
+    color: var(--ga-rec, #ff3b30);
   }
 
   .connection-grid {
@@ -691,18 +690,16 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    color: #858590;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta, 11px);
   }
 
   .panel-tabs {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     padding: 0 12px;
-    border-top: 1px solid #202026;
-    border-bottom: 1px solid #202026;
+    border-top: 1px solid var(--ga-line-1);
+    border-bottom: 1px solid var(--ga-line-1);
   }
 
   .panel-tabs button,
@@ -711,7 +708,7 @@
   .test-patterns button {
     border: 0;
     background: transparent;
-    color: #8c8c96;
+    color: var(--ga-ink-1);
     cursor: pointer;
   }
 
@@ -741,9 +738,9 @@
   .test-patterns button,
   .tool-row button {
     padding: 7px 8px;
-    border: 1px solid #323239;
-    border-radius: 4px;
-    background: #141419;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
     font-size: 12px;
   }
 
@@ -774,7 +771,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    color: #aaa;
+    color: var(--ga-ink-1);
     font-size: 12px;
   }
 
@@ -791,7 +788,7 @@
     text-transform: none;
     letter-spacing: 0;
     font-size: 12px;
-    color: #aaa;
+    color: var(--ga-ink-1);
   }
 
   .check-option input {
@@ -803,8 +800,8 @@
     width: 100%;
     aspect-ratio: 16 / 7;
     max-height: 260px;
-    border: 1px solid #34343b;
-    background: #0d0d10;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-slot);
     cursor: default;
     touch-action: none;
   }
@@ -817,7 +814,7 @@
     display: flex;
     justify-content: space-between;
     gap: 10px;
-    color: #6f6f79;
+    color: var(--ga-ink-3);
     font-size: 10px;
     padding: 5px 1px 8px;
   }
@@ -836,11 +833,11 @@
 
   .subsection-title {
     margin: 3px 0 8px;
-    color: #777781;
+    color: var(--ga-ink-2);
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .range-grid {
@@ -854,7 +851,7 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    color: #aaa;
+    color: var(--ga-ink-1);
     font-size: 11px;
   }
 
@@ -889,21 +886,21 @@
 
   .range-title button,
   .range-remove {
-    border: 1px solid #34343b;
-    background: #141419;
-    color: #9b9ba5;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     cursor: pointer;
   }
 
   .range-title button {
     padding: 5px 8px;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     font-size: 10px;
   }
 
   .section-note,
   .empty-ranges {
-    color: #70707a;
+    color: var(--ga-ink-2);
     font-size: 10px;
     line-height: 1.45;
   }
@@ -927,8 +924,10 @@
   .physical-range label {
     display: grid;
     gap: 3px;
-    color: #777781;
-    font-size: 9px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
   }
 
@@ -938,10 +937,10 @@
     min-width: 0;
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid #33333a;
-    border-radius: 4px;
-    background: #09090c;
-    color: #e7e7eb;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
     padding: 6px 7px;
   }
 
@@ -952,8 +951,8 @@
   .range-remove {
     width: 28px;
     height: 29px;
-    border-radius: 4px;
-    color: #ff7777;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-rec, #ff3b30);
   }
 
   .live-color-match {
@@ -963,8 +962,8 @@
     align-items: center;
     padding: 10px;
     margin-bottom: 12px;
-    border: 1px solid #2c2c33;
-    background: #0d0d11;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-slot);
   }
 
   .live-color-match > div {
@@ -976,8 +975,10 @@
 
   .color-caption {
     grid-column: 1 / -1;
-    color: #777781;
-    font-size: 9px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
   }
 
@@ -985,11 +986,11 @@
     display: block;
     width: 22px;
     height: 22px;
-    border: 1px solid #4a4a52;
+    border: 1px solid var(--ga-line-3);
   }
 
   .live-color-match code {
-    color: #b9b9c2;
+    color: var(--ga-ink-1);
     font-size: 10px;
   }
 
@@ -1001,7 +1002,7 @@
     display: grid;
     gap: 5px;
     margin-bottom: 12px;
-    color: #aaa;
+    color: var(--ga-ink-1);
     font-size: 11px;
   }
 
@@ -1013,14 +1014,14 @@
   }
 
   .color-panel .red input { accent-color: #ff6b6b; }
-  .color-panel .green input { accent-color: #4ade80; }
+  .color-panel .green input { accent-color: var(--ga-green, #46d18a); }
   .color-panel .blue input { accent-color: var(--ga-blue-300); }
 
   .test-color {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    color: #aaa;
+    color: var(--ga-ink-1);
     font-size: 12px;
     margin-top: 12px;
   }
@@ -1028,12 +1029,12 @@
   .test-color input {
     width: 54px;
     height: 32px;
-    border: 1px solid #33333a;
-    background: #09090c;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-slot);
   }
 
   .test-panel p {
-    color: #777781;
+    color: var(--ga-ink-2);
     font-size: 11px;
     line-height: 1.45;
     margin: 12px 0 0;

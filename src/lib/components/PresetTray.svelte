@@ -565,11 +565,11 @@
             <span class="rec-dot"></span>
             <span class="rec-time">{formatDuration(recordingDuration)}</span>
           </div>
-          <button class="stop-rec-btn" onclick={stopRecording}>
+          <button class="tray-stop-rec-btn" onclick={stopRecording}>
             ■ Stop recording
           </button>
         {:else}
-          <button class="rec-btn" onclick={startRecording}>
+          <button class="tray-rec-btn" onclick={startRecording}>
             ● Record output
           </button>
         {/if}
@@ -1032,8 +1032,9 @@
     margin: 4px 0;
   }
 
-  /* Recording controls: record red is meaning-bearing. */
-  .rec-btn {
+  /* Recording controls: record red is meaning-bearing. Own class names:
+     the global .rec-btn rule sizes the toolbar's square record button. */
+  .tray-rec-btn {
     height: var(--ga-control-h, 26px);
     background: transparent;
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
@@ -1052,12 +1053,12 @@
     flex: 0 0 auto;
   }
 
-  .rec-btn:hover {
+  .tray-rec-btn:hover {
     background: color-mix(in srgb, var(--ga-rec, #ff4444) 14%, transparent);
     border-color: color-mix(in srgb, var(--ga-rec, #ff4444) 55%, transparent);
   }
 
-  .stop-rec-btn {
+  .tray-stop-rec-btn {
     height: var(--ga-control-h, 26px);
     background: var(--ga-rec, #ff4444);
     border: none;
@@ -1069,7 +1070,7 @@
     cursor: pointer;
   }
 
-  .stop-rec-btn:hover {
+  .tray-stop-rec-btn:hover {
     filter: brightness(1.1);
   }
 
