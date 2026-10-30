@@ -36,7 +36,7 @@
 </script>
 
 {#if part === 'drums'}
-  <StudioModule title="DRUMS" subtitle="Each voice has its own jack: patch it to a layer or a macro">
+  <StudioModule title="DRUMS" subtitle="Patch any voice">
     {#snippet head()}
       <StudioJack id="audio:drums" label="Out" title="Drum sound" />
     {/snippet}
@@ -54,7 +54,7 @@
     </div>
   </StudioModule>
 {:else}
-  <StudioModule title="ACID" subtitle="Bass line · click a step for its pitch, right-click to rest" grow>
+  <StudioModule title="ACID" subtitle="Click a step for its note" grow>
     {#snippet head()}
       <StudioJack id="cv:acid.cutoff" label="Cutoff" title="Acid filter, as a control signal" />
       <StudioJack id="audio:acid" label="Out" title="Acid sound" />

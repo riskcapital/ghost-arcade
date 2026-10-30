@@ -5067,9 +5067,79 @@
       "enabled": true
     },
     {
-      "file": "DB-EchoTrails.fs",
+      "file": "VX-ScanField.fs",
       "tier": "demo",
-      "category": "Dub",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "analog"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-Barcode.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "berlin"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-LightLines.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "berlin"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-Panels.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "berlin"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-Glyphs.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "berlin"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-EchoRings.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
       "tags": [
         "notes",
         "music",
@@ -5081,9 +5151,9 @@
       "enabled": true
     },
     {
-      "file": "DB-Smoke.fs",
+      "file": "VX-Smoke.fs",
       "tier": "demo",
-      "category": "Dub",
+      "category": "Visual Voices",
       "tags": [
         "notes",
         "music",
@@ -5095,9 +5165,9 @@
       "enabled": true
     },
     {
-      "file": "DB-Ripples.fs",
+      "file": "VX-Scope.fs",
       "tier": "demo",
-      "category": "Dub",
+      "category": "Visual Voices",
       "tags": [
         "notes",
         "music",
@@ -5109,13 +5179,83 @@
       "enabled": true
     },
     {
-      "file": "DB-Speaker.fs",
+      "file": "VX-Nebula.fs",
       "tier": "demo",
-      "category": "Dub",
+      "category": "Visual Voices",
       "tags": [
         "notes",
         "music",
-        "dub"
+        "ambient"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-Cymatics.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "ambient"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-Aurora.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "ambient"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-VideoSynth.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "analog"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-Wobbulator.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "analog"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VX-Feedback.fs",
+      "tier": "demo",
+      "category": "Visual Voices",
+      "tags": [
+        "notes",
+        "music",
+        "analog"
       ],
       "defaults": {},
       "featured": false,

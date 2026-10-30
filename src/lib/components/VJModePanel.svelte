@@ -98,6 +98,7 @@
   import StudioView from './music/StudioView.svelte';
   import { musicStudio } from '../music/musicStudioStore';
   import { isNoteDrivenInput } from '../music/noteVisuals';
+  import { isVoiceDrivenInput } from '../music/visualVoices';
   // VJAudioBar import retained for fallback / type compatibility but the
   // standalone strip below the header was dropped — its contents are now
   // inline in the header (single source of truth, no second tap/tempo row).
@@ -1490,8 +1491,8 @@
     if (selectedLayerIndex === null) return [];
     // Reference activeClipId to make this reactive to clip changes
     void activeClipId;
-    // Note inputs are played by the music studio every frame, not set by hand.
-    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME));
+    // Note and visual voice inputs are played by the music studio every frame, not set by hand.
+    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME) && !isVoiceDrivenInput(input.NAME));
   })();
 
   // Audio-ready badge: true if current shader uses audio uniforms

@@ -6,7 +6,7 @@
   import { PLAYABLE_INSTRUMENTS, noteName, type InstrumentId } from '../../music/noteEvents';
   import { INSTRUMENT_LABELS, KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from '../../music/instruments';
   import { KEYBOARD_SIZES, keyboardRange, octaveBaseNote, type KeyboardSize } from '../../music/keyboardLayout';
-  import { NOTE_SHADERS, addNoteShaderToDeck } from '../../music/noteShaders';
+  import { VOICE_SHADERS, addVoiceRow } from '../../music/visualScenes';
   import { musicStudio } from '../../music/musicStudioStore';
   import StudioModule from './StudioModule.svelte';
   import PianoKeys from './PianoKeys.svelte';
@@ -30,8 +30,8 @@
 
   function addVisual(e: Event) {
     const el = e.target as HTMLSelectElement;
-    const shader = NOTE_SHADERS.find((n) => n.file === el.value);
-    if (shader) void addNoteShaderToDeck(shader.file, shader.name);
+    // A visual added from the keys follows what they play.
+    if (el.value) void addVoiceRow(el.value, 'played', s.set);
     el.value = '';
   }
 </script>
@@ -73,9 +73,9 @@
       <button class:on={visual.mode === 'fade'} onclick={() => musicStudio.setVisualMode(s.instrument, 'fade')} title="Visuals linger, then fade away">Fade</button>
       <button class:on={visual.mode === 'build'} onclick={() => musicStudio.setVisualMode(s.instrument, 'build')} title="Visuals keep building while you play">Build</button>
     </div>
-    <select class="add-visual" value="" aria-label="Add a note-reactive visual to the deck" onchange={addVisual}>
-      <option value="" disabled>Add a note visual…</option>
-      {#each NOTE_SHADERS as shader}<option value={shader.file}>{shader.name}</option>{/each}
+    <select class="add-visual" value="" aria-label="Add a visual that follows what you play" onchange={addVisual}>
+      <option value="" disabled>Add a visual for what you play…</option>
+      {#each VOICE_SHADERS as shader (shader.file)}<option value={shader.file}>{shader.name}</option>{/each}
     </select>
   </div>
 </StudioModule>

@@ -103,7 +103,7 @@
     </div>
   </StudioModule>
 {:else if part === 'bowls'}
-  <StudioModule title="BOWLS" subtitle="Strike, or hold to keep it lit">
+  <StudioModule title="BOWLS" subtitle="Strike, or hold">
     {#snippet head()}
       <StudioJack id="cv:bowls.ring" label="Ring" title="Bowl ring, as a control signal" />
       <StudioJack id="audio:bowls" label="Out" title="Bowl sound" />
@@ -128,7 +128,7 @@
     </div>
   </StudioModule>
 {:else if part === 'xy'}
-  <StudioModule title="XY · SPACE" subtitle="Touch to play · drone ↔ bowls · near ↔ vast" grow>
+  <StudioModule title="XY · SPACE" subtitle="Touch to play" grow>
     {#snippet head()}
       <StudioJack id="audio:xy" label="Out" title="XY tone" />
       <StudioJack id="cv:xy.x" label="X" />
@@ -166,7 +166,7 @@
     </div>
   </StudioModule>
 {:else}
-  <StudioModule title="CHORDS" subtitle="{keyLabel(s.key)} · tap to layer, tap again to let go">
+  <StudioModule title="CHORDS" subtitle="{keyLabel(s.key)} · tap to layer">
     {#snippet head()}
       {#if t.chords.length}
         <button class="clear" onclick={releaseChords}>LET GO</button>

@@ -45,7 +45,7 @@
   const LABELS: Record<string, string> = { wave1: 'Wave', wave2: 'Wave', tune1: 'Tune', tune2: 'Tune', lforate: 'Rate', lfodepth: 'Depth' };
 </script>
 
-<StudioModule title="ANALOG" subtitle="Envelope normalled to filter and amp · patch to re-route, or out to the picture" led={sounding}>
+<StudioModule title="ANALOG" subtitle="Envelope normalled to filter and amp · patch to re-route, or out to the picture" led={sounding} class="synth-panel">
   {#snippet head()}
     <button class="load" onclick={() => void loadAnalogPatch()} title="A first patch: the LFO sweeps the filter and two note visuals follow the envelope and the LFO">LOAD PATCH</button>
   {/snippet}
@@ -94,6 +94,12 @@
 </StudioModule>
 
 <style>
+  /* Walnut cheeks, as on the synths this panel is modelled on. */
+  :global(.studio-tokens.set-analog .module.synth-panel) {
+    border-left: 12px solid #5b351d;
+    border-right: 12px solid #5b351d;
+    border-image: repeating-linear-gradient(177deg, #6e4224 0 3px, #5a331b 3px 8px, #7a4c2c 8px 10px, #4e2c17 10px 14px) 12;
+  }
   .synth { flex: 1; min-height: 0; display: flex; }
   .section {
     flex: 1 1 auto;

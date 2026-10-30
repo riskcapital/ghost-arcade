@@ -1,25 +1,42 @@
-/* The music studio's palette, shared by the Studio view and the music tray:
-   the app's own deep blues for the ground and panels, blue-grey lines and
-   one blue accent. */
+/* The music studio's look.
+   Chrome (the top bar, the output, the loop library, the tray's header) is
+   the app's own: warm near-black surfaces, warm white type, the blue accent.
+   Each set's instruments sit on a face of their own, so the mode reads at a
+   glance: Sound bath is deep blue glass and gold, Berlin is black, hairlines
+   and red, Dub is deep green and amber, Analog is a matte black panel with
+   cream legends, aluminium knobs and orange. A face is any element with the
+   `face` class inside a `set-*` studio. */
 .studio-tokens {
-  --studio-ground: var(--ga-blue-900, #0a0e1f);
-  --studio-panel: color-mix(in srgb, var(--ga-blue-800, #141e40) 55%, #080a12);
-  --studio-edge: var(--ga-blue-mute-600, #404a6b);
-  --studio-edge-soft: var(--ga-blue-mute-800, #1e2336);
-  --studio-slot: #060912;
-  --studio-cell: color-mix(in srgb, var(--ga-blue-800, #141e40) 70%, #070a12);
-  --studio-ink: #e6ebf7;
-  --studio-muted: var(--ga-blue-mute-300, #818ebd);
-  --studio-accent: var(--ga-blue-400, #5278ff);
+  --studio-ground: var(--ga-void, #0a0908);
+  --studio-panel: var(--ga-panel, #100f0d);
+  --studio-cell: var(--ga-card, #16140f);
+  --studio-slot: var(--ga-slot, #060504);
+  --studio-edge: var(--ga-line2, rgba(245, 236, 222, 0.13));
+  --studio-edge-soft: var(--ga-line, rgba(245, 236, 222, 0.07));
+  --studio-ink: var(--ga-ink0, #f2ede4);
+  --studio-muted: var(--ga-ink2, #89857e);
+  --studio-accent: var(--ga-blue, #5278ff);
   --studio-accent-soft: var(--ga-blue-a16, rgba(82, 120, 255, 0.16));
   --studio-on-accent: #ffffff;
-  --studio-knob-face: radial-gradient(circle at 35% 30%, #2b3558, #0c1122 70%);
-  --studio-knob-edge: #34406a;
+  --studio-knob-face: radial-gradient(circle at 35% 30%, #3b362e, #13110e 70%);
+  --studio-knob-edge: #3d382f;
+  --studio-pointer: var(--studio-ink);
   --studio-radius: var(--ga-r-hard, 5px);
+  --studio-title-font: var(--ga-font-ui, system-ui, sans-serif);
+  --studio-title-tracking: 0.12em;
   --studio-gap: 10px;
-  --ga-slider-fill: var(--studio-accent);
 
-  /* Shared parts (keys, pads, steps, takes) read the --mk tokens. */
+  color: var(--studio-ink);
+  font-family: var(--ga-font-ui, system-ui, sans-serif);
+  font-size: var(--ga-type-control, 12px);
+  font-weight: var(--ga-font-ui-weight, 500);
+}
+
+/* Shared parts (keys, pads, steps, takes) read the --mk tokens. They are
+   declared again on each face so they pick up the face's colours. */
+.studio-tokens,
+.studio-tokens .face {
+  --ga-slider-fill: var(--studio-accent);
   --mk-accent: var(--studio-accent);
   --mk-on-accent: var(--studio-on-accent);
   --mk-ink: var(--studio-ink);
@@ -30,16 +47,92 @@
   --mk-cell: var(--studio-cell);
   --mk-cell-edge: var(--studio-edge-soft);
   --mk-radius: var(--studio-radius);
-  --mk-white: #dfe5f3;
-  --mk-black: #0d1122;
-
-  color: var(--studio-ink);
-  font-family: var(--ga-font-ui, system-ui, sans-serif);
-  font-size: var(--ga-type-control, 12px);
-  font-weight: var(--ga-font-ui-weight, 500);
 }
 
-/* Controls the studio's modules share. */
+.studio-tokens {
+  --mk-white: #e9e4da;
+  --mk-black: #12100d;
+}
+
+/* ── Faces ── */
+
+.studio-tokens.set-bath .face {
+  --studio-panel: #0b1124;
+  --studio-cell: #111a36;
+  --studio-slot: #070b19;
+  --studio-edge: rgba(140, 165, 255, 0.24);
+  --studio-edge-soft: rgba(140, 165, 255, 0.12);
+  --studio-ink: #e9eeff;
+  --studio-muted: #8e9ac6;
+  --studio-accent: #f0c46e;
+  --studio-accent-soft: rgba(240, 196, 110, 0.16);
+  --studio-on-accent: #1d1406;
+  --studio-knob-face: radial-gradient(circle at 35% 30%, #34447e, #0b1331 72%);
+  --studio-knob-edge: #3a4a86;
+  --studio-radius: 10px;
+  --mk-white: #dfe5f7;
+  --mk-black: #0d1430;
+}
+
+.studio-tokens.set-berlin .face {
+  --studio-panel: #000000;
+  --studio-cell: #0b0b0b;
+  --studio-slot: #000000;
+  --studio-edge: rgba(255, 255, 255, 0.32);
+  --studio-edge-soft: rgba(255, 255, 255, 0.15);
+  --studio-ink: #ffffff;
+  --studio-muted: #8f8f8f;
+  --studio-accent: #ff2a1a;
+  --studio-accent-soft: rgba(255, 42, 26, 0.16);
+  --studio-on-accent: #ffffff;
+  --studio-knob-face: #000000;
+  --studio-knob-edge: rgba(255, 255, 255, 0.7);
+  --studio-radius: 0px;
+  --studio-title-font: var(--ga-font-mono, ui-monospace, monospace);
+  --studio-title-tracking: 0.2em;
+  --mk-white: #f4f4f4;
+  --mk-black: #000000;
+  font-family: var(--ga-font-mono, ui-monospace, monospace);
+}
+
+.studio-tokens.set-dub .face {
+  --studio-panel: #0a120d;
+  --studio-cell: #101c15;
+  --studio-slot: #060b08;
+  --studio-edge: rgba(150, 220, 175, 0.22);
+  --studio-edge-soft: rgba(150, 220, 175, 0.11);
+  --studio-ink: #f2e9d4;
+  --studio-muted: #8fa394;
+  --studio-accent: #ffae42;
+  --studio-accent-soft: rgba(255, 174, 66, 0.16);
+  --studio-on-accent: #1d1000;
+  --studio-knob-face: radial-gradient(circle at 35% 30%, #2b4434, #0b150f 72%);
+  --studio-knob-edge: #34543f;
+  --studio-radius: 12px;
+  --mk-white: #ece4d0;
+  --mk-black: #0c1610;
+}
+
+.studio-tokens.set-analog .face {
+  --studio-panel: #111111;
+  --studio-cell: #1b1b1b;
+  --studio-slot: #0a0a0a;
+  --studio-edge: rgba(241, 233, 216, 0.24);
+  --studio-edge-soft: rgba(241, 233, 216, 0.11);
+  --studio-ink: #f1e9d8;
+  --studio-muted: #a59e8e;
+  --studio-accent: #ff7a1f;
+  --studio-accent-soft: rgba(255, 122, 31, 0.16);
+  --studio-on-accent: #1d0b00;
+  --studio-knob-face: radial-gradient(circle at 38% 30%, #f2f2ef, #a7a7a2 52%, #5d5d59 100%);
+  --studio-knob-edge: #2a2a2a;
+  --studio-pointer: #141414;
+  --studio-radius: 3px;
+  --mk-white: #efe8d8;
+  --mk-black: #111111;
+}
+
+/* ── Controls the studio's modules share ── */
 .studio-tokens select {
   height: 24px;
   padding: 0 4px;
@@ -68,7 +161,7 @@
   height: 28px;
   padding: 0 11px;
   border: 1px solid var(--studio-edge);
-  background: var(--studio-panel);
+  background: var(--studio-cell);
   color: var(--studio-ink);
   border-radius: var(--studio-radius);
   font: inherit;
@@ -77,6 +170,7 @@
   letter-spacing: 0.08em;
   cursor: pointer;
 }
+.studio-tokens .text-btn:hover { border-color: var(--ga-line3, rgba(245, 236, 222, 0.24)); }
 .studio-tokens .text-btn.small { height: 22px; padding: 0 8px; font-size: 10px; }
 .studio-tokens .stepper { display: inline-flex; align-items: center; gap: 4px; }
 .studio-tokens .stepper span { min-width: 28px; text-align: center; font-family: var(--ga-font-mono, ui-monospace); }
@@ -99,7 +193,7 @@
   justify-content: center;
   padding: 0;
   border: 1px solid var(--studio-edge);
-  background: var(--studio-panel);
+  background: var(--studio-cell);
   color: var(--studio-ink);
   border-radius: var(--studio-radius);
   cursor: pointer;

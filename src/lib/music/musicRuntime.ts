@@ -26,6 +26,7 @@ import {
   DRUM_VOICES,
   HeldNotes,
   INSTRUMENTS,
+  drumVoiceForNote,
   noteBus,
   noteOff,
   noteOn,
@@ -35,12 +36,37 @@ import {
   type NoteSource,
 } from './noteEvents';
 import { NOTE_DRIVEN_INPUTS, NOTE_MODE_INPUT, NoteVisualState } from './noteVisuals';
+import {
+  VOICE_AUTO_INPUT,
+  VOICE_DRIVEN_INPUTS,
+  VOICE_SOURCE_INPUT,
+  VoiceSignals,
+  sourcesForEvent,
+  voiceSourceAt,
+  type SourceContext,
+} from './visualVoices';
 import { TakeRecorder, takeEventsBetween, type Take } from './recording';
-import { patternHasHits, stepAt, stepsBetween } from './drumPattern';
+import { STEPS_PER_BEAT, patternHasHits, stepAt, stepsBetween, type DrumPattern } from './drumPattern';
+import {
+  BEATS_PER_BAR,
+  CAPTURE_WINDOW_BEATS,
+  EARLY_GRACE_BEATS,
+  PlayedNotes,
+  capturePhrase,
+  nextRecordedName,
+  quantizeBeats,
+  recordedLoopLabel,
+  recordedNotesBetween,
+  roleForRecording,
+  takeLoop,
+  writeHits,
+  type LoopTake,
+  type RecordedLoop,
+} from './loopRecorder';
 import { drumPadForKey } from './keyboardLayout';
 import { attachMusicKeyboard, musicKeysArmed } from './musicKeyboard';
 import { DRUM_CHANNEL, MusicMidiInput, type MidiNoteMessage } from './midiNotes';
-import { musicStudio, musicTransport, nextTakeName, type MusicStudioState } from './musicStudioStore';
+import { LOOP_REC_OFF, musicStudio, musicTransport, nextTakeName, type MusicStudioState, type MusicTransportState } from './musicStudioStore';
 import { captureScene, dominantColumn, nextSceneName, sceneLaunchActions, type PlayingNow } from './scenes';
 import { macros } from '../stores/macros';
 import { getNativeRendererFrameSnapshot } from '../api/native-renderer';
@@ -48,11 +74,9 @@ import {
   LOOP_ROLES,
   ROLE_INSTRUMENTS,
   beatPattern,
-  isBeatLoop,
   loopById,
   loopNotesBetween,
   nextBar,
-  type BeatLoop,
   type LoopRole,
   type MelodicLoop,
 } from './loops';
@@ -78,6 +102,7 @@ const PAD_FLASH_MS = 110;
 
 const audio = new MusicAudioEngine();
 const visuals = new NoteVisualState();
+const voices = new VoiceSignals();
 const recorder = new TakeRecorder();
 const held = new HeldNotes();
 
@@ -114,10 +139,25 @@ function send(event: NoteEvent): void {
 noteBus.subscribe((event) => {
   audio.play(event);
   visuals.push(event);
+  voices.push(event, sourcesForEvent(event, sourceContext()));
   recorder.capture(event);
+  trackPlayed(event);
   showInPanel(event);
   ensureFrameLoop();
 });
+
+/** Which instruments play which part now, for the visual voices. */
+function sourceContext(): SourceContext {
+  const s = get(musicStudio);
+  const roles: SourceContext['roles'] = {};
+  for (const role of LOOP_ROLES) {
+    const list: InstrumentId[] = [ROLE_INSTRUMENTS[s.set][role]];
+    const slot = loopSlots.get(role);
+    if (slot && !list.includes(slot.instrument)) list.push(slot.instrument);
+    roles[role] = list;
+  }
+  return { played: s.instrument, roles };
+}
 
 function showInPanel(event: NoteEvent): void {
   const key = heldKey(event.instrument, event.note);
@@ -180,6 +220,7 @@ export function screenNoteOff(pointerId: number): void {
 
 /** Release everything: live inputs, sustain, replay and every sounding voice. */
 export function panic(): void {
+  repeats.clear();
   for (const [code] of keyboardNotes) releaseKeyboardNote(code);
   for (const [id] of screenNotes) screenNoteOff(id);
   releaseMidi();
@@ -189,6 +230,7 @@ export function panic(): void {
   held.clear();
   audio.allNotesOff();
   visuals.releaseAll();
+  voices.releaseAll();
   musicTransport.update((s) => ({ ...s, held: new Set() }));
 }
 
@@ -386,6 +428,8 @@ function scheduleSequencer(): void {
   const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000);
   for (const step of stepsBetween(s.pattern, sequencer.scheduledBeat, horizon)) {
     if (s.drumMutes.includes(step.voice)) continue;
+    // A hit just recorded onto this step was already heard live.
+    if (heardLive.delete(`${step.voice}:${Math.round(step.beat * STEPS_PER_BEAT)}`)) continue;
     send(noteOn('drums', step.note, step.velocity, 'sequencer', timeAt(step.beat)));
   }
   if (s.set === 'berlin') scheduleAcid(sequencer.scheduledBeat, horizon, timeAt);
@@ -587,7 +631,7 @@ function cancelQueuedScene(): void {
 // ── Loop library ────────────────────────────────────────────────────────
 
 interface LoopSlot {
-  loop: MelodicLoop;
+  loop: MelodicLoop | RecordedLoop;
   instrument: InstrumentId;
   startBeat: number;
   /** Where scheduling has reached, in launch-clock beats. */
@@ -612,13 +656,18 @@ let beatLoopTimer: ReturnType<typeof setTimeout> | null = null;
 export function launchLoop(id: string, now = false): void {
   ensureMusicRuntime();
   audio.now();
-  const loop = loopById(id);
-  if (!loop) return;
-  if (isBeatLoop(loop)) {
-    launchBeatLoop(loop, now);
+  const s = get(musicStudio);
+  const kept = s.myBeats.find((b) => b.id === id);
+  if (kept) {
+    launchBeatLoop(kept.pattern, kept.id, now);
     return;
   }
-  const s = get(musicStudio);
+  const loop = loopById(id) ?? s.myLoops.find((l) => l.id === id);
+  if (!loop) return;
+  if ('rows' in loop) {
+    launchBeatLoop(beatPattern(loop), loop.id, now);
+    return;
+  }
   const { beat } = launchClockPosition();
   const busy = !!sequencer || !!replay || loopSlots.size > 0;
   const startBeat = busy && !now ? nextBar(beat) : Math.floor(beat / 4 + 1e-6) * 4;
@@ -630,7 +679,7 @@ export function launchLoop(id: string, now = false): void {
   }
   loopSlots.set(loop.role, {
     loop,
-    instrument: ROLE_INSTRUMENTS[s.set][loop.role],
+    instrument: isRecorded(loop) ? loop.instrument : ROLE_INSTRUMENTS[s.set][loop.role],
     startBeat,
     scheduledBeat: from,
     stopBeat: null,
@@ -642,20 +691,24 @@ export function launchLoop(id: string, now = false): void {
   ensureFrameLoop();
 }
 
-function launchBeatLoop(loop: BeatLoop, now: boolean): void {
+function isRecorded(loop: MelodicLoop | RecordedLoop): loop is RecordedLoop {
+  return 'kind' in loop && loop.kind === 'recorded';
+}
+
+function launchBeatLoop(pattern: DrumPattern, id: string, now: boolean): void {
   if (beatLoopTimer) clearTimeout(beatLoopTimer);
   beatLoopTimer = null;
   const apply = () => {
     beatLoopTimer = null;
-    musicStudio.setPattern(beatPattern(loop));
-    musicTransport.update((t) => ({ ...t, beatLoop: loop.id, queuedBeat: null }));
+    musicStudio.setPattern(pattern);
+    musicTransport.update((t) => ({ ...t, beatLoop: id, queuedBeat: null }));
     if (!sequencer) startSequencer();
   };
   if (!sequencer || now) {
     apply();
     return;
   }
-  musicTransport.update((t) => ({ ...t, queuedBeat: loop.id }));
+  musicTransport.update((t) => ({ ...t, queuedBeat: id }));
   const wait = Math.max(0, nextLaunchBoundary(4) - performance.now() - 10);
   beatLoopTimer = setTimeout(apply, wait);
 }
@@ -691,6 +744,8 @@ export function stopAllLoops(): void {
 function retargetLoops(set: StudioSet): void {
   const beat = launchClockPosition().beat;
   for (const [role, slot] of loopSlots) {
+    // A recorded loop keeps the instrument it was played on.
+    if (isRecorded(slot.loop)) continue;
     const instrument = ROLE_INSTRUMENTS[set][role];
     if (instrument === slot.instrument) continue;
     endLoopSlot(slot, beat);
@@ -712,7 +767,10 @@ function scheduleLoops(beat: number, horizon: number, timeAt: (b: number) => num
   const schedule = (slot: LoopSlot) => {
     const until = slot.stopBeat === null ? horizon : Math.min(horizon, slot.stopBeat);
     if (until > slot.scheduledBeat) {
-      for (const n of loopNotesBetween(slot.loop, s.key, slot.startBeat, slot.scheduledBeat, until)) {
+      const notes = isRecorded(slot.loop)
+        ? recordedNotesBetween(slot.loop, slot.startBeat, slot.scheduledBeat, until)
+        : loopNotesBetween(slot.loop, s.key, slot.startBeat, slot.scheduledBeat, until);
+      for (const n of notes) {
         const offBeat = slot.stopBeat === null ? n.beat + n.dur : Math.min(n.beat + n.dur, slot.stopBeat);
         send(noteOn(slot.instrument, n.note, n.velocity, 'sequencer', timeAt(n.beat)));
         send(noteOff(slot.instrument, n.note, 'sequencer', timeAt(offBeat)));
@@ -747,6 +805,264 @@ function scheduleLoopWindow(): void {
   const { beat, beatMs } = launchClockPosition();
   const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
   scheduleLoops(beat, horizon, (b) => Math.max(now, now + ((b - beat) * beatMs) / 1000));
+}
+
+// ── Loop recorder ───────────────────────────────────────────────────────
+
+/** Live playing, kept for capture and for the recording window. */
+const played = new PlayedNotes();
+let loopRec: { startBeat: number; endBeat: number | null; clickBeat: number } | null = null;
+/** Grid steps a live hit was just recorded onto, `${voice}:${absolute step}`: the sequencer skips them once. */
+const heardLive = new Set<string>();
+
+const isLive = (source: NoteSource) => source === 'keyboard' || source === 'screen' || source === 'midi';
+
+/** Launch-clock beat at an audio-clock time. */
+function beatAtTime(time: number): number {
+  const { beat, beatMs } = launchClockPosition();
+  const now = audio.peekNow() ?? time;
+  return beat + ((time - now) * 1000) / beatMs;
+}
+
+function trackPlayed(event: NoteEvent): void {
+  if (!isLive(event.source)) return;
+  const beat = beatAtTime(event.time);
+  if (event.instrument === 'drums') {
+    if (event.type !== 'on') return;
+    const voice = event.drum ?? drumVoiceForNote(event.note);
+    played.hit(voice, event.note, event.velocity, beat);
+    if (loopRec && beat >= loopRec.startBeat - EARLY_GRACE_BEATS) recordHit(voice, event.velocity, beat);
+  } else if (event.type === 'on') {
+    played.noteOn(event.instrument, event.note, event.velocity, beat);
+  } else {
+    played.noteOff(event.instrument, event.note, beat);
+  }
+  played.forgetBefore(beat - CAPTURE_WINDOW_BEATS);
+}
+
+/** Touch drumming while recording writes each hit into the beat grid, which keeps playing it. */
+function recordHit(voice: DrumVoice, velocity: number, beat: number): void {
+  const s = get(musicStudio);
+  const beats = loopRec?.endBeat != null ? loopRec.endBeat - loopRec.startBeat : 0;
+  musicStudio.setPattern(writeHits(s.pattern, [{ beat, voice, velocity }], beats));
+  const step = Math.round(beat * STEPS_PER_BEAT);
+  if (sequencer && step / STEPS_PER_BEAT >= sequencer.scheduledBeat) heardLive.add(`${voice}:${step}`);
+  if (!sequencer) startSequencer();
+}
+
+/**
+ * Record button: the first press counts in to the next bar and records the
+ * set number of bars (or until pressed again, ending on a bar line). A press
+ * during the count-in cancels.
+ */
+export function toggleLoopRecord(): void {
+  ensureMusicRuntime();
+  audio.now();
+  const { beat } = launchClockPosition();
+  if (loopRec) {
+    if (beat < loopRec.startBeat) {
+      loopRec = null;
+    } else {
+      const end = Math.max(loopRec.startBeat + BEATS_PER_BAR, nextBar(beat));
+      loopRec.endBeat = loopRec.endBeat === null ? end : Math.min(loopRec.endBeat, end);
+    }
+    publishLoopRec(beat);
+    return;
+  }
+  const s = get(musicStudio);
+  const startBeat = nextBar(beat + 1e-3);
+  loopRec = {
+    startBeat,
+    endBeat: s.recordLength ? startBeat + s.recordLength * BEATS_PER_BAR : null,
+    clickBeat: Math.ceil(beat),
+  };
+  heardLive.clear();
+  publishLoopRec(beat);
+  ensureScheduler();
+  ensureFrameLoop();
+}
+
+/**
+ * Keep what was just played without having recorded it: the latest phrase,
+ * in whole bars, starts looping at once in step with the clock.
+ * Returns how many loops it made (a beat counts as one), 0 if nothing was played.
+ */
+export function captureLoop(): number {
+  ensureMusicRuntime();
+  audio.now();
+  const { beat } = launchClockPosition();
+  const phrase = capturePhrase(played.all(), beat);
+  if (!phrase) return 0;
+  const s = get(musicStudio);
+  const take = takeLoop(played.between(phrase.startBeat, phrase.startBeat + phrase.beats), phrase.startBeat, phrase.beats, quantizeBeats(s.quantize));
+  // What was kept is used up: the next capture starts from new playing.
+  played.clear();
+  return keepTake(take, beat, true);
+}
+
+/** Keep the beat grid as one of my beats. */
+export function saveBeat(): void {
+  const s = get(musicStudio);
+  const id = generateUUID();
+  musicStudio.addMyBeat({ kind: 'beat', id, name: nextRecordedName(s.myBeats, 'Beat'), pattern: s.pattern, createdAt: Date.now() });
+  musicTransport.update((t) => ({ ...t, beatLoop: id }));
+}
+
+/** Turn a take into recorded loops that start repeating from `fromBeat`; drums go into the grid. */
+function keepTake(take: LoopTake, fromBeat: number, writeDrums: boolean): number {
+  let made = 0;
+  const s = get(musicStudio);
+  const kept: RecordedLoop[] = [];
+  for (const [instrument, notes] of take.melodic) {
+    if (!notes.length) continue;
+    const loop: RecordedLoop = {
+      kind: 'recorded',
+      id: generateUUID(),
+      name: nextRecordedName([...s.myLoops, ...kept], recordedLoopLabel(instrument)),
+      role: roleForRecording(instrument, notes),
+      instrument,
+      beats: take.beats,
+      notes,
+      createdAt: Date.now(),
+    };
+    kept.push(loop);
+  }
+  for (const loop of kept) {
+    musicStudio.addMyLoop(loop);
+    startRecordedLoop(loop, take.startBeat, fromBeat);
+    made++;
+  }
+  if (writeDrums && take.hits.length) {
+    musicStudio.setPattern(writeHits(get(musicStudio).pattern, take.hits, take.beats));
+    musicTransport.update((t) => ({ ...t, beatLoop: null }));
+    if (!sequencer) startSequencer();
+    made++;
+  }
+  return made;
+}
+
+/** A recorded loop takes its slot at once, in phase with where it was played. */
+function startRecordedLoop(loop: RecordedLoop, startBeat: number, fromBeat: number): void {
+  const old = loopSlots.get(loop.role);
+  if (old) {
+    old.stopBeat = fromBeat;
+    endingSlots.push(old);
+  }
+  loopSlots.set(loop.role, {
+    loop,
+    instrument: loop.instrument,
+    startBeat,
+    scheduledBeat: fromBeat,
+    stopBeat: null,
+    pending: [],
+    announced: true,
+  });
+  const s = get(musicStudio);
+  const queued = { ...s.queuedLoops };
+  delete queued[loop.role];
+  musicStudio.setTransport({ playingLoops: { ...s.playingLoops, [loop.role]: loop.id }, queuedLoops: queued });
+  ensureScheduler();
+  ensureFrameLoop();
+}
+
+/** The count-in and recording clicks, and the end of a recording. */
+function scheduleLoopRecorder(): void {
+  if (!loopRec) return;
+  const now = audio.now();
+  const { beat, beatMs } = launchClockPosition();
+  if (loopRec.endBeat !== null && beat >= loopRec.endBeat - 0.02) {
+    finishLoopRecord(loopRec.startBeat, loopRec.endBeat);
+    return;
+  }
+  // Clicks count in, and keep time while recording when nothing else plays.
+  const quiet = !sequencer && !loopSlots.size && !replay;
+  const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
+  for (let b = Math.max(loopRec.clickBeat, Math.ceil(beat - 1e-6)); b < horizon; b++) {
+    if (b < loopRec.startBeat || quiet) audio.click(Math.max(now, now + ((b - beat) * beatMs) / 1000), b % BEATS_PER_BAR === 0);
+    loopRec.clickBeat = b + 1;
+  }
+}
+
+function finishLoopRecord(startBeat: number, endBeat: number): void {
+  loopRec = null;
+  heardLive.clear();
+  const s = get(musicStudio);
+  const take = takeLoop(played.between(startBeat, endBeat), startBeat, endBeat - startBeat, quantizeBeats(s.quantize));
+  played.clear();
+  // Drums were written into the grid as they were played.
+  keepTake(take, endBeat, false);
+  publishLoopRec(launchClockPosition().beat);
+}
+
+function publishLoopRec(beat: number): void {
+  const next: MusicTransportState['loopRec'] = loopRec
+    ? { phase: beat < loopRec.startBeat ? 'count' : 'rec', startBeat: loopRec.startBeat, endBeat: loopRec.endBeat, beat }
+    : LOOP_REC_OFF;
+  const t = get(musicTransport);
+  if (t.loopRec.phase === next.phase && t.loopRec.endBeat === next.endBeat && t.loopRec.startBeat === next.startBeat && Math.abs(t.loopRec.beat - next.beat) < 0.02) return;
+  musicTransport.set({ ...t, loopRec: next });
+}
+
+function cancelLoopRecord(): void {
+  loopRec = null;
+  heardLive.clear();
+  publishLoopRec(0);
+}
+
+// ── Pads ────────────────────────────────────────────────────────────────
+
+/** What a pad plays: a kit voice, or one of the shots. */
+export type PadSound = { kind: 'drum'; voice: DrumVoice } | { kind: 'shot'; index: number };
+
+/** Note repeat rates, in beats. */
+export const REPEAT_RATES = [
+  { id: '1/8', beats: 1 / 2 },
+  { id: '1/16', beats: 1 / 4 },
+  { id: '1/32', beats: 1 / 8 },
+  { id: '1/8T', beats: 1 / 3 },
+  { id: '1/16T', beats: 1 / 6 },
+] as const;
+
+const SHOT_LENGTH_SECONDS = 0.16;
+/** Pads held with note repeat on, by pointer. */
+const repeats = new Map<number, { sound: PadSound; velocity: number; rate: number; nextBeat: number }>();
+
+function firePad(sound: PadSound, velocity: number, time: number): void {
+  if (sound.kind === 'drum') {
+    send(noteOn('drums', DRUM_NOTES[sound.voice], velocity, 'screen', time));
+    return;
+  }
+  send(noteOn('shots', 60 + sound.index, velocity, 'screen', time));
+  send(noteOff('shots', 60 + sound.index, 'screen', time + SHOT_LENGTH_SECONDS));
+}
+
+/** A pad pressed: it plays now, and with a repeat rate keeps playing on that grid while held. */
+export function padDown(pointerId: number, sound: PadSound, velocity: number, repeatRate = 0): void {
+  ensureMusicRuntime();
+  firePad(sound, velocity, liveTime());
+  if (repeatRate > 0) {
+    const { beat } = launchClockPosition();
+    repeats.set(pointerId, { sound, velocity, rate: repeatRate, nextBeat: (Math.floor(beat / repeatRate + 1e-6) + 1) * repeatRate });
+    ensureScheduler();
+  }
+}
+
+export function padUp(pointerId: number): void {
+  repeats.delete(pointerId);
+}
+
+function scheduleRepeats(): void {
+  if (!repeats.size) return;
+  const now = audio.now();
+  const { beat, beatMs } = launchClockPosition();
+  const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
+  for (const hold of repeats.values()) {
+    // After a clock jump, pick up from the next grid line rather than catching up.
+    if (beat - hold.nextBeat > hold.rate) hold.nextBeat = (Math.floor(beat / hold.rate) + 1) * hold.rate;
+    for (; hold.nextBeat < horizon; hold.nextBeat += hold.rate) {
+      firePad(hold.sound, hold.velocity, Math.max(now, now + ((hold.nextBeat - beat) * beatMs) / 1000));
+    }
+  }
 }
 
 // ── Dub controls ────────────────────────────────────────────────────────
@@ -852,7 +1168,7 @@ async function scanTick(): Promise<void> {
 function ensureScheduler(): void {
   if (schedulerHandle !== null) return;
   const tick = () => {
-    if (!sequencer && !replay && !loopSlots.size && !endingSlots.length) {
+    if (!sequencer && !replay && !loopSlots.size && !endingSlots.length && !loopRec && !repeats.size) {
       clearInterval(schedulerHandle!);
       schedulerHandle = null;
       return;
@@ -861,6 +1177,8 @@ function ensureScheduler(): void {
       scheduleSequencer();
       scheduleReplay();
       scheduleLoopWindow();
+      scheduleLoopRecorder();
+      scheduleRepeats();
     } catch (err) {
       console.warn('[Music] scheduler failed:', err);
     }
@@ -879,16 +1197,20 @@ function frame(): void {
   const now = audio.peekNow();
   if (now !== null) {
     visuals.advance(now);
+    const { beat, beatMs } = launchClockPosition();
+    voices.advance(now, { beat, beatSeconds: beatMs / 1000 });
     const active = visuals.isActive();
-    // One last write after the visuals go quiet leaves the clips at rest.
-    if (active || visualsWereActive) writeNoteInputs();
+    // One last write after the note visuals go quiet leaves those clips at
+    // rest; visual voices follow the clock, so they are written every frame.
+    writeNoteInputs(active || visualsWereActive);
     visualsWereActive = active;
     routeControlCables();
     syncMacroFx();
     publishTransport(now);
+    if (loopRec) publishLoopRec(launchClockPosition().beat);
   }
   const s = get(musicStudio);
-  if (s.isOpen || sequencer || replay || loopSlots.size || visualsWereActive) frameHandle = requestAnimationFrame(frame);
+  if (s.isOpen || sequencer || replay || loopSlots.size || loopRec || visualsWereActive) frameHandle = requestAnimationFrame(frame);
 }
 
 function publishTransport(now: number): void {
@@ -1022,10 +1344,14 @@ interface ClipNoteInputs {
   driven: string[];
   /** The shader's default noteMode, when it declares one. */
   modeDefault: number;
+  /** Visual voice inputs it declares, and its defaults for which sound it follows and auto. */
+  voice: string[];
+  sourceDefault: number;
+  autoDefault: number;
 }
 
 const inputCache = new Map<string, ClipNoteInputs>();
-const NO_NOTE_INPUTS: ClipNoteInputs = { driven: [], modeDefault: 0 };
+const NO_NOTE_INPUTS: ClipNoteInputs = { driven: [], modeDefault: 0, voice: [], sourceDefault: 0, autoDefault: 1 };
 
 /** Which note inputs a shader declares. Parsed once per shader source. */
 export function noteInputsForShader(code: string): ClipNoteInputs {
@@ -1036,8 +1362,19 @@ export function noteInputsForShader(code: string): ClipNoteInputs {
     const inputs = parseISF(code).metadata.INPUTS ?? [];
     const declared = new Set(inputs.map((i) => i.NAME));
     const driven = NOTE_DRIVEN_INPUTS.filter((name) => declared.has(name));
+    const voice = VOICE_DRIVEN_INPUTS.filter((name) => declared.has(name));
     const mode = inputs.find((i) => i.NAME === NOTE_MODE_INPUT);
-    if (driven.length) result = { driven, modeDefault: Number(mode?.DEFAULT) || 0 };
+    const source = inputs.find((i) => i.NAME === VOICE_SOURCE_INPUT);
+    const auto = inputs.find((i) => i.NAME === VOICE_AUTO_INPUT);
+    if (driven.length || voice.length) {
+      result = {
+        driven,
+        modeDefault: Number(mode?.DEFAULT) || 0,
+        voice,
+        sourceDefault: Number(source?.DEFAULT) || 0,
+        autoDefault: auto ? Number(auto.DEFAULT ?? 1) : 1,
+      };
+    }
   } catch {
     result = NO_NOTE_INPUTS;
   }
@@ -1046,25 +1383,43 @@ export function noteInputsForShader(code: string): ClipNoteInputs {
   return result;
 }
 
-function writeNoteInputs(): void {
+/**
+ * Write the studio's values into every playing shader clip that reads them:
+ * note inputs while the note visuals move (`notes`), and each visual
+ * voice's signals for the sound it follows, every frame.
+ */
+function writeNoteInputs(notes: boolean): void {
   const launcher = get(vjClipLauncher);
   const byMode = new Map<number, Record<string, number>>();
+  const bySource = new Map<string, Record<string, number>>();
   const decks: [VJDeck, typeof launcher.layerStates][] = [['A', launcher.layerStates], ['B', launcher.bankBLayerStates]];
   for (const [deck, states] of decks) {
     states?.forEach((state, layer) => {
       const clip = state?.activeClip;
       if (!clip || clip.type !== 'shader' || !clip.shaderCode) return;
       const info = noteInputsForShader(clip.shaderCode);
-      if (!info.driven.length) return;
-      const mode = Math.round(Number(clip.shaderValues?.[NOTE_MODE_INPUT] ?? info.modeDefault) || 0);
-      let values = byMode.get(mode);
-      if (!values) {
-        values = visuals.inputs(mode);
-        byMode.set(mode, values);
-      }
       const picked: Record<string, number> = {};
-      for (const name of info.driven) picked[name] = values[name];
-      vjClipLauncher.batchUpdateShaderValues(layer, picked, deck);
+      if (notes && info.driven.length) {
+        const mode = Math.round(Number(clip.shaderValues?.[NOTE_MODE_INPUT] ?? info.modeDefault) || 0);
+        let values = byMode.get(mode);
+        if (!values) {
+          values = visuals.inputs(mode);
+          byMode.set(mode, values);
+        }
+        for (const name of info.driven) picked[name] = values[name];
+      }
+      if (info.voice.length) {
+        const source = voiceSourceAt(clip.shaderValues?.[VOICE_SOURCE_INPUT] ?? info.sourceDefault);
+        const auto = Boolean(Number(clip.shaderValues?.[VOICE_AUTO_INPUT] ?? info.autoDefault));
+        const key = `${source}:${auto}`;
+        let values = bySource.get(key);
+        if (!values) {
+          values = voices.inputs(source, auto);
+          bySource.set(key, values);
+        }
+        for (const name of info.voice) picked[name] = values[name];
+      }
+      if (Object.keys(picked).length) vjClipLauncher.batchUpdateShaderValues(layer, picked, deck);
     });
   }
 }
@@ -1077,6 +1432,7 @@ function writeNoteInputs(): void {
  */
 function stopEverything(): void {
   cancelQueuedScene();
+  cancelLoopRecord();
   stopAllLoops();
   setScan(false);
   throwHeld = false;

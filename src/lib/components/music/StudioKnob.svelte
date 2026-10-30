@@ -160,7 +160,7 @@
     height: calc(var(--size) * 0.3);
     margin-left: -1px;
     border-radius: 1px;
-    background: var(--studio-ink);
+    background: var(--studio-pointer, var(--studio-ink));
     transform-origin: 50% calc(var(--size) / 2 - 4px);
     pointer-events: none;
   }

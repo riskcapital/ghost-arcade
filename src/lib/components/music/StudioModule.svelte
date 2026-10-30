@@ -62,7 +62,7 @@
     border-bottom: 1px solid var(--studio-edge-soft);
     white-space: nowrap;
   }
-  h2 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; }
+  h2 { margin: 0; font-family: var(--studio-title-font, inherit); font-size: 11px; font-weight: 700; letter-spacing: var(--studio-title-tracking, 0.12em); }
   .subtitle { min-width: 0; color: var(--studio-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
   .spacer { flex: 1; }
   .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-edge); flex: 0 0 auto; }

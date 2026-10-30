@@ -24,6 +24,16 @@ import {
   type PatternLength,
 } from './drumPattern';
 import { normalizeTake, type Take } from './recording';
+import {
+  RECORD_LENGTHS,
+  QUANTIZE_GRIDS,
+  normalizeRecordedBeat,
+  normalizeRecordedLoop,
+  type QuantizeId,
+  type RecordLength,
+  type RecordedBeat,
+  type RecordedLoop,
+} from './loopRecorder';
 import { normalizeScene, type MusicScene } from './scenes';
 import type { LoopRole } from './loops';
 import { createMacroFx, normalizeMacroFx, type MacroFxInstance, type MacroFxParam, type MacroFxType } from './macroFx';
@@ -74,6 +84,12 @@ export interface MusicStudioProjectState {
   cables: Record<StudioSet, Cable[]>;
   /** Sound effects on each macro knob, by macro id. */
   macroFx: Record<string, MacroFxInstance[]>;
+  /** Loops recorded or captured from playing, and beats kept from the grid. */
+  myLoops: RecordedLoop[];
+  myBeats: RecordedBeat[];
+  /** Bars the loop recorder takes (0 = until stopped), and how it snaps notes. */
+  recordLength: RecordLength;
+  quantize: QuantizeId;
 }
 
 export interface MusicStudioState extends MusicStudioProjectState {
@@ -160,6 +176,10 @@ export function defaultProjectState(): MusicStudioProjectState {
     drumMutes: [],
     cables: defaultCables(),
     macroFx: {},
+    myLoops: [],
+    myBeats: [],
+    recordLength: 2,
+    quantize: '1/16',
   };
 }
 
@@ -223,7 +243,17 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
     cables: input.cables ? normalizeCables(input.cables) : d.cables,
     macroFx: normalizeMacroFx(input.macroFx),
+    myLoops: uniqueById((Array.isArray(input.myLoops) ? input.myLoops : []).map(normalizeRecordedLoop)),
+    myBeats: uniqueById((Array.isArray(input.myBeats) ? input.myBeats : []).map(normalizeRecordedBeat)),
+    recordLength: (RECORD_LENGTHS as readonly number[]).includes(Number(input.recordLength)) ? (Number(input.recordLength) as RecordLength) : d.recordLength,
+    quantize: QUANTIZE_GRIDS.some((g) => g.id === input.quantize) ? (input.quantize as QuantizeId) : d.quantize,
   };
+}
+
+function uniqueById<T extends { id: string }>(items: Array<T | null>): T[] {
+  const out: T[] = [];
+  for (const item of items) if (item && !out.some((x) => x.id === item.id)) out.push(item);
+  return out;
 }
 
 function normalizeKey(raw: unknown, fallback: MusicKey): MusicKey {
@@ -367,6 +397,19 @@ function createMusicStudioStore() {
         playingTakeId: s.playingTakeId === id ? null : s.playingTakeId,
       })),
 
+    addMyLoop: (loop: RecordedLoop) => update((s) => ({ ...s, myLoops: [...s.myLoops, loop] })),
+    addMyBeat: (beat: RecordedBeat) => update((s) => ({ ...s, myBeats: [...s.myBeats, beat] })),
+    renameMine: (id: string, name: string) =>
+      update((s) => ({
+        ...s,
+        myLoops: s.myLoops.map((l) => (l.id === id ? { ...l, name: name.trim() || l.name } : l)),
+        myBeats: s.myBeats.map((b) => (b.id === id ? { ...b, name: name.trim() || b.name } : b)),
+      })),
+    removeMine: (id: string) =>
+      update((s) => ({ ...s, myLoops: s.myLoops.filter((l) => l.id !== id), myBeats: s.myBeats.filter((b) => b.id !== id) })),
+    setRecordLength: (recordLength: RecordLength) => set({ recordLength }),
+    setQuantize: (quantize: QuantizeId) => set({ quantize }),
+
     addScene: (scene: MusicScene) => update((s) => ({ ...s, scenes: [...s.scenes, scene] })),
     updateScene: (id: string, patch: Partial<Omit<MusicScene, 'id'>>) =>
       update((s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.id === id ? { ...sc, ...patch } : sc)) })),
@@ -402,6 +445,10 @@ function createMusicStudioStore() {
         drumMutes: [...s.drumMutes],
         cables: Object.fromEntries(Object.entries(s.cables).map(([set, list]) => [set, list.map((c) => ({ ...c }))])) as Record<StudioSet, Cable[]>,
         macroFx: JSON.parse(JSON.stringify(s.macroFx)),
+        myLoops: s.myLoops.map((l) => ({ ...l, notes: l.notes.map((n) => ({ ...n })) })),
+        myBeats: s.myBeats.map((b) => ({ ...b, pattern: normalizePattern(b.pattern) })),
+        recordLength: s.recordLength,
+        quantize: s.quantize,
       };
     },
 
@@ -442,6 +489,18 @@ export interface MusicTransportState {
   /** The beat loop last loaded into the grid, and one waiting for the next bar. */
   beatLoop: string | null;
   queuedBeat: string | null;
+  /** The loop recorder: counting in to its first bar, or recording until `endBeat` (null: until stopped). */
+  loopRec: { phase: 'off' | 'count' | 'rec'; startBeat: number; endBeat: number | null; beat: number };
 }
 
-export const musicTransport = writable<MusicTransportState>({ step: -1, takeProgress: 0, held: new Set(), chords: [], beatLoop: null, queuedBeat: null });
+export const LOOP_REC_OFF: MusicTransportState['loopRec'] = { phase: 'off', startBeat: 0, endBeat: null, beat: 0 };
+
+export const musicTransport = writable<MusicTransportState>({
+  step: -1,
+  takeProgress: 0,
+  held: new Set(),
+  chords: [],
+  beatLoop: null,
+  queuedBeat: null,
+  loopRec: LOOP_REC_OFF,
+});

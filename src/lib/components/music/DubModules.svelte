@@ -63,7 +63,7 @@
     </div>
   </StudioModule>
 {:else if part === 'siren'}
-  <StudioModule title="SIREN" subtitle="Hold to wail, latch to keep it going" led={sirenSounding}>
+  <StudioModule title="SIREN" subtitle="Hold to wail" led={sirenSounding}>
     {#snippet head()}
       <StudioJack id="cv:siren.level" label="Level" title="Siren level, as a control signal" />
       <StudioJack id="audio:siren" label="Out" title="Siren sound" />

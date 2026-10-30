@@ -151,8 +151,15 @@ studio, so a song keeps playing.
 The **Studio** button in the music tray turns VJ mode into one full-screen
 instrument. The live output stays in the middle (the view hands the native
 preview its frame; VJ mode hides behind it) and the set's modules sit around
-it, in the app's deep blues. **Tray** goes back with the music playing;
-**Exit** stops it.
+it. **Tray** goes back with the music playing; **Exit** stops it.
+
+The chrome (top bar, output, loop library, the tray's header) is the app's
+own; the app's eight macro knobs sit in the top bar as they do in VJ mode,
+each with its effects and a jack. Each set's instruments sit on a face of
+their own (`studioTokens.css`), so the mode reads at a glance: Sound bath is
+deep blue glass and gold, Berlin black with hairlines, mono type and red, Dub
+deep green and amber, Analog a matte black panel with cream legends,
+aluminium knobs, walnut cheeks and orange.
 
 Four sets, each with its own instruments (the keys switch to the set's own
 voice where it has one):
@@ -161,15 +168,16 @@ voice where it has one):
   bowls tuned to the key), XY Space (X morphs drone against bowls, Y opens the
   reverb and shimmer; touching it plays a gliding tone in the key), Chords
   (eight chords in the key that layer: each holds until tapped again), Play,
-  FX (shimmer, tape, delay, reverb), Macros, Beat.
+  FX (shimmer, tape, delay, reverb), Beat.
 - **Berlin**: Drums (a mixer with tune, level, mute and a jack per voice),
   Acid (a resonant bass line with its own 16-step note row, accents and
-  glides, playing with the beat), Visual layers, FX (drive, bitcrush, dub
-  delay, gated reverb), Macros, Beat (up to 64 steps).
+  glides, playing with the beat), FX (drive, bitcrush, dub delay, gated
+  reverb), Beat (up to 64 steps), Pads.
 - **Dub** (`dubSounds.ts`): Dub bass (a round mono bass with glide, played on
   the wide keyboard under the output), Siren (hold, or latch, with pitch,
-  rate, depth and shape), Shots (laser, zap, riser, boing, crackle, boom,
-  alarm, echo clap), and the Echo chamber: a tempo-locked tape echo with wow
+  rate, depth and shape), Pads (the kit and the shots: laser, zap, riser,
+  boing, crackle, boom, alarm, echo clap), and the Echo chamber: a
+  tempo-locked tape echo with wow
   and a saturating feedback loop that can run away, a spring, a filter sweep
   and warmth. **Throw** floods the echo while held; **Drop** cuts the drums
   and bass so the echoes carry the tune.
@@ -215,15 +223,65 @@ reads a small frame from the native renderer about eleven times a second.
 Its sound and its brightness have jacks, so the picture can also turn a
 macro or pulse a layer.
 
-**Visuals per set**: Berlin glitch (`public/ISF/BG-*.fs`: slit-scan,
-threshold, grain, scanlines, kick strobe, datamosh, black and white) and dub
-(`public/ISF/DB-*.fs`: echo trails, smoke, ripples, speaker). Each Visual
-layers row picks one and shows what drives it. **Load jam** sets up a
-groove, four layers and the cables between them, and starts it: in Berlin a
-techno beat and the acid line with the strobe on the kick; in Dub a one drop
-with the bassline and skank, the smoke on the bass, ripples on the shots and
-the speaker on the kick. The analog set's **Load patch** starts with the LFO
-sweeping the filter and two note visuals following the envelope and LFO.
+**Visual voices** (`visualVoices.ts`, `visualScenes.ts`, `VisualRack.svelte`,
+`public/ISF/VX-*.fs`): the picture side of the instrument. Each deck A row
+holds one voice, a shader that follows **one sound**: the kick, snare, hats,
+toms, bass, lead, chords, pads, shots, what is on the keys, or everything.
+The studio works out that sound's signals every frame and writes them into
+the voice (`vx*` inputs): its envelope, a flash per hit, velocity, pitch and
+a gliding pitch, up to four sounding notes, a hit count, a motion clock that
+only runs forward and speeds up while the sound plays, and the beat and bar.
+With **Auto** on, a voice shows only while its sound is part of the music,
+so a scene builds and strips back with the track by itself. Voices draw on
+black and stack with screen blending; each has its own grammar (stripes for
+the hats, light frames for the kick, smoke for the bass), so several stay
+readable together. The Visuals rack shows each row's voice, what it follows
+and its main controls (open a row for all of them and its colours), and
+loads **scenes**: ready-made stacks per set, in the set's palette of one ink
+and one accent. The voices run on the native render core, several of them
+with simulation buffers (ripples, smoke, phosphor, feedback). The library:
+
+- Berlin: Barcode (data stripes re-rolled by each hit), Light Lines (frames
+  of light down a corridor), Panels (architectural light panels), Glyphs (a
+  readout of the notes).
+- Dub: Echo Rings (rings that repeat like a tape echo), Smoke (rising from
+  where each bass note lands), Scope (the notes as oscilloscope figures, true
+  to their intervals).
+- Sound bath: Nebula (veils that open with the pads), Cymatics (sand settling
+  into each note's figure), Aurora (a curtain per note of the chord).
+- Analog: Video Synth (raster oscillators tuned to the notes, folded,
+  keyed and colourised), Wobbulator (scan lines deflected by the sound), Scan
+  Field (a scan-processor landscape that ripples on every hit), Feedback
+  (camera-into-monitor feedback seeded by hits).
+
+**Load jam** (Scenes tab) sets up a groove, loops, a visual scene and the
+cables, and starts it: a techno beat and the acid line in Berlin, a one drop
+with the bassline and skank through the echo in Dub, a filter-swept bassline
+in Analog.
+
+**Pads** (`PadsModule.svelte`): sixteen pads for finger and touch drumming,
+the kit on the bottom rows (kick bottom left) and the shots above. Velocity
+comes from pressure where the screen reports it, otherwise from where the
+pad is hit (higher is harder); several fingers play at once. Full level and
+note repeat (1/8 to 1/32 and triplets, on the beat grid while held).
+
+**Recording loops** (`loopRecorder.ts`, `LoopRecorderBar.svelte`): **Rec**
+counts in to the next bar (with a click when nothing else plays) and records
+1, 2, 4 or 8 bars, or until pressed again (ending on a bar line). **Capture**
+keeps what was just played without having recorded it: the latest phrase,
+since the last pause of a bar, in whole bars. Notes snap to the chosen grid.
+Melodic parts become loops of their own, one per instrument played, kept with
+the project at the top of their column in the loop library; they start
+looping at once on the instrument they were played on. Drum hits are written
+into the beat grid as they are played, so touch drumming builds the pattern
+(the grid grows to hold a longer recording). **Save** on the Beats column
+keeps the grid as one of your beats.
+
+**MIDI** (`midiFile.ts`, `midiExport.ts`): **MIDI out** saves the beat and
+the playing loops as a multi-track .mid file for a DAW; each recorded loop
+and take has its own MIDI button. **MIDI in** adds loops from a .mid file:
+the drum channel becomes a beat, every other track a loop played by the
+set's instrument for its part.
 
 **Macro effects** (`macroFx.ts`, `macroFxAudio.ts`, `MacroEditor.svelte`): the
 FX button on a macro opens its effects. Sound: delay (beat-synced, ping-pong),
@@ -237,8 +295,9 @@ clip effects, and save with the project.
 column and launch them together on the next bar.
 
 **The tray** (`VJMusicStudio.svelte`) is a condensed copy of the current set
-under the VJ deck: the keys, the set's main modules and the loop library, with
-the beat and record buttons in its header. Patching lives in the Studio view.
+under the VJ deck, on the set's face: the keys or pads, the set's main
+modules and the loop library with its recorder, with the beat and record
+buttons in its header. Patching lives in the Studio view.
 
 ## Phases
 
@@ -258,4 +317,6 @@ the beat and record buttons in its header. Patching lives in the Studio view.
    - An arrangement timeline for scenes, and loops recorded from takes.
    - Scan synth modes: read along a circle or a row, or follow a colour.
 3. **Later**: per-take editing (quantize, trim, overdub), more instruments
-   and sample kits, MIDI out to hardware, exporting a take as a MIDI file.
+   and sample kits, MIDI out to hardware, per-instrument audio analysis for
+   the visual voices, a voice built on the render core's compute graph
+   (instanced geometry and particles), and porting the studio to Studio.

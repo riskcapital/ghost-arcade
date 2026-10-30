@@ -23,6 +23,8 @@
   import PlayModule from './PlayModule.svelte';
   import BeatModule from './BeatModule.svelte';
   import LoopBrowser from './LoopBrowser.svelte';
+  import LoopRecorderBar from './LoopRecorderBar.svelte';
+  import PadsModule from './PadsModule.svelte';
   import BathModules from './BathModules.svelte';
   import BerlinModules from './BerlinModules.svelte';
   import DubModules from './DubModules.svelte';
@@ -71,8 +73,9 @@
 </script>
 
 {#snippet loops()}
-  <StudioModule title="LOOPS" subtitle="Starts on the next bar" class="loops">
-    <LoopBrowser />
+  <StudioModule title="LOOPS" class="loops">
+    {#snippet head()}<LoopRecorderBar compact />{/snippet}
+    <LoopBrowser compact />
   </StudioModule>
 {/snippet}
 
@@ -139,22 +142,23 @@
     {#if !minimized}
       <div class="music-body">
         {#if s.set === 'bath'}
-          <div class="slot play"><PlayModule size={null} patches /></div>
-          <div class="slot"><BathModules part="chords" /></div>
-          <div class="slot"><BathModules part="drone" /></div>
+          <div class="slot play face"><PlayModule size={null} patches /></div>
+          <div class="slot face"><BathModules part="chords" /></div>
+          <div class="slot face"><BathModules part="drone" /></div>
           <div class="slot loops">{@render loops()}</div>
         {:else if s.set === 'berlin'}
-          <div class="slot wide"><BeatModule /></div>
-          <div class="slot acid"><BerlinModules part="acid" /></div>
+          <div class="slot wide face"><BeatModule /></div>
+          <div class="slot pads face"><PadsModule /></div>
+          <div class="slot acid face"><BerlinModules part="acid" /></div>
           <div class="slot loops">{@render loops()}</div>
         {:else if s.set === 'dub'}
-          <div class="slot play"><PlayModule size={null} patches /></div>
-          <div class="slot"><DubModules part="shots" /></div>
-          <div class="slot"><DubModules part="siren" /></div>
+          <div class="slot play face"><PlayModule size={null} patches /></div>
+          <div class="slot pads face"><PadsModule /></div>
+          <div class="slot face"><DubModules part="siren" /></div>
           <div class="slot loops">{@render loops()}</div>
         {:else}
-          <div class="slot play"><PlayModule size={null} patches /></div>
-          <div class="slot synth"><AnalogModules bay={false} /></div>
+          <div class="slot play face"><PlayModule size={null} patches /></div>
+          <div class="slot synth face"><AnalogModules bay={false} /></div>
           <div class="slot loops">{@render loops()}</div>
         {/if}
       </div>
@@ -180,7 +184,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--studio-slot);
+    background: var(--ga-bar, #100f0d);
     border-bottom: 1px solid var(--studio-edge-soft);
     white-space: nowrap;
   }
@@ -204,7 +208,8 @@
   .slot > :global(.module) { flex: 1; }
   .slot.play { flex: 1.3 1 0; min-width: 380px; }
   .slot.wide { flex: 1.6 1 0; min-width: 420px; }
-  .slot.loops { flex: 2.2 1 0; min-width: 560px; }
+  .slot.loops { flex: 2.2 1 0; min-width: 520px; }
+  .slot.pads { flex: 0.9 1 0; min-width: 280px; }
   .slot.acid { flex: 1.3 1 0; min-width: 420px; }
   .slot.synth { flex: 0 0 auto; min-width: 0; }
 

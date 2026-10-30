@@ -109,6 +109,20 @@ export class MusicAudioEngine {
     return this.ctx ? this.ctx.currentTime : null;
   }
 
+  /** The recorder's count-in click: a short blip straight to the speakers, higher on the bar. */
+  click(time: number, accent: boolean): void {
+    const ctx = this.ensure();
+    const osc = ctx.createOscillator();
+    const amp = ctx.createGain();
+    osc.frequency.value = accent ? 1760 : 1320;
+    amp.gain.setValueAtTime(0, time);
+    amp.gain.linearRampToValueAtTime(accent ? 0.22 : 0.14, time + 0.002);
+    amp.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+    osc.connect(amp).connect(ctx.destination);
+    osc.start(time);
+    osc.stop(time + 0.06);
+  }
+
   setSynthPatch(patch: SynthPatch): void {
     this.synthPatch = patch;
   }

@@ -16,6 +16,7 @@
   import { scanPosition } from '../../music/scanSynth';
   import { musicStudio } from '../../music/musicStudioStore';
   import { ROOT_NAMES, SCALES, STUDIO_SETS, keyLabel, type ScaleId } from '../../music/studioSets';
+  import { loadAnalogPatch, loadBerlinJam, loadDubJam } from '../../music/jams';
   import {
     captureCurrentScene,
     launchScene,
@@ -33,8 +34,12 @@
   import DubModules from './DubModules.svelte';
   import AnalogModules from './AnalogModules.svelte';
   import RackModules from './RackModules.svelte';
+  import VisualRack from './VisualRack.svelte';
+  import MacroStrip from './MacroStrip.svelte';
   import OutputStrip from './OutputStrip.svelte';
   import LoopBrowser from './LoopBrowser.svelte';
+  import LoopRecorderBar from './LoopRecorderBar.svelte';
+  import PadsModule from './PadsModule.svelte';
   import PlayModule from './PlayModule.svelte';
   import BeatModule from './BeatModule.svelte';
   import CableLayer from './CableLayer.svelte';
@@ -54,6 +59,18 @@
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
   const queuedScene = $derived(s.scenes.find((sc) => sc.id === s.queuedSceneId) ?? null);
   const playingScene = $derived(s.scenes.find((sc) => sc.id === s.sceneId) ?? null);
+  const jam = $derived(s.set === 'berlin' ? loadBerlinJam : s.set === 'dub' ? loadDubJam : s.set === 'analog' ? loadAnalogPatch : null);
+  const lowerSubtitle = $derived(
+    lowerTab === 'scenes'
+      ? queuedScene
+        ? `${queuedScene.name} on the next bar`
+        : playingScene
+          ? `Playing ${playingScene.name}`
+          : 'Beat, loops, take and visuals change together, on the bar'
+      : lowerTab === 'loops'
+        ? `In ${keyLabel(s.key)}`
+        : 'Recorded performances',
+  );
 
   // The live output draws into the frame while the view is up.
   $effect(() => {
@@ -133,7 +150,7 @@
 {/snippet}
 
 {#snippet lower()}
-  <StudioModule title={lowerTab.toUpperCase()} subtitle={lowerTab === 'scenes' ? 'Beat, loops, take and visuals change together, on the bar' : lowerTab === 'loops' ? `In ${keyLabel(s.key)} · each starts on the next bar` : 'Recorded performances'} class="lower">
+  <StudioModule title={lowerTab.toUpperCase()} subtitle={lowerSubtitle} class="lower">
     {#snippet lead()}
       <div class="seg small" role="tablist" aria-label="Scenes, loops or takes">
         <button role="tab" aria-selected={lowerTab === 'loops'} class:on={lowerTab === 'loops'} onclick={() => (lowerTab = 'loops')}>Loops</button>
@@ -143,7 +160,12 @@
     {/snippet}
     {#snippet head()}
       {#if lowerTab === 'scenes'}
-        <button class="text-btn small" onclick={captureCurrentScene} title="Save what is playing now as a scene">+ CAPTURE</button>
+        {#if jam}
+          <button class="text-btn small" onclick={() => void jam()} title="Load the set's ready-made jam: a groove, loops, its visuals and the cables between them">LOAD JAM</button>
+        {/if}
+        <button class="text-btn small" onclick={captureCurrentScene} title="Save what is playing now as a scene">+ SAVE SCENE</button>
+      {:else if lowerTab === 'loops'}
+        <LoopRecorderBar />
       {/if}
     {/snippet}
     {#if lowerTab === 'loops'}
@@ -168,7 +190,7 @@
           <span class="cell" class:playing>{columnLabel(scene.vjColumn) || '—'}</span>
           <button class="icon-btn" onclick={() => musicStudio.removeScene(scene.id)} aria-label="Delete scene {scene.name}" title="Delete scene">×</button>
         {:else}
-          <p class="empty">Start a beat and some loops, launch a VJ column, then Capture. Each scene brings it all back on the bar.</p>
+          <p class="empty">Start a beat and some loops, launch a VJ column, then Save scene. Each scene brings it all back on the bar.</p>
         {/each}
       </div>
     {/if}
@@ -178,10 +200,7 @@
 {#if open}
   <div class="studio-view studio-tokens set-{s.set}" role="region" aria-label="Studio view" bind:this={root}>
     <header class="bar">
-      <div class="brand">
-        <span class="wordmark">GHOST ARCADE</span>
-        <span class="mode">STUDIO</span>
-      </div>
+      <span class="mode">STUDIO</span>
       <span class="sep"></span>
       <button class="transport" class:on={s.sequencerPlaying} onclick={toggleBeat} title={s.sequencerPlaying ? 'Stop the beat' : 'Play the beat on the VJ clock'} aria-label={s.sequencerPlaying ? 'Stop the beat' : 'Play the beat'}>
         {#if s.sequencerPlaying}
@@ -195,7 +214,7 @@
       </button>
       <div class="readouts">
         <span><span class="muted">BPM</span> {tempo.toFixed(1)}</span>
-        {#if s.recording}<span><span class="muted">REC</span> {seconds(elapsed)}</span>{/if}
+        {#if s.recording}<span class="rec-time">{seconds(elapsed)}</span>{/if}
       </div>
       <span class="sep"></span>
       <div class="key">
@@ -211,77 +230,75 @@
           Lock
         </label>
       </div>
-      <div class="scene-status">
-        {#if queuedScene}
-          {playingScene ? playingScene.name : 'Now'} → <strong>{queuedScene.name}</strong> on the next bar
-        {:else if playingScene}
-          Scene <strong>{playingScene.name}</strong>
-        {/if}
-      </div>
+      <span class="sep"></span>
+      <MacroStrip />
+      <span class="spacer"></span>
       <div class="seg" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
           <button class:on={s.set === set.id} onclick={() => musicStudio.setSet(set.id)}>{set.label}</button>
         {/each}
       </div>
       <span class="sep"></span>
-      <button class="text-btn" onclick={panic} title="Stop every sounding note">ALL OFF</button>
+      <button class="icon-btn" onclick={panic} title="Stop every sounding note" aria-label="All notes off">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v8M7 7a7 7 0 1 0 10 0" /></svg>
+      </button>
       <button class="text-btn" onclick={() => musicStudio.setStudioView(false)} title="Back to the music tray; the music keeps playing">TRAY</button>
       <button class="text-btn" onclick={() => musicStudio.close()} title="Close the studio and stop the music">EXIT</button>
     </header>
 
     <div class="centre">
       {@render frame()}
-      <OutputStrip layers={s.set !== 'berlin' && s.set !== 'dub'} />
+      <OutputStrip layers={false} />
       {@render lower()}
     </div>
 
     {#if s.set === 'bath'}
-      <div class="rack left">
+      <div class="rack left face">
         <BathModules part="drone" />
         <BathModules part="bowls" />
-        <PlayModule />
-      </div>
-      <div class="rack right">
         <BathModules part="xy" />
-        <RackModules part="fx" />
       </div>
-      <div class="slot b1"><BathModules part="chords" /></div>
-      <div class="slot b2"><RackModules part="macros" columns={8} /></div>
-      <div class="slot b3"><BeatModule /></div>
+      <div class="rack right face">
+        <VisualRack />
+        <RackModules />
+      </div>
+      <div class="slot b1 face"><BathModules part="chords" /></div>
+      <div class="slot b2 face"><PlayModule /></div>
+      <div class="slot b3 face"><BeatModule /></div>
     {:else if s.set === 'berlin'}
-      <div class="rack left">
+      <div class="rack left face">
         <BerlinModules part="drums" />
         <BerlinModules part="acid" />
       </div>
-      <div class="rack right">
-        <RackModules part="layers" />
-        <RackModules part="fx" />
+      <div class="rack right face">
+        <VisualRack />
+        <RackModules />
       </div>
-      <div class="slot b12"><BeatModule /></div>
-      <div class="slot b3"><RackModules part="macros" /></div>
+      <div class="slot b12 face"><BeatModule /></div>
+      <div class="slot b3 face"><PadsModule /></div>
     {:else if s.set === 'dub'}
-      <div class="rack left">
+      <div class="rack left face">
         <DubModules part="bass" />
         <DubModules part="siren" />
-        <DubModules part="shots" />
+        <PadsModule />
       </div>
-      <div class="rack right">
-        <RackModules part="layers" />
-        <RackModules part="fx" />
+      <div class="rack right face">
+        <VisualRack />
+        <RackModules />
       </div>
-      <div class="slot b1"><RackModules part="macros" /></div>
-      <div class="slot b2"><PlayModule size="wide" /></div>
-      <div class="slot b3"><BeatModule /></div>
+      <div class="slot b12 face"><PlayModule size="wide" /></div>
+      <div class="slot b3 face"><BeatModule /></div>
     {:else}
-      <div class="rack left">
+      <div class="rack left face">
         <PlayModule />
-        <BeatModule />
+        <PadsModule />
       </div>
-      <div class="rack right">
-        <RackModules part="fx" />
-        <RackModules part="macros" />
+      <div class="rack right face">
+        <VisualRack />
+        <RackModules />
       </div>
-      <div class="slot b123"><AnalogModules /></div>
+      <div class="slot b12 face"><AnalogModules /></div>
+      <div class="slot b3 face"><BeatModule /></div>
     {/if}
 
     <CableLayer {root} />
@@ -302,7 +319,7 @@
     z-index: 60;
     display: grid;
     grid-template-columns: 336px minmax(0, 1fr) 356px;
-    grid-template-rows: 48px minmax(0, 1fr) 188px;
+    grid-template-rows: 56px minmax(0, 1fr) 196px;
     grid-template-areas:
       'bar bar bar'
       'left centre right'
@@ -312,7 +329,7 @@
     box-sizing: border-box;
     user-select: none;
   }
-  .set-analog { grid-template-rows: 48px minmax(0, 1fr) 206px; }
+  .set-analog { grid-template-rows: 56px minmax(0, 1fr) 214px; }
 
   /* The output frame lets the native preview show through; its shadow paints the ground everywhere else. */
   .frame {
@@ -361,18 +378,16 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    background: var(--studio-slot);
+    background: var(--ga-bar, #100f0d);
     border-bottom: 1px solid var(--studio-edge-soft);
     white-space: nowrap;
   }
-  .brand { display: flex; align-items: baseline; gap: 8px; }
-  .wordmark { font-weight: 700; letter-spacing: 0.12em; font-size: 13px; }
-  .mode { font-weight: 700; letter-spacing: 0.2em; font-size: 10px; color: var(--studio-accent); }
-  .sep { width: 1px; height: 22px; background: var(--studio-edge-soft); }
-  .readouts { display: flex; gap: 14px; font-family: var(--ga-font-mono, ui-monospace); font-size: 12px; }
+  .mode { font-weight: 700; letter-spacing: 0.22em; font-size: 11px; color: var(--studio-ink); }
+  .sep { flex: 0 0 auto; width: 1px; height: 26px; background: var(--studio-edge-soft); }
+  .spacer { flex: 1; min-width: 4px; }
+  .readouts { display: flex; gap: 12px; font-family: var(--ga-font-mono, ui-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .rec-time { color: var(--ga-rec, #ff3b30); }
   .key { display: flex; align-items: center; gap: 6px; }
-  .scene-status { flex: 1; text-align: center; color: var(--studio-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
-  .scene-status strong { color: var(--studio-ink); font-weight: 650; }
 
   /* ── Layout ── */
   .rack { display: flex; flex-direction: column; gap: var(--studio-gap); min-height: 0; }
