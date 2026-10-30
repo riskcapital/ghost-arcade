@@ -1226,7 +1226,7 @@
     }
     if (missing) {
       showToast(
-        `${missing} media file${missing === 1 ? ' is' : 's are'} missing${moved ? ` (${moved} found in a new place)` : ''}. File → Project Media… can find ${missing === 1 ? 'it' : 'them'}.`,
+        `${missing} media file${missing === 1 ? ' is' : 's are'} missing${moved ? ` (${moved} found in a new place)` : ''}. File → Project media… can find ${missing === 1 ? 'it' : 'them'}.`,
         'warning',
       );
     } else if (moved) {
@@ -1727,7 +1727,7 @@
   $: selectedPluginId = selectedMediaSource?.effectSource?.effectType ?? selectedMediaSource?.spoutSource?.pluginId ?? null;
   // Show the plugin-controls tab for any registered integrated effect type
   // (fluid, particles, milkdrop, …) plus the legacy Spout plugin ids.
-  $: hasPluginControls = selectedPluginId === 'fluid' || selectedPluginId === 'fluidgen' || selectedPluginId === 'particles' || selectedPluginId === 'particles3d' || selectedPluginId === 'milkdrop' || selectedPluginId === 'audiomotion' || selectedPluginId === 'wavejs' || selectedPluginId === 'hydra' || selectedPluginId === 'ghostfx' || selectedPluginId === 'handfx';
+  $: hasPluginControls = selectedPluginId === 'fluid' || selectedPluginId === 'fluidgen' || selectedPluginId === 'particles' || selectedPluginId === 'particles3d' || selectedPluginId === 'milkdrop' || selectedPluginId === 'audiomotion' || selectedPluginId === 'wavejs' || selectedPluginId === 'hydra' || selectedPluginId === 'ghostfx' || selectedPluginId === 'handfx' || selectedPluginId === 'music-studio';
   // Auto-switch to plugin tab when a plugin layer is first selected
   let prevPluginId: string | null = null;
   $: if (hasPluginControls && selectedPluginId !== prevPluginId) {
@@ -6172,7 +6172,7 @@
       } catch (err: any) {
         const missing = /not found|ENOENT/i.test(err?.message || '');
         if (missing) {
-          if (confirm(`"${entry.name}" could not be found.\n\nRemove it from Recent Files?`)) {
+          if (confirm(`"${entry.name}" could not be found.\n\nRemove it from recent files?`)) {
             recentFiles.remove(entry);
           }
         } else {
@@ -7223,7 +7223,7 @@
                     <rect x="14" y="14" width="7" height="7" rx="1"></rect>
                   </svg>
                 </span>
-                <span class="menu-label">New from Template...</span>
+                <span class="menu-label">New from template...</span>
               </button>
               <button class="menu-item" onclick={() => { fileMenuOpen = false; pickSongForShow(); }}>
                 <span class="menu-icon">
@@ -7233,7 +7233,7 @@
                     <circle cx="18" cy="16" r="3"></circle>
                   </svg>
                 </span>
-                <span class="menu-label">New Show from Audio...</span>
+                <span class="menu-label">New show from audio...</span>
               </button>
               <button class="menu-item" onclick={loadComposition}>
                 <span class="menu-icon">
@@ -7246,7 +7246,7 @@
               </button>
               {#if $recentFiles.length > 0}
                 <div class="menu-separator"></div>
-                <div class="menu-section-label">Recent Files</div>
+                <div class="menu-section-label">Recent files</div>
                 {#each $recentFiles as recent (recent.timestamp)}
                   <button
                     class="menu-item menu-item-recent"
@@ -7264,7 +7264,7 @@
                 {/each}
                 <button class="menu-item menu-item-small" onclick={() => { recentFiles.clear(); fileMenuOpen = false; }}>
                   <span class="menu-icon"></span>
-                  <span class="menu-label">Clear Recent Files</span>
+                  <span class="menu-label">Clear recent files</span>
                 </button>
               {/if}
               <div class="menu-separator"></div>
@@ -7287,7 +7287,7 @@
                     <polyline points="7 3 7 8 15 8"></polyline>
                   </svg>
                 </span>
-                <span class="menu-label">Save As...</span>
+                <span class="menu-label">Save as...</span>
                 <span class="menu-shortcut">Ctrl+Shift+S</span>
               </button>
               <div class="menu-separator"></div>
@@ -7301,7 +7301,7 @@
                     <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
                   </svg>
                 </span>
-                <span class="menu-label">Render to Video...</span>
+                <span class="menu-label">Render to video...</span>
               </button>
               <button class="menu-item" onclick={() => { fileMenuOpen = false; showVideoConverter = true; }}>
                 <span class="menu-icon">
@@ -7311,17 +7311,17 @@
                     <path d="m10 12 4 3-4 3v-6z"></path>
                   </svg>
                 </span>
-                <span class="menu-label">Video Converter...</span>
+                <span class="menu-label">Video converter...</span>
               </button>
               {#if isDesktopApp}
                 <button class="menu-item" onclick={() => { fileMenuOpen = false; showProjectMedia = true; }}>
-                  <span class="menu-icon">▣</span><span class="menu-label">Project Media...</span>
+                  <span class="menu-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg></span><span class="menu-label">Project media...</span>
                 </button>
                 <button class="menu-item" onclick={() => { fileMenuOpen = false; showProjectPackage = true; }}>
-                  <span class="menu-icon">⇪</span><span class="menu-label">Export Package...</span>
+                  <span class="menu-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M12 17v-6M9 14l3-3 3 3"/></svg></span><span class="menu-label">Export package...</span>
                 </button>
                 <button class="menu-item" onclick={() => openProjectPackage()}>
-                  <span class="menu-icon">⇩</span><span class="menu-label">Open Package...</span>
+                  <span class="menu-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg></span><span class="menu-label">Open package...</span>
                 </button>
               {/if}
               <div class="menu-separator"></div>
@@ -7333,7 +7333,7 @@
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                   </svg>
                 </span>
-                <span class="menu-label">Import Presets...</span>
+                <span class="menu-label">Import presets...</span>
               </button>
               <button class="menu-item" onclick={exportPresetsToFile}>
                 <span class="menu-icon">
@@ -7343,7 +7343,7 @@
                     <line x1="12" y1="3" x2="12" y2="15"></line>
                   </svg>
                 </span>
-                <span class="menu-label">Export Presets...</span>
+                <span class="menu-label">Export presets...</span>
               </button>
               <div class="menu-separator"></div>
               <button class="menu-item" onclick={handleUndo} disabled={!$canUndo}>
@@ -8597,20 +8597,24 @@
         {:else if $selectedMediaLayer}
           {#if hasPluginControls}
             <div class="media-sidebar-tabs">
-              <button
-                class="media-sidebar-tab"
-                class:active={mediaSidebarTab === 'plugin'}
-                onclick={() => mediaSidebarTab = 'plugin'}
-              >
-                Plugin Controls
-              </button>
-              <button
-                class="media-sidebar-tab"
-                class:active={mediaSidebarTab === 'media'}
-                onclick={() => mediaSidebarTab = 'media'}
-              >
-                Media
-              </button>
+              <div class="ga-segmented" role="group" aria-label="Plugin controls or media">
+                <button
+                  class="media-sidebar-tab"
+                  class:active={mediaSidebarTab === 'plugin'}
+                  aria-pressed={mediaSidebarTab === 'plugin'}
+                  onclick={() => mediaSidebarTab = 'plugin'}
+                >
+                  Plugin controls
+                </button>
+                <button
+                  class="media-sidebar-tab"
+                  class:active={mediaSidebarTab === 'media'}
+                  aria-pressed={mediaSidebarTab === 'media'}
+                  onclick={() => mediaSidebarTab = 'media'}
+                >
+                  Media
+                </button>
+              </div>
             </div>
             {#if mediaSidebarTab === 'plugin'}
               <PluginLayerPanel source={selectedMediaSource} />
@@ -8787,9 +8791,12 @@
     {#if showInteractiveStudio}
       <div class="studio-workshop-backdrop"><section bind:this={studioDialog} class="studio-workshop" role="dialog" aria-label="Interactive Studio tools" aria-modal="true" tabindex="-1">
         <nav>
-          <button class:active={studioPage==='interactive'} aria-pressed={studioPage==='interactive'} onclick={()=>studioPage='interactive'}>Interactive Studio</button>
-          <button class:active={studioPage==='calibration'} aria-pressed={studioPage==='calibration'} onclick={()=>studioPage='calibration'}>Phone calibration{pendingPhoneCalibration?' •':''}</button>
-          <button onclick={closeInteractiveStudio}>Close</button>
+          <div class="ga-segmented" role="group" aria-label="Interactive Studio pages">
+            <button class:active={studioPage==='interactive'} aria-pressed={studioPage==='interactive'} onclick={()=>studioPage='interactive'}>Interactive Studio</button>
+            <button class:active={studioPage==='calibration'} aria-pressed={studioPage==='calibration'} onclick={()=>studioPage='calibration'}>Phone calibration{pendingPhoneCalibration?' •':''}</button>
+          </div>
+          <!-- The editor's own header closes it; the calibration page needs a way out. -->
+          {#if studioPage==='calibration'}<button class="studio-workshop-close" onclick={closeInteractiveStudio}>Close</button>{/if}
         </nav>
         <!-- The editor stays mounted behind the calibration page: remounting it
              would restore the scene it was opened with and publish that over
@@ -8972,7 +8979,7 @@
       {:else}
         <span class="version-label" title="Ghost Arcade Pro {appVersion}">v{appVersion}</span>
       {/if}
-      <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title="Keyboard Shortcuts (?)">?</button>
+      <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title="Keyboard shortcuts (?)">?</button>
     </footer>
   </div>
 
@@ -11505,34 +11512,17 @@
   }
 
   .media-sidebar-tabs {
-    display: flex;
-    gap: 4px;
-    padding: 8px;
-    background: var(--bg-secondary, #111114);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--ga-line-2);
   }
-
+  .media-sidebar-tabs .ga-segmented {
+    display: flex;
+    height: var(--ga-control-h);
+  }
   .media-sidebar-tab {
     flex: 1;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: var(--text-muted, #888);
-    padding: 7px 8px;
-    border-radius: 6px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .media-sidebar-tab:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-primary, #ddd);
-  }
-
-  .media-sidebar-tab.active {
-    background: rgba(187, 134, 252, 0.16);
-    border-color: rgba(187, 134, 252, 0.4);
-    color: var(--accent-primary);
+    justify-content: center;
+    font-size: var(--ga-text-control) !important;
   }
 
   .right-sidebar {
@@ -11837,5 +11827,5 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
-.studio-workshop-backdrop{position:fixed;inset:0;z-index:9999;background:#000b;display:grid;place-items:center;padding:24px}.studio-workshop{width:min(1200px,96vw);max-height:94vh;overflow:auto;background:var(--ga-inspector-bg,var(--ga-card,#141414));color:var(--ga-ink-0,#eee);border:1px solid var(--ga-line-3,#444);border-radius:var(--ga-r-soft,6px)}.studio-workshop nav{display:flex;gap:8px;padding:12px}.studio-workshop nav button{padding:10px 16px;background:var(--ga-hardware-bg,var(--ga-card,#202020));color:inherit;border:1px solid var(--ga-line-2,#444);border-radius:var(--ga-r-hard,3px)}.studio-workshop nav button.active{border-color:var(--ga-violet-line,var(--ga-line-3,#666));background:var(--ga-violet-soft,var(--ga-card,#2a2a2a))}.studio-workshop:focus{outline:none}
+.studio-workshop-backdrop{position:fixed;inset:0;z-index:9999;background:#000b;display:grid;place-items:center;padding:24px}.studio-workshop{width:min(1200px,96vw);max-height:94vh;overflow:auto;background:var(--ga-inspector-bg,var(--ga-card,#141414));color:var(--ga-ink-0,#eee);border:1px solid var(--ga-line-3,#444);border-radius:var(--ga-r-soft,6px)}.studio-workshop nav{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border-bottom:1px solid var(--ga-line-2)}.studio-workshop-close{height:var(--ga-bar-control-h);padding:0 12px;background:var(--ga-card,#16140f);color:var(--ga-ink-0);border:1px solid var(--ga-line-2);border-radius:var(--ga-r-hard,5px);font:inherit;font-size:var(--ga-text-body);font-weight:600;cursor:pointer}.studio-workshop-close:hover{border-color:var(--ga-line-3)}.studio-workshop:focus{outline:none}
 </style>

@@ -34,6 +34,7 @@
   import type { MediaSource, IntegratedEffectSource } from '../types';
   import MilkdropPanel from './MilkdropPanel.svelte';
   import HydraPanel from './HydraPanel.svelte';
+  import MusicStudioPanel from './MusicStudioPanel.svelte';
 
   export let source: MediaSource | null = null;
   export let onUpdateEffectSource: ((next: IntegratedEffectSource) => void) | null = null;
@@ -200,6 +201,9 @@
         onPresetSelect={onUpdateEffectSource ? handleHydraPresetSelect : null}
       />
     {/if}
+    {#if effectSource.effectType === 'music-studio'}
+      <MusicStudioPanel source={effectSource} onchange={(next) => commitEffectSource(next as IntegratedEffectSource)} />
+    {/if}
 
     {#if effectSource.effectType === 'ghostfx' || effectSource.effectType === 'handfx'}
       <div class="movement-nav" aria-label="Visual movements">
@@ -218,7 +222,7 @@
       <div class="handfx-guide">
         <span class="handfx-eyebrow">{HAND_FX_BODY_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Body performance' : HAND_FX_FACE_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Face performance' : 'Hand performance'}</span>
         <p role="status">{handStatus}</p>
-        <p>{getVal('handfxInput', 'live') === 'demo' ? 'Rehearsal plays a virtual performer. Switch to Live camera to perform.' : HAND_FX_BODY_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Step back so the camera sees your whole body. Show Camera and Camera Opacity control the camera background; tracking stays on.' : HAND_FX_FACE_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Face the camera. Show Camera and Camera Opacity control the camera background; tracking stays on.' : 'Bring your hands into view. Show Camera and Camera Opacity control the selfie background; tracking stays on.'}</p>
+        <p>{getVal('handfxInput', 'live') === 'demo' ? 'Rehearsal plays a virtual performer. Switch to Live camera to perform.' : HAND_FX_BODY_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Step back so the camera sees your whole body. Show camera and Camera opacity control the camera background; tracking stays on.' : HAND_FX_FACE_MODES.includes(getVal('handfxMode', 'bridge')) ? 'Face the camera. Show camera and Camera opacity control the camera background; tracking stays on.' : 'Bring your hands into view. Show camera and Camera opacity control the selfie background; tracking stays on.'}</p>
         <p class="handfx-gesture">{gestureGuides[getVal('handfxMode', 'bridge')] ?? 'Move your hands to shape the visual. Layer it over video using Add or Screen blend.'}</p>
       </div>
     {/if}

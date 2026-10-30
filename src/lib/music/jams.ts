@@ -7,7 +7,8 @@ import { get } from 'svelte/store';
 import { macros } from '../stores/macros';
 import { createPattern, type DrumPattern } from './drumPattern';
 import { musicStudio } from './musicStudioStore';
-import { VISUAL_SCENES, loadVisualScene } from './visualScenes';
+import { VISUAL_SCENES } from './visualScenes';
+import { loadSceneIntoStudio } from './studioTarget';
 import { launchLoop, startSequencer, stopAllLoops } from './musicRuntime';
 import type { Cable } from './studioSets';
 
@@ -33,7 +34,7 @@ export function technoPattern(): DrumPattern {
 /** Load a set's visual scene by id. */
 async function visualScene(id: string): Promise<void> {
   const scene = VISUAL_SCENES.find((sc) => sc.id === id);
-  if (scene) await loadVisualScene(scene);
+  if (scene) loadSceneIntoStudio(scene);
 }
 
 /**

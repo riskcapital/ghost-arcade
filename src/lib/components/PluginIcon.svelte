@@ -75,6 +75,15 @@
     <path d="M6.3 6.3 L9.2 9.2 M14.8 14.8 L17.7 17.7 M17.7 6.3 L14.8 9.2 M9.2 14.8 L6.3 17.7" stroke="currentColor" stroke-width="1" opacity="0.6" stroke-linecap="round"/>
   </svg>
 
+{:else if resolvedId === 'musicstudio'}
+  <!-- A note over a stack of voices: the studio's visuals. -->
+  <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <path d="M9 15V5l9-2v10" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+    <circle cx="7" cy="15" r="2" stroke="currentColor" stroke-width="1.4"/>
+    <circle cx="16" cy="13" r="2" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M3 19.5h18M5 22h14" stroke="currentColor" stroke-width="1" opacity="0.55" stroke-linecap="round"/>
+  </svg>
+
 {:else if resolvedId === 'ghostfx'}
   <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
     <path d="M12 3 L20 12 L12 21 L4 12 Z"  stroke="currentColor" stroke-width="1.3"/>

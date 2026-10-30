@@ -85,6 +85,7 @@ import { TRACK_IDS, clipFromRecording, clipLoop, findClip, type Session, type Se
 import type { AnalogDest, AnalogSource } from './analogSynth';
 import type { ChannelId } from './mixer';
 import { LiveInput } from './liveInput';
+import { setStudioDriver, studioHostsLive, studioVisualTick } from './studioPlugin';
 import type { VoiceSourceId } from './visualVoices';
 import {
   ACID_STEPS,
@@ -1331,6 +1332,9 @@ function frame(): void {
     visuals.advance(now);
     const { beat, beatMs } = launchClockPosition();
     voices.advance(now, { beat, beatSeconds: beatMs / 1000 });
+    // Music Studio instances read this frame's signals when the scene syncs.
+    studioDriven.clear();
+    if (studioHostsLive() > 0) studioVisualTick.update((n) => n + 1);
     const active = visuals.isActive();
     // One last write after the note visuals go quiet leaves those clips at
     // rest; visual voices follow the clock, so they are written every frame.
@@ -1342,7 +1346,7 @@ function frame(): void {
     if (loopRec) publishLoopRec(launchClockPosition().beat);
   }
   const s = get(musicStudio);
-  if (s.isOpen || sequencer || replay || loopSlots.size || loopRec || visualsWereActive) frameHandle = requestAnimationFrame(frame);
+  if (s.isOpen || sequencer || replay || loopSlots.size || loopRec || visualsWereActive || studioHostsLive() > 0) frameHandle = requestAnimationFrame(frame);
 }
 
 function publishTransport(now: number): void {
@@ -1613,6 +1617,34 @@ export function pushOutsideNote(type: 'on' | 'off', note: number, velocity: numb
   ensureFrameLoop();
 }
 
+// ── Music Studio plugin ─────────────────────────────────────────────────
+
+/** This frame's signals per sound, shared by every voice following it. */
+const studioDriven = new Map<string, Record<string, number>>();
+
+function drivenForStudio(source: VoiceSourceId, auto: boolean): Record<string, number> {
+  // With the studio closed nothing plays, so a voice on Auto would never
+  // show (a studio on a mapping layer would stay black): it shows at rest.
+  const follows = auto && wasOpen;
+  const key = `${source}:${follows}`;
+  let values = studioDriven.get(key);
+  if (!values) {
+    values = voices.inputs(source, follows);
+    studioDriven.set(key, values);
+  }
+  return values;
+}
+
+/**
+ * A Music Studio clip or layer is showing: start the studio's clock (and its
+ * MIDI and audio, as opening it would) so the voices move with the music,
+ * whether or not the studio panel has been opened.
+ */
+export function wakeStudioVisuals(): void {
+  ensureMusicRuntime();
+  ensureFrameLoop();
+}
+
 let liveInput: LiveInput | null = null;
 
 /** Start listening to the live input on the device chosen in the studio. */
@@ -1655,6 +1687,7 @@ let lastPattern: DrumPattern | null = null;
 export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
+  setStudioDriver(drivenForStudio);
   musicStudio.subscribe((s) => {
     if (wasOpen && !s.isOpen) {
       wasOpen = false;

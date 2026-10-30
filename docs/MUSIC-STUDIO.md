@@ -288,22 +288,49 @@ Its sound and its brightness have jacks, so the picture can also turn a
 macro or pulse a layer.
 
 **Visual voices** (`visualVoices.ts`, `visualScenes.ts`, `VisualRack.svelte`,
-`public/ISF/VX-*.fs`): the picture side of the instrument. Each deck A row
-holds one voice, a shader that follows **one sound**: the kick, snare, hats,
-toms, bass, lead, chords, pads, shots, what is on the keys, or everything.
-The studio works out that sound's signals every frame and writes them into
-the voice (`vx*` inputs): its envelope, a flash per hit, velocity, pitch and
-a gliding pitch, up to four sounding notes, a hit count, a motion clock that
-only runs forward and speeds up while the sound plays, and the beat and bar.
-With **Auto** on, a voice shows only while its sound is part of the music,
-so a scene builds and strips back with the track by itself. Voices draw on
-black and stack with screen blending; each has its own grammar (stripes for
-the hats, light frames for the kick, smoke for the bass), so several stay
-readable together. The Visuals rack shows each row's voice, what it follows
-and its main controls (open a row for all of them and its colours), and
-loads **scenes**: ready-made stacks per set, in the set's palette of one ink
-and one accent. The voices run on the native render core, several of them
-with simulation buffers (ripples, smoke, phosphor, feedback). The library:
+`public/ISF/VX-*.fs`): the picture side of the instrument. A voice is a
+shader that follows **one sound**: the kick, snare, hats, toms, bass, lead,
+chords, pads, shots, what is on the keys, or everything. The studio works out
+that sound's signals every frame and writes them into the voice (`vx*`
+inputs): its envelope, a flash per hit, velocity, pitch and a gliding pitch,
+up to four sounding notes, a hit count, a motion clock that only runs forward
+and speeds up while the sound plays, and the beat and bar. With **Auto** on, a
+voice shows only while its sound is part of the music, so a scene builds and
+strips back with the track by itself. Voices draw on black and stack with
+screen blending; each has its own grammar (stripes for the hats, light frames
+for the kick, smoke for the bass), so several stay readable together.
+**Scenes** are ready-made stacks per set, in the set's palette of one ink and
+one accent. The voices run on the native render core, several of them with
+simulation buffers (ripples, smoke, phosphor, feedback).
+
+**The Music Studio plugin** (`studioPlugin.ts`, `studioTarget.ts`,
+`components/MusicStudioPanel.svelte`): the voices live in one place, a Music
+Studio instance, never across the deck's rows. Drag **Music Studio** from the
+media tray's Plugins tab onto a VJ cell, or apply it to a selected mapping
+media layer. Each instance holds its own stack of up to six voices (the
+shader, the sound it follows, Auto, level and look) and its palette, saved
+with the clip or the layer. The clip panel (VJ) and the Plugin controls tab
+(mapping) edit it: scene, palette and voices.
+
+At render time an instance becomes its voices plus one mix: every voice is a
+hidden shader layer, and the instance's own layer shows them screen-blended
+through the native mix pass the VJ deck uses (`vj-mix`). The layer keeps its
+place on the deck or the map, its opacity, blend, warp, masks and effects. In
+a VJ row the mix runs with the other content, before the crossfades and the
+deck mix read it (`graph_layer_frame_order` in the core). A project with a
+studio clip starts the studio's clock when it shows, panel open or not.
+
+The music itself comes from the studio, which lives in VJ mode (or from
+Ableton Live through it); leaving VJ closes it. While it is closed nothing
+plays, so voices on Auto show at rest instead of hiding: a studio layer on
+the map is never black, and it comes alive with the music once the studio
+plays.
+
+The studio's **Visuals** rack edits the instance the studio plays to: the
+studio clip on the selected row, else the first one playing, else the first
+on the grid (in mapping, the selected studio layer, else the first). Loading a
+scene with no instance puts one in the first free cell of deck A (or on the
+selected media layer). The library:
 
 - Berlin: Barcode (data stripes re-rolled by each hit), Light Lines (frames
   of light down a corridor), Panels (architectural light panels), Glyphs (a
