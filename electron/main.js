@@ -159,6 +159,7 @@ const nativeRendererBroker = createNativeRendererBroker({
   nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
   sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
   canWritePath: target => pathGrants.canWrite(target),
+  onCoreStarted: coreInstance => reattachLinuxSlicesToCore(coreInstance),
 });
 
 // three.js / p5.js media sources render in offscreen windows and send their
@@ -3260,7 +3261,9 @@ async function startNativeOutputRecording(args = {}) {
  *  With `nativeAudio`, the core's clip mix held by settleRecordingAudioTap
  *  is aligned to video frame 0 by wall clock and mixed in at unity gain;
  *  it can also be the only audio when no sidecar source was active. */
-ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
+ipcMain.handle('native_recording_mux_audio', (_event, args = {}) => muxNativeRecordingAudio(args));
+
+async function muxNativeRecordingAudio(args = {}) {
   const videoPath = typeof args.videoPath === 'string' ? args.videoPath : '';
   const audio = args.audio instanceof Uint8Array && args.audio.length > 0 ? args.audio : null;
   const native = args.nativeAudio === true ? pendingNativeRecordingAudio.get(videoPath) ?? null : null;
@@ -3276,7 +3279,7 @@ ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
   // Same container as the recording: ProRes / HAP stay .mov (PCM audio).
   const muxedPath = `${videoPath}.muxed${path.extname(videoPath) || '.mp4'}`;
   try {
-    if (audio) fs.writeFileSync(audioPath, Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength));
+    if (audio) await fs.promises.writeFile(audioPath, Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength));
     const { buildRecordingMuxArgs } = require('./native-audio-tap.cjs');
     const code = await new Promise((resolve, reject) => {
       const child = spawn(resolveFfmpegPath(), buildRecordingMuxArgs({
@@ -3303,7 +3306,7 @@ ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
     if (audioPath) try { fs.rmSync(audioPath, { force: true }); } catch { /* best-effort */ }
     discardPendingRecordingAudio(native);
   }
-});
+}
 
 // Show timeline audio: songs Chromium cannot play are converted once with
 // the bundled ffmpeg, and Render to Video gets the show's soundtrack.
@@ -3373,10 +3376,49 @@ async function stopCoreNativeRecording(rec) {
   };
 }
 
+/** Finish a native recording when the editor that started it crashes,
+ *  reloads or closes. Nothing else would stop it: ffmpeg, the frame pump and
+ *  the audio tap would run on, and every new REC would fail as already
+ *  running. The take is kept, as on a normal stop. */
+function watchNativeRecordingOwner(rec, owner) {
+  if (!rec || !owner) return;
+  const gone = () => {
+    detach();
+    if (nativeOutputRecording !== rec) return;
+    console.warn(`[NativeRec] the editor went away; finishing ${rec.outputPath}`);
+    void stopNativeOutputRecording()
+      .then(async (result) => {
+        if (!result?.success) {
+          console.warn('[NativeRec] recording ended without a file:', result?.error || 'unknown error');
+          return;
+        }
+        // The editor would have mixed in the clip audio; nobody else will.
+        if (result.nativeAudio) await muxNativeRecordingAudio({ videoPath: result.outputPath, nativeAudio: true });
+        console.log(`[NativeRec] kept ${result.outputPath}`);
+      })
+      .catch((err) => console.warn('[NativeRec] could not finish the recording:', err?.message || err));
+  };
+  const onNavigate = (details) => {
+    if (details?.isMainFrame && !details.isSameDocument) gone();
+  };
+  const detach = () => {
+    owner.removeListener('destroyed', gone);
+    owner.removeListener('render-process-gone', gone);
+    owner.removeListener('did-start-navigation', onNavigate);
+    if (rec.detachOwner === detach) rec.detachOwner = null;
+  };
+  owner.once('destroyed', gone);
+  owner.once('render-process-gone', gone);
+  owner.on('did-start-navigation', onNavigate);
+  rec.detachOwner = detach;
+  if (owner.isDestroyed()) gone();
+}
+
 async function stopNativeOutputRecording() {
   const rec = nativeOutputRecording;
   nativeOutputRecording = null;
   if (!rec) return { success: false, error: 'No native output recording is running.' };
+  rec.detachOwner?.();
   if (rec.coreEncoded) return stopCoreNativeRecording(rec);
   const pumped = await rec.pump.stop();
   const written = pumped.written;
@@ -3569,7 +3611,7 @@ function attachSliceNativeLayer(sliceId, win) {
  *  readback and no pump: the core draws it on its own frame, as it does the
  *  output window. Electron keeps owning display placement and fullscreen; the
  *  core only fills the window, and follows it as it resizes. */
-const sliceLinuxResizeHandlers = new Map(); // sliceId -> () => void
+const sliceLinuxResizeHandlers = new Map(); // sliceId -> { win, onResize, coreInstance }
 
 function linuxSlicePhysicalSize(win) {
   const [width, height] = win.getContentSize();
@@ -3585,19 +3627,28 @@ async function attachSliceNativeLayerLinux(sliceId, win) {
     // An X11 Window is an unsigned long: 8 bytes on 64-bit, 4 on 32-bit.
     const x11Window = handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
     const { width, height } = linuxSlicePhysicalSize(win);
+    // The core process this attach reaches; a respawned one starts without it.
+    const coreInstance = nativeRendererBroker.coreInstance;
     const result = await nativeRendererBroker.invoke('native_renderer_attach_slice_window', {
       slice_id: sliceId, x11_window: x11Window, width, height,
     });
     if (!result?.attached) return false;
     sliceNativeAttached.add(sliceId);
-    const onResize = () => {
-      if (win.isDestroyed() || !sliceNativeAttached.has(sliceId)) return;
-      const size = linuxSlicePhysicalSize(win);
-      void nativeRendererBroker.invoke('native_renderer_resize_slice_window', { slice_id: sliceId, ...size })
-        .catch(() => {});
-    };
-    win.on('resize', onResize);
-    sliceLinuxResizeHandlers.set(sliceId, { win, onResize });
+    const existing = sliceLinuxResizeHandlers.get(sliceId);
+    if (existing?.win === win) {
+      // Re-attached to a new core: the window keeps its resize listener.
+      existing.coreInstance = coreInstance;
+    } else {
+      if (existing && !existing.win.isDestroyed()) existing.win.removeListener('resize', existing.onResize);
+      const onResize = () => {
+        if (win.isDestroyed() || !sliceNativeAttached.has(sliceId)) return;
+        const size = linuxSlicePhysicalSize(win);
+        void nativeRendererBroker.invoke('native_renderer_resize_slice_window', { slice_id: sliceId, ...size })
+          .catch(() => {});
+      };
+      win.on('resize', onResize);
+      sliceLinuxResizeHandlers.set(sliceId, { win, onResize, coreInstance });
+    }
     console.log(`[SliceNative] ${sliceId} presented by the core in X11 window 0x${x11Window.toString(16)} (${width}x${height}, ${result.format})`);
     return true;
   } catch (err) {
@@ -3605,6 +3656,21 @@ async function attachSliceNativeLayerLinux(sliceId, win) {
     return false;
   } finally {
     sliceNativePending.delete(sliceId);
+  }
+}
+
+/** Linux: a respawned core (GPU-fault restart, or the editor restarting it)
+ *  has none of the Screens' child windows, and nothing else re-sends them,
+ *  so every Screen would stay blank. Hand each open one to the new core. */
+function reattachLinuxSlicesToCore(coreInstance) {
+  if (process.platform !== 'linux') return;
+  for (const [sliceId, entry] of sliceLinuxResizeHandlers) {
+    if (entry.coreInstance === coreInstance || !sliceNativeAttached.has(sliceId)) continue;
+    const win = sliceWindows.get(sliceId);
+    if (!win || win !== entry.win || win.isDestroyed()) continue;
+    void attachSliceNativeLayerLinux(sliceId, win).then((attached) => {
+      if (!attached) console.warn(`[SliceNative] ${sliceId} could not be handed to the restarted core`);
+    });
   }
 }
 
@@ -4497,9 +4563,14 @@ function createSpoutOsrWindow(width, height) {
       }
     });
 
+    // A restart can open the next window before this one has finished
+    // closing; the shared state and pumps then belong to the new one.
+    const osrWindow = spoutOsrWindow;
+
     // Handle crashes — fall back to CPU path
     spoutOsrWindow.webContents.on('render-process-gone', (event, details) => {
       console.error(`[${textureShareLabel} OSR] Renderer process gone:`, details.reason);
+      if (spoutOsrWindow && spoutOsrWindow !== osrWindow) return;
       osrActive = false;
       osrFailureReason = 'renderer-gone';
       stopOsrPaintPump();
@@ -4509,6 +4580,7 @@ function createSpoutOsrWindow(width, height) {
 
     spoutOsrWindow.on('closed', () => {
       console.log(`[${textureShareLabel} OSR] Window closed`);
+      if (spoutOsrWindow && spoutOsrWindow !== osrWindow) return;
       spoutOsrWindow = null;
       osrActive = false;
       stopOsrPaintPump();
@@ -5262,12 +5334,18 @@ function createAtlasOsrWindow(width, height) {
       startAtlasPaintPump();
     });
 
+    // A restart can open the next window before this one has finished
+    // closing; the shared state and pump then belong to the new one.
+    const osrWindow = atlasOsrWindow;
+
     atlasOsrWindow.webContents.on('render-process-gone', (event, details) => {
       console.error('[Atlas OSR] Renderer process gone:', details.reason);
+      if (atlasOsrWindow && atlasOsrWindow !== osrWindow) return;
       stopAtlasOutput('renderer-gone');
     });
 
     atlasOsrWindow.on('closed', () => {
+      if (atlasOsrWindow && atlasOsrWindow !== osrWindow) return;
       atlasOsrWindow = null;
       stopAtlasPaintPump();
     });
@@ -7494,8 +7572,9 @@ function registerIpcHandlers() {
   // Save a project file. Next to each media file's absolute location the
   // project records where it is from the project's folder, so the show
   // opens after the folder is moved or copied to another computer. The file
-  // is written beside the target and renamed over it: a crash or a full
-  // disk mid-save leaves the previous project intact.
+  // is written beside the target, flushed to disk and renamed over it: a
+  // crash, a power cut or a full disk mid-save leaves the previous project
+  // intact.
   ipcMain.handle('save_project_file', async (_, args) => {
     try {
       const filePath = typeof args?.path === 'string' ? path.normalize(args.path) : '';
@@ -7503,21 +7582,18 @@ function registerIpcHandlers() {
       if (typeof args?.content !== 'string') return { success: false, error: 'Content must be a string' };
       if (!pathGrants.canWrite(filePath)) return PATH_NOT_ALLOWED;
       let content = args.content;
+      // The parsed project, so registering its media need not parse it again.
+      let parsed = null;
       try {
         const data = JSON.parse(content);
         if (data && typeof data === 'object' && !Array.isArray(data)) {
-          content = JSON.stringify(projectMedia.makeProjectPortable(data, path.dirname(filePath)), null, 2);
+          // Registered as written: the portable form, with its media paths.
+          parsed = projectMedia.makeProjectPortable(data, path.dirname(filePath));
+          content = JSON.stringify(parsed, null, 2);
         }
       } catch { /* not JSON: write it as given */ }
-      const temp = `${filePath}.saving-${process.pid}`;
-      try {
-        fs.writeFileSync(temp, content, 'utf8');
-        await require('./replace-file.cjs').replaceFile(temp, filePath);
-      } catch (err) {
-        try { fs.unlinkSync(temp); } catch { /* never written */ }
-        throw err;
-      }
-      pathGrants.registerProjectFile(filePath, content);
+      await require('./atomic-write.cjs').writeFileAtomic(filePath, content);
+      pathGrants.registerProjectFile(filePath, parsed ?? content);
       return { success: true };
     } catch (err) {
       console.error('[Main] save_project_file error:', err?.message || err);
@@ -7577,7 +7653,9 @@ function registerIpcHandlers() {
       fs.mkdirSync(dir, { recursive: true });
       const safeName = safeGeneratedAssetFilename(filename, mime);
       const dest = path.join(dir, safeName);
-      fs.writeFileSync(dest, buffer);
+      // Async: a recording can be gigabytes, and a sync write stalls every
+      // other IPC until it is on disk.
+      await fs.promises.writeFile(dest, buffer);
       return { success: true, path: dest };
     } catch (err) {
       console.error('[Main] save_generated_asset error:', err?.message || err);
@@ -8480,7 +8558,7 @@ function registerIpcHandlers() {
       if (buf.length === 0 && base64Data.length > 0) {
         return { success: false, error: 'base64 decode produced empty buffer (invalid encoding)' };
       }
-      fs.writeFileSync(normalized, buf);
+      await fs.promises.writeFile(normalized, buf);
       return { success: true };
     } catch (err) {
       console.error('[Main] save_file_binary error:', err?.message || err);
@@ -8514,7 +8592,7 @@ function registerIpcHandlers() {
       } else {
         return { success: false, error: 'Invalid bytes payload' };
       }
-      fs.writeFileSync(normalized, buffer);
+      await fs.promises.writeFile(normalized, buffer);
       return { success: true };
     } catch (err) {
       console.error('[Main] save_file_bytes error:', err?.message || err);
@@ -8569,7 +8647,9 @@ function registerIpcHandlers() {
           }
         }
       } catch { /* fall through to the actual copy */ }
-      fs.copyFileSync(normSrc, normDest);
+      // Async: this runs after REC stops and after an offline render, and a
+      // multi-gigabyte sync copy would stall every other IPC for minutes.
+      await fs.promises.copyFile(normSrc, normDest);
       return { success: true };
     } catch (err) {
       console.error('[Main] copy_file_to_project error:', err?.message || err);
@@ -8702,9 +8782,11 @@ function registerIpcHandlers() {
   });
 
   // ── Native output live recording (main-process IOSurface capture) ──
-  ipcMain.handle('native_output_recording_start', async (_event, args = {}) => {
+  ipcMain.handle('native_output_recording_start', async (event, args = {}) => {
     try {
-      return await startNativeOutputRecording(args);
+      const result = await startNativeOutputRecording(args);
+      if (result?.success) watchNativeRecordingOwner(nativeOutputRecording, event.sender);
+      return result;
     } catch (err) {
       return { success: false, error: err?.message || String(err) };
     }
@@ -9392,6 +9474,30 @@ function createMainWindow() {
   // short window we give up (prevents a reload-loop eating CPU).
   let _rendererCrashReloads = 0;
   let _lastRendererCrashAt = 0;
+  // At most one reload waits on an unresponsive editor. It is dropped when
+  // the editor answers again, crashes (that reloads on its own) or starts a
+  // new page, and checked once more before it fires.
+  let unresponsiveReloadTimer = null;
+  let editorUnresponsive = false;
+  const cancelUnresponsiveReload = () => {
+    editorUnresponsive = false;
+    if (unresponsiveReloadTimer) {
+      clearTimeout(unresponsiveReloadTimer);
+      unresponsiveReloadTimer = null;
+    }
+  };
+  // JavaScript sources run for the editor that opened them. A crashed or
+  // reloaded editor reopens the ones it still uses; until then the hidden
+  // windows would keep painting for nobody.
+  mainWindow.webContents.on('render-process-gone', () => {
+    cancelUnresponsiveReload();
+    jsSourceHost.closeAll();
+  });
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (!details?.isMainFrame || details.isSameDocument) return;
+    cancelUnresponsiveReload();
+    jsSourceHost.closeAll();
+  });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     const now = Date.now();
     const wasRecent = (now - _lastRendererCrashAt) < 30_000;
@@ -9405,14 +9511,22 @@ function createMainWindow() {
     try { mainWindow.reload(); } catch (e) { console.error('[Main] reload() threw:', e); }
   });
   mainWindow.webContents.on('unresponsive', () => {
+    editorUnresponsive = true;
+    if (unresponsiveReloadTimer) return;
     console.warn('[Main] MAIN renderer unresponsive (>30s). Giving it another 10s before we reload...');
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.isLoading() === false) {
-        try { mainWindow.reload(); } catch {}
-      }
+    const win = mainWindow;
+    unresponsiveReloadTimer = setTimeout(() => {
+      unresponsiveReloadTimer = null;
+      if (!editorUnresponsive || !win || win !== mainWindow || win.isDestroyed()) return;
+      const wc = win.webContents;
+      if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading()) return;
+      editorUnresponsive = false;
+      console.warn('[Main] MAIN renderer still unresponsive. Reloading.');
+      try { win.reload(); } catch {}
     }, 10_000);
   });
   mainWindow.webContents.on('responsive', () => {
+    cancelUnresponsiveReload();
     console.log('[Main] MAIN renderer responsive again.');
   });
 
@@ -9456,6 +9570,7 @@ function createMainWindow() {
   });
 
   mainWindow.on('closed', () => {
+    cancelUnresponsiveReload();
     mainWindow = null;
     // Close every performer/display pop-out so the app can actually exit.
     closeAuxiliaryWindows();
@@ -10016,9 +10131,6 @@ app.whenReady().then(async () => {
       if (!pathGrants.canRead(normalized)) {
         return addCorsHeaders(new Response('Forbidden', { status: 403 }));
       }
-      if (!fs.existsSync(normalized)) {
-        return addCorsHeaders(new Response('Not found', { status: 404 }));
-      }
       // Re-emit as file:// for net.fetch — it handles range requests +
       // streaming for us, which <video> needs to seek without buffering
       // the whole file. We can't expose file:// to the renderer directly
@@ -10032,11 +10144,27 @@ app.whenReady().then(async () => {
       const fetchHeaders = new Headers();
       const range = request.headers.get('range');
       if (range) fetchHeaders.set('range', range);
-      const resp = await electronNet.fetch(fileUrl, {
-        method: request.method,
-        headers: fetchHeaders,
-        bypassCustomProtocolHandlers: true,
-      });
+      // No existence check up front: a video asks for every range read, and
+      // a sync stat each time stalls the main thread (badly on a network
+      // drive). A missing file is told apart only when the fetch fails.
+      const notFound = async () => {
+        try { await fs.promises.access(normalized); return false; } catch { return true; }
+      };
+      let resp;
+      try {
+        resp = await electronNet.fetch(fileUrl, {
+          method: request.method,
+          headers: fetchHeaders,
+          bypassCustomProtocolHandlers: true,
+        });
+      } catch (err) {
+        if (await notFound()) return addCorsHeaders(new Response('Not found', { status: 404 }));
+        throw err;
+      }
+      if (!resp.ok && await notFound()) {
+        resp.body?.cancel().catch(() => {});
+        return addCorsHeaders(new Response('Not found', { status: 404 }));
+      }
       return addCorsHeaders(resp);
     } catch (err) {
       console.error('[ghost-asset] handler error:', err?.message || err);

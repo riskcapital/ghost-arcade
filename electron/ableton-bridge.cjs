@@ -7,6 +7,7 @@
 const dgram = require('dgram');
 const fs = require('fs');
 const path = require('path');
+const { writeFileAtomicSync } = require('./atomic-write.cjs');
 
 const APP_PORT = 11050;
 const SCRIPT_PORT = 11051;
@@ -122,7 +123,7 @@ function readSettings(app) {
 
 function writeSettings(app, settings) {
   try {
-    fs.writeFileSync(path.join(app.getPath('userData'), SETTINGS_FILE), JSON.stringify(settings, null, 2));
+    writeFileAtomicSync(path.join(app.getPath('userData'), SETTINGS_FILE), JSON.stringify(settings, null, 2));
   } catch (err) {
     console.warn('[Ableton] could not save bridge settings:', err?.message || err);
   }

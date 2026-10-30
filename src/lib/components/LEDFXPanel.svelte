@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { project } from '../stores/layers';
+  import { runAsLiveControl } from '../stores/historyHooks';
   import type {
     WLEDColorSource,
     WLEDEffect,
@@ -67,7 +68,8 @@
     if (!effect) return;
     holdRestore = { ...holdRestore, [effectId]: effect.active };
     heldEffects = { ...heldEffects, [effectId]: true };
-    updateEffect(effectId, { active: true });
+    // Holding a pad is playing, not editing: no undo step, no unsaved change.
+    runAsLiveControl(() => updateEffect(effectId, { active: true }));
   }
 
   function endHold(effectId: string) {
@@ -79,7 +81,7 @@
     delete nextRestore[effectId];
     heldEffects = nextHeld;
     holdRestore = nextRestore;
-    updateEffect(effectId, { active: restore });
+    runAsLiveControl(() => updateEffect(effectId, { active: restore }));
   }
 
   function handleHoldStart(event: PointerEvent, effectId: string) {

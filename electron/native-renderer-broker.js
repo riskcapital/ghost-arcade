@@ -469,6 +469,7 @@ export function createNativeRendererBroker({
   nativeFrameEncoderStatusProvider = null,
   sharedTextureHandlePreparer = null,
   canWritePath = null,
+  onCoreStarted = null,
 }) {
   return new NativeRendererBroker({
     appRoot,
@@ -481,6 +482,7 @@ export function createNativeRendererBroker({
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
     canWritePath,
+    onCoreStarted,
   });
 }
 
@@ -528,6 +530,7 @@ class NativeRendererBroker {
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
     canWritePath,
+    onCoreStarted,
   }) {
     this.appRoot = appRoot;
     this.resourcesPath = resourcesPath;
@@ -545,6 +548,9 @@ class NativeRendererBroker {
     // Decides which disk paths a renderer-originated export may write.
     // Without one, renderer input cannot name an output path at all.
     this.canWritePath = typeof canWritePath === 'function' ? canWritePath : () => false;
+    // Told the core instance after every start that returns, whoever asked
+    // for it (the editor, or the GPU-fault restart below).
+    this.onCoreStarted = typeof onCoreStarted === 'function' ? onCoreStarted : null;
     this.child = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -820,6 +826,11 @@ class NativeRendererBroker {
         backend_ready: false,
         last_frame_error: `${HANDSHAKE_FAILED}: ${err?.message || String(err)}`,
       };
+    }
+    try {
+      this.onCoreStarted?.(this.coreInstance);
+    } catch (err) {
+      console.warn('[NativeRenderer] core start listener failed:', err?.message || err);
     }
     return this.lastStatus;
   }

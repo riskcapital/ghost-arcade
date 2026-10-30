@@ -47,10 +47,64 @@ function isRuntimeRef(value: unknown): boolean {
 // first stroke survived an undo round-trip — strokes 2..N came back with
 // `brush.color = null` / missing fields, and the renderer threw
 // `Cannot read properties of null (reading 'x')` once Canvas re-rendered.
+// ============================================================================
+// LARGE STRINGS — an embedded 3D model or image (a data URL of many MB) is
+// kept once and referenced from each step. Steps are JSON strings, so it was
+// otherwise copied into all fifty of them: each edit re-serialised it and the
+// history held gigabytes.
+// ============================================================================
+
+const LARGE_STRING = 64 * 1024;
+const LARGE_REF = '\u0000ga-large:';
+const largeById = new Map<number, string>();
+const idByLarge = new Map<string, number>();
+let nextLargeId = 1;
+/** Ids interned by the serialisation in progress. */
+let largeInUse: Set<number> | null = null;
+
+function internLarge(value: string): string {
+  let id = idByLarge.get(value);
+  if (id === undefined) {
+    id = nextLargeId++;
+    idByLarge.set(value, id);
+    largeById.set(id, value);
+  }
+  largeInUse?.add(id);
+  return LARGE_REF + id;
+}
+
+/** Put the large strings back into a parsed step, in place. */
+function restoreLarge(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.startsWith(LARGE_REF) ? (largeById.get(Number(value.slice(LARGE_REF.length))) ?? value) : value;
+  }
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) value[i] = restoreLarge(value[i]);
+  } else {
+    const record = value as Record<string, unknown>;
+    for (const key of Object.keys(record)) record[key] = restoreLarge(record[key]);
+  }
+  return value;
+}
+
+/** Forget large strings no step refers to any more. */
+function pruneLarge(entries: Iterable<HistoryEntry | null>): void {
+  if (largeById.size === 0) return;
+  const keep = new Set<number>();
+  for (const entry of entries) for (const id of entry?.large ?? []) keep.add(id);
+  for (const [id, value] of largeById) {
+    if (keep.has(id)) continue;
+    largeById.delete(id);
+    idByLarge.delete(value);
+  }
+}
+
 function sanitize(value: unknown, ancestors: WeakSet<object> = new WeakSet()): unknown {
   if (value === null || value === undefined) return value;
   const t = typeof value;
-  if (t === 'string' || t === 'number' || t === 'boolean') return value;
+  if (t === 'string') return (value as string).length >= LARGE_STRING ? internLarge(value as string) : value;
+  if (t === 'number' || t === 'boolean') return value;
   if (t === 'function' || t === 'symbol' || t === 'bigint') return undefined;
   if (t !== 'object') return undefined;
 
@@ -126,8 +180,14 @@ export interface HistorySnapshot {
  * hooks run — avoiding the "Unable to serialize Texture." flood that
  * otherwise starves the renderer when VJ clips hold live textures.
  */
-function serializeSnapshot(project: Project, keyframes: unknown, output: OutputHistoryState | null): string {
-  return JSON.stringify({ project: sanitize(withoutViewState(project)), keyframes: sanitize(keyframes), output: sanitize(output) });
+function serializeSnapshot(project: Project, keyframes: unknown, output: OutputHistoryState | null): { json: string; large: number[] } {
+  largeInUse = new Set();
+  try {
+    const json = JSON.stringify({ project: sanitize(withoutViewState(project)), keyframes: sanitize(keyframes), output: sanitize(output) });
+    return { json, large: [...largeInUse] };
+  } finally {
+    largeInUse = null;
+  }
 }
 
 /**
@@ -177,8 +237,11 @@ const SOURCE_TRANSPORT_KEYS = [
   '_timelapseTotalFrames',
 ] as const;
 
-function parseSnapshot(json: string): { project: Project; keyframes: unknown; output: OutputHistoryState | null } {
+/** A step's state. `withLarge: false` leaves large strings as references
+ *  (enough to compare two steps, and much cheaper). */
+function parseSnapshot(json: string, withLarge = true): { project: Project; keyframes: unknown; output: OutputHistoryState | null } {
   const parsed = JSON.parse(json) as { project: Project; keyframes: unknown; output?: OutputHistoryState | null };
+  if (withLarge && json.includes('\\u0000ga-large:')) restoreLarge(parsed);
   return { project: parsed.project, keyframes: parsed.keyframes ?? null, output: parsed.output ?? null };
 }
 
@@ -278,6 +341,8 @@ interface HistoryEntry {
   id: number;
   json: string;
   selectedLayerId: string | null;
+  /** Large strings this step refers to (see internLarge). */
+  large: number[];
 }
 
 interface HistoryState {
@@ -286,9 +351,13 @@ interface HistoryState {
   current: HistoryEntry | null;
 }
 
+function entriesOf(state: HistoryState): Array<HistoryEntry | null> {
+  return [...state.past, state.current, ...state.future];
+}
+
 let nextEntryId = 1;
-function makeEntry(json: string, project: Project | null | undefined): HistoryEntry {
-  return { id: nextEntryId++, json, selectedLayerId: project?.selectedLayerId ?? null };
+function makeEntry(snapshot: { json: string; large: number[] }, project: Project | null | undefined): HistoryEntry {
+  return { id: nextEntryId++, json: snapshot.json, large: snapshot.large, selectedLayerId: project?.selectedLayerId ?? null };
 }
 
 function createHistoryStore() {
@@ -309,13 +378,16 @@ function createHistoryStore() {
       if (source.length === 0) return state;
       const target = direction < 0 ? source[source.length - 1] : source[0];
       const leaving = state.current;
-      const parsed = parseSnapshot(target.json);
-      const left = leaving ? parseSnapshot(leaving.json) : null;
+      // Compared with large strings still as references (equal strings
+      // share one), then put back in what is restored.
+      const parsed = parseSnapshot(target.json, false);
+      const left = leaving ? parseSnapshot(leaving.json, false) : null;
+      const project = mergeProjectStep(liveProject, parsed.project, left?.project ?? null, target.selectedLayerId);
       result = {
-        project: mergeProjectStep(liveProject, parsed.project, left?.project ?? null, target.selectedLayerId),
-        keyframes: parsed.keyframes,
-        output: parsed.output,
-        leavingOutput: left?.output ?? null,
+        project: restoreLarge(project) as Project,
+        keyframes: restoreLarge(parsed.keyframes),
+        output: restoreLarge(parsed.output) as OutputHistoryState | null,
+        leavingOutput: restoreLarge(left?.output ?? null) as OutputHistoryState | null,
       };
       if (direction < 0) {
         return {
@@ -338,11 +410,9 @@ function createHistoryStore() {
 
     // Initialize with a project state
     init(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null) {
-      set({
-        past: [],
-        future: [],
-        current: makeEntry(serializeSnapshot(project, keyframes, output), project),
-      });
+      const current = makeEntry(serializeSnapshot(project, keyframes, output), project);
+      set({ past: [], future: [], current });
+      pruneLarge([current]);
     },
 
     // Record a new state (called after discrete user actions)
@@ -351,20 +421,23 @@ function createHistoryStore() {
 
       const serialized = serializeSnapshot(project, keyframes, output);
 
+      let kept: HistoryState | null = null;
       update((state) => {
         // Skip if identical to current state
-        if (state.current?.json === serialized) return state;
+        if (state.current?.json === serialized.json) return state;
 
         const newPast = state.current
           ? [...state.past, state.current].slice(-MAX_HISTORY_SIZE)
           : state.past;
 
-        return {
+        kept = {
           past: newPast,
           future: [],
           current: makeEntry(serialized, project),
         };
+        return kept;
       });
+      if (kept) pruneLarge(entriesOf(kept));
     },
 
     /** Replace the latest step with this state, without adding a step
@@ -372,10 +445,32 @@ function createHistoryStore() {
     amend(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null) {
       if (suppressCount > 0) return;
       const serialized = serializeSnapshot(project, keyframes, output);
+      let kept: HistoryState | null = null;
       update((state) => {
-        if (!state.current || state.current.json === serialized) return state;
-        return { ...state, current: { ...state.current, json: serialized } };
+        if (!state.current || state.current.json === serialized.json) return state;
+        kept = { ...state, current: { ...state.current, json: serialized.json, large: serialized.large } };
+        return kept;
       });
+      if (kept) pruneLarge(entriesOf(kept));
+    },
+
+    /**
+     * Name the project in every step. Its name follows its file (Save As
+     * names it), so undo must not take it back to the old name.
+     */
+    renameSteps(name: string) {
+      const rename = (entry: HistoryEntry | null): HistoryEntry | null => {
+        if (!entry) return entry;
+        const parsed = JSON.parse(entry.json) as { project?: { name?: string } };
+        if (!parsed.project || parsed.project.name === name) return entry;
+        parsed.project.name = name;
+        return { ...entry, json: JSON.stringify(parsed) };
+      };
+      update((state) => ({
+        past: state.past.map((e) => rename(e)!),
+        future: state.future.map((e) => rename(e)!),
+        current: rename(state.current),
+      }));
     },
 
     // Suppress/unsuppress recording during undo/redo
@@ -405,6 +500,7 @@ function createHistoryStore() {
     clear() {
       set({ past: [], future: [], current: null });
       suppressCount = 0;
+      pruneLarge([]);
     },
   };
 }
