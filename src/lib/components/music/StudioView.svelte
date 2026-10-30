@@ -61,7 +61,7 @@
   let tempo = $state(120);
   let scanX = $state(0);
   let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band'>('session');
-  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Band' } as const;
+  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band' } as const;
 
   const s = $derived($musicStudio);
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
@@ -191,7 +191,7 @@
         <button role="tab" aria-selected={lowerTab === 'scenes'} class:active={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>{#if s.scenes.length}Scenes {s.scenes.length}{:else}Scenes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'takes'} class:active={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>{#if s.takes.length}Takes {s.takes.length}{:else}Takes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'mixer'} class:active={lowerTab === 'mixer'} onclick={() => (lowerTab = 'mixer')}>Mixer</button>
-        <button role="tab" aria-selected={lowerTab === 'band'} class:active={lowerTab === 'band'} onclick={() => (lowerTab = 'band')}>Band</button>
+        <button role="tab" aria-selected={lowerTab === 'band'} class:active={lowerTab === 'band'} onclick={() => (lowerTab = 'band')}>Live band</button>
       </div>
     {/snippet}
     {#snippet head()}
