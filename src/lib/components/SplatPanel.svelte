@@ -1,6 +1,5 @@
 <script lang="ts" module>
-  import { get as getStore } from 'svelte/store';
-  import { project as projectStore } from '../stores/layers';
+  import { releaseBlobUrl } from './blobUrlUsers';
 
   /** Blob URLs this panel made (splat files and video textures), with the
    *  file name behind each. Keyed by URL rather than by panel: one panel
@@ -8,13 +7,10 @@
    *  only the URL that layer was using. */
   const splatBlobNames = new Map<string, string>();
 
-  /** Revoke a URL this panel made once no layer shows it any more. */
+  /** Revoke a URL this panel made once nothing uses it any more (layers, VJ
+   *  clips in any block or deck, media, presets, undo steps). */
   function releaseSplatBlobUrl(url: string | null | undefined): void {
-    if (!url || !splatBlobNames.has(url)) return;
-    const layers = getStore(projectStore)?.layers ?? [];
-    if (layers.some((l) => l.splatContent?.filePath === url || l.splatContent?.texturePath === url)) return;
-    splatBlobNames.delete(url);
-    URL.revokeObjectURL(url);
+    releaseBlobUrl(splatBlobNames, url);
   }
 </script>
 
