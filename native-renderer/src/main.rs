@@ -712,16 +712,18 @@ const RPC_FAST_PATH_UNORDERED_METHODS: &[&str] = &[
 /// main thread, in order with the commands before it.
 #[derive(Default)]
 struct PublishedRpcSnapshot {
-    status: Value,
-    stats: Value,
+    /// Shared with the next publishes until they are rebuilt (see
+    /// `refresh_rpc_snapshot`).
+    status: Arc<Value>,
+    stats: Arc<Value>,
     output_shared_texture: Value,
 }
 
 impl PublishedRpcSnapshot {
     fn get(&self, method: &str) -> Option<&Value> {
         match method {
-            "status" | "get_status" => Some(&self.status),
-            "stats" | "get_stats" => Some(&self.stats),
+            "status" | "get_status" => Some(self.status.as_ref()),
+            "stats" | "get_stats" => Some(self.stats.as_ref()),
             "output_shared_texture" | "get_output_shared_texture" => {
                 Some(&self.output_shared_texture)
             }
@@ -776,6 +778,53 @@ struct RpcFastPath {
 
 /// How long after the last read-only query the render loop keeps republishing.
 const RPC_FAST_PATH_INTEREST_WINDOW_MS: u64 = 4_000;
+/// Between RPCs, status and stats are rebuilt at most this often (~15 Hz)
+/// unless something a poller waits on changed.
+const RPC_SNAPSHOT_REFRESH: Duration = Duration::from_millis(66);
+/// Frequent main-thread queries that change nothing `status` or `stats`
+/// report, so the snapshot need not be rebuilt for them.
+const RPC_READ_ONLY_METHODS: &[&str] = &[
+    "layers_snapshot", "get_layers_snapshot", "launch_status",
+    "get_layer_source_readiness", "get_source_frame_readiness", "audio_scope",
+];
+
+/// Recent frame submission intervals, kept in arrival order and sorted, so
+/// the stats percentiles need no copy or sort when stats are built.
+#[derive(Default)]
+struct IntervalWindow {
+    arrival: VecDeque<f64>,
+    sorted: Vec<f64>,
+}
+
+impl IntervalWindow {
+    const CAPACITY: usize = 2048;
+
+    fn push(&mut self, value: f64) {
+        if self.arrival.len() >= Self::CAPACITY {
+            if let Some(old) = self.arrival.pop_front() {
+                let at = self.sorted.partition_point(|v| v.total_cmp(&old).is_lt());
+                if at < self.sorted.len() {
+                    self.sorted.remove(at);
+                }
+            }
+        }
+        self.arrival.push_back(value);
+        let at = self.sorted.partition_point(|v| v.total_cmp(&value).is_le());
+        self.sorted.insert(at, value);
+    }
+
+    fn len(&self) -> usize {
+        self.sorted.len()
+    }
+
+    fn max(&self) -> Option<f64> {
+        self.sorted.last().copied()
+    }
+
+    fn percentile(&self, p: f64) -> Option<f64> {
+        self.sorted.get((self.sorted.len().saturating_sub(1) as f64 * p).ceil() as usize).copied()
+    }
+}
 
 impl RpcFastPath {
     fn new() -> Self {
@@ -3237,7 +3286,7 @@ fn graph_layer_frame_order(
         .then_with(|| a.1.cmp(b.1))
 }
 
-fn sort_graph_layers_for_frame(layers: &mut [NativeGraphLayer]) {
+fn sort_graph_layers_for_frame(layers: &mut Vec<NativeGraphLayer>) {
     layers.sort_by(|a, b| {
         graph_layer_frame_order((&a.kind, a.layer_id.as_str()), (&b.kind, b.layer_id.as_str()))
     });
@@ -3259,9 +3308,8 @@ fn sort_graph_layers_for_frame(layers: &mut [NativeGraphLayer]) {
         resources.into_iter().filter_map(|resource| writers.get(resource).copied())
             .filter(|writer| *writer != index).collect::<HashSet<_>>()
     }).collect::<Vec<_>>();
-    let order = graph_dependency_order(&dependencies);
-    let ordered = order.into_iter().map(|index| layers[index].clone()).collect::<Vec<_>>();
-    layers.clone_from_slice(&ordered);
+    let mut taken = std::mem::take(layers).into_iter().map(Some).collect::<Vec<_>>();
+    layers.extend(graph_dependency_order(&dependencies).into_iter().filter_map(|index| taken[index].take()));
 }
 
 fn graph_dependency_order(dependencies: &[HashSet<usize>]) -> Vec<usize> {
@@ -3393,7 +3441,8 @@ struct NativeGraphLayer {
     input_source_id: String,
     kind: NativeGraphLayerKind,
     params: Value,
-    effect_job_template: Option<NativeGraphFrameJob>,
+    /// Shared, so the per-frame copy of the layer does not copy its buffers.
+    effect_job_template: Option<Arc<NativeGraphFrameJob>>,
     planet_state: NativePlanetGraphState,
     ink_cloud_state: NativeInkCloudGraphState,
     smoke_3d_state: NativeSmoke3DGraphState,
@@ -4655,7 +4704,10 @@ struct App {
     video_prefetch_bytes: u64,
     video_prefetch_versions: HashMap<String, u64>,
     image_prefetch_waiters: HashMap<(String, String), Vec<(u64, Instant)>>,
-    submitted_intervals_ms: VecDeque<f64>,
+    submitted_intervals_ms: IntervalWindow,
+    /// Status and stats last built for the fast path, when, and the
+    /// `rpc_snapshot_watch_key` at the time.
+    rpc_snapshot_cache: Option<(Arc<Value>, Arc<Value>, Instant, u64)>,
     last_submission_at: Option<Instant>,
     media_pump_ms: f64,
     /// When launches and video sessions last advanced (see pump_frame_media).
@@ -4748,6 +4800,14 @@ struct App {
     /// Per shader source: whether it samples any image (see
     /// native_shader_reads_inputs). Checked once per source.
     shader_reads_inputs: HashMap<u64, bool>,
+    /// When each shader was last bound to a layer or rendered for one. Only
+    /// these are dropped at the registry cap; graph and stdlib shaders are
+    /// sent once and kept.
+    isf_shader_last_used: HashMap<String, u64>,
+    isf_shader_use_tick: u64,
+    /// Hashed ids of shaders dropped at the cap. A layer bound to one is
+    /// reported in `layers_snapshot` so the editor sends the source again.
+    evicted_shader_ids: HashSet<u64>,
     isf_shader_generation: u64,
     /// Latest analyser spectrum for ISF audio / audioFFT inputs.
     isf_audio_spectrum: IsfAudioSpectrum,
@@ -5105,7 +5165,8 @@ impl App {
             video_prefetch_bytes: 0,
             video_prefetch_versions: HashMap::new(),
             image_prefetch_waiters: HashMap::new(),
-            submitted_intervals_ms: VecDeque::new(),
+            submitted_intervals_ms: IntervalWindow::default(),
+            rpc_snapshot_cache: None,
             last_submission_at: None,
             media_pump_ms: 0.0,
             last_frame_service: Instant::now(),
@@ -5158,6 +5219,9 @@ impl App {
             shader_isf_inputs: HashMap::new(),
             shader_isf_hosts: HashMap::new(),
             shader_reads_inputs: HashMap::new(),
+            isf_shader_last_used: HashMap::new(),
+            isf_shader_use_tick: 0,
+            evicted_shader_ids: HashSet::new(),
             isf_shader_generation: 0,
             isf_audio_spectrum: IsfAudioSpectrum::default(),
             isf_multipass_renders: 0,
@@ -6142,8 +6206,13 @@ impl App {
             .scene_layers
             .values()
             .map(|layer| {
+                // A shader dropped at the registry cap that this layer was
+                // bound to again: the editor must send its source again.
+                let evicted_shader_id = self.isf_layer_bindings.get(&layer.id).or(layer.shader_id.as_ref())
+                    .filter(|id| !self.shader_registry.contains_key(*id) && self.evicted_shader_ids.contains(&stable_hash64(id)));
                 json!({
                     "layer_id": layer.id,
+                    "evicted_shader_id": evicted_shader_id,
                     "z_index": layer.z_index,
                     "visible": layer.visible,
                     "opacity": layer.opacity,
@@ -6193,11 +6262,9 @@ impl App {
                 renderer.native_compute_graph_buffer_count() as u64;
         }
         let mut value = json!(self.stats.clone());
-        let mut intervals: Vec<f64> = self.submitted_intervals_ms.iter().copied().collect();
-        intervals.sort_by(f64::total_cmp);
-        let percentile = |p: f64| intervals.get(((intervals.len().saturating_sub(1)) as f64 * p).ceil() as usize).copied();
-        value["submission_intervals"] = json!({ "samples": intervals.len(), "p99_ms": percentile(0.99),
-            "p999_ms": percentile(0.999), "max_ms": intervals.last(), "coverage": "program submission cadence, not physical display timing" });
+        let intervals = &self.submitted_intervals_ms;
+        value["submission_intervals"] = json!({ "samples": intervals.len(), "p99_ms": intervals.percentile(0.99),
+            "p999_ms": intervals.percentile(0.999), "max_ms": intervals.max(), "coverage": "program submission cadence, not physical display timing" });
         value["live_resources"] = json!({
             "rpc_queued_bytes": self.fast_path.queued_bytes.load(Ordering::Acquire),
             "rpc_queued_requests": self.fast_path.queued.load(Ordering::Acquire).saturating_sub(self.fast_path.applied.load(Ordering::Acquire)),
@@ -6234,12 +6301,51 @@ impl App {
         // Background workers (video decode pre-roll, GPU completion) mutate the
         // state `status` reports without routing through `handle_rpc`, so the
         // snapshot has to be rebuilt from scratch here rather than patched.
-        let stats = self.stats_payload();
+        let stats = Arc::new(self.stats_payload());
+        let status = Arc::new(json!(self.status()));
+        self.rpc_snapshot_cache = Some((status.clone(), stats.clone(), Instant::now(), self.rpc_snapshot_watch_key()));
         self.fast_path.publish(PublishedRpcSnapshot {
-            status: json!(self.status()),
+            status,
             stats,
             output_shared_texture: self.output_shared_texture(),
         });
+    }
+
+    /// The per-frame and on-poll publish. The output texture is refreshed
+    /// every time: its frame counter is what the preview and texture-share
+    /// pumps follow. Status and stats are rebuilt at most ~15 Hz, or at once
+    /// when something a poller waits on changed.
+    fn refresh_rpc_snapshot(&mut self) {
+        let key = self.rpc_snapshot_watch_key();
+        let cached = self.rpc_snapshot_cache.as_ref()
+            .filter(|(_, _, built_at, cached_key)| *cached_key == key && built_at.elapsed() < RPC_SNAPSHOT_REFRESH)
+            .map(|(status, stats, _, _)| (status.clone(), stats.clone()));
+        let Some((status, stats)) = cached else {
+            self.publish_rpc_snapshot();
+            return;
+        };
+        self.fast_path.publish(PublishedRpcSnapshot {
+            status,
+            stats,
+            output_shared_texture: self.output_shared_texture(),
+        });
+    }
+
+    /// Changes between RPCs that editor pollers wait on: a seek or frame step
+    /// landing (first frame of a new seek generation), a session starting,
+    /// stopping or failing, the backend coming up or going down.
+    fn rpc_snapshot_watch_key(&self) -> u64 {
+        let renderer_ok = self.renderer.as_ref().is_some_and(|renderer| renderer.last_frame_error.is_none());
+        let mut key = u64::from(self.running) | u64::from(renderer_ok) << 1 | u64::from(self.stats.swapchain_presented > 0) << 2;
+        for (source_id, session) in &self.native_video_streams {
+            // Summed, so the map's iteration order does not matter.
+            key = key.wrapping_add(stable_hash64(source_id)
+                ^ session.seek_generation.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                ^ u64::from(session.frames_presented > 0) << 3
+                ^ u64::from(session.playing) << 4
+                ^ u64::from(session.stream.backend() == "failed") << 5);
+        }
+        key
     }
 
     fn handle_rpc(&mut self, event_loop: &ActiveEventLoop, req: RpcRequest) {
@@ -6779,8 +6885,15 @@ impl App {
         // may run immediately after the reply, even before this handler exits.
         self.fast_path
             .set_manual_clock(self.render_clock_mode == "manual");
-        if self.fast_path.wants_publish() {
+        if RPC_READ_ONLY_METHODS.contains(&req.method.as_str()) {
+            // Nothing changed, so the last full build still holds every applied command.
+            if self.fast_path.wants_publish() {
+                self.refresh_rpc_snapshot();
+            }
+        } else if self.fast_path.wants_publish() {
             self.publish_rpc_snapshot();
+        } else {
+            self.rpc_snapshot_cache = None;
         }
         if req.id != 0 {
             match result {
@@ -7913,7 +8026,7 @@ impl App {
         // scene layer every replay — at install time a shader layer may not
         // have rendered yet (its binding would pin to the empty placeholder
         // forever), and video slots can move under pool pressure.
-        let debug_resolution = self.native_frame_index() % 240 == 0;
+        let debug_resolution = self.native_frame_index() % 240 == 0 && std::env::var("GHOST_DEBUG_LAYERS").is_ok();
         for plan in &mut job.render_plans {
             for binding in &mut plan.bindings {
                 if let Some(layer_id) = binding.resource_id.strip_prefix("shader-frame:") {
@@ -12983,8 +13096,7 @@ impl App {
             renderer.finish_frame();
             let now = Instant::now();
             if let Some(previous) = self.last_submission_at.replace(now) {
-                if self.submitted_intervals_ms.len() >= 2048 { self.submitted_intervals_ms.pop_front(); }
-                self.submitted_intervals_ms.push_back(now.duration_since(previous).as_secs_f64() * 1000.0);
+                self.submitted_intervals_ms.push(now.duration_since(previous).as_secs_f64() * 1000.0);
             }
         }
         if render_result.is_ok() && !pipeline_warming && native_graph_job_count > 0 {
@@ -13191,7 +13303,7 @@ impl App {
         // in particular only changes here, and it is what the editor's preview
         // display-link watches to decide the core is still alive.
         if self.fast_path.wants_publish() {
-            self.publish_rpc_snapshot();
+            self.refresh_rpc_snapshot();
         }
     }
 
@@ -14975,9 +15087,13 @@ impl App {
         let stage = string_at(command, &["stage"]).unwrap_or_else(|| "module".to_string());
         let entry = string_at(command, &["entry"]).unwrap_or_else(|| "main".to_string());
 
-        if self.shader_registry.len() >= self.shader_precompile_queue_cap as usize
-            && !self.shader_registry.contains_key(&shader_id)
-        {
+        let cap = self.shader_precompile_queue_cap as usize;
+        if self.shader_registry.len() >= cap && !self.shader_registry.contains_key(&shader_id) {
+            // Every ISF edit and clip adds a record; make room from layer
+            // shaders nothing shows any more instead of refusing new ones.
+            self.evict_unbound_layer_shaders(self.shader_registry.len() + 1 - cap);
+        }
+        if self.shader_registry.len() >= cap && !self.shader_registry.contains_key(&shader_id) {
             self.stats.shader_precompile_dropped =
                 self.stats.shader_precompile_dropped.saturating_add(1);
             self.last_shader_error =
@@ -15007,6 +15123,7 @@ impl App {
                             compiled_at_ms: epoch_ms().min(u64::MAX as u128) as u64,
                         };
                         self.shader_registry.insert(shader_id.clone(), record);
+                        self.evicted_shader_ids.remove(&stable_hash64(&shader_id));
                         self.shader_sources
                             .insert(shader_id.clone(), Arc::<str>::from(native_source));
                         let host = matches!(probe.kind, NativeShaderSourceKind::IsfGlsl)
@@ -15066,6 +15183,7 @@ impl App {
                     compiled_at_ms: epoch_ms().min(u64::MAX as u128) as u64,
                 };
                 self.shader_registry.insert(shader_id.clone(), record);
+                self.evicted_shader_ids.remove(&stable_hash64(&shader_id));
                 self.shader_sources
                     .insert(shader_id.clone(), Arc::<str>::from(source));
                 self.shader_isf_inputs.remove(&shader_id);
@@ -15087,6 +15205,36 @@ impl App {
                 self.last_shader_error = Some(format!("{shader_id}: {err}"));
             }
         }
+    }
+
+    /// Drop the `count` least recently used layer shaders that no layer is
+    /// bound to, from every shader-keyed map.
+    fn evict_unbound_layer_shaders(&mut self, count: usize) {
+        let bound: HashSet<String> = self.isf_layer_bindings.values()
+            .chain(self.scene_layers.values().filter_map(|layer| layer.shader_id.as_ref()))
+            .cloned()
+            .collect();
+        let victims = shader_eviction_victims(&self.isf_shader_last_used, &self.shader_registry, &bound, count);
+        if self.evicted_shader_ids.len() + victims.len() > 262_144 {
+            self.evicted_shader_ids.clear();
+        }
+        for id in &victims {
+            self.shader_registry.remove(id);
+            self.shader_sources.remove(id);
+            self.shader_isf_inputs.remove(id);
+            self.shader_isf_hosts.remove(id);
+            self.isf_uniforms.remove(id);
+            self.isf_shader_last_used.remove(id);
+            self.evicted_shader_ids.insert(stable_hash64(id));
+        }
+        // Uniforms and use times for shaders that never registered (a parse
+        // error) have no other removal path.
+        let registry = &self.shader_registry;
+        self.isf_uniforms.retain(|id, _| registry.contains_key(id) || bound.contains(id));
+        self.isf_shader_last_used.retain(|id, _| registry.contains_key(id) || bound.contains(id));
+        let hashes: HashSet<u64> = registry.values().map(|record| record.source_hash).collect();
+        self.shader_reads_inputs.retain(|hash, _| hashes.contains(hash));
+        self.stats.shader_cache_entries = self.shader_registry.len() as u64;
     }
 
     fn precompiled_shader_count(&self, stage: &str) -> u32 {
@@ -15381,7 +15529,7 @@ impl App {
             .or_else(|| command.get("effectGraph"))
             .filter(|value| !value.is_null())
             .and_then(|config| match self.compute_graph_frame_job(config) {
-                Ok(job) => Some(job),
+                Ok(job) => Some(Arc::new(job)),
                 Err(err) => {
                     // Loud on stderr: the broker forwards this to the app log,
                     // otherwise a bad template silently freezes the layer.
@@ -15662,6 +15810,7 @@ impl App {
         let template = layer
             .effect_job_template
             .as_mut()
+            .map(Arc::make_mut)
             .ok_or_else(|| format!("native graph layer `{layer_id}` has no graph template"))?;
         let buffer = template
             .buffers
@@ -15802,6 +15951,8 @@ impl App {
         };
         self.isf_layer_bindings
             .insert(layer_id.clone(), shader_id.clone());
+        self.isf_shader_use_tick += 1;
+        self.isf_shader_last_used.insert(shader_id.clone(), self.isf_shader_use_tick);
         let input_source_id = string_at(command, &["input_source_id"])
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| EMPTY_SOURCE_FRAME_ID.to_string());
@@ -15951,7 +16102,11 @@ impl App {
             .values()
             .cloned()
             .collect::<HashSet<_>>();
+        self.isf_shader_use_tick += 1;
         for shader_id in shader_ids {
+            if let Some(used) = self.isf_shader_last_used.get_mut(&shader_id) {
+                *used = self.isf_shader_use_tick;
+            }
             if let Some(state) = self.isf_uniforms.get_mut(&shader_id) {
                 state.time = time;
                 state.time_delta = frame_delta;
@@ -20052,7 +20207,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::RepublishRpcSnapshot => {
                 self.fast_path.release_republish();
-                self.publish_rpc_snapshot();
+                self.refresh_rpc_snapshot();
             }
             UserEvent::GpuFrameFailed(error) => {
                 self.running = false;
@@ -34101,6 +34256,23 @@ fn native_graph_render_pipeline_key(base_key: &str, output_format: wgpu::Texture
     )
 }
 
+/// The `count` least recently used layer shaders that are registered and
+/// that no layer is bound to, oldest first.
+fn shader_eviction_victims(
+    last_used: &HashMap<String, u64>,
+    registry: &HashMap<String, ShaderRecord>,
+    bound: &HashSet<String>,
+    count: usize,
+) -> Vec<String> {
+    let mut candidates = last_used
+        .iter()
+        .filter(|(id, _)| registry.contains_key(*id) && !bound.contains(*id))
+        .map(|(id, tick)| (*tick, id))
+        .collect::<Vec<_>>();
+    candidates.sort_unstable();
+    candidates.into_iter().take(count).map(|(_, id)| id.clone()).collect()
+}
+
 fn stable_hash64(input: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in input.as_bytes() {
@@ -35643,6 +35815,46 @@ void main() {
             None
         );
         assert!(native_shader_pipeline_key(&record, "isf", "main").contains("ISF/GLSL"));
+    }
+
+    #[test]
+    fn interval_percentiles_match_a_full_sort_of_the_window() {
+        let mut window = IntervalWindow::default();
+        let mut all = Vec::new();
+        let mut seed = 7_u64;
+        for _ in 0..2600 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            // Few distinct values, so duplicates leave the window too.
+            let value = (seed >> 58) as f64 * 0.5;
+            window.push(value);
+            all.push(value);
+            let mut expected = all[all.len().saturating_sub(IntervalWindow::CAPACITY)..].to_vec();
+            expected.sort_by(f64::total_cmp);
+            let pick = |p: f64| expected.get((expected.len().saturating_sub(1) as f64 * p).ceil() as usize).copied();
+            assert_eq!(window.len(), expected.len());
+            assert_eq!(window.percentile(0.99), pick(0.99));
+            assert_eq!(window.percentile(0.999), pick(0.999));
+            assert_eq!(window.max(), expected.last().copied());
+        }
+        assert!(IntervalWindow::default().percentile(0.99).is_none());
+    }
+
+    #[test]
+    fn the_registry_cap_drops_only_unbound_layer_shaders_oldest_first() {
+        let record = |id: &str| ShaderRecord {
+            shader_id: id.to_string(), stage: "pixel".to_string(), entry: "main".to_string(),
+            source_kind: NativeShaderSourceKind::IsfGlsl.label().to_string(), source_hash: 1,
+            source_bytes: 1, entry_points: vec!["main".to_string()], compiled_at_ms: 1,
+        };
+        let registry: HashMap<String, ShaderRecord> = ["stdlib:tonemap", "clip:a", "clip:b", "clip:c", "clip:d"]
+            .into_iter().map(|id| (id.to_string(), record(id))).collect();
+        // A graph shader is never bound to a layer, so it has no use time.
+        let last_used: HashMap<String, u64> = [("clip:a", 4), ("clip:b", 1), ("clip:c", 2), ("clip:d", 3), ("clip:gone", 0)]
+            .into_iter().map(|(id, tick)| (id.to_string(), tick)).collect();
+        let bound: HashSet<String> = ["clip:c".to_string()].into_iter().collect();
+        assert_eq!(shader_eviction_victims(&last_used, &registry, &bound, 2), vec!["clip:b", "clip:d"]);
+        assert_eq!(shader_eviction_victims(&last_used, &registry, &bound, 10), vec!["clip:b", "clip:d", "clip:a"]);
+        assert!(shader_eviction_victims(&last_used, &registry, &bound, 0).is_empty());
     }
 
     #[test]

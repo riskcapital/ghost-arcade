@@ -5,7 +5,13 @@ use std::{collections::{HashMap, HashSet, VecDeque}, time::{Duration, Instant, S
 const MAX_PENDING: usize = 64;
 const MAX_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LANES: usize = 128;
-const MAX_RESOURCES: usize = 512;
+const MAX_RESOURCES: usize = 2048;
+/// A launch not taken by then is dropped as expired.
+const LAUNCH_TTL: Duration = Duration::from_secs(65);
+/// Resource fences outlive the launch that set them by this much. A late
+/// enqueue older than that cannot still be in flight, and fade input layers
+/// get a new id per fade, so keeping every fence forever filled the table.
+const FENCE_TTL: Duration = Duration::from_secs(65 + 60);
 pub struct Launch {
     pub id: String,
     pub lane: String,
@@ -22,7 +28,8 @@ pub struct Launch {
 pub struct Scheduler {
     pending: Vec<Launch>,
     revisions: HashMap<String, u64>,
-    resource_revisions: HashMap<String, u64>,
+    /// Resource key -> (newest revision, when it was set).
+    resource_revisions: HashMap<String, (u64, Instant)>,
     receipts: VecDeque<(Value, Instant)>,
     serial: u64,
 }
@@ -124,9 +131,10 @@ impl Scheduler {
         for source in commands.iter().filter_map(|c| c["sources"].as_array()).flatten() {
             resources.insert(format!("source:{}", source["source_id"].as_str().unwrap()));
         }
-        if resources.iter().any(|key| self.resource_revisions.get(key).is_some_and(|current| revision <= *current)) {
+        if resources.iter().any(|key| self.resource_revisions.get(key).is_some_and(|(current, _)| revision <= *current)) {
             return Err("stale launch resource revision".into());
         }
+        self.prune_fences(now);
         if self.resource_revisions.len() + resources.iter().filter(|key| !self.resource_revisions.contains_key(*key)).count() > MAX_RESOURCES {
             return Err("launch resource limit reached".into());
         }
@@ -140,11 +148,17 @@ impl Scheduler {
             if launch.lane == lane || !launch.resources.is_disjoint(&resources) { self.record(&launch, "replaced", Value::Null); }
             else { self.pending.push(launch); }
         }
-        for key in &resources { self.resource_revisions.insert(key.clone(), revision); }
+        for key in &resources { self.resource_revisions.insert(key.clone(), (revision, now)); }
         self.revisions.insert(lane.to_string(), revision);
         self.pending.push(Launch { id: id.into(), lane: lane.into(), revision, commands: args["commands"].clone(), expected_sources: args["expected_sources"].clone(),
-            due: now + Duration::from_secs_f64(delay / 1000.0), beat, expires: now + Duration::from_secs(65), bytes, resources });
+            due: now + Duration::from_secs_f64(delay / 1000.0), beat, expires: now + LAUNCH_TTL, bytes, resources });
         Ok(json!({"accepted": true, "id": id, "lane": lane, "revision": revision}))
+    }
+    /// Drop fences that no pending launch uses and that are older than any
+    /// late enqueue they could still have to reject.
+    fn prune_fences(&mut self, now: Instant) {
+        let in_use: HashSet<&str> = self.pending.iter().flat_map(|launch| launch.resources.iter().map(String::as_str)).collect();
+        self.resource_revisions.retain(|key, (_, set_at)| now.saturating_duration_since(*set_at) < FENCE_TTL || in_use.contains(key.as_str()));
     }
     fn record(&mut self, launch: &Launch, state: &str, extra: Value) {
         self.serial += 1;
@@ -304,5 +318,41 @@ impl Scheduler {
         fade["commands"].as_array_mut().unwrap().push(json!({"type":"bind_media_source","layer_id":"input","source_id":"other"}));
         assert!(q.enqueue(&fade,now,100).is_ok());
     }
-
+    fn faded_launch(revision:u64, token:u64, row:usize) -> Value {
+        let layer=format!("vj-layer-{row}");
+        let (old,new)=(format!("clip-{}",token%700),format!("clip-{}",(token+1)%700));
+        let mut guards=serde_json::Map::new();
+        guards.insert(format!("__vj-clip:{layer}:{token}:out"),json!({"source_id":old,"seek_generation":0}));
+        json!({"id":format!("fade-{revision}"),"lane":format!("vj-cut:A:{row}"),"revision":revision,"delay_ms":200,"expected_sources":guards,
+            "commands":[{"type":"set_media_source_playback","source_id":new,"uri":"file:///clip.mov","paused":false,"time_seconds":0.0,"seek_generation":1},
+                {"type":"start_prepared_transition","layer_id":layer,"token":token,"sources":[{"source_id":old,"seek_generation":0},{"source_id":new,"seek_generation":1}]}]})
+    }
+    #[test] fn a_long_show_of_faded_launches_never_fills_the_fence_table() {
+        let start=Instant::now(); let mut q=Scheduler::default();
+        for i in 0..2000u64 {
+            let now=start+Duration::from_millis(i*700);
+            q.enqueue_at(&faded_launch(1000+i,i+1,(i%4) as usize),now,0.0,100).unwrap_or_else(|e| panic!("launch {i}: {e}"));
+            assert_eq!(q.take_due(now+Duration::from_millis(200),None).len(),1);
+            assert!(q.resource_revisions.len()<=MAX_RESOURCES);
+        }
+        // Fresh fences still fence: an older revision arriving late is refused.
+        let late=start+Duration::from_millis(1999*700);
+        let mut stale=faded_launch(2998,2000,3); stale["lane"]=json!("vj-column:A");
+        assert!(q.enqueue_at(&stale,late,0.0,100).unwrap_err().contains("resource revision"));
+    }
+    #[test] fn a_fence_used_by_a_pending_launch_is_kept() {
+        let start=Instant::now(); let mut q=Scheduler::default();
+        let mut held=request(10); held["lane"]=json!("held"); held["commands"][0]["layer_id"]=json!("held-layer");
+        q.enqueue_at(&held,start,0.0,100).unwrap();
+        // No frame pumps the queue, so the launch is still pending long after its fence would age out.
+        let later=start+FENCE_TTL+Duration::from_secs(60);
+        q.enqueue_at(&request(20),later,0.0,100).unwrap();
+        assert!(q.resource_revisions.contains_key("layer:held-layer"));
+        let mut stale=request(5); stale["lane"]=json!("other"); stale["commands"][0]["layer_id"]=json!("held-layer");
+        assert!(q.enqueue_at(&stale,later,0.0,100).unwrap_err().contains("resource revision"));
+        // Once the launch is gone the old fence is pruned.
+        q.clear();
+        q.enqueue_at(&request(21),later,0.0,100).unwrap();
+        assert!(!q.resource_revisions.contains_key("layer:held-layer"));
+    }
 }

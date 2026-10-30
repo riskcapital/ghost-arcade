@@ -114,9 +114,9 @@ describe('paths the renderer may write and read', () => {
   it('checks a project save against the grants and writes it in one step', () => {
     const handler = mainHandler('save_project_file');
     expect(handler).toContain('pathGrants.canWrite(filePath)');
-    expect(handler.indexOf('pathGrants.canWrite(')).toBeLessThan(handler.indexOf('fs.writeFileSync('));
-    // Renamed over the target (retrying past a brief Windows file hold).
-    expect(handler).toContain('replaceFile(temp, filePath)');
+    // Written to a temp file, flushed to disk and renamed over the target.
+    expect(handler.indexOf('pathGrants.canWrite(')).toBeLessThan(handler.indexOf('writeFileAtomic('));
+    expect(handler).toContain('writeFileAtomic(filePath, content)');
     expect(handler).toContain('climbsUp(filePath)');
   });
 
@@ -161,12 +161,15 @@ describe('paths the renderer may write and read', () => {
     for (const name of ['save_file_text', 'save_file_binary', 'save_file_bytes']) {
       const handler = mainHandler(name);
       expect(handler, name).toContain('pathGrants.canWrite(normalized)');
-      expect(handler.indexOf('pathGrants.canWrite('), name).toBeLessThan(handler.indexOf('fs.writeFileSync('));
+      const write = handler.search(/fs\.(promises\.writeFile|writeFileSync)\(/);
+      expect(write, name).toBeGreaterThan(-1);
+      expect(handler.indexOf('pathGrants.canWrite('), name).toBeLessThan(write);
     }
     const copy = mainHandler('copy_file_to_project');
     expect(copy).toContain('pathGrants.canRead(normSrc)');
     expect(copy).toContain('pathGrants.canWrite(normDest)');
-    expect(copy.indexOf('pathGrants.canWrite(')).toBeLessThan(copy.indexOf('fs.copyFileSync('));
+    expect(copy.indexOf('fs.promises.copyFile(')).toBeGreaterThan(-1);
+    expect(copy.indexOf('pathGrants.canWrite(')).toBeLessThan(copy.indexOf('fs.promises.copyFile('));
   });
 
   it('grants what the user chose in each native dialog', () => {

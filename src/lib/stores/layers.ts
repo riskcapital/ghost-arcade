@@ -435,7 +435,7 @@ export const PROJECT_SECTION_RESETS = {
   layerSequencer: () => layerSequencer.hydrate(null),
   musicStudio: () => musicStudio.hydrate(null),
   geoDeck: () => geoDeckStore.reset(),
-  stage3d: () => stage3dScene.newScene(),
+  stage3d: () => stage3dScene.loadForProject(null),
   projectionSim: () => projectionSimScene.resetForProject(),
   showTimeline: () => showTimeline.hydrate(null),
   showControl: () => hydrateShowControl(null),
@@ -1542,6 +1542,10 @@ void main() {
                 lightPaintingContent: {
                   ...layer.lightPaintingContent,
                   strokes: [...layer.lightPaintingContent.strokes, stroke],
+                  // The stroke is finished: its live preview goes with it,
+                  // in the same step, or undo brings a ghost copy back.
+                  isRecording: false,
+                  livePreviewStroke: null,
                 },
               }
             : layer
@@ -2818,8 +2822,12 @@ void main() {
         // freshly-loaded texture mid-load → "video freezes on first frame".
         const srcChanged = !!oldSource && oldSource.src !== source?.src;
 
-        // Dispose old JS animation context if the underlying source genuinely changed
-        if (oldSource && oldSource.jsAnimation && srcChanged) {
+        // Dispose the old JS animation context when the animation is replaced.
+        // Every JS animation shares one src ('js-animation'), so compare ids.
+        if (
+          oldSource && oldSource.jsAnimation && (srcChanged || oldSource.id !== source?.id)
+          && !project.layers.some((l) => l.id !== id && l.source?.id === oldSource.id)
+        ) {
           console.log('Disposing old JS animation context:', oldSource.id, oldSource.name);
           disposeJSAnimationContext(oldSource.id);
         }
@@ -5199,6 +5207,8 @@ void main() {
         ...project,
         mediaFolders: normalizeMediaTrayFolders(folders),
       }));
+      // Its own step: otherwise undoing the next edit also undid this.
+      recordDiscreteAction();
     },
 
     // ============================================================================
@@ -5950,6 +5960,7 @@ void main() {
      */
     importProject(data: unknown, projectDir?: string, options: { live?: boolean } = {}): boolean {
       const openingFile = !options.live;
+      importingProject = true;
       try {
         const parsed = data as {
           version?: string;
@@ -6108,12 +6119,12 @@ void main() {
           walk(gpuLayerContent?.params);
         };
 
-        if (!parsed.project) {
-          console.error('Invalid project data: missing project object');
+        if (!isProjectFileData(parsed)) {
+          console.error('Invalid project data: not a project file');
           return false;
         }
 
-        const proj = parsed.project;
+        const proj = parsed.project!;
         // Keeps importing even if VJ runtime cleanup fails.
         resetProjectSection('vjClipLauncher');
 
@@ -6561,7 +6572,8 @@ void main() {
         // Import keyframe timelines
         if (Array.isArray((parsed as any).keyframeTimelines)) {
           keyframeTimeline.importAll((parsed as any).keyframeTimelines);
-          keyframeTimeline.restoreSettings((parsed as any).keyframeSettings);keyframeTimeline.seek(0);
+          // An older file without settings opens with the defaults, not the last project's.
+          keyframeTimeline.restoreSettings((parsed as any).keyframeSettings ?? { duration: 30, isLooping: true });keyframeTimeline.seek(0);
         } else {
           resetProjectSection('keyframes');
         }
@@ -6791,7 +6803,7 @@ void main() {
         queueMicrotask(() => {
           try {
             if (importedStage3d?.schemaVersion === 1 && Array.isArray(importedStage3d.nodes)) {
-              stage3dScene.loadScene(importedStage3d);
+              stage3dScene.loadForProject(importedStage3d);
             } else if (incomingSyncedStage3d?.schemaVersion === 1 && Array.isArray(incomingSyncedStage3d.nodes)) {
               // State-sync payloads apply Stage 3D separately after
               // project import. Do not clear the scene in between.
@@ -6930,6 +6942,8 @@ void main() {
       } catch (err) {
         console.error('Failed to import project:', err);
         return false;
+      } finally {
+        importingProject = false;
       }
     },
 
@@ -6951,6 +6965,32 @@ void main() {
 }
 
 export const project = createProjectStore();
+
+// Mapping modulation is keyed by layer position: when layers are added,
+// removed or reordered (an edit, an undo), it moves with its layers. An
+// import brings its own keys for its own order, so it is only noted.
+let importingProject = false;
+let lastLayerOrder: string[] | null = null;
+project.subscribe(($project) => {
+  const order = ($project?.layers ?? []).map((layer) => layer.id);
+  const previous = lastLayerOrder;
+  if (previous && previous.length === order.length && previous.every((id, i) => id === order[i])) return;
+  lastLayerOrder = order;
+  if (previous && !importingProject) modulationStore.followMappingLayers(previous, order);
+});
+
+/**
+ * Is this a project file's content? A presets export also has a `project`
+ * key; opening one as a project would load an empty show over the open one.
+ * Checked before anything is reset, so a wrong file leaves the open project
+ * as it was.
+ */
+export function isProjectFileData(data: unknown): boolean {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  const file = data as { type?: unknown; project?: unknown };
+  if (file.type === 'ill-presets') return false;
+  return !!file.project && typeof file.project === 'object' && !Array.isArray(file.project);
+}
 
 // ─── Show timeline → composition loader ──────────────────────────────────
 // The show timeline must be able to fire a preset without importing this

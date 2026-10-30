@@ -105,6 +105,8 @@
   /** The scene object and authoring signature this editor last put in the
    *  store. Anything else showing up there was written from outside. */
   let studioSeenScene:InteractiveScene|undefined,studioOwnSignature='';
+  // A layer's scene edited in the open Studio, not yet an undo step.
+  let studioUnrecordedEdit=false;
   /** True while an editor instance is being replaced: its teardown flush
    *  carries the scene that was just superseded and must not be written back. */
   let studioEditorMuted=false;
@@ -185,17 +187,20 @@
     }
     else project.update(p=>({...p,layers:p.layers.map(l=>l.id===studioEditorLayer&&l.source?{...l,visible:active,source:{...l.source,effectSource}}:l)}));
     studioEditorActive=active;
-    studioSeenScene=studioCurrentSource()?.interactiveScene;studioOwnSignature=interactiveEditSignature(edited);
+    const editSignature=interactiveEditSignature(edited);
+    // A layer's scene becomes an undo step when the Studio closes; until then it is unsaved work.
+    if(!studioEditorClip&&editSignature!==studioOwnSignature)studioUnrecordedEdit=true;
+    studioSeenScene=studioCurrentSource()?.interactiveScene;studioOwnSignature=editSignature;
   }
   function closeInteractiveStudio(){
     if(!showInteractiveStudio)return;
-    studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();
+    studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();studioUnrecordedEdit=false;
   }
   /** The layer or clip under the editor went away (deleted, undone, another
    *  project). There is nothing left to flush into, so close and say why. */
   function studioTargetLost(message:string){
     if(!showInteractiveStudio)return;
-    showInteractiveStudio=false;showToast(message,'info');
+    showInteractiveStudio=false;studioUnrecordedEdit=false;showToast(message,'info');
   }
   /** The stored scene changed without the editor writing it (an undo, a
    *  preset, the same project reloaded). Remount the editor on what is stored
@@ -381,11 +386,12 @@
   import { paintMaskLayerId } from './lib/stores/paintMaskTool';
   import PaintMaskOverlay from './lib/components/PaintMaskOverlay.svelte';
   import { resetProjectOwnedStores } from './lib/stores/layers';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot, isProjectFileData } from './lib/stores/layers';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
   import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback, amendLastHistoryStep, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
   import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './lib/stores/projectDirty';
+  import { stage3dScene } from './lib/stage3d/store';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
   import { hydrateShowControl, serializeShowControl } from './lib/show/showControlPersistence';
@@ -1314,6 +1320,12 @@
   let closeModalForQuit = false;
   // The user chose Save or Don't Save: let the window close without asking.
   let closeConfirmed = false;
+  // The modal is asking about opening another project: its answer resolves
+  // confirmLeaveProject() instead of closing anything.
+  let openGuardResolve: ((go: boolean) => void) | null = null;
+  // A project double-clicked while the recovery offer was up: it opens once
+  // the offer is answered, so the earlier session's work is never passed over.
+  let deferredProjectOpen: string | null = null;
 
   // Auto-save & crash recovery state
   let autosaveInterval: ReturnType<typeof setInterval> | null = null;
@@ -1332,6 +1344,7 @@
         exported: project.exportProject() as Record<string, any>,
         showTimeline: showTimeline.serialize(),
         showControl: serializeShowControl(),
+        stage3d: get(stage3dScene),
       }),
       // Map Sim edits and relinked media are counted where they happen.
       counters: JSON.stringify([get(projectionSimHistoryVersion), get(mediaRelinkVersion)]),
@@ -1342,19 +1355,37 @@
   function refreshUnsavedChanges(): boolean {
     // An edit still waiting for its undo debounce is a change too. (Not
     // flushed here: the autosave tick must not split a drag in two.)
-    hasUnsavedChanges = hasPendingHistorySnapshot() || isProjectDirty(savedProjectState, projectDirtySnapshot());
+    hasUnsavedChanges = hasPendingHistorySnapshot() || studioUnrecordedEdit || isProjectDirty(savedProjectState, projectDirtySnapshot());
     return hasUnsavedChanges;
   }
 
-  function markAsSaved() {
+  /**
+   * `baseline` is the state that was written (taken when the save exported
+   * it): an edit made while the file was being written is not in it, so it
+   * still counts as unsaved.
+   */
+  function markAsSaved(baseline: ProjectDirtySnapshot | null = null) {
     hasUnsavedChanges = false;
     // Taken a moment later: opening a project resets the undo history in a
     // microtask queued during the import, and the saved step is that one.
     queueMicrotask(() => {
       flushPendingHistorySnapshot();
-      savedProjectState = projectDirtySnapshot();
-      hasUnsavedChanges = false;
+      savedProjectState = baseline ?? projectDirtySnapshot();
+      hasUnsavedChanges = baseline ? isProjectDirty(baseline, projectDirtySnapshot()) : false;
     });
+  }
+
+  let saveBaseline: ProjectDirtySnapshot | null = null;
+  /** Export the project for a save, noting what is being written. */
+  async function exportForSave(): Promise<string> {
+    flushPendingHistorySnapshot();
+    saveBaseline = projectDirtySnapshot();
+    return project.exportProjectJSONForSave();
+  }
+  function takeSaveBaseline(): ProjectDirtySnapshot | null {
+    const baseline = saveBaseline;
+    saveBaseline = null;
+    return baseline;
   }
 
   /** The project is not on disk as it stands (a recovered autosave). */
@@ -1410,7 +1441,14 @@
           console.warn('[Recovery] Could not check the media of the recovered project:', err);
         }
       }
-      project.importProjectJSON(savedData!, projectDir);
+      if (!project.importProjectJSON(savedData!, projectDir)) {
+        // Keep the snapshot: it may open in a later version, and it is the
+        // only copy of that work.
+        showRecoveryModal = false;
+        alert('The recovered project could not be opened. Its snapshot is kept and will be offered again next time.');
+        openDeferredProject();
+        return;
+      }
       // Recovered work is not in any file yet: it stays unsaved (and keeps
       // being autosaved) until it is saved.
       markAsUnsaved();
@@ -1421,6 +1459,7 @@
     localStorage.removeItem('ghostarcade-autosave-path');
     autosaveFromEarlierSession = false;
     showRecoveryModal = false;
+    openDeferredProject();
   }
 
   function discardAutosave() {
@@ -1428,6 +1467,24 @@
     localStorage.removeItem('ghostarcade-autosave-timestamp');
     autosaveFromEarlierSession = false;
     showRecoveryModal = false;
+    openDeferredProject();
+  }
+
+  /** Open the project double-clicked while the recovery offer was up. */
+  function openDeferredProject() {
+    const path = deferredProjectOpen;
+    deferredProjectOpen = null;
+    if (path) void openProjectFromUser(path);
+  }
+
+  /** Open a project the user picked by path, asking about unsaved changes first. */
+  async function openProjectFromUser(path: string, name?: string): Promise<void> {
+    if (!(await confirmLeaveProject())) return;
+    try {
+      if (!(await openProjectAtPath(path, name))) alert('Failed to load project. The file may be corrupted or invalid.');
+    } catch (err: any) {
+      alert(`Failed to load project: ${err?.message || err}`);
+    }
   }
 
   function clearAutosave() {
@@ -1458,12 +1515,33 @@
     }
   }
 
+  /**
+   * Before another project replaces this one: ask about unsaved changes, as
+   * closing does. Resolves true to go ahead (saved, or the changes were
+   * let go), false to stay.
+   */
+  function confirmLeaveProject(): Promise<boolean> {
+    if (promptsSuppressed() || !refreshUnsavedChanges()) return Promise.resolve(true);
+    // Already asking about something: this open waits for another try.
+    if (showCloseModal) return Promise.resolve(false);
+    showCloseModal = true;
+    return new Promise((resolve) => (openGuardResolve = resolve));
+  }
+
+  function answerOpenGuard(go: boolean) {
+    const resolve = openGuardResolve;
+    openGuardResolve = null;
+    resolve?.(go);
+  }
+
   // Close modal actions
   async function closeModalSave() {
     showCloseModal = false;
-    // Only close once the project is really saved: a cancelled Save As or a
-    // failed write keeps the app open with the work still in it.
-    if (!(await saveComposition())) {
+    // Only go on once the project is really saved: a cancelled Save As or a
+    // failed write keeps the work where it is.
+    const saved = await saveComposition();
+    if (openGuardResolve) return answerOpenGuard(saved);
+    if (!saved) {
       abandonClose();
       return;
     }
@@ -1475,11 +1553,13 @@
     hasUnsavedChanges = false;
     // The user chose to throw the changes away; do not offer them back.
     if (!autosaveFromEarlierSession) clearAutosave();
+    if (openGuardResolve) return answerOpenGuard(true);
     finishClose();
   }
 
   function closeModalCancel() {
     showCloseModal = false;
+    if (openGuardResolve) return answerOpenGuard(false);
     abandonClose();
   }
 
@@ -1488,7 +1568,8 @@
   function handleQuitRequest() {
     void invoke('app_quit_ack').catch(() => {});
     if (showCloseModal) {
-      // Already asking about a window close; answer for the quit instead.
+      // Already asking about a window close (or an open); answer for the quit instead.
+      answerOpenGuard(false);
       closeModalForQuit = true;
       return;
     }
@@ -2193,10 +2274,12 @@
         try {
           const pending: string | null = await desktopApi.invoke('take_pending_project_open');
           if (!pending) return;
-          showRecoveryModal = false;
-          // Opening another project passes over the recovery offer.
-          autosaveFromEarlierSession = false;
-          if (!(await openProjectAtPath(pending))) alert('Failed to load project. The file may be corrupted or invalid.');
+          // The recovery offer is answered first; the file opens after it.
+          if (showRecoveryModal) {
+            deferredProjectOpen = pending;
+            return;
+          }
+          await openProjectFromUser(pending);
         } catch (err: any) {
           alert(`Failed to load project: ${err?.message || err}`);
         }
@@ -2254,6 +2337,8 @@
             // instead of autosave silently dying for the whole session.
             const trimmed = JSON.parse(jsonStr);
             delete trimmed?.project?.stage3d;
+            // Stage presets carry their own copy of the 3D scene, models and all.
+            for (const preset of trimmed?.project?.stagePresets ?? []) delete preset?.stage3d;
             delete trimmed?.project?.projectionSim;
             delete trimmed?.project?.showTimeline;
             localStorage.setItem('ghostarcade-autosave', JSON.stringify(trimmed));
@@ -5792,8 +5877,10 @@
     if (!name || name === current || (onlyIfUntitled && current && current !== DEFAULT_PROJECT_NAME)) return;
     project.setProjectName(name);
     // Naming the project after its file is not an edit: fold it into the
-    // current undo step, or undoing the next edit would rename it back.
+    // current undo step, and into the earlier ones, or undoing would rename
+    // it back.
     amendLastHistoryStep();
+    history.renameSteps(name);
   }
 
   /** Save to the project's file (Save As when it has none). Resolves true
@@ -5807,7 +5894,7 @@
     saveInFlight = true;
     fileMenuOpen = false;
     try {
-      const jsonStr = await project.exportProjectJSONForSave();
+      const jsonStr = await exportForSave();
 
       // Electron path: re-save to the previously-chosen filesystem path,
       // re-materializing any new blob assets to the same project dir.
@@ -5834,7 +5921,7 @@
             // file picker. Without this an in-place Electron save never
             // refreshes the recent-files entry.
             recentFiles.add(currentProjectPath.split(sep).pop() || 'project.gha', currentProjectPath);
-            markAsSaved();
+            markAsSaved(takeSaveBaseline());
             clearAutosave();
             return true;
           } catch (err: any) {
@@ -5862,7 +5949,7 @@
           // Access handles don't expose a disk path → currentProjectPath
           // stays null in that case, which is the expected web behaviour.
           recentFiles.add(currentFileHandle.name, currentProjectPath);
-          markAsSaved();
+          markAsSaved(takeSaveBaseline());
           clearAutosave();
           return true;
         } catch (err: any) {
@@ -5899,7 +5986,7 @@
   // mutex — split out so saveComposition can re-use it without lock thrash.
   async function saveCompositionAsInner(): Promise<boolean> {
     await (await import('./lib/stores/settings')).flushSettings();
-    let jsonStr = await project.exportProjectJSONForSave();
+    let jsonStr = await exportForSave();
     const suggestedName = `${$project.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.gha`;
 
     // In Electron: use the native save dialog so we get a real filesystem
@@ -5918,7 +6005,7 @@
           if (dialogResult?.canceled || !dialogResult?.filePath) return false;
           const filePath: string = dialogResult.filePath;
           nameProjectAfterFile(filePath);
-          jsonStr = await project.exportProjectJSONForSave();
+          jsonStr = await exportForSave();
           // Derive project dir from the chosen file path
           const sep = filePath.includes('\\') ? '\\' : '/';
           const projectDir = filePath.substring(0, filePath.lastIndexOf(sep) + 1);
@@ -5933,7 +6020,7 @@
           // Store the absolute path so clicking this entry in Recent
           // Files loads it directly instead of re-prompting the picker.
           recentFiles.add(filePath.split(sep).pop() || 'project.gha', filePath);
-          markAsSaved();
+          markAsSaved(takeSaveBaseline());
           clearAutosave();
           return true;
         } catch (err: any) {
@@ -5961,14 +6048,14 @@
           ],
         });
         nameProjectAfterFile(handle.name);
-        jsonStr = await project.exportProjectJSONForSave();
+        jsonStr = await exportForSave();
         const writable = await handle.createWritable();
         await writable.write(jsonStr);
         await writable.close();
         currentFileHandle = handle; // Remember for future saves
         console.log('Project saved successfully');
         recentFiles.add(handle.name, null);
-        markAsSaved();
+        markAsSaved(takeSaveBaseline());
         clearAutosave();
         return true;
       } catch (err: any) {
@@ -5992,13 +6079,14 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    markAsSaved();
+    markAsSaved(takeSaveBaseline());
     clearAutosave();
     return true;
   }
 
-  function loadComposition() {
+  async function loadComposition() {
     fileMenuOpen = false;
+    if (!(await confirmLeaveProject())) return;
     fileInput?.click();
   }
 
@@ -6044,14 +6132,12 @@
     reader.onload = (e) => {
       const content = e.target?.result as string;
       if (content) {
+        const data = readProjectFileData(content);
         // Clear stale performer / session / runtime caches before loading so
-        // older project files can't carry legacy clip bindings into the new build.
-        try { synthVisionStore.reset(); } catch {}
-        try { sessionClipCache.clear(); } catch {}
-        try { isfShaderCache.clear(); } catch {}
-        try { modulationStore.clearAll(); } catch {}
-
-        const success = project.importProjectJSON(content, projectDir);
+        // older project files can't carry legacy clip bindings into the new
+        // build (only once the file is known to be a project).
+        if (data) clearProjectRuntimeCaches();
+        const success = !!data && project.importProject(data, projectDir);
         if (success) {
           console.log('Project loaded successfully', projectDir ? `(projectDir=${projectDir})` : '(no projectDir)');
           currentFileHandle = null; // Clear file handle since we loaded via file input
@@ -6127,17 +6213,36 @@
   // =========================================================================
   // OPEN RECENT FILE
   // =========================================================================
+  /** A project file's content, parsed, or null when it is not a project. */
+  function readProjectFileData(content: string): unknown | null {
+    try {
+      const data = JSON.parse(content);
+      return isProjectFileData(data) ? data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Runtime caches an opened project must not inherit from the last one. */
+  function clearProjectRuntimeCaches() {
+    try { synthVisionStore.reset(); } catch {}
+    try { sessionClipCache.clear(); } catch {}
+    try { isfShaderCache.clear(); } catch {}
+    try { modulationStore.clearAll(); } catch {}
+  }
+
   /** Open a .gha from disk by path (Electron). Throws when it cannot be
    *  read; resolves false when it is not a valid project. Shared by Open
    *  Recent and the show-mode startup. */
   async function openProjectAtPath(path: string, name = path.split(/[\\/]/).pop() || path): Promise<boolean> {
     const { invoke } = await import('$lib/bridge');
     const result = await invoke<{ content: string; dir: string; media?: { moved?: string[]; missing?: string[] } | null }>('read_project_file', { path });
-    try { synthVisionStore.reset(); } catch {}
-    try { sessionClipCache.clear(); } catch {}
-    try { isfShaderCache.clear(); } catch {}
-    try { modulationStore.clearAll(); } catch {}
-    const success = project.importProjectJSON(result.content, result.dir);
+    // Checked before anything is cleared: a file that is not a project
+    // leaves the open one exactly as it was.
+    const data = readProjectFileData(result.content);
+    if (!data) return false;
+    clearProjectRuntimeCaches();
+    const success = project.importProject(data, result.dir);
     if (success) {
       console.log('Project loaded:', path);
       currentFileHandle = null;
@@ -6160,6 +6265,7 @@
 
   async function openRecentFile(entry: { name: string; path: string | null; timestamp: number }) {
     fileMenuOpen = false;
+    if (!(await confirmLeaveProject())) return;
 
     // Electron: read the file directly from disk via IPC
     if (isDesktopApp && entry.path) {
@@ -6182,8 +6288,8 @@
       return;
     }
 
-    // Web / no path: fall back to the file picker
-    loadComposition();
+    // Web / no path: fall back to the file picker (already asked above).
+    fileInput?.click();
   }
 
   // =========================================================================
@@ -7320,7 +7426,7 @@
                 <button class="menu-item" onclick={() => { fileMenuOpen = false; showProjectPackage = true; }}>
                   <span class="menu-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M12 17v-6M9 14l3-3 3 3"/></svg></span><span class="menu-label">Export package...</span>
                 </button>
-                <button class="menu-item" onclick={() => openProjectPackage()}>
+                <button class="menu-item" onclick={async () => { if (await confirmLeaveProject()) void openProjectPackage(); }}>
                   <span class="menu-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg></span><span class="menu-label">Open package...</span>
                 </button>
               {/if}
@@ -9043,7 +9149,9 @@
         </svg>
       </div>
       <h2 class="close-modal-title">Unsaved Changes</h2>
-      <p class="close-modal-desc">{closeModalForQuit
+      <p class="close-modal-desc">{openGuardResolve
+        ? 'Your project has unsaved changes that will be lost if you open another project without saving.'
+        : closeModalForQuit
         ? 'Your project has unsaved changes that will be lost if you quit without saving.'
         : 'Your project has unsaved changes that will be lost if you close without saving.'}</p>
       <div class="close-modal-actions">
@@ -9053,14 +9161,14 @@
             <polyline points="17 21 17 13 7 13 7 21"/>
             <polyline points="7 3 7 8 15 8"/>
           </svg>
-          {closeModalForQuit ? 'Save & Quit' : 'Save & Close'}
+          {openGuardResolve ? 'Save & Open' : closeModalForQuit ? 'Save & Quit' : 'Save & Close'}
         </button>
         <button class="close-modal-btn btn-discard" onclick={closeModalDiscard}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
           </svg>
-          {closeModalForQuit ? 'Quit Without Saving' : 'Close Without Saving'}
+          {openGuardResolve ? 'Open Without Saving' : closeModalForQuit ? 'Quit Without Saving' : 'Close Without Saving'}
         </button>
         <button class="close-modal-btn btn-cancel" onclick={closeModalCancel}>
           Cancel

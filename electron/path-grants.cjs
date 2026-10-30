@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { fileURLToPath } = require('url');
+const { writeFileAtomicSync } = require('./atomic-write.cjs');
 
 const PROJECT_EXTENSIONS = new Set(['.gha', '.shrnk', '.json']);
 const MEDIA_EXTENSIONS = new Set([
@@ -81,7 +82,10 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
         const key = canon(entry);
         if (key) mediaDirs.add(key);
       }
-    } catch { /* first run, or an unreadable store: start empty */ }
+    } catch (err) {
+      // First run, or an unreadable store: start empty.
+      if (err?.code !== 'ENOENT') console.warn('[PathGrants] could not read the saved grants:', err?.message || err);
+    }
   }
   function trim(set) {
     while (set.size > PERSIST_LIMIT) set.delete(set.values().next().value);
@@ -91,7 +95,8 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
     if (!storePath) return;
     try {
       fs.mkdirSync(path.dirname(storePath), { recursive: true });
-      fs.writeFileSync(storePath, JSON.stringify({ projectFiles: [...projectFiles], readFiles: [...persistedReads], mediaDirs: [...mediaDirs] }), 'utf8');
+      // Sync: this also runs at quit, when nothing waits for a promise.
+      writeFileAtomicSync(storePath, JSON.stringify({ projectFiles: [...projectFiles], readFiles: [...persistedReads], mediaDirs: [...mediaDirs] }));
     } catch { /* the grants still hold for this launch */ }
   }
   function scheduleSave() {
@@ -219,14 +224,17 @@ function createPathGrants({ assetDirs = [], storePath = null, platform = process
   /**
    * A project file the user opened or the main process read. It becomes
    * writable (Save writes back to it) and its media becomes readable.
+   * `content` is the file's text, or its already parsed data.
    */
   function registerProjectFile(value, content) {
     const key = canon(value);
     if (!key || !isProjectFile(key)) return false;
     remember(projectFiles, key);
     try {
-      const text = typeof content === 'string' ? content : fs.readFileSync(value, 'utf8');
-      registerProjectData(JSON.parse(text), pathApi.dirname(key));
+      const data = content && typeof content === 'object'
+        ? content
+        : JSON.parse(typeof content === 'string' ? content : fs.readFileSync(value, 'utf8'));
+      registerProjectData(data, pathApi.dirname(key));
     } catch { /* not a readable project: nothing to register */ }
     return true;
   }
