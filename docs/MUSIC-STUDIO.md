@@ -153,7 +153,7 @@ instrument. The live output stays in the middle (the view hands the native
 preview its frame; VJ mode hides behind it) and the set's modules sit around
 it. **Tray** goes back with the music playing; **Exit** stops it.
 
-The chrome (top bar, output, loop library, the tray's header) is the app's
+The chrome (top bar, output, session, the tray's header) is the app's
 own; the app's eight macro knobs sit in the top bar as they do in VJ mode,
 each with its effects and a jack. Each set's instruments sit on a face of
 their own (`studioTokens.css`), so the mode reads at a glance: Sound bath is
@@ -204,14 +204,32 @@ the kick another). Drag a plugged input to move its cable, or drop it on
 nothing to unplug it. Every knob, the key, the acid row, mutes and cables
 save with the project.
 
-**Loop library** (`loops.ts`, `LoopBrowser.svelte`): premade beats,
-basslines, leads, chord progressions and textures, launched from a column
-per kind like clips. A loop starts on the next bar and takes over from the
-one in its column; the square stops a column. Melodic loops are written in
-scale degrees, so they play in the studio's key, and each set plays them on
-its own instruments (a bassline is the acid line in Berlin and the dub bass
-in the dub set; switching sets hands playing loops to the new set's
-instruments). Beats load into the beat grid, ready to edit.
+**Session** (`session.ts`, `SessionGrid.svelte`, `ClipEditor.svelte`,
+`presetLibrary.ts`): the loops play from a session grid, as in a DAW's
+session view. There is a track per part (beat, bass, lead, chords, texture)
+with clip slots. Click a clip to start it on the next bar; it takes over its
+track. A row's play button launches the row across every track (tracks empty
+in that row stop), and a track's square stops it. An empty slot's menu fills
+it from the factory presets (beats, basslines, leads, chord parts and
+textures) or your own.
+
+Clips are the session's own copies, so editing one never changes a preset.
+A clip made from a preset follows the studio's key by scale degree; a
+recorded or imported clip keeps its pitches and the instrument it was played
+on. Double-click a clip (or its pencil) to open the clip editor:
+- for a notes clip, a piano roll with the key's notes shaded: draw, move,
+  lengthen and delete notes, set velocities, length, snap and quantize,
+  transpose;
+- for a beat clip, a step grid with accents, steps and swing.
+
+Edits play straight away, and a playing beat clip and the Beat module's grid
+stay in step. **Add to my presets** keeps a clip on this computer for every
+project. New sessions start with four rows of presets that work together.
+
+**Transport**: the top bar's play button starts the music (what Stop
+stopped, or the beat) and stops everything; **Kill** silences everything at
+once, effect tails included. Changing sets stops what was playing and fades
+the old set's effects out, so each set starts fresh.
 
 **Scan synth** (`scanSynth.ts`, `OutputStrip.svelte`): the picture plays
 music back. A line sweeps across the live output in time with the beat
@@ -270,18 +288,18 @@ counts in to the next bar (with a click when nothing else plays) and records
 1, 2, 4 or 8 bars, or until pressed again (ending on a bar line). **Capture**
 keeps what was just played without having recorded it: the latest phrase,
 since the last pause of a bar, in whole bars. Notes snap to the chosen grid.
-Melodic parts become loops of their own, one per instrument played, kept with
-the project at the top of their column in the loop library; they start
-looping at once on the instrument they were played on. Drum hits are written
-into the beat grid as they are played, so touch drumming builds the pattern
-(the grid grows to hold a longer recording). **Save** on the Beats column
-keeps the grid as one of your beats.
+Melodic parts become clips in the session, one per instrument played, in
+the first empty slot of their track; they start looping at once on the
+instrument they were played on. Drum hits are written into the beat grid as
+they are played, so touch drumming builds the pattern (the grid grows to
+hold a longer recording), and the beat is kept as a clip. **Save** on the
+beat track keeps the grid as a new clip.
 
 **MIDI** (`midiFile.ts`, `midiExport.ts`): **MIDI out** saves the beat and
-the playing loops as a multi-track .mid file for a DAW; each recorded loop
-and take has its own MIDI button. **MIDI in** adds loops from a .mid file:
-the drum channel becomes a beat, every other track a loop played by the
-set's instrument for its part.
+the playing clips as a multi-track .mid file for a DAW; each clip and take
+has its own MIDI button. **MIDI in** adds clips to the session from a .mid
+file: the drum channel becomes a beat clip, every other track a notes clip
+on the track for its part.
 
 **Macro effects** (`macroFx.ts`, `macroFxAudio.ts`, `MacroEditor.svelte`): the
 FX button on a macro opens its effects. Sound: delay (beat-synced, ping-pong),
@@ -296,7 +314,7 @@ column and launch them together on the next bar.
 
 **The tray** (`VJMusicStudio.svelte`) is a condensed copy of the current set
 under the VJ deck, on the set's face: the keys or pads, the set's main
-modules and the loop library with its recorder, with the beat and record
+modules and the session with its recorder, with play, record and kill
 buttons in its header. Patching lives in the Studio view.
 
 ## Phases
