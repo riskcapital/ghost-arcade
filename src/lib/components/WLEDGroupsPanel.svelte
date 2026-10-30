@@ -95,7 +95,7 @@
     gap: 10px;
     margin-top: 16px;
     padding-top: 14px;
-    border-top: 1px solid #292930;
+    border-top: 1px solid var(--ga-line-2);
   }
 
   header,
@@ -111,14 +111,14 @@
 
   h4 {
     margin: 0;
-    color: #e5e5e9;
+    color: var(--ga-ink-0);
     font-size: 13px;
   }
 
   p,
   .empty {
     margin: 3px 0 0;
-    color: #777781;
+    color: var(--ga-ink-2);
     font-size: 10px;
   }
 
@@ -129,10 +129,10 @@
 
   header button,
   .remove {
-    border: 1px solid #383840;
-    border-radius: 4px;
-    background: #15151a;
-    color: #aaaab4;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     cursor: pointer;
   }
 
@@ -141,42 +141,44 @@
   }
 
   article {
-    border: 1px solid #2e2e35;
-    background: #111116;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-card);
   }
 
   .group-heading {
     display: grid;
     grid-template-columns: minmax(100px, 1fr) auto 28px;
     padding: 8px;
-    border-bottom: 1px solid #292930;
+    border-bottom: 1px solid var(--ga-line-2);
   }
 
   .group-heading input {
     min-width: 0;
-    border: 1px solid #36363e;
-    background: #09090c;
-    color: #ededf0;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
     padding: 6px 7px;
   }
 
   .group-heading span {
-    color: #70707b;
-    font-size: 9px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
   }
 
   .remove {
     width: 28px;
     height: 28px;
-    color: #ff7777;
+    color: var(--ga-rec, #ff3b30);
   }
 
   .member-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1px;
-    background: #232329;
+    background: var(--ga-raise);
   }
 
   label {
@@ -184,8 +186,8 @@
     align-items: center;
     gap: 7px;
     padding: 8px;
-    background: #131318;
-    color: #c2c2ca;
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     font-size: 11px;
     cursor: pointer;
   }
@@ -199,7 +201,7 @@
   }
 
   label small {
-    color: #676771;
+    color: var(--ga-ink-2);
     font-size: 9px;
   }
 
@@ -213,7 +215,7 @@
 
   .empty {
     padding: 12px;
-    border: 1px dashed #33333b;
+    border: 1px dashed var(--ga-line-2);
     text-align: center;
   }
 </style>

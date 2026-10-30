@@ -15,6 +15,16 @@
     type SVState, type SVLayer, type SVParams, type SVParamKey,
     type SVReactivityMode
   } from '../stores/synthVision';
+  // The store keeps names in capitals; shown in sentence case, abbreviations kept.
+  const SV_KEEP_CAPS = new Set(['DNA', 'ASCII', 'FX', 'RGB', 'LFO', 'BPM', '3D', '2D']);
+  function svName(name: string | null | undefined): string {
+    if (!name) return '';
+    return name
+      .split(/(\s+|-)/)
+      .map((w, i) => (SV_KEEP_CAPS.has(w) || w.length <= 1 ? w : i === 0 ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase()))
+      .join('')
+      .replace(/(\d)d\b/g, '$1D');
+  }
   import {
     performerDeckStore,
   } from '../stores/performerDecks';
@@ -4990,9 +5000,9 @@ void main() {
 <div data-help-page="synthvision" class="sv-root" on:click={() => { if (state.showSplash) dismissSplash(); }}>
   <!-- HEADER -->
   <div class="sv-header">
-    <div class="sv-logo">PERFORMER</div>
+    <div class="sv-logo">Performer</div>
     <div class="sv-deck-tabs">
-      <button class="sv-deck-tab active" title="Shader clip instrument">SHADER MODE</button>
+      <button class="sv-deck-tab active" title="Shader clip instrument">Shader mode</button>
     </div>
 
 
@@ -5009,9 +5019,9 @@ void main() {
         <span class="sv-bpm-lbl">BPM</span>
       </div>
       <button class="sv-bpm-btn" on:click={() => synthVisionStore.nudgeBpm(5)}>+5</button>
-      <button class="sv-tap-btn" on:click={tapBPM}>TAP</button>
+      <button class="sv-tap-btn" on:click={tapBPM}>Tap</button>
       <div class="sv-beat-indicator" class:flash={state && state.bp < .15}></div>
-      <button class="sv-sync-btn" class:on={state?.bpmSync} on:click={() => synthVisionStore.toggleSync()}>SYNC</button>
+      <button class="sv-sync-btn" class:on={state?.bpmSync} on:click={() => synthVisionStore.toggleSync()}>Sync</button>
     </div>
 
     <!-- Reactivity Mode picker. Controls how the Milkdrop-style smooth
@@ -5029,7 +5039,7 @@ void main() {
         on:change={(e) => synthVisionStore.setReactivityMode((e.currentTarget as HTMLSelectElement).value as SVReactivityMode)}
       >
         {#each SV_REACTIVITY_MODES as m}
-          <option value={m.id}>{m.label}</option>
+          <option value={m.id}>{svName(m.label)}</option>
         {/each}
       </select>
     </div>
@@ -5044,19 +5054,19 @@ void main() {
     <div class="sv-quick-actions">
       <button class="sv-action-btn" class:on={state?.drift}
         on:click={() => synthVisionStore.toggleDrift()}
-        title="DRIFT: slowly randomize all performer params over time. Hands-free evolution.">DRIFT</button>
+        title="DRIFT: slowly randomize all performer params over time. Hands-free evolution.">Drift</button>
       <button class="sv-action-btn" class:on={state?.autoMode}
         on:click={toggleShaderAuto}
-        title="SHADER AUTO: auto-cycle to a new random shader / world at the configured interval.">SHADER AUTO</button>
+        title="SHADER AUTO: auto-cycle to a new random shader / world at the configured interval.">Shader auto</button>
     </div>
 
     <button class="sv-edit-btn" class:active={performerEditMode} on:click={() => performerEditMode = !performerEditMode}>
-      {performerEditMode ? '✓ EDIT' : 'EDIT'}
+      {performerEditMode ? '✓ Edit' : 'Edit'}
     </button>
     {#if performerEditMode}
-      <button class="sv-reset-btn" on:click={() => { clipAssignments = {}; activePresetId = null; clipsDirty = false; }}>RESET</button>
+      <button class="sv-reset-btn" on:click={() => { clipAssignments = {}; activePresetId = null; clipsDirty = false; }}>Reset</button>
     {/if}
-    <button class="sv-close-btn" on:click={handleClose}>X</button>
+    <button class="sv-close-btn" on:click={handleClose}>✕</button>
   </div>
 
   <!-- MAIN CONTROLS -->
@@ -5084,15 +5094,15 @@ void main() {
         <div class="sv-kb-side sv-kb-left">
           <div class="sv-section-title">LIVE CAMERA</div>
           <button class="sv-cam-toggle" class:active={state?.camActive} on:click={toggleCamera}>
-            <span class="sv-cam-icon">{state?.camActive ? '[ ON ]' : '[ OFF ]'}</span>
-            <span class="sv-cam-label">{state?.camActive ? 'STREAMING' : 'CLICK TO START'}</span>
+            <span class="sv-cam-icon">{state?.camActive ? 'On' : 'Off'}</span>
+            <span class="sv-cam-label">{state?.camActive ? 'Streaming' : 'Click to start'}</span>
           </button>
           {#if state?.camActive}
             <div class="sv-cam-blend-row">
               <span class="sv-cam-blend-lbl">BLEND</span>
               <div class="sv-cam-blend-controls">
                 <button class="sv-cam-blend-btn" on:click={() => synthVisionStore.cycleCamBlend(-1)}>&lt;</button>
-                <span class="sv-cam-blend-val">{SV_CAM_BLENDS[state?.camBlend ?? 0]?.name || 'ADD'}</span>
+                <span class="sv-cam-blend-val">{svName(SV_CAM_BLENDS[state?.camBlend ?? 0]?.name) || 'Add'}</span>
                 <button class="sv-cam-blend-btn" on:click={() => synthVisionStore.cycleCamBlend(1)}>&gt;</button>
               </div>
             </div>
@@ -5110,7 +5120,7 @@ void main() {
             <div class="sv-cam-mode-row">
               <span class="sv-cam-mode-lbl">MODE</span>
               <button class="sv-cam-nav" on:click={() => synthVisionStore.cycleCamMode(-1)}>&lt;</button>
-              <span class="sv-cam-mode-name">{SV_CAM_MODES.find(m => m.id === state?.camMode)?.name || 'DIRECT'}</span>
+              <span class="sv-cam-mode-name">{svName(SV_CAM_MODES.find(m => m.id === state?.camMode)?.name) || 'Direct'}</span>
               <button class="sv-cam-nav" on:click={() => synthVisionStore.cycleCamMode(1)}>&gt;</button>
             </div>
           {/if}
@@ -5120,7 +5130,7 @@ void main() {
           <button class="sv-shader-mix-btn" class:active={shaderMixActive}
             on:click={() => { shaderMixActive = !shaderMixActive; if (shaderMixActive) randomizeAll(); }}>
             <span class="sv-shader-mix-icon">&#9876;</span>
-            <span class="sv-shader-mix-label">{shaderMixActive ? 'MIXING' : 'START MIX'}</span>
+            <span class="sv-shader-mix-label">{shaderMixActive ? 'Mixing' : 'Start mix'}</span>
           </button>
           {#if shaderMixActive}
             <div class="sv-shader-mix-hint">Press <kbd>TAB</kbd> to randomize</div>
@@ -5240,7 +5250,7 @@ void main() {
             <div class="sv-selector-horiz">
               <span class="sv-sel-lbl">SPACE</span>
               <button class="sv-sel-btn" on:click={() => synthVisionStore.cycleSpace(-1)}>&lt;</button>
-              <span class="sv-sel-val">{SV_SPACES[focusedLayer?.space ?? 0]}</span>
+              <span class="sv-sel-val">{svName(SV_SPACES[focusedLayer?.space ?? 0])}</span>
               <button class="sv-sel-btn" on:click={() => synthVisionStore.cycleSpace(1)}>&gt;</button>
             </div>
           </div>
@@ -5254,13 +5264,13 @@ void main() {
               <button class="sv-world-btn" class:on={worldsEnabled && focusedLayer && focusedLayer.world === i}
                 class:worlds-off={!worldsEnabled}
                 on:click={() => { if (worldsEnabled) void activateNativeWorld(i); }}>
-                {world}
+                {svName(world)}
               </button>
             {/each}
           </div>
           <button class="sv-worlds-toggle" class:on={worldsEnabled}
             on:click={toggleNativeWorlds}>
-            {worldsEnabled ? '3D ON' : '3D OFF'}
+            {worldsEnabled ? '3D on' : '3D off'}
           </button>
         </div>
       </div>
@@ -5270,16 +5280,16 @@ void main() {
     <div class="sv-right-col">
       <!-- Tab selector for Effects vs Shader vs World params -->
       <div class="sv-param-tabs">
-        <button class="sv-param-tab" class:active={state?.paramTab === 'effects'} on:click={() => synthVisionStore.setParamTab('effects')}>EFFECTS</button>
-        <button class="sv-param-tab" class:active={state?.paramTab === 'shader'} on:click={() => synthVisionStore.setParamTab('shader')}>SHADER</button>
-        <button class="sv-param-tab world" class:active={state?.paramTab === 'world'} on:click={() => synthVisionStore.setParamTab('world')}>WORLD</button>
+        <button class="sv-param-tab" class:active={state?.paramTab === 'effects'} on:click={() => synthVisionStore.setParamTab('effects')}>Effects</button>
+        <button class="sv-param-tab" class:active={state?.paramTab === 'shader'} on:click={() => synthVisionStore.setParamTab('shader')}>Shader</button>
+        <button class="sv-param-tab world" class:active={state?.paramTab === 'world'} on:click={() => synthVisionStore.setParamTab('world')}>World</button>
       </div>
 
       {#if state?.paramTab === 'effects'}
         <!-- Layer Effects (applied to SynthVision's VJ layer) -->
         <div class="sv-effects-panel">
           <div class="sv-effects-header">
-            <span>Layer Effects</span>
+            <span>Layer effects</span>
             <button class="sv-add-fx-btn" on:click={() => showEffectPicker = true}>+ Add</button>
           </div>
           <div class="sv-effects-list">
@@ -5310,7 +5320,7 @@ void main() {
                         {#if pd.type === 'select' && pd.options}
                           <select value={val}
                             on:change={(e) => updateSvEffectParam(effect.id, pd.param, parseFloat(e.currentTarget.value))}
-                            style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;">
+                            style="flex:1; background:var(--ga-slot); color:var(--ga-ink-0); border:1px solid var(--ga-line-2); border-radius:var(--ga-r-hard, 5px); padding:2px 4px; font-size:var(--ga-text-control, 12px);">
                             {#each pd.options as opt}
                               <option value={opt.value} selected={val === opt.value}>{opt.label}</option>
                             {/each}
@@ -5332,7 +5342,7 @@ void main() {
                                 updateSvEffectParam(effect.id, pd.colorParams.b, b);
                               }
                             }}
-                            style="flex:0 0 40px; height:22px; padding:0; border:1px solid #444; border-radius:3px; cursor:pointer;" />
+                            style="flex:0 0 40px; height:22px; padding:0; border:1px solid var(--ga-line-2); border-radius:var(--ga-r-hard, 5px); cursor:pointer;" />
                         {:else}
                           <input type="range" min={pd.min} max={pd.max} step={pd.step}
                             value={val}
@@ -5423,7 +5433,7 @@ void main() {
                 {:else if input.TYPE === 'bool'}
                   <button class="sv-isf-toggle" class:on={!!val}
                     on:click={() => setISFValue(input.NAME, !val)}>
-                    {val ? 'ON' : 'OFF'}
+                    {val ? 'On' : 'Off'}
                   </button>
                 {:else if input.TYPE === 'color'}
                   <input type="color" class="sv-isf-color"
@@ -5466,7 +5476,7 @@ void main() {
           {@const shaderDef = SV_SHADER_DEFS[currentShaderIdx]}
           {@const shaderParams = state?.shaderParams?.[currentShaderIdx] ?? {}}
           <div class="sv-shader-info">
-            <span class="sv-shader-name">{shaderDef?.name ?? 'SHADER'}</span>
+            <span class="sv-shader-name">{svName(shaderDef?.name) || 'Shader'}</span>
           </div>
           <div class="sv-dial-grid sv-shader-params">
             {#if shaderDef?.params}
@@ -5498,7 +5508,7 @@ void main() {
         {@const worldDef = SV_WORLD_DEFS[currentWorldIdx]}
         {@const worldParams = state?.worldParams?.[currentWorldIdx] ?? {}}
         <div class="sv-shader-info world">
-          <span class="sv-shader-name world">{worldDef?.name ?? 'WORLD'}</span>
+          <span class="sv-shader-name world">{svName(worldDef?.name) || 'World'}</span>
         </div>
         <label class="sv-world-palette">Color scheme
           <select aria-label="World color scheme" value={worldPaletteIndex(worldParams.palette ?? 0)}
@@ -5540,7 +5550,7 @@ void main() {
         <div class="sv-spacefx-dropdown">
           <button class="sv-spacefx-nav" on:click={() => synthVisionStore.cycleSpaceFx(-1)}>&lt;</button>
           <div class="sv-spacefx-current">
-            <span class="sv-spacefx-name">{SV_SPACE_FX.find(f => f.id === state?.spaceFx)?.name || 'PUMP'}</span>
+            <span class="sv-spacefx-name">{svName(SV_SPACE_FX.find(f => f.id === state?.spaceFx)?.name) || 'Pump'}</span>
             <span class="sv-spacefx-desc">{SV_SPACE_FX.find(f => f.id === state?.spaceFx)?.desc || ''}</span>
           </div>
           <button class="sv-spacefx-nav" on:click={() => synthVisionStore.cycleSpaceFx(1)}>&gt;</button>
@@ -5549,12 +5559,12 @@ void main() {
 
       <div class="sv-section-title" style="margin-top:8px">ACTIONS</div>
       <div class="sv-action-grid">
-        <button class="sv-big-btn pump" on:click={() => synthVisionStore.doPump()}>PUMP</button>
-        <button class="sv-big-btn glitch" on:click={() => synthVisionStore.doGlitch()}>GLITCH</button>
-        <button class="sv-big-btn" on:click={() => randomizeAll()}>RANDOM</button>
-        <button class="sv-big-btn invert" class:on={state?.invert} on:click={() => synthVisionStore.toggleInvert()}>INVERT</button>
-        <button class="sv-big-btn black" class:on={state?.blackout > 0.5} on:click={() => synthVisionStore.doBlackout()}>BLACK</button>
-        <button class="sv-big-btn white" class:on={state?.whiteout > 0.5} on:click={() => synthVisionStore.doWhiteout()}>WHITE</button>
+        <button class="sv-big-btn pump" on:click={() => synthVisionStore.doPump()}>Pump</button>
+        <button class="sv-big-btn glitch" on:click={() => synthVisionStore.doGlitch()}>Glitch</button>
+        <button class="sv-big-btn" on:click={() => randomizeAll()}>Random</button>
+        <button class="sv-big-btn invert" class:on={state?.invert} on:click={() => synthVisionStore.toggleInvert()}>Invert</button>
+        <button class="sv-big-btn black" class:on={state?.blackout > 0.5} on:click={() => synthVisionStore.doBlackout()}>Black</button>
+        <button class="sv-big-btn white" class:on={state?.whiteout > 0.5} on:click={() => synthVisionStore.doWhiteout()}>White</button>
       </div>
     </div>
 
@@ -5563,8 +5573,8 @@ void main() {
       <div class="sv-edit-tray">
         <div class="sv-edit-tray-tabs">
           <button class="sv-edit-tab" class:active={editMediaTab === 'fx'} on:click={() => editMediaTab = 'fx'}>FX</button>
-          <button class="sv-edit-tab" class:active={editMediaTab === 'vid'} on:click={() => editMediaTab = 'vid'}>VID</button>
-          <button class="sv-edit-tab" class:active={editMediaTab === 'img'} on:click={() => editMediaTab = 'img'}>IMG</button>
+          <button class="sv-edit-tab" class:active={editMediaTab === 'vid'} on:click={() => editMediaTab = 'vid'}>Video</button>
+          <button class="sv-edit-tab" class:active={editMediaTab === 'img'} on:click={() => editMediaTab = 'img'}>Image</button>
         </div>
         <div class="sv-edit-tray-list">
           {#if editMediaTab === 'fx'}
@@ -5651,12 +5661,13 @@ void main() {
 />
 
 <style>
-  .sv-world-palette { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; color: #adb9ce; font-size: 12px; }
-  .sv-world-palette select { min-width: 0; padding: 6px 9px; border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; background: var(--ga-blue-mute-800); color: #e3ecff; font: inherit; }
+  .sv-world-palette { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; color: var(--ga-ink-1); font-size: 12px; }
+  .sv-world-palette select { min-width: 0; padding: 6px 9px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px); background: var(--ga-slot); color: var(--ga-ink-0); font: inherit; }
 
   :root {
     /* Use global theme variables for consistent styling */
-    --sv-c: var(--accent-primary, #FF6B6B);
+    /* The highlight is the app's selection blue. */
+    --sv-c: var(--ga-selection-line, var(--accent-primary, #FF6B6B));
     --sv-m: var(--accent-secondary, #FF8585);
     --sv-g: var(--success, #2ED573);
     --sv-y: var(--warning, #FFA502);
@@ -5685,8 +5696,8 @@ void main() {
     flex-direction: column;
     height: 100%;
     background: var(--sv-bg);
-    color: #fff;
-    font-family: 'Geist Mono', 'Consolas', monospace;
+    color: var(--ga-ink-0);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     user-select: none;
     overflow: hidden;
   }
@@ -5704,12 +5715,11 @@ void main() {
   }
 
   .sv-logo {
-    font-family: 'Orbitron', sans-serif;
-    font-weight: 900;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
+    font-weight: 700;
     font-size: 14px;
-    letter-spacing: 3px;
     color: var(--sv-c);
-    text-shadow: 0 0 10px rgba(187,134,252,.3);
+    text-shadow: 0 0 10px color-mix(in srgb, var(--ga-selection-line) 30%, transparent);
   }
   .sv-logo em { color: var(--sv-m); font-style: normal; }
 
@@ -5723,22 +5733,21 @@ void main() {
     height: 24px;
     padding: 0 10px;
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.04);
-    color: rgba(255,255,255,.55);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     font-size: 11px;
-    letter-spacing: .08em;
     font-weight: 700;
     cursor: pointer;
     transition: all .12s ease;
   }
   .sv-deck-tab:hover {
-    border-color: rgba(255,255,255,.2);
-    color: #fff;
+    border-color: var(--ga-ink-2);
+    color: var(--ga-ink-0);
   }
   .sv-deck-tab.active {
     border-color: var(--sv-c);
     color: var(--sv-c);
-    background: rgba(255,255,255,.08);
+    background: var(--ga-sub);
     box-shadow: 0 0 10px rgba(255,255,255,.08);
   }
   .sv-deck-tab.geo.active {
@@ -5755,15 +5764,15 @@ void main() {
   }
   .sv-bpm-btn {
     padding: 4px 8px;
-    background: rgba(255,255,255,.04);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
-    font-family: 'Orbitron', sans-serif;
+    color: var(--ga-ink-1);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     cursor: pointer;
     transition: all .1s;
   }
-  .sv-bpm-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-bpm-btn:hover { background: var(--ga-sub); color: var(--ga-ink-0); }
   .sv-bpm-display {
     display: flex;
     flex-direction: column;
@@ -5771,7 +5780,7 @@ void main() {
     min-width: 50px;
   }
   .sv-bpm-val {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 20px;
     font-weight: 700;
     color: var(--sv-c);
@@ -5780,26 +5789,25 @@ void main() {
   .sv-bpm-lbl {
     font-size: 9px;
     opacity: .3;
-    letter-spacing: 1px;
   }
   .sv-tap-btn {
     padding: 6px 14px;
-    background: linear-gradient(135deg, rgba(187,134,252,.15), rgba(187,134,252,.05));
-    border: 1px solid rgba(187,134,252,.3);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--ga-selection-line) 15%, transparent), color-mix(in srgb, var(--ga-selection-line) 5%, transparent));
+    border: 1px solid color-mix(in srgb, var(--ga-selection-line) 30%, transparent);
     color: var(--sv-c);
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all .1s;
   }
-  .sv-tap-btn:hover { background: linear-gradient(135deg, rgba(187,134,252,.25), rgba(187,134,252,.1)); }
+  .sv-tap-btn:hover { background: linear-gradient(135deg, color-mix(in srgb, var(--ga-selection-line) 25%, transparent), color-mix(in srgb, var(--ga-selection-line) 10%, transparent)); }
   .sv-tap-btn:active { transform: scale(.95); }
   .sv-beat-indicator {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: rgba(255,255,255,.1);
+    background: var(--ga-sub);
     transition: all .05s;
   }
   .sv-beat-indicator.flash {
@@ -5808,10 +5816,10 @@ void main() {
   }
   .sv-sync-btn {
     padding: 4px 10px;
-    background: rgba(255,255,255,.04);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.4);
-    font-family: 'Orbitron', sans-serif;
+    color: var(--ga-ink-2);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     cursor: pointer;
     transition: all .1s;
@@ -5828,25 +5836,23 @@ void main() {
     margin-left: 8px;
   }
   .sv-react-lbl {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 9px;
-    letter-spacing: 1.5px;
     opacity: .45;
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   .sv-react-select {
     padding: 4px 8px;
-    background: rgba(255,255,255,.04);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.7);
-    font-family: 'Orbitron', sans-serif;
+    color: var(--ga-ink-1);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
-    letter-spacing: 1px;
     cursor: pointer;
     outline: none;
-    border-radius: 2px;
+    border-radius: var(--ga-r-hard, 5px);
   }
-  .sv-react-select:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-react-select:hover { background: var(--ga-sub); color: var(--ga-ink-0); }
   .sv-react-select:focus { border-color: var(--sv-c); }
 
   /* Quick Actions */
@@ -5856,15 +5862,15 @@ void main() {
   }
   .sv-action-btn {
     padding: 6px 12px;
-    background: rgba(255,255,255,.04);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
-    font-family: 'Orbitron', sans-serif;
+    color: var(--ga-ink-1);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     cursor: pointer;
     transition: all .1s;
   }
-  .sv-action-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-action-btn:hover { background: var(--ga-sub); color: var(--ga-ink-0); }
   .sv-action-btn.on {
     background: rgba(105,240,174,.1);
     border-color: var(--sv-g);
@@ -5877,7 +5883,7 @@ void main() {
     background: rgba(255,0,170,.1);
     border: 1px solid rgba(255,0,170,.3);
     color: var(--sv-m);
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 14px;
     font-weight: 700;
     cursor: pointer;
@@ -5924,10 +5930,9 @@ void main() {
   .sv-geo-tab-btn {
     height: 28px;
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.04);
-    color: rgba(255,255,255,.6);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     font-size: 11px;
-    letter-spacing: .06em;
     font-weight: 700;
     cursor: pointer;
   }
@@ -5947,8 +5952,8 @@ void main() {
   }
   .sv-geo-scene-btn {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
-    color: var(--text-primary, #ddd);
+    background: var(--ga-card);
+    color: var(--ga-ink-0);
     font-size: 11px;
     padding: 5px 8px;
     display: flex;
@@ -5958,19 +5963,18 @@ void main() {
   }
   .sv-geo-scene-btn small {
     font-size: 10px;
-    color: rgba(255,255,255,.55);
+    color: var(--ga-ink-1);
   }
   .sv-geo-scene-btn.on {
     border-color: var(--sv-c);
     color: var(--sv-c);
-    background: rgba(255,255,255,.08);
+    background: var(--ga-sub);
   }
   .sv-geo-scene-store {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
-    color: rgba(255,255,255,.65);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     font-size: 10px;
-    letter-spacing: .06em;
     cursor: pointer;
   }
   .sv-geo-morph-controls {
@@ -5981,15 +5985,15 @@ void main() {
   }
   .sv-geo-morph-controls select {
     height: 24px;
-    background: rgba(255,255,255,.05);
-    color: var(--text-primary, #ddd);
+    background: var(--ga-card);
+    color: var(--ga-ink-0);
     border: 1px solid var(--sv-brd);
     font-size: 11px;
   }
   .sv-geo-form-btn {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
-    color: var(--text-primary, #ddd);
+    background: var(--ga-card);
+    color: var(--ga-ink-0);
     text-align: left;
     padding: 8px;
     cursor: pointer;
@@ -5997,8 +6001,8 @@ void main() {
     min-height: 58px;
   }
   .sv-geo-form-btn:hover {
-    border-color: rgba(255,255,255,.2);
-    background: rgba(255,255,255,.06);
+    border-color: var(--ga-ink-2);
+    background: var(--ga-card);
   }
   .sv-geo-form-btn.on {
     border-color: var(--sv-g);
@@ -6008,14 +6012,13 @@ void main() {
   .sv-geo-form-name {
     display: block;
     font-size: 12px;
-    font-weight: 800;
-    letter-spacing: .08em;
+    font-weight: 700;
     margin-bottom: 4px;
   }
   .sv-geo-form-hint {
     display: block;
     font-size: 11px;
-    color: rgba(255,255,255,.55);
+    color: var(--ga-ink-1);
   }
   .sv-geo-shortcuts {
     margin-top: 10px;
@@ -6026,8 +6029,7 @@ void main() {
   }
   .sv-geo-shortcut {
     font-size: 11px;
-    color: rgba(255,255,255,.6);
-    letter-spacing: .05em;
+    color: var(--ga-ink-1);
   }
   .sv-xy-pad-geo {
     min-height: 300px;
@@ -6044,7 +6046,7 @@ void main() {
   }
   .sv-geo-stat {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
+    background: var(--ga-card);
     padding: 6px 8px;
     display: flex;
     flex-direction: column;
@@ -6052,14 +6054,12 @@ void main() {
   }
   .sv-geo-stat-label {
     font-size: 10px;
-    letter-spacing: .1em;
-    color: rgba(255,255,255,.5);
+    color: var(--ga-ink-1);
   }
   .sv-geo-stat-value {
     font-size: 13px;
-    font-weight: 800;
-    color: #fff;
-    letter-spacing: .06em;
+    font-weight: 700;
+    color: var(--ga-ink-0);
   }
   .sv-geo-slider-wrap {
     display: grid;
@@ -6070,8 +6070,7 @@ void main() {
   }
   .sv-geo-slider-label {
     font-size: 11px;
-    letter-spacing: .08em;
-    color: rgba(255,255,255,.7);
+    color: var(--ga-ink-1);
   }
   .sv-geo-slider-wrap input[type="range"] {
     width: 100%;
@@ -6079,7 +6078,7 @@ void main() {
   .sv-geo-slider-val {
     font-size: 12px;
     text-align: right;
-    color: var(--text-primary, #ddd);
+    color: var(--ga-ink-0);
   }
   .sv-geo-action-grid {
     display: grid;
@@ -6089,23 +6088,22 @@ void main() {
   }
   .sv-geo-action-btn {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
-    color: #dcdcdc;
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     font-size: 11px;
-    letter-spacing: .08em;
     font-weight: 700;
     padding: 8px 6px;
     cursor: pointer;
     transition: all .12s ease;
   }
   .sv-geo-action-btn:hover {
-    border-color: rgba(255,255,255,.2);
-    background: rgba(255,255,255,.08);
+    border-color: var(--ga-ink-2);
+    background: var(--ga-sub);
   }
   .sv-geo-action-btn.on {
     border-color: var(--sv-c);
     color: var(--sv-c);
-    background: rgba(255,255,255,.08);
+    background: var(--ga-sub);
   }
   .sv-geo-footer-actions {
     display: grid;
@@ -6119,7 +6117,7 @@ void main() {
   }
   .sv-geo-route {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
+    background: var(--ga-card);
     padding: 6px;
     display: grid;
     grid-template-columns: 1fr;
@@ -6127,22 +6125,20 @@ void main() {
   }
   .sv-geo-route label {
     font-size: 11px;
-    color: rgba(255,255,255,.72);
+    color: var(--ga-ink-1);
     display: flex;
     gap: 6px;
     align-items: center;
   }
   .sv-geo-route span {
     font-size: 11px;
-    color: rgba(255,255,255,.6);
+    color: var(--ga-ink-1);
     text-align: right;
   }
 
   .sv-section-title {
     font-size: 10px;
     opacity: .35;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
     margin-bottom: 6px;
     padding-bottom: 4px;
     border-bottom: 1px solid var(--sv-brd);
@@ -6162,9 +6158,9 @@ void main() {
   .sv-xy-section { flex: 1; display: flex; flex-direction: column; }
   .sv-xy-pad {
     flex: 1;
-    background: linear-gradient(135deg, rgba(187,134,252,.02), rgba(255,0,170,.02));
+    background: linear-gradient(135deg, color-mix(in srgb, var(--ga-selection-line) 2%, transparent), rgba(255,0,170,.02));
     border: 1px solid var(--sv-brd);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     position: relative;
     cursor: crosshair;
     min-height: 180px;
@@ -6173,14 +6169,14 @@ void main() {
     position: absolute;
     left: 0; right: 0;
     height: 1px;
-    background: rgba(187,134,252,.2);
+    background: color-mix(in srgb, var(--ga-selection-line) 20%, transparent);
     pointer-events: none;
   }
   .sv-xy-crosshair-v {
     position: absolute;
     top: 0; bottom: 0;
     width: 1px;
-    background: rgba(187,134,252,.2);
+    background: color-mix(in srgb, var(--ga-selection-line) 20%, transparent);
     pointer-events: none;
   }
   .sv-xy-dot {
@@ -6206,7 +6202,7 @@ void main() {
     flex: 1;
     background: rgba(255,255,255,.02);
     border: 1px solid var(--sv-brd);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     padding: 8px;
     display: flex;
     flex-direction: column;
@@ -6215,15 +6211,15 @@ void main() {
     cursor: pointer;
     transition: all .1s;
   }
-  .sv-layer-box:hover { border-color: rgba(255,255,255,.15); }
+  .sv-layer-box:hover { border-color: var(--ga-ink-2); }
   .sv-layer-box.active {
     border-color: var(--sv-c);
-    background: rgba(187,134,252,.05);
+    background: color-mix(in srgb, var(--ga-selection-line) 5%, transparent);
   }
   .sv-layer-letter {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 20px;
-    font-weight: 900;
+    font-weight: 700;
     color: var(--sv-c);
   }
   .sv-layer-box:last-child .sv-layer-letter { color: var(--sv-m); }
@@ -6256,14 +6252,14 @@ void main() {
   .sv-xf-range::-webkit-slider-runnable-track {
     width: 6px;
     background: linear-gradient(to bottom, var(--sv-c), var(--sv-m));
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
   }
   .sv-xf-range::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 16px;
     height: 8px;
     background: #fff;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
     border: none;
     box-shadow: 0 0 6px rgba(255,255,255,.3);
     margin-left: -5px; /* center thumb on 6px track */
@@ -6326,7 +6322,7 @@ void main() {
     position: relative;
     width: 54px;
     height: 56px;
-    background-color: rgba(255,255,255,.02);
+    background-color: var(--ga-ink-2);
     background-image: none;
     background-size: cover;
     background-position: center;
@@ -6341,23 +6337,23 @@ void main() {
     padding: 5px 3px 3px;
     overflow: hidden;
   }
-  .sv-clip-btn:hover { border-color: rgba(255,255,255,.25); background-color: rgba(255,255,255,.05); }
+  .sv-clip-btn:hover { border-color: var(--ga-ink-2); background-color: var(--ga-ink-2); }
   .sv-clip-btn.keyboard-pressed {
     border-color: var(--sv-c);
-    background-color: rgba(187,134,252,.2);
-    box-shadow: 0 0 16px rgba(187,134,252,.42);
+    background-color: color-mix(in srgb, var(--ga-selection-line) 20%, transparent);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--ga-selection-line) 42%, transparent);
     transform: translateY(1px);
   }
   .sv-clip-btn.on {
     border-color: var(--sv-c);
-    background-color: rgba(187,134,252,.12);
-    box-shadow: 0 0 12px rgba(187,134,252,.2);
+    background-color: color-mix(in srgb, var(--ga-selection-line) 12%, transparent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--ga-selection-line) 20%, transparent);
   }
   .sv-clip-key {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 14px;
     font-weight: 700;
-    color: rgba(255,255,255,.45);
+    color: var(--ga-ink-2);
     line-height: 1;
   }
   .sv-clip-btn.on .sv-clip-key { color: var(--sv-c); }
@@ -6410,8 +6406,8 @@ void main() {
     height: 32px;
     background: rgba(255,0,170,.03);
     border: 1px solid rgba(255,0,170,.2);
-    border-radius: 4px;
-    color: rgba(255,255,255,.55);
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1);
     font-size: 10px;
     font-weight: 500;
     cursor: pointer;
@@ -6435,13 +6431,12 @@ void main() {
     height: 24px;
     background: rgba(255,0,170,.05);
     border: 1px solid rgba(255,0,170,.2);
-    border-radius: 4px;
-    color: rgba(255,255,255,.4);
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2);
     font-size: 10px;
     font-weight: 600;
     cursor: pointer;
     transition: all .12s;
-    letter-spacing: 1px;
   }
   .sv-worlds-toggle:hover { border-color: rgba(255,0,170,.4); }
   .sv-worlds-toggle.on {
@@ -6471,19 +6466,19 @@ void main() {
   .sv-sel-btn {
     width: 32px;
     height: 32px;
-    background: rgba(255,255,255,.05);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.6);
+    color: var(--ga-ink-1);
     font-size: 16px;
     cursor: pointer;
     transition: all .1s;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
   }
-  .sv-sel-btn:hover { background: rgba(255,255,255,.1); color: #fff; }
+  .sv-sel-btn:hover { background: var(--ga-sub); color: var(--ga-ink-0); }
   .sv-sel-val {
     min-width: 80px;
     text-align: center;
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 13px;
     color: var(--sv-c);
   }
@@ -6498,53 +6493,52 @@ void main() {
     align-items: center;
     justify-content: center;
     padding: 10px 8px;
-    background: rgba(187,134,252,.04);
-    border: 1px solid rgba(187,134,252,.25);
+    background: color-mix(in srgb, var(--ga-selection-line) 4%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-selection-line) 25%, transparent);
     border-radius: 6px;
     cursor: pointer;
     transition: all .15s;
     width: 100%;
   }
   .sv-shader-mix-btn:hover {
-    background: rgba(187,134,252,.12);
-    border-color: rgba(187,134,252,.5);
+    background: color-mix(in srgb, var(--ga-selection-line) 12%, transparent);
+    border-color: color-mix(in srgb, var(--ga-selection-line) 50%, transparent);
   }
   .sv-shader-mix-btn.active {
-    background: rgba(187,134,252,.18);
-    border-color: #BB86FC;
-    box-shadow: 0 0 18px rgba(187,134,252,.25);
+    background: color-mix(in srgb, var(--ga-selection-line) 18%, transparent);
+    border-color: var(--ga-selection-line);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--ga-selection-line) 25%, transparent);
     animation: sv-mix-pulse 2s ease-in-out infinite;
   }
   @keyframes sv-mix-pulse {
-    0%, 100% { box-shadow: 0 0 10px rgba(187,134,252,.2); }
-    50% { box-shadow: 0 0 24px rgba(187,134,252,.4); }
+    0%, 100% { box-shadow: 0 0 10px color-mix(in srgb, var(--ga-selection-line) 20%, transparent); }
+    50% { box-shadow: 0 0 24px color-mix(in srgb, var(--ga-selection-line) 40%, transparent); }
   }
   .sv-shader-mix-icon {
     font-size: 20px;
-    color: #BB86FC;
+    color: var(--ga-selection-line);
   }
   .sv-shader-mix-label {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 11px;
     font-weight: 700;
-    color: #BB86FC;
-    letter-spacing: .08em;
+    color: var(--ga-selection-line);
     margin-top: 2px;
   }
   .sv-shader-mix-hint {
     font-size: 10px;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
     text-align: center;
     margin-top: 4px;
   }
   .sv-shader-mix-hint kbd {
-    background: rgba(187,134,252,.15);
-    border: 1px solid rgba(187,134,252,.3);
-    border-radius: 3px;
+    background: color-mix(in srgb, var(--ga-selection-line) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-selection-line) 30%, transparent);
+    border-radius: var(--ga-r-hard, 5px);
     padding: 1px 4px;
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
-    color: #BB86FC;
+    color: var(--ga-selection-line);
   }
 
   /* LIVE CAMERA - LARGER Vertical Layout */
@@ -6571,7 +6565,7 @@ void main() {
     box-shadow: 0 0 18px rgba(105,240,174,.25);
   }
   .sv-cam-icon {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 16px;
     font-weight: 700;
     color: var(--sv-g);
@@ -6608,19 +6602,19 @@ void main() {
   .sv-cam-blend-btn {
     width: 22px;
     height: 22px;
-    background: rgba(255,255,255,.05);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.6);
+    color: var(--ga-ink-1);
     font-size: 13px;
     cursor: pointer;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
     flex-shrink: 0;
   }
-  .sv-cam-blend-btn:hover { background: rgba(255,255,255,.1); }
+  .sv-cam-blend-btn:hover { background: var(--ga-sub); }
   .sv-cam-blend-val {
     flex: 1;
     text-align: center;
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     color: var(--sv-g);
   }
@@ -6632,7 +6626,7 @@ void main() {
     width: 100%;
     padding: 6px;
     background: rgba(0,0,0,.15);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
   }
   .sv-cam-opacity-lbl {
     font-size: 9px;
@@ -6643,7 +6637,7 @@ void main() {
     height: 6px;
     -webkit-appearance: none;
     background: rgba(105,240,174,.25);
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
   }
   .sv-cam-opacity-vert input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -6654,7 +6648,7 @@ void main() {
     cursor: pointer;
   }
   .sv-cam-opacity-val {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 13px;
     color: var(--sv-g);
   }
@@ -6675,29 +6669,29 @@ void main() {
   .sv-cam-mode-name {
     flex: 1;
     text-align: center;
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     color: var(--sv-g);
   }
   .sv-cam-nav {
     width: 22px;
     height: 22px;
-    background: rgba(255,255,255,.05);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
+    color: var(--ga-ink-1);
     font-size: 13px;
     cursor: pointer;
     transition: all .1s;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
     flex-shrink: 0;
   }
   .sv-cam-nav:hover {
-    background: rgba(255,255,255,.08);
-    color: #fff;
+    background: var(--ga-sub);
+    color: var(--ga-ink-0);
   }
   /* Duplicate sv-cam-mode-name removed - defined above */
   .sv-cam-mode-name-old {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 12px;
     font-weight: 700;
     color: var(--sv-g);
@@ -6717,8 +6711,8 @@ void main() {
     height: 28px;
     background: rgba(105,240,174,.02);
     border: 1px solid rgba(105,240,174,.15);
-    border-radius: 3px;
-    color: rgba(255,255,255,.5);
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1);
     font-size: 9px;
     cursor: pointer;
     transition: all .08s;
@@ -6753,19 +6747,19 @@ void main() {
   .sv-cam-blend-btn {
     width: 20px;
     height: 20px;
-    background: rgba(255,255,255,.04);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
+    color: var(--ga-ink-1);
     font-size: 11px;
     cursor: pointer;
     transition: all .1s;
   }
   .sv-cam-blend-btn:hover {
-    background: rgba(255,255,255,.08);
-    color: #fff;
+    background: var(--ga-sub);
+    color: var(--ga-ink-0);
   }
   .sv-cam-blend-val {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     color: var(--sv-g);
     min-width: 55px;
@@ -6782,8 +6776,8 @@ void main() {
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: rgba(255,255,255,.1);
-    border-radius: 2px;
+    background: var(--ga-sub);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
   .sv-cam-opacity input[type="range"]::-webkit-slider-thumb {
@@ -6796,7 +6790,7 @@ void main() {
     box-shadow: 0 0 6px rgba(105,240,174,.4);
   }
   .sv-cam-opacity-val {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     color: var(--sv-g);
     min-width: 30px;
@@ -6814,25 +6808,25 @@ void main() {
   /* ── Effects Panel ── */
   .sv-effects-panel { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; min-height: 0; }
   .sv-effects-header { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; }
-  .sv-effects-header span { font-size: 11px; color: var(--text-muted, #888); text-transform: uppercase; }
-  .sv-add-fx-btn { background: #BB86FC22; border: 1px solid #BB86FC44; border-radius: 4px; color: #BB86FC; font-size: 11px; padding: 2px 8px; cursor: pointer; transition: all 0.15s; }
-  .sv-add-fx-btn:hover { background: #BB86FC33; border-color: #BB86FC88; }
+  .sv-effects-header span { font-size: 11px; color: var(--ga-ink-2); }
+  .sv-add-fx-btn { background: color-mix(in srgb, var(--ga-selection-line) 13%, transparent); border: 1px solid color-mix(in srgb, var(--ga-selection-line) 27%, transparent); border-radius: var(--ga-r-hard, 5px); color: var(--ga-selection-line); font-size: 11px; padding: 2px 8px; cursor: pointer; transition: all 0.15s; }
+  .sv-add-fx-btn:hover { background: color-mix(in srgb, var(--ga-selection-line) 20%, transparent); border-color: color-mix(in srgb, var(--ga-selection-line) 53%, transparent); }
   .sv-effects-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
-  .sv-effect-item { background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; border-radius: 4px; overflow: hidden; }
+  .sv-effect-item { background: var(--ga-card); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px); overflow: hidden; }
   .sv-effect-item.disabled { opacity: 0.5; }
   .sv-effect-header { display: flex; align-items: center; gap: 6px; padding: 4px 6px; cursor: pointer; }
-  .sv-fx-toggle { background: none; border: none; color: #BB86FC; font-size: 11px; cursor: pointer; padding: 0; }
-  .sv-fx-toggle.active { color: #BB86FC; }
-  .sv-fx-name { font-size: 11px; color: var(--text-primary, #ccc); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sv-fx-expand { font-size: 9px; color: #666; }
-  .sv-fx-delete { background: none; border: none; color: #666; font-size: 13px; cursor: pointer; padding: 0 2px; }
+  .sv-fx-toggle { background: none; border: none; color: var(--ga-selection-line); font-size: 11px; cursor: pointer; padding: 0; }
+  .sv-fx-toggle.active { color: var(--ga-selection-line); }
+  .sv-fx-name { font-size: 11px; color: var(--ga-ink-0); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sv-fx-expand { font-size: 9px; color: var(--ga-ink-2); }
+  .sv-fx-delete { background: none; border: none; color: var(--ga-ink-2); font-size: 13px; cursor: pointer; padding: 0 2px; }
   .sv-fx-delete:hover { color: #f44; }
   .sv-effect-params { padding: 4px 8px 6px; border-top: 1px solid #2a2a2a; }
   .sv-fx-param-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
-  .sv-fx-param-name { font-size: 10px; color: var(--text-muted, #888); min-width: 50px; }
-  .sv-fx-param-row input[type=range] { flex: 1; height: 3px; accent-color: #BB86FC; }
-  .sv-fx-param-val { font-size: 10px; color: #666; min-width: 28px; text-align: right; }
-  .sv-fx-no-params, .sv-fx-empty { font-size: 11px; color: #555; text-align: center; padding: 8px; }
+  .sv-fx-param-name { font-size: 10px; color: var(--ga-ink-2); min-width: 50px; }
+  .sv-fx-param-row input[type=range] { flex: 1; height: 3px; accent-color: var(--ga-selection-line); }
+  .sv-fx-param-val { font-size: 10px; color: var(--ga-ink-2); min-width: 28px; text-align: right; }
+  .sv-fx-no-params, .sv-fx-empty { font-size: 11px; color: var(--ga-ink-2); text-align: center; padding: 8px; }
 
   .sv-dial-grid {
     display: grid;
@@ -6864,24 +6858,22 @@ void main() {
     stroke: var(--sv-c);
     stroke-width: 8;
     stroke-linecap: round;
-    filter: drop-shadow(0 0 4px rgba(187,134,252,.3));
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ga-selection-line) 30%, transparent));
   }
   .sv-dial-val {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 12px;
     font-weight: 700;
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   .sv-dial-lbl {
     font-size: 9px;
     opacity: .55;
     margin-top: 2px;
-    text-transform: uppercase;
-    letter-spacing: .5px;
   }
   .sv-dial-lbl.shader { color: var(--sv-m); opacity: .7; }
 
@@ -6894,20 +6886,20 @@ void main() {
   .sv-param-tab {
     flex: 1;
     height: 26px;
-    background: rgba(255,255,255,.04);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    border-radius: 4px;
-    color: rgba(255,255,255,.5);
-    font-family: 'Orbitron', sans-serif;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     font-weight: 600;
     cursor: pointer;
     transition: all .15s;
   }
-  .sv-param-tab:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-param-tab:hover { background: var(--ga-sub); color: var(--ga-ink-0); }
   .sv-param-tab.active {
-    background: rgba(187,134,252,.1);
-    border-color: rgba(187,134,252,.4);
+    background: color-mix(in srgb, var(--ga-selection-line) 10%, transparent);
+    border-color: color-mix(in srgb, var(--ga-selection-line) 40%, transparent);
     color: var(--sv-c);
   }
 
@@ -6918,14 +6910,13 @@ void main() {
     padding: 4px 8px;
     background: rgba(255,0,170,.08);
     border: 1px solid rgba(255,0,170,.3);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
   }
   .sv-shader-name {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 12px;
     font-weight: 700;
     color: var(--sv-m);
-    letter-spacing: 1px;
   }
   .sv-shader-params .sv-dial-arc.shader {
     stroke: var(--sv-m);
@@ -6949,7 +6940,7 @@ void main() {
     padding-right: 4px;
   }
   .sv-isf-controls::-webkit-scrollbar { width: 3px; }
-  .sv-isf-controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 2px; }
+  .sv-isf-controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: var(--ga-r-hard, 5px); }
   .sv-isf-control {
     display: flex;
     flex-direction: column;
@@ -6959,8 +6950,8 @@ void main() {
     padding-left: 4px;
   }
   .sv-isf-control.sv-modulated {
-    border-left-color: #a855f7;
-    background: rgba(168, 85, 247, 0.06);
+    border-left-color: var(--ga-selection-line);
+    background: color-mix(in srgb, var(--ga-selection-line) 6%, transparent);
     border-radius: 0 4px 4px 0;
   }
   .sv-isf-header {
@@ -6973,38 +6964,36 @@ void main() {
     font-size: 9px;
     padding: 1px 6px;
     background: #000;
-    border: 1px solid rgba(255,255,255,.12);
-    border-radius: 3px;
-    color: rgba(255,255,255,.5);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1);
     cursor: pointer;
     max-width: 70px;
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     transition: border-color 0.12s, color 0.12s, background 0.12s;
   }
   .sv-mod-chip:hover {
-    border-color: rgba(255,255,255,.3);
-    color: rgba(255,255,255,.8);
+    border-color: var(--ga-ink-2);
+    color: var(--ga-ink-1);
   }
   .sv-mod-chip.active {
-    border-color: #a855f7;
-    color: #a855f7;
-    background: rgba(168, 85, 247, 0.15);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-line);
+    background: color-mix(in srgb, var(--ga-selection-line) 15%, transparent);
   }
   .sv-mod-chip.open {
-    border-color: #a855f7;
-    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.35);
+    border-color: var(--ga-selection-line);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ga-selection-line) 35%, transparent);
   }
   /* Depth slider moved into the ModTray popover. */
   .sv-isf-label {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 9px;
     font-weight: 600;
-    letter-spacing: .8px;
     color: var(--sv-y);
-    text-transform: uppercase;
     opacity: .85;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7021,7 +7010,7 @@ void main() {
     -webkit-appearance: none;
     appearance: none;
     background: rgba(255,165,2,.15);
-    border-radius: 2px;
+    border-radius: var(--ga-r-hard, 5px);
     outline: none;
     cursor: pointer;
   }
@@ -7035,9 +7024,9 @@ void main() {
     box-shadow: 0 0 6px rgba(255,165,2,.4);
   }
   .sv-isf-val {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
-    color: rgba(255,255,255,.6);
+    color: var(--ga-ink-1);
     min-width: 32px;
     text-align: right;
   }
@@ -7046,9 +7035,9 @@ void main() {
     height: 24px;
     background: rgba(255,165,2,.08);
     border: 1px solid rgba(255,165,2,.3);
-    border-radius: 3px;
-    color: #fff;
-    font-family: 'Orbitron', sans-serif;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     padding: 0 6px;
     cursor: pointer;
@@ -7060,13 +7049,12 @@ void main() {
     width: 48px;
     height: 22px;
     border: 1px solid rgba(255,165,2,.3);
-    border-radius: 3px;
-    background: rgba(255,255,255,.03);
-    color: rgba(255,255,255,.5);
-    font-family: 'Orbitron', sans-serif;
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 9px;
     font-weight: 700;
-    letter-spacing: 1px;
     cursor: pointer;
     transition: all .1s;
   }
@@ -7080,7 +7068,7 @@ void main() {
     width: 44px;
     height: 24px;
     border: 1px solid rgba(255,165,2,.3);
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
     background: transparent;
     cursor: pointer;
     padding: 1px;
@@ -7120,25 +7108,25 @@ void main() {
   }
   .sv-big-btn {
     height: 36px;
-    background: rgba(255,255,255,.04);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    border-radius: 4px;
-    color: rgba(255,255,255,.6);
-    font-family: 'Orbitron', sans-serif;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all .1s;
   }
-  .sv-big-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-big-btn:hover { background: var(--ga-sub); color: var(--ga-ink-0); }
   .sv-big-btn:active { transform: scale(.97); }
-  .sv-big-btn.pump { border-color: rgba(187,134,252,.3); color: var(--sv-c); }
-  .sv-big-btn.pump:hover { background: rgba(187,134,252,.1); }
+  .sv-big-btn.pump { border-color: color-mix(in srgb, var(--ga-selection-line) 30%, transparent); color: var(--sv-c); }
+  .sv-big-btn.pump:hover { background: color-mix(in srgb, var(--ga-selection-line) 10%, transparent); }
   .sv-big-btn.glitch { border-color: rgba(255,0,170,.3); color: var(--sv-m); }
   .sv-big-btn.glitch:hover { background: rgba(255,0,170,.1); }
   .sv-big-btn.invert.on { background: rgba(255,213,79,.15); border-color: var(--sv-y); color: var(--sv-y); }
-  .sv-big-btn.black.on { background: #111; border-color: #333; color: #666; }
-  .sv-big-btn.white.on { background: rgba(255,255,255,.2); border-color: #fff; color: #fff; }
+  .sv-big-btn.black.on { background: #111; border-color: var(--ga-line-2); color: var(--ga-ink-2); }
+  .sv-big-btn.white.on { background: rgba(255,255,255,.2); border-color: var(--ga-ink-0); color: var(--ga-ink-0); }
 
   /* Spacebar Effect Selector */
   .sv-spacefx-selector {
@@ -7149,29 +7137,28 @@ void main() {
   .sv-spacefx-btn {
     width: 100%;
     height: 40px;
-    background: linear-gradient(135deg, rgba(255,0,170,.15), rgba(187,134,252,.1));
+    background: linear-gradient(135deg, rgba(255,0,170,.15), color-mix(in srgb, var(--ga-selection-line) 10%, transparent));
     border: 2px solid rgba(255,0,170,.4);
     border-radius: 6px;
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--sv-m);
     cursor: pointer;
     transition: all .15s;
     text-shadow: 0 0 8px rgba(255,0,170,.4);
   }
   .sv-spacefx-btn:hover {
-    background: linear-gradient(135deg, rgba(255,0,170,.25), rgba(187,134,252,.15));
+    background: linear-gradient(135deg, rgba(255,0,170,.25), color-mix(in srgb, var(--ga-selection-line) 15%, transparent));
     border-color: var(--sv-m);
     transform: scale(1.02);
     box-shadow: 0 0 15px rgba(255,0,170,.3);
   }
   .sv-spacefx-btn:active {
     transform: scale(.98);
-    background: linear-gradient(135deg, rgba(255,0,170,.4), rgba(187,134,252,.2));
+    background: linear-gradient(135deg, rgba(255,0,170,.4), color-mix(in srgb, var(--ga-selection-line) 20%, transparent));
   }
   .sv-spacefx-key {
-    letter-spacing: 3px;
   }
   .sv-spacefx-dropdown {
     display: flex;
@@ -7181,19 +7168,19 @@ void main() {
   .sv-spacefx-nav {
     width: 28px;
     height: 32px;
-    background: rgba(255,255,255,.04);
+    background: var(--ga-card);
     border: 1px solid var(--sv-brd);
-    border-radius: 4px;
-    color: rgba(255,255,255,.5);
-    font-family: 'Orbitron', sans-serif;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 13px;
     cursor: pointer;
     transition: all .1s;
   }
   .sv-spacefx-nav:hover {
-    background: rgba(255,255,255,.08);
-    border-color: rgba(255,255,255,.2);
-    color: #fff;
+    background: var(--ga-sub);
+    border-color: var(--ga-ink-2);
+    color: var(--ga-ink-0);
   }
   .sv-spacefx-current {
     flex: 1;
@@ -7201,22 +7188,19 @@ void main() {
     flex-direction: column;
     align-items: center;
     padding: 4px 8px;
-    background: rgba(187,134,252,.06);
-    border: 1px solid rgba(187,134,252,.2);
-    border-radius: 4px;
+    background: color-mix(in srgb, var(--ga-selection-line) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-selection-line) 20%, transparent);
+    border-radius: var(--ga-r-hard, 5px);
   }
   .sv-spacefx-name {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 12px;
     font-weight: 700;
     color: var(--sv-c);
-    letter-spacing: 1px;
   }
   .sv-spacefx-desc {
     font-size: 9px;
     opacity: .4;
-    text-transform: uppercase;
-    letter-spacing: .5px;
     margin-top: 1px;
   }
 
@@ -7237,7 +7221,6 @@ void main() {
     right: 3px;
     font-size: 9px;
     opacity: .5;
-    letter-spacing: .5px;
   }
 
   @media (max-width: 1400px) {
@@ -7272,30 +7255,28 @@ void main() {
   .sv-assign-hint {
     font-size: 10px;
     font-weight: 400;
-    color: rgba(255,255,255,.3);
+    color: var(--ga-ink-2);
     font-family: inherit;
-    letter-spacing: 0;
   }
 
   /* ═══ EDIT Button ═══ */
   .sv-edit-btn {
     padding: 4px 12px;
-    background: rgba(255,255,255,.06);
-    border: 1px solid rgba(255,255,255,.12);
-    border-radius: 4px;
-    color: var(--text-secondary, #aaa);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1);
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 1px;
     cursor: pointer;
     transition: all .15s;
     font-family: inherit;
     margin-left: auto;
   }
   .sv-edit-btn:hover {
-    background: rgba(255,255,255,.1);
-    color: var(--text-primary, #ddd);
-    border-color: rgba(255,255,255,.2);
+    background: var(--ga-sub);
+    color: var(--ga-ink-0);
+    border-color: var(--ga-ink-2);
   }
   .sv-edit-btn.active {
     background: rgba(46,213,115,.15);
@@ -7312,7 +7293,7 @@ void main() {
   }
 
   .sv-keyboard.edit-mode .sv-clip-btn {
-    border: 1px dashed rgba(255,255,255,.15);
+    border: 1px dashed var(--ga-line-2);
     cursor: default;
   }
 
@@ -7338,15 +7319,14 @@ void main() {
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
-    color: #666;
+    color: var(--ga-ink-2);
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 1px;
     cursor: pointer;
     transition: all .12s;
     font-family: inherit;
   }
-  .sv-edit-tab:hover { color: var(--text-secondary, #aaa); }
+  .sv-edit-tab:hover { color: var(--ga-ink-1); }
   .sv-edit-tab.active {
     color: var(--sv-c);
     border-bottom-color: var(--sv-c);
@@ -7363,11 +7343,11 @@ void main() {
   }
   .sv-edit-tray-list::-webkit-scrollbar { width: 3px; }
   .sv-edit-tray-list::-webkit-scrollbar-track { background: transparent; }
-  .sv-edit-tray-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .sv-edit-tray-list::-webkit-scrollbar-thumb { background: var(--ga-raise); border-radius: var(--ga-r-hard, 5px); }
   .sv-edit-item {
     position: relative;
-    background: #333;
-    border-radius: 4px;
+    background: var(--ga-raise);
+    border-radius: var(--ga-r-hard, 5px);
     overflow: hidden;
     cursor: grab;
     transition: all .12s;
@@ -7412,7 +7392,7 @@ void main() {
     padding: 2px 4px;
     background: rgba(0,0,0,.8);
     font-size: 10px;
-    color: var(--text-primary, #eee);
+    color: var(--ga-ink-0);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7421,7 +7401,7 @@ void main() {
     grid-column: 1 / -1;
     padding: 16px 8px;
     font-size: 11px;
-    color: #555;
+    color: var(--ga-ink-2);
     text-align: center;
   }
 
@@ -7435,7 +7415,7 @@ void main() {
     position: absolute;
     inset: 0;
     background: rgba(0,0,0,.55);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     pointer-events: none;
   }
   .sv-clip-btn.has-thumb .sv-clip-key,
@@ -7448,12 +7428,12 @@ void main() {
 
   /* Reset button */
   .sv-reset-btn {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     font-weight: 700;
     padding: 4px 8px;
     border: 1px solid rgba(255,80,80,.4);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     background: rgba(255,80,80,.1);
     color: #ff5050;
     cursor: pointer;
@@ -7477,38 +7457,38 @@ void main() {
     flex-shrink: 0;
   }
   .sv-preset-save-btn {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     font-weight: 700;
     padding: 4px 10px;
-    border: 1px solid rgba(187,134,252,.4);
-    border-radius: 4px;
-    background: rgba(187,134,252,.1);
+    border: 1px solid color-mix(in srgb, var(--ga-selection-line) 40%, transparent);
+    border-radius: var(--ga-r-hard, 5px);
+    background: color-mix(in srgb, var(--ga-selection-line) 10%, transparent);
     color: var(--sv-c);
     cursor: pointer;
   }
-  .sv-preset-save-btn:hover { background: rgba(187,134,252,.25); }
+  .sv-preset-save-btn:hover { background: color-mix(in srgb, var(--ga-selection-line) 25%, transparent); }
   .sv-preset-input {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     width: 100px;
     padding: 3px 6px;
-    border: 1px solid rgba(187,134,252,.4);
-    border-radius: 3px;
+    border: 1px solid color-mix(in srgb, var(--ga-selection-line) 40%, transparent);
+    border-radius: var(--ga-r-hard, 5px);
     background: rgba(0,0,0,.4);
-    color: #fff;
+    color: var(--ga-ink-0);
     outline: none;
   }
   .sv-preset-input:focus { border-color: var(--sv-c); }
   .sv-preset-save-confirm, .sv-preset-save-cancel {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 9px;
     font-weight: 700;
     padding: 3px 6px;
     border: 1px solid var(--sv-brd);
-    border-radius: 3px;
-    background: rgba(255,255,255,.05);
-    color: var(--text-secondary, #aaa);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     cursor: pointer;
   }
   .sv-preset-save-confirm:hover { color: var(--sv-g); border-color: var(--sv-g); }
@@ -7523,34 +7503,34 @@ void main() {
   }
   .sv-preset-list::-webkit-scrollbar { display: none; }
   .sv-preset-btn {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-size: 10px;
     font-weight: 600;
     padding: 4px 10px;
     border: 1px solid var(--sv-brd);
-    border-radius: 4px;
-    background: rgba(255,255,255,.03);
-    color: rgba(255,255,255,.6);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
   }
-  .sv-preset-btn:hover { border-color: rgba(255,255,255,.25); background: rgba(255,255,255,.08); color: #fff; }
+  .sv-preset-btn:hover { border-color: var(--ga-ink-2); background: var(--ga-sub); color: var(--ga-ink-0); }
   .sv-preset-btn.active {
     border-color: var(--sv-c);
-    background: rgba(187,134,252,.12);
+    background: color-mix(in srgb, var(--ga-selection-line) 12%, transparent);
     color: var(--sv-c);
   }
   .sv-preset-hint {
     font-size: 10px;
-    color: rgba(255,255,255,.2);
+    color: var(--ga-ink-2);
     font-style: italic;
   }
   .sv-scope-toggle {
     padding: 2px 6px;
     font-size: 12px;
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-3);
+    border-radius: var(--ga-r-hard, 5px);
     background: rgba(255,255,255,0.05);
     cursor: pointer;
     line-height: 1;
@@ -7561,11 +7541,147 @@ void main() {
   }
   .sv-preset-scope {
     font-size: 10px;
-    font-weight: bold;
+    font-weight: 700;
     color: color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
     margin-right: 3px;
   }
   .global-preset {
     border-color: var(--ga-blue-a28) !important;
   }
+
+  /* ── Shared type roles (docs/DESIGN-SYSTEM.md) ─────────────────────────
+     The instrument keeps its colour coding (worlds, media, ISF); type, sizes
+     and the selected state follow the rest of the app. */
+  .sv-root { font-size: var(--ga-text-control, 12px); color: var(--ga-ink-0); }
+  .sv-header { gap: 12px; padding: 0 12px; }
+  .sv-logo {
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
+    color: var(--ga-ink-0);
+    text-shadow: none;
+  }
+  /* Eyebrows. */
+  .sv-section-title,
+  .sv-effects-header span {
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2);
+    opacity: 1;
+  }
+  /* Faceplate legends: by knobs, keys and selectors. */
+  .sv-bpm-lbl,
+  .sv-react-lbl,
+  .sv-cam-blend-lbl,
+  .sv-cam-opacity-lbl,
+  .sv-cam-mode-lbl,
+  .sv-sel-lbl,
+  .sv-dial-lbl,
+  .sv-clip-desc,
+  .sv-clip-type,
+  .sv-spacefx-key {
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2);
+    opacity: 1;
+  }
+  .sv-clip-desc { color: var(--ga-ink-2); }
+  /* Numbers that tick. */
+  .sv-bpm-val,
+  .sv-dial-val,
+  .sv-isf-val,
+  .sv-cam-opacity-val,
+  .sv-fx-param-val {
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
+  }
+  .sv-bpm-val { color: var(--ga-ink-0); }
+  .sv-fx-param-val { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-1); }
+  /* Header controls: 26px. */
+  .sv-deck-tab,
+  .sv-bpm-btn,
+  .sv-tap-btn,
+  .sv-sync-btn,
+  .sv-action-btn,
+  .sv-edit-btn,
+  .sv-reset-btn,
+  .sv-react-select {
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    padding: 0 10px;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    border-radius: var(--ga-r-hard, 5px);
+  }
+  .sv-react-select { padding: 0 8px; }
+  .sv-tap-btn {
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+  }
+  .sv-tap-btn:hover { background: var(--ga-sub); border-color: var(--ga-line-3); }
+  .sv-close-btn {
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    margin-left: 4px;
+    font-size: var(--ga-text-control, 12px);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1);
+  }
+  .sv-close-btn:hover { background: var(--ga-sub); color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  /* Selected tabs and toggles: the selection colours. */
+  .sv-deck-tab.active,
+  .sv-param-tab.active,
+  .sv-param-tab.world.active,
+  .sv-edit-tab.active,
+  .sv-sync-btn.on,
+  .sv-action-btn.on,
+  .sv-edit-btn.active,
+  .sv-shader-mix-btn.active {
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
+    box-shadow: none;
+  }
+  .sv-shader-mix-btn.active .sv-shader-mix-label,
+  .sv-shader-mix-btn.active .sv-shader-mix-icon { color: var(--ga-selection-ink); }
+  .sv-param-tab {
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    border-radius: var(--ga-r-hard, 5px);
+  }
+  .sv-edit-tab { font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); border-radius: var(--ga-r-hard, 5px); }
+  .sv-big-btn { font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); border-radius: var(--ga-r-hard, 5px); }
+  .sv-world-btn,
+  .sv-worlds-toggle,
+  .sv-cam-mode-btn { font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); border-radius: var(--ga-r-hard, 5px); }
+  .sv-clip-name { font-size: var(--ga-text-eyebrow, 10px); color: var(--ga-ink-1); opacity: 1; }
+  .sv-cam-label { font-size: var(--ga-text-meta, 11px); }
+  .sv-cam-icon { font-size: var(--ga-text-body, 13px); font-weight: var(--ga-weight-control, 600); }
+  .sv-cam-blend-val,
+  .sv-cam-mode-name { font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); }
+  .sv-sel-val { font-size: var(--ga-text-body, 13px); font-weight: var(--ga-weight-control, 600); color: var(--ga-ink-0); }
+  .sv-shader-name,
+  .sv-spacefx-name { font-size: var(--ga-text-body, 13px); font-weight: var(--ga-weight-title, 650); }
+  .sv-shader-name.isf { font-size: var(--ga-text-control, 12px); }
+  .sv-spacefx-desc { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2); opacity: 1; }
+  .sv-shader-mix-label { font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); }
+  .sv-shader-mix-hint { font-size: var(--ga-text-meta, 11px); }
+  .sv-shader-mix-hint kbd { font-family: var(--ga-font-mono, ui-monospace, monospace); }
+  .sv-isf-label { font-size: var(--ga-text-meta, 11px); font-weight: 600; color: var(--ga-ink-1); opacity: 1; }
+  .sv-isf-toggle { font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); }
+  .sv-isf-select { font-size: var(--ga-text-meta, 11px); }
+  .sv-mod-chip { font-size: var(--ga-text-eyebrow, 10px); font-weight: 600; }
+  .sv-fx-name,
+  .sv-fx-no-params,
+  .sv-fx-empty,
+  .sv-edit-empty { font-size: var(--ga-text-meta, 11px); }
+  .sv-fx-param-name { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-1); }
+  .sv-add-fx-btn { font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); border-radius: var(--ga-r-hard, 5px); }
 </style>

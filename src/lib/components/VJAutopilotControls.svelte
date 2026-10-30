@@ -31,7 +31,7 @@
       <label>Column <input aria-label="Autopilot target column" data-help="Choose the destination column for this layer when the autopilot interval completes." type="number" min="1" max={columns} value={(value.column ?? 0) + 1}
         onchange={(e) => change({ column: Math.max(0, Math.min(columns - 1, Number(e.currentTarget.value) - 1)) })} /></label>
     {/if}
-    <p>Launch a clip to start. Continues across this layer; empty cells are skipped. Launches follow QUANT. Loops require video clips; use beats for mixed media. Held Piano clips wait for manual control.</p>
+    <p>Launch a clip to start. Continues across this layer; empty cells are skipped. Launches follow Quantize. Loops require video clips; use beats for mixed media. Held Piano clips wait for manual control.</p>
   {/if}
 </div>
 <style>

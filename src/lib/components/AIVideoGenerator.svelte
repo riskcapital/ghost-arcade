@@ -308,7 +308,7 @@
 
 <div data-help-page="ai-generation" class="veo-generator">
   <div class="header">
-    <h4>AI Video Generator</h4>
+    <h4>AI video generator</h4>
     <button aria-label="Close video generator" class="close-btn" onclick={() => dispatch('close')}>&times;</button>
   </div>
 
@@ -428,7 +428,7 @@
       </div>
       <label class="loop-toggle">
         <input type="checkbox" bind:checked={loopEnabled} disabled={isGenerating} />
-        <span>Seamless Loop</span>
+        <span>Seamless loop</span>
       </label>
     </div>
 
@@ -436,7 +436,7 @@
     <div class="veo-keyframes">
       <div class="keyframe-slot">
         <label class="keyframe-pick" for="veo-first-frame">
-          <span>First Frame</span>
+          <span>First frame</span>
           <input
             id="veo-first-frame"
             type="file"
@@ -455,7 +455,7 @@
 
       <div class="keyframe-slot">
         <label class="keyframe-pick" for="veo-last-frame">
-          <span>Last Frame</span>
+          <span>Last frame</span>
           <input
             id="veo-last-frame"
             type="file"
@@ -479,7 +479,7 @@
       <!-- Negative prompt (Veo only) -->
       {#if !isLuma}
         <div class="field">
-          <label>Negative Prompt</label>
+          <label>Negative prompt</label>
           <input
             type="text"
             bind:value={negativePrompt}
@@ -494,7 +494,7 @@
 
   <!-- Generate button -->
   <button
-    class="generate-btn"
+    class="generate-btn primary-btn"
     onclick={generate}
     disabled={isGenerating || !prompt.trim()}
   >
@@ -502,7 +502,7 @@
       <span class="spinner"></span>
       Generating...
     {:else}
-      Generate Video
+      Generate video
     {/if}
   </button>
 
@@ -538,12 +538,12 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px;
-    background: #0d0d14;
-    border-radius: 6px;
-    border: 1px solid #333;
-    font-size: 12px;
-    color: var(--text-primary, #ccc);
+    padding: 12px;
+    background: var(--ga-panel, #0d0d14);
+    border-radius: var(--ga-r-soft, 7px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   .header {
@@ -554,21 +554,29 @@
 
   h4 {
     margin: 0;
-    font-size: 13px;
-    color: #fff;
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .close-btn {
+    width: var(--ga-control-h-sm, 22px);
+    height: var(--ga-control-h-sm, 22px);
     background: none;
     border: none;
-    color: var(--text-muted, #888);
-    font-size: 16px;
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-heading);
+    line-height: 1;
     cursor: pointer;
-    padding: 0 4px;
+    padding: 0;
   }
-  .close-btn:hover { color: #fff; }
+  .close-btn:hover {
+    color: var(--ga-ink-0, #eef0f4);
+    background: var(--ga-raise, #26221c);
+  }
 
-  /* Provider tabs */
+  /* Provider: a two-way segmented choice. */
   .provider-tabs {
     display: flex;
     gap: 4px;
@@ -576,58 +584,57 @@
 
   .provider-tab {
     flex: 1;
-    padding: 6px;
-    background: #111;
-    border: 1px solid #333;
-    color: var(--text-muted, #888);
-    font-size: 11px;
-    font-weight: 500;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
+    background: var(--ga-card, #111);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    border-radius: 4px;
-    transition: all 0.15s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    border-radius: var(--ga-r-hard, 3px);
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
   }
 
   .provider-tab:hover {
-    background: #222;
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .provider-tab.active {
-    background: linear-gradient(135deg, #ff00aa, #7700ff);
-    color: #fff;
-    border-color: transparent;
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
-  .api-key-warning {
+  .api-key-warning,
+  .error {
     padding: 6px 8px;
-    background: #3a1020;
-    border: 1px solid #662233;
-    border-radius: 4px;
-    color: #ff6688;
-    font-size: 11px;
+    background: color-mix(in srgb, var(--ga-rec, #ff4438) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-rec, #ff4438) 45%, transparent);
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-rec, #ff6688);
+    font-size: var(--ga-text-meta);
   }
 
   .configure-hint {
-    opacity: 0.7;
-    font-style: italic;
+    opacity: 0.75;
   }
 
   .prompt-section textarea {
     width: 100%;
-    background: #111;
-    border: 1px solid #333;
-    color: #fff;
-    padding: 8px;
-    font-size: 12px;
-    border-radius: 4px;
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 8px 10px;
+    font-size: var(--ga-text-body);
+    border-radius: var(--ga-r-hard, 3px);
     resize: vertical;
     font-family: inherit;
     box-sizing: border-box;
   }
   .prompt-section textarea:focus {
-    border-color: #ff00aa;
+    border-color: var(--ga-focus, #8aa4ff);
     outline: none;
   }
 
@@ -637,12 +644,13 @@
     gap: 4px;
   }
   .example-chip {
-    background: #14141e;
-    border: 1px solid #333;
-    color: var(--text-secondary, #aaa);
-    padding: 3px 8px;
-    font-size: 10px;
-    border-radius: 10px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-card, #14141e);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    padding: 0 8px;
+    font-size: var(--ga-text-meta);
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
@@ -650,9 +658,8 @@
     max-width: 200px;
   }
   .example-chip:hover {
-    background: #333;
-    color: #fff;
-    border-color: #ff00aa;
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .settings-row {
@@ -664,33 +671,44 @@
   .setting {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
   }
-  .setting label {
-    font-size: 10px;
-    color: var(--text-muted, #888);
+  /* Field labels: eyebrows. */
+  .setting label,
+  .field label,
+  .keyframe-pick span {
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2, #89857e);
     text-transform: uppercase;
   }
   .setting select {
-    background: #111;
-    border: 1px solid #333;
-    color: var(--text-primary, #ccc);
-    padding: 3px 6px;
-    font-size: 11px;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 0 6px;
+    font-size: var(--ga-text-meta);
+    border-radius: var(--ga-r-hard, 3px);
   }
 
   .toggle-advanced {
+    height: var(--ga-control-h-sm, 22px);
     background: none;
-    border: 1px solid #444;
-    color: var(--text-muted, #888);
-    padding: 3px 8px;
-    font-size: 10px;
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    padding: 0 8px;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
     margin-left: auto;
   }
-  .toggle-advanced:hover { color: #fff; border-color: #666; }
+  .toggle-advanced:hover {
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+  }
 
   /* Luma-specific options */
   .luma-options {
@@ -702,15 +720,11 @@
   .loop-toggle {
     display: flex;
     align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    gap: 6px;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1, #9aa0ac);
     cursor: pointer;
     padding: 3px 0;
-  }
-
-  .loop-toggle input[type="checkbox"] {
-    accent-color: #ff00aa;
   }
 
   .veo-keyframes {
@@ -729,16 +743,13 @@
   .keyframe-pick {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    font-size: 10px;
-    color: var(--text-muted, #888);
-    text-transform: uppercase;
+    gap: 4px;
   }
 
   .keyframe-pick input {
     width: 100%;
-    color: var(--text-secondary, #aaa);
-    font-size: 10px;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-meta);
   }
 
   .keyframe-preview {
@@ -753,18 +764,19 @@
     width: 100%;
     height: 44px;
     object-fit: cover;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 3px);
     background: #000;
-    border: 1px solid #333;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   .keyframe-preview button {
-    background: #222;
-    border: 1px solid #444;
-    color: var(--text-secondary, #aaa);
-    font-size: 10px;
-    border-radius: 3px;
-    padding: 3px 5px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-meta);
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 6px;
     cursor: pointer;
   }
 
@@ -773,44 +785,44 @@
     flex-direction: column;
     gap: 6px;
     padding: 8px;
-    background: #111;
-    border-radius: 4px;
+    background: var(--ga-card, #111);
+    border-radius: var(--ga-r-hard, 3px);
   }
   .field {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-  }
-  .field label {
-    font-size: 10px;
-    color: var(--text-muted, #888);
-    text-transform: uppercase;
+    gap: 4px;
   }
   .field input, .field select {
-    background: #0d0d14;
-    border: 1px solid #333;
-    color: var(--text-primary, #ccc);
-    padding: 4px 6px;
-    font-size: 11px;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 0 6px;
+    font-size: var(--ga-text-meta);
+    border-radius: var(--ga-r-hard, 3px);
   }
 
-  .generate-btn {
+  /* The panel's primary action (.primary-btn takes the theme's look). */
+  .generate-btn,
+  .add-btn {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    background: linear-gradient(135deg, #ff00aa, #7700ff);
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
+    background: var(--ga-violet, #9b87f5);
     border: none;
-    color: #fff;
-    padding: 8px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    border-radius: 4px;
+    color: var(--ga-blue-800, #0b0d11);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    border-radius: var(--ga-r-soft, 7px);
     cursor: pointer;
-    transition: opacity 0.2s;
+    transition: filter 0.15s;
   }
-  .generate-btn:hover:not(:disabled) { opacity: 0.9; }
+  .generate-btn:hover:not(:disabled),
+  .add-btn:hover { filter: brightness(1.06); }
   .generate-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -819,8 +831,8 @@
   .spinner {
     width: 12px;
     height: 12px;
-    border: 2px solid rgba(255,255,255,0.3);
-    border-top-color: #fff;
+    border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+    border-top-color: currentColor;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -833,24 +845,16 @@
     justify-content: space-between;
     align-items: center;
     padding: 6px 8px;
-    background: #14141e;
-    border-radius: 4px;
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    background: var(--ga-card, #14141e);
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #9aa0ac);
   }
-  .status.done { color: #0f0; }
+  .status.done { color: var(--ga-live, #46d18a); }
   .elapsed {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: var(--text-muted, #888);
-  }
-
-  .error {
-    padding: 6px 8px;
-    background: #3a1020;
-    border: 1px solid #662233;
-    border-radius: 4px;
-    color: #ff6688;
-    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ga-ink-2, #89857e);
   }
 
   .preview {
@@ -860,20 +864,8 @@
   }
   .preview video {
     width: 100%;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 3px);
     background: #000;
     max-height: 200px;
   }
-
-  .add-btn {
-    background: #0a6;
-    border: none;
-    color: #fff;
-    padding: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .add-btn:hover { background: #0b7; }
 </style>

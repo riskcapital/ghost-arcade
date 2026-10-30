@@ -58,7 +58,7 @@
     padding: 0 10px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--ga-space-2, 6px);
     border-bottom: 1px solid var(--studio-edge-soft);
     white-space: nowrap;
   }

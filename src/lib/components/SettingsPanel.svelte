@@ -384,12 +384,12 @@
       // rotation, blackout, plus Canvas (size/aspect) and Layers
       // (default layer behavior) which used to live under "Project".
       { id: 'output:display', label: 'Display' },
-      { id: 'output:ndi', label: 'NDI Output' },
+      { id: 'output:ndi', label: 'NDI output' },
     ]},
     { id: 'performance', label: 'Performance', sections: [
       { id: 'performance:gpu', label: 'Renderer' },
-      { id: 'performance:render-quality', label: 'Render Quality' },
-      { id: 'performance:video-decoding', label: 'Video Decoding' },
+      { id: 'performance:render-quality', label: 'Render quality' },
+      { id: 'performance:video-decoding', label: 'Video decoding' },
     ]},
     { id: 'recording', label: 'Recording', sections: [
       { id: 'recording', label: 'Recording' },
@@ -399,16 +399,16 @@
       { id: 'integrations:osc', label: 'OSC' },
       { id: 'integrations:keyboard', label: 'Keyboard' },
       { id: 'integrations:wled', label: 'WLED' },
-      { id: 'integrations:pixelmap', label: 'Pixel Mapping' },
-      { id: 'integrations:dmxinput', label: 'DMX Input' },
+      { id: 'integrations:pixelmap', label: 'Pixel mapping' },
+      { id: 'integrations:dmxinput', label: 'DMX input' },
       { id: 'integrations:mediapipe', label: 'MediaPipe' },
     ]},
     // Unattended shows: timecode chase, the schedule, start at boot and
     // PJLink projectors. The cue list itself lives beside the Show timeline.
-    { id: 'show', label: 'Show Control', sections: [
+    { id: 'show', label: 'Show control', sections: [
       { id: 'show:timecode', label: 'Timecode' },
       { id: 'show:schedule', label: 'Schedule' },
-      { id: 'show:startup', label: 'Start at Boot' },
+      { id: 'show:startup', label: 'Start at boot' },
       { id: 'show:projectors', label: 'Projectors' },
     ]},
     { id: 'ai', label: 'AI', sections: [
@@ -571,9 +571,9 @@
 
   // Canvas size presets
   const canvasPresets = [
-    { label: '1920 x 1080 (16:9 Landscape)', width: 1920, height: 1080 },
-    { label: '1080 x 1920 (9:16 Portrait)', width: 1080, height: 1920 },
-    { label: '1080 x 1080 (Square)', width: 1080, height: 1080 },
+    { label: '1920 x 1080 (16:9 landscape)', width: 1920, height: 1080 },
+    { label: '1080 x 1920 (9:16 portrait)', width: 1080, height: 1920 },
+    { label: '1080 x 1080 (square)', width: 1080, height: 1080 },
     { label: '1024 x 768 (4:3)', width: 1024, height: 768 },
     { label: '3840 x 2160 (4K)', width: 3840, height: 2160 },
     { label: '1280 x 720 (720p)', width: 1280, height: 720 },
@@ -614,8 +614,8 @@
 
   // Spout output resolution options
   const spoutResolutions: { value: OutputSettings['spoutResolution']; label: string }[] = [
-    { value: 'match', label: 'Match Canvas' },
-    { value: 'output', label: 'Match Output Display' },
+    { value: 'match', label: 'Match canvas' },
+    { value: 'output', label: 'Match output display' },
     { value: '720p', label: '1280×720 (720p)' },
     { value: '1080p', label: '1920×1080 (1080p)' },
     { value: 'WXGA', label: '1280×800 (WXGA)' },
@@ -663,10 +663,10 @@
 
   // Bitrate options
   const bitrateOptions = [
-    { value: 2500000, label: '2.5 Mbps (Small files)' },
-    { value: 5000000, label: '5 Mbps (Balanced)' },
-    { value: 8000000, label: '8 Mbps (High quality)' },
-    { value: 12000000, label: '12 Mbps (Best quality)' },
+    { value: 2500000, label: '2.5 Mbps (small files)' },
+    { value: 5000000, label: '5 Mbps (balanced)' },
+    { value: 8000000, label: '8 Mbps (high quality)' },
+    { value: 12000000, label: '12 Mbps (best quality)' },
   ];
 
   const fluidQualityModes: { value: FluidQualityMode; label: string }[] = [
@@ -784,10 +784,7 @@
       <div class="settings-header">
         <h2>Settings</h2>
         <button class="close-btn" onclick={onClose} aria-label="Close settings">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
         </button>
       </div>
 
@@ -824,14 +821,14 @@
         {#if $updateInfo.available}
           <div class="update-banner">
             <div class="update-banner-content">
-              <div class="update-badge">UPDATE</div>
+              <div class="update-badge">Update</div>
               <div class="update-text">
                 <strong>Ghost Arcade Pro {$updateInfo.latestVersion}</strong> is available
                 <span class="update-current">(you have v{$updateInfo.currentVersion})</span>
               </div>
             </div>
             <div class="update-links">
-              <button class="update-cta-btn" onclick={() => updateModalOpen.set(true)}>
+              <button class="update-cta-btn primary-btn" onclick={() => updateModalOpen.set(true)}>
                 See what's new
               </button>
             </div>
@@ -842,7 +839,7 @@
         <svelte:boundary onerror={handleSectionError}>
         <!-- Appearance Section -->
         {#if selectedSection === 'output:ndi'}
-          <section class="settings-section"><h3>NDI Output</h3><NdiOutputSettings /></section>
+          <section class="settings-section"><h3>NDI output</h3><NdiOutputSettings /></section>
         {/if}
 
         {#if selectedSection === 'app:appearance'}
@@ -877,7 +874,10 @@
               <label class="label-text" for="tooltips-enabled">Tooltips</label>
               <span class="label-hint">Show feature explanations and documentation links when hovering or focusing controls.</span>
             </div>
-            <input id="tooltips-enabled" type="checkbox" checked={$tooltipsEnabled} onchange={e => tooltipsEnabled.set(e.currentTarget.checked)} />
+            <label class="toggle">
+              <input id="tooltips-enabled" type="checkbox" checked={$tooltipsEnabled} onchange={e => tooltipsEnabled.set(e.currentTarget.checked)} />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           <!-- Theme Templates — a complete style overhaul (fonts,
@@ -885,7 +885,7 @@
                swap. New themes plug in via src/lib/theming/themes/.  -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Theme Template</span>
+              <span class="label-text">Theme template</span>
               <span class="label-hint">Full visual style — fonts, surfaces, corner system, accents. Switches the whole app at once.</span>
             </div>
           </div>
@@ -925,7 +925,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Accent Scheme</span>
+              <span class="label-text">Accent scheme</span>
               <span class="label-hint">Fine-tune accent colours on top of the active theme template.</span>
             </div>
           </div>
@@ -952,7 +952,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Safe Mode</span>
+              <span class="label-text">Safe mode</span>
               <span class="label-hint">Add a confirmation prompt before deleting layers, shaders, clips, or media library entries. Useful when you're moving fast in a session and don't want a misclick to nuke a layer.</span>
             </div>
             <label class="toggle">
@@ -1010,7 +1010,6 @@
               <span class="label-hint">How precise mouse drags are in mapping mode. Snaps to the project's pixel grid (1920×1080 at default), independent of editor zoom. Lower = more precise; "free" disables snap entirely.</span>
             </div>
             <select
-              class="port-input"
               value={$settings.ui.warpDragGranularity ?? '1px'}
               onchange={(e) => {
                 const v = (e.target as HTMLSelectElement).value as 'free' | 'sub' | '1px' | '5px' | '10px';
@@ -1039,7 +1038,7 @@
                 {#if versionInfo?.error}
                   Last check failed: {versionInfo.error}.
                 {:else if versionInfo?.hasUpdate && versionInfo.latest}
-                  <strong style="color: #BB86FC;">{versionInfo.latest}</strong> is available — open the download page to install it.
+                  <strong class="accent-text">{versionInfo.latest}</strong> is available — open the download page to install it.
                 {:else if versionInfo?.latest && !versionInfo.hasUpdate}
                   You're on the latest release.
                 {:else}
@@ -1047,7 +1046,7 @@
                 {/if}
               </span>
             </div>
-            <div style="display: flex; gap: 8px; align-items: center;">
+            <div class="button-group">
               {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
                 <a
                   class="btn-update-link"
@@ -1108,7 +1107,7 @@
                   <path d="M14.5 14.8 21.5 18.5" />
                   <path d="M21.5 7.5v11" />
                 </svg>
-                {$liveOutput.mode === 'fullscreen' ? 'Stop Fullscreen' : 'Fullscreen Output'}
+                {$liveOutput.mode === 'fullscreen' ? 'Stop fullscreen' : 'Fullscreen output'}
               </button>
               <button
                 class="secondary-btn"
@@ -1117,7 +1116,7 @@
                 aria-pressed={$liveOutput.mode === 'window'}
                 title="A floating output window you can drag to any screen"
               >
-                {$liveOutput.mode === 'window' ? 'Close Window' : 'Output Window'}
+                {$liveOutput.mode === 'window' ? 'Close Output' : 'Output Window'}
               </button>
               {#if isDesktopApp}
                 <button
@@ -1125,7 +1124,7 @@
                   onclick={(e) => openOutputDisplayMenu(e)}
                   title="Choose which display the fullscreen output goes to"
                 >
-                  Choose Display…
+                  Choose display…
                 </button>
               {/if}
             </div>
@@ -1143,7 +1142,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Zoom Speed</span>
+              <span class="label-text">Zoom speed</span>
               <span class="label-hint">How far the mapping canvas zooms per scroll or pinch. Lower it if a trackpad zooms too fast.</span>
             </div>
             <select value={String($settings.ui.canvasZoomSpeed ?? 1)}
@@ -1158,7 +1157,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Two-Finger Scroll</span>
+              <span class="label-text">Two-finger scroll</span>
               <span class="label-hint">On the mapping canvas. Zoom suits a mouse wheel; Pan suits a trackpad, where a pinch zooms.</span>
             </div>
             <select value={$settings.ui.canvasScrollGesture ?? 'zoom'}
@@ -1186,7 +1185,7 @@
           {#if isCustomSize}
             <div class="setting-row custom-size-row">
               <div class="setting-label">
-                <span class="label-text">Custom Size</span>
+                <span class="label-text">Custom size</span>
                 <span class="label-hint">Min 128, Max 7680</span>
               </div>
               <div class="custom-size-inputs">
@@ -1223,7 +1222,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Default Layer Shader</span>
+              <span class="label-text">Default layer shader</span>
               <span class="label-hint">Applied automatically when creating a new layer</span>
             </div>
             <select
@@ -1238,7 +1237,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">New Layer Placement</span>
+              <span class="label-text">New layer placement</span>
               <span class="label-hint">Where a newly-created layer lands in the layer list (Top = renders on top of everything)</span>
             </div>
             <select
@@ -1262,7 +1261,7 @@
           {#if NATIVE_ENGINE_ONLY && bridgeIsElectron}
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Recording Format</span>
+              <span class="label-text">Recording format</span>
               <span class="label-hint">File the REC button writes. ProRes 4444 and HAP Alpha keep transparency when recording a layer or the composition. Pick the source from the arrow beside REC.</span>
             </div>
             <select value={recordingCodecOption($settings.recording.nativeCodec).id} onchange={(e) => settings.setNativeRecordingCodec((e.currentTarget as HTMLSelectElement).value as RecordingCodecId)}>
@@ -1275,13 +1274,13 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Video Format</span>
+              <span class="label-text">Video format</span>
               <span class="label-hint">Choose the format for screen recordings</span>
             </div>
             <select value={$settings.recording.format} onchange={handleFormatChange}>
               {#each formats as format}
                 <option value={format.id} disabled={!format.supported}>
-                  {format.label} {!format.supported ? '(Not supported)' : ''}
+                  {format.label} {!format.supported ? '(not supported)' : ''}
                 </option>
               {/each}
             </select>
@@ -1289,7 +1288,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Video Quality</span>
+              <span class="label-text">Video quality</span>
               <span class="label-hint">Higher quality = larger file size</span>
             </div>
             <select value={$settings.recording.videoBitrate} onchange={handleBitrateChange}>
@@ -1332,12 +1331,12 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Save Location</span>
+              <span class="label-text">Save location</span>
               <span class="label-hint">{$settings.recording.saveDirectoryName}</span>
             </div>
             <div class="button-group">
               <button class="secondary-btn" onclick={handlePickDirectory}>
-                Choose Folder
+                Choose folder
               </button>
               {#if $settings.recording.saveDirectoryHandle}
                 <button class="text-btn" onclick={handleClearDirectory}>
@@ -1367,11 +1366,11 @@
         <!-- Output Settings Section -->
         {#if selectedSection === 'output:display'}
         <section class="settings-section">
-          <h3>Render Quality</h3>
+          <h3>Render quality</h3>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Fluid Quality</span>
+              <span class="label-text">Fluid quality</span>
               <span class="label-hint">Controls fluid simulation smoothness vs fidelity</span>
             </div>
             <select value={$settings.ui.fluidQuality} onchange={handleFluidQualityChange}>
@@ -1383,7 +1382,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Shader Quality</span>
+              <span class="label-text">Shader quality</span>
               <span class="label-hint">Render resolution for shader layers. Native renders at output size; lower tiers render smaller and upscale.</span>
             </div>
             <select value={$settings.ui.shaderQuality} onchange={handleShaderQualityChange}>
@@ -1395,7 +1394,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">{tsLabel} Output</span>
+              <span class="label-text">{tsLabel} output</span>
               <span class="label-hint">Share GPU texture to other applications</span>
             </div>
             <label class="toggle">
@@ -1411,7 +1410,7 @@
           {#if $settings.output.spoutEnabled}
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Sender Name</span>
+                <span class="label-text">Sender name</span>
                 <span class="label-hint">Visible to {tsLabel} receivers (e.g. OBS)</span>
               </div>
               <input
@@ -1425,7 +1424,7 @@
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Output Resolution</span>
+                <span class="label-text">Output resolution</span>
                 <span class="label-hint">{$settings.output.spoutResolution === 'output' && detectedOutputRes
                   ? `Detected: ${detectedOutputRes.width}×${detectedOutputRes.height}`
                   : `Resolution of the ${tsLabel} texture`}</span>
@@ -1433,7 +1432,7 @@
               <select value={$settings.output.spoutResolution} onchange={handleSpoutResolutionChange}>
                 {#each spoutResolutions as opt}
                   <option value={opt.value}>{opt.value === 'output' && detectedOutputRes
-                    ? `Match Output (${detectedOutputRes.width}×${detectedOutputRes.height})`
+                    ? `Match output (${detectedOutputRes.width}×${detectedOutputRes.height})`
                     : opt.label}</option>
                 {/each}
               </select>
@@ -1442,7 +1441,7 @@
             {#if $settings.output.spoutResolution === 'custom'}
               <div class="setting-row">
                 <div class="setting-label">
-                  <span class="label-text">Custom Size</span>
+                  <span class="label-text">Custom size</span>
                 </div>
                 <div class="custom-res-inputs">
                   <input type="number" class="text-input small-input" min="128" max="7680" value={$settings.output.customWidth}
@@ -1478,17 +1477,17 @@
               <span class="label-text">Resolution</span>
               <span class="label-hint">
                 Project canvas: <strong>{$project.width}×{$project.height}</strong>
-                {#if matchResLabel}<br/><em style="color: #BB86FC;">{matchResLabel}</em>{/if}
+                {#if matchResLabel}<br/><em class="accent-text">{matchResLabel}</em>{/if}
               </span>
             </div>
             <button class="secondary-btn" onclick={handleMatchResolution} disabled={matchResBusy}>
-              {matchResBusy ? 'Detecting…' : 'Match Output Display'}
+              {matchResBusy ? 'Detecting…' : 'Match output display'}
             </button>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Output Rotation</span>
+              <span class="label-text">Output rotation</span>
               <span class="label-hint">Rotate the output for portrait projectors</span>
             </div>
             <div class="rotation-buttons">
@@ -1501,7 +1500,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Input Crop</span>
+              <span class="label-text">Input crop</span>
               <span class="label-hint">Crop the output region</span>
             </div>
           </div>
@@ -1531,13 +1530,13 @@
               <span class="crop-value">{Math.round(outputCropRegion.height * 100)}%</span>
             </div>
             <button class="secondary-btn" onclick={resetOutputCrop}>
-              Reset Crop
+              Reset crop
             </button>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Show Cursor on Output</span>
+              <span class="label-text">Show cursor on output</span>
               <span class="label-hint">Visualises mouse position on the output window</span>
             </div>
             <label class="toggle">
@@ -1650,14 +1649,14 @@
              card shows under GPU since that's first in the sidebar. -->
         {#if selectedSection === 'performance:gpu'}
         <section class="settings-section">
-          <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;">
-            <div class="setting-label" style="flex: 1;">
-              <span class="label-text" style="color: #BB86FC;">Tune the editor for your hardware</span>
-              <span class="label-hint" style="line-height: 1.5;">
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Tune the editor for your hardware</span>
+              <span class="label-hint">
                 If the app feels laggy, step these down until it feels smooth. None of these change your output content — only how the editor renders and the output stream encodes. Capable machines should leave everything at the defaults.
                 <br/><br/>
                 <a href="https://ghostarcade.live/docs/performance" target="_blank" rel="noopener noreferrer"
-                   style="color: #BB86FC; text-decoration: underline; font-weight: 600;">
+                   class="settings-link">
                   Full guide: optimizing Ghost Arcade for your machine →
                 </a>
               </span>
@@ -1675,7 +1674,7 @@
              time hunting for an unavailable effect or output path.
              ───────────────────────────────────────────────────────── -->
         <section class="settings-section">
-          <h3>Renderer &amp; Output</h3>
+          <h3>Renderer &amp; output</h3>
           <!-- Restart-required banner. The renderer chooses which canvas
                and effect-chain path to mount at boot, so toggling these
                flags mid-session leaves a broken state (grid disappears,
@@ -1691,14 +1690,14 @@
                 the editor will appear broken (no grid, missing frames)
                 until you restart the app.
               </div>
-              <button class="primary-btn" onclick={restartApp} disabled={restarting} style="white-space: nowrap;">
+              <button class="primary-btn" onclick={restartApp} disabled={restarting} >
                 {restarting ? 'Restarting…' : 'Restart app'}
               </button>
             </div>
           {/if}
-          <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
-            <div class="setting-label" style="flex: 1;">
-              <span class="label-text" style:color={webgpuSupported ? '#4caf50' : '#fbbf24'}>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text" style:color={webgpuSupported ? 'var(--ga-green, #46d18a)' : '#fbbf24'}>
                 {#if webgpuProbing}
                   Probing WebGPU…
                 {:else if webgpuSupported}
@@ -1707,7 +1706,7 @@
                   ⚠ WebGPU not available
                 {/if}
               </span>
-              <span class="label-hint" style="line-height: 1.5;">
+              <span class="label-hint">
                 {#if webgpuSupported}
                   Adapter:
                   <strong>
@@ -1715,7 +1714,7 @@
                     {#if webgpuInfo.architecture}({webgpuInfo.architecture}){/if}
                   </strong>
                   {#if webgpuInfo.isFallbackAdapter}
-                    <br/><span style="color: #fbbf24;">⚠ Software fallback adapter — performance will be limited.</span>
+                    <br/><span class="native-runtime-warning">⚠ Software fallback adapter — performance will be limited.</span>
                   {/if}
                   <br/>
                   {#if NATIVE_ENGINE_ONLY && isDesktopApp}
@@ -1734,7 +1733,7 @@
                 {/if}
               </span>
             </div>
-            <button class="primary-btn" onclick={refreshWebGPUStatus} disabled={webgpuProbing} style="white-space: nowrap;">
+            <button class="primary-btn" onclick={refreshWebGPUStatus} disabled={webgpuProbing} >
               {webgpuProbing ? 'Probing…' : 'Re-probe'}
             </button>
           </div>
@@ -1801,7 +1800,7 @@
                 class="native-runtime-gate"
                 title={gate.detail}
               >
-                <span class="native-runtime-gate-state">{gate.ok ? 'OK' : 'WAIT'}</span>
+                <span class="native-runtime-gate-state">{gate.ok ? 'OK' : 'Wait'}</span>
                 <span class="native-runtime-gate-label">{gate.label}</span>
               </div>
             {/each}
@@ -1832,7 +1831,7 @@
                 <span class="label-hint">
                   Use the WebGPU + VideoFrame bridge for the editor -> renderer handoff.
                   {#if !webgpuSupported}
-                    <br/><em style="color: #999;">Disabled - requires WebGPU.</em>
+                    <br/><em>Disabled - requires WebGPU.</em>
                   {/if}
                 </span>
               </div>
@@ -1869,10 +1868,10 @@
         {/if}
         {#if selectedSection === 'performance:render-quality'}
         <section class="settings-section">
-          <h3>Render Quality</h3>
+          <h3>Render quality</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Shader Quality</span>
+              <span class="label-text">Shader quality</span>
               <span class="label-hint">Internal render resolution for shader layers. Native renders at output size; lower tiers render smaller and upscale.</span>
             </div>
             <select value={$settings.ui.shaderQuality} onchange={handleShaderQualityChange}>
@@ -1883,7 +1882,7 @@
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">GPU Instrument Budget</span>
+              <span class="label-text">GPU instrument budget</span>
               <span class="label-hint">Caps expensive WebGPU shader internals like particles, volume grids, emitters, and ray steps. Auto adapts live; fixed modes stay stable.</span>
             </div>
             <select value={$settings.performance.gpuInstrumentQuality ?? 'auto'} onchange={handleGpuInstrumentQualityChange}>
@@ -1895,7 +1894,7 @@
           {#if isDesktopApp}
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Video Memory</span>
+                <span class="label-text">Video memory</span>
                 <span class="label-hint">Memory the playing videos' frames may use. Automatic takes a quarter of this GPU's memory{gpuMemoryMb ? ` (${formatMemory(gpuMemoryMb)}), ${formatMemory(autoVideoMemoryMb)} here` : ''}. Raise it if many videos playing at once stutter; lower it if other apps need the memory.</span>
               </div>
               <select value={String($settings.performance.videoMemoryMb ?? 0)} onchange={handleVideoMemoryChange}>
@@ -1909,10 +1908,10 @@
         </section>
 
         <section class="settings-section">
-          <h3>Editor Render</h3>
+          <h3>Editor render</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Editor Frame Rate Cap</span>
+              <span class="label-text">Editor frame rate cap</span>
               <span class="label-hint">
                 Caps editor render fps. Projectors are 60Hz; rendering at 120/144/165Hz on a high-refresh monitor wastes GPU. Cap to 60 to free budget. Input remains responsive. Applies to mapping mode too.
               </span>
@@ -1927,10 +1926,10 @@
         </section>
 
         <section class="settings-section">
-          <h3>VJ Preview</h3>
+          <h3>VJ preview</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Preview Resolution</span>
+              <span class="label-text">Preview resolution</span>
               <span class="label-hint">Long-edge cap for the VJ mode preview. Lower frees GPU. Doesn't affect output.</span>
             </div>
             <select value={String($settings.performance.previewMaxDim)}
@@ -1944,7 +1943,7 @@
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Preview Refresh Rate</span>
+              <span class="label-text">Preview refresh rate</span>
               <span class="label-hint">FPS for the preview canvas. 30 is enough to monitor; 15 frees a lot of budget.</span>
             </div>
             <select value={String($settings.performance.previewFrameRate)}
@@ -1957,10 +1956,10 @@
         </section>
 
         <section class="settings-section">
-          <h3>Output Stream</h3>
+          <h3>Output stream</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Output Frame Rate</span>
+              <span class="label-text">Output frame rate</span>
               <span class="label-hint">Encoder rate for the output window. 60 = silky; 30 = projector standard; 24 = cinematic.</span>
             </div>
             <select value={String($settings.performance.outputFrameRate)}
@@ -1972,7 +1971,7 @@
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Max Bitrate</span>
+              <span class="label-text">Max bitrate</span>
               <span class="label-hint">Encoder bitrate ceiling. Same-process loopback so the rate doesn't go on a wire — high = near-lossless, low = encoder works less.</span>
             </div>
             <select value={String($settings.performance.outputMaxBitrate)}
@@ -1985,19 +1984,19 @@
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Quality vs Smoothness</span>
+              <span class="label-text">Quality vs smoothness</span>
               <span class="label-hint">How the encoder degrades under load: keep pixels (drop fps), keep smoothness (drop pixels), or balanced.</span>
             </div>
             <select value={$settings.performance.outputDegradationPreference}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputDegradationPreference: (e.target as HTMLSelectElement).value as 'maintain-resolution' | 'maintain-framerate' | 'balanced' } }))}>
-              <option value="maintain-resolution">Maintain Resolution</option>
-              <option value="maintain-framerate">Maintain Frame Rate</option>
+              <option value="maintain-resolution">Maintain resolution</option>
+              <option value="maintain-framerate">Maintain frame rate</option>
               <option value="balanced">Balanced</option>
             </select>
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Video Codec</span>
+              <span class="label-text">Video codec</span>
               <span class="label-hint">
                 Auto picks VP9 first (best quality/bitrate). Force H.264 if your machine has hardware H.264 — usually a big perf win.
                 {#if codecEncode}
@@ -2012,9 +2011,9 @@
               <option value="vp8">Force VP8 (compatibility)</option>
             </select>
           </div>
-          <div class="setting-row" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px; margin-top: 4px;">
-            <div class="setting-label" style="flex: 1;">
-              <span class="label-hint" style="opacity: 0.7;">
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-hint">
                 <strong>Apply on next output-window open.</strong> Stream-tuning settings take effect when the output window opens — close and reopen the output for changes to apply.
               </span>
             </div>
@@ -2024,10 +2023,10 @@
         {/if}
         {#if selectedSection === 'performance:video-decoding'}
         <section class="settings-section">
-          <h3>Video Decoding</h3>
+          <h3>Video decoding</h3>
           <div class="setting-row">
-            <div class="setting-label" style="flex: 1;">
-              <div class="label-hint" style="line-height: 1.7;">
+            <div class="setting-label">
+              <div class="label-hint">
                 {#if !isDesktopApp}
                   Video decoding is checked in the desktop app.
                 {:else if decodeChecking && !decodeRows}
@@ -2056,7 +2055,7 @@
           </div>
           {#if slowProjectVideos.length}
             <div class="setting-row">
-              <div class="setting-label" style="flex: 1;">
+              <div class="setting-label">
                 <span class="label-text">Videos in use that may lag</span>
                 {#each slowProjectVideos as entry (entry.path)}
                   <div class="decode-file">
@@ -2076,16 +2075,16 @@
         <!-- MIDI Settings Section -->
         {#if selectedSection === 'integrations:midi'}
         <section class="settings-section">
-          <h3>MIDI Controller</h3>
+          <h3>MIDI controller</h3>
 
           {#if midiAvailable}
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">MIDI Device</span>
+                <span class="label-text">MIDI device</span>
                 <span class="label-hint">Select your MIDI controller input</span>
               </div>
               <select value={midiSelectedId || ''} onchange={handleMidiDeviceChange}>
-                <option value="">No MIDI Device</option>
+                <option value="">No MIDI device</option>
                 {#each midiDevices as device}
                   <option value={device.id}>{device.name}</option>
                 {/each}
@@ -2094,7 +2093,7 @@
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">MIDI Learn Mode</span>
+                <span class="label-text">MIDI Learn mode</span>
                 <span class="label-hint">Click a parameter, then move a MIDI control to map it</span>
               </div>
               <button
@@ -2104,7 +2103,7 @@
                 disabled={midiDevices.length === 0 && !midiEditMode}
                 onclick={() => midiStore.toggleEditMode()}
               >
-                {midiEditMode ? 'Exit MIDI Learn' : midiDevices.length === 0 ? 'No MIDI Device' : 'Enter MIDI Learn'}
+                {midiEditMode ? 'Exit MIDI Learn' : midiDevices.length === 0 ? 'No MIDI device' : 'Enter MIDI Learn'}
               </button>
             </div>
 
@@ -2131,8 +2130,8 @@
                  question being asked. A parameter holds one mapping, a pad can
                  hold many, so "what is this pad doing" is a group and
                  "unlearn it" is one button. -->
-            <h3 style="margin-top: 18px;">Mappings ({$midiStore.mappings.length})</h3>
-            <p class="settings-hint" style="margin-bottom: 10px;">
+            <h3>Mappings ({$midiStore.mappings.length})</h3>
+            <p class="settings-hint">
               Everything you have learned, grouped by the pad, key or knob it sits
               on. Removing a mapping here is the same as clearing it from the
               parameter itself. Mappings are saved for this machine, not inside the
@@ -2245,11 +2244,11 @@
             <ControllerLightsSettings />
 
             <!-- MIDI Clock — sync to / from external transport -->
-            <h3 style="margin-top: 18px;" data-tour="midi-clock">MIDI Clock</h3>
+            <h3 data-tour="midi-clock">MIDI clock</h3>
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Receive MIDI Clock</span>
+                <span class="label-text">Receive MIDI clock</span>
                 <span class="label-hint">Sync BPM from a DAW, drum machine, or other clock master via the selected input device</span>
               </div>
               <label class="toggle">
@@ -2262,21 +2261,21 @@
             </div>
 
             {#if $midiStore.clockInEnabled}
-              <div class="setting-row" style="padding-left: 16px;">
+              <div class="setting-row sub-row">
                 <div class="setting-label">
-                  <span class="label-text">Clock Input</span>
+                  <span class="label-text">Clock input</span>
                   <span class="label-hint">Use a separate virtual MIDI port when clock and controls come from different places</span>
                 </div>
                 <select value={midiClockSelectedId || ''} onchange={handleMidiClockDeviceChange}>
-                  <option value="">Same as MIDI Device</option>
+                  <option value="">Same as MIDI device</option>
                   {#each midiDevices as device}
                     <option value={device.id}>{device.name}</option>
                   {/each}
                 </select>
               </div>
-              <div class="setting-row" style="padding-left: 16px;">
+              <div class="setting-row sub-row">
                 <div class="setting-label">
-                  <span class="label-text">Clock Status</span>
+                  <span class="label-text">Clock status</span>
                   <span class="label-hint">{$midiStore.clockInRunning ? 'Running' : 'Idle'}{$midiStore.clockInBPM ? ` · ${$midiStore.clockInBPM.toFixed(1)} BPM` : ''}</span>
                 </div>
                 <span class="clock-status-dot" class:on={$midiStore.clockInRunning}></span>
@@ -2285,7 +2284,7 @@
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Send MIDI Clock</span>
+                <span class="label-text">Send MIDI clock</span>
                 <span class="label-hint">Drive slaved devices at the master BPM (24 PPQN) — use this to sync drum machines / synths to Ghost Arcade</span>
               </div>
               <label class="toggle">
@@ -2300,14 +2299,14 @@
             {#if $midiStore.clockOutEnabled || $midiStore.outputDevices.length > 0}
               <div class="setting-row">
                 <div class="setting-label">
-                  <span class="label-text">Output Device</span>
+                  <span class="label-text">Output device</span>
                   <span class="label-hint">Where to send clock ticks</span>
                 </div>
                 <select
                   value={$midiStore.selectedOutputId || ''}
                   onchange={(e) => midiManager.selectOutputDevice((e.target as HTMLSelectElement).value || null)}
                 >
-                  <option value="">No Output Device</option>
+                  <option value="">No output device</option>
                   {#each $midiStore.outputDevices.filter(d => d.state === 'connected') as device (device.id)}
                     <option value={device.id}>{device.name}</option>
                   {/each}
@@ -2318,7 +2317,7 @@
             <!-- Ableton Link — WiFi/LAN tempo session with DAWs, DJ
                  software, and other Link apps. Tempo flows both ways;
                  a running MIDI clock-in takes priority over Link. -->
-            <h3 style="margin-top: 18px;" data-tour="ableton-link-title">Ableton Link</h3>
+            <h3 data-tour="ableton-link-title">Ableton Link</h3>
 
             <div class="setting-row" data-tour="ableton-link">
               <div class="setting-label">
@@ -2335,7 +2334,7 @@
             </div>
 
             {#if $abletonLink.enabled}
-              <div class="setting-row" style="padding-left: 16px;">
+              <div class="setting-row sub-row">
                 <div class="setting-label">
                   <span class="label-text">Session</span>
                   <span class="label-hint">{$abletonLink.peers} peer{$abletonLink.peers === 1 ? '' : 's'} · {$abletonLink.tempo.toFixed(1)} BPM{$midiStore.clockInEnabled && $midiStore.clockInRunning ? ' · deferring to MIDI clock-in' : ''}</span>
@@ -2346,7 +2345,7 @@
               <!-- Beat / phase readout. Tempo alone was never enough to tell
                    whether Ghost Arcade was actually following the session's
                    downbeat; this shows the phase it is acting on. -->
-              <div class="setting-row" style="padding-left: 16px; align-items: flex-start;">
+              <div class="setting-row sub-row" style="align-items: flex-start;">
                 <div class="setting-label">
                   <span class="label-text">Beat</span>
                   <span class="label-hint">
@@ -2358,7 +2357,7 @@
               </div>
             {/if}
             {#if $abletonLink.error}
-              <div class="setting-row" style="padding-left: 16px;">
+              <div class="setting-row sub-row">
                 <span class="label-hint">Link unavailable: {$abletonLink.error}</span>
               </div>
             {/if}
@@ -2387,7 +2386,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Enable OSC Listener</span>
+              <span class="label-text">Enable OSC listener</span>
               <span class="label-hint">UDP socket in the desktop app — point TouchOSC / Lemur / your DAW at this machine's IP on the configured port.</span>
             </div>
             <label class="toggle">
@@ -2416,7 +2415,7 @@
           <!-- MCP. Off by default and never auto-enabled: this is an open
                port that can black out the output mid-show, so switching it on
                should be a decision, not a convenience. -->
-          <div class="setting-row" style="margin-top: 14px;">
+          <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">AI control (MCP)</span>
               <span class="label-hint">
@@ -2530,7 +2529,7 @@
                   this machine; use the tablet's IP for TouchOSC over Wi-Fi.
                 </span>
               </div>
-              <div style="display: flex; gap: 6px; align-items: center;">
+              <div class="button-group">
                 <input
                   type="text"
                   class="port-input"
@@ -2573,9 +2572,9 @@
                 <span class="label-text">Last message</span>
                 <span class="label-hint">
                   <code class="osc-last">{$oscStore.lastMessage.address}</code>
-                  <span style="color: var(--text-muted, #888);"> · args: </span>
+                  <span> · args: </span>
                   <code class="osc-last">{JSON.stringify($oscStore.lastMessage.args)}</code>
-                  <span style="color: #555;"> · from {$oscStore.lastMessage.from}</span>
+                  <span> · from {$oscStore.lastMessage.from}</span>
                 </span>
               </div>
             </div>
@@ -2611,8 +2610,8 @@
             </button>
           </div>
 
-          <h4 style="margin-top: 14px;">Bindings ({$oscStore.bindings.length})</h4>
-          <p class="settings-hint" style="margin-bottom: 8px;">
+          <h4>Bindings ({$oscStore.bindings.length})</h4>
+          <p class="settings-hint">
             Each row maps an OSC address to a param path (the same path strings the MIDI router uses, e.g. <code>vj:0:opacity</code>). Trigger bindings accept numeric/boolean values, argument-less messages, and OSC Impulse.
           </p>
 
@@ -2623,8 +2622,8 @@
           {:else}
             <div class="osc-bindings">
               <div class="osc-binding-head">
-                <span>OSC Address</span>
-                <span>Param Path</span>
+                <span>OSC address</span>
+                <span>Param path</span>
                 <span>Mode</span>
                 <span>Min</span>
                 <span>Max</span>
@@ -2756,14 +2755,14 @@
              up), so each binding carries an action mode. -->
         {#if selectedSection === 'integrations:keyboard'}
         <section class="settings-section">
-          <h3>Keyboard Control</h3>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <h3>Keyboard control</h3>
+          <p class="settings-hint">
             Map computer-keyboard keys to any control — the same param paths MIDI and OSC use (e.g. <code>vj:column:0</code>, <code>vj:layer:0:opacity</code>). Works with or without a controller plugged in.
           </p>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Enable Keyboard Control</span>
+              <span class="label-text">Enable keyboard control</span>
               <span class="label-hint">While on, mapped keys act as dedicated controls and are intercepted (they won't also trigger app shortcuts). Keys typed into text fields are ignored.</span>
             </div>
             <label class="toggle">
@@ -2800,25 +2799,25 @@
               class="osc-add-btn learn"
               class:active={$keyboardStore.editMode}
               onclick={() => keyboardStore.toggleEditMode()}
-              title={$keyboardStore.editMode ? 'Exit Keyboard Edit Mode' : 'Enter Keyboard Edit Mode, then click a control and press a key'}
-            >{$keyboardStore.editMode ? 'Exit Keyboard Edit' : 'Keyboard Edit Mode'}</button>
+              title={$keyboardStore.editMode ? 'Exit keyboard edit mode' : 'Enter keyboard edit mode, then click a control and press a key'}
+            >{$keyboardStore.editMode ? 'Exit keyboard edit' : 'Keyboard edit mode'}</button>
             <span class="settings-hint keyboard-edit-hint">Click any highlighted control, then press a key to assign it.</span>
           </div>
 
-          <h4 style="margin-top: 14px;">Bindings ({$keyboardStore.bindings.length})</h4>
-          <p class="settings-hint" style="margin-bottom: 8px;">
-            <strong>trigger</strong> fires on press (clips/columns/presets) · <strong>toggle</strong> flips min↔max · <strong>momentary</strong> = max while held, min on release · <strong>nudge</strong> steps by the step amount each press (use a negative step for a "down" key).
+          <h4>Bindings ({$keyboardStore.bindings.length})</h4>
+          <p class="settings-hint">
+            <strong>Trigger</strong> fires on press (clips/columns/presets) · <strong>Toggle</strong> flips min↔max · <strong>Momentary</strong> = max while held, min on release · <strong>Nudge</strong> steps by the step amount each press (use a negative step for a "down" key).
           </p>
 
           {#if $keyboardStore.bindings.length === 0}
             <div class="osc-empty">
-              No keyboard bindings yet. Use <strong>Keyboard Edit Mode</strong>, click a highlighted control, then press the key you want to bind.
+              No keyboard bindings yet. Use <strong>Keyboard edit mode</strong>, click a highlighted control, then press the key you want to bind.
             </div>
           {:else}
             <div class="osc-bindings" style="grid-template-columns: 0.9fr 1.5fr 0.9fr 0.55fr 0.55fr 0.6fr 28px;">
               <div class="osc-binding-head" style="grid-template-columns: 0.9fr 1.5fr 0.9fr 0.55fr 0.55fr 0.6fr 28px;">
                 <span>Key</span>
-                <span>Param Path</span>
+                <span>Param path</span>
                 <span>Mode</span>
                 <span>Min</span>
                 <span>Max</span>
@@ -2842,10 +2841,10 @@
                     value={b.mode}
                     onchange={(e) => keyboardStore.updateBinding(b.id, { mode: (e.target as HTMLSelectElement).value as KeyActionMode })}
                   >
-                    <option value="trigger">trigger</option>
-                    <option value="toggle">toggle</option>
-                    <option value="momentary">momentary</option>
-                    <option value="nudge">nudge</option>
+                    <option value="trigger">Trigger</option>
+                    <option value="toggle">Toggle</option>
+                    <option value="momentary">Momentary</option>
+                    <option value="nudge">Nudge</option>
                   </select>
                   <input
                     type="number" step="any"
@@ -2895,10 +2894,10 @@
                   }}
                 />
                 <select bind:value={keyboardAddMode}>
-                  <option value="trigger">trigger</option>
-                  <option value="toggle">toggle</option>
-                  <option value="momentary">momentary</option>
-                  <option value="nudge">nudge</option>
+                  <option value="trigger">Trigger</option>
+                  <option value="toggle">Toggle</option>
+                  <option value="momentary">Momentary</option>
+                  <option value="nudge">Nudge</option>
                 </select>
                 <input type="number" step="any" bind:value={keyboardAddMin} />
                 <input type="number" step="any" bind:value={keyboardAddMax} />
@@ -2930,9 +2929,9 @@
              src/lib/wled/sender.ts + electron/main.js → wled_send_frame. -->
         {#if selectedSection === 'integrations:wled'}
         <section class="settings-section">
-          <h3>WLED LED Controllers</h3>
+          <h3>WLED LED controllers</h3>
           <button class="osc-add-btn" onclick={() => openExternalUrl('https://ghostarcade.live/docs/wled')}>WLED setup guide ↗</button>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <p class="settings-hint">
             Send the final composite to WLED LEDs on your local network. Colors and bright regions are spatially sampled across the image and shipped over UDP. Native output uses a shared preview stream, targeting 20 updates per second. WLED's default port is 21324; max 490 LEDs per controller for the DRGB protocol.
           </p>
 
@@ -2997,8 +2996,8 @@
              process. See src/lib/pixelmap/ + electron/pixelmap-output.cjs. -->
         {#if selectedSection === 'integrations:pixelmap'}
         <section class="settings-section">
-          <h3>Art-Net and sACN Pixel Mapping</h3>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <h3>Art-Net and sACN pixel mapping</h3>
+          <p class="settings-hint">
             Drive LED fixtures on Art-Net or sACN (E1.31) nodes from the final composite. Each fixture samples a region of the image, like a WLED controller, and is patched across universes automatically: 170 RGB or 128 RGBW pixels per universe, never splitting a pixel. Output runs at the frame rate you set, up to 60 fps. Turning output off, blackout, or disabling a fixture sends one black frame and then stops; sACN streams are terminated cleanly. LED FX from VJ mode (chase, strobe and the rest) run on fixtures too: target a fixture directly, or add it to an LED group below.
           </p>
           <PixelMapPanel />
@@ -3009,8 +3008,8 @@
         {/if}
         {#if selectedSection === 'integrations:dmxinput'}
         <section class="settings-section">
-          <h3>Art-Net and sACN DMX Input</h3>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <h3>Art-Net and sACN DMX input</h3>
+          <p class="settings-hint">
             Let a lighting desk drive the show. Ghost Arcade listens for Art-Net (UDP 6454) and sACN (UDP 5568) and binds desk channels to layer opacity, effect parameters, macros, the crossfader, and clip or column triggers. Faders can be 8-bit or 16-bit (coarse and fine), buttons fire on a threshold with hysteresis, and every binding has its own range and invert. Bindings save with the project; the on switch and network settings stay with this machine. Off by default.
           </p>
           <DmxInputPanel />
@@ -3023,7 +3022,7 @@
         {#if selectedSection === 'integrations:mediapipe'}
         <section class="settings-section">
           <h3>MediaPipe</h3>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <p class="settings-hint">
             Use the webcam as a control input. Hand landmarks, pinch distance, palm position, and the canned MediaPipe gestures (open palm, fist, victory, thumb up/down, etc.) become signals that bind to any MIDI-mappable parameter through the same router OSC uses.
           </p>
           <MediaPipePanel />
@@ -3034,7 +3033,7 @@
         {#if selectedSection === 'show:timecode'}
         <section class="settings-section">
           <h3>Timecode</h3>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <p class="settings-hint">
             Chase SMPTE timecode from LTC on an audio input or MTC over MIDI. The show timeline follows it and its markers fire their cues; cues with a timecode fire as it passes. Saved with the project.
           </p>
           <ShowControlSettings section="timecode" />
@@ -3043,7 +3042,7 @@
         {#if selectedSection === 'show:schedule'}
         <section class="settings-section">
           <h3>Schedule</h3>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <p class="settings-hint">
             Daily or weekly show times with date exceptions. The scheduler fires a cue at each start, stops the cue list at each stop, and can power the projectors. Saved with the project.
           </p>
           <ShowControlSettings section="schedule" />
@@ -3051,8 +3050,8 @@
         {/if}
         {#if selectedSection === 'show:startup'}
         <section class="settings-section">
-          <h3>Start at Boot</h3>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <h3>Start at boot</h3>
+          <p class="settings-hint">
             For installs: start with the computer, open a show and run it without anyone at the machine. These settings belong to this computer, not the project.
           </p>
           <ShowControlSettings section="startup" />
@@ -3061,7 +3060,7 @@
         {#if selectedSection === 'show:projectors'}
         <section class="settings-section">
           <h3>Projectors</h3>
-          <p class="settings-hint" style="margin-bottom: 12px;">
+          <p class="settings-hint">
             PJLink (class 1, TCP 4352) power, shutter and input control with password authentication, and status polling. Cues and the scheduler can command these. Saved with the project.
           </p>
           <ShowControlSettings section="projectors" />
@@ -3075,7 +3074,7 @@
           <!-- Shader AI Provider -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Shader AI Provider</span>
+              <span class="label-text">Shader AI provider</span>
               <span class="label-hint">AI model used for shader generation</span>
             </div>
             <select value={$settings.ai.shaderProvider} onchange={(e) => settings.setShaderProvider((e.target as HTMLSelectElement).value as ShaderAIProvider)}>
@@ -3088,7 +3087,7 @@
           <!-- Claude API Key -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Claude API Key
+              <span class="label-text">Claude API key
                 {#if claudeKeyValid === true}<span class="key-badge valid">Valid</span>{:else if claudeKeyValid === false}<span class="key-badge invalid">Invalid</span>{/if}
               </span>
               <span class="label-hint"><a href="https://console.anthropic.com" target="_blank" class="settings-link">console.anthropic.com</a></span>
@@ -3110,7 +3109,7 @@
           <!-- Claude Model -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Claude Model</span>
+              <span class="label-text">Claude model</span>
             </div>
             <select value={$settings.ai.claudeModel} onchange={(e) => settings.setClaudeModel((e.target as HTMLSelectElement).value)}>
               {#each CLAUDE_MODELS as model}
@@ -3122,7 +3121,7 @@
           <!-- Gemini API Key -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Gemini API Key
+              <span class="label-text">Gemini API key
                 {#if geminiKeyValid === true}<span class="key-badge valid">Valid</span>{:else if geminiKeyValid === false}<span class="key-badge invalid">Invalid</span>{/if}
               </span>
               <span class="label-hint">Also used for Veo video generation · <a href="https://aistudio.google.com/apikey" target="_blank" class="settings-link">aistudio.google.com</a></span>
@@ -3144,7 +3143,7 @@
           <!-- Gemini Model -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Gemini Model</span>
+              <span class="label-text">Gemini model</span>
             </div>
             <select value={$settings.ai.geminiModel} onchange={(e) => settings.setGeminiModel((e.target as HTMLSelectElement).value)}>
               {#each GEMINI_MODELS as model}
@@ -3159,7 +3158,7 @@
           <!-- Video AI: both providers' keys always visible -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Default Video Provider</span>
+              <span class="label-text">Default video provider</span>
               <span class="label-hint">Which AI to use when generating videos</span>
             </div>
             <select value={$settings.ai.videoProvider} onchange={(e) => settings.setVideoProvider((e.target as HTMLSelectElement).value as VideoAIProvider)}>
@@ -3171,7 +3170,7 @@
           <!-- Veo Model -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Veo Model</span>
+              <span class="label-text">Veo model</span>
               <span class="label-hint">Uses Gemini API key above</span>
             </div>
             <select value={$settings.ai.veoModel} onchange={(e) => settings.setVeoModel((e.target as HTMLSelectElement).value)}>
@@ -3184,7 +3183,7 @@
           <!-- Luma API Key -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Luma API Key
+              <span class="label-text">Luma API key
                 {#if lumaKeyValid === true}<span class="key-badge valid">Valid</span>{:else if lumaKeyValid === false}<span class="key-badge invalid">Invalid</span>{/if}
               </span>
               <span class="label-hint"><a href="https://lumalabs.ai/dream-machine/api/keys" target="_blank" class="settings-link">lumalabs.ai/api/keys</a></span>
@@ -3206,7 +3205,7 @@
           <!-- Luma Model -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Luma Model</span>
+              <span class="label-text">Luma model</span>
             </div>
             <select value={$settings.ai.lumaModel} onchange={(e) => settings.setLumaModel((e.target as HTMLSelectElement).value)}>
               {#each LUMA_MODELS as model}
@@ -3274,10 +3273,10 @@
                 </div>
                 <div class="diag-actions">
                   <button class="text-btn" onclick={() => { navigator.clipboard.writeText(JSON.stringify(errorLog, null, 2)); }}>
-                    Copy to Clipboard
+                    Copy to clipboard
                   </button>
                   <button class="text-btn" onclick={() => { clearErrorLog(); errorLog = []; }}>
-                    Clear Log
+                    Clear log
                   </button>
                 </div>
               {/if}
@@ -3285,8 +3284,8 @@
           {/if}
         </div>
 
-        <button class="text-btn" onclick={() => settings.reset()}>
-          Reset to Defaults
+        <button class="secondary-btn" onclick={() => settings.reset()}>
+          Reset to defaults
         </button>
         <button class="primary-btn" onclick={onClose}>
           Done
@@ -3297,30 +3296,74 @@
 {/if}
 
 <style>
+  /* Dialog frame: the same backdrop, panel, header and close button as the
+     other dialogs. */
   .settings-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--ga-void, #0a0908) 76%, transparent);
+    backdrop-filter: blur(8px);
     z-index: 200000;
-    backdrop-filter: blur(4px);
   }
 
   .settings-panel {
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 12px;
-    width: 92%;
-    max-width: 900px;  /* widened to fit sidebar + content */
-    max-height: 85vh;
+    width: 100%;
+    max-width: 960px;
+    /* A fixed height, so the panel does not jump as sections change. */
+    height: min(780px, calc(100vh - 48px));
     display: flex;
     flex-direction: column;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+    background: var(--ga-faceplate-bg, var(--ga-panel, #100f0d));
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.08)), 0 24px 80px rgba(0, 0, 0, 0.58);
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-body);
+  }
+
+  .settings-header {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+  }
+
+  .settings-header h2 {
+    margin: 0;
+    font-size: var(--ga-text-heading);
+    font-weight: var(--ga-weight-title);
+    line-height: 1.3;
+    letter-spacing: 0;
+    color: var(--ga-ink-0, #f2ede4);
+  }
+
+  .close-btn {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+
+  .close-btn:hover {
+    color: var(--ga-ink-0, #f2ede4);
+    background: var(--ga-raise, #26221c);
+    border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
   }
 
   /* Body: sidebar + content side-by-side, content scrolls independently */
@@ -3332,247 +3375,61 @@
   }
 
   .settings-sidebar {
-    width: 200px;
+    width: 196px;
     flex-shrink: 0;
-    border-right: 1px solid #1f1f24;
     overflow-y: auto;
-    padding: 12px 0 80px;  /* bottom padding leaves room for the toggle */
-    background: #0a0a0d;
-    position: relative;
+    padding: 4px 0 12px;
+    background: var(--ga-bar, #100f0d);
+    border-right: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
 
   .sidebar-category {
     padding: 14px 16px 4px;
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow);
     font-weight: 700;
-    color: #555;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    color: var(--ga-ink-2, #89857e);
     user-select: none;
   }
 
   .sidebar-section {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
     width: 100%;
+    min-height: var(--ga-control-h);
+    padding: 0 16px 0 22px;
     text-align: left;
     background: none;
     border: none;
-    color: var(--text-secondary, #aaa);
-    font-size: 14px;
-    padding: 7px 16px 7px 24px;
-    cursor: pointer;
     border-left: 2px solid transparent;
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-body);
+    cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
 
   .sidebar-section:hover {
-    color: var(--text-primary, #e0e0e0);
-    background: rgba(187, 134, 252, 0.04);
+    color: var(--ga-ink-0, #f2ede4);
+    background: rgba(255, 255, 255, 0.04);
   }
 
   .sidebar-section.active {
-    color: #BB86FC;
-    background: rgba(187, 134, 252, 0.10);
-    border-left-color: #BB86FC;
-    padding-left: 22px;  /* compensate for 2px border */
-    font-weight: 500;
-  }
-
-  .sidebar-adv-tag {
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    padding: 1px 4px;
-    border-radius: 2px;
-    background: rgba(245, 158, 11, 0.18);
-    color: #f59e0b;
-  }
-
-  .sidebar-advanced-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    font-size: 12px;
-    color: var(--text-muted, #888);
-    cursor: pointer;
-    border-top: 1px solid #1f1f24;
-    background: #0a0a0d;
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    user-select: none;
-  }
-
-  .sidebar-advanced-toggle:hover {
-    color: var(--text-primary, #ccc);
-  }
-
-  .sidebar-advanced-toggle input[type="checkbox"] {
-    accent-color: #BB86FC;
-    cursor: pointer;
-  }
-
-  .settings-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid #333;
-  }
-
-  .settings-header h2 {
-    margin: 0;
-    font-size: 19px;
-    font-weight: 600;
-    color: var(--text-primary, #eee);
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted, #888);
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-  }
-
-  .close-btn:hover {
-    background: #333;
-    color: var(--text-primary, #eee);
-  }
-
-  .settings-tabs {
-    display: flex;
-    padding: 0 20px;
-    gap: 0;
-    border-bottom: 1px solid #333;
-  }
-
-  .settings-tab {
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--text-muted, #888);
-    font-size: 14px;
-    font-weight: 600;
-    padding: 10px 16px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .settings-tab:hover {
-    color: var(--text-primary, #ccc);
-  }
-
-  .settings-tab.active {
-    color: #BB86FC;
-    border-bottom-color: #BB86FC;
-  }
-
-  .tier-indicator {
-    display: inline-block;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    padding: 1px 5px;
-    border-radius: 3px;
-    color: #000;
-    margin-left: 4px;
-    vertical-align: middle;
-  }
-
-  /* Dev tier override box */
-  .dev-tier-box {
-    background: rgba(245, 158, 11, 0.06);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    border-radius: 8px;
-    padding: 12px 14px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .dev-tier-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .dev-tier-label {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    padding: 2px 6px;
-    border-radius: 3px;
-    background: #f59e0b;
-    color: #000;
-  }
-
-  .dev-tier-sublabel {
-    font-size: 12px;
-    color: #f59e0b;
-    font-weight: 500;
-  }
-
-  .dev-tier-select {
-    background: var(--bg-primary, #0d0d1a);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: var(--text-primary, #e0e0e0);
-    font-size: 13px;
-    cursor: pointer;
-    min-width: 200px;
-  }
-
-  .dev-tier-select:focus {
-    outline: none;
-    border-color: #f59e0b;
-  }
-
-  .pro-badge {
-    display: inline-block;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    padding: 2px 6px;
-    border-radius: 3px;
-    background: #f59e0b;
-    color: #000;
-    vertical-align: middle;
-  }
-
-  .locked-label {
-    font-size: 17px;
-    opacity: 0.5;
-  }
-
-  .pro-gate-notice {
-    background: rgba(245, 158, 11, 0.08);
-    border: 1px solid rgba(245, 158, 11, 0.2);
-    border-radius: 6px;
-    padding: 10px 12px;
-    font-size: 13px;
-    color: #999;
-    line-height: 1.5;
+    color: var(--ga-selection-ink, #e0e8ff);
+    background: var(--ga-selection-bg, #1f3170);
+    border-left-color: var(--ga-selection-line, #5278ff);
   }
 
   .settings-content {
     flex: 1;
+    min-width: 0;
     overflow-y: auto;
-    padding: 20px;
+    padding: 16px 20px 24px;
   }
 
+  /* One section-heading style: the eyebrow. */
   .settings-section {
     margin-bottom: 24px;
   }
@@ -3581,59 +3438,57 @@
     margin-bottom: 0;
   }
 
-  .settings-section h3 {
-    margin: 0 0 16px 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: #BB86FC;
+  .settings-section h3,
+  .settings-section h4 {
+    margin: 0 0 4px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    line-height: 1.2;
+    color: var(--ga-ink-2, #89857e);
   }
 
+  .settings-section > h3:not(:first-child),
+  .settings-section > h4:not(:first-child) {
+    margin-top: 24px;
+  }
+
+  /* One row layout: label left, hint under it, control right. */
   .setting-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 0;
-    border-bottom: 1px solid #161618;
+    gap: 16px;
+    min-height: var(--ga-control-h);
+    padding: 10px 0;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
 
   .setting-row:last-of-type {
     border-bottom: none;
   }
 
-  /* Sub-rows are nested controls under a parent toggle (e.g. cursor
-     style/size when "Show Cursor" is on). Tighter padding + indent. */
+  /* Rows that only show under a parent toggle. */
   .setting-row.sub-row {
-    padding: 6px 0 6px 14px;
-    border-bottom: 1px solid #131315;
-  }
-  .setting-row.sub-row .label-text {
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
-  }
-  .setting-row.sub-row .label-hint {
-    font-size: 11px;
-    color: #666;
+    padding-left: 16px;
   }
   .setting-row.sub-row input[type="range"] {
-    width: 140px;
-    accent-color: var(--ga-blue-300);
+    width: 160px;
   }
   .setting-row.sub-row input[type="color"] {
-    width: 32px;
-    height: 24px;
-    border: 1px solid #2a2a30;
+    width: 40px;
+    height: var(--ga-control-h-sm);
+    padding: 0;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     background: transparent;
     cursor: pointer;
-    padding: 0;
   }
   .native-runtime-row {
     align-items: flex-start;
-    gap: 12px;
   }
   .native-runtime-detail {
-    line-height: 1.45;
     overflow-wrap: anywhere;
   }
   .native-runtime-warning {
@@ -3643,22 +3498,20 @@
     flex: 0 0 auto;
     min-width: 84px;
     max-width: 140px;
-    padding: 5px 9px;
+    padding: 4px 8px;
     border: 1px solid rgba(251, 191, 36, 0.45);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     color: #fbbf24;
     background: rgba(251, 191, 36, 0.08);
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.06em;
+    font-size: var(--ga-text-meta);
+    font-weight: 700;
     text-align: center;
-    text-transform: uppercase;
     overflow-wrap: anywhere;
   }
   .native-runtime-pill.ok {
-    border-color: rgba(76, 175, 80, 0.45);
-    color: #4caf50;
-    background: rgba(76, 175, 80, 0.08);
+    border-color: color-mix(in srgb, var(--ga-green, #46d18a) 45%, transparent);
+    color: var(--ga-green, #46d18a);
+    background: color-mix(in srgb, var(--ga-green, #46d18a) 8%, transparent);
   }
   .native-runtime-pill.warn {
     border-color: rgba(251, 191, 36, 0.45);
@@ -3669,33 +3522,33 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
     gap: 6px;
-    margin: -2px 0 12px;
+    margin: 0 0 12px;
     padding: 0 0 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
   .native-runtime-gate {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
     min-width: 0;
-    padding: 7px 8px;
+    height: var(--ga-control-h);
+    padding: 0 8px;
     border: 1px solid rgba(251, 191, 36, 0.28);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     background: rgba(251, 191, 36, 0.06);
     color: #fbbf24;
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     line-height: 1.2;
   }
   .native-runtime-gate.ok {
-    border-color: rgba(76, 175, 80, 0.32);
-    background: rgba(76, 175, 80, 0.07);
-    color: #7ee787;
+    border-color: color-mix(in srgb, var(--ga-green, #46d18a) 32%, transparent);
+    background: color-mix(in srgb, var(--ga-green, #46d18a) 7%, transparent);
+    color: var(--ga-green, #46d18a);
   }
   .native-runtime-gate-state {
     flex: 0 0 auto;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.04em;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
   }
   .native-runtime-gate-label {
     min-width: 0;
@@ -3704,24 +3557,15 @@
     white-space: nowrap;
   }
   .native-runtime-blockers {
-    margin: -4px 0 12px;
+    margin: 0 0 12px;
     padding: 8px 10px;
     border: 1px solid rgba(251, 191, 36, 0.25);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     background: rgba(251, 191, 36, 0.06);
     color: #fbbf24;
-    font-size: 11px;
-    line-height: 1.35;
+    font-size: var(--ga-text-meta);
+    line-height: 1.4;
     overflow-wrap: anywhere;
-  }
-  .select-input {
-    background: #1c1c20;
-    color: var(--text-primary, #ddd);
-    border: 1px solid #2a2a30;
-    padding: 4px 8px;
-    border-radius: 3px;
-    font-size: 12px;
-    cursor: pointer;
   }
 
   .setting-label {
@@ -3733,106 +3577,75 @@
   }
 
   .label-text {
-    font-size: 15px;
-    color: var(--text-primary, #eee);
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
+    line-height: 1.35;
+    color: var(--ga-ink-0, #f2ede4);
   }
 
-  .label-hint {
-    font-size: 13px;
-    color: #666;
+  .label-hint,
+  .settings-hint,
+  .hint {
+    font-size: var(--ga-text-meta);
+    line-height: 1.45;
+    color: var(--ga-ink-2, #89857e);
+  }
+
+  .settings-hint {
+    margin: 0 0 12px;
+  }
+
+  /* Fields: 26px, the slot surface, hard corners. */
+  select,
+  .text-input,
+  .port-input {
+    box-sizing: border-box;
+    height: var(--ga-control-h);
+    background-color: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
+    font-family: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-body);
   }
 
   select {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: var(--text-primary, #eee);
-    font-size: 14px;
-    cursor: pointer;
     min-width: 180px;
-  }
-
-  select:hover {
-    border-color: #555;
-  }
-
-  select:focus {
-    outline: none;
-    border-color: #BB86FC;
+    max-width: 280px;
+    padding: 0 26px 0 8px;
+    cursor: pointer;
   }
 
   .text-input {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: var(--text-primary, #eee);
-    font-size: 14px;
     min-width: 180px;
+    padding: 0 8px;
   }
 
-  .text-input:hover {
-    border-color: #555;
+  .port-input {
+    width: 90px;
+    padding: 0 8px;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
-  .text-input:focus {
+  select:hover,
+  .text-input:hover,
+  .port-input:hover {
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+  }
+
+  select:focus,
+  .text-input:focus,
+  .port-input:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   select option:disabled {
-    color: #666;
+    color: var(--ga-ink-3, #39342c);
   }
 
-  /* Updates section buttons */
-  .btn-check-update {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    border-radius: 6px;
-    padding: 8px 14px;
-    color: var(--text-primary, #ddd);
-    font-size: 13px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .btn-check-update:hover:not(:disabled) {
-    background: #1f1f23;
-    border-color: #777;
-    color: #fff;
-  }
-  .btn-check-update:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .btn-update-link {
-    background: rgba(187, 134, 252, 0.12);
-    border: 1px solid #BB86FC;
-    border-radius: 6px;
-    padding: 8px 14px;
-    color: #BB86FC;
-    font-size: 13px;
-    text-decoration: none;
-    white-space: nowrap;
-  }
-  .btn-update-link:hover {
-    background: rgba(187, 134, 252, 0.24);
-    color: #fff;
-  }
-
-  /* Toggle switch */
   /* ── OSC settings styles ── */
-  .port-input {
-    width: 90px;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    border-radius: 4px;
-    padding: 5px 8px;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 13px;
-  }
-  .port-input:focus { border-color: var(--ga-blue-300); outline: none; }
   .osc-status-dot {
     display: inline-block;
     width: 8px; height: 8px;
@@ -3840,29 +3653,27 @@
     margin-right: 6px;
     vertical-align: middle;
   }
-  /* Names what an agent has been doing, so its work is visible rather than
-     inferred from the output changing on its own. */
   /* Section render failure. Amber like the other notices in this panel:
      it reports a problem, it is not an alarm the user caused. */
   .settings-section-failed {
     border: 1px solid rgba(255, 176, 0, 0.35);
-    border-radius: 4px;
-    padding: 14px 16px;
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 12px 16px;
   }
   .settings-failed-text {
     margin: 6px 0 10px;
-    font-size: 12px;
+    font-size: var(--ga-text-meta);
     line-height: 1.5;
-    color: #9ca3af;
+    color: var(--ga-ink-1, #ada9a2);
   }
   .settings-failed-message {
     display: block;
     margin-bottom: 12px;
     padding: 8px 10px;
-    border-radius: 3px;
-    background: rgba(0, 0, 0, 0.35);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot, #060504);
     color: #ffb000;
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -3872,6 +3683,8 @@
     margin-bottom: 8px;
   }
 
+  /* Names what an agent has been doing, so its work is visible rather than
+     inferred from the output changing on its own. */
   .mcp-call {
     display: inline-block;
     margin: 0 4px 2px 0;
@@ -3880,7 +3693,7 @@
     background: rgba(163, 230, 53, 0.12);
     border: 1px solid rgba(163, 230, 53, 0.3);
     color: #a3e635;
-    font-size: 9px;
+    font-size: var(--ga-text-micro);
   }
   .mcp-call.failed {
     background: rgba(255, 176, 0, 0.12);
@@ -3888,14 +3701,14 @@
     color: #ffb000;
   }
 
-  .osc-status-dot.listening { background: #4ade80; box-shadow: 0 0 6px rgba(74,222,128,0.6); }
-  .osc-status-dot.error     { background: #ff5252; }
-  .osc-status-dot.idle      { background: #555; }
+  .osc-status-dot.listening { background: var(--ga-green, #46d18a); box-shadow: 0 0 6px color-mix(in srgb, var(--ga-green, #46d18a) 60%, transparent); }
+  .osc-status-dot.error     { background: var(--ga-rec, #ff3b30); }
+  .osc-status-dot.idle      { background: var(--ga-ink-3, #39342c); }
   .osc-last {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: var(--ga-blue-100);
-    font-size: 12px;
-    background: var(--ga-blue-a08);
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-meta);
+    background: var(--ga-slot, #060504);
     padding: 1px 4px;
     border-radius: 3px;
   }
@@ -3904,15 +3717,15 @@
     align-items: center;
     gap: 8px;
     margin: 12px 0;
-    padding: 8px 10px;
-    background: rgba(255,214,102,0.08);
-    border: 1px solid rgba(255,214,102,0.4);
-    border-radius: 5px;
+    padding: 6px 6px 6px 10px;
+    background: rgba(255, 214, 102, 0.08);
+    border: 1px solid rgba(255, 214, 102, 0.4);
+    border-radius: var(--ga-r-hard, 5px);
     color: #ffd166;
-    font-size: 13px;
+    font-size: var(--ga-text-control);
   }
   .osc-learn-pulse {
-    width: 10px; height: 10px;
+    width: 8px; height: 8px;
     border-radius: 50%;
     background: #ffd166;
     animation: oscPulse 1s infinite;
@@ -3923,25 +3736,30 @@
   }
   .osc-learn-cancel {
     margin-left: auto;
+    height: var(--ga-control-h-sm);
+    padding: 0 10px;
     background: transparent;
-    border: 1px solid rgba(255,214,102,0.4);
+    border: 1px solid rgba(255, 214, 102, 0.4);
+    border-radius: var(--ga-r-hard, 5px);
     color: #ffd166;
-    padding: 3px 10px;
-    border-radius: 4px;
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    font-size: 12px;
   }
-  .osc-learn-cancel:hover { background: rgba(255,214,102,0.15); color: #fff; }
+  .osc-learn-cancel:hover { background: rgba(255, 214, 102, 0.15); color: var(--ga-ink-0, #f2ede4); }
 
   .osc-empty {
-    padding: 16px;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px dashed #2a2a30;
-    border-radius: 5px;
-    font-size: 13px;
-    color: var(--text-muted, #888);
+    padding: 12px 16px;
+    background: var(--ga-card, #16140f);
+    border: 1px dashed var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    font-size: var(--ga-text-meta);
+    line-height: 1.5;
+    color: var(--ga-ink-2, #89857e);
     text-align: center;
   }
+  .osc-empty strong { color: var(--ga-ink-1, #ada9a2); }
   .osc-bindings {
     display: flex;
     flex-direction: column;
@@ -3954,39 +3772,59 @@
     align-items: center;
   }
   .osc-binding-head {
-    font-size: 10.5px;
-    letter-spacing: 1px;
-    color: #555;
+    padding: 4px 0;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-transform: uppercase;
-    padding: 4px 4px;
+    color: var(--ga-ink-2, #89857e);
   }
-  .osc-binding-row input[type="text"], .osc-binding-row input[type="number"] {
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    border-radius: 3px;
-    padding: 4px 6px;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 12px;
+  /* Table cells use the compact 22px height. */
+  .osc-binding-row input[type="text"],
+  .osc-binding-row input[type="number"],
+  .osc-binding-row select {
+    box-sizing: border-box;
     width: 100%;
+    min-width: 0;
+    max-width: none;
+    height: var(--ga-control-h-sm);
+    background-color: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
+    border-radius: var(--ga-r-hard, 5px);
+    font-size: var(--ga-text-meta);
   }
-  .osc-binding-row input:focus, .osc-binding-row select:focus { border-color: var(--ga-blue-300); outline: none; }
+  .osc-binding-row input[type="text"],
+  .osc-binding-row input[type="number"] {
+    padding: 0 6px;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+  }
+  .osc-binding-row select {
+    padding: 0 20px 0 6px;
+  }
+  .osc-binding-row input:focus, .osc-binding-row select:focus { border-color: var(--ga-selection-line, #5278ff); outline: none; }
   .osc-binding-row input.invalid-path, .osc-learn-form input.invalid-path {
     border-color: #ff6868;
     box-shadow: 0 0 0 1px rgba(255, 104, 104, 0.18);
   }
   .osc-inv { display: flex; align-items: center; justify-content: center; cursor: pointer; }
   .osc-binding-del {
+    display: inline-grid;
+    place-items: center;
+    width: var(--ga-control-h-sm);
+    height: var(--ga-control-h-sm);
+    padding: 0;
     background: transparent;
-    border: 1px solid #2a2a30;
-    color: var(--text-muted, #888);
-    width: 24px; height: 24px;
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
     cursor: pointer;
   }
-  .osc-binding-del:hover { background: rgba(255,68,68,0.15); color: #ff8888; }
+  .osc-binding-del:hover { background: color-mix(in srgb, var(--ga-rec, #ff3b30) 15%, transparent); color: var(--ga-rec, #ff3b30); }
   .osc-add-row {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 6px;
     margin-top: 10px;
   }
@@ -3997,46 +3835,54 @@
     gap: 16px;
     padding: 12px;
     margin-top: 12px;
-    border: 1px solid var(--ga-blue-a28);
-    background: var(--ga-blue-a08);
-    border-radius: 5px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-card, #16140f);
+    border-radius: var(--ga-r-hard, 5px);
   }
-  .osc-template strong { color: var(--text-primary, #ddd); font-size: 13px; }
-  .osc-template p { color: var(--text-muted, #888); font-size: 12px; margin: 4px 0 7px; }
-  .osc-template code { color: var(--ga-blue-300); font-size: 11px; }
-  .osc-template span { color: var(--text-muted, #888); font-size: 11px; margin-left: 6px; }
-  .osc-add-btn.template { flex: 0 0 auto; border-color: var(--ga-blue-a45); color: var(--ga-blue-300); }
+  .osc-template strong { color: var(--ga-ink-0, #f2ede4); font-size: var(--ga-text-body); font-weight: var(--ga-weight-control); }
+  .osc-template p { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta); line-height: 1.45; margin: 4px 0 8px; }
+  .osc-template code { color: var(--ga-blue-300, #8aa4ff); font-size: var(--ga-text-meta); }
+  .osc-template span { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta); margin-left: 6px; }
   .osc-add-btn {
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    padding: 5px 12px;
-    border-radius: 4px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    height: var(--ga-control-h);
+    padding: 0 12px;
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    white-space: nowrap;
     cursor: pointer;
-    font-size: 12px;
   }
-  .osc-add-btn:hover { border-color: var(--ga-blue-300); color: var(--ga-blue-300); }
-  .osc-add-btn.learn { border-color: rgba(255,214,102,0.5); color: #ffd166; }
-  .osc-add-btn.learn:hover { background: rgba(255,214,102,0.1); color: #fff; }
+  .osc-add-btn:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
+  .osc-add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .osc-add-btn.template { flex: 0 0 auto; }
+  .osc-add-btn.learn { border-color: rgba(255, 214, 102, 0.5); color: #ffd166; }
+  .osc-add-btn.learn:hover:not(:disabled) { background: rgba(255, 214, 102, 0.1); color: var(--ga-ink-0, #f2ede4); }
   .osc-add-btn.learn.active {
-    background: rgba(255,214,102,0.22);
+    background: rgba(255, 214, 102, 0.22);
     border-color: #ffd166;
-    color: #fff;
-    box-shadow: 0 0 12px rgba(255,214,102,0.22);
+    color: var(--ga-ink-0, #f2ede4);
+    box-shadow: 0 0 12px rgba(255, 214, 102, 0.22);
   }
   .osc-learn-form {
     display: grid;
-    gap: 7px;
+    gap: 6px;
     margin-top: 10px;
     padding: 12px;
-    border: 1px solid rgba(255,214,102,0.35);
-    background: rgba(255,214,102,0.05);
-    border-radius: 5px;
+    border: 1px solid rgba(255, 214, 102, 0.35);
+    background: rgba(255, 214, 102, 0.05);
+    border-radius: var(--ga-r-hard, 5px);
   }
   .osc-learn-form label {
-    color: var(--text-primary, #ddd);
-    font-size: 12px;
-    font-weight: 600;
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
   }
   .osc-learn-controls {
     display: grid;
@@ -4044,49 +3890,48 @@
     gap: 6px;
   }
   .osc-learn-controls input {
+    box-sizing: border-box;
     min-width: 0;
-    padding: 6px 8px;
-    color: var(--text-primary, #ddd);
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    border-radius: 4px;
+    height: var(--ga-control-h);
+    padding: 0 8px;
+    color: var(--ga-ink-0, #f2ede4);
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-control);
   }
-  .osc-path-valid, .osc-path-error { font-size: 11px; }
-  .osc-path-valid { color: #4ade80; }
+  .osc-path-valid, .osc-path-error { font-size: var(--ga-text-meta); }
+  .osc-path-valid { color: var(--ga-green, #46d18a); }
   .osc-path-error { color: #ff7d7d; }
   .osc-path-reference {
     margin-top: 12px;
-    color: var(--text-muted, #888);
-    font-size: 12px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
-  .osc-path-reference summary { cursor: pointer; color: var(--ga-blue-300); }
+  .osc-path-reference summary { cursor: pointer; color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); }
   .osc-path-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 5px;
+    gap: 4px;
     margin-top: 8px;
   }
   .osc-path-grid button {
     display: grid;
     gap: 2px;
     min-width: 0;
-    padding: 7px;
+    padding: 6px 8px;
     text-align: left;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    border-radius: 4px;
-    color: var(--text-muted, #888);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
+    font: inherit;
+    font-size: var(--ga-text-meta);
     cursor: pointer;
   }
-  .osc-path-grid button:hover { border-color: var(--ga-blue-300); }
-  .osc-path-grid code { color: var(--ga-blue-300); overflow-wrap: anywhere; }
-  .osc-add-btn.learn.active {
-    background: rgba(255,214,102,0.22);
-    border-color: #ffd166;
-    color: #fff;
-    box-shadow: 0 0 12px rgba(255,214,102,0.22);
-  }
+  .osc-path-grid button:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-1, #ada9a2); }
+  .osc-path-grid code { color: var(--ga-blue-300, #8aa4ff); overflow-wrap: anywhere; }
   .keyboard-add-bindings { margin-top: 8px; }
   .keyboard-edit-row {
     align-items: center;
@@ -4098,16 +3943,17 @@
 
   /* Keyboard binding combo cell — a click-to-rebind chip. */
   .kbd-combo {
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    height: 24px;
+    box-sizing: border-box;
+    height: var(--ga-control-h-sm);
     padding: 0 8px;
-    border-radius: 3px;
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
     cursor: pointer;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 12px;
-    font-weight: 600;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -4118,8 +3964,8 @@
     cursor: not-allowed;
   }
   .kbd-combo:disabled:hover {
-    border-color: #2a2a30;
-    color: var(--text-primary, #ddd);
+    border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   /* ── MIDI mappings table ────────────────────────────────────────
@@ -4134,37 +3980,38 @@
   }
 
   .mm-group {
-    border: 1px solid var(--border-subtle, #2a2a2a);
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
     overflow: hidden;
     transition: border-color 0.15s, box-shadow 0.15s;
   }
 
   /* The control the user just pressed while finding. */
   .mm-group.found {
-    border-color: #BB86FC;
-    box-shadow: 0 0 0 1px #BB86FC55;
+    border-color: var(--ga-selection-line, #5278ff);
+    box-shadow: 0 0 0 1px var(--ga-selection-line, #5278ff);
   }
 
   .mm-group-head {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 7px 10px;
-    background: var(--bg-elevated, #1a1a1a);
+    min-height: var(--ga-control-h);
+    padding: 4px 6px 4px 10px;
+    background: var(--ga-card, #16140f);
   }
 
   .mm-control {
-    font-family: var(--font-mono, ui-monospace, monospace);
-    font-size: 12px;
-    color: var(--text-primary, #ddd);
-    font-weight: 600;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-0, #f2ede4);
+    font-weight: var(--ga-weight-control);
   }
 
   .mm-channel,
   .mm-count {
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .mm-count {
@@ -4173,28 +4020,32 @@
 
   .mm-clear,
   .mm-del {
+    box-sizing: border-box;
+    height: var(--ga-control-h-sm);
     background: none;
-    border: 1px solid var(--border-subtle, #2a2a2a);
-    color: var(--text-muted, #888);
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-2, #89857e);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
-    font-size: 11px;
-    padding: 3px 8px;
+    font: inherit;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    padding: 0 8px;
   }
 
   .mm-clear:hover,
   .mm-del:hover {
-    color: #ff6b6b;
-    border-color: #ff6b6b55;
+    color: var(--ga-rec, #ff3b30);
+    border-color: color-mix(in srgb, var(--ga-rec, #ff3b30) 40%, transparent);
   }
 
   .mm-row {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 6px 10px;
-    border-top: 1px solid var(--border-subtle, #2a2a2a);
-    font-size: 12px;
+    padding: 4px 6px 4px 10px;
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+    font-size: var(--ga-text-control);
   }
 
   .mm-target {
@@ -4207,7 +4058,7 @@
   }
 
   .mm-context {
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .mm-context::after {
@@ -4215,32 +4066,29 @@
   }
 
   .mm-label {
-    color: var(--text-primary, #ddd);
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   /* The mapping points at an effect that is not in the open project. It
      still holds the control, which is exactly why it is worth showing. */
   .mm-orphan {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-size: var(--ga-text-meta);
     color: #e0a458;
     border: 1px solid #e0a45844;
     border-radius: 3px;
-    padding: 1px 5px;
+    padding: 0 5px;
   }
 
   .mm-mode {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .mm-del {
-    font-size: 14px;
+    width: var(--ga-control-h-sm);
+    padding: 0;
+    font-size: var(--ga-text-title);
     line-height: 1;
-    padding: 1px 7px;
   }
 
   /* Routing is paused while this is up, so it says so. */
@@ -4250,18 +4098,18 @@
     gap: 8px;
     padding: 8px 10px;
     margin-bottom: 10px;
-    border: 1px solid #BB86FC44;
-    border-radius: 4px;
-    background: #BB86FC11;
-    font-size: 12px;
-    color: var(--text-primary, #ddd);
+    border: 1px solid var(--ga-selection-line, #5278ff);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-selection-bg, #1f3170);
+    font-size: var(--ga-text-control);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .mm-identify-pulse {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #BB86FC;
+    background: var(--ga-selection-ink, #e0e8ff);
     animation: mm-pulse 1.2s ease-in-out infinite;
   }
 
@@ -4270,11 +4118,13 @@
     50% { opacity: 0.25; }
   }
 
+  /* Toggle switch: the same 26px height as the fields beside it. */
   .toggle {
     position: relative;
     display: inline-block;
-    width: 48px;
-    height: 26px;
+    flex: 0 0 auto;
+    width: 44px;
+    height: var(--ga-control-h);
   }
 
   .toggle input {
@@ -4298,30 +4148,42 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: #444;
+    background-color: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     transition: 0.2s;
-    border-radius: 26px;
+    border-radius: var(--ga-control-h);
   }
 
   .toggle .toggle-slider::before {
     position: absolute;
     content: "";
-    height: 20px;
-    width: 20px;
+    height: 18px;
+    width: 18px;
     left: 3px;
-    bottom: 3px;
-    background-color: var(--text-muted, #888);
+    top: 3px;
+    background-color: var(--ga-ink-2, #89857e);
     transition: 0.2s;
     border-radius: 50%;
   }
 
   .toggle input:checked + .toggle-slider {
-    background-color: #BB86FC33;
+    background-color: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   .toggle input:checked + .toggle-slider::before {
-    transform: translateX(22px);
-    background-color: #BB86FC;
+    transform: translateX(18px);
+    background-color: var(--ga-selection-ink, #e0e8ff);
+  }
+
+  .toggle input:focus-visible + .toggle-slider {
+    outline: 2px solid var(--ga-focus, #8aa4ff);
+    outline-offset: 1px;
+  }
+
+  .toggle input:disabled + .toggle-slider {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .button-group {
@@ -4333,7 +4195,6 @@
   .output-send-row {
     align-items: flex-start;
     flex-wrap: wrap;
-    gap: 10px;
   }
   .output-send-buttons {
     display: flex;
@@ -4343,113 +4204,165 @@
   .output-send {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
   }
   .output-send-buttons .secondary-btn.active {
     color: var(--ga-live, #46d18a);
     border-color: color-mix(in srgb, var(--ga-live, #46d18a) 60%, transparent);
-    background: color-mix(in srgb, var(--ga-live, #46d18a) 14%, #222);
+    background: color-mix(in srgb, var(--ga-live, #46d18a) 14%, transparent);
   }
 
-  .secondary-btn {
-    background: #333;
-    border: 1px solid #444;
-    border-radius: 6px;
-    padding: 8px 14px;
-    color: var(--text-primary, #eee);
-    font-size: 14px;
+  /* Buttons. In a row: 26px, 12px/600. The footer pair is 30px. */
+  .secondary-btn,
+  .primary-btn,
+  .text-btn,
+  .btn-check-update,
+  .btn-update-link {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--ga-control-h);
+    padding: 0 12px;
+    border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    white-space: nowrap;
+    text-decoration: none;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: color 0.12s, background 0.12s, border-color 0.12s, filter 0.12s;
   }
 
-  .secondary-btn:hover {
-    background: #3a3a3a;
-    border-color: #555;
+  .secondary-btn,
+  .btn-check-update {
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+  }
+
+  .secondary-btn:hover:not(:disabled),
+  .btn-check-update:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .text-btn {
     background: none;
-    border: none;
-    color: var(--text-muted, #888);
-    font-size: 14px;
-    cursor: pointer;
-    padding: 8px 12px;
-    transition: color 0.15s;
+    border: 1px solid transparent;
+    color: var(--ga-ink-2, #89857e);
   }
 
-  .text-btn:hover {
-    color: var(--text-primary, #eee);
+  .text-btn:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
   }
 
-  .primary-btn {
-    background: #BB86FC;
-    border: none;
-    border-radius: 6px;
-    padding: 10px 20px;
-    color: #000;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
+  .primary-btn,
+  .btn-update-link {
+    background: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-ink-0, #f2ede4);
+    color: var(--ga-void, #0a0908);
   }
 
-  .primary-btn:hover {
-    background: var(--ga-blue-300);
+  .primary-btn:hover:not(:disabled),
+  .btn-update-link:hover {
+    filter: brightness(1.06);
+  }
+
+  .secondary-btn:disabled,
+  .primary-btn:disabled,
+  .text-btn:disabled,
+  .btn-check-update:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .info-box {
     display: flex;
-    gap: 10px;
-    padding: 12px;
-    background: var(--bg-secondary, #111114);
-    border-radius: 8px;
+    gap: 8px;
+    padding: 10px 12px;
     margin-top: 12px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+    border-radius: var(--ga-r-hard, 5px);
   }
 
   .info-box svg {
     flex-shrink: 0;
-    color: #BB86FC;
-    margin-top: 2px;
+    width: 14px;
+    height: 14px;
+    margin-top: 1px;
+    color: var(--ga-ink-2, #89857e);
   }
 
   .info-box p {
     margin: 0;
-    font-size: 13px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #ada9a2);
     line-height: 1.5;
   }
 
   .info-box strong {
-    color: var(--text-secondary, #aaa);
+    color: var(--ga-ink-0, #f2ede4);
   }
 
+  /* Footer: Diagnostics on the left, the secondary + primary pair on the
+     right, the same as every other dialog. */
   .settings-footer {
+    flex: 0 0 auto;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-top: 1px solid #333;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+  }
+
+  .settings-footer > .section {
+    flex: 1;
+    min-width: 0;
+    max-height: 30vh;
+    overflow-y: auto;
+  }
+
+  .settings-footer > .section h3 {
+    margin: 0;
+    font-size: inherit;
+  }
+
+  .settings-footer > .secondary-btn,
+  .settings-footer > .primary-btn {
+    height: var(--ga-bar-control-h);
+    padding: 0 14px;
+    font-size: var(--ga-text-body);
+  }
+
+  .settings-footer > .primary-btn {
+    min-width: 72px;
   }
 
   .custom-size-row {
     flex-wrap: wrap;
   }
 
-  .custom-size-inputs {
+  .custom-size-inputs,
+  .custom-res-inputs {
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
-  .size-input {
-    width: 72px;
+  .size-input,
+  .small-input {
+    width: 72px !important;
     min-width: 72px;
     text-align: center;
   }
 
-  .size-separator {
-    color: var(--text-muted, #888);
-    font-size: 14px;
+  .size-separator,
+  .custom-res-inputs span {
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-control);
   }
 
   /* Theme Template cards — bigger preview than the accent cards
@@ -4457,41 +4370,46 @@
   .theme-template-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 14px;
-    margin: 8px 0 24px;
+    gap: 12px;
+    margin: 4px 0 16px;
   }
   .theme-template-card {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
-    padding: 10px 10px 14px;
-    background: var(--bg-tertiary, #161618);
-    border: 2px solid transparent;
-    border-radius: 10px;
+    gap: 6px;
+    padding: 8px 8px 12px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: inherit;
+    font: inherit;
     cursor: pointer;
-    transition: all 0.18s;
+    transition: border-color 0.15s, background 0.15s;
     text-align: left;
   }
-  .theme-template-card:hover { background: var(--bg-tertiary, #1a1a1e); border-color: #444; }
-  .theme-template-card.active { background: var(--bg-tertiary, #1a1a1e); border-color: var(--accent-primary, #FF6B6B); }
+  .theme-template-card:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
+  .theme-template-card.active {
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+  }
   .theme-preview {
     width: 100%;
-    height: 96px;
-    border-radius: 8px;
+    height: 88px;
+    border-radius: var(--ga-r-hard, 5px);
     border: 1px solid;
     overflow: hidden;
     display: flex;
     flex-direction: column;
   }
   .theme-bar {
-    height: 18px;
+    height: 16px;
     border-bottom: 1px solid;
   }
   .theme-body { flex: 1; display: flex; padding: 8px; }
   .theme-panel {
     flex: 1;
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 8px;
     display: flex;
     align-items: center;
@@ -4510,50 +4428,52 @@
     border-radius: 50%;
     box-shadow: 0 0 8px currentColor;
   }
-  .theme-name { font-size: 15px; font-weight: 600; color: var(--text-primary, #fff); margin-top: 2px; }
-  .theme-desc { font-size: 12px; color: var(--text-secondary, #888); line-height: 1.4; }
+  .theme-name { margin-top: 2px; padding: 0 4px; font-size: var(--ga-text-body); font-weight: var(--ga-weight-control); color: var(--ga-ink-0, #f2ede4); }
+  .theme-desc { padding: 0 4px; font-size: var(--ga-text-meta); color: var(--ga-ink-2, #89857e); line-height: 1.4; }
 
   /* Color Scheme Selector */
   .color-scheme-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 12px;
-    margin-top: 8px;
+    margin: 4px 0 8px;
   }
 
   .color-scheme-card {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 12px;
-    background: var(--bg-tertiary, #161618);
-    border: 2px solid transparent;
-    border-radius: 10px;
+    gap: 6px;
+    padding: 8px 8px 12px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: inherit;
+    font: inherit;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: border-color 0.15s, background 0.15s;
   }
 
   .color-scheme-card:hover {
-    background: var(--bg-tertiary, #1a1a1e);
-    border-color: #444;
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .color-scheme-card.active {
-    border-color: var(--accent-primary, #FF6B6B);
-    background: var(--bg-tertiary, #1a1a1e);
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   .scheme-preview {
     width: 100%;
-    height: 48px;
-    border-radius: 6px;
+    height: 44px;
+    border-radius: var(--ga-r-hard, 5px);
     border: 1px solid;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     padding: 8px;
+    box-sizing: border-box;
   }
 
   .scheme-accent {
@@ -4571,14 +4491,14 @@
   }
 
   .scheme-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary, #eee);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .scheme-desc {
-    font-size: 11px;
-    color: #666;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     text-align: center;
   }
 
@@ -4595,33 +4515,27 @@
     min-width: 120px;
   }
 
-  .test-btn {
-    padding: 8px 10px;
-    white-space: nowrap;
-  }
-
   .key-badge {
     display: inline-block;
-    font-size: 11px;
-    padding: 1px 6px;
-    border-radius: 4px;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    padding: 0 6px;
+    border-radius: 3px;
     margin-left: 6px;
-    text-transform: none;
-    font-weight: 400;
   }
 
   .key-badge.valid {
-    background: #22c55e33;
-    color: #22c55e;
+    background: color-mix(in srgb, var(--ga-green, #46d18a) 18%, transparent);
+    color: var(--ga-green, #46d18a);
   }
 
   .key-badge.invalid {
-    background: #ef444433;
-    color: #ef4444;
+    background: color-mix(in srgb, var(--ga-rec, #ff3b30) 18%, transparent);
+    color: var(--ga-rec, #ff3b30);
   }
 
   .settings-link {
-    color: #BB86FC;
+    color: var(--ga-blue-300, #8aa4ff);
     text-decoration: none;
   }
 
@@ -4629,82 +4543,82 @@
     text-decoration: underline;
   }
 
+  .accent-text {
+    color: var(--ga-blue-300, #8aa4ff);
+  }
+
   .ai-divider {
     height: 1px;
-    background: #333;
+    background: var(--ga-line-2, rgba(245, 236, 222, 0.13));
     margin: 8px 0;
   }
 
-  /* Rotation buttons */
+  /* Rotation: a segmented control. */
   .rotation-buttons {
-    display: flex;
-    gap: 4px;
+    display: inline-flex;
+    height: var(--ga-control-h);
+    padding: 2px;
+    gap: 2px;
+    box-sizing: border-box;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
   }
 
   .rot-btn {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    border-radius: 6px;
-    padding: 6px 12px;
-    color: var(--text-secondary, #aaa);
-    font-size: 13px;
+    min-width: 40px;
+    padding: 0 8px;
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    font-variant-numeric: tabular-nums;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: color 0.12s, background 0.12s;
   }
 
-  .rot-btn:hover {
-    border-color: #666;
-    color: var(--text-primary, #eee);
+  .rot-btn:hover:not(.active) {
+    color: var(--ga-ink-0, #f2ede4);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .rot-btn.active {
-    background: #BB86FC22;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
+    box-shadow: inset 0 0 0 1px var(--ga-selection-line, #5278ff);
   }
 
   /* Crop grid */
   .crop-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    padding: 8px 0 12px;
+    gap: 8px 16px;
+    padding: 4px 0 12px;
   }
 
   .crop-item {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
   }
 
   .crop-label {
-    font-size: 13px;
-    color: var(--text-muted, #888);
-    min-width: 16px;
-    font-weight: 600;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-2, #89857e);
+    min-width: 14px;
+    font-weight: var(--ga-weight-control);
   }
 
   .crop-item input[type="range"] {
     flex: 1;
-    height: 4px;
-    -webkit-appearance: none;
-    background: #000000;
-    border-radius: 2px;
-    cursor: pointer;
-  }
-
-  .crop-item input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #BB86FC;
-    cursor: pointer;
   }
 
   .crop-value {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #ada9a2);
     min-width: 32px;
     text-align: right;
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
@@ -4717,22 +4631,23 @@
 
   /* MIDI learn button */
   .midi-learn-btn.active {
-    background: #BB86FC;
-    color: #000;
-    border-color: #BB86FC;
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   /* MIDI Clock running indicator — pulses when transport is active */
   .clock-status-dot {
-    width: 12px;
-    height: 12px;
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    background: #444;
+    background: var(--ga-ink-3, #39342c);
     transition: background 0.2s;
   }
   .clock-status-dot.on {
-    background: #2ED573;
-    box-shadow: 0 0 10px rgba(46, 213, 115, 0.55);
+    background: var(--ga-green, #46d18a);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--ga-green, #46d18a) 55%, transparent);
     animation: clockPulse 0.5s ease-in-out infinite;
   }
   @keyframes clockPulse {
@@ -4740,56 +4655,67 @@
     50%      { opacity: 1; }
   }
 
+  /* Diagnostics: a quiet disclosure in the footer. */
   .section-toggle {
+    display: inline-flex;
+    align-items: center;
+    height: var(--ga-bar-control-h);
+    padding: 0;
     background: none;
     border: none;
-    color: inherit;
+    color: var(--ga-ink-2, #89857e);
     font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    padding: 0;
+  }
+
+  .section-toggle:hover {
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .decode-table { border-collapse: collapse; margin: 0 0 8px; }
-  .decode-table th { text-align: left; font-weight: 600; padding: 1px 12px 1px 0; white-space: nowrap; }
+  .decode-table th { text-align: left; font-weight: var(--ga-weight-control); color: var(--ga-ink-1, #ada9a2); padding: 1px 12px 1px 0; white-space: nowrap; }
   .decode-table td { padding: 1px 12px 1px 0; vertical-align: top; }
   .decode-reason { opacity: 0.7; }
   .decode-file { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 6px; }
 
   .diagnostics {
-    margin-top: 8px;
+    margin-top: 4px;
+  }
+
+  .diagnostics .hint {
+    margin: 4px 0;
   }
 
   .error-log {
     max-height: 200px;
     overflow-y: auto;
-    font-size: 12px;
-    background: var(--bg-secondary, #1a1a2e);
-    border-radius: 4px;
-    padding: 6px;
+    font-size: var(--ga-text-meta);
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 6px 8px;
     margin-top: 4px;
   }
 
   .error-entry {
-    padding: 3px 0;
-    border-bottom: 1px solid #ffffff10;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
     display: flex;
     flex-direction: column;
     gap: 2px;
   }
 
-  .error-time {
-    color: var(--text-muted, #888);
-    font-size: 11px;
+  .error-time,
+  .error-source {
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
 
   .error-msg {
     color: #ff6b6b;
     word-break: break-word;
-  }
-
-  .error-source {
-    color: #666;
-    font-size: 11px;
   }
 
   .diag-actions {
@@ -4798,263 +4724,45 @@
     margin-top: 6px;
   }
 
-  .section-hint {
-    font-size: 12px;
-    color: #666;
-    margin: -4px 0 12px 0;
-    line-height: 1.4;
-  }
-
-  /* ── Slice manager ───────────────────────────────────────────────────── */
-  .slice-presets {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-  }
-  .slice-presets-label {
-    font-size: 13px;
-    color: var(--text-muted, #888);
-  }
-
-  .slice-card {
-    background: #111116;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 6px;
-    margin-bottom: 6px;
-    overflow: hidden;
-    transition: border-color 0.15s;
-  }
-  .slice-card.expanded {
-    border-color: rgba(187, 134, 252, 0.25);
-  }
-
-  .slice-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
-    cursor: pointer;
-    user-select: none;
-  }
-  .slice-header:hover {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .slice-toggle {
-    flex-shrink: 0;
-  }
-
-  .slice-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary, #e0e0e0);
-    min-width: 60px;
-  }
-
-  .slice-info {
-    font-size: 12px;
-    color: #666;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .slice-chevron {
-    font-size: 13px;
-    color: #666;
-    flex-shrink: 0;
-  }
-
-  .slice-remove {
-    background: none;
-    border: none;
-    color: #555;
-    font-size: 19px;
-    cursor: pointer;
-    padding: 0 4px;
-    line-height: 1;
-    border-radius: 4px;
-    flex-shrink: 0;
-    transition: color 0.15s, background 0.15s;
-  }
-  .slice-remove:hover {
-    color: #ff4757;
-    background: rgba(255, 71, 87, 0.1);
-  }
-
-  .slice-body {
-    padding: 8px 12px 14px;
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .slice-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .slice-field-label {
-    font-size: 12px;
-    color: var(--text-muted, #888);
-    min-width: 80px;
-    font-weight: 600;
-  }
-
-  .slice-input {
-    flex: 1;
-    background: #0a0a0e;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: var(--text-primary, #e0e0e0);
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 13px;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-  }
-  .slice-input:focus {
-    border-color: rgba(187, 134, 252, 0.4);
-    outline: none;
-  }
-
-  .slice-subsection {
-    margin-top: 4px;
-  }
-
-  .slice-subsection-title {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #666;
-    display: block;
-    margin-bottom: 4px;
-  }
-
-  .add-slice-btn {
-    margin-top: 8px;
-  }
-
-  .master-canvas-block {
-    margin-bottom: 10px;
-  }
-  .master-canvas-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .master-canvas-row .slice-input.num {
-    width: 80px;
-  }
-  .master-canvas-row .dim-x {
-    color: #777;
-    margin: 0 -4px;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-  }
-  .secondary-btn.small {
-    padding: 2px 8px;
-    font-size: 13px;
-    line-height: 1.4;
-  }
-
-  .clear-slices-btn {
-    margin-top: 4px;
-    color: var(--text-muted, #888) !important;
-    border-color: rgba(255, 255, 255, 0.06) !important;
-  }
-
-  .custom-res-inputs {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .custom-res-inputs span {
-    color: var(--text-muted, #888);
-    font-size: 13px;
-  }
-  .small-input {
-    width: 70px !important;
-  }
-
   /* Update banner */
   .update-banner {
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.12), color-mix(in srgb, var(--ga-blue-200) 8%, transparent));
-    border: 1px solid rgba(168, 85, 247, 0.3);
-    border-radius: 6px;
-    padding: 12px 14px;
-    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    background: var(--ga-selection-bg, #1f3170);
+    border: 1px solid var(--ga-selection-line, #5278ff);
+    border-radius: var(--ga-r-hard, 5px);
   }
   .update-banner-content {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 8px;
+    min-width: 0;
   }
   .update-badge {
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    background: #a855f7;
-    color: #fff;
-    padding: 2px 6px;
+    flex: 0 0 auto;
+    font-size: var(--ga-text-meta);
+    font-weight: 700;
+    background: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
+    padding: 1px 6px;
     border-radius: 3px;
   }
   .update-text {
-    font-size: 13px;
-    color: var(--text-primary, #e0e0e0);
+    font-size: var(--ga-text-body);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
   .update-current {
-    font-size: 12px;
-    color: var(--text-muted, #666);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #ada9a2);
   }
   .update-links {
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
-  }
-  .update-link {
-    font-size: 12px;
-    font-weight: 600;
-    padding: 4px 10px;
-    background: rgba(168, 85, 247, 0.15);
-    border: 1px solid rgba(168, 85, 247, 0.3);
-    color: #a855f7;
-    border-radius: 3px;
-    text-decoration: none;
-    transition: all 0.15s;
-  }
-  .update-link:hover {
-    background: rgba(168, 85, 247, 0.25);
-  }
-  .update-link-notes {
-    font-size: 12px;
-    color: var(--text-secondary, #888);
-    text-decoration: none;
-    padding: 4px 8px;
-  }
-  .update-link-notes:hover {
-    color: var(--text-primary, #e0e0e0);
-    text-decoration: underline;
-  }
-  .update-cta-btn {
-    font-size: 13px;
-    font-weight: 600;
-    padding: 6px 14px;
-    background: linear-gradient(90deg, #FF8577, var(--ga-blue-200));
-    border: none;
-    color: #0a0a0a;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: filter 0.15s, transform 0.15s;
-  }
-  .update-cta-btn:hover {
-    filter: brightness(1.1);
-    transform: translateY(-1px);
   }
 
   /* Banner shown above the GPU toggles when any of them has diverged
@@ -5069,12 +4777,12 @@
     padding: 10px 12px;
     background: rgba(251, 191, 36, 0.10);
     border: 1px solid rgba(251, 191, 36, 0.45);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
   }
   .gpu-restart-text {
     flex: 1;
     color: #e6c66a;
-    font-size: 13px;
+    font-size: var(--ga-text-meta);
     line-height: 1.45;
   }
   .gpu-restart-text strong {

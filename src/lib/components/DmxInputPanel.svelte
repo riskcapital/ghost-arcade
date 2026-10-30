@@ -226,7 +226,7 @@
         <span></span>
       </label>
       <strong class="card-title">Input</strong>
-      <span class="state" class:live={stateLabel === 'LISTENING'} class:error={stateLabel === 'ERROR'}>{stateLabel}</span>
+      <span class="state" class:live={stateLabel === 'LISTENING'} class:error={stateLabel === 'ERROR'}>{stateLabel.charAt(0) + stateLabel.slice(1).toLowerCase()}</span>
     </header>
     <div class="output-grid">
       <label class="wide">
@@ -567,9 +567,9 @@
   }
 
   .pm-card {
-    background: #111116;
-    border: 1px solid #2a2a30;
-    border-radius: 6px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
     overflow: hidden;
   }
 
@@ -579,12 +579,12 @@
     gap: 8px;
     align-items: center;
     padding: 10px 12px;
-    background: #15151b;
-    border-bottom: 1px solid #24242a;
+    background: var(--ga-sub);
+    border-bottom: 1px solid var(--ga-line-2);
   }
 
   .card-title {
-    color: #e7e7eb;
+    color: var(--ga-ink-0);
     font-size: 13px;
   }
 
@@ -604,15 +604,15 @@
     min-width: 0;
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid #33333a;
-    border-radius: 4px;
-    background: #09090c;
-    color: #e7e7eb;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
     padding: 7px 8px;
   }
 
   input.invalid {
-    border-color: #ff6b6b !important;
+    border-color: var(--ga-rec, #ff3b30) !important;
   }
 
   .power-toggle {
@@ -635,7 +635,7 @@
     width: 26px;
     height: 14px;
     border-radius: 7px;
-    background: #3b3b42;
+    background: var(--ga-raise);
     position: relative;
     pointer-events: none;
   }
@@ -648,7 +648,7 @@
     left: 2px;
     top: 2px;
     border-radius: 50%;
-    background: #aaa;
+    background: var(--ga-ink-1);
     transition: transform 120ms, background 120ms;
   }
 
@@ -662,18 +662,17 @@
   }
 
   .state {
-    color: #686873;
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
-    letter-spacing: 0.08em;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
   }
 
   .state.live {
-    color: #4ade80;
+    color: var(--ga-green, #46d18a);
   }
 
   .state.error {
-    color: #ff6b6b;
+    color: var(--ga-rec, #ff3b30);
   }
 
   .output-grid,
@@ -694,10 +693,8 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    color: #858590;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta, 11px);
   }
 
   .output-grid .wide {
@@ -713,7 +710,7 @@
     text-transform: none !important;
     letter-spacing: 0 !important;
     font-size: 12px !important;
-    color: #aaa !important;
+    color: var(--ga-ink-1) !important;
     grid-column: 1 / -1;
   }
 
@@ -731,8 +728,8 @@
     flex-wrap: wrap;
     gap: 6px 14px;
     padding: 8px 12px 10px;
-    border-top: 1px solid #202026;
-    color: #777781;
+    border-top: 1px solid var(--ga-line-1);
+    color: var(--ga-ink-2);
     font-size: 11px;
   }
 
@@ -747,12 +744,12 @@
   }
 
   .stats-row .source {
-    color: #a5a5ae;
+    color: var(--ga-ink-1);
   }
 
   .error-text,
   .issue {
-    color: #ff8a8a;
+    color: var(--ga-rec, #ff3b30);
   }
 
   .issue,
@@ -764,7 +761,7 @@
   }
 
   .section-note {
-    color: #777781;
+    color: var(--ga-ink-2);
   }
 
   .section-note code {
@@ -777,11 +774,11 @@
     justify-content: space-between;
     gap: 10px;
     margin-top: 6px;
-    color: #777781;
+    color: var(--ga-ink-2);
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .monitor-select {
@@ -796,10 +793,10 @@
   .add-button,
   .learn-button,
   .remove-button {
-    border: 1px solid #323239;
-    border-radius: 4px;
-    background: #141419;
-    color: #8c8c96;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
+    color: var(--ga-ink-1);
     cursor: pointer;
     font-size: 12px;
   }
@@ -836,12 +833,12 @@
   .remove-button {
     width: 28px;
     height: 28px;
-    color: #888;
+    color: var(--ga-ink-2);
   }
 
   .remove-button:hover {
-    border-color: #ff6b6b;
-    color: #ff6b6b;
+    border-color: var(--ga-rec, #ff3b30);
+    color: var(--ga-rec, #ff3b30);
   }
 
   .monitor-card {
@@ -866,9 +863,9 @@
     margin: 0 12px 10px;
     padding: 8px 10px;
     border: 1px solid rgba(251, 191, 36, 0.4);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     background: rgba(251, 191, 36, 0.06);
-    color: #e7e7eb;
+    color: var(--ga-ink-0);
     font-size: 12px;
   }
 
@@ -886,12 +883,12 @@
   }
 
   .empty {
-    color: #70707a;
+    color: var(--ga-ink-2);
     font-size: 11px;
     line-height: 1.45;
     padding: 10px 12px;
-    border: 1px dashed #2a2a30;
-    border-radius: 6px;
+    border: 1px dashed var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
   }
 
   .binding-table {
@@ -905,9 +902,9 @@
     gap: 6px;
     align-items: center;
     padding: 6px 8px;
-    border: 1px solid #2a2a30;
-    border-radius: 5px;
-    background: #111116;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
   }
 
   .binding-row.head {
@@ -915,10 +912,11 @@
     background: none;
     padding-top: 0;
     padding-bottom: 0;
-    color: #686873;
-    font-size: 9px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .binding-row.learned {

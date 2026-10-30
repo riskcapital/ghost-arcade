@@ -256,13 +256,13 @@
     onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"
-    aria-label="Effect Picker"
+    aria-label="Effect picker"
     tabindex="0"
   >
     <div class="modal-panel">
       <!-- Header -->
       <div class="modal-header">
-        <h2>Add Effects</h2>
+        <h2>Add effects</h2>
         <div class="header-right">
           <input
             type="file"
@@ -276,7 +276,7 @@
             onclick={() => fileInput?.click()}
             title="Import a .dmfx.json custom effect"
           >
-            + Import Custom
+            + Import custom
           </button>
           <button
             class="template-btn"
@@ -414,9 +414,9 @@
   }
 
   .modal-panel {
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 12px;
+    background: var(--ga-panel, #0d0d10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 7px);
     width: 94%;
     max-width: 760px;
     max-height: 85vh;
@@ -430,96 +430,108 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 18px 10px;
-    border-bottom: 1px solid #222;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   .modal-header h2 {
     margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary, #eee);
+    font-size: var(--ga-text-heading);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .header-right {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
 
   .selection-count {
-    font-size: 13px;
-    color: #BB86FC;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1, #9aa0ac);
     font-weight: 500;
+    margin: 0 4px;
   }
 
   .close-btn {
-    /* Sized for a comfortable 32×32 minimum tap target — was 22×22 before,
-       which failed the iOS / Android accessibility floor. */
+    /* 32×32 keeps a comfortable tap target. */
     background: none;
     border: none;
-    color: var(--text-muted, #888);
-    font-size: 23px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-display);
     cursor: pointer;
     width: 32px;
     height: 32px;
     padding: 0;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 3px);
     line-height: 1;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s;
   }
 
   .close-btn:hover {
-    background: var(--bg-tertiary, #333);
-    color: var(--text-primary, #eee);
+    background: var(--ga-raise, #26221c);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   /* Search row + expand/collapse controls share one bar so the
      header stays compact. */
   .search-bar {
-    padding: 8px 18px;
+    padding: 8px 16px;
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
   }
 
   .search-input {
     flex: 1;
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #333;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: var(--text-primary, #eee);
-    font-size: 14px;
+    min-width: 0;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 10px;
+    color: var(--ga-ink-0, #eef0f4);
+    font-size: var(--ga-text-body);
     outline: none;
     transition: border-color 0.15s;
   }
-  .search-input::placeholder { color: #666; }
-  .search-input:focus { border-color: #BB86FC; }
+  .search-input::placeholder { color: var(--ga-ink-3, #3a404a); }
+  .search-input:focus { border-color: var(--ga-focus, #8aa4ff); }
 
   .accordion-controls {
     display: flex;
     gap: 4px;
     flex-shrink: 0;
   }
-  .ctrl-btn {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #333;
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: #999;
-    font-size: 12px;
+
+  /* Secondary buttons: one look across the picker. */
+  .ctrl-btn,
+  .import-btn,
+  .template-btn,
+  .secondary-btn {
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 10px;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s, color 0.15s;
     white-space: nowrap;
   }
-  .ctrl-btn:hover {
-    background: #1f1f23;
-    color: var(--text-primary, #eee);
-    border-color: #555;
+  .ctrl-btn:hover,
+  .import-btn:hover,
+  .template-btn:hover,
+  .secondary-btn:hover {
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   /* ── Accordion sections ────────────────────────────────────────── */
@@ -527,7 +539,7 @@
     overflow-y: auto;
     flex: 1;
     min-height: 0;
-    padding: 4px 12px 12px;
+    padding: 0 12px 12px;
   }
 
   .accordion-list::-webkit-scrollbar {
@@ -535,41 +547,43 @@
   }
 
   .accordion-list::-webkit-scrollbar-thumb {
-    background: #444;
+    background: var(--ga-line-3, #444);
     border-radius: 3px;
   }
 
   .cat-section {
-    border-bottom: 1px solid #1d1d22;
+    border-bottom: 1px solid var(--ga-line-1, rgba(255, 255, 255, 0.07));
     padding-bottom: 4px;
   }
   .cat-section:last-child { border-bottom: none; }
 
-  /* Category header = sticky-ish accent bar that toggles its grid. */
+  /* Category header: an eyebrow section label that folds its grid. */
   .cat-header {
     display: flex;
     align-items: center;
     gap: 8px;
     width: 100%;
-    background: #131318;
+    min-height: var(--ga-control-h, 26px);
+    background: transparent;
     border: none;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: #BB86FC;
-    font-size: 12px;
-    font-weight: 600;
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 8px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     cursor: pointer;
-    transition: background 0.12s;
-    margin: 8px 0 6px;
+    transition: background 0.12s, color 0.12s;
+    margin: 6px 0 4px;
     text-align: left;
   }
   .cat-header:hover {
-    background: var(--bg-tertiary, #1a1a20);
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-1, #9aa0ac);
   }
   .cat-header.empty {
-    color: #555;
+    color: var(--ga-ink-3, #3a404a);
     background: transparent;
     cursor: default;
   }
@@ -577,8 +591,8 @@
   /* Tiny chevron rotates 90° when section is open. */
   .cat-chevron {
     display: inline-block;
-    font-size: 10px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-micro);
+    color: var(--ga-ink-2, #89857e);
     width: 10px;
     transition: transform 0.15s ease;
     flex-shrink: 0;
@@ -591,15 +605,20 @@
     flex: 1;
   }
 
+  /* Count badge. */
   .cat-count {
-    color: #555;
-    font-weight: 500;
-    font-size: 11px;
-    background: rgba(187, 134, 252, 0.08);
-    border: 1px solid rgba(187, 134, 252, 0.18);
-    border-radius: 999px;
-    padding: 1px 8px;
-    min-width: 22px;
+    box-sizing: border-box;
+    height: 14px;
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 7px;
+    background: var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-micro);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    line-height: 14px;
     text-align: center;
   }
 
@@ -610,7 +629,7 @@
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 4px;
-    padding: 0 4px 4px;
+    padding: 0 0 4px;
   }
 
   .effect-row {
@@ -619,10 +638,10 @@
     gap: 8px;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 5px 7px 5px 5px;
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 4px 6px 4px 4px;
     cursor: pointer;
-    transition: all 0.12s;
+    transition: background 0.12s, border-color 0.12s;
     text-align: left;
     width: 100%;
     min-width: 0;
@@ -630,13 +649,13 @@
   }
 
   .effect-row:hover {
-    background: #1c1c22;
-    border-color: #333;
+    background: var(--ga-card, #13161c);
+    border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   .effect-row.selected {
-    background: #BB86FC11;
-    border-color: #BB86FC;
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   .effect-row.native-unavailable {
@@ -654,7 +673,7 @@
     width: 36px;
     height: 36px;
     min-width: 36px;
-    border-radius: 5px;
+    border-radius: var(--ga-r-hard, 3px);
     flex-shrink: 0;
     position: relative;
   }
@@ -669,8 +688,8 @@
   }
 
   .row-name {
-    font-size: 13px;
-    color: var(--text-primary, #ddd);
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-0, #eef0f4);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -678,29 +697,12 @@
   }
 
   .effect-row.selected .row-name {
-    color: #BB86FC;
-  }
-
-  .pending-badge {
-    display: inline-block;
-    margin-left: 5px;
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    vertical-align: middle;
-  }
-
-  .pending-badge {
-    background: rgba(148, 163, 184, 0.11);
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    color: #94a3b8;
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .row-desc {
-    font-size: 11px;
-    color: #666;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -709,110 +711,49 @@
   .no-results {
     text-align: center;
     padding: 40px 0;
-    color: #666;
-    font-size: 14px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-body);
   }
 
   .modal-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 18px;
-    border-top: 1px solid #222;
+    gap: 12px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   .hint {
-    font-size: 11px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .footer-actions {
     display: flex;
-    gap: 8px;
-  }
-
-  .secondary-btn {
-    background: #333;
-    border: 1px solid #444;
-    border-radius: 6px;
-    padding: 7px 14px;
-    color: var(--text-primary, #eee);
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .secondary-btn:hover {
-    background: #3a3a3a;
-    border-color: #555;
+    gap: 6px;
   }
 
   .primary-btn {
-    background: #BB86FC;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-violet, #9b87f5);
     border: none;
-    border-radius: 6px;
-    padding: 7px 16px;
-    color: #000;
-    font-size: 13px;
-    font-weight: 600;
+    border-radius: var(--ga-r-soft, 7px);
+    padding: 0 14px;
+    color: var(--ga-blue-800, #0b0d11);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: filter 0.15s;
   }
 
   .primary-btn:hover:not(:disabled) {
-    background: #d0a8ff;
+    filter: brightness(1.06);
   }
 
   .primary-btn:disabled {
     opacity: 0.4;
     cursor: default;
-  }
-
-  /* ── Tier lockout styles ── */
-  .effect-row.locked {
-    opacity: 0.45;
-    cursor: default;
-  }
-
-  .effect-row.locked:hover {
-    background: rgba(255, 255, 255, 0.03);
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-
-  .lock-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.5);
-    border-radius: 5px;
-    font-size: 14px;
-  }
-
-  .tier-badge {
-    display: inline-block;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    padding: 1px 4px;
-    border-radius: 3px;
-    background: #f59e0b;
-    color: #000;
-    margin-left: 4px;
-    vertical-align: middle;
-  }
-
-  .upgrade-toast {
-    background: rgba(245, 158, 11, 0.15);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    border-radius: 6px;
-    padding: 8px 14px;
-    margin: 0 18px;
-    font-size: 13px;
-    color: #f59e0b;
-    text-align: center;
-    animation: fadeIn 0.2s ease-out;
   }
 
   @keyframes fadeIn {
@@ -821,86 +762,62 @@
   }
 
   /* ── Custom-effect import UI ── */
-  .import-btn,
-  .template-btn {
-    background: var(--bg-tertiary, #1a1a1e);
-    border: 1px solid #333;
-    border-radius: 6px;
-    padding: 5px 10px;
-    color: var(--text-primary, #ccc);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .import-btn:hover,
-  .template-btn:hover {
-    background: #252528;
-    color: #fff;
-    border-color: #BB86FC;
-  }
-
-  .import-btn {
-    color: #BB86FC;
-    border-color: #BB86FC55;
-  }
-
   .import-banner {
-    margin: 8px 18px 0;
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-size: 13px;
+    margin: 8px 16px 0;
+    padding: 6px 10px;
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-control);
     animation: fadeIn 0.2s ease-out;
   }
 
   .import-banner.ok {
-    background: rgba(34, 197, 94, 0.12);
-    border: 1px solid rgba(34, 197, 94, 0.35);
-    color: #4ade80;
+    background: color-mix(in srgb, var(--ga-live, #22c55e) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-live, #22c55e) 35%, transparent);
+    color: var(--ga-live, #4ade80);
   }
 
   .import-banner.err {
-    background: rgba(239, 68, 68, 0.12);
-    border: 1px solid rgba(239, 68, 68, 0.35);
-    color: #f87171;
+    background: color-mix(in srgb, var(--ga-rec, #ef4444) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-rec, #ef4444) 35%, transparent);
+    color: var(--ga-rec, #f87171);
   }
 
+  /* Legend on effects you imported. */
   .custom-badge {
     display: inline-block;
-    font-size: 9px;
+    font-size: var(--ga-text-micro);
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     padding: 1px 4px;
-    border-radius: 3px;
-    background: #BB86FC;
-    color: #000;
+    border-radius: var(--ga-r-hard, 3px);
+    background: var(--ga-violet, #9b87f5);
+    color: var(--ga-blue-800, #0b0d11);
     margin-left: 4px;
     vertical-align: middle;
   }
 
   .effect-row.custom .row-thumb {
-    border: 1px solid #BB86FC55;
+    border: 1px solid var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .delete-btn {
     position: absolute;
     top: 2px;
     right: 2px;
-    background: #2a1a2a;
-    border: 1px solid #BB86FC33;
-    color: #BB86FC;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
     width: 18px;
     height: 18px;
-    border-radius: 3px;
-    font-size: 14px;
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-title);
     line-height: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     padding: 0;
-    transition: all 0.15s;
+    transition: opacity 0.15s, color 0.15s, border-color 0.15s;
     opacity: 0;
   }
 
@@ -909,8 +826,7 @@
   }
 
   .delete-btn:hover {
-    background: #BB86FC;
-    color: #000;
-    border-color: #BB86FC;
+    color: var(--ga-rec, #ff4438);
+    border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 45%, transparent);
   }
 </style>
