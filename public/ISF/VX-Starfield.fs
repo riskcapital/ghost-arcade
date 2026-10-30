@@ -54,12 +54,13 @@ vec3 hash32(vec2 p) {
     return fract((p3.xxy + p3.yzz) * p3.zyx);
 }
 
-float sdSegmentT(vec2 p, vec2 a, vec2 b, out float t) {
+// Distance to a segment, and where along it the nearest point lies.
+vec2 sdSegmentT(vec2 p, vec2 a, vec2 b) {
     vec2 pa = p - a;
     vec2 ba = b - a;
     float bb = max(dot(ba, ba), 1e-12);
-    t = clamp(dot(pa, ba) / bb, 0.0, 1.0);
-    return length(pa - ba * t);
+    float t = clamp(dot(pa, ba) / bb, 0.0, 1.0);
+    return vec2(length(pa - ba * t), t);
 }
 
 void main() {
@@ -122,8 +123,9 @@ void main() {
                     // The warp draws each star back toward the centre, never past a cell.
                     float lenS = min(length(ps) * tailShare, 0.9 * cellScr);
                     vec2 tail = ps - normalize(ps + 1e-6) * lenS;
-                    float t;
-                    float d = sdSegmentT(p, ps, tail, t) / px;
+                    vec2 seg = sdSegmentT(p, ps, tail);
+                    float t = seg.y;
+                    float d = seg.x / px;
                     float h4 = hash21(cell + seed + 7.7);
                     float h5 = hash21(cell + seed + 3.1);
                     float mag = 0.3 + 1.6 * pow(h4, 7.0);
