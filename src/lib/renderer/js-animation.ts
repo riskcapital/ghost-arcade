@@ -185,11 +185,16 @@ export function createJSAnimationContext(
     }
   };
 
+  // Safe to call more than once; only drops the cache entry if it is
+  // still this context (the id may have been reused since).
+  let disposed = false;
   const dispose = () => {
+    if (disposed) return;
+    disposed = true;
     texture.dispose();
     iframe.remove();
     URL.revokeObjectURL(blobUrl);
-    jsAnimationCache.delete(id);
+    if (jsAnimationCache.get(id) === context) jsAnimationCache.delete(id);
   };
 
   const context: JSAnimationContext = {

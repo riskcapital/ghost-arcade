@@ -356,14 +356,7 @@ export class AudioAnalyzer {
    */
   private _installHotplugHandlers(): void {
     this._uninstallHotplugHandlers();
-
-    this.deviceChangeHandler = () => {
-      console.warn('[AudioAnalyzer] Audio device changed — re-initialising analyser');
-      this._recoverAudioPipeline();
-    };
-    try {
-      navigator.mediaDevices?.addEventListener?.('devicechange', this.deviceChangeHandler);
-    } catch {}
+    this._watchDeviceChanges();
 
     // AudioContext can auto-suspend on device loss or user-gesture timeout.
     // Try to resume; if that fails, do a full rebuild.
@@ -380,6 +373,16 @@ export class AudioAnalyzer {
       this.audioContext.addEventListener('statechange', this.ctxStateHandler);
     }
   }
+  private _watchDeviceChanges(): void {
+    if (this.deviceChangeHandler) return;
+    this.deviceChangeHandler = () => {
+      console.warn('[AudioAnalyzer] Audio device changed — re-initialising analyser');
+      void this._recoverAudioPipeline();
+    };
+    try {
+      navigator.mediaDevices?.addEventListener?.('devicechange', this.deviceChangeHandler);
+    } catch {}
+  }
   private _uninstallHotplugHandlers(): void {
     if (this.deviceChangeHandler) {
       try { navigator.mediaDevices?.removeEventListener?.('devicechange', this.deviceChangeHandler); } catch {}
@@ -391,28 +394,61 @@ export class AudioAnalyzer {
     this.ctxStateHandler = null;
   }
   private _recoveryInFlight = false;
+  private _recoverAgain = false;
+  private _stopCount = 0;
   private async _recoverAudioPipeline(): Promise<void> {
-    if (this._recoveryInFlight) return;
+    if (this._recoveryInFlight) { this._recoverAgain = true; return; }
     this._recoveryInFlight = true;
+    this._recoverAgain = false;
     const src = this.lastSourceType;
     const el = this.lastMediaElement;
     const micId = this.lastMicDeviceId;
+    let failed = false;
+    // Each start begins with one stop(); any more mean the user stopped or
+    // switched sources meanwhile, and this recovery must leave that alone.
+    let expectStops = -1;
     try {
       await this.stop();
+      const stops = this._stopCount;
       // Brief delay gives the OS time to finish its device transition.
       await new Promise(r => setTimeout(r, 300));
+      if (stops !== this._stopCount) return;
+      expectStops = stops + 1;
       if (src === 'microphone') await this.startMicrophone(micId);
       else if (src === 'system') await this.startSystemAudio();
       else if (src === 'mediaElement' && el) await this.startMediaElement(el);
     } catch (err) {
       console.error('[AudioAnalyzer] Audio pipeline recovery failed:', err);
+      if (expectStops < 0 || this._stopCount === expectStops) {
+        failed = true;
+        // The input is gone (e.g. unplugged). Drop the levels so audio-driven
+        // params fall back instead of freezing at their last value, and keep
+        // listening so plugging it back in recovers.
+        this._publishSilence();
+        this._watchDeviceChanges();
+      }
     } finally {
       this._recoveryInFlight = false;
     }
+    // A device change arrived while this attempt ran; it may be the replug.
+    const again = this._recoverAgain;
+    this._recoverAgain = false;
+    if (again && failed) void this._recoverAudioPipeline();
+  }
+
+  /** One frame of silence, so listeners drop to zero rather than hold the last levels. */
+  private _publishSilence(): void {
+    this.resetState();
+    if (!this.onAnalysis) return;
+    const bins = this.fftData.length || this.fftSize / 2;
+    const fft = new Float32Array(bins).fill(-100);
+    const wave = new Float32Array(bins);
+    this.onAnalysis(this.analyzeBuffers(fft, wave, this.audioContext?.sampleRate ?? 48000, performance.now()));
   }
 
   /** Stop all audio analysis and release resources */
   async stop(): Promise<void> {
+    this._stopCount++;
     this.isRunning = false;
     this._uninstallHotplugHandlers();
 

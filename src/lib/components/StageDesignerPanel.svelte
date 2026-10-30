@@ -130,10 +130,12 @@
 	      surfaceStore.beginHistoryGesture();
 	      nudgeGestureOpen = true;
 	    }
+	    const updates: { sliceId: string; patch: { polygon: BezierPoint[] } }[] = [];
 	    for (const sl of targets) {
 	      const polygon = nudgeSlicePolygon(sl.polygon, selectedVertex, offset);
-	      if (polygon) surfaceStore.updateSlice(sl.id, { polygon });
+	      if (polygon) updates.push({ sliceId: sl.id, patch: { polygon } });
 	    }
+	    surfaceStore.updateSlices(updates);
 	    noteAltArrow(e);
 	    return true;
 	  }
@@ -429,14 +431,17 @@
 	      if (vertexDrag.kind === 'sliceMove') {
 	        const dx = travel.x;
 	        const dy = travel.y;
-	        for (const item of vertexDrag.startPolygons) {
-	          const moved: BezierPoint[] = item.polygon.map(p => ({
-	            x: p.x + dx, y: p.y + dy,
-	            cpIn:  p.cpIn  ? { x: p.cpIn.x  + dx, y: p.cpIn.y  + dy } : undefined,
-	            cpOut: p.cpOut ? { x: p.cpOut.x + dx, y: p.cpOut.y + dy } : undefined,
-	          }));
-	          surfaceStore.updateSlice(item.sliceId, { polygon: moved });
-	        }
+	        // One store write per move for the whole selection.
+	        surfaceStore.updateSlices(vertexDrag.startPolygons.map(item => ({
+	          sliceId: item.sliceId,
+	          patch: {
+	            polygon: item.polygon.map((p): BezierPoint => ({
+	              x: p.x + dx, y: p.y + dy,
+	              cpIn:  p.cpIn  ? { x: p.cpIn.x  + dx, y: p.cpIn.y  + dy } : undefined,
+	              cpOut: p.cpOut ? { x: p.cpOut.x + dx, y: p.cpOut.y + dy } : undefined,
+	            })),
+	          },
+	        })));
 	      } else if (vertexDrag.kind === 'sliceRotate') {
         // Rotate every anchor + handle around the centroid by the
         // angular delta from initial pointer position to current.

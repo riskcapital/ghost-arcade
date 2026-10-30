@@ -9,6 +9,102 @@ import { ControllerLights, pairedOutput } from './controllerLights';
 import { controllerLightsStore } from './controllerLightsStore';
 import { controllerProfiles, controllerCell, detectControllerProfile } from './controllerProfiles';
 
+const CLOCK_PPQN = 24;
+const CLOCK_BPM_MIN = 30;
+const CLOCK_BPM_MAX = 300;
+
+/**
+ * Steady tempo from MIDI clock ticks (24 per quarter note).
+ *
+ * Fits a line through the last 48 tick times, so one late tick barely moves
+ * it. A new tempo is reported when it moves 0.3 BPM or more (at most four
+ * times a second), or 0.1 BPM in the same direction for a whole second.
+ * Tick-to-tick jitter therefore never reaches the tempo (or Link peers).
+ */
+export class ClockTempoTracker {
+  static readonly WINDOW = 48;
+  static readonly MIN_TICKS = 24;
+  static readonly STEP_BPM = 0.3;
+  static readonly MIN_INTERVAL_MS = 250;
+  static readonly DRIFT_HOLD_MS = 1000;
+  /** A gap longer than this is a stopped clock, not a slow tick. */
+  static readonly GAP_MS = 500;
+
+  private ticks: number[] = [];
+  private published: number | null = null;
+  private publishedAt = -Infinity;
+  private driftSince: number | null = null;
+  private driftSign = 0;
+
+  /** Drop tick history (transport Start). The last tempo is kept. */
+  restart(): void {
+    this.ticks = [];
+    this.driftSince = null;
+  }
+
+  /** Forget everything (clock in turned off). */
+  reset(): void {
+    this.restart();
+    this.published = null;
+    this.publishedAt = -Infinity;
+  }
+
+  /** Add a tick at `timeMs`. Returns the tempo to publish, or null for no change. */
+  tick(timeMs: number): number | null {
+    const ticks = this.ticks;
+    const last = ticks[ticks.length - 1];
+    if (last !== undefined && (timeMs < last || timeMs - last > ClockTempoTracker.GAP_MS)) this.restart();
+    ticks.push(timeMs);
+    if (ticks.length > ClockTempoTracker.WINDOW) ticks.shift();
+    if (ticks.length < ClockTempoTracker.MIN_TICKS) return null;
+
+    // Least-squares slope of tick time against tick number: ms per tick.
+    const n = ticks.length;
+    const meanIndex = (n - 1) / 2;
+    let meanTime = 0;
+    for (let i = 0; i < n; i++) meanTime += ticks[i];
+    meanTime /= n;
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+      const di = i - meanIndex;
+      num += di * (ticks[i] - meanTime);
+      den += di * di;
+    }
+    const tickMs = num / den;
+    if (!(tickMs > 0)) return null;
+    const bpm = 60000 / (CLOCK_PPQN * tickMs);
+    if (bpm < CLOCK_BPM_MIN || bpm > CLOCK_BPM_MAX) return null;
+    const rounded = Math.round(bpm * 10) / 10;
+
+    if (this.published === null) return this.publish(rounded, timeMs);
+    const delta = rounded - this.published;
+    const size = Math.abs(delta);
+    if (size >= ClockTempoTracker.STEP_BPM - 1e-6) {
+      return timeMs - this.publishedAt >= ClockTempoTracker.MIN_INTERVAL_MS ? this.publish(rounded, timeMs) : null;
+    }
+    if (size >= 0.1 - 1e-6) {
+      const sign = Math.sign(delta);
+      if (this.driftSince === null || sign !== this.driftSign) {
+        this.driftSince = timeMs;
+        this.driftSign = sign;
+      } else if (timeMs - this.driftSince >= ClockTempoTracker.DRIFT_HOLD_MS) {
+        return this.publish(rounded, timeMs);
+      }
+      return null;
+    }
+    this.driftSince = null;
+    return null;
+  }
+
+  private publish(bpm: number, timeMs: number): number {
+    this.published = bpm;
+    this.publishedAt = timeMs;
+    this.driftSince = null;
+    return bpm;
+  }
+}
+
 export class MidiManager {
   private access: MIDIAccess | null = null;
   private activeInput: MIDIInput | null = null;
@@ -34,21 +130,20 @@ export class MidiManager {
   private static _LAST_MSG_MIN_INTERVAL_MS = 33;
 
   // ===== MIDI Clock (receive) state =====
-  // 24 PPQN means 24 ticks per quarter note. We measure intervals between
-  // consecutive 0xF8 ticks, average across the last N, and convert to BPM.
-  // Reset on 0xFA Start so the first beat after Start is clean.
-  private _clockTickTimes: number[] = [];
-  private static _CLOCK_TICK_AVG_WINDOW = 48; // 2 quarter notes — fast lock + stable
-  private static _CLOCK_PPQN = 24;
-  // Stop processing ticks if the device sends them out of spec (more than
-  // ~300 BPM or less than ~30 BPM). Keeps audioStore.bpm sane against bad
-  // hardware or test signals.
-  private static _CLOCK_BPM_MIN = 30;
-  private static _CLOCK_BPM_MAX = 300;
+  // 24 PPQN means 24 ticks per quarter note. Tick times come from each
+  // MIDI event's own timestamp; ClockTempoTracker turns them into a steady
+  // tempo. Tick history resets on 0xFA Start so the first beat after Start is clean.
+  private _clockTempo = new ClockTempoTracker();
+  private static _CLOCK_PPQN = CLOCK_PPQN;
   // Stale-detection: if no tick arrives for >500ms we mark clock-in as
   // stopped so the BPM readout doesn't keep reporting the last known value.
-  private _clockStaleTimer: number | null = null;
+  private _clockStaleTimer: ReturnType<typeof setTimeout> | null = null;
   private _clockStalePeriodMs = 500;
+
+  // The input the user picked. While it is unplugged another input stands
+  // in (not saved); when it comes back it takes over again. Undefined until
+  // read from the saved selection on the first device scan.
+  private chosenInputId: string | null | undefined = undefined;
 
   // Last clock-in BPM bridged into audioStore — used by the subscriber
   // installed in init() to dedupe writes. Reset to null on disable so a
@@ -228,37 +323,41 @@ export class MidiManager {
     });
     midiStore.setOutputDevices(outputs);
 
-    const state = get(midiStore);
+    let state = get(midiStore);
+    const isConnected = (id: string | null | undefined) => !!id && inputs.some(d => d.id === id && d.state === 'connected');
 
-    // If selected input disconnected, detach listener
+    // Use the chosen input whenever it is connected. Otherwise borrow the
+    // first connected one for now without saving it, so the chosen input
+    // takes over again when it is plugged back in.
+    if (this.chosenInputId === undefined) this.chosenInputId = state.selectedDeviceId;
+    const inputId = isConnected(this.chosenInputId) ? this.chosenInputId!
+      : isConnected(state.selectedDeviceId) ? state.selectedDeviceId
+      : inputs.find(d => d.state === 'connected')?.id ?? state.selectedDeviceId;
+    if (inputId !== state.selectedDeviceId) {
+      midiStore.selectDevice(inputId, false);
+      state = get(midiStore);
+    }
+
     if (state.selectedDeviceId) {
-      const dev = inputs.find(d => d.id === state.selectedDeviceId);
-      if (!dev || dev.state === 'disconnected') {
+      if (!isConnected(state.selectedDeviceId)) {
         this.detachInput();
       } else if (!this.activeInput || this.activeInput.id !== state.selectedDeviceId) {
-        // Device reconnected — reattach
+        // Reconnected, or switched to or from a stand-in
+        if (this.activeInput) this.detachInput();
         this.attachInput(state.selectedDeviceId);
       }
     }
 
     const clockInputId = state.selectedClockInputId || state.selectedDeviceId;
     if (clockInputId) {
-      const clockDev = inputs.find(d => d.id === clockInputId);
-      if (!clockDev || clockDev.state === 'disconnected') {
+      if (!isConnected(clockInputId)) {
         this.detachClockInput();
       } else if (!this.activeClockInput || this.activeClockInput.id !== clockInputId) {
+        this.detachClockInput();
         this.attachClockInput(clockInputId);
       }
     } else {
       this.detachClockInput();
-    }
-
-    // Auto-select first input if none selected (or try remembered device)
-    if (!state.selectedDeviceId || !inputs.find(d => d.id === state.selectedDeviceId && d.state === 'connected')) {
-      const firstConnected = inputs.find(d => d.state === 'connected');
-      if (firstConnected) {
-        this.selectDevice(firstConnected.id);
-      }
     }
 
     // Re-resolve the clock-send output handle if it was disconnected /
@@ -275,7 +374,9 @@ export class MidiManager {
     }
   }
 
+  /** The user picks an input. It is saved and followed across unplug/replug. */
   selectDevice(deviceId: string) {
+    this.chosenInputId = deviceId;
     this.detachInput();
     midiStore.selectDevice(deviceId);
     this.attachInput(deviceId);
@@ -297,7 +398,7 @@ export class MidiManager {
   setClockInEnabled(enabled: boolean) {
     midiStore.setClockInEnabled(enabled);
     if (!enabled) {
-      this._clockTickTimes = [];
+      this._clockTempo.reset();
       midiStore.setClockInRunning(false);
       midiStore.setClockInBPM(null);
       this.disarmClockStaleTimer();
@@ -377,7 +478,7 @@ export class MidiManager {
     // upper nibble is 0xF and a lower-nibble channel mask doesn't apply.
     if (status === 0xF8 || status === 0xFA || status === 0xFB || status === 0xFC) {
       if (!clockInputId || inputId === clockInputId) {
-        this.handleClockByte(status);
+        this.handleClockByte(status, event.timeStamp);
       }
       return;
     }
@@ -448,16 +549,18 @@ export class MidiManager {
    *  0xFB continue / 0xFC stop). Drives audioStore BPM via midiStore.
    *  Silently no-ops when clock-in is disabled in settings — saves the
    *  tick math overhead for users who don't sync over MIDI. */
-  private handleClockByte(status: number) {
+  private handleClockByte(status: number, timeStamp?: number) {
     const state = get(midiStore);
     if (!state.clockInEnabled) return;
 
-    const now = performance.now();
+    // The event's own time, not when this handler got to run: a busy main
+    // thread delivers ticks in bursts.
+    const now = typeof timeStamp === 'number' && Number.isFinite(timeStamp) && timeStamp > 0 ? timeStamp : performance.now();
 
     if (status === 0xFA) {
       // Start: reset tick history so the first measured BPM is from the
       // new transport, not the old one.
-      this._clockTickTimes = [];
+      this._clockTempo.restart();
       midiStore.setClockInRunning(true);
       this.armClockStaleTimer();
       return;
@@ -475,26 +578,9 @@ export class MidiManager {
       return;
     }
 
-    // 0xF8: tick (24 PPQN)
-    this._clockTickTimes.push(now);
-    if (this._clockTickTimes.length > MidiManager._CLOCK_TICK_AVG_WINDOW) {
-      this._clockTickTimes.shift();
-    }
-
-    // Need at least 2 samples for an interval. Compute BPM from the
-    // average tick interval over the window.
-    if (this._clockTickTimes.length >= 2) {
-      const first = this._clockTickTimes[0];
-      const last = this._clockTickTimes[this._clockTickTimes.length - 1];
-      const intervals = this._clockTickTimes.length - 1;
-      const avgTickMs = (last - first) / intervals;
-      // 24 ticks per quarter, 60s per minute → BPM = 60000 / (24 * avgTickMs)
-      const bpm = 60000 / (MidiManager._CLOCK_PPQN * avgTickMs);
-      if (bpm >= MidiManager._CLOCK_BPM_MIN && bpm <= MidiManager._CLOCK_BPM_MAX) {
-        // Round to 1 decimal so the readout doesn't jitter on every tick
-        midiStore.setClockInBPM(Math.round(bpm * 10) / 10);
-      }
-    }
+    // 0xF8: tick (24 PPQN). Publish only real tempo changes.
+    const bpm = this._clockTempo.tick(now);
+    if (bpm !== null) midiStore.setClockInBPM(bpm);
 
     // Mark running on first tick (some devices don't send 0xFA before ticks)
     if (!state.clockInRunning) midiStore.setClockInRunning(true);
@@ -505,7 +591,7 @@ export class MidiManager {
    *  stale BPM lingering on screen after a DAW silently disconnects. */
   private armClockStaleTimer() {
     if (this._clockStaleTimer !== null) clearTimeout(this._clockStaleTimer);
-    this._clockStaleTimer = window.setTimeout(() => {
+    this._clockStaleTimer = setTimeout(() => {
       midiStore.setClockInRunning(false);
       this._clockStaleTimer = null;
     }, this._clockStalePeriodMs);

@@ -2,7 +2,7 @@
   import { localServerFetch } from '../remote/remotePairing';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
+  import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, disposeThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext, disposeJSAnimationContext } from '../renderer/engine';
   import { project, layers, compositions } from '../stores/layers';
   import { compositionTransition } from '../stores/compositionTransition';
   import { buildCompositionTransitionLayers } from '../renderer/compositionTransitionLayers';
@@ -51,7 +51,7 @@
   import { showToast } from '../stores/errorToast';
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
-  import { layerRenderMeshGrid } from '../utils/meshWarp';
+  import { NativeLayerInteractionTracker, coalesceToMicrotask } from './nativeSceneSync';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixelsAsync, pruneSliceReadbackStates, isBlendRendererAvailable } from '../output/blendRenderer';
   import { isAtlasSenderSlice } from '../output/atlasLayout';
@@ -203,6 +203,7 @@
       if (!stage3DMirrorRequested) {
         stage3DMirrorRequested = true;
         void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
+          if (canvasDestroyed) return;
           stage3DMirror = acquireNativeCompositeMirror({ maxDim: 1280, fps: 30 });
         });
       }
@@ -396,10 +397,9 @@
     low: 'performance',
   } as const;
 
-  let nativeLayersUnsub: (() => void) | null = null;
   let nativeProjectUnsub: (() => void) | null = null;
   let nativeInteractionRaf: number | null = null;
-  const nativeInteractionSignatures = new Map<string, string>();
+  const nativeInteractionTracker = new NativeLayerInteractionTracker();
   const pendingNativeInteractions = new Map<string, import('$lib/api/native-renderer').NativeViewportLayerInteraction>();
   let nativeOutputSceneResyncUnsub: (() => void) | null = null;
   let nativePreviewSyncRaf: number | null = null;
@@ -414,6 +414,7 @@
   let editorCanvasGeometrySnapshot: EditorCanvasGeometry | null = null;
   let editorCanvasGeometrySignature = '';
   let editorCanvasGeometryRevision = 0;
+  let editorCanvasGeometryMeasuredAt = 0;
   // Native-active preview follows the single-render contract: the Rust/wgpu
   // core renders once and the editor views that core frame. Browser GPU
   // instruments are only allowed when the native core is unavailable.
@@ -426,21 +427,9 @@
 
   function queueNativeLayerInteractions(projectLayers: Layer[]): void {
     if (!nativeEngineRequested() || typeof requestAnimationFrame === 'undefined') return;
-    const liveIds = new Set<string>();
-    for (const layer of projectLayers) {
-      liveIds.add(layer.id);
-      const meshGrid = layerRenderMeshGrid(layer);
-      const signature = JSON.stringify([layer.corners, meshGrid]);
-      if (nativeInteractionSignatures.get(layer.id) === signature) continue;
-      nativeInteractionSignatures.set(layer.id, signature);
-      pendingNativeInteractions.set(layer.id, {
-        layer_id: layer.id,
-        corners: layer.corners,
-        mesh_grid: meshGrid,
-      });
-    }
-    for (const layerId of nativeInteractionSignatures.keys()) {
-      if (!liveIds.has(layerId)) nativeInteractionSignatures.delete(layerId);
+    // Only layers whose warp objects changed are serialized.
+    for (const interaction of nativeInteractionTracker.collect(projectLayers)) {
+      pendingNativeInteractions.set(interaction.layer_id, interaction);
     }
     if (nativeInteractionRaf !== null || pendingNativeInteractions.size === 0) return;
     nativeInteractionRaf = requestAnimationFrame(() => {
@@ -970,11 +959,136 @@
       if (tex) tex.dispose();
       textureCache.delete(key);
     }
+    if (keysToDelete.length > 0) mediaReleaseDue = true;
 
     if (textureCache.size > targetCount && (window as any).__VIDEO_DEBUG__) {
       console.warn('[textureCache] cache size', textureCache.size,
         'exceeds target', targetCount, '— all entries pinned, allowing growth');
     }
+  }
+
+  // ── Canvas-made media lifetime ──
+  // Three.js pages and JS animations run in hidden iframes, each with its
+  // own WebGL context and render loop, and output windows play videos in
+  // elements made here. Both used to outlive their layer. They are freed
+  // once no live layer uses them. Pages the VJ launcher made are its own
+  // and are never freed here.
+  const ownedThreeContextIds = new Set<string>();
+  const ownedJsContextIds = new Set<string>();
+  /** Videos made here, with the src each one plays. */
+  const ownedVideos = new Map<HTMLVideoElement, string>();
+  const releasedVideos = new WeakSet<HTMLVideoElement>();
+  /** Ends the wait on a video's first load when it is freed mid-load. */
+  const pendingVideoLoads = new WeakMap<HTMLVideoElement, () => void>();
+  /** Layer id → the source the texture pass last saw for it. */
+  const layerMediaRefs = new Map<string, { src: string; sourceId: string }>();
+  let mediaReleaseDue = false;
+  let stageNativeMasterSince = 0;
+
+  function noteLayerMediaRef(layerId: string, src: string, sourceId: string): void {
+    const ref = layerMediaRefs.get(layerId);
+    if (ref && ref.src === src && ref.sourceId === sourceId) return;
+    if (ref) mediaReleaseDue = true;
+    layerMediaRefs.set(layerId, { src, sourceId });
+  }
+
+  function forgetLayerMediaRef(layerId: string): void {
+    if (layerMediaRefs.delete(layerId)) mediaReleaseDue = true;
+  }
+
+  function hasOwnedLayerMedia(): boolean {
+    return ownedThreeContextIds.size > 0 || ownedJsContextIds.size > 0 || ownedVideos.size > 0;
+  }
+
+  /** Drop cached textures that match, so a layer that comes back loads
+   *  afresh instead of sampling a freed source. */
+  function dropCachedTextures(match: (texture: THREE.Texture) => boolean): void {
+    for (const [key, texture] of textureCache) {
+      if (!match(texture)) continue;
+      try { texture.dispose(); } catch { /* */ }
+      textureCache.delete(key);
+    }
+  }
+
+  function releaseCanvasVideo(video: HTMLVideoElement): void {
+    ownedVideos.delete(video);
+    releasedVideos.add(video);
+    pendingVideoLoads.get(video)?.();
+    pendingVideoLoads.delete(video);
+    dropCachedTextures((texture) => texture.image === video);
+    try {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    } catch { /* */ }
+  }
+
+  function releaseLayerContext(id: string, kind: 'three' | 'js'): void {
+    const context = kind === 'three' ? getThreeJSIframeContext(id) : getJSAnimationContext(id);
+    if (context) dropCachedTextures((texture) => texture === context.texture);
+    if (kind === 'three') {
+      ownedThreeContextIds.delete(id);
+      disposeThreeJSIframeContext(id);
+    } else {
+      ownedJsContextIds.delete(id);
+      disposeJSAnimationContext(id);
+    }
+  }
+
+  function releaseAllCanvasLayerMedia(): void {
+    for (const id of [...ownedThreeContextIds]) releaseLayerContext(id, 'three');
+    for (const id of [...ownedJsContextIds]) releaseLayerContext(id, 'js');
+    for (const video of [...ownedVideos.keys()]) releaseCanvasVideo(video);
+  }
+
+  /** Free Canvas-made pages and videos that no live layer uses any more. */
+  function releaseUnusedLayerMedia(): void {
+    mediaReleaseDue = false;
+    if (!hasOwnedLayerMedia()) return;
+    const usedIds = new Set<string>();
+    const usedSrcs = new Set<string>();
+    const note = (source: Layer['source'] | null | undefined) => {
+      if (!source) return;
+      if (source.id) usedIds.add(source.id);
+      if (source.src) usedSrcs.add(source.src);
+    };
+    for (const ref of layerMediaRefs.values()) {
+      usedIds.add(ref.sourceId);
+      usedSrcs.add(ref.src);
+    }
+    for (const layer of get(layers)) note(layer.source);
+    for (const layer of get(vjOutputLayers) ?? []) note(layer.source);
+    for (const entry of get(vjTransitionOutputLayers)) note(entry.layer.source);
+    for (const id of [...ownedThreeContextIds]) {
+      if (!usedIds.has(id)) releaseLayerContext(id, 'three');
+    }
+    for (const id of [...ownedJsContextIds]) {
+      if (!usedIds.has(id)) releaseLayerContext(id, 'js');
+    }
+    for (const [video, src] of [...ownedVideos]) {
+      if (!usedSrcs.has(src)) releaseCanvasVideo(video);
+    }
+  }
+
+  /** Stage Sim on the core's picture: once that has held for a few
+   *  seconds, free the pages and videos the first local frames loaded. */
+  function noteStageNativeMaster(active: boolean): void {
+    if (!active) {
+      stageNativeMasterSince = 0;
+      return;
+    }
+    const now = performance.now();
+    if (!stageNativeMasterSince) stageNativeMasterSince = now;
+    else if (now - stageNativeMasterSince > 5000 && hasOwnedLayerMedia()) releaseAllCanvasLayerMedia();
+  }
+
+  /** A cached page texture can belong to a context that was replaced (the
+   *  VJ launcher frees and remakes clip pages). Follow the live one. */
+  function followContextTexture(layer: Layer, lookupKey: string, texture: THREE.CanvasTexture): void {
+    const cached = textureCache.get(lookupKey);
+    if (!cached || cached === texture) return;
+    textureCache.set(lookupKey, texture);
+    if (layer.source) layer.source.texture = texture;
   }
 
   // ISF shader instances and their render targets
@@ -1664,6 +1778,7 @@
       clientRect.height,
     ];
     const signature = values.map((value) => Number(value).toFixed(3)).join(',');
+    editorCanvasGeometryMeasuredAt = performance.now();
     if (signature === editorCanvasGeometrySignature && editorCanvasGeometrySnapshot) {
       return editorCanvasGeometrySnapshot;
     }
@@ -1736,19 +1851,9 @@
 
       bootNativeRendererSync(false);
 
-      nativeLayersUnsub = layers.subscribe(($layers) => {
-        // Route through the VJ-aware effective-layers path once it is
-        // armed: pushing raw $layers here during a VJ-live set drops the
-        // deck feed layers and stomps the stage scene (visible as slices
-        // reverting to their default shaders whenever the project store
-        // churns — e.g. Stage FX automation advancing every beat).
-        if (nativeLayersSyncRef) {
-          nativeLayersSyncRef();
-          return;
-        }
-        const p = get(project);
-        nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, withStudioVoices($layers));
-      });
+      // No separate `layers` subscription: `layers` derives from `project`,
+      // whose subscription below already syncs on every change through the
+      // VJ-aware path. A second one only rebuilt the same scene again.
 
       // The native compositor's layer list: VJ live sets replace the editor
       // layers (the legacy engine did this merge inside its render loop,
@@ -2093,7 +2198,10 @@
           nativeRendererSync?.forceSync(width, height, scene);
         } else nativeRendererSync?.syncNow(width, height, scene);
       };
-      const scheduleNativeLayersSync = (
+      // Builds the scene and hands it to the sync now. Urgent VJ triggers,
+      // the forced resync and the render loop's stage-FX push call this
+      // directly; everything else goes through the coalesced queue below.
+      const runNativeLayersSync = (
         urgent = false,
         retry = true,
         videoSourceIds: string[] = [],
@@ -2185,6 +2293,28 @@
           else nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, effective);
         }
       };
+      // Many stores emit within one task (modulation writes the project once
+      // per target per frame). scheduleSync keeps only the newest list and
+      // flushes on its own frame timer, so one build per microtask is enough.
+      const queuedNativeLayersSync = coalesceToMicrotask(() => runNativeLayersSync());
+      const scheduleNativeLayersSync = (
+        urgent = false,
+        retry = true,
+        videoSourceIds: string[] = [],
+        triggeredAtMs?: number,
+        onVideoHandoff?: () => void,
+      ) => {
+        if (nativeClipSyncDisposed) return;
+        if (urgent) {
+          // Same order as before batching: a build queued by the emissions
+          // ahead of the trigger reaches the sync first, so the trigger's
+          // handoff can still cancel the flush it scheduled.
+          queuedNativeLayersSync.flush();
+          runNativeLayersSync(true, retry, videoSourceIds, triggeredAtMs, onVideoHandoff);
+          return;
+        }
+        queuedNativeLayersSync.schedule();
+      };
       const clipTransitionCoordinator = createNativeClipTransitionCoordinator({
         read: () => {
           const state = get(vjClipLauncher);
@@ -2244,7 +2374,14 @@
           scheduleNativePreviewWindowSync('project');
         }
       });
-      nativeLayersSyncRef = () => scheduleNativeLayersSync();
+      // Immediate: the browser render loop calls this while stage-FX
+      // opacities are applied in place, and restores them before a
+      // microtask would run. A build already queued is covered by this one,
+      // and running it later would push the restored values over it.
+      nativeLayersSyncRef = () => {
+        queuedNativeLayersSync.cancel();
+        runNativeLayersSync();
+      };
       // Music Studio instances: their voices' signals move every frame.
       const studioFrameUnsub = studioVisualTick.subscribe(() => scheduleNativeLayersSync());
       const studioCodeUnsub = studioCodeTick.subscribe(() => scheduleNativeLayersSync());
@@ -2355,6 +2492,7 @@
       const previousNativeProjectUnsub = nativeProjectUnsub;
       nativeProjectUnsub = () => {
         nativeClipSyncDisposed = true;
+        queuedNativeLayersSync.cancel();
         deferredHandoffs.clear();
         deferredVideoSources.clear();
         previousNativeProjectUnsub();
@@ -2383,7 +2521,9 @@
 
       const handleNativeOutputSceneResync = () => {
         forceNativeSceneResync = true;
-        scheduleNativeLayersSync();
+        // Immediate, as before batching; it covers any queued build.
+        queuedNativeLayersSync.cancel();
+        runNativeLayersSync();
       };
       window.addEventListener('ghost:native-output-scene-resync', handleNativeOutputSceneResync);
       nativeOutputSceneResyncUnsub = () => {
@@ -3070,6 +3210,22 @@
           vjState.crossfaderBlendMode || 'normal'
         );
 
+        // Stage Sim in the desktop app shows the core's finished picture.
+        // Decide that first: while it is in use nothing samples the local
+        // layer content, so the texture passes and VJ mixes below are
+        // skipped. A stage object showing one deck row needs that row's own
+        // texture, which only the local render makes; keep it then.
+        let stageNativeMaster: THREE.Texture | null = null;
+        if (stage3DOutput && browserEditorPreviewActive()) {
+          const wantsRowTexture = (get(stage3dScene).userElements ?? []).some((el: any) => {
+            const vjSource = el?.params?.vjSource;
+            return vjSource != null && vjSource !== 'solid' && vjSource !== 'master' && Number(vjSource) !== VJ_MIX_SOURCE_INDEX;
+          });
+          if (!wantsRowTexture) stageNativeMaster = nativeStage3DMasterTexture();
+        }
+        const renderLocalContent = !stageNativeMaster;
+        noteStageNativeMaster(!!stageNativeMaster);
+
         let layersToRender: Layer[];
         let stage3DSourceLayers: Layer[] | null = null;
         let compEffects: import('../types').Effect[] | undefined;
@@ -3105,7 +3261,7 @@
           );
           layersToRender = presetLayers;
           compEffects = vjState.compositionEffects;
-          if (browserEditorPreviewActive()) {
+          if (browserEditorPreviewActive() && renderLocalContent) {
             updateAllTextures(layersToRender, null);
           }
           didStageTexturePrepass = true;
@@ -3117,7 +3273,7 @@
           const allManagedLayers: Layer[] = [...(vjLayers || []), ...stageScreens];
 
           // 2. Update all textures in one batch
-          if (browserEditorPreviewActive()) {
+          if (browserEditorPreviewActive() && renderLocalContent) {
             updateAllTextures(allManagedLayers, normalLayers);
           }
           didStageTexturePrepass = true;
@@ -3178,7 +3334,7 @@
               continue;
             }
             // Both banks present — run per-layer crossfade.
-            if (slot.a && slot.b) {
+            if (slot.a && slot.b && renderLocalContent) {
               const texA = resolveVjLayerTexture(slot.a);
               const texB = resolveVjLayerTexture(slot.b);
               if (!texA && !texB) continue;
@@ -3193,7 +3349,7 @@
             }
           }
 
-          if (normalLayers.some(layer => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX) && vjLayers && vjLayers.length > 0) {
+          if (renderLocalContent && normalLayers.some(layer => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX) && vjLayers && vjLayers.length > 0) {
             const mixTexture = engine.renderVJMixToTexture(vjLayers);
             if (mixTexture) vjResolved.set(VJ_MIX_SOURCE_INDEX, { layer: vjMixCarrierLayer, texture: mixTexture });
           }
@@ -3251,7 +3407,7 @@
               const tex = resolveVjLayerTexture(vjLayer);
               if (tex) vjResolvedMap.set(parsed.idx, { layer: vjLayer, texture: tex });
             }
-            if (normalLayers.some(layer => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX)) {
+            if (renderLocalContent && normalLayers.some(layer => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX)) {
               const mixTexture = engine.renderVJMixToTexture(mappedVjLayers, vjState.compositionEffects);
               if (mixTexture) vjResolvedMap.set(VJ_MIX_SOURCE_INDEX, { layer: vjMixCarrierLayer, texture: mixTexture });
             }
@@ -3383,7 +3539,7 @@
 
         // ── Update all textures AFTER keyframe overrides so shader uniforms reflect new values ──
         const hasKeyframeOverrides = Object.keys(kfOverrides).length > 0;
-        if (browserEditorPreviewActive() && (!didStageTexturePrepass || hasKeyframeOverrides)) {
+        if (browserEditorPreviewActive() && renderLocalContent && (!didStageTexturePrepass || hasKeyframeOverrides)) {
           updateAllTextures(layersToRender, null);
         }
 
@@ -3502,14 +3658,9 @@
             legacyRenderer.setClearColor(0x000000, 1);
             legacyRenderer.clear(true, true, true);
           } else {
-            // A stage object showing one deck row needs that row's own
-            // texture, which only the local render makes; keep it then.
-            const wantsRowTexture = stage3DOutput && (get(stage3dScene).userElements ?? []).some((el: any) => {
-              const vjSource = el?.params?.vjSource;
-              return vjSource != null && vjSource !== 'solid' && vjSource !== 'master' && Number(vjSource) !== VJ_MIX_SOURCE_INDEX;
-            });
-            const nativeMaster = stage3DOutput && !wantsRowTexture ? nativeStage3DMasterTexture() : null;
-            // Until the core's first frame arrives, render locally as before.
+            // Picked at the top of the frame (stageNativeMaster). Until the
+            // core's first frame arrives, render locally as before.
+            const nativeMaster = stageNativeMaster;
             if (!nativeMaster) engine.render(layersToRender, null, compEffects, macroBundles);
             if (stage3DOutput) {
               if (!stage3DRenderer) stage3DRenderer = new Stage3DRenderer(glCanvas);
@@ -3981,12 +4132,37 @@
   let _knownLayerIds = new Set<string>();
   $: if (engine && $project) {
     const liveIds = new Set($project.layers.map(l => l.id));
+    let removedAny = false;
     for (const id of _knownLayerIds) {
       if (!liveIds.has(id)) {
+        removedAny = true;
         try { engine.removeLayer(id); } catch (e) { console.warn('[Canvas] engine.removeLayer failed for', id, e); }
+        disposeLayerContentTargets(id);
       }
     }
     _knownLayerIds = liveIds;
+    // A removed layer that the texture pass no longer visits (e.g. during a
+    // VJ set) would otherwise keep its page or video running.
+    if (removedAny) releaseUnusedLayerMedia();
+  }
+
+  /** Lines render target and SVG renderer of a layer that left the project. */
+  function disposeLayerContentTargets(layerId: string): void {
+    const linesTarget = linesRenderTargets.get(layerId);
+    if (linesTarget) {
+      try { linesTarget.dispose(); } catch { /* */ }
+      linesRenderTargets.delete(layerId);
+    }
+    const svgRenderer = svgRenderers.get(layerId);
+    if (svgRenderer) {
+      try { svgRenderer.dispose(); } catch { /* */ }
+      svgRenderers.delete(layerId);
+    }
+    const svgTarget = svgRenderTargets.get(layerId);
+    if (svgTarget) {
+      try { svgTarget.dispose(); } catch { /* */ }
+      svgRenderTargets.delete(layerId);
+    }
   }
 
   // Re-resize engine when project dimensions change. Pre-guard the
@@ -4193,6 +4369,12 @@
     }
     textureCache.clear();
     loadingTextures.clear();
+    // Videos made here that no layer source holds would be made again by
+    // the reload below; free them now instead of leaving them playing.
+    const attachedVideos = new Set(get(layers).map((l) => l.source?.videoElement).filter(Boolean));
+    for (const video of [...ownedVideos.keys()]) {
+      if (!attachedVideos.has(video)) releaseCanvasVideo(video);
+    }
 
     // Clear shader instances
     for (const shader of shaderInstances.values()) {
@@ -4259,6 +4441,12 @@
     }
 
     cancelAnimationFrame(animationId);
+    // The Stage Sim mirror timer runs from script start, whichever path mounted.
+    clearInterval(stage3DMirrorIdle);
+    stage3DMirror?.release();
+    stage3DMirror = null;
+    stage3DMirrorTexture?.dispose();
+    stage3DMirrorTexture = null;
     if (canvas) stopWLEDSenders(canvas);
     engine?.dispose();
 
@@ -4305,10 +4493,6 @@
       clearInterval(nativeRendererStatusTimer);
       nativeRendererStatusTimer = null;
     }
-    if (nativeLayersUnsub) {
-      nativeLayersUnsub();
-      nativeLayersUnsub = null;
-    }
     if (nativeQualityUnsub) {
       nativeQualityUnsub();
       nativeQualityUnsub = null;
@@ -4323,7 +4507,7 @@
       nativeInteractionRaf = null;
     }
     pendingNativeInteractions.clear();
-    nativeInteractionSignatures.clear();
+    nativeInteractionTracker.clear();
     if (nativeOutputSceneResyncUnsub) {
       nativeOutputSceneResyncUnsub();
       nativeOutputSceneResyncUnsub = null;
@@ -4371,6 +4555,9 @@
     if (!isOsrMode && !isOutputMode) destroyStateBroadcast();
     stopAudioBroadcast();
     stopModulationBroadcast();
+
+    // Free the pages and videos this component made.
+    releaseAllCanvasLayerMedia();
 
     // Dispose textures
     for (const texture of textureCache.values()) {
@@ -4498,6 +4685,7 @@
           cleanupLayerShader(layer.id, oldSrc);
           activeLayerSources.delete(layer.id);
         }
+        forgetLayerMediaRef(layer.id);
         continue;
       }
 
@@ -4557,6 +4745,7 @@
         layer.source.texture = getBlackHoldTexture();
       }
       activeLayerSources.set(layer.id, textureCacheKey);
+      noteLayerMediaRef(layer.id, layer.source.src, layer.source.id);
 
       // If texture exists in cache, ALWAYS assign it to the source object
       // This handles cases where the store creates new source objects
@@ -4735,6 +4924,7 @@
           const iframeContext = getThreeJSIframeContext(layer.source.id);
           if (iframeContext) {
             iframeContext.updateTexture();
+            followContextTexture(layer, lookupKey, iframeContext.texture);
             // Mark the texture as needing update
             if (layer.source.texture) {
               (layer.source.texture as THREE.CanvasTexture).needsUpdate = true;
@@ -4751,7 +4941,10 @@
       // the canvas to the GPU twice per frame. Drop the redundant set.
       if ((layer.source.type === 'threejs' || layer.source.type === 'p5js') && layer.source.jsAnimation) {
         const jsContext = getJSAnimationContext(layer.source.id);
-        if (jsContext) jsContext.updateTexture();
+        if (jsContext) {
+          jsContext.updateTexture();
+          followContextTexture(layer, lookupKey, jsContext.texture);
+        }
       }
     }
 
@@ -4760,13 +4953,16 @@
     // pass) — otherwise we'd dispose the upstream VJ layer's resources every
     // frame, forcing a fresh RT allocation each frame and leaving the Screen
     // layers sampling a never-rendered texture.
-    if (!cleanupStale) return;
-    for (const [layerId, src] of activeLayerSources.entries()) {
-      if (!currentLayerIds.has(layerId)) {
-        cleanupLayerShader(layerId, src);
-        activeLayerSources.delete(layerId);
+    if (cleanupStale) {
+      for (const [layerId, src] of activeLayerSources.entries()) {
+        if (!currentLayerIds.has(layerId)) {
+          cleanupLayerShader(layerId, src);
+          activeLayerSources.delete(layerId);
+          forgetLayerMediaRef(layerId);
+        }
       }
     }
+    if (mediaReleaseDue) releaseUnusedLayerMedia();
   }
 
   // Cleanup shader resources for a layer
@@ -4818,18 +5014,24 @@
   // Async texture loading
   // Takes layerId and source snapshot to avoid stale closure issues
   async function loadTextureAsync(layerId: string, source: import('../types').MediaSource, cacheKey: string) {
+    let createdVideo: HTMLVideoElement | null = null;
     try {
       let texture: THREE.Texture | null = null;
 
       if (source.type === 'image') {
         texture = await loadImageTexture(source.src);
       } else if (source.type === 'video') {
-        // Get video element - either from source or create a new one
-        let video = source.videoElement;
+        // Get video element - either from source or create a new one.
+        // One this component already freed has no src left to play.
+        let video = source.videoElement && !releasedVideos.has(source.videoElement)
+          ? source.videoElement
+          : undefined;
 
         // If no video element exists, create one
         if (!video) {
           video = document.createElement('video');
+          createdVideo = video;
+          ownedVideos.set(video, source.src);
           // Only set crossOrigin for remote URLs, not blob: URLs
           if (!source.src.startsWith('blob:')) {
             video.crossOrigin = 'anonymous';
@@ -4855,11 +5057,15 @@
             const cleanup = () => {
               v.removeEventListener('loadeddata', onLoaded);
               v.removeEventListener('error', onError);
+              pendingVideoLoads.delete(v);
             };
             v.addEventListener('loadeddata', onLoaded, { once: true });
             v.addEventListener('error', onError, { once: true });
+            // Freed before it loaded: stop waiting (checked below).
+            pendingVideoLoads.set(v, () => { cleanup(); resolve(); });
             v.load();  // Fresh element only — see big comment above.
           });
+          if (releasedVideos.has(video)) return;
 
           // Store reference on the layer's source
           const currentLayers = $layers;
@@ -4873,7 +5079,7 @@
         if (video.readyState < 2) { // HAVE_CURRENT_DATA
           await new Promise<void>((resolve) => {
             const checkReady = () => {
-              if (video!.readyState >= 2) {
+              if (video!.readyState >= 2 || releasedVideos.has(video!)) {
                 resolve();
               } else {
                 requestAnimationFrame(checkReady);
@@ -4883,6 +5089,7 @@
             checkReady();
           });
         }
+        if (releasedVideos.has(video)) return;
 
         // Ensure video is playing
         if (video.paused) {
@@ -4895,6 +5102,7 @@
 
         // Wait one more frame to ensure video has rendered
         await new Promise(resolve => requestAnimationFrame(resolve));
+        if (releasedVideos.has(video)) return;
 
         texture = createVideoTexture(video);
         source.isPlaying = !video.paused;
@@ -4985,10 +5193,13 @@
           // Create iframe context if it doesn't exist
           console.log('Creating ThreeJS iframe context for:', source.name, source.src);
           iframeContext = createThreeJSIframeContext(source.id, source.src);
+          ownedThreeContextIds.add(source.id);
         }
         if (iframeContext) {
           // Wait for iframe to load (give it a moment to initialize)
           await new Promise(resolve => setTimeout(resolve, 1000));
+          // Freed while it loaded (its layer went away): nothing to cache.
+          if (getThreeJSIframeContext(source.id) !== iframeContext) return;
           // Update once to capture initial frame
           iframeContext.updateTexture();
           texture = iframeContext.texture;
@@ -5007,10 +5218,13 @@
           // Create JS animation context from the HTML code
           console.log('Creating JS animation context for:', source.name, source.type);
           jsContext = createJSAnimationContext(source.id, source.jsAnimation);
+          ownedJsContextIds.add(source.id);
         }
         if (jsContext) {
           // Wait for iframe to load (give it a moment to initialize)
           await new Promise(resolve => setTimeout(resolve, 1500));
+          // Freed while it loaded (its layer went away): nothing to cache.
+          if (getJSAnimationContext(source.id) !== jsContext) return;
           // Update once to capture initial frame
           jsContext.updateTexture();
           texture = jsContext.texture;
@@ -5369,6 +5583,8 @@
         project.updateLayer(layerId, {});
       }
     } catch (err) {
+      // A video made here that never loaded must not keep fetching.
+      if (createdVideo && ownedVideos.has(createdVideo)) releaseCanvasVideo(createdVideo);
       // Permanent failure — mark this cacheKey as poisoned so updateTexturesSync
       // stops re-triggering the load every frame. Previously a single missing
       // video file (stale blob URL, deleted project media, bad path) produced
@@ -7704,8 +7920,26 @@
   // Publishes the pointer's normalized position over the native preview's
   // CONTENT rect (letterbox-aware). The sync packs it into the splat
   // uniforms so point clouds react to the mouse in native mode.
+  /** The pointer's content rect. Reuses the editor geometry measured in the
+   *  last quarter second instead of reading layout on every move. */
+  function splatPointerRect(): { x: number; y: number; contentX: number; contentY: number; contentWidth: number; contentHeight: number } | null {
+    const cached = editorCanvasGeometrySnapshot;
+    if (cached && !get(nativePreviewHostEl)?.isConnected
+      && performance.now() - editorCanvasGeometryMeasuredAt < 250) {
+      return {
+        x: cached.clientX,
+        y: cached.clientY,
+        contentX: 0,
+        contentY: 0,
+        contentWidth: Math.max(1, cached.clientWidth),
+        contentHeight: Math.max(1, cached.clientHeight),
+      };
+    }
+    return nativePreviewEmbeddedRect();
+  }
+
   function updateSplatPointerFromEvent(e: PointerEvent, down?: boolean) {
-    const rect = nativePreviewEmbeddedRect();
+    const rect = splatPointerRect();
     if (!rect || rect.contentWidth <= 2 || rect.contentHeight <= 2) {
       splatPointer.update((prev) => (prev.active ? { ...prev, active: false } : prev));
       return;
@@ -7720,7 +7954,26 @@
       down: down ?? prev.down,
     }));
   }
-  function handleSplatPointerMove(e: PointerEvent) { updateSplatPointerFromEvent(e); }
+  // Only splat layers read the pointer. Moves skip the layout reads when
+  // there is none; down/up still run so the button state stays right.
+  let splatScanProjectLayers: unknown = null;
+  let splatScanVjLayers: unknown = null;
+  let splatScanResult = false;
+  function splatLayerPresent(): boolean {
+    const projectLayers = $layers as Layer[];
+    const vjLayers = $vjOutputLayers as Layer[] | null;
+    if (projectLayers !== splatScanProjectLayers || vjLayers !== splatScanVjLayers) {
+      splatScanProjectLayers = projectLayers;
+      splatScanVjLayers = vjLayers;
+      splatScanResult = projectLayers.some((l) => l.type === 'splat')
+        || !!vjLayers?.some((l) => l.type === 'splat');
+    }
+    return splatScanResult;
+  }
+  function handleSplatPointerMove(e: PointerEvent) {
+    if (!splatLayerPresent()) return;
+    updateSplatPointerFromEvent(e);
+  }
   function handleSplatPointerDown(e: PointerEvent) { updateSplatPointerFromEvent(e, true); }
   function handleSplatPointerUp(e: PointerEvent) { updateSplatPointerFromEvent(e, false); }
 

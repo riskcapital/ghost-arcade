@@ -32,7 +32,7 @@
     geoDeckStore,
   } from '../stores/geoDeck';
   import { evaluateGeoDeck, type GeoEngineRuntime } from '../geo/engine';
-  import { vjClipLauncher, type VJClip, type VJDeck } from '../stores/vjClipLauncher';
+  import { vjClipLauncher, type VJClip, type VJClipLauncherState, type VJDeck } from '../stores/vjClipLauncher';
   import { get } from 'svelte/store';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { resolveAssetTreeInPlace, resolveAssetRefForRuntime } from '../storage/assetRegistry';
@@ -272,15 +272,43 @@
   // renders through the normal clip.effects path.
   $: svLayerEffects = $synthVisionStore.performerEffects;
 
+  // Last chain and clip stamped. The store is written every frame, so the
+  // reactive sync below compares these before touching the VJ store.
+  let stampedPerformerEffects: Effect[] | null = null;
+  let stampedPerformerClipKey: string | null = null;
+
+  /** Deck, layer and clip id Performer drives; null when no clip is active. */
+  function performerClipKey(launcher: VJClipLauncherState, layer: number): string | null {
+    const deck = performerTargetDeck(launcher);
+    const states = deck === 'B' ? launcher.bankBLayerStates : launcher.layerStates;
+    const clipId = states[layer]?.activeClip?.id;
+    return clipId ? `${deck}:${layer}:${clipId}` : null;
+  }
+
   /** Push the Performer chain onto the clip it is currently driving. */
   function syncPerformerEffectsToClip() {
     const effects = get(synthVisionStore).performerEffects;
-    vjClipLauncher.setActiveClipEffects(assignedVJLayer, effects, activePerformerDeck());
+    const launcher = get(vjClipLauncher);
+    stampedPerformerEffects = effects;
+    stampedPerformerClipKey = performerClipKey(launcher, assignedVJLayer);
+    vjClipLauncher.setActiveClipEffects(assignedVJLayer, effects, performerTargetDeck(launcher));
   }
-  // Re-stamp whenever the chain changes or Performer moves to another clip.
-  $: if ($synthVisionStore.performerEffects || activePerformerLayerState()?.activeClip?.id) {
+
+  function syncPerformerEffectsIfChanged(effects: Effect[], clipKey: string | null) {
+    if (effects === stampedPerformerEffects && clipKey === stampedPerformerClipKey) return;
+    // No clip to stamp yet: remember the pair so this does not retry every frame.
+    if (clipKey === null) {
+      stampedPerformerEffects = effects;
+      stampedPerformerClipKey = null;
+      return;
+    }
     syncPerformerEffectsToClip();
   }
+  // Re-stamp only when the chain changes or Performer moves to another clip.
+  $: syncPerformerEffectsIfChanged(
+    $synthVisionStore.performerEffects,
+    performerClipKey($vjClipLauncher, assignedVJLayer),
+  );
 
   function handleEffectPickerAdd(types: EffectType[]) {
     for (const type of types) {
@@ -440,8 +468,15 @@
     else startCamera();
   }
 
+  // Nothing reads the composite today, so the per-frame copy into
+  // outputCanvas only runs once a caller has asked for it.
+  let outputCanvasRequested = false;
+  // True while shaderCanvas already holds the cleared frame.
+  let shaderCanvasBlank = false;
+
   // Expose output canvas for VJ layer texture
   export function getOutputCanvas(): HTMLCanvasElement | null {
+    outputCanvasRequested = true;
     return outputCanvas || null;
   }
 
@@ -3522,7 +3557,7 @@ void main() {
 
     // Show splash screen until first interaction (only when UI is visible)
     if (visible && state.showSplash) {
-      renderSplash();
+      if (outputCanvasRequested) renderSplash();
       return;
     }
 
@@ -3677,17 +3712,19 @@ void main() {
 
           gl.bindVertexArray(quadVAO);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          shaderCanvasBlank = false;
 
           if (frameNum < 3) {
             console.log('SynthVision ISF render: frame=', frameNum, 'shader=', isfShaderInstance.name, 'size=', w, 'x', h);
           }
-        } else {
-          // ── NO CLIP ACTIVE: clear to black so stale framebuffers and
+        } else if (!shaderCanvasBlank) {
+          // ── NO CLIP ACTIVE: clear to black once so stale framebuffers and
           //     the legacy mega-shader can never leak through.
           gl.bindFramebuffer(gl.FRAMEBUFFER, null);
           gl.viewport(0, 0, shaderCanvas.width, shaderCanvas.height);
           gl.clearColor(0, 0, 0, 1);
           gl.clear(gl.COLOR_BUFFER_BIT);
+          shaderCanvasBlank = true;
         }
         // Legacy mega-shader path removed — built-in shaders were leaking through
         // when no ISF clip was active. ISF clips are now the only render path.
@@ -3755,6 +3792,7 @@ void main() {
     }
 
     // Composite to output canvas
+    if (!outputCanvasRequested) return;
     if (compCtx && outputCanvas && shaderCanvas && threeCanvas) {
       compCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
       compCtx.globalCompositeOperation = 'source-over';

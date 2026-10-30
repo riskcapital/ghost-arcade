@@ -30,7 +30,7 @@ import {
   type VJMixRow,
 } from '$lib/renderer/vjMixNative';
 import type { Layer, MeshWarpGrid, Model3DContent, SplatContent } from '$lib/types';
-import { buildEdgeEffectContext, nativeEdgeEffectPayload, type EdgeEffectContext } from '$lib/drawing/edgeEffects';
+import { buildEdgeEffectContext, nativeEdgeEffectPayload, type EdgeEffectContext, type EdgeEffectLayerContext } from '$lib/drawing/edgeEffects';
 import { layerRenderMeshGrid, meshGridHasTangents, meshHasRest, resolveMeshTangents } from '$lib/utils/meshWarp';
 import { nativePaintStroke } from '$lib/utils/paintMask';
 import { project } from '$lib/stores/layers';
@@ -254,6 +254,8 @@ type LayerSnapshot = {
   maskSig: string;
   paintMaskSig: string;
   sourceSig: string;
+  /** Shader / JS param values. A change only sends new uniforms. */
+  valuesSig: string;
   nativeParamsSig: string;
   effectsSig: string;
   edgeEffectsSig: string;
@@ -599,6 +601,23 @@ type NativeGraphLayerRoute = {
   inputCoreRendered?: boolean;
 };
 
+/** A layer's graph route for one flush: `possible` ignores the failure kill
+ *  switch, `active` honours it. */
+type NativeGraphRoutePair = {
+  possible: NativeGraphLayerRoute | null;
+  active: NativeGraphLayerRoute | null;
+};
+
+/** LUT table buffer ids a graph config holds. */
+function nativeLutTableIds(config: Record<string, any> | null | undefined): string[] {
+  const buffers = Array.isArray(config?.buffers) ? config.buffers : [];
+  const ids: string[] = [];
+  for (const buffer of buffers) {
+    if (buffer?.immutable_lut === true && buffer.id) ids.push(String(buffer.id));
+  }
+  return ids;
+}
+
 export function nativeGraphCompositeSourceId(
   route: Pick<NativeGraphLayerRoute, 'source'>,
 ): string {
@@ -749,6 +768,17 @@ const NATIVE_VIDEO_PREFETCH_WINDOW_FRAMES = 1;
 const NATIVE_VIDEO_PREFETCH_WINDOW_FPS = 30;
 const GPU_PREVIEW_REFRESH_MS = 700;
 const NATIVE_POINT_CLOUD_MAX_POINTS = 500_000;
+// Per-source caches (prefetch marks, frame-ready seqs, aspects, decode sizes)
+// keep a source this long after the last layer stops using it, so a clip
+// that comes straight back, or a group toggled off and on, keeps its warm
+// state. Past that, a returning source starts fresh (preroll, decode).
+const SOURCE_CACHE_GRACE_MS = 30_000;
+const SOURCE_CACHE_PRUNE_INTERVAL_MS = 5_000;
+/** A replaced LUT table is freed once LUT changes pause this long. */
+const LUT_TABLE_PRUNE_DEBOUNCE_MS = 2_000;
+const COMPOSITE_FX_LUT_OWNER = 'composite-fx';
+/** The per-frame loop counts as stalled after this long without a tick. */
+const SHADER_ANIMATION_STALL_MS = 250;
 
 type PreviewFlushBudget = {
   staticRemaining: number;
@@ -886,6 +916,21 @@ function generatedLayerPreview(layer: Layer): { key: string; element: CanvasImag
   return null;
 }
 
+// A page's text and control list, hashed once per page rather than copied
+// and hashed on every flush (pages can be tens of kilobytes).
+const javascriptStructureSignatures = new WeakMap<object, { html: unknown; params: string; signature: string }>();
+
+function javascriptStructureSignature(js: NonNullable<NonNullable<Layer['source']>['jsAnimation']>): string {
+  const params = JSON.stringify(js.params ?? []);
+  const cached = javascriptStructureSignatures.get(js);
+  if (cached && cached.html === js.htmlCode && cached.params === params) return cached.signature;
+  const signature = hashString(`${js.htmlCode}:${params}`);
+  javascriptStructureSignatures.set(js, { html: js.htmlCode, params, signature });
+  return signature;
+}
+
+/** What the layer's source is. A change rebinds it. Shader and JS param
+ *  values are kept apart in sourceValuesSignature. */
 function sourceSignature(layer: Layer): string {
   const s = layer.source;
   if (!s && layer.type === 'gpu' && layer.gpuLayerContent) {
@@ -896,15 +941,26 @@ function sourceSignature(layer: Layer): string {
     return generatedLayerPreview(layer)?.signature ?? 'none';
   }
   const javascriptSignature = s.jsAnimation
-    ? hashString(`${s.jsAnimation.htmlCode}:${JSON.stringify(s.jsAnimation.params ?? [])}:${JSON.stringify(s.jsAnimation.paramValues ?? {})}`)
+    ? javascriptStructureSignature(s.jsAnimation)
     : 'no-js';
-  const shaderValuesSignature = s.shaderValues
-    ? hashString(stableNativeGraphKey(s.shaderValues))
-    : 'no-shader-values';
   const imageInputsSignature = s.shaderImageInputs && Object.keys(s.shaderImageInputs).length
     ? hashString(JSON.stringify(s.shaderImageInputs))
     : 'no-image-inputs';
-  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}:${shaderValuesSignature}:${javascriptSignature}:${imageInputsSignature}`;
+  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}:${javascriptSignature}:${imageInputsSignature}`;
+}
+
+/** Shader and JS param values. Keyframes, sliders and macros change these
+ *  every frame; that needs new uniforms, not a new source binding. */
+function sourceValuesSignature(layer: Layer): string {
+  const s = layer.source;
+  if (!s) return 'none';
+  const shaderValuesSignature = s.shaderValues
+    ? hashString(stableNativeGraphKey(s.shaderValues))
+    : 'no-shader-values';
+  const javascriptValuesSignature = s.jsAnimation
+    ? hashString(JSON.stringify(s.jsAnimation.paramValues ?? {}))
+    : 'no-js';
+  return `${shaderValuesSignature}:${javascriptValuesSignature}`;
 }
 
 function nativeEffectDescriptors(layer: Layer): string[] {
@@ -912,7 +968,7 @@ function nativeEffectDescriptors(layer: Layer): string[] {
   if (!effects.length) return [];
   return effects
     .filter((e: any) => e && e.enabled !== false)
-    .map((e: any) => effectToNativeDescriptor(e))
+    .map((e: any) => memoizedEffectPass(e).descriptor)
     .filter((d: string | null): d is string => !!d);
 }
 
@@ -3421,13 +3477,85 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
   };
 }
 
+type EffectPassMemo = {
+  type: unknown;
+  enabled: unknown;
+  id: unknown;
+  params: unknown;
+  keys: string[];
+  values: unknown[];
+  descriptor: string | null;
+  pass: NativeEffectPassRuntime | null;
+};
+
+/*
+ * Descriptor and parsed pass per effect object. The flush asks for these
+ * several times per layer per frame, and building the descriptor string and
+ * parsing it back was most of the flush. They are rebuilt when the effect's
+ * type, id, enabled flag or params object changes, or when a top-level param
+ * value changes in place. Nested values are compared by identity, as
+ * cubeLutHandle already does for LUT assets.
+ */
+const effectPassMemo = new WeakMap<object, EffectPassMemo>();
+
+function sameTopLevelParams(params: unknown, memo: EffectPassMemo): boolean {
+  if (!params || typeof params !== 'object') return memo.keys.length === 0;
+  const record = params as Record<string, unknown>;
+  let index = 0;
+  for (const key in record) {
+    if (index >= memo.keys.length || memo.keys[index] !== key || memo.values[index] !== record[key]) return false;
+    index += 1;
+  }
+  return index === memo.keys.length;
+}
+
+function memoizedEffectPass(effect: any): EffectPassMemo {
+  // Colorama's descriptor carries the live audio level, so it is rebuilt
+  // every time, as before.
+  const cacheable = !!effect && typeof effect === 'object' &&
+    String(effect.type || '').toLowerCase() !== 'colorama';
+  const memo = cacheable ? effectPassMemo.get(effect) : undefined;
+  if (
+    memo &&
+    memo.type === effect.type &&
+    memo.enabled === effect.enabled &&
+    memo.id === effect.id &&
+    memo.params === effect.params &&
+    sameTopLevelParams(effect.params, memo)
+  ) {
+    return memo;
+  }
+  const descriptor = effectToNativeDescriptor(effect);
+  const keys: string[] = [];
+  const values: unknown[] = [];
+  const params = cacheable ? effect.params : null;
+  if (params && typeof params === 'object') {
+    for (const key in params) {
+      keys.push(key);
+      values.push(params[key]);
+    }
+  }
+  const next: EffectPassMemo = {
+    type: cacheable ? effect.type : undefined,
+    enabled: cacheable ? effect.enabled : undefined,
+    id: cacheable ? effect.id : undefined,
+    params,
+    keys,
+    values,
+    descriptor,
+    pass: nativeEffectPassFromDescriptor(descriptor),
+  };
+  if (cacheable) effectPassMemo.set(effect, next);
+  return next;
+}
+
 export function nativeEffectPassesForLayer(layer: Layer): NativeEffectPassRuntime[] | null {
   const enabled = (layer.effects || [])
     .filter((effect: any) => effect && effect.enabled !== false)
     .slice(0, NATIVE_EFFECT_PASS_LIMIT);
   if (!enabled.length) return null;
   const passes = enabled.map((effect: any) => {
-    const pass = nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect));
+    const pass = memoizedEffectPass(effect).pass;
     if (!pass) return null;
     const mix = Number(effect.opacity ?? 1);
     return { ...pass, mix: Number.isFinite(mix) ? clampNumber(mix, 0, 1) : 1 };
@@ -3442,7 +3570,7 @@ export function nativeUnsupportedEffectTypes(layer: Pick<Layer, 'effects'>): str
     .filter(effect => effect && effect.enabled !== false)
     .slice(0, NATIVE_EFFECT_PASS_LIMIT);
   for (const effect of rendered) {
-    if (nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect))) continue;
+    if (memoizedEffectPass(effect).pass) continue;
     unsupported.add(String(effect.type || 'unknown'));
   }
   return [...unsupported];
@@ -3741,6 +3869,10 @@ export function isFullQuadStageShape(layer: Layer): boolean {
   return corners.size === 4;
 }
 
+// The expanded quad and outline per (shape, corners) pair. Reusing them keeps
+// their identity across flushes, so the edge effect cache can hit.
+const expandedScreenBounds = new WeakMap<object, { corners: unknown; result: Pick<Layer, 'corners' | 'layerShape'> }>();
+
 /** A custom stage outline can extend outside its original corner quad when a
  * vertex is dragged. Reframe the render quad around the whole outline while
  * keeping the authored base points in source UV space. Otherwise the native
@@ -3749,6 +3881,8 @@ export function expandCustomScreenRenderBounds(layer: Layer): Layer {
   if (layer.type !== 'screen' || layer.layerShape?.type !== 'custom' || !layer.layerShape.enabled) return layer;
   const points = layer.layerShape.params.customPoints;
   if (!points?.length || !layer.corners) return layer;
+  const cached = expandedScreenBounds.get(layer.layerShape);
+  if (cached && cached.corners === layer.corners) return { ...layer, ...cached.result };
   let minX = 0, maxX = 1, minY = 0, maxY = 1;
   for (const point of points) {
     for (const candidate of [point, point.cpIn, point.cpOut]) {
@@ -3773,8 +3907,7 @@ export function expandCustomScreenRenderBounds(layer: Layer): Layer {
     x: (point.x - minX) / width,
     y: (point.y - minY) / height,
   });
-  return {
-    ...layer,
+  const result: Pick<Layer, 'corners' | 'layerShape'> = {
     corners: {
       topLeft: project(minX, maxY), topRight: project(maxX, maxY),
       bottomLeft: project(minX, minY), bottomRight: project(maxX, minY),
@@ -3791,6 +3924,8 @@ export function expandCustomScreenRenderBounds(layer: Layer): Layer {
       },
     },
   };
+  expandedScreenBounds.set(layer.layerShape, { corners: layer.corners, result });
+  return { ...layer, ...result };
 }
 
 export function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
@@ -4092,6 +4227,20 @@ export function nativeLayerEdgeEffectsState(
   };
 }
 
+function sameEdgeEffectLayerContext(
+  a: EdgeEffectLayerContext | undefined,
+  b: EdgeEffectLayerContext | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.count === b.count &&
+    a.chase.order === b.chase.order &&
+    a.chase.leftToRight === b.chase.leftToRight &&
+    a.chase.radial === b.chase.radial &&
+    a.groupBounds.length === b.groupBounds.length &&
+    a.groupBounds.every((value, index) => value === b.groupBounds[index]);
+}
+
 function tessellateNativeMaskShape(points: NonNullable<Layer['mask']>['shapes'][number]['points']): Array<{ x: number; y: number }> {
   const output: Array<{ x: number; y: number }> = [];
   for (let index = 0; index < points.length; index++) {
@@ -4132,7 +4281,10 @@ export function nativeLayerPaintMaskState(layer: Layer): {
   const inverted = mask?.inverted === true;
   return {
     signature: `${enabled ? 1 : 0}:${inverted ? 1 : 0}:${strokes.length}:${ids}`,
-    command: { enabled, inverted, strokes: strokes.map(nativePaintStroke) },
+    // Built only when read: the flush reads it only when the signature changed.
+    get command() {
+      return { enabled, inverted, strokes: strokes.map(nativePaintStroke) };
+    },
   };
 }
 
@@ -4717,9 +4869,12 @@ const handFxTracking = { ownsBody: false, ownsFace: false, bodyNeededAt: 0, face
  * mode needs. Body and face tracking each cost camera frame rate, so they are
  * switched on for the body and face modes and off again a moment after the
  * last layer stops needing them. A tracker someone else switched on is left alone.
+ * Each call renews a one-second hold on the camera; once no live HandFX layer
+ * renews it, the hold lapses and the camera stops.
  */
 function ensureHandFxTracking(params: Record<string, any> | null | undefined): void {
   if (!params || params.handfxInput === 'demo') return;
+  mediaPipeSource.acquire('handfx-layers', 1000);
   const needs = handFxTrackingNeeds(params);
   const now = performance.now();
   if (needs.trackBody) handFxTracking.bodyNeededAt = now;
@@ -4728,6 +4883,8 @@ function ensureHandFxTracking(params: Record<string, any> | null | undefined): v
   let next: Parameters<typeof mediaPipeSource.start>[0] | null = null;
   if (!mediaPipeSource.isRunning()) {
     next = { useGesture: false, targetFps: 60, numHands: 2, trackBody: needs.trackBody, trackFace: needs.trackFace };
+    // Wait after a failed start, or while the camera is turned off in the panel.
+    if (!mediaPipeSource.canAutoStart(next)) return;
     handFxTracking.ownsBody = needs.trackBody;
     handFxTracking.ownsFace = needs.trackFace;
   } else {
@@ -5062,11 +5219,33 @@ type NativeLibraryVideoArmRequest = {
   trimEnd?: number;
 };
 
+/** Arms replayed when a core starts, newest last. Every hovered tray item
+ *  used to stay here for the whole session and was re-prerolled on each
+ *  core restart. */
 const pendingLibraryVideoArms = new Map<string, NativeLibraryVideoArmRequest>();
+/** The core keeps at most 16 library sessions warm (NATIVE_LIBRARY_SESSION_CAP),
+ *  so replaying older requests would only have them evicted again. */
+const PENDING_LIBRARY_ARM_LIMIT = 16;
 const armedLibraryVideoAt = new Map<string, number>();
 const armedLibraryVideoSignatures = new Map<string, string>();
 const LIBRARY_ARM_REFRESH_MS = 20_000;
 const NATIVE_LIBRARY_TRIGGER_SEEK_GENERATION = 1;
+
+/** The request as kept for replay: plain fields only, so it does not hold
+ *  the clip's video element alive. Metadata the element already has is
+ *  copied, so a replayed arm gets the same decode size as the first one. */
+function pendingLibraryArmRequest(item: NativeLibraryVideoArmRequest): NativeLibraryVideoArmRequest {
+  const { videoElement, ...rest } = item;
+  const duration = Number(item.durationSeconds ?? videoElement?.duration);
+  const width = Number(videoElement?.videoWidth) || Number(item.videoWidth ?? 0);
+  const height = Number(videoElement?.videoHeight) || Number(item.videoHeight ?? 0);
+  return {
+    ...rest,
+    durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : undefined,
+    videoWidth: width > 0 ? width : undefined,
+    videoHeight: height > 0 ? height : undefined,
+  };
+}
 
 function nativeLibraryArmGeneration(item: NativeLibraryVideoArmRequest): number {
   const generation = Number(item.seekGeneration ?? NATIVE_LIBRARY_TRIGGER_SEEK_GENERATION);
@@ -5163,6 +5342,11 @@ function flushPendingLibraryVideoArms(sync: NativeRendererSync): void {
   }
 }
 
+/** The arm requests a core start would replay (for tests). */
+export function pendingNativeLibraryVideoArms(): NativeLibraryVideoArmRequest[] {
+  return [...pendingLibraryVideoArms.values()];
+}
+
 /**
  * Pre-arm a media-library video BEFORE the user commits to placing it
  * (pointer-enter / drag-start). The core pre-rolls a paused decoder under a
@@ -5183,7 +5367,15 @@ export function armNativeLibraryVideo(item: NativeLibraryVideoArmRequest, force 
     armedLibraryVideoAt.delete(key);
     armedLibraryVideoSignatures.delete(key);
   }
-  pendingLibraryVideoArms.set(armKey, item);
+  // Re-insert so the newest request is last, then drop the oldest.
+  pendingLibraryVideoArms.delete(armKey);
+  pendingLibraryVideoArms.set(armKey, pendingLibraryArmRequest(item));
+  while (pendingLibraryVideoArms.size > PENDING_LIBRARY_ARM_LIMIT) {
+    const oldest = pendingLibraryVideoArms.keys().next().value as string;
+    pendingLibraryVideoArms.delete(oldest);
+    armedLibraryVideoAt.delete(oldest);
+    armedLibraryVideoSignatures.delete(oldest);
+  }
   if (activeNativeRendererSync) {
     prefetchArmedLibraryVideo(activeNativeRendererSync, item, force);
   }
@@ -5320,6 +5512,8 @@ export class NativeRendererSync {
   // auto-pauses on tab visibility and lines up with the compositor so uniform
   // uploads aren't done just to be thrown away.
   private shaderAnimationRaf: number | null = null;
+  /** When the per-frame loop last ran (performance.now()). */
+  private shaderAnimationTickAt = 0;
   /** True while the core is holding a composition-FX chain for us. */
   private compositeFxResident = false;
   private lastCompositeEffectsSig: string | null = null;
@@ -5716,6 +5910,23 @@ export class NativeRendererSync {
   private nativeVideoPlaybackState = new Map<string, NativeVideoPlaybackSyncState>();
   private nativeVideoDecodeDimensionCache = new Map<string, { width: number; height: number; metadata: boolean }>();
   private nativeSourceAspectCache = new Map<string, number>();
+  /** When a layer last used each per-source cache key. Keys unused for
+   *  SOURCE_CACHE_GRACE_MS are dropped from the per-source caches. */
+  private sourceKeyLastUsedAt = new Map<string, number>();
+  private lastSourceCachePruneAt = 0;
+  /** Edge effect data per layer id, reused while its inputs are the same. */
+  private edgeEffectsMemo = new Map<string, {
+    edgeEffects: unknown;
+    layerShape: unknown;
+    corners: unknown;
+    meshGrid: unknown;
+    warpMode: unknown;
+    width: number;
+    height: number;
+    context: EdgeEffectLayerContext | undefined;
+    state: NativeLayerEdgeEffectsState;
+  }>();
+  private edgeContextMemo: { width: number; height: number; inputs: unknown[]; context: EdgeEffectContext } | null = null;
   private previewImageElements = new Map<string, HTMLImageElement>();
   private previewImageLoads = new Set<string>();
   /** Aspect of each image file, by URL, once any layer has loaded it: the
@@ -5729,6 +5940,11 @@ export class NativeRendererSync {
   private nativeGraphReadyKinds = new Set<NativeGraphRouteKind>();
   private nativeEffectPassDescriptorIds = new Set<string>();
   private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
+  /** LUT table buffers each graph owner (a route key, or composite FX) last
+   *  used, so the table of a replaced LUT can be freed. */
+  private nativeLutTables = new Map<string, string[]>();
+  private pendingLutTablePrunes = new Set<string>();
+  private lutTablePruneDueAt = 0;
   private nativeGraphRouteFailures = 0;
   private nativeGraphRouteSuppressedFailures = 0;
   private nativeGraphRouteLastFailure: string | null = null;
@@ -6256,6 +6472,7 @@ export class NativeRendererSync {
     if (!state) return false;
     const fingerprint = [
       sourceSignature(layer),
+      sourceValuesSignature(layer),
       nativeSourceIdentity(inputSource),
       (effectPasses ?? []).map(pass => pass.descriptor).join('>'),
     ].join('|');
@@ -6478,6 +6695,171 @@ export class NativeRendererSync {
       inputSource: null,
       effectPasses: effectPasses ?? undefined,
     };
+  }
+
+  /**
+   * Both route lookups in one pass. They differ only when the kill switch
+   * holds the route found first; then the layer may fall through to another
+   * route kind, so that case is looked up again.
+   */
+  private nativeGraphRoutePairForLayer(layer: Layer): NativeGraphRoutePair {
+    const possible = this.nativeGraphRouteForLayer(layer, true);
+    if (!possible) return { possible: null, active: null };
+    const held = (this.nativeGraphRoutes.get(possible.key)?.warnings ?? 0) >= 3;
+    return { possible, active: held ? this.nativeGraphRouteForLayer(layer) : possible };
+  }
+
+  /** Route pairs looked up at most once per layer object. One per flush. */
+  private nativeGraphRouteLookup(): (layer: Layer) => NativeGraphRoutePair {
+    const pairs = new Map<Layer, NativeGraphRoutePair>();
+    return (layer) => {
+      let pair = pairs.get(layer);
+      if (!pair) {
+        pair = this.nativeGraphRoutePairForLayer(layer);
+        pairs.set(layer, pair);
+      }
+      return pair;
+    };
+  }
+
+  /** Track the LUT tables an owner's graph uses and queue the ones it
+   *  dropped for removal (see takeDueLutTablePrunes). */
+  private noteNativeLutTables(owner: string, config: Record<string, any> | null | undefined) {
+    const ids = nativeLutTableIds(config);
+    const previous = this.nativeLutTables.get(owner);
+    if (previous) {
+      for (const id of previous) {
+        if (!ids.includes(id)) this.queueLutTablePrune(id);
+      }
+    }
+    if (ids.length) this.nativeLutTables.set(owner, ids);
+    else this.nativeLutTables.delete(owner);
+  }
+
+  private queueLutTablePrune(id: string) {
+    this.pendingLutTablePrunes.add(id);
+    this.lutTablePruneDueAt = Date.now() + LUT_TABLE_PRUNE_DEBOUNCE_MS;
+  }
+
+  /**
+   * LUT tables to free now. Waits until LUT changes settle: every buffer
+   * prune makes each resident LUT upload again, so stepping through LUTs
+   * frees them once at the end. A table some graph uses again is kept.
+   */
+  private takeDueLutTablePrunes(now: number): string[] {
+    if (!this.pendingLutTablePrunes.size || now < this.lutTablePruneDueAt) return [];
+    const inUse = new Set<string>();
+    for (const ids of this.nativeLutTables.values()) for (const id of ids) inUse.add(id);
+    const due = [...this.pendingLutTablePrunes].filter((id) => !inUse.has(id));
+    this.pendingLutTablePrunes.clear();
+    return due;
+  }
+
+  /** Edge effect group context, rebuilt only when an edge layer's inputs,
+   *  order or group changed, or the output size did. */
+  private nativeEdgeEffectContext(layers: Layer[], width: number, height: number): EdgeEffectContext {
+    const inputs: unknown[] = [];
+    layers.forEach((layer, index) => {
+      // Layers without enabled edge effects take no part in the context.
+      if (!layer.edgeEffects?.enabled) return;
+      inputs.push(
+        index, layer.id, (layer as { parentGroupId?: string | null }).parentGroupId ?? null,
+        layer.edgeEffects, layer.layerShape, layer.corners, layer.meshGrid, layer.warpMode,
+      );
+    });
+    const memo = this.edgeContextMemo;
+    if (
+      memo && memo.width === width && memo.height === height &&
+      memo.inputs.length === inputs.length &&
+      memo.inputs.every((value, index) => value === inputs[index])
+    ) {
+      return memo.context;
+    }
+    const context = buildEdgeEffectContext(layers, width, height);
+    this.edgeContextMemo = { width, height, inputs, context };
+    return context;
+  }
+
+  /** nativeLayerEdgeEffectsState, reused while the layer's edge effects,
+   *  shape, corners, mesh, output size and group context are unchanged. */
+  private nativeEdgeEffectsStateFor(
+    layer: Layer,
+    width: number,
+    height: number,
+    context: EdgeEffectContext,
+  ): NativeLayerEdgeEffectsState {
+    if (!layer.edgeEffects?.enabled) {
+      this.edgeEffectsMemo.delete(layer.id);
+      return nativeLayerEdgeEffectsState(layer, width, height, context);
+    }
+    const layerContext = context.layers.get(layer.id);
+    const memo = this.edgeEffectsMemo.get(layer.id);
+    if (
+      memo &&
+      memo.edgeEffects === layer.edgeEffects &&
+      memo.layerShape === layer.layerShape &&
+      memo.corners === layer.corners &&
+      memo.meshGrid === layer.meshGrid &&
+      memo.warpMode === layer.warpMode &&
+      memo.width === width &&
+      memo.height === height &&
+      sameEdgeEffectLayerContext(memo.context, layerContext)
+    ) {
+      return memo.state;
+    }
+    const state = nativeLayerEdgeEffectsState(layer, width, height, context);
+    this.edgeEffectsMemo.set(layer.id, {
+      edgeEffects: layer.edgeEffects,
+      layerShape: layer.layerShape,
+      corners: layer.corners,
+      meshGrid: layer.meshGrid,
+      warpMode: layer.warpMode,
+      width,
+      height,
+      context: layerContext,
+      state,
+    });
+    return state;
+  }
+
+  /**
+   * Drop per-source cache entries no layer has used for SOURCE_CACHE_GRACE_MS.
+   * Every clip ever played used to keep its prefetch mark, frame-ready seq,
+   * aspect and decode size until stop(). A stale prefetch mark also made a
+   * clip that came back much later skip its preroll, and a stale seq said
+   * its frame was still resident.
+   */
+  private pruneSourceCaches(liveKeys: Set<string>, liveIsfImageIds: Set<string>, now: number) {
+    this.lastSourceCachePruneAt = now;
+    for (const key of liveKeys) this.sourceKeyLastUsedAt.set(key, now);
+    const stale = (key: string): boolean => {
+      if (liveKeys.has(key)) return false;
+      if (key.startsWith('isf-image:')) {
+        if (liveIsfImageIds.has(key.slice('isf-image:'.length))) return false;
+      } else {
+        const separator = key.indexOf('::');
+        if (separator >= 0 && liveIsfImageIds.has(key.slice(0, separator))) return false;
+      }
+      const lastUsedAt = this.sourceKeyLastUsedAt.get(key);
+      if (lastUsedAt === undefined) {
+        // Not seen in the scene yet (a library arm, or written between
+        // passes): its grace period starts now.
+        this.sourceKeyLastUsedAt.set(key, now);
+        return false;
+      }
+      return now - lastUsedAt > SOURCE_CACHE_GRACE_MS;
+    };
+    for (const key of this.prefetchedSources) if (stale(key)) this.prefetchedSources.delete(key);
+    for (const key of this.sourcePreviewSeq.keys()) if (stale(key)) this.sourcePreviewSeq.delete(key);
+    for (const key of this.sourcePreviewSig.keys()) if (stale(key)) this.sourcePreviewSig.delete(key);
+    for (const key of this.sourcePreviewNextAt.keys()) if (stale(key)) this.sourcePreviewNextAt.delete(key);
+    for (const key of this.nativeSourceAspectCache.keys()) if (stale(key)) this.nativeSourceAspectCache.delete(key);
+    for (const key of this.nativeVideoDecodeDimensionCache.keys()) {
+      if (stale(key)) this.nativeVideoDecodeDimensionCache.delete(key);
+    }
+    for (const [key, lastUsedAt] of this.sourceKeyLastUsedAt) {
+      if (now - lastUsedAt > SOURCE_CACHE_GRACE_MS) this.sourceKeyLastUsedAt.delete(key);
+    }
   }
 
   private nativeGraphRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
@@ -6882,16 +7264,23 @@ export class NativeRendererSync {
     height: number,
     clock: NativeRenderClockCommand,
     visual: VisualAudioState,
+    /** The flush's route lookup. Given, `layers` is already group-resolved. */
+    flushRoutes?: (layer: Layer) => NativeGraphRoutePair,
   ): Promise<RendererCommand[]> {
     const queuedCommands: RendererCommand[] = [];
     if (!this.nativeComputeGraphSourceFrames) {
       this.nativeGraphRoutes.clear();
+      for (const owner of Array.from(this.nativeLutTables.keys())) {
+        if (owner !== COMPOSITE_FX_LUT_OWNER) this.nativeLutTables.delete(owner);
+      }
       return queuedCommands;
     }
+    if (!flushRoutes) layers = this.resolveNativeGroupLayers(layers);
+    const routesFor = flushRoutes ?? this.nativeGraphRouteLookup();
     const activeRouteKeys = new Set<string>();
-    layers = this.resolveNativeGroupLayers(layers);
+    const lutOwnersSeen = new Set<string>();
     this.activePointCloudKeys = new Set(layers.flatMap(layer => {
-      const input = this.nativeGraphRouteForLayer(layer, true)?.inputSource;
+      const input = routesFor(layer).possible?.inputSource;
       return input ? [this.nativePointCloudCacheKey(input)] : [];
     }));
     this.nativePointCloudDataCache.forEach((_value, key) => {
@@ -6902,7 +7291,8 @@ export class NativeRendererSync {
       this.nativePointCloudBytes.delete(key);
     });
     for (const layer of layers) {
-      const possibleRoute = this.nativeGraphRouteForLayer(layer, true);
+      const routePair = routesFor(layer);
+      const possibleRoute = routePair.possible;
       if (!possibleRoute) continue;
       if (NATIVE_CORE_OWNED_GRAPH_KINDS.has(possibleRoute.kind)) {
         activeRouteKeys.add(possibleRoute.key);
@@ -6985,8 +7375,9 @@ export class NativeRendererSync {
       }
       activeRouteKeys.add(possibleRoute.key);
 
-      const route = this.nativeGraphRouteForLayer(layer);
+      const route = routePair.active;
       if (!route) continue;
+      lutOwnersSeen.add(route.key);
       if (
         this.nativeGraphUsesSourceFrameInput(layer, route) &&
         route.inputSource &&
@@ -7073,7 +7464,11 @@ export class NativeRendererSync {
             throw new Error('native effect-pass route is missing input source or effect metadata');
           }
           const nowMs = Date.now();
-          if (nowMs - ((this as any).__fxQueueDebugAt ?? 0) > 4000) {
+          // Diagnostics only: set window.__NATIVE_SCENE_DEBUG__ = true.
+          if (
+            (globalThis as { __NATIVE_SCENE_DEBUG__?: boolean }).__NATIVE_SCENE_DEBUG__ === true &&
+            nowMs - ((this as any).__fxQueueDebugAt ?? 0) > 4000
+          ) {
             (this as any).__fxQueueDebugAt = nowMs;
             console.log('[NativeRendererSync] fx-chain queue', JSON.stringify({
               layer: layer.id,
@@ -7103,6 +7498,7 @@ export class NativeRendererSync {
             type: 'queue_compute_graph',
             ...(effectGraph.config as unknown as Record<string, unknown>),
           });
+          this.noteNativeLutTables(route.key, effectGraph.config as unknown as Record<string, any>);
           routeState.state = null;
           routeState.lastGraphFrameIndex = graphFrameIndex;
           routeState.lastManualClockKey = manualClockKey || undefined;
@@ -7601,6 +7997,7 @@ export class NativeRendererSync {
           type: 'queue_compute_graph',
           ...(graph.config as unknown as Record<string, unknown>),
         });
+        let effectGraphConfig: Record<string, any> | null = null;
         if (route.effectPasses?.length && route.source.id !== graphSource.id) {
           const effectGraph = buildNativeEffectPassChainGraph({
             sourceId: graphSource.id,
@@ -7623,7 +8020,9 @@ export class NativeRendererSync {
             type: 'queue_compute_graph',
             ...(effectGraph.config as unknown as Record<string, unknown>),
           });
+          effectGraphConfig = effectGraph.config as unknown as Record<string, any>;
         }
+        this.noteNativeLutTables(route.key, effectGraphConfig);
         routeState.state = graph.state ?? null;
         routeState.lastGraphFrameIndex = graphFrameIndex;
         routeState.lastManualClockKey = manualClockKey || undefined;
@@ -7641,6 +8040,12 @@ export class NativeRendererSync {
         inactiveGraphBufferPrefixes.push(...routeState.bufferPrefixes);
         this.nativeGraphRoutes.delete(key);
       }
+    }
+    // A route that is gone frees the LUT tables it last used.
+    for (const [owner, ids] of Array.from(this.nativeLutTables.entries())) {
+      if (owner === COMPOSITE_FX_LUT_OWNER || activeRouteKeys.has(owner) || lutOwnersSeen.has(owner)) continue;
+      for (const id of ids) this.queueLutTablePrune(id);
+      this.nativeLutTables.delete(owner);
     }
     if (inactiveGraphBufferPrefixes.length > 0) {
       await this.clearNativeGraphBuffers(inactiveGraphBufferPrefixes);
@@ -7958,6 +8363,7 @@ export class NativeRendererSync {
           { type: 'clear_composite_graph' } as unknown as RendererCommand,
         ]).catch(() => { /* core without post-composite support */ });
       }
+      this.noteNativeLutTables(COMPOSITE_FX_LUT_OWNER, null);
       return null;
     };
     if (!this.supportsNativeFeature('native_post_composite_graph')) return noChain();
@@ -7991,7 +8397,7 @@ export class NativeRendererSync {
     const effectPasses = candidates
       .map(({ effect, mix }) => ({
         effect, mix,
-        pass: nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect)),
+        pass: memoizedEffectPass(effect).pass,
       }))
       .filter((entry) => !!entry.pass && this.nativeEffectPassDescriptorIds.has(entry.pass.effect))
       .slice(0, NATIVE_EFFECT_PASS_LIMIT);
@@ -8019,6 +8425,7 @@ export class NativeRendererSync {
         seq: frameIndex * 16 + 12,
       });
       this.compositeFxResident = true;
+      this.noteNativeLutTables(COMPOSITE_FX_LUT_OWNER, graph.config as unknown as Record<string, any>);
       return {
         type: 'queue_compute_graph',
         ...(graph.config as unknown as Record<string, unknown>),
@@ -8510,6 +8917,10 @@ export class NativeRendererSync {
     this.nativeVideoPrefetchAt.clear();
     this.nativeVideoDecodeDimensionCache.clear();
     this.nativeSourceAspectCache.clear();
+    this.sourceKeyLastUsedAt.clear();
+    this.lastSourceCachePruneAt = 0;
+    this.edgeEffectsMemo.clear();
+    this.edgeContextMemo = null;
     this.sourcePreviewSeq.clear();
     this.sourcePreviewNextAt.clear();
     this.sourcePreviewSig.clear();
@@ -8537,6 +8948,8 @@ export class NativeRendererSync {
     this.nativeGraphReadyKinds.clear();
     this.nativeEffectPassDescriptorIds.clear();
     this.nativeGraphRoutes.clear();
+    this.nativeLutTables.clear();
+    this.pendingLutTablePrunes.clear();
     this.nativePointCloudLoads.forEach(controller => controller.abort());
     this.nativePointCloudLoads.clear();
     this.nativePointCloudBytes.clear();
@@ -8621,6 +9034,7 @@ export class NativeRendererSync {
           this.stopShaderAnimation();
           return;
         }
+        this.shaderAnimationTickAt = performance.now();
         const interval = 1000 / Math.max(1, this.targetFps);
         if (now >= nextFlushAt - 2) {
           nextFlushAt += interval;
@@ -8631,6 +9045,7 @@ export class NativeRendererSync {
         }
         this.shaderAnimationRaf = requestAnimationFrame(loop);
       };
+      this.shaderAnimationTickAt = performance.now();
       this.shaderAnimationRaf = requestAnimationFrame(loop);
     } else if (!hasContinuousNativeLayers && this.shaderAnimationRaf !== null) {
       // The per-frame loop is the only thing still repainting the output.
@@ -8649,6 +9064,16 @@ export class NativeRendererSync {
       }
       this.pendingSync = false;
       void this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+      return;
+    }
+
+    // The per-frame loop's next tick flushes latestLayers. Arming the timer
+    // as well ran the whole sync twice per frame. If the loop has stopped
+    // ticking (a hidden window), the timer still carries the change.
+    if (
+      this.shaderAnimationRaf !== null &&
+      performance.now() - this.shaderAnimationTickAt < SHADER_ANIMATION_STALL_MS
+    ) {
       return;
     }
 
@@ -9254,7 +9679,21 @@ export class NativeRendererSync {
     // binding transactionally once the first native frame is resident.
     const videoPrerolls = new Set<string>();
     layers = this.resolveNativeGroupLayers(layers);
-    const edgeContext = buildEdgeEffectContext(layers, width, height);
+    const edgeContext = this.nativeEdgeEffectContext(layers, width, height);
+    // Each layer's graph route, looked up once per flush and shared with
+    // renderNativeGraphSources. It used to be looked up four times.
+    const routesFor = this.nativeGraphRouteLookup();
+    // Per-source cache keys the scene uses, collected only on flushes that
+    // prune those caches (see pruneSourceCaches).
+    const pruneSourceCachesDue = now - this.lastSourceCachePruneAt >= SOURCE_CACHE_PRUNE_INTERVAL_MS;
+    const liveSourceKeys = new Set<string>();
+    const liveIsfImageIds = new Set<string>();
+    const noteLiveSource = (source: NativeLayerSource | null | undefined) => {
+      if (!source || !pruneSourceCachesDue) return;
+      liveSourceKeys.add(this.sourceCacheKey(source.id, source.uri));
+      const src = source.source;
+      if (src) liveSourceKeys.add(this.sourceCacheKey(src.id, src.src));
+    };
     // An offline render owns the clock: the core decodes each video's exact
     // frame when the export snapshot is taken, so a timestamped pre-roll
     // here would only race it (and fail against the core's prefetch budget
@@ -9262,6 +9701,7 @@ export class NativeRendererSync {
     const allowVideoPreroll = this.manualClockExportDepth === 0;
     for (const layer of layers) {
       const candidate = nativeLayerSource(layer);
+      noteLiveSource(candidate);
       const src = candidate.source;
       if (
         !allowVideoPreroll ||
@@ -9295,7 +9735,7 @@ export class NativeRendererSync {
       const unsupportedNativeEffects = nativeUnsupportedEffectTypes(layer);
       const nativeGraphRouteCandidate = unsupportedNativeEffects.length > 0
         ? null
-        : this.nativeGraphRouteForLayer(layer);
+        : routesFor(layer).active;
       const unsupportedNativeSource = unsupportedNativeEffects.length > 0
         ? null
         : nativeUnsupportedSourceReason(layer, !!nativeGraphRouteCandidate, {
@@ -9329,7 +9769,7 @@ export class NativeRendererSync {
       const nativeShape = nativeLayerShapeState(layer);
       const nativeMask = nativeLayerMaskState(layer);
       const nativePaintMask = nativeLayerPaintMaskState(layer);
-      const nativeEdgeEffects = nativeLayerEdgeEffectsState(layer, width, height, edgeContext);
+      const nativeEdgeEffects = this.nativeEdgeEffectsStateFor(layer, width, height, edgeContext);
       const nativeGraphQuality = this.nativeGraphQuality();
       const nativeGraphScaledParams = nativeGraphRoute
         ? nativeGraphParamsForLayer(layer, nativeGraphRoute.kind, nativeGraphQuality)
@@ -9379,6 +9819,7 @@ export class NativeRendererSync {
         sourceSig: nativeLayerBlocked
           ? nativeBlockSig
           : `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}:graph=${nativeGraphRoute?.kind ?? 'none'}:${nativeGraphSourceParamsSig}:effects=${nativeGraphEffectSig}`,
+        valuesSig: nativeLayerBlocked ? nativeBlockSig : sourceValuesSignature(layer),
         nativeParamsSig: nativeParamsSignature(layer),
         effectsSig: nativeLayerBlocked
           ? nativeBlockSig
@@ -9392,6 +9833,8 @@ export class NativeRendererSync {
 
       const graphInput = nativeGraphRoute?.inputSource;
       const graphInputSrc = graphInput?.source ?? null;
+      noteLiveSource(nativeSource);
+      noteLiveSource(graphInput);
       /*
        * Track the camera the layer ASKS for, not the one that resolved.
        *
@@ -9658,7 +10101,7 @@ export class NativeRendererSync {
                 opacity, premultiplied: true, uvTransform: [0, 0, 1, 1], uvFlags: [0, 1, 0, 0],
                 ready: frozen,
               };
-              const route = this.nativeGraphRouteForLayer(input);
+              const route = routesFor(input).active;
               const source = route?.source ?? nativeLayerSource(input);
               const uv = this.nativeLayerUvState(input, source, width, height);
               return {
@@ -9733,7 +10176,7 @@ export class NativeRendererSync {
               const groups = rawGroups.map(group => ({
                 id: String(group.id), opacity: Number(group.opacity), blendMode: String(group.blendMode),
                 effects: (group.effects ?? []).filter((fx: any) => fx.enabled !== false).map((fx: any) => {
-                  const pass = nativeEffectPassFromDescriptor(effectToNativeDescriptor(fx));
+                  const pass = memoizedEffectPass(fx).pass;
                   return pass ? { ...pass, mix: Number(fx.opacity ?? 1) } : null;
                 }).filter((pass: any) => pass && this.nativeEffectPassDescriptorIds.has(pass.effect)).slice(0, NATIVE_EFFECT_PASS_LIMIT),
               }));
@@ -9875,6 +10318,7 @@ export class NativeRendererSync {
             })
           : null;
         if (!skipInstall && ((nativeGraphRoute.kind !== 'vj-crossfade' && nativeGraphRoute.kind !== 'vj-mix') || installPluginGraph)) {
+          const installedGraph = composeNativeGraphs(pluginGraph?.config, effectGraph?.config);
           commands.push({
             type: 'set_native_graph_layer',
             layer_id: layer.id,
@@ -9885,9 +10329,10 @@ export class NativeRendererSync {
             instrument_source_id: nativeGraphInstrumentSourceId(nativeGraphRoute),
             composite_source_id: nativeGraphCompositeSourceId(nativeGraphRoute),
             input_source_id: nativeGraphRoute.inputSource?.id ?? null,
-            effect_graph: composeNativeGraphs(pluginGraph?.config, effectGraph?.config),
+            effect_graph: installedGraph,
             params: nativeGraphScaledParams ?? {},
           });
+          this.noteNativeLutTables(nativeGraphRoute.key, installedGraph);
         }
       } else if (!nativeGraphRoute && prev && prev.sourceSig !== snap.sourceSig) {
         commands.push({
@@ -9992,7 +10437,22 @@ export class NativeRendererSync {
       // content until the effect was toggled off/on, and shader params
       // froze the moment an effect was added.
       const src2 = nativeGraphRoute?.inputSource?.source ?? nativeSource.source;
-      if (src2?.shaderCode && layer.visible && (!prev || prev.sourceSig !== snap.sourceSig)) {
+      if (pruneSourceCachesDue && src2?.shaderImageInputs) {
+        // Media picked as an ISF image input keeps its decode marks.
+        for (const ref of Object.values(src2.shaderImageInputs)) {
+          if (ref && typeof ref === 'object' && ref.type === 'media' && ref.id) {
+            liveSourceKeys.add(`isf-image:${ref.id}`);
+            liveIsfImageIds.add(String(ref.id));
+          }
+        }
+      }
+      // Uniforms go out when the source changes and when only its shader or
+      // JS param values do; a values change no longer rebinds the source.
+      if (
+        src2?.shaderCode &&
+        layer.visible &&
+        (!prev || prev.sourceSig !== snap.sourceSig || prev.valuesSig !== snap.valuesSig)
+      ) {
         const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
         const shaderTime =
           typeof renderClock.time === 'number' && Number.isFinite(renderClock.time)
@@ -10174,7 +10634,10 @@ export class NativeRendererSync {
     this.nativeSvgState.forEach((_state, layerId) => {
       if (!liveLayerIds.has(layerId)) this.nativeSvgState.delete(layerId);
     });
-
+    this.edgeEffectsMemo.forEach((_memo, layerId) => {
+      if (!liveLayerIds.has(layerId)) this.edgeEffectsMemo.delete(layerId);
+    });
+    if (pruneSourceCachesDue) this.pruneSourceCaches(liveSourceKeys, liveIsfImageIds, now);
 
     if (graphInputCommands.length) {
       noteNativeIpcProbe(graphInputCommands);
@@ -10185,7 +10648,7 @@ export class NativeRendererSync {
       }
     }
 
-    const graphSourceCommands = await this.renderNativeGraphSources(layers, width, height, renderClock, visual);
+    const graphSourceCommands = await this.renderNativeGraphSources(layers, width, height, renderClock, visual, routesFor);
     commands.push(...graphSourceCommands);
 
     // A clip was fired while this expensive scene frame was being assembled.
@@ -10217,9 +10680,11 @@ export class NativeRendererSync {
     this.warnNativeCommandDrops(batchSummary, 'frame-batch');
     if (ahead.dropped && batchSummary) batchSummary.dropped = Number(batchSummary.dropped ?? 0) + ahead.dropped;
     if (!this.running || lifecycleGeneration !== this.lifecycleGeneration) return;
-    if (this.pendingGraphBufferPrunes.length) {
+    // Old LUT tables go only once a frame without them has landed.
+    const lutTablePrunes = Number(batchSummary?.dropped ?? 0) > 0 ? [] : this.takeDueLutTablePrunes(Date.now());
+    if (this.pendingGraphBufferPrunes.length || lutTablePrunes.length) {
       // After the batch: the graph that still used these buffers is gone.
-      const prefixes = this.pendingGraphBufferPrunes.splice(0);
+      const prefixes = [...this.pendingGraphBufferPrunes.splice(0), ...lutTablePrunes];
       void this.clearNativeGraphBuffers(prefixes);
     }
     if (Number(batchSummary?.dropped ?? 0) > 0) {
@@ -10270,6 +10735,13 @@ export class NativeRendererSync {
         if (!core) {
           drift = 'missing-from-core';
         } else {
+          // The core dropped this shader to stay under its registry cap and
+          // the layer was bound to it again: send its source again.
+          const evictedShader = (core as { evicted_shader_id?: string | null }).evicted_shader_id;
+          if (evictedShader) {
+            this.precompiledShaders.delete(evictedShader);
+            drift = `shader ${evictedShader} evicted`;
+          }
           const sigCorners = snap.geometrySig.startsWith('corners:')
             ? snap.geometrySig.slice('corners:'.length)
             : snap.geometrySig.startsWith('mesh:')

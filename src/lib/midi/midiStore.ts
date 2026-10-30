@@ -128,8 +128,10 @@ function createMidiStore() {
 
     setOutputDevices: (devices: MidiDevice[]) => update(s => ({ ...s, outputDevices: devices })),
 
-    selectDevice: (deviceId: string | null) => {
-      saveSelectedDevice(deviceId);
+    /** `remember: false` is for a stand-in while the chosen input is
+     *  unplugged: it is used now but not saved. */
+    selectDevice: (deviceId: string | null, remember = true) => {
+      if (remember) saveSelectedDevice(deviceId);
       update(s => ({ ...s, selectedDeviceId: deviceId }));
     },
 
@@ -148,11 +150,17 @@ function createMidiStore() {
       update(s => ({ ...s, clockInEnabled: enabled }));
     },
 
-    setClockInRunning: (running: boolean) =>
-      update(s => ({ ...s, clockInRunning: running })),
+    // Both are called from the MIDI clock path; skip no-op writes so
+    // subscribers (tempo bridge, Link) are not woken for nothing.
+    setClockInRunning: (running: boolean) => {
+      if (get({ subscribe }).clockInRunning === running) return;
+      update(s => ({ ...s, clockInRunning: running }));
+    },
 
-    setClockInBPM: (bpm: number | null) =>
-      update(s => ({ ...s, clockInBPM: bpm })),
+    setClockInBPM: (bpm: number | null) => {
+      if (get({ subscribe }).clockInBPM === bpm) return;
+      update(s => ({ ...s, clockInBPM: bpm }));
+    },
 
     setClockOutEnabled: (enabled: boolean) => {
       saveClockOutEnabled(enabled);

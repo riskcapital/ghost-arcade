@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import {
+  Model3DRenderer,
+  collectMaterialTextures,
   createModel3DWireframeGeometry,
   getModel3DLightingProfile,
   getModel3DMorphReferenceSize,
@@ -118,5 +120,47 @@ describe('model 3D wireframe geometry', () => {
 
     wireframe.dispose();
     source.dispose();
+  });
+});
+
+describe('model 3D teardown', () => {
+  it('finds every map and texture uniform on a material', () => {
+    const map = new THREE.Texture();
+    const normalMap = new THREE.Texture();
+    const roughnessMap = new THREE.Texture();
+    const standard = new THREE.MeshStandardMaterial({ map, normalMap, roughnessMap });
+    const shaderTex = new THREE.Texture();
+    const shader = new THREE.ShaderMaterial({ uniforms: { tex: { value: shaderTex }, amount: { value: 1 } } });
+
+    const found = collectMaterialTextures(shader, collectMaterialTextures(standard, new Set()));
+    expect([...found]).toEqual(expect.arrayContaining([map, normalMap, roughnessMap, shaderTex]));
+    expect(found.size).toBe(4);
+  });
+
+  it('disposes a model\'s textures but keeps the environment map', () => {
+    const r = new Model3DRenderer(64, 64) as any;
+    const map = new THREE.Texture();
+    const env = new THREE.Texture();
+    const material = new THREE.MeshStandardMaterial({ map, envMap: env });
+    const model = new THREE.Group().add(new THREE.Mesh(new THREE.BoxGeometry(), material));
+    r.environmentMap = env;
+    const mapDisposed = vi.fn();
+    const envDisposed = vi.fn();
+    map.addEventListener('dispose', mapDisposed);
+    env.addEventListener('dispose', envDisposed);
+
+    r.disposeObject(model);
+    expect(mapDisposed).toHaveBeenCalledTimes(1);
+    expect(envDisposed).not.toHaveBeenCalled();
+  });
+
+  it('gives its own WebGL context back on dispose', () => {
+    const r = new Model3DRenderer(64, 64) as any;
+    const fake = { dispose: vi.fn(), forceContextLoss: vi.fn() };
+    r.renderer = fake;
+    r.dispose();
+    expect(fake.dispose).toHaveBeenCalledTimes(1);
+    expect(fake.forceContextLoss).toHaveBeenCalledTimes(1);
+    expect(r.getContext()).toBeNull();
   });
 });

@@ -11119,7 +11119,9 @@ function withCubeLuts(graph: NativeEffectPassGraph, options: NativeEffectPassCha
     const handle = effect.params?.lutHandle ?? 0;
     const lut = cubeLutForHandle(handle);
     const replacement = buildNativeCubeLutGraph({ lut, sourceId: '__input', targetSourceId: '__output', strength: handle === 0 ? 0 : (effect.params?.amount ?? effect.amount ?? 1) * (effect.mix ?? 1) });
-    const tableId = `${uniformId}:lut:${handle}`;
+    // The `:table` suffix ends the id, so a buffer prune by prefix removes
+    // only this table (handle 1 must not also match handle 12).
+    const tableId = `${uniformId}:lut:${handle}:table`;
     graph.config.buffers = graph.config.buffers.filter(buffer => buffer.id !== uniformId);
     graph.config.buffers.push({ ...replacement.buffers[0], id: uniformId }, { ...replacement.buffers[1], id: tableId, persistent: true, immutable_lut: true });
     pass.shader_id = replacement.render_passes[0].shader_id;

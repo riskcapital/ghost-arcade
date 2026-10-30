@@ -51,7 +51,7 @@
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
   import { BLEND_MODE_ORDER, generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
   import { audioStore, audioBpm, audioManualBpm } from '../stores/audio';
-  import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
+  import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob, pathToFileUrl } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
   import { modulationStore, modulationEngine, setParamModSource, hasModRange, rangeWithRestAt, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
@@ -1843,7 +1843,8 @@
       vjDetectedNdiSources = [];
       vjNdiStatusHint = 'Install NDI and restart Ghost Arcade';
     }
-    if (!vjNdiAvailable) return;
+    // VJ may have closed while availability was being checked.
+    if (!vjNdiAvailable || !vjPanelOpen) return;
     if (vjNdiScanInterval) return;
     const tick = async () => {
       vjNdiScanning = true;
@@ -1868,6 +1869,11 @@
   function vjStopNdiScan() {
     if (vjNdiScanInterval) { clearInterval(vjNdiScanInterval); vjNdiScanInterval = null; }
   }
+  // The panel stays mounted while VJ is closed. Poll for NDI senders (so the
+  // Sources tab follows senders coming and going) only while it is open.
+  let vjPanelOpen = false;
+  $: vjPanelOpen = $vjClipLauncher.isOpen;
+  $: if (vjPanelOpen) void vjStartNdiScan(); else vjStopNdiScan();
   function vjAddNdiSource(sourceName: string) {
     const senderName = sourceName.trim();
     if (!senderName) return;
@@ -2184,11 +2190,6 @@
 
   // Load shaders on mount
   onMount(() => {
-    // Start the NDI source scan loop. Polls findSources() every 2s
-    // so the Sources tab reflects new senders as they come/go on the
-    // network. No-ops cleanly when NDI isn't available.
-    void vjStartNdiScan();
-
     window.addEventListener('midi-stage-preset', stagePresetHandler);
     window.addEventListener('midi-vj-rec', midiRecHandler);
     window.addEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
@@ -2398,7 +2399,8 @@
         if ((inp.TYPE === 'float' || inp.TYPE === 'long') && inp.DEFAULT !== undefined) {
           const current = clip.shaderValues?.[inp.NAME];
           if (current === undefined) {
-            vjClipLauncher.updateActiveClipShaderValue(layerIndex, inp.NAME, inp.DEFAULT as number);
+            // Showing the params is not an edit to the project.
+            vjClipLauncher.updateActiveClipShaderValue(layerIndex, inp.NAME, inp.DEFAULT as number, undefined, false);
           }
         }
       }
@@ -2800,7 +2802,7 @@
   function startModGhostLoop() {
     if (modGhostRaf !== null) return;
     const tick = () => {
-      if (selectedLayerIndex === null || !showShaderParams) {
+      if (!vjPanelOpen || selectedLayerIndex === null || !showShaderParams) {
         modGhostValues = {};
         modGhostRaf = null;
         return;
@@ -2825,7 +2827,7 @@
   }
 
   // Start/stop ghost loop when shader params panel is visible
-  $: if (showShaderParams && selectedLayerIndex !== null) {
+  $: if (vjPanelOpen && showShaderParams && selectedLayerIndex !== null) {
     startModGhostLoop();
   } else {
     stopModGhostLoop();
@@ -3267,19 +3269,17 @@
         blob.type || 'video/mp4',
         blobUrl,
       );
-      const video = document.createElement('video');
-      video.loop = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = 'auto';
-      video.src = blobUrl;
+      // The desktop app writes the video to a file: play that and let the
+      // blob go. Elsewhere the blob URL is the clip's only source.
+      const filePath = assetRef.kind === 'local-file' ? assetRef.originalPath : undefined;
+      if (filePath) URL.revokeObjectURL(blobUrl);
+      // setClip makes the cell's video element.
       vjClipLauncher.setClip(layerIndex, columnIndex, {
         id: generateUUID(),
         type: 'video',
         name: saved.name || 'Saved Video',
-        src: blobUrl,
+        src: filePath ? pathToFileUrl(filePath) : blobUrl,
         thumbnail: saved.thumbnail,
-        videoElement: video,
         _assetRef: assetRef,
       } as VJClip, bank);
     } catch (err) {

@@ -23,7 +23,8 @@
  *
  * 3. **Bounded update rate.** A 16ms minimum interval caps legacy
  *    render-loop sends. Native output follows fresh frames from the
- *    shared composite mirror (requested at 20fps).
+ *    shared composite mirror (requested at 20fps). A frame identical to
+ *    the last one sent is skipped, except for a once-a-second keepalive.
  *
  * 4. **Physical mapping.** Auto grids, linear strips, serpentine
  *    matrices, source regions, and custom LED points all resolve to
@@ -56,8 +57,16 @@ interface SenderState {
   effectBuffer: Uint8Array;
   previousBuffer: Uint8Array;
   samplePoints: WLEDNormalizedPoint[];
-  mappingSignature: string;
+  sampleRadius: number;
+  // What samplePoints were built from. Project edits replace the mapping
+  // object rather than change it, so a reference check is enough.
+  mappingRef: WLEDController['mapping'];
+  mappingCount: number;
+  mappingAspectKey: number;
   lastSendMs: number;
+  /** Last frame actually put on the wire, and when. */
+  sentBuffer: Uint8Array;
+  lastWireMs: number;
   inFlight: boolean;
   lastErrorAt: number;           // For throttling repeated error logs
   lastTelemetryAt: number;
@@ -90,6 +99,9 @@ let currentBpm = 120;
 // Minimum interval between sends per controller (ms). 16ms = ~60Hz —
 // matches RAF cadence; sending faster is wasted bandwidth + CPU.
 const MIN_SEND_INTERVAL_MS = 16;
+// An unchanged frame is sent again only this often. WLED leaves realtime
+// mode when no packet arrives for the 2 s timeout set in each packet.
+export const WLED_KEEPALIVE_MS = 1000;
 
 const SOURCE_ROLE_PRIORITY: Record<WLEDSourceRole, number> = {
   native: 4,
@@ -115,6 +127,7 @@ function activeSource(): RegisteredSource | null {
 function ensureSender(c: WLEDController): SenderState {
   const existing = senders.get(c.id);
   if (existing && existing.controller.ledCount === c.ledCount) {
+    if (existing.controller !== c) existing.lastWireMs = -Infinity; // address or settings changed: send the next frame
     existing.controller = c;  // Update other params (ipAddr, brightness, etc.)
     return existing;
   }
@@ -129,8 +142,13 @@ function ensureSender(c: WLEDController): SenderState {
     effectBuffer: new Uint8Array(count * 3),
     previousBuffer: new Uint8Array(count * 3),
     samplePoints: [],
-    mappingSignature: '',
+    sampleRadius: 0,
+    mappingRef: undefined,
+    mappingCount: 0,
+    mappingAspectKey: Number.NaN,
     lastSendMs: 0,
+    sentBuffer: new Uint8Array(count * 3),
+    lastWireMs: -Infinity,
     inFlight: false,
     lastErrorAt: 0,
     lastTelemetryAt: 0,
@@ -143,18 +161,25 @@ function ensureSamplePoints(state: SenderState, sourceCanvas: HTMLCanvasElement)
   const sourceAspect = sourceCanvas.width > 0 && sourceCanvas.height > 0
     ? sourceCanvas.width / sourceCanvas.height
     : 16 / 9;
-  const signature = JSON.stringify([
-    sanitizeWLEDCount(state.controller.ledCount),
-    sourceAspect.toFixed(4),
-    state.controller.mapping ?? null,
-  ]);
-  if (signature === state.mappingSignature) return;
-  state.mappingSignature = signature;
-  state.samplePoints = resolveWLEDMapping(
-    state.controller.ledCount,
-    state.controller.mapping,
-    sourceAspect
-  ).points;
+  const count = sanitizeWLEDCount(state.controller.ledCount);
+  const aspectKey = Math.round(sourceAspect * 10000);
+  if (
+    state.mappingRef === state.controller.mapping
+    && state.mappingCount === count
+    && state.mappingAspectKey === aspectKey
+  ) return;
+  state.mappingRef = state.controller.mapping;
+  state.mappingCount = count;
+  state.mappingAspectKey = aspectKey;
+  const mapping = resolveWLEDMapping(state.controller.ledCount, state.controller.mapping, sourceAspect);
+  state.samplePoints = mapping.points;
+  state.sampleRadius = mapping.sampleRadius;
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 /** Tear down a sender + tell the main process to close its socket. */
@@ -203,11 +228,6 @@ function captureComposite(sourceCanvas: HTMLCanvasElement, flipY: boolean): Imag
 }
 
 function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number) {
-  const mapping = resolveWLEDMapping(
-    state.controller.ledCount,
-    state.controller.mapping,
-    imageData && imageData.height > 0 ? imageData.width / imageData.height : 16 / 9
-  );
   const options = {
     brightness: state.controller.brightness,
     gamma: state.controller.gamma,
@@ -229,7 +249,7 @@ function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number)
       imageData.width,
       imageData.height,
       state.samplePoints,
-      mapping.sampleRadius,
+      state.sampleRadius,
       state.sourceBuffer,
       state.controller.samplingMode ?? 'dominant'
     );
@@ -304,6 +324,10 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
     }
 
     state.lastSendMs = now;
+    // Skip a frame identical to the last one sent, apart from a keepalive.
+    if (now - state.lastWireMs < WLED_KEEPALIVE_MS && sameBytes(state.rgbBuffer, state.sentBuffer)) continue;
+    state.sentBuffer.set(state.rgbBuffer);
+    state.lastWireMs = now;
     state.inFlight = true;
     invoke('wled_send_frame', {
       controllerId: state.controller.id,
@@ -312,6 +336,7 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
       pixels: state.rgbBuffer,
     }).then((res: any) => {
       state.inFlight = false;
+      if (res && !res.ok) state.lastWireMs = -Infinity; // not delivered: send the next frame
       if (res && !res.ok && now - state.lastErrorAt > 5000) {
         // Throttle error logs to once per 5s so we don't flood
         // when a controller goes offline.
@@ -320,6 +345,7 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
       }
     }).catch(() => {
       state.inFlight = false;
+      state.lastWireMs = -Infinity;
     });
   }
 }

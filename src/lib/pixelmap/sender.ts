@@ -66,7 +66,13 @@ export const pixelMapStats = writable<PixelMapStats | null>(null);
 export const pixelMapBlackout = writable(false);
 
 interface FixtureState {
-  signature: string;
+  // What the points were built from. Project edits replace objects rather
+  // than change them, so comparing references is enough and costs nothing
+  // per tick (a custom map can hold thousands of points).
+  type: PixelMapFixture['type'];
+  pixelCount: number;
+  mappingRef: unknown;
+  aspectKey: number;
   points: WLEDNormalizedPoint[];
   sampleRadius: number;
   source: Uint8Array;
@@ -102,6 +108,9 @@ let lastStatsAt = 0;
 let lastErrorLogAt = 0;
 let unsubscribers: Array<() => void> = [];
 const fixtureStates = new Map<string, FixtureState>();
+// Each fixture's mapping object as stored in the project. Normalizing makes
+// new objects on every edit; these stay the same for untouched fixtures.
+let rawMappings = new Map<string, unknown>();
 
 function readyFixtures(): PixelMapFixture[] {
   return (config?.fixtures ?? []).filter(fixture => fixture.enabled && fixtureIssues(fixture).length === 0);
@@ -201,14 +210,24 @@ function captureMirror(): ImageData | null {
 }
 
 function ensureFixtureState(fixture: PixelMapFixture, aspect: number): FixtureState {
-  const signature = JSON.stringify([fixture.type, fixture.pixelCount, fixture.mapping, aspect.toFixed(4)]);
+  const mappingRef = rawMappings.get(fixture.id) ?? fixture.mapping;
+  const aspectKey = Math.round(aspect * 10000);
   let state = fixtureStates.get(fixture.id);
-  if (state && state.signature === signature) return state;
+  if (
+    state
+    && state.mappingRef === mappingRef
+    && state.type === fixture.type
+    && state.pixelCount === fixture.pixelCount
+    && state.aspectKey === aspectKey
+  ) return state;
   const mapping = resolveFixtureMapping(fixture, aspect);
   const length = mapping.points.length * 3;
   const sameLength = state?.rgb.length === length;
   state = {
-    signature,
+    type: fixture.type,
+    pixelCount: fixture.pixelCount,
+    mappingRef,
+    aspectKey,
     points: mapping.points,
     sampleRadius: mapping.sampleRadius,
     source: sameLength ? state!.source : new Uint8Array(length),
@@ -301,6 +320,10 @@ export function startPixelMapOutput(): () => void {
       if (current.pixelMap === rawConfig) return;
       rawConfig = current.pixelMap;
       config = rawConfig ? normalizePixelMapConfig(rawConfig) : null;
+      rawMappings = new Map();
+      for (const fixture of rawConfig?.fixtures ?? []) {
+        if (fixture?.id && fixture.mapping) rawMappings.set(fixture.id, fixture.mapping);
+      }
       reconcile();
     }),
     settings.subscribe(current => {
@@ -327,6 +350,7 @@ function shutdown() {
   reconcile();
   releaseMirror();
   fixtureStates.clear();
+  rawMappings = new Map();
   rawConfig = undefined;
   config = null;
   ledGroups = [];

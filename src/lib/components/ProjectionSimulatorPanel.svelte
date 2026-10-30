@@ -123,6 +123,10 @@
   let padCanvas: HTMLCanvasElement | null = null;
   let padPreview: ImageData | null = null;
   let padPreviewAt = 0;
+  // Serial of the preview pixels last read, and of the ones in padBitmap.
+  let padPreviewSerial = -1;
+  let padBitmap: HTMLCanvasElement | null = null;
+  let padBitmapSerial = -1;
   let padDrag: { pointerId: number; x: number; y: number; fine: boolean } | null = null;
   let overlayInFlight = false;
   let overlayQueued = false;
@@ -803,6 +807,7 @@
     calibrationPointId = null;
     calibrationCursor = null;
     padPreview = null;
+    padPreviewSerial = -1;
     renderer?.setPickMode('select');
     if (id && isDesktopApp) {
       overlaySentFor = null;
@@ -1011,6 +1016,10 @@
     padPreviewAt = now;
     const { w, h } = padSize();
     padPreview = renderer.renderProjectorPreview(calibratingProjector.id, Math.round(w), Math.round(h));
+    // The renderer hands back the same pixels while the scene is unchanged.
+    const serial = renderer.getProjectorPreviewSerial();
+    if (serial === padPreviewSerial) return;
+    padPreviewSerial = serial;
     drawPad();
   }
 
@@ -1030,10 +1039,16 @@
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, bw, bh);
     if (padPreview) {
-      const bitmap = document.createElement('canvas');
-      bitmap.width = padPreview.width;
-      bitmap.height = padPreview.height;
-      bitmap.getContext('2d')?.putImageData(padPreview, 0, 0);
+      const bitmap = padBitmap ??= document.createElement('canvas');
+      if (bitmap.width !== padPreview.width || bitmap.height !== padPreview.height) {
+        bitmap.width = padPreview.width;
+        bitmap.height = padPreview.height;
+        padBitmapSerial = -1;
+      }
+      if (padBitmapSerial !== padPreviewSerial || padPreviewSerial < 0) {
+        bitmap.getContext('2d')?.putImageData(padPreview, 0, 0);
+        padBitmapSerial = padPreviewSerial;
+      }
       ctx.globalAlpha = 0.85;
       ctx.drawImage(bitmap, 0, 0, bw, bh);
       ctx.globalAlpha = 1;
@@ -1171,6 +1186,8 @@
     if (!wasNative) renderer?.endRecording();
     renderer?.dispose();
     renderer = null;
+    padPreview = null;
+    padBitmap = null;
   });
 
   $: renderer?.setGizmoMode($projectionSimGizmoMode);

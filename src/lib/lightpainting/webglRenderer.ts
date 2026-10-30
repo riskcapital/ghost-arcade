@@ -1396,5 +1396,8 @@ export class LightPaintingWebGLRenderer {
     gl.deleteTexture(this.bloomRT_B.tex);
     gl.deleteFramebuffer(this.bloomRT_B.fb);
     this.texture.dispose();
+    // Each layer owns a context; give it back now rather than at GC, so
+    // repeated layer churn cannot hit the browser's live-context limit.
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

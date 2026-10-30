@@ -415,7 +415,7 @@
   import { fitMenuHeight } from './lib/utils/menuFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import RecordingSourcePicker from './lib/components/RecordingSourcePicker.svelte';
-  import { vjClipLauncher } from './lib/stores/vjClipLauncher';
+  import { vjClipLauncher, vjEditVersion } from './lib/stores/vjClipLauncher';
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
   import { audioStore, audioBpm, audioManualBpm, isBeat } from './lib/stores/audio';
   // Side effect: the analyser follows clip audio when no live input runs.
@@ -1346,8 +1346,8 @@
         showControl: serializeShowControl(),
         stage3d: get(stage3dScene),
       }),
-      // Map Sim edits and relinked media are counted where they happen.
-      counters: JSON.stringify([get(projectionSimHistoryVersion), get(mediaRelinkVersion)]),
+      // Map Sim edits, relinked media and VJ clip/deck edits are counted where they happen.
+      counters: JSON.stringify([get(projectionSimHistoryVersion), get(mediaRelinkVersion), get(vjEditVersion)]),
     };
   }
 

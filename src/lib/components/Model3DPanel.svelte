@@ -1,3 +1,23 @@
+<script lang="ts" module>
+  import { get as getStore } from 'svelte/store';
+  import { project as projectStore } from '../stores/layers';
+
+  /** Blob URLs this panel made for models, with the file behind each. Keyed
+   *  by URL rather than by panel, because one panel edits whichever layer or
+   *  clip is selected: a reload re-reads that layer's own file, and loading a
+   *  new file frees only the URL the edited layer was using. */
+  const modelBlobFiles = new Map<string, File>();
+
+  /** Revoke a model URL this panel made once no layer shows it any more. */
+  function releaseModelBlobUrl(url: string | null | undefined): void {
+    if (!url || !modelBlobFiles.has(url)) return;
+    const layers = getStore(projectStore)?.layers ?? [];
+    if (layers.some((l) => l.model3dContent?.modelData === url)) return;
+    modelBlobFiles.delete(url);
+    URL.revokeObjectURL(url);
+  }
+</script>
+
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { project, selectedLayer, scheduleHistorySnapshot } from '../stores/layers';
@@ -137,11 +157,8 @@
   $: deformInfo = model3dDeformInfo(mc?.deformationType);
   $: isVJMode = !!onUpdate;
 
-  // Track blob URLs + the original File so we can re-create a blob without
-  // re-prompting the user. Cached at module scope so it survives panel
-  // unmount-remount cycles (e.g. switching to VJ mode and back).
-  let currentBlobUrl: string | null = null;
-  let currentFileName: string = '';
+  // Blob URLs and their files live in modelBlobFiles (module scope), so
+  // they survive panel unmount-remount cycles and stay per layer.
 
   // NB: do NOT revoke the blob URL on panel destroy. The panel unmounts
   // every time the user switches modes, but the layer's modelData still
@@ -150,10 +167,9 @@
   // the file. Blobs stay alive until the modelData is replaced, the layer
   // is deleted, or the page reloads (acceptable lifecycle here).
 
-  // Last selected File, kept in module memory so the reload button can
-  // re-create a fresh blob without prompting the user. Lost on page reload
-  // (then the reload button falls through to the file picker).
-  let cachedFile: File | null = null;
+  // The reload button re-creates a fresh blob from the edited layer's own
+  // File (modelBlobFiles). Lost on page reload, when it falls through to
+  // the file picker.
 
   // File input handler
   async function handleFileSelect(event: Event) {
@@ -174,16 +190,13 @@
 
     showLoading('Loading 3D model...');
     try {
-      // Revoke previous URL only when replacing it with a new blob — safe
-      // because nothing else references it once we overwrite modelData.
-      if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+      // The URL this layer (or clip) shows now; other layers keep theirs.
+      const previousUrl = mc?.modelData;
 
       // Capture both runtime URL and durable AssetRef. The blob URL is for
       // immediate three.js loading; the AssetRef is what survives save/reload.
       const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
-      currentBlobUrl = blobUrl;
-      currentFileName = file.name;
-      cachedFile = file;
+      modelBlobFiles.set(blobUrl, file);
 
       console.log('[Model3DPanel] Created blob URL for model:', blobUrl);
 
@@ -193,6 +206,7 @@
         modelName: file.name,
         _assetRef: assetRef,
       } as any);
+      if (previousUrl !== blobUrl) releaseModelBlobUrl(previousUrl);
     } catch (err) {
       console.error('Failed to load 3D model:', err);
     } finally {
@@ -207,6 +221,7 @@
    * after app restart), fall back to opening the file picker.
    */
   async function reloadModel() {
+    const cachedFile = mc?.modelData ? modelBlobFiles.get(mc.modelData) : undefined;
     if (cachedFile) {
       console.log('[Model3DPanel] Reloading from cached File');
       await loadModelFromFile(cachedFile);
@@ -350,7 +365,7 @@
       </div>
       {#if mc.modelData}
         <div class="file-info">
-          <span class="filename">{currentFileName || mc.modelName || 'Loaded model'}</span>
+          <span class="filename">{mc.modelName || 'Loaded model'}</span>
           <span class="format">{mc.modelFormat.toUpperCase()}</span>
           {#if mc.vertexCount > 0}
             <span class="vertex-count">{mc.vertexCount.toLocaleString()} vertices</span>
