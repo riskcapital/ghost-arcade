@@ -152,7 +152,7 @@
     min-height: 14px;
   }
   .mixer-strip.vertical.compact .strip-clip-name {
-    font-size: 8.5px;
+    font-size: 9px;
     max-width: calc(var(--tablet-mixer-width, 68px) - 10px);
     min-height: 10px;
     line-height: 10px;

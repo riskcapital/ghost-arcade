@@ -91,7 +91,7 @@
 </script>
 
 {#if part === 'drone'}
-  <StudioModule title="DRONE" subtitle={keyLabel(s.key)} led={droneSounding}>
+  <StudioModule title="Drone" subtitle={keyLabel(s.key)} led={droneSounding}>
     {#snippet head()}
       <StudioJack id="cv:drone.level" label="Level" title="Drone level, as a control signal" />
       <StudioJack id="audio:drone" label="Out" title="Drone sound" />
@@ -103,7 +103,7 @@
     </div>
   </StudioModule>
 {:else if part === 'bowls'}
-  <StudioModule title="BOWLS" subtitle="Strike, or hold">
+  <StudioModule title="Bowls" subtitle="Strike, or hold">
     {#snippet head()}
       <StudioJack id="cv:bowls.ring" label="Ring" title="Bowl ring, as a control signal" />
       <StudioJack id="audio:bowls" label="Out" title="Bowl sound" />
@@ -128,7 +128,7 @@
     </div>
   </StudioModule>
 {:else if part === 'xy'}
-  <StudioModule title="XY · SPACE" subtitle="Touch to play" grow>
+  <StudioModule title="XY · Space" subtitle="Touch to play" grow>
     {#snippet head()}
       <StudioJack id="audio:xy" label="Out" title="XY tone" />
       <StudioJack id="cv:xy.x" label="X" />
@@ -157,8 +157,8 @@
         e.stopPropagation();
       }}
     >
-      <span class="corner bl">DRONE · NEAR</span>
-      <span class="corner tr">BOWLS · VAST</span>
+      <span class="corner bl ga-eyebrow">Drone · near</span>
+      <span class="corner tr ga-eyebrow">Bowls · vast</span>
       {#each trail as p, i (i)}
         <span class="trail" style="left: {p.x * 100}%; top: {(1 - p.y) * 100}%; opacity: {(i + 1) / (trail.length + 4)}"></span>
       {/each}
@@ -166,10 +166,10 @@
     </div>
   </StudioModule>
 {:else}
-  <StudioModule title="CHORDS" subtitle="{keyLabel(s.key)} · tap to layer">
+  <StudioModule title="Chords" subtitle="{keyLabel(s.key)} · tap to layer">
     {#snippet head()}
       {#if t.chords.length}
-        <button class="clear" onclick={releaseChords}>LET GO</button>
+        <button class="studio-btn" onclick={releaseChords}>Let go</button>
       {/if}
     {/snippet}
     <div class="chords">
@@ -211,7 +211,7 @@
     overflow: hidden;
   }
   .xy:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
-  .corner { position: absolute; font-size: 10px; letter-spacing: 0.1em; color: var(--studio-muted); pointer-events: none; }
+  .corner { position: absolute; pointer-events: none; }
   .corner.bl { left: 8px; bottom: 6px; }
   .corner.tr { right: 8px; top: 6px; }
   .trail, .puck { position: absolute; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); }
@@ -223,19 +223,6 @@
     border: 2px solid var(--studio-accent);
     background: var(--studio-accent-soft);
     box-shadow: 0 0 18px var(--studio-accent);
-  }
-  .clear {
-    height: 22px;
-    padding: 0 8px;
-    border: 1px solid var(--studio-edge);
-    background: transparent;
-    color: var(--studio-ink);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    cursor: pointer;
   }
   .chords { flex: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .chord {

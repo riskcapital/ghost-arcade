@@ -130,7 +130,7 @@
     justify-content: space-between;
     margin-bottom: 10px;
   }
-  .picker-head h2 { font-size: 17px; margin: 0; }
+  .picker-head h2 { font-size: 16px; margin: 0; }
   .close-x {
     width: 30px; height: 30px;
     border: none;

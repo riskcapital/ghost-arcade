@@ -99,7 +99,7 @@
       <rect x="3" y="14" width="7" height="7"/>
       <rect x="14" y="14" width="7" height="7"/>
     </svg>
-    <span class="snap-handle-label">SNAPS</span>
+    <span class="snap-handle-label">Snaps</span>
     {#if populatedCount > 0}
       <span class="snap-handle-count">{populatedCount}</span>
     {/if}
@@ -170,10 +170,10 @@
     bottom: 18px;
     right: 18px;
     z-index: 8500;
-    background: rgba(20, 20, 26, 0.92);
+    background: color-mix(in srgb, var(--ga-raise, #14141a) 92%, transparent);
     backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 8px);
     padding: 6px;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
     transition: padding 0.18s;
@@ -200,42 +200,46 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px 4px 6px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px 0 6px;
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
-    color: var(--text-secondary, #aaa);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 4px);
+    color: var(--ga-ink-1, #aaa);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
     cursor: pointer;
-    transition: background 0.12s, color 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
   .snap-handle:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-0, #fff);
   }
   .snap-bank.inline .snap-handle {
     height: var(--vj-control-h, 30px);
     padding: 0 var(--vj-snap-pad-x, 9px) 0 calc(var(--vj-snap-pad-x, 9px) - 2px);
-    background: rgba(9, 11, 15, 0.88);
-    border-color: rgba(255, 255, 255, 0.14);
-    font-size: var(--vj-snap-font, 12px);
+    background: transparent;
+    border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    font-size: var(--vj-snap-font, 13px);
   }
-  .snap-bank.inline .snap-handle:hover,
+  .snap-bank.inline .snap-handle:hover {
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-0, #fff);
+  }
   .snap-bank.inline.expanded .snap-handle {
-    border-color: rgba(187, 134, 252, 0.55);
-    color: #efe6ff;
-    background: rgba(187, 134, 252, 0.12);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
+    background: var(--ga-selection-bg, #1f3170);
   }
-  .snap-handle-label { letter-spacing: 0.16em; }
   .snap-handle-count {
-    background: #BB86FC;
-    color: #000;
-    font-size: 10px;
-    font-weight: 800;
+    background: rgba(255, 255, 255, 0.12);
+    color: inherit;
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     padding: 1px 5px;
-    border-radius: 7px;
+    border-radius: 999px;
     min-width: 14px;
     text-align: center;
   }
@@ -257,10 +261,10 @@
     right: 0;
     margin-top: 0;
     padding: 8px;
-    background: rgba(20, 20, 26, 0.96);
+    background: color-mix(in srgb, var(--ga-raise, #14141a) 96%, transparent);
     backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 8px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 8px);
     box-shadow: 0 14px 36px rgba(0, 0, 0, 0.58);
   }
 
@@ -281,9 +285,9 @@
     padding: 0;
     height: 32px;
     background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
-    color: #666;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 4px);
+    color: var(--ga-ink-2, #666);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -294,9 +298,8 @@
     transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
   }
   .snap-cell:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
-    transform: translateY(-1px);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-0, #fff);
   }
   .snap-cell.populated {
     background: var(--snap-color);
@@ -325,7 +328,7 @@
 
   .snap-name {
     font-size: 9px;
-    color: var(--text-secondary, #aaa);
+    color: var(--ga-ink-1, #aaa);
     max-width: 32px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -339,9 +342,9 @@
     max-width: 32px;
     min-width: 0;
     box-sizing: border-box;
-    background: rgba(0, 0, 0, 0.4);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    color: #fff;
+    background: var(--ga-slot, rgba(0, 0, 0, 0.4));
+    border: 1px solid var(--ga-selection-line, #5278ff);
+    color: var(--ga-ink-0, #fff);
     font-size: 9px;
     text-align: center;
     border-radius: 2px;
@@ -353,9 +356,9 @@
   .snap-ctx {
     position: fixed;
     z-index: 9000;
-    background: var(--bg-tertiary, #1a1a1e);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 5px;
+    background: var(--ga-raise, #1a1a1e);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 6px);
     padding: 4px 0;
     min-width: 200px;
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
@@ -365,30 +368,27 @@
     width: 100%;
     background: none;
     border: none;
-    color: var(--text-primary, #ccc);
-    font-size: 12px;
+    color: var(--ga-ink-1, #ccc);
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-body, 500);
     text-align: left;
-    padding: 6px 14px;
+    padding: 6px 12px;
     cursor: pointer;
     font-family: inherit;
   }
   .snap-ctx-item:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ga-ink-0, #fff);
   }
   .snap-ctx-primary {
-    color: #FF8577;
-    font-weight: 700;
+    color: var(--ga-ink-0, #fff);
+    font-weight: var(--ga-weight-control, 600);
   }
-  .snap-ctx-primary:hover {
-    background: rgba(255, 133, 119, 0.12);
-    color: #ffa899;
-  }
-  .snap-ctx-danger { color: #ff6b6b; }
-  .snap-ctx-danger:hover { background: rgba(255, 80, 80, 0.12); color: #ff4444; }
+  .snap-ctx-danger { color: var(--ga-rec, #ff6b6b); }
+  .snap-ctx-danger:hover { background: color-mix(in srgb, var(--ga-rec, #ff4438) 14%, transparent); color: var(--ga-rec, #ff4444); }
   .snap-ctx-sep {
     height: 1px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--ga-line, rgba(255, 255, 255, 0.07));
     margin: 4px 0;
   }
 </style>

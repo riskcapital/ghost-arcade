@@ -103,10 +103,10 @@
 </script>
 
 {#if active}
-  <div data-help-page="midi-audio" class="mp-learn-modal" role="dialog" aria-label="MediaPipe Learn">
+  <div data-help-page="midi-audio" class="mp-learn-modal" role="dialog" aria-label="MediaPipe learn">
     <header class="mp-learn-head">
       <span class="mp-learn-dot"></span>
-      <span class="mp-learn-title">MediaPipe Learn</span>
+      <span class="mp-learn-title">MediaPipe learn</span>
       <button class="mp-learn-done" onclick={stopSession} title="End learn session (Esc)">Done</button>
     </header>
 
@@ -136,13 +136,13 @@
         <label class="mp-learn-row">
           <span>Gesture</span>
           <select bind:value={gestureName}>
-            <option value="Open_Palm">Open Palm</option>
-            <option value="Closed_Fist">Closed Fist</option>
-            <option value="Pointing_Up">Pointing Up</option>
-            <option value="Thumb_Up">Thumb Up</option>
-            <option value="Thumb_Down">Thumb Down</option>
+            <option value="Open_Palm">Open palm</option>
+            <option value="Closed_Fist">Closed fist</option>
+            <option value="Pointing_Up">Pointing up</option>
+            <option value="Thumb_Up">Thumb up</option>
+            <option value="Thumb_Down">Thumb down</option>
             <option value="Victory">Victory</option>
-            <option value="ILoveYou">I Love You</option>
+            <option value="ILoveYou">I love you</option>
           </select>
         </label>
         <label class="mp-learn-row">
@@ -164,7 +164,7 @@
           <span class="mp-learn-dash">→</span>
           <input type="number" step="0.01" min="0" max="1" bind:value={sourceMax} />
           <label class="mp-learn-check">
-            <input type="checkbox" bind:checked={invert} /> invert
+            <input type="checkbox" bind:checked={invert} /> Invert
           </label>
         </div>
         <div class="mp-learn-row mp-learn-row-narrow">
@@ -202,27 +202,27 @@
 {/if}
 
 <style>
+  /* The coral accent marks learn mode, matching the outlines on bindable controls. */
   .mp-learn-modal {
     position: fixed;
     bottom: 60px;
     right: 16px;
     width: 280px;
     z-index: 99999;
-    background: rgba(14, 8, 22, 0.97);
-    color: var(--text-primary, #ddd);
+    background: var(--ga-panel);
+    color: var(--ga-ink-0);
     border: 1px solid rgba(255, 107, 107, 0.55);
-    border-radius: 6px;
-    box-shadow: 0 6px 28px rgba(255, 107, 107, 0.25), 0 2px 6px rgba(0, 0, 0, 0.6);
-    font-size: 12px;
+    border-radius: var(--ga-r-soft);
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.6);
+    font-size: var(--ga-text-control);
     pointer-events: auto;
-    backdrop-filter: blur(6px);
   }
   .mp-learn-head {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
-    border-bottom: 1px solid rgba(255, 107, 107, 0.20);
+    padding: 8px 8px 8px 12px;
+    border-bottom: 1px solid var(--ga-line-1);
   }
   .mp-learn-dot {
     width: 7px; height: 7px;
@@ -235,26 +235,25 @@
   @keyframes mpLearnDot { 0%,100%{opacity:1} 50%{opacity:.35} }
   .mp-learn-title {
     flex: 1;
-    color: var(--accent-secondary, #FF8585);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    font-weight: 700;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-title);
   }
   .mp-learn-done {
-    background: rgba(255, 107, 107, 0.12);
-    border: 1px solid rgba(255, 107, 107, 0.55);
-    color: var(--accent-primary, #FF6B6B);
-    padding: 3px 10px;
-    border-radius: 3px;
-    font-size: 11px;
+    height: var(--ga-control-h-sm);
+    background: var(--ga-accent-gradient, var(--ga-violet));
+    border: 1px solid transparent;
+    color: var(--ga-blue-800);
+    padding: 0 10px;
+    border-radius: var(--ga-r-soft);
+    font-size: var(--ga-text-control);
     font-weight: 700;
     cursor: pointer;
   }
-  .mp-learn-done:hover { background: rgba(255, 107, 107, 0.22); }
+  .mp-learn-done:hover { filter: brightness(1.06); }
 
   .mp-learn-body {
-    padding: 8px 10px;
+    padding: 8px 12px 12px;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -263,45 +262,45 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    min-height: var(--ga-control-h);
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1);
   }
   .mp-learn-row > span:first-child {
     width: 56px;
     flex-shrink: 0;
-    font-size: 10px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1);
   }
   .mp-learn-row select,
   .mp-learn-row input[type="number"] {
     flex: 1;
-    background: var(--bg-primary, #050507);
-    border: 1px solid #2a1a35;
-    color: var(--text-primary, #ddd);
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 11px;
+    height: var(--ga-control-h);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
     outline: none;
     min-width: 0;
   }
   .mp-learn-row input[type="number"] { max-width: 60px; flex: 0 0 auto; }
   .mp-learn-row input[type="range"] { flex: 1; min-width: 0; }
   .mp-learn-row select:focus,
-  .mp-learn-row input:focus { border-color: var(--accent-primary, #FF6B6B); }
+  .mp-learn-row input:focus { border-color: var(--ga-focus); }
 
   .mp-learn-meter {
     position: relative;
     height: 6px;
-    background: var(--ga-blue-900);
+    background: var(--ga-card);
     border-radius: 2px;
     overflow: hidden;
     margin-left: 62px;
   }
   .mp-learn-meter-bar {
     height: 100%;
-    background: linear-gradient(to right, #5a2a4a, var(--accent-primary, #FF6B6B));
+    background: var(--ga-selection-line);
     transition: width 0.05s linear;
   }
   .mp-learn-meter-val {
@@ -309,33 +308,33 @@
     right: 4px;
     top: -1px;
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 9px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-micro);
+    color: var(--ga-ink-1);
     line-height: 8px;
   }
 
-  .mp-learn-dash { color: #555; font-size: 12px; }
-  .mp-learn-check { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-secondary, #aaa); cursor: pointer; }
-  .mp-learn-val { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 11px; color: var(--text-secondary, #aaa); width: 32px; text-align: right; }
+  .mp-learn-dash { color: var(--ga-ink-3); font-size: var(--ga-text-control); }
+  .mp-learn-check { display: flex; align-items: center; gap: 4px; font-size: var(--ga-text-meta); color: var(--ga-ink-1); cursor: pointer; }
+  .mp-learn-val { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: var(--ga-text-meta); color: var(--ga-ink-1); width: 32px; text-align: right; }
 
   .mp-learn-toggle {
+    align-self: flex-start;
     background: transparent;
     border: none;
-    color: #777;
+    color: var(--ga-ink-1);
     text-align: left;
     padding: 2px 0;
-    font-size: 10px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
   }
-  .mp-learn-toggle:hover { color: var(--text-secondary, #aaa); }
+  .mp-learn-toggle:hover { color: var(--ga-ink-0); }
 
   .mp-learn-prompt {
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     line-height: 1.5;
-    padding: 4px 0;
+    padding: 2px 0;
   }
   .mp-learn-tag-inline {
     color: var(--accent-primary, #FF6B6B);
@@ -345,15 +344,16 @@
   .mp-learn-list-head {
     display: flex;
     justify-content: space-between;
-    font-size: 9px;
-    color: #666;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding-top: 4px;
-    border-top: 1px solid #1a1428;
+    letter-spacing: var(--ga-eyebrow-tracking);
+    padding-top: 8px;
+    border-top: 1px solid var(--ga-line-1);
     margin-top: 4px;
   }
-  .mp-learn-count { color: var(--text-muted, #888); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
+  .mp-learn-count { color: var(--ga-ink-1); }
 
   .mp-learn-list {
     display: flex;
@@ -367,7 +367,7 @@
     grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1.4fr) 16px;
     gap: 4px;
     align-items: center;
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     padding: 2px 0;
   }
   .mp-learn-item-sig {
@@ -377,9 +377,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .mp-learn-item-arr { color: #444; text-align: center; }
+  .mp-learn-item-arr { color: var(--ga-ink-3); text-align: center; }
   .mp-learn-item-path {
-    color: var(--text-primary, #ddd);
+    color: var(--ga-ink-0);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -387,11 +387,11 @@
   .mp-learn-item-del {
     background: transparent;
     border: none;
-    color: #555;
+    color: var(--ga-ink-2);
     cursor: pointer;
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1;
     padding: 0;
   }
-  .mp-learn-item-del:hover { color: #f87171; }
+  .mp-learn-item-del:hover { color: var(--ga-rec); }
 </style>

@@ -436,7 +436,7 @@
 
   .modal-header h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 600;
     color: var(--text-primary, #eee);
   }
@@ -686,7 +686,7 @@
     margin-left: 5px;
     padding: 1px 4px;
     border-radius: 3px;
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.08em;
     vertical-align: middle;
@@ -787,7 +787,7 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.5);
     border-radius: 5px;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .tier-badge {
@@ -868,7 +868,7 @@
 
   .custom-badge {
     display: inline-block;
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.08em;
     padding: 1px 4px;
@@ -893,7 +893,7 @@
     width: 18px;
     height: 18px;
     border-radius: 3px;
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1;
     display: flex;
     align-items: center;

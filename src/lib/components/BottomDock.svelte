@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Bottom dock — coral-active pills for Presets / Sequencer / Keyframes
+   * Bottom dock — toggle pills for Presets / Sequencer / Keyframes
    * sitting under the stage. Click a pill to open a drawer; click again
    * to collapse. Inactive pills stay quiet so the dock doesn't shout
    * for attention when the user is mapping or designing.
@@ -107,34 +107,35 @@
     pointer-events: auto;
     box-shadow: 0 -10px 30px rgba(0, 0, 0, .34);
   }
+  /* Same toggle as the status-bar pills: quiet when off, selection
+     colours when on. */
   .pill {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 28px;
-    padding: 0 14px;
-    border: 1px solid transparent;
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, .12));
     border-radius: var(--ga-r-pill, 999px);
     background: transparent;
     color: var(--ga-ink-1, #9aa0ac);
     font: inherit;
     font-family: var(--ga-font-ui, system-ui, sans-serif);
-    font-weight: 600;
-    font-size: 12.5px;
-    letter-spacing: 0.01em;
+    font-weight: var(--ga-weight-control, 600);
+    font-size: var(--ga-text-control, 12px);
+    letter-spacing: 0;
     cursor: pointer;
     transition: background 0.14s, color 0.14s, border-color 0.14s;
   }
-  .pill:hover {
+  .pill:hover:not(.on) {
     color: var(--ga-ink-0, #eef0f4);
-    background: var(--ga-card, rgba(255, 255, 255, .04));
+    border-color: var(--ga-line-3, rgba(255, 255, 255, .24));
   }
   .pill.on {
-    color: #23110c;
-    background: var(--ga-coral, #ff6f5e);
-    border-color: var(--ga-coral, #ff6f5e);
+    color: var(--ga-selection-ink, #e0e8ff);
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
   }
-  .pill.on:hover { filter: brightness(1.08); }
   .pill svg { flex: none; }
   .count {
     display: inline-flex;
@@ -148,11 +149,11 @@
     background: rgba(255, 255, 255, 0.1);
     color: inherit;
     font-family: var(--ga-font-mono, ui-monospace);
-    font-size: 10.5px;
-    font-weight: 500;
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 600;
     letter-spacing: 0;
   }
   .pill.on .count {
-    background: rgba(35, 17, 12, 0.18);
+    background: rgba(255, 255, 255, 0.14);
   }
 </style>

@@ -447,7 +447,7 @@
   }
   .sl-header-left { display: flex; align-items: center; gap: 12px; }
   .sl-header-right { display: flex; align-items: center; gap: 8px; }
-  .sl-header h2 { font-size: 17px; font-weight: 600; margin: 0; color: #fff; }
+  .sl-header h2 { font-size: 16px; font-weight: 600; margin: 0; color: #fff; }
   .sl-count { font-size: 13px; color: #666; }
 
   .sl-find-latest {
@@ -476,7 +476,7 @@
   .sl-close {
     width: 28px; height: 28px; border-radius: 50%;
     background: rgba(255,255,255,0.06); border: none;
-    color: var(--text-muted, #888); font-size: 19px; cursor: pointer;
+    color: var(--text-muted, #888); font-size: 20px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     transition: all 0.15s;
   }

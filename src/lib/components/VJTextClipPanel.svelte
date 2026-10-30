@@ -30,7 +30,7 @@
   </section>
 
   <section>
-    <div class="section-label">Repeat and Read</div>
+    <div class="section-label">Repeat and read</div>
     <TextMotionControls {content} {onUpdate} />
   </section>
 
@@ -49,10 +49,10 @@
     <div class="section-label">Appearance</div>
     <label class="color-row"><span>Fill</span><input type="color" value={content.color} oninput={(event) => onUpdate({ color: (event.target as HTMLInputElement).value })} /></label>
     <label class="color-row"><span>Stroke</span><input type="color" value={content.strokeColor} oninput={(event) => onUpdate({ strokeColor: (event.target as HTMLInputElement).value })} /></label>
-    <label class="range-row"><span>Stroke W</span><input type="range" min="0" max="20" step="0.5" value={content.strokeWidth} oninput={(event) => onUpdate({ strokeWidth: Number((event.target as HTMLInputElement).value) })} /><output>{content.strokeWidth}px</output></label>
+    <label class="range-row"><span>Stroke width</span><input type="range" min="0" max="20" step="0.5" value={content.strokeWidth} oninput={(event) => onUpdate({ strokeWidth: Number((event.target as HTMLInputElement).value) })} /><output>{content.strokeWidth}px</output></label>
     <div class="color-row"><span>Background</span><div><input type="color" value={content.backgroundColor === 'transparent' ? '#000000' : content.backgroundColor} oninput={(event) => onUpdate({ backgroundColor: (event.target as HTMLInputElement).value })} /><button onclick={() => onUpdate({ backgroundColor: 'transparent' })}>Clear</button></div></div>
     <label class="color-row"><span>Shadow</span><input type="color" value={content.shadowColor.startsWith('rgba') ? '#000000' : content.shadowColor} oninput={(event) => onUpdate({ shadowColor: (event.target as HTMLInputElement).value })} /></label>
-    <label class="range-row"><span>Shadow Blur</span><input type="range" min="0" max="50" step="1" value={content.shadowBlur} oninput={(event) => onUpdate({ shadowBlur: Number((event.target as HTMLInputElement).value) })} /><output>{content.shadowBlur}px</output></label>
+    <label class="range-row"><span>Shadow blur</span><input type="range" min="0" max="50" step="1" value={content.shadowBlur} oninput={(event) => onUpdate({ shadowBlur: Number((event.target as HTMLInputElement).value) })} /><output>{content.shadowBlur}px</output></label>
   </section>
 
   <section>
@@ -72,7 +72,7 @@
     <label class="toggle-row"><span>Enable 3D</span><input type="checkbox" checked={content.enable3D} onchange={(event) => onUpdate({ enable3D: (event.target as HTMLInputElement).checked })} /></label>
     {#if content.enable3D}
       <label class="range-row"><span>Depth</span><input type="range" min="1" max="100" step="1" value={content.extrudeDepth} oninput={(event) => onUpdate({ extrudeDepth: Number((event.target as HTMLInputElement).value) })} /><output>{content.extrudeDepth}px</output></label>
-      <label class="color-row"><span>Depth Color</span><input type="color" value={content.extrudeColor} oninput={(event) => onUpdate({ extrudeColor: (event.target as HTMLInputElement).value })} /></label>
+      <label class="color-row"><span>Depth color</span><input type="color" value={content.extrudeColor} oninput={(event) => onUpdate({ extrudeColor: (event.target as HTMLInputElement).value })} /></label>
       <label class="range-row"><span>Rotate X</span><input type="range" min="-90" max="90" step="1" value={content.rotateX} oninput={(event) => onUpdate({ rotateX: Number((event.target as HTMLInputElement).value) })} /><output>{content.rotateX}&deg;</output></label>
       <label class="range-row"><span>Rotate Y</span><input type="range" min="-90" max="90" step="1" value={content.rotateY} oninput={(event) => onUpdate({ rotateY: Number((event.target as HTMLInputElement).value) })} /><output>{content.rotateY}&deg;</output></label>
       <label class="range-row"><span>Rotate Z</span><input type="range" min="-180" max="180" step="1" value={content.rotateZ} oninput={(event) => onUpdate({ rotateZ: Number((event.target as HTMLInputElement).value) })} /><output>{content.rotateZ}&deg;</output></label>
@@ -83,19 +83,23 @@
 </div>
 
 <style>
-  .text-clip-panel { display: flex; flex-direction: column; gap: 7px; padding: 8px 10px 14px; color: #c9cbd3; font-size: 12px; }
-  section { padding: 7px; border: 1px solid #292b34; background: #111219; }
-  .section-label { margin-bottom: 7px; color: #8e919b; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
-  textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid #343641; border-radius: 3px; background: #08090d; color: #fff; padding: 7px; font: inherit; }
-  .range-row { display: grid; grid-template-columns: 72px minmax(80px, 1fr) 42px; align-items: center; gap: 7px; min-height: 28px; }
-  .range-row input { width: 100%; accent-color: #49d298; }
-  output { color: var(--ga-blue-300); font: 10px var(--ga-font-mono, monospace); text-align: right; }
-  .select-row, .color-row, .toggle-row, .button-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; }
-  select { min-width: 150px; max-width: 70%; border: 1px solid #343641; border-radius: 3px; background: #08090d; color: #d7d9df; padding: 5px 7px; }
-  input[type='color'] { width: 38px; height: 25px; padding: 0; border: 1px solid #3b3e49; background: transparent; }
-  input[type='checkbox'] { accent-color: #b67aff; }
-  button { min-height: 25px; border: 1px solid #3a3d48; border-radius: 3px; background: var(--ga-blue-mute-800); color: #b8bac2; cursor: pointer; }
-  button.active { border-color: #c27aff; background: #6d3a8c; color: #fff; }
-  .button-row div, .color-row div { display: flex; gap: 3px; align-items: center; }
-  .button-row button { width: 31px; }
+  .text-clip-panel { display: flex; flex-direction: column; gap: 0; padding: 0 10px 14px; color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-control, 12px); }
+  /* Flat sections: an eyebrow and a hairline, as in the other clip panels. */
+  section { padding: 10px 0; border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07)); display: flex; flex-direction: column; gap: 4px; }
+  section:first-child { border-top: 0; }
+  .section-label { margin-bottom: 4px; color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); line-height: 1.2; text-transform: uppercase; }
+  textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); background: var(--ga-slot, #060504); color: var(--ga-ink-0, #f2ede4); padding: 6px 8px; font: inherit; font-size: var(--ga-text-control, 12px); }
+  .long-text { margin: 0; color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-meta, 11px); }
+  .range-row { display: grid; grid-template-columns: 80px minmax(80px, 1fr) 44px; align-items: center; gap: 8px; min-height: var(--ga-control-h, 26px); }
+  .range-row input { width: 100%; accent-color: var(--ga-slider-fill, var(--ga-selection-line, #5278ff)); }
+  output { color: var(--ga-ink-1, #ada9a2); font: var(--ga-text-meta, 11px) var(--ga-font-mono, monospace); font-variant-numeric: tabular-nums; text-align: right; }
+  .select-row, .color-row, .toggle-row, .button-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ga-control-h, 26px); }
+  select { height: var(--ga-control-h, 26px); box-sizing: border-box; min-width: 150px; max-width: 70%; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); background: var(--ga-slot, #060504); color: var(--ga-ink-0, #f2ede4); padding: 0 8px; font-size: var(--ga-text-control, 12px); }
+  input[type='color'] { width: 38px; height: 22px; padding: 0; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); background: transparent; }
+  input[type='checkbox'] { accent-color: var(--ga-selection-line, #5278ff); }
+  button { height: var(--ga-control-h-sm, 22px); box-sizing: border-box; padding: 0 8px; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); background: var(--ga-card, #16140f); color: var(--ga-ink-1, #ada9a2); font-family: inherit; font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); cursor: pointer; }
+  button:hover:not(.active) { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-0, #f2ede4); }
+  button.active { border-color: var(--ga-selection-line, #5278ff); background: var(--ga-selection-bg, #1f3170); color: var(--ga-selection-ink, #e0e8ff); }
+  .button-row div, .color-row div { display: flex; gap: 4px; align-items: center; }
+  .button-row button { width: 32px; padding: 0; }
 </style>

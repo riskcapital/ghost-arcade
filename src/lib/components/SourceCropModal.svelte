@@ -432,7 +432,7 @@
 
   .source-crop-header h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 700;
   }
 
@@ -453,7 +453,7 @@
     border-radius: 4px;
     color: var(--ga-ink-1, #9aa0ac);
     cursor: pointer;
-    font-size: 17px;
+    font-size: 16px;
   }
 
   .source-crop-close:hover {

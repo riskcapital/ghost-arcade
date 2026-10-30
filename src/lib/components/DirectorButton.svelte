@@ -26,20 +26,20 @@
     width: 40px;
     height: 40px;
     border-radius: 50%;
-    background: var(--accent-primary, #BB86FC);
-    border: 2px solid rgba(255,255,255,0.15);
-    color: #fff;
+    background: var(--ga-raise);
+    border: 1px solid var(--ga-line-3);
+    color: var(--ga-ink-0);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4), 0 0 20px rgba(187,134,252,0.2);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
     transition: all 0.2s ease;
   }
 
   .director-btn:hover {
-    transform: scale(1.1);
-    box-shadow: 0 6px 24px rgba(0,0,0,0.5), 0 0 30px rgba(187,134,252,0.35);
+    border-color: var(--ga-selection-line);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
   }
 
   .director-btn.streaming {
@@ -47,7 +47,7 @@
   }
 
   @keyframes pulse {
-    0%, 100% { box-shadow: 0 4px 16px rgba(0,0,0,0.4), 0 0 20px rgba(187,134,252,0.2); }
-    50% { box-shadow: 0 4px 16px rgba(0,0,0,0.4), 0 0 40px rgba(187,134,252,0.5); }
+    0%, 100% { box-shadow: 0 4px 16px rgba(0,0,0,0.4), 0 0 0 0 var(--ga-selection-line); }
+    50% { box-shadow: 0 4px 16px rgba(0,0,0,0.4), 0 0 0 4px color-mix(in srgb, var(--ga-selection-line) 35%, transparent); }
   }
 </style>

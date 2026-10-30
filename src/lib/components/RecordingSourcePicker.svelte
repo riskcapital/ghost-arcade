@@ -157,7 +157,7 @@
     align-items: center;
     justify-content: center;
     width: 18px;
-    height: 32px;
+    height: var(--ga-bar-control-h, 30px);
     padding: 0;
     background: transparent;
     border: 1px solid rgba(255, 68, 56, 0.25);
@@ -206,9 +206,10 @@
   .rec-source-group {
     padding: 4px 6px 2px;
     color: var(--ga-ink-2, rgba(255, 255, 255, 0.5));
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
   .rec-source-item {
     text-align: left;

@@ -89,23 +89,22 @@
     min-width: 200px;
     overflow-y: auto;
     overflow-x: hidden;
-    border-right: 1px solid rgba(255,255,255,0.06);
-    background: rgba(10, 10, 14, 0.98);
-    font-size: 11px;
+    border-right: 1px solid var(--ga-line, rgba(255,255,255,0.07));
+    background: var(--ga-panel, #0a0a0e);
+    font-size: var(--ga-text-meta, 11px);
   }
   .ruler-spacer {
     height: 20px;
-    background: rgba(14, 14, 18, 0.98);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: var(--ga-card, #0e0e12);
+    border-bottom: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
     position: sticky;
     top: 0;
     z-index: 2;
   }
   .no-layer {
     padding: 20px 10px;
-    color: #555;
+    color: var(--ga-ink-2, #555);
     text-align: center;
-    font-style: italic;
   }
   .group-header {
     display: flex;
@@ -115,16 +114,16 @@
     padding: 0 6px;
     background: rgba(255,255,255,0.03);
     border: none;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    color: #999;
-    font-size: 10px;
-    text-transform: uppercase;
+    border-bottom: 1px solid var(--ga-line, rgba(255,255,255,0.07));
+    color: var(--ga-ink-1, #999);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     text-align: left;
     box-sizing: border-box;
   }
-  .group-header:hover { background: rgba(255,255,255,0.06); }
-  .group-chevron { font-size: 9px; width: 10px; color: #666; }
+  .group-header:hover { background: rgba(255,255,255,0.06); color: var(--ga-ink-0, #fff); }
+  .group-chevron { font-size: 9px; width: 10px; color: var(--ga-ink-2, #666); }
   .group-name { flex: 1; }
   .track-row {
     display: flex;
@@ -132,15 +131,15 @@
     gap: 4px;
     padding: 0 6px;
     border-bottom: 1px solid rgba(255,255,255,0.02);
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2, #888);
     box-sizing: border-box;
   }
-  .track-row.has-kf { color: #bbb; }
+  .track-row.has-kf { color: var(--ga-ink-0, #bbb); }
   .track-row.armed { background: rgba(255, 32, 32, 0.04); }
   .kf-diamond {
     background: none;
     border: none;
-    color: #444;
+    color: var(--ga-ink-3, #444);
     font-size: 9px;
     cursor: pointer;
     padding: 0;
@@ -159,14 +158,14 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
-    font-size: 11px;
+    font-size: var(--ga-text-meta, 11px);
   }
   .ctx-menu {
     position: fixed;
     z-index: 10000;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 30%, transparent);
-    border-radius: 4px;
+    background: var(--ga-raise, #14141a);
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
+    border-radius: var(--ga-r-soft, 6px);
     padding: 4px 0;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
     min-width: 180px;
@@ -177,13 +176,13 @@
     padding: 6px 14px;
     background: none;
     border: none;
-    color: var(--text-primary, #ddd);
-    font-size: 12px;
+    color: var(--ga-ink-1, #ddd);
+    font-size: var(--ga-text-body, 13px);
     text-align: left;
     cursor: pointer;
     font-family: inherit;
   }
-  .ctx-item:hover { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent); color: #fff; }
-  .ctx-delete { color: #FF4757; }
-  .ctx-sep { height: 1px; background: rgba(255,255,255,0.08); margin: 4px 0; }
+  .ctx-item:hover { background: rgba(255,255,255,0.06); color: var(--ga-ink-0, #fff); }
+  .ctx-delete { color: var(--ga-rec, #FF4757); }
+  .ctx-sep { height: 1px; background: var(--ga-line, rgba(255,255,255,0.07)); margin: 4px 0; }
 </style>

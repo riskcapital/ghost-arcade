@@ -124,9 +124,9 @@
     gap: 8px;
     width: 100%;
     padding: 10px 12px 8px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: linear-gradient(180deg, #15181e, #0d0f13);
+    border-radius: var(--ga-r-soft, 8px);
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-hardware-bg, linear-gradient(180deg, var(--ga-raise, #15181e), var(--ga-bar, #0d0f13)));
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
     user-select: none;
   }
@@ -134,11 +134,11 @@
   .lamp {
     width: 28px;
     height: 22px;
-    border-radius: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2);
     font: inherit;
-    font-weight: 800;
-    font-size: 12px;
+    font-weight: 700;
+    font-size: var(--ga-text-control, 12px);
     cursor: pointer;
     color: color-mix(in srgb, var(--deck) calc(var(--level) * 100%), #4a4f58);
     background: color-mix(in srgb, var(--deck) calc(var(--level) * 22%), #0b0d10);
@@ -146,8 +146,8 @@
   }
   .lamp.a { --deck: var(--a); }
   .lamp.b { --deck: var(--b); }
-  .state { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ga-ink-2, #8a909b); }
-  .state.link { padding: 3px 8px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.14); background: transparent; font: inherit; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: #e0a33a; cursor: pointer; }
+  .state { font-size: var(--ga-text-micro, 9px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--ga-ink-2, #8a909b); }
+  .state.link { height: var(--ga-control-h-sm, 22px); padding: 0 8px; border-radius: var(--ga-r-hard, 5px); border: 1px solid var(--ga-line-2); background: transparent; font: inherit; font-size: var(--ga-text-meta, 11px); font-weight: 600; letter-spacing: 0; text-transform: none; color: #e0a33a; cursor: pointer; }
   .state.link.linked { color: var(--ga-live, #46d18a); border-color: color-mix(in srgb, var(--ga-live, #46d18a) 45%, transparent); }
 
   .slot {
@@ -164,7 +164,7 @@
   .scale, .travel { position: absolute; left: 23px; right: 23px; top: 0; bottom: 0; }
   .tick { position: absolute; top: 4px; width: 1px; height: 6px; background: rgba(255, 255, 255, 0.18); transform: translateX(-0.5px); }
   .tick.major { height: 9px; background: rgba(255, 255, 255, 0.42); }
-  .scale::after { content: ''; position: absolute; left: 0; right: 0; bottom: 4px; border-bottom: 1px dashed rgba(255, 255, 255, 0.1); }
+  .scale::after { content: ''; position: absolute; left: 0; right: 0; bottom: 4px; border-bottom: 1px dashed var(--ga-line-2); }
   .groove {
     position: absolute;
     left: 14px;
@@ -172,7 +172,7 @@
     top: 50%;
     height: 6px;
     transform: translateY(-50%);
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
     background: #020304;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.06);
   }
@@ -182,7 +182,7 @@
     width: 22px;
     height: 40px;
     transform: translate(-50%, -50%);
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
     background:
       linear-gradient(90deg, rgba(0, 0, 0, 0.35), transparent 30%, transparent 70%, rgba(0, 0, 0, 0.35)),
       linear-gradient(180deg, #e9ebef, #9aa0aa 48%, #c9ccd2 52%, #7d838d);
@@ -201,17 +201,17 @@
   .cuts { display: flex; justify-content: space-between; gap: 4px; }
   .cuts button {
     flex: 1;
-    height: 20px;
-    border-radius: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    height: var(--ga-control-h-sm, 22px);
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2);
     background: transparent;
     color: var(--ga-ink-2, #8a909b);
     font: inherit;
-    font-size: 10px;
-    letter-spacing: 0.06em;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
     cursor: pointer;
   }
-  .cuts button:hover { color: var(--ga-ink-0, #eef0f4); border-color: rgba(255, 255, 255, 0.28); }
+  .cuts button:hover { color: var(--ga-ink-0, #eef0f4); border-color: var(--ga-line-3); }
   .compact { padding: 6px 8px; gap: 5px; }
   .compact .slot { height: 38px; }
   .compact .cap { height: 32px; width: 18px; }

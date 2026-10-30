@@ -59,38 +59,43 @@
     border-right: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     font-family: var(--ga-font-ui, system-ui, sans-serif);
   }
+  /* Sentence-case tabs in the UI face; the chosen one takes the
+     selection colours and a 2px underline. */
   .left-tabs {
     display: flex;
-    gap: 0;
-    padding: 0 14px;
+    align-items: stretch;
+    gap: 2px;
+    height: 36px;
+    padding: 0 8px;
     background: var(--ga-panel, #0b0d11);
     border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     flex-shrink: 0;
   }
   .left-tab {
     flex: 0 0 auto;
-    padding: 13px 14px;
-    margin-right: 8px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 12px;
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
     border-radius: 0;
-    color: var(--ga-ink-2, #5e6571);
-    font-size: 12px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.10em;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
+    text-transform: none;
     cursor: pointer;
-    transition: color 80ms ease, border-color 80ms ease;
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    transition: color 80ms ease, border-color 80ms ease, background 80ms ease;
   }
   .left-tab:hover {
     color: var(--ga-ink-0, #eef0f4);
   }
   .left-tab.active {
-    background: transparent;
-    color: var(--ga-ink-0, #eef0f4);
-    border-bottom-color: var(--ga-violet, #9b87f5);
+    background: var(--ga-selection-bg, transparent);
+    color: var(--ga-selection-ink, var(--ga-ink-0, #eef0f4));
+    border-bottom-color: var(--ga-selection-line, #5278ff);
   }
   .left-panel-host {
     flex: 1;

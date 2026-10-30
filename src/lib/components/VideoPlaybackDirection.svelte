@@ -17,10 +17,10 @@
 
 <style>
   .direction-options { display: inline-flex; flex-shrink: 0; gap: 3px; }
-  button { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0;
-    border-radius: var(--ga-r-hard, 5px); color: var(--text-secondary, #a6adba);
-    background: var(--ga-card, #16191f); border: 1px solid var(--border-secondary, #303540); cursor: pointer; }
-  button:hover { color: var(--text-primary, #eef0f4); border-color: var(--ga-blue-mute-600); }
+  button { display: flex; align-items: center; justify-content: center; width: var(--ga-control-h, 26px); height: var(--ga-control-h, 26px); padding: 0;
+    border-radius: var(--ga-r-hard, 5px); color: var(--ga-ink-1);
+    background: var(--ga-sub); border: 1px solid var(--ga-line-2); cursor: pointer; }
+  button:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   button.active { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, var(--ga-blue-700)); border-color: var(--ga-selection-line, var(--ga-blue-500)); }
   button:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
 </style>

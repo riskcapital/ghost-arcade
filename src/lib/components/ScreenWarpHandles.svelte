@@ -1064,7 +1064,7 @@
     align-items: center;
     justify-content: center;
     color: #BB86FC;
-    font-size: 19px;
+    font-size: 20px;
     line-height: 1;
   }
   .move-handle:hover { background: rgba(187, 134, 252, 0.2); }

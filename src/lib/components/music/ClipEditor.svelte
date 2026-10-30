@@ -278,38 +278,38 @@
         <span class="muted where">{found.track === 'beats' ? 'Beat' : `${found.track[0].toUpperCase()}${found.track.slice(1)}`} · row {found.row + 1}{clip.kind === 'notes' ? ` · ${INSTRUMENT_LABELS[instrument]} · ${keyLabel(s.key)}` : ''}</span>
         <span class="spacer"></span>
         {#if clip.kind === 'notes'}
-          <label class="field">Length
+          <label class="labelled">Length
             <select value={clip.beats} onchange={(e) => setLength(+(e.target as HTMLSelectElement).value)}>
               {#each LENGTHS.includes(clip.beats) ? LENGTHS : [...LENGTHS, clip.beats].sort((a, b) => a - b) as b}<option value={b}>{b % 4 === 0 ? `${b / 4} bar${b === 4 ? '' : 's'}` : `${b} beats`}</option>{/each}
             </select>
           </label>
-          <label class="field">Snap
+          <label class="labelled">Snap
             <select value={snap} onchange={(e) => (snap = +(e.target as HTMLSelectElement).value)}>
               {#each SNAPS as g}<option value={g.beats}>{g.id}</option>{/each}
             </select>
           </label>
-          <button class="text-btn small" onclick={quantize} disabled={snap <= 0} title="Snap every note's start to the grid">QUANTIZE</button>
+          <button class="text-btn" onclick={quantize} disabled={snap <= 0} title="Snap every note's start to the grid">Quantize</button>
           <div class="nudge" role="group" aria-label="Transpose">
-            <button class="text-btn small" onclick={() => transpose(-12)} title="Down an octave">−12</button>
-            <button class="text-btn small" onclick={() => transpose(-1)} title="Down a semitone">−1</button>
-            <button class="text-btn small" onclick={() => transpose(1)} title="Up a semitone">+1</button>
-            <button class="text-btn small" onclick={() => transpose(12)} title="Up an octave">+12</button>
+            <button class="text-btn" onclick={() => transpose(-12)} title="Down an octave">−12</button>
+            <button class="text-btn" onclick={() => transpose(-1)} title="Down a semitone">−1</button>
+            <button class="text-btn" onclick={() => transpose(1)} title="Up a semitone">+1</button>
+            <button class="text-btn" onclick={() => transpose(12)} title="Up an octave">+12</button>
           </div>
-          <button class="text-btn small" onclick={clearNotes} title="Remove every note">CLEAR</button>
+          <button class="text-btn" onclick={clearNotes} title="Remove every note">Clear</button>
         {:else}
-          <label class="field">Steps
+          <label class="labelled">Steps
             <select value={clip.pattern.steps} onchange={(e) => editPattern((p) => resizePattern(p, +(e.target as HTMLSelectElement).value as PatternLength))}>
               {#each PATTERN_LENGTHS as n}<option value={n}>{n}</option>{/each}
             </select>
           </label>
-          <label class="field">Swing
+          <label class="labelled">Swing
             <input type="range" min="0" max="0.5" step="0.01" value={clip.pattern.swing} oninput={(e) => editPattern((p) => ({ ...p, swing: +(e.target as HTMLInputElement).value }))} />
           </label>
         {/if}
         <span class="divider"></span>
-        <button class="text-btn small" onclick={savePreset} title="Keep this clip in your presets, for every project">ADD TO MY PRESETS</button>
-        <button class="text-btn small" onclick={saveMidi} title="Save as a MIDI file">MIDI</button>
-        <button class="text-btn small" onclick={close} title="Close (Esc)">DONE</button>
+        <button class="text-btn" onclick={savePreset} title="Keep this clip in your presets, for every project">Add to my presets</button>
+        <button class="text-btn" onclick={saveMidi} title="Save as a MIDI file">MIDI</button>
+        <button class="text-btn" onclick={close} title="Close (Esc)">Done</button>
       </header>
 
       {#if notesClip}
@@ -352,7 +352,7 @@
           </div>
         </div>
         <div class="velocity" style="--ppb: {ppb}px">
-          <span class="lane-name muted">VEL</span>
+          <span class="lane-name ga-eyebrow legend">Vel</span>
           <div class="bars" role="application" aria-label="Velocities" onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp}>
             {#each notes as n, i (i)}
               <div class="vbar" style="left: {n.beat * ppb}px; height: {n.velocity * 100}%" role="slider" aria-label="Velocity of {noteName(n.note)}" aria-valuenow={Math.round(n.velocity * 127)} tabindex="-1" onpointerdown={(e) => velocityDown(e, i)}></div>
@@ -422,20 +422,20 @@
     color: var(--studio-ink);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-weight: 650;
+    font-weight: var(--ga-weight-control, 600);
   }
-  .where { font-size: 11px; }
+  .where { font-size: var(--ga-text-meta, 11px); }
   .spacer { flex: 1; }
   .divider { width: 1px; height: 18px; background: var(--studio-edge-soft); }
-  .field { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--studio-muted); }
-  .field select { height: 22px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  .labelled { display: inline-flex; align-items: center; gap: 6px; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
+  header select { height: var(--ga-control-h, 26px); }
   .nudge { display: inline-flex; gap: 2px; }
-  .nudge .text-btn { padding: 0 6px; }
+  .nudge .text-btn { padding: 0 7px; font-variant-numeric: tabular-nums; }
   .text-btn:disabled { opacity: 0.4; cursor: default; }
 
   .roll-wrap { flex: 1; min-height: 160px; overflow: auto; display: flex; border: 1px solid var(--studio-edge-soft); border-radius: var(--studio-radius); background: var(--studio-slot); }
   .keys { flex: 0 0 44px; position: sticky; left: 0; z-index: 2; background: var(--studio-cell); border-right: 1px solid var(--studio-edge); }
-  .key { box-sizing: border-box; padding-right: 4px; font-family: var(--ga-font-mono, ui-monospace); font-size: 8px; line-height: 13px; text-align: right; color: var(--studio-muted); border-bottom: 1px solid var(--studio-edge-soft); }
+  .key { box-sizing: border-box; padding-right: 4px; font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; line-height: 13px; text-align: right; color: var(--studio-muted); border-bottom: 1px solid var(--studio-edge-soft); }
   .key.black { background: rgba(0, 0, 0, 0.35); }
   .key.root { color: var(--studio-accent); font-weight: 700; }
   .roll { position: relative; flex: 1; min-width: 0; cursor: crosshair; touch-action: none; }
@@ -464,13 +464,13 @@
   .note::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 5px; cursor: ew-resize; }
   .playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--studio-ink); opacity: 0.7; pointer-events: none; }
   .velocity { display: flex; gap: 0; height: 46px; }
-  .lane-name { flex: 0 0 44px; font-size: 9px; font-weight: 700; letter-spacing: 0.1em; padding-top: 2px; }
+  .lane-name { flex: 0 0 44px; padding-top: 2px; }
   .bars { position: relative; flex: 1; border-top: 1px solid var(--studio-edge-soft); border-bottom: 1px solid var(--studio-edge-soft); touch-action: none; }
   .vbar { position: absolute; bottom: 0; width: 5px; margin-left: -2px; background: var(--studio-accent); border-radius: 1px 1px 0 0; cursor: ns-resize; }
-  .hint { margin: 0; font-size: 11px; }
+  .hint { margin: 0; font-size: var(--ga-text-meta, 11px); }
 
   .beat { display: grid; grid-template-columns: 70px 1fr; gap: 4px 8px; align-items: center; }
-  .voice { font-size: 11px; color: var(--studio-muted); }
+  .voice { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .cells { display: grid; grid-template-columns: repeat(var(--steps), minmax(0, 1fr)); gap: 2px; }
   .cell { height: 22px; padding: 0; border: 1px solid var(--studio-edge-soft); background: var(--studio-cell); border-radius: 2px; cursor: pointer; }
   .cell.beat-start { border-color: var(--studio-edge); }

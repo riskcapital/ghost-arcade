@@ -36,7 +36,7 @@
   }
 </script>
 
-<StudioModule title="PLAY" class="play">
+<StudioModule title="Play" class="play">
   {#snippet head()}
     <select value={s.instrument} onchange={(e) => musicStudio.setInstrument((e.target as HTMLSelectElement).value as InstrumentId)} aria-label="What the keys play">
       {#each PLAYABLE_INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
@@ -55,9 +55,9 @@
         </div>
       {/if}
       <div class="stepper" title="Octave of the letter keys (Z / X)">
-        <button onclick={() => musicStudio.shiftOctave(-1)} aria-label="Octave down">‹</button>
+        <button onclick={() => musicStudio.shiftOctave(-1)} aria-label="Octave down"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 3L4.5 6l3 3" /></svg></button>
         <span>{noteName(octaveBaseNote(s.octave))}</span>
-        <button onclick={() => musicStudio.shiftOctave(1)} aria-label="Octave up">›</button>
+        <button onclick={() => musicStudio.shiftOctave(1)} aria-label="Octave up"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3l3 3-3 3" /></svg></button>
       </div>
     {/if}
   {/snippet}
@@ -69,7 +69,7 @@
     {/if}
   </div>
   <div class="foot">
-    <div class="seg small" role="group" aria-label="Visual behaviour">
+    <div class="seg small" role="group" aria-label="Visual behavior">
       <button class:on={visual.mode === 'fade'} onclick={() => musicStudio.setVisualMode(s.instrument, 'fade')} title="Visuals linger, then fade away">Fade</button>
       <button class:on={visual.mode === 'build'} onclick={() => musicStudio.setVisualMode(s.instrument, 'build')} title="Visuals keep building while you play">Build</button>
     </div>
@@ -83,5 +83,7 @@
 <style>
   .surface { flex: 1; min-height: 56px; display: flex; }
   .foot { display: flex; align-items: center; gap: 8px; }
+  .stepper button { display: inline-grid; place-items: center; }
+  .stepper svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .add-visual { flex: 1; min-width: 0; height: 22px; }
 </style>

@@ -556,70 +556,78 @@
 </div>
 
 <style>
-  .led-fx-panel { display: grid; gap: 8px; color: #c9c9d0; font-size: 10px; }
+  .led-fx-panel { display: grid; gap: 8px; color: var(--ga-ink-1); font-size: var(--ga-text-control); }
   button, input, select { font: inherit; }
   button, select, input[type='text'], input[type='number'] {
-    border: 1px solid #33333c; border-radius: 3px; background: #111116; color: #c9c9d0;
+    height: var(--ga-control-h); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); background: var(--ga-sub); color: var(--ga-ink-1);
   }
-  button { cursor: pointer; }
+  select, input[type='text'], input[type='number'] { background: var(--ga-slot); color: var(--ga-ink-0); }
+  button { cursor: pointer; font-weight: var(--ga-weight-control); }
+  button:hover:not(.active):not(.effect-name) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .panel-heading, .automation-bar, .catalog-title, .catalog-add, .effect-heading {
     display: flex; align-items: center;
   }
-  .panel-heading { justify-content: space-between; padding: 2px 1px 7px; }
+  .panel-heading { justify-content: space-between; padding: 0 0 4px; }
   .panel-heading > div { display: grid; gap: 2px; }
-  .panel-heading strong, .catalog-title span { color: #ff7768; letter-spacing: 1px; }
-  .panel-heading span, .catalog-title small { color: #696973; font-size: 8px; text-transform: uppercase; }
-  .automation-play { width: 31px; height: 27px; }
-  .automation-play.active { border-color: #4fd59a; color: #4fd59a; }
-  .automation-bar { gap: 5px; padding: 7px; border: 1px solid #2d2d34; background: #0e0e13; }
-  .automation-bar select { min-width: 0; padding: 4px; }
+  .panel-heading strong { color: var(--ga-ink-0); font-size: var(--ga-text-title); font-weight: var(--ga-weight-title); }
+  .panel-heading span, .catalog-title small { color: var(--ga-ink-2); font-size: var(--ga-text-meta); }
+  /* Eyebrow section label, same as every layer editor. */
+  .catalog-title span { color: var(--ga-ink-2); font-size: var(--ga-text-eyebrow); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking); text-transform: uppercase; }
+  .automation-play { width: var(--ga-control-h); padding: 0; }
+  .automation-play.active { border-color: var(--ga-live); color: var(--ga-live); }
+  .automation-bar { gap: 6px; padding: 6px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); background: var(--ga-card); }
+  .automation-bar select { min-width: 0; padding: 0 6px; }
   .automation-bar select:last-child { margin-left: auto; }
-  .automation-bar input { width: 38px; padding: 4px; }
-  .automation-bar span { color: #71717a; }
-  .catalog { border: 1px solid #2d2d34; background: #0e0e13; }
-  .catalog-title { justify-content: space-between; padding: 8px; border-bottom: 1px solid #28282e; }
-  .catalog-picker { padding: 8px; border-bottom: 1px solid #24242b; }
-  .catalog-picker span { color: #85858f; text-transform: uppercase; letter-spacing: 0.7px; }
-  .catalog-picker select { min-width: 0; width: 100%; padding: 6px; }
-  .catalog-add { gap: 7px; padding: 8px; }
+  .automation-bar input { width: 44px; padding: 0 6px; }
+  .automation-bar span { color: var(--ga-ink-2); font-size: var(--ga-text-meta); }
+  .catalog { border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); background: var(--ga-card); }
+  .catalog-title { justify-content: space-between; padding: 8px; border-bottom: 1px solid var(--ga-line-1); }
+  .catalog-picker { padding: 8px; border-bottom: 1px solid var(--ga-line-1); }
+  .catalog-picker span { color: var(--ga-ink-1); }
+  .catalog-picker select { min-width: 0; width: 100%; padding: 0 8px; }
+  .catalog-add { gap: 8px; padding: 8px; }
   .catalog-add div { display: grid; min-width: 0; gap: 2px; }
-  .catalog-add strong { color: #eeeeef; }
-  .catalog-add span { color: #6f6f78; font-size: 8px; line-height: 1.35; }
+  .catalog-add strong { color: var(--ga-ink-0); font-weight: var(--ga-weight-control); }
+  .catalog-add span { color: var(--ga-ink-2); font-size: var(--ga-text-meta); line-height: 1.35; }
   .catalog-add button {
-    flex: 0 0 auto; margin-left: auto; padding: 6px 8px; border-color: #8b4138; color: #ff7768;
+    flex: 0 0 auto; margin-left: auto; padding: 0 10px;
+    background: var(--ga-accent-gradient, var(--ga-violet)); border-color: transparent; color: var(--ga-blue-800);
+    border-radius: var(--ga-r-soft); font-weight: 700;
   }
-  .effect-stack { display: grid; gap: 5px; }
-  article { border: 1px solid #303038; background: #111116; }
-  article.live { border-color: #3e9d75; }
-  article.held { box-shadow: inset 3px 0 #4fd59a; }
-  .effect-heading { gap: 4px; min-height: 38px; padding: 5px; }
-  .latch { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 50%; }
-  .latch span { width: 9px; height: 9px; border: 1px solid #666671; border-radius: 50%; }
-  .latch.active { border-color: #4fd59a; }
-  .latch.active span { border-color: #4fd59a; background: #4fd59a; box-shadow: 0 0 8px #4fd59a; }
+  .catalog-add button:hover:not(.active):not(.effect-name) { color: var(--ga-blue-800); border-color: transparent; filter: brightness(1.06); }
+  .effect-stack { display: grid; gap: 4px; }
+  article { border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); background: var(--ga-card); }
+  article.live { border-color: color-mix(in srgb, var(--ga-live) 55%, transparent); }
+  article.held { box-shadow: inset 3px 0 var(--ga-live); }
+  .effect-heading { gap: 4px; min-height: 36px; padding: 4px; }
+  .latch { display: grid; width: var(--ga-control-h); padding: 0; place-items: center; border-radius: 50%; }
+  .latch span { width: 9px; height: 9px; border: 1px solid var(--ga-ink-2); border-radius: 50%; }
+  .latch.active { border-color: var(--ga-live); }
+  .latch.active span { border-color: var(--ga-live); background: var(--ga-live); box-shadow: 0 0 8px var(--ga-live); }
   .effect-name {
-    display: grid; min-width: 0; flex: 1; gap: 1px; border: 0; background: transparent; text-align: left;
+    display: grid; min-width: 0; height: auto; flex: 1; gap: 1px; padding: 0 2px; border: 0; background: transparent; text-align: left;
   }
-  .effect-name strong { overflow: hidden; color: #e6e6e9; text-overflow: ellipsis; white-space: nowrap; }
-  .effect-name span { color: #64646f; font-size: 8px; text-transform: uppercase; }
-  .hold, .sequence, .remove { width: 27px; height: 27px; }
-  .hold.active { border-color: #4fd59a; color: #4fd59a; }
-  .sequence.included { border-color: #298b68; color: #4fd59a; }
-  .remove { color: #e75c5c; }
+  .effect-name strong { overflow: hidden; color: var(--ga-ink-0); font-weight: var(--ga-weight-control); text-overflow: ellipsis; white-space: nowrap; }
+  .effect-name span { color: var(--ga-ink-2); font-size: var(--ga-text-meta); font-weight: 500; }
+  .hold, .sequence, .remove { width: var(--ga-control-h); padding: 0; }
+  .hold.active { border-color: var(--ga-live); color: var(--ga-live); }
+  .sequence.included { border-color: color-mix(in srgb, var(--ga-live) 55%, transparent); color: var(--ga-live); }
+  .remove { color: var(--ga-ink-2); }
+  .effect-heading button.remove:hover { color: var(--ga-rec); border-color: color-mix(in srgb, var(--ga-rec) 45%, transparent); }
   .effect-controls {
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
-    padding: 9px; border-top: 1px solid #2b2b31;
+    padding: 8px; border-top: 1px solid var(--ga-line-1);
   }
   label { display: grid; min-width: 0; gap: 4px; }
   label.wide { grid-column: 1 / -1; }
-  label > span { display: flex; justify-content: space-between; color: #85858f; text-transform: capitalize; }
-  label b { color: var(--ga-blue-300); font-weight: 400; }
-  label select, label input[type='text'] { min-width: 0; width: 100%; padding: 5px; }
-  label input[type='range'] { min-width: 0; width: 100%; accent-color: #4fd59a; }
+  label > span { display: flex; justify-content: space-between; color: var(--ga-ink-1); }
+  label b { color: var(--ga-ink-0); font-weight: 500; font-size: var(--ga-text-meta); font-variant-numeric: tabular-nums; }
+  label select, label input[type='text'] { min-width: 0; width: 100%; padding: 0 8px; }
+  label input[type='range'] { min-width: 0; width: 100%; accent-color: var(--ga-slider-fill, var(--ga-blue)); }
   label input[type='color'] {
-    width: 100%; height: 27px; padding: 1px; border: 1px solid #33333c; background: #0a0a0e;
+    width: 100%; height: var(--ga-control-h-sm); padding: 1px; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); background: var(--ga-slot);
   }
   .empty {
-    padding: 14px; border: 1px dashed #36363e; color: #6e6e78; text-align: center; line-height: 1.5;
+    padding: 14px; border: 1px dashed var(--ga-line-2); border-radius: var(--ga-r-hard); color: var(--ga-ink-2); font-size: var(--ga-text-meta); text-align: center; line-height: 1.5;
   }
 </style>

@@ -3171,6 +3171,8 @@
     ? currentItems.filter(item => activeFolder.itemIds.includes(item.id))
     : [];
   $: isFolderTab = FOLDER_TABS.includes(activeTab as FolderTab);
+  // Shaders tab: the section label and the Folders toggle share one row.
+  $: shaderHeadRow = activeTab === 'shaders' && shaderCategories.length > 1;
   $: mediaSections = (() => {
     // Shader tab with active folder: show only folder items, no duplicate "All Clips"
     if (activeTab === 'shaders' && activeFolderId && activeFolder) {
@@ -3185,7 +3187,7 @@
     if (activeTab === 'shaders') {
       return [{
         id: 'all-clips',
-        label: shaderCategoryFilter || 'All Shaders',
+        label: shaderCategoryFilter || 'All shaders',
         items: currentItems,
         kind: 'all' as const,
       }];
@@ -3201,7 +3203,7 @@
         },
         {
           id: 'all-clips',
-          label: 'All Clips',
+          label: 'All clips',
           items: currentItems,
           kind: 'all' as const,
         },
@@ -3209,7 +3211,7 @@
     }
     return [{
       id: 'all-clips',
-      label: 'All Clips',
+      label: 'All clips',
       items: currentItems,
       kind: 'all' as const,
     }];
@@ -4028,65 +4030,57 @@
   <div class="tabs">
     <div class="tab-row">
       <button class="tab" class:active={activeTab === 'shaders'} data-midi-path="tray:tab:fx" data-midi-label="Library tab: FX" data-midi-mode="toggle" onclick={() => activeTab = 'shaders'}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-        <span>FX</span>
-        {#if shaders.length}<span class="tab-count">{shaders.length}</span>{/if}
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>{#if shaders.length}<span class="tab-count">{shaders.length}</span>{/if}</span>
+        <span class="tab-label">FX</span>
       </button>
       <button class="tab" class:active={activeTab === 'js'} data-midi-path="tray:tab:js" data-midi-label="Library tab: JS" data-midi-mode="toggle" onclick={() => activeTab = 'js'}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-        <span>JS</span>
-        {#if jsAnimations.length}<span class="tab-count">{jsAnimations.length}</span>{/if}
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>{#if jsAnimations.length}<span class="tab-count">{jsAnimations.length}</span>{/if}</span>
+        <span class="tab-label">JS</span>
       </button>
       <button class="tab" class:active={activeTab === 'library'} data-midi-path="tray:tab:saved" data-midi-label="Library tab: Saved" data-midi-mode="toggle" onclick={() => activeTab = 'library'}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-        <span>Saved</span>
-        {#if savedShaders.length}<span class="tab-count">{savedShaders.length}</span>{/if}
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>{#if savedShaders.length}<span class="tab-count">{savedShaders.length}</span>{/if}</span>
+        <span class="tab-label">Saved</span>
       </button>
       <button class="tab" class:active={activeTab === 'videos'} data-midi-path="tray:tab:vid" data-midi-label="Library tab: Videos" data-midi-mode="toggle" onclick={() => activeTab = 'videos'}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        <span>Vid</span>
-        {#if videos.length}<span class="tab-count">{videos.length}</span>{/if}
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>{#if videos.length}<span class="tab-count">{videos.length}</span>{/if}</span>
+        <span class="tab-label">Videos</span>
       </button>
       <button class="tab" class:active={activeTab === 'images'} data-midi-path="tray:tab:img" data-midi-label="Library tab: Images" data-midi-mode="toggle" onclick={() => activeTab = 'images'}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        <span>Img</span>
-        {#if images.length}<span class="tab-count">{images.length}</span>{/if}
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>{#if images.length}<span class="tab-count">{images.length}</span>{/if}</span>
+        <span class="tab-label">Images</span>
       </button>
       {#if $phoneScanLibrary.length}
         <!-- Scans sent from a paired phone. Only shown once there is one. -->
         <button class="tab" class:active={activeTab === 'scans'} onclick={() => activeTab = 'scans'} data-tray-tab="scans">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="7" cy="13" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="10" cy="20" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>
-          <span>Scan</span>
-          <span class="tab-count">{$phoneScanLibrary.length}</span>
+          <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="7" cy="13" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="10" cy="20" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg><span class="tab-count">{$phoneScanLibrary.length}</span></span>
+          <span class="tab-label">Scans</span>
         </button>
       {/if}
       <button class="tab" class:active={activeTab === 'sources'} data-midi-path="tray:tab:src" data-midi-label="Library tab: Sources" data-midi-mode="toggle" onclick={() => { activeTab = 'sources'; sourcesInitialized = true; enumerateWebcams(); }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-        <span>Src</span>
-        {#if liveSources.filter(s => s.status === 'live').length > 0}
-          <span class="tab-live">{liveSources.filter(s => s.status === 'live').length}</span>
-        {/if}
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>{#if liveSources.filter(s => s.status === 'live').length > 0}<span class="tab-count tab-live">{liveSources.filter(s => s.status === 'live').length}</span>{/if}</span>
+        <span class="tab-label">Sources</span>
       </button>
       <button class="tab" class:active={activeTab === 'plugins'} data-midi-path="tray:tab:plug" data-midi-label="Library tab: Plugins" data-midi-mode="toggle" onclick={() => { activeTab = 'plugins'; }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-        <span>Plug</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
+        <span class="tab-label">Plugins</span>
       </button>
     </div>
   </div>
 
   <!-- AI Generator Buttons -->
   <div class="ai-generator-section">
-    <button class="ai-generate-btn" onclick={() => { showAIGenerator = !showAIGenerator; if (showAIGenerator) showVideoGenerator = false; }}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <!-- Toggles: the open generator shows as pressed rather than renaming the button. -->
+    <button class="ai-generate-btn secondary-btn" class:active={showAIGenerator} aria-pressed={showAIGenerator} onclick={() => { showAIGenerator = !showAIGenerator; if (showAIGenerator) showVideoGenerator = false; }}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
       </svg>
-      {showAIGenerator ? 'Hide AI Generator' : 'AI Generate'}
+      AI generate
     </button>
-    <button class="ai-generate-btn ai-video-btn" onclick={() => { showVideoGenerator = !showVideoGenerator; if (showVideoGenerator) showAIGenerator = false; }}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <button class="ai-generate-btn secondary-btn" class:active={showVideoGenerator} aria-pressed={showVideoGenerator} onclick={() => { showVideoGenerator = !showVideoGenerator; if (showVideoGenerator) showAIGenerator = false; }}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="5 3 19 12 5 21 5 3"/>
       </svg>
-      {showVideoGenerator ? 'Hide Video Gen' : 'AI Video'}
+      AI video
     </button>
   </div>
 
@@ -4463,19 +4457,19 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>
             </svg>
-            {tsLabel} In
+            {tsLabel} in
           </button>
           <button class="source-add-btn ndi" class:active={showNdiPicker} onclick={toggleNdiPicker}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/>
             </svg>
-            NDI® In
+            NDI® in
           </button>
         </div>
 
         {#if showSpoutPicker}
           <div class="spout-picker">
-            <label class="picker-label">{tsLabel} Senders</label>
+            <label class="picker-label">{tsLabel} senders</label>
             {#if availableSpoutSenders.length > 0}
               <div class="spout-sender-list">
                 {#each availableSpoutSenders as sender}
@@ -4504,7 +4498,7 @@
 
         {#if showNdiPicker}
           <div class="spout-picker ndi-picker">
-            <div class="picker-label">NDI® Sources</div>
+            <div class="picker-label">NDI® sources</div>
             {#if ndiSources.length > 0}
               <div class="spout-sender-list">
                 {#each ndiSources as src (src.name)}
@@ -4537,7 +4531,7 @@
 
         {#if availableWebcams.length > 1}
           <div class="webcam-picker">
-            <label class="picker-label">Camera Device</label>
+            <label class="picker-label">Camera device</label>
             <select class="device-select" onchange={(e) => { const v = (e.target as HTMLSelectElement).value; if (v) startWebcam(v); }}>
               <option value="">Select camera...</option>
               {#each availableWebcams as cam}
@@ -4581,7 +4575,7 @@
                     <button
                       class="source-rec-btn"
                       class:active={!!$sourceRecActive[source.id]}
-                      title={$sourceRecActive[source.id] ? 'Stop recording (adds the clip to Vid)' : 'Record this source to a clip'}
+                      title={$sourceRecActive[source.id] ? 'Stop recording (adds the clip to Videos)' : 'Record this source to a clip'}
                       data-midi-path={`tray:rec:${sourceIdx}`}
                       data-midi-label={`Record source ${sourceIdx + 1}: ${source.name}`}
                       data-midi-mode="toggle"
@@ -4659,7 +4653,7 @@
       <!-- Plugins Panel -->
       <div class="plugins-panel">
         <div class="plugins-header">
-          <span class="plugins-title">GPU Plugins</span>
+          <span class="plugins-title">GPU plugins</span>
           <span class="plugins-hint">{vjMode ? 'Click or drag to add to VJ deck' : 'Click to apply to selected layer'}</span>
         </div>
         <div class="plugins-grid">
@@ -4678,7 +4672,7 @@
               <div class="plugin-info">
                 <span class="plugin-name">GPU Shader</span>
                 <span class="plugin-desc">Native generative shaders with live controls</span>
-                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+                <span class="plugin-tier creator-tier">VJ content</span>
               </div>
             </button>
             <button
@@ -4695,7 +4689,7 @@
               <div class="plugin-info">
                 <span class="plugin-name">Performer</span>
                 <span class="plugin-desc">Keyboard-launched worlds, shaders and clips</span>
-                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+                <span class="plugin-tier creator-tier">VJ content</span>
               </div>
             </button>
             <button
@@ -4712,7 +4706,7 @@
               <div class="plugin-info">
                 <span class="plugin-name">Text Creator</span>
                 <span class="plugin-desc">Animated typography with transforms and depth</span>
-                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+                <span class="plugin-tier creator-tier">VJ content</span>
               </div>
             </button>
           {/if}
@@ -4735,7 +4729,7 @@
               <div class="plugin-info">
                 <span class="plugin-name">{plugin.name}</span>
                 <span class="plugin-desc">{plugin.description}</span>
-                <span class="plugin-tier">{plugin.tier.toUpperCase()}</span>
+                <span class="plugin-tier">{plugin.tier}</span>
               </div>
             </button>
           {/each}
@@ -4872,7 +4866,7 @@
           <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/>
         </svg>
         <p>No JS animations yet</p>
-        <p class="hint">Use AI Generate to create Three.js or p5.js animations</p>
+        <p class="hint">Use AI generate to create Three.js or p5.js animations</p>
       </div>
     {:else if activeTab === 'js'}
       <div class="media-grid">
@@ -4947,23 +4941,26 @@
           <rect x="3" y="3" width="18" height="18" rx="2" />
         </svg>
         <p>Drop {activeTab} here</p>
-        <p class="hint">or click Add Files below</p>
+        <p class="hint">or click Add files below</p>
       </div>
     {:else}
-      {#if activeTab === 'shaders' && shaderCategories.length > 1}
-        <!-- Folders toggle — collapsible category sidebar. Saves the
-             panel height for the shader grid; user opens when they
-             want to filter by category or by custom folder. -->
-        <button
-          class="folders-toggle"
-          class:open={foldersOpen}
-          onclick={() => foldersOpen = !foldersOpen}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({foldersOpen ? 90 : 0}deg); transition: transform .15s;">
-            <path d="M9 18l6-6-6-6"/>
-          </svg>
-          Folders
-        </button>
+      {#if shaderHeadRow}
+        <!-- One row: what the grid shows, and the Folders toggle that opens
+             the category list to change it. -->
+        <div class="grid-head">
+          <span class="section-label">{mediaSections[0]?.label ?? ''}</span>
+          <button
+            class="folders-toggle"
+            class:open={foldersOpen}
+            aria-expanded={foldersOpen}
+            onclick={() => foldersOpen = !foldersOpen}
+          >
+            Folders
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({foldersOpen ? 90 : 0}deg); transition: transform .15s;">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </button>
+        </div>
         {#if foldersOpen}
         <div class="category-stack">
           <button
@@ -4971,7 +4968,7 @@
             class:active={shaderCategoryFilter === null && !activeFolderId}
             onclick={() => { shaderCategoryFilter = null; activeFolderId = null; }}
           >
-            <span class="category-name">All Shaders</span>
+            <span class="category-label">All shaders</span>
             <span class="category-count">{shaders.length}</span>
           </button>
           {#each shaderCategories as cat (cat.name)}
@@ -4980,7 +4977,7 @@
               class:active={shaderCategoryFilter === cat.name && !activeFolderId}
               onclick={() => { shaderCategoryFilter = shaderCategoryFilter === cat.name ? null : cat.name; activeFolderId = null; }}
             >
-              <span class="category-name">{cat.name}</span>
+              <span class="category-label">{cat.name}</span>
               <span class="category-count">{cat.count}</span>
             </button>
           {/each}
@@ -5003,7 +5000,7 @@
                 class:drag-over={dragOverFolderIndex === fi && draggedFolderIndex !== fi}
                 title="Right-click to rename or delete. Drag to reorder."
               >
-                <span class="category-name">{folder.name}</span>
+                <span class="category-label">{folder.name}</span>
                 <span class="category-count">{folder.itemIds.length}</span>
               </button>
             {/each}
@@ -5029,7 +5026,9 @@
         </div>
       {/if}
       {#each mediaSections as section (section.id)}
-        {#if section.kind === 'folder'}
+        {#if shaderHeadRow}
+          <!-- Label already shown in the head row above. -->
+        {:else if section.kind === 'folder'}
           <div class="section-label">{section.label}</div>
           <div class="folder-open-divider"></div>
         {:else if isFolderTab}
@@ -5215,13 +5214,13 @@
               if (!(await confirmDeleteIfSafeMode(`${n} ${n === 1 ? 'item' : 'items'} from this folder`, e))) return;
               removeItemsFromFolder(activeFolderId!, selectedTrayItemIds);
             }}>
-              Remove from Folder ({selectedTrayItemIds.length})
+              Remove from folder ({selectedTrayItemIds.length})
             </button>
             <div class="ctx-sep"></div>
           {/if}
           {#if selectedTrayItemIds.length > 0}
             <button class="ctx-btn" onclick={createFolderFromSelection}>
-              Create New Folder ({selectedTrayItemIds.length} selected)
+              Create new folder ({selectedTrayItemIds.length} selected)
             </button>
           {:else}
             <span class="ctx-hint">Ctrl/Cmd+click to select, then right-click</span>
@@ -5259,7 +5258,7 @@
           </div>
         {:else}
           <button class="ctx-btn" onclick={() => renameFolder(folderContextMenuId!)}>
-            Rename Folder
+            Rename folder
           </button>
           <button class="ctx-btn ctx-btn-danger" onclick={async (e) => {
             const folder = mediaFolders.find(f => f.id === folderContextMenuId);
@@ -5268,7 +5267,7 @@
             if (!(await confirmDeleteIfSafeMode(`folder "${folder?.name ?? 'this folder'}"`, e))) return;
             deleteFolder(id);
           }}>
-            Delete Folder
+            Delete folder
           </button>
         {/if}
       </div>
@@ -5281,7 +5280,7 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 5v14M5 12h14" />
       </svg>
-      Add Files
+      Add files
       <input
         type="file"
         accept={`image/*,${VIDEO_FILE_ACCEPT},.fs,.isf,.html,.htm`}
@@ -5326,12 +5325,12 @@
       style="left: {loopPopoverPos.x}px; top: {loopPopoverPos.y}px; transform: translate(-50%, -100%);"
       onclick={(e) => e.stopPropagation()}
     >
-      <div class="loop-popover-title">Create Seamless Loop</div>
+      <div class="loop-popover-title">Create seamless loop</div>
       <div class="loop-opt-row">
         <label for="loop-creation-mode">Mode</label>
         <select id="loop-creation-mode" bind:value={loopCreationMode}>
           <option value="crossfade">Crossfade</option>
-          <option value="veo">Veo Bridge</option>
+          <option value="veo">Veo bridge</option>
         </select>
       </div>
       {#if loopCreationMode === 'crossfade'}
@@ -5365,7 +5364,7 @@
         </div>
       {/if}
       <button class="loop-create-btn" onclick={() => createLoopFromVideo(loopItem)}>
-        {loopCreationMode === 'veo' ? 'Create Veo Loop' : 'Create Loop'}
+        {loopCreationMode === 'veo' ? 'Create Veo loop' : 'Create loop'}
       </button>
     </div>
   {/if}
@@ -5383,7 +5382,7 @@
         <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
         <circle cx="12" cy="13" r="4"/>
       </svg>
-      Timelapse Playback
+      Timelapse playback
     </div>
 
     <div class="timelapse-opt-row">
@@ -5595,16 +5594,22 @@
   }
 
   .tray-header {
-    padding: 14px 14px 10px;
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0 12px;
+    box-sizing: border-box;
     border-bottom: none;
   }
 
+  /* A panel title like every other panel's. */
   .tray-header h3 {
     margin: 0;
-    font-size: 19px;
-    font-weight: 800;
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    line-height: 1.2;
     color: var(--ga-ink-0, #eef0f4);
-    letter-spacing: 0.01em;
+    letter-spacing: 0;
   }
 
   .tabs {
@@ -5614,30 +5619,40 @@
 
   .tab-row {
     display: flex;
-    gap: 2px;
-    padding: 0 8px;
+    gap: 1px;
+    padding: 0 4px;
   }
 
+  /* Icon over a sentence-case label; the count sits beside the icon. Tabs
+     size to their content so the longer labels get the room. */
   .tab {
-    flex: 1;
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     background: none;
     border: none;
-    padding: 9px 2px;
-    color: rgba(238, 240, 244, 0.74);
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    padding: 7px 2px 5px;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-family: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    letter-spacing: 0;
+    text-transform: none;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s;
     border-bottom: 2px solid transparent;
-    border-radius: 0;
+    border-radius: var(--ga-r-hard, 3px) var(--ga-r-hard, 3px) 0 0;
     position: relative;
     min-width: 0;
+  }
+
+  .tab-glyph {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 13px;
   }
 
   .tab svg {
@@ -5646,8 +5661,8 @@
     flex-shrink: 0;
   }
 
-  .tab span {
-    line-height: 1;
+  .tab-label {
+    line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -5664,46 +5679,40 @@
   }
 
   .tab.active {
-    color: var(--ga-ink-0, #eef0f4);
-    border-bottom-color: var(--ga-blue, #5278ff);
-    background: transparent;
+    color: var(--ga-selection-ink, #e0e8ff);
+    background: var(--ga-selection-bg, #1f3170);
+    border-bottom-color: var(--ga-selection-line, #5278ff);
   }
 
   .tab.active svg {
     opacity: 1;
   }
 
+  /* Count badge. */
   .tab-count {
-    font-size: 9px;
-    background: transparent;
-    color: var(--ga-blue, #5278ff);
-    padding: 0;
-    border-radius: 0;
-    line-height: 1.2;
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    min-width: 14px;
+    box-sizing: border-box;
+    height: 13px;
+    min-width: 13px;
+    padding: 0 3px;
+    border-radius: 7px;
+    background: var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-micro);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 13px;
     text-align: center;
   }
 
   .tab.active .tab-count {
-    background: transparent;
-    color: var(--ga-blue, #5278ff);
+    background: color-mix(in srgb, var(--ga-selection-line, #5278ff) 45%, transparent);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
-  .tab-live {
-    font-size: 9px;
-    background: rgba(74, 222, 128, 0.2);
-    color: #4ade80;
-    padding: 1px 4px;
-    border-radius: 6px;
-    line-height: 1.2;
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    min-width: 14px;
-    text-align: center;
+  /* Live sources: green because they are live. */
+  .tab .tab-count.tab-live {
+    background: color-mix(in srgb, var(--ga-live, #46d18a) 22%, transparent);
+    color: var(--ga-live, #46d18a);
     animation: pulse-live 2s ease-in-out infinite;
   }
 
@@ -5769,25 +5778,30 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 14px;
+    gap: 4px;
+    padding: 8px 12px;
     background: var(--ga-card, #13161c);
     position: sticky;
     top: 0;
   }
 
   .params-header h4 {
+    flex: 1;
+    min-width: 0;
     margin: 0;
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--ga-violet, #9b87f5);
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #eef0f4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .close-params {
     background: none;
     border: none;
     color: var(--ga-ink-2, #5e6571);
-    font-size: 17px;
+    font-size: 16px;
     cursor: pointer;
     padding: 0 4px;
   }
@@ -5800,7 +5814,7 @@
     background: none;
     border: none;
     color: var(--ga-blue, #5278ff);
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
     padding: 0 6px;
     line-height: 1;
@@ -5816,7 +5830,7 @@
      only the range slippers remain on the slider track. */
 
   .params-list {
-    padding: 0 14px 12px;
+    padding: 0 12px 10px;
   }
 
   .param-row {
@@ -5827,7 +5841,7 @@
   }
 
   .param-row label {
-    font-size: 12px;
+    font-size: var(--ga-text-control);
     color: var(--ga-ink-1, #9aa0ac);
     min-width: 80px;
     max-width: 80px;
@@ -5847,7 +5861,9 @@
   }
 
   .param-value {
-    font-size: 11px;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta);
+    font-variant-numeric: tabular-nums;
     color: var(--ga-ink-2, #5e6571);
     min-width: 36px;
     text-align: right;
@@ -5869,9 +5885,10 @@
     background: var(--ga-slot, #050607);
     color: var(--ga-ink-0, #eef0f4);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    padding: 6px 8px;
-    border-radius: 4px;
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-control);
     cursor: pointer;
   }
 
@@ -5895,7 +5912,7 @@
     margin-bottom: 3px;
   }
   .shader-param-name {
-    font-size: 12px;
+    font-size: var(--ga-text-control);
     color: var(--ga-ink-1, #9aa0ac);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -5903,11 +5920,11 @@
     flex: 1;
   }
   .mod-source-chip {
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     padding: 2px 8px;
     background-color: var(--ga-slot, #050607);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 3px);
     color: var(--ga-ink-2, #5e6571);
     cursor: pointer;
     max-width: 85px;
@@ -5917,7 +5934,7 @@
     transition: border-color 0.12s, color 0.12s, background 0.12s;
   }
   .mod-source-chip:hover {
-    border-color: var(--ga-line-1, rgba(255, 255, 255, 0.25));
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.25));
     color: var(--ga-ink-1, #aab1bd);
   }
   .mod-source-chip.active {
@@ -5997,55 +6014,55 @@
     pointer-events: none;
     z-index: 1;
   }
-  .auto-val-grow { min-width: 0; flex: 1; text-align: left; color: #5ce1e6; opacity: 0.75; }
   .param-val {
-    font-size: 11px;
-    color: #666;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta);
+    font-variant-numeric: tabular-nums;
+    color: var(--ga-ink-2, #89857e);
     min-width: 36px;
     text-align: right;
   }
   .param-select {
     flex: 1;
-    background-color: var(--ga-blue-mute-800);
-    color: var(--text-primary, #ccc);
-    border: 1px solid #333;
-    border-radius: 3px;
-    padding: 5px 8px;
-    font-size: 11px;
+    height: var(--ga-control-h, 26px);
+    background-color: var(--ga-slot, #050607);
+    color: var(--ga-ink-0, #eef0f4);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 8px;
+    font-size: var(--ga-text-control);
     outline: none;
     cursor: pointer;
   }
-  /* ISF `event` inputs — a momentary action, styled as an accented
-     button so it reads as "do something" rather than "set a value". */
+  /* ISF `event` inputs: a momentary action, so a button rather than a value. */
   .param-event-btn {
     flex: 1;
-    background-color: var(--ga-blue-mute-800);
-    color: #BB86FC;
-    border: 1px solid #BB86FC;
-    border-radius: 3px;
-    padding: 5px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-hardware-bg, var(--ga-card, #13161c));
+    color: var(--ga-ink-0, #eef0f4);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 8px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     outline: none;
     cursor: pointer;
-    transition: background-color 0.15s, color 0.15s;
+    transition: border-color 0.15s, color 0.15s;
   }
   .param-event-btn:hover {
-    background-color: #BB86FC;
-    color: #12121c;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
   .param-event-btn:active {
     transform: translateY(1px);
   }
   .param-select:focus {
-    border-color: #BB86FC;
+    border-color: var(--ga-focus, #8aa4ff);
   }
   .param-color {
     width: 40px;
     height: 24px;
-    border: 1px solid #444;
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
     padding: 0;
     cursor: pointer;
     background: transparent;
@@ -6053,18 +6070,18 @@
   /* Depth rows moved into the ModTray popover. */
 
   .image-select:hover {
-    border-color: #BB86FC;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .image-select:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: var(--ga-focus, #8aa4ff);
   }
 
   .media-content {
     flex: 1;
     overflow-y: auto;
-    padding: 8px 14px 12px;
+    padding: 8px 12px 12px;
     background: var(--ga-panel, #0b0d11);
     /* Its own stacking context: the raised load badges otherwise escape the
        scroller and paint above it, and the compositor gave each one a layer
@@ -6092,17 +6109,48 @@
 
   .empty-state p {
     margin: 4px 0;
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   .empty-state .hint {
-    font-size: 12px;
-    color: var(--ga-ink-3, #3a404a);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #5e6571);
   }
 
   .media-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 9px;
+    gap: 8px;
+  }
+
+  /* Shaders tab: what the grid shows on the left, Folders on the right. */
+  .grid-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: var(--ga-control-h-sm, 22px);
+    margin-bottom: 6px;
+  }
+
+  /* Section labels over the grid use the eyebrow style. */
+  .section-label {
+    min-width: 0;
+    margin: 2px 0 6px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .grid-head .section-label {
+    margin: 0;
   }
 
   /* ─── Stacked category toggles ─── */
@@ -6110,7 +6158,7 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     background: transparent;
     border-radius: 0;
     overflow: hidden;
@@ -6120,11 +6168,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 7px 8px;
+    min-height: var(--ga-control-h-sm, 22px);
+    padding: 3px 8px;
     background: transparent;
     border: none;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13.5px;
+    font-size: var(--ga-text-control);
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
     border-left: 2px solid transparent;
@@ -6137,41 +6186,44 @@
   }
 
   .category-toggle.active {
-    background: var(--ga-blue-soft, var(--ga-blue-a28));
-    color: var(--ga-blue, #5278ff);
-    border-left-color: var(--ga-blue, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-left-color: var(--ga-selection-line, #5278ff);
   }
 
+  /* Your own folders carry a faint rule on the left. */
   .category-toggle.user-folder {
-    border-left-color: rgba(168, 85, 247, 0.2);
+    border-left-color: var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   .category-toggle.user-folder.active {
-    color: #a855f7;
-    border-left-color: #a855f7;
-    background: rgba(168, 85, 247, 0.08);
+    border-left-color: var(--ga-selection-line, #5278ff);
   }
 
-  .category-toggle.user-folder:hover {
-    border-left-color: rgba(168, 85, 247, 0.4);
+  .category-toggle.user-folder:hover:not(.active) {
+    border-left-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .category-toggle.drag-over {
-    border-top: 2px solid #a855f7;
+    border-top: 2px solid var(--ga-selection-line, #5278ff);
   }
 
   .category-sep {
     height: 1px;
-    background: var(--ga-blue-mute-800);
+    background: var(--ga-line-1, rgba(255, 255, 255, 0.07));
     margin: 4px 8px;
   }
 
-  .category-name {
+  .category-label {
     font-weight: 500;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .category-count {
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     color: var(--ga-ink-2, #5e6571);
     font-variant-numeric: tabular-nums;
     min-width: 22px;
@@ -6179,51 +6231,45 @@
   }
 
   .category-toggle.active .category-count {
-    color: var(--ga-blue, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .folder-bar {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     flex-wrap: wrap;
     margin-bottom: 8px;
+  }
+
+  .folder-bar:empty {
+    display: none;
   }
 
   .folder-chip {
     position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    border: 1px solid #3f3f49;
-    background: var(--bg-tertiary, #1a1a22);
-    color: #a0a4b8;
-    border-radius: 999px;
-    padding: 4px 10px;
-    font-size: 12px;
+    gap: 4px;
+    height: var(--ga-control-h-sm, 22px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-1, #9aa0ac);
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 0 8px;
+    font-size: var(--ga-text-control);
+    font-weight: 500;
     cursor: pointer;
   }
 
   .folder-chip:hover {
-    border-color: var(--ga-blue-300);
-    color: #d8f9ff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .folder-chip.active {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
-    background: var(--ga-blue-a16);
-  }
-
-  .folder-chip.active::after {
-    content: '';
-    position: absolute;
-    left: 8px;
-    right: 8px;
-    bottom: -6px;
-    height: 2px;
-    border-radius: 999px;
-    background: var(--ga-blue-300);
-    opacity: 0.95;
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
+    background: var(--ga-selection-bg, #1f3170);
   }
 
   .folder-chip-icon {
@@ -6233,15 +6279,15 @@
   }
 
   .folder-status {
-    font-size: 12px;
-    color: #9cb4c2;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #5e6571);
     margin: 0 0 8px 2px;
   }
 
   .folder-open-divider {
     height: 1px;
-    margin: 4px 0 8px;
-    background: color-mix(in srgb, var(--ga-blue-300) 75%, transparent);
+    margin: 0 0 8px;
+    background: color-mix(in srgb, var(--ga-selection-line, #5278ff) 60%, transparent);
   }
 
   .all-clips-label {
@@ -6264,20 +6310,16 @@
     border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
-  .media-item.selected {
-    border-color: var(--ga-violet, #9b87f5);
-    box-shadow: 0 0 0 1px var(--ga-violet, #9b87f5);
+  .media-item.selected,
+  .media-item.item-selected {
+    border-color: var(--ga-selection-line, #5278ff);
+    box-shadow: 0 0 0 1px var(--ga-selection-line, #5278ff);
   }
 
   .media-item.drag-over-reorder {
-    border-color: var(--ga-blue-300);
-    box-shadow: 0 0 8px var(--ga-blue-a45);
+    border-color: var(--ga-selection-line, #5278ff);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--ga-selection-line, #5278ff) 45%, transparent);
     transform: scale(0.95);
-  }
-
-  .media-item.item-selected {
-    border-color: var(--ga-blue, #5278ff);
-    box-shadow: 0 0 0 1px var(--ga-blue, #5278ff);
   }
 
   .media-item img {
@@ -6290,10 +6332,10 @@
     position: fixed;
     z-index: 9000;
     min-width: 190px;
-    background: #14161d;
-    border: 1px solid var(--ga-blue-mute-800);
-    border-radius: 8px;
-    padding: 6px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 7px);
+    padding: 4px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
   }
 
@@ -6302,70 +6344,67 @@
     text-align: left;
     border: none;
     background: transparent;
-    color: #d7d9e0;
-    padding: 8px 10px;
-    border-radius: 6px;
-    font-size: 13px;
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 6px 10px;
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-body);
+    font-weight: 500;
     cursor: pointer;
   }
 
   .ctx-btn:hover {
-    background: var(--ga-blue-a16);
-    color: #e8feff;
+    background: var(--ga-raise, #1d212a);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .ctx-hint {
     display: block;
     padding: 6px 10px;
-    font-size: 11px;
-    color: #555;
-    font-style: italic;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #5e6571);
   }
 
   .ctx-input-row {
     display: flex;
     gap: 4px;
-    padding: 6px 8px;
+    padding: 4px;
   }
   .folder-name-input {
     flex: 1;
-    background: var(--bg-primary, #0d0d1a);
-    border: 1px solid var(--accent-primary, #a855f7);
-    color: var(--text-primary, #e0e0e0);
-    padding: 3px 6px;
-    font-size: 12px;
-    border-radius: 3px;
+    min-width: 0;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 0 6px;
+    font-size: var(--ga-text-control);
+    border-radius: var(--ga-r-hard, 3px);
     outline: none;
   }
-  .folder-input-ok {
-    background: var(--accent-primary, #a855f7);
-    color: #fff;
-    border: none;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    border-radius: 3px;
-    cursor: pointer;
+  .folder-name-input:focus {
+    border-color: var(--ga-focus, #8aa4ff);
   }
-  .folder-input-cancel {
-    background: transparent;
-    color: var(--text-muted, #666);
-    border: 1px solid var(--border, #333);
-    padding: 2px 6px;
-    font-size: 11px;
-    border-radius: 3px;
+  .folder-input-ok {
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-violet, #9b87f5);
+    color: var(--ga-blue-800, #0b0d11);
+    border: none;
+    padding: 0 10px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    border-radius: var(--ga-r-soft, 7px);
     cursor: pointer;
   }
 
   .ctx-btn-danger:hover {
-    background: rgba(239, 68, 68, 0.15) !important;
-    color: #ef4444 !important;
+    background: color-mix(in srgb, var(--ga-rec, #ff4438) 15%, transparent) !important;
+    color: var(--ga-rec, #ff4438) !important;
   }
 
   .ctx-sep {
     height: 1px;
-    background: var(--ga-blue-mute-800);
-    margin: 6px 4px;
+    background: var(--ga-line-1, rgba(255, 255, 255, 0.07));
+    margin: 4px;
   }
 
   .shader-icon {
@@ -6400,16 +6439,14 @@
   }
 
   .loading-text {
-    font-size: 10px;
+    font-size: var(--ga-text-meta);
     color: var(--ga-ink-2, #5e6571);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
   }
 
   .shader-placeholder-text {
-    font-size: 12px;
+    font-size: var(--ga-text-control);
     font-weight: 700;
-    letter-spacing: 1px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     color: var(--ga-violet, #9b87f5);
     opacity: 0.8;
   }
@@ -6439,9 +6476,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow);
     font-weight: 700;
-    letter-spacing: 0.2px;
+    letter-spacing: 0;
     color: #111;
     border: 1px solid rgba(0, 0, 0, 0.25);
     text-shadow: none;
@@ -6476,16 +6513,18 @@
     background: var(--ga-slot, #050607);
   }
 
+  /* Caption: a name, so the UI face rather than mono. */
   .item-name {
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 2px 4px;
+    padding: 2px 5px;
     background: rgba(5, 6, 7, 0.82);
     color: var(--ga-ink-1, #9aa0ac);
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
+    font-size: var(--ga-text-meta);
+    font-weight: 500;
+    line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6509,34 +6548,6 @@
     font-size: 13px;
     line-height: 0;
     vertical-align: middle;
-  }
-
-  .find-latest-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    background: rgba(192, 140, 255, 0.12);
-    color: #c08cff;
-    border: 1px solid rgba(192, 140, 255, 0.4);
-    border-radius: 4px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .find-latest-btn:hover:not(:disabled) {
-    background: rgba(192, 140, 255, 0.22);
-    border-color: rgba(192, 140, 255, 0.7);
-  }
-  .find-latest-btn:disabled {
-    opacity: 0.55;
-    cursor: default;
-  }
-  .find-latest-btn .spin {
-    animation: spin 0.9s linear infinite;
-  }
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 
   /* Action buttons container */
@@ -6614,16 +6625,17 @@
   }
 
   .loop-btn.active {
-    background: var(--ga-blue-soft, var(--ga-blue-a28));
-    box-shadow: 0 0 0 1px var(--ga-blue, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
+    box-shadow: 0 0 0 1px var(--ga-selection-line, #5278ff);
   }
 
   :global(.loop-options-popover) {
     position: fixed;
     z-index: 9999;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #555;
-    border-radius: 8px;
+    background: var(--ga-panel, #0d0d10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 7px);
     padding: 12px;
     display: flex;
     flex-direction: column;
@@ -6634,11 +6646,9 @@
   }
 
   :global(.loop-popover-title) {
-    font-size: 12px;
-    font-weight: 600;
-    color: #BB86FC;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #eef0f4);
     margin-bottom: 2px;
   }
 
@@ -6650,18 +6660,19 @@
   }
 
   :global(.loop-opt-row label) {
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1, #9aa0ac);
     white-space: nowrap;
   }
 
   :global(.loop-opt-row select) {
-    background-color: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    color: var(--text-primary, #ddd);
-    font-size: 12px;
-    padding: 3px 6px;
-    border-radius: 4px;
+    height: var(--ga-control-h, 26px);
+    background-color: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    font-size: var(--ga-text-control);
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
     flex: 1;
     min-width: 0;
@@ -6669,7 +6680,7 @@
 
   :global(.loop-opt-row select:focus) {
     outline: none;
-    border-color: #BB86FC;
+    border-color: var(--ga-focus, #8aa4ff);
   }
 
   :global(.loop-opt-column) {
@@ -6679,20 +6690,20 @@
   }
 
   :global(.loop-opt-column label) {
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   :global(.loop-opt-column textarea) {
     width: 100%;
     min-height: 58px;
-    background-color: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    color: var(--text-primary, #ddd);
-    font-size: 12px;
+    background-color: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    font-size: var(--ga-text-control);
     line-height: 1.35;
     padding: 5px 6px;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 3px);
     box-sizing: border-box;
     resize: vertical;
     font-family: inherit;
@@ -6700,23 +6711,25 @@
 
   :global(.loop-opt-column textarea:focus) {
     outline: none;
-    border-color: #BB86FC;
+    border-color: var(--ga-focus, #8aa4ff);
   }
 
+  /* The popover's one primary action. */
   :global(.loop-create-btn) {
-    background: #BB86FC;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-violet, #9b87f5);
     border: none;
-    color: #000;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 6px 12px;
-    border-radius: 4px;
+    color: var(--ga-blue-800, #0b0d11);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    padding: 0 12px;
+    border-radius: var(--ga-r-soft, 7px);
     cursor: pointer;
-    transition: background 0.15s;
+    transition: filter 0.15s;
   }
 
   :global(.loop-create-btn:hover) {
-    background: var(--ga-blue-300);
+    filter: brightness(1.06);
   }
 
   /* ==========================================
@@ -6725,9 +6738,9 @@
   :global(.timelapse-popover) {
     position: fixed;
     z-index: 9999;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #444;
-    border-radius: 8px;
+    background: var(--ga-panel, #0d0d10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 7px);
     padding: 12px;
     width: 220px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
@@ -6737,16 +6750,16 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-primary, #eee);
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #eef0f4);
     margin-bottom: 10px;
     padding-bottom: 8px;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   :global(.timelapse-popover-title svg) {
-    color: #BB86FC;
+    color: var(--ga-ink-2, #89857e);
   }
 
   :global(.timelapse-opt-row) {
@@ -6757,30 +6770,31 @@
   }
 
   :global(.timelapse-opt-row label) {
-    font-size: 11px;
-    color: #999;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1, #9aa0ac);
     min-width: 45px;
   }
 
   :global(.timelapse-opt-row select) {
     flex: 1;
-    background-color: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    border-radius: 4px;
-    color: var(--text-primary, #eee);
-    padding: 4px 6px;
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    background-color: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 0 6px;
+    font-size: var(--ga-text-control);
     cursor: pointer;
   }
 
   :global(.timelapse-opt-row select:focus) {
-    border-color: #BB86FC;
+    border-color: var(--ga-focus, #8aa4ff);
     outline: none;
   }
 
   :global(.timelapse-interval-label) {
-    font-size: 10px;
-    color: #666;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     white-space: nowrap;
   }
 
@@ -6790,38 +6804,40 @@
     justify-content: center;
     gap: 3px;
     padding: 8px;
-    background: #111;
-    border-radius: 6px;
+    background: var(--ga-slot, #050607);
+    border-radius: var(--ga-r-hard, 3px);
     margin-bottom: 8px;
-    font-family: 'Courier New', monospace;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
   }
 
   :global(.timelapse-frame-current) {
-    font-size: 19px;
+    font-size: var(--ga-text-display);
     font-weight: 700;
-    color: #BB86FC;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   :global(.timelapse-frame-sep) {
-    font-size: 15px;
-    color: #555;
+    font-size: var(--ga-text-title);
+    color: var(--ga-ink-3, #3a404a);
   }
 
   :global(.timelapse-frame-total) {
-    font-size: 15px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-title);
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   :global(.timelapse-frame-label) {
-    font-size: 10px;
-    color: #555;
+    font-family: var(--ga-font-ui, inherit);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     margin-left: 4px;
   }
 
   :global(.timelapse-progress-bar) {
     width: 100%;
     height: 3px;
-    background: #333;
+    background: var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: 2px;
     overflow: hidden;
     margin-bottom: 10px;
@@ -6829,7 +6845,7 @@
 
   :global(.timelapse-progress-fill) {
     height: 100%;
-    background: #BB86FC;
+    background: var(--ga-selection-line, #5278ff);
     border-radius: 2px;
     transition: width 0.3s ease;
   }
@@ -6846,31 +6862,23 @@
     align-items: center;
     justify-content: center;
     gap: 4px;
-    padding: 6px 8px;
-    border: 1px solid #444;
-    border-radius: 5px;
-    font-size: 11px;
-    font-weight: 600;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: all 0.15s;
-    background: var(--bg-tertiary, #161618);
-    color: var(--text-primary, #ccc);
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   :global(.timelapse-ctrl-btn:hover) {
-    border-color: #BB86FC;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
-  :global(.timelapse-start) {
-    background: var(--ga-blue-a16);
-    color: #BB86FC;
-    border-color: var(--ga-blue-a45);
-  }
-
-  :global(.timelapse-start:hover) {
-    background: var(--ga-blue-a28);
-  }
-
+  /* Pause amber and stop red carry meaning; start is a plain button. */
   :global(.timelapse-pause) {
     background: rgba(250, 204, 21, 0.15);
     color: #facc15;
@@ -6882,25 +6890,25 @@
   }
 
   :global(.timelapse-stop) {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
-    border-color: rgba(239, 68, 68, 0.3);
+    background: color-mix(in srgb, var(--ga-rec, #ef4444) 15%, transparent);
+    color: var(--ga-rec, #ef4444);
+    border-color: color-mix(in srgb, var(--ga-rec, #ef4444) 30%, transparent);
   }
 
   :global(.timelapse-stop:hover) {
-    background: rgba(239, 68, 68, 0.3);
+    background: color-mix(in srgb, var(--ga-rec, #ef4444) 30%, transparent);
   }
 
   :global(.timelapse-status) {
     text-align: center;
-    font-size: 10px;
+    font-size: var(--ga-text-meta);
     padding: 4px;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 3px);
   }
 
   :global(.timelapse-status.running) {
-    color: #4ade80;
-    background: rgba(74, 222, 128, 0.1);
+    color: var(--ga-live, #4ade80);
+    background: color-mix(in srgb, var(--ga-live, #4ade80) 10%, transparent);
   }
 
   :global(.timelapse-status.paused) {
@@ -6917,7 +6925,7 @@
     align-items: center;
     justify-content: center;
     z-index: 10;
-    border-radius: 4px;
+    border-radius: inherit;
   }
 
   .loop-progress-content {
@@ -6929,7 +6937,7 @@
   }
 
   .loop-spinner {
-    color: #BB86FC;
+    color: var(--ga-ink-0, #eef0f4);
     animation: spin 1s linear infinite;
   }
 
@@ -6939,8 +6947,8 @@
   }
 
   .loop-progress-text {
-    font-size: 10px;
-    color: var(--text-primary, #ccc);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-0, #eef0f4);
     text-align: center;
     max-width: 100px;
   }
@@ -6948,49 +6956,52 @@
   .loop-progress-bar-container {
     width: 80px;
     height: 3px;
-    background: #444;
+    background: var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: 2px;
     overflow: hidden;
   }
 
   .loop-progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, #BB86FC, #69F0AE);
+    background: var(--ga-selection-line, #5278ff);
     border-radius: 2px;
     transition: width 0.2s ease-out;
   }
 
   .media-item.processing {
-    border-color: #BB86FC;
-    box-shadow: 0 0 12px #BB86FC66;
+    border-color: var(--ga-selection-line, #5278ff);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--ga-selection-line, #5278ff) 40%, transparent);
   }
 
-  /* Folders collapse toggle — header above the category sidebar. */
+  /* Folders: a quiet disclosure button at the right of the grid head. */
   .folders-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
+    flex: 0 0 auto;
+    height: var(--ga-control-h-sm, 22px);
     background: transparent;
     border: none;
+    border-radius: var(--ga-r-hard, 3px);
     color: var(--ga-ink-1, #9aa0ac);
-    font-family: var(--ga-font-mono, 'Geist Mono', monospace);
-    font-size: 11px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    padding: 7px 8px;
-    margin-bottom: 4px;
+    font-family: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    letter-spacing: 0;
+    text-transform: none;
+    padding: 0 4px 0 6px;
     cursor: pointer;
   }
   .folders-toggle:hover { color: var(--ga-ink-0, #eef0f4); }
   .folders-toggle.open { color: var(--ga-ink-0, #eef0f4); }
 
   .tray-footer {
-    padding: 12px 14px;
+    padding: 8px 12px;
     border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     background: var(--ga-panel, #0b0d11);
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 9px;
+    gap: 6px;
     /* Stick the action row to the bottom of the tray flex column so it
        never scrolls off the screen even when the grid is long. */
     margin-top: auto;
@@ -7000,105 +7011,76 @@
     z-index: 1;
   }
 
-  .add-btn {
+  /* Two button looks in the tray: Add files is the one primary action;
+     the AI toggles and Shader Library share the secondary look (the theme
+     skin styles .secondary-btn / .browse-library-btn the same way). */
+  .add-btn,
+  .browse-library-btn,
+  .ai-generate-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
     width: 100%;
-    height: 36px;
-    padding: 0;
+    min-width: 0;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
+    margin: 0;
+    font-family: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    letter-spacing: 0;
+    white-space: nowrap;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+
+  .add-btn {
     background: var(--ga-violet, #9b87f5);
-    color: var(--ga-blue-800);
+    color: var(--ga-blue-800, #0b0d11);
     border: none;
     border-radius: var(--ga-r-soft, 7px);
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.15s;
+    transition: filter 0.15s;
   }
 
   .add-btn:hover {
     filter: brightness(1.06);
   }
 
-  .browse-library-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    height: 36px;
-    padding: 0;
-    margin-top: 0;
-    background: transparent;
+  .browse-library-btn,
+  .ai-generate-btn {
+    background: var(--ga-card, #13161c);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: var(--ga-r-hard, 3px);
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13.5px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s, color 0.15s;
   }
-  .browse-library-btn:hover {
-    background: transparent;
+
+  .browse-library-btn:hover,
+  .ai-generate-btn:hover {
     border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
     color: var(--ga-ink-0, #eef0f4);
   }
 
+  /* The open generator reads as selected. The skin paints every state of
+     .secondary-btn with !important, so the pressed state has to as well. */
+  .ai-generator-section .ai-generate-btn.active {
+    background: var(--ga-selection-bg, #1f3170) !important;
+    border-color: var(--ga-selection-line, #5278ff) !important;
+    color: var(--ga-selection-ink, #e0e8ff) !important;
+  }
+
   /* AI Generator Section */
   .ai-generator-section {
-    padding: 12px 14px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 9px;
-  }
-
-  .ai-generate-btn {
-    height: 38px;
-    padding: 0;
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
-    border-radius: var(--ga-r-soft, 7px);
-    color: var(--ga-violet, #9b87f5);
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     gap: 6px;
-    transition: all 0.2s;
-  }
-
-  .ai-generate-btn:hover {
-    background: var(--ga-blue-a16);
-    box-shadow: none;
-  }
-
-  .ai-video-btn {
-    background: var(--ga-blue-soft, var(--ga-blue-a28));
-    border-color: var(--ga-blue-line, var(--ga-blue-a08));
-    color: var(--ga-blue, #5278ff);
-  }
-  .ai-video-btn:hover {
-    background: var(--ga-blue-a16);
-    border-color: var(--ga-blue-line, var(--ga-blue-a08));
-    box-shadow: none;
-  }
-
-  .ai-generate-btn svg {
-    animation: pulse-glow 2s ease-in-out infinite;
-  }
-
-  @keyframes pulse-glow {
-    0%, 100% { opacity: 0.7; }
-    50% { opacity: 1; }
   }
 
   .ai-generator-container {
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     max-height: 500px;
     overflow-y: auto;
   }
@@ -7107,35 +7089,37 @@
   .js-filter-row {
     display: flex;
     gap: 4px;
-    padding: 8px 12px;
-    background: var(--bg-primary, #0d0d10);
-    border-bottom: 1px solid #333;
+    padding: 6px 12px;
+    background: var(--ga-panel, #0d0d10);
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   .js-filter-btn {
     flex: 1;
-    padding: 6px 8px;
-    background: var(--bg-secondary, #111114);
-    border: 1px solid #333;
-    border-radius: 4px;
-    color: var(--text-muted, #888);
-    font-size: 12px;
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 8px;
+    background: var(--ga-card, #111114);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s, color 0.15s;
   }
 
   .js-filter-btn:hover {
-    background: var(--bg-tertiary, #161618);
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .js-filter-btn.active {
-    background: #333;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
-  /* JS Animation Items */
+  /* JS Animation Items: three.js yellow and p5 pink mark the engine. */
   .media-item.js-item {
     border: 2px solid transparent;
   }
@@ -7179,12 +7163,12 @@
     position: absolute;
     top: 4px;
     right: 4px;
-    background: linear-gradient(135deg, #BB86FC, #A78BFA);
-    color: #000;
-    font-size: 9px;
+    background: var(--ga-violet, #9b87f5);
+    color: var(--ga-blue-800, #0b0d11);
+    font-size: var(--ga-text-micro);
     font-weight: 700;
     padding: 2px 4px;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 3px);
   }
 
   .js-type-badge {
@@ -7192,46 +7176,33 @@
     bottom: 20px;
     left: 4px;
     background: rgba(0, 0, 0, 0.7);
-    color: var(--text-muted, #888);
-    font-size: 9px;
-    font-weight: 600;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-micro);
+    font-weight: 700;
     padding: 2px 4px;
-    border-radius: 2px;
+    border-radius: var(--ga-r-hard, 3px);
   }
 
-  /* Library Grid Styles */
+  /* Library Grid Styles (Saved tab) */
   .library-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 12px;
-    padding: 8px 0;
+    gap: 8px;
+    padding: 0 0 8px;
   }
 
   .library-item {
-    background: var(--bg-tertiary, #161618);
-    border-radius: 8px;
+    background: var(--ga-card, #161618);
+    border-radius: var(--ga-r-tile, 7px);
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    border: 2px solid transparent;
-    transition: all 0.15s;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    transition: border-color 0.15s;
   }
 
   .library-item:hover {
-    border-color: #BB86FC;
-    transform: translateY(-2px);
-  }
-
-  .library-item.isf {
-    border-color: #ff00aa44;
-  }
-
-  .library-item.threejs {
-    border-color: #BB86FC44;
-  }
-
-  .library-item.p5js {
-    border-color: #ffaa0044;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .library-item-header {
@@ -7239,29 +7210,20 @@
     justify-content: space-between;
     align-items: center;
     padding: 4px 8px;
-    background: var(--bg-primary, #0d0d10);
-    font-size: 10px;
+    background: var(--ga-slot, #0d0d10);
+    font-size: var(--ga-text-meta);
   }
 
+  /* Type code (ISF, 3JS, P5, VID) as a legend. */
   .library-type-badge {
-    font-weight: 600;
-    color: #BB86FC;
-  }
-
-  .library-item.isf .library-type-badge {
-    color: #ff00aa;
-  }
-
-  .library-item.threejs .library-type-badge {
-    color: #BB86FC;
-  }
-
-  .library-item.p5js .library-type-badge {
-    color: #ffaa00;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   .library-date {
-    color: #666;
+    color: var(--ga-ink-2, #89857e);
   }
 
   .library-thumb {
@@ -7282,27 +7244,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #222, #333);
-    color: #555;
-  }
-
-  .library-item.isf .library-icon {
-    background: linear-gradient(135deg, #ff00aa22, #22002a);
-  }
-
-  .library-item.threejs .library-icon {
-    background: linear-gradient(135deg, #BB86FC22, #002a22);
-  }
-
-  .library-item.p5js .library-icon {
-    background: linear-gradient(135deg, #ffaa0022, #2a2200);
+    background: var(--ga-slot, #0d0d10);
+    color: var(--ga-ink-3, #3a404a);
   }
 
   .library-name {
     padding: 6px 8px 2px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-primary, #eee);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-0, #eef0f4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7310,8 +7260,8 @@
 
   .library-desc {
     padding: 0 8px 6px;
-    font-size: 10px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7322,65 +7272,54 @@
     display: flex;
     gap: 4px;
     padding: 6px 8px;
-    border-top: 1px solid #333;
-    background: var(--bg-primary, #0d0d10);
+    border-top: 1px solid var(--ga-line-1, rgba(255, 255, 255, 0.07));
   }
 
   .library-load-btn {
     flex: 1;
-    padding: 6px 10px;
-    background: linear-gradient(135deg, #BB86FC, #69F0AE);
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 10px;
+    background: var(--ga-violet, #9b87f5);
     border: none;
-    border-radius: 4px;
-    color: #000;
-    font-size: 11px;
-    font-weight: 600;
+    border-radius: var(--ga-r-soft, 7px);
+    color: var(--ga-blue-800, #0b0d11);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: filter 0.15s;
   }
 
   .library-load-btn:hover {
-    transform: scale(1.02);
-    box-shadow: 0 2px 8px #BB86FC44;
+    filter: brightness(1.06);
   }
 
   .library-delete-btn {
-    padding: 6px 8px;
-    background: #333;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-muted, #888);
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 7px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-1, #9aa0ac);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
   .library-delete-btn:hover {
-    background: #ff4444;
-    color: #fff;
+    background: color-mix(in srgb, var(--ga-rec, #ff4438) 12%, transparent);
+    border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 45%, transparent);
+    color: var(--ga-rec, #ff4438);
   }
 
   .library-section-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted, #888);
-    padding: 8px 0 4px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2, #89857e);
+    padding: 2px 0 6px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .video-badge {
-    color: #f472b6 !important;
-  }
-
-  .video-item {
-    border-color: #f472b644;
-  }
-
-  .video-item .library-icon {
-    background: linear-gradient(135deg, #f472b622, #2a001a);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   /* Playback mode controls removed — camera icon moved to item-actions */
@@ -7390,93 +7329,66 @@
      ========================================== */
 
   .plugins-panel {
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .plugins-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 4px;
-  }
-
-  .plugins-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary, #aaa);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .plugins-hint {
-    font-size: 11px;
-    color: #666;
-  }
-
-  .plugins-grid {
+    padding: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
 
-  /* App-native plugin card — minimal dark surface with the accent tint. 
-     Palette follows the active accent scheme (--accent-primary), with
-     every tint derived from it via color-mix. No per-plugin gradient
-     backgrounds — uniform look across every visualizer engine. */
+  .plugins-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .plugins-title {
+    flex: 0 0 auto;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2, #89857e);
+    text-transform: uppercase;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+  }
+
+  .plugins-hint {
+    min-width: 0;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
+    text-align: right;
+  }
+
+  .plugins-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  /* Plugin card: a plain card in the panel's own surfaces. */
   .plugin-card {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 9px 10px;
-    background: #0a0a0d;
-    border: 1px solid color-mix(in srgb, var(--accent-primary, #FF725F) 10%, transparent);
-    border-radius: 6px;
-    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+    padding: 8px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-1, #9aa0ac);
+    transition: border-color 0.15s, background 0.15s;
     cursor: pointer;
     text-align: left;
     width: 100%;
   }
 
   .plugin-card:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--accent-primary, #FF725F) 55%, transparent);
-    background: #100a0c;
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary, #FF725F) 6%, transparent), 0 0 10px color-mix(in srgb, var(--accent-primary, #FF725F) 10%, transparent);
-  }
-
-  .plugin-card:hover:not(:disabled) .plugin-icon-svg {
-    color: var(--accent-primary, #FF725F);
-    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent-primary, #FF725F) 40%, transparent));
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    background: var(--ga-sub, var(--ga-card, #13161c));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .plugin-card:disabled {
     opacity: 0.4;
     cursor: not-allowed;
-  }
-
-  .plugin-card.running {
-    border-color: var(--accent-primary, #FF725F);
-    background: color-mix(in srgb, var(--accent-primary, #FF725F) 5%, transparent);
-    position: relative;
-  }
-
-  .plugin-status-dot {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    width: 6px;
-    height: 6px;
-    background: var(--accent-primary, #FF725F);
-    border-radius: 50%;
-    box-shadow: 0 0 6px color-mix(in srgb, var(--accent-primary, #FF725F) 60%, transparent);
-    animation: pulse-dot 2s infinite;
-  }
-
-  @keyframes pulse-dot {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
   }
 
   .plugin-preview {
@@ -7485,21 +7397,10 @@
     justify-content: center;
     width: 40px;
     height: 40px;
-    border-radius: 5px;
-    background: var(--bg-primary, #050507);
-    border: 1px solid color-mix(in srgb, var(--accent-primary, #FF725F) 8%, transparent);
+    border-radius: var(--ga-r-hard, 3px);
+    background: var(--ga-slot, #050507);
+    border: 1px solid var(--ga-line-1, rgba(255, 255, 255, 0.07));
     flex-shrink: 0;
-  }
-
-  .plugin-icon-emoji {
-    font-size: 19px;
-    opacity: 0.85;
-    color: var(--accent-secondary, #FF8585);
-  }
-
-  .plugin-icon-svg {
-    color: var(--accent-secondary, #FF8585);
-    transition: color 0.15s, filter 0.15s;
   }
 
   .plugin-info {
@@ -7511,43 +7412,36 @@
   }
 
   .plugin-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary, #e8e8e8);
-    letter-spacing: 0.2px;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .plugin-desc {
-    font-size: 10px;
-    color: var(--text-muted, #666);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     line-height: 1.35;
   }
 
+  /* Tier as a faceplate legend. */
   .plugin-tier {
-    font-size: 9px;
-    color: var(--accent-primary, #FF725F);
-    letter-spacing: 0.6px;
-    margin-top: 1px;
-    opacity: 0.55;
+    margin-top: 2px;
+    font-size: var(--ga-text-micro);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
   }
 
   .plugins-hint-footer {
-    font-size: 11px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     text-align: center;
     padding: 8px;
-    font-style: italic;
   }
-
-  /* plugins-warning removed — plugins are now integrated */
 
   .spin {
     animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
   }
 
   /* ==========================================
@@ -7555,10 +7449,10 @@
      ========================================== */
 
   .sources-panel {
-    padding: 8px;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
   }
 
   .sources-add-row {
@@ -7568,24 +7462,26 @@
 
   .source-add-btn {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 4px;
-    padding: 10px 4px;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: var(--text-secondary, #aaa);
-    font-size: 11px;
+    padding: 8px 4px 6px;
+    background: var(--ga-card, #0d0d10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    white-space: nowrap;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s, color 0.15s;
   }
 
   .source-add-btn:hover:not(:disabled) {
-    border-color: #BB86FC;
-    color: #BB86FC;
-    background: var(--ga-blue-mute-800);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .source-add-btn:disabled {
@@ -7593,26 +7489,11 @@
     opacity: 0.42;
   }
 
-  .source-add-btn.spout {
-    border-color: #444;
-  }
-
-  .source-add-btn.spout:hover,
-  .source-add-btn.spout.active {
-    border-color: #a78bfa;
-    color: #a78bfa;
-    background: var(--ga-blue-mute-800);
-  }
-
-  .source-add-btn.ndi {
-    border-color: #444;
-  }
-
-  .source-add-btn.ndi:hover,
-  .source-add-btn.ndi.active {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
-    background: var(--ga-blue-mute-800);
+  /* Spout / NDI pickers open below the row; the open one reads as selected. */
+  .source-add-btn.active {
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .spout-picker {
@@ -7620,9 +7501,9 @@
     flex-direction: column;
     gap: 6px;
     padding: 8px;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 6px;
+    background: var(--ga-card, #0d0d10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
   }
 
   .spout-sender-list {
@@ -7635,108 +7516,64 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 10px;
-    background: #222;
-    border: 1px solid #333;
-    border-radius: 4px;
-    color: var(--text-primary, #ccc);
-    font-size: 12px;
+    min-height: var(--ga-control-h, 26px);
+    padding: 0 10px;
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-0, #eef0f4);
+    font-size: var(--ga-text-control);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s;
     text-align: left;
   }
 
   .spout-sender-btn:hover {
-    border-color: #a78bfa;
-    color: #a78bfa;
-    background: var(--ga-blue-mute-800);
-  }
-
-  .ndi-picker .ndi-sender-btn:hover {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
-    background: var(--ga-blue-mute-800);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .spout-no-senders {
-    padding: 12px;
+    padding: 8px;
     text-align: center;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   .spout-no-senders p {
     margin: 0 0 4px 0;
-    font-size: 12px;
+    font-size: var(--ga-text-control);
   }
 
   .spout-no-senders .hint {
-    color: #666;
-    font-size: 11px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
 
   .spout-refresh-btn {
-    margin-top: 8px;
+    margin-top: 6px;
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 6px 12px;
-    background: #333;
-    border: 1px solid #444;
-    border-radius: 4px;
-    color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 10px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: border-color 0.15s, color 0.15s;
   }
 
   .spout-refresh-btn:hover {
-    background: #444;
-    border-color: #a78bfa;
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
-  /* Removed manual entry - keeping for reference if needed later
-  .spout-manual-row {
-    display: flex;
-    gap: 4px;
+  .spout-refresh-btn:disabled {
+    opacity: 0.55;
+    cursor: progress;
   }
-
-  .spout-name-input {
-    flex: 1;
-    background: #222;
-    border: 1px solid #333;
-    border-radius: 4px;
-    color: var(--text-primary, #ccc);
-    padding: 6px 8px;
-    font-size: 12px;
-  }
-
-  .spout-name-input:focus {
-    outline: none;
-    border-color: #a78bfa;
-  }
-
-  .spout-connect-btn {
-    padding: 6px 10px;
-    background: #a78bfa20;
-    border: 1px solid #a78bfa;
-    border-radius: 4px;
-    color: #a78bfa;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .spout-connect-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-
-  .spout-connect-btn:not(:disabled):hover {
-    background: #a78bfa40;
-  }
-  */
 
   .webcam-picker {
     display: flex;
@@ -7745,19 +7582,21 @@
   }
 
   .picker-label {
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2, #89857e);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .device-select {
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 4px;
-    color: var(--text-primary, #ccc);
-    padding: 6px 8px;
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #0d0d10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 0 8px;
+    font-size: var(--ga-text-control);
   }
 
   .sources-list {
@@ -7770,15 +7609,15 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px;
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid #333;
-    border-radius: 8px;
-    transition: all 0.2s;
+    padding: 6px;
+    background: var(--ga-card, #0d0d10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    transition: border-color 0.2s;
   }
 
   .source-card.live {
-    border-color: #22c55e40;
+    border-color: color-mix(in srgb, var(--ga-live, #22c55e) 30%, transparent);
   }
 
   .source-card.connecting {
@@ -7786,11 +7625,12 @@
   }
 
   .source-preview {
+    position: relative;
     width: 56px;
     height: 36px;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 3px);
     overflow: hidden;
-    background: #111;
+    background: var(--ga-slot, #111);
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -7808,7 +7648,7 @@
   }
 
   .source-icon {
-    color: #555;
+    color: var(--ga-ink-3, #555);
   }
 
   .source-info {
@@ -7820,8 +7660,9 @@
   }
 
   .source-name {
-    font-size: 12px;
-    color: var(--text-primary, #ddd);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-0, #eef0f4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7831,8 +7672,8 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .status-dot {
@@ -7840,12 +7681,12 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #555;
+    background: var(--ga-ink-3, #555);
   }
 
   .status-dot.live {
-    background: #22c55e;
-    box-shadow: 0 0 6px #22c55e80;
+    background: var(--ga-live, #22c55e);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--ga-live, #22c55e) 50%, transparent);
   }
 
   .status-dot.connecting {
@@ -7866,29 +7707,28 @@
 
   .source-apply-btn,
   .source-stop-btn {
-    width: 28px;
-    height: 28px;
-    border-radius: 4px;
-    border: 1px solid #333;
-    background: var(--bg-tertiary, #161618);
-    color: var(--text-secondary, #aaa);
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    border-radius: var(--ga-r-hard, 3px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: var(--ga-card, #161618);
+    color: var(--ga-ink-1, #9aa0ac);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
   }
 
   .source-apply-btn:hover {
-    border-color: #BB86FC;
-    color: #BB86FC;
-    background: var(--ga-blue-mute-800);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .source-stop-btn:hover {
-    border-color: #f44;
-    color: #f44;
-    background: #2d1a1a;
+    border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 45%, transparent);
+    color: var(--ga-rec, #ff4438);
+    background: color-mix(in srgb, var(--ga-rec, #ff4438) 12%, transparent);
   }
 
   /* ── Capture chooser modal ─────────────────────────────────────── */
@@ -7905,9 +7745,9 @@
   }
 
   .capture-picker-modal {
-    background: #141418;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    background: var(--ga-panel, #141418);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 7px);
     width: 92vw;
     max-width: 1100px;
     height: 80vh;
@@ -7915,66 +7755,61 @@
     flex-direction: column;
     overflow: hidden;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    color: #e8e8ea;
+    color: var(--ga-ink-0, #e8e8ea);
   }
 
   .cpm-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 18px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   .cpm-title {
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
+    font-size: var(--ga-text-heading);
+    font-weight: var(--ga-weight-title);
   }
 
   .cpm-close {
     background: transparent;
-    color: var(--text-secondary, #aaa);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 4px;
-    width: 28px;
-    height: 28px;
-    font-size: 19px;
+    color: var(--ga-ink-1, #9aa0ac);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    font-size: var(--ga-text-heading);
     line-height: 1;
     cursor: pointer;
   }
 
-  .spout-refresh-btn:disabled {
-    opacity: 0.55;
-    cursor: progress;
-  }
-
   .cpm-close:hover {
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.3);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .cpm-loading,
   .cpm-empty {
     padding: 40px;
     text-align: center;
-    color: var(--text-muted, #888);
-    font-size: 14px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-body);
   }
 
   .cpm-section-title {
-    padding: 16px 18px 6px;
-    font-size: 12px;
+    padding: 16px 16px 6px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1.1px;
-    color: var(--text-muted, #888);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .cpm-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 12px;
-    padding: 6px 18px 18px;
+    padding: 6px 16px 16px;
     overflow-y: auto;
   }
 
@@ -7983,9 +7818,9 @@
   }
 
   .cpm-card {
-    background: #1c1c22;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    background: var(--ga-card, #1c1c22);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-tile, 7px);
     padding: 8px;
     display: flex;
     flex-direction: column;
@@ -7997,16 +7832,16 @@
   }
 
   .cpm-card:hover {
-    border-color: #BB86FC;
-    background: var(--ga-blue-mute-800);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    background: var(--ga-sub, var(--ga-card, #1c1c22));
   }
 
   .cpm-thumb {
     width: 100%;
     aspect-ratio: 16 / 9;
     object-fit: cover;
-    background: var(--bg-primary, #0a0a0c);
-    border-radius: 4px;
+    background: var(--ga-slot, #0a0a0c);
+    border-radius: var(--ga-r-hard, 3px);
     display: block;
   }
 
@@ -8014,8 +7849,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #555;
-    font-size: 12px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
 
   .cpm-name-row {
@@ -8033,8 +7868,8 @@
   }
 
   .cpm-name {
-    font-size: 13px;
-    color: #d8d8dc;
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-0, #eef0f4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -8047,44 +7882,45 @@
     flex-wrap: wrap;
     gap: 4px;
     padding: 6px 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
   .midi-tray-nav button {
     flex: 1 1 auto;
-    font-size: 10px;
-    padding: 4px 6px;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    background: rgba(255, 255, 255, 0.04);
-    color: inherit;
+    height: var(--ga-control-h-sm, 22px);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard, 3px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-1, #9aa0ac);
     cursor: pointer;
   }
   .media-item.midi-cursor,
   .plugin-card.midi-cursor,
   .source-card.midi-cursor {
-    outline: 2px solid #4ade80;
+    outline: 2px solid var(--ga-green, #4ade80);
     outline-offset: 1px;
   }
-  .source-preview { position: relative; }
   .source-rec-btn {
     position: absolute;
     top: 4px;
     right: 4px;
     z-index: 2;
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow);
     line-height: 1;
     padding: 3px 6px;
     border-radius: 10px;
-    border: 1px solid rgba(255, 80, 80, 0.6);
+    border: 1px solid color-mix(in srgb, var(--ga-rec, #ff5a5a) 60%, transparent);
     background: rgba(0, 0, 0, 0.6);
-    color: #ff5a5a;
+    color: var(--ga-rec, #ff5a5a);
     cursor: pointer;
   }
   .source-rec-btn.active {
-    background: #e11d48;
+    background: var(--ga-rec, #e11d48);
     color: #fff;
     animation: source-rec-pulse 1s ease-in-out infinite;
   }
-  .source-card.recording { box-shadow: 0 0 0 1px #e11d48 inset; }
+  .source-card.recording { box-shadow: 0 0 0 1px var(--ga-rec, #e11d48) inset; }
   @keyframes source-rec-pulse { 50% { opacity: 0.6; } }
 </style>

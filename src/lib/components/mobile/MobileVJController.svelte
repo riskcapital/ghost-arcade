@@ -673,7 +673,7 @@
   }
   .empty-icon { opacity: 0.3; }
   .empty-title {
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.5);
   }

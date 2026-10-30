@@ -18,6 +18,7 @@
   export let onfinish: () => void;
 
   const tools: TouchTool[] = ['attract', 'repel', 'vortex'];
+  const TOOL_LABELS: Record<TouchTool, string> = { attract: 'Attract', repel: 'Repel', vortex: 'Vortex' };
 
   $: press = handheld ? 'Tap' : 'Click';
   $: hint = placingEmitter
@@ -52,7 +53,7 @@
   {:else if mode === 'perform' && !handheld}
     <div class="stage-tools" role="group" aria-label="Touch interaction">
       {#each tools as t}
-        <button class:active={tool === t} aria-pressed={tool === t} onclick={() => (tool = t)}>{t}</button>
+        <button class:active={tool === t} aria-pressed={tool === t} onclick={() => (tool = t)}>{TOOL_LABELS[t]}</button>
       {/each}
     </div>
   {:else}

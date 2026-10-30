@@ -152,13 +152,14 @@
 {/if}
 
 <style>
+  /* The shared icon tint: things you can create read in one colour. */
   .plugin-icon-svg {
-    color: var(--coral, #FF6B6B);
+    color: var(--ga-icon, #5278ff);
     display: block;
   }
   .plugin-icon-emoji {
     display: inline-block;
     line-height: 1;
-    color: var(--coral, #FF6B6B);
+    color: var(--ga-icon, #5278ff);
   }
 </style>

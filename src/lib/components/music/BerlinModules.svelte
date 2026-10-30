@@ -36,7 +36,7 @@
 </script>
 
 {#if part === 'drums'}
-  <StudioModule title="DRUMS" subtitle="Patch any voice">
+  <StudioModule title="Drums" subtitle="Patch any voice">
     {#snippet head()}
       <StudioJack id="audio:drums" label="Out" title="Drum sound" />
     {/snippet}
@@ -54,7 +54,7 @@
     </div>
   </StudioModule>
 {:else}
-  <StudioModule title="ACID" subtitle="Click a step for its note" grow>
+  <StudioModule title="Acid" subtitle="Click a step for its note" grow>
     {#snippet head()}
       <StudioJack id="cv:acid.cutoff" label="Cutoff" title="Acid filter, as a control signal" />
       <StudioJack id="audio:acid" label="Out" title="Acid sound" />
@@ -89,19 +89,20 @@
 <style>
   .mixer { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; flex: 1; min-height: 0; }
   .channel { display: flex; flex-direction: column; align-items: center; gap: 8px; min-height: 0; }
-  .ch-name { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; color: var(--studio-ink); }
+  /* Channel names are eyebrows, as on the mixer's strips. */
+  .ch-name { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; white-space: nowrap; color: var(--studio-ink); }
   .channel.lit .ch-name { color: var(--studio-accent); }
   .mute {
     width: 28px;
-    height: 20px;
+    height: var(--ga-control-h-sm, 22px);
     padding: 0;
     border: 1px solid var(--studio-edge);
     background: var(--studio-slot);
     color: var(--studio-muted);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 9px;
-    font-weight: 800;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
   .mute.on { background: var(--studio-ink); color: var(--studio-slot); border-color: var(--studio-ink); }
@@ -122,7 +123,7 @@
   .acid-step.playhead .pitch { box-shadow: inset 0 0 0 1px var(--studio-accent); }
   .dot { position: absolute; left: 2px; right: 2px; height: 6px; background: var(--studio-ink); pointer-events: none; }
   .dot.glide { background: var(--studio-muted); }
-  .step-note { font-family: var(--ga-font-mono, ui-monospace); font-size: 8px; text-align: center; color: var(--studio-muted); }
+  .step-note { font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; text-align: center; color: var(--studio-muted); }
   .flag {
     height: 8px;
     padding: 0;

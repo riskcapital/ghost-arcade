@@ -60,6 +60,7 @@
   let tempo = $state(120);
   let scanX = $state(0);
   let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer'>('session');
+  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer' } as const;
 
   const s = $derived($musicStudio);
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
@@ -169,7 +170,7 @@
 
 {#snippet frame()}
   <div class="frame" bind:this={hole}>
-    <span class="frame-label">LIVE OUTPUT</span>
+    <span class="frame-label ga-eyebrow">Live output</span>
     {#if s.scanOn}
       <span class="scan-line" style="left: {scanX * 100}%"></span>
     {/if}
@@ -180,24 +181,24 @@
 {/snippet}
 
 {#snippet lower()}
-  <StudioModule title={lowerTab.toUpperCase()} subtitle={lowerSubtitle} class="lower">
+  <StudioModule title={LOWER_TITLES[lowerTab]} subtitle={lowerSubtitle} class="lower">
     {#snippet lead()}
-      <div class="seg small" role="tablist" aria-label="Session, scenes, takes or mixer">
-        <button role="tab" aria-selected={lowerTab === 'session'} class:on={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
-        <button role="tab" aria-selected={lowerTab === 'scenes'} class:on={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>Scenes{s.scenes.length ? ` ${s.scenes.length}` : ''}</button>
-        <button role="tab" aria-selected={lowerTab === 'takes'} class:on={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>Takes{s.takes.length ? ` ${s.takes.length}` : ''}</button>
-        <button role="tab" aria-selected={lowerTab === 'mixer'} class:on={lowerTab === 'mixer'} onclick={() => (lowerTab = 'mixer')}>Mixer</button>
+      <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes or mixer">
+        <button role="tab" aria-selected={lowerTab === 'session'} class:active={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
+        <button role="tab" aria-selected={lowerTab === 'scenes'} class:active={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>Scenes{s.scenes.length ? ` ${s.scenes.length}` : ''}</button>
+        <button role="tab" aria-selected={lowerTab === 'takes'} class:active={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>Takes{s.takes.length ? ` ${s.takes.length}` : ''}</button>
+        <button role="tab" aria-selected={lowerTab === 'mixer'} class:active={lowerTab === 'mixer'} onclick={() => (lowerTab = 'mixer')}>Mixer</button>
       </div>
     {/snippet}
     {#snippet head()}
       {#if lowerTab === 'scenes'}
         {#if jam}
-          <button class="text-btn small" onclick={() => void jam()} title="Load the set's ready-made jam: a groove, loops, its visuals and the cables between them">LOAD JAM</button>
+          <button class="text-btn small" onclick={() => void jam()} title="Load the set's ready-made jam: a groove, loops, its visuals and the cables between them">Load jam</button>
         {/if}
-        <button class="text-btn small" onclick={captureCurrentScene} title="Save what is playing now as a scene">+ SAVE SCENE</button>
+        <button class="text-btn small" onclick={captureCurrentScene} title="Save what is playing now as a scene">+ Save scene</button>
       {:else if lowerTab === 'session'}
         {#if !s.liveControl}<LoopRecorderBar />{/if}
-        <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own instruments" : "Control Ableton Live from here: its clips and scenes, its sound. The studio's instruments go quiet."}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>ABLETON LIVE</button>
+        <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own instruments" : "Control Ableton Live from here: its clips and scenes, its sound. The studio's instruments go quiet."}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
       {/if}
     {/snippet}
     {#if lowerTab === 'session'}
@@ -208,7 +209,7 @@
       <div class="scroll"><TakeList /></div>
     {:else}
       <div class="scene-grid">
-        <span></span><span class="col">BEAT</span><span class="col">LOOPS</span><span class="col">TAKE</span><span class="col">VISUALS</span><span></span>
+        <span></span><span class="col ga-eyebrow">Beat</span><span class="col ga-eyebrow">Loops</span><span class="col ga-eyebrow">Take</span><span class="col ga-eyebrow">Visuals</span><span></span>
         {#each s.scenes as scene (scene.id)}
           {@const playing = s.sceneId === scene.id}
           {@const queued = s.queuedSceneId === scene.id}
@@ -222,7 +223,7 @@
           <span class="cell" class:playing>{loopNames(scene.loops) || '—'}</span>
           <span class="cell" class:playing>{takeName(scene.takeId) || '—'}</span>
           <span class="cell" class:playing>{columnLabel(scene.vjColumn) || '—'}</span>
-          <button class="icon-btn" onclick={() => musicStudio.removeScene(scene.id)} aria-label="Delete scene {scene.name}" title="Delete scene">×</button>
+          <button class="icon-btn" onclick={() => musicStudio.removeScene(scene.id)} aria-label="Delete scene {scene.name}" title="Delete scene"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
         {:else}
           <p class="empty">Start a beat and some loops, launch a VJ column, then Save scene. Each scene brings it all back on the bar.</p>
         {/each}
@@ -234,25 +235,23 @@
 {#if open}
   <div class="studio-view studio-tokens set-{s.set}" role="region" aria-label="Studio view" bind:this={root}>
     <header class="bar">
-      <span class="mode">STUDIO</span>
-      <span class="sep"></span>
-      <button class="transport" class:on={playing} onclick={toggleAll} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'} aria-label={playing ? 'Stop everything' : 'Play'}>
-        {#if playing}
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-        {:else}
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>
-        {/if}
-      </button>
-      <button class="transport rec" class:on={s.recording} onclick={toggleRecord} title={s.recording ? 'Stop recording and keep the take' : 'Record a take'} aria-label={s.recording ? 'Stop recording' : 'Record'}>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg>
-      </button>
-      <div class="readouts">
-        <span><span class="muted">BPM</span> {tempo.toFixed(1)}</span>
+      <span class="bar-title">Studio</span>
+      <div class="group">
+        <button class="transport" class:on={playing} onclick={toggleAll} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'} aria-label={playing ? 'Stop everything' : 'Play'}>
+          {#if playing}
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+          {:else}
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>
+          {/if}
+        </button>
+        <button class="transport rec" class:on={s.recording} onclick={toggleRecord} title={s.recording ? 'Stop recording and keep the take' : 'Record a take'} aria-label={s.recording ? 'Stop recording' : 'Record'}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg>
+        </button>
+        <span class="tempo"><span class="tempo-value">{tempo.toFixed(1)}</span> <span class="tempo-unit">BPM</span></span>
         {#if s.recording}<span class="rec-time">{seconds(elapsed)}</span>{/if}
       </div>
-      <span class="sep"></span>
-      <div class="key">
-        <span class="muted">KEY</span>
+      <div class="group">
+        <span class="bar-label">Key</span>
         <select value={s.key.root} onchange={(e) => musicStudio.setKey({ ...s.key, root: +(e.target as HTMLSelectElement).value })} aria-label="Key root">
           {#each ROOT_NAMES as name, i}<option value={i}>{name}</option>{/each}
         </select>
@@ -264,18 +263,18 @@
           Lock
         </label>
       </div>
-      <span class="sep"></span>
       <MacroStrip />
       <span class="spacer"></span>
-      <div class="seg" role="group" aria-label="Instrument set">
+      <div class="ga-segmented" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
-          <button class:on={s.set === set.id} onclick={() => musicStudio.setSet(set.id)}>{set.label}</button>
+          <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)}>{set.label}</button>
         {/each}
       </div>
-      <span class="sep"></span>
-      <button class="text-btn kill" onclick={killAll} title="Silence everything now, echoes and reverb included">KILL</button>
-      <button class="text-btn" onclick={() => musicStudio.setStudioView(false)} title="Back to the music tray; the music keeps playing">TRAY</button>
-      <button class="text-btn" onclick={() => musicStudio.close()} title="Close the studio and stop the music">EXIT</button>
+      <div class="group">
+        <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included">Kill</button>
+        <button class="text-btn" onclick={() => musicStudio.setStudioView(false)} title="Back to the music tray; the music keeps playing">Tray</button>
+        <button class="text-btn" onclick={() => musicStudio.close()} title="Close the studio and stop the music">Exit</button>
+      </div>
     </header>
 
     <div class="centre">
@@ -353,7 +352,7 @@
     z-index: 60;
     display: grid;
     grid-template-columns: 336px minmax(0, 1fr) 356px;
-    grid-template-rows: 56px minmax(0, 1fr) 196px;
+    grid-template-rows: var(--ga-bar-h, 48px) minmax(0, 1fr) 196px;
     grid-template-areas:
       'bar bar bar'
       'left centre right'
@@ -363,7 +362,7 @@
     box-sizing: border-box;
     user-select: none;
   }
-  .set-analog { grid-template-rows: 56px minmax(0, 1fr) 214px; }
+  .set-analog { grid-template-rows: var(--ga-bar-h, 48px) minmax(0, 1fr) 214px; }
 
   /* The output frame lets the native preview show through; its shadow paints the ground everywhere else. */
   .frame {
@@ -385,12 +384,8 @@
     padding: 2px 6px;
     background: var(--studio-ground);
     border-radius: 3px;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    color: var(--studio-muted);
   }
-  .frame-note { position: absolute; inset: 0; display: grid; place-items: center; color: var(--studio-muted); }
+  .frame-note { position: absolute; inset: 0; display: grid; place-items: center; color: var(--studio-muted); font-size: var(--ga-text-meta, 11px); }
   .scan-line {
     position: absolute;
     top: 0;
@@ -404,26 +399,31 @@
 
   .bar, .rack, .slot, .centre > :global(.module) { position: relative; z-index: 1; }
 
-  /* ── Top bar ── */
+  /* ── Top bar: the app's top bar (48px, 30px controls, 13px text), in groups ── */
   .bar {
     grid-area: bar;
     margin: 0 -14px;
-    padding: 0 16px;
+    padding: 0 14px;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--ga-bar-group-gap, 14px);
     background: var(--ga-bar, #100f0d);
     border-bottom: 1px solid var(--studio-edge-soft);
     white-space: nowrap;
+    font-size: var(--ga-text-body, 13px);
   }
-  .mode { font-weight: 700; letter-spacing: 0.22em; font-size: 11px; color: var(--studio-ink); }
-  .sep { flex: 0 0 auto; width: 1px; height: 26px; background: var(--studio-edge-soft); }
+  .group { display: flex; align-items: center; gap: var(--ga-bar-gap, 6px); flex: 0 0 auto; }
+  .bar-title { font-size: var(--ga-text-title, 14px); font-weight: var(--ga-weight-title, 650); color: var(--studio-ink); }
+  .bar-label { color: var(--studio-muted); font-weight: var(--ga-weight-control, 600); }
   .spacer { flex: 1; min-width: 4px; }
-  .readouts { display: flex; gap: 12px; font-family: var(--ga-font-mono, ui-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .rec-time { color: var(--ga-rec, #ff3b30); }
-  .kill { color: var(--ga-rec, #ff3b30); }
-  .kill:hover { border-color: var(--ga-rec, #ff3b30); }
-  .key { display: flex; align-items: center; gap: 6px; }
+  .bar .transport { width: var(--ga-bar-control-h, 30px); height: var(--ga-bar-control-h, 30px); }
+  .bar select { height: var(--ga-bar-control-h, 30px); padding: 0 8px; font-size: var(--ga-text-body, 13px); }
+  .bar .check { font-size: var(--ga-text-body, 13px); }
+  .bar :is(.text-btn, .kill-btn) { height: var(--ga-bar-control-h, 30px); padding: 0 12px; font-size: var(--ga-text-body, 13px); }
+  .tempo { display: inline-flex; align-items: baseline; gap: 4px; margin-left: 4px; }
+  .tempo-value { font-family: var(--ga-font-mono, ui-monospace); font-variant-numeric: tabular-nums; color: var(--studio-ink); }
+  .tempo-unit { font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); color: var(--studio-muted); }
+  .rec-time { font-family: var(--ga-font-mono, ui-monospace); font-variant-numeric: tabular-nums; color: var(--ga-rec, #ff3b30); }
 
   /* ── Layout ── */
   .rack { display: flex; flex-direction: column; gap: var(--studio-gap); min-height: 0; }
@@ -443,7 +443,7 @@
 
   /* ── Lower panel ── */
   .scroll { min-height: 0; overflow: auto; flex: 1; display: flex; flex-direction: column; }
-  .empty { margin: 4px 0; color: var(--studio-muted); grid-column: 1 / -1; line-height: 1.5; }
+  .empty { margin: 4px 0; color: var(--studio-muted); grid-column: 1 / -1; font-size: var(--ga-text-meta, 11px); line-height: 1.5; }
 
   /* ── Scenes ── */
   .scene-grid {
@@ -453,7 +453,7 @@
     overflow: auto;
     align-items: center;
   }
-  .col { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--studio-muted); }
+  .col { padding-left: 2px; }
   .launch {
     height: 30px;
     box-sizing: border-box;
@@ -488,7 +488,7 @@
     background: transparent;
     color: inherit;
     font: inherit;
-    font-weight: 650;
+    font-weight: var(--ga-weight-control, 600);
     border-radius: var(--studio-radius);
   }
   .launch input:focus { border-color: var(--studio-edge); background: var(--studio-slot); }
@@ -508,7 +508,9 @@
     text-overflow: ellipsis;
   }
   .cell.playing { border-color: var(--studio-accent); color: var(--studio-ink); }
-  .live-led { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--studio-edge); vertical-align: 1px; }
+  .scene-grid .icon-btn { display: grid; place-items: center; }
+  .scene-grid .icon-btn svg { width: 12px; height: 12px; }
+  .live-led { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--studio-edge); }
   .live-led.on { background: var(--studio-muted); }
   .live-led.linked { background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent); }
 </style>

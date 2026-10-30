@@ -2690,7 +2690,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: rgba(255, 255, 255, 0.45);
-    font-size: 15px;
+    font-size: 14px;
   }
   .row-enable.on { background: var(--lc); color: #1a1a1f; border-color: var(--lc); }
   .row-enable:disabled { opacity: 0.3; }
@@ -3313,7 +3313,7 @@
     max-height: 86vh;
     overflow-y: auto;
   }
-  .modal-card h2 { margin: 0 0 14px 0; font-size: 17px; }
+  .modal-card h2 { margin: 0 0 14px 0; font-size: 16px; }
   .project-card {
     display: grid;
     gap: 10px;
@@ -3342,7 +3342,7 @@
     border-radius: 9px;
     color: #fff;
     padding: 10px 11px;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
   }
   .project-actions {
@@ -3425,7 +3425,7 @@
     border-radius: 10px;
     text-align: left;
     margin-bottom: 8px;
-    font-size: 15px;
+    font-size: 14px;
   }
 	  .row-btn:active { background: #25252e; }
 	  .row-btn:disabled { opacity: 0.45; }
@@ -3438,7 +3438,7 @@
     border: none;
     background: #1c1c24;
     color: #fff;
-    font-size: 15px;
+    font-size: 14px;
   }
 
 	  /* MIDI sub-sheet */

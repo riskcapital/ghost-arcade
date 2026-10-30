@@ -226,89 +226,95 @@
   .ss-panel {
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, #0e0a1a, #0a0612);
-    border-bottom: 1px solid var(--ga-blue-mute-800);
-    padding: 8px 8px 10px;
-    gap: 6px;
+    background: var(--ga-panel);
+    border-bottom: 1px solid var(--ga-line-1);
+    padding: 12px;
+    gap: 8px;
   }
-  .ss-header { display: flex; align-items: baseline; gap: 6px; }
-  .ss-title { font-size: 11px; color: var(--accent-secondary, #FF8585); letter-spacing: 0.6px; text-transform: uppercase; font-weight: 700; }
-  .ss-sub   { font-size: 10px; color: #555; }
+  .ss-header { display: flex; align-items: baseline; gap: 8px; }
+  /* Eyebrow section label, same as every layer editor. */
+  .ss-title { font-size: var(--ga-text-eyebrow); color: var(--ga-ink-2); letter-spacing: var(--ga-eyebrow-tracking); text-transform: uppercase; font-weight: 700; }
+  .ss-sub   { font-size: var(--ga-text-meta); color: var(--ga-ink-2); }
 
-  .ss-row { display: flex; align-items: center; gap: 6px; }
-  .ss-label { font-size: 10px; color: #666; width: 50px; }
+  .ss-row { display: flex; align-items: center; gap: 8px; }
+  .ss-label { font-size: var(--ga-text-control); color: var(--ga-ink-1); width: 56px; flex-shrink: 0; }
   select {
     flex: 1;
-    background: #0a0612;
-    border: 1px solid #2a2235;
-    color: var(--text-primary, #ddd);
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 11px;
+    min-width: 0;
+    height: var(--ga-control-h);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
     outline: none;
   }
-  select:focus { border-color: var(--accent-primary, #FF6B6B); }
+  select:focus { border-color: var(--ga-focus); }
 
-  .ss-actions { display: flex; gap: 4px; margin-top: 2px; }
+  .ss-actions { display: flex; gap: 4px; }
   .ss-btn {
     flex: 1;
-    padding: 4px 8px;
-    background: #15101e;
-    border: 1px solid rgba(255, 107, 107, 0.20);
-    border-radius: 3px;
-    color: var(--accent-secondary, #FF8585);
-    font-size: 12px;
-    font-weight: 600;
+    height: var(--ga-control-h);
+    padding: 0 10px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     transition: all 0.12s;
   }
-  .ss-btn:hover:not(:disabled) { background: #20162e; border-color: rgba(255, 107, 107, 0.55); color: var(--accent-primary, #FF6B6B); }
+  .ss-btn:hover:not(:disabled) { border-color: var(--ga-line-3); color: var(--ga-ink-0); }
   .ss-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .ss-btn.small { flex: 0 0 28px; }
-  .ss-btn.primary { background: rgba(255, 107, 107, 0.10); }
+  .ss-btn.small { flex: 0 0 auto; min-width: var(--ga-control-h); padding: 0 8px; }
+  .ss-btn.primary { background: var(--ga-accent-gradient, var(--ga-violet)); border-color: transparent; color: var(--ga-blue-800); border-radius: var(--ga-r-soft); font-weight: 700; }
+  .ss-btn.primary:hover:not(:disabled) { color: var(--ga-blue-800); filter: brightness(1.06); }
 
   .ss-err {
-    font-size: 10px;
+    font-size: var(--ga-text-meta);
     color: #f87171;
     padding: 4px 6px;
     background: rgba(248, 113, 113, 0.08);
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard);
   }
   .ss-hint {
-    font-size: 10px;
-    color: #666;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     line-height: 1.45;
-    padding-top: 2px;
   }
-  .ss-hint strong { color: var(--text-muted, #888); font-weight: 600; }
+  .ss-hint strong { color: var(--ga-ink-1); font-weight: 600; }
 
   .ss-active {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: rgba(255, 107, 107, 0.06);
-    border: 1px solid rgba(255, 107, 107, 0.20);
-    border-radius: 3px;
-    padding: 4px 8px;
+    gap: 8px;
+    min-height: var(--ga-control-h);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    padding: 2px 2px 2px 8px;
   }
   .ss-dot {
     width: 6px; height: 6px;
-    background: var(--accent-primary, #FF6B6B);
+    background: var(--ga-live);
     border-radius: 50%;
-    box-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--ga-live) 60%, transparent);
     animation: ssDot 2s infinite;
   }
   @keyframes ssDot { 0%,100%{opacity:1} 50%{opacity:.35} }
-  .ss-active-name { flex: 1; font-size: 11px; color: var(--accent-secondary, #FF8585); }
+  .ss-active-name { flex: 1; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); color: var(--ga-ink-0); }
+  .ss-active .ss-btn.small { height: var(--ga-control-h-sm); }
 
   .ss-matrix {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    background: #060410;
-    border: 1px solid #1a1428;
-    border-radius: 3px;
-    padding: 4px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    padding: 6px;
   }
   .ss-matrix-head,
   .ss-matrix-row {
@@ -317,18 +323,19 @@
     gap: 4px;
     align-items: center;
   }
+  .ss-matrix-row { min-height: var(--ga-control-h-sm); }
   .ss-matrix-head { padding: 2px 0; }
   .ss-matrix-head span {
-    font-size: 9px;
-    color: #555;
+    font-size: var(--ga-text-micro);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-align: center;
   }
   .ss-stem-label {
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -337,28 +344,28 @@
     width: 100%;
     height: 3px;
     -webkit-appearance: none;
-    background: #2a1a2a;
+    background: var(--ga-line-2);
     border-radius: 2px;
     cursor: pointer;
   }
   .ss-matrix-row input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 10px; height: 10px;
-    background: var(--accent-primary, #FF6B6B);
+    background: var(--ga-selection-line);
     border-radius: 50%;
     cursor: pointer;
   }
   .ss-meter {
     width: 100%;
     height: 8px;
-    background: #0a0612;
+    background: var(--ga-card);
     border-radius: 2px;
     overflow: hidden;
   }
   .ss-meter-bar {
     height: 100%;
     width: 0%;
-    background: linear-gradient(to right, #5a2a4a, var(--accent-primary, #FF6B6B));
+    background: var(--ga-live);
     transition: width 0.05s linear;
   }
 </style>

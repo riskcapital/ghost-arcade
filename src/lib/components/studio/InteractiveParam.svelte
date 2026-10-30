@@ -155,8 +155,8 @@
   .auto-range {
     display: flex;
     gap: 8px;
-    font-size: 10px;
-    color: #a4bac9;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2);
   }
   .auto-range label {
     min-width: 0;
@@ -165,12 +165,12 @@
   .auto-range input {
     box-sizing: border-box;
     width: 100%;
-    height: 28px;
+    height: var(--ga-control-h, 26px);
     color: inherit;
     background: var(--ga-slot, var(--ga-blue-800));
-    border: 1px solid var(--ga-blue-mute-600);
-    border-radius: 3px;
-    padding: 4px;
+    border: 1px solid var(--ga-line-2, var(--ga-blue-mute-600));
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 6px;
   }
   .param {
     margin: 10px 0;
@@ -184,32 +184,37 @@
   }
   .head label {
     flex: 1;
-    font-size: 11px;
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1);
     line-height: 1.3;
     overflow-wrap: anywhere;
   }
   .head output {
-    font:
-      10px ui-monospace,
-      monospace;
-    color: var(--ga-ink-2, #a8b6c4);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #a8b6c4);
   }
   button {
-    font-size: 10px;
-    min-height: 28px;
-    padding: 3px 8px;
+    font: inherit;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
+    min-height: var(--ga-control-h-sm, 22px);
+    padding: 0 8px;
     border: 1px solid var(--ga-line-2, var(--ga-blue-mute-600));
     background: var(--ga-slot, var(--ga-blue-900));
     color: inherit;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
+    cursor: pointer;
   }
+  button:hover { border-color: var(--ga-line-3); }
   .assigned {
-    color: var(--ga-blue-200);
-    border-color: var(--ga-blue-300);
+    color: var(--ga-selection-ink, var(--ga-blue-200));
+    background: var(--ga-selection-bg, transparent);
+    border-color: var(--ga-selection-line, var(--ga-blue-300));
   }
   input {
     width: 100%;
-    height: 32px;
+    height: var(--ga-control-h, 26px);
     touch-action: none;
     accent-color: var(--ga-accent, var(--ga-blue-mute-300));
     cursor: ew-resize;
@@ -217,7 +222,7 @@
   }
   button:focus-visible,
   input:focus-visible {
-    outline: 2px solid var(--ga-blue-200);
+    outline: 2px solid var(--ga-focus, var(--ga-blue-200));
     outline-offset: 2px;
   }
   @media (pointer: coarse) {

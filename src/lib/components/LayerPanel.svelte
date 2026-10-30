@@ -247,6 +247,12 @@
     'vivid-light',
     'pin-light',
   ];
+  /** Menu text for a blend mode id: 'color-dodge' -> 'Color dodge'. */
+  const BLEND_MODE_NAMES: Partial<Record<string, string>> = { hardlight: 'Hard light', softlight: 'Soft light' };
+  function blendModeName(mode: string): string {
+    const words = BLEND_MODE_NAMES[mode] ?? mode.replace(/-/g, ' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
 
   // Drag and drop state
   let draggedIndex: number | null = null;
@@ -990,7 +996,7 @@
             addMenuPos = { top: rect.bottom + 4, left: Math.max(8, rect.right - 170) };
           }
         }}>
-          <span class="btn-add__plus" aria-hidden="true">+</span> Add Layer
+          <span class="btn-add__plus" aria-hidden="true">+</span> Add layer
         </button>
         {#if showAddLayerMenu}
           <div class="add-layer-backdrop" onclick={() => showAddLayerMenu = false}></div>
@@ -1001,7 +1007,7 @@
                 <circle cx="8.5" cy="8.5" r="1.5"/>
                 <path d="M21 15l-5-5L5 21"/>
               </svg>
-              Media Layer
+              Media layer
             </button>
             <button onclick={()=>{const layerId=project.addLayer('Interactive Studio','interactive');showAddLayerMenu=false;if(layerId)window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId}}));}}>
               <PluginIcon effectType="performer-world" size={14}/> Interactive
@@ -1019,7 +1025,7 @@
                 <circle cx="22" cy="14" r="1.5" fill="currentColor"/>
                 <circle cx="16" cy="20" r="1.5" fill="currentColor"/>
               </svg>
-              Custom Shape
+              Custom shape
             </button>
             <button
               title="Add mask layer — masks every layer below it"
@@ -1034,7 +1040,7 @@
                 <path d="M12 3v18"/>
                 <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity="0.35"/>
               </svg>
-              Mask Layer
+              Mask layer
             </button>
             <button
               title="Add lines layer"
@@ -1044,7 +1050,7 @@
                 <polyline points="4 17 10 7 16 13 20 6"/>
                 <line x1="4" y1="20" x2="20" y2="20"/>
               </svg>
-              Lines Layer
+              Lines layer
             </button>
             <button
               title="Add SVG layer"
@@ -1054,7 +1060,7 @@
                 <polygon points="12,2 22,20 2,20"/>
                 <polygon points="12,8 17,16 7,16"/>
               </svg>
-              SVG Layer
+              SVG layer
             </button>
             <button
               title="Add light painting layer"
@@ -1065,7 +1071,7 @@
                 <path d="M12 2c3 4 7 5 7 10a7 7 0 1 1-14 0c0-5 4-6 7-10z"/>
                 <path d="M12 18c-2.2 0-4-1.8-4-4 0-2.5 2-3 4-6"/>
               </svg>
-              Light Painting
+              Light painting
             </button>
             <!-- Adv Light Paint button hidden — superseded by the
                  in-progress "Light Painting GPU" effort that adds GPU
@@ -1088,7 +1094,7 @@
                 <line x1="9" y1="20" x2="15" y2="20"/>
                 <line x1="12" y1="4" x2="12" y2="20"/>
               </svg>
-              Text Layer
+              Text layer
             </button>
             <button
               title="Add splat / point cloud layer"
@@ -1106,7 +1112,7 @@
                 <circle cx="9" cy="10" r="0.8"/>
                 <circle cx="15" cy="13" r="0.8"/>
               </svg>
-              Splat / Point Cloud
+              Splat / point cloud
             </button>
             <button
               title="Add 3D model layer"
@@ -1117,7 +1123,7 @@
                 <path d="M2 17L12 22L22 17"/>
                 <path d="M2 12L12 17L22 12"/>
               </svg>
-              3D Model
+              3D model
             </button>
             <!-- Legacy Pixel FX layer button hidden — Pixel Particles
                  now ships as a shader inside the GPU Shader layer
@@ -1137,7 +1143,7 @@
                   <ellipse cx="12" cy="12" rx="9" ry="3.2"/>
                   <path d="M3 12 a9 9 0 0 0 18 0"/>
                 </svg>
-                GPU Shader
+                GPU shader
               </button>
             {/if}
             <button
@@ -1149,7 +1155,7 @@
                 <line x1="8" y1="21" x2="16" y2="21"/>
                 <line x1="12" y1="17" x2="12" y2="21"/>
               </svg>
-              Screen (VJ Output)
+              Screen (VJ output)
             </button>
             <button
               title="Add group layer"
@@ -1197,7 +1203,7 @@
             <p class="effect-chain-warning" role="status">{nativeEffectChainWarning(mappingComposition.effects)}</p>
           {/if}
           <div class="composition-section-header">
-            <span>Output Effects</span>
+            <span>Output effects</span>
             <button
               class="add-effect-btn"
               onclick={() => {
@@ -1284,7 +1290,7 @@
                             onchange={(e) => project.updateMappingCompositionEffect(effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
                           >
                             {#each blendModes as mode}
-                              <option value={mode}>{mode}</option>
+                              <option value={mode}>{blendModeName(mode)}</option>
                             {/each}
                           </select>
                         </div>
@@ -1717,7 +1723,7 @@
     {/each}
 
     {#if $layers.length === 0}
-      <div class="empty-state">No layers. Click "+ Add Layer" to start.</div>
+      <div class="empty-state">No layers. Click "+ Add layer" to start.</div>
     {/if}
   </div>
 
@@ -1766,7 +1772,7 @@
       {#if ctxLayer && ctxLayer.type !== 'group'}
         {#if groups.length > 0}
           <button class="ctx-item ctx-has-sub" onclick={() => ctxGroupSubmenu = !ctxGroupSubmenu}>
-            Add to Group ▸
+            Add to group ▸
           </button>
           {#if ctxGroupSubmenu}
             <div class="ctx-submenu">
@@ -1783,11 +1789,11 @@
           {/if}
         {/if}
         {#if ctxLayer.parentGroupId}
-          <button class="ctx-item" onclick={() => { project.removeFromGroup([ctxId]); closeContextMenu(); }}>Remove from Group</button>
+          <button class="ctx-item" onclick={() => { project.removeFromGroup([ctxId]); closeContextMenu(); }}>Remove from group</button>
         {/if}
       {/if}
       {#if ctxLayer?.type === 'group'}
-        <button class="ctx-item" onclick={() => { project.dissolveGroup(ctxId); closeContextMenu(); }}>Dissolve Group</button>
+        <button class="ctx-item" onclick={() => { project.dissolveGroup(ctxId); closeContextMenu(); }}>Dissolve group</button>
       {/if}
       <div class="ctx-divider"></div>
       <button class="ctx-item" onclick={() => { project.duplicateLayer(ctxId); closeContextMenu(); }}>Duplicate</button>
@@ -1823,7 +1829,7 @@
             <MapSurfaceControls {layer} />
 
             <div class="property-row">
-              <label>Shader Mode</label>
+              <label>Shader mode</label>
               <div class="radio-group">
                 <label class="radio-label">
                   <input type="radio" name="group-shader-mode" value="individual"
@@ -1847,7 +1853,7 @@
             </p>
 
             <div class="property-row">
-              <label>Override Effects</label>
+              <label>Override effects</label>
               <label class="toggle">
                 <input type="checkbox"
                   checked={layer.groupConfig?.overrideStyles ?? false}
@@ -1902,11 +1908,11 @@
               <span class="property-value">{Math.round(layer.opacity * 100)}%</span>
             </div>
             <div class="property-row">
-              <label>Blend Mode</label>
+              <label>Blend mode</label>
               <select value={layer.blendMode}
                 onchange={(e) => project.updateLayer(layer.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}>
                 {#each blendModes as mode}
-                  <option value={mode}>{mode}</option>
+                  <option value={mode}>{blendModeName(mode)}</option>
                 {/each}
               </select>
             </div>
@@ -1914,7 +1920,7 @@
             <!-- Content Fit (when group has a source, individual mode only) -->
             {#if layer.source && layer.groupConfig?.shaderMode === 'individual'}
               <div class="property-row">
-                <label>Content Fit</label>
+                <label>Content fit</label>
                 <select value={layer.contentFit || 'stretch'}
                   onchange={(e) => project.updateLayer(layer.id, { contentFit: (e.target as HTMLSelectElement).value as any })}>
                   <option value="stretch">Stretch</option>
@@ -1927,7 +1933,7 @@
             <!-- Render Quality (when group has a shader source) -->
             {#if layer.source?.type === 'shader'}
               <div class="property-row">
-                <label>Render Quality</label>
+                <label>Render quality</label>
                 <select
                   value={layer.renderQuality == null ? '' : String(layer.renderQuality)}
                   onchange={(e) => {
@@ -1944,7 +1950,7 @@
 
             <!-- Warp Mode -->
             <div class="property-row">
-              <label>Warp Mode</label>
+              <label>Warp mode</label>
               <div class="warp-mode-buttons">
                 <button
                   class="warp-mode-btn"
@@ -1964,7 +1970,7 @@
             </div>
 
             <!-- Reset Warp -->
-            <button class="reset-warp-btn" onclick={() => project.resetCorners(layer.id)}>Reset Warp</button>
+            <button class="reset-warp-btn" onclick={() => project.resetCorners(layer.id)}>Reset warp</button>
           </div>
 
           <!-- Group Edge Effects -->
@@ -1974,7 +1980,7 @@
           {:else}
 
           <div class="layer-properties media-properties">
-        <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : layer.type === 'interactive' ? 'Interactive' : 'Media'})</h4>
+        <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point cloud' : layer.type === 'model3d' ? '3D model' : layer.type === 'interactive' ? 'Interactive' : 'Media'})</h4>
         <!-- Source picks where a surface's picture comes from, so it only
              belongs on the layers that route someone else's feed. A media or
              custom-shape layer draws its own content -- video, shader,
@@ -2110,13 +2116,13 @@
                 else project.setLayerVJIndex(layer.id, parseInt(value));
               }}
             >
-              <option value={String(VJ_MIX_SOURCE_INDEX)}>VJ Mix</option>
+              <option value={String(VJ_MIX_SOURCE_INDEX)}>VJ mix</option>
               {#if layer.vjGroupId && !($vjClipLauncher.groups ?? []).some(group => group.id === layer.vjGroupId)}
                 <option value={`group:${layer.vjGroupId}`}>Unavailable group</option>
               {/if}
               {#each $vjClipLauncher.groups ?? [] as group}<option value={`group:${group.id}`}>{group.name} · Group</option>{/each}
               {#each Array($vjClipLauncher.numLayers) as _, i}
-                <option value={String(i)}>VJ Layer {i + 1}</option>
+                <option value={String(i)}>VJ layer {i + 1}</option>
               {/each}
             </select>
           </div>
@@ -2450,14 +2456,14 @@
 
         <!-- Blend Mode -->
         <div class="property-row">
-          <label>Blend Mode</label>
+          <label>Blend mode</label>
           <select
             value={layer.blendMode}
             onchange={(e) =>
               project.setLayerBlendMode(layer.id, (e.target as HTMLSelectElement).value as BlendMode)}
           >
             {#each blendModes as mode}
-              <option value={mode}>{mode}</option>
+              <option value={mode}>{blendModeName(mode)}</option>
             {/each}
           </select>
         </div>
@@ -2465,7 +2471,7 @@
         <!-- Render Quality (shader layers only) -->
         {#if layer.source?.type === 'shader'}
           <div class="property-row">
-            <label>Render Quality</label>
+            <label>Render quality</label>
             <select
               value={layer.renderQuality == null ? '' : String(layer.renderQuality)}
               onchange={(e) => {
@@ -2486,7 +2492,7 @@
         <!-- Content Fit Mode (for media/screen/shader layers) -->
         {#if layer.type === 'media' || layer.type === 'screen' || layer.type === 'interactive'}
           <div class="property-row">
-            <label>Content Fit</label>
+            <label>Content fit</label>
             <select
               value={layer.contentFit || 'stretch'}
               onchange={(e) =>
@@ -2501,13 +2507,13 @@
 
         {#if layer.type === 'media' || layer.type === 'screen' || layer.type === 'interactive'}
           <div class="property-row source-crop-row">
-            <label>Source Crop</label>
+            <label>Source crop</label>
             <button
               class="btn-small source-crop-edit"
               disabled={!layer.source}
               onclick={() => { if (layer.source) showSourceCropModal = true; }}
             >
-              {layer.source ? (layer.cropRegion ? 'Edit Crop' : 'Crop Source') : 'No Source'}
+              {layer.source ? (layer.cropRegion ? 'Edit crop' : 'Crop source') : 'No source'}
             </button>
             {#if layer.source && layer.cropRegion}
               <button class="btn-small source-crop-reset" onclick={() => project.resetCropRegion(layer.id)}>
@@ -2525,7 +2531,7 @@
         {#if layer.effects}
           {@const featherEffect = layer.effects.find(e => e.type === 'edgeFeather')}
           <div class="property-row feather-row">
-            <label>Edge Feather</label>
+            <label>Edge feather</label>
             {#if !featherEffect}
               <button class="btn-small" onclick={() => project.addEffect(layer.id, 'edgeFeather', { featherTop: 0, featherBottom: 0, featherLeft: 0, featherRight: 0, featherSoftness: 0.5 })}>
                 + Enable
@@ -2557,7 +2563,7 @@
           </div>
         {:else}
           <div class="property-row feather-row">
-            <label>Edge Feather</label>
+            <label>Edge feather</label>
             <button class="btn-small" onclick={() => project.addEffect(layer.id, 'edgeFeather', { featherTop: 0, featherBottom: 0, featherLeft: 0, featherRight: 0, featherSoftness: 0.5 })}>
               + Enable
             </button>
@@ -2567,7 +2573,7 @@
         <div class="inspector-section-title">Warp</div>
         <!-- Warp Mode -->
         <div class="property-row">
-          <label>Warp Mode</label>
+          <label>Warp mode</label>
           <div class="warp-mode-buttons">
             <button
               class="warp-mode-btn"
@@ -2589,7 +2595,7 @@
         <!-- Mesh Grid Size (only show when in mesh mode) -->
         {#if layer.warpMode === 'mesh' && layer.meshGrid}
           <div class="property-row">
-            <label>Grid Size</label>
+            <label>Grid size</label>
             <select
               value="{layer.meshGrid.rows}x{layer.meshGrid.cols}"
               onchange={(e) => {
@@ -2624,7 +2630,7 @@
                the whole layer. Fitting starts the mesh over; content stays put. -->
           {#if fittableShapeOutline(layer.layerShape)}
             <div class="property-row">
-              <label for="mesh-fit-shape-{layer.id}">Fit Mesh To</label>
+              <label for="mesh-fit-shape-{layer.id}">Fit mesh to</label>
               <div class="warp-mode-buttons">
                 <button
                   id="mesh-fit-shape-{layer.id}"
@@ -2663,17 +2669,17 @@
         <div class="property-row inspector-actions">
           {#if layer.warpMode === 'mesh'}
             <button class="btn-reset" onclick={() => project.resetMeshGrid(layer.id)}>
-              Reset Mesh
+              Reset mesh
             </button>
           {:else}
             <button class="btn-reset" onclick={() => project.resetCorners(layer.id)}>
-              Reset Warp
+              Reset warp
             </button>
             <!-- A warped mesh stays applied under Corner mode, so it can be
                  cleared from here without switching back to Mesh. -->
             {#if layerRenderMeshGrid(layer)}
               <button class="btn-reset" onclick={() => project.resetMeshGrid(layer.id)}>
-                Reset Mesh
+                Reset mesh
               </button>
             {/if}
           {/if}
@@ -2718,7 +2724,7 @@
                   checked={layer.mask?.inverted ?? false}
                   onchange={() => project.toggleMaskInvert(layer.id)}
                 />
-                Invert Mask
+                Invert mask
               </label>
             </div>
 
@@ -2775,7 +2781,7 @@
 
             <div class="property-row mask-actions">
               <button class="btn-secondary" onclick={() => project.clearMask(layer.id)}>
-                Clear All
+                Clear all
               </button>
               <span class="mask-hint">Click to add points · Click+drag for curves · Click first point or right-click empty area to close · Right-click anchor to delete</span>
             </div>
@@ -2786,7 +2792,7 @@
                   class="btn-primary mask-done-btn"
                   onclick={() => maskEditingLayerId.set(null)}
                 >
-                  Done Editing Mask
+                  Done editing mask
                 </button>
               </div>
             {:else}
@@ -2795,7 +2801,7 @@
                   class="btn-secondary mask-done-btn"
                   onclick={() => maskEditingLayerId.set(layer.id)}
                 >
-                  Edit Mask
+                  Edit mask
                 </button>
               </div>
             {/if}
@@ -2809,7 +2815,7 @@
         {@const paint = layer.paintMask}
         {@const armed = $paintMaskLayerId === layer.id}
         <div class="mask-section paint-mask-section" data-help-page="masks-slices">
-          <div class="inspector-section-title">Paint Mask</div>
+          <div class="inspector-section-title">Paint mask</div>
           <div class="property-row">
             <button
               class={armed ? 'mask-done-btn paint-arm' : 'btn-reset paint-arm'}
@@ -2821,7 +2827,7 @@
                 if (paint && paint.enabled === false) project.setPaintMaskVisible(layer.id, true);
                 paintMaskLayerId.set(layer.id);
               }}
-            >{armed ? 'Done Painting' : 'Paint'}</button>
+            >{armed ? 'Done painting' : 'Paint'}</button>
             <span class="mask-point-count">{paint?.strokes.length ?? 0} {(paint?.strokes.length ?? 0) === 1 ? 'stroke' : 'strokes'}</span>
           </div>
           {#if armed}
@@ -2921,11 +2927,11 @@
             {#if shapeType === 'circle' || shapeType === 'triangle' || shapeType === 'ellipse' || shapeType === 'polygon' || shapeType === 'star'}
               <div class="property-row inspector-actions">
                 <button class="btn-secondary" onclick={toggleShapeWarpEditing}>
-                  {shapeWarpEditing ? 'Done Warping' : 'Warp Shape'}
+                  {shapeWarpEditing ? 'Done warping' : 'Warp shape'}
                 </button>
                 {#if layer.layerShape?.controlPoints?.length}
                   <button class="btn-secondary" onclick={() => resetShapeWarp(layer.id)} title="Reset warp handles to their default positions">
-                    Reset Warp
+                    Reset warp
                   </button>
                 {/if}
               </div>
@@ -2935,7 +2941,7 @@
               <div class="property-row inspector-actions">
                 <button class="btn-secondary" onclick={() => project.convertToCustomShape(layer.id)} title="Convert shape to editable polygon with draggable vertices">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1.5" fill="currentColor"/><path d="M12 5v2m0 10v2m-7-7h2m10 0h2"/></svg>
-                  Edit Points
+                  Edit points
                 </button>
               </div>
             {/if}
@@ -3015,7 +3021,7 @@
               <!-- Inner radius for star -->
               {#if shapeT === 'star'}
                 <div class="property-row">
-                  <label>Inner Radius</label>
+                  <label>Inner radius</label>
                   <input
                     type="range"
                     min="0.1"
@@ -3122,11 +3128,11 @@
         {#if !layer.parentGroupId || layer.type === 'group'}
         <div class="effects-section">
             <div class="effects-header">
-              <h4>Layer Effects</h4>
+              <h4>Layer effects</h4>
               <button
                 class="add-effect-btn"
                 onclick={() => { effectPickerTarget = 'layer'; effectPickerLayerId = layer.id; showEffectPicker = true; }}
-              >+ Add Effect</button>
+              >+ Add effect</button>
             </div>
 
             {#key layer.id}
@@ -3241,7 +3247,7 @@
                             onchange={(e) => project.updateEffect(layer.id, effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
                           >
                             {#each blendModes as mode}
-                              <option value={mode}>{mode}</option>
+                              <option value={mode}>{blendModeName(mode)}</option>
                             {/each}
                           </select>
                         </div>
@@ -3428,7 +3434,7 @@
               {/each}
               </div>
             {:else}
-              <div class="no-effects">No effects. Click + Add Effect above.</div>
+              <div class="no-effects">No effects. Click + Add effect above.</div>
             {/if}
           </div>
           <!-- End effects-section -->
@@ -3468,8 +3474,8 @@
 
 
 <style>
-  .stage-effect-description { font-size: 12px; line-height: 1.5; color: var(--text-secondary, #aab2c2); margin: 0 0 10px; }
-  .effect-chain-warning { color: #f4c46a; font-size: 11px; line-height: 1.5; padding: 6px 8px; }
+  .stage-effect-description { font-size: var(--ga-text-meta, 11px); line-height: 1.5; color: var(--ga-ink-1, #aab2c2); margin: 0 0 8px; }
+  .effect-chain-warning { color: #f4c46a; font-size: var(--ga-text-meta, 11px); line-height: 1.5; padding: 6px 8px; }
   .layer-panel {
     width: 300px;
     background: var(--ga-panel, #0b0d11);
@@ -3478,7 +3484,7 @@
     flex-direction: column;
     color: var(--ga-ink-0, #eef0f4);
     font-family: var(--ga-font-ui, system-ui, sans-serif);
-    font-size: 14.5px;
+    font-size: var(--ga-text-body, 13px);
     height: 100%;
     overflow: hidden;
   }
@@ -3512,7 +3518,7 @@
     min-height: 0;
     flex: 1;
     overflow-y: auto;
-    padding: 13px 14px;
+    padding: 10px 12px 12px;
   }
 
   /* Effects section inside properties panel */
@@ -3533,31 +3539,30 @@
     padding: 4px 0;
   }
 
+  /* Eyebrow, like the other section labels in this panel. */
   .effects-header h4 {
     margin: 0;
-    /* Mirror EdgeEffectsPanel's .section-title styling exactly: same
-       weight, size, uppercase, letter-spacing. Only difference is the
-       accent color — purple (BB86FC) here vs orange (ff9800) for Edge
-       Effects, so the two sections read as siblings, not parent/child. */
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ga-violet, #9b87f5);
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    color: var(--ga-ink-2, #8b93a2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 13px 14px;
+    gap: 6px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
   .panel-header h3 {
     margin: 0;
-    font-size: 16px;
-    font-weight: 700;
+    margin-right: auto;
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
     color: var(--ga-ink-0, #eef0f4);
   }
 
@@ -3566,7 +3571,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 8px 10px;
+    min-height: 34px;
+    padding: 4px 12px;
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     background: rgba(255, 255, 255, 0.015);
   }
@@ -3578,19 +3584,18 @@
   .mapping-composition-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
     color: var(--ga-ink-1, #b7bdc9);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
 
   .mapping-composition-toggle input {
-    width: 15px;
-    height: 15px;
-    accent-color: var(--ga-blue, #5278ff);
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: var(--ga-selection-line, #5278ff);
   }
 
   .composition-edit-btn,
@@ -3601,25 +3606,25 @@
     color: var(--ga-ink-1, #b7bdc9);
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-size: 11px;
-    font-weight: 700;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
   }
 
   .composition-edit-btn {
-    height: 25px;
-    padding: 0 9px;
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 10px;
   }
 
   .composition-edit-btn:hover,
   .composition-mini-btn:hover:not(:disabled),
   .mapping-stage-live:hover {
-    border-color: var(--ga-blue-a45);
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .composition-mini-btn {
-    min-width: 24px;
-    height: 24px;
+    min-width: 22px;
+    height: var(--ga-control-h-sm, 22px);
     padding: 0 5px;
   }
 
@@ -3630,9 +3635,9 @@
 
   .composition-mini-btn.active,
   .mapping-stage-live.active {
-    background: var(--ga-blue-a16);
-    border-color: var(--ga-blue-a70);
-    color: var(--ga-blue-300);
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .layers-section.composition-open {
@@ -3669,19 +3674,21 @@
   }
 
   .composition-tabs button {
-    height: 28px;
+    height: var(--ga-control-h, 26px);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     background: rgba(255, 255, 255, 0.025);
-    color: var(--ga-ink-2, #8b93a2);
+    color: var(--ga-ink-1, #9aa0ac);
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-weight: 700;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
   }
+  .composition-tabs button:hover:not(.active) { color: var(--ga-ink-0, #eef0f4); }
 
   .composition-tabs button.active {
-    color: #e9fbff;
-    border-color: var(--ga-blue-a45);
-    background: var(--ga-blue-a16);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
   }
 
   .composition-section-header,
@@ -3694,13 +3701,14 @@
 
   .composition-section-header {
     justify-content: space-between;
-    color: var(--ga-ink-1, #b7bdc9);
-    font-size: 11px;
+    color: var(--ga-ink-2, #8b93a2);
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
-    margin-bottom: 7px;
+    margin-bottom: 6px;
   }
+  .composition-section-header .add-effect-btn { text-transform: none; letter-spacing: 0; }
 
   .composition-effect-list {
     display: flex;
@@ -3744,8 +3752,8 @@
     background: transparent;
     color: var(--ga-ink-0, #eef0f4);
     text-align: left;
-    font-size: 12px;
-    font-weight: 700;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3760,7 +3768,7 @@
     border-radius: 3px;
     padding: 2px 5px;
     font-size: 9px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     line-height: 1;
   }
@@ -3790,9 +3798,10 @@
 
   .composition-empty {
     border: 1px dashed var(--ga-line-2, rgba(255, 255, 255, 0.14));
-    color: var(--ga-ink-3, #747c89);
+    border-radius: var(--ga-r-hard, 2px);
+    color: var(--ga-ink-2, #747c89);
     padding: 10px;
-    font-size: 12px;
+    font-size: var(--ga-text-meta, 11px);
     text-align: center;
   }
 
@@ -3801,8 +3810,8 @@
   }
 
   .stage-auto-play {
-    width: 30px;
-    height: 28px;
+    width: 28px;
+    height: var(--ga-control-h, 26px);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     background: rgba(255, 255, 255, 0.035);
     color: var(--ga-ink-1, #b7bdc9);
@@ -3811,21 +3820,22 @@
   }
 
   .stage-auto-play.playing {
-    color: #59f0b8;
-    border-color: rgba(89, 240, 184, 0.5);
-    background: rgba(89, 240, 184, 0.11);
+    color: var(--ga-live, #59f0b8);
+    border-color: color-mix(in srgb, var(--ga-live, #59f0b8) 50%, transparent);
+    background: color-mix(in srgb, var(--ga-live, #59f0b8) 11%, transparent);
   }
 
   .stage-auto-mode,
   .stage-fx-select,
   .stage-auto-interval {
-    height: 28px;
-    background: var(--bg-tertiary, #11141a);
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #11141a);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     color: var(--ga-ink-0, #eef0f4);
     border-radius: var(--ga-r-hard, 2px);
-    padding: 0 7px;
+    padding: 0 8px;
     min-width: 0;
+    font-size: var(--ga-text-control, 12px);
   }
 
   .stage-auto-mode,
@@ -3838,8 +3848,8 @@
   }
 
   .stage-auto-unit {
-    color: var(--ga-ink-3, #747c89);
-    font-size: 11px;
+    color: var(--ga-ink-2, #747c89);
+    font-size: var(--ga-text-meta, 11px);
     width: 24px;
   }
 
@@ -3849,8 +3859,8 @@
 
   .mapping-stage-live {
     min-width: 44px;
-    height: 24px;
-    padding: 0 7px;
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 8px;
   }
 
   .mapping-stage-effects .effects-list {
@@ -3860,26 +3870,26 @@
   }
 
   .mapping-stage-effects .effect-item {
-    background: var(--bg-primary, #0d0d10);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 6px;
+    background: var(--ga-card, #0d0d10);
+    border: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    border-radius: var(--ga-r-hard, 2px);
     overflow: hidden;
   }
 
   .mapping-stage-effects .effect-item.live {
-    background: color-mix(in srgb, var(--ga-blue-400) 4%, transparent);
-    border-left: 2px solid var(--ga-blue-300);
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.08));
+    border-left: 2px solid var(--ga-selection-line, #5278ff);
   }
 
   .mapping-stage-effects .effect-header {
-    gap: 8px;
-    padding: 7px 10px;
+    gap: 6px;
+    padding: 4px 8px;
     cursor: pointer;
     transition: background 0.1s;
   }
 
   .mapping-stage-effects .effect-header:hover {
-    background: var(--bg-secondary, #111114);
+    background: var(--ga-sub, #111114);
   }
 
   .mapping-stage-effects .effect-header:active {
@@ -3891,9 +3901,9 @@
     align-items: center;
     gap: 4px;
     min-width: 0;
-    color: var(--text-primary, #ddd);
-    font-size: 13px;
-    font-weight: 600;
+    color: var(--ga-ink-0, #ddd);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3907,9 +3917,9 @@
   .effect-live-radio {
     width: 22px;
     height: 22px;
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2, #2a2a30);
     background: transparent;
-    color: #555;
+    color: var(--ga-ink-3, #555);
     border-radius: 50%;
     cursor: pointer;
     font-size: 13px;
@@ -3920,15 +3930,14 @@
   }
 
   .effect-live-radio:hover {
-    border-color: var(--ga-blue-300);
-    color: var(--text-secondary, #aaa);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-1, #aaa);
   }
 
   .effect-live-radio.active {
-    color: var(--ga-blue-300);
-    border-color: var(--ga-blue-300);
-    background: var(--ga-blue-a16);
-    box-shadow: 0 0 8px var(--ga-blue-a28);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
   }
 
   .stage-effect-hold-button {
@@ -4011,16 +4020,16 @@
   .effect-cycle-toggle {
     background: transparent;
     border: 1px solid transparent;
-    color: #555;
-    border-radius: 3px;
+    color: var(--ga-ink-3, #555);
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
     padding: 2px 4px;
   }
 
   .effect-cycle-toggle:hover {
-    color: var(--text-secondary, #aaa);
-    border-color: #2a2a30;
+    color: var(--ga-ink-1, #aaa);
+    border-color: var(--ga-line-2, #2a2a30);
   }
 
   .effect-cycle-toggle.included {
@@ -4029,15 +4038,16 @@
   }
 
   .btn-add {
-    height: 30px;
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    color: var(--ga-violet, #9b87f5);
-    border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
-    padding: 0 12px;
+    height: var(--ga-control-h, 26px);
+    background: transparent;
+    color: var(--ga-ink-0, #eef0f4);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 10px;
     border-radius: var(--ga-r-soft, 7px);
     cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    white-space: nowrap;
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -4052,14 +4062,13 @@
   }
 
   .btn-add:hover {
-    background: var(--ga-blue-a16);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
   /* Looks shares the Add Layer button's look (class btn-add, so every
      skin rule applies to both); only its mark takes the action accent. */
   .btn-looks {
     margin-left: auto;
-    margin-right: 6px;
   }
   .btn-looks :global(.looks-icon) { color: var(--ga-icon, #5278ff); }
   .btn-looks.invite { animation: looks-invite 1.6s ease-in-out infinite; }
@@ -4097,8 +4106,8 @@
   }
 
   .layer-item.selected {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   .layer-item.selected::before {
@@ -4108,12 +4117,12 @@
     top: 0;
     bottom: 0;
     width: 2px;
-    background: var(--ga-violet, #9b87f5);
+    background: var(--ga-selection-line, #5278ff);
   }
 
   .layer-item.multi-selected {
-    background: var(--ga-blue-soft, var(--ga-blue-a28));
-    border: 1px solid var(--ga-blue-line, var(--ga-blue-a08));
+    background: color-mix(in srgb, var(--ga-selection-bg, #1f3170) 55%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-selection-line, #5278ff) 45%, transparent);
   }
 
   .layer-item.native-pending {
@@ -4170,15 +4179,15 @@
     bottom: -8px;
   }
   .layer-item.drag-over-into {
-    outline: 2px solid var(--ga-violet, #9b87f5);
+    outline: 2px solid var(--ga-selection-line, #5278ff);
     outline-offset: -2px;
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
   }
 
   /* Group layer styles */
   .layer-item.group-layer {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    border-left: 2px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    background: var(--ga-sub, rgba(255, 255, 255, 0.03));
+    border-left: 2px solid var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
   .layer-item.group-child {
     /* Hierarchy indent + a vertical tree-line so the user sees which
@@ -4218,43 +4227,43 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--ga-violet, #9b87f5);
+    color: var(--ga-ink-1, #9aa0ac);
   }
   .layer-thumbnail.group {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    background: var(--ga-sub, rgba(255, 255, 255, 0.04));
   }
   .radio-group {
     display: flex;
     gap: 12px;
   }
   .radio-label {
-    font-size: 13px;
-    color: var(--text-primary, #ccc);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #ccc);
     display: flex;
     align-items: center;
     gap: 4px;
     cursor: pointer;
   }
   .radio-label input[type="radio"] {
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line, #5278ff);
   }
   .property-hint {
-    font-size: 12px;
-    color: #666;
-    margin: 4px 0 8px;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #666);
+    margin: 2px 0 8px;
     line-height: 1.4;
   }
   .property-value {
-    font-size: 13px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #aaa);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .grouped-child-note {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #888);
     padding: 8px 12px;
-    background: rgba(187, 134, 252, 0.06);
-    border-left: 2px solid rgba(187, 134, 252, 0.3);
+    background: var(--ga-sub, rgba(255, 255, 255, 0.03));
+    border-left: 2px solid var(--ga-line-3, rgba(255, 255, 255, 0.24));
     margin: 8px 0;
     line-height: 1.4;
   }
@@ -4268,9 +4277,9 @@
   .layer-ctx-menu {
     position: fixed;
     z-index: 9999;
-    background: var(--bg-tertiary, #1a1a20);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    background: var(--ga-raise, #1a1a20);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.1));
+    border-radius: var(--ga-r-soft, 6px);
     padding: 4px 0;
     min-width: 160px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -4281,31 +4290,32 @@
     text-align: left;
     background: none;
     border: none;
-    color: var(--text-primary, #ccc);
-    font-size: 13px;
-    padding: 6px 14px;
+    color: var(--ga-ink-1, #ccc);
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-body, 500);
+    padding: 6px 12px;
     cursor: pointer;
   }
   .layer-ctx-menu .ctx-item:hover {
-    background: rgba(187, 134, 252, 0.12);
-    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ga-ink-0, #fff);
   }
   .layer-ctx-menu .ctx-item.ctx-danger:hover {
-    background: rgba(255, 71, 87, 0.15);
-    color: #ff4757;
+    background: color-mix(in srgb, var(--ga-rec, #ff4757) 15%, transparent);
+    color: var(--ga-rec, #ff4757);
   }
   .layer-ctx-menu .ctx-item.ctx-has-sub {
     position: relative;
   }
   .layer-ctx-menu .ctx-divider {
     height: 1px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--ga-line, rgba(255, 255, 255, 0.06));
     margin: 4px 0;
   }
   .ctx-submenu {
-    background: var(--bg-tertiary, #1a1a20);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
+    background: var(--ga-sub, #1a1a20);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.1));
+    border-radius: var(--ga-r-hard, 4px);
     padding: 4px 0;
     margin: 0 4px 4px 4px;
   }
@@ -4361,8 +4371,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 14.5px;
-    font-weight: 600;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-control, 600);
   }
 
   .layer-item.selected .layer-name {
@@ -4376,9 +4386,9 @@
     color: #ffb85f;
     border-radius: 3px;
     padding: 2px 4px;
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: 0.05em;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
     line-height: 1;
     max-width: 54px;
     overflow: hidden;
@@ -4390,11 +4400,11 @@
   .layer-name-input {
     flex: 1;
     background: var(--ga-slot, #050607);
-    border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    border: 1px solid var(--ga-selection-line, #5278ff);
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-0, #eef0f4);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--ga-text-body, 13px);
     padding: 2px 6px;
     outline: none;
     min-width: 0;
@@ -4406,8 +4416,8 @@
      italic muted span and is the only flex sibling that's allowed to
      shrink, so the row never overflows. */
   .invert-hint {
-    font-size: 11px;
-    color: #777;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #777);
     font-style: italic;
     flex: 1 1 auto;
     min-width: 0;
@@ -4433,12 +4443,12 @@
   }
 
   .btn-visibility {
-    color: var(--ga-violet, #9b87f5);
-    opacity: 0.85;
+    color: var(--ga-ink-1, #9aa0ac);
+    opacity: 0.9;
   }
   .btn-visibility:hover {
     opacity: 1;
-    color: var(--ga-violet, #9b87f5);
+    color: var(--ga-ink-0, #eef0f4);
   }
   .btn-visibility.hidden {
     color: var(--ga-ink-3, #3a404a);
@@ -4478,7 +4488,9 @@
   .empty-state {
     text-align: center;
     color: var(--ga-ink-2, #5e6571);
-    padding: 20px;
+    font-size: var(--ga-text-meta, 11px);
+    line-height: 1.5;
+    padding: 16px 12px;
   }
 
   .layer-properties {
@@ -4486,9 +4498,9 @@
   }
 
   .layer-properties h4 {
-    margin: 0 0 11px 0;
-    font-size: 15px;
-    font-weight: 700;
+    margin: 0 0 8px 0;
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
     color: var(--ga-ink-0, #eef0f4);
   }
 
@@ -4499,22 +4511,25 @@
     padding: 10px;
     text-align: center;
     margin-bottom: 8px;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control, 12px);
     transition: border-color 0.2s;
   }
 
   .media-drop-zone:hover {
-    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
   .source-name {
     display: block;
-    color: var(--ga-violet, #9b87f5);
+    color: var(--ga-ink-0, #eef0f4);
+    font-weight: var(--ga-weight-control, 600);
     word-break: break-all;
   }
 
   .source-type {
     display: block;
-    font-size: 11px;
+    font-size: var(--ga-text-meta, 11px);
     color: var(--ga-ink-2, #5e6571);
     margin-bottom: 8px;
   }
@@ -4523,13 +4538,13 @@
   .video-controls-panel {
     margin-bottom: 12px;
     padding: 8px;
-    background: rgba(255, 255, 255, 0.04);
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--ga-sub, rgba(255, 255, 255, 0.04));
+    border-radius: var(--ga-r-soft, 6px);
+    border: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
-  .vt-playback-options { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-  .vt-playback-options .vt-speed { height: 28px; border-radius: 5px; }
+  .vt-playback-options { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .vt-playback-options .vt-speed { height: var(--ga-control-h, 26px); border-radius: var(--ga-r-hard, 5px); }
   .vt-transport {
     display: flex;
     flex-wrap: wrap;
@@ -4539,12 +4554,12 @@
   }
 
   .vt-btn {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-primary, #ccc);
-    border: none;
-    width: 28px;
-    height: 28px;
-    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ga-ink-1, #ccc);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    border-radius: var(--ga-r-hard, 4px);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -4552,18 +4567,19 @@
     transition: background 0.15s, color 0.15s;
     flex-shrink: 0;
   }
-  .vt-btn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+  .vt-btn:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); color: var(--ga-ink-0, #fff); }
   .vt-btn:disabled { opacity: 0.4; cursor: wait; }
 
   .vt-play {
-    background: #BB86FC;
-    color: #111;
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
-  .vt-play:hover { background: #CF6EFF; color: #000; }
+  .vt-play:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-selection-line, #5278ff); }
 
   .vt-time {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #888);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     margin-left: 4px;
     flex: 1;
@@ -4571,16 +4587,16 @@
   }
 
   .vt-speed {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-secondary, #aaa);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
-    font-size: 12px;
-    padding: 2px 4px;
+    background: var(--ga-slot, rgba(255, 255, 255, 0.08));
+    color: var(--ga-ink-1, #aaa);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-control, 12px);
+    padding: 0 6px;
     cursor: pointer;
     flex-shrink: 0;
   }
-  .vt-speed:hover { border-color: rgba(255, 255, 255, 0.25); }
+  .vt-speed:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
 
   /* Timeline track */
   .vt-timeline {
@@ -4610,9 +4626,9 @@
     position: absolute;
     top: 0;
     height: 100%;
-    background: rgba(187, 134, 252, 0.15);
-    border-top: 2px solid rgba(187, 134, 252, 0.35);
-    border-bottom: 2px solid rgba(187, 134, 252, 0.35);
+    background: color-mix(in srgb, var(--ga-selection-line, #5278ff) 15%, transparent);
+    border-top: 2px solid color-mix(in srgb, var(--ga-selection-line, #5278ff) 45%, transparent);
+    border-bottom: 2px solid color-mix(in srgb, var(--ga-selection-line, #5278ff) 45%, transparent);
     pointer-events: none;
     z-index: 1;
   }
@@ -4622,8 +4638,8 @@
     top: -2px;
     width: 2px;
     height: calc(100% + 4px);
-    background: #BB86FC;
-    box-shadow: 0 0 4px rgba(187, 134, 252, 0.6);
+    background: var(--ga-ink-0, #f2ede4);
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
     z-index: 3;
     pointer-events: none;
     transform: translateX(-1px);
@@ -4648,14 +4664,14 @@
     transform: translateX(-50%);
     width: 2px;
     height: 50%;
-    background: rgba(187, 134, 252, 0.7);
+    background: color-mix(in srgb, var(--ga-selection-line, #5278ff) 75%, transparent);
     border-radius: 1px;
   }
   .vt-trim-handle:hover {
-    background: rgba(187, 134, 252, 0.25);
+    background: color-mix(in srgb, var(--ga-selection-line, #5278ff) 25%, transparent);
   }
   .vt-trim-handle:hover::after {
-    background: #BB86FC;
+    background: var(--ga-selection-line, #5278ff);
   }
 
   /* Mode buttons */
@@ -4673,7 +4689,7 @@
     gap: 6px;
     margin-top: 8px;
     padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
   .vt-audio-head {
     display: grid;
@@ -4682,10 +4698,11 @@
     gap: 8px;
   }
   .vt-audio-title {
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: #777;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2, #777);
   }
   .vt-audio-row {
     display: grid;
@@ -4694,8 +4711,8 @@
     gap: 8px;
   }
   .vt-audio-row label {
-    font-size: 11px;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #aaa);
   }
   .vt-audio-row input[type='range'] {
     width: 100%;
@@ -4708,13 +4725,13 @@
     text-align: right;
   }
   .vt-audio-toggle {
-    height: 22px;
-    border-radius: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    height: var(--ga-control-h-sm, 22px);
+    border-radius: var(--ga-r-hard, 3px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     background: rgba(255, 255, 255, 0.05);
-    color: var(--text-secondary, #aaa);
-    font-size: 11px;
-    font-weight: 700;
+    color: var(--ga-ink-1, #aaa);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
   .vt-audio-toggle.active {
@@ -4723,14 +4740,15 @@
     color: #fbbf24;
   }
   .vt-audio-note {
-    font-size: 10px;
-    color: var(--text-muted, #888);
-    font-style: italic;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #888);
   }
 
   .link {
-    color: #BB86FC;
+    color: var(--ga-ink-0, #eef0f4);
     text-decoration: underline;
+    text-decoration-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    text-underline-offset: 2px;
   }
 
   .property-row {
@@ -4738,29 +4756,28 @@
     grid-template-columns: 84px minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
-    /* Tightened from 13px so rows pack tighter — was eating real
-       estate while leaving plenty of empty whitespace between labels. */
-    margin-bottom: 7px;
+    min-height: var(--ga-control-h, 26px);
+    margin-bottom: 6px;
   }
 
   .feather-row { flex-wrap: wrap; }
   .feather-sliders { width: 100%; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
   .feather-slider { display: flex; align-items: center; gap: 4px; }
-  .feather-label { width: 12px; font-size: 10px; color: #666; text-align: center; }
+  .feather-label { width: 12px; font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; color: var(--ga-ink-2, #666); text-align: center; }
   .feather-slider input[type='range'] { flex: 1; }
-  .btn-small { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary, #aaa); font-size: 11px; padding: 3px 8px; border-radius: 3px; cursor: pointer; }
-  .btn-small:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
+  .btn-small { min-height: var(--ga-control-h, 26px); background: rgba(255,255,255,0.05); border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12)); color: var(--ga-ink-1, #aaa); font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); padding: 0 10px; border-radius: var(--ga-r-hard, 3px); cursor: pointer; }
+  .btn-small:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(255,255,255,0.24)); color: var(--ga-ink-0, #fff); }
   .btn-small:disabled { opacity: 0.45; cursor: not-allowed; }
-  .source-crop-row .btn-small { min-height: 26px; }
-  .source-crop-edit { color: var(--ga-ink-0, #eef0f4); border-color: var(--ga-blue-a28); }
+  .source-crop-row .btn-small { min-height: var(--ga-control-h, 26px); }
+  .source-crop-edit { color: var(--ga-ink-0, #eef0f4); }
   .source-crop-reset { color: var(--ga-ink-1, #9aa0ac); }
   .source-crop-value { color: var(--ga-ink-2, #5e6571); }
 
   .property-row label {
     width: auto;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13.5px;
-    font-weight: 500;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-body, 500);
   }
 
   .property-row input[type='range'] {
@@ -4770,21 +4787,21 @@
 
   .property-row select {
     flex: 1;
-    height: 32px;
+    height: var(--ga-control-h, 26px);
     background: transparent;
     color: var(--ga-ink-0, #eef0f4);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    padding: 0 26px 0 11px;
+    padding: 0 24px 0 8px;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 14px;
-    font-weight: 500;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-body, 500);
   }
 
   .property-row .value {
     width: 40px;
     text-align: right;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13px;
+    font-size: var(--ga-text-meta, 11px);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
   }
 
@@ -4792,26 +4809,27 @@
     flex: 1;
     min-width: 0;
     max-width: 100%;
-    background: var(--bg-tertiary, #1a1a1e);
-    color: var(--text-primary, #eee);
-    border: 1px solid #555;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #1a1a1e);
+    color: var(--ga-ink-0, #eee);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 4px);
+    font-size: var(--ga-text-control, 12px);
   }
 
   .btn-reset,
   .reset-warp-btn {
     width: 100%;
-    height: 34px;
+    height: var(--ga-control-h, 26px);
     background: transparent;
     color: var(--ga-ink-0, #eef0f4);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     padding: 0 12px;
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     transition: color 0.15s, border-color 0.15s, background 0.15s;
   }
 
@@ -4836,11 +4854,12 @@
     color: var(--ga-ink-2, #5e6571);
     border: none;
     border-right: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    padding: 7px;
+    height: calc(var(--ga-control-h, 26px) - 2px);
+    padding: 0 6px;
     border-radius: 0;
     cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     transition: all 0.15s;
   }
 
@@ -4848,21 +4867,21 @@
     border-right: none;
   }
 
-  .warp-mode-btn:hover {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    color: var(--ga-violet, #9b87f5);
+  .warp-mode-btn:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .warp-mode-btn.active {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    color: var(--ga-violet, #9b87f5);
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   /* Mask Section Styles */
   .mask-section {
-    margin-top: 16px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
   .mask-section .property-row {
@@ -4876,8 +4895,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
-    color: var(--text-primary, #ccc);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #ccc);
   }
 
   .mask-section .property-row label input[type="checkbox"] {
@@ -4885,8 +4904,8 @@
   }
 
   .mask-point-count {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #888);
     margin-left: auto;
   }
 
@@ -4896,8 +4915,8 @@
   }
 
   .mask-section .property-row .value {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #888);
     min-width: 35px;
     text-align: right;
   }
@@ -4907,17 +4926,19 @@
   }
 
   .mask-actions .btn-secondary {
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
-    border: none;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 12px;
+    height: var(--ga-control-h-sm, 22px);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ga-ink-0, #fff);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 4px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
 
   .mask-actions .btn-secondary:hover:not(:disabled) {
-    background: #555;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
   .mask-actions .btn-secondary:disabled {
@@ -4926,9 +4947,9 @@
   }
 
   .mask-hint {
-    font-size: 11px;
-    color: #666;
-    font-style: italic;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #666);
+    line-height: 1.45;
   }
 
   .mask-shape-list {
@@ -4938,7 +4959,7 @@
     margin: 6px 0 8px;
     padding: 6px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 4px);
   }
   .mask-shape-row {
     display: flex;
@@ -4961,12 +4982,12 @@
   }
   .mask-shape-label {
     flex: 1;
-    font-size: 12px;
-    color: var(--text-primary, #ddd);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-0, #ddd);
   }
   .mask-shape-meta {
-    color: var(--text-muted, #888);
-    font-size: 11px;
+    color: var(--ga-ink-2, #888);
+    font-size: var(--ga-text-meta, 11px);
   }
   .mask-shape-meta em {
     color: #ffd400;
@@ -4975,59 +4996,58 @@
   }
   .mask-shape-delete {
     background: transparent;
-    border: 1px solid #555;
-    color: var(--text-secondary, #aaa);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #aaa);
     width: 22px; height: 22px;
-    border-radius: 3px;
-    font-size: 15px;
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: 14px;
     line-height: 1;
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
   .mask-shape-delete:hover {
-    background: #2a1414;
-    border-color: #844;
-    color: #f88;
+    background: color-mix(in srgb, var(--ga-rec, #ff4438) 12%, transparent);
+    border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 50%, transparent);
+    color: var(--ga-rec, #ff4438);
   }
 
-  /* Per-shape edit button — matches the delete-button footprint so the
-     row layout stays tight. Hover shifts to the warp-orange palette
-     used elsewhere for "this puts you into an editing mode." */
+  /* Per-shape edit button, same footprint as delete. */
   .mask-shape-edit {
     background: transparent;
-    border: 1px solid #555;
-    color: var(--text-secondary, #aaa);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #aaa);
     width: 22px; height: 22px;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     margin-right: 4px;
   }
   .mask-shape-edit:hover {
-    background: #2a1f10;
-    border-color: #ff9800;
-    color: #ff9800;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .mask-done {
-    margin-top: 10px;
+    margin-top: 8px;
   }
 
+  /* Shown while a mask or paint mode is on: the active-state colours. */
   .mask-done-btn {
     width: 100%;
-    padding: 10px 16px;
-    background: #BB86FC;
-    border: none;
-    border-radius: 4px;
-    color: #000;
-    font-size: 13px;
-    font-weight: 600;
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
+    background: var(--ga-selection-bg, #1f3170);
+    border: 1px solid var(--ga-selection-line, #5278ff);
+    border-radius: var(--ga-r-hard, 4px);
+    color: var(--ga-selection-ink, #e0e8ff);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     transition: all 0.15s ease;
   }
 
   .mask-done-btn:hover {
-    background: #CF6EFF;
+    color: var(--ga-ink-0, #fff);
   }
 
   .paint-arm {
@@ -5043,9 +5063,9 @@
 
   /* Shape Mask Section Styles */
   .shape-mask-section {
-    margin-top: 16px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
   .shape-mask-section .property-row {
@@ -5059,8 +5079,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
-    color: var(--text-primary, #ccc);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #ccc);
     min-width: 70px;
   }
 
@@ -5079,34 +5099,37 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-tertiary, #1a1a1e);
-    color: #9aa0a6;
-    border: 1px solid #444;
-    border-radius: 6px;
-    height: 30px;
+    background: transparent;
+    color: var(--ga-ink-1, #9aa0a6);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 4px);
+    height: var(--ga-control-h, 26px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     transition: all 0.15s ease;
   }
 
-  .shape-icon-btn:hover {
-    border-color: var(--ga-blue-300);
-    color: #d6faff;
+  .shape-icon-btn:hover:not(.active) {
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .shape-icon-btn.active {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
-    background: var(--ga-blue-a08);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
   }
 
   .shape-mask-section .property-row select {
     flex: 1;
-    background: var(--bg-tertiary, #1a1a1e);
-    color: #fff;
-    border: 1px solid #555;
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 13px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #1a1a1e);
+    color: var(--ga-ink-0, #fff);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 4px);
+    padding: 0 8px;
+    font-size: var(--ga-text-control, 12px);
   }
 
   .shape-mask-section .property-row input[type="range"] {
@@ -5115,8 +5138,8 @@
   }
 
   .shape-mask-section .property-row .value {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #888);
     min-width: 35px;
     text-align: right;
   }
@@ -5127,41 +5150,45 @@
   }
 
   .shape-mask-section .shape-help span {
-    font-size: 12px;
-    color: #9aa0a6;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #9aa0a6);
     line-height: 1.35;
   }
 
   .shape-mask-section .btn-secondary {
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
-    border: none;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--ga-control-h, 26px);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ga-ink-0, #fff);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 4px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
 
   .shape-mask-section .btn-secondary:hover {
-    background: #555;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
-  /* Effects Panel Styles - already defined in .effects-panel etc */
-
   .add-effect-btn {
-    background: #BB86FC;
-    color: #000;
-    border: none;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    height: var(--ga-control-h-sm, 22px);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ga-ink-0, #eef0f4);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 4px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
-    transition: background 0.15s;
+    transition: border-color 0.15s;
   }
 
   .add-effect-btn:hover {
-    background: #CF6EFF;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
   .effect-list {
@@ -5172,7 +5199,7 @@
 
   .effect-item {
     background: rgba(255, 255, 255, 0.04);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 4px);
     overflow: hidden;
     transition: all 0.15s;
   }
@@ -5187,7 +5214,7 @@
   }
 
   .effect-item.drag-over {
-    border-top: 2px solid #BB86FC;
+    border-top: 2px solid var(--ga-selection-line, #5278ff);
     margin-top: -2px;
   }
 
@@ -5195,7 +5222,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 8px;
+    padding: 2px 6px;
+    min-height: var(--ga-control-h, 26px);
     cursor: grab;
   }
 
@@ -5205,7 +5233,7 @@
 
   .effect-drag-handle {
     cursor: grab;
-    color: #555;
+    color: var(--ga-ink-3, #555);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -5214,7 +5242,7 @@
   }
 
   .effect-drag-handle:hover {
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-1, #888);
   }
 
   .effect-item.dragging .effect-drag-handle {
@@ -5222,7 +5250,7 @@
   }
 
   .effect-header input[type="checkbox"] {
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line, #5278ff);
     cursor: pointer;
     flex-shrink: 0;
   }
@@ -5231,22 +5259,26 @@
     flex: 1;
     background: none;
     border: none;
-    color: var(--text-primary, #ddd);
-    font-size: 13px;
+    color: var(--ga-ink-0, #ddd);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     text-align: left;
     padding: 4px 0;
   }
 
   .effect-name:hover {
-    color: #BB86FC;
+    color: var(--ga-ink-0, #fff);
+    text-decoration: underline;
+    text-decoration-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    text-underline-offset: 3px;
   }
 
   .effect-delete {
     background: none;
     border: none;
-    color: #ff4444;
-    font-size: 15px;
+    color: var(--ga-rec, #ff4444);
+    font-size: 14px;
     cursor: pointer;
     padding: 2px 4px;
     opacity: 0.6;
@@ -5264,8 +5296,8 @@
   .effect-reset {
     background: none;
     border: none;
-    color: var(--ga-blue-200);
-    font-size: 15px;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: 14px;
     line-height: 1;
     cursor: pointer;
     padding: 2px 4px;
@@ -5277,9 +5309,9 @@
   }
 
   .effect-params {
-    padding: 8px 10px 10px;
+    padding: 8px;
     background: rgba(255, 255, 255, 0.03);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
   .effect-mix-row {
@@ -5287,7 +5319,7 @@
     gap: 8px;
     margin-bottom: 8px;
     padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
   .effect-opacity-ctrl {
@@ -5301,8 +5333,8 @@
   .effect-blend-ctrl label,
   .effect-opacity-ctrl .param-label,
   .effect-blend-ctrl .param-label {
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #888);
     white-space: nowrap;
     min-width: 38px;
   }
@@ -5319,12 +5351,13 @@
   }
 
   .effect-blend-ctrl select {
-    background: var(--bg-tertiary, #1a1a1e);
-    border: 1px solid #333;
-    color: var(--text-primary, #ccc);
-    font-size: 11px;
-    padding: 2px 4px;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, #1a1a1e);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #ccc);
+    font-size: var(--ga-text-meta, 11px);
+    padding: 0 4px;
+    border-radius: var(--ga-r-hard, 3px);
     max-width: 90px;
   }
 
@@ -5342,56 +5375,55 @@
   .param-row label,
   .param-row .param-label {
     width: 70px;
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #888);
     flex-shrink: 0;
   }
 
   .param-row input[type="range"] {
     flex: 1;
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line, #5278ff);
     height: 4px;
   }
 
   .param-row select {
     flex: 1;
-    background: var(--bg-tertiary, #1a1a1e);
-    color: var(--text-primary, #eee);
-    border: 1px solid #555;
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #1a1a1e);
+    color: var(--ga-ink-0, #eee);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-control, 12px);
   }
 
   .param-value {
     width: 40px;
     text-align: right;
-    font-size: 11px;
-    color: #666;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #666);
     flex-shrink: 0;
   }
 
   .param-info {
-    font-size: 12px;
-    color: #666;
-    font-style: italic;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #666);
     padding: 4px 0;
   }
 
   .macro-hint {
-    font-size: 11px;
-    color: #555;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #555);
     padding: 2px 6px 6px;
-    font-style: italic;
   }
 
   .no-effects {
-    font-size: 12px;
-    color: #666;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #666);
     text-align: center;
     padding: 10px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 4px);
   }
 
   /* Add layer dropdown menu */
@@ -5407,11 +5439,12 @@
   .add-layer-menu {
     position: fixed;
     z-index: 9999;
-    background: var(--bg-tertiary, #1a1a1e);
-    border: 1px solid #444;
-    border-radius: 6px;
+    background: var(--ga-raise, #1a1a1e);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 6px);
+    padding: 4px 0;
     min-width: 170px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     max-height: calc(100vh - 80px);
     overflow-y: auto;
   }
@@ -5421,18 +5454,19 @@
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 10px 14px;
+    padding: 7px 12px;
     background: none;
     border: none;
-    color: var(--text-primary, #eee);
-    font-size: 13px;
+    color: var(--ga-ink-0, #eee);
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-body, 500);
     cursor: pointer;
     text-align: left;
     transition: background 0.15s;
   }
 
   .add-layer-menu button:hover {
-    background: #2a2a30;
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .add-layer-menu button:disabled,
@@ -5448,7 +5482,7 @@
   }
 
   .add-layer-menu button svg {
-    color: #BB86FC;
+    color: var(--ga-icon, #5278ff);
   }
 
   .add-layer-menu button:disabled svg,
@@ -5457,29 +5491,17 @@
   }
 
   /* Lines layer thumbnail */
-  .layer-thumbnail.lines {
-    background: linear-gradient(135deg, var(--ga-blue-mute-800) 0%, var(--ga-blue-800) 100%);
-    border: 1px solid #00ffc844;
-  }
-
   .lines-thumb,
   .shader-thumb {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #00ffc8;
+    color: var(--ga-icon, #5278ff);
   }
 
   .lines-hint {
-    font-size: 10px;
-    opacity: 0.5;
-    font-style: italic;
-  }
-
-  /* Color layer thumbnail */
-  .layer-thumbnail.color {
-    background: var(--bg-secondary, #1a1a2e);
-    border: 1px solid #ff88ff44;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #5e6571);
   }
 
   .color-thumb {
@@ -5496,22 +5518,22 @@
     align-items: center;
     justify-content: center;
     border-radius: 3px;
-    background: #0e0e10;
+    background: var(--ga-slot, #0e0e10);
   }
 
   /* Color layer controls */
   .color-controls {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 8px 0;
+    gap: 6px;
+    padding: 4px 0 8px;
   }
 
   .color-preview-large {
     width: 100%;
-    height: 60px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    height: 48px;
+    border-radius: var(--ga-r-tile, 6px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
   .color-slider-group {
@@ -5523,8 +5545,8 @@
   .color-slider-group label {
     display: flex;
     justify-content: space-between;
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #888);
   }
 
   .color-slider-group input[type="range"] {
@@ -5544,7 +5566,7 @@
     height: 14px;
     border-radius: 50%;
     background: #fff;
-    border: 2px solid #BB86FC;
+    border: 2px solid var(--ga-selection-line, #5278ff);
     cursor: pointer;
   }
 
@@ -5571,23 +5593,9 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
-    font-size: 13px;
-    color: var(--text-muted, #888);
-  }
-
-  .add-shape-select {
-    background: #BB86FC;
-    color: #000;
-    border: none;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .add-shape-select:hover {
-    background: #CF6EFF;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1, #888);
   }
 
   .element-list {
@@ -5602,33 +5610,34 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 8px;
-    background: var(--bg-tertiary, #1a1a1e);
-    border-radius: 4px;
+    padding: 4px 8px;
+    background: var(--ga-sub, #1a1a1e);
+    border: 1px solid transparent;
+    border-radius: var(--ga-r-hard, 4px);
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .element-item:hover {
-    background: #3a3a3a;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
   .element-item.selected {
-    background: #BB86FC22;
-    border: 1px solid #BB86FC;
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
+    border: 1px solid var(--ga-selection-line, #5278ff);
   }
 
   .element-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #BB86FC;
+    color: var(--ga-ink-1, #9aa0ac);
     flex-shrink: 0;
   }
 
   .element-name {
     flex: 1;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -5637,7 +5646,7 @@
   .element-delete {
     background: none;
     border: none;
-    color: #ff4444;
+    color: var(--ga-rec, #ff4444);
     font-size: 13px;
     cursor: pointer;
     padding: 2px 4px;
@@ -5650,21 +5659,21 @@
   }
 
   .no-elements {
-    font-size: 12px;
-    color: #666;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #666);
     text-align: center;
     padding: 12px 8px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 4px);
   }
 
   .svg-info {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #888);
     text-align: center;
     padding: 12px 8px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 4px);
   }
 
   .orientation-controls {
@@ -5673,84 +5682,83 @@
     padding: 0;
     align-items: center;
     border-bottom: none;
-    margin-bottom: 13px;
+    margin-bottom: 6px;
   }
 
   .orient-label {
-    flex: 0 0 84px;
-    font-size: 13.5px;
+    flex: 0 0 76px;
+    font-size: var(--ga-text-control, 12px);
     color: var(--ga-ink-1, #9aa0ac);
     margin-right: 0;
     text-transform: none;
     letter-spacing: 0;
-    font-weight: 500;
+    font-weight: var(--ga-weight-body, 500);
   }
 
   .orient-btn {
-    width: 30px;
-    height: 30px;
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
     display: flex;
     align-items: center;
     justify-content: center;
     background: transparent;
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
-    color: var(--ga-violet, #9b87f5);
+    color: var(--ga-ink-2, #8b93a2);
     cursor: pointer;
     padding: 0;
     transition: all 0.15s;
   }
 
-  .orient-btn:hover {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
-    color: var(--ga-violet, #9b87f5);
+  .orient-btn:hover:not(.active) {
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .orient-btn.active {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
-    color: var(--ga-violet, #9b87f5);
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .splat-info, .model3d-info {
     padding: 8px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 4px;
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
+    border-radius: var(--ga-r-hard, 4px);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1, #aaa);
   }
   .splat-info .file-loaded-info, .model3d-info .file-loaded-info {
-    color: #8f8;
+    color: var(--ga-live, #46d18a);
   }
   .splat-info .no-file-info, .model3d-info .no-file-info {
-    color: var(--text-muted, #888);
-    font-style: italic;
+    color: var(--ga-ink-2, #888);
   }
 
   .screen-layer-config {
     padding: 8px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 4px);
     display: flex;
     align-items: center;
     gap: 8px;
   }
 
   .screen-label {
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #888);
     white-space: nowrap;
   }
 
   .screen-vj-select {
     flex: 1;
-    padding: 4px 8px;
-    background: var(--bg-tertiary, #1a1a1e);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-    color: var(--text-primary, #ddd);
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
+    background: var(--ga-slot, #1a1a1e);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 4px);
+    color: var(--ga-ink-0, #ddd);
+    font-size: var(--ga-text-control, 12px);
   }
 
   .flip-controls {
@@ -5764,26 +5772,26 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 6px 12px;
+    padding: 0 12px;
+    height: var(--ga-control-h, 26px);
     background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
-    color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 4px);
+    color: var(--ga-ink-1, #aaa);
+    font-size: var(--ga-text-control, 12px);
     cursor: pointer;
     transition: all 0.15s ease;
   }
 
   .flip-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
-    border-color: #555;
+    color: var(--ga-ink-0, #fff);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
   .flip-btn.active {
-    background: #BB86FC;
-    color: #000;
-    border-color: #BB86FC;
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
+    border-color: var(--ga-selection-line, #5278ff);
   }
 
   .flip-btn svg {
@@ -5792,39 +5800,39 @@
   }
 
   /* Mapping inspector: consistent density, full-width actions, quiet surfaces. */
-  .media-properties { font-size: 12px; line-height: 1.4; min-width: 0; }
-  .media-properties h4 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
-  .inspector-section-title { font-size: 10px; font-weight: 650; letter-spacing: .09em;
-    text-transform: uppercase; color: var(--ga-ink-1, #9aa0ac); margin: 14px 0 8px;
-    padding-top: 10px; border-top: 1px solid var(--ga-line-2, #303540); }
+  .media-properties { font-size: var(--ga-text-control, 12px); line-height: 1.4; min-width: 0; }
+  /* Section labels in the inspector: the eyebrow style. */
+  .inspector-section-title { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase; color: var(--ga-ink-2, #8b93a2); margin: 12px 0 8px;
+    padding-top: 10px; border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)); }
   .video-controls-panel .inspector-section-title,
   .mask-section .inspector-section-title,
   .shape-mask-section .inspector-section-title { border: 0; padding: 0; margin: 0 0 8px; }
-  .media-properties .property-row { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 6px; margin-bottom: 8px; min-width: 0; }
+  .media-properties .property-row { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 6px; margin-bottom: 6px; min-width: 0; }
   .media-properties .property-row > :not(label) { min-width: 0; }
-  .media-properties .property-row label { font-size: 12px; font-weight: 500; }
-  .media-properties .property-row select { width: 100%; font-size: 12px; height: 28px; padding-left: 8px; border-radius: 5px; }
+  .media-properties .property-row label { font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-body, 500); }
+  .media-properties .property-row select { width: 100%; font-size: var(--ga-text-control, 12px); height: var(--ga-control-h, 26px); padding-left: 8px; border-radius: var(--ga-r-hard, 5px); }
   .media-properties .property-row input[type='range'] { width: 100%; min-width: 0; }
-  .media-properties .property-row .value { font-size: 11px; font-variant-numeric: tabular-nums; }
+  .media-properties .property-row .value { font-size: var(--ga-text-meta, 11px); font-variant-numeric: tabular-nums; }
   .media-properties .property-row.inspector-actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .media-properties .inspector-actions button { width: auto; flex: 1 1 auto; white-space: nowrap; }
   .media-properties .btn-reset, .media-properties .btn-secondary,
-  .media-properties .btn-small, .media-properties .warp-mode-btn { font-size: 12px; font-weight: 500; min-height: 28px; height: auto; padding: 5px 8px; border-radius: 5px; line-height: 1.3; }
-  .media-properties .warp-mode-buttons { border-radius: 5px; }
-  .media-properties .warp-mode-btn { border-radius: 0; }
+  .media-properties .btn-small, .media-properties .warp-mode-btn { font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); min-height: var(--ga-control-h, 26px); height: auto; padding: 4px 8px; border-radius: var(--ga-r-hard, 5px); line-height: 1.3; }
+  .media-properties .warp-mode-buttons { border-radius: var(--ga-r-hard, 5px); }
+  .media-properties .warp-mode-btn { border-radius: 0; min-height: calc(var(--ga-control-h, 26px) - 2px); padding: 3px 8px; }
   .media-properties .shape-icon-row { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
-  .media-properties .shape-icon-btn { height: 28px; padding: 0; border-radius: 5px; }
+  .media-properties .shape-icon-btn { height: var(--ga-control-h, 26px); padding: 0; border-radius: var(--ga-r-hard, 5px); }
   .media-properties .shape-icon-btn.active, .media-properties .warp-mode-btn.active,
   .media-properties .vt-audio-toggle.active { color: var(--ga-selection-ink, #e0e8ff);
     background: var(--ga-selection-bg, var(--ga-blue-700)); border-color: var(--ga-selection-line, var(--ga-blue-500)); }
   .media-properties .mask-section, .media-properties .shape-mask-section { margin-top: 12px; padding-top: 10px; }
   .media-properties .mask-section .property-row label { white-space: nowrap; flex-shrink: 0; }
-  .media-properties .mask-point-count { font-size: 11px; text-align: right; }
-  .media-properties .mask-hint { font-size: 11px; font-style: normal; line-height: 1.5; }
-  .media-properties .media-drop-zone { border-radius: 6px; padding: 8px; }
-  .media-properties .source-name { font-size: 12px; font-weight: 500; color: var(--ga-ink-0, #eef0f4); overflow-wrap: anywhere; }
+  .media-properties .mask-point-count { font-size: var(--ga-text-meta, 11px); text-align: right; }
+  .media-properties .mask-hint { font-size: var(--ga-text-meta, 11px); font-style: normal; line-height: 1.5; }
+  .media-properties .media-drop-zone { border-radius: var(--ga-r-hard, 5px); padding: 8px; }
+  .media-properties .source-name { font-size: var(--ga-text-control, 12px); font-weight: var(--ga-weight-control, 600); color: var(--ga-ink-0, #eef0f4); overflow-wrap: anywhere; }
   .media-properties .video-controls-panel { padding: 8px; }
-  .media-properties .vt-time { font-size: 11px; font-variant-numeric: tabular-nums; margin-left: auto; }
+  .media-properties .vt-time { font-size: var(--ga-text-meta, 11px); font-variant-numeric: tabular-nums; margin-left: auto; }
   .media-properties .vt-audio-num { color: var(--ga-ink-1, #9aa0ac); }
   .media-properties button:focus-visible, .media-properties select:focus-visible { outline: 2px solid var(--ga-focus, var(--ga-blue-300)); outline-offset: 2px; }
 </style>

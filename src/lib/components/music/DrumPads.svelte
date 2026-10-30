@@ -35,8 +35,8 @@
     justify-content: center;
     gap: 4px;
     font: inherit;
-    font-size: 12px;
-    font-weight: 700;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     touch-action: none;
   }

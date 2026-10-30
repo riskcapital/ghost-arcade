@@ -139,7 +139,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: none;
     color: var(--text-secondary, #aaa);
-    font-size: 19px;
+    font-size: 20px;
     cursor: pointer;
     display: flex;
     align-items: center;

@@ -47,8 +47,8 @@
     color: var(--mk-muted, var(--ga-ink-1, #9aa0ac));
     text-align: left;
     font: inherit;
-    font-weight: 700;
-    font-size: 11px;
+    font-weight: var(--ga-weight-control, 600);
+    font-size: var(--ga-text-meta, 11px);
     cursor: pointer;
     white-space: nowrap;
   }

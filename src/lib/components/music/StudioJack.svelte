@@ -86,9 +86,10 @@
   }
   .jack:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
   .jack-label {
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
+    font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    line-height: 1.2;
     color: var(--studio-muted);
     text-transform: uppercase;
     white-space: nowrap;

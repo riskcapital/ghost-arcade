@@ -101,12 +101,12 @@
     align-items: center;
     gap: 6px;
     height: var(--vj-control-h, 28px);
-    padding: 0 6px 0 3px;
-    border: 1px solid #34383f;
-    border-radius: 5px;
-    background: #121419;
-    color: #dce0e7;
-    font-size: 11px;
+    padding: 0 8px 0 3px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot, #121419);
+    color: var(--ga-ink-0, #dce0e7);
+    font-size: var(--ga-text-meta, 11px);
   }
   .ss-play {
     width: 22px;
@@ -114,14 +114,15 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #34383f;
-    border-radius: 4px;
-    background: #181b21;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+    background: rgba(255, 255, 255, 0.04);
     color: inherit;
     cursor: pointer;
     padding: 0;
   }
-  .ss-play.on { background: var(--ga-coral, #ff6f5e); border-color: var(--ga-coral, #ff6f5e); color: #14090a; }
+  .ss-play:hover:not(.on) { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
+  .ss-play.on { background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff); }
   .ss-strip {
     position: relative;
     width: 132px;
@@ -143,19 +144,19 @@
     flex: 1 1 0;
     min-width: 1px;
     border-radius: 1px;
-    background: #4a5260;
+    background: var(--ga-ink-3, #4a5260);
   }
-  .ss-bars i.played { background: #8fb4ff; }
+  .ss-bars i.played { background: var(--ga-selection-line, #8fb4ff); }
   .ss-head {
     position: absolute;
     top: -2px;
     bottom: -2px;
     width: 2px;
     margin-left: -1px;
-    background: #fff;
+    background: var(--ga-ink-0, #fff);
     border-radius: 1px;
     pointer-events: none;
   }
-  .ss-time { font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 8.5ch; }
-  .ss-total { color: #969eab; }
+  .ss-time { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 8.5ch; }
+  .ss-total { color: var(--ga-ink-2, #969eab); }
 </style>

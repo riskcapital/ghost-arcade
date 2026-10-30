@@ -147,12 +147,12 @@
 </div>
 
 <style>
-  .expression-error { font-size: 11px; line-height: 1.4; color: #e0b29d; }
+  .expression-error { font-size: var(--ga-text-meta, 11px); line-height: 1.4; color: #e0b29d; }
   input[aria-invalid="true"] { border-color: #c88d74; }
   .ni { display: flex; flex-direction: column; gap: 2px; }
   .ni-label {
-    font-size: 11.5px;
-    opacity: 0.85;
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #9aa0ac);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -161,8 +161,10 @@
   .ni-display {
     background: transparent;
     border: 1px dashed transparent;
-    color: var(--ga-blue-300);
+    color: var(--ga-ink-0, #eef0f4);
     font: inherit;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     cursor: text;
@@ -171,14 +173,16 @@
     transition: background 0.08s, border-color 0.08s;
   }
   .ni-display:hover {
-    background: var(--ga-blue-a08);
-    border-color: var(--ga-blue-a28);
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
   .ni-edit {
-    background: #0f1219;
-    border: 1px solid var(--ga-blue-300);
-    color: #e0e7ef;
+    background: var(--ga-slot, #0f1219);
+    border: 1px solid var(--ga-focus, #8aa4ff);
+    color: var(--ga-ink-0, #e0e7ef);
     font: inherit;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     padding: 1px 6px;
@@ -187,5 +191,5 @@
     text-align: right;
     outline: none;
   }
-  input[type="range"] { width: 100%; accent-color: var(--ga-blue-300); }
+  input[type="range"] { width: 100%; accent-color: var(--ga-selection-line, #5278ff); }
 </style>

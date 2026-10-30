@@ -10,7 +10,7 @@
   const s = $derived($musicStudio);
 </script>
 
-<StudioModule title="BEAT" led={s.sequencerPlaying} class="beat">
+<StudioModule title="Beat" led={s.sequencerPlaying} class="beat">
   {#snippet head()}
     <button
       class="transport mini"
@@ -29,7 +29,7 @@
       {#each PATTERN_LENGTHS as n}<option value={n}>{n} steps</option>{/each}
     </select>
     <StudioKnob label="Swing" hideLabel value={s.pattern.swing} max={0.5} size={16} format={(v) => `${Math.round(v * 200)}%`} onchange={(v) => musicStudio.setSwing(v)} />
-    <button class="text-btn small" onclick={() => musicStudio.clearPattern()}>CLEAR</button>
+    <button class="studio-btn" onclick={() => musicStudio.clearPattern()}>Clear</button>
   {/snippet}
   <div class="grid"><StepGrid rowHeight={0} /></div>
 </StudioModule>

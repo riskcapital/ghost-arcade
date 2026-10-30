@@ -683,28 +683,30 @@
         <path d="M15 18l-6-6 6-6"/>
       </svg>
     </button>
+    <span class="place-title">Stage Sim</span>
+    <span class="tb-divider" aria-hidden="true"></span>
     <div class="seg" role="tablist">
       <button
         class="seg-btn"
         class:on={$stage3DGizmoMode === 'translate'}
         onclick={() => setGizmoMode('translate')}
-        title="Move (W / G)">✛ Move</button>
+        title="Move (W / G)">Move</button>
       <button
         class="seg-btn"
         class:on={$stage3DGizmoMode === 'rotate'}
         onclick={() => setGizmoMode('rotate')}
-        title="Rotate (E / R)">⟳ Rotate</button>
+        title="Rotate (E / R)">Rotate</button>
       <button
         class="seg-btn"
         class:on={$stage3DGizmoMode === 'scale'}
         onclick={() => setGizmoMode('scale')}
-        title="Scale (S)">⤢ Scale</button>
+        title="Scale (S)">Scale</button>
     </div>
 
-    <button class="tbtn" onclick={toggleSnap}>⊞ Snap: {snapOn ? '1m / 15°' : 'Off'}</button>
+    <button class="tbtn" class:on={snapOn} aria-pressed={snapOn} onclick={toggleSnap} title="Snap to 1 m and 15°">Snap</button>
 
-    <button class="tbtn" onclick={undo} disabled={!canUndo} title="Undo (⌘Z)">↶ Undo</button>
-    <button class="tbtn" onclick={redo} disabled={!canRedo} title="Redo (⇧⌘Z)">↷ Redo</button>
+    <button class="tbtn" onclick={undo} disabled={!canUndo} title="Undo (⌘Z)">Undo</button>
+    <button class="tbtn" onclick={redo} disabled={!canRedo} title="Redo (⇧⌘Z)">Redo</button>
 
     <div class="spacer"></div>
 
@@ -715,27 +717,29 @@
       value={venue}
       onchange={(e) => setVenue((e.target as HTMLSelectElement).value as Stage3DVenue)}
     >
-      <option value="empty">Blank Room</option>
-      <option value="festival">Festival Mainstage</option>
+      <option value="empty">Blank room</option>
+      <option value="festival">Festival mainstage</option>
       <option value="arena">Arena</option>
       <option value="club">Club</option>
       <option value="nightclub">Nightclub</option>
-      <option value="sphere">Sphere (Immersive Dome)</option>
+      <option value="sphere">Sphere (immersive dome)</option>
     </select>
 
     <label class="dim-label" for="stage3d-pa-select">PA</label>
     <select id="stage3d-pa-select" class="vsel" value="" onchange={onPASelect}>
       <option value="">Add PA preset…</option>
-      <option value="linearray">Flown Line Array L/R</option>
-      <option value="festivalpa">Festival PA + Subs</option>
-      <option value="groundstack">Ground-Stacked L/R</option>
-      <option value="club">Club Point-Source</option>
-      <option value="nightclub">Nightclub Distributed</option>
+      <option value="linearray">Flown line array L/R</option>
+      <option value="festivalpa">Festival PA + subs</option>
+      <option value="groundstack">Ground-stacked L/R</option>
+      <option value="club">Club point-source</option>
+      <option value="nightclub">Nightclub distributed</option>
     </select>
 
-    <button class="tbtn" onclick={() => $stage3DRendererControls?.topCamera()}>⬓ Top</button>
-    <button class="tbtn" onclick={() => $stage3DRendererControls?.frameCamera()}>⊡ Frame</button>
-    <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast('Scene reloaded'); }} title="Rebuild venue + screens">⟳ Reload</button>
+    <span class="tb-divider" aria-hidden="true"></span>
+    <button class="tbtn" onclick={() => $stage3DRendererControls?.topCamera()}>Top</button>
+    <button class="tbtn" onclick={() => $stage3DRendererControls?.frameCamera()}>Frame</button>
+    <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast('Scene reloaded'); }} title="Rebuild venue + screens">Reload</button>
+    <span class="tb-divider" aria-hidden="true"></span>
     {#if !isRecording}
       <select
         class="vsel rec-res"
@@ -758,13 +762,15 @@
     <button
       class="tbtn"
       class:reel-on={reelOpen}
+      aria-pressed={reelOpen}
       onclick={() => { reelOpen = !reelOpen; }}
       title="Demo Reel — shot-based sizzle-reel recorder"
-    >🎬 Reel</button>
-    <button class="tbtn" onclick={togglePanels} title="Hide panels (H)">▤ Hide</button>
-    <button class="tbtn" onclick={saveDesign}>↓ Save</button>
-    <button class="tbtn" onclick={loadDesign}>↑ Load</button>
-    <button class="tbtn danger" onclick={clearElements}>✕ Clear</button>
+    >Reel</button>
+    <span class="tb-divider" aria-hidden="true"></span>
+    <button class="tbtn" onclick={togglePanels} title="Hide panels (H)">Hide</button>
+    <button class="tbtn" onclick={saveDesign}>Save</button>
+    <button class="tbtn load-btn" onclick={loadDesign}>Load</button>
+    <button class="tbtn danger" onclick={clearElements}>Clear</button>
     <input bind:this={fileInput} type="file" accept="application/json" style="display:none" onchange={onFileChosen} />
     <input bind:this={modelImportInput} type="file" accept=".glb,.gltf,.obj" style="display:none" onchange={onModelImportChosen} />
   </header>
@@ -780,7 +786,7 @@
         disabled={fullscreenBusy}
         title={stageFullscreen ? 'Exit fullscreen stage view' : 'Fullscreen stage view on this display'}
       >
-        {stageFullscreen ? 'Exit Full' : 'Full Screen'}
+        {stageFullscreen ? 'Exit full screen' : 'Full screen'}
       </button>
     </div>
     <div class="hud-group" title="Camera elevation — ↑/↓ arrows in the viewport work too">
@@ -801,8 +807,8 @@
   <aside class="lib">
     <h3>Element Library</h3>
     <div class="lib-actions">
-      <button class="mini-action" onclick={blankSlate}>Blank Room</button>
-      <button class="mini-action" onclick={triggerModelImport}>Import Model</button>
+      <button class="mini-action" onclick={blankSlate}>Blank room</button>
+      <button class="mini-action" onclick={triggerModelImport}>Import model</button>
     </div>
     {#each libraryGroups as group}
       <div class="grp">
@@ -822,7 +828,7 @@
             class="ghd-action"
             onclick={() => setStage3DMultiSelection(screenLayers.map(l => `screen:${l.id}`))}
             title="Select all screens"
-          >all</button>
+          >All</button>
         </div>
         {#each screenLayers as layer (layer.id)}
           {@const key = `screen:${layer.id}`}
@@ -848,7 +854,7 @@
             class="ghd-action"
             onclick={() => setStage3DMultiSelection(userElements.map(el => `element:${el.id}`))}
             title="Select all placed elements"
-          >all</button>
+          >All</button>
         </div>
         {#each userElements as el (el.id)}
           {@const key = `element:${el.id}`}
@@ -874,7 +880,7 @@
             class="ghd-action"
             onclick={() => stage3dScene.clearSceneryOverrides()}
             title="Restore all venue elements to default"
-          >reset</button>
+          >Reset</button>
         </div>
         {#each sceneryItems as item (item.id)}
           {@const key = `scenery:${item.id}`}
@@ -950,10 +956,10 @@
           tools.
         </p>
         <button class="scenery-del" onclick={() => deleteScenery(selectedScenery.id)}>
-          ✕ Hide this element
+          Hide this element
         </button>
         <button class="scenery-restore" onclick={() => restoreScenery(selectedScenery.id)}>
-          ⟲ Reset to default position
+          Reset to default position
         </button>
       </div>
     {:else}
@@ -984,9 +990,9 @@
 
   {#if panelsHidden}
     {#if stageFullscreen}
-      <button class="show-panels-btn fullscreen-exit-btn" onclick={toggleStageFullscreen} title="Exit fullscreen stage view">Exit Full Screen</button>
+      <button class="show-panels-btn fullscreen-exit-btn" onclick={toggleStageFullscreen} title="Exit fullscreen stage view">Exit full screen</button>
     {:else}
-      <button class="show-panels-btn" onclick={togglePanels} title="Show panels (H)">▦ Show panels</button>
+      <button class="show-panels-btn" onclick={togglePanels} title="Show panels (H)">Show panels</button>
     {/if}
   {/if}
 
@@ -1005,11 +1011,12 @@
   .stage3d-root {
     position: fixed;
     inset: 0;
-    background: #0a0c10;
+    background: var(--ga-void, #0a0908);
     z-index: 1000;
     overflow: hidden;
-    color: #e9edf4;
-    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--ga-ink-0);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
+    font-size: var(--ga-text-control, 12px);
   }
   .stage3d-root.external { background: transparent; pointer-events: none; }
   .stage3d-root.external :global(button),
@@ -1023,68 +1030,121 @@
   .stage3d-root.external .toast { pointer-events: auto; }
   .reel-host { position: absolute; inset: 0; pointer-events: none; z-index: 25; }
   .reel-host :global(.reel-panel) { pointer-events: auto; }
-  .tbtn.reel-on { background: #3b2a63; border-color: var(--ga-blue-600); }
   .viewport-fallback {
     position: absolute;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #666;
-    font-size: 15px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-title, 14px);
   }
 
-  /* ── Top bar ────────────────────────────────────────────────── */
+  /* ── Top bar: the same bar as the app top bar ───────────────────── */
   .topbar {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    height: 54px;
+    height: var(--ga-bar-h, 48px);
+    box-sizing: border-box;
     z-index: 20;
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 8px;
-    background: linear-gradient(180deg, rgba(10, 12, 16, 0.92), rgba(10, 12, 16, 0.4));
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    gap: var(--ga-bar-gap, 6px);
+    padding: 0 14px;
+    background: var(--ga-bar, #100f0d);
+    border-bottom: 1px solid var(--ga-line-2);
   }
-  .icon-btn {
-    width: 36px; height: 36px; border-radius: 18px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(20, 22, 30, 0.85);
-    color: #fff; font-size: 21px; cursor: pointer;
-  }
-  .icon-btn:hover { background: var(--ga-blue-mute-800); }
-  .seg {
-    display: flex; gap: 2px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 9px;
-    padding: 3px;
-  }
-  .seg-btn {
-    font: inherit; font-size: 12px; color: #8a93a3;
-    background: none; border: none;
-    padding: 6px 9px; border-radius: 6px;
-    cursor: pointer;
-  }
-  .seg-btn:hover { color: #e9edf4; }
-  .seg-btn.on { background: #4af2ff; color: #04161a; font-weight: 600; }
-  .tbtn {
-    font: inherit; font-size: 12px; color: #e9edf4;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    padding: 7px 9px; cursor: pointer;
+  .place-title {
+    margin-left: 4px;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
     white-space: nowrap;
   }
-  .tbtn:hover { border-color: #4af2ff; color: #4af2ff; }
+  .tb-divider {
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: var(--ga-line-2);
+    flex-shrink: 0;
+  }
+  .icon-btn {
+    width: var(--ga-bar-control-h, 30px);
+    height: var(--ga-bar-control-h, 30px);
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-card);
+    color: var(--ga-ink-0);
+    cursor: pointer;
+  }
+  .icon-btn:hover { border-color: var(--ga-line-3); }
+  .seg {
+    display: flex;
+    gap: 2px;
+    height: var(--ga-bar-control-h, 30px);
+    box-sizing: border-box;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 2px;
+  }
+  .seg-btn {
+    font: inherit;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1);
+    background: none;
+    border: none;
+    padding: 0 10px;
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+    cursor: pointer;
+  }
+  .seg-btn:hover { color: var(--ga-ink-0); }
+  .seg-btn.on {
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    box-shadow: inset 0 0 0 1px var(--ga-selection-line);
+  }
+  .tbtn {
+    height: var(--ga-bar-control-h, 30px);
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font: inherit;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .tbtn:hover { border-color: var(--ga-line-3); color: var(--ga-ink-0); }
+  .tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .tbtn:disabled:hover { border-color: var(--ga-line-2); color: var(--ga-ink-1); }
+  .tbtn.danger:hover { border-color: var(--ga-rec, #ff3b30); color: var(--ga-rec, #ff3b30); }
+  /* Toggles: the selection colours, above the theme's button skin. */
+  .tbtn.on,
+  .tbtn.reel-on {
+    background: var(--ga-selection-bg) !important;
+    border-color: var(--ga-selection-line) !important;
+    color: var(--ga-selection-ink) !important;
+  }
+
   /* ── Camera HUD strip (under the topbar, clear of the inspector) ── */
   .viewport-hud {
     position: absolute;
-    top: 76px;
+    top: calc(var(--ga-bar-h, 48px) + 24px);
     right: 322px;
     z-index: 19;
     display: flex;
@@ -1094,24 +1154,27 @@
   .hud-group {
     display: inline-flex;
     align-items: center;
-    height: 30px;
-    background: rgba(10, 12, 16, 0.78);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 88%, transparent);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     backdrop-filter: blur(8px);
   }
   .hud-btn {
+    height: 100%;
     font: inherit;
-    font-size: 11px;
-    color: #e9edf4;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1);
     background: transparent;
     border: none;
-    border-right: 1px solid rgba(255, 255, 255, 0.07);
-    padding: 7px 9px;
+    border-right: 1px solid var(--ga-line-1);
+    padding: 0 9px;
     cursor: pointer;
   }
   .hud-btn:last-child { border-right: none; }
-  .hud-btn:hover { color: #4af2ff; }
+  .hud-btn:hover { color: var(--ga-ink-0); }
   .hud-btn:disabled {
     opacity: 0.45;
     cursor: wait;
@@ -1122,206 +1185,209 @@
     border-right: none;
   }
   .fullscreen-toggle.on {
-    background: rgba(74, 242, 255, 0.14);
-    color: #4af2ff;
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
   }
   .fov-ctl {
     gap: 6px;
     padding: 0 10px;
   }
   .fov-ctl .fov-label {
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
-    letter-spacing: 0.12em;
-    color: rgba(255, 255, 255, 0.55);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
   }
   .fov-ctl input[type='range'] {
     width: 84px;
-    accent-color: #4af2ff;
+    accent-color: var(--ga-selection-line);
   }
   .fov-ctl .fov-val {
-    font-size: 11px;
-    color: #4af2ff;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-0);
     font-variant-numeric: tabular-nums;
     min-width: 30px;
     text-align: right;
   }
-  .tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
-  .tbtn:disabled:hover { border-color: rgba(255, 255, 255, 0.08); color: #e9edf4; }
-  .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
   .rec-res {
-    padding: 6px 6px;
-    font-size: 12px;
+    width: auto;
+    padding: 0 6px;
   }
   .rec-btn {
     min-width: 66px;
     text-align: center;
   }
   .rec-btn.recording {
-    background: rgba(255, 68, 91, 0.18);
-    border-color: rgba(255, 68, 91, 0.72);
-    color: #ff8d9b;
-    font-family: 'Geist Mono', monospace;
+    background: color-mix(in srgb, var(--ga-rec, #ff3b30) 18%, transparent) !important;
+    border-color: color-mix(in srgb, var(--ga-rec, #ff3b30) 72%, transparent) !important;
+    color: var(--ga-rec, #ff3b30) !important;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-variant-numeric: tabular-nums;
   }
   .rec-btn.recording:hover {
-    border-color: #ff445b;
-    color: #ffd2d8;
+    border-color: var(--ga-rec, #ff3b30) !important;
   }
   .show-panels-btn {
     position: absolute;
-    top: 14px; left: 50%;
+    top: 9px; left: 50%;
     transform: translateX(-50%);
     z-index: 15;
-    font: inherit; font-size: 13px;
-    color: #e9edf4;
-    background: rgba(16, 19, 26, 0.92);
-    border: 1px solid #4af2ff;
-    border-radius: 20px;
-    padding: 8px 18px;
+    height: var(--ga-bar-control-h, 30px);
+    box-sizing: border-box;
+    font: inherit;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-0);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-3);
+    border-radius: var(--ga-r-soft, 8px);
+    padding: 0 16px;
     cursor: pointer;
     pointer-events: auto;
     backdrop-filter: blur(10px);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   }
-  .show-panels-btn:hover { background: rgba(74, 242, 255, 0.15); }
   .show-panels-btn.fullscreen-exit-btn {
     left: auto;
     right: 14px;
     transform: none;
-    border-color: #ff5cb8;
     opacity: 0.42;
   }
   .show-panels-btn.fullscreen-exit-btn:hover {
-    background: rgba(255, 92, 184, 0.13);
     opacity: 1;
   }
   .spacer { flex: 1 1 0; min-width: 0; }
   .dim-label {
-    font-family: 'Geist Mono', monospace;
-    font-size: 11px;
-    color: #8a93a3;
-    letter-spacing: 0.1em;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-2);
   }
   .vsel {
+    height: var(--ga-bar-control-h, 30px);
+    box-sizing: border-box;
     min-width: 0;
-    font: inherit; font-size: 12px; color: #e9edf4;
-    background: #10131a;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    padding: 7px 8px; cursor: pointer;
+    font: inherit;
+    font-size: var(--ga-text-body, 13px);
+    color: var(--ga-ink-0);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 8px;
+    cursor: pointer;
   }
-  #stage3d-venue-select { width: clamp(145px, 12vw, 220px); }
-  #stage3d-pa-select { width: clamp(140px, 11vw, 205px); }
+  #stage3d-venue-select { width: clamp(150px, 11vw, 205px); }
+  #stage3d-pa-select { width: clamp(140px, 10vw, 190px); }
   @media (max-width: 1900px) {
     .dim-label { display: none; }
-    .topbar { gap: 5px; }
-    .tbtn { padding-inline: 8px; }
-    .seg-btn { padding-inline: 8px; }
-    #stage3d-pa-select { width: 185px; }
-    #stage3d-venue-select { width: 205px; }
   }
   @media (max-width: 1740px) {
     .tbtn.danger { display: none; }
-    #stage3d-pa-select { width: 168px; }
-    #stage3d-venue-select { width: 185px; }
+    #stage3d-pa-select { width: 160px; }
+    #stage3d-venue-select { width: 170px; }
   }
   @media (max-width: 1620px) {
-    .tbtn { padding-inline: 7px; font-size: 11px; }
-    .seg-btn { padding-inline: 7px; font-size: 11px; }
-    .vsel { font-size: 11px; padding-inline: 7px; }
-    #stage3d-pa-select { width: 150px; }
-    #stage3d-venue-select { width: 168px; }
+    .place-title,
+    .place-title + .tb-divider { display: none; }
+    .tbtn, .seg-btn { padding-inline: 8px; }
+    #stage3d-pa-select { width: 140px; }
+    #stage3d-venue-select { width: 150px; }
   }
   @media (max-width: 1500px) {
-    .tbtn:nth-last-of-type(2) { display: none; } /* Load */
-    #stage3d-pa-select { width: 138px; }
-    #stage3d-venue-select { width: 154px; }
+    .tbtn.load-btn { display: none; }
   }
 
   /* ── Library ────────────────────────────────────────────────── */
   .lib {
     position: absolute;
-    top: 66px; left: 12px; bottom: 12px;
+    top: calc(var(--ga-bar-h, 48px) + 12px); left: 12px; bottom: 12px;
     width: 212px;
+    box-sizing: border-box;
     z-index: 15;
-    background: rgba(16, 19, 26, 0.86);
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 90%, transparent);
     backdrop-filter: blur(14px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 11px;
-    padding: 14px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
+    padding: 12px;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-gutter: stable;
   }
-  .lib h3 {
-    font-size: 11px; letter-spacing: 0.22em;
-    color: #8a93a3; text-transform: uppercase;
-    margin: 0 0 9px;
+  /* Eyebrows (docs/DESIGN-SYSTEM.md). */
+  .lib h3,
+  .props h3,
+  .ghd {
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
+    text-transform: uppercase;
+    line-height: 1.2;
+  }
+  .lib h3,
+  .props h3 {
+    margin: 0 0 8px;
   }
   .lib-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 6px;
-    margin-bottom: 14px;
+    margin-bottom: 16px;
   }
   .mini-action {
+    height: var(--ga-control-h, 26px);
     font: inherit;
-    font-size: 11.5px;
-    color: #e9edf4;
-    background: rgba(74, 242, 255, 0.07);
-    border: 1px solid rgba(74, 242, 255, 0.22);
-    border-radius: 7px;
-    padding: 7px 6px;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-0);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 6px;
+    white-space: nowrap;
     cursor: pointer;
   }
   .mini-action:hover {
-    color: #04161a;
-    background: #4af2ff;
-    border-color: #4af2ff;
+    border-color: var(--ga-line-3);
   }
   .grp { margin-bottom: 16px; }
   .ghd {
-    font-size: 12px; letter-spacing: 0.14em;
-    color: #4af2ff; text-transform: uppercase;
-    margin-bottom: 7px;
+    margin-bottom: 6px;
     display: flex; align-items: center; gap: 6px;
-  }
-  .ghd::before {
-    content: "";
-    width: 5px; height: 5px; border-radius: 50%;
-    background: #4af2ff;
+    min-height: 20px;
   }
   .additem {
     width: 100%; text-align: left;
-    font: inherit; font-size: 13.5px; color: #e9edf4;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    padding: 9px 11px; margin-bottom: 5px;
+    min-height: var(--ga-control-h, 26px);
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-0);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 4px 8px; margin-bottom: 4px;
     cursor: pointer; transition: .14s;
-    display: flex; align-items: center; gap: 9px;
+    display: flex; align-items: center; gap: 8px;
   }
   .additem:hover {
-    background: rgba(74, 242, 255, 0.08);
-    border-color: rgba(74, 242, 255, 0.4);
-    transform: translateX(2px);
+    border-color: var(--ga-line-3);
   }
   .additem.screen.selected,
   .additem.screen.selected:hover {
-    background: rgba(187, 134, 252, 0.16);
-    border-color: rgba(187, 134, 252, 0.6);
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
   }
   .additem.screen.selected.primary,
   .additem.screen.selected.primary:hover {
-    background: rgba(74, 242, 255, 0.18);
-    border-color: #4af2ff;
+    box-shadow: inset 3px 0 0 var(--ga-selection-line) !important;
   }
-  .additem .ic { width: 16px; text-align: center; opacity: 0.8; }
+  .additem .ic { width: 16px; text-align: center; opacity: 0.7; }
 
   /* ── Venue element rows (scenery) ─────────────────────────────── */
   .scenery-row {
-    display: flex; align-items: center; gap: 4px; margin-bottom: 5px;
+    display: flex; align-items: center; gap: 4px; margin-bottom: 4px;
   }
   .scenery-row .scenery-pick { margin-bottom: 0; flex: 1; min-width: 0; }
   .scenery-pick :global(span) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1330,116 +1396,122 @@
     text-decoration: line-through;
     cursor: default;
   }
-  .scenery-pick.deleted:hover { background: rgba(255, 255, 255, 0.03); border-color: rgba(255, 255, 255, 0.08); transform: none; }
+  .scenery-pick.deleted:hover { border-color: var(--ga-line-2); }
   .scenery-act {
     flex: 0 0 auto;
-    width: 26px; height: 34px;
-    font: inherit; font-size: 13px;
-    color: #8a93a3;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    width: var(--ga-control-h, 26px); height: var(--ga-control-h, 26px);
+    font: inherit; font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-2);
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
-  .scenery-act:hover { color: #4af2ff; border-color: #4af2ff; }
-  .scenery-act.danger:hover { color: #ff5cb8; border-color: #ff5cb8; }
+  .scenery-act:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .scenery-act.danger:hover { color: var(--ga-rec, #ff3b30); border-color: var(--ga-rec, #ff3b30); }
 
   /* ── Venue element inspector ──────────────────────────────────── */
   .scenery-inspect { display: flex; flex-direction: column; gap: 8px; }
-  .scenery-title { font-size: 16px; font-weight: 600; color: #e9edf4; }
+  .scenery-title { font-size: var(--ga-text-title, 14px); font-weight: var(--ga-weight-title, 650); color: var(--ga-ink-0); }
   .scenery-sub {
-    font-family: 'Geist Mono', monospace;
-    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
-    color: #4af2ff;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2);
   }
-  .scenery-note { color: #8a93a3; font-size: 13px; line-height: 1.6; margin: 4px 0 8px; }
+  .scenery-note { color: var(--ga-ink-2); font-size: var(--ga-text-meta, 11px); line-height: 1.5; margin: 0 0 4px; }
   .scenery-del, .scenery-restore {
-    font: inherit; font-size: 13.5px; text-align: left;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px; padding: 9px 12px; cursor: pointer; color: #e9edf4;
+    min-height: var(--ga-control-h, 26px);
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    text-align: left;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px); padding: 4px 10px; cursor: pointer; color: var(--ga-ink-0);
   }
-  .scenery-del:hover { border-color: #ff5cb8; color: #ff5cb8; }
-  .scenery-restore:hover { border-color: #4af2ff; color: #4af2ff; }
+  .scenery-del:hover { border-color: var(--ga-rec, #ff3b30); color: var(--ga-rec, #ff3b30); }
+  .scenery-restore:hover { border-color: var(--ga-line-3); }
 
   .ghd-action {
     margin-left: auto;
+    height: 20px;
     font: inherit;
-    font-size: 11px;
-    color: #8a93a3;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ga-ink-1);
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
-    padding: 1px 6px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 6px;
     cursor: pointer;
-    text-transform: lowercase;
-    letter-spacing: 0.05em;
   }
-  .ghd-action:hover { color: #4af2ff; border-color: #4af2ff; }
+  .ghd-action:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
 
   /* ── Properties ─────────────────────────────────────────────── */
   .props {
     position: absolute;
-    top: 66px; right: 12px; bottom: 12px;
+    top: calc(var(--ga-bar-h, 48px) + 12px); right: 12px; bottom: 12px;
     width: 264px;
+    box-sizing: border-box;
     z-index: 15;
-    background: rgba(16, 19, 26, 0.86);
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 90%, transparent);
     backdrop-filter: blur(14px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 11px;
-    padding: 14px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
+    padding: 12px;
     overflow-y: auto;
   }
-  .props h3 {
-    font-size: 11px; letter-spacing: 0.22em;
-    color: #8a93a3; text-transform: uppercase;
-    margin: 0 0 9px;
-  }
   .empty {
-    color: #8a93a3;
-    font-size: 13.5px;
-    line-height: 1.7;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta, 11px);
+    line-height: 1.5;
     margin-top: 8px;
   }
   .multi-banner {
-    background: rgba(187, 134, 252, 0.12);
-    border: 1px solid rgba(187, 134, 252, 0.4);
-    border-radius: 8px;
-    padding: 9px 12px;
+    background: var(--ga-selection-bg);
+    border: 1px solid var(--ga-selection-line);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 8px 10px;
     margin-bottom: 12px;
-    font-size: 12.5px;
+    font-size: var(--ga-text-meta, 11px);
     line-height: 1.5;
-    color: #d8c8ff;
+    color: var(--ga-selection-ink);
   }
-  .multi-banner b { color: #fff; }
+  .multi-banner b { color: var(--ga-ink-0); }
   .inspector-tabs {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 4px;
+    gap: 2px;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
     margin: 0 0 12px;
-    padding: 4px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    padding: 2px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
   }
   .inspector-tab {
     font: inherit;
-    font-size: 12px;
-    color: #aeb5c2;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1);
     background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 7px 8px;
+    border: 0;
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+    padding: 0 8px;
     cursor: pointer;
   }
   .inspector-tab:hover:not(:disabled) {
-    border-color: rgba(187, 134, 252, 0.45);
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   .inspector-tab.active {
-    background: #bb86fc;
-    color: #150d22;
-    font-weight: 700;
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    box-shadow: inset 0 0 0 1px var(--ga-selection-line);
   }
   .inspector-tab:disabled {
     opacity: 0.4;
@@ -1453,30 +1525,31 @@
     transform: translateX(-50%);
     z-index: 14;
     display: flex; gap: 14px; align-items: center;
-    font-size: 12px; color: #8a93a3;
-    background: rgba(16, 19, 26, 0.86);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 30px;
-    padding: 8px 18px;
+    font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2);
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 90%, transparent);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
+    padding: 6px 14px;
+    white-space: nowrap;
     backdrop-filter: blur(10px);
   }
-  .hud b { color: #e9edf4; font-weight: 600; }
+  .hud b { color: var(--ga-ink-0); font-weight: 600; }
   .kbd {
-    font-family: 'Geist Mono', monospace;
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 5px;
-    padding: 1px 6px;
-    color: #c4ccd8;
-    font-size: 11px;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 1px 5px;
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-meta, 11px);
     margin: 0 2px;
   }
   .multi-pill {
-    background: rgba(187, 134, 252, 0.18);
-    color: #fff;
-    border: 1px solid rgba(187, 134, 252, 0.5);
-    border-radius: 12px;
-    padding: 2px 9px;
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    border: 1px solid var(--ga-selection-line);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 1px 8px;
   }
 
   /* ── Toast ──────────────────────────────────────────────────── */
@@ -1486,12 +1559,12 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 30;
-    background: #10131a;
-    border: 1px solid #4af2ff;
-    color: #e9edf4;
-    font-size: 13.5px;
-    padding: 10px 18px;
-    border-radius: 9px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-3);
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-body, 13px);
+    padding: 8px 16px;
+    border-radius: var(--ga-r-soft, 8px);
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   }
 

@@ -103,8 +103,8 @@
 
 {#if c}
   <div data-help-page="layers" class="adv-paint-panel">
-    <div class="panel-title">Adv Light Paint <span class="badge">WebGPU</span></div>
-    <div class="panel-hint">click + drag over the editor canvas to paint</div>
+    <div class="adv-title">Advanced light paint <span class="badge">WebGPU</span></div>
+    <div class="panel-hint">Click and drag over the editor canvas to paint.</div>
 
     <!-- Brush preset picker -->
     <div class="section">
@@ -230,47 +230,46 @@
     width: 100%;
     height: 100%;
     overflow-y: auto;
-    padding: 14px;
-    color: var(--text-primary, #ddd);
-    background: var(--ga-blue-900);
+    padding: 12px;
+    color: var(--ga-ink-0);
+    background: var(--ga-panel);
     font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
-    font-size: 13px;
+    font-size: var(--ga-text-body);
     box-sizing: border-box;
   }
-  .panel-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: #fff;
+  .adv-title {
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0);
     margin-bottom: 4px;
     display: flex;
     align-items: center;
     gap: 8px;
   }
   .badge {
-    font-size: 10px;
-    background: linear-gradient(135deg, var(--ga-blue-300), #b9f);
-    color: #000;
-    padding: 2px 6px;
-    border-radius: 999px;
-    letter-spacing: 0.4px;
-    font-weight: 700;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-1);
+    padding: 1px 6px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
   }
   .panel-hint {
-    color: var(--text-muted, #888);
-    font-size: 12px;
-    margin-bottom: 16px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta);
+    margin-bottom: 12px;
   }
   .section {
-    margin-bottom: 16px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid #2a2a35;
+    padding: 12px 0;
+    border-top: 1px solid var(--ga-line-1);
   }
-  .section:last-child { border-bottom: none; }
+  /* Eyebrow section label, same as every layer editor. */
   .section-title {
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-muted, #888);
+    letter-spacing: var(--ga-eyebrow-tracking);
+    color: var(--ga-ink-2);
     margin-bottom: 8px;
   }
   .brush-grid {
@@ -280,25 +279,26 @@
     margin-bottom: 6px;
   }
   .brush-button {
-    background: #25252e;
-    border: 1px solid #333344;
-    color: var(--text-secondary, #aaa);
-    padding: 6px 4px;
-    font-size: 12px;
-    border-radius: 3px;
+    height: var(--ga-control-h);
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    padding: 0 4px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
     transition: all 0.15s;
   }
-  .brush-button:hover { background: #2d2d3a; color: #fff; border-color: var(--ga-blue-300); }
+  .brush-button:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .brush-button.active {
-    background: linear-gradient(135deg, var(--ga-blue-300), #b9f);
-    color: #000;
-    font-weight: 700;
-    border-color: transparent;
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    border-color: var(--ga-selection-line);
   }
   .brush-desc {
-    font-size: 11px;
-    color: #666;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     line-height: 1.4;
   }
   .row {
@@ -306,45 +306,50 @@
     grid-template-columns: 90px 1fr 56px;
     align-items: center;
     gap: 8px;
-    margin-bottom: 6px;
+    min-height: var(--ga-control-h);
+    margin-bottom: 2px;
   }
-  .row span:first-child { color: var(--text-secondary, #aaa); font-size: 12px; }
+  .row span:first-child { color: var(--ga-ink-1); font-size: var(--ga-text-control); }
   .row .num {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
+    font-variant-numeric: tabular-nums;
     text-align: right;
-    color: var(--ga-blue-300);
+    color: var(--ga-ink-1);
   }
   .row.color-row { grid-template-columns: 90px 40px 1fr; }
   .row.color-row input[type="color"] {
     width: 40px;
-    height: 24px;
-    border: 1px solid #333344;
+    height: var(--ga-control-h-sm);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     background: transparent;
     cursor: pointer;
     padding: 0;
   }
   input[type="range"] {
-    accent-color: var(--ga-blue-300);
+    accent-color: var(--ga-slider-fill, var(--ga-blue));
     width: 100%;
   }
   .actions { display: flex; gap: 6px; }
   .action-btn {
     flex: 1;
-    padding: 8px;
-    background: #25252e;
-    border: 1px solid #333344;
-    color: var(--text-primary, #ddd);
-    font-size: 12px;
-    border-radius: 3px;
+    height: var(--ga-control-h);
+    padding: 0 10px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
   }
-  .action-btn:hover { background: #2d2d3a; }
+  .action-btn:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
   .action-btn.danger {
-    border-color: rgba(255, 80, 80, 0.4);
-    color: #ff7878;
+    border-color: color-mix(in srgb, var(--ga-rec) 40%, transparent);
+    color: var(--ga-rec);
   }
   .action-btn.danger:hover {
-    background: rgba(255, 80, 80, 0.1);
+    background: color-mix(in srgb, var(--ga-rec) 10%, transparent);
   }
 </style>

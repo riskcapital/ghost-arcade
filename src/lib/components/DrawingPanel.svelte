@@ -372,7 +372,7 @@
 
 <div data-help-page="layers" class="drawing-panel">
   <div class="panel-header">
-    <h3>Shape Editor</h3>
+    <h3>Shape editor</h3>
   </div>
 
   {#if $selectedGenerativeLayer}
@@ -498,7 +498,7 @@
 
             {#if ($selectedElement.stroke.type === 'glow' || $selectedElement.stroke.type === 'neon') && 'glowSize' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Glow Size</span>
+                <span class="control-label">Glow size</span>
                 <input
                   type="range"
                   min="5"
@@ -978,7 +978,7 @@
                 <span class="control-value">{($selectedElement.fill.intensity ?? 1).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Arc Count</span>
+                <span class="control-label">Arc count</span>
                 <input type="range" min="1" max="10" step="1"
                   value={$selectedElement.fill.arcCount ?? 5}
                   oninput={(e) => {
@@ -994,7 +994,7 @@
             <!-- HOLOGRAPHIC controls -->
             {#if $selectedElement.fill.type === 'holographic'}
               <div class="control-row">
-                <span class="control-label">Hue Shift</span>
+                <span class="control-label">Hue shift</span>
                 <input type="range" min="0" max="1" step="0.05"
                   value={$selectedElement.fill.shiftAmount ?? 0.5}
                   oninput={(e) => {
@@ -1807,11 +1807,11 @@
 <style>
   .drawing-panel {
     width: 100%;
-    background: var(--bg-secondary, #111114);
+    background: var(--ga-panel);
     display: flex;
     flex-direction: column;
-    color: var(--text-primary, #eee);
-    font-size: 14px;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-body);
     overflow-y: auto;
     flex: 1;
   }
@@ -1821,50 +1821,53 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px;
-    border-bottom: 1px solid #333;
     flex-shrink: 0;
   }
 
   .panel-header h3 {
     margin: 0;
-    font-size: 15px;
-    font-weight: 600;
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0);
   }
 
   .section {
-    border-bottom: 1px solid #333;
+    border-top: 1px solid var(--ga-line-1);
   }
 
+  /* Collapsible eyebrow section label, same as every layer editor. */
   .section-header {
     width: 100%;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 12px;
-    background: var(--bg-tertiary, #161618);
+    min-height: 32px;
+    padding: 0 12px;
+    background: transparent;
     border: none;
-    color: var(--text-secondary, #aaa);
+    color: var(--ga-ink-2);
     cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-align: left;
   }
 
   .section-header:hover {
-    background: #333;
-    color: #fff;
+    color: var(--ga-ink-0);
   }
 
   .expand-icon {
-    font-size: 13px;
-    font-weight: bold;
+    font-size: var(--ga-text-body);
+    font-weight: 700;
   }
 
   .shape-library {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 6px;
-    padding: 10px;
+    gap: 4px;
+    padding: 0 12px 12px;
   }
 
   .shape-item {
@@ -1873,127 +1876,132 @@
     align-items: center;
     gap: 4px;
     padding: 8px 4px;
-    background: #333;
-    border: 1px solid #444;
-    border-radius: 6px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
     transition: all 0.15s;
-    color: var(--text-primary, #eee);
+    color: var(--ga-ink-0);
   }
 
   .shape-item:hover {
-    background: #444;
-    border-color: #BB86FC;
-    transform: scale(1.05);
+    border-color: var(--ga-line-3);
   }
 
   .shape-icon {
-    font-size: 21px;
+    font-size: 20px;
     line-height: 1;
   }
 
   .shape-label {
-    font-size: 10px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-1);
   }
 
   .effect-controls {
-    padding: 10px;
+    padding: 0 12px 12px;
   }
 
   .control-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 8px;
+    min-height: var(--ga-control-h);
+    margin-bottom: 4px;
   }
 
   .control-label {
-    width: 70px;
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    width: 84px;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1);
     flex-shrink: 0;
   }
 
   .control-row input[type="range"] {
     flex: 1;
-    background: #000000;
+    min-width: 0;
   }
 
   .control-row input[type="color"] {
     width: 40px;
-    height: 24px;
-    border: none;
-    border-radius: 4px;
+    height: var(--ga-control-h-sm);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
   }
 
   .control-row select {
     flex: 1;
-    background: #333;
-    color: var(--text-primary, #eee);
-    border: 1px solid #555;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
+    min-width: 0;
+    height: var(--ga-control-h);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
+    border: 1px solid var(--ga-line-2);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
   }
 
   .control-value {
     width: 45px;
     text-align: right;
-    font-size: 11px;
-    color: #666;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1);
+    font-variant-numeric: tabular-nums;
     flex-shrink: 0;
   }
 
   .delete-btn {
     width: 100%;
+    height: var(--ga-control-h);
     margin-top: 10px;
-    padding: 8px;
-    background: #ff444433;
-    border: 1px solid #ff4444;
-    border-radius: 4px;
-    color: #ff4444;
-    font-size: 13px;
+    padding: 0 10px;
+    background: color-mix(in srgb, var(--ga-rec) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-rec) 35%, transparent);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-rec);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .delete-btn:hover {
-    background: #ff444455;
+    background: color-mix(in srgb, var(--ga-rec) 16%, transparent);
   }
 
   .no-selection, .no-layer {
     padding: 20px;
     text-align: center;
-    color: #666;
+    color: var(--ga-ink-2);
   }
 
   .no-selection p, .no-layer p {
     margin: 0 0 10px 0;
-    font-size: 13px;
+    font-size: var(--ga-text-control);
   }
 
   .hint {
-    font-size: 12px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
   }
 
-  /* Line tools */
+  /* Line tools: an eyebrow sub-label */
   .subsection-header {
-    padding: 8px 10px;
-    font-size: 11px;
-    color: #666;
+    padding: 12px 12px 8px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-top: 1px solid #333;
-    margin-top: 6px;
+    letter-spacing: var(--ga-eyebrow-tracking);
+    border-top: 1px solid var(--ga-line-1);
   }
 
   .line-tools {
     display: flex;
-    gap: 6px;
-    padding: 6px 10px;
+    gap: 4px;
+    padding: 0 12px 8px;
   }
 
   .tool-btn {
@@ -2003,44 +2011,46 @@
     align-items: center;
     gap: 4px;
     padding: 8px 4px;
-    background: #333;
-    border: 1px solid #444;
-    border-radius: 6px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
     transition: all 0.15s;
-    color: var(--text-primary, #eee);
+    color: var(--ga-ink-0);
   }
 
-  .tool-btn:hover {
-    background: #444;
-    border-color: var(--text-muted, #888);
+  .tool-btn:hover:not(.active) {
+    border-color: var(--ga-line-3);
   }
 
   .tool-btn.active {
-    background: #BB86FC33;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
   }
 
   .tool-icon {
-    font-size: 19px;
+    font-size: 20px;
   }
 
   .tool-label {
-    font-size: 10px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-1);
   }
 
   .tool-btn.active .tool-label {
-    color: #BB86FC;
+    color: var(--ga-selection-ink);
   }
 
   .drawing-hint {
-    padding: 6px 10px;
-    font-size: 11px;
-    color: #BB86FC;
-    background: #BB86FC11;
-    border-top: 1px solid #BB86FC33;
+    margin: 0 12px 12px;
+    padding: 6px 8px;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
+    background: var(--ga-card);
+    border-left: 2px solid var(--ga-line-3);
+    border-radius: 0 var(--ga-r-hard) var(--ga-r-hard) 0;
   }
 
   /* Warp controls */
@@ -2055,49 +2065,53 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    background: #333;
-    padding: 6px;
-    border-radius: 4px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-1);
+    padding: 4px 6px;
+    border-radius: var(--ga-r-hard);
   }
 
   .corner-label {
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-2);
     width: 20px;
   }
 
   .warp-corner input[type="number"] {
     width: 50px;
-    background: #222;
-    border: 1px solid #444;
-    color: var(--text-primary, #eee);
-    padding: 4px;
-    border-radius: 3px;
-    font-size: 12px;
+    height: var(--ga-control-h-sm);
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    padding: 0 4px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
   }
 
   .reset-btn {
     width: 100%;
-    padding: 6px;
-    background: #333;
-    border: 1px solid #555;
-    border-radius: 4px;
-    color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    height: var(--ga-control-h);
+    padding: 0 10px;
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .reset-btn:hover {
-    background: #444;
-    border-color: var(--text-muted, #888);
-    color: #fff;
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
   }
 
   .control-row input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    accent-color: #BB86FC;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--ga-selection-line);
     cursor: pointer;
   }
 </style>

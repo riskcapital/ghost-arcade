@@ -268,7 +268,7 @@
     font-variant-numeric: tabular-nums;
   }
   .snap-name {
-    font-size: 8px;
+    font-size: 9px;
     line-height: 1;
     overflow: hidden;
     text-overflow: ellipsis;

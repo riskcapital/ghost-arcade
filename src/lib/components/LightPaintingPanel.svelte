@@ -85,8 +85,8 @@
     { type: 'watercolor', label: 'Watercolor' },
     { type: 'spiral', label: 'Spiral' },
     { type: 'firefly', label: 'Firefly' },
-    { type: 'sap-flow', label: 'Sap Flow' },
-    { type: 'water', label: 'Water Flow' },
+    { type: 'sap-flow', label: 'Sap flow' },
+    { type: 'water', label: 'Water flow' },
     { type: 'galaxy', label: 'Galaxy' },
     { type: 'nebula', label: 'Nebula' },
     { type: 'sparkle', label: 'Sparkle' },
@@ -122,10 +122,10 @@
     { mode: 'recorded', label: 'Recorded' },
     { mode: 'random', label: 'Random' },
     { mode: 'alternating', label: 'Alternating' },
-    { mode: 'bottomUp', label: 'Bottom Up' },
-    { mode: 'topDown', label: 'Top Down' },
-    { mode: 'centerOut', label: 'Center Out' },
-    { mode: 'outsideIn', label: 'Outside In' },
+    { mode: 'bottomUp', label: 'Bottom up' },
+    { mode: 'topDown', label: 'Top down' },
+    { mode: 'centerOut', label: 'Center out' },
+    { mode: 'outsideIn', label: 'Outside in' },
   ];
 
   $: layer = $selectedLightPaintingLayer;
@@ -1179,7 +1179,7 @@
           {:else}Click and drag to paint light trails{/if}
         </div>
       {/if}
-      {#if isDrawing}<div class="status-pill rec">REC</div>{/if}
+      {#if isDrawing}<div class="status-pill rec">Rec</div>{/if}
       {#if drawMode === 'pen' && penPoints.length > 0}
         <div class="status-pill pen">{penPoints.length} pts - Enter to finish</div>
       {/if}
@@ -1191,7 +1191,7 @@
     <div data-help-page="layers" class="lp-sidebar">
       <!-- Header -->
       <div class="lp-header">
-        <span class="lp-title">Light Painting</span>
+        <span class="lp-title">Light painting</span>
       </div>
 
       <!-- Draw / Edit toggle -->
@@ -1232,7 +1232,7 @@
       <!-- Tabs -->
       <div class="lp-tabs">
         <button class:active={activeSection === 'brush'} onclick={() => activeSection = 'brush'}>Brush</button>
-        <button class:active={activeSection === 'animation'} onclick={() => activeSection = 'animation'}>Anim</button>
+        <button class:active={activeSection === 'animation'} onclick={() => activeSection = 'animation'}>Animation</button>
         <button class:active={activeSection === 'effects'} onclick={() => activeSection = 'effects'}>FX</button>
         <button class:active={activeSection === 'strokes'} onclick={() => activeSection = 'strokes'}>Strokes</button>
       </div>
@@ -1271,7 +1271,7 @@
             Secondary Glow
             <button class="mini-toggle" class:on={currentBrush.secondaryColor !== null}
               onclick={() => setSecondaryColor(currentBrush.secondaryColor ? null : [67, 232, 249])}>
-              {currentBrush.secondaryColor ? 'ON' : 'OFF'}
+              {currentBrush.secondaryColor ? 'On' : 'Off'}
             </button>
           </div>
           {#if currentBrush.secondaryColor}
@@ -1297,7 +1297,7 @@
             <div class="sc"><label>Speed <b>{(currentBrush.speed ?? 1).toFixed(2)}</b></label><input type="range" min="0.1" max="5" step="0.05" value={currentBrush.speed ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, speed: parseFloat((e.target as HTMLInputElement).value) })} /></div>
           </div>
           <div class="check-row">
-            <label><input type="checkbox" checked={currentBrush.taper} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taper: (e.target as HTMLInputElement).checked })} /> Soft Ends</label>
+            <label><input type="checkbox" checked={currentBrush.taper} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taper: (e.target as HTMLInputElement).checked })} /> Soft ends</label>
             <label><input type="checkbox" checked={currentBrush.pressureSensitive} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, pressureSensitive: (e.target as HTMLInputElement).checked })} /> Pressure</label>
           </div>
 
@@ -1321,13 +1321,13 @@
           </div>
           <div class="slider-col">
             <div class="sc">
-              <label>Start Width <b>{(currentBrush.taperStart ?? 1).toFixed(2)}×</b></label>
+              <label>Start width <b>{(currentBrush.taperStart ?? 1).toFixed(2)}×</b></label>
               <input type="range" min="0" max="2" step="0.05"
                 value={currentBrush.taperStart ?? 1}
                 oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: parseFloat((e.target as HTMLInputElement).value) })} />
             </div>
             <div class="sc">
-              <label>End Width <b>{(currentBrush.taperEnd ?? 1).toFixed(2)}×</b></label>
+              <label>End width <b>{(currentBrush.taperEnd ?? 1).toFixed(2)}×</b></label>
               <input type="range" min="0" max="2" step="0.05"
                 value={currentBrush.taperEnd ?? 1}
                 oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperEnd: parseFloat((e.target as HTMLInputElement).value) })} />
@@ -1360,19 +1360,19 @@
               </div>
               {#if currentBrush.type === 'spiral'}
                 <div class="sc">
-                  <label>Wrap Radius <b>{(currentBrush.gpuSpiralRadius ?? 0.025).toFixed(3)}</b></label>
+                  <label>Wrap radius <b>{(currentBrush.gpuSpiralRadius ?? 0.025).toFixed(3)}</b></label>
                   <input type="range" min="0.005" max="0.15" step="0.001"
                     value={currentBrush.gpuSpiralRadius ?? 0.025}
                     oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralRadius: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="sc">
-                  <label>Wrap Speed <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
+                  <label>Wrap speed <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
                   <input type="range" min="-5" max="5" step="0.1"
                     value={currentBrush.gpuSpiralSpeed ?? 1.2}
                     oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="sc">
-                  <label>Helix Pitch <b>{currentBrush.gpuSpiralPitch ?? 8}</b></label>
+                  <label>Helix pitch <b>{currentBrush.gpuSpiralPitch ?? 8}</b></label>
                   <input type="range" min="1" max="30" step="0.5"
                     value={currentBrush.gpuSpiralPitch ?? 8}
                     oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralPitch: parseFloat((e.target as HTMLInputElement).value) })} />
@@ -1396,13 +1396,13 @@
               {/if}
               {#if currentBrush.type === 'water'}
                 <div class="sc">
-                  <label>Sag (Gravity) <b>{(currentBrush.gpuWaterGravity ?? 1).toFixed(2)}</b></label>
+                  <label>Sag (gravity) <b>{(currentBrush.gpuWaterGravity ?? 1).toFixed(2)}</b></label>
                   <input type="range" min="0" max="2" step="0.05"
                     value={currentBrush.gpuWaterGravity ?? 1}
                     oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuWaterGravity: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="sc">
-                  <label>Flow Speed <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
+                  <label>Flow speed <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
                   <input type="range" min="0.1" max="5" step="0.1"
                     value={currentBrush.gpuSpiralSpeed ?? 1.2}
                     oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
@@ -1410,7 +1410,7 @@
               {/if}
               {#if currentBrush.type === 'smoke'}
                 <div class="sc">
-                  <label>Rise Speed <b>{(currentBrush.gpuSmokeRise ?? 0.5).toFixed(2)}</b></label>
+                  <label>Rise speed <b>{(currentBrush.gpuSmokeRise ?? 0.5).toFixed(2)}</b></label>
                   <input type="range" min="0.05" max="1.5" step="0.05"
                     value={currentBrush.gpuSmokeRise ?? 0.5}
                     oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSmokeRise: parseFloat((e.target as HTMLInputElement).value) })} />
@@ -1434,7 +1434,7 @@
               </div>
               {#if currentBrush.gpuGlassTube}
                 <div class="sc">
-                  <label>Tube Width <b>{(currentBrush.gpuGlassTubeRadiusScale ?? 1.25).toFixed(2)}×</b></label>
+                  <label>Tube width <b>{(currentBrush.gpuGlassTubeRadiusScale ?? 1.25).toFixed(2)}×</b></label>
                   <input type="range" min="0.5" max="3" step="0.05"
                     value={currentBrush.gpuGlassTubeRadiusScale ?? 1.25}
                     oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTubeRadiusScale: parseFloat((e.target as HTMLInputElement).value) })} />
@@ -1491,11 +1491,11 @@
           <div class="sec-label">Timing</div>
           <div class="slider-col">
             <div class="sc"><label>Speed <b>{content.animationSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.animationSpeed} oninput={(e) => updateSetting('animationSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Draw Speed <b>{content.drawSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="10" step="0.1" value={content.drawSpeed} oninput={(e) => updateSetting('drawSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Trail Length <b>{content.trailLength.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.trailLength} oninput={(e) => updateSetting('trailLength', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc" title="Softens the front edge of the drawing animation instead of a hard cut"><label>Head Feather <b>{(content.headFeather ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.headFeather ?? 0} oninput={(e) => updateSetting('headFeather', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Draw speed <b>{content.drawSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="10" step="0.1" value={content.drawSpeed} oninput={(e) => updateSetting('drawSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Trail length <b>{content.trailLength.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.trailLength} oninput={(e) => updateSetting('trailLength', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc" title="Softens the front edge of the drawing animation instead of a hard cut"><label>Head feather <b>{(content.headFeather ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.headFeather ?? 0} oninput={(e) => updateSetting('headFeather', parseFloat((e.target as HTMLInputElement).value))} /></div>
             {#if content.loopMode === 'pingpong'}
-              <div class="sc"><label>Ping Pong Hold <b>{content.pingPongHold ?? 0}ms</b></label><input type="range" min="0" max="5000" step="100" value={content.pingPongHold ?? 0} oninput={(e) => updateSetting('pingPongHold', parseInt((e.target as HTMLInputElement).value))} /></div>
+              <div class="sc"><label>Ping pong hold <b>{content.pingPongHold ?? 0}ms</b></label><input type="range" min="0" max="5000" step="100" value={content.pingPongHold ?? 0} oninput={(e) => updateSetting('pingPongHold', parseInt((e.target as HTMLInputElement).value))} /></div>
             {/if}
           </div>
 
@@ -1505,7 +1505,7 @@
           </div>
           {#if content.staggerStrokes}
             <div class="slider-col">
-              <div class="sc"><label>Stagger Delay <b>{content.staggerDelay}ms</b></label><input type="range" min="0" max="2000" step="50" value={content.staggerDelay} oninput={(e) => updateSetting('staggerDelay', parseInt((e.target as HTMLInputElement).value))} /></div>
+              <div class="sc"><label>Stagger delay <b>{content.staggerDelay}ms</b></label><input type="range" min="0" max="2000" step="50" value={content.staggerDelay} oninput={(e) => updateSetting('staggerDelay', parseInt((e.target as HTMLInputElement).value))} /></div>
             </div>
           {/if}
 
@@ -1521,24 +1521,24 @@
             </div>
           </div>
           {#if (content.sequenceMode ?? 'recorded') === 'random'}
-            <div class="check-row"><button class="mini-action" onclick={reshuffleSequence}>Reshuffle Random Order</button></div>
+            <div class="check-row"><button class="mini-action" onclick={reshuffleSequence}>Reshuffle random order</button></div>
           {/if}
 
           <div class="sec-label">Snake</div>
           <div class="slider-col">
-            <div class="sc"><label>Head Size <b>{content.snake.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.snake} oninput={(e) => updateSetting('snake', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Snake Speed <b>{content.snakeSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.snakeSpeed} oninput={(e) => updateSetting('snakeSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Head size <b>{content.snake.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.snake} oninput={(e) => updateSetting('snake', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Snake speed <b>{content.snakeSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.snakeSpeed} oninput={(e) => updateSetting('snakeSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
           <div class="sec-label">Organic Motion</div>
           <div class="slider-col">
-            <div class="sc"><label>Wind Sway <b>{(content.windSway ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windSway ?? 0} oninput={(e) => updateSetting('windSway', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Wind Speed <b>{(content.windSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.windSpeed ?? 1} oninput={(e) => updateSetting('windSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Wind Detail <b>{(content.windScale ?? 2).toFixed(1)}</b></label><input type="range" min="0.5" max="8" step="0.1" value={content.windScale ?? 2} oninput={(e) => updateSetting('windScale', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Root Lock <b>{(content.windAnchor ?? 0.7).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windAnchor ?? 0.7} oninput={(e) => updateSetting('windAnchor', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Flow Pulse <b>{(content.flowPulse ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.flowPulse ?? 0} oninput={(e) => updateSetting('flowPulse', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Flow Speed <b>{(content.flowSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.flowSpeed ?? 1} oninput={(e) => updateSetting('flowSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Flow Width <b>{(content.flowWidth ?? 0.12).toFixed(2)}</b></label><input type="range" min="0.03" max="0.5" step="0.01" value={content.flowWidth ?? 0.12} oninput={(e) => updateSetting('flowWidth', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Wind sway <b>{(content.windSway ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windSway ?? 0} oninput={(e) => updateSetting('windSway', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Wind speed <b>{(content.windSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.windSpeed ?? 1} oninput={(e) => updateSetting('windSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Wind detail <b>{(content.windScale ?? 2).toFixed(1)}</b></label><input type="range" min="0.5" max="8" step="0.1" value={content.windScale ?? 2} oninput={(e) => updateSetting('windScale', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Root lock <b>{(content.windAnchor ?? 0.7).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windAnchor ?? 0.7} oninput={(e) => updateSetting('windAnchor', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Flow pulse <b>{(content.flowPulse ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.flowPulse ?? 0} oninput={(e) => updateSetting('flowPulse', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Flow speed <b>{(content.flowSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.flowSpeed ?? 1} oninput={(e) => updateSetting('flowSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Flow width <b>{(content.flowWidth ?? 0.12).toFixed(2)}</b></label><input type="range" min="0.03" max="0.5" step="0.01" value={content.flowWidth ?? 0.12} oninput={(e) => updateSetting('flowWidth', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
         {:else if activeSection === 'effects'}
@@ -1546,34 +1546,34 @@
           <div class="slider-col">
             <div class="sc"><label>Bloom <b>{content.bloom.toFixed(1)}</b></label><input type="range" min="0" max="3" step="0.1" value={content.bloom} oninput={(e) => updateSetting('bloom', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Afterglow <b>{content.afterglow.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.afterglow} oninput={(e) => updateSetting('afterglow', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Motion Blur <b>{content.motionBlur.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.motionBlur} oninput={(e) => updateSetting('motionBlur', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Motion blur <b>{content.motionBlur.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.motionBlur} oninput={(e) => updateSetting('motionBlur', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
           <div class="sec-label">Color</div>
           <div class="slider-col">
-            <div class="sc"><label>Hue Shift <b>{content.colorShift.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.colorShift} oninput={(e) => updateSetting('colorShift', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Hue shift <b>{content.colorShift.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.colorShift} oninput={(e) => updateSetting('colorShift', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
-          <div class="check-row"><label><input type="checkbox" checked={content.multiColorGlow} onchange={(e) => updateSetting('multiColorGlow', (e.target as HTMLInputElement).checked)} /> Multi-Color Glow</label></div>
+          <div class="check-row"><label><input type="checkbox" checked={content.multiColorGlow} onchange={(e) => updateSetting('multiColorGlow', (e.target as HTMLInputElement).checked)} /> Multi-color glow</label></div>
 
           <div class="sec-label">Echo Lines</div>
           <div class="slider-col">
-            <div class="sc"><label>Echo Count <b>{content.echo}</b></label><input type="range" min="0" max="10" step="1" value={content.echo} oninput={(e) => updateSetting('echo', parseInt((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Echo Offset <b>{content.echoOffset.toFixed(2)}</b></label><input type="range" min="0.01" max="0.2" step="0.005" value={content.echoOffset} oninput={(e) => updateSetting('echoOffset', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Echo Decay <b>{content.echoDecay.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.echoDecay} oninput={(e) => updateSetting('echoDecay', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Echo count <b>{content.echo}</b></label><input type="range" min="0" max="10" step="1" value={content.echo} oninput={(e) => updateSetting('echo', parseInt((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Echo offset <b>{content.echoOffset.toFixed(2)}</b></label><input type="range" min="0.01" max="0.2" step="0.005" value={content.echoOffset} oninput={(e) => updateSetting('echoOffset', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Echo decay <b>{content.echoDecay.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.echoDecay} oninput={(e) => updateSetting('echoDecay', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
           <div class="sec-label">Pulse & Strobe</div>
           <div class="slider-col">
             <div class="sc"><label>Pulse <b>{content.pulse.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.pulse} oninput={(e) => updateSetting('pulse', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Pulse Speed <b>{content.pulseSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.pulseSpeed} oninput={(e) => updateSetting('pulseSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Pulse speed <b>{content.pulseSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.pulseSpeed} oninput={(e) => updateSetting('pulseSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Strobe <b>{content.strobe.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.strobe} oninput={(e) => updateSetting('strobe', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
           <div class="sec-label">Distortion</div>
           <div class="slider-col">
             <div class="sc"><label>Wave <b>{content.wave.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.wave} oninput={(e) => updateSetting('wave', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Wave Freq <b>{content.waveFreq.toFixed(1)}</b></label><input type="range" min="0.5" max="10" step="0.5" value={content.waveFreq} oninput={(e) => updateSetting('waveFreq', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Wave Speed <b>{content.waveSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.waveSpeed} oninput={(e) => updateSetting('waveSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Wave freq <b>{content.waveFreq.toFixed(1)}</b></label><input type="range" min="0.5" max="10" step="0.5" value={content.waveFreq} oninput={(e) => updateSetting('waveFreq', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Wave speed <b>{content.waveSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.waveSpeed} oninput={(e) => updateSetting('waveSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
           <div class="sec-label">Particles & Dynamics</div>
@@ -1581,7 +1581,7 @@
             <div class="sc"><label>Sparkle <b>{content.sparkle.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.sparkle} oninput={(e) => updateSetting('sparkle', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Flicker <b>{content.flicker.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.flicker} oninput={(e) => updateSetting('flicker', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Breathe <b>{content.breathe.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.breathe} oninput={(e) => updateSetting('breathe', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Breathe Speed <b>{content.breatheSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.breatheSpeed} oninput={(e) => updateSetting('breatheSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Breathe speed <b>{content.breatheSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.breatheSpeed} oninput={(e) => updateSetting('breatheSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
         {:else if activeSection === 'strokes'}
@@ -1672,11 +1672,11 @@
                     <span class="sname">{stroke.drawMode === 'pen' ? 'Pen ' : ''}Stroke {i+1}</span>
                     <span class="smeta">{stroke.brush.type} / size {stroke.brush.size} / {stroke.points.length} pts</span>
                   </div>
-                  <button class="del-btn" onclick={(e) => { e.stopPropagation(); removeStroke(stroke.id); }}>X</button>
+                  <button class="del-btn" onclick={(e) => { e.stopPropagation(); removeStroke(stroke.id); }} aria-label="Delete stroke" title="Delete stroke">×</button>
                 </div>
               {/each}
             </div>
-            <button class="clear-btn" onclick={clearAllStrokes}>Clear All Strokes</button>
+            <button class="clear-btn" onclick={clearAllStrokes}>Clear all strokes</button>
           {/if}
         {/if}
       </div>
@@ -1697,16 +1697,17 @@
      is null when not editing. */
   .lp-draw-overlay.inactive { pointer-events: none; cursor: default; }
   .lp-preview-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-  .draw-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.25); font-size: 14px; pointer-events: none; text-align: center; max-width: 300px; }
-  .status-pill { position: absolute; top: 10px; left: 10px; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; pointer-events: none; }
-  .status-pill.rec { background: rgba(255,50,50,0.85); color: #fff; animation: pulse-rec 1s infinite; }
-  .status-pill.pen { background: color-mix(in srgb, var(--ga-blue-300) 85%, transparent); color: #000; }
+  .draw-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.25); font-size: var(--ga-text-title); pointer-events: none; text-align: center; max-width: 300px; }
+  .status-pill { position: absolute; top: 10px; left: 10px; padding: 3px 10px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-meta); font-weight: 700; pointer-events: none; }
+  .status-pill.rec { background: var(--ga-rec); color: #fff; animation: pulse-rec 1s infinite; }
+  .status-pill.pen { background: var(--ga-selection-bg); color: var(--ga-selection-ink); box-shadow: inset 0 0 0 1px var(--ga-selection-line); }
   @keyframes pulse-rec { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
   /* ====== SIDEBAR ====== */
   .lp-sidebar {
     width: 100%;
-    background: #141416;
+    background: var(--ga-panel);
+    color: var(--ga-ink-0);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1714,257 +1715,266 @@
   }
 
   .lp-header {
-    padding: 10px 12px 8px;
-    border-bottom: 1px solid #161618;
+    padding: 12px 12px 8px;
   }
-  .lp-title { font-size: 14px; font-weight: 700; color: #BB86FC; letter-spacing: 0.5px; }
+  .lp-title { font-size: var(--ga-text-title); font-weight: var(--ga-weight-title); color: var(--ga-ink-0); }
 
   /* Draw mode & playback rows */
   .lp-row {
     display: flex; align-items: center; gap: 6px;
-    padding: 6px 12px;
-    border-bottom: 1px solid #222;
+    min-height: var(--ga-control-h);
+    padding: 0 12px 6px;
   }
-  .row-label { font-size: 12px; color: var(--text-muted, #888); font-weight: 600; }
+  .row-label { width: 44px; flex-shrink: 0; font-size: var(--ga-text-control); color: var(--ga-ink-1); }
 
-  .mode-btns { display: flex; border: 1px solid #444; border-radius: 5px; overflow: hidden; }
+  /* Segmented choice: the shared look */
+  .mode-btns { display: flex; gap: 2px; padding: 2px; background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); }
   .mode-btns button {
-    background: transparent; border: none; color: var(--text-muted, #888);
-    padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+    height: calc(var(--ga-control-h) - 6px);
+    background: transparent; border: none; color: var(--ga-ink-1);
+    padding: 0 12px; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer;
+    border-radius: calc(var(--ga-r-hard) - 1px);
   }
-  .mode-btns button:hover { color: var(--text-primary, #ddd); background: rgba(255,255,255,0.04); }
-  .mode-btns button.active { color: #BB86FC; background: var(--ga-blue-a08); }
-  .mode-btns button + button { border-left: 1px solid #444; }
+  .mode-btns button:hover:not(.active) { color: var(--ga-ink-0); background: rgba(255,255,255,0.05); }
+  .mode-btns button.active { color: var(--ga-selection-ink); background: var(--ga-selection-bg); box-shadow: inset 0 0 0 1px var(--ga-selection-line); }
 
   .play-btn {
-    background: var(--bg-tertiary, #161618); border: 1px solid #444; color: var(--text-primary, #eee);
-    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-0);
+    width: var(--ga-control-h); height: var(--ga-control-h); border-radius: 50%;
     display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
   }
-  .play-btn:hover { background: #333; }
-  .play-btn.playing { background: #BB86FC; color: #000; border-color: #BB86FC; }
+  .play-btn:hover:not(.playing) { border-color: var(--ga-line-3); }
+  .play-btn.playing { background: var(--ga-selection-bg); color: var(--ga-selection-ink); border-color: var(--ga-selection-line); }
 
   .loop-btn {
-    background: #222; border: 1px solid #3a3a3a; color: var(--text-muted, #888);
-    padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;
+    height: var(--ga-control-h-sm);
+    background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1);
+    padding: 0 8px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-meta); font-weight: var(--ga-weight-control); cursor: pointer;
   }
-  .loop-btn:hover { color: var(--text-primary, #ccc); border-color: #555; }
-  .loop-btn.active { color: #BB86FC; border-color: #BB86FC; background: var(--ga-blue-a08); }
+  .loop-btn:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .loop-btn.active { color: var(--ga-selection-ink); border-color: var(--ga-selection-line); background: var(--ga-selection-bg); }
 
   .stroke-badge {
-    background: #BB86FC; color: #000; font-size: 10px; font-weight: 700;
-    padding: 1px 5px; border-radius: 8px; margin-left: auto;
+    min-width: 18px; text-align: center;
+    background: var(--ga-sub); color: var(--ga-ink-1); border: 1px solid var(--ga-line-2);
+    font-size: var(--ga-text-micro); font-weight: 700; font-variant-numeric: tabular-nums;
+    padding: 1px 5px; border-radius: var(--ga-r-hard); margin-left: auto;
   }
 
-  /* Tabs */
-  .lp-tabs { display: flex; border-bottom: 1px solid #161618; flex-shrink: 0; }
-  .lp-tabs button {
-    flex: 1; background: none; border: none; color: #666;
-    padding: 7px 4px; font-size: 12px; font-weight: 600; cursor: pointer;
-    border-bottom: 2px solid transparent;
+  /* Tabs: the shared segmented look */
+  .lp-tabs {
+    display: flex; gap: 2px; flex-shrink: 0;
+    margin: 2px 12px 4px; padding: 2px;
+    background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard);
   }
-  .lp-tabs button:hover { color: var(--text-secondary, #aaa); }
-  .lp-tabs button.active { color: #BB86FC; border-bottom-color: #BB86FC; }
+  .lp-tabs button {
+    flex: 1; height: calc(var(--ga-control-h) - 4px); background: none; border: none; color: var(--ga-ink-1);
+    padding: 0 4px; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer;
+    border-radius: calc(var(--ga-r-hard) - 1px);
+  }
+  .lp-tabs button:hover:not(.active) { color: var(--ga-ink-0); background: rgba(255,255,255,0.05); }
+  .lp-tabs button.active { color: var(--ga-selection-ink); background: var(--ga-selection-bg); box-shadow: inset 0 0 0 1px var(--ga-selection-line); }
 
   /* Content */
-  .lp-content { padding: 8px 12px; overflow-y: auto; flex: 1; }
+  .lp-content { padding: 8px 12px 12px; overflow-y: auto; flex: 1; }
 
-  /* Section labels */
+  /* Eyebrow section label, same as every layer editor. */
   .sec-label {
     display: flex; align-items: center; justify-content: space-between;
-    font-size: 12px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
-    margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #222;
+    font-size: var(--ga-text-eyebrow); font-weight: 700; color: var(--ga-ink-2); text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking);
+    margin: 16px 0 8px; padding-top: 12px; border-top: 1px solid var(--ga-line-1);
   }
-  .sec-label:first-child { margin-top: 0; }
+  .sec-label:first-child { margin-top: 4px; padding-top: 0; border-top: 0; }
 
   /* Full-width slider column */
   .slider-col { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
   .sc { display: flex; flex-direction: column; }
   .sc label {
-    font-size: 12px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
+    font-size: var(--ga-text-control); color: var(--ga-ink-1); margin-bottom: 4px; display: flex; align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
+  .sc label b { color: var(--ga-ink-0); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: var(--ga-text-meta); font-weight: 400; font-variant-numeric: tabular-nums; margin-left: auto; }
   .sc input[type="range"] {
-    width: 100%; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
+    width: 100%; height: 4px; appearance: none; background: var(--ga-line-2); border-radius: 2px; outline: none;
   }
   .sc input[type="range"]::-webkit-slider-thumb {
     appearance: none; width: 14px; height: 14px; border-radius: 50%;
-    background: #BB86FC; cursor: pointer; border: 2px solid #141416;
+    background: var(--ga-selection-line); cursor: pointer; border: 2px solid var(--ga-panel);
   }
   .sc select {
-    width: 100%; background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-primary, #ddd);
-    border-radius: 5px; padding: 6px 8px; font-size: 12px; outline: none;
+    width: 100%; height: var(--ga-control-h); background: var(--ga-slot); border: 1px solid var(--ga-line-2); color: var(--ga-ink-0);
+    border-radius: var(--ga-r-hard); padding: 0 8px; font-size: var(--ga-text-control); outline: none;
   }
 
   /* Brush grid */
   .brush-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px; }
   .brush-btn {
-    background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-secondary, #aaa);
-    border-radius: 5px; padding: 6px 2px; font-size: 11px; font-weight: 600;
+    height: var(--ga-control-h);
+    background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard); padding: 0 2px; font-size: var(--ga-text-meta); font-weight: var(--ga-weight-control);
     cursor: pointer; text-align: center;
     position: relative;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .brush-btn:hover { background: var(--bg-tertiary, #161618); color: var(--text-primary, #eee); border-color: #555; }
-  .brush-btn.active { background: var(--ga-blue-a08); color: #BB86FC; border-color: #BB86FC; }
+  .brush-btn:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .brush-btn.active { background: var(--ga-selection-bg); color: var(--ga-selection-ink); border-color: var(--ga-selection-line); }
   .brush-btn.unavailable,
   .brush-btn.unavailable:hover {
     opacity: 0.38;
     cursor: not-allowed;
-    color: var(--text-muted, #666);
-    border-color: #2a2a2d;
-    background: var(--bg-primary, #0d0d10);
+    color: var(--ga-ink-2);
+    border-color: var(--ga-line-1);
+    background: var(--ga-sub);
   }
-  /* GPU brush buttons get a subtle gradient hint so they're visually
-     distinct from the CPU-rasterised ones in the picker. */
+  /* GPU brushes carry a quiet blue edge so they read apart from the CPU ones. */
   .brush-btn.gpu {
-    background: linear-gradient(135deg, #0d0d10, #181228);
-    border-color: var(--ga-blue-700);
+    border-color: color-mix(in srgb, var(--ga-selection-line) 45%, transparent);
   }
-  .brush-btn.gpu:hover { border-color: var(--ga-blue-300); }
+  .brush-btn.gpu:hover:not(.active) { border-color: var(--ga-selection-line); }
   .brush-btn.gpu.active {
-    background: linear-gradient(135deg, var(--ga-blue-a16), rgba(187,134,252,0.15));
-    border-color: var(--ga-blue-300);
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
   }
   .gpu-badge {
     display: inline-block;
-    background: linear-gradient(135deg, var(--ga-blue-300), #b9f);
-    color: #000;
-    font-size: 8px;
+    border: 1px solid var(--ga-line-3);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-micro);
     font-weight: 700;
-    padding: 1px 3px;
-    border-radius: 999px;
-    letter-spacing: 0.4px;
+    padding: 0 3px;
+    border-radius: var(--ga-r-hard);
     margin-left: 3px;
     vertical-align: middle;
   }
-  .gpu-badge.inline { margin-left: 6px; font-size: 9px; padding: 1px 5px; }
+  .gpu-badge.inline { margin-left: 6px; padding: 0 5px; }
   .gpu-hint {
     margin-top: 8px;
     padding: 6px 8px;
-    background: var(--ga-blue-a08);
-    border: 1px solid var(--ga-blue-a16);
-    border-radius: 4px;
-    font-size: 11px;
-    color: #aac;
+    background: var(--ga-card);
+    border-left: 2px solid var(--ga-line-3);
+    border-radius: 0 var(--ga-r-hard) var(--ga-r-hard) 0;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     line-height: 1.4;
   }
 
   /* Color grid */
-  .color-grid { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .color-grid { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
   .color-dot {
     width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer;
   }
   .color-dot.sm { width: 18px; height: 18px; }
   .color-dot:hover { transform: scale(1.15); }
-  .color-dot.active { border-color: #fff; transform: scale(1.1); }
+  .color-dot.active { border-color: var(--ga-ink-0); transform: scale(1.1); }
   .color-picker { width: 22px; height: 22px; border: none; border-radius: 50%; cursor: pointer; background: none; padding: 0; }
   .color-picker.sm { width: 18px; height: 18px; }
 
   .mini-toggle {
-    background: var(--bg-tertiary, #161618); border: 1px solid #444; color: var(--text-muted, #888);
-    padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; cursor: pointer;
+    height: 18px;
+    background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-2);
+    padding: 0 8px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-eyebrow); font-weight: var(--ga-weight-control); cursor: pointer;
   }
-  .mini-toggle.on { background: var(--ga-blue-a16); color: #BB86FC; border-color: #BB86FC; }
+  .mini-toggle:hover:not(.on) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .mini-toggle.on { background: var(--ga-selection-bg); color: var(--ga-selection-ink); border-color: var(--ga-selection-line); }
 
-  .check-row { display: flex; gap: 12px; margin-bottom: 8px; }
-  .check-row label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #bbb; cursor: pointer; }
-  .check-row input[type="checkbox"] { accent-color: #BB86FC; width: 13px; height: 13px; }
+  .check-row { display: flex; gap: 12px; flex-wrap: wrap; min-height: var(--ga-control-h-sm); margin-bottom: 8px; }
+  .check-row label { display: flex; align-items: center; gap: 6px; font-size: var(--ga-text-control); color: var(--ga-ink-1); cursor: pointer; }
+  .check-row input[type="checkbox"] { accent-color: var(--ga-selection-line); width: 13px; height: 13px; }
   .mini-action {
-    background: var(--bg-tertiary, #161618); border: 1px solid #333; color: #bbb;
-    border-radius: 5px; padding: 5px 8px; font-size: 12px; cursor: pointer;
+    height: var(--ga-control-h-sm);
+    background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1);
+    border-radius: var(--ga-r-hard); padding: 0 8px; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer;
   }
-  .mini-action:hover { border-color: #BB86FC; color: #fff; }
+  .mini-action:hover { border-color: var(--ga-line-3); color: var(--ga-ink-0); }
 
   /* Strokes list */
   .strokes-list { max-height: 240px; overflow-y: auto; }
-  .empty-msg { text-align: center; color: #555; font-size: 13px; padding: 20px; }
+  .empty-msg { text-align: center; color: var(--ga-ink-2); font-size: var(--ga-text-control); padding: 20px; }
   .stroke-row {
-    display: flex; align-items: center; gap: 8px; padding: 5px 8px;
-    border: 1px solid #222; border-radius: 5px; margin-bottom: 4px;
+    display: flex; align-items: center; gap: 8px; min-height: var(--ga-control-h); padding: 4px 8px;
+    border: 1px solid var(--ga-line-1); border-radius: var(--ga-r-hard); margin-bottom: 4px;
     cursor: pointer; transition: border-color 0.15s, background 0.15s;
   }
-  .stroke-row:hover { background: var(--bg-primary, #0d0d10); border-color: #333; }
-  .stroke-row.selected { border-color: #bb86fc; background: rgba(187, 134, 252, 0.08); }
-  .stroke-row.selected:hover { background: rgba(187, 134, 252, 0.12); }
+  .stroke-row:hover { background: var(--ga-card); border-color: var(--ga-line-2); }
+  .stroke-row.selected { border-color: var(--ga-selection-line); background: var(--ga-selection-bg); }
+  .stroke-row.selected:hover { background: var(--ga-selection-bg); }
 
   .editing-banner {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 6px 10px; margin-bottom: 6px;
-    background: rgba(187, 134, 252, 0.1); border: 1px solid rgba(187, 134, 252, 0.3);
-    border-radius: 6px; font-size: 12px; color: #bb86fc;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    min-height: var(--ga-control-h); padding: 2px 4px 2px 10px; margin-bottom: 6px;
+    background: var(--ga-selection-bg); border: 1px solid var(--ga-selection-line);
+    border-radius: var(--ga-r-hard); font-size: var(--ga-text-control); color: var(--ga-selection-ink);
   }
-  .editing-banner b { color: #fff; }
+  .editing-banner b { color: var(--ga-ink-0); }
   .done-btn {
-    padding: 2px 10px; background: #bb86fc; color: #000; border: none;
-    border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;
+    height: var(--ga-control-h-sm); padding: 0 10px; background: var(--ga-accent-gradient, var(--ga-violet)); color: var(--ga-blue-800); border: none;
+    border-radius: var(--ga-r-soft); font-size: var(--ga-text-control); font-weight: 700; cursor: pointer;
   }
-  .done-btn:hover { background: #d4b8ff; }
+  .done-btn:hover { filter: brightness(1.06); }
   .path-edit-row {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
     padding: 6px 8px; margin-bottom: 8px;
-    background: var(--ga-blue-a08); border: 1px solid var(--ga-blue-a16);
-    border-radius: 6px;
+    background: var(--ga-card); border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
   }
   .path-edit-toggle {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 4px 10px;
-    background: transparent; color: var(--ga-blue-300);
-    border: 1px solid var(--ga-blue-a45);
-    border-radius: 4px;
-    font-size: 12px; font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    height: var(--ga-control-h-sm); padding: 0 10px;
+    background: var(--ga-sub); color: var(--ga-ink-1);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
-  .path-edit-toggle:hover { background: var(--ga-blue-a08); border-color: var(--ga-blue-a70); }
-  .path-edit-toggle.active { background: var(--ga-blue-300); color: #0a0a0c; border-color: var(--ga-blue-300); }
-  .path-edit-toggle.active:hover { background: var(--ga-blue-100); }
+  .path-edit-toggle:hover:not(.active) { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
+  .path-edit-toggle.active { background: var(--ga-selection-bg); color: var(--ga-selection-ink); border-color: var(--ga-selection-line); }
   .path-edit-checkbox {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-size: 11px; color: var(--text-secondary, #aaa); cursor: pointer; user-select: none;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: var(--ga-text-meta); color: var(--ga-ink-1); cursor: pointer; user-select: none;
   }
-  .path-edit-checkbox input { width: 12px; height: 12px; cursor: pointer; accent-color: var(--ga-blue-300); }
-  .path-edit-hint { font-size: 11px; color: var(--text-muted, #888); flex-basis: 100%; }
+  .path-edit-checkbox input { width: 12px; height: 12px; cursor: pointer; accent-color: var(--ga-selection-line); }
+  .path-edit-hint { font-size: var(--ga-text-meta); color: var(--ga-ink-2); flex-basis: 100%; }
   .path-edit-tools {
-    display: inline-flex; gap: 0; align-items: stretch;
-    border: 1px solid var(--ga-blue-a28);
-    border-radius: 4px; overflow: hidden;
+    display: inline-flex; gap: 2px; align-items: stretch;
+    padding: 2px; background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
   }
   .path-tool-btn {
-    padding: 4px 9px;
-    background: transparent; color: var(--ga-blue-300);
-    border: none;
-    border-right: 1px solid var(--ga-blue-a16);
-    font-size: 11px; font-weight: 600; cursor: pointer;
+    height: calc(var(--ga-control-h-sm) - 4px); padding: 0 8px;
+    background: transparent; color: var(--ga-ink-1);
+    border: none; border-radius: calc(var(--ga-r-hard) - 1px);
+    font-size: var(--ga-text-meta); font-weight: var(--ga-weight-control); cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .path-tool-btn:last-child { border-right: none; }
-  .path-tool-btn:hover { background: var(--ga-blue-a08); }
-  .path-tool-btn.active { background: var(--ga-blue-300); color: #0a0a0c; }
+  .path-tool-btn:hover:not(.active) { color: var(--ga-ink-0); background: rgba(255,255,255,0.05); }
+  .path-tool-btn.active { background: var(--ga-selection-bg); color: var(--ga-selection-ink); box-shadow: inset 0 0 0 1px var(--ga-selection-line); }
   .path-tool-btn.delete { color: #FF8080; }
   .path-tool-btn.delete:hover { background: rgba(255, 128, 128, 0.10); }
-  .path-tool-btn.delete.active { background: #FF8080; color: #1a0a0a; }
+  .path-tool-btn.delete.active { background: #FF8080; color: #1a0a0a; box-shadow: none; }
   .path-tool-btn.insert { color: #80E89C; }
   .path-tool-btn.insert:hover { background: rgba(128, 232, 156, 0.10); }
-  .path-tool-btn.insert.active { background: #80E89C; color: #0a1a0c; }
+  .path-tool-btn.insert.active { background: #80E89C; color: #0a1a0c; box-shadow: none; }
   .path-edit-selcount {
-    font-size: 11px; font-weight: 600; color: #FFDD3C;
+    font-size: var(--ga-text-meta); font-weight: var(--ga-weight-control); color: #FFDD3C;
     padding: 2px 6px;
     border: 1px solid rgba(255, 220, 60, 0.5);
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard);
     background: rgba(255, 220, 60, 0.10);
   }
   .stroke-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .stroke-info { flex: 1; min-width: 0; }
-  .sname { display: block; font-size: 13px; color: var(--text-primary, #ddd); }
-  .smeta { display: block; font-size: 11px; color: #666; }
+  .sname { display: block; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); color: var(--ga-ink-0); }
+  .stroke-row.selected .sname { color: var(--ga-selection-ink); }
+  .smeta { display: block; font-size: var(--ga-text-meta); color: var(--ga-ink-2); }
   .del-btn {
-    background: none; border: 1px solid transparent; color: #666;
-    font-size: 12px; font-weight: 700; cursor: pointer; padding: 2px 6px; border-radius: 3px;
+    background: none; border: 1px solid transparent; color: var(--ga-ink-2);
+    font-size: 14px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: var(--ga-r-hard);
   }
-  .del-btn:hover { color: #ff5555; background: rgba(255,85,85,0.1); border-color: rgba(255,85,85,0.3); }
+  .del-btn:hover { color: var(--ga-rec); background: color-mix(in srgb, var(--ga-rec) 10%, transparent); border-color: color-mix(in srgb, var(--ga-rec) 30%, transparent); }
   .clear-btn {
-    width: 100%; background: rgba(255,85,85,0.06); border: 1px solid rgba(255,85,85,0.2);
-    color: #ff7777; padding: 7px; border-radius: 5px; font-size: 12px; font-weight: 600;
+    width: 100%; height: var(--ga-control-h); background: color-mix(in srgb, var(--ga-rec) 6%, transparent); border: 1px solid color-mix(in srgb, var(--ga-rec) 25%, transparent);
+    color: var(--ga-rec); padding: 0 10px; border-radius: var(--ga-r-hard); font-size: var(--ga-text-control); font-weight: var(--ga-weight-control);
     cursor: pointer; margin-top: 8px;
   }
-  .clear-btn:hover { background: rgba(255,85,85,0.12); border-color: rgba(255,85,85,0.4); }
+  .clear-btn:hover { background: color-mix(in srgb, var(--ga-rec) 12%, transparent); border-color: color-mix(in srgb, var(--ga-rec) 45%, transparent); }
 </style>

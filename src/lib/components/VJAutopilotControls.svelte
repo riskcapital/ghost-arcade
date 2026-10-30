@@ -35,11 +35,11 @@
   {/if}
 </div>
 <style>
-  .autopilot { padding: 10px 12px; border: 1px solid var(--ga-border, #333); border-radius: var(--ga-rSoft, 8px); margin: 10px 0 12px; font-size: var(--ga-type-control, 12px); }
-  label { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  select { flex: 1; min-width: 0; background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 4px; }
-  .check { gap: 6px; }
-  .check input { width: auto; }
-  input { width: 54px; background: #222; color: #ddd; border: 1px solid #444; padding: 4px; }
-  p { margin: 4px 0 0; color: #aaa; font-size: 11px; }
+  .autopilot { padding: 10px 0; border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07)); font-size: var(--ga-text-control, 12px); color: var(--ga-ink-1, #ada9a2); }
+  label { display: flex; align-items: center; gap: 8px; min-height: var(--ga-control-h, 26px); margin-bottom: 6px; }
+  select, input:not([type="checkbox"]) { height: var(--ga-control-h, 26px); box-sizing: border-box; padding: 0 8px; background: var(--ga-slot, #060504); color: var(--ga-ink-0, #f2ede4); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); font: inherit; }
+  select { flex: 1; min-width: 0; }
+  input:not([type="checkbox"]) { width: 56px; font-variant-numeric: tabular-nums; }
+  .check { gap: 8px; }
+  p { margin: 4px 0 0; color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); line-height: 1.45; }
 </style>

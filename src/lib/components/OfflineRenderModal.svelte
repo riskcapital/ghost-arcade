@@ -554,7 +554,7 @@
   }
   .modal-head h2 {
     margin: 0;
-    font-size: 15px;
+    font-size: 14px;
     letter-spacing: 2px;
     color: var(--ga-blue-300);
     font-weight: 600;
@@ -566,7 +566,7 @@
     background: transparent;
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
-    font-size: 19px;
+    font-size: 20px;
     line-height: 1;
     cursor: pointer;
     display: inline-flex;
@@ -805,7 +805,7 @@
     line-height: 56px;
     margin: 6px auto 12px;
   }
-  .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 17px; }
+  .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 16px; }
   .success-meta { color: var(--text-muted, #888); font-size: 12px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); margin: 0 0 12px; }
   .preview {
     width: 100%;
@@ -844,6 +844,6 @@
     margin: 6px auto 12px;
     font-weight: 700;
   }
-  .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 17px; }
+  .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 16px; }
   .error-msg { color: #ff8888; font-size: 13px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); word-break: break-word; }
 </style>

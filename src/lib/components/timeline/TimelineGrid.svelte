@@ -434,11 +434,11 @@
     {/each}
     <div class="ctx-sep"></div>
     <button class="ctx-item" onclick={(e) => { e.stopPropagation(); copyKeyframe(); }}>
-      Copy Keyframe <span class="ctx-shortcut">Ctrl+C</span>
+      Copy keyframe <span class="ctx-shortcut">Ctrl+C</span>
     </button>
     <button class="ctx-item" disabled={!canPasteHere}
       onclick={(e) => { e.stopPropagation(); if (canPasteHere) pasteAtPlayhead(); }}>
-      Paste at Playhead <span class="ctx-shortcut">Ctrl+V</span>
+      Paste at playhead <span class="ctx-shortcut">Ctrl+V</span>
     </button>
     <div class="ctx-sep"></div>
     <button class="ctx-item ctx-delete" onclick={(e) => { e.stopPropagation(); deleteKeyframe(); }}>Delete</button>
@@ -450,11 +450,11 @@
     oncontextmenu={(e) => e.preventDefault()}>
     <button class="ctx-item" disabled={!canPasteHere}
       onclick={(e) => { e.stopPropagation(); if (canPasteHere) pasteAtCursor(); }}>
-      Paste Keyframe Here
+      Paste keyframe here
     </button>
     <button class="ctx-item" disabled={!canPasteHere}
       onclick={(e) => { e.stopPropagation(); if (canPasteHere) pasteAtPlayhead(); }}>
-      Paste at Playhead <span class="ctx-shortcut">Ctrl+V</span>
+      Paste at playhead <span class="ctx-shortcut">Ctrl+V</span>
     </button>
   </div>
 {/if}
@@ -465,7 +465,7 @@
     overflow-x: auto;
     overflow-y: auto;
     position: relative;
-    background: rgba(8, 8, 12, 0.98);
+    background: var(--ga-void, #08080c);
     cursor: crosshair;
   }
   .ruler {
@@ -473,8 +473,8 @@
     position: sticky;
     top: 0;
     z-index: 2;
-    background: rgba(14, 14, 18, 0.98);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: var(--ga-card, #0e0e12);
+    border-bottom: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
   }
   .ruler-tick {
     position: absolute;
@@ -488,8 +488,8 @@
     top: 4px;
     left: 3px;
     font-size: 9px;
-    color: #555;
-    font-family: var(--font-jetbrains), monospace;
+    color: var(--ga-ink-2, #555);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     white-space: nowrap;
   }
   .tracks-area {
@@ -511,7 +511,7 @@
     top: 50%;
     transform: translate(-50%, -50%);
     color: var(--ga-coral, #ff6f5e);
-    font-size: 17px;
+    font-size: 16px;
     cursor: grab;
     padding: 2px 4px;
     z-index: 5;
@@ -519,7 +519,7 @@
     user-select: none;
     pointer-events: auto;
   }
-  .kf-mark:hover { color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff); font-size: 19px; }
+  .kf-mark:hover { color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff); font-size: 20px; }
   .kf-mark:active { cursor: grabbing; color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 55%, #ffffff); }
   .kf-mark.bool { color: var(--ga-blue-200); }
   .kf-mark.selected {
@@ -558,11 +558,11 @@
   .context-menu {
     position: fixed;
     z-index: 10000;
-    background: var(--bg-tertiary, #1a1a22);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 4px;
+    background: var(--ga-raise, #1a1a22);
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
+    border-radius: var(--ga-r-soft, 6px);
     padding: 4px 0;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
     min-width: 160px;
     max-width: calc(100vw - 16px);
     max-height: calc(100vh - 16px);
@@ -571,17 +571,18 @@
   .ctx-item {
     display: block;
     width: 100%;
-    padding: 4px 12px;
+    padding: 5px 12px;
     background: none;
     border: none;
-    color: var(--text-primary, #ccc);
-    font-size: 12px;
+    color: var(--ga-ink-1, #ccc);
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-body, 500);
     text-align: left;
     cursor: pointer;
   }
-  .ctx-item:hover:not(:disabled) { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent); color: #fff; }
+  .ctx-item:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: var(--ga-ink-0, #fff); }
   .ctx-item:disabled { opacity: 0.4; cursor: default; }
-  .ctx-delete { color: #FF4757; }
-  .ctx-sep { height: 1px; background: rgba(255,255,255,0.06); margin: 2px 0; }
-  .ctx-shortcut { float: right; color: rgba(255,255,255,0.35); font-size: 11px; padding-left: 8px; }
+  .ctx-delete { color: var(--ga-rec, #FF4757); }
+  .ctx-sep { height: 1px; background: var(--ga-line, rgba(255,255,255,0.07)); margin: 4px 0; }
+  .ctx-shortcut { float: right; color: var(--ga-ink-2, #888); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: var(--ga-text-meta, 11px); padding-left: 8px; }
 </style>

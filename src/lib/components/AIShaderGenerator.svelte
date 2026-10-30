@@ -339,7 +339,7 @@
 
   .header h3 {
     margin: 0;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     flex: 1;
     background: linear-gradient(90deg, #BB86FC, #A78BFA);
@@ -358,7 +358,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 21px;
+    font-size: 20px;
     line-height: 1;
   }
 

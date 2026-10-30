@@ -31,7 +31,6 @@
 <style>
   .macros { display: flex; align-items: center; gap: 4px; }
   .macro { display: flex; align-items: center; gap: 2px; }
-  .macro :global(.knob-label) { font-size: 8px; letter-spacing: 0.1em; }
   .macro :global(.knob-wrap) { min-width: 40px; gap: 1px; }
   .side { display: flex; flex-direction: column; align-items: center; gap: 3px; }
   .side :global(.jack-wrap) { transform: scale(0.8); margin: -3px 0; }
@@ -45,9 +44,9 @@
     color: var(--studio-muted);
     border-radius: 3px;
     font: inherit;
-    font-size: 8px;
+    font-size: var(--ga-text-micro, 9px);
     font-weight: 700;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     cursor: pointer;
   }
   .fx.has { color: var(--studio-accent); border-color: var(--studio-accent); }

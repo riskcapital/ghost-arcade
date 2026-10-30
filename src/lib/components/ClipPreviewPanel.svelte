@@ -295,7 +295,7 @@
     margin-bottom: 2px;
   }
   .cpp-title {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     color: #fff;
     overflow: hidden;
@@ -357,7 +357,7 @@
     color: #666;
   }
   .cpp-preview-empty-type {
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 600;
     color: var(--text-secondary, #aaa);
     text-transform: uppercase;

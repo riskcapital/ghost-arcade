@@ -164,10 +164,12 @@
     transform-origin: 50% calc(var(--size) / 2 - 4px);
     pointer-events: none;
   }
+  /* The faceplate legend: 9px eyebrow caps, the same under every knob. */
   .knob-label {
-    font-size: 9px;
+    font-size: var(--ga-text-micro, 9px);
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    line-height: 1.2;
     text-transform: uppercase;
     color: var(--studio-muted);
     white-space: nowrap;

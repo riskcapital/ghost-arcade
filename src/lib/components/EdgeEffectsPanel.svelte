@@ -40,10 +40,10 @@
     { value: 'overlay', label: 'Overlay' },
     { value: 'difference', label: 'Difference' },
     { value: 'exclusion', label: 'Exclusion' },
-    { value: 'softlight', label: 'Soft Light' },
-    { value: 'hardlight', label: 'Hard Light' },
-    { value: 'color-dodge', label: 'Color Dodge' },
-    { value: 'color-burn', label: 'Color Burn' },
+    { value: 'softlight', label: 'Soft light' },
+    { value: 'hardlight', label: 'Hard light' },
+    { value: 'color-dodge', label: 'Color dodge' },
+    { value: 'color-burn', label: 'Color burn' },
     { value: 'lighten', label: 'Lighten' },
     { value: 'darken', label: 'Darken' },
   ];
@@ -312,7 +312,7 @@
       {/each}
 
       <button class="btn-add-effect" onclick={() => project.addEdgeEffect($selectedLayer.id)}>
-        + Add Effect
+        + Add effect
       </button>
     {/if}
   </div>
@@ -321,78 +321,78 @@
 <style>
   .edge-effects-panel {
     padding: 8px 0;
-    border-top: 1px solid #333;
+    border-top: 1px solid var(--ga-line-1);
   }
 
   .section-header-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    /* Reduced left padding from 12 → 0 so this title's left edge lines
-       up with the LAYER EFFECTS title (which sits at padding 4 0). */
+    min-height: var(--ga-control-h-sm);
     padding: 4px 0;
   }
 
+  /* Eyebrow section label, same as every layer editor. */
   .section-title {
-    font-size: 12px;
-    font-weight: 600;
-    /* Match LAYER EFFECTS accent — was orange. Both effect surfaces
-       read as sibling sections of the layer inspector. */
-    color: var(--ga-violet, #9b87f5);
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking);
     flex: 1;
   }
 
   .toggle-label {
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    gap: 6px;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1);
     cursor: pointer;
   }
 
   .toggle-label input { width: 14px; height: 14px; }
 
   .btn-enable {
-    background: #333;
-    color: #ff9800;
-    border: 1px solid #ff9800;
-    padding: 2px 10px;
-    border-radius: 4px;
-    font-size: 11px;
+    height: var(--ga-control-h-sm);
+    background: var(--ga-sub);
+    color: var(--ga-ink-1);
+    border: 1px solid var(--ga-line-2);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
   }
-  .btn-enable:hover { background: #ff9800; color: #000; }
+  .btn-enable:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
 
   .btn-disable {
     background: none;
     border: none;
-    color: #666;
+    color: var(--ga-ink-2);
     cursor: pointer;
-    font-size: 15px;
+    font-size: 14px;
     padding: 0 4px;
   }
-  .btn-disable:hover { color: #f44; }
+  .btn-disable:hover { color: var(--ga-rec); }
 
   .edge-warning {
-    margin: 6px 8px;
+    margin: 6px 0;
     padding: 6px 8px;
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     line-height: 1.45;
     color: #ffcf8a;
     background: #2b2112;
     border: 1px solid #6b4b18;
-    border-radius: 5px;
+    border-radius: var(--ga-r-hard);
   }
 
-  .stack-controls { margin: 4px 8px 6px; }
+  .stack-controls { margin: 4px 0 6px; }
 
   .effect-card {
-    margin: 4px 8px;
-    border: 1px solid #333;
-    border-radius: 6px;
+    margin: 6px 0;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     overflow: hidden;
   }
   .effect-card.disabled { opacity: 0.5; }
@@ -401,8 +401,9 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 8px;
-    background: #1a1a1c;
+    min-height: var(--ga-control-h);
+    padding: 2px 8px;
+    background: var(--ga-card);
   }
   .effect-header input[type="checkbox"] { width: 14px; height: 14px; flex-shrink: 0; }
 
@@ -411,8 +412,9 @@
     min-width: 0;
     background: none;
     border: none;
-    color: var(--text-primary, #ccc);
-    font-size: 12px;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     text-align: left;
     padding: 2px 0;
@@ -420,147 +422,155 @@
     justify-content: space-between;
     gap: 4px;
   }
-  .effect-title:hover { color: #fff; }
+  .effect-title:hover { color: var(--ga-ink-0); }
   .effect-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .expand-icon { color: #666; font-size: 15px; }
+  .expand-icon { color: var(--ga-ink-2); font-size: 14px; }
 
   .btn-move {
     background: none;
     border: none;
-    color: #777;
+    color: var(--ga-ink-2);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ga-text-control);
     padding: 0 2px;
   }
-  .btn-move:hover:not(:disabled) { color: #fff; }
+  .btn-move:hover:not(:disabled) { color: var(--ga-ink-0); }
   .btn-move:disabled { opacity: 0.3; cursor: default; }
 
   .effect-mix {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 8px 5px 30px;
-    background: #1a1a1c;
+    padding: 0 8px 6px 30px;
+    background: var(--ga-card);
   }
 
   .blend-select {
     width: 96px;
-    background: #333;
-    color: var(--text-primary, #ccc);
-    border: 1px solid #444;
-    border-radius: 3px;
-    font-size: 11px;
-    padding: 2px;
+    height: var(--ga-control-h-sm);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-meta);
+    padding: 0 4px;
   }
 
   .opacity-slider {
     flex: 1;
     min-width: 40px;
-    accent-color: #ff9800;
+    accent-color: var(--ga-slider-fill, var(--ga-blue));
   }
 
   .btn-remove {
     background: none;
     border: none;
-    color: #666;
+    color: var(--ga-ink-2);
     cursor: pointer;
-    font-size: 15px;
+    font-size: 14px;
     padding: 0 2px;
     flex-shrink: 0;
   }
-  .btn-remove:hover { color: #f44; }
+  .btn-remove:hover { color: var(--ga-rec); }
 
   .effect-controls {
     padding: 6px 8px;
-    background: #111113;
+    background: var(--ga-panel);
+    border-top: 1px solid var(--ga-line-1);
   }
 
   .subsection {
-    margin: 8px 0;
+    margin: 10px 0;
   }
 
   .subsection-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: #666;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking);
     display: block;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
   }
 
   .control-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    min-height: var(--ga-control-h-sm);
     margin-bottom: 4px;
   }
 
-  .toggle-row { cursor: pointer; font-size: 11px; color: #aaa; }
+  .toggle-row { cursor: pointer; font-size: var(--ga-text-control); color: var(--ga-ink-1); }
   .toggle-row input { width: 14px; height: 14px; }
 
   .control-label {
-    width: 60px;
-    font-size: 11px;
-    color: #777;
+    width: 72px;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1);
     flex-shrink: 0;
   }
 
   .control-row input[type="color"] {
     width: 28px;
-    height: 22px;
-    border: 1px solid #555;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     padding: 0;
     cursor: pointer;
   }
 
-  .radius-slider { flex: 1; accent-color: #ff9800; height: 14px; }
-  .control-value { width: 44px; text-align: right; font-size: 10px; color: #777; }
+  .radius-slider { flex: 1; accent-color: var(--ga-slider-fill, var(--ga-blue)); height: 14px; }
+  .control-value { width: 44px; text-align: right; font-size: var(--ga-text-meta); color: var(--ga-ink-1); font-variant-numeric: tabular-nums; }
 
   .alpha-slider {
     flex: 1;
-    accent-color: #ff9800;
+    accent-color: var(--ga-slider-fill, var(--ga-blue));
     height: 14px;
   }
 
   .control-row select {
     flex: 1;
     min-width: 0;
-    background: #222;
-    color: var(--text-primary, #ccc);
-    border: 1px solid #444;
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 11px;
+    height: var(--ga-control-h);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
+    border: 1px solid var(--ga-line-2);
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
   }
 
   .btn-more {
     display: block;
+    height: var(--ga-control-h-sm);
     margin: 6px 0 4px;
-    padding: 3px 8px;
-    background: #1c1c20;
-    color: #9aa3b5;
-    border: 1px solid #333;
-    border-radius: 4px;
-    font-size: 11px;
+    padding: 0 10px;
+    background: var(--ga-sub);
+    color: var(--ga-ink-1);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
   }
-  .btn-more:hover { color: #fff; border-color: #555; }
+  .btn-more:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
 
   .btn-add-effect {
     display: block;
-    width: calc(100% - 16px);
-    margin: 6px 8px;
-    padding: 5px;
-    background: #222;
-    color: var(--text-muted, #888);
-    border: 1px dashed #444;
-    border-radius: 4px;
-    font-size: 11px;
+    width: 100%;
+    height: var(--ga-control-h);
+    margin: 6px 0;
+    padding: 0 10px;
+    background: transparent;
+    color: var(--ga-ink-1);
+    border: 1px dashed var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     text-align: center;
   }
-  .btn-add-effect:hover { color: #ff9800; border-color: #ff9800; }
+  .btn-add-effect:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
 </style>

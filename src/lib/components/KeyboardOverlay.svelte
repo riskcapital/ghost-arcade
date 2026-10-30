@@ -303,7 +303,7 @@
     background: #7cffc4;
     color: #00140a;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 800;
     padding: 1px 4px;
     border-radius: 2px;

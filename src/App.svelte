@@ -7416,6 +7416,7 @@
         >
           Fullscreen
         </button>
+        <span class="tb-divider" aria-hidden="true"></span>
         <button
           class="output-btn sim-launch-btn stage-sim-btn"
           class:active={showStage3D || stage3DWindowOpen}
@@ -7431,6 +7432,20 @@
             <path d="M12 5.5v6" />
           </svg>
           <span class="tb-label">Stage Sim</span>
+        </button>
+        <!-- Mapping and VJ open the same live 2D stage editor, from the same place. -->
+        <button
+          class="output-btn sim-launch-btn stage-edit-btn"
+          class:active={$vjStageEdit}
+          onclick={() => vjStageEdit.set(true)}
+          title="Open Stage Editor"
+          aria-label="Open Stage Editor"
+        >
+          <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="15" rx="2" />
+            <path d="M7 15 17 8M17 8l-1 4M17 8l-4 1" />
+          </svg>
+          <span class="tb-label">Stage Edit</span>
         </button>
         <button
           class="output-btn sim-launch-btn map-sim-btn"
@@ -7574,35 +7589,6 @@
         {/if}
         </div>
 
-        <!-- VJ Mixer Button -->
-        <button
-          class="vj-btn"
-          onclick={openVJMode}
-          title="Open VJ Mixer"
-          data-midi-path="vj:mode"
-          data-midi-label="VJ Mode"
-          data-midi-mode="toggle"
-        >
-          VJ
-        </button>
-
-        <!-- Mapping and VJ open the same live stage screen editor. -->
-        <button
-          class="stage-btn stage-edit-btn"
-          class:active={$vjStageEdit}
-          onclick={() => vjStageEdit.set(true)}
-          title="Open Stage Editor"
-          aria-label="Open Stage Editor"
-        >
-          <svg class="stage-edit-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 20l4.1-.9L19.2 8l-3.3-3.3L4.9 15.8 4 20Z" />
-            <path d="M14.8 5.8 18.1 9.1" />
-            <path d="M13.5 19.5h6" />
-            <path d="M16.5 16.5v6" />
-          </svg>
-          <span class="tb-label">Stage</span>
-        </button>
-
         <!-- Settings Button -->
         <button class="settings-btn" onclick={() => showSettings = true} title="Settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -7610,6 +7596,20 @@
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
+
+        <!-- Mode switch: the same control, in the same place, in VJ mode. -->
+        <div class="ga-mode-switch" role="group" aria-label="Mode">
+          <button class="active" aria-pressed="true" title="Mapping">Mapping</button>
+          <button
+            class="mode-vj"
+            aria-pressed="false"
+            onclick={openVJMode}
+            title="Open VJ Mixer"
+            data-midi-path="vj:mode"
+            data-midi-label="VJ Mode"
+            data-midi-mode="toggle"
+          >VJ</button>
+        </div>
 
         <div class="mobile-btn-wrapper">
           <button
@@ -8831,10 +8831,10 @@
         <span class="output-status">Output: Active</span>
       {/if}
       {#if $settings.output.blackout}
-        <span class="blackout-status">BLACKOUT</span>
+        <span class="blackout-status">Blackout</span>
       {/if}
       {#if $settings.output.testPattern && $settings.output.testPattern !== 'none'}
-        <span class="test-pattern-status">TEST: {$settings.output.testPattern}</span>
+        <span class="test-pattern-status">Test pattern: {$settings.output.testPattern}</span>
       {/if}
       <span class="spacer"></span>
 
@@ -9214,10 +9214,10 @@
   }
   :global(details summary) {
     cursor: pointer;
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     color: #999;
     padding: 8px 0 6px;
     user-select: none;
@@ -9412,7 +9412,7 @@
     background: var(--ga-void, var(--bg-primary));
     color: var(--ga-ink-0, var(--text-primary));
     font-family: var(--ga-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-    font-size: 15px;
+    font-size: 14px;
     -webkit-font-smoothing: antialiased;
   }
   .app.native-primary-presenter {
@@ -9485,7 +9485,7 @@
     background: var(--ga-bar, var(--bg-secondary));
     backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--ga-line-2, var(--border-secondary));
-    height: 52px;
+    height: var(--ga-bar-h);
     position: relative;
     z-index: 1000;
     font-family: var(--ga-font-ui, inherit);
@@ -9545,7 +9545,7 @@
     background: linear-gradient(90deg, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.08));
     border-bottom: 1px solid rgba(245, 158, 11, 0.35);
     color: #fde68a;
-    font-size: 13.5px;
+    font-size: 13px;
     line-height: 1.4;
   }
   .gpu-warning-icon { flex: 0 0 auto; color: #fbbf24; display: flex; align-items: center; }
@@ -9661,7 +9661,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -9746,24 +9746,25 @@
   }
 
   .menu-shortcut {
-    font-size: 11px;
-    color: #555;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2);
     margin-left: 16px;
   }
 
   .menu-separator {
     height: 1px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--ga-line-1);
     margin: 4px 0;
   }
 
   .menu-section-label {
     padding: 6px 12px 4px;
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow, 10px);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: rgba(255, 255, 255, 0.45);
-    font-weight: 600;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
+    font-weight: 700;
   }
 
   .menu-item-recent .menu-label {
@@ -9798,7 +9799,7 @@
     color: var(--ga-ink-1, #9aa0ac);
     padding: 0 12px;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 13.5px;
+    font-size: 13px;
     width: 140px;
     transition: all 0.15s;
   }
@@ -9816,7 +9817,7 @@
     color: #23110c;
     padding: 0 13px;
     border-radius: var(--ga-r-soft, 7px);
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.15s;
@@ -9894,8 +9895,8 @@
   .display-menu-title {
     padding: 5px 8px 7px;
     color: #7d8595;
-    font-size: 10px;
-    letter-spacing: 0.08em;
+    font-size: var(--ga-text-eyebrow, 10px);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
   }
   .display-menu-item {
@@ -9935,14 +9936,14 @@
   }
 
   .output-btn {
-    height: 32px;
+    height: var(--ga-bar-control-h);
     background: var(--ga-card, #13161c);
     color: var(--ga-ink-1, #9aa0ac);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     padding: 0 13px;
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 600;
     transition: all 0.15s;
     display: inline-flex;
@@ -9968,8 +9969,7 @@
 	    font-weight: 700;
 	  }
 
-	  .sim-launch-icon,
-	  .stage-edit-icon {
+	  .sim-launch-icon {
 	    flex: 0 0 auto;
 	    stroke: currentColor;
 	    stroke-width: 1.8;
@@ -9983,7 +9983,9 @@
 	  }
 
 	  .stage-sim-btn:hover,
-	  .stage-sim-btn.active {
+	  .stage-sim-btn.active,
+	  .stage-edit-btn:hover,
+	  .stage-edit-btn.active {
 	    background: var(--ga-blue-a08);
 	    border-color: var(--ga-blue-a45);
 	    color: var(--ga-blue-200);
@@ -9998,7 +10000,7 @@
 
 	  .output-btn.settings-btn {
 	    padding: 6px 10px;
-	    font-size: 15px;
+	    font-size: 14px;
 	  }
 
   .output-settings-popover {
@@ -10018,12 +10020,12 @@
   }
 
   .output-settings-popover .settings-header {
-    font-weight: 600;
-    font-size: 13px;
+    font-weight: 700;
+    font-size: var(--ga-text-eyebrow, 10px);
     color: var(--accent-primary);
     margin-bottom: 12px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .output-settings-popover .settings-section {
@@ -10155,7 +10157,7 @@
     color: var(--ga-rec, #ff4438);
     padding: 0;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1;
     font-weight: 600;
     cursor: pointer;
@@ -10430,11 +10432,11 @@
     gap: 2px;
   }
   .mic-picker-label {
-    font-size: 11px;
-    font-weight: 600;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     color: #808080;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     padding: 4px 8px 2px;
   }
   .mic-picker-item {
@@ -10479,7 +10481,7 @@
     bottom: -1px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 7px;
+    font-size: 9px;
     font-weight: 700;
     color: #2ED573;
     letter-spacing: 0.5px;
@@ -10490,65 +10492,9 @@
     50% { opacity: 0.6; box-shadow: 0 0 3px #2ED57340; }
   }
 
-  /* VJ Button in header */
-  .vj-btn {
-    height: 32px;
-    background: var(--ga-coral, #ff6f5e);
-    border: 1px solid var(--ga-coral, #ff6f5e);
-    color: #23110c;
-    padding: 0 18px;
-    border-radius: var(--ga-r-soft, 7px);
-    font-size: 13.5px;
-    font-weight: 700;
-    cursor: pointer;
-    letter-spacing: 0.02em;
-    transition: filter 0.14s;
-  }
-
-  .vj-btn:hover {
-    filter: brightness(1.06);
-  }
-
-  /* Stage Designer button — sibling to VJ button, distinct cyan
-     gradient so the user reads them as different workspaces at a
-     glance. */
-	  .stage-btn {
-	    height: 32px;
-	    background: var(--ga-card, #13161c);
-	    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-	    color: var(--ga-ink-1, #9aa0ac);
-	    padding: 0 13px;
-	    border-radius: var(--ga-r-soft, 7px);
-	    font-size: 13.5px;
-	    font-weight: 700;
-	    cursor: pointer;
-	    letter-spacing: 0.02em;
-	    transition: color 0.14s, border-color 0.14s, background 0.14s;
-	    display: inline-flex;
-	    align-items: center;
-	    gap: 7px;
-	  }
-	  .stage-btn:hover,
-	  .stage-btn.active {
-	    background: var(--ga-card, #13161c);
-	    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
-	    color: var(--ga-ink-0, #eef0f4);
-	  }
-
-	  .stage-btn.active {
-	    background: var(--ga-blue-a08);
-	    border-color: var(--ga-blue-a45);
-	    color: var(--ga-blue-200);
-	  }
-
-	  .stage-edit-icon {
-	    width: 15px;
-	    height: 15px;
-	  }
-
   .settings-btn {
-    width: 34px;
-    height: 32px;
+    width: var(--ga-bar-control-h);
+    height: var(--ga-bar-control-h);
     background: var(--ga-card, #13161c);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     color: var(--ga-ink-1, #9aa0ac);
@@ -10577,7 +10523,7 @@
     align-items: center;
     gap: 7px;
     height: 32px;
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--ga-ink-1, #9aa0ac);
     background: transparent;
@@ -10831,14 +10777,14 @@
   }
 
   .pairing-code-label {
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow, 10px);
     color: #777;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .pairing-code-value {
-    font-size: 17px;
+    font-size: 16px;
     letter-spacing: 0.08em;
     color: var(--accent-primary);
     background: transparent;
@@ -11140,10 +11086,10 @@
     padding: 0;
     background: var(--ga-bar, #0e1014);
     border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 11.5px;
+    font-family: var(--ga-font-ui, inherit);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 500;
     color: var(--ga-ink-2, #5e6571);
-    letter-spacing: 0.02em;
     flex: 0 0 30px;
     z-index: 60;
   }
@@ -11170,19 +11116,14 @@
   }
   .status-pill:hover {
     color: var(--ga-ink-0, #eef0f4);
-    background: rgba(206, 222, 236, 0.10);
-    border-color: rgba(206, 222, 236, 0.42) !important;
+    border-color: var(--ga-line-3) !important;
   }
-  /* Active toggles wear the ghost-chrome accent: ice-white fill, cold dark
-     ink, and a cool halo — the same language as the VJ button and the other
-     filled accent controls. */
+  /* An open tool or a switch that is on: the selection colours, as everywhere. */
   .status-pill.on {
-    color: var(--ga-blue-mute-800);
-    background: linear-gradient(180deg, #f4f9fd, #cfdde9);
-    border-color: rgba(214, 228, 240, 0.72) !important;
-    box-shadow: 0 0 12px rgba(176, 200, 222, 0.32);
+    color: var(--ga-selection-ink);
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line) !important;
   }
-  .status-pill.on:hover { filter: brightness(1.04); }
   .status-pill-icon {
     flex: none;
     color: var(--ga-ink-1, #9aa0ac);
@@ -11203,10 +11144,8 @@
     fill: currentColor;
     opacity: 0.18;
   }
-  /* On an ice-white pill the icon reads as dark ink, not a glowing neon
-     stroke — the glow was fighting the fill and looked muddy. */
   .status-pill.on .status-pill-icon {
-    color: var(--ga-blue-mute-800);
+    color: var(--ga-selection-ink);
     filter: none;
   }
   .map-tool-pill {
@@ -11226,8 +11165,7 @@
     cursor: pointer;
   }
   .status-grid-select:hover {
-    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4));
-    background-color: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
+    border-color: var(--ga-line-3);
   }
 
   /* Hide the floating BottomDock since the pills now live inline in
@@ -11270,20 +11208,16 @@
     color: var(--ga-rec, #ff4438);
     font-weight: 700;
     animation: blackout-pulse 1.5s ease-in-out infinite;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
 
   .test-pattern-status {
     color: #FFD740;
     font-weight: 600;
-    text-transform: uppercase;
-    font-size: 11px;
   }
 
   .fps-counter {
     font-family: var(--ga-font-mono, 'Consolas', 'Monaco', 'Courier New', monospace);
-    font-size: 12px;
+    font-size: var(--ga-text-meta, 11px);
     font-weight: 600;
     color: var(--ga-ink-1, #9aa0ac);
     padding: 0 13px;
@@ -11302,7 +11236,7 @@
 
   .version-label {
     font-family: var(--ga-font-mono, 'Consolas', 'Monaco', 'Courier New', monospace);
-    font-size: 11.5px;
+    font-size: var(--ga-text-meta, 11px);
     color: var(--ga-ink-2, #5e6571);
     background: transparent;
     padding: 0 13px;
@@ -11648,7 +11582,7 @@
   }
 
   .close-modal-title {
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 8px;
@@ -11850,7 +11784,7 @@
   }
 
   .shortcut-overlay-title {
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 600;
     color: var(--text-primary, #e8e8e8);
     margin: 0 0 24px 0;
@@ -11864,10 +11798,10 @@
   }
 
   .shortcut-section h3 {
-    font-size: 12px;
-    font-weight: 600;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     color: #999;
     margin: 0 0 12px 0;
   }

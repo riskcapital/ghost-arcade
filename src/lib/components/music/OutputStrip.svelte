@@ -28,7 +28,7 @@
 <div class="strip" role="group" aria-label="Scan synth and layer inputs">
   <button class="scan-toggle" class:on={s.scanOn} aria-pressed={s.scanOn} onclick={() => setScan(!s.scanOn)} title="Sweep a line across the output and play what it crosses">
     <span class="led" class:on={s.scanOn}></span>
-    SCAN
+    Scan
   </button>
   <span class="hint">{s.scanOn ? 'Reading the picture' : 'Plays the picture'}</span>
   <div class="knobs">
@@ -40,7 +40,7 @@
   <StudioJack id="audio:scan" label="Out" title="Scan synth sound" />
   {#if layers}
     <span class="spacer"></span>
-    <span class="group-name">LAYERS</span>
+    <span class="ga-eyebrow">Layers</span>
     {#each $vjClipLauncher.layerStates as _, i (i)}
       <StudioJack id="dest:layer:{i}" label="L{i + 1}" title="Pulse layer {i + 1} with a control signal" />
     {/each}
@@ -63,7 +63,7 @@
     border-radius: var(--studio-radius);
   }
   .scan-toggle {
-    height: 26px;
+    height: var(--ga-control-h, 26px);
     padding: 0 10px;
     display: inline-flex;
     align-items: center;
@@ -73,16 +73,14 @@
     color: var(--studio-ink);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
   .scan-toggle.on { border-color: var(--studio-accent); color: var(--studio-accent); }
   .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-edge); }
   .led.on { background: var(--studio-accent); box-shadow: 0 0 8px var(--studio-accent); }
-  .hint { font-size: 11px; color: var(--studio-muted); white-space: nowrap; min-width: 112px; }
+  .hint { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); white-space: nowrap; min-width: 112px; }
   .knobs { display: flex; gap: 12px; }
   .spacer { flex: 1; }
-  .group-name { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--studio-muted); }
 </style>

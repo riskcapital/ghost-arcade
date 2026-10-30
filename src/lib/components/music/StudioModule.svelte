@@ -62,8 +62,18 @@
     border-bottom: 1px solid var(--studio-edge-soft);
     white-space: nowrap;
   }
-  h2 { margin: 0; font-family: var(--studio-title-font, inherit); font-size: 11px; font-weight: 700; letter-spacing: var(--studio-title-tracking, 0.12em); }
-  .subtitle { min-width: 0; color: var(--studio-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+  /* The module's name is its faceplate eyebrow: the app's eyebrow, in the face's ink. */
+  h2 {
+    margin: 0;
+    font-family: var(--studio-title-font, inherit);
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    line-height: 1.2;
+    text-transform: uppercase;
+    color: var(--studio-ink);
+  }
+  .subtitle { min-width: 0; color: var(--studio-muted); font-size: var(--ga-text-meta, 11px); overflow: hidden; text-overflow: ellipsis; }
   .spacer { flex: 1; }
   .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-edge); flex: 0 0 auto; }
   .led.on { background: var(--studio-accent); box-shadow: 0 0 8px var(--studio-accent); }

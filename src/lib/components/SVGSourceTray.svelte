@@ -1935,7 +1935,7 @@
 
   .tray-header h3 {
     margin: 0;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-primary, #eee);
   }
@@ -2002,7 +2002,7 @@
   }
 
   .toggle {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-muted, #888);
   }
 

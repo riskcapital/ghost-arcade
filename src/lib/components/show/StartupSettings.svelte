@@ -105,22 +105,25 @@
   .st-panel { display: flex; flex-direction: column; gap: 4px; }
   .st-banner {
     padding: 8px 10px;
-    border-radius: 6px;
+    border-radius: var(--ga-r-hard, 5px);
     border: 1px solid rgba(240, 198, 116, 0.4);
     background: rgba(240, 198, 116, 0.08);
     color: #f0c674;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
   }
-  .st-path { word-break: break-all; font-family: var(--font-jetbrains), monospace; }
+  .st-path { word-break: break-all; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .st-buttons { display: flex; gap: 6px; }
   .st-buttons button {
-    font-size: 12px;
-    padding: 5px 10px;
-    border-radius: 4px;
-    border: 1px solid #33333a;
-    background: #15151b;
-    color: #ddd;
+    height: var(--ga-control-h, 26px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 4px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ga-ink-0, #ddd);
     cursor: pointer;
   }
-  .st-error { color: #ff8a80; font-size: 12px; }
+  .st-buttons button:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
+  .st-error { color: #ff8a80; font-size: var(--ga-text-control, 12px); }
 </style>

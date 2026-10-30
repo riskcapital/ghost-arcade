@@ -39,9 +39,9 @@
     { value: 'orbit', label: 'Turntable', description: 'Continuous rigid rotation around the vertical axis' },
     { value: 'tumble', label: 'Tumble', description: 'Continuous multi-axis rigid rotation' },
     { value: 'breathe', label: 'Breathe', description: 'Coherent rhythmic expansion and contraction' },
-    { value: 'drift', label: 'Organic Drift', description: 'Slow coherent motion through a 3D noise field' },
+    { value: 'drift', label: 'Organic drift', description: 'Slow coherent motion through a 3D noise field' },
     { value: 'vortex', label: 'Vortex', description: 'Continuous height-dependent torsion' },
-    { value: 'wave3d', label: 'Wave Field', description: 'Propagating spatial wave' },
+    { value: 'wave3d', label: 'Wave field', description: 'Propagating spatial wave' },
     { value: 'swarm', label: 'Swarm', description: 'Noise-driven flocking and separation' },
     { value: 'spiral', label: 'Spiral', description: 'Spiral motion pattern' },
     { value: 'scatter', label: 'Scatter', description: 'Random scatter and reassembly' },
@@ -49,7 +49,7 @@
     { value: 'implode', label: 'Implode', description: 'Points collapse to center' },
     { value: 'slice', label: 'Slice', description: 'Reveal via animated slice plane' },
     { value: 'peel', label: 'Peel', description: 'Layer-by-layer reveal' },
-    { value: 'voxelSnap', label: 'Voxel Snap', description: 'Snap to 3D voxel grid' },
+    { value: 'voxelSnap', label: 'Voxel snap', description: 'Snap to 3D voxel grid' },
     { value: 'gravity', label: 'Gravity', description: 'Physics-inspired falling motion' },
     { value: 'morph', label: 'Morph', description: 'Morph between shapes' },
   ];
@@ -57,29 +57,29 @@
   // Displacement types
   const displacementTypes: { value: SplatDisplacementType; label: string }[] = [
     { value: 'none', label: 'None' },
-    { value: 'noise', label: 'Noise Distortion' },
-    { value: 'curlNoise', label: 'Curl Flow' },
-    { value: 'audioReactive', label: 'Audio Reactive' },
-    { value: 'wave', label: 'Wave Field' },
-    { value: 'radialPulse', label: 'Radial Pulse' },
-    { value: 'twist', label: 'Axis Twist' },
-    { value: 'wind', label: 'Wind / Turbulence' },
-    { value: 'magnetic', label: 'Magnetic Field' },
-    { value: 'ripple', label: 'Interaction Ripple' },
-    { value: 'scanline', label: 'Scan Field' },
-    { value: 'glitch', label: 'Glitch Offset' },
+    { value: 'noise', label: 'Noise distortion' },
+    { value: 'curlNoise', label: 'Curl flow' },
+    { value: 'audioReactive', label: 'Audio reactive' },
+    { value: 'wave', label: 'Wave field' },
+    { value: 'radialPulse', label: 'Radial pulse' },
+    { value: 'twist', label: 'Axis twist' },
+    { value: 'wind', label: 'Wind / turbulence' },
+    { value: 'magnetic', label: 'Magnetic field' },
+    { value: 'ripple', label: 'Interaction ripple' },
+    { value: 'scanline', label: 'Scan field' },
+    { value: 'glitch', label: 'Glitch offset' },
   ];
 
   // Color effect types
   const colorEffectTypes: { value: SplatColorEffectType; label: string }[] = [
     { value: 'none', label: 'None' },
-    { value: 'chromatic', label: 'Chromatic Shift' },
-    { value: 'heatmap', label: 'Heat Map' },
-    { value: 'pointillist', label: 'Pointillist Cycling' },
-    { value: 'hologram', label: 'Hologram Scanlines' },
+    { value: 'chromatic', label: 'Chromatic shift' },
+    { value: 'heatmap', label: 'Heat map' },
+    { value: 'pointillist', label: 'Pointillist cycling' },
+    { value: 'hologram', label: 'Hologram scanlines' },
     { value: 'rainbow', label: 'Rainbow' },
-    { value: 'depthGradient', label: 'Depth Gradient' },
-    { value: 'neon', label: 'Neon Glow' },
+    { value: 'depthGradient', label: 'Depth gradient' },
+    { value: 'neon', label: 'Neon glow' },
     { value: 'pastel', label: 'Pastel' },
     { value: 'cyberpunk', label: 'Cyberpunk' },
     { value: 'fire', label: 'Fire' },
@@ -89,22 +89,22 @@
   // Opacity effect types
   const opacityEffectTypes: { value: SplatOpacityEffectType; label: string }[] = [
     { value: 'none', label: 'None' },
-    { value: 'dof', label: 'Depth of Field' },
-    { value: 'fog', label: 'Volumetric Fog' },
+    { value: 'dof', label: 'Depth of field' },
+    { value: 'fog', label: 'Volumetric fog' },
     { value: 'pulse', label: 'Pulse' },
-    { value: 'proximity', label: 'Proximity Reveal' },
+    { value: 'proximity', label: 'Proximity reveal' },
     { value: 'dissolve', label: 'Dissolve' },
   ];
 
   // Creative effect types
   const creativeEffectTypes: { value: SplatCreativeEffectType; label: string }[] = [
     { value: 'none', label: 'None' },
-    { value: 'feedback', label: 'Feedback Loop' },
+    { value: 'feedback', label: 'Feedback loop' },
     { value: 'kaleidoscope', label: 'Kaleidoscope' },
-    { value: 'constellation', label: 'Constellation / Sparkle' },
-    { value: 'datamosh', label: 'Datamosh / Glitch' },
-    { value: 'pixelSort', label: 'Pixel Sort' },
-    { value: 'echo', label: 'Echo / Ghost' },
+    { value: 'constellation', label: 'Constellation / sparkle' },
+    { value: 'datamosh', label: 'Datamosh / glitch' },
+    { value: 'pixelSort', label: 'Pixel sort' },
+    { value: 'echo', label: 'Echo / ghost' },
   ];
 
   // How the constellation sparkle combines with the point's own colour.
@@ -120,11 +120,11 @@
   // Render modes
   const renderModes: { value: SplatRenderMode; label: string }[] = [
     { value: 'points', label: 'Points' },
-    { value: 'gaussians', label: 'Gaussian Splats' },
+    { value: 'gaussians', label: 'Gaussian splats' },
     { value: 'spheres', label: 'Spheres' },
     { value: 'billboards', label: 'Billboards' },
     { value: 'cubes', label: 'Cubes' },
-    { value: 'wireframe', label: 'Wireframe (Lines)' },
+    { value: 'wireframe', label: 'Wireframe (lines)' },
   ];
 
   // Mouse interactions
@@ -148,35 +148,35 @@
 
   const animationControls: Partial<Record<SplatAnimationType, NumericSplatControl[]>> = {
     explode: [
-      { key: 'explodeForce', label: 'Burst Distance', min: 0, max: 8, step: 0.01, fallback: 2 },
+      { key: 'explodeForce', label: 'Burst distance', min: 0, max: 8, step: 0.01, fallback: 2 },
       { key: 'explodeTurbulence', label: 'Turbulence', min: 0, max: 2, step: 0.01, fallback: 0.35 },
     ],
     implode: [
       { key: 'implodeForce', label: 'Collapse', min: 0, max: 1, step: 0.01, fallback: 0.85 },
-      { key: 'implodeSpin', label: 'Core Spin', min: 0, max: 8, step: 0.01, fallback: 1.5 },
+      { key: 'implodeSpin', label: 'Core spin', min: 0, max: 8, step: 0.01, fallback: 1.5 },
     ],
     slice: [
-      { key: 'sliceWidth', label: 'Band Count', min: 0.5, max: 12, step: 0.1, fallback: 3 },
-      { key: 'sliceSoftness', label: 'Band Softness', min: 0.01, max: 0.95, step: 0.01, fallback: 0.2 },
+      { key: 'sliceWidth', label: 'Band count', min: 0.5, max: 12, step: 0.1, fallback: 3 },
+      { key: 'sliceSoftness', label: 'Band softness', min: 0.01, max: 0.95, step: 0.01, fallback: 0.2 },
       { key: 'sliceTravel', label: 'Travel', min: -5, max: 5, step: 0.01, fallback: 1 },
     ],
     peel: [
-      { key: 'peelWidth', label: 'Peel Width', min: 0.05, max: 2.5, step: 0.01, fallback: 0.55 },
+      { key: 'peelWidth', label: 'Peel width', min: 0.05, max: 2.5, step: 0.01, fallback: 0.55 },
       { key: 'peelCurl', label: 'Curl', min: 0, max: 10, step: 0.01, fallback: 2.2 },
     ],
-    voxelSnap: [{ key: 'voxelGridSize', label: 'Grid Density', min: 2, max: 64, step: 1, fallback: 16 }],
+    voxelSnap: [{ key: 'voxelGridSize', label: 'Grid density', min: 2, max: 64, step: 1, fallback: 16 }],
     gravity: [
       { key: 'gravityStrength', label: 'Gravity', min: 0, max: 12, step: 0.01, fallback: 2 },
-      { key: 'gravitySpread', label: 'Air Spread', min: 0, max: 2, step: 0.01, fallback: 0.25 },
+      { key: 'gravitySpread', label: 'Air spread', min: 0, max: 2, step: 0.01, fallback: 0.25 },
       { key: 'gravityFloor', label: 'Floor', min: -5, max: 2, step: 0.01, fallback: -2 },
     ],
     swarm: [
       { key: 'swarmCohesion', label: 'Cohesion', min: 0, max: 2, step: 0.01, fallback: 0.3 },
       { key: 'swarmSeparation', label: 'Separation', min: 0, max: 2, step: 0.01, fallback: 0.4 },
-      { key: 'swarmAlignment', label: 'Flow Alignment', min: 0, max: 2, step: 0.01, fallback: 0.6 },
+      { key: 'swarmAlignment', label: 'Flow alignment', min: 0, max: 2, step: 0.01, fallback: 0.6 },
     ],
     morph: [{ key: 'morphRoundness', label: 'Roundness', min: 0, max: 1, step: 0.01, fallback: 1 }],
-    orbit: [{ key: 'turntableTilt', label: 'Axis Tilt', min: -90, max: 90, step: 1, fallback: 0, suffix: '°' }],
+    orbit: [{ key: 'turntableTilt', label: 'Axis tilt', min: -90, max: 90, step: 1, fallback: 0, suffix: '°' }],
     wave3d: [
       { key: 'animationWaveFrequency', label: 'Frequency', min: 0.25, max: 20, step: 0.01, fallback: 5 },
       { key: 'animationWaveAmplitude', label: 'Amplitude', min: 0, max: 3, step: 0.01, fallback: 0.3 },
@@ -190,9 +190,9 @@
       { key: 'spiralTurns', label: 'Turns', min: -8, max: 8, step: 0.01, fallback: 2 },
       { key: 'spiralLift', label: 'Lift', min: -5, max: 5, step: 0.01, fallback: 1 },
     ],
-    tumble: [{ key: 'tumbleSpread', label: 'Axis Spread', min: 0, max: 3, step: 0.01, fallback: 1 }],
+    tumble: [{ key: 'tumbleSpread', label: 'Axis spread', min: 0, max: 3, step: 0.01, fallback: 1 }],
     breathe: [{ key: 'breatheAmount', label: 'Expansion', min: 0, max: 1, step: 0.01, fallback: 0.15 }],
-    drift: [{ key: 'driftAmount', label: 'Drift Range', min: 0, max: 2, step: 0.01, fallback: 0.25 }],
+    drift: [{ key: 'driftAmount', label: 'Drift range', min: 0, max: 2, step: 0.01, fallback: 0.25 }],
     vortex: [{ key: 'vortexTwist', label: 'Twist', min: -10, max: 10, step: 0.01, fallback: 2 }],
   };
 
@@ -416,17 +416,17 @@
 
 {#if isVJMode ? sc : layer && sc}
   <div data-help-page="point-clouds" class="splat-panel" class:compact>
-    {#if !compact}<h3>Splat / Point Cloud</h3>{/if}
+    {#if !compact}<h3>Splat / point cloud</h3>{/if}
 
     <!-- File Loading -->
     <div class="section">
       <label class="section-label">Point Cloud / Splat File</label>
       <div class="file-row">
         {#if onFileLoad}
-          <button class="file-button" onclick={onFileLoad}>Load File</button>
+          <button class="file-button" onclick={onFileLoad}>Load file</button>
         {:else}
           <input type="file" accept=".ply,.splat" onchange={handleFileSelect} id="ply-file-input" />
-          <label for="ply-file-input" class="file-button">Load PLY/Splat</label>
+          <label for="ply-file-input" class="file-button">Load PLY/splat</label>
         {/if}
       </div>
       {#if sc.filePath}
@@ -442,7 +442,7 @@
         </div>
 
         <div class="property-row">
-          <label>Point Density</label>
+          <label>Point density</label>
           <input
             type="range"
             min="0.01"
@@ -475,7 +475,7 @@
                 data-midi-label="Use Texture Map"
                 data-midi-mode="toggle"
               />
-              Use Texture Map
+              Use texture map
             </label>
           </div>
 
@@ -573,9 +573,9 @@
               >
                 <option value="spherical">Spherical</option>
                 <option value="cylindrical">Cylindrical</option>
-                <option value="planarXY">Planar XY (Front)</option>
-                <option value="planarXZ">Planar XZ (Top)</option>
-                <option value="planarYZ">Planar YZ (Side)</option>
+                <option value="planarXY">Planar XY (front)</option>
+                <option value="planarXZ">Planar xz (top)</option>
+                <option value="planarYZ">Planar yz (side)</option>
                 <option value="box">Box</option>
                 <option value="native">Native (from file)</option>
               </select>
@@ -672,7 +672,7 @@
       {#if showImportOrientation}
         <div class="section-content">
           <div class="property-row">
-            <label>Source Up</label>
+            <label>Source up</label>
             <select
               value={sc.importOrientation ?? 'authored'}
               onchange={(e) =>
@@ -697,10 +697,10 @@
               disabled={!hasAutoLevelSuggestion}
               onclick={() => applyImportOrientation('auto')}
             >
-              Auto Level
+              Auto level
             </button>
             <button class="reset-button" onclick={setCurrentAsUpright}>
-              Set Current As Upright
+              Set current as upright
             </button>
           </div>
 
@@ -726,7 +726,7 @@
       {#if showRendering}
         <div class="section-content">
           <div class="property-row">
-            <label>Render Mode</label>
+            <label>Render mode</label>
             <select
               value={sc.renderMode}
               onchange={(e) => doUpdate({ renderMode: (e.target as HTMLSelectElement).value as SplatRenderMode })}
@@ -744,7 +744,7 @@
           </div>
 
           <div class="property-row">
-            <label>Point Size</label>
+            <label>Point size</label>
             <input
               type="range"
               min="0.1"
@@ -763,7 +763,7 @@
           </div>
 
           <div class="property-row">
-            <label>Global Scale</label>
+            <label>Global scale</label>
             <input
               type="range"
               min="0.01"
@@ -782,7 +782,7 @@
           </div>
 
           <div class="property-row">
-            <label>Global Opacity</label>
+            <label>Global opacity</label>
             <input
               type="range"
               min="0"
@@ -820,7 +820,7 @@
           </div>
 
           <div class="property-row">
-            <label>BG Color</label>
+            <label>BG color</label>
             <input
               type="color"
               value={sc.backgroundColor ?? '#000000'}
@@ -840,7 +840,7 @@
                 data-midi-label="Size Attenuation"
                 data-midi-mode="toggle"
               />
-              Size Attenuation
+              Size attenuation
             </label>
           </div>
 
@@ -854,7 +854,7 @@
                 data-midi-label="Depth Test"
                 data-midi-mode="toggle"
               />
-              Depth Test
+              Depth test
             </label>
           </div>
 
@@ -869,7 +869,7 @@
                 data-midi-label="Solid Points"
                 data-midi-mode="toggle"
               />
-              Solid Points
+              Solid points
             </label>
           </div>
 
@@ -883,7 +883,7 @@
                 data-midi-label="Show Transform Gizmo"
                 data-midi-mode="toggle"
               />
-              Show Transform Gizmo
+              Show transform gizmo
             </label>
           </div>
         </div>
@@ -1051,7 +1051,7 @@
                   data-midi-label="Loop Animation"
                   data-midi-mode="toggle"
                 />
-                Loop Animation
+                Loop animation
               </label>
             </div>
 
@@ -1066,7 +1066,7 @@
                     data-midi-label="Ping Pong Animation"
                     data-midi-mode="toggle"
                   />
-                  Ping Pong
+                  Ping pong
                 </label>
               </div>
             {:else}
@@ -1191,7 +1191,7 @@
                     data-midi-label="Audio Displacement"
                     data-midi-mode="toggle"
                   />
-                  Audio Displacement
+                  Audio displacement
                 </label>
               </div>
 
@@ -1207,12 +1207,12 @@
                   data-midi-step="1"
                   data-midi-discrete="all,sub,bass,lowMid,mid,highMid,high"
                 >
-                  <option value="all">Full Mix</option>
+                  <option value="all">Full mix</option>
                   <option value="sub">Sub</option>
                   <option value="bass">Bass</option>
-                  <option value="lowMid">Low Mid</option>
+                  <option value="lowMid">Low mid</option>
                   <option value="mid">Mid</option>
-                  <option value="highMid">High Mid</option>
+                  <option value="highMid">High mid</option>
                   <option value="high">High</option>
                 </select>
               </div>
@@ -1297,7 +1297,7 @@
                 data-midi-label="Point Lighting"
                 data-midi-mode="toggle"
               />
-              Enable Lighting
+              Enable lighting
             </label>
           </div>
 
@@ -1322,7 +1322,7 @@
             </div>
 
             <div class="property-row">
-              <label>Key Color</label>
+              <label>Key color</label>
               <input
                 type="color"
                 value={sc.keyLightColor ?? '#ffffff'}
@@ -1333,7 +1333,7 @@
             </div>
 
             <div class="property-row">
-              <label>Key Power</label>
+              <label>Key power</label>
               <input
                 type="range"
                 min="0"
@@ -1352,7 +1352,7 @@
             </div>
 
             <div class="property-row">
-              <label>Key Orbit</label>
+              <label>Key orbit</label>
               <input
                 type="range"
                 min="-180"
@@ -1371,7 +1371,7 @@
             </div>
 
             <div class="property-row">
-              <label>Key Height</label>
+              <label>Key height</label>
               <input
                 type="range"
                 min="-90"
@@ -1390,7 +1390,7 @@
             </div>
 
             <div class="property-row">
-              <label>Rim Color</label>
+              <label>Rim color</label>
               <input
                 type="color"
                 value={sc.rimLightColor ?? '#66ccff'}
@@ -1401,7 +1401,7 @@
             </div>
 
             <div class="property-row">
-              <label>Rim Power</label>
+              <label>Rim power</label>
               <input
                 type="range"
                 min="0"
@@ -1420,7 +1420,7 @@
             </div>
 
             <div class="property-row">
-              <label>Rim Orbit</label>
+              <label>Rim orbit</label>
               <input
                 type="range"
                 min="-180"
@@ -1539,7 +1539,7 @@
           </div>
 
           <div class="property-row">
-            <label>Fresnel Power</label>
+            <label>Fresnel power</label>
             <input
               type="range" min="0.5" max="8" step="0.05"
               value={sc.fresnelPower ?? 3}
@@ -1567,7 +1567,7 @@
           </div>
 
           <div class="property-row">
-            <label>Specular Tint</label>
+            <label>Specular tint</label>
             <input
               type="color"
               value={sc.specularTint ?? '#ffffff'}
@@ -1576,7 +1576,7 @@
           </div>
 
           <div class="property-row">
-            <label>Rim Tint</label>
+            <label>Rim tint</label>
             <input
               type="color"
               value={sc.rimTint ?? '#ffffff'}
@@ -1592,7 +1592,7 @@
           </p>
 
           <div class="property-row">
-            <label>Glow Strength</label>
+            <label>Glow strength</label>
             <input
               type="range" min="0" max="3" step="0.01"
               value={sc.bloom ?? 0}
@@ -1606,7 +1606,7 @@
           </div>
 
           <div class="property-row">
-            <label>Glow Threshold</label>
+            <label>Glow threshold</label>
             <input
               type="range" min="0" max="1" step="0.01"
               value={sc.bloomThreshold ?? 0.5}
@@ -1620,7 +1620,7 @@
           </div>
 
           <div class="property-row">
-            <label>Glow Radius</label>
+            <label>Glow radius</label>
             <input
               type="range" min="1" max="4" step="0.05"
               value={sc.bloomRadius ?? 2}
@@ -1654,7 +1654,7 @@
                 data-midi-label="Volumetric Light"
                 data-midi-mode="toggle"
               />
-              Enable Light Shafts
+              Enable light shafts
             </label>
           </div>
           <p class="section-note">
@@ -1663,7 +1663,7 @@
 
           {#if sc.volumetricEnabled ?? false}
             <div class="property-row">
-              <label>Haze Density</label>
+              <label>Haze density</label>
               <input
                 type="range"
                 min="0"
@@ -1682,7 +1682,7 @@
             </div>
 
             <div class="property-row">
-              <label>Haze Colour</label>
+              <label>Haze colour</label>
               <input
                 type="color"
                 value={sc.volumetricColor ?? '#cfe0ff'}
@@ -1693,7 +1693,7 @@
             </div>
 
             <div class="property-row">
-              <label>Shaft Power</label>
+              <label>Shaft power</label>
               <input
                 type="range"
                 min="0"
@@ -1712,7 +1712,7 @@
             </div>
 
             <div class="property-row">
-              <label>Shadow Density</label>
+              <label>Shadow density</label>
               <input
                 type="range"
                 min="0"
@@ -1731,7 +1731,7 @@
             </div>
 
             <div class="property-row">
-              <label>Cloud Shadowing</label>
+              <label>Cloud shadowing</label>
               <input
                 type="range"
                 min="0"
@@ -1750,7 +1750,7 @@
             </div>
 
             <div class="property-row">
-              <label>Shadow Volume</label>
+              <label>Shadow volume</label>
               <select
                 value={String(sc.volumetricShadowRes ?? 0)}
                 onchange={(e) => doUpdate({ volumetricShadowRes: parseInt((e.target as HTMLSelectElement).value, 10) })}
@@ -1768,7 +1768,7 @@
             </div>
 
             <div class="property-row">
-              <label>Spot Angle</label>
+              <label>Spot angle</label>
               <input
                 type="range"
                 min="5"
@@ -1787,7 +1787,7 @@
             </div>
 
             <div class="property-row">
-              <label>Spot Softness</label>
+              <label>Spot softness</label>
               <input
                 type="range"
                 min="0.01"
@@ -1806,7 +1806,7 @@
             </div>
 
             <div class="property-row">
-              <label>Light Distance</label>
+              <label>Light distance</label>
               <input
                 type="range"
                 min="1"
@@ -1825,7 +1825,7 @@
             </div>
 
             <div class="property-row">
-              <label>Scatter Bias</label>
+              <label>Scatter bias</label>
               <input
                 type="range"
                 min="-0.95"
@@ -1869,7 +1869,7 @@
                 data-midi-label="Point Atmosphere"
                 data-midi-mode="toggle"
               />
-              Enable Atmosphere
+              Enable atmosphere
             </label>
           </div>
 
@@ -1894,7 +1894,7 @@
             </div>
 
             <div class="property-row">
-              <label>Fog Color</label>
+              <label>Fog color</label>
               <input
                 type="color"
                 value={sc.atmosphereColor ?? '#8aa4c8'}
@@ -1943,7 +1943,7 @@
             </div>
 
             <div class="property-row">
-              <label>Drift Speed</label>
+              <label>Drift speed</label>
               <input
                 type="range"
                 min="-2"
@@ -2032,7 +2032,7 @@
 
             {#if sc.colorEffect === 'depthGradient'}
               <div class="property-row">
-                <label>Near Color</label>
+                <label>Near color</label>
                 <input
                   class="color-input"
                   type="color"
@@ -2043,7 +2043,7 @@
                 />
               </div>
               <div class="property-row">
-                <label>Far Color</label>
+                <label>Far color</label>
                 <input
                   class="color-input"
                   type="color"
@@ -2054,7 +2054,7 @@
                 />
               </div>
               <div class="property-row">
-                <label>Depth Bias</label>
+                <label>Depth bias</label>
                 <input
                   type="range"
                   min="0.05"
@@ -2126,7 +2126,7 @@
 
             {#if sc.opacityEffect === 'dof'}
               <div class="property-row">
-                <label>Focus Distance</label>
+                <label>Focus distance</label>
                 <input
                   type="range"
                   min="0"
@@ -2145,7 +2145,7 @@
               </div>
 
               <div class="property-row">
-                <label>Blur Amount</label>
+                <label>Blur amount</label>
                 <input
                   type="range"
                   min="0"
@@ -2166,7 +2166,7 @@
 
             {#if sc.opacityEffect === 'fog'}
               <div class="property-row">
-                <label>Fog Density</label>
+                <label>Fog density</label>
                 <input
                   type="range"
                   min="0"
@@ -2185,7 +2185,7 @@
               </div>
 
               <div class="property-row">
-                <label>Fog Color</label>
+                <label>Fog color</label>
                 <input
                   type="color"
                   value={sc.fogColor}
@@ -2249,7 +2249,7 @@
           <!-- Datamosh: flicker rate was hardcoded at 10Hz with no control. -->
           {#if sc.creativeEffect === 'datamosh'}
             <div class="property-row">
-              <label>Flicker Speed</label>
+              <label>Flicker speed</label>
               <input
                 type="range" min="0" max="4" step="0.01"
                 value={sc.datamoshSpeed ?? 1}
@@ -2267,7 +2267,7 @@
           <!-- Constellation: a per-point sparkle (it does not draw lines). -->
           {#if sc.creativeEffect === 'constellation'}
             <div class="property-row">
-              <label>Sparkle Speed</label>
+              <label>Sparkle speed</label>
               <input
                 type="range" min="0" max="8" step="0.01"
                 value={sc.constellationSpeed ?? 1}
@@ -2294,7 +2294,7 @@
             </div>
 
             <div class="property-row">
-              <label>Wave Mode</label>
+              <label>Wave mode</label>
               <input
                 type="checkbox"
                 checked={sc.constellationWave ?? false}
@@ -2308,7 +2308,7 @@
                 of firing uniformly.
               </p>
               <div class="property-row">
-                <label>Wave Axis</label>
+                <label>Wave axis</label>
                 <select
                   value={sc.constellationWaveAxis ?? 'y'}
                   onchange={(e) =>
@@ -2320,7 +2320,7 @@
                 </select>
               </div>
               <div class="property-row">
-                <label>Wave Frequency</label>
+                <label>Wave frequency</label>
                 <input
                   type="range" min="0.1" max="8" step="0.01"
                   value={sc.constellationWaveFrequency ?? 1.5}
@@ -2333,7 +2333,7 @@
                 <span class="value">{(sc.constellationWaveFrequency ?? 1.5).toFixed(2)}</span>
               </div>
               <div class="property-row">
-                <label>Wave Speed</label>
+                <label>Wave speed</label>
                 <input
                   type="range" min="-4" max="4" step="0.01"
                   value={sc.constellationWaveSpeed ?? 1}
@@ -2359,7 +2359,7 @@
       </button>
       {#if showCamera}
         <div class="section-content">
-          <button class="reset-button" onclick={frameObject}>Frame Object</button>
+          <button class="reset-button" onclick={frameObject}>Frame object</button>
 
           <div class="property-row checkbox">
             <label>
@@ -2371,7 +2371,7 @@
                 data-midi-label="Enable Orbit Controls"
                 data-midi-mode="toggle"
               />
-              Enable Orbit Controls
+              Enable orbit controls
             </label>
           </div>
 
@@ -2385,13 +2385,13 @@
                 data-midi-label="Auto Rotate"
                 data-midi-mode="toggle"
               />
-              Auto Rotate
+              Auto rotate
             </label>
           </div>
 
           {#if sc.autoRotate}
             <div class="property-row">
-              <label>Rotate Speed</label>
+              <label>Rotate speed</label>
               <input
                 type="range"
                 min="0"
@@ -2635,7 +2635,7 @@
                 data-midi-label="Enable Physics"
                 data-midi-mode="toggle"
               />
-              Enable Physics
+              Enable physics
             </label>
           </div>
 
@@ -2712,78 +2712,90 @@
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--text-primary, #e0e0e0);
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-0);
     overflow-y: auto;
     max-height: 100%;
   }
 
   h3 {
     margin: 0 0 8px 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--accent-primary, #bb86fc);
-    border-bottom: 1px solid var(--border-color, #333);
-    padding-bottom: 8px;
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0);
   }
 
   .section {
-    background: var(--bg-tertiary, #0d0d10);
-    border-radius: 6px;
-    padding: 8px;
+    border-top: 1px solid var(--ga-line-1);
+  }
+  .section:not(.collapsible) {
+    padding: 12px 0;
   }
 
+  /* Eyebrow section label, same as every layer editor. */
   .section-label {
     display: block;
-    font-size: 12px;
-    color: var(--text-secondary, #888);
-    margin-bottom: 6px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
+    margin-bottom: 8px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking);
+  }
+
+  .subsection-label {
+    margin-top: 4px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking);
+    text-transform: uppercase;
   }
 
   .collapsible {
     padding: 0;
   }
 
+  /* Collapsible eyebrow header */
   .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     width: 100%;
-    padding: 8px 10px;
+    min-height: 32px;
+    padding: 0;
     background: none;
     border: none;
-    color: var(--text-primary, #e0e0e0);
+    color: var(--ga-ink-2);
     cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-align: left;
-    border-radius: 6px;
   }
 
   .section-header:hover {
-    background: var(--bg-hover, #111114);
+    color: var(--ga-ink-0);
   }
 
   .section-content {
-    padding: 8px 10px;
+    padding: 0 0 12px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    border-top: 1px solid var(--border-color, #333);
+    gap: 6px;
   }
 
   .chevron {
-    font-size: 17px;
-    color: var(--text-secondary, #888);
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-2);
   }
 
   .property-row {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
+    min-height: var(--ga-control-h);
   }
 
   .property-row :global(.epr.button-only) {
@@ -2792,11 +2804,10 @@
   }
 
   .property-row > label:first-child {
-    min-width: 70px;
-    max-width: 110px;
+    width: 96px;
     flex-shrink: 0;
-    color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2807,8 +2818,9 @@
      turns those slim cyan handles into full-size splat thumbs. */
   .property-row > input[type='range'] {
     flex: 1;
+    min-width: 0;
     height: 6px;
-    background: #000000;
+    background: var(--ga-slot);
     border-radius: 3px;
     -webkit-appearance: none;
     cursor: pointer;
@@ -2818,28 +2830,30 @@
     -webkit-appearance: none;
     width: 14px;
     height: 14px;
-    background: var(--accent-primary, #bb86fc);
+    background: var(--ga-selection-line);
     border-radius: 50%;
     cursor: pointer;
   }
 
   .property-row select {
     flex: 1;
-    padding: 5px 8px;
-    background-color: var(--bg-secondary, #161618);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    color: var(--text-primary, #e0e0e0);
-    font-size: 12px;
+    min-width: 0;
+    height: var(--ga-control-h);
+    padding: 0 8px;
+    background-color: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-control);
     cursor: pointer;
   }
 
   .property-row input[type='color'] {
     width: 40px;
-    height: 24px;
+    height: var(--ga-control-h-sm);
     padding: 0;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
     background: none;
   }
@@ -2847,20 +2861,22 @@
   .property-row .value {
     min-width: 40px;
     text-align: right;
-    color: var(--accent-primary, #bb86fc);
-    font-size: 11px;
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-meta);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
   }
 
   .property-row.checkbox label {
     display: flex;
     align-items: center;
     flex: 0 1 auto;
+    width: auto;
     min-width: 0;
     max-width: none;
     gap: 8px;
     cursor: pointer;
-    color: var(--text-primary, #e0e0e0);
+    color: var(--ga-ink-0);
     overflow: visible;
     text-overflow: clip;
   }
@@ -2873,17 +2889,20 @@
 
   .reset-button {
     width: 100%;
-    padding: 7px 10px;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    background: var(--bg-secondary, #161618);
-    color: var(--text-primary, #e0e0e0);
+    height: var(--ga-control-h);
+    padding: 0 10px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    background: var(--ga-sub);
+    color: var(--ga-ink-1);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
   }
 
-  .reset-button:hover {
-    border-color: var(--accent-primary, #bb86fc);
+  .reset-button:hover:not(:disabled) {
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
   }
 
   .reset-button:disabled {
@@ -2894,7 +2913,7 @@
   .orientation-actions {
     display: grid;
     grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-    gap: 8px;
+    gap: 4px;
   }
 
   .orientation-actions .reset-button {
@@ -2906,21 +2925,22 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px 12px;
-    color: var(--text-secondary, #98a0ad);
+    color: var(--ga-ink-1);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
+    font-variant-numeric: tabular-nums;
   }
 
   .section-note {
     margin: 0;
-    color: var(--text-muted, #6f7784);
-    font-size: 11px;
-    line-height: 1.35;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta);
+    line-height: 1.4;
   }
 
   .file-row {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
   }
 
@@ -2928,76 +2948,81 @@
     display: none;
   }
 
+  /* Primary action */
   .file-button {
-    padding: 6px 12px;
-    background: var(--accent-primary, #bb86fc);
-    color: var(--bg-primary, #121212);
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    height: var(--ga-control-h);
+    padding: 0 12px;
+    background: var(--ga-accent-gradient, var(--ga-violet));
+    border: none;
+    color: var(--ga-blue-800);
+    border-radius: var(--ga-r-soft);
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
-    transition: background 0.2s;
+    font-size: var(--ga-text-control);
+    font-weight: 700;
+    transition: filter 0.2s;
   }
 
   .file-button:hover {
-    background: var(--accent-hover, #34d399);
+    filter: brightness(1.06);
   }
 
   .file-info {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    margin-top: 6px;
-    padding: 6px;
-    background: var(--bg-secondary, #0d0d10);
-    border-radius: 4px;
-    font-size: 11px;
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-1);
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-meta);
   }
 
   .filename {
-    color: var(--text-primary, #e0e0e0);
-    font-weight: 500;
+    color: var(--ga-ink-0);
+    font-weight: var(--ga-weight-control);
   }
 
   .point-count {
-    color: var(--accent-primary, #bb86fc);
+    color: var(--ga-ink-1);
   }
 
   .data-type {
-    color: var(--text-secondary, #888);
+    color: var(--ga-ink-2);
   }
 
   .density-info {
-    font-size: 11px;
-    color: var(--text-secondary, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2);
     margin-top: 4px;
-    padding-left: 2px;
   }
 
   .texture-section {
     margin-top: 12px;
     padding-top: 12px;
-    border-top: 1px solid var(--border-color, #333);
+    border-top: 1px solid var(--ga-line-1);
   }
 
   .texture-preview {
     margin: 8px 0;
     padding: 8px;
-    background: var(--bg-tertiary, #0d0d10);
-    border-radius: 4px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-1);
+    border-radius: var(--ga-r-hard);
     text-align: center;
   }
 
   .hint {
-    color: var(--text-secondary, #666);
-    font-size: 11px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta);
     margin: 6px 0 0 0;
-    font-style: italic;
   }
 
   .no-layer {
     padding: 20px;
     text-align: center;
-    color: var(--text-secondary, #666);
+    color: var(--ga-ink-2);
   }
 </style>

@@ -1447,7 +1447,7 @@
     border-color: var(--ga-blue-300);
     color: #fff;
   }
-  .back-arrow { font-size: 15px; line-height: 1; }
+  .back-arrow { font-size: 14px; line-height: 1; }
   .title {
     font-size: 12px;
     letter-spacing: 2px;
@@ -1485,7 +1485,7 @@
     background: var(--bg-tertiary, #14141a);
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
@@ -1496,7 +1496,7 @@
     padding: 0 9px 0 7px;
   }
   .tool-btn .t-icon {
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1;
   }
   .tool-btn .t-label {
@@ -1516,7 +1516,7 @@
   .tool-btn.import-btn {
     width: auto;
     padding: 0 14px;
-    font-size: 12.5px;
+    font-size: 13px;
     letter-spacing: 0.5px;
     font-weight: 600;
     background: linear-gradient(180deg, var(--ga-blue-a16), var(--ga-blue-a08));
@@ -1604,7 +1604,7 @@
     margin-top: 4px;
   }
   .binding-label {
-    font-size: 10.5px;
+    font-size: 11px;
     letter-spacing: 1px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
@@ -1757,7 +1757,7 @@
     color: var(--ga-blue-300);
   }
   .palette-btn .p-icon {
-    font-size: 17px;
+    font-size: 16px;
     line-height: 1;
   }
   .palette-btn .p-label {
@@ -1920,7 +1920,7 @@
     backdrop-filter: blur(8px);
   }
   .empty-title {
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 700;
     color: var(--ga-blue-300);
     letter-spacing: 2px;
@@ -1970,7 +1970,7 @@
     margin: 0 0 4px;
   }
   .empty-shortcut {
-    font-size: 11.5px;
+    font-size: 12px;
     color: #555;
     margin: 0;
     letter-spacing: 0.3px;
@@ -2007,7 +2007,7 @@
   }
   .drop-card p {
     margin: 0;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     letter-spacing: 1px;
   }

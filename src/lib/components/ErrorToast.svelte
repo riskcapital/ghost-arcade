@@ -59,7 +59,7 @@
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 19px;
+    font-size: 20px;
     cursor: pointer;
     padding: 0 2px;
     line-height: 1;

@@ -225,7 +225,7 @@
   .audio-input-picker {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
 
   .aip-btn {
@@ -233,8 +233,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 32px;
+    width: var(--ga-bar-control-h, 30px);
+    height: var(--ga-bar-control-h, 30px);
     background: var(--ga-card, #13161c);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     color: var(--ga-ink-1, #9aa0ac);
@@ -317,16 +317,16 @@
     gap: 2px;
   }
   .aip-popover-label {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     color: var(--ga-ink-2, #5e6571);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     padding: 4px 8px 2px;
   }
   .aip-popover-item {
     text-align: left;
-    font-size: 15px;
+    font-size: var(--ga-text-body, 13px);
     color: var(--ga-ink-1, #9aa0ac);
     background: transparent;
     border: 1px solid transparent;

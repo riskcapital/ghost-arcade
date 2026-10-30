@@ -524,7 +524,7 @@
     border: none;
     background: none;
     color: rgba(255, 255, 255, 0.3);
-    font-size: 17px;
+    font-size: 16px;
     cursor: pointer;
     padding: 8px;
     min-width: 36px;

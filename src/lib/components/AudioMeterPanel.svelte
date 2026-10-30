@@ -135,7 +135,7 @@
            stays here as the block's own node. -->
       <div class="amp-popover-home">
       <div class="amp-popover" use:portal bind:this={popoverEl} style="top:{popTop}px; left:{popLeft}px">
-        <div class="amp-popover-title">AUDIO INPUT TWEAKS</div>
+        <div class="amp-popover-title">Audio input tweaks</div>
 
         <div class="amp-row">
           <label class="amp-row-label">Sensitivity</label>
@@ -165,9 +165,9 @@
              user can boost the kick or cut harsh treble while watching
              the band react. -->
         <div class="amp-popover-subhead">
-          <span>PER-BAND GAIN</span>
+          <span>Per-band gain</span>
           <button class="amp-reset-btn" onclick={() => audioStore.resetBandGain()}
-            title="Reset all band gains to 1×">RESET</button>
+            title="Reset all band gains to 1×">Reset</button>
         </div>
         <div class="amp-bands-readout">
           {#each [
@@ -215,21 +215,21 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     padding: 4px 8px;
-    height: 34px;
+    height: var(--ga-bar-control-h, 30px);
+    box-sizing: border-box;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
   .amp-fft-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.18);
+    border-color: var(--ga-line-3);
   }
   .amp-fft-btn.open {
-    background: rgba(187, 134, 252, 0.12);
-    border-color: rgba(187, 134, 252, 0.45);
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
   }
 
   /* Scope + band strip stacked in the width one of them used to take. */
@@ -267,7 +267,7 @@
   .amp-bandstrip i:nth-child(8) { background: #ec4899; } /* presence */
 
   .amp-eq-glyph {
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
     line-height: 0;
     transition: transform 0.18s, color 0.18s;
   }
@@ -276,7 +276,7 @@
     height: 10px;
   }
   .amp-eq-glyph.active {
-    color: #BB86FC;
+    color: var(--ga-selection-ink);
     transform: rotate(180deg);
   }
 
@@ -284,7 +284,7 @@
     width: 11px;
     height: 11px;
     border-radius: 50%;
-    background: #333;
+    background: var(--ga-line-3);
     transition: background 0.06s, box-shadow 0.06s;
   }
   .amp-beat.flash {
@@ -294,7 +294,7 @@
 
   .amp-error {
     color: #f44;
-    font-size: 15px;
+    font-size: 14px;
     padding: 0 4px;
   }
 
@@ -307,14 +307,14 @@
   .amp-popover {
     position: fixed;
     font-family: var(--ga-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-    font-size: 13px;
-    color: var(--text-primary, #e8e8e8);
+    font-size: var(--ga-text-body, 13px);
+    color: var(--ga-ink-0);
     -webkit-app-region: no-drag;
     width: 280px;
     max-width: calc(100vw - 24px);
-    background: var(--bg-tertiary, #1a1a1e);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
     padding: 12px 12px 10px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
     z-index: 4000;
@@ -323,10 +323,9 @@
     gap: 10px;
   }
   .amp-popover-title {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text-muted, #888);
-    letter-spacing: 0.16em;
+    font-size: var(--ga-text-title, 14px);
+    font-weight: 650;
+    color: var(--ga-ink-0);
   }
   .amp-row {
     display: grid;
@@ -335,25 +334,25 @@
     gap: 8px;
   }
   .amp-row-label {
-    font-size: 14px;
-    color: var(--text-primary, #ccc);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1);
   }
   .amp-slider {
     width: 100%;
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line);
   }
   .amp-row-value {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 13px;
-    color: #BB86FC;
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-0);
     text-align: right;
   }
   .amp-popover-hint {
-    font-size: 13px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2);
     line-height: 1.4;
     padding-top: 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--ga-line-1);
   }
 
   /* Per-band readout (horizontal bars showing live levels) */
@@ -362,33 +361,37 @@
     flex-direction: column;
     gap: 4px;
     padding-top: 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--ga-line-1);
   }
   .amp-popover-subhead {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
-    color: var(--text-muted, #888);
-    letter-spacing: 0.16em;
-    padding-top: 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--ga-ink-2);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    padding-top: 8px;
+    border-top: 1px solid var(--ga-line-1);
   }
   .amp-reset-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--text-secondary, #aaa);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    padding: 2px 6px;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
   .amp-reset-btn:hover {
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.25);
+    color: var(--ga-ink-0);
+    border-color: var(--ga-line-3);
   }
 
   .amp-band {
@@ -398,10 +401,10 @@
     gap: 6px;
   }
   .amp-band-name {
-    font-size: 12px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
-    color: #999;
-    letter-spacing: 0.08em;
+    color: var(--ga-ink-2);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
   .amp-band-track {
     height: 4px;
@@ -426,7 +429,7 @@
 
   .amp-band-gain {
     width: 70px;
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line);
     height: 4px;
   }
 

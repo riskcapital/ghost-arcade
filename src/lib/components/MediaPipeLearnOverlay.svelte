@@ -194,7 +194,7 @@
     position: fixed;
     border: 2px solid var(--accent-primary, #FF6B6B);
     background: rgba(255, 107, 107, 0.08);
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
     box-shadow: 0 0 12px rgba(255, 107, 107, 0.35), inset 0 0 6px rgba(255, 107, 107, 0.2);
     pointer-events: none;
     transition: background-color 0.12s ease, border-color 0.12s ease;
@@ -211,9 +211,9 @@
     background: #ffd166;
     color: #1a0e08;
     padding: 1px 5px;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 5px);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
     pointer-events: none;

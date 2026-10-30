@@ -85,15 +85,18 @@ html[data-theme="arcade"] body {
 
 /* ============================================================
    TOP TOOLBAR
+   One spec for the mapping toolbar and the VJ header (see
+   docs/DESIGN-SYSTEM.md): a 48px bar, 30px controls, 13px/600 sentence
+   case, 6px between controls and a hairline between groups.
    ============================================================ */
 .toolbar {
-  height: 52px !important;
-  padding: 0 14px !important;
+  height: var(--ga-bar-h) !important;
+  padding: 0 12px !important;
   display: flex !important;
   align-items: center !important;
-  gap: 10px !important;
+  gap: var(--ga-bar-group-gap) !important;
   background: var(--ga-bar, #0e1014) !important;
-  border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-bottom: 1px solid var(--ga-line-2) !important;
 }
 
 .toolbar-left,
@@ -101,224 +104,146 @@ html[data-theme="arcade"] body {
 .toolbar-right {
   display: flex !important;
   align-items: center !important;
-  gap: 10px !important;
+  gap: var(--ga-bar-gap) !important;
 }
 
 .toolbar-center { flex: 1 !important; }
 
-/* Logo size — keep your skull/ghost emblem at the v10's 24px */
 .toolbar .header-logo {
-  height: 28px !important;
+  height: 26px !important;
   width: auto !important;
-  margin-right: 8px !important;
+  margin-right: 6px !important;
   border-radius: 6px !important;
 }
 
-/* The toolbar is primary chrome, not a panel — its chips read at full
-   brightness rather than the muted ink-1 used for secondary text inside
-   panels. Buttons that own their colour (record, VJ, active states) are
-   excluded so they keep their meaning. */
-.toolbar :is(button, .file-menu-btn, .output-btn, .stage3d-btn, .stage-btn, .connection-btn):not(.vj-btn):not(.rec-btn):not(.stop-rec-btn):not(.active) {
-  color: var(--ga-ink-0, #eef0f4) !important;
+/* A hairline between groups of controls. */
+.tb-divider {
+  flex: 0 0 auto !important;
+  width: 1px !important;
+  height: 18px !important;
+  margin: 0 4px !important;
+  background: var(--ga-line-2) !important;
 }
 
-.toolbar .app-name,
-.toolbar-left > span:first-of-type {
-  font-weight: 700 !important;
-  font-size: 14px !important;
-  letter-spacing: 0.01em !important;
-  color: var(--ga-ink-0, #eef0f4) !important;
+/* The toolbar is primary chrome: its labels read at full ink. Buttons that
+   carry meaning in their colour (record, active states) keep it. */
+.toolbar :is(button, .file-menu-btn, .output-btn, .connection-btn):not(.rec-btn):not(.stop-rec-btn):not(.active) {
+  color: var(--ga-ink-0) !important;
 }
 
-/* GPU indicator pill — green dot + mono label */
-.gpu-indicator {
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 7px !important;
-  height: 32px !important;
-  padding: 0 12px !important;
-  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  border-radius: var(--ga-r-hard, 2px) !important;
-  background: var(--ga-card, #13161c) !important;
-  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  color: var(--ga-ink-1, #9aa0ac) !important;
-  white-space: nowrap !important;
-}
-.gpu-dot {
-  width: 7px !important;
-  height: 7px !important;
-  border-radius: 50% !important;
-  background: var(--ga-green, #46d18a) !important;
-  box-shadow: 0 0 7px rgba(70, 209, 138, 0.6) !important;
-}
-
-/* File menu chip */
-.file-menu-btn {
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 7px !important;
-  height: 32px !important;
-  padding: 0 12px !important;
-  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  border-radius: var(--ga-r-hard, 2px) !important;
-  background: var(--ga-card, #13161c) !important;
-  color: var(--ga-ink-1, #9aa0ac) !important;
-  font-weight: 600 !important;
-  font-size: 13.5px !important;
-  cursor: pointer !important;
-  white-space: nowrap !important;
-}
-.file-menu-btn:hover,
-.file-menu-btn.active {
-  color: var(--ga-ink-0, #eef0f4) !important;
-  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
-}
-
-/* Output Window / Fullscreen / Stage 3D — ghost chips */
+/* Every labelled chip in the bar: File, Output Window, Fullscreen, the places,
+   Connect Mobile. */
+.file-menu-btn,
 .output-btn,
-.stage3d-btn {
-  height: 32px !important;
-  padding: 0 13px !important;
-  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  border-radius: var(--ga-r-hard, 2px) !important;
-  background: var(--ga-card, #13161c) !important;
-  color: var(--ga-ink-1, #9aa0ac) !important;
-  font-weight: 600 !important;
-  font-size: 13.5px !important;
-  cursor: pointer !important;
-  white-space: nowrap !important;
+.stage3d-btn,
+.connection-btn {
   display: inline-flex !important;
   align-items: center !important;
+  justify-content: center !important;
   gap: 7px !important;
-}
-.output-btn:hover,
-.stage3d-btn:hover {
-  color: var(--ga-ink-0, #eef0f4) !important;
-  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+  height: var(--ga-bar-control-h) !important;
+  padding: 0 12px !important;
+  border: 1px solid var(--ga-line-2) !important;
+  border-radius: var(--ga-r-hard, 5px) !important;
   background: var(--ga-card, #13161c) !important;
+  font-size: var(--ga-text-body) !important;
+  font-weight: var(--ga-weight-control) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+.connection-btn { background: transparent !important; }
+.file-menu-btn:hover,
+.file-menu-btn.active,
+.output-btn:hover,
+.stage3d-btn:hover,
+.connection-btn:hover {
+  color: var(--ga-ink-0) !important;
+  border-color: var(--ga-line-3) !important;
 }
 .output-btn.active,
 .stage3d-btn.active {
-  color: var(--ga-violet, #9b87f5) !important;
-  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
-  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+  color: var(--ga-selection-ink) !important;
+  border-color: var(--ga-selection-line) !important;
+  background: var(--ga-selection-bg) !important;
 }
 
-/* Square icon buttons — blackout / freeze / testpattern / screenshot / settings */
+/* Square icon buttons: blackout, test grid, freeze, screenshot, settings. */
 .blackout-btn,
 .freeze-btn,
 .testpattern-btn,
 .screenshot-btn,
 .settings-btn {
-  width: 34px !important;
-  height: 32px !important;
+  width: var(--ga-bar-control-h) !important;
+  height: var(--ga-bar-control-h) !important;
   padding: 0 !important;
-  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  border-radius: var(--ga-r-hard, 2px) !important;
+  border: 1px solid var(--ga-line-2) !important;
+  border-radius: var(--ga-r-hard, 5px) !important;
   background: var(--ga-card, #13161c) !important;
-  color: var(--ga-ink-1, #9aa0ac) !important;
+  color: var(--ga-ink-1) !important;
   display: grid !important;
   place-items: center !important;
   cursor: pointer !important;
 }
+.settings-btn svg { width: 16px !important; height: 16px !important; }
 .blackout-btn:hover,
 .freeze-btn:hover,
 .testpattern-btn:hover,
 .screenshot-btn:hover,
 .settings-btn:hover {
-  color: var(--ga-ink-0, #eef0f4) !important;
-  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+  color: var(--ga-ink-0) !important;
+  border-color: var(--ga-line-3) !important;
 }
 .blackout-btn.active,
 .freeze-btn.active {
-  color: var(--ga-coral, #ff6f5e) !important;
-  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.40)) !important;
-  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11)) !important;
+  color: var(--ga-rec, #ff4438) !important;
+  border-color: rgba(255, 68, 56, 0.45) !important;
+  background: rgba(255, 68, 56, 0.12) !important;
 }
 
-/* REC button (outlined red) + stop-rec */
+/* Record: a red-outlined square, the same in both modes. */
 .rec-btn {
-  width: 34px !important;
-  height: 32px !important;
+  width: var(--ga-bar-control-h) !important;
+  height: var(--ga-bar-control-h) !important;
   padding: 0 !important;
   display: grid !important;
   place-items: center !important;
   border: 1px solid rgba(255, 68, 56, 0.4) !important;
-  border-radius: var(--ga-r-hard, 2px) !important;
+  border-radius: var(--ga-r-hard, 5px) !important;
   background: transparent !important;
   color: var(--ga-rec, #ff4438) !important;
+  font-size: var(--ga-text-body) !important;
   cursor: pointer !important;
 }
+.rec-btn:hover { background: rgba(255, 68, 56, 0.12) !important; }
 .stop-rec-btn {
-  height: 32px !important;
+  height: var(--ga-bar-control-h) !important;
   padding: 0 12px !important;
-  border-radius: var(--ga-r-soft, 7px) !important;
+  border-radius: var(--ga-r-hard, 5px) !important;
   background: var(--ga-rec, #ff4438) !important;
   color: #fff !important;
-  font-weight: 700 !important;
-  font-size: 13px !important;
+  font-weight: var(--ga-weight-control) !important;
+  font-size: var(--ga-text-body) !important;
   border: none !important;
   cursor: pointer !important;
 }
 
-/* VJ button — coral pill */
-.vj-btn {
-  height: 32px !important;
-  padding: 0 18px !important;
-  border-radius: var(--ga-r-soft, 7px) !important;
-  border: 1px solid var(--ga-coral, #ff6f5e) !important;
-  background: var(--ga-coral, #ff6f5e) !important;
-  color: #23110c !important;
-  font-weight: 700 !important;
-  font-size: 13.5px !important;
-  cursor: pointer !important;
-  letter-spacing: 0.02em !important;
+/* The VJ header's chips read at full ink, as the toolbar's do; the
+   fullscreen-output button stays green while the output is live. */
+html[data-theme] .vj-header :is(.minimize-btn, .vj-file-menu-btn):not(.active) {
+  color: var(--ga-ink-0) !important;
 }
-.vj-btn:hover { filter: brightness(1.06) !important; }
-
-/* STAGE button — ghost pill */
-.stage-btn {
-  height: 32px !important;
-  padding: 0 18px !important;
-  border-radius: var(--ga-r-soft, 7px) !important;
-  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  background: var(--ga-card, #13161c) !important;
-  color: var(--ga-ink-1, #9aa0ac) !important;
-  font-weight: 700 !important;
-  font-size: 13.5px !important;
-  cursor: pointer !important;
-  letter-spacing: 0.02em !important;
-}
-.stage-btn:hover {
-  color: var(--ga-ink-0, #eef0f4) !important;
-  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
-}
-.stage-btn.active {
-  background: var(--ga-violet, #9b87f5) !important;
-  border-color: var(--ga-violet, #9b87f5) !important;
-  color: var(--ga-blue-800) !important;
+html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
+  color: var(--ga-live) !important;
+  border-color: color-mix(in srgb, var(--ga-live) 60%, transparent) !important;
+  background: color-mix(in srgb, var(--ga-live) 14%, transparent) !important;
 }
 
-/* Connect Mobile — outline button */
-.connection-btn {
-  height: 32px !important;
-  padding: 0 13px !important;
-  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  border-radius: var(--ga-r-hard, 2px) !important;
-  background: transparent !important;
-  color: var(--ga-ink-1, #9aa0ac) !important;
-  font-weight: 600 !important;
-  font-size: 13.5px !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 7px !important;
-  cursor: pointer !important;
-}
-.connection-btn:hover {
-  color: var(--ga-ink-0, #eef0f4) !important;
-  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+/* The mode switch sits in the bar at the bar's control height. */
+.toolbar .ga-mode-switch,
+.vj-header .ga-mode-switch {
+  height: var(--ga-bar-control-h) !important;
 }
 
 /* ============================================================
@@ -413,7 +338,7 @@ html[data-theme="arcade"] body {
 .layer-panel .layer-item .layer-name,
 .layer-panel .layer-item .name {
   font-weight: 600 !important;
-  font-size: 14.5px !important;
+  font-size: 14px !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
 }
 .layer-panel .layer-item.selected .layer-name,
@@ -432,7 +357,7 @@ html[data-theme="arcade"] body {
 }
 .layer-panel .property-row:not(.media-properties .property-row) label,
 .layer-panel .property-label {
-  font-size: 13.5px !important;
+  font-size: 13px !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   font-weight: 500 !important;
 }
@@ -515,12 +440,12 @@ html[data-theme="arcade"] body {
   display: flex !important;
   align-items: center !important;
   gap: 0 !important;
-  height: 26px !important;
+  height: 30px !important;
   background: var(--ga-bar, #0e1014) !important;
   border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
-  font-size: 11.5px !important;
-  color: rgba(238, 240, 244, 0.74) !important;
+  font-family: var(--ga-font-ui, inherit) !important;
+  font-size: var(--ga-text-meta, 11px) !important;
+  color: var(--ga-ink-2) !important;
 }
 .status-bar > *,
 .statusbar > * {
@@ -550,7 +475,7 @@ html[data-theme="arcade"] body {
 .media-library .library-title,
 .media-library .library-header {
   font-weight: 800 !important;
-  font-size: 19px !important;
+  font-size: 20px !important;
   color: var(--ga-ink-0, #eef0f4) !important;
   padding: 14px 14px 10px !important;
 }
@@ -668,7 +593,7 @@ html[data-theme="arcade"] body {
   background: transparent !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   font-weight: 600 !important;
-  font-size: 13.5px !important;
+  font-size: 13px !important;
   cursor: pointer !important;
 }
 .media-library .lib-library-btn:hover {
@@ -893,7 +818,7 @@ html[data-theme="arcade"] body {
 .macro-popover-section-title {
   color: var(--ga-violet, #9b87f5) !important;
   font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
-  font-size: 11.5px !important;
+  font-size: 12px !important;
   font-weight: 700 !important;
   letter-spacing: 0.08em !important;
   text-transform: uppercase !important;
@@ -1379,6 +1304,7 @@ html[data-theme="arcade"] .stage3d-root:not(.external) {
 
 html[data-theme="arcade"] :is(
   .toolbar,
+  .vj-header,
   .status-bar,
   .statusbar,
   .stage-header,
@@ -1477,22 +1403,19 @@ html[data-theme="arcade"] :is(
   .library-section-label,
   .stage-presets-label,
   .shader-params-overlay-title,
-  .amp-popover-title,
   .macro-popover-section-title,
   .palette-section,
   .sidebar-category,
-  .lib-tab span,
-  .tab span,
-  .left-tab,
   .category-name,
-  .effects-header,
   .stage3d-root .lib h3,
   .stage3d-root .props h3,
   .stage3d-root .ghd
 ) {
-  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
+  /* Eyebrows (docs/DESIGN-SYSTEM.md): the one uppercase style. */
+  font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
+  font-weight: 700 !important;
   color: var(--ga-ink-2, #5e564a) !important;
-  letter-spacing: 0.14em !important;
+  letter-spacing: var(--ga-eyebrow-tracking, 0.08em) !important;
   text-transform: uppercase !important;
   text-shadow: none !important;
 }
@@ -1501,6 +1424,8 @@ html[data-theme="arcade"] :is(
   .output-btn,
   .stage3d-btn,
   .file-menu-btn,
+  .vj-file-menu-btn,
+  .vj-header .minimize-btn,
   .gpu-indicator,
   .freeze-btn,
   .blackout-btn,
@@ -1549,6 +1474,8 @@ html[data-theme="arcade"] :is(
   .output-btn,
   .stage3d-btn,
   .file-menu-btn,
+  .vj-file-menu-btn,
+  .vj-header .minimize-btn,
   .connection-btn,
   .stage-btn,
   .secondary-btn,
@@ -1617,6 +1544,7 @@ html[data-theme="arcade"] :is(
 }
 
 html[data-theme="arcade"] :is(
+  .vj-header .minimize-btn.active:not(.output-send-btn),
   .output-btn.active,
   .stage3d-btn.active,
   .tool-btn.active,
@@ -1634,13 +1562,10 @@ html[data-theme="arcade"] :is(
   .category-toggle.active,
   .additem.screen.selected
 ) {
-  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
-  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
-  color: var(--ga-coral, #ff6f5e) !important;
-  box-shadow:
-    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
-    0 0 0 1px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
-    0 0 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 28%, transparent) !important;
+  background: var(--ga-selection-bg) !important;
+  border-color: var(--ga-selection-line) !important;
+  color: var(--ga-selection-ink) !important;
+  box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)) !important;
 }
 
 html[data-theme="arcade"] :is(
@@ -1676,24 +1601,21 @@ html[data-theme="arcade"] :is(
   .slice-row.selected,
   .theme-template-card.active
 ) {
-  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
-  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
-  box-shadow:
-    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
-    0 0 0 1px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
-    0 0 14px color-mix(in srgb, var(--ga-coral, #ff6f5e) 28%, transparent) !important;
+  background: color-mix(in srgb, var(--ga-selection-bg) 70%, var(--ga-card, #16140f)) !important;
+  border-color: var(--ga-selection-line) !important;
+  box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)) !important;
 }
 
-/* Arcade multi-selection — dimmer coral than the primary selection. */
+/* Multi-selection: the selection blue, dimmer. */
 html[data-theme="arcade"] .layer-item.multi-selected {
-  background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 7%, transparent) !important;
-  border-color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 32%, transparent) !important;
+  background: color-mix(in srgb, var(--ga-selection-bg) 35%, transparent) !important;
+  border-color: color-mix(in srgb, var(--ga-selection-line) 45%, transparent) !important;
 }
 
 html[data-theme="arcade"] .layer-item.selected::before,
 html[data-theme="arcade"] .layer-item.active::before {
-  background: var(--ga-coral, #ff6f5e) !important;
-  box-shadow: 0 0 10px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+  background: var(--ga-selection-line) !important;
+  box-shadow: none !important;
 }
 
 html[data-theme="arcade"] :is(
@@ -1704,7 +1626,7 @@ html[data-theme="arcade"] :is(
   .lib-tab.on,
   .stage-preset-btn.active
 ) {
-  border-bottom-color: var(--ga-coral, #ff6f5e) !important;
+  border-bottom-color: var(--ga-selection-line) !important;
 }
 
 html[data-theme="arcade"] :is(
@@ -1845,12 +1767,12 @@ html[data-theme="arcade"] .toggle input:checked + .toggle-slider::before {
 
 html[data-theme="arcade"] :is(.statusbar, .status-bar, .dock) {
   background: var(--ga-void, #0a0908) !important;
-  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
   color: var(--ga-ink-2, #5e564a) !important;
-  letter-spacing: 0.06em !important;
+  letter-spacing: 0 !important;
 }
 
-html[data-theme="arcade"] :is(.fps-counter, .version-label, .statusbar b, .status-bar b, .param-value, .value, .shader-param-name, .dim-label, .surface-dims, .zoom-readout) {
+html[data-theme="arcade"] :is(.fps-counter, .version-label, .param-value, .value, .shader-param-name, .surface-dims, .zoom-readout) {
   font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
 }
 
@@ -2184,7 +2106,7 @@ html[data-theme="arcade"] .stage3d-root input[type="range"]::-moz-range-thumb {
    ============================================================ */
 
 :root {
-  --ga-type-label-tracking: 0.065em;
+  --ga-type-label-tracking: var(--ga-eyebrow-tracking, 0.08em);
   --ga-type-command-tracking: 0;
   --ga-type-data-tracking: 0.01em;
 }
@@ -2285,7 +2207,6 @@ html.native-primary-presenter .viewport-content {
   .library-section-label,
   .stage-presets-label,
   .shader-params-overlay-title,
-  .amp-popover-title,
   .macro-popover-section-title,
   .palette-section,
   .sidebar-category,
@@ -2297,7 +2218,7 @@ html.native-primary-presenter .viewport-content {
   .projection-sim-root h3
 ) {
   font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   letter-spacing: var(--ga-type-label-tracking) !important;
   text-transform: uppercase !important;
 }
@@ -2306,15 +2227,12 @@ html.native-primary-presenter .viewport-content {
   code,
   kbd,
   .gpu-indicator,
-  .status-bar,
-  .statusbar,
   .fps-counter,
   .version-label,
   .rec-time,
   .param-value,
   .param-val,
   .value,
-  .dim-label,
   .surface-dims,
   .zoom-readout,
   .stage-auto-interval,

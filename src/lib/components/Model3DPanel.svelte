@@ -19,21 +19,21 @@
 
   // Material types with descriptions
   const materialTypes: { value: Model3DMaterialType; label: string; description: string }[] = [
-    { value: 'source', label: 'Model Materials', description: 'Embedded colors and textures' },
+    { value: 'source', label: 'Model materials', description: 'Embedded colors and textures' },
     { value: 'standard', label: 'Standard PBR', description: 'Physically-based rendering' },
-    { value: 'wireframe', label: 'Wireframe Only', description: 'Lines only, no faces' },
+    { value: 'wireframe', label: 'Wireframe only', description: 'Lines only, no faces' },
     { value: 'glass', label: 'Glass', description: 'Transparent with refraction' },
     { value: 'chrome', label: 'Chrome', description: 'Mirror-like reflections' },
     { value: 'hologram', label: 'Hologram', description: 'Sci-fi scanlines and glow' },
     { value: 'lava', label: 'Lava', description: 'Animated flowing magma' },
     { value: 'ice', label: 'Ice', description: 'Frosted translucent' },
     { value: 'neon', label: 'Neon', description: 'Bright emissive glow' },
-    { value: 'xray', label: 'X-Ray', description: 'Medical see-through effect' },
-    { value: 'toon', label: 'Toon/Cel', description: 'Cartoon cel-shading' },
+    { value: 'xray', label: 'X-ray', description: 'Medical see-through effect' },
+    { value: 'toon', label: 'Toon/cel', description: 'Cartoon cel-shading' },
     { value: 'fresnel', label: 'Fresnel', description: 'Edge glow falloff' },
     { value: 'dissolve', label: 'Dissolve', description: 'Noise-based disintegration' },
     { value: 'glitch', label: 'Glitch', description: 'Digital corruption' },
-    { value: 'normal', label: 'Normal Map', description: 'Visualize normals' },
+    { value: 'normal', label: 'Normal map', description: 'Visualize normals' },
     { value: 'depth', label: 'Depth', description: 'Depth visualization' },
   ];
 
@@ -41,13 +41,13 @@
   const wireframeModes: { value: Model3DWireframeMode; label: string }[] = [
     { value: 'none', label: 'None' },
     { value: 'classic', label: 'Classic' },
-    { value: 'animated', label: 'Animated Flow' },
-    { value: 'glow', label: 'Soft Glow' },
-    { value: 'neon', label: 'Neon Tubes' },
+    { value: 'animated', label: 'Animated flow' },
+    { value: 'glow', label: 'Soft glow' },
+    { value: 'neon', label: 'Neon tubes' },
     { value: 'pulse', label: 'Pulsing' },
     { value: 'rainbow', label: 'Rainbow' },
     { value: 'dotted', label: 'Dotted' },
-    { value: 'thick', label: 'Thick Lines' },
+    { value: 'thick', label: 'Thick lines' },
   ];
 
   // Vertex decorations
@@ -72,20 +72,20 @@
     { value: 'float', label: 'Float', description: 'Gentle floating' },
     { value: 'shake', label: 'Shake', description: 'Vibration/tremor' },
     { value: 'spiral', label: 'Spiral', description: 'Spiral path' },
-    { value: 'fadeIn', label: 'Fade In', description: 'Opacity fade' },
-    { value: 'scaleIn', label: 'Scale In', description: 'Scale from 0' },
+    { value: 'fadeIn', label: 'Fade in', description: 'Opacity fade' },
+    { value: 'scaleIn', label: 'Scale in', description: 'Scale from 0' },
     { value: 'unfold', label: 'Unfold', description: 'Origami unfold' },
     { value: 'assemble', label: 'Assemble', description: 'Parts fly in' },
     { value: 'grow', label: 'Grow', description: 'Organic growth' },
-    { value: 'morphLoop', label: 'Morph Loop', description: 'Morph keyframes' },
-    { value: 'colorCycle', label: 'Color Cycle', description: 'Hue rotation' },
-    { value: 'texturePan', label: 'Texture Pan', description: 'UV animation' },
+    { value: 'morphLoop', label: 'Morph loop', description: 'Morph keyframes' },
+    { value: 'colorCycle', label: 'Color cycle', description: 'Hue rotation' },
+    { value: 'texturePan', label: 'Texture pan', description: 'UV animation' },
   ];
 
   // Echo types
   const echoTypes: { value: Model3DEchoType; label: string; description: string }[] = [
     { value: 'none', label: 'None', description: 'No copies' },
-    { value: 'ghostTrail', label: 'Ghost Trail', description: 'Fading copies behind' },
+    { value: 'ghostTrail', label: 'Ghost trail', description: 'Fading copies behind' },
     { value: 'stream', label: 'Stream', description: 'Flowing copies' },
     { value: 'swarm', label: 'Swarm', description: 'Boid-like flock' },
     { value: 'grid', label: '3D Grid', description: 'Grid arrangement' },
@@ -103,13 +103,13 @@
 
   // Lighting presets
   const lightingPresets: { value: Model3DLightingPreset; label: string }[] = [
-    { value: 'studio', label: 'Studio (3-Point)' },
+    { value: 'studio', label: 'Studio (3-point)' },
     { value: 'dramatic', label: 'Dramatic' },
-    { value: 'neon', label: 'Neon Rim' },
+    { value: 'neon', label: 'Neon rim' },
     { value: 'sunrise', label: 'Sunrise' },
     { value: 'moonlight', label: 'Moonlight' },
     { value: 'disco', label: 'Disco' },
-    { value: 'none', label: 'None (Unlit)' },
+    { value: 'none', label: 'None (unlit)' },
   ];
 
   // Optional props for dual-mode (mapping mode vs VJ mode)
@@ -315,14 +315,14 @@
 
 {#if (isVJMode ? mc : layer && mc)}
   <div data-help-page="layers" class="model3d-panel" class:compact>
-    {#if !compact}<h3>3D Model</h3>{/if}
+    {#if !compact}<h3>3D model</h3>{/if}
 
     <!-- File Loading -->
     <div class="section">
       <label class="section-label">Model File</label>
       <div class="file-row">
         {#if onFileLoad}
-          <button class="file-button" onclick={onFileLoad}>Load File</button>
+          <button class="file-button" onclick={onFileLoad}>Load file</button>
         {:else}
           <input
             type="file"
@@ -330,7 +330,7 @@
             onchange={handleFileSelect}
             id="model3d-file-input"
           />
-          <label for="model3d-file-input" class="file-button">Load Model</label>
+          <label for="model3d-file-input" class="file-button">Load model</label>
         {/if}
         {#if mc.modelData}
           <button
@@ -350,7 +350,7 @@
       </div>
       {#if mc.modelData}
         <div class="file-info">
-          <span class="filename">{currentFileName || mc.modelName || 'Loaded Model'}</span>
+          <span class="filename">{currentFileName || mc.modelName || 'Loaded model'}</span>
           <span class="format">{mc.modelFormat.toUpperCase()}</span>
           {#if mc.vertexCount > 0}
             <span class="vertex-count">{mc.vertexCount.toLocaleString()} vertices</span>
@@ -453,7 +453,7 @@
             </div>
 
             <div class="property-row">
-              <label>Emissive Int.</label>
+              <label>Emissive int.</label>
               <input
                 type="range" min="0" max="5" step="0.1"
                 value={mc.materialEmissiveIntensity}
@@ -470,7 +470,7 @@
 
           {#if mc.materialType === 'hologram'}
             <div class="property-row">
-              <label>Scan Speed</label>
+              <label>Scan speed</label>
               <input
                 type="range" min="0" max="10" step="0.1"
                 value={mc.hologramScanSpeed}
@@ -485,7 +485,7 @@
             </div>
 
             <div class="property-row">
-              <label>Scan Count</label>
+              <label>Scan count</label>
               <input
                 type="range" min="5" max="100" step="1"
                 value={mc.hologramScanCount}
@@ -515,7 +515,7 @@
             </div>
 
             <div class="property-row">
-              <label>Rim Color</label>
+              <label>Rim color</label>
               <input
                 type="color"
                 value={rgbToHex(mc.hologramRimColor[0], mc.hologramRimColor[1], mc.hologramRimColor[2])}
@@ -526,7 +526,7 @@
 
           {#if mc.materialType === 'lava'}
             <div class="property-row">
-              <label>Flow Speed</label>
+              <label>Flow speed</label>
               <input
                 type="range" min="0" max="5" step="0.1"
                 value={mc.lavaFlowSpeed}
@@ -541,7 +541,7 @@
             </div>
 
             <div class="property-row">
-              <label>Crack Int.</label>
+              <label>Crack int.</label>
               <input
                 type="range" min="0" max="2" step="0.1"
                 value={mc.lavaCrackIntensity}
@@ -556,7 +556,7 @@
             </div>
 
             <div class="property-row">
-              <label>Glow Color</label>
+              <label>Glow color</label>
               <input
                 type="color"
                 value={rgbToHex(mc.lavaGlowColor[0], mc.lavaGlowColor[1], mc.lavaGlowColor[2])}
@@ -614,7 +614,7 @@
             </div>
 
             <div class="property-row">
-              <label>Edge Color</label>
+              <label>Edge color</label>
               <input
                 type="color"
                 value={rgbToHex(mc.dissolveEdgeColor[0], mc.dissolveEdgeColor[1], mc.dissolveEdgeColor[2])}
@@ -623,7 +623,7 @@
             </div>
 
             <div class="property-row">
-              <label>Edge Width</label>
+              <label>Edge width</label>
               <input
                 type="range" min="0.01" max="0.2" step="0.01"
                 value={mc.dissolveEdgeWidth}
@@ -655,7 +655,7 @@
             </div>
 
             <div class="property-row">
-              <label>Fresnel Color</label>
+              <label>Fresnel color</label>
               <input
                 type="color"
                 value={rgbToHex(mc.fresnelColor[0], mc.fresnelColor[1], mc.fresnelColor[2])}
@@ -769,7 +769,7 @@
 
             {#if mc.wireframeMode === 'animated' || mc.wireframeMode === 'pulse' || mc.wireframeMode === 'rainbow' || mc.wireframeMode === 'dotted'}
               <div class="property-row">
-                <label>Anim Speed</label>
+                <label>Anim speed</label>
                 <input
                   type="range" min="0" max="5" step="0.1"
                   value={mc.wireframeAnimSpeed}
@@ -938,9 +938,9 @@
                 data-midi-discrete="all,x,y,z"
               >
                 <option value="all">All</option>
-                {#if deformInfo.axes.includes('x')}<option value="x">X Only</option>{/if}
-                {#if deformInfo.axes.includes('y')}<option value="y">Y Only</option>{/if}
-                {#if deformInfo.axes.includes('z')}<option value="z">Z Only</option>{/if}
+                {#if deformInfo.axes.includes('x')}<option value="x">X only</option>{/if}
+                {#if deformInfo.axes.includes('y')}<option value="y">Y only</option>{/if}
+                {#if deformInfo.axes.includes('z')}<option value="z">Z only</option>{/if}
               </select>
             </div>
           {/if}
@@ -973,7 +973,7 @@
             </div>
             {#if mc.useFileAnimation !== false}
               <div class="property-row">
-                <label>Playback Speed</label>
+                <label>Playback speed</label>
                 <input
                   type="range" min="0" max="5" step="0.1"
                   value={mc.fileAnimationSpeed ?? 1}
@@ -1153,7 +1153,7 @@
               </div>
 
               <div class="property-row">
-                <label>Fade Rate</label>
+                <label>Fade rate</label>
                 <input
                   type="range" min="0" max="1" step="0.01"
                   value={mc.echo.fadeRate}
@@ -1168,7 +1168,7 @@
               </div>
 
               <div class="property-row">
-                <label>Scale Var.</label>
+                <label>Scale var.</label>
                 <input
                   type="range" min="0" max="1" step="0.01"
                   value={mc.echo.scaleVariation}
@@ -1183,7 +1183,7 @@
               </div>
 
               <div class="property-row">
-                <label>Rotation Var.</label>
+                <label>Rotation var.</label>
                 <input
                   type="range" min="0" max="1" step="0.01"
                   value={mc.echo.rotationVariation}
@@ -1198,7 +1198,7 @@
               </div>
 
               <div class="property-row">
-                <label>Color Var.</label>
+                <label>Color var.</label>
                 <input
                   type="range" min="0" max="1" step="0.01"
                   value={mc.echo.colorVariation}
@@ -1357,8 +1357,8 @@
       {#if showCamera}
         <div class="section-content">
           <div class="button-row">
-            <button class="secondary-button" type="button" onclick={frameCamera}>Frame Model</button>
-            <button class="secondary-button" type="button" onclick={resetModelTransform}>Reset Model</button>
+            <button class="secondary-button" type="button" onclick={frameCamera}>Frame model</button>
+            <button class="secondary-button" type="button" onclick={resetModelTransform}>Reset model</button>
           </div>
 
           <div class="property-row checkbox">
@@ -1377,7 +1377,7 @@
 
           {#if mc.camera.autoRotate}
             <div class="property-row">
-              <label>Rotate Speed</label>
+              <label>Rotate speed</label>
               <input
                 type="range" min="0" max="5" step="0.1"
                 value={mc.camera.rotateSpeed}
@@ -1579,14 +1579,14 @@
               onchange={(e) => updateContent({ backgroundMode: (e.target as HTMLSelectElement).value as Model3DContent['backgroundMode'] })}
             >
               <option value="transparent">Transparent</option>
-              <option value="color">Solid Color</option>
+              <option value="color">Solid color</option>
               <option value="environment">Environment</option>
             </select>
           </div>
 
           {#if (mc.backgroundMode ?? 'transparent') === 'color'}
             <div class="property-row">
-              <label>BG Color</label>
+              <label>BG color</label>
               <input
                 type="color"
                 value={rgbToHex(...(mc.backgroundColor ?? [8, 8, 12]))}
@@ -1597,7 +1597,7 @@
 
           {#if (mc.backgroundMode ?? 'transparent') !== 'transparent'}
             <div class="property-row">
-              <label>BG Opacity</label>
+              <label>BG opacity</label>
               <input
                 type="range" min="0" max="1" step="0.01"
                 value={mc.backgroundOpacity ?? 1}
@@ -1631,7 +1631,7 @@
           </div>
 
           <div class="property-row">
-            <label>Key Power</label>
+            <label>Key power</label>
             <input
               type="range" min="0" max="3" step="0.1"
               value={mc.directionalIntensity}
@@ -1646,7 +1646,7 @@
           </div>
 
           <div class="property-row">
-            <label>Key Color</label>
+            <label>Key color</label>
             <input
               type="color"
               value={rgbToHex(mc.lightColor[0], mc.lightColor[1], mc.lightColor[2])}
@@ -1655,7 +1655,7 @@
           </div>
 
           <div class="property-row">
-            <label>Key Azimuth</label>
+            <label>Key azimuth</label>
             <input
               type="range" min="-180" max="180" step="1"
               value={mc.keyLightAzimuth ?? 45}
@@ -1670,7 +1670,7 @@
           </div>
 
           <div class="property-row">
-            <label>Key Elevation</label>
+            <label>Key elevation</label>
             <input
               type="range" min="-10" max="90" step="1"
               value={mc.keyLightElevation ?? 50}
@@ -1685,7 +1685,7 @@
           </div>
 
           <div class="property-row">
-            <label>Fill Power</label>
+            <label>Fill power</label>
             <input
               type="range" min="0" max="3" step="0.05"
               value={mc.fillIntensity ?? 0.35}
@@ -1700,7 +1700,7 @@
           </div>
 
           <div class="property-row">
-            <label>Rim Power</label>
+            <label>Rim power</label>
             <input
               type="range" min="0" max="3" step="0.05"
               value={mc.rimIntensity ?? 0.4}
@@ -1715,7 +1715,7 @@
           </div>
 
           <div class="property-row">
-            <label>Rim Color</label>
+            <label>Rim color</label>
             <input
               type="color"
               value={rgbToHex(...(mc.rimColor ?? [120, 180, 255]))}
@@ -1825,12 +1825,12 @@
                 data-midi-step="1"
                 data-midi-discrete="all,sub,bass,lowMid,mid,highMid,high"
               >
-                <option value="all">All Frequencies</option>
-                <option value="sub">Sub Bass</option>
+                <option value="all">All frequencies</option>
+                <option value="sub">Sub bass</option>
                 <option value="bass">Bass</option>
-                <option value="lowMid">Low Mid</option>
+                <option value="lowMid">Low mid</option>
                 <option value="mid">Mid</option>
-                <option value="highMid">High Mid</option>
+                <option value="highMid">High mid</option>
                 <option value="high">High</option>
               </select>
             </div>
@@ -1923,7 +1923,7 @@
       {#if showBeatSync}
         <div class="section-content">
           <div class="property-row">
-            <label>Beat Scale</label>
+            <label>Beat scale</label>
             <input
               type="range" min="0" max="1" step="0.01"
               value={mc.beatScale}
@@ -1938,7 +1938,7 @@
           </div>
 
           <div class="property-row">
-            <label>Beat Rotate</label>
+            <label>Beat rotate</label>
             <input
               type="range" min="0" max="1" step="0.01"
               value={mc.beatRotate}
@@ -1953,7 +1953,7 @@
           </div>
 
           <div class="property-row">
-            <label>Beat Explode</label>
+            <label>Beat explode</label>
             <input
               type="range" min="0" max="1" step="0.01"
               value={mc.beatExplode}
@@ -1968,7 +1968,7 @@
           </div>
 
           <div class="property-row">
-            <label>Color Flash</label>
+            <label>Color flash</label>
             <input
               type="range" min="0" max="1" step="0.01"
               value={mc.beatColorFlash}
@@ -1997,123 +1997,127 @@
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--text-primary, #e0e0e0);
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-0);
     overflow-y: auto;
     max-height: 100%;
   }
 
   h3 {
     margin: 0 0 8px 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--accent-primary, #BB86FC);
-    border-bottom: 1px solid var(--border-color, #333);
-    padding-bottom: 8px;
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0);
   }
 
   .section {
-    background: var(--bg-tertiary, #0d0d10);
-    border-radius: 6px;
-    padding: 8px;
+    border-top: 1px solid var(--ga-line-1);
+  }
+  .section:not(.collapsible) {
+    padding: 12px 0;
   }
 
+  /* Eyebrow section label, same as every layer editor. */
   .section-label {
     display: block;
-    font-size: 12px;
-    color: var(--text-secondary, #888);
-    margin-bottom: 6px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2);
+    margin-bottom: 8px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking);
   }
 
   .subsection-label {
-    color: var(--text-secondary, #888);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
+    margin-top: 4px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-transform: uppercase;
   }
 
   .button-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px;
+    gap: 4px;
   }
 
   .secondary-button {
     min-width: 0;
-    padding: 6px 8px;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    background: var(--bg-secondary, #161618);
-    color: var(--text-primary, #e0e0e0);
-    font-size: 11px;
+    height: var(--ga-control-h);
+    padding: 0 8px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    background: var(--ga-sub);
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
   }
 
   .secondary-button:hover {
-    border-color: var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
   }
 
   .collapsible {
     padding: 0;
   }
 
+  /* Collapsible eyebrow header */
   .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     width: 100%;
-    padding: 8px 10px;
+    min-height: 32px;
+    padding: 0;
     background: none;
     border: none;
-    color: var(--text-primary, #e0e0e0);
+    color: var(--ga-ink-2);
     cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-align: left;
-    border-radius: 6px;
   }
 
   .section-header:hover {
-    background: var(--bg-hover, #111114);
+    color: var(--ga-ink-0);
   }
 
   .section-content {
-    padding: 8px 10px;
+    padding: 0 0 12px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    border-top: 1px solid var(--border-color, #333);
+    gap: 6px;
   }
 
   .section-divider {
     height: 1px;
-    background: var(--border-color, #333);
+    background: var(--ga-line-1);
     margin: 4px 0;
-    opacity: 0.5;
   }
 
   .chevron {
-    font-size: 17px;
-    color: var(--text-secondary, #888);
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-2);
   }
 
   .property-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    min-height: var(--ga-control-h);
   }
 
   .property-row > label:first-child {
-    min-width: 70px;
-    max-width: 110px;
+    width: 96px;
     flex-shrink: 0;
-    color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-control);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2121,8 +2125,9 @@
 
   .property-row input[type="range"] {
     flex: 1;
+    min-width: 0;
     height: 6px;
-    background: #000000;
+    background: var(--ga-slot);
     border-radius: 3px;
     -webkit-appearance: none;
     cursor: pointer;
@@ -2132,28 +2137,30 @@
     -webkit-appearance: none;
     width: 14px;
     height: 14px;
-    background: var(--accent-primary, #BB86FC);
+    background: var(--ga-selection-line);
     border-radius: 50%;
     cursor: pointer;
   }
 
   .property-row select {
     flex: 1;
-    padding: 5px 8px;
-    background-color: var(--bg-secondary, #161618);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    color: var(--text-primary, #e0e0e0);
-    font-size: 12px;
+    min-width: 0;
+    height: var(--ga-control-h);
+    padding: 0 8px;
+    background-color: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-control);
     cursor: pointer;
   }
 
   .property-row input[type="color"] {
     width: 40px;
-    height: 24px;
+    height: var(--ga-control-h-sm);
     padding: 0;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
     cursor: pointer;
     background: none;
   }
@@ -2161,17 +2168,19 @@
   .property-row .value {
     min-width: 40px;
     text-align: right;
-    color: var(--accent-primary, #BB86FC);
-    font-size: 11px;
+    color: var(--ga-ink-1);
+    font-size: var(--ga-text-meta);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
   }
 
   .property-row.checkbox label {
+    width: auto;
     display: flex;
     align-items: center;
     gap: 8px;
     cursor: pointer;
-    color: var(--text-primary, #e0e0e0);
+    color: var(--ga-ink-0);
   }
 
   .property-row.checkbox input[type="checkbox"] {
@@ -2182,7 +2191,7 @@
 
   .file-row {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
   }
 
@@ -2190,41 +2199,44 @@
     display: none;
   }
 
+  /* Primary action */
   .file-button {
-    padding: 6px 12px;
-    background: var(--accent-primary, #BB86FC);
-    color: var(--bg-primary, #121212);
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    height: var(--ga-control-h);
+    padding: 0 12px;
+    background: var(--ga-accent-gradient, var(--ga-violet));
+    border: none;
+    color: var(--ga-blue-800);
+    border-radius: var(--ga-r-soft);
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
-    transition: background 0.2s;
+    font-size: var(--ga-text-control);
+    font-weight: 700;
+    transition: filter 0.2s;
   }
 
   .file-button:hover {
-    background: var(--accent-hover, #34d399);
+    filter: brightness(1.06);
   }
 
   .reload-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: var(--ga-control-h);
+    height: var(--ga-control-h);
     padding: 0;
-    margin-left: 6px;
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-    color: var(--text-dim, #888);
+    background: var(--ga-sub);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard);
+    color: var(--ga-ink-1);
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .reload-button:hover {
-    color: var(--accent-primary, #BB86FC);
-    border-color: var(--accent-primary, #BB86FC);
-    background: rgba(187, 134, 252, 0.08);
+    color: var(--ga-ink-0);
+    border-color: var(--ga-line-3);
   }
 
   .reload-button:active {
@@ -2236,36 +2248,36 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    margin-top: 6px;
-    padding: 6px;
-    background: var(--bg-secondary, #0d0d10);
-    border-radius: 4px;
-    font-size: 11px;
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: var(--ga-card);
+    border: 1px solid var(--ga-line-1);
+    border-radius: var(--ga-r-hard);
+    font-size: var(--ga-text-meta);
   }
 
   .filename {
-    color: var(--text-primary, #e0e0e0);
-    font-weight: 500;
+    color: var(--ga-ink-0);
+    font-weight: var(--ga-weight-control);
   }
 
   .format {
-    color: var(--accent-primary, #BB86FC);
+    color: var(--ga-ink-1);
   }
 
   .vertex-count, .face-count {
-    color: var(--text-secondary, #888);
+    color: var(--ga-ink-2);
   }
 
   .hint {
-    color: var(--text-secondary, #666);
-    font-size: 11px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-meta);
     margin: 6px 0 0 0;
-    font-style: italic;
   }
 
   .no-layer {
     padding: 20px;
     text-align: center;
-    color: var(--text-secondary, #666);
+    color: var(--ga-ink-2);
   }
 </style>

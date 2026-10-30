@@ -181,48 +181,50 @@
 <style>
   .signals { display: flex; flex-direction: column; gap: 8px; }
   .add-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ga-ink-2, #8a909b); margin-right: 4px; }
-  .add, .ghost, .solid { height: 26px; padding: 0 10px; border-radius: 3px; font: inherit; cursor: pointer; white-space: nowrap; }
-  .add { border: 1px dashed rgba(255, 255, 255, 0.2); background: transparent; color: var(--ga-ink-1, #b8bdc6); }
-  .add:hover, .add.active { color: var(--ga-ink-0, #eef0f4); border-color: #c9c4ff; }
-  .ghost { border: 1px solid rgba(255, 255, 255, 0.14); background: transparent; color: var(--ga-ink-1, #b8bdc6); }
+  .label { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--ga-ink-2, #8a909b); margin-right: 4px; }
+  .add, .ghost, .solid { height: var(--ga-control-h, 26px); padding: 0 10px; border-radius: var(--ga-r-hard, 5px); font: inherit; font-weight: var(--ga-weight-control, 600); cursor: pointer; white-space: nowrap; }
+  .add { border: 1px dashed var(--ga-line-3); background: transparent; color: var(--ga-ink-1, #b8bdc6); }
+  .add:hover { color: var(--ga-ink-0, #eef0f4); border-color: var(--ga-line-3); }
+  .add.active { background: var(--ga-selection-bg); color: var(--ga-selection-ink); border-color: var(--ga-selection-line); border-style: solid; }
+  .ghost { border: 1px solid var(--ga-line-2); background: transparent; color: var(--ga-ink-1, #b8bdc6); }
   .ghost:hover { color: var(--ga-ink-0, #eef0f4); }
-  .solid { border: none; background: var(--ga-ink-0, #eef0f4); color: #07090d; font-weight: 600; }
+  .solid { border: 1px solid var(--ga-violet-line, transparent); border-radius: var(--ga-r-soft, 8px); background: var(--ga-accent-gradient, var(--ga-ink-0, #eef0f4)); color: var(--ga-void, #07090d); }
   .solid:disabled { opacity: 0.35; cursor: default; }
-  .form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; padding: 10px; border: 1px solid rgba(201, 196, 255, 0.3); border-radius: 4px; background: rgba(127, 119, 221, 0.06); }
+  .form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; padding: 10px; border: 1px solid color-mix(in srgb, var(--ga-selection-line) 45%, transparent); border-radius: var(--ga-r-hard, 5px); background: color-mix(in srgb, var(--ga-selection-bg) 40%, transparent); }
   .form label { display: flex; flex-direction: column; gap: 3px; }
-  .form label > span { font-size: 10px; color: var(--ga-ink-2, #8a909b); }
+  .form label > span { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-1, #8a909b); }
   .form .grow { flex: 1; min-width: 240px; }
   .target-row { display: flex; gap: 6px; }
   .target-row select { flex: 1; }
   select, input[type='number'] {
-    height: 26px;
-    background: #000;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    background: var(--ga-slot);
     color: var(--ga-ink-0, #eef0f4);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     font: inherit;
     padding: 0 6px;
     min-width: 0;
   }
   select { max-width: 220px; }
   .arrow { color: var(--ga-ink-2, #8a909b); padding-bottom: 4px; }
-  .intro { padding: 10px 12px; border: 1px solid rgba(127, 119, 221, 0.35); background: rgba(127, 119, 221, 0.08); border-radius: 4px; }
+  .intro { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ga-selection-line) 45%, transparent); background: color-mix(in srgb, var(--ga-selection-bg) 45%, transparent); border-radius: var(--ga-r-hard, 5px); }
   .intro b { font-weight: 600; }
   .intro p { margin: 4px 0 0; color: var(--ga-ink-1, #b8bdc6); line-height: 1.5; }
-  .row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 3px; background: rgba(255, 255, 255, 0.02); }
+  .row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--ga-line-1); border-radius: var(--ga-r-hard, 5px); background: var(--ga-card); }
   .swatch { width: 4px; align-self: stretch; border-radius: 2px; }
   .src { width: 190px; display: flex; flex-direction: column; min-width: 0; }
   .src b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .src small { color: var(--ga-ink-2, #8a909b); font-size: 10px; }
-  .meter { width: 90px; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; flex: 0 0 auto; }
-  .meter span { display: block; height: 100%; background: linear-gradient(90deg, #7f77dd, #c9c4ff); transform-origin: left center; }
+  .src small { color: var(--ga-ink-2, #8a909b); font-size: var(--ga-text-meta, 11px); }
+  .meter { width: 90px; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: var(--ga-r-hard, 5px); overflow: hidden; flex: 0 0 auto; }
+  .meter span { display: block; height: 100%; background: var(--ga-selection-line); transform-origin: left center; }
   .tgt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .range { display: flex; align-items: center; gap: 4px; color: var(--ga-ink-2, #8a909b); }
   .range input { width: 64px; }
   .check { display: flex; align-items: center; gap: 4px; color: var(--ga-ink-1, #b8bdc6); white-space: nowrap; }
   .smooth { display: flex; align-items: center; gap: 6px; color: var(--ga-ink-2, #8a909b); }
   .smooth input { width: 80px; }
-  .x { width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 3px; background: transparent; color: var(--ga-ink-1, #b8bdc6); cursor: pointer; }
+  .x { width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px); background: transparent; color: var(--ga-ink-1, #b8bdc6); cursor: pointer; }
   .note { margin: 0; font-size: 11px; color: var(--ga-ink-2, #8a909b); }
 </style>

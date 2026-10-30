@@ -431,7 +431,7 @@
   <div data-help-page="projects" class="preset-tray" class:vj-drag={vjDragMode}>
     <div class="tray-header">
       <div class="header-left">
-        <span class="tray-title">MAPPING PRESETS</span>
+        <span class="tray-title">Mapping presets</span>
         <div class="transition-controls">
           <label class="transition-toggle" title="Enable transition between presets">
             <input
@@ -566,11 +566,11 @@
             <span class="rec-time">{formatDuration(recordingDuration)}</span>
           </div>
           <button class="stop-rec-btn" onclick={stopRecording}>
-            ■ Stop Recording
+            ■ Stop recording
           </button>
         {:else}
           <button class="rec-btn" onclick={startRecording}>
-            ● Record Output
+            ● Record output
           </button>
         {/if}
       </div>
@@ -703,11 +703,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: linear-gradient(135deg, #0d0d10, #111114);
-    border: 1px solid #444;
-    color: var(--text-primary, #ddd);
-    padding: 8px 16px;
-    border-radius: 20px;
+    background: var(--ga-bar, #111114);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #ddd);
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
+    border-radius: var(--ga-r-pill, 999px);
     cursor: pointer;
     transition: all 0.2s ease;
     z-index: 100;
@@ -715,31 +716,31 @@
   }
 
   .tray-toggle:hover {
-    border-color: #BB86FC;
-    box-shadow: 0 4px 30px var(--ga-blue-a16);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
   .tray-toggle.open {
-    border-color: #BB86FC;
-    background: linear-gradient(135deg, var(--ga-blue-mute-800), var(--ga-blue-mute-800));
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .toggle-icon {
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #888);
   }
 
   .toggle-label {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
   }
 
   .count-badge {
-    background: #BB86FC;
-    color: #000;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-size: 11px;
+    background: rgba(255, 255, 255, 0.1);
+    color: inherit;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: var(--ga-text-micro, 9px);
     font-weight: 700;
   }
 
@@ -753,20 +754,22 @@
     z-index: 1204;
     bottom: 0;
     height: 172px;
-    border-top: 1px solid var(--ga-coral-line, rgba(206,222,236,.45));
+    border-top: 1px solid var(--ga-line-3, rgba(255, 255, 255, 0.24));
     box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.55);
   }
   .tray-minimize-btn {
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    padding: 5px 12px;
-    border-radius: 4px;
+    height: var(--ga-control-h, 26px);
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #ddd);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 4px);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     white-space: nowrap;
   }
-  .tray-minimize-btn:hover { border-color: var(--ga-coral, #ff6f5e); }
+  .tray-minimize-btn:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); color: var(--ga-ink-0, #fff); }
   .preset-tray.vj-drag .preset-item { cursor: grab; }
   .preset-tray.vj-drag .preset-item:active { cursor: grabbing; }
 
@@ -776,8 +779,8 @@
     left: 0;
     right: 0;
     height: 180px;
-    background: var(--bg-primary, #0a0a0c);
-    border-top: 1px solid #333;
+    background: var(--ga-panel, #0a0a0c);
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     z-index: 90;
     display: flex;
     flex-direction: column;
@@ -799,9 +802,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px;
-    background: var(--bg-primary, #0d0d10);
-    border-bottom: 1px solid #161618;
+    gap: 12px;
+    min-height: 40px;
+    padding: 6px 12px;
+    background: var(--ga-bar, #0d0d10);
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     flex-shrink: 0;
   }
 
@@ -824,46 +829,52 @@
   .transition-toggle {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     cursor: pointer;
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1, #888);
   }
 
   .transition-toggle input {
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line, #5278ff);
     cursor: pointer;
     margin: 0;
   }
 
   .transition-toggle input:checked ~ .transition-label {
-    color: #BB86FC;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .transition-label {
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
   }
 
-  .transition-duration {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    color: var(--text-primary, #ddd);
-    font-size: 11px;
-    padding: 2px 4px;
-    border-radius: 3px;
+  .transition-duration,
+  .ap-select {
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #161618);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #ddd);
+    font-size: var(--ga-text-control, 12px);
+    padding: 0 6px;
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
   }
 
   .transition-duration:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: var(--ga-focus, #8aa4ff);
   }
 
+  /* Eyebrow. */
   .tray-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted, #888);
-    letter-spacing: 0.5px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    color: var(--ga-ink-2, #888);
+    text-transform: uppercase;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    white-space: nowrap;
   }
 
   .save-preset {
@@ -876,118 +887,106 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    margin-top: 6px;
   }
   .ap-btn {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    color: var(--text-primary, #ddd);
-    width: 28px;
-    height: 26px;
-    border-radius: 4px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
+    color: var(--ga-ink-1, #ddd);
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    border-radius: var(--ga-r-hard, 4px);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 0;
   }
-  .ap-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
-  .ap-btn.play { color: #2ED573; }
-  .ap-btn.stop { color: #FF4757; }
-  .ap-btn.loop.active { background: rgba(187,134,252,0.15); border-color: #BB86FC; color: #BB86FC; }
-  .ap-select {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    color: var(--text-primary, #ddd);
-    font-size: 11px;
-    padding: 3px 4px;
-    border-radius: 3px;
-    cursor: pointer;
-  }
+  .ap-btn:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(255,255,255,0.24)); color: var(--ga-ink-0, #fff); }
+  .ap-btn.play { color: var(--ga-live, #2ED573); }
+  .ap-btn.stop { color: var(--ga-rec, #FF4757); }
+  .ap-btn.loop.active { background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); color: var(--ga-selection-ink, #e0e8ff); }
   .ap-bpm {
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #888);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .ap-progress {
     width: 60px;
-    height: 6px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 3px;
+    height: 4px;
+    background: var(--ga-slot, rgba(255,255,255,0.06));
+    border-radius: 2px;
     overflow: hidden;
   }
   .ap-progress-bar {
     height: 100%;
-    background: #BB86FC;
+    background: var(--ga-selection-line, #5278ff);
     transition: width 0.1s linear;
   }
   .preset-duration {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #333;
-    color: var(--text-muted, #888);
-    font-size: 10px;
-    padding: 2px;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, #161618);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #888);
+    font-size: var(--ga-text-meta, 11px);
+    padding: 0 2px;
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
-    width: 36px;
+    width: 40px;
   }
 
   .save-preset input {
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    color: var(--text-primary, #eee);
-    padding: 5px 10px;
-    border-radius: 4px;
-    font-size: 12px;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-slot, #161618);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eee);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 4px);
+    font-size: var(--ga-text-control, 12px);
     width: 140px;
   }
 
   .save-preset input:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: var(--ga-focus, #8aa4ff);
   }
 
+  /* Primary action: the ghost-white fill used for primary buttons. */
   .save-btn {
-    background: #BB86FC;
-    border: none;
-    color: #000;
-    padding: 5px 12px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    height: var(--ga-control-h, 26px);
+    background: linear-gradient(180deg, #f4f9fd, #cfdde9);
+    border: 1px solid rgba(214, 228, 240, 0.72);
+    color: var(--ga-blue-mute-800, #1d2633);
+    padding: 0 12px;
+    border-radius: var(--ga-r-soft, 6px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: 700;
     cursor: pointer;
     white-space: nowrap;
   }
 
   .save-btn:hover {
-    background: var(--ga-blue-300);
+    filter: brightness(1.04);
   }
 
-  /* "Update current preset" — visually paired with .save-btn but with
-     an inverted scheme: outlined accent + filled-on-hover. Signals
-     "this is destructive over an existing entry" without being
-     alarming (preset overwrites aren't catastrophic — they can be
-     re-saved). */
+  /* Update overwrites the active preset: an outlined twin of Save. */
   .update-btn {
+    height: var(--ga-control-h, 26px);
     background: transparent;
-    border: 1px solid #BB86FC;
-    color: #BB86FC;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 0 10px;
+    border-radius: var(--ga-r-soft, 6px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     white-space: nowrap;
   }
   .update-btn:hover {
-    background: rgba(187,134,252,0.15);
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
-  /* Right-click context menu over preset cards. Mirrors the styling of
-     similar context menus elsewhere (LayerPanel) — dark background,
-     subtle border, hover row, danger-row for destructive actions. */
+  /* Right-click menu over preset cards, same as the layer menu. */
   .ctx-backdrop {
     position: fixed;
     inset: 0;
@@ -998,84 +997,80 @@
     position: fixed;
     z-index: 1101;
     min-width: 200px;
-    background: #1a1a1f;
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 6px;
-    padding: 4px;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    background: var(--ga-raise, #1a1a1f);
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
+    border-radius: var(--ga-r-soft, 6px);
+    padding: 4px 0;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
     display: flex;
     flex-direction: column;
-    gap: 1px;
   }
   .preset-ctx-menu .ctx-item {
     background: transparent;
     border: none;
-    color: var(--text-primary, #ddd);
-    padding: 6px 10px;
+    color: var(--ga-ink-1, #ddd);
+    padding: 6px 12px;
     text-align: left;
-    font-size: 13px;
-    border-radius: 4px;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-body, 500);
     cursor: pointer;
     white-space: nowrap;
   }
   .preset-ctx-menu .ctx-item:hover {
     background: rgba(255,255,255,0.06);
-    color: #fff;
+    color: var(--ga-ink-0, #fff);
   }
   .preset-ctx-menu .ctx-item.ctx-danger {
-    color: #ff8888;
+    color: var(--ga-rec, #ff8888);
   }
   .preset-ctx-menu .ctx-item.ctx-danger:hover {
-    background: rgba(255,68,68,0.12);
-    color: #ffb0b0;
+    background: color-mix(in srgb, var(--ga-rec, #ff4438) 14%, transparent);
   }
   .preset-ctx-menu .ctx-divider {
     height: 1px;
-    background: rgba(255,255,255,0.08);
-    margin: 4px 2px;
+    background: var(--ga-line, rgba(255,255,255,0.07));
+    margin: 4px 0;
   }
 
-  /* Recording controls */
+  /* Recording controls: record red is meaning-bearing. */
   .rec-btn {
-    background: var(--ga-card, #13161c);
-    border: 1px solid var(--ga-line-2, #555);
+    height: var(--ga-control-h, 26px);
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     color: var(--ga-rec, #ff4444);
-    padding: 6px 14px;
-    border-radius: var(--ga-r-soft, 4px);
-    font-size: 12px;
-    font-weight: 700;
+    padding: 0 12px;
+    border-radius: var(--ga-r-soft, 6px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    /* Fixes the "Record / Output" vertical wrap when the tray gives
-       us narrow space — was breaking into two lines because the flex
-       column ancestor was crushing this in. */
+    /* Keeps the label on one line when the tray is narrow. */
     white-space: nowrap;
     flex: 0 0 auto;
-    min-width: 130px;
   }
 
   .rec-btn:hover {
-    background: #ff4444;
-    border-color: #ff4444;
-    color: #fff;
+    background: color-mix(in srgb, var(--ga-rec, #ff4444) 14%, transparent);
+    border-color: color-mix(in srgb, var(--ga-rec, #ff4444) 55%, transparent);
   }
 
   .stop-rec-btn {
-    background: #ff4444;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-rec, #ff4444);
     border: none;
     color: #fff;
-    padding: 5px 12px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    padding: 0 12px;
+    border-radius: var(--ga-r-soft, 6px);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
 
   .stop-rec-btn:hover {
-    background: #ff6666;
+    filter: brightness(1.1);
   }
 
   .recording-indicator {
@@ -1087,7 +1082,7 @@
   .rec-dot {
     width: 8px;
     height: 8px;
-    background: #ff4444;
+    background: var(--ga-rec, #ff4444);
     border-radius: 50%;
     animation: blink 1s infinite;
   }
@@ -1098,9 +1093,9 @@
   }
 
   .rec-time {
-    font-size: 12px;
+    font-size: var(--ga-text-control, 12px);
     font-weight: 600;
-    color: #ff4444;
+    color: var(--ga-rec, #ff4444);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
@@ -1109,7 +1104,7 @@
     flex: 1;
     display: flex;
     gap: 8px;
-    padding: 12px 16px;
+    padding: 10px 12px;
     overflow-x: auto;
     overflow-y: hidden;
   }
@@ -1120,18 +1115,18 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    color: #555;
+    color: var(--ga-ink-1, #555);
     text-align: center;
   }
 
   .empty-state p {
     margin: 0;
-    font-size: 13px;
+    font-size: var(--ga-text-body, 13px);
   }
 
   .empty-state .hint {
-    font-size: 11px;
-    color: #444;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #444);
     margin-top: 4px;
     max-width: 300px;
   }
@@ -1139,9 +1134,9 @@
   .preset-item {
     flex-shrink: 0;
     width: 120px;
-    background: #1e1e1e;
-    border: 1px solid #333;
-    border-radius: 6px;
+    background: var(--ga-card, #1e1e1e);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-tile, 6px);
     cursor: pointer;
     transition: all 0.15s;
     position: relative;
@@ -1149,25 +1144,24 @@
   }
 
   .preset-item:hover {
-    border-color: #BB86FC;
-    transform: translateY(-2px);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
   }
 
   .preset-item.active {
-    border-color: #BB86FC;
-    box-shadow: 0 0 12px var(--ga-blue-a28);
+    border-color: var(--ga-selection-line, #5278ff);
+    box-shadow: 0 0 0 1px var(--ga-selection-line, #5278ff);
   }
 
   .preset-item.dragover {
-    border-color: var(--ga-blue-200);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ga-blue-200) 70%, transparent), 0 0 14px color-mix(in srgb, var(--ga-blue-200) 26%, transparent);
+    border-color: var(--ga-selection-line, #5278ff);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ga-selection-line, #5278ff) 70%, transparent), 0 0 14px color-mix(in srgb, var(--ga-selection-line, #5278ff) 26%, transparent);
     transform: translateY(-2px);
   }
 
   .preset-thumb {
     width: 100%;
     height: 68px;
-    background: #111;
+    background: var(--ga-slot, #111);
     overflow: hidden;
   }
 
@@ -1183,9 +1177,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #161618, #0d0d10);
-    color: #666;
-    font-size: 19px;
+    background: var(--ga-slot, #0d0d10);
+    color: var(--ga-ink-3, #666);
+    font-size: var(--ga-text-display, 20px);
     font-weight: 700;
   }
 
@@ -1197,26 +1191,27 @@
   }
 
   .preset-name {
-    font-size: 11px;
-    color: var(--text-primary, #ddd);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-0, #ddd);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .preset-layers {
-    font-size: 10px;
-    color: #666;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2, #666);
   }
 
   .name-edit {
     width: 100%;
-    background: #333;
-    border: 1px solid #BB86FC;
-    color: var(--text-primary, #eee);
+    background: var(--ga-slot, #333);
+    border: 1px solid var(--ga-selection-line, #5278ff);
+    color: var(--ga-ink-0, #eee);
     padding: 2px 4px;
     border-radius: 2px;
-    font-size: 11px;
+    font-size: var(--ga-text-control, 12px);
   }
 
   .delete-btn {
@@ -1225,7 +1220,7 @@
     right: 4px;
     width: 18px;
     height: 18px;
-    background: rgba(255, 50, 50, 0.9);
+    background: var(--ga-rec, #ff3232);
     border: none;
     border-radius: 50%;
     color: #fff;
@@ -1242,7 +1237,7 @@
   }
 
   .delete-btn:hover {
-    background: #ff3333;
+    filter: brightness(1.1);
   }
 
   /* Scrollbar */
@@ -1251,15 +1246,15 @@
   }
 
   .preset-list::-webkit-scrollbar-track {
-    background: var(--bg-primary, #0d0d10);
+    background: transparent;
   }
 
   .preset-list::-webkit-scrollbar-thumb {
-    background: #333;
+    background: var(--ga-line-2, #333);
     border-radius: 3px;
   }
 
   .preset-list::-webkit-scrollbar-thumb:hover {
-    background: #444;
+    background: var(--ga-line-3, #444);
   }
 </style>

@@ -36,23 +36,23 @@
   const SECTIONS: Array<{ name: string; rows: string[][] }> = [
     { name: 'VCO 1', rows: [['wave1'], ['tune1']] },
     { name: 'VCO 2', rows: [['wave2'], ['tune2']] },
-    { name: 'MIX', rows: [['mix2', 'sub'], ['noise', 'glide']] },
-    { name: 'FILTER', rows: [['cutoff', 'reso'], ['envamt', 'drive']] },
-    { name: 'ENVELOPE', rows: [['attack', 'decay'], ['sustain', 'release']] },
+    { name: 'Mix', rows: [['mix2', 'sub'], ['noise', 'glide']] },
+    { name: 'Filter', rows: [['cutoff', 'reso'], ['envamt', 'drive']] },
+    { name: 'Envelope', rows: [['attack', 'decay'], ['sustain', 'release']] },
     { name: 'LFO', rows: [['lforate'], ['lfodepth']] },
   ];
 
   const LABELS: Record<string, string> = { wave1: 'Wave', wave2: 'Wave', tune1: 'Tune', tune2: 'Tune', lforate: 'Rate', lfodepth: 'Depth' };
 </script>
 
-<StudioModule title="ANALOG" subtitle="Envelope normalled to filter and amp · patch to re-route, or out to the picture" led={sounding} class="synth-panel">
+<StudioModule title="Analog" subtitle="Envelope normalled to filter and amp · patch to re-route, or out to the picture" led={sounding} class="synth-panel">
   {#snippet head()}
-    <button class="load" onclick={() => void loadAnalogPatch()} title="A first patch: the LFO sweeps the filter and two note visuals follow the envelope and the LFO">LOAD PATCH</button>
+    <button class="studio-btn load" onclick={() => void loadAnalogPatch()} title="A first patch: the LFO sweeps the filter and two note visuals follow the envelope and the LFO">Load patch</button>
   {/snippet}
   <div class="synth">
     {#each SECTIONS as section (section.name)}
       <div class="section">
-        <span class="section-name">{section.name}</span>
+        <span class="section-name ga-eyebrow">{section.name}</span>
         <div class="knobs">
           {#each section.rows as row, ri (ri)}
             <div class="row">
@@ -75,14 +75,14 @@
     {/each}
     {#if bay}
     <div class="section bay">
-      <span class="section-name">PATCH</span>
+      <span class="section-name ga-eyebrow">Patch</span>
       <div class="bay-grid">
-        <span class="row-name">OUT</span>
+        <span class="row-name ga-eyebrow legend">Out</span>
         <StudioJack id="cv:analog.lfo" label="LFO" title="LFO out" />
         <StudioJack id="cv:analog.env" label="Env" title="Envelope out" />
         <StudioJack id="cv:analog.vco2" label="VCO 2" title="VCO 2 out: into Pitch for FM" />
         <StudioJack id="cv:analog.level" label="Level" title="How loud the synth is, as a control signal" />
-        <span class="row-name">IN</span>
+        <span class="row-name ga-eyebrow legend">In</span>
         <StudioJack id="dest:analog.cutoff" label="Cutoff" title="Filter cutoff in" />
         <StudioJack id="dest:analog.pitch" label="Pitch" title="Pitch in" />
         <StudioJack id="dest:analog.amp" label="Amp" title="Amp in" />
@@ -110,7 +110,8 @@
     border-left: 1px solid var(--studio-edge-soft);
   }
   .section:first-child { padding-left: 0; border-left: 0; }
-  .section-name { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--studio-accent); }
+  /* Section names print in the panel's orange, as on the synths it is modelled on. */
+  .section .section-name { color: var(--studio-accent); }
   .knobs { flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
   .row { display: flex; justify-content: space-around; gap: 6px; }
   .bay { flex: 0 0 auto; padding-right: 0; }
@@ -126,18 +127,7 @@
     border: 1px solid var(--studio-edge-soft);
     border-radius: var(--studio-radius);
   }
-  .row-name { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--studio-muted); justify-self: start; padding-right: 6px; }
-  .load {
-    height: 22px;
-    padding: 0 9px;
-    border: 1px solid var(--studio-accent);
-    background: var(--studio-accent-soft);
-    color: var(--studio-accent);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-  }
+  .row-name { justify-self: start; padding-right: 6px; }
+  /* The one call to action on the panel, in its accent. */
+  .studio-btn.load { color: var(--studio-accent); border-color: var(--studio-accent); background: var(--studio-accent-soft); }
 </style>

@@ -154,6 +154,6 @@
   .compact .beat {
     width: 14px;
     height: 14px;
-    font-size: 8px;
+    font-size: 9px;
   }
 </style>

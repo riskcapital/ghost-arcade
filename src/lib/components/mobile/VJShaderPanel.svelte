@@ -311,7 +311,7 @@
   }
 
   .empty-icon {
-    font-size: 21px;
+    font-size: 20px;
     color: rgba(187, 134, 252, 0.25);
   }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * The set's effects rack: patch instruments into its input. In the dub set
-   * it is the echo chamber, with THROW and DROP to play the echoes.
+   * it is the echo chamber, with Throw and Drop to play the echoes.
    */
   import { musicStudio } from '../../music/musicStudioStore';
   import { FX_RACKS } from '../../music/studioSets';
@@ -17,7 +17,7 @@
   let throwing = $state(false);
   let dropping = $state(false);
 
-  /** THROW and DROP last as long as they are held. */
+  /** Throw and Drop last as long as they are held. */
   function press(kind: 'throw' | 'drop', on: boolean, e?: PointerEvent) {
     if (e) {
       e.preventDefault();
@@ -41,7 +41,7 @@
   });
 </script>
 
-  <StudioModule title={s.set === 'dub' ? 'ECHO CHAMBER' : 'FX'} subtitle={fed ? `${fed} patched in` : 'Patch an instrument in'}>
+  <StudioModule title={s.set === 'dub' ? 'Echo chamber' : 'FX'} subtitle={fed ? `${fed} patched in` : 'Patch an instrument in'}>
     {#snippet head()}
       <StudioJack id="fx:in" label="In" title="Effects rack input" />
     {/snippet}
@@ -54,7 +54,7 @@
           onpointerup={() => press('throw', false)}
           onpointercancel={() => press('throw', false)}
           title="Hold: everything in the chamber floods the tape echo"
-        >THROW</button>
+        >Throw</button>
         <button
           class="throw"
           class:on={dropping}
@@ -62,13 +62,13 @@
           onpointerup={() => press('drop', false)}
           onpointercancel={() => press('drop', false)}
           title="Hold: the drums and bass drop out and the echoes carry on"
-        >DROP</button>
+        >Drop</button>
       </div>
     {/if}
     <div class="units">
       {#each rack as unit (unit.id)}
         <div class="unit" class:wide={unit.params.length > 3}>
-          <span class="unit-name">{unit.name}</span>
+          <span class="unit-name ga-eyebrow">{unit.name}</span>
           <div class="unit-knobs">
             {#each unit.params as p (p.key)}
               <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={22} title="{unit.name} {p.label}" onchange={(v) => musicStudio.setParam(p.key, v)} />
@@ -84,7 +84,6 @@
   .units { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; min-height: 0; }
   .unit { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
   .unit.wide { grid-column: 1 / -1; }
-  .unit-name { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--studio-muted); }
   .unit-knobs { display: flex; justify-content: space-between; }
   .throws { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .throw {
@@ -94,9 +93,8 @@
     color: var(--studio-ink);
     border-radius: var(--studio-radius);
     font: inherit;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     touch-action: none;
   }

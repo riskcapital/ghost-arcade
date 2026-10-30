@@ -114,14 +114,14 @@
   .arrangement { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
   .toolbar { display: flex; align-items: center; gap: 12px; }
   .hint { color: var(--ga-ink-2, #8a909b); }
-  .ghost { height: 24px; padding: 0 10px; border-radius: 3px; border: 1px dashed rgba(255, 255, 255, 0.2); background: transparent; color: var(--ga-ink-1, #b8bdc6); font: inherit; cursor: pointer; white-space: nowrap; }
-  .ghost:hover { color: var(--ga-ink-0, #eef0f4); border-color: rgba(255, 255, 255, 0.4); }
-  .intro { padding: 10px 12px; border: 1px solid rgba(127, 119, 221, 0.35); background: rgba(127, 119, 221, 0.08); border-radius: 4px; }
+  .ghost { height: var(--ga-control-h, 26px); padding: 0 10px; font-weight: var(--ga-weight-control, 600); border-radius: var(--ga-r-hard, 5px); border: 1px dashed var(--ga-line-3); background: transparent; color: var(--ga-ink-1, #b8bdc6); font: inherit; cursor: pointer; white-space: nowrap; }
+  .ghost:hover { color: var(--ga-ink-0, #eef0f4); border-color: var(--ga-line-3); }
+  .intro { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ga-selection-line) 45%, transparent); background: color-mix(in srgb, var(--ga-selection-bg) 45%, transparent); border-radius: var(--ga-r-hard, 5px); }
   .intro b { font-weight: 600; }
   .intro p { margin: 4px 0 0; color: var(--ga-ink-1, #b8bdc6); line-height: 1.5; }
   .timeline { position: relative; padding: 0 60px 0 4px; }
-  .ruler { position: relative; height: 18px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
-  .tick { position: absolute; bottom: 2px; transform: translateX(-1px); font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-size: 10px; color: var(--ga-ink-2, #8a909b); border-left: 1px solid rgba(255, 255, 255, 0.15); padding-left: 3px; }
+  .ruler { position: relative; height: 18px; border-bottom: 1px solid var(--ga-line-2); }
+  .tick { position: absolute; bottom: 2px; transform: translateX(-1px); font-family: var(--ga-font-mono, ui-monospace, monospace); font-size: 10px; color: var(--ga-ink-2, #8a909b); border-left: 1px solid var(--ga-line-3); padding-left: 3px; }
   .track {
     position: relative;
     height: 120px;
@@ -141,16 +141,16 @@
   .marker.passed { border-left-color: color-mix(in srgb, #e0a33a 55%, transparent); }
   .flag { padding: 2px 7px; background: #e0a33a; color: #1a1204; font-weight: 600; font-size: 11px; border-radius: 0 3px 3px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
   .marker.selected .flag { box-shadow: 0 0 0 1px var(--ga-ink-0, #eef0f4); }
-  .marker.drop .flag { background: #c9c4ff; }
+  .marker.drop .flag { background: var(--ga-selection-line); }
   .marker.flash .flag { animation: flash 0.45s ease-out; }
   @keyframes flash { from { background: #fff; } }
   .visuals { display: flex; gap: 3px; flex-wrap: wrap; }
-  .vis { width: 46px; height: 26px; border-radius: 2px; overflow: hidden; background: #000; border: 1px solid rgba(201, 196, 255, 0.45); display: flex; align-items: center; justify-content: center; }
+  .vis { width: 46px; height: 26px; border-radius: 2px; overflow: hidden; background: #000; border: 1px solid color-mix(in srgb, var(--ga-selection-line) 60%, transparent); display: flex; align-items: center; justify-content: center; }
   .vis img { width: 100%; height: 100%; object-fit: cover; }
-  .vis i { font-style: normal; font-size: 9px; font-weight: 700; color: #c9c4ff; }
-  .empty-vis { font-size: 10px; color: var(--ga-ink-2, #8a909b); border: 1px dashed rgba(255, 255, 255, 0.15); padding: 4px 6px; border-radius: 2px; }
+  .vis i { font-style: normal; font-size: 9px; font-weight: 700; color: var(--ga-ink-1); }
+  .empty-vis { font-size: 10px; color: var(--ga-ink-2, #8a909b); border: 1px dashed var(--ga-line-3); padding: 4px 6px; border-radius: 2px; }
   .playhead { position: absolute; top: -18px; bottom: 0; width: 2px; background: var(--ga-ink-2, #8a909b); pointer-events: none; }
   .playhead.moving { background: var(--ga-live, #46d18a); }
   .playhead.beyond { opacity: 0.6; }
-  .beyond-label { position: absolute; top: 22px; right: 6px; padding: 1px 6px; border-radius: 3px; background: #0c0f14; border: 1px solid rgba(255, 255, 255, 0.12); font-family: var(--ga-font-mono, 'JetBrains Mono', monospace); font-size: 10px; color: var(--ga-ink-1, #b8bdc6); white-space: nowrap; }
+  .beyond-label { position: absolute; top: 22px; right: 6px; padding: 1px 6px; border-radius: var(--ga-r-hard, 5px); background: var(--ga-card); border: 1px solid var(--ga-line-2); font-family: var(--ga-font-mono, ui-monospace, monospace); font-size: 10px; color: var(--ga-ink-1, #b8bdc6); white-space: nowrap; }
 </style>

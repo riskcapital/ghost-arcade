@@ -1197,18 +1197,19 @@
           <path d="M15 18l-6-6 6-6"/>
         </svg>
       </button>
-      <div class="brand">PROJECTION<b>SIM</b></div>
+      <span class="place-title">Map Sim</span>
+      <div class="toolbar-divider"></div>
 
       <div class="toolbar-cluster primary-actions" aria-label="Scene file actions">
-        <button class="tbtn primary" onclick={newBlankScene} title="New blank scene">
+        <button class="tbtn" onclick={newBlankScene} title="New blank scene">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>
           <span>New</span>
         </button>
-        <button class="tbtn primary" onclick={saveDesign} title="Save projection sim scene">
+        <button class="tbtn" onclick={saveDesign} title="Save projection sim scene">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
           <span>Save</span>
         </button>
-        <button class="tbtn primary" onclick={loadDesign} title="Load projection sim scene">
+        <button class="tbtn" onclick={loadDesign} title="Load projection sim scene">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h5l2 3h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 7V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v2"/></svg>
           <span>Load</span>
         </button>
@@ -1256,6 +1257,8 @@
         </button>
       </div>
 
+      <div class="toolbar-divider"></div>
+
       <div class="toolbar-cluster view-actions" aria-label="View and mapping actions">
         <button class="tbtn" onclick={() => renderer?.frameCamera()} title="Frame scene">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg>
@@ -1265,21 +1268,21 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 5-8 5-8-5z"/><path d="M4 13l8 5 8-5"/></svg>
           <span>Top</span>
         </button>
-        <button class="tbtn" class:on={snapEnabled} onclick={() => snapEnabled = !snapEnabled} title="Toggle snapping">
+        <button class="tbtn" class:on={snapEnabled} aria-pressed={snapEnabled} onclick={() => snapEnabled = !snapEnabled} title="Toggle snapping">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v7a6 6 0 0 0 12 0V3"/><path d="M6 7h4"/><path d="M14 7h4"/><path d="M6 21v-4"/><path d="M18 21v-4"/></svg>
           <span>Snap</span>
         </button>
-        <button class="tbtn" class:on={editProjectors} onclick={() => editProjectors = !editProjectors} title="Toggle projector selection">
+        <button class="tbtn" class:on={editProjectors} aria-pressed={editProjectors} onclick={() => editProjectors = !editProjectors} title="Toggle projector selection">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h9a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3H4z"/><path d="M16 10l5-3v10l-5-3"/><path d="M7 12h3"/></svg>
           <span>Projectors</span>
         </button>
         <button class="tbtn" onclick={syncProjectorsFromSlices} title="Sync projectors from screen slices">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10"/><path d="M10 3l4 4-4 4"/><path d="M20 17H10"/><path d="M14 13l-4 4 4 4"/></svg>
-          <span>Sync Slices</span>
+          <span>Sync slices</span>
         </button>
         <button class="tbtn" onclick={toggleFullscreen} title="Fullscreen output">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg>
-          <span>Full Screen</span>
+          <span>Full screen</span>
         </button>
       </div>
 
@@ -1321,7 +1324,7 @@
             </select>
           </label>
           <p class="empty">{selectedPreset?.description}</p>
-          <button class="wide-btn" onclick={() => applyPreset(selectedPresetId)}>Load Preset</button>
+          <button class="wide-btn" onclick={() => applyPreset(selectedPresetId)}>Load preset</button>
           <button class="wide-btn auto-map-btn" disabled={autoMapBusy} onclick={runAutoMap}
             title="Create a mapping layer for every face the projectors can see, already fitted to it">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8l9-4 9 4-9 4z" /><path d="M3 8v8l9 4 9-4V8" /><path d="M12 12v8" /></svg>
@@ -1335,11 +1338,11 @@
         <h3>Build</h3>
         <div class="primitive-grid">
           {#each primitiveKinds as kind}
-            <button class="add-btn" onclick={() => addPrimitive(kind)}>{kind}</button>
+            <button class="build-btn" onclick={() => addPrimitive(kind)}>{kind}</button>
           {/each}
         </div>
-        <button class="wide-btn" onclick={addProjector}>Add Projector</button>
-        <button class="wide-btn" onclick={triggerImport}>Import Model / PLY</button>
+        <button class="wide-btn" onclick={addProjector}>Add projector</button>
+        <button class="wide-btn" onclick={triggerImport}>Import model / PLY</button>
         <input bind:this={fileInput} type="file" accept=".glb,.gltf,.obj,.fbx,.ply" style="display:none" onchange={handleImportFile} />
         <input bind:this={designFileInput} type="file" accept=".json,.ghost-projection" style="display:none" onchange={handleDesignFile} />
       </section>
@@ -1363,9 +1366,9 @@
           <input type="range" min="0.02" max="0.5" step="0.01" bind:value={snapThreshold} disabled={!snapEnabled} />
         </label>
         <div class="arrange-grid">
-          <button class="add-btn" onclick={() => spaceEvenly('x')}>Space X</button>
-          <button class="add-btn" onclick={() => spaceEvenly('y')}>Space Y</button>
-          <button class="add-btn" onclick={() => spaceEvenly('z')}>Space Z</button>
+          <button class="build-btn" onclick={() => spaceEvenly('x')}>Space X</button>
+          <button class="build-btn" onclick={() => spaceEvenly('y')}>Space Y</button>
+          <button class="build-btn" onclick={() => spaceEvenly('z')}>Space Z</button>
         </div>
       </section>
 
@@ -1456,13 +1459,13 @@
     <aside class="sim-right">
       {#if multiSelectionCount > 1}
         <section>
-          <h3>{multiSelectionCount} items selected</h3>
+          <h3 class="sel-title">{multiSelectionCount} items selected</h3>
           <p class="empty">Use Move, Rotate, or Scale to transform the selected items together. Locked items stay protected.</p>
-          <button class="danger wide-btn" disabled={selectedLocked} onclick={deleteSelected}>Delete Selection</button>
+          <button class="danger wide-btn" disabled={selectedLocked} onclick={deleteSelected}>Delete selection</button>
         </section>
       {:else if selectedObject}
         <section>
-          <h3>{selectedObject.name}</h3>
+          <h3 class="sel-title">{selectedObject.name}</h3>
           <label class="field">
             <span>Name</span>
             <input value={selectedObject.name} oninput={(e) => updateObject(selectedObject.id, { name: (e.target as HTMLInputElement).value })} />
@@ -1508,11 +1511,11 @@
             <input type="checkbox" checked={selectedObject.castShadow} onchange={(e) => updateObject(selectedObject.id, { castShadow: (e.target as HTMLInputElement).checked })} />
             <span>Cast shadow</span>
           </label>
-          <button class="danger wide-btn" disabled={selectedObject.locked} onclick={() => projectionSimScene.removeObject(selectedObject!.id)}>Delete Object</button>
+          <button class="danger wide-btn" disabled={selectedObject.locked} onclick={() => projectionSimScene.removeObject(selectedObject!.id)}>Delete object</button>
         </section>
       {:else if selectedProjector}
         <section>
-          <h3>{selectedProjector.name}</h3>
+          <h3 class="sel-title">{selectedProjector.name}</h3>
           <label class="field">
             <span>Name</span>
             <input value={selectedProjector.name} oninput={(e) => updateProjector(selectedProjector.id, { name: (e.target as HTMLInputElement).value })} />
@@ -1615,7 +1618,7 @@
             <span>Tint</span>
             <input type="color" value={selectedProjector.color} oninput={(e) => updateProjector(selectedProjector.id, { color: (e.target as HTMLInputElement).value })} />
           </label>
-          <button class="danger wide-btn" disabled={selectedProjector.locked} onclick={() => projectionSimScene.removeProjector(selectedProjector!.id)}>Delete Projector</button>
+          <button class="danger wide-btn" disabled={selectedProjector.locked} onclick={() => projectionSimScene.removeProjector(selectedProjector!.id)}>Delete projector</button>
         </section>
       {:else}
         <section>
@@ -1647,7 +1650,7 @@
         </div>
         <div class="calib-side">
           <div class="calib-head">
-            <h3>Calibrate {calibratingProjector.name}</h3>
+            <h3 class="sel-title">Calibrate {calibratingProjector.name}</h3>
             <button class="tbtn" onclick={stopCalibration}>Done</button>
           </div>
           {#if !calibrationScreens.length}
@@ -1707,7 +1710,7 @@
       </div>
     {/if}
   {:else}
-    <button class="show-panels" onclick={togglePanels}>Show Controls</button>
+    <button class="show-panels" onclick={togglePanels}>Show controls</button>
   {/if}
 </div>
 
@@ -1729,13 +1732,16 @@
     stroke-linejoin: round;
   }
   .auto-map-status { margin-top: 6px; }
+  /* Sits over the app top bar: Map Sim's own bar takes its place, as the
+     Stage Sim and Stage Edit bars do. */
   .projection-sim-root {
     position: fixed;
     inset: 0;
-    z-index: 999;
-    background: #05070b;
-    color: var(--ga-ink-0, #eef0f4);
-    font-family: var(--ga-font-ui, Inter, system-ui, sans-serif);
+    z-index: 1001;
+    background: var(--ga-void, #05070b);
+    color: var(--ga-ink-0);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
+    font-size: var(--ga-text-control, 12px);
     overflow: hidden;
   }
   .sim-canvas {
@@ -1751,33 +1757,43 @@
   .show-panels {
     position: absolute;
     z-index: 2;
-    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
-    background: color-mix(in srgb, var(--ga-panel, #0b0d11) 97%, #05070b);
-    box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-panel, #100f0d);
   }
+  .sim-left,
+  .sim-right {
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 94%, transparent);
+    border-radius: var(--ga-r-soft, 8px);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+    backdrop-filter: blur(12px);
+  }
+  /* Same bar as the app top bar: 48px, 30px controls, 13px text. */
   .sim-topbar {
-    top: 14px;
-    left: 14px;
-    right: 14px;
-    height: 48px;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--ga-bar-h, 48px);
+    box-sizing: border-box;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 10px;
+    gap: var(--ga-bar-gap, 6px);
+    padding: 0 14px;
+    background: var(--ga-bar, #100f0d);
+    border: 0;
+    border-bottom: 1px solid var(--ga-line-2);
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
   }
   .sim-topbar::-webkit-scrollbar { display: none; }
-  .brand {
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    letter-spacing: 0.08em;
-    font-size: 12px;
-    margin-right: 2px;
+  .place-title {
+    margin-left: 4px;
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
     white-space: nowrap;
     flex: 0 0 auto;
   }
-  .brand b { color: var(--ga-coral, #ff725f); }
   .spacer { flex: 1; }
   button, input, select {
     font: inherit;
@@ -1785,57 +1801,46 @@
   .icon-btn,
   .tbtn,
   .seg-btn,
-  .add-btn,
+  .build-btn,
   .wide-btn,
   .tree-row,
   .tree-lock,
   .tree-delete,
   .show-panels {
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(255,255,255,0.055);
-    color: inherit;
+    border: 1px solid var(--ga-line-2);
+    background: var(--ga-card);
+    color: var(--ga-ink-0);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
   .toolbar-cluster {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    height: 34px;
-    padding: 3px;
-    border: 1px solid rgba(255,255,255,0.10);
-    background: rgba(255,255,255,0.025);
+    gap: var(--ga-bar-gap, 6px);
     flex: 0 0 auto;
-  }
-  .toolbar-cluster.primary-actions {
-    border-color: rgba(97, 214, 164, 0.18);
-    background: linear-gradient(180deg, rgba(97, 214, 164, 0.075), rgba(255,255,255,0.02));
-  }
-  .toolbar-cluster.edit-actions {
-    border-color: var(--ga-blue-a16);
-    background: linear-gradient(180deg, var(--ga-blue-a08), rgba(255,255,255,0.02));
-  }
-  .toolbar-cluster.view-actions {
-    border-color: rgba(255,255,255,0.09);
   }
   .toolbar-divider {
     width: 1px;
-    height: 28px;
-    background: linear-gradient(180deg, transparent, rgba(255,255,255,0.18), transparent);
+    height: 18px;
+    margin: 0 4px;
+    background: var(--ga-line-2);
     flex: 0 0 auto;
   }
   .icon-btn {
-    width: 30px;
-    height: 30px;
+    width: var(--ga-bar-control-h, 30px);
+    height: var(--ga-bar-control-h, 30px);
+    padding: 0;
     display: grid;
     place-items: center;
     flex: 0 0 auto;
   }
   .tbtn {
-    height: 30px;
+    height: var(--ga-bar-control-h, 30px);
+    box-sizing: border-box;
     padding: 0 10px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1855,43 +1860,47 @@
     stroke-linejoin: round;
     flex: 0 0 auto;
   }
+  /* Inside the calibration dock: panel-sized buttons. */
+  .psim-calibration-dock .tbtn {
+    height: var(--ga-control-h, 26px);
+    font-size: var(--ga-text-control, 12px);
+  }
   .tbtn.primary {
-    border-color: rgba(97, 214, 164, 0.30);
-    color: #d2ffe5;
-    background: rgba(97, 214, 164, 0.08);
+    background: var(--ga-accent-gradient, var(--ga-ink-0));
+    border-color: var(--ga-violet-line, var(--ga-line-3));
+    color: var(--ga-void, #0a0908);
   }
-  .tbtn.primary:hover {
-    border-color: rgba(97, 214, 164, 0.54);
-    background: rgba(97, 214, 164, 0.14);
-  }
-  .tbtn:hover,
+  .tbtn:hover:not(:disabled),
   .seg-btn:hover,
-  .add-btn:hover,
-  .wide-btn:hover,
+  .build-btn:hover,
+  .wide-btn:hover:not(:disabled),
   .tree-row:hover,
   .tree-lock:hover,
-  .tree-delete:hover {
-    border-color: rgba(255,255,255,0.28);
-    background: rgba(255,255,255,0.1);
+  .tree-delete:hover:not(:disabled) {
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
   }
   .rec {
-    border-color: rgba(255,114,95,0.45);
-    color: #ffb4a8;
+    border-color: color-mix(in srgb, var(--ga-rec, #ff3b30) 45%, transparent);
   }
+  .rec svg { fill: var(--ga-rec, #ff3b30); stroke: none; }
   .rec.recording {
-    background: rgba(255, 80, 70, 0.18);
+    background: color-mix(in srgb, var(--ga-rec, #ff3b30) 18%, transparent) !important;
+    border-color: var(--ga-rec, #ff3b30) !important;
+    color: var(--ga-rec, #ff3b30) !important;
   }
+  /* Toggles: the selection colours, above the theme's button skin. */
   .tbtn.on {
-    border-color: rgba(97, 214, 164, 0.45);
-    background: rgba(97, 214, 164, 0.14);
-    color: #bbf7d0;
+    background: var(--ga-selection-bg) !important;
+    border-color: var(--ga-selection-line) !important;
+    color: var(--ga-selection-ink) !important;
   }
-  .danger-mini {
-    border-color: rgba(255, 80, 70, 0.34);
-    color: #ffaaa0;
+  .danger-mini:hover:not(:disabled) {
+    border-color: var(--ga-rec, #ff3b30) !important;
+    color: var(--ga-rec, #ff3b30) !important;
   }
   .tbtn:disabled,
-  .add-btn:disabled,
+  .build-btn:disabled,
   .wide-btn:disabled,
   .tree-delete:disabled {
     opacity: 0.42;
@@ -1899,51 +1908,70 @@
   }
   .seg {
     display: flex;
-    border: 1px solid rgba(255,255,255,0.12);
-    overflow: hidden;
+    gap: 2px;
+    height: var(--ga-bar-control-h, 30px);
+    box-sizing: border-box;
+    padding: 2px;
+    background: var(--ga-slot);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     flex: 0 0 auto;
   }
   .seg-btn {
-    height: 30px;
     border: 0;
-    border-right: 1px solid rgba(255,255,255,0.1);
+    background: transparent;
+    color: var(--ga-ink-1);
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
     padding: 0 10px;
-    font-size: 11px;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-control, 600);
     display: inline-flex;
     align-items: center;
     gap: 6px;
     white-space: nowrap;
   }
-  .seg-btn:last-child { border-right: 0; }
   .seg-btn.on {
-    background: rgba(255,114,95,0.18);
-    color: #ffd0c8;
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
+    box-shadow: inset 0 0 0 1px var(--ga-selection-line);
   }
   .sim-left,
   .sim-right {
-    top: 76px;
-    bottom: 18px;
+    top: calc(var(--ga-bar-h, 48px) + 12px);
+    bottom: 12px;
     width: 288px;
+    box-sizing: border-box;
     overflow: auto;
-    padding: 14px;
+    padding: 12px;
   }
-  .sim-left { left: 14px; }
-  .sim-right { right: 14px; }
+  .sim-left { left: 12px; }
+  .sim-right { right: 12px; }
   section + section {
     margin-top: 18px;
   }
+  /* Eyebrows (docs/DESIGN-SYSTEM.md). */
   h3 {
-    margin: 0 0 10px;
-    font-size: 11px;
+    margin: 0 0 8px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: var(--ga-ink-2, #9ca3af);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
+  }
+  /* The selected item's name: a title, not an eyebrow. */
+  h3.sel-title {
+    font-size: var(--ga-text-title, 14px) !important;
+    font-weight: var(--ga-weight-title, 650) !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+    color: var(--ga-ink-0) !important;
+    overflow-wrap: anywhere;
   }
   .preset-picker,
   .primitive-grid,
   .tree {
     display: grid;
-    gap: 8px;
+    gap: 6px;
   }
   .primitive-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1951,97 +1979,128 @@
   .arrange-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
+    gap: 6px;
   }
   .tree-row b {
-    font-size: 12px;
-    font-weight: 650;
+    text-align: left;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .tree-row span,
   .empty {
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
     line-height: 1.45;
-    color: var(--ga-ink-2, #9ca3af);
+    color: var(--ga-ink-2);
   }
-  .add-btn,
+  .empty { margin: 0 0 6px; }
+  .build-btn,
   .wide-btn {
-    min-height: 34px;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
     padding: 0 10px;
-    text-transform: capitalize;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
   }
+  .build-btn { text-transform: capitalize; }
   .wide-btn {
     width: 100%;
-    margin-top: 8px;
+    margin-top: 6px;
   }
-  .danger {
-    border-color: rgba(255, 80, 70, 0.38);
-    color: #ffaaa0;
+  .wide-btn.danger {
+    border-color: color-mix(in srgb, var(--ga-rec, #ff3b30) 38%, transparent);
+    color: var(--ga-rec, #ff3b30);
   }
   .tree-row {
-    min-height: 40px;
-    padding: 8px 10px;
+    min-height: 28px;
+    padding: 0 8px;
     display: grid;
-    grid-template-columns: 68px 1fr;
+    grid-template-columns: 56px 1fr;
     gap: 8px;
     align-items: center;
     text-align: left;
   }
   .tree-item {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 52px 30px;
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) 56px 28px;
+    gap: 4px;
   }
   .tree-item .tree-row {
     width: 100%;
   }
   .tree-item.selected .tree-row {
-    background: rgba(255,114,95,0.16);
-    border-color: rgba(255,114,95,0.5);
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
   }
   .tree-item.primary .tree-row {
-    box-shadow: inset 3px 0 0 #ff725f;
+    box-shadow: inset 3px 0 0 var(--ga-selection-line);
   }
   .tree-delete {
-    min-height: 40px;
-    color: #ffaaa0;
+    min-height: 28px;
+    color: var(--ga-ink-2);
+  }
+  .tree-delete:hover:not(:disabled) {
+    color: var(--ga-rec, #ff3b30);
   }
   .tree-lock {
-    min-height: 40px;
+    min-height: 28px;
     padding: 0 6px;
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    color: var(--ga-ink-2, #9ca3af);
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
+    color: var(--ga-ink-2);
   }
   .tree-lock.locked {
-    border-color: rgba(97, 214, 164, 0.4);
-    background: rgba(97, 214, 164, 0.14);
-    color: #bbf7d0;
+    border-color: var(--ga-selection-line);
+    background: var(--ga-selection-bg);
+    color: var(--ga-selection-ink);
   }
   .field,
   .check-row {
     display: grid;
-    gap: 6px;
-    margin-bottom: 10px;
-    font-size: 11px;
-    color: var(--ga-ink-2, #9ca3af);
+    gap: 4px;
+    margin-bottom: 8px;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1);
+  }
+  .check-row {
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-0);
+    margin-bottom: 4px;
+    min-height: 22px;
   }
   .field.mini {
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   .field input,
   .field select,
   .triple input,
   .quad input {
     min-width: 0;
-    height: 30px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(0,0,0,0.25);
-    color: var(--ga-ink-0, #eef0f4);
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-control, 12px);
     padding: 0 8px;
+  }
+  .triple input,
+  .quad input {
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    padding: 0 6px;
   }
   .field input[type="color"] {
     padding: 2px;
+  }
+  .field input[type="range"] {
+    height: auto;
+    padding: 0;
+    border: 0;
+    background: none;
   }
   .check-row {
     grid-template-columns: 18px 1fr;
@@ -2050,8 +2109,8 @@
   .triple,
   .quad {
     display: grid;
-    gap: 8px;
-    margin-bottom: 10px;
+    gap: 6px;
+    margin-bottom: 8px;
   }
   .triple {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2062,18 +2121,19 @@
   .triple label,
   .quad label {
     display: grid;
-    gap: 5px;
-    font-size: 10px;
-    color: var(--ga-ink-2, #9ca3af);
+    gap: 4px;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1);
   }
   .show-panels {
-    top: 16px;
-    right: 16px;
-    height: 34px;
+    top: 9px;
+    right: 14px;
+    height: var(--ga-bar-control-h, 30px);
     padding: 0 14px;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    font-size: 11px;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: var(--ga-weight-control, 600);
+    border-radius: var(--ga-r-soft, 8px);
+    border-color: var(--ga-line-3);
   }
   .snap-hud {
     position: absolute;
@@ -2086,30 +2146,31 @@
     pointer-events: none;
   }
   .snap-hud span {
-    min-height: 26px;
+    min-height: var(--ga-control-h-sm, 22px);
     display: inline-flex;
     align-items: center;
-    border: 1px solid rgba(97, 214, 164, 0.45);
-    background: rgba(5, 8, 12, 0.82);
-    color: #bbf7d0;
+    border: 1px solid var(--ga-selection-line);
+    border-radius: var(--ga-r-hard, 5px);
+    background: color-mix(in srgb, var(--ga-void, #05070b) 82%, transparent);
+    color: var(--ga-selection-ink);
     padding: 0 10px;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
     box-shadow: 0 10px 28px rgba(0,0,0,0.34);
   }
   .psim-calibration-dock {
     position: absolute;
-    left: 316px;
-    right: 316px;
-    bottom: 18px;
+    left: 312px;
+    right: 312px;
+    bottom: 12px;
     z-index: 3;
     display: grid;
     grid-template-columns: minmax(0, 1fr) 260px;
     gap: 12px;
     padding: 10px;
-    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
-    background: color-mix(in srgb, var(--ga-panel, #0b0d11) 97%, #05070b);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 97%, transparent);
     /* Keep the upper half of the view free for picking points on the model. */
     max-height: 44%;
     overflow: auto;
@@ -2123,28 +2184,28 @@
   .psim-calibration-pad {
     justify-self: center;
     background: #000;
-    border: 1px solid rgba(255,255,255,0.16);
+    border: 1px solid var(--ga-line-3);
     cursor: default;
     touch-action: none;
   }
   .psim-calibration-pad.armed {
     cursor: crosshair;
-    border-color: var(--ga-blue-a45);
+    border-color: var(--ga-selection-line);
   }
   .calib-step {
     margin: 0;
-    font-size: 11px;
-    color: var(--ga-ink-1, #d7dbe2);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1);
   }
   .calib-cursor-row,
   .calib-head,
   .calib-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
     justify-content: space-between;
-    font-size: 11px;
-    color: var(--ga-ink-2, #9ca3af);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2);
   }
   .calib-head h3 { margin: 0; }
   .calib-actions { justify-content: flex-start; margin: 10px 0 8px; }
@@ -2152,22 +2213,25 @@
   .calib-row {
     display: grid;
     grid-template-columns: 64px 64px minmax(0, 1fr);
-    gap: 8px;
+    gap: 6px;
     margin: 10px 0;
   }
   .calib-row label {
     display: grid;
-    gap: 5px;
-    font-size: 10px;
-    color: var(--ga-ink-2, #9ca3af);
+    gap: 4px;
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1);
   }
   .calib-row input,
   .calib-row select {
     min-width: 0;
-    height: 28px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(0,0,0,0.25);
-    color: var(--ga-ink-0, #eef0f4);
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot);
+    color: var(--ga-ink-0);
+    font-size: var(--ga-text-control, 12px);
     padding: 0 6px;
   }
   .calib-points {
@@ -2178,23 +2242,28 @@
   }
   .calib-point {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 30px;
+    grid-template-columns: minmax(0, 1fr) 26px;
     gap: 4px;
   }
-  .calib-point .tree-delete { min-height: 28px; }
+  .calib-point .tree-delete { min-height: 26px; }
   .calib-point-main {
-    min-height: 28px;
+    min-height: 26px;
     display: grid;
     grid-template-columns: 22px 1fr auto;
     gap: 8px;
     align-items: center;
     padding: 0 8px;
     text-align: left;
-    font-size: 11px;
+    font-size: var(--ga-text-meta, 11px);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card);
+    color: var(--ga-ink-0);
+    cursor: pointer;
   }
   .calib-point.selected .calib-point-main {
-    border-color: var(--ga-blue-a70);
-    background: var(--ga-blue-a16);
+    border-color: var(--ga-selection-line);
+    background: var(--ga-selection-bg);
   }
   .calib-err { color: #ffcf3a; font-variant-numeric: tabular-nums; }
   .calib-result {
@@ -2202,24 +2271,26 @@
     gap: 3px;
     margin-top: 10px;
     padding: 8px;
-    border: 1px solid rgba(97, 214, 164, 0.35);
-    background: rgba(97, 214, 164, 0.08);
-    font-size: 11px;
-    color: #cdeee0;
+    border: 1px solid color-mix(in srgb, var(--ga-green, #46d18a) 35%, transparent);
+    border-radius: var(--ga-r-hard, 5px);
+    background: color-mix(in srgb, var(--ga-green, #46d18a) 8%, transparent);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-1);
   }
-  .calib-result b { font-size: 13px; color: #eafff4; }
+  .calib-result b { font-size: var(--ga-text-body, 13px); color: var(--ga-ink-0); }
   .calib-result.bad {
     border-color: rgba(255, 160, 80, 0.4);
     background: rgba(255, 160, 80, 0.08);
     color: #ffd9b8;
   }
   .calib-warn {
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
     line-height: 1.45;
     color: #ffd08a;
   }
   .wide-btn.on {
-    background: var(--ga-blue-a16);
-    border-color: var(--ga-blue-a45);
+    background: var(--ga-selection-bg) !important;
+    border-color: var(--ga-selection-line) !important;
+    color: var(--ga-selection-ink) !important;
   }
 </style>
