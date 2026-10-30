@@ -64,6 +64,52 @@ input, so the existing audio-reactive shaders follow the music too.
   are already mapped (a pad that launches a clip) or that MIDI learn is
   waiting for.
 
+### Mixer (`mixer.ts`, `components/music/MixerPanel.svelte`)
+
+The **Mixer** tab under the studio has a strip for each instrument of the
+set and one for the live input. Each instrument's volume feeds its strip:
+a low shelf (180 Hz), a mid peak (1.1 kHz) and a high shelf (4.8 kHz), each
+±15 dB, then pan, then a mute/solo gate, then the FX rack or the mix. The
+fader is the instrument's volume, so scenes, the bath morph and the dub drop
+still move it. Solo only counts among the set's channels. A meter reads after
+each strip. The strips are saved with the project (`mixer`).
+
+### Live input (`liveInput.ts`, `inputTracker.ts`)
+
+An instrument on an audio input (a guitar, a voice) plays through the input
+strip and drives the visual voices. The input strip chooses the device (kept
+per computer), what the visuals see it as (**Feeds**: Lead, Bass, Kick...),
+how quietly it can be played and still count (**Sens**), and whether it is
+heard (**MON**; off, it only drives the visuals). Its call-audio processing
+(echo cancelling, noise suppression, auto gain) is off.
+
+The tracker reads the raw signal about 80 times a second, on its own timer:
+a hit is a jump of 6 dB or more over the recent level, above the gate;
+pitch comes from the normalised autocorrelation and only counts when the
+block is clearly periodic (one string or one voice; a strummed chord gives
+hits and level but no pitch); a held note that slides to a new pitch and
+stays there becomes a new note; a note ends 6 dB under the gate. The notes go
+straight to the visual voices (`pushOutsideNote`) and never play a studio
+instrument.
+
+### Ableton Live in control (`liveControl.ts`, `liveFeed.ts`, `components/music/LiveSessionGrid.svelte`)
+
+**Ableton Live** in the Session tab hands the studio to Live: the studio's
+instruments go quiet (the live input still plays), and the session grid
+shows Live's scenes and clips through the Live control script
+(`ableton/GhostArcade`). Launching one fires it in Live, and Live plays the
+audio. The main Play and Stop run Live's transport, and tempo follows Live
+over Link as before.
+
+Each Live track's header says which sound it feeds the visual voices as.
+**Match by name** fills in tracks whose names say what they are (Kick, Bass,
+Pads...). A MIDI track sends its clip notes as they play, with exact pitch and
+length on the song clock. An audio track sends its level, which is listened
+to for hits. Tracks are matched by name, so the mapping survives tracks being
+moved. The bridge streams only those tracks (`abletonBridge.setStudioFeed`),
+alongside any score tracks and signals. `liveControl` and `liveRoles` are
+saved with the project.
+
 ### Note-reactive shaders (`noteVisuals.ts`, `public/ISF/NR-*.fs`)
 
 A shader opts in by declaring ordinary ISF float inputs with these names (any
@@ -334,6 +380,9 @@ buttons in its header. Patching lives in the Studio view.
    - More drum kits (909, minimal, lo-fi, organic) and pattern chains.
    - An arrangement timeline for scenes, and loops recorded from takes.
    - Scan synth modes: read along a circle or a row, or follow a colour.
+   - Live in control: a studio scene that fires a Live scene, Live's own
+     mixer on the Mixer tab, and choosing the input channel of a
+     multi-channel interface (a guitar on input 2 alone).
 3. **Later**: per-take editing (quantize, trim, overdub), more instruments
    and sample kits, MIDI out to hardware, per-instrument audio analysis for
    the visual voices, a voice built on the render core's compute graph

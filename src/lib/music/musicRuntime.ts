@@ -1597,9 +1597,10 @@ const ONE_SHOT_SOURCES = new Set<VoiceSourceId>(['kick', 'snare', 'hats', 'perc'
 /**
  * A note from outside the studio (the live input, a Live track) for the
  * visual voices. It never plays a studio instrument; the sound comes from
- * the instrument itself or from Live.
+ * the instrument itself or from Live. `delaySeconds` queues it ahead.
  */
-export function pushOutsideNote(type: 'on' | 'off', note: number, velocity: number, role: VoiceSourceId, time = audio.now()): void {
+export function pushOutsideNote(type: 'on' | 'off', note: number, velocity: number, role: VoiceSourceId, delaySeconds = 0): void {
+  const time = audio.now() + Math.max(0, delaySeconds);
   const event: NoteEvent = {
     type,
     instrument: ONE_SHOT_SOURCES.has(role) ? 'drums' : 'synth',
@@ -1617,10 +1618,10 @@ let liveInput: LiveInput | null = null;
 /** Start listening to the live input on the device chosen in the studio. */
 export async function startLiveInput(): Promise<void> {
   const s = get(musicStudio);
-  liveInput ??= new LiveInput(s.liveInput.sensitivity, (events, time) => {
+  liveInput ??= new LiveInput(s.liveInput.sensitivity, (events) => {
     const role = get(musicStudio).liveInput.role;
-    for (const e of events) pushOutsideNote(e.type, e.note, e.velocity, role, time);
-  });
+    for (const e of events) pushOutsideNote(e.type, e.note, e.velocity, role);
+  }, () => musicStudio.setInputStatus(false, 'The audio input was disconnected.'));
   try {
     const ctx = audioContextForInput();
     await liveInput.start(ctx, s.inputDevice, audio.inputChannel());

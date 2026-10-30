@@ -42,7 +42,9 @@ export class LiveInput {
 
   constructor(
     sensitivity: number,
-    private readonly onEvents: (events: TrackerEvent[], time: number) => void,
+    private readonly onEvents: (events: TrackerEvent[]) => void,
+    /** The device went away (unplugged) without `stop()` being called. */
+    private readonly onLost: () => void = () => {},
   ) {
     this.tracker = new InputTracker({ sensitivity });
   }
@@ -89,7 +91,11 @@ export class LiveInput {
     this.source.connect(this.analyser);
     this.source.connect(into);
     // A device unplugged mid-set ends its track.
-    for (const track of stream.getAudioTracks()) track.addEventListener('ended', () => this.stop());
+    for (const track of stream.getAudioTracks()) track.addEventListener('ended', () => {
+      if (this.stream !== stream) return;
+      this.stop();
+      this.onLost();
+    });
     this.timer = setInterval(() => this.poll(), POLL_MS);
   }
 
@@ -102,7 +108,7 @@ export class LiveInput {
     this.source = null;
     this.analyser = null;
     const released = this.tracker.reset();
-    if (released.length && this.ctx) this.onEvents(released, this.ctx.currentTime);
+    if (released.length) this.onEvents(released);
   }
 
   private poll(): void {
@@ -110,6 +116,6 @@ export class LiveInput {
     this.analyser.getFloatTimeDomainData(this.buffer);
     const time = this.ctx.currentTime;
     const events = this.tracker.step(this.buffer, this.ctx.sampleRate, time);
-    if (events.length) this.onEvents(events, time);
+    if (events.length) this.onEvents(events);
   }
 }
