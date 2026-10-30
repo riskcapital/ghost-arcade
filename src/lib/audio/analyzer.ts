@@ -417,6 +417,7 @@ export class AudioAnalyzer {
       if (src === 'microphone') await this.startMicrophone(micId);
       else if (src === 'system') await this.startSystemAudio();
       else if (src === 'mediaElement' && el) await this.startMediaElement(el);
+      if (this._stopCount === expectStops) this.onInputStatus?.('restored');
     } catch (err) {
       console.error('[AudioAnalyzer] Audio pipeline recovery failed:', err);
       if (expectStops < 0 || this._stopCount === expectStops) {
@@ -426,6 +427,7 @@ export class AudioAnalyzer {
         // listening so plugging it back in recovers.
         this._publishSilence();
         this._watchDeviceChanges();
+        this.onInputStatus?.('lost');
       }
     } finally {
       this._recoveryInFlight = false;
@@ -594,6 +596,12 @@ export class AudioAnalyzer {
   /** Set the analysis callback */
   setCallback(cb: (analysis: AudioAnalysis) => void): void {
     this.onAnalysis = cb;
+  }
+
+  private onInputStatus: ((status: 'lost' | 'restored') => void) | null = null;
+  /** Told when the input goes away (unplugged, failed to reopen) and when it comes back. */
+  setInputStatusCallback(cb: ((status: 'lost' | 'restored') => void) | null): void {
+    this.onInputStatus = cb;
   }
 
   /** Set smoothing factor (0-1) */

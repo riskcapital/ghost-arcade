@@ -386,11 +386,11 @@
   import { paintMaskLayerId } from './lib/stores/paintMaskTool';
   import PaintMaskOverlay from './lib/components/PaintMaskOverlay.svelte';
   import { resetProjectOwnedStores } from './lib/stores/layers';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot, isProjectFileData } from './lib/stores/layers';
+  import { automatedRecalls, project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot, isProjectFileData } from './lib/stores/layers';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
   import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback, amendLastHistoryStep, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
-  import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './lib/stores/projectDirty';
+  import { isProjectDirty, projectSettingsSections, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot, type RecallSection } from './lib/stores/projectDirty';
   import { stage3dScene } from './lib/stage3d/store';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
@@ -1337,19 +1337,44 @@
   let showRecoveryModal = false;
   let recoveryTimestamp = '';
 
-  function projectDirtySnapshot(): ProjectDirtySnapshot {
+  /**
+   * `asSaved`: the state as it is, for a baseline. Otherwise sections still
+   * as an automated recall left them read as saved (see recallImprint).
+   */
+  function projectDirtySnapshot(asSaved = false): ProjectDirtySnapshot {
+    const sections = projectSettingsSections({
+      exported: project.exportProject() as Record<string, any>,
+      showTimeline: showTimeline.serialize(),
+      showControl: serializeShowControl(),
+      stage3d: get(stage3dScene),
+    });
+    const compared = asSaved ? sections : withRecallsAsSaved(sections, recallImprint, savedProjectState?.sections);
     return {
       stepId: history.currentStepId(),
-      settings: projectSettingsSignature({
-        exported: project.exportProject() as Record<string, any>,
-        showTimeline: showTimeline.serialize(),
-        showControl: serializeShowControl(),
-        stage3d: get(stage3dScene),
-      }),
+      settings: JSON.stringify(compared),
+      sections,
       // Map Sim edits, relinked media and VJ clip/deck edits are counted where they happen.
       counters: JSON.stringify([get(projectionSimHistoryVersion), get(mediaRelinkVersion), get(vjEditVersion)]),
     };
   }
+
+  // What automated recalls (show cues, VJ clip presets, MIDI- or Live-
+  // triggered stage presets) left in the sections they rewrote. Playing a
+  // show is not editing it; a section changed again after that counts.
+  let recallImprint: Partial<Record<RecallSection, string>> = {};
+  const recallSectionValue: Record<RecallSection, () => unknown> = {
+    sequencer: () => layerSequencer.serialize(),
+    keyframeSettings: () => keyframeTimeline.exportSettings(),
+    surfaces: () => get(project).surfaces || [],
+    stage3d: () => get(stage3dScene),
+  };
+  const stopRecallWatch = automatedRecalls.subscribe(({ count, sections }) => {
+    if (count === 0) return;
+    const next = { ...recallImprint };
+    for (const section of sections) next[section] = recallSectionSignature(section, recallSectionValue[section]());
+    recallImprint = next;
+  });
+  onDestroy(stopRecallWatch);
 
   /** Work out whether the project has unsaved changes, now. */
   function refreshUnsavedChanges(): boolean {
@@ -1370,7 +1395,9 @@
     // microtask queued during the import, and the saved step is that one.
     queueMicrotask(() => {
       flushPendingHistorySnapshot();
-      savedProjectState = baseline ?? projectDirtySnapshot();
+      // What the file holds now includes what any recall wrote.
+      recallImprint = {};
+      savedProjectState = baseline ?? projectDirtySnapshot(true);
       hasUnsavedChanges = baseline ? isProjectDirty(baseline, projectDirtySnapshot()) : false;
     });
   }
@@ -1379,7 +1406,7 @@
   /** Export the project for a save, noting what is being written. */
   async function exportForSave(): Promise<string> {
     flushPendingHistorySnapshot();
-    saveBaseline = projectDirtySnapshot();
+    saveBaseline = projectDirtySnapshot(true);
     return project.exportProjectJSONForSave();
   }
   function takeSaveBaseline(): ProjectDirtySnapshot | null {

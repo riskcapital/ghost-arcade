@@ -82,7 +82,9 @@ import {
   scheduleHistorySnapshot,
   notifyProjectReplaced,
   amendLastHistoryStep,
+  runAsLiveControl,
 } from './historyHooks';
+import type { RecallSection } from './projectDirty';
 export {
   setHistoryCallback,
   recordDiscreteAction,
@@ -90,6 +92,19 @@ export {
   flushPendingHistorySnapshot,
 } from './historyHooks';
 const selectedLayerIdsState = writable<string[]>([]);
+
+/**
+ * Automated recalls (a show cue, a VJ clip's preset, a MIDI- or
+ * Live-triggered stage preset) and the sections of the unsaved-changes check
+ * each rewrote. Playing a show is not editing it: the app reads those
+ * sections as saved until something else changes them.
+ */
+export const automatedRecalls = writable<{ count: number; sections: RecallSection[] }>({ count: 0, sections: [] });
+function noteAutomatedRecall(sections: RecallSection[]) {
+  if (sections.length === 0) return;
+  // After the recall's deferred writes (sequencer, 3D scene, the surfaces mirror).
+  setTimeout(() => automatedRecalls.update((r) => ({ count: r.count + 1, sections })), 0);
+}
 
 /**
  * MediaSource fields that are runtime state, not settings: live GPU and DOM
@@ -645,6 +660,22 @@ void main() {
         }
       });
     }
+  };
+
+  /** A user's recall is an undo step; an automated one (no history) is
+   *  playing, run as live control, and noted as such. */
+  const restoreStagePresetFromUserOrShow = (preset: StagePreset, history: boolean) => {
+    if (history) {
+      restoreStagePresetSnapshot(preset);
+      recordDiscreteAction();
+      return;
+    }
+    runAsLiveControl(() => restoreStagePresetSnapshot(preset));
+    const sections: RecallSection[] = [];
+    if (preset.surfaceSnapshot || preset.stageEffects) sections.push('surfaces');
+    if ((preset.stage3d as any)?.schemaVersion === 1) sections.push('stage3d');
+    if (preset.keyframeTimelines && timelinesHaveKeyframes(preset.keyframeTimelines)) sections.push('keyframeSettings');
+    noteAutomatedRecall(sections);
   };
 
   const store = {
@@ -3758,15 +3789,13 @@ void main() {
         candidate => candidate.id === presetId
       );
       if (!preset) return;
-      restoreStagePresetSnapshot(preset);
-      if (options.history !== false) recordDiscreteAction();
+      restoreStagePresetFromUserOrShow(preset, options.history !== false);
     },
 
     /** Restore an external/global Stage preset through the exact same
      * complete path as a project preset. */
     loadStagePresetSnapshot(preset: StagePreset, options: { history?: boolean } = {}) {
-      restoreStagePresetSnapshot(preset);
-      if (options.history !== false) recordDiscreteAction();
+      restoreStagePresetFromUserOrShow(preset, options.history !== false);
     },
 
     /** Delete a stage preset */
@@ -4903,6 +4932,12 @@ void main() {
         });
       } else if (recordHistory) {
         recordDiscreteAction();
+      }
+      if (!recordHistory) {
+        const sections: RecallSection[] = [];
+        if (seqSnap?.snapshot) sections.push('sequencer');
+        if (kfSnap?.snapshot && timelinesHaveKeyframes(kfSnap.snapshot)) sections.push('keyframeSettings');
+        noteAutomatedRecall(sections);
       }
     },
 

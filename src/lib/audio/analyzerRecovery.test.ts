@@ -65,6 +65,8 @@ describe('audio input unplugged and plugged back in', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const audio = fakeAudio();
+    const status: string[] = [];
+    analyzer.setInputStatusCallback((s) => status.push(s));
     await analyzer.startMicrophone('usb-interface');
     for (let i = 0; i < 5; i++) audio.runFrame();
     expect(frames.at(-1)!.amplitude).toBeGreaterThan(0.2);
@@ -79,6 +81,8 @@ describe('audio input unplugged and plugged back in', () => {
     expect(last.bands.bass).toBe(0);
     expect(last.bpm).toBe(0);
     expect(audio.listening()).toBe(true);
+    // The store is told, so the input reads as off rather than active.
+    expect(status).toEqual(['lost']);
 
     // Plug back in: the same device comes back.
     audio.devices.plugged = true;
@@ -87,6 +91,7 @@ describe('audio input unplugged and plugged back in', () => {
     expect(analyzer.running).toBe(true);
     const lastCall = audio.devices.getUserMedia.mock.calls.at(-1)![0] as MediaStreamConstraints;
     expect((lastCall.audio as MediaTrackConstraints).deviceId).toEqual({ exact: 'usb-interface' });
+    expect(status).toEqual(['lost', 'restored']);
   });
 
   it('stops listening for devices once the user stops audio', async () => {
