@@ -32,7 +32,7 @@ async function settledSliceState(c, id, attempts = 8) {
 export async function addDisplayScreen(c) {
   await openTab(c, 'Screens');
   const before = await screenRows(c);
-  await c.clickElement(el.button('+ Add Screen'));
+  await c.clickElement(el.button('+ Add screen'));
   await c.waitFor(`document.querySelectorAll('.screen-row').length>${before.length}`, 5000, 'new Screen row');
   const name = (await screenRows(c)).find((n) => !before.includes(n)) || (await screenRows(c)).at(-1);
   await selectScreen(c, name);
@@ -215,7 +215,7 @@ export const stepCalibration = {
     // Known content: hide what is there, add one full-frame coordinate image.
     for (const name of await layerNames(c)) await setLayerVisible(c, name, false);
     const image = writeCoordinateImage(path.join(t.outDir, 'd-coordinates.png'));
-    await addLayer(c, 'Media Layer');
+    await addLayer(c, 'Media layer');
     await c.waitFor("!!document.querySelector('.media-drop-zone')", 8000, 'media drop zone');
     await dropFile(c, "document.querySelector('.media-drop-zone')", image);
     let base = null;

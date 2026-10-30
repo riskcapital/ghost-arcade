@@ -257,13 +257,13 @@
 
 {#if isOpen}
   <div data-help-page="performance" class="modal-backdrop" onclick={closeModal} role="presentation"></div>
-  <div data-help-page="performance" class="modal-shell" role="dialog" aria-label="Video Converter">
+  <div data-help-page="performance" class="modal-shell" role="dialog" aria-label="Video converter">
     <header class="modal-head">
       <div>
-        <h2>Video Converter</h2>
+        <h2>Video converter</h2>
         <p>Prepare videos and image sequences for playback or sharing.</p>
       </div>
-      <button class="close-btn" onclick={closeModal} disabled={isConverting} title={isConverting ? 'Conversion is running' : 'Close'}>×</button>
+      <button class="close-btn" onclick={closeModal} disabled={isConverting} title={isConverting ? 'Conversion is running' : 'Close'} aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
     </header>
 
     <div class="modal-body">
@@ -282,7 +282,7 @@
           ondragleave={onDragLeave}
           disabled={isConverting}
         >
-          <span class="drop-title">{selectedVideo ? selectedVideo.name : 'Choose Video'}</span>
+          <span class="drop-title">{selectedVideo ? selectedVideo.name : 'Choose video'}</span>
           <span class="drop-meta">
             {#if selectedVideo}
               {formatBytes(selectedVideo.size) || selectedVideo.path}
@@ -293,7 +293,7 @@
         </button>
       {:else}
         <button class="drop-zone sequence-zone" onclick={chooseSequence} disabled={isConverting}>
-          <span class="drop-title">{selectedSequence ? selectedSequence.name : 'Choose Image Sequence Folder'}</span>
+          <span class="drop-title">{selectedSequence ? selectedSequence.name : 'Choose image sequence folder'}</span>
           <span class="drop-meta">
             {#if selectedSequence}
               {selectedSequence.frameCount} frames · {selectedSequence.firstFrame} → {selectedSequence.lastFrame}
@@ -350,7 +350,7 @@
           <span>Output</span>
           <strong>{outputPath || 'Choose an output path'}</strong>
         </div>
-        <button class="btn-secondary" onclick={chooseOutput} disabled={isConverting}>Choose</button>
+        <button class="btn-secondary row-btn" onclick={chooseOutput} disabled={isConverting}>Choose</button>
       </div>
 
       <div class="summary">
@@ -396,16 +396,16 @@
       {/if}
 
       <div class="actions">
-        <button class="btn-secondary" onclick={closeModal} disabled={isConverting}>Close</button>
+        <button class="btn-secondary secondary-btn" onclick={closeModal} disabled={isConverting}>Close</button>
         {#if resultPath || outputPath}
-          <button class="btn-secondary" onclick={revealResult} disabled={isConverting}>Reveal</button>
+          <button class="btn-secondary secondary-btn" onclick={revealResult} disabled={isConverting}>Reveal</button>
         {/if}
         {#if isConverting}
           <button class="btn-danger" onclick={cancelConversion} disabled={isCancelling}>
             {isCancelling ? 'Cancelling...' : 'Cancel'}
           </button>
         {/if}
-        <button class="btn-primary" onclick={startConversion} disabled={!canStart || isConverting}>
+        <button class="btn-primary primary-btn" onclick={startConversion} disabled={!canStart || isConverting}>
           {isConverting ? 'Converting...' : 'Convert'}
         </button>
       </div>
@@ -417,9 +417,11 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
     z-index: 1100;
+  }
+  .modal-backdrop {
+    background: color-mix(in srgb, var(--ga-void, #0a0908) 76%, transparent);
+    backdrop-filter: blur(8px);
   }
   .modal-shell {
     position: fixed;
@@ -427,99 +429,118 @@
     left: 50%;
     transform: translate(-50%, -50%);
     width: 600px;
-    max-width: calc(100vw - 40px);
-    max-height: calc(100vh - 80px);
-    background: var(--bg-primary, #0a0a0c);
-    border: 1px solid #2a2a30;
-    border-radius: 8px;
-    box-shadow: 0 16px 60px rgba(0, 0, 0, 0.6);
+    max-width: calc(100vw - 48px);
+    max-height: calc(100vh - 48px);
     z-index: 1101;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    background: var(--ga-faceplate-bg, var(--ga-panel, #100f0d));
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.08)), 0 24px 80px rgba(0, 0, 0, 0.58);
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-body);
   }
   .modal-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    padding: 14px 18px;
-    background: linear-gradient(180deg, #14141a, #0d0d11);
-    border-bottom: 1px solid #1d1d22;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
   .modal-head h2 {
     margin: 0;
-    font-size: 14px;
-    letter-spacing: 2px;
-    color: var(--ga-blue-300);
-    font-weight: 600;
+    font-size: var(--ga-text-heading);
+    font-weight: var(--ga-weight-title);
+    line-height: 1.3;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ga-ink-0, #f2ede4);
   }
   .modal-head p {
-    margin: 4px 0 0;
-    color: var(--text-muted, #888);
-    font-size: 12px;
+    margin: 2px 0 0;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
   .close-btn {
-    width: 32px;
-    height: 32px;
-    border: 1px solid var(--border-secondary, #2a2a30);
-    background: transparent;
-    color: var(--text-secondary, #aaa);
-    border-radius: 4px;
-    font-size: 20px;
-    line-height: 1;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
   }
-  .close-btn:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: #fff; }
-  .close-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .close-btn:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    background: var(--ga-raise, #26221c);
+    border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
+  }
+  .close-btn:disabled { opacity: 0.35; cursor: not-allowed; }
   .modal-body {
-    padding: 18px;
+    padding: 16px;
     overflow-y: auto;
   }
+  /* Video file | Image sequence: a segmented control. */
   .mode-tabs {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    margin-bottom: 14px;
+    gap: 2px;
+    height: var(--ga-bar-control-h);
+    padding: 2px;
+    box-sizing: border-box;
+    margin-bottom: 12px;
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
   }
   .mode-tabs button {
-    height: 38px;
-    border: 1px solid #2a2a30;
-    background: #11141a;
-    color: var(--text-secondary, #aaa);
-    border-radius: 5px;
-    font-weight: 700;
+    border: 0;
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+    background: transparent;
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
   }
+  .mode-tabs button:hover:not(.active):not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    background: rgba(255, 255, 255, 0.05);
+  }
   .mode-tabs button.active {
-    color: #fff;
-    border-color: var(--ga-blue-a70);
-    background: var(--ga-blue-a16);
+    background: var(--ga-selection-bg, #1f3170);
+    color: var(--ga-selection-ink, #e0e8ff);
+    box-shadow: inset 0 0 0 1px var(--ga-selection-line, #5278ff);
   }
   .drop-zone {
     width: 100%;
-    min-height: 108px;
+    min-height: 96px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    padding: 18px;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px dashed #3a3a44;
-    border-radius: 7px;
-    color: var(--text-primary, #ddd);
+    gap: 4px;
+    padding: 16px;
+    background: var(--ga-card, #16140f);
+    border: 1px dashed var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
+    font: inherit;
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
   }
   .drop-zone:hover:not(:disabled),
   .drop-zone.dragging {
-    border-color: var(--ga-blue-300);
-    background: var(--ga-blue-a08);
+    border-color: var(--ga-selection-line, #5278ff);
+    background: var(--ga-selection-bg, #1f3170);
   }
   .drop-zone:disabled { cursor: not-allowed; opacity: 0.55; }
   .sequence-zone {
@@ -528,166 +549,212 @@
   .drop-title {
     max-width: 100%;
     overflow-wrap: anywhere;
-    font-size: 14px;
-    font-weight: 700;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
   }
   .drop-meta {
     max-width: 100%;
     overflow-wrap: anywhere;
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
   .settings-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
-    margin: 14px 0;
+    margin: 12px 0;
   }
   .field {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    color: var(--text-muted, #888);
-    font-size: 11px;
+    gap: 4px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
   }
   .field input,
   .field select {
-    height: 36px;
-    border: 1px solid #2a2a30;
-    background: #080a0d;
-    color: #e5e7eb;
-    border-radius: 4px;
-    padding: 0 10px;
+    box-sizing: border-box;
+    height: var(--ga-control-h);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background-color: var(--ga-slot, #060504);
+    color: var(--ga-ink-0, #f2ede4);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 8px;
     font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-body);
   }
+  .field select { padding-right: 26px; }
   .path-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 10px;
-    align-items: stretch;
-    padding: 10px;
-    border: 1px solid var(--ga-blue-mute-800);
-    background: #0d1015;
-    border-radius: 6px;
+    align-items: center;
+    padding: 8px 8px 8px 12px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-card, #16140f);
+    border-radius: var(--ga-r-hard, 5px);
   }
   .path-row div {
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
   }
   .path-row span {
-    color: var(--text-muted, #888);
-    font-size: 11px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
   }
   .path-row strong {
-    color: #d7dce4;
-    font-size: 12px;
-    font-weight: 500;
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-body);
     overflow-wrap: anywhere;
   }
-  .summary {
-    background: var(--ga-blue-a08);
-    border-left: 2px solid var(--ga-blue-a45);
-    padding: 8px 12px;
-    border-radius: 0 4px 4px 0;
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
-    line-height: 1.5;
-    margin: 14px 0;
+  .row-btn {
+    box-sizing: border-box;
+    height: var(--ga-control-h);
+    padding: 0 12px;
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    cursor: pointer;
   }
-  .summary strong { color: var(--ga-blue-300); }
+  .row-btn:hover:not(:disabled) { color: var(--ga-ink-0, #f2ede4); border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
+  .row-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .summary {
+    background: var(--ga-card, #16140f);
+    border-left: 2px solid var(--ga-selection-line, #5278ff);
+    padding: 8px 12px;
+    border-radius: 0 var(--ga-r-hard, 5px) var(--ga-r-hard, 5px) 0;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #ada9a2);
+    line-height: 1.5;
+    margin: 12px 0;
+  }
+  .summary strong { color: var(--ga-ink-0, #f2ede4); font-weight: var(--ga-weight-control); }
   .progress-block {
-    margin-top: 14px;
+    margin-top: 12px;
   }
   .phase {
-    font-size: 14px;
-    color: var(--ga-blue-300);
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-0, #f2ede4);
     margin-bottom: 8px;
-    font-weight: 500;
+    font-weight: var(--ga-weight-control);
   }
   .progress-bar {
-    height: 10px;
-    background: var(--bg-tertiary, #14141a);
-    border-radius: 5px;
+    height: 6px;
+    background: var(--ga-slot, #060504);
+    border-radius: 3px;
     overflow: hidden;
-    border: 1px solid #1d1d22;
+    border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--ga-blue-300), #49df93);
+    background: var(--ga-selection-line, #5278ff);
     transition: width 0.15s ease-out;
   }
   .progress-meta {
     display: flex;
     justify-content: space-between;
     margin-top: 6px;
-    font-size: 12px;
+    font-size: var(--ga-text-meta);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2, #89857e);
   }
   .error-box,
   .notice-box,
   .success-box {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-top: 14px;
+    gap: 4px;
+    margin-top: 12px;
     padding: 10px 12px;
-    border-radius: 5px;
-    font-size: 13px;
+    border-radius: var(--ga-r-hard, 5px);
+    font-size: var(--ga-text-meta);
   }
+  .error-box strong,
+  .notice-box strong,
+  .success-box strong { font-size: var(--ga-text-body); font-weight: var(--ga-weight-control); }
   .error-box {
     background: rgba(255, 80, 80, 0.10);
     border: 1px solid rgba(255, 80, 80, 0.35);
     color: #ff9b9b;
   }
   .notice-box {
-    background: var(--ga-blue-a08);
-    border: 1px solid var(--ga-blue-a28);
-    color: var(--ga-blue-100);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
   }
   .success-box {
-    background: rgba(76, 222, 128, 0.10);
-    border: 1px solid rgba(76, 222, 128, 0.35);
-    color: #86efac;
+    background: color-mix(in srgb, var(--ga-green, #46d18a) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-green, #46d18a) 35%, transparent);
+    color: var(--ga-green, #46d18a);
   }
   .success-box span {
-    color: var(--text-secondary, #aaa);
+    color: var(--ga-ink-1, #ada9a2);
     overflow-wrap: anywhere;
   }
   .success-box video {
     width: 100%;
     max-height: 220px;
     margin-top: 6px;
-    border-radius: 5px;
+    border-radius: var(--ga-r-hard, 5px);
     background: #000;
   }
+  /* The action row reads as the dialog footer: full width, hairline above,
+     pinned to the bottom while the form scrolls. */
   .actions {
+    position: sticky;
+    bottom: 0;
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    margin-top: 18px;
+    margin: 16px -16px -16px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+    background: var(--ga-panel, #100f0d);
   }
-  .btn-primary,
+  .btn-secondary.secondary-btn,
   .btn-danger,
-  .btn-secondary {
-    min-height: 36px;
-    padding: 8px 18px;
-    border-radius: 5px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
+  .btn-primary {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--ga-bar-control-h);
+    padding: 0 14px;
+    border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
     white-space: nowrap;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, filter 0.12s;
+  }
+  .btn-secondary.secondary-btn {
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+  }
+  .btn-secondary.secondary-btn:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
   .btn-primary {
-    background: linear-gradient(135deg, var(--ga-blue-300), #49df93);
-    color: #071015;
-    border: none;
+    background: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-ink-0, #f2ede4);
+    color: var(--ga-void, #0a0908);
   }
-  .btn-primary:hover:not(:disabled) {
-    filter: brightness(1.08);
-  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.06); }
+  .btn-secondary.secondary-btn:disabled,
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-danger {
     background: rgba(255, 80, 80, 0.12);
@@ -700,14 +767,4 @@
     color: #ffd0d0;
   }
   .btn-danger:disabled { opacity: 0.45; cursor: wait; }
-  .btn-secondary {
-    background: transparent;
-    border: 1px solid #2a2a30;
-    color: var(--text-secondary, #aaa);
-  }
-  .btn-secondary:hover:not(:disabled) {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
-  }
-  .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

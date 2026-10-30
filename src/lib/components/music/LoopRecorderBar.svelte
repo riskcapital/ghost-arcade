@@ -76,7 +76,7 @@
     title={rec.phase === 'off' ? 'Record a loop from the next bar' : rec.phase === 'count' ? 'Cancel the recording' : 'Stop on the next bar line and keep the loop'}
   >
     <span class="dot"></span>
-    {#if rec.phase === 'count'}In {barsLeft}{:else if rec.phase === 'rec'}Rec{rec.endBeat !== null ? ` ${barsLeft}` : ''}{:else}Rec{/if}
+    {#if rec.phase === 'count'}In {barsLeft}{:else if rec.phase === 'rec' && rec.endBeat !== null}Rec {barsLeft}{:else}Rec{/if}
   </button>
   <div class="ga-segmented small" role="group" aria-label="Bars to record">
     {#each RECORD_LENGTHS as bars}

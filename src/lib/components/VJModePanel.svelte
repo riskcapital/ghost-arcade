@@ -4391,9 +4391,9 @@
               <button class="vj-menu-item" onclick={() => vjFileAction('open')}>Open...<span class="vj-menu-sc">Ctrl+O</span></button>
               <div class="vj-menu-sep"></div>
               <button class="vj-menu-item" onclick={() => vjFileAction('save')}>Save<span class="vj-menu-sc">Ctrl+S</span></button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>Save As...<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>Save as...<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
               <div class="vj-menu-sep"></div>
-              <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>Import Presets...</button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>Import presets...</button>
               <div class="vj-menu-sep"></div>
               <button class="vj-menu-item" onclick={() => vjFileAction('undo')}>Undo<span class="vj-menu-sc">Ctrl+Z</span></button>
               <button class="vj-menu-item" onclick={() => vjFileAction('redo')}>Redo<span class="vj-menu-sc">Ctrl+Y</span></button>
@@ -7232,7 +7232,7 @@
     --vj-macro-bank-w: 368px;
     --vj-macro-gap: 0px;
     --vj-macro-name-font: 9px;
-    --vj-snap-font: 12px;
+    --vj-snap-font: 13px;
     --vj-snap-pad-x: 9px;
     --vj-aip-chevron-w: 14px;
     --vj-amp-bar-w: 5px;
@@ -8154,7 +8154,7 @@
       --vj-macro-bank-w: 384px;
       --vj-macro-gap: 1px;
       --vj-macro-name-font: 9px;
-      --vj-snap-font: 12px;
+      --vj-snap-font: 13px;
       --vj-snap-pad-x: 10px;
       --vj-aip-chevron-w: 16px;
       --vj-amp-bar-w: 5px;

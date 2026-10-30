@@ -50,45 +50,123 @@
   onDestroy(() => stopProgress?.());
 </script>
 
-<div data-help-page="projects" class="backdrop">
-  <div role="dialog" aria-modal="true" aria-labelledby="package-title" class="modal">
-    <header><h2 id="package-title">Export Package</h2></header>
+<div data-help-page="projects" class="backdrop modal-backdrop">
+  <div role="dialog" aria-modal="true" aria-labelledby="package-title" class="modal modal-panel">
+    <header class="modal-header"><h2 id="package-title">Export package</h2></header>
     {#if phase === 'choosing'}
-      <p>Choose where to save the package.</p>
+      <div class="body"><p>Choose where to save the package.</p></div>
     {:else if phase === 'packing'}
-      <p>Packing the project and its media…</p>
-      <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent}><span style="width:{percent}%"></span></div>
-      <p class="detail">{percent}% · {size(progress.done)} of {size(progress.total)}{progress.file ? ` · ${progress.file.replace(/^Media\//, '')}` : ''}</p>
-      <footer><button disabled={cancelling} onclick={cancel}>{cancelling ? 'Cancelling…' : 'Cancel'}</button></footer>
+      <div class="body">
+        <p>Packing the project and its media…</p>
+        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent}><span style="width:{percent}%"></span></div>
+        <p class="detail">{percent}% · {size(progress.done)} of {size(progress.total)}{progress.file ? ` · ${progress.file.replace(/^Media\//, '')}` : ''}</p>
+      </div>
+      <footer><button class="secondary secondary-btn" disabled={cancelling} onclick={cancel}>{cancelling ? 'Cancelling…' : 'Cancel'}</button></footer>
     {:else if phase === 'done' && result}
-      <p>Packed with the project: {result.files} {result.files === 1 ? 'media file' : 'media files'} ({size(result.bytes)}).</p>
-      <p class="result">{result.outputPath}</p>
-      <p class="hint">On the other computer, choose File → Open Package…, or unzip it and open the project inside.</p>
-      {#if result.missing.length}
-        <p class="warn">Not in the package, because they could not be found:</p>
-        <ul>{#each result.missing as name}<li>{name}</li>{/each}</ul>
-      {/if}
-      {#if result.fonts.length}
-        <p class="hint">Fonts are not packed. Install these on the other computer: {result.fonts.join(', ')}.</p>
-      {/if}
-      <footer><button onclick={onClose}>Done</button></footer>
+      <div class="body">
+        <p>Packed with the project: {result.files} {result.files === 1 ? 'media file' : 'media files'} ({size(result.bytes)}).</p>
+        <p class="result">{result.outputPath}</p>
+        <p class="hint">On the other computer, choose File → Open package…, or unzip it and open the project inside.</p>
+        {#if result.missing.length}
+          <p class="warn">Not in the package, because they could not be found:</p>
+          <ul>{#each result.missing as name}<li>{name}</li>{/each}</ul>
+        {/if}
+        {#if result.fonts.length}
+          <p class="hint">Fonts are not packed. Install these on the other computer: {result.fonts.join(', ')}.</p>
+        {/if}
+      </div>
+      <footer><button class="primary primary-btn" onclick={onClose}>Done</button></footer>
     {:else}
-      <p class="error" role="alert">{error}</p>
-      <footer><button onclick={onClose}>Close</button></footer>
+      <div class="body"><p class="error" role="alert">{error}</p></div>
+      <footer><button class="secondary secondary-btn" onclick={onClose}>Close</button></footer>
     {/if}
   </div>
 </div>
 
 <style>
-  .backdrop { position:fixed; inset:0; z-index:1200; background:#000b; display:flex; align-items:center; justify-content:center; }
-  .modal { width:min(560px,92vw); max-height:88vh; overflow:auto; background:#191b20; border:1px solid #42464f; border-radius:12px; padding:22px; color:#e6e8ef; font-size:13px; }
-  h2 { margin:0 0 6px; font-size:20px; }
-  p { line-height:1.5; margin:10px 0; } .hint, .detail { color:#aaaeb9; } .warn, .error { color:#ffad9c; }
-  .result { overflow-wrap:anywhere; color:var(--ga-blue-200); }
-  ul { margin:4px 0 0; padding-left:18px; max-height:22vh; overflow:auto; color:#d8dbe3; }
-  .bar { height:8px; border-radius:4px; background:#2c2f37; overflow:hidden; margin-top:14px; }
-  .bar span { display:block; height:100%; background:var(--ga-blue-400, #5b8cff); transition:width .15s linear; }
-  footer { display:flex; justify-content:flex-end; margin-top:18px; }
-  button { border:1px solid #4c5260; background:var(--ga-blue-mute-800); color:inherit; border-radius:6px; padding:8px 12px; cursor:pointer; }
-  button:disabled { opacity:.45; cursor:default; }
+  .backdrop { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .backdrop {
+    background: color-mix(in srgb, var(--ga-void, #0a0908) 76%, transparent);
+    backdrop-filter: blur(8px);
+  }
+  .modal {
+    width: min(560px, 92vw);
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--ga-faceplate-bg, var(--ga-panel, #100f0d));
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.08)), 0 24px 80px rgba(0, 0, 0, 0.58);
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-body);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+  }
+  h2 {
+    margin: 0;
+    font-size: var(--ga-text-heading);
+    font-weight: var(--ga-weight-title);
+    line-height: 1.3;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ga-ink-0, #f2ede4);
+  }
+  .body { padding: 12px 16px; overflow-y: auto; }
+  p { line-height: 1.5; margin: 6px 0; }
+  .hint, .detail { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta); }
+  .warn, .error { color: #ffad9c; }
+  .result { overflow-wrap: anywhere; color: var(--ga-ink-0, #f2ede4); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: var(--ga-text-meta); }
+  ul { margin: 4px 0 0; padding-left: 18px; max-height: 22vh; overflow: auto; color: var(--ga-ink-1, #ada9a2); }
+  .bar { height: 6px; border-radius: 3px; background: var(--ga-slot, #060504); border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07)); overflow: hidden; margin-top: 12px; }
+  .bar span { display: block; height: 100%; background: var(--ga-selection-line, #5278ff); transition: width .15s linear; }
+  footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+  }
+  .secondary,
+  .primary {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--ga-bar-control-h);
+    padding: 0 14px;
+    border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, filter 0.12s;
+  }
+  .secondary {
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+  }
+  .secondary:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+  }
+  .primary {
+    background: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-ink-0, #f2ede4);
+    color: var(--ga-void, #0a0908);
+  }
+  .primary:hover:not(:disabled) { filter: brightness(1.06); }
+  .secondary:disabled,
+  .primary:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

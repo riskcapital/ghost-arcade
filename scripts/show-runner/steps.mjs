@@ -111,7 +111,7 @@ const ACTIONS = {
       const sel = document.querySelector('.preset-picker select');
       sel.value = ${J(s.id)}; sel.dispatchEvent(new Event('change', { bubbles: true }));
       await sleep(300);
-      [...document.querySelectorAll('.preset-picker .wide-btn')].find((b) => /Load Preset/.test(b.textContent)).click();
+      [...document.querySelectorAll('.preset-picker .wide-btn')].find((b) => /Load preset/i.test(b.textContent)).click();
       await sleep(1500); window.confirm = keep;
     })()`);
   },

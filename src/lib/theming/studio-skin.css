@@ -203,7 +203,7 @@ html[data-theme="arcade"] body {
 }
 
 /* Record: a red-outlined square, the same in both modes. */
-.rec-btn {
+.toolbar .rec-btn {
   width: var(--ga-bar-control-h) !important;
   height: var(--ga-bar-control-h) !important;
   padding: 0 !important;
@@ -216,8 +216,8 @@ html[data-theme="arcade"] body {
   font-size: var(--ga-text-body) !important;
   cursor: pointer !important;
 }
-.rec-btn:hover { background: rgba(255, 68, 56, 0.12) !important; }
-.stop-rec-btn {
+.toolbar .rec-btn:hover { background: rgba(255, 68, 56, 0.12) !important; }
+.toolbar .stop-rec-btn {
   height: var(--ga-bar-control-h) !important;
   padding: 0 12px !important;
   border-radius: var(--ga-r-hard, 5px) !important;
@@ -260,34 +260,38 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
-  padding: 13px 14px !important;
+  padding: 8px 12px !important;
 }
 .layer-panel .panel-header h3,
 .layer-panel h3 {
-  font-weight: 700 !important;
-  font-size: 16px !important;
+  font-weight: var(--ga-weight-title) !important;
+  font-size: var(--ga-text-title) !important;
   color: var(--ga-ink-0, #eef0f4) !important;
   margin: 0 !important;
 }
 
-/* "+ Add Layer" violet pill */
+/* Looks and Add layer: the panel's two actions, plain chips. */
 .layer-panel .btn-add {
-  height: 30px !important;
-  padding: 0 12px !important;
-  border-radius: var(--ga-r-soft, 7px) !important;
-  border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
-  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
-  color: var(--ga-violet, #9b87f5) !important;
-  font-weight: 600 !important;
-  font-size: 13px !important;
+  height: var(--ga-control-h) !important;
+  padding: 0 10px !important;
+  border-radius: var(--ga-r-hard, 5px) !important;
+  border: 1px solid var(--ga-line-2) !important;
+  background: var(--ga-card, #16140f) !important;
+  color: var(--ga-ink-0) !important;
+  font-weight: var(--ga-weight-control) !important;
+  font-size: var(--ga-text-control) !important;
   cursor: pointer !important;
   display: inline-flex !important;
   align-items: center !important;
   gap: 5px !important;
 }
-.layer-panel .btn-add:hover,
+.layer-panel .btn-add:hover {
+  border-color: var(--ga-line-3) !important;
+}
 .layer-panel .btn-add.active {
-  background: var(--ga-blue-a16) !important;
+  background: var(--ga-selection-bg) !important;
+  border-color: var(--ga-selection-line) !important;
+  color: var(--ga-selection-ink) !important;
 }
 
 /* Layer row */
@@ -422,14 +426,14 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 /* Selects inside left panel */
 .layer-panel select:not(.media-properties select),
 .property-row select:not(.media-properties select) {
-  height: 32px !important;
-  padding: 0 11px !important;
+  height: var(--ga-control-h) !important;
+  padding: 0 8px !important;
   border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  border-radius: var(--ga-r-hard, 2px) !important;
+  border-radius: var(--ga-r-hard, 5px) !important;
   background: transparent !important;
   color: var(--ga-ink-0, #eef0f4) !important;
   font-weight: 500 !important;
-  font-size: 14px !important;
+  font-size: var(--ga-text-control) !important;
 }
 
 /* ============================================================
@@ -474,8 +478,8 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 }
 .media-library .library-title,
 .media-library .library-header {
-  font-weight: 800 !important;
-  font-size: 20px !important;
+  font-weight: var(--ga-weight-title, 650) !important;
+  font-size: var(--ga-text-title, 14px) !important;
   color: var(--ga-ink-0, #eef0f4) !important;
   padding: 14px 14px 10px !important;
 }
@@ -803,7 +807,7 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 .update-modal-header h2,
 .shortcut-overlay-title {
   color: var(--ga-ink-0, #eef0f4) !important;
-  font-weight: 800 !important;
+  font-weight: var(--ga-weight-title, 650) !important;
   letter-spacing: 0 !important;
 }
 
@@ -838,8 +842,8 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 
 :is(.app, .settings-panel, .stage-overlay, .stage3d-root, .mobile-app, .modal-shell, .modal-panel, .shader-library-modal) :is(input[type="text"], input[type="number"], input[type="password"], input[type="url"], input[type="search"], textarea, select):focus {
   outline: none !important;
-  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ga-violet, #9b87f5) 18%, transparent) !important;
+  border-color: var(--ga-focus, var(--ga-selection-line)) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ga-focus, var(--ga-selection-line)) 18%, transparent) !important;
 }
 
 :is(.primary-btn, .btn-save, .btn-recover, .apply-stage-btn, .empty-btn.primary, .pwa-install-btn, .connect-form button, .library-load-btn, .stage-preset-save-btn, .library-add-btn, .folder-input-ok) {
@@ -847,7 +851,7 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
   border: 1px solid var(--ga-violet, #9b87f5) !important;
   color: var(--ga-blue-800) !important;
   border-radius: var(--ga-r-soft, 7px) !important;
-  font-weight: 800 !important;
+  font-weight: 700 !important;
   box-shadow: none !important;
 }
 
@@ -958,9 +962,9 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 }
 
 .sidebar-category {
-  color: var(--ga-ink-3, #3a404a) !important;
-  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
-  letter-spacing: 0.10em !important;
+  color: var(--ga-ink-2) !important;
+  font-family: var(--ga-font-ui, inherit) !important;
+  letter-spacing: var(--ga-eyebrow-tracking, 0.08em) !important;
 }
 
 .sidebar-section {
@@ -1014,17 +1018,14 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 }
 
 .stage-header {
-  height: 52px !important;
-  flex-basis: 52px !important;
-  padding: 0 14px !important;
+  height: var(--ga-bar-h) !important;
+  flex-basis: var(--ga-bar-h) !important;
+  padding: 0 12px !important;
 }
 
-.stage-header .title,
-.effects-header,
-.empty-title,
-.binding-name,
-.inspector-note strong {
-  color: var(--ga-violet, #9b87f5) !important;
+.stage-header .title {
+  color: var(--ga-ink-0) !important;
+  font-size: var(--ga-text-title) !important;
 }
 
 .surface-dims,
@@ -1112,7 +1113,7 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 }
 
 .stage3d-root .topbar {
-  height: 52px !important;
+  height: var(--ga-bar-h) !important;
   background: color-mix(in srgb, var(--ga-bar, #0e1014) 88%, transparent) !important;
   border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
   border-radius: 0 !important;
@@ -1138,12 +1139,11 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 .stage3d-root .lib h3,
 .stage3d-root .props h3,
 .stage3d-root .ghd {
-  color: var(--ga-violet, #9b87f5) !important;
-  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
+  color: var(--ga-ink-2) !important;
 }
 
 .stage3d-root .ghd::before {
-  background: var(--ga-violet, #9b87f5) !important;
+  background: var(--ga-line-3) !important;
 }
 
 .stage3d-root .additem {
@@ -1385,7 +1385,6 @@ html[data-theme="arcade"] :is(
   .update-modal-header h2,
   .shortcut-overlay-title,
   .lib-title,
-  .stage-header .title,
   .stage3d-root .logo,
   .gridhead h4
 ) {
@@ -1506,12 +1505,18 @@ html[data-theme="arcade"] :is(
   .ghd-action,
   .btn-small
 ):hover:not(:disabled) {
-  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+  border-color: var(--ga-line-3) !important;
   color: var(--ga-ink-0, #f2ede4) !important;
   background: var(--ga-hardware-bg) !important;
-  box-shadow:
-    var(--ga-hardware-shadow),
-    0 0 10px color-mix(in srgb, var(--ga-coral, #ff6f5e) 18%, transparent) !important;
+  box-shadow: var(--ga-hardware-shadow) !important;
+}
+
+/* A plain chip that is switched on (a pressed toggle): the selection colours. */
+html[data-theme] :is(.secondary-btn, .text-btn, .tool-btn, .icon-btn)[aria-pressed="true"],
+html[data-theme] :is(.secondary-btn, .text-btn).active {
+  background: var(--ga-selection-bg) !important;
+  border-color: var(--ga-selection-line) !important;
+  color: var(--ga-selection-ink) !important;
 }
 
 html[data-theme="arcade"] :is(
@@ -1771,7 +1776,7 @@ html[data-theme="arcade"] :is(.statusbar, .status-bar, .dock) {
   letter-spacing: 0 !important;
 }
 
-html[data-theme="arcade"] :is(.fps-counter, .version-label, .param-value, .value, .shader-param-name, .surface-dims, .zoom-readout) {
+html[data-theme="arcade"] :is(.fps-counter, .version-label, .param-value, .value, .surface-dims, .zoom-readout) {
   font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
 }
 
@@ -2017,23 +2022,22 @@ html[data-theme="arcade"] .stage3d-root :is(.seg, .seg-btn, .tbtn, .icon-btn, .v
   box-shadow: var(--ga-hardware-shadow) !important;
 }
 
-html[data-theme="arcade"] .stage3d-root :is(.seg-btn.on, .additem.screen.selected, .additem.screen.selected.primary, .pill.active) {
-  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
-  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
-  color: var(--ga-coral, #ff6f5e) !important;
-  box-shadow:
-    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
-    0 0 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 28%, transparent) !important;
+html[data-theme="arcade"] .stage3d-root :is(.seg-btn.on, .tbtn.on, .tbtn.reel-on, .additem.screen.selected, .additem.screen.selected.primary, .pill.active) {
+  background: var(--ga-selection-bg) !important;
+  border-color: var(--ga-selection-line) !important;
+  color: var(--ga-selection-ink) !important;
+  box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)) !important;
 }
 
-html[data-theme="arcade"] .stage3d-root :is(.ghd, .field label .v, .row .val, .slider-val, .badge, .multi-pill, .multi-banner b) {
-  color: var(--ga-coral, #ff6f5e) !important;
-  text-shadow: 0 0 7px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+/* Values read in ink; eyebrows stay eyebrows. */
+html[data-theme="arcade"] .stage3d-root :is(.field label .v, .row .val, .slider-val, .badge, .multi-pill, .multi-banner b) {
+  color: var(--ga-ink-0) !important;
+  text-shadow: none !important;
 }
 
 html[data-theme="arcade"] .stage3d-root .ghd::before {
-  background: var(--ga-coral, #ff6f5e) !important;
-  box-shadow: 0 0 8px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+  background: var(--ga-line-3) !important;
+  box-shadow: none !important;
 }
 
 html[data-theme="arcade"] .stage3d-root :is(.multi-banner, .badge, .multi-pill) {
@@ -2213,8 +2217,7 @@ html.native-primary-presenter .viewport-content {
   .composition-section-header,
   .stage3d-root .lib h3,
   .stage3d-root .props h3,
-  .stage3d-root .ghd,
-  .projection-sim-root h3
+  .stage3d-root .ghd
 ) {
   font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
   font-weight: 700 !important;
@@ -2251,7 +2254,7 @@ html.native-primary-presenter .viewport-content {
 }
 
 :is(.library-tab, .tab-btn, .fx-tab, .left-tab, .category-name) {
-  letter-spacing: 0.035em !important;
+  letter-spacing: 0 !important;
 }
 
 :is(.hint, .label-hint, .empty, .no-effects, .composition-empty) {
@@ -2361,11 +2364,11 @@ html :is(button, .tab, .menu-item, .pill, .status-pill)[aria-selected="true"] sv
 /* Performance UI refinements. These rules affect chrome only: never the
    native preview aperture, artwork text or output surfaces. */
 :is(.effects-info-label, .vt-section-title, .library-section-label, .section-title, .palette-section) {
-  font-size: var(--ga-type-caption) !important;
+  font-size: var(--ga-text-eyebrow) !important;
   font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
-  font-weight: 650 !important;
-  letter-spacing: .06em !important;
-  color: var(--ga-ink-1) !important;
+  font-weight: 700 !important;
+  letter-spacing: var(--ga-eyebrow-tracking) !important;
+  color: var(--ga-ink-2) !important;
 }
 :is(.shader-param-name, .property-label, .param-label, .setting-label, .vt-tf-label) {
   font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
@@ -2375,7 +2378,7 @@ html :is(button, .tab, .menu-item, .pill, .status-pill)[aria-selected="true"] sv
 :is(.hint, .label-hint, .empty, .no-effects, .vt-audio-note, .vt-direction, .help-text) {
   font-size: var(--ga-type-caption) !important;
   line-height: 1.45 !important;
-  color: var(--ga-ink-1) !important;
+  color: var(--ga-ink-2) !important;
 }
 :is(.vt-time, .param-value, .param-val, .slider-val, input[type="number"]) {
   font-variant-numeric: tabular-nums !important;

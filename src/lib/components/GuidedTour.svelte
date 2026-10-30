@@ -77,7 +77,7 @@
     body: 'Want a head start? A template opens a project that is already set up for a band, a club night, a liquid light show or projection mapping.',
     bullets: [
       'Take another path or this one again from the ? button at the bottom right',
-      'File > New from Template opens the templates at any time',
+      'File > New from template opens the templates at any time',
     ],
     prepare: closeSettings,
   };
@@ -101,7 +101,7 @@
             'FX holds the shaders, JS holds code sketches, SAVED holds looks you kept',
             'VID and IMG hold your own videos and pictures, SRC holds cameras and live inputs',
             'Drag any item onto an empty cell in the deck',
-            'Add Files imports media, or drop files from your computer straight onto a row',
+            'Add files imports media, or drop files from your computer straight onto a row',
           ],
           targets: ['.right-panel-vj'],
           prepare: openVjMedia,
@@ -211,7 +211,7 @@
         {
           title: 'Add a surface',
           body: 'Each surface is a layer. Add one for every object or wall you want to cover, such as a drum riser, a screen or a column.',
-          bullets: ['Add Layer opens a menu of layer types', 'The newest layer sits on top of the others'],
+          bullets: ['Add layer opens a menu of layer types', 'The newest layer sits on top of the others'],
           targets: ['.layer-panel .add-layer-wrapper .btn-add'],
           prepare: () => sidebarTab('layers'),
           action: {
@@ -229,7 +229,7 @@
             'Drag the four corner handles onto the corners of your object',
             'Drag the centre handle to move it and the top circle to rotate it',
             'Arrow keys nudge the selection for fine alignment',
-            'For curved or uneven surfaces, set Warp Mode to Mesh in its properties and pull the grid points',
+            'For curved or uneven surfaces, set Warp mode to Mesh in its properties and pull the grid points',
           ],
           targets: ['.canvas-wrapper'],
           loose: true,
@@ -250,8 +250,8 @@
           body: 'The selected surface’s properties sit under the layer list.',
           bullets: [
             'Opacity and blend mode set how it mixes with surfaces underneath',
-            'Content Fit and Source Crop decide which part of the picture lands on it',
-            'Edge Feather softens its edges',
+            'Content fit and Source crop decide which part of the picture lands on it',
+            'Edge feather softens its edges',
           ],
           targets: ['.layer-properties'],
           prepare: async () => {

@@ -608,7 +608,8 @@
     border-radius: var(--ga-r-hard, 5px);
     background: var(--ga-slot);
     color: var(--ga-ink-0);
-    padding: 7px 8px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
   }
 
   input.invalid {

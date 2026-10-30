@@ -134,7 +134,7 @@
 <aside data-help-page="clip-launcher" class="clip-preview-panel" role="dialog" aria-label="Clip preview">
   <header class="cpp-header">
     <div class="cpp-header-left">
-      <div class="cpp-eyebrow">DECK {bank} · L{layerIndex + 1} · C{columnIndex + 1}</div>
+      <div class="cpp-eyebrow">Deck {bank} · L{layerIndex + 1} · C{columnIndex + 1}</div>
       <div class="cpp-title" title={clip.name}>{clip.name || clip.id || 'Untitled clip'}</div>
     </div>
     <button class="cpp-close" type="button" on:click={onClose} aria-label="Close">
@@ -232,7 +232,7 @@
   {/if}
 
   <footer class="cpp-footer">
-    <button class="cpp-trigger" type="button" on:click={trigger}>
+    <button class="cpp-trigger primary-btn" type="button" on:click={trigger}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
       Trigger
     </button>
@@ -261,19 +261,18 @@
     transform: translate(-50%, -50%);
     width: 380px;
     max-height: 85vh;
-    background: rgba(20, 20, 26, 0.98);
-    backdrop-filter: blur(24px);
-    border: 1px solid color-mix(in srgb, var(--ga-blue-200) 20%, transparent);
-    border-radius: 12px;
+    background: var(--ga-panel, #14141a);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 7px);
     z-index: 9991;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 133, 119, 0.05);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
     overflow: hidden;
-    animation: cpp-pop 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: cpp-pop 0.2s ease-out;
   }
   @keyframes cpp-pop {
-    from { opacity: 0; transform: translate(-50%, -50%) scale(0.94); }
+    from { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
     to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   }
 
@@ -281,47 +280,47 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 16px 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    background: linear-gradient(180deg, rgba(255, 133, 119, 0.06), transparent);
+    padding: 10px 12px 10px 16px;
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     gap: 10px;
   }
   .cpp-header-left { min-width: 0; flex: 1; }
   .cpp-eyebrow {
-    font-size: 11px;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: var(--ga-blue-200);
-    letter-spacing: 0.1em;
     margin-bottom: 2px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
   }
   .cpp-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: #fff;
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #eef0f4);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .cpp-close {
     flex-shrink: 0;
-    width: 26px;
-    height: 26px;
-    background: rgba(255, 255, 255, 0.06);
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
+    background: transparent;
     border: none;
-    border-radius: 50%;
-    color: var(--text-secondary, #aaa);
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-2, #89857e);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: background 0.15s, color 0.15s;
   }
-  .cpp-close:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+  .cpp-close:hover { background: var(--ga-raise, #26221c); color: var(--ga-ink-0, #eef0f4); }
 
   .cpp-preview {
     padding: 12px 16px;
     background: #000;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--ga-line-1, rgba(255, 255, 255, 0.07));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -332,65 +331,66 @@
     width: 320px;
     height: 180px;
     object-fit: cover;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-1, rgba(255, 255, 255, 0.07));
+    border-radius: var(--ga-r-hard, 3px);
     display: block;
     background: #000;
   }
   .cpp-preview-note {
     margin-left: 12px;
-    font-size: 12px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     max-width: 80px;
     line-height: 1.4;
   }
   .cpp-preview-empty {
     width: 320px;
     height: 180px;
-    border: 1px dashed rgba(255, 255, 255, 0.12);
-    border-radius: 4px;
+    border: 1px dashed var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 4px;
-    color: #666;
+    color: var(--ga-ink-2, #89857e);
   }
+  /* Clip type (shader, video…) as an eyebrow. */
   .cpp-preview-empty-type {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-secondary, #aaa);
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-1, #9aa0ac);
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
   .cpp-preview-empty-note {
-    font-size: 12px;
-    color: #666;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .cpp-params {
-    padding: 12px 16px 14px;
+    padding: 12px 16px;
     overflow-y: auto;
     flex: 1;
     min-height: 0;
   }
   .cpp-params::-webkit-scrollbar { width: 6px; }
   .cpp-params::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: 3px;
   }
 
   .cpp-section-label {
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
-    color: var(--text-muted, #888);
-    letter-spacing: 0.15em;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2, #89857e);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
   }
 
   .cpp-row {
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   .cpp-row:last-child { margin-bottom: 0; }
   .cpp-row-head {
@@ -401,24 +401,26 @@
   }
   .cpp-row-label {
     flex: 1;
-    font-size: 12px;
-    color: #d4d4d4;
-    text-transform: capitalize;
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-1, #9aa0ac);
   }
+  /* ISF names arrive lowercase; sentence case them. */
+  .cpp-row-label::first-letter { text-transform: uppercase; }
   .cpp-reset {
     background: transparent;
     border: none;
-    color: #666;
+    color: var(--ga-ink-2, #89857e);
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--ga-text-body);
     padding: 0 4px;
     line-height: 1;
   }
-  .cpp-reset:hover { color: #fff; }
+  .cpp-reset:hover { color: var(--ga-ink-0, #eef0f4); }
   .cpp-value {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
-    color: var(--ga-blue-200);
+    font-size: var(--ga-text-meta);
+    font-variant-numeric: tabular-nums;
+    color: var(--ga-ink-0, #eef0f4);
     min-width: 36px;
     text-align: right;
   }
@@ -427,79 +429,72 @@
     height: 18px;
     background: transparent;
     cursor: pointer;
-    accent-color: #FF8577;
+    accent-color: var(--ga-selection-line, #5278ff);
   }
 
   .cpp-row-bool {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   .cpp-row-bool .cpp-row-label { margin-bottom: 0; }
   .cpp-row-bool input[type="checkbox"] {
-    accent-color: #FF8577;
+    accent-color: var(--ga-selection-line, #5278ff);
   }
 
   .cpp-row-color {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   .cpp-row-color .cpp-row-label { margin-bottom: 0; }
   .cpp-row-color input[type="color"] {
     width: 36px;
     height: 22px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
     background: transparent;
     cursor: pointer;
     padding: 0;
   }
 
   .cpp-empty-params {
-    font-size: 12px;
-    color: #666;
-    font-style: italic;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .cpp-footer {
-    padding: 12px 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(0, 0, 0, 0.2);
+    padding: 10px 16px;
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     display: flex;
     align-items: center;
     gap: 10px;
   }
+  /* The panel's primary action (.primary-btn takes the theme's look). */
   .cpp-trigger {
     flex: 1;
-    background: linear-gradient(135deg, #FF8577, var(--ga-blue-200));
-    color: #0a0a0a;
+    height: var(--ga-control-h, 26px);
+    background: var(--ga-violet, #9b87f5);
+    color: var(--ga-blue-800, #0b0d11);
     border: none;
-    border-radius: 6px;
-    padding: 10px 16px;
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    border-radius: var(--ga-r-soft, 7px);
+    padding: 0 12px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    transition: filter 0.15s, transform 0.15s, box-shadow 0.15s;
-    box-shadow: 0 4px 12px rgba(255, 133, 119, 0.3);
+    transition: filter 0.15s;
   }
   .cpp-trigger:hover {
-    filter: brightness(1.1);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 18px rgba(255, 133, 119, 0.45);
+    filter: brightness(1.06);
   }
-  .cpp-trigger:active { transform: translateY(0); }
   .cpp-hint {
-    font-size: 11px;
-    color: #666;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 </style>

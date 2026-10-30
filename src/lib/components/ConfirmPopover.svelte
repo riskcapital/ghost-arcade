@@ -109,13 +109,14 @@
       {/if}
 
       <div class="confirm-actions">
-        <button class="confirm-btn cancel" onclick={() => dismiss(false)}>
+        <button class="confirm-btn cancel secondary-btn" onclick={() => dismiss(false)}>
           {$confirmPrompt.cancelLabel}
         </button>
         <button
           bind:this={confirmBtn}
           class="confirm-btn primary"
           class:danger={$confirmPrompt.destructive}
+          class:primary-btn={!$confirmPrompt.destructive}
           onclick={() => dismiss(true)}
         >
           {$confirmPrompt.confirmLabel}
@@ -133,36 +134,38 @@
     background: transparent;
   }
 
+  /* A small dialog: the same surface, type and button pair as the others,
+     at control size. */
   .confirm-popover {
     position: fixed;
     min-width: 220px;
     max-width: 320px;
-    padding: 10px 12px 10px;
-    background: #1c1c20;
-    color: var(--text-primary, #eee);
-    border: 1px solid #3a3a42;
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4);
+    padding: 12px;
+    background: var(--ga-panel, #100f0d);
+    color: var(--ga-ink-1, #ada9a2);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
     font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
-    font-size: 13px;
-    line-height: 1.35;
+    font-size: var(--ga-text-body);
+    line-height: 1.4;
     animation: confirm-pop 90ms ease-out;
   }
 
   .confirm-popover.destructive {
-    border-color: #5a2a2a;
+    border-color: color-mix(in srgb, var(--ga-rec, #ff3b30) 40%, transparent);
   }
 
   .confirm-arrow {
     position: absolute;
     width: 10px;
     height: 10px;
-    background: #1c1c20;
-    border: 1px solid #3a3a42;
+    background: var(--ga-panel, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     transform: translateX(-50%) rotate(45deg);
   }
   .confirm-popover.destructive .confirm-arrow {
-    border-color: #5a2a2a;
+    border-color: color-mix(in srgb, var(--ga-rec, #ff3b30) 40%, transparent);
   }
   .confirm-arrow.from-top {
     /* Popover is below the anchor, so the arrow sits on its TOP edge. */
@@ -178,60 +181,63 @@
   }
 
   .confirm-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: #fff;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #f2ede4);
     margin-bottom: 2px;
   }
 
   .confirm-subtitle {
-    font-size: 12px;
-    color: var(--text-muted, #888);
-    margin-bottom: 8px;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .confirm-actions {
     display: flex;
     justify-content: flex-end;
     gap: 6px;
-    margin-top: 4px;
+    margin-top: 12px;
   }
 
   .confirm-btn {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: 4px;
+    box-sizing: border-box;
+    height: var(--ga-control-h);
+    padding: 0 12px;
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
-    border: 1px solid transparent;
-    background: transparent;
-    color: var(--text-primary, #ccc);
-    transition: background 80ms ease, border-color 80ms ease;
+    transition: color 80ms ease, border-color 80ms ease, filter 80ms ease;
+  }
+  .confirm-btn.cancel {
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
   }
   .confirm-btn.cancel:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-primary, #eee);
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
   .confirm-btn.primary {
-    background: #BB86FC;
-    color: #14141a;
-    font-weight: 600;
+    background: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-ink-0, #f2ede4);
+    color: var(--ga-void, #0a0908);
   }
   .confirm-btn.primary:hover {
-    background: #d0a8ff;
+    filter: brightness(1.06);
   }
   .confirm-btn.primary.danger {
-    background: #ff5252;
+    background: var(--ga-rec, #ff3b30);
+    border-color: var(--ga-rec, #ff3b30);
     color: #fff;
   }
-  .confirm-btn.primary.danger:hover {
-    background: #ff7373;
-  }
-  .confirm-btn:focus {
-    outline: 2px solid rgba(187, 134, 252, 0.55);
+  .confirm-btn:focus-visible {
+    outline: 2px solid var(--ga-focus, #8aa4ff);
     outline-offset: 1px;
   }
-  .confirm-btn.primary.danger:focus {
-    outline-color: rgba(255, 82, 82, 0.55);
+  .confirm-btn.primary.danger:focus-visible {
+    outline-color: color-mix(in srgb, var(--ga-rec, #ff3b30) 60%, transparent);
   }
 
   @keyframes confirm-pop {

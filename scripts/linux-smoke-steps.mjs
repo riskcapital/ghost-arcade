@@ -76,7 +76,7 @@ export async function openTab(c, name) {
 /** Layers tab > + Add Layer > one menu entry. Returns the layer row count. */
 export async function addLayer(c, menuEntry) {
   await openTab(c, 'Layers');
-  if (!(await c.exists("document.querySelector('.add-layer-menu')"))) await c.clickElement(el.button('+ Add Layer'));
+  if (!(await c.exists("document.querySelector('.add-layer-menu')"))) await c.clickElement(el.button('+ Add layer'));
   await c.waitFor("!!document.querySelector('.add-layer-menu')", 5000, 'Add Layer menu');
   await c.clickElement(el.button(menuEntry, "document.querySelector('.add-layer-menu')"));
   await sleep(800);
@@ -162,7 +162,7 @@ export const stepComposite = {
   id: 'b', title: 'A shader layer shows a non-black composite in the editor',
   async run(t) {
     const { c } = t;
-    await addLayer(c, 'GPU Shader');
+    await addLayer(c, 'GPU shader');
     const rows = await c.eval("document.body.innerText.includes('Properties (Media)')");
     t.check('GPU Shader layer was added and selected', rows, 'inspector shows the layer properties');
     // Software Vulkan needs a while for the first frames of a new graph.

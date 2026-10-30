@@ -605,7 +605,8 @@
     border-radius: var(--ga-r-hard, 5px);
     background: var(--ga-slot);
     color: var(--ga-ink-0);
-    padding: 7px 8px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
   }
 
   .name-input {
@@ -718,8 +719,8 @@
   }
 
   .panel-tabs button.active {
-    color: var(--ga-blue-300);
-    border-bottom-color: var(--ga-blue-300);
+    color: var(--ga-ink-0);
+    border-bottom-color: var(--ga-selection-line);
   }
 
   .panel-body {
@@ -737,7 +738,8 @@
   .mode-row button,
   .test-patterns button,
   .tool-row button {
-    padding: 7px 8px;
+    min-height: var(--ga-control-h, 26px);
+    padding: 3px 8px;
     border: 1px solid var(--ga-line-2);
     border-radius: var(--ga-r-hard, 5px);
     background: var(--ga-card);
@@ -746,9 +748,9 @@
 
   .mode-row button.active,
   .test-patterns button.active {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
-    background: var(--ga-blue-a08);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
+    background: var(--ga-selection-bg);
   }
 
   .map-options {
@@ -815,7 +817,7 @@
     justify-content: space-between;
     gap: 10px;
     color: var(--ga-ink-3);
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
     padding: 5px 1px 8px;
   }
 
@@ -895,13 +897,13 @@
   .range-title button {
     padding: 5px 8px;
     border-radius: var(--ga-r-hard, 5px);
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
   }
 
   .section-note,
   .empty-ranges {
     color: var(--ga-ink-2);
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
     line-height: 1.45;
   }
 

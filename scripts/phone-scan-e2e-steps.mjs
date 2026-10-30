@@ -53,8 +53,8 @@ export async function transferChecks(s) {
 export async function libraryChecks(s) {
   const { check } = s;
   const splatLayers = () => s.page(`(${PROJECT}).layers.filter((l) => l.type === 'splat').length`);
-  await s.click('button', 'Add Layer');
-  await s.click('button', 'Media Layer');
+  await s.click('button', 'Add layer');
+  await s.click('button', 'Media layer');
   await s.waitFor(`!!document.querySelector('[data-tray-tab="scans"]')`, 8000, 'Scan tab in the Media Library');
   await s.click('[data-tray-tab="scans"]');
   const row = await s.waitFor(`(() => { const r = document.querySelector('[data-scan-item=${JSON.stringify(s.savedName)}]'); return r && r.getClientRects().length ? r.innerText : null; })()`, 5000, 'scan row');

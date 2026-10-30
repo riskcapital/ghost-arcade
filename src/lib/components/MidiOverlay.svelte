@@ -291,7 +291,7 @@
               <span class="midi-tag">{mappingLabel}</span>
             {/if}
             {#if isLearning}
-              <span class="midi-learn-label">LEARN</span>
+              <span class="midi-learn-label">Learn</span>
             {/if}
           </div>
         {/if}
@@ -300,11 +300,11 @@
 
     <!-- Status bar at bottom -->
     <div class="midi-status-bar">
-      <span class="midi-status-title">MIDI EDIT</span>
+      <span class="midi-status-title">MIDI edit</span>
       {#if $midiStore.learn.active && $midiStore.learn.targetLabel}
         <span class="midi-learn-status">Waiting: <strong>{$midiStore.learn.targetLabel}</strong> &mdash; move a control on your MIDI device</span>
       {:else}
-        <span class="midi-hint">Click control to assign | Right-click to clear | ESC to exit</span>
+        <span class="midi-hint">Click a control to assign · Right-click to clear · Esc to exit</span>
       {/if}
       {#if $midiStore.lastMessage}
         <span class="midi-last-msg">
@@ -320,9 +320,9 @@
         class="midi-file-input"
         onchange={handleMappingFileChosen}
       />
-      <button class="midi-bar-btn" title="Load MIDI mappings from a file" onclick={() => mappingFileInput?.click()}>LOAD</button>
-      <button class="midi-bar-btn" title="Save your MIDI mappings to a file" disabled={!$midiStore.mappings.length} onclick={saveMappingsToFile}>SAVE</button>
-      <button class="midi-exit-btn" onclick={() => midiStore.setEditMode(false)}>EXIT</button>
+      <button class="midi-bar-btn" title="Load MIDI mappings from a file" onclick={() => mappingFileInput?.click()}>Load</button>
+      <button class="midi-bar-btn" title="Save your MIDI mappings to a file" disabled={!$midiStore.mappings.length} onclick={saveMappingsToFile}>Save</button>
+      <button class="midi-exit-btn" onclick={() => midiStore.setEditMode(false)}>Exit</button>
     </div>
   </div>
 {/if}
@@ -388,43 +388,42 @@
     border-radius: 2px;
     line-height: 1;
     white-space: nowrap;
-    letter-spacing: 0.3px;
     pointer-events: none;
   }
 
   .midi-learn-label {
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow);
     font-weight: 700;
     color: var(--ga-blue-300);
-    letter-spacing: 1px;
     text-shadow: 0 0 6px color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
     pointer-events: none;
   }
 
+  /* Edit-mode bar: shared with the keyboard edit bar, in its own colour. */
   .midi-status-bar {
     position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 28px;
-    background: var(--ga-blue-900);
-    border-top: 2px solid #bb86fc;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 100001;
+    pointer-events: auto;
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 0 12px;
-    font-size: 12px;
-    color: var(--text-primary, #ccc);
-    z-index: 100001;
-    pointer-events: auto;
-    backdrop-filter: blur(8px);
+    min-height: 38px;
+    padding: 6px 8px 6px 12px;
+    box-sizing: border-box;
+    color: var(--ga-ink-1, #ada9a2);
+    background: var(--ga-panel, #100f0d);
+    border: 1px solid color-mix(in srgb, var(--ga-selection-line, #5278ff) 45%, transparent);
+    border-radius: var(--ga-r-hard, 5px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    font-size: var(--ga-text-control);
   }
 
   .midi-status-title {
-    color: #bb86fc;
+    color: var(--ga-selection-ink, #e0e8ff);
     font-weight: 700;
-    letter-spacing: 1px;
-    font-size: 11px;
   }
 
   .midi-learn-status {
@@ -432,43 +431,51 @@
     flex: 1;
   }
   .midi-learn-status strong {
-    color: #fff;
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .midi-hint {
-    color: var(--text-muted, #888);
     flex: 1;
-    font-size: 11px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
 
   .midi-last-msg {
-    color: #666;
-    font-size: 11px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .midi-map-count {
-    color: #00ff88;
-    font-size: 11px;
-    font-weight: 600;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
 
   .midi-exit-btn,
   .midi-bar-btn {
-    background: transparent;
-    border: 1px solid #bb86fc;
-    color: #bb86fc;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 3px;
+    box-sizing: border-box;
+    height: var(--ga-control-h-sm);
+    padding: 0 10px;
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    letter-spacing: 1px;
   }
-  .midi-exit-btn:hover,
   .midi-bar-btn:hover:not(:disabled) {
-    background: #bb86fc;
-    color: #000;
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+  }
+  .midi-exit-btn {
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
+  }
+  .midi-exit-btn:hover {
+    filter: brightness(1.15);
   }
   .midi-bar-btn:disabled {
     opacity: 0.4;

@@ -486,6 +486,15 @@
   }
 
   // Library grouped by category.
+  // Library names are stored in Title Case; shown in sentence case
+  // (abbreviations such as LED, DJ and PAR keep their capitals).
+  function sentenceLabel(label: string): string {
+    return label
+      .split(/(\s+|-)/)
+      .map((w, i) => (i > 0 && /^[A-Z][a-z]+$/.test(w) ? w.toLowerCase() : w))
+      .join('');
+  }
+
   $: libraryGroups = (() => {
     const groups: Record<string, [string, typeof ELEMENT_TYPES[string]][]> = {};
     for (const [type, def] of Object.entries(ELEMENT_TYPES)) {
@@ -815,7 +824,7 @@
         <div class="ghd">{group.name}</div>
         {#each group.items as [type, def]}
           <button class="additem" onclick={() => addElement(type)}>
-            <span class="ic">{def.icon}</span>{def.label}
+            <span class="ic">{def.icon}</span>{sentenceLabel(def.label)}
           </button>
         {/each}
       </div>

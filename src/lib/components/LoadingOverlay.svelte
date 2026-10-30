@@ -66,46 +66,45 @@
 <style>
   .loading-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.7);
+    inset: 0;
+    background: color-mix(in srgb, var(--ga-void, #0a0908) 76%, transparent);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 99999;
     pointer-events: all;
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(8px);
   }
 
   .loading-content {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
   }
 
   .spinner {
-    width: 36px;
-    height: 36px;
-    border: 3px solid rgba(187, 134, 252, 0.2);
-    border-top: 3px solid #bb86fc;
+    width: 32px;
+    height: 32px;
+    border: 3px solid color-mix(in srgb, var(--ga-selection-line, #5278ff) 20%, transparent);
+    border-top: 3px solid var(--ga-selection-line, #5278ff);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
 
   .loading-text {
-    color: var(--text-primary, #ccc);
-    font-size: 14px;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    letter-spacing: 0.05em;
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
   }
 
   .loading-detail,
   .progress-value {
-    color: var(--text-secondary, #8b93a1);
-    font-size: 12px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
+  }
+
+  .progress-value {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
@@ -113,29 +112,33 @@
     width: min(320px, 70vw);
     height: 4px;
     overflow: hidden;
-    background: var(--ga-blue-mute-800);
+    border-radius: 2px;
+    background: var(--ga-slot, #060504);
   }
 
   .progress-fill {
     height: 100%;
-    background: var(--ga-blue-300);
+    background: var(--ga-selection-line, #5278ff);
     transition: width 90ms linear;
   }
 
   .background-btn {
+    box-sizing: border-box;
+    height: var(--ga-control-h);
     margin-top: 4px;
-    padding: 7px 16px;
-    border-radius: 5px;
-    border: 1px solid #2a2a30;
-    background: transparent;
-    color: var(--text-secondary, #aaa);
-    font-size: 12px;
-    font-weight: 600;
+    padding: 0 12px;
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-raise, #26221c);
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
   }
   .background-btn:hover {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   /* Non-blocking: only the chip itself takes pointer events. */
@@ -149,19 +152,19 @@
     gap: 10px;
     max-width: min(360px, 80vw);
     padding: 8px 12px;
-    border: 1px solid #2a2a30;
-    border-radius: 6px;
-    background: rgba(12, 13, 16, 0.92);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
-    color: var(--text-secondary, #8b93a1);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-panel, #100f0d);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
   .chip-spinner {
     flex: none;
     width: 14px;
     height: 14px;
-    border: 2px solid rgba(187, 134, 252, 0.2);
-    border-top: 2px solid #bb86fc;
+    border: 2px solid color-mix(in srgb, var(--ga-selection-line, #5278ff) 20%, transparent);
+    border-top: 2px solid var(--ga-selection-line, #5278ff);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -169,7 +172,8 @@
     min-width: 0;
   }
   .chip-message {
-    color: var(--text-primary, #ccc);
+    color: var(--ga-ink-0, #f2ede4);
+    font-weight: var(--ga-weight-control);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -181,6 +185,7 @@
   }
   .chip-value {
     flex: none;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   @keyframes spin {

@@ -168,7 +168,7 @@
     font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
-  .chip.on { color: var(--studio-on-accent); background: var(--studio-accent); border-color: var(--studio-accent); }
+  .chip.on { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); }
   .chip.mute.on { background: #c8a23a; border-color: #c8a23a; color: #111; }
   .level { flex: 1; min-height: 80px; display: flex; gap: 4px; align-items: stretch; }
   .meter { width: 5px; background: var(--studio-slot); border: 1px solid var(--studio-edge-soft); border-radius: 2px; position: relative; margin: 6px 0; overflow: hidden; }

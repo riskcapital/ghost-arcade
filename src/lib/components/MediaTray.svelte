@@ -4028,41 +4028,43 @@
 
   <!-- Tabs -->
   <div class="tabs">
+    <!-- Label first in the DOM (scripts match a tab by its leading text);
+         column-reverse draws the icon row on top. -->
     <div class="tab-row">
       <button class="tab" class:active={activeTab === 'shaders'} data-midi-path="tray:tab:fx" data-midi-label="Library tab: FX" data-midi-mode="toggle" onclick={() => activeTab = 'shaders'}>
-        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>{#if shaders.length}<span class="tab-count">{shaders.length}</span>{/if}</span>
         <span class="tab-label">FX</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>{#if shaders.length}<span class="tab-count">{shaders.length}</span>{/if}</span>
       </button>
       <button class="tab" class:active={activeTab === 'js'} data-midi-path="tray:tab:js" data-midi-label="Library tab: JS" data-midi-mode="toggle" onclick={() => activeTab = 'js'}>
-        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>{#if jsAnimations.length}<span class="tab-count">{jsAnimations.length}</span>{/if}</span>
         <span class="tab-label">JS</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>{#if jsAnimations.length}<span class="tab-count">{jsAnimations.length}</span>{/if}</span>
       </button>
       <button class="tab" class:active={activeTab === 'library'} data-midi-path="tray:tab:saved" data-midi-label="Library tab: Saved" data-midi-mode="toggle" onclick={() => activeTab = 'library'}>
-        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>{#if savedShaders.length}<span class="tab-count">{savedShaders.length}</span>{/if}</span>
         <span class="tab-label">Saved</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>{#if savedShaders.length}<span class="tab-count">{savedShaders.length}</span>{/if}</span>
       </button>
       <button class="tab" class:active={activeTab === 'videos'} data-midi-path="tray:tab:vid" data-midi-label="Library tab: Videos" data-midi-mode="toggle" onclick={() => activeTab = 'videos'}>
-        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>{#if videos.length}<span class="tab-count">{videos.length}</span>{/if}</span>
         <span class="tab-label">Videos</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>{#if videos.length}<span class="tab-count">{videos.length}</span>{/if}</span>
       </button>
       <button class="tab" class:active={activeTab === 'images'} data-midi-path="tray:tab:img" data-midi-label="Library tab: Images" data-midi-mode="toggle" onclick={() => activeTab = 'images'}>
-        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>{#if images.length}<span class="tab-count">{images.length}</span>{/if}</span>
         <span class="tab-label">Images</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>{#if images.length}<span class="tab-count">{images.length}</span>{/if}</span>
       </button>
       {#if $phoneScanLibrary.length}
         <!-- Scans sent from a paired phone. Only shown once there is one. -->
         <button class="tab" class:active={activeTab === 'scans'} onclick={() => activeTab = 'scans'} data-tray-tab="scans">
-          <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="7" cy="13" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="10" cy="20" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg><span class="tab-count">{$phoneScanLibrary.length}</span></span>
           <span class="tab-label">Scans</span>
+          <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="7" cy="13" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="10" cy="20" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg><span class="tab-count">{$phoneScanLibrary.length}</span></span>
         </button>
       {/if}
       <button class="tab" class:active={activeTab === 'sources'} data-midi-path="tray:tab:src" data-midi-label="Library tab: Sources" data-midi-mode="toggle" onclick={() => { activeTab = 'sources'; sourcesInitialized = true; enumerateWebcams(); }}>
-        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>{#if liveSources.filter(s => s.status === 'live').length > 0}<span class="tab-count tab-live">{liveSources.filter(s => s.status === 'live').length}</span>{/if}</span>
         <span class="tab-label">Sources</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>{#if liveSources.filter(s => s.status === 'live').length > 0}<span class="tab-count tab-live">{liveSources.filter(s => s.status === 'live').length}</span>{/if}</span>
       </button>
       <button class="tab" class:active={activeTab === 'plugins'} data-midi-path="tray:tab:plug" data-midi-label="Library tab: Plugins" data-midi-mode="toggle" onclick={() => { activeTab = 'plugins'; }}>
-        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
         <span class="tab-label">Plugins</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
       </button>
     </div>
   </div>
@@ -5628,7 +5630,7 @@
   .tab {
     flex: 1 1 auto;
     display: flex;
-    flex-direction: column;
+    flex-direction: column-reverse;
     align-items: center;
     gap: 3px;
     background: none;

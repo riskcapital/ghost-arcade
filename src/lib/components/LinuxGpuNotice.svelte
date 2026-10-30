@@ -146,7 +146,7 @@
       radial-gradient(ellipse at 50% 0%, rgba(255, 170, 90, 0.10), transparent 60%),
       rgba(5, 6, 10, 0.86);
     backdrop-filter: blur(10px);
-    color: #e9edf5;
+    color: var(--ga-ink-0, #f2ede4);
     opacity: 0;
     transition: opacity 0.4s ease;
   }
@@ -189,48 +189,48 @@
     border-radius: 9px;
     display: grid;
     place-items: center;
-    font: 800 11px/1 system-ui, sans-serif;
+    font: 700 var(--ga-text-meta)/1 system-ui, sans-serif;
     color: #1a0d03;
     background: #ffb060;
     box-shadow: 0 0 0 3px rgba(14, 16, 22, 0.94);
   }
   .eyebrow, .legacy-eyebrow {
-    margin: 0 0 3px;
-    font-size: 11px;
-    font-weight: 650;
-    letter-spacing: 0.16em;
+    margin: 0 0 4px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking);
     text-transform: uppercase;
     color: #ffc58a;
   }
-  h2 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; letter-spacing: -0.01em; color: #f4f6fb; }
-  h3 { margin: 0 0 10px; font-size: 13px; font-weight: 650; color: #e9edf5; }
+  h2 { margin: 0; font-size: var(--ga-text-display); line-height: 1.25; font-weight: 700; letter-spacing: -0.01em; color: var(--ga-ink-0, #f2ede4); }
+  h3 { margin: 0 0 10px; font-size: var(--ga-text-body); font-weight: var(--ga-weight-title); color: var(--ga-ink-0, #f2ede4); }
 
-  .finding { margin: 0 0 10px; font-size: 13px; line-height: 1.55; color: #c3cad8; }
+  .finding { margin: 0 0 10px; font-size: var(--ga-text-body); line-height: 1.55; color: var(--ga-ink-1, #ada9a2); }
   .adapter {
     display: flex;
     align-items: center;
     gap: 7px;
-    margin: 0 0 18px;
-    font-size: 12px;
-    color: #98a1b3;
+    margin: 0 0 16px;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
-  .adapter svg { width: 15px; height: 15px; flex: 0 0 auto; fill: none; stroke: #98a1b3; stroke-width: 1.8; stroke-linecap: round; }
-  code { font-family: var(--ga-font-mono, ui-monospace, 'SF Mono', Menlo, monospace); font-size: 12px; }
-  .adapter code { color: #e9edf5; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.06); }
+  .adapter svg { width: 14px; height: 14px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  code { font-family: var(--ga-font-mono, ui-monospace, 'SF Mono', Menlo, monospace); font-size: var(--ga-text-control); }
+  .adapter code { color: var(--ga-ink-0, #f2ede4); font-size: var(--ga-text-meta); padding: 1px 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); }
 
   .block { margin-bottom: 16px; }
   .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-  .steps li { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; font-size: 13px; line-height: 1.5; color: #d4dae5; }
+  .steps li { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; font-size: var(--ga-text-body); line-height: 1.5; color: var(--ga-ink-1, #ada9a2); }
   .num {
     display: grid;
     place-items: center;
     width: 22px;
     height: 22px;
     margin-top: 1px;
-    border-radius: 7px;
-    font-size: 12px;
+    border-radius: 6px;
+    font-size: var(--ga-text-meta);
     font-weight: 700;
-    color: #e9edf5;
+    color: var(--ga-ink-0, #f2ede4);
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
   }
@@ -239,11 +239,11 @@
   .command code {
     flex: 1;
     min-width: 0;
-    padding: 8px 10px;
-    border-radius: 8px;
+    padding: 7px 10px;
+    border-radius: var(--ga-r-hard, 5px);
     background: #07080b;
     border: 1px solid rgba(255, 255, 255, 0.09);
-    color: #e9edf5;
+    color: var(--ga-ink-0, #f2ede4);
     user-select: all;
     overflow-x: auto;
     white-space: nowrap;
@@ -262,8 +262,8 @@
   }
   .legacy.solo { border-color: rgba(143, 180, 255, 0.55); box-shadow: 0 10px 34px rgba(80, 110, 255, 0.16); }
   .legacy .legacy-eyebrow { color: var(--ga-blue-200, #a8bcff); }
-  .legacy h3 { margin: 0 0 4px; font-size: 14px; color: #f1f4fa; }
-  .legacy p { margin: 0; font-size: 13px; line-height: 1.5; color: #aab3c4; }
+  .legacy h3 { margin: 0 0 4px; font-size: var(--ga-text-title); color: var(--ga-ink-0, #f2ede4); }
+  .legacy p { margin: 0; font-size: var(--ga-text-body); line-height: 1.5; color: var(--ga-ink-1, #ada9a2); }
   .legacy-actions { display: grid; gap: 7px; justify-items: stretch; }
 
   button {
@@ -271,18 +271,21 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
+    box-sizing: border-box;
+    height: var(--ga-bar-control-h);
     font: inherit;
-    font-size: 13px;
-    padding: 8px 13px;
-    border-radius: 9px;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
+    padding: 0 14px;
+    border-radius: var(--ga-r-soft, 8px);
     border: 1px solid rgba(255, 255, 255, 0.14);
     background: rgba(255, 255, 255, 0.04);
-    color: #dfe4ee;
+    color: var(--ga-ink-1, #ada9a2);
     cursor: pointer;
     white-space: nowrap;
   }
-  button:hover { border-color: rgba(255, 255, 255, 0.32); color: #fff; }
-  button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  button:hover { border-color: rgba(255, 255, 255, 0.32); color: var(--ga-ink-0, #f2ede4); }
+  button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   button.primary {
     border: none;
     color: #0b0f1d;
@@ -290,7 +293,7 @@
     background: linear-gradient(135deg, #8fa8ff, #b993ff);
     box-shadow: 0 6px 18px rgba(110, 120, 255, 0.35);
   }
-  button.copy { padding: 0 11px; font-size: 12px; }
+  button.copy { height: auto; padding: 0 10px; font-size: var(--ga-text-control); border-radius: var(--ga-r-hard, 5px); }
   button.copy.done { color: #46d18a; border-color: rgba(70, 209, 138, 0.45); }
 
   .actions {
@@ -298,12 +301,11 @@
     justify-content: space-between;
     align-items: center;
     gap: 8px;
-    padding-top: 14px;
+    padding-top: 12px;
     border-top: 1px solid rgba(255, 255, 255, 0.07);
   }
-  button.ghost { border-color: transparent; background: none; color: #8a93a5; padding-left: 0; }
-  button.ghost:hover { color: #d4dae5; }
-  button.continue { font-weight: 600; }
+  button.ghost { border-color: transparent; background: none; color: var(--ga-ink-2, #89857e); padding-left: 0; }
+  button.ghost:hover { border-color: transparent; color: var(--ga-ink-0, #f2ede4); }
 
   @media (max-width: 560px) {
     .legacy { grid-template-columns: 1fr; }

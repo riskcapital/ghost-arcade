@@ -952,9 +952,9 @@ function enforceNativeEngineOnly(settings: AppSettings): AppSettings {
 // Check which formats are supported by this browser
 export function getSupportedFormats(): { id: string; label: string; mimeType: string; supported: boolean }[] {
   const formats = [
-    { id: 'webm-vp9', label: 'WebM (VP9) - Best Quality', mimeType: 'video/webm;codecs=vp9' },
-    { id: 'webm-vp8', label: 'WebM (VP8) - Good Compatibility', mimeType: 'video/webm;codecs=vp8' },
-    { id: 'mp4-h264', label: 'MP4 (H.264) - Universal Playback', mimeType: 'video/mp4;codecs=avc1.424028' },
+    { id: 'webm-vp9', label: 'WebM (VP9), best quality', mimeType: 'video/webm;codecs=vp9' },
+    { id: 'webm-vp8', label: 'WebM (VP8), good compatibility', mimeType: 'video/webm;codecs=vp8' },
+    { id: 'mp4-h264', label: 'MP4 (H.264), plays everywhere', mimeType: 'video/mp4;codecs=avc1.424028' },
   ];
 
   return formats.map(f => ({

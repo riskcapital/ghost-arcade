@@ -253,8 +253,8 @@
 <div data-help-page="frame-locked-export" class="modal-backdrop" onclick={closeAndReset} role="presentation"></div>
 <div data-help-page="frame-locked-export" class="modal-shell" role="dialog" aria-label="Render to video">
   <header class="modal-head">
-    <h2>Render to Video</h2>
-    <button class="close-btn" onclick={closeAndReset} disabled={isRunning} title={isRunning ? 'Cancel before closing' : 'Close'}>×</button>
+    <h2>Render to video</h2>
+    <button class="close-btn" onclick={closeAndReset} disabled={isRunning} title={isRunning ? 'Cancel before closing' : 'Close'} aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
   </header>
 
   {#if state.status === 'complete' && state.lastOutputKind === 'frames'}
@@ -270,9 +270,9 @@
       <p class="success-hint">A manifest with an FFmpeg compile command was written beside the frames.</p>
       <div class="actions">
         {#if canReveal}
-          <button class="btn-secondary" onclick={reveal}>Show in Finder</button>
+          <button class="btn-secondary secondary-btn" onclick={reveal}>Show in Finder</button>
         {/if}
-        <button class="btn-primary" onclick={closeAndReset}>Done</button>
+        <button class="btn-primary primary-btn" onclick={closeAndReset}>Done</button>
       </div>
     </div>
 
@@ -297,9 +297,9 @@
       {/if}
       <div class="actions">
         {#if canReveal}
-          <button class="btn-secondary" onclick={reveal}>Show in Finder</button>
+          <button class="btn-secondary secondary-btn" onclick={reveal}>Show in Finder</button>
         {/if}
-        <button class="btn-primary" onclick={closeAndReset}>Done</button>
+        <button class="btn-primary primary-btn" onclick={closeAndReset}>Done</button>
       </div>
     </div>
 
@@ -332,7 +332,7 @@
         </span>
       </div>
       <div class="actions">
-        <button class="btn-secondary" onclick={cancel}>Cancel</button>
+        <button class="btn-secondary secondary-btn" onclick={cancel}>Cancel</button>
       </div>
     </div>
 
@@ -345,8 +345,8 @@
         <p class="error-msg">{state.errorMessage}</p>
       {/if}
       <div class="actions">
-        <button class="btn-secondary" onclick={() => offlineRender.reset()}>Back to settings</button>
-        <button class="btn-primary" onclick={closeAndReset}>Close</button>
+        <button class="btn-secondary secondary-btn" onclick={() => offlineRender.reset()}>Back to settings</button>
+        <button class="btn-primary primary-btn" onclick={closeAndReset}>Close</button>
       </div>
     </div>
 
@@ -437,9 +437,9 @@
             class:active={settings.captureBackend === 'native'}
             disabled={!nativeFrameCaptureAvailable}
             onclick={() => selectCaptureBackend('native')}
-            title={nativeFrameCaptureAvailable ? 'Native Renderer' : nativeFrameCaptureMessage}
+            title={nativeFrameCaptureAvailable ? 'Native renderer' : nativeFrameCaptureMessage}
           >
-            <span class="engine-title">Native Renderer</span>
+            <span class="engine-title">Native renderer</span>
             <span class="engine-meta">{nativeFrameCaptureMessage}</span>
           </button>
         </div>
@@ -469,11 +469,11 @@
         {#if isFrameOutput}
           Will write <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> JPEG frames at
           <strong>{settings.width}×{settings.height}</strong> with
-          <strong>{settings.captureBackend === 'native' ? 'Native Renderer' : 'WebGL'}</strong>.
+          <strong>{settings.captureBackend === 'native' ? 'Native renderer' : 'WebGL'}</strong>.
         {:else}
           Will produce <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> frames at
           <strong>{settings.width}×{settings.height}</strong> with
-          <strong>{settings.captureBackend === 'native' ? 'Native Renderer' : 'WebGL'}</strong>.
+          <strong>{settings.captureBackend === 'native' ? 'Native renderer' : 'WebGL'}</strong>.
         {/if}
       </div>
 
@@ -489,15 +489,15 @@
             Reactive timing will follow real elapsed time, so the audio in the exported clip
             won't line up with the visuals if the render runs slower than real time.
             For frame-accurate reactivity, put the song on the Show timeline
-            (File › New Show from Audio).
+            (File › New show from audio).
           </span>
         </div>
       {/if}
 
       <div class="actions">
-        <button class="btn-secondary" onclick={closeAndReset}>Cancel</button>
-        <button class="btn-primary" onclick={start} disabled={!settings.durationSeconds || !settings.fps}>
-          Start Render
+        <button class="btn-secondary secondary-btn" onclick={closeAndReset}>Cancel</button>
+        <button class="btn-primary primary-btn" onclick={start} disabled={!settings.durationSeconds || !settings.fps}>
+          Start render
         </button>
       </div>
     </div>
@@ -507,105 +507,118 @@
 
 <style>
   .show-length-btn {
-    margin-top: 4px;
+    box-sizing: border-box;
     align-self: flex-start;
-    background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 32%, transparent);
-    color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 80%, #ffffff);
-    font-size: 10px;
-    font-weight: 600;
-    padding: 3px 8px;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm);
+    margin-top: 4px;
+    padding: 0 8px;
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    font-family: inherit;
-    letter-spacing: 0.3px;
   }
-  .show-length-btn:hover { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 22%, transparent); color: #fff; }
+  .show-length-btn:hover { color: var(--ga-ink-0, #f2ede4); border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
 
   .modal-backdrop {
     position: fixed; inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
     z-index: 1100;
+  }
+  .modal-backdrop {
+    background: color-mix(in srgb, var(--ga-void, #0a0908) 76%, transparent);
+    backdrop-filter: blur(8px);
   }
   .modal-shell {
     position: fixed;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
     width: 560px;
-    max-width: calc(100vw - 40px);
-    max-height: calc(100vh - 80px);
-    background: var(--bg-primary, #0a0a0c);
-    border: 1px solid #2a2a30;
-    border-radius: 10px;
-    box-shadow: 0 16px 60px rgba(0, 0, 0, 0.6);
+    max-width: calc(100vw - 48px);
+    max-height: calc(100vh - 48px);
     z-index: 1101;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    background: var(--ga-faceplate-bg, var(--ga-panel, #100f0d));
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.08)), 0 24px 80px rgba(0, 0, 0, 0.58);
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-body);
   }
   .modal-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 18px;
-    background: linear-gradient(180deg, #14141a, #0d0d11);
-    border-bottom: 1px solid #1d1d22;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
   .modal-head h2 {
     margin: 0;
-    font-size: 14px;
-    letter-spacing: 2px;
-    color: var(--ga-blue-300);
-    font-weight: 600;
+    font-size: var(--ga-text-heading);
+    font-weight: var(--ga-weight-title);
+    line-height: 1.3;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ga-ink-0, #f2ede4);
   }
   .close-btn {
-    /* 32×32 satisfies the 32px tap-target accessibility floor. */
-    width: 32px; height: 32px;
-    border: 1px solid var(--border-secondary, #2a2a30);
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
     background: transparent;
-    color: var(--text-secondary, #aaa);
-    border-radius: 4px;
-    font-size: 20px;
-    line-height: 1;
+    border: 1px solid transparent;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
   }
-  .close-btn:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: #fff; }
-  .close-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .close-btn:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    background: var(--ga-raise, #26221c);
+    border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
+  }
+  .close-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
   .modal-body {
-    padding: 18px;
+    padding: 16px;
     overflow-y: auto;
   }
   .field {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    margin-bottom: 14px;
+    gap: 4px;
+    margin-bottom: 12px;
   }
   .field.small { flex: 1; }
   .field label {
-    font-size: 11px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-2, #89857e);
   }
   .field input,
   .field select {
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    color: var(--text-primary, #ddd);
-    border-radius: 4px;
-    padding: 7px 10px;
-    font-size: 13px;
+    box-sizing: border-box;
+    height: var(--ga-control-h);
+    background-color: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-0, #f2ede4);
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 0 8px;
+    font-size: var(--ga-text-control);
     font-family: inherit;
   }
+  .field select { padding-right: 26px; }
   .field input:focus,
   .field select:focus {
-    border-color: var(--ga-blue-300);
+    border-color: var(--ga-selection-line, #5278ff);
     outline: none;
   }
   .row { display: flex; gap: 10px; }
@@ -613,34 +626,38 @@
   .preset-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 5px;
+    gap: 4px;
     margin-bottom: 4px;
   }
-  .preset-btn {
+  .preset-btn,
+  .engine-btn {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    padding: 7px 10px;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    border-radius: 4px;
-    color: var(--text-secondary, #aaa);
+    gap: 2px;
+    padding: 6px 10px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
     cursor: pointer;
     text-align: left;
   }
-  .preset-btn:hover {
-    background: #1c1c22;
-    border-color: var(--ga-blue-300);
-    color: #fff;
+  .preset-btn:hover:not(.active),
+  .engine-btn:hover:not(:disabled):not(.active) {
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-0, #f2ede4);
   }
-  .preset-btn.active {
-    background: var(--ga-blue-a16);
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
+  .preset-btn.active,
+  .engine-btn.active {
+    background: var(--ga-selection-bg, #1f3170);
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
-  .preset-label { font-size: 12px; font-weight: 500; }
-  .preset-dims { font-size: 11px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); color: #666; }
-  .preset-btn.active .preset-dims { color: var(--ga-blue-300); }
+  .preset-label { font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); }
+  .preset-dims { font-size: var(--ga-text-meta); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); color: var(--ga-ink-2, #89857e); }
+  .preset-btn.active .preset-dims { color: inherit; opacity: 0.8; }
 
   .engine-grid {
     display: grid;
@@ -648,59 +665,39 @@
     gap: 6px;
   }
   .engine-btn {
-    min-height: 54px;
-    padding: 9px 10px;
-    background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
-    border-radius: 5px;
-    color: var(--text-secondary, #aaa);
-    cursor: pointer;
-    text-align: left;
-    display: flex;
-    flex-direction: column;
+    min-height: 48px;
     justify-content: center;
-    gap: 3px;
-  }
-  .engine-btn:hover:not(:disabled) {
-    background: #1c1c22;
-    border-color: var(--ga-blue-300);
-    color: #fff;
-  }
-  .engine-btn.active {
-    background: var(--ga-blue-a16);
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
   }
   .engine-btn:disabled {
     cursor: not-allowed;
-    opacity: 0.52;
+    opacity: 0.5;
   }
   .engine-title {
-    font-size: 12px;
-    font-weight: 650;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
   }
   .engine-meta {
-    font-size: 11px;
-    color: #777;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
     line-height: 1.25;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 100%;
   }
-  .engine-btn.active .engine-meta { color: color-mix(in srgb, var(--ga-blue-300) 82%, transparent); }
+  .engine-btn.active .engine-meta { color: inherit; opacity: 0.8; }
 
   .summary {
-    background: var(--ga-blue-a08);
-    border-left: 2px solid var(--ga-blue-a45);
+    background: var(--ga-card, #16140f);
+    border-left: 2px solid var(--ga-selection-line, #5278ff);
     padding: 8px 12px;
-    border-radius: 0 4px 4px 0;
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
+    border-radius: 0 var(--ga-r-hard, 5px) var(--ga-r-hard, 5px) 0;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #ada9a2);
     line-height: 1.5;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }
-  .summary strong { color: var(--ga-blue-300); }
+  .summary strong { color: var(--ga-ink-0, #f2ede4); font-weight: var(--ga-weight-control); }
 
   .warn-note {
     display: flex;
@@ -709,15 +706,15 @@
     background: rgba(255, 176, 32, 0.06);
     border-left: 2px solid rgba(255, 176, 32, 0.55);
     padding: 8px 12px;
-    border-radius: 0 4px 4px 0;
-    font-size: 12px;
-    color: var(--text-secondary, #aaa);
+    border-radius: 0 var(--ga-r-hard, 5px) var(--ga-r-hard, 5px) 0;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #ada9a2);
     line-height: 1.5;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }
   .warn-note strong {
     color: #ffb020;
-    font-weight: 600;
+    font-weight: var(--ga-weight-control);
   }
   .warn-icon {
     flex: 0 0 auto;
@@ -727,106 +724,125 @@
     border-radius: 50%;
     background: rgba(255, 176, 32, 0.18);
     color: #ffb020;
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     font-weight: 700;
     line-height: 16px;
     text-align: center;
   }
 
+  /* The action row reads as the dialog footer: full width, hairline above,
+     pinned to the bottom while the form scrolls. */
   .actions {
+    position: sticky;
+    bottom: 0;
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    margin-top: 18px;
+    margin: 16px -16px -16px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+    background: var(--ga-panel, #100f0d);
   }
-  .btn-primary,
-  .btn-secondary {
-    padding: 8px 18px;
-    border-radius: 5px;
-    font-size: 13px;
-    font-weight: 600;
+  .btn-secondary,
+  .btn-primary {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--ga-bar-control-h);
+    padding: 0 14px;
+    border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
+    white-space: nowrap;
     cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, filter 0.12s;
+  }
+  .btn-secondary {
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
   .btn-primary {
-    background: linear-gradient(135deg, var(--ga-blue-300), var(--ga-blue-400));
-    color: #fff;
-    border: none;
+    background: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-ink-0, #f2ede4);
+    color: var(--ga-void, #0a0908);
   }
-  .btn-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, var(--ga-blue-200), var(--ga-blue-400));
-  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.06); }
+  .btn-secondary:disabled,
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-secondary {
-    background: transparent;
-    border: 1px solid #2a2a30;
-    color: var(--text-secondary, #aaa);
-  }
-  .btn-secondary:hover {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
-  }
 
   /* Progress + states */
   .progress .phase {
-    font-size: 14px;
-    color: var(--ga-blue-300);
+    font-size: var(--ga-text-body);
+    color: var(--ga-ink-0, #f2ede4);
     margin-bottom: 8px;
-    font-weight: 500;
-    letter-spacing: 0.3px;
+    font-weight: var(--ga-weight-control);
   }
   .progress-bar {
-    height: 10px;
-    background: var(--bg-tertiary, #14141a);
-    border-radius: 5px;
+    height: 6px;
+    background: var(--ga-slot, #060504);
+    border-radius: 3px;
     overflow: hidden;
-    border: 1px solid #1d1d22;
+    border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--ga-blue-300), var(--ga-blue-400));
+    background: var(--ga-selection-line, #5278ff);
     transition: width 0.15s ease-out;
   }
   .progress-meta {
     display: flex;
     justify-content: space-between;
     margin-top: 6px;
-    font-size: 12px;
+    font-size: var(--ga-text-meta);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2, #89857e);
   }
   .success { text-align: center; }
-  .success-icon {
-    width: 56px; height: 56px;
-    background: rgba(76, 222, 128, 0.15);
-    color: #4ade80;
-    border: 1px solid #4ade80;
+  .success-icon,
+  .error-icon {
+    width: 44px; height: 44px;
     border-radius: 50%;
-    font-size: 29px;
-    line-height: 56px;
-    margin: 6px auto 12px;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 44px;
+    margin: 4px auto 12px;
   }
-  .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 16px; }
-  .success-meta { color: var(--text-muted, #888); font-size: 12px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); margin: 0 0 12px; }
+  .success-icon {
+    background: color-mix(in srgb, var(--ga-green, #46d18a) 15%, transparent);
+    color: var(--ga-green, #46d18a);
+    border: 1px solid var(--ga-green, #46d18a);
+  }
+  .success h3,
+  .error h3 { margin: 0 0 4px; color: var(--ga-ink-0, #f2ede4); font-size: var(--ga-text-title); font-weight: var(--ga-weight-title); }
+  .success-meta { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); margin: 0 0 12px; }
   .preview {
     width: 100%;
     max-height: 280px;
-    border-radius: 5px;
+    border-radius: var(--ga-r-hard, 5px);
     background: #000;
     margin-bottom: 8px;
   }
-  .success-hint { color: #4ade80; font-size: 12px; margin: 8px 0 0; }
-  /* The full path matters more than tidiness here — a user who dismissed
-     the save dialog has no other way to find the file. Wrap, don't clip. */
+  .success-hint { color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-meta); margin: 8px 0 0; }
   .audio-note {
     margin: 0;
-    font-size: 12px;
-    color: var(--text-secondary, #a0a0a0);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
+  /* The full path matters more than tidiness here — a user who dismissed
+     the save dialog has no other way to find the file. Wrap, don't clip. */
   .output-path {
     margin: 4px 0 0;
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-0, #f2ede4);
     word-break: break-all;
     line-height: 1.4;
     user-select: text;
@@ -834,16 +850,9 @@
 
   .error { text-align: center; }
   .error-icon {
-    width: 56px; height: 56px;
-    background: rgba(255, 80, 80, 0.15);
-    color: #ff5252;
-    border: 1px solid #ff5252;
-    border-radius: 50%;
-    font-size: 29px;
-    line-height: 56px;
-    margin: 6px auto 12px;
-    font-weight: 700;
+    background: color-mix(in srgb, var(--ga-rec, #ff3b30) 15%, transparent);
+    color: var(--ga-rec, #ff3b30);
+    border: 1px solid var(--ga-rec, #ff3b30);
   }
-  .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 16px; }
-  .error-msg { color: #ff8888; font-size: 13px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); word-break: break-word; }
+  .error-msg { color: #ff8888; font-size: var(--ga-text-meta); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); word-break: break-word; }
 </style>

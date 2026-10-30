@@ -296,17 +296,17 @@
     onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"
-    aria-label="Source Crop"
+    aria-label="Source crop"
     tabindex="-1"
   >
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="source-crop-modal" onclick={(e) => e.stopPropagation()}>
-      <header class="source-crop-header">
+      <header class="source-crop-header modal-header">
         <div>
-          <h2>Source Crop</h2>
+          <h2>Source crop</h2>
           <p>{source?.name || 'Media source'} - {previewWidth} x {previewHeight}</p>
         </div>
-        <button class="source-crop-close" onclick={restoreAndClose} aria-label="Close">x</button>
+        <button class="source-crop-close" onclick={restoreAndClose} aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
       </header>
 
       <div class="source-crop-body">
@@ -379,10 +379,10 @@
       </div>
 
       <footer class="source-crop-footer">
-        <button class="source-crop-secondary" onclick={resetCrop}>Reset</button>
+        <button class="source-crop-secondary secondary-btn" onclick={resetCrop}>Reset</button>
         <div class="source-crop-footer-actions">
-          <button class="source-crop-secondary" onclick={restoreAndClose}>Cancel</button>
-          <button class="source-crop-primary" onclick={done}>Done</button>
+          <button class="source-crop-secondary secondary-btn" onclick={restoreAndClose}>Cancel</button>
+          <button class="source-crop-primary primary-btn" onclick={done}>Done</button>
         </div>
       </footer>
     </div>
@@ -397,22 +397,23 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 28px;
-    background: rgba(0, 0, 0, 0.72);
-    backdrop-filter: blur(5px);
+    padding: 24px;
+    background: color-mix(in srgb, var(--ga-void, #0a0908) 76%, transparent);
+    backdrop-filter: blur(8px);
   }
 
   .source-crop-modal {
-    width: min(980px, calc(100vw - 56px));
-    max-height: calc(100vh - 56px);
+    width: min(980px, calc(100vw - 48px));
+    max-height: calc(100vh - 48px);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--ga-panel, #0b0d11);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 8px;
-    box-shadow: 0 24px 72px rgba(0, 0, 0, 0.55);
-    color: var(--ga-ink-0, #eef0f4);
+    background: var(--ga-faceplate-bg, var(--ga-panel, #100f0d));
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.08)), 0 24px 80px rgba(0, 0, 0, 0.58);
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-body);
   }
 
   .source-crop-header,
@@ -421,45 +422,51 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 14px 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
   }
 
   .source-crop-footer {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
     border-bottom: 0;
   }
 
   .source-crop-header h2 {
     margin: 0;
-    font-size: 16px;
-    font-weight: 700;
+    font-size: var(--ga-text-heading);
+    font-weight: var(--ga-weight-title);
+    line-height: 1.3;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .source-crop-header p {
-    margin: 4px 0 0;
-    color: var(--ga-ink-2, #5e6571);
-    font-size: 13px;
+    margin: 2px 0 0;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
 
   .source-crop-close {
-    width: 30px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-    color: var(--ga-ink-1, #9aa0ac);
+    border: 1px solid transparent;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
     cursor: pointer;
-    font-size: 16px;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
   }
-
-  .source-crop-close:hover {
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.25);
+  .source-crop-close:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    background: var(--ga-raise, #26221c);
+    border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
   }
+  .source-crop-close:disabled { opacity: 0.35; cursor: not-allowed; }
 
   .source-crop-body {
     min-height: 0;
@@ -482,9 +489,9 @@
       linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
     background-size: 18px 18px;
     background-position: 0 0, 0 9px, 9px -9px, -9px 0;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-    padding: 14px;
+    border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+    border-radius: var(--ga-r-hard, 5px);
+    padding: 12px;
   }
 
   .source-crop-stage {
@@ -493,8 +500,8 @@
     max-height: min(64vh, 620px);
     overflow: hidden;
     background: repeating-conic-gradient(var(--ga-blue-900) 0% 25%, #101217 0% 50%) 0 / 16px 16px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 4px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: 3px;
   }
 
   .source-crop-media,
@@ -521,8 +528,8 @@
   }
 
   .source-crop-placeholder span {
-    font-size: 14px;
-    font-weight: 700;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
   }
 
 
@@ -582,15 +589,16 @@
     justify-content: space-between;
     gap: 10px;
     padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 13px;
-    color: var(--ga-ink-2, #5e6571);
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+    font-size: var(--ga-text-control);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .source-crop-stat strong {
-    color: var(--ga-ink-0, #eef0f4);
+    color: var(--ga-ink-0, #f2ede4);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 13px;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
   }
 
   .source-crop-presets {
@@ -599,26 +607,22 @@
     gap: 6px;
   }
 
-  .source-crop-presets button,
-  .source-crop-secondary,
-  .source-crop-primary {
-    min-height: 30px;
-    border-radius: 4px;
+  .source-crop-presets button {
+    box-sizing: border-box;
+    height: var(--ga-control-h);
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    font-size: 13px;
   }
 
-  .source-crop-presets button,
-  .source-crop-secondary {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--ga-ink-1, #9aa0ac);
-  }
-
-  .source-crop-presets button:hover,
-  .source-crop-secondary:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+  .source-crop-presets button:hover {
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
   }
 
   .source-crop-fields {
@@ -632,21 +636,22 @@
     grid-template-columns: 58px minmax(0, 1fr);
     align-items: center;
     gap: 8px;
-    color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13px;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-control);
   }
 
   .source-crop-fields input {
+    box-sizing: border-box;
     width: 100%;
     min-width: 0;
-    height: 30px;
-    background: var(--ga-slot, #050607);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 4px;
-    color: var(--ga-ink-0, #eef0f4);
+    height: var(--ga-control-h);
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-0, #f2ede4);
     padding: 0 8px;
-    font: inherit;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-control);
   }
 
   .source-crop-footer-actions {
@@ -654,22 +659,40 @@
     gap: 8px;
   }
 
-  .source-crop-secondary {
-    padding: 0 12px;
-  }
-
+  .source-crop-secondary,
   .source-crop-primary {
-    min-width: 82px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--ga-bar-control-h);
     padding: 0 14px;
-    background: var(--ga-blue-300);
-    border: 1px solid var(--ga-blue-300);
-    color: #041116;
-    font-weight: 700;
+    border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, filter 0.12s;
   }
-
-  .source-crop-primary:hover {
-    filter: brightness(1.08);
+  .source-crop-secondary {
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
   }
+  .source-crop-secondary:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+  }
+  .source-crop-primary {
+    background: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-ink-0, #f2ede4);
+    color: var(--ga-void, #0a0908);
+  }
+  .source-crop-primary:hover:not(:disabled) { filter: brightness(1.06); }
+  .source-crop-secondary:disabled,
+  .source-crop-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
   @media (max-width: 760px) {
     .source-crop-overlay {

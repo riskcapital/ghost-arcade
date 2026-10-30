@@ -85,7 +85,7 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .beats {
@@ -99,11 +99,11 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--ga-blue-mute-600);
-    border-radius: 2px;
-    background: var(--ga-blue-900);
-    color: #6b7280;
-    font-size: 10px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: 3px;
+    background: var(--ga-slot, #060504);
+    color: var(--ga-ink-3, #39342c);
+    font-size: var(--ga-text-eyebrow);
     /* No transition on the active state: a fade would smear the very thing
        the indicator exists to show. */
     transition: border-color 120ms ease;
@@ -112,8 +112,8 @@
   /* The downbeat is outlined even when idle, so an offset bar is visible
      without having to watch which cell lights first. */
   .beat.downbeat {
-    border-color: #4b5563;
-    color: #9ca3af;
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    color: var(--ga-ink-2, #89857e);
   }
 
   .beat.active {
@@ -132,18 +132,17 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 10px;
-    color: #6b7280;
-    letter-spacing: 0.04em;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .readout b {
-    color: #d1d5db;
-    font-weight: 600;
+    color: var(--ga-ink-0, #f2ede4);
+    font-weight: var(--ga-weight-control);
   }
 
   .sep {
-    color: var(--ga-blue-mute-600);
+    color: var(--ga-ink-3, #39342c);
   }
 
   .warn b,
@@ -154,6 +153,6 @@
   .compact .beat {
     width: 14px;
     height: 14px;
-    font-size: 9px;
+    font-size: var(--ga-text-micro);
   }
 </style>

@@ -487,7 +487,7 @@
     z-index: 8;
     pointer-events: none;
     transform: translate(-50%, -50%);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
   }
 
   .mode-strip {
@@ -497,9 +497,9 @@
     display: flex;
     gap: 2px;
     padding: 3px;
-    border: 1px solid var(--ga-blue-mute-600);
-    border-radius: 4px;
-    background: rgba(8, 12, 17, 0.94);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 94%, transparent);
     box-shadow: 0 5px 18px rgba(0, 0, 0, 0.45);
     pointer-events: auto;
     z-index: 20;
@@ -508,14 +508,15 @@
 
   .mode-strip button {
     min-width: 68px;
-    height: 30px;
+    height: var(--ga-control-h, 26px);
     padding: 0 7px;
     border: 1px solid transparent;
-    border-radius: 2px;
-    color: #9ca3af;
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+    color: var(--ga-ink-1);
     background: transparent;
     font: inherit;
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
     display: inline-flex;
     align-items: center;
@@ -523,16 +524,15 @@
     gap: 5px;
   }
 
-  .mode-strip button:hover,
-  .mode-strip button.active {
-    color: #f9fafb;
-    border-color: #4b5563;
-    background: var(--ga-blue-mute-800);
+  .mode-strip button:hover {
+    color: var(--ga-ink-0);
+    border-color: var(--ga-line-3);
   }
 
   .mode-strip button.active {
-    color: var(--ga-blue-300);
-    border-color: var(--ga-blue-mute-300);
+    color: var(--ga-selection-ink);
+    border-color: var(--ga-selection-line);
+    background: var(--ga-selection-bg);
   }
 
   .tool-icon {
@@ -547,13 +547,13 @@
   }
 
   kbd {
-    color: #6b7280;
-    font: inherit;
-    font-size: 9px;
+    color: var(--ga-ink-2);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-micro, 9px);
   }
 
   .active kbd {
-    color: var(--ga-blue-300);
+    color: var(--ga-selection-ink);
   }
 
   .rotation-strip {
@@ -564,10 +564,10 @@
     display: flex;
     align-items: center;
     gap: 3px;
-    padding: 4px 5px;
-    border: 1px solid var(--ga-blue-mute-600);
-    border-radius: 4px;
-    background: rgba(8, 12, 17, 0.96);
+    padding: 3px;
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
+    background: color-mix(in srgb, var(--ga-panel, #100f0d) 96%, transparent);
     box-shadow: 0 5px 18px rgba(0, 0, 0, 0.45);
     pointer-events: auto;
     white-space: nowrap;
@@ -575,31 +575,30 @@
 
   .rotation-hint {
     padding: 0 4px;
-    color: #6b7280;
-    font-size: 9px;
+    color: var(--ga-ink-2);
+    font-size: var(--ga-text-eyebrow, 10px);
   }
 
   .rotation-strip button {
-    height: 24px;
+    height: var(--ga-control-h-sm, 22px);
     padding: 0 7px;
-    border: 1px solid var(--ga-blue-mute-600);
-    border-radius: 2px;
-    color: #d1d5db;
-    background: var(--ga-blue-900);
+    border: 1px solid var(--ga-line-2);
+    border-radius: calc(var(--ga-r-hard, 5px) - 1px);
+    color: var(--ga-ink-1);
+    background: var(--ga-card);
     font: inherit;
-    font-size: 9px;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: var(--ga-weight-control, 600);
     cursor: pointer;
   }
 
   .rotation-strip button:hover {
-    color: #ffffff;
-    border-color: var(--ga-blue-mute-300);
-    background: var(--ga-blue-mute-800);
+    color: var(--ga-ink-0);
+    border-color: var(--ga-line-3);
   }
 
   .rotation-strip .flip-upright {
-    color: var(--ga-blue-300);
-    border-color: var(--ga-blue-mute-600);
+    color: var(--ga-ink-0);
   }
 
   .drag-surface {

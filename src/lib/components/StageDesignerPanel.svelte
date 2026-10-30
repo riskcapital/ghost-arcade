@@ -844,7 +844,7 @@
       <button class="back-btn" onclick={() => workspace.closeAll()} title="Close Stage Designer without applying (Esc)">
         <span class="back-arrow">←</span> Back to Mapping
       </button>
-      <span class="title">STAGE DESIGNER</span>
+      <span class="title">Stage Edit</span>
       {#if $activeSurface}
         <input
           class="surface-name-input"
@@ -1421,7 +1421,7 @@
     justify-content: space-between;
     padding: 0 10px;
     background: linear-gradient(180deg, #0e0e12, #08080a);
-    border-bottom: 1px solid #1d1d22;
+    border-bottom: 1px solid var(--ga-line-2);
   }
   .header-left {
     display: flex;
@@ -1431,7 +1431,7 @@
   .back-btn {
     height: 28px;
     padding: 0 12px;
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2);
     background: var(--bg-tertiary, #14141a);
     color: var(--text-primary, #ccc);
     border-radius: 4px;
@@ -1445,12 +1445,11 @@
   .back-btn:hover {
     background: #1c1c24;
     border-color: var(--ga-blue-300);
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   .back-arrow { font-size: 14px; line-height: 1; }
   .title {
     font-size: 12px;
-    letter-spacing: 2px;
     color: var(--ga-blue-300);
     font-weight: 600;
   }
@@ -1466,7 +1465,7 @@
   .surface-name-input:hover { border-color: #2a2a30; }
   .surface-name-input:focus { border-color: var(--ga-blue-300); outline: none; }
   .surface-dims {
-    color: #666;
+    color: var(--ga-ink-2);
     font-size: 12px;
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
@@ -1481,7 +1480,7 @@
     min-width: 30px;
     height: 30px;
     padding: 0 6px;
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2);
     background: var(--bg-tertiary, #14141a);
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
@@ -1501,12 +1500,11 @@
   }
   .tool-btn .t-label {
     font-size: 12px;
-    letter-spacing: 0.3px;
     font-weight: 500;
   }
   .tool-btn:hover {
     border-color: var(--ga-blue-300);
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   .tool-btn.active {
     background: var(--ga-blue-a16);
@@ -1517,7 +1515,6 @@
     width: auto;
     padding: 0 14px;
     font-size: 13px;
-    letter-spacing: 0.5px;
     font-weight: 600;
     background: linear-gradient(180deg, var(--ga-blue-a16), var(--ga-blue-a08));
     border-color: var(--ga-blue-a45);
@@ -1527,7 +1524,7 @@
   .tool-btn.import-btn:hover {
     background: linear-gradient(180deg, var(--ga-blue-a28), var(--ga-blue-a16));
     border-color: var(--ga-blue-300);
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   .tool-btn.import-btn .import-icon {
     font-size: 14px;
@@ -1548,16 +1545,16 @@
     width: 28px;
     height: 28px;
     background: transparent;
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2);
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
     cursor: pointer;
   }
-  .zoom-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .zoom-btn:hover { background: rgba(255,255,255,0.06); color: var(--ga-ink-0); }
   .zoom-readout {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
     min-width: 44px;
     text-align: right;
   }
@@ -1573,13 +1570,12 @@
      workspace's entry point) and Import SVG. */
   .apply-stage-btn {
     background: linear-gradient(135deg, var(--ga-blue-300), var(--ga-blue-400));
-    color: #fff;
+    color: var(--ga-ink-0);
     border: none;
     padding: 7px 14px;
     border-radius: 5px;
     font-size: 13px;
     font-weight: 700;
-    letter-spacing: 0.4px;
     cursor: pointer;
     transition: all 0.15s;
     box-shadow: 0 0 0 1px var(--ga-blue-a45), 0 2px 8px var(--ga-blue-a16);
@@ -1604,11 +1600,12 @@
     margin-top: 4px;
   }
   .binding-label {
-    font-size: 11px;
-    letter-spacing: 1px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-eyebrow, 10px);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
     text-transform: uppercase;
     margin-bottom: 4px;
+    font-weight: 700;
   }
   .binding-name {
     font-size: 14px;
@@ -1629,36 +1626,36 @@
   }
   .binding-action:hover {
     background: var(--ga-blue-a16);
-    color: #fff;
+    color: var(--ga-ink-0);
   }
-  .inspector-stat .muted { color: #555; font-style: italic; }
+  .inspector-stat .muted { color: var(--ga-ink-2); font-style: italic; }
   .inspector-note strong { color: var(--ga-blue-300); font-weight: 600; }
 
   /* ── Stage Effects panel ── */
   .effects-section {
-    border-top: 1px solid #1d1d22;
+    border-top: 1px solid var(--ga-line-2);
     padding: 10px 12px 16px;
   }
   .effects-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 11px;
-    letter-spacing: 1.5px;
+    font-size: var(--ga-text-eyebrow, 10px);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     color: var(--ga-blue-300);
     text-transform: uppercase;
     margin-bottom: 10px;
-    font-weight: 600;
+    font-weight: 700;
   }
   .effects-count {
-    color: #555;
+    color: var(--ga-ink-2);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-weight: normal;
   }
 
   .effects-pointer {
     font-size: 12px;
-    color: #bbb;
+    color: var(--ga-ink-1);
     line-height: 1.6;
     padding: 10px 12px;
     background: var(--ga-blue-a08);
@@ -1684,7 +1681,7 @@
     gap: 8px;
     padding: 4px 0;
     font-size: 12px;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
     border-top: 1px solid var(--ga-blue-a08);
   }
   .effects-catalog-icon {
@@ -1709,8 +1706,8 @@
      space; icon + tiny label below each button so the user can
      identify tools without hovering for tooltips. */
   .tool-palette {
-    background: #08080a;
-    border-right: 1px solid #1d1d22;
+    background: var(--ga-panel);
+    border-right: 1px solid var(--ga-line-2);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -1719,12 +1716,13 @@
     gap: 4px;
   }
   .palette-section {
-    font-size: 10px;
-    letter-spacing: 1.2px;
-    color: #555;
+    font-size: var(--ga-text-eyebrow, 10px);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
     text-transform: uppercase;
     padding: 6px 4px 2px;
     text-align: center;
+    font-weight: 700;
   }
   .palette-divider {
     height: 1px;
@@ -1748,7 +1746,7 @@
   }
   .palette-btn:hover {
     background: var(--bg-tertiary, #14141a);
-    color: #fff;
+    color: var(--ga-ink-0);
     border-color: #2a2a30;
   }
   .palette-btn.active {
@@ -1762,9 +1760,8 @@
   }
   .palette-btn .p-label {
     font-size: 10px;
-    letter-spacing: 0.3px;
     font-weight: 500;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
   }
   .palette-btn:hover .p-label,
   .palette-btn.active .p-label {
@@ -1778,7 +1775,7 @@
   .palette-btn.primary-btn:hover {
     background: linear-gradient(180deg, var(--ga-blue-a28), var(--ga-blue-a16));
     border-color: var(--ga-blue-300);
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   .palette-btn.primary-btn .p-label {
     color: var(--ga-blue-100);
@@ -1788,7 +1785,7 @@
   /* ─── Slice list (left) ─── */
   .slice-list-panel {
     background: var(--bg-primary, #0a0a0c);
-    border-right: 1px solid #1d1d22;
+    border-right: 1px solid var(--ga-line-2);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -1796,17 +1793,18 @@
   .panel-header {
     flex: 0 0 28px;
     padding: 6px 12px;
-    font-size: 11px;
-    letter-spacing: 1.5px;
-    color: var(--text-muted, #888);
-    background: #08080a;
-    border-bottom: 1px solid #1d1d22;
+    font-size: var(--ga-text-eyebrow, 10px);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
+    background: var(--ga-panel);
+    border-bottom: 1px solid var(--ga-line-2);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    font-weight: 700;
   }
   .slice-count {
-    color: #555;
+    color: var(--ga-ink-2);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .slice-list {
@@ -1849,18 +1847,18 @@
   .slice-icon-btn {
     background: transparent;
     border: none;
-    color: #555;
+    color: var(--ga-ink-2);
     cursor: pointer;
     font-size: 13px;
     padding: 2px;
     border-radius: 3px;
   }
   .slice-icon-btn.active { color: var(--text-secondary, #aaa); }
-  .slice-icon-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .slice-icon-btn:hover { background: rgba(255,255,255,0.06); color: var(--ga-ink-0); }
   .slice-icon-btn.danger:hover { color: #ff8888; }
   .slice-empty {
     padding: 24px 12px;
-    color: #555;
+    color: var(--ga-ink-2);
     font-size: 12px;
     line-height: 1.5;
     text-align: center;
@@ -1912,7 +1910,7 @@
   .empty-card {
     pointer-events: auto;
     background: rgba(10, 10, 14, 0.85);
-    border: 1px solid #1d1d22;
+    border: 1px solid var(--ga-line-2);
     border-radius: 10px;
     padding: 32px 36px;
     text-align: center;
@@ -1923,7 +1921,6 @@
     font-size: 20px;
     font-weight: 700;
     color: var(--ga-blue-300);
-    letter-spacing: 2px;
     margin: 0 0 6px;
   }
   .empty-sub {
@@ -1941,7 +1938,7 @@
   .empty-btn {
     padding: 11px 18px;
     border-radius: 6px;
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2);
     background: var(--bg-tertiary, #14141a);
     color: var(--text-primary, #ddd);
     font-size: 14px;
@@ -1952,12 +1949,12 @@
   .empty-btn:hover {
     background: #1c1c24;
     border-color: var(--ga-blue-300);
-    color: #fff;
+    color: var(--ga-ink-0);
   }
   .empty-btn.primary {
     background: linear-gradient(135deg, var(--ga-blue-300), var(--ga-blue-400));
     border-color: transparent;
-    color: #fff;
+    color: var(--ga-ink-0);
     font-weight: 600;
   }
   .empty-btn.primary:hover {
@@ -1971,9 +1968,8 @@
   }
   .empty-shortcut {
     font-size: 12px;
-    color: #555;
+    color: var(--ga-ink-2);
     margin: 0;
-    letter-spacing: 0.3px;
   }
 
   /* Live drop overlay — shown while a file is being dragged over the
@@ -2009,13 +2005,12 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    letter-spacing: 1px;
   }
 
   /* ─── Inspector (right) ─── */
   .inspector-panel {
     background: var(--bg-primary, #0a0a0c);
-    border-left: 1px solid #1d1d22;
+    border-left: 1px solid var(--ga-line-2);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -2031,21 +2026,19 @@
     flex-direction: column;
     gap: 4px;
     font-size: 11px;
-    letter-spacing: 1px;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
   }
   .inspector-section label.check {
     flex-direction: row;
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    letter-spacing: 0;
-    color: #bbb;
+    color: var(--ga-ink-1);
     text-transform: none;
   }
   .inspector-section input[type="text"] {
     background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2);
     border-radius: 3px;
     color: var(--text-primary, #ddd);
     padding: 5px 8px;
@@ -2059,7 +2052,7 @@
     width: 100%;
     height: 28px;
     background: var(--bg-tertiary, #14141a);
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2);
     border-radius: 3px;
   }
   .inspector-row {
@@ -2070,7 +2063,7 @@
     display: flex;
     justify-content: space-between;
     font-size: 12px;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
     padding: 4px 0;
     border-top: 1px solid #1a1a20;
   }
@@ -2081,7 +2074,7 @@
   .inspector-action {
     margin-top: 4px;
     background: transparent;
-    border: 1px solid #2a2a30;
+    border: 1px solid var(--ga-line-2);
     color: var(--text-secondary, #aaa);
     padding: 5px 10px;
     border-radius: 4px;
@@ -2096,7 +2089,7 @@
   }
   .inspector-note {
     font-size: 11px;
-    color: #555;
+    color: var(--ga-ink-2);
     line-height: 1.5;
     padding: 8px;
     background: color-mix(in srgb, var(--ga-blue-400) 4%, transparent);
@@ -2105,7 +2098,7 @@
   }
   .inspector-empty {
     padding: 24px 12px;
-    color: #555;
+    color: var(--ga-ink-2);
     font-size: 12px;
     text-align: center;
   }

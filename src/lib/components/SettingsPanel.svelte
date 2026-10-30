@@ -1186,7 +1186,7 @@
             <div class="setting-row custom-size-row">
               <div class="setting-label">
                 <span class="label-text">Custom size</span>
-                <span class="label-hint">Min 128, Max 7680</span>
+                <span class="label-hint">Min 128, max 7680</span>
               </div>
               <div class="custom-size-inputs">
                 <input
@@ -1300,7 +1300,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Include Audio</span>
+              <span class="label-text">Include audio</span>
               <span class="label-hint">Record sound with the video: playing clips, mic and system audio. Turn off for a silent video file.</span>
             </div>
             <label class="toggle">
@@ -1316,7 +1316,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Auto-Download</span>
+              <span class="label-text">Auto-download</span>
               <span class="label-hint">Automatically save recordings when stopped</span>
             </div>
             <label class="toggle">
@@ -2046,7 +2046,7 @@
                     </tbody>
                   </table>
                   Hardware formats play smoothly, including in reverse. Software formats use the CPU and may lag
-                  with several layers. Convert them with File › Video Converter › <strong>Playback</strong>, or with
+                  with several layers. Convert them with File › Video converter › <strong>Playback</strong>, or with
                   <strong>Convert for smooth playback</strong> on the SW badge of a clip.
                   <button class="text-btn" onclick={() => { decodeRows = null; void runDecodeCheck(); }} disabled={decodeChecking}>Check again</button>
                 {/if}
@@ -2114,7 +2114,7 @@
                 <line x1="12" y1="8" x2="12.01" y2="8"/>
               </svg>
               <p>
-                In MIDI Learn mode, click any parameter slider in the main UI, then move a knob or fader on your MIDI controller to create a mapping. Press <strong>ESC</strong> to exit learn mode.
+                In MIDI Learn mode, click any parameter slider in the main UI, then move a knob or fader on your MIDI controller to create a mapping. Press <strong>Esc</strong> to exit learn mode.
               </p>
             </div>
 
@@ -2617,7 +2617,7 @@
 
           {#if $oscStore.bindings.length === 0}
             <div class="osc-empty">
-              No bindings yet. Add one manually, or click <strong>+ Learn</strong>, type a target path, and send an OSC message from your controller.
+              No bindings yet. Add one manually, or click <strong>+ Learn binding</strong>, type a target path, and send an OSC message from your controller.
             </div>
           {:else}
             <div class="osc-bindings">
@@ -4206,10 +4206,11 @@
     align-items: center;
     gap: 6px;
   }
+  /* Live output keeps its green over the theme's button skin. */
   .output-send-buttons .secondary-btn.active {
-    color: var(--ga-live, #46d18a);
-    border-color: color-mix(in srgb, var(--ga-live, #46d18a) 60%, transparent);
-    background: color-mix(in srgb, var(--ga-live, #46d18a) 14%, transparent);
+    color: var(--ga-live, #46d18a) !important;
+    border-color: color-mix(in srgb, var(--ga-live, #46d18a) 60%, transparent) !important;
+    background: color-mix(in srgb, var(--ga-live, #46d18a) 14%, transparent) !important;
   }
 
   /* Buttons. In a row: 26px, 12px/600. The footer pair is 30px. */
@@ -4630,10 +4631,11 @@
   }
 
   /* MIDI learn button */
-  .midi-learn-btn.active {
-    background: var(--ga-selection-bg, #1f3170);
-    color: var(--ga-selection-ink, #e0e8ff);
-    border-color: var(--ga-selection-line, #5278ff);
+  /* On, in the selection colours, over the theme's button skin. */
+  .secondary-btn.midi-learn-btn.active {
+    background: var(--ga-selection-bg, #1f3170) !important;
+    color: var(--ga-selection-ink, #e0e8ff) !important;
+    border-color: var(--ga-selection-line, #5278ff) !important;
   }
 
   /* MIDI Clock running indicator — pulses when transport is active */

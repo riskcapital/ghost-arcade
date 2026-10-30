@@ -231,7 +231,7 @@
               <span class="keyboard-tag">{bindingLabel}</span>
             {/if}
             {#if isLearning}
-              <span class="keyboard-learn-label">KEY</span>
+              <span class="keyboard-learn-label">Key</span>
             {/if}
           </div>
         {/if}
@@ -239,17 +239,17 @@
     {/key}
 
     <div class="keyboard-status-bar">
-      <span class="keyboard-status-title">KEYBOARD EDIT</span>
+      <span class="keyboard-status-title">Keyboard edit</span>
       {#if $keyboardStore.learnTarget}
         <span class="keyboard-learn-status">Press key for <strong>{$keyboardStore.learnTarget.label ?? $keyboardStore.learnTarget.path}</strong></span>
       {:else}
-        <span class="keyboard-hint">Click control to assign | Right-click to clear | ESC to exit</span>
+        <span class="keyboard-hint">Click a control to assign · Right-click to clear · Esc to exit</span>
       {/if}
       {#if $keyboardStore.lastKey}
         <span class="keyboard-last-msg">{formatKeyCombo($keyboardStore.lastKey)}</span>
       {/if}
       <span class="keyboard-map-count">{$keyboardStore.bindings.length} mapped</span>
-      <button class="keyboard-exit-btn" onclick={() => keyboardStore.setEditMode(false)}>EXIT</button>
+      <button class="keyboard-exit-btn" onclick={() => keyboardStore.setEditMode(false)}>Exit</button>
     </div>
   </div>
 {/if}
@@ -303,8 +303,8 @@
     background: #7cffc4;
     color: #00140a;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 9px;
-    font-weight: 800;
+    font-size: var(--ga-text-micro);
+    font-weight: 700;
     padding: 1px 4px;
     border-radius: 2px;
     white-space: nowrap;
@@ -314,13 +314,13 @@
     background: #ffd166;
     color: #111;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 9px;
-    font-weight: 900;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
     padding: 2px 6px;
     border-radius: 3px;
-    letter-spacing: 0.08em;
   }
 
+  /* Edit-mode bar: shared with the MIDI edit bar, in its own colour. */
   .keyboard-status-bar {
     position: fixed;
     left: 12px;
@@ -330,52 +330,60 @@
     pointer-events: auto;
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 12px;
     min-height: 38px;
-    padding: 8px 12px;
+    padding: 6px 8px 6px 12px;
     box-sizing: border-box;
-    color: #e8edf2;
-    background: rgba(12, 13, 16, 0.96);
-    border: 1px solid rgba(255, 214, 102, 0.36);
-    border-radius: 6px;
+    color: var(--ga-ink-1, #ada9a2);
+    background: var(--ga-panel, #100f0d);
+    border: 1px solid color-mix(in srgb, #ffd166 45%, transparent);
+    border-radius: var(--ga-r-hard, 5px);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    font-size: 12px;
+    font-size: var(--ga-text-control);
   }
 
   .keyboard-status-title {
     color: #ffd166;
-    font-weight: 900;
-    letter-spacing: 0.08em;
+    font-weight: 700;
+  }
+
+  .keyboard-learn-status {
+    flex: 1;
   }
 
   .keyboard-learn-status strong {
-    color: #fff;
+    color: var(--ga-ink-0, #f2ede4);
   }
 
   .keyboard-hint {
-    color: rgba(232, 237, 242, 0.72);
+    flex: 1;
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
   }
 
   .keyboard-last-msg,
   .keyboard-map-count {
+    color: var(--ga-ink-2, #89857e);
+    font-size: var(--ga-text-meta);
+  }
+
+  .keyboard-last-msg {
     margin-left: auto;
-    color: rgba(232, 237, 242, 0.72);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
   }
 
-  .keyboard-map-count {
-    margin-left: 0;
-  }
-
   .keyboard-exit-btn {
+    box-sizing: border-box;
+    height: var(--ga-control-h-sm);
+    padding: 0 10px;
     border: 1px solid rgba(255, 214, 102, 0.45);
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 5px);
     color: #ffd166;
     background: rgba(255, 214, 102, 0.08);
-    padding: 4px 10px;
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    font-size: 11px;
-    font-weight: 800;
   }
 
   .keyboard-exit-btn:hover {

@@ -1821,8 +1821,8 @@
         <div class="properties-effects-content">
 
           {#if layer.type === 'group'}
-          <!-- ── Group Properties ── -->
-          <div class="layer-properties">
+          <!-- ── Group Properties ── (same compact inspector rows as media) -->
+          <div class="layer-properties media-properties">
             <h4>Properties (Group)</h4>
             <!-- Source: own content, a VJ row, the deck mix or a VJ group.
                  A live source is the master feed for every child. -->

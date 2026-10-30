@@ -28,7 +28,7 @@
   const renderModes: { value: SVGRenderMode; label: string }[] = [
     { value: 'source', label: 'Original SVG' },
     { value: 'flat', label: 'Flat (2D)' },
-    { value: 'extrude', label: '3D Extrude' },
+    { value: 'extrude', label: '3D extrude' },
   ];
   const materialPresets: { value: SVGMaterialPreset; label: string }[] = [
     { value: 'holographic', label: 'Holographic' },
@@ -44,11 +44,11 @@
   ];
   const outlineStyles: { value: SVGOutlineStyle; label: string }[] = [
     { value: 'solid', label: 'Solid' },
-    { value: 'dashed', label: 'Marching Ants' },
+    { value: 'dashed', label: 'Marching ants' },
     { value: 'gradient', label: 'Gradient' },
-    { value: 'double', label: 'Neon (Double)' },
+    { value: 'double', label: 'Neon (double)' },
     { value: 'taper', label: 'Taper' },
-    { value: 'glow-pulse', label: 'Glow Pulse' },
+    { value: 'glow-pulse', label: 'Glow pulse' },
   ];
   const connectionStyles: { value: SVGConnectionStyle; label: string }[] = [
     { value: 'arc', label: 'Arc' },
@@ -56,13 +56,13 @@
     { value: 'electric', label: 'Electric' },
     { value: 'orbital', label: 'Orbital' },
     { value: 'beaded', label: 'Beaded' },
-    { value: 'gravity', label: 'Gravity Sag' },
-    { value: 'dataflow', label: 'Data Flow' },
+    { value: 'gravity', label: 'Gravity sag' },
+    { value: 'dataflow', label: 'Data flow' },
   ];
 
   // Color mode options
   const colorModes: { value: SVGColorMode; label: string }[] = [
-    { value: 'perShape', label: 'Per Shape' },
+    { value: 'perShape', label: 'Per shape' },
     { value: 'rainbow', label: 'Rainbow' },
     { value: 'monochrome', label: 'Monochrome' },
     { value: 'complementary', label: 'Complementary' },
@@ -405,7 +405,7 @@
 <!-- Slide-out tray -->
 <div data-help-page="custom-shaders" class="svg-tray" class:open={isOpen || embedded} class:embedded>
   <div class="tray-header">
-    <h3>SVG Controls</h3>
+    <h3>SVG controls</h3>
   </div>
 
   <div class="tray-content">
@@ -423,7 +423,7 @@
       <!-- SVG Source Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('source')}>
-          <span>SVG Source</span>
+          <span>SVG source</span>
           <span class="toggle">{expandedSections.source ? '-' : '+'}</span>
         </button>
         {#if expandedSections.source}
@@ -443,7 +443,7 @@
                     <path d="M9 12l2 2 4-4" />
                     <circle cx="12" cy="12" r="10" />
                   </svg>
-                  <span>SVG Loaded</span>
+                  <span>SVG loaded</span>
                 </div>
                 <div class="svg-actions">
                   <label class="action-btn replace">
@@ -463,7 +463,7 @@
                   <line x1="12" y1="3" x2="12" y2="15" />
                 </svg>
                 <p>Drop SVG here</p>
-                <label class="upload-btn">
+                <label class="upload-btn primary-btn">
                   <input type="file" accept=".svg" onchange={handleSVGUpload} />
                   Upload SVG
                 </label>
@@ -476,7 +476,7 @@
       <!-- Position & Scale Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('position')}>
-          <span>Position, Rotation & Scale</span>
+          <span>Position, rotation & scale</span>
           <span class="toggle">{expandedSections.position ? '-' : '+'}</span>
         </button>
         {#if expandedSections.position && $selectedSVGContent}
@@ -547,7 +547,7 @@
               updateParam('rotateY', 0);
               updateParam('rotateZ', 0);
             }}>
-              Reset Position & Rotation
+              Reset position & rotation
             </button>
           </div>
         {/if}
@@ -556,13 +556,13 @@
       <!-- 3D / Material Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('threeD')}>
-          <span>3D / Material</span>
+          <span>3D / material</span>
           <span class="toggle">{expandedSections.threeD ? '-' : '+'}</span>
         </button>
         {#if expandedSections.threeD && $selectedSVGContent}
           <div class="section-content">
             <div class="param-row">
-              <label>Render Mode</label>
+              <label>Render mode</label>
               <select
                 value={$selectedSVGContent.renderMode ?? 'flat'}
                 onchange={(e) => updateParam('renderMode', (e.target as HTMLSelectElement).value)}
@@ -597,7 +597,7 @@
               </div>
               {#if $selectedSVGContent.bevelEnabled ?? true}
                 <div class="param-row">
-                  <label>Bevel Size</label>
+                  <label>Bevel size</label>
                   <input type="range" min="0" max="6" step="0.1"
                     value={$selectedSVGContent.bevelSize ?? 2}
                     oninput={(e) => updateParam('bevelSize', parseFloat((e.target as HTMLInputElement).value))} />
@@ -653,7 +653,7 @@
                 </select>
               </div>
               <div class="param-row">
-                <label>Light Power</label>
+                <label>Light power</label>
                 <input type="range" min="0" max="3" step="0.05"
                   value={$selectedSVGContent.lightIntensity ?? 1}
                   oninput={(e) => updateParam('lightIntensity', parseFloat((e.target as HTMLInputElement).value))} />
@@ -727,7 +727,7 @@
       <!-- Fill Mode Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('fillMode')}>
-          <span>Fill Mode</span>
+          <span>Fill mode</span>
           <span class="toggle">{expandedSections.fillMode ? '-' : '+'}</span>
         </button>
         {#if expandedSections.fillMode && $selectedSVGContent}
@@ -768,7 +768,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.liquidSpeed.toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Wave Amp</label>
+                <label>Wave amp</label>
                 <input
                   type="range"
                   min="0.02"
@@ -861,7 +861,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.pulseSpeed.toFixed(1)} />
               </div>
               <div class="param-row">
-                <label>Ring Scale</label>
+                <label>Ring scale</label>
                 <input
                   type="range"
                   min="2"
@@ -930,14 +930,14 @@
 
             {#if $selectedSVGContent.fillMode === 'fluid' || $selectedSVGContent.fillMode === 'flow'}
               <div class="param-row">
-                <label>Fluid Scale</label>
+                <label>Fluid scale</label>
                 <input type="range" min="0.5" max="6" step="0.1"
                   value={$selectedSVGContent.fluidScale ?? 2.5}
                   oninput={(e) => updateParam('fluidScale', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.fluidScale ?? 2.5).toFixed(1)} />
               </div>
               <div class="param-row">
-                <label>Fluid Speed</label>
+                <label>Fluid speed</label>
                 <input type="range" min="0.1" max="3" step="0.05"
                   value={$selectedSVGContent.fluidSpeed ?? 0.6}
                   oninput={(e) => updateParam('fluidSpeed', parseFloat((e.target as HTMLInputElement).value))} />
@@ -957,19 +957,19 @@
               <label>
                 <input type="checkbox" checked={$selectedSVGContent.particleFillEnabled ?? false}
                   onchange={() => toggleParam('particleFillEnabled')} />
-                Particle Fill
+                Particle fill
               </label>
             </div>
             {#if $selectedSVGContent.particleFillEnabled}
               <div class="param-row">
-                <label>Fill Density</label>
+                <label>Fill density</label>
                 <input type="range" min="50" max="500" step="10"
                   value={$selectedSVGContent.particleFillDensity}
                   oninput={(e) => updateParam('particleFillDensity', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleFillDensity} />
               </div>
               <div class="param-row">
-                <label>Fill Speed</label>
+                <label>Fill speed</label>
                 <input type="range" min="0.1" max="3" step="0.05"
                   value={$selectedSVGContent.particleFillSpeed}
                   oninput={(e) => updateParam('particleFillSpeed', parseFloat((e.target as HTMLInputElement).value))} />
@@ -979,7 +979,7 @@
 
             <!-- Outline (always visible) -->
             <div class="param-row">
-              <label>Outline Style</label>
+              <label>Outline style</label>
               <select
                 value={$selectedSVGContent.outlineStyle ?? 'solid'}
                 onchange={(e) => updateParam('outlineStyle', (e.target as HTMLSelectElement).value)}
@@ -1006,7 +1006,7 @@
       <!-- Color Mode Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('colorMode')}>
-          <span>Color Mode</span>
+          <span>Color mode</span>
           <span class="toggle">{expandedSections.colorMode ? '-' : '+'}</span>
         </button>
         {#if expandedSections.colorMode && $selectedSVGContent}
@@ -1045,7 +1045,7 @@
                   checked={$selectedSVGContent.colorCycleEnabled}
                   onchange={() => toggleParam('colorCycleEnabled')}
                 />
-                Color Cycle
+                Color cycle
               </label>
             </div>
 
@@ -1083,7 +1083,7 @@
                   checked={$selectedSVGContent.energyEnabled}
                   onchange={() => toggleParam('energyEnabled')}
                 />
-                Energy Pulses
+                Energy pulses
               </label>
               {#if $selectedSVGContent.energyEnabled}
                 <div class="effect-params">
@@ -1171,7 +1171,7 @@
                   checked={$selectedSVGContent.glowEnabled}
                   onchange={() => toggleParam('glowEnabled')}
                 />
-                Vertex Glow
+                Vertex glow
               </label>
               {#if $selectedSVGContent.glowEnabled}
                 <div class="effect-params">
@@ -1291,7 +1291,7 @@
                   checked={$selectedSVGContent.edgeFlowEnabled}
                   onchange={() => toggleParam('edgeFlowEnabled')}
                 />
-                Edge Flow
+                Edge flow
               </label>
               {#if $selectedSVGContent.edgeFlowEnabled}
                 <div class="effect-params">
@@ -1331,7 +1331,7 @@
                   checked={$selectedSVGContent.innerGlowEnabled}
                   onchange={() => toggleParam('innerGlowEnabled')}
                 />
-                Inner Glow
+                Inner glow
               </label>
               {#if $selectedSVGContent.innerGlowEnabled}
                 <div class="effect-params">
@@ -1439,7 +1439,7 @@
                   checked={$selectedSVGContent.plasmaEnabled}
                   onchange={() => toggleParam('plasmaEnabled')}
                 />
-                Plasma Tendrils
+                Plasma tendrils
               </label>
               {#if $selectedSVGContent.plasmaEnabled}
                 <div class="effect-params">
@@ -1503,7 +1503,7 @@
                   checked={$selectedSVGContent.particleLinksEnabled}
                   onchange={() => toggleParam('particleLinksEnabled')}
                 />
-                Particle Links
+                Particle links
               </label>
               {#if $selectedSVGContent.particleLinksEnabled}
                 <div class="effect-params">
@@ -1544,7 +1544,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleLinkThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Max Links</span>
+                    <span>Max links</span>
                     <input
                       type="range"
                       min="100"
@@ -1567,7 +1567,7 @@
                   checked={$selectedSVGContent.echoEnabled}
                   onchange={() => toggleParam('echoEnabled')}
                 />
-                Echo Layers
+                Echo layers
               </label>
               {#if $selectedSVGContent.echoEnabled}
                 <div class="effect-params">
@@ -1631,7 +1631,7 @@
                   checked={$selectedSVGContent.arcBridgesEnabled}
                   onchange={() => toggleParam('arcBridgesEnabled')}
                 />
-                Arc Bridges
+                Arc bridges
               </label>
               {#if $selectedSVGContent.arcBridgesEnabled}
                 <div class="effect-params">
@@ -1680,7 +1680,7 @@
               <label class="effect-toggle">
                 <input type="checkbox" checked={$selectedSVGContent.organicWarpEnabled ?? false}
                   onchange={() => toggleParam('organicWarpEnabled')} />
-                Organic Warp
+                Organic warp
               </label>
               {#if $selectedSVGContent.organicWarpEnabled}
                 <div class="effect-params">
@@ -1737,7 +1737,7 @@
                   checked={$selectedSVGContent.colorCycleEnabled}
                   onchange={() => toggleParam('colorCycleEnabled')}
                 />
-                Color Cycle
+                Color cycle
               </label>
               {#if $selectedSVGContent.colorCycleEnabled}
                 <div class="effect-params">
@@ -1789,7 +1789,7 @@
                   checked={$selectedSVGContent.perShapeColors}
                   onchange={() => toggleParam('perShapeColors')}
                 />
-                Per-Shape Colors
+                Per-shape colors
               </label>
             </div>
 
@@ -1801,7 +1801,7 @@
                   checked={$selectedSVGContent.particlesEnabled}
                   onchange={() => toggleParam('particlesEnabled')}
                 />
-                Edge Particles
+                Edge particles
               </label>
               {#if $selectedSVGContent.particlesEnabled}
                 <div class="effect-params">
@@ -1841,7 +1841,7 @@
   {#if svgLayers.length > 0}
     <div class="layer-list">
       <div class="layer-list-header">
-        <span>SVG Layers</span>
+        <span>SVG layers</span>
       </div>
       {#each svgLayers as layer (layer.id)}
         <button
@@ -1867,12 +1867,13 @@
     right: 0;
     top: calc(50% + 120px);
     transform: translateY(-50%);
-    background: #333;
-    border: none;
-    border-radius: 8px 0 0 8px;
+    background: var(--ga-card, #333);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-right: none;
+    border-radius: var(--ga-r-soft, 7px) 0 0 var(--ga-r-soft, 7px);
     padding: 12px 8px;
     cursor: pointer;
-    color: #ff00aa;
+    color: var(--ga-ink-1, #9aa0ac);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1882,7 +1883,8 @@
   }
 
   .tray-toggle:hover {
-    background: #444;
+    background: var(--ga-raise, #444);
+    color: var(--ga-ink-0, #eef0f4);
     padding-right: 12px;
   }
 
@@ -1893,8 +1895,8 @@
   .toggle-label {
     writing-mode: vertical-rl;
     text-orientation: mixed;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
   }
 
   .svg-tray {
@@ -1903,8 +1905,8 @@
     top: 48px;
     bottom: 28px;
     width: 320px;
-    background: var(--bg-secondary, #111114);
-    border-left: 1px solid #333;
+    background: var(--ga-panel, #111114);
+    border-left: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     display: flex;
     flex-direction: column;
     z-index: 99;
@@ -1928,16 +1930,21 @@
   }
 
   .tray-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid #333;
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0 12px;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     flex-shrink: 0;
   }
 
   .tray-header h3 {
     margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary, #eee);
+    font-size: var(--ga-text-title);
+    font-weight: var(--ga-weight-title);
+    color: var(--ga-ink-0, #eef0f4);
+    letter-spacing: 0;
   }
 
   .tray-content {
@@ -1953,7 +1960,8 @@
     justify-content: center;
     height: 100%;
     text-align: center;
-    color: #666;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-body);
     padding: 20px;
   }
 
@@ -1967,30 +1975,33 @@
   }
 
   .hint {
-    font-size: 12px;
-    color: #555;
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .section {
-    margin-bottom: 8px;
-    border: 1px solid #333;
-    border-radius: 4px;
-    background: var(--bg-primary, #0d0d10);
+    margin-bottom: 6px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    background: var(--ga-card, #0d0d10);
   }
 
+  /* Section header: a sentence-case title row that folds its section. */
   .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px;
-    background: var(--bg-secondary, #111114);
+    min-height: var(--ga-control-h, 26px);
+    padding: 4px 8px;
+    background: transparent;
     border: none;
-    border-radius: 4px 4px 0 0;
+    border-radius: var(--ga-r-hard, 3px) var(--ga-r-hard, 3px) 0 0;
     cursor: pointer;
     width: 100%;
-    color: #fff;
-    font-weight: 500;
-    font-size: 13px;
+    color: var(--ga-ink-0, #eef0f4);
+    font-weight: var(--ga-weight-control);
+    font-size: var(--ga-text-control);
+    text-align: left;
   }
 
   .section-header.static {
@@ -1998,12 +2009,12 @@
   }
 
   .section-header:hover:not(.static) {
-    background: var(--bg-tertiary, #161618);
+    background: var(--ga-sub, #161618);
   }
 
   .toggle {
-    font-size: 14px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-title);
+    color: var(--ga-ink-2, #89857e);
   }
 
   .section-content {
@@ -2015,8 +2026,8 @@
   }
 
   .source-area.dragover {
-    background: #333;
-    border: 2px dashed #ff00aa;
+    background: var(--ga-sub, #333);
+    border: 2px dashed var(--ga-selection-line, #5278ff);
   }
 
   .upload-area {
@@ -2024,8 +2035,8 @@
     flex-direction: column;
     align-items: center;
     text-align: center;
-    color: #666;
-    padding: 16px 8px;
+    color: var(--ga-ink-2, #89857e);
+    padding: 12px 8px;
   }
 
   .upload-area svg {
@@ -2035,27 +2046,29 @@
 
   .upload-area p {
     margin: 4px 0;
-    font-size: 12px;
+    font-size: var(--ga-text-control);
   }
 
+  /* The section's primary action (.primary-btn takes the theme's look). */
   .upload-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    height: var(--ga-control-h, 26px);
     margin-top: 8px;
-    padding: 6px 14px;
-    background: #ff00aa;
-    color: #fff;
+    padding: 0 14px;
+    background: var(--ga-violet, #9b87f5);
+    color: var(--ga-blue-800, #0b0d11);
     border: none;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    border-radius: var(--ga-r-soft, 7px);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: background 0.15s;
+    transition: filter 0.15s;
   }
 
   .upload-btn:hover {
-    background: #ff33bb;
+    filter: brightness(1.06);
   }
 
   .upload-btn input {
@@ -2077,14 +2090,14 @@
   }
 
   .svg-preview span {
-    color: #BB86FC;
-    font-weight: 600;
-    font-size: 13px;
+    color: var(--ga-ink-0, #eef0f4);
+    font-weight: var(--ga-weight-control);
+    font-size: var(--ga-text-control);
   }
 
   .svg-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     width: 100%;
   }
 
@@ -2093,35 +2106,35 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6px;
-    border: none;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
     cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .action-btn.replace {
-    background: #333;
-    color: var(--text-primary, #eee);
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
   }
 
   .action-btn.replace:hover {
-    background: #444;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .action-btn.replace input {
     display: none;
   }
 
+  /* Clear removes the SVG: the destructive red. */
   .action-btn.clear {
-    background: #ff4444;
-    color: #fff;
+    color: var(--ga-rec, #ff4438);
+    border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 40%, transparent);
   }
 
   .action-btn.clear:hover {
-    background: #ff5555;
+    background: color-mix(in srgb, var(--ga-rec, #ff4438) 12%, transparent);
   }
 
   .presets {
@@ -2131,88 +2144,87 @@
   }
 
   .preset-btn {
-    padding: 4px 8px;
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    color: var(--text-primary, #ccc);
-    border-radius: 3px;
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 8px;
+    background: var(--ga-card, #161618);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ga-text-control);
+    font-weight: 500;
   }
 
   .preset-btn:hover {
-    background: #3a3a3a;
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .preset-btn.reset {
-    background: #3a2a2a;
-    border-color: #553;
-  }
-
-  .preset-btn.reset:hover {
-    background: #4a3a3a;
+    color: var(--ga-ink-2, #89857e);
   }
 
   .reset-position-btn {
     width: 100%;
-    padding: 6px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
     margin-top: 8px;
-    background: #333;
-    border: 1px solid #444;
-    color: var(--text-primary, #ccc);
-    border-radius: 4px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
-    transition: all 0.15s;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    transition: border-color 0.15s, color 0.15s;
   }
 
   .reset-position-btn:hover {
-    background: #444;
-    color: #fff;
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .param-row {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 11px;
+    margin-bottom: 8px;
     min-height: 22px;
   }
 
   /* Sub-label that groups related rows (e.g. Rotate vs Auto-spin) with a
      little breathing room above so dense panels don't read as a wall. */
   .param-subhead {
-    font-size: 11px;
-    letter-spacing: 0.08em;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
-    color: var(--text-muted, #888);
-    margin: 12px 0 7px;
+    color: var(--ga-ink-2, #89857e);
+    margin: 12px 0 6px;
     padding-bottom: 4px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid var(--ga-line-1, rgba(255, 255, 255, 0.07));
   }
   .param-subhead:first-child { margin-top: 2px; }
   .param-hint {
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
     line-height: 1.35;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2, #89857e);
     margin: 6px 0 8px;
   }
 
   .param-row label {
     flex: 0 0 70px;
-    color: var(--text-secondary, #aaa);
+    color: var(--ga-ink-1, #9aa0ac);
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 12px;
+    font-size: var(--ga-text-control);
   }
 
   .param-row input[type="range"] {
     flex: 1;
     height: 4px;
-    background: #333;
+    background: var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: 2px;
     -webkit-appearance: none;
     appearance: none;
@@ -2223,84 +2235,85 @@
     appearance: none;
     width: 12px;
     height: 12px;
-    background: #ff00aa;
+    background: var(--ga-selection-line, #5278ff);
     border-radius: 50%;
     cursor: pointer;
   }
 
   .param-row select {
     flex: 1;
-    background: var(--bg-tertiary, #161618);
-    border: 1px solid #444;
-    color: #fff;
-    padding: 4px;
-    border-radius: 3px;
-    font-size: 12px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, #161618);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 0 4px;
+    border-radius: var(--ga-r-hard, 3px);
+    font-size: var(--ga-text-control);
   }
 
   .param-row .value {
     flex: 0 0 45px;
     text-align: right;
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-1, #9aa0ac);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 11px;
+    font-size: var(--ga-text-meta);
+    font-variant-numeric: tabular-nums;
   }
 
   /* Editable numeric readouts — look like the old text values but you can
      click in and type. Spinner chrome hidden; subtle affordance on hover. */
   .vnum {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--ga-slot, rgba(255, 255, 255, 0.04));
     border: 1px solid transparent;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 3px);
     padding: 2px 4px;
     margin: 0;
-    color: #cbd1da;
+    color: var(--ga-ink-0, #cbd1da);
     -moz-appearance: textfield;
     appearance: textfield;
     cursor: text;
     transition: border-color 0.12s, background 0.12s;
   }
-  .vnum:hover { border-color: rgba(255, 255, 255, 0.18); }
+  .vnum:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.18)); }
   .vnum:focus {
     outline: none;
-    border-color: #ff00aa;
-    background: rgba(0, 0, 0, 0.35);
-    color: #fff;
+    border-color: var(--ga-focus, #8aa4ff);
+    color: var(--ga-ink-0, #eef0f4);
   }
   .vnum::-webkit-inner-spin-button,
   .vnum::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   .param-row .value.vnum { flex: 0 0 58px; }
-  .mini-value.vnum { flex: 0 0 46px; text-align: right; font-size: 11px; }
+  .mini-value.vnum { flex: 0 0 46px; text-align: right; font-size: var(--ga-text-meta); }
 
   .effects-grid {
     display: flex;
     flex-direction: column;
-    gap: 9px;
+    gap: 6px;
   }
 
   .effect-group {
-    background: #222;
-    border-radius: 4px;
-    padding: 9px 10px;
+    background: var(--ga-sub, #222);
+    border-radius: var(--ga-r-hard, 3px);
+    padding: 8px 10px;
   }
 
   .effect-toggle {
     display: flex;
     align-items: center;
     gap: 6px;
-    color: var(--text-primary, #ccc);
+    color: var(--ga-ink-0, #eef0f4);
     cursor: pointer;
-    font-weight: 500;
-    font-size: 12px;
+    font-weight: var(--ga-weight-control);
+    font-size: var(--ga-text-control);
   }
 
   .effect-toggle input[type="checkbox"] {
     margin: 0;
-    accent-color: #ff00aa;
+    accent-color: var(--ga-selection-line, #5278ff);
   }
 
   .effect-params {
-    margin-top: 9px;
+    margin-top: 8px;
     padding-left: 12px;
     overflow: hidden;
   }
@@ -2309,7 +2322,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 9px;
+    margin-bottom: 8px;
     min-height: 20px;
     min-width: 0;
   }
@@ -2317,8 +2330,8 @@
 
   .mini-param span {
     flex: 0 0 52px;
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #9aa0ac);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2328,7 +2341,7 @@
     flex: 1;
     min-width: 0;
     height: 3px;
-    background: #333;
+    background: var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: 2px;
     -webkit-appearance: none;
     appearance: none;
@@ -2339,7 +2352,7 @@
     appearance: none;
     width: 10px;
     height: 10px;
-    background: #ff00aa;
+    background: var(--ga-selection-line, #5278ff);
     border-radius: 50%;
     cursor: pointer;
   }
@@ -2347,25 +2360,26 @@
   .mini-value {
     flex: 0 0 32px;
     text-align: right;
-    font-size: 10px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta);
+    color: var(--ga-ink-1, #9aa0ac);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
   }
 
   .layer-list {
-    border-top: 1px solid #333;
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     flex-shrink: 0;
     max-height: 150px;
     overflow-y: auto;
   }
 
   .layer-list-header {
-    padding: 6px 12px;
-    background: var(--bg-primary, #0d0d10);
-    font-size: 11px;
-    color: var(--text-muted, #888);
+    padding: 8px 12px 4px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    color: var(--ga-ink-2, #89857e);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
 
   .layer-item {
@@ -2373,25 +2387,28 @@
     align-items: center;
     justify-content: space-between;
     width: 100%;
-    padding: 8px 12px;
+    min-height: var(--ga-control-h, 26px);
+    padding: 4px 12px;
     background: none;
     border: none;
-    border-bottom: 1px solid #333;
-    color: var(--text-primary, #ccc);
-    font-size: 12px;
+    border-bottom: 1px solid var(--ga-line-1, rgba(255, 255, 255, 0.07));
+    border-left: 2px solid transparent;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: var(--ga-text-control);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s;
     text-align: left;
   }
 
   .layer-item:hover {
-    background: #333;
+    background: var(--ga-sub, #333);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .layer-item.selected {
-    background: var(--bg-tertiary, #161618);
-    border-left: 3px solid #ff00aa;
-    color: #fff;
+    background: var(--ga-selection-bg, #1f3170);
+    border-left-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
 
   .layer-item .layer-name {
@@ -2402,18 +2419,18 @@
   }
 
   .layer-status {
-    font-size: 10px;
-    padding: 2px 5px;
-    border-radius: 3px;
+    font-size: var(--ga-text-meta);
+    padding: 1px 5px;
+    border-radius: var(--ga-r-hard, 3px);
   }
 
   .layer-status.loaded {
-    background: #BB86FC33;
-    color: #BB86FC;
+    background: var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   .layer-status.empty {
-    background: #66666633;
-    color: #666;
+    background: transparent;
+    color: var(--ga-ink-3, #3a404a);
   }
 </style>
