@@ -22,7 +22,7 @@
 <div class="ndi-output" data-help-page="syphon-spout-ndi">
   <div class="status-row">
     <strong>{checking ? 'Checking NDI output…' : status.active ? 'NDI output enabled' : status.available ? 'NDI output ready' : 'NDI output unavailable'}</strong>
-    <button onclick={refresh} disabled={checking}>Refresh</button>
+    <button class="secondary-btn" onclick={refresh} disabled={checking}>Refresh</button>
   </div>
   {#if status.active}<p>Sender: <strong>{status.name}</strong>{status.fps ? ` · up to ${status.fps} fps` : ''}</p>{/if}
   {#if !checking && status.reason}<p class="notice">{status.reason}</p>{/if}
@@ -39,12 +39,34 @@
 </div>
 
 <style>
-  .ndi-output { color: var(--ga-ink-1, #bdc6d4); font-size: 13px; line-height: 1.6; }
-  .status-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--ga-blue-mute-600); border-radius: 9px; background: var(--ga-blue-mute-800); }
-  button { border: 1px solid var(--ga-blue-mute-600); border-radius: 6px; background: var(--ga-blue-mute-800); color: #e2ebfa; padding: 6px 12px; cursor: pointer; }
-  button:disabled { opacity: .5; }
-  h4 { margin-bottom: 6px; color: var(--ga-ink-0, #eef0f4); }
-  ol { padding-left: 20px; }
-  li { margin: 5px 0; }
+  .ndi-output { color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-meta); line-height: 1.55; }
+  .ndi-output p { margin: 8px 0; }
+  .ndi-output strong { color: var(--ga-ink-0, #f2ede4); font-weight: var(--ga-weight-control); }
+  .status-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 8px 8px 12px; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); background: var(--ga-card, #16140f); font-size: var(--ga-text-body); }
+  .secondary-btn {
+    height: var(--ga-control-h);
+    padding: 0 12px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-raise, #26221c);
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-control);
+    font-weight: var(--ga-weight-control);
+    cursor: pointer;
+  }
+  .secondary-btn:hover:not(:disabled) { color: var(--ga-ink-0, #f2ede4); border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
+  .secondary-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  /* Sub-heading: the eyebrow, like the section heading above it. */
+  h4 {
+    margin: 20px 0 4px;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
+  }
+  ol { margin: 0; padding-left: 18px; }
+  li { margin: 4px 0; }
   .notice { color: #e5ba82; }
 </style>

@@ -23,8 +23,8 @@ export const EFFECT_PARAM_DEFS: Record<string, EffectParamDef[]> = {
   eulerianMagnify: [
     { name: 'Mode', param: 'eulerianMode', min: 0, max: 3, step: 1, default: 0, type: 'select',
       options: [
-        { value: 0, label: 'Color Pulse' },
-        { value: 1, label: 'Motion Phase' },
+        { value: 0, label: 'Color pulse' },
+        { value: 1, label: 'Motion phase' },
         { value: 2, label: 'Hybrid' },
         { value: 3, label: 'Attenuate' },
       ] },
@@ -186,9 +186,9 @@ export const EFFECT_PARAM_DEFS: Record<string, EffectParamDef[]> = {
         { value: 1, label: 'Photoelastic' },
         { value: 2, label: 'Lippmann' },
         { value: 3, label: 'InSAR' },
-        { value: 4, label: 'Catoptric Cylinder' },
-        { value: 5, label: 'Catoptric Cone' },
-        { value: 6, label: 'DTI Ribbons' },
+        { value: 4, label: 'Catoptric cylinder' },
+        { value: 5, label: 'Catoptric cone' },
+        { value: 6, label: 'DTI ribbons' },
         { value: 7, label: 'Composite' },
       ] },
     { name: 'Intensity', param: 'phaseLabIntensity', min: 0, max: 4, step: 0.01, default: 1.35 },

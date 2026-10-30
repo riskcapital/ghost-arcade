@@ -32,7 +32,7 @@
 <section data-help-page="settings" class="groups-panel">
   <header>
     <div>
-      <h4>Fixture Groups</h4>
+      <h4>Fixture groups</h4>
       <p>Combine WLED controllers, named ranges and Art-Net or sACN fixtures into reusable LED FX targets.</p>
     </div>
     <button onclick={addGroup}>+ Add group</button>
@@ -112,14 +112,15 @@
   h4 {
     margin: 0;
     color: var(--ga-ink-0);
-    font-size: 13px;
+    font-size: var(--ga-text-title, 14px);
+    font-weight: var(--ga-weight-title, 650);
   }
 
   p,
   .empty {
     margin: 3px 0 0;
     color: var(--ga-ink-2);
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
   }
 
   button,
@@ -137,11 +138,16 @@
   }
 
   header button {
-    padding: 6px 9px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 10px;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
   }
 
   article {
     border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
+    overflow: hidden;
     background: var(--ga-card);
   }
 
@@ -157,7 +163,10 @@
     border: 1px solid var(--ga-line-2);
     background: var(--ga-slot);
     color: var(--ga-ink-0);
-    padding: 6px 7px;
+    border-radius: var(--ga-r-hard, 5px);
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    padding: 0 8px;
   }
 
   .group-heading span {
@@ -169,8 +178,8 @@
   }
 
   .remove {
-    width: 28px;
-    height: 28px;
+    width: var(--ga-control-h, 26px);
+    height: var(--ga-control-h, 26px);
     color: var(--ga-rec, #ff3b30);
   }
 
@@ -193,7 +202,7 @@
   }
 
   label input {
-    accent-color: var(--ga-blue-300);
+    accent-color: var(--ga-selection-line);
   }
 
   label span {
@@ -202,7 +211,7 @@
 
   label small {
     color: var(--ga-ink-2);
-    font-size: 9px;
+    font-size: var(--ga-text-eyebrow, 10px);
   }
 
   .range-member {

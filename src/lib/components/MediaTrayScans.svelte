@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Media Library, Scan tab: point cloud scans received from a paired phone.
+  // Media Library, Scans tab: point cloud scans received from a paired phone.
   import { phoneScanLibrary, addPhoneScanAsLayer, type PhoneScan } from '../stores/phoneScans';
   import { showToast } from '../stores/errorToast';
 
@@ -26,32 +26,34 @@
 </div>
 
 <style>
-  .scan-list { display: flex; flex-direction: column; gap: 6px; padding: 8px; font-size: 12px; }
+  .scan-list { display: flex; flex-direction: column; gap: 6px; font-size: var(--ga-text-control); }
   .scan-row {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px;
+    padding: 6px 6px 6px 8px;
     color: var(--ga-ink-0, #eee);
-    background: var(--ga-slot, rgba(255, 255, 255, 0.03));
+    background: var(--ga-card, rgba(255, 255, 255, 0.03));
     border: 1px solid var(--ga-line-2, #2c2c33);
-    border-radius: 6px;
+    border-radius: var(--ga-r-hard, 3px);
   }
   .scan-row svg { flex: none; color: var(--ga-ink-2, #888); }
   .scan-text { flex: 1; min-width: 0; }
-  .scan-name { overflow-wrap: anywhere; }
-  .scan-meta, .scan-hint { color: var(--ga-ink-2, #888); font-size: 11px; }
+  .scan-name { overflow-wrap: anywhere; font-weight: var(--ga-weight-control); }
+  .scan-meta, .scan-hint { color: var(--ga-ink-2, #888); font-size: var(--ga-text-meta); }
   .scan-hint { margin: 4px 2px 0; }
   .scan-add {
     flex: none;
-    padding: 5px 10px;
+    height: var(--ga-control-h-sm, 22px);
+    padding: 0 8px;
     font: inherit;
-    font-size: 11px;
-    color: var(--ga-ink-0, #eee);
-    background: transparent;
-    border: 1px solid var(--ga-line-3, #3a3a42);
-    border-radius: 4px;
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-1, #bbb);
+    background: var(--ga-card, transparent);
+    border: 1px solid var(--ga-line-2, #3a3a42);
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
   }
-  .scan-add:hover { background: rgba(255, 255, 255, 0.06); }
+  .scan-add:hover { color: var(--ga-ink-0, #eee); border-color: var(--ga-line-3, #4a4a52); }
 </style>

@@ -33,9 +33,9 @@ const sectionStart = panel.indexOf("{#if selectedSection === 'recording'}");
 const section = panel.slice(sectionStart, panel.indexOf('</section>', sectionStart));
 
 describe('recording settings', () => {
-  it('shows an Include Audio toggle in the Recording section', () => {
-    expect(section).toContain('<span class="label-text">Include Audio</span>');
-    const row = section.slice(section.indexOf('Include Audio'), section.indexOf('Auto-Download'));
+  it('shows an Include audio toggle in the Recording section', () => {
+    expect(section).toContain('<span class="label-text">Include audio</span>');
+    const row = section.slice(section.indexOf('Include audio'), section.indexOf('Auto-download'));
     expect(row).toContain('class="toggle"');
     expect(row).toContain('checked={$settings.recording.includeAudio !== false}');
     expect(row).toContain('onchange={handleIncludeAudioChange}');

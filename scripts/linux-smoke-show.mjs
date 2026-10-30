@@ -41,7 +41,7 @@ export const stepRecording = {
     const profile = t.args.profile || path.join(t.outDir, 'profile');
     // Something to record: the first content layer, or a new shader layer.
     let names = (await layerNames(c)).filter((name) => !/Interactive/.test(name));
-    if (!names.length) { await addLayer(c, 'GPU Shader'); names = (await layerNames(c)).filter((name) => !/Interactive/.test(name)); }
+    if (!names.length) { await addLayer(c, 'GPU shader'); names = (await layerNames(c)).filter((name) => !/Interactive/.test(name)); }
     await setLayerVisible(c, names[0], true);
     // Stopping a take otherwise opens the OS save dialog, which input cannot reach.
     await c.clickElement(el.byTitle('Settings'));

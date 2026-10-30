@@ -236,7 +236,11 @@
   <div class="sfa-backdrop" onclick={close}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="sfa-dialog" role="dialog" aria-modal="true" aria-labelledby="sfa-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-      <h2 id="sfa-title">New show from audio</h2>
+      <header class="sfa-head modal-header">
+        <h2 id="sfa-title">New show from audio</h2>
+        <button class="sfa-close" onclick={close} aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
+      </header>
+      <div class="sfa-body">
 
       {#if phase === 'loading'}
         <p class="sfa-muted">Reading the song…</p>
@@ -317,10 +321,12 @@
         {/if}
       {/if}
 
+      </div>
+
       <div class="sfa-actions">
-        <button class="sfa-cancel" onclick={close}>Cancel</button>
+        <button class="sfa-cancel secondary-btn" onclick={close}>Cancel</button>
         <button
-          class="sfa-create"
+          class="sfa-create primary-btn"
           onclick={create}
           disabled={phase !== 'ready' || !prepared || songDuration <= 0 || needsPresets || (mode === 'sections' && analyzing)}
         >{phase === 'creating' ? 'Creating…' : 'Create show'}</button>
@@ -339,41 +345,82 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgba(0, 0, 0, 0.6);
     -webkit-app-region: no-drag;
+  }
+  .sfa-backdrop {
+    background: color-mix(in srgb, var(--ga-void, #0a0908) 76%, transparent);
+    backdrop-filter: blur(8px);
   }
   .sfa-dialog {
     width: min(560px, 100%);
     max-height: calc(100vh - 48px);
-    overflow-y: auto;
-    padding: 20px 22px 18px;
-    border-radius: 10px;
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    background: var(--ga-panel, #0f1116);
-    color: var(--text-primary, #e8e8e8);
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--ga-faceplate-bg, var(--ga-panel, #100f0d));
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.08)), 0 24px 80px rgba(0, 0, 0, 0.58);
+    color: var(--ga-ink-1, #ada9a2);
+    font-size: var(--ga-text-body);
     font-family: var(--ga-font-ui, inherit);
-    font-size: 13px;
     outline: none;
   }
-  h2 { margin: 0 0 14px; font-size: 16px; font-weight: 650; }
-  .sfa-muted { color: var(--text-secondary, #a0a0a0); margin: 8px 0; }
-  .sfa-note { color: #f6c453; margin: 10px 0 0; font-size: 12px; }
+  .sfa-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+  }
+  h2 {
+    margin: 0;
+    font-size: var(--ga-text-heading);
+    font-weight: var(--ga-weight-title);
+    line-height: 1.3;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ga-ink-0, #f2ede4);
+  }
+  .sfa-close {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--ga-r-hard, 5px);
+    color: var(--ga-ink-2, #89857e);
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+  .sfa-close:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    background: var(--ga-raise, #26221c);
+    border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
+  }
+  .sfa-close:disabled { opacity: 0.35; cursor: not-allowed; }
+  .sfa-body { padding: 16px; overflow-y: auto; }
+  .sfa-muted { color: var(--ga-ink-2, #89857e); margin: 8px 0; }
+  .sfa-note { color: #f6c453; margin: 10px 0 0; font-size: var(--ga-text-meta); }
   .sfa-error { color: #ff8a7a; margin: 10px 0; }
   .sfa-song { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-  .sfa-song-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sfa-song-len { color: var(--text-secondary, #a0a0a0); font-variant-numeric: tabular-nums; }
+  .sfa-song-name { font-weight: var(--ga-weight-control); color: var(--ga-ink-0, #f2ede4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sfa-song-len { color: var(--ga-ink-2, #89857e); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: var(--ga-text-meta); font-variant-numeric: tabular-nums; }
   .sfa-wave {
-    margin: 10px 0 14px;
-    border-radius: 6px;
-    background: #0a0c10;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin: 8px 0 16px;
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-slot, #060504);
+    border: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
     overflow: hidden;
   }
   .sfa-wave svg { display: block; width: 100%; height: 48px; }
   .sfa-wave path { fill: #8fb4ff; opacity: 0.75; }
   .sfa-wave line { stroke: #ffffff; stroke-opacity: 0.55; stroke-width: 1; vector-effect: non-scaling-stroke; }
-  .sfa-lane { position: relative; height: 22px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+  .sfa-lane { position: relative; height: 22px; border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07)); }
   .sfa-clip {
     position: absolute;
     top: 3px;
@@ -381,7 +428,7 @@
     border-radius: 3px;
     background: color-mix(in srgb, var(--c, #ff725f) 35%, transparent);
     border-left: 2px solid var(--c, #ff725f);
-    font-size: 10px;
+    font-size: var(--ga-text-eyebrow);
     line-height: 14px;
     padding: 0 4px;
     overflow: hidden;
@@ -389,23 +436,34 @@
     text-overflow: ellipsis;
     box-sizing: border-box;
   }
-  .sfa-keep { left: 0; right: 0; background: rgba(255, 255, 255, 0.06); border-left-color: rgba(255, 255, 255, 0.3); color: var(--text-secondary, #a0a0a0); }
+  .sfa-keep { left: 0; right: 0; background: rgba(255, 255, 255, 0.06); border-left-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); color: var(--ga-ink-2, #89857e); }
   .sfa-modes { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; }
-  .sfa-modes legend { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary, #a0a0a0); margin-bottom: 6px; }
+  .sfa-modes legend {
+    margin-bottom: 6px;
+    padding: 0;
+    font-size: var(--ga-text-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
+  }
   .sfa-modes label {
     display: flex;
     gap: 10px;
     align-items: flex-start;
     padding: 8px 10px;
-    border-radius: 7px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    background: var(--ga-card, #16140f);
     cursor: pointer;
   }
-  .sfa-modes label.on { border-color: var(--ga-coral, #ff6f5e); background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 8%, transparent); }
+  .sfa-modes label.on { border-color: var(--ga-selection-line, #5278ff); background: var(--ga-selection-bg, #1f3170); }
   .sfa-modes label.off { opacity: 0.45; cursor: default; }
-  .sfa-modes input { margin-top: 3px; accent-color: var(--ga-coral, #ff6f5e); }
+  .sfa-modes input { margin-top: 2px; accent-color: var(--ga-selection-line, #5278ff); }
   .sfa-modes span { display: grid; gap: 2px; }
-  .sfa-modes small { color: var(--text-secondary, #a0a0a0); font-size: 12px; }
+  .sfa-modes strong { color: var(--ga-ink-0, #f2ede4); font-weight: var(--ga-weight-control); }
+  .sfa-modes small { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta); }
+  .sfa-modes label.on small { color: var(--ga-selection-ink, #e0e8ff); opacity: 0.8; }
   .sfa-presets {
     margin-top: 10px;
     display: flex;
@@ -415,27 +473,60 @@
     overflow-y: auto;
   }
   .sfa-preset {
+    box-sizing: border-box;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 9px;
-    border-radius: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    height: var(--ga-control-h-sm);
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 5px);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ga-text-control);
   }
-  .sfa-preset.on { border-color: var(--ga-coral, #ff6f5e); }
-  .sfa-preset input { accent-color: var(--ga-coral, #ff6f5e); margin: 0; }
-  .sfa-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-  .sfa-actions button {
-    min-height: 32px;
+  .sfa-preset.on { border-color: var(--ga-selection-line, #5278ff); background: var(--ga-selection-bg, #1f3170); color: var(--ga-selection-ink, #e0e8ff); }
+  .sfa-preset input { accent-color: var(--ga-selection-line, #5278ff); margin: 0; }
+  .sfa-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--ga-line-1, rgba(245, 236, 222, 0.07));
+  }
+  .sfa-cancel,
+  .sfa-create {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--ga-bar-control-h);
     padding: 0 14px;
-    border-radius: 6px;
+    border-radius: var(--ga-r-hard, 5px);
     font: inherit;
-    font-weight: 600;
+    font-size: var(--ga-text-body);
+    font-weight: var(--ga-weight-control);
+    white-space: nowrap;
     cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, filter 0.12s;
   }
-  .sfa-cancel { background: transparent; border: 1px solid rgba(255, 255, 255, 0.16); color: var(--text-primary, #e8e8e8); }
-  .sfa-create { background: var(--ga-coral, #ff6f5e); border: 1px solid var(--ga-coral, #ff6f5e); color: #14090a; }
-  .sfa-create:disabled { opacity: 0.45; cursor: default; }
+  .sfa-cancel {
+    background: var(--ga-raise, #26221c);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    color: var(--ga-ink-1, #ada9a2);
+  }
+  .sfa-cancel:hover:not(:disabled) {
+    color: var(--ga-ink-0, #f2ede4);
+    border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24));
+  }
+  .sfa-create {
+    background: var(--ga-ink-0, #f2ede4);
+    border: 1px solid var(--ga-ink-0, #f2ede4);
+    color: var(--ga-void, #0a0908);
+  }
+  .sfa-create:hover:not(:disabled) { filter: brightness(1.06); }
+  .sfa-cancel:disabled,
+  .sfa-create:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

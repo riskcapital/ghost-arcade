@@ -185,8 +185,8 @@
     {#snippet lead()}
       <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes or mixer">
         <button role="tab" aria-selected={lowerTab === 'session'} class:active={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
-        <button role="tab" aria-selected={lowerTab === 'scenes'} class:active={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>Scenes{s.scenes.length ? ` ${s.scenes.length}` : ''}</button>
-        <button role="tab" aria-selected={lowerTab === 'takes'} class:active={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>Takes{s.takes.length ? ` ${s.takes.length}` : ''}</button>
+        <button role="tab" aria-selected={lowerTab === 'scenes'} class:active={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>{#if s.scenes.length}Scenes {s.scenes.length}{:else}Scenes{/if}</button>
+        <button role="tab" aria-selected={lowerTab === 'takes'} class:active={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>{#if s.takes.length}Takes {s.takes.length}{:else}Takes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'mixer'} class:active={lowerTab === 'mixer'} onclick={() => (lowerTab = 'mixer')}>Mixer</button>
       </div>
     {/snippet}

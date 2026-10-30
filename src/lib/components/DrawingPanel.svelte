@@ -1799,7 +1799,7 @@
   {:else}
     <div class="no-layer">
       <p>Select a Drawing layer from the left panel to edit shapes.</p>
-      <p class="hint">Click "+ Add Layer" and choose "Drawing Layer" to create one.</p>
+      <p class="hint">Click "+ Add layer" and choose "Drawing layer" to create one.</p>
     </div>
   {/if}
 </div>

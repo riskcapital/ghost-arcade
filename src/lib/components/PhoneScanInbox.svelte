@@ -35,7 +35,7 @@
         <label class="scan-always"><input type="checkbox" bind:checked={always} /> Always accept scans from paired phones</label>
         <div class="scan-actions">
           <button class="scan-btn" onclick={() => answer(offer.requestId, false)}>Decline</button>
-          <button class="scan-btn primary" data-scan-accept onclick={() => answer(offer.requestId, true)}>Accept</button>
+          <button class="scan-btn primary primary-btn" data-scan-accept onclick={() => answer(offer.requestId, true)}>Accept</button>
         </div>
       </div>
     {/each}
@@ -54,10 +54,10 @@
       <div class="scan-card" role="status" data-scan-arrived>
         <div class="scan-title">Scan received</div>
         <div class="scan-name">{$phoneScanArrived.name}</div>
-        <div class="scan-meta">Saved in the Media Library, Scan tab.</div>
+        <div class="scan-meta">Saved in the Media Library, Scans tab.</div>
         <div class="scan-actions">
           <button class="scan-btn" onclick={() => phoneScanArrived.set(null)}>Close</button>
-          <button class="scan-btn primary" data-scan-add-layer onclick={addLayer}>Add as Point Cloud layer</button>
+          <button class="scan-btn primary primary-btn" data-scan-add-layer onclick={addLayer}>Add as Point Cloud layer</button>
         </div>
       </div>
     {/if}
@@ -75,32 +75,41 @@
     gap: 8px;
     width: 300px;
     font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
-    font-size: 12px;
+    font-size: var(--ga-text-control);
     line-height: 1.4;
   }
   .scan-card {
     padding: 12px;
-    background: var(--ga-inspector-bg, #1c1c20);
+    background: var(--ga-card, #1c1c20);
     color: var(--ga-ink-0, #eee);
-    border: 1px solid var(--ga-line-3, #3a3a42);
-    border-radius: 8px;
+    border: 1px solid var(--ga-line-2, #3a3a42);
+    border-radius: var(--ga-r-soft, 7px);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   }
-  .scan-title { font-size: 13px; font-weight: 600; }
+  .scan-title { font-size: var(--ga-text-body); font-weight: var(--ga-weight-title); }
   .scan-name { margin-top: 4px; overflow-wrap: anywhere; color: var(--ga-ink-0, #eee); }
-  .scan-meta { margin-top: 2px; color: var(--ga-ink-2, #888); }
+  .scan-meta { margin-top: 2px; font-size: var(--ga-text-meta); color: var(--ga-ink-2, #888); }
   .scan-always { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--ga-ink-1, #bbb); }
   .scan-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
   .scan-btn {
-    padding: 5px 12px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
     font: inherit;
-    color: var(--ga-ink-0, #eee);
-    background: transparent;
-    border: 1px solid var(--ga-line-3, #3a3a42);
-    border-radius: 4px;
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-1, #bbb);
+    background: var(--ga-card, transparent);
+    border: 1px solid var(--ga-line-2, #3a3a42);
+    border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
   }
-  .scan-btn:hover { background: rgba(255, 255, 255, 0.06); }
-  .scan-btn.primary { background: var(--ga-selection-bg, #38271c); border-color: var(--ga-selection-line, #b5683a); font-weight: 600; }
-  progress { width: 100%; height: 6px; margin-top: 8px; accent-color: var(--ga-selection-line, #b5683a); }
+  .scan-btn:hover { color: var(--ga-ink-0, #eee); border-color: var(--ga-line-3, #4a4a52); }
+  /* The card's one primary action (.primary-btn takes the theme's look). */
+  .scan-btn.primary {
+    background: var(--ga-violet, #9b87f5);
+    border-color: transparent;
+    border-radius: var(--ga-r-soft, 7px);
+    color: var(--ga-blue-800, #0b0d11);
+  }
+  .scan-btn.primary:hover { filter: brightness(1.06); }
+  progress { width: 100%; height: 6px; margin-top: 8px; accent-color: var(--ga-selection-line, #5278ff); }
 </style>

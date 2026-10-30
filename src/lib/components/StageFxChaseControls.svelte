@@ -30,7 +30,7 @@
   <div class="param-row">
     <span class="param-label">Drives</span>
     <div class="chase-seg" role="radiogroup" aria-label="What the effect drives">
-      {#each [['brightness', 'Brightness'], ['color', 'Colour'], ['both', 'Both']] as [value, label] (value)}
+      {#each [['brightness', 'Brightness'], ['color', 'Color'], ['both', 'Both']] as [value, label] (value)}
         <button type="button" role="radio" aria-checked={output === value} class:active={output === value}
           onclick={() => set({ output: value as StageEffect['output'] })}>{label}</button>
       {/each}
@@ -38,19 +38,19 @@
   </div>
   {#if output !== 'brightness'}
     <div class="param-row">
-      <span class="param-label">Colours</span>
-      <div class="chase-seg" role="radiogroup" aria-label="Colour style">
-        {#each [['two-tone', 'Two colours'], ['rainbow', 'Rainbow']] as [value, label] (value)}
+      <span class="param-label">Colors</span>
+      <div class="chase-seg" role="radiogroup" aria-label="Color style">
+        {#each [['two-tone', 'Two colors'], ['rainbow', 'Rainbow']] as [value, label] (value)}
           <button type="button" role="radio" aria-checked={(effect.colorStyle ?? 'two-tone') === value}
             class:active={(effect.colorStyle ?? 'two-tone') === value}
             onclick={() => set({ colorStyle: value as StageEffect['colorStyle'] })}>{label}</button>
         {/each}
       </div>
       {#if (effect.colorStyle ?? 'two-tone') === 'two-tone'}
-        <input type="color" class="chase-color" aria-label="Lit colour" title="Lit colour" value={effect.color ?? DEFAULT_CHASE_COLOR}
+        <input type="color" class="chase-color" aria-label="Lit color" title="Lit color" value={effect.color ?? DEFAULT_CHASE_COLOR}
           onchange={(e) => set({ color: (e.currentTarget as HTMLInputElement).value })} />
       {/if}
-      <input type="color" class="chase-color" aria-label="Rest colour" title="Rest colour" value={effect.color2 ?? DEFAULT_CHASE_COLOR2}
+      <input type="color" class="chase-color" aria-label="Rest color" title="Rest color" value={effect.color2 ?? DEFAULT_CHASE_COLOR2}
         onchange={(e) => set({ color2: (e.currentTarget as HTMLInputElement).value })} />
     </div>
   {/if}
@@ -71,15 +71,17 @@
 
 <style>
   .chase-controls { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
-  .param-row { display: flex; align-items: center; gap: 6px; }
-  .param-label { flex: 0 0 64px; font-size: 11px; color: #9da3b0; }
-  .chase-seg { flex: 1; display: flex; min-width: 0; border: 1px solid #3a3a48; border-radius: 4px; overflow: hidden; }
-  .chase-seg button { flex: 1; background: #15151b; color: #aeb2bd; border: 0; font-size: 11px; padding: 3px 4px; cursor: pointer; white-space: nowrap; }
-  .chase-seg button + button { border-left: 1px solid #3a3a48; }
-  .chase-seg button.active { background: rgba(255, 79, 216, 0.22); color: #fff; }
-  .chase-color { width: 26px; height: 20px; padding: 0; border: 1px solid #333; border-radius: 4px; background: none; cursor: pointer; }
-  .chase-order-btn, .chase-order-reset { background: #1a1a22; color: #d5d8e0; border: 1px solid #3a3a48; border-radius: 4px; font-size: 11px; padding: 3px 8px; cursor: pointer; }
+  .param-row { display: flex; align-items: center; gap: 6px; min-height: var(--ga-control-h-sm, 22px); }
+  .param-label { flex: 0 0 64px; font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2); }
+  /* One-of-few choice: a segmented track (docs/DESIGN-SYSTEM.md). */
+  .chase-seg { flex: 1; display: flex; gap: 2px; min-width: 0; padding: 2px; background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px); }
+  .chase-seg button { flex: 1; min-height: 18px; background: transparent; color: var(--ga-ink-1); border: 0; border-radius: calc(var(--ga-r-hard, 5px) - 1px); font: inherit; font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); padding: 0 4px; cursor: pointer; white-space: nowrap; }
+  .chase-seg button:hover:not(.active) { color: var(--ga-ink-0); }
+  .chase-seg button.active { background: var(--ga-selection-bg); color: var(--ga-selection-ink); box-shadow: inset 0 0 0 1px var(--ga-selection-line); }
+  .chase-color { width: 26px; height: var(--ga-control-h-sm, 22px); padding: 0; border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px); background: none; cursor: pointer; }
+  .chase-order-btn, .chase-order-reset { min-height: var(--ga-control-h-sm, 22px); background: var(--ga-card); color: var(--ga-ink-0); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px); font: inherit; font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); padding: 0 8px; cursor: pointer; }
+  .chase-order-btn:hover, .chase-order-reset:hover { border-color: var(--ga-line-3); }
   .chase-order-btn { flex: 1; }
-  .chase-order-btn.recording { border-color: #ff4fd8; color: #fff; background: rgba(255, 79, 216, 0.18); }
-  .chase-hint { margin: 0; font-size: 11px; color: #ff9ee9; }
+  .chase-order-btn.recording { border-color: var(--ga-rec, #ff3b30); color: var(--ga-ink-0); background: color-mix(in srgb, var(--ga-rec, #ff3b30) 16%, transparent); }
+  .chase-hint { margin: 0; font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-1); }
 </style>

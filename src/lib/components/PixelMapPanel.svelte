@@ -749,7 +749,8 @@
     border-radius: var(--ga-r-hard, 5px);
     background: var(--ga-slot);
     color: var(--ga-ink-0);
-    padding: 7px 8px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
   }
 
   .field-grid input:disabled {
@@ -836,13 +837,14 @@
   }
 
   .blackout-button {
-    padding: 6px 10px;
+    height: var(--ga-control-h, 26px);
+    padding: 0 10px;
   }
 
   .blackout-button.active {
     border-color: var(--ga-rec, #ff3b30);
     color: var(--ga-rec, #ff3b30);
-    background: rgba(255, 107, 107, 0.1);
+    background: color-mix(in srgb, var(--ga-rec, #ff3b30) 10%, transparent);
   }
 
   .remove-button {
@@ -981,8 +983,8 @@
   }
 
   .fixture-row.selected {
-    border-color: var(--ga-blue-300);
-    background: var(--ga-blue-a08);
+    border-color: var(--ga-selection-line);
+    background: var(--ga-selection-bg);
   }
 
   .fixture-name {
@@ -1045,8 +1047,8 @@
   }
 
   .panel-tabs button.active {
-    color: var(--ga-blue-300);
-    border-bottom-color: var(--ga-blue-300);
+    color: var(--ga-ink-0);
+    border-bottom-color: var(--ga-selection-line);
   }
 
   .panel-body {
@@ -1097,7 +1099,7 @@
     justify-content: space-between;
     gap: 10px;
     color: var(--ga-ink-3);
-    font-size: 10px;
+    font-size: var(--ga-text-meta, 11px);
     padding: 5px 1px 8px;
   }
 
@@ -1110,7 +1112,8 @@
 
   .tool-row button,
   .test-patterns button {
-    padding: 7px 8px;
+    min-height: var(--ga-control-h, 26px);
+    padding: 3px 8px;
   }
 
   .subsection-title {
@@ -1179,9 +1182,9 @@
   }
 
   .test-patterns button.active {
-    border-color: var(--ga-blue-300);
-    color: var(--ga-blue-300);
-    background: var(--ga-blue-a08);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
+    background: var(--ga-selection-bg);
   }
 
   .test-color {

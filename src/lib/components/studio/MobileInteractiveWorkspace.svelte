@@ -73,8 +73,8 @@
     max-height: none;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     border: 0;
-    background: #10151c;
-    color: #edf2f8;
+    background: var(--ga-panel, #10151c);
+    color: var(--ga-ink-0, #edf2f8);
     overflow: hidden;
   }
   /* The editor takes the room; the workspace bar keeps its place underneath. */
@@ -88,6 +88,6 @@
     position: relative;
   }
   dialog::backdrop {
-    background: #03060c;
+    background: var(--ga-void, #03060c);
   }
 </style>
