@@ -77,6 +77,14 @@ export const MELODIC_LOOPS: MelodicLoop[] = [
     notes: notes([[0, 3.5, 0, 0.9], [4, 1.8, -3, 0.85], [6, 1.8, -2, 0.85]]) },
   { id: 'bass-walking', name: 'Walking minor', role: 'bass', beats: 8,
     notes: notes([[0, 0.9, 0], [1, 0.9, 2], [2, 0.9, 4], [3, 0.9, 5], [4, 0.9, 4], [5, 0.9, 2], [6, 0.9, 1], [7, 0.9, -1]]) },
+  { id: 'bass-reese', name: 'Reese drone', role: 'bass', beats: 8,
+    notes: notes([[0, 3.8, 0, 0.9], [4, 3.8, -2, 0.85]]) },
+  { id: 'bass-pump', name: 'House pump', role: 'bass', beats: 4,
+    notes: notes([[0, 0.25, 0, 1], [0.75, 0.25, 0], [1.5, 0.25, 7], [2, 0.25, 0, 1], [2.75, 0.25, 0], [3.5, 0.25, 4]]) },
+  { id: 'bass-broken', name: 'Broken dub', role: 'bass', beats: 8,
+    notes: notes([[0, 0.9, 0, 1], [1.5, 0.4, 0], [2.5, 0.4, -3], [3, 0.9, -2], [5, 0.4, 0], [6, 1.5, 4]]) },
+  { id: 'bass-arp', name: 'Arp bass', role: 'bass', beats: 4,
+    notes: sixteenths([0, 7, 0, 9, 0, 7, 0, 4, 0, 7, 0, 9, 11, 9, 7, 4], 0.2, [0, 8]) },
 
   // ── Leads ──
   { id: 'lead-arp', name: 'Rising arp', role: 'lead', beats: 4,
@@ -91,6 +99,14 @@ export const MELODIC_LOOPS: MelodicLoop[] = [
     notes: notes([[0, 1, 7], [1, 1, 9], [2, 2, 11], [4, 1, 9], [5, 1, 7], [6, 2, 4]]) },
   { id: 'lead-run', name: 'Scale run', role: 'lead', beats: 2,
     notes: sixteenths([0, 1, 2, 3, 4, 5, 6, 7], 0.2) },
+  { id: 'lead-pluck', name: 'Pluck stabs', role: 'lead', beats: 4,
+    notes: notes([[0, 0.25, 7], [0.75, 0.25, 7], [1.5, 0.25, 9], [2.25, 0.25, 7], [3, 0.5, 4]]) },
+  { id: 'lead-detroit', name: 'Detroit line', role: 'lead', beats: 8,
+    notes: notes([[0, 1.5, 9], [1.5, 0.5, 7], [2, 1, 4], [3, 1, 7], [4, 1.5, 11], [5.5, 0.5, 9], [6, 2, 7]]) },
+  { id: 'lead-whistle', name: 'Echo whistle', role: 'lead', beats: 8,
+    notes: notes([[0, 0.5, 14], [1, 0.5, 11], [2.5, 1, 9], [6, 0.5, 14], [6.5, 0.5, 16]]) },
+  { id: 'lead-wander', name: 'Wandering', role: 'lead', beats: 8,
+    notes: notes([[0, 0.5, 0], [0.5, 0.5, 2], [1, 0.5, 4], [2, 1, 7], [3.5, 0.5, 9], [4, 1, 7], [5, 0.5, 4], [5.5, 0.5, 2], [6, 2, 0]]) },
 
   // ── Chords ──
   { id: 'chords-epic', name: 'i · VI · III · VII', role: 'chords', beats: 16,
@@ -103,6 +119,14 @@ export const MELODIC_LOOPS: MelodicLoop[] = [
     notes: notes([[0.75, 0.2, [0, 2, 4, 6], 0.9], [2.5, 0.2, [0, 2, 4, 6], 0.7]]) },
   { id: 'chords-float', name: 'Floating sevenths', role: 'chords', beats: 16,
     notes: notes([[0, 7.8, [0, 2, 4, 6], 0.7], [8, 7.8, [5, 7, 9, 11], 0.7]]) },
+  { id: 'chords-ninths', name: 'Deep house ninths', role: 'chords', beats: 8,
+    notes: notes([[0, 3.8, [0, 2, 4, 6, 8], 0.75], [4, 3.8, [-2, 0, 2, 4, 6], 0.75]]) },
+  { id: 'chords-chop', name: 'Dub chops', role: 'chords', beats: 4,
+    notes: notes([[0.5, 0.15, [0, 2, 4]], [1.5, 0.15, [0, 2, 4]], [2.5, 0.15, [0, 2, 4]], [3.5, 0.15, [-1, 1, 3]]]) },
+  { id: 'chords-sus', name: 'Suspended', role: 'chords', beats: 16,
+    notes: notes([[0, 7.8, [0, 3, 4], 0.65], [8, 7.8, [-2, 1, 4], 0.65]]) },
+  { id: 'chords-detroit', name: 'Detroit stabs', role: 'chords', beats: 4,
+    notes: notes([[0, 0.3, [0, 2, 4, 6], 0.95], [0.75, 0.3, [0, 2, 4, 6], 0.7], [2, 0.3, [1, 3, 5, 7], 0.9], [3.5, 0.3, [0, 2, 4, 6], 0.6]]) },
 
   // ── Textures ──
   { id: 'tex-swell', name: 'Slow swells', role: 'texture', beats: 16,
@@ -113,6 +137,14 @@ export const MELODIC_LOOPS: MelodicLoop[] = [
     notes: notes([[0, 1, 0, 0.8], [4, 1, 4, 0.7], [8, 1, 2, 0.7], [12, 1, 6, 0.6]]) },
   { id: 'tex-pulse', name: 'Distant pulse', role: 'texture', beats: 4,
     notes: notes([[0, 0.3, 7, 0.5], [2, 0.3, 7, 0.4]]) },
+  { id: 'tex-cloud', name: 'Shimmer cloud', role: 'texture', beats: 8,
+    notes: notes([[0, 3, 14, 0.45], [1, 3, 16, 0.4], [2, 3, 18, 0.4], [3, 3, 21, 0.35]]) },
+  { id: 'tex-ticks', name: 'Ticks', role: 'texture', beats: 4,
+    notes: sixteenths([null, 21, null, null, 23, null, 21, null, null, null, 25, null, 21, null, null, 23], 0.1) },
+  { id: 'tex-rise', name: 'Rising tide', role: 'texture', beats: 16,
+    notes: notes([[0, 4, 0, 0.5], [4, 4, 2, 0.55], [8, 4, 4, 0.6], [12, 4, 7, 0.65]]) },
+  { id: 'tex-rain', name: 'Glass rain', role: 'texture', beats: 8,
+    notes: notes([[0.25, 0.2, 14, 0.5], [1.75, 0.2, 18, 0.45], [2.5, 0.2, 16, 0.5], [4.25, 0.2, 21, 0.45], [5, 0.2, 14, 0.5], [6.75, 0.2, 19, 0.4]]) },
 ];
 
 export const BEAT_LOOPS: BeatLoop[] = [
@@ -134,6 +166,18 @@ export const BEAT_LOOPS: BeatLoop[] = [
     kick: 'x......x..x.....', clap: '....x.......x...', hatClosed: 'xxxxxxxxxxxxxxxx', tom: '.............o.o' } },
   { id: 'beat-pulse', name: 'Ambient pulse', steps: 16, swing: 0, rows: {
     kick: 'o.......o.......', rim: '......o.......o.', hatClosed: '..o.......o.....' } },
+  { id: 'beat-rockers', name: 'Dub rockers', steps: 16, swing: 0.05, rows: {
+    kick: 'x.......x.......', snare: '........x.......', hatClosed: 'x.x.x.x.x.x.x.x.', rim: '....o.......o...' } },
+  { id: 'beat-garage', name: '2-step garage', steps: 16, swing: 0.18, rows: {
+    kick: 'x.........x.....', snare: '....x.......x...', hatClosed: '..x...x...x.x.x.', rim: '.......o......o.' } },
+  { id: 'beat-house', name: 'Deep house', steps: 16, swing: 0.1, rows: {
+    kick: 'x...x...x...x...', clap: '....x.......x...', hatOpen: '..o...o...o...o.', hatClosed: 'o.....o.....o...' } },
+  { id: 'beat-industrial', name: 'Industrial', steps: 16, swing: 0, rows: {
+    kick: 'x..x..x...x..x..', snare: '....x.......x...', tom: 'o.....o.....o...', crash: 'x...............' } },
+  { id: 'beat-trap', name: 'Half-time rolls', steps: 16, swing: 0, rows: {
+    kick: 'x......x..x.....', snare: '........x.......', hatClosed: 'x.x.xxx.x.x.xxxx' } },
+  { id: 'beat-brushed', name: 'Brushed', steps: 16, swing: 0.2, rows: {
+    kick: 'o...........o...', rim: '..o.....o.o.....', hatClosed: 'o..o..o..o..o...' } },
 ];
 
 export function loopById(id: string): MelodicLoop | BeatLoop | null {

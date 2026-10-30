@@ -183,7 +183,9 @@ describe('saved takes', () => {
     expect(partial.visuals.synth.mode).toBe('build');
     expect(partial.visuals.synth.release).toBe(defaultProjectState().visuals.synth.release);
     expect(partial.octave).toBe(8);
-    expect(normalizeProjectState(null)).toEqual(defaultProjectState());
+    // A missing studio section starts from the defaults (with a fresh starter session).
+    const withoutIds = (x: ReturnType<typeof defaultProjectState>) => JSON.parse(JSON.stringify(x).replace(/"id":"[^"]+"/g, '"id":""'));
+    expect(withoutIds(normalizeProjectState(null))).toEqual(withoutIds(defaultProjectState()));
   });
 });
 

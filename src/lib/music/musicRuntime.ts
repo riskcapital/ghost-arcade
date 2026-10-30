@@ -46,7 +46,7 @@ import {
   type SourceContext,
 } from './visualVoices';
 import { TakeRecorder, takeEventsBetween, type Take } from './recording';
-import { STEPS_PER_BEAT, patternHasHits, stepAt, stepsBetween, type DrumPattern } from './drumPattern';
+import { STEPS_PER_BEAT, patternBeats, patternHasHits, stepAt, stepsBetween, type DrumPattern } from './drumPattern';
 import {
   BEATS_PER_BAR,
   CAPTURE_WINDOW_BEATS,
@@ -81,6 +81,7 @@ import {
   type MelodicLoop,
 } from './loops';
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
+import { TRACK_IDS, clipFromRecording, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
 import type { AnalogDest, AnalogSource } from './analogSynth';
 import {
   ACID_STEPS,
@@ -232,6 +233,51 @@ export function panic(): void {
   visuals.releaseAll();
   voices.releaseAll();
   musicTransport.update((s) => ({ ...s, held: new Set() }));
+}
+
+// ── Transport ───────────────────────────────────────────────────────────
+
+/** What Stop stopped, so Play brings the same music back. */
+let resumable: { beat: boolean; loops: string[] } | null = null;
+
+/** Stop every part (beat, loops, take, held notes); effect tails ring out. */
+export function stopAll(): void {
+  const s = get(musicStudio);
+  const loops = Object.values(s.playingLoops).filter((id): id is string => !!id);
+  if (sequencer || loops.length) resumable = { beat: !!sequencer, loops };
+  cancelQueuedScene();
+  stopAllLoops();
+  if (sequencer) stopSequencer();
+  releaseChords();
+  setSiren(false);
+  panic();
+}
+
+/** Start the music again: what Stop stopped, or the beat when there is nothing to bring back. */
+export function playAll(): void {
+  ensureMusicRuntime();
+  const back = resumable;
+  resumable = null;
+  if (!back || back.beat || !back.loops.length) startSequencer();
+  for (const id of back?.loops ?? []) launchLoop(id, true);
+}
+
+/** Silence everything at once, effect tails included. */
+export function killAll(): void {
+  stopAll();
+  resumable = null;
+  audio.kill();
+}
+
+/** A new set starts clean: what was playing stops and its echoes fade out. */
+function freshSet(): void {
+  cancelQueuedScene();
+  stopAllLoops();
+  if (sequencer) stopSequencer();
+  releaseChords();
+  setSiren(false);
+  panic();
+  resumable = null;
 }
 
 /** With scale lock on, the drone and bowls never play a note outside the key. */
@@ -657,17 +703,78 @@ export function launchLoop(id: string, now = false): void {
   ensureMusicRuntime();
   audio.now();
   const s = get(musicStudio);
-  const kept = s.myBeats.find((b) => b.id === id);
-  if (kept) {
-    launchBeatLoop(kept.pattern, kept.id, now);
+  const found = findClip(s.session, id);
+  if (found) {
+    startClip(found.track, found.clip, now);
     return;
   }
-  const loop = loopById(id) ?? s.myLoops.find((l) => l.id === id);
+  // A factory preset that is not in the session (a scene saved before it was).
+  const loop = loopById(id);
   if (!loop) return;
-  if ('rows' in loop) {
-    launchBeatLoop(beatPattern(loop), loop.id, now);
-    return;
+  if ('rows' in loop) launchBeatLoop(beatPattern(loop), loop.id, now);
+  else startMelodic(loop, ROLE_INSTRUMENTS[s.set][loop.role], now);
+}
+
+/** Where a playing clip is now, in beats from its start (null when its track is not playing it). */
+export function clipPosition(id: string): number | null {
+  const { beat } = launchClockPosition();
+  for (const slot of loopSlots.values()) {
+    if (slot.loop.id !== id || beat < slot.startBeat || slot.loop.beats <= 0) continue;
+    return (beat - slot.startBeat) % slot.loop.beats;
   }
+  if (sequencer && get(musicTransport).beatLoop === id) {
+    const pattern = get(musicStudio).pattern;
+    return ((beat % patternBeats(pattern)) + patternBeats(pattern)) % patternBeats(pattern);
+  }
+  return null;
+}
+
+/** Launch the clip in a session slot. */
+export function launchClip(track: TrackId, row: number, now = false): void {
+  ensureMusicRuntime();
+  audio.now();
+  const clip = get(musicStudio).session[track]?.[row];
+  if (clip) startClip(track, clip, now);
+}
+
+/** Launch a session row across every track; tracks with an empty slot in the row stop. */
+export function launchRow(row: number): void {
+  ensureMusicRuntime();
+  const s = get(musicStudio);
+  for (const track of TRACK_IDS) {
+    const clip = s.session[track][row];
+    if (clip) startClip(track, clip, false);
+    else stopTrack(track);
+  }
+}
+
+/** Stop one track. */
+export function stopTrack(track: TrackId): void {
+  if (track === 'beats') {
+    if (sequencer) stopSequencer();
+    musicTransport.update((t) => ({ ...t, queuedBeat: null }));
+  } else {
+    stopLoop(track);
+  }
+}
+
+function startClip(track: TrackId, clip: SessionClip, now: boolean): void {
+  const s = get(musicStudio);
+  if (clip.kind === 'beat') launchBeatLoop(clip.pattern, clip.id, now);
+  else if (track !== 'beats') {
+    const loop = clipLoop(clip, track, s.set, s.key);
+    startMelodic(loop, loop.instrument, now);
+  }
+}
+
+/**
+ * Start a melodic loop in its part's slot. With music playing it starts on
+ * the next bar (taking over from the loop there); with nothing playing, or
+ * with `now` (a scene already on the bar), it joins the current bar at once,
+ * so it still sits on the same bar lines as the beat.
+ */
+function startMelodic(loop: MelodicLoop | RecordedLoop, instrument: InstrumentId, now: boolean): void {
+  const s = get(musicStudio);
   const { beat } = launchClockPosition();
   const busy = !!sequencer || !!replay || loopSlots.size > 0;
   const startBeat = busy && !now ? nextBar(beat) : Math.floor(beat / 4 + 1e-6) * 4;
@@ -679,16 +786,38 @@ export function launchLoop(id: string, now = false): void {
   }
   loopSlots.set(loop.role, {
     loop,
-    instrument: isRecorded(loop) ? loop.instrument : ROLE_INSTRUMENTS[s.set][loop.role],
+    instrument,
     startBeat,
     scheduledBeat: from,
     stopBeat: null,
     pending: [],
     announced: false,
   });
-  musicStudio.setTransport({ queuedLoops: { ...s.queuedLoops, [loop.role]: id } });
+  musicStudio.setTransport({ queuedLoops: { ...s.queuedLoops, [loop.role]: loop.id } });
   ensureScheduler();
   ensureFrameLoop();
+}
+
+/**
+ * Follow edits and key changes in playing clips: a melodic clip plays its
+ * new notes from the next note on; a beat clip edited in its editor loads
+ * into the grid, and grid edits go back into the playing beat clip.
+ */
+function syncPlayingClips(s: MusicStudioState, sessionChanged: boolean, patternChanged: boolean): void {
+  for (const [role, slot] of loopSlots) {
+    const found = findClip(s.session, slot.loop.id);
+    if (!found || found.clip.kind !== 'notes') continue;
+    const next = clipLoop(found.clip, role, s.set, s.key);
+    if (next.instrument !== slot.instrument) endLoopSlot(slot, launchClockPosition().beat);
+    slot.loop = next;
+    slot.instrument = next.instrument;
+  }
+  const beatId = get(musicTransport).beatLoop;
+  if (!beatId) return;
+  const beat = findClip(s.session, beatId);
+  if (!beat || beat.clip.kind !== 'beat' || beat.clip.pattern === s.pattern) return;
+  if (sessionChanged) musicStudio.setPattern(beat.clip.pattern);
+  else if (patternChanged) musicStudio.updateSessionClip(beatId, (c) => (c.kind === 'beat' ? { ...c, pattern: s.pattern } : c));
 }
 
 function isRecorded(loop: MelodicLoop | RecordedLoop): loop is RecordedLoop {
@@ -738,19 +867,6 @@ export function stopAllLoops(): void {
   if (beatLoopTimer) clearTimeout(beatLoopTimer);
   beatLoopTimer = null;
   musicTransport.update((t) => ({ ...t, queuedBeat: null }));
-}
-
-/** A set change hands each playing loop to the new set's instrument for its part. */
-function retargetLoops(set: StudioSet): void {
-  const beat = launchClockPosition().beat;
-  for (const [role, slot] of loopSlots) {
-    // A recorded loop keeps the instrument it was played on.
-    if (isRecorded(slot.loop)) continue;
-    const instrument = ROLE_INSTRUMENTS[set][role];
-    if (instrument === slot.instrument) continue;
-    endLoopSlot(slot, beat);
-    slot.instrument = instrument;
-  }
 }
 
 function endLoopSlot(slot: LoopSlot, atBeat: number): void {
@@ -900,12 +1016,20 @@ export function captureLoop(): number {
   return keepTake(take, beat, true);
 }
 
-/** Keep the beat grid as one of my beats. */
+/** Keep the beat grid as a clip in the beat track's first empty slot, and play it from there. */
 export function saveBeat(): void {
   const s = get(musicStudio);
   const id = generateUUID();
-  musicStudio.addMyBeat({ kind: 'beat', id, name: nextRecordedName(s.myBeats, 'Beat'), pattern: s.pattern, createdAt: Date.now() });
+  const names = s.session.beats.filter((c): c is SessionClip => !!c);
+  musicStudio.addSessionClip('beats', { kind: 'beat', id, name: nextRecordedName(names, 'Beat'), pattern: s.pattern });
   musicTransport.update((t) => ({ ...t, beatLoop: id }));
+}
+
+/** After drumming into the grid, the beat lives in a clip: the playing one, or a new one. */
+function keepBeatInSession(): void {
+  const beatId = get(musicTransport).beatLoop;
+  if (beatId && findClip(get(musicStudio).session, beatId)) return;
+  saveBeat();
 }
 
 /** Turn a take into recorded loops that start repeating from `fromBeat`; drums go into the grid. */
@@ -918,7 +1042,7 @@ function keepTake(take: LoopTake, fromBeat: number, writeDrums: boolean): number
     const loop: RecordedLoop = {
       kind: 'recorded',
       id: generateUUID(),
-      name: nextRecordedName([...s.myLoops, ...kept], recordedLoopLabel(instrument)),
+      name: nextRecordedName([...sessionClips(s.session), ...kept], recordedLoopLabel(instrument)),
       role: roleForRecording(instrument, notes),
       instrument,
       beats: take.beats,
@@ -928,17 +1052,21 @@ function keepTake(take: LoopTake, fromBeat: number, writeDrums: boolean): number
     kept.push(loop);
   }
   for (const loop of kept) {
-    musicStudio.addMyLoop(loop);
+    musicStudio.addSessionClip(loop.role, clipFromRecording(loop));
     startRecordedLoop(loop, take.startBeat, fromBeat);
     made++;
   }
   if (writeDrums && take.hits.length) {
     musicStudio.setPattern(writeHits(get(musicStudio).pattern, take.hits, take.beats));
-    musicTransport.update((t) => ({ ...t, beatLoop: null }));
     if (!sequencer) startSequencer();
     made++;
   }
+  if (take.hits.length) keepBeatInSession();
   return made;
+}
+
+function sessionClips(session: Session): SessionClip[] {
+  return TRACK_IDS.flatMap((t) => session[t].filter((c): c is SessionClip => !!c));
 }
 
 /** A recorded loop takes its slot at once, in phase with where it was played. */
@@ -1448,6 +1576,8 @@ let wasOpen = false;
 let macroSubscribed = false;
 let lastKey = '';
 let lastSet: StudioSet | null = null;
+let lastSession: Session | null = null;
+let lastPattern: DrumPattern | null = null;
 
 /** Start listening to the studio's settings. Safe to call repeatedly. */
 export function ensureMusicRuntime(): void {
@@ -1462,13 +1592,20 @@ export function ensureMusicRuntime(): void {
     audio.setSynthPatch(s.synthPatch);
     audio.setKeysPatch(s.keysPatch);
     const keySig = `${s.key.root}:${s.key.scale}`;
-    if (keySig !== lastKey) {
+    const keyChanged = keySig !== lastKey;
+    if (keyChanged) {
       lastKey = keySig;
       if (chords.size) revoiceChords();
     }
+    const sessionChanged = s.session !== lastSession;
+    const patternChanged = s.pattern !== lastPattern;
+    lastSession = s.session;
+    lastPattern = s.pattern;
+    if (keyChanged || sessionChanged || patternChanged) syncPlayingClips(s, sessionChanged, patternChanged);
     if (s.set !== lastSet) {
+      const first = lastSet === null;
       lastSet = s.set;
-      retargetLoops(s.set);
+      if (!first) freshSet();
     }
     const volumes = morphedVolumes(s);
     for (const id of INSTRUMENTS) audio.setVolume(id, volumes[id]);

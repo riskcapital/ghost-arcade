@@ -9,6 +9,7 @@
   import { captureLoop, toggleLoopRecord } from '../../music/musicRuntime';
   import { downloadMidi, importMidi, playingSong } from '../../music/midiExport';
   import { readMidiFile } from '../../music/midiFile';
+  import { TRACK_IDS, type SessionClip } from '../../music/session';
   import { launchClockTempo } from '../../stores/launchClock';
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
@@ -38,7 +39,7 @@
       set: state.set,
       pattern: state.sequencerPlaying ? state.pattern : null,
       playingLoops: state.playingLoops,
-      myLoops: state.myLoops,
+      session: state.session,
     });
     if (!song.tracks.length) {
       showToast('Start a beat or a loop to export it as MIDI.', 'info');
@@ -55,11 +56,10 @@
     try {
       const song = readMidiFile(new Uint8Array(await file.arrayBuffer()));
       const state = get(musicStudio);
-      const parts = importMidi(song, state.set, file.name, state, generateUUID);
-      for (const loop of parts.loops) musicStudio.addMyLoop(loop);
-      for (const beat of parts.beats) musicStudio.addMyBeat(beat);
-      const count = parts.loops.length + parts.beats.length;
-      showToast(count ? `Added ${count} loop${count === 1 ? '' : 's'} from ${file.name}.` : `${file.name} has no notes.`, 'info');
+      const existing = TRACK_IDS.flatMap((t) => state.session[t].filter((c): c is SessionClip => !!c));
+      const clips = importMidi(song, file.name, existing, generateUUID);
+      for (const { track, clip } of clips) musicStudio.addSessionClip(track, clip);
+      showToast(clips.length ? `Added ${clips.length} clip${clips.length === 1 ? '' : 's'} from ${file.name} to the session.` : `${file.name} has no notes.`, 'info');
     } catch (err) {
       showToast(`Could not read ${file.name}: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
@@ -91,7 +91,7 @@
   <button class="text-btn small" onclick={capture} title="Keep what you just played as a loop, without having recorded it">CAPTURE</button>
   <span class="divider"></span>
   <button class="text-btn small" onclick={exportPlaying} title="Save the beat and the playing loops as a MIDI file">MIDI OUT</button>
-  <button class="text-btn small" onclick={() => fileInput?.click()} title="Add loops from a MIDI file">MIDI IN</button>
+  <button class="text-btn small" onclick={() => fileInput?.click()} title="Add clips to the session from a MIDI file">MIDI IN</button>
   <input bind:this={fileInput} type="file" accept=".mid,.midi,audio/midi" hidden onchange={importFile} />
 </div>
 

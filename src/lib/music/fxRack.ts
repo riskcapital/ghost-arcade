@@ -88,6 +88,21 @@ export function softClip(amount: number): Float32Array<ArrayBuffer> {
   return curve;
 }
 
+/**
+ * Saturation for inside a feedback loop: unity gain for quiet signals and
+ * squashing only loud ones, so the loop decays at the feedback setting and
+ * runs away only near the top of the knob. (`softClip` boosts quiet signals,
+ * which in a loop would make it oscillate on its own.)
+ */
+export function loopClip(amount: number): Float32Array<ArrayBuffer> {
+  const curve = new Float32Array(1024);
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i / (curve.length - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * amount) / amount;
+  }
+  return curve;
+}
+
 /** Beat divisions for tempo-locked echoes, shortest first. */
 const ECHO_DIVISIONS = [0.25, 0.375, 0.5, 0.75, 1, 1.5, 2];
 
@@ -142,7 +157,7 @@ function delayUnit(ctx: AudioContext, key: (p: string) => string, kind: FxKind):
   tone.Q.value = dub ? 0.8 : 0.3;
   // The tape echo saturates and wobbles in its loop, so repeats darken and drift.
   const sat = ctx.createWaveShaper();
-  sat.curve = softClip(echo ? 2.2 : 1);
+  sat.curve = loopClip(echo ? 2.2 : 1);
   delay.connect(tone).connect(sat).connect(feedback).connect(delay);
   const wow = ctx.createOscillator();
   wow.frequency.value = 0.7;
@@ -161,8 +176,9 @@ function delayUnit(ctx: AudioContext, key: (p: string) => string, kind: FxKind):
         ? (ECHO_DIVISIONS[Math.round(time * (ECHO_DIVISIONS.length - 1))] * 60) / Math.max(30, tempo)
         : 0.06 + time * (dub ? 0.69 : 1.1);
       delay.delayTime.setTargetAtTime(seconds, t, 0.08);
-      // A tape echo can just pass unity: the dub runaway, tamed by its saturation.
-      const ceiling = echo ? 1.02 : 0.92;
+      // At the top of its knob a tape echo just passes unity: the dub
+      // runaway, held in check by its saturation.
+      const ceiling = echo ? 1.04 : 0.92;
       feedback.gain.setTargetAtTime(Math.min(ceiling, (p[key('feedback')] ?? 0.4) * ceiling), t, 0.05);
       if (echo) {
         tone.frequency.setTargetAtTime(500 + Math.pow(p[key('tone')] ?? 0.45, 2) * 7000, t, 0.05);

@@ -46,6 +46,12 @@ const SUBTRACTIVE: Record<SynthPatch, SubtractivePatch> = {
 
 const MAX_VOICES_PER_INSTRUMENT = 24;
 
+/** Changing sets fades the old set's effect tails out over this long. */
+const SET_CHANGE_FADE_SECONDS = 1.5;
+/** Kill: how fast everything goes, and how long the mix stays down before it comes back. */
+const KILL_FADE_SECONDS = 0.03;
+const KILL_HOLD_SECONDS = 0.6;
+
 interface MelodicVoice {
   key: string;
   startedAt: number;
@@ -203,11 +209,49 @@ export class MusicAudioEngine {
     this.scan?.play(frequencies, levels, level);
   }
 
-  /** Which set's rack is in use, and which instruments its cables send through it. */
+  /**
+   * Which set's rack is in use, and which instruments its cables send through
+   * it. A new set starts on a fresh rack; the old set's echoes and reverb
+   * tails fade out and are cleared.
+   */
   setRouting(set: StudioSet, throughFx: Set<InstrumentId>): void {
+    const changed = set !== this.activeSet;
     this.activeSet = set;
     this.throughFx = new Set(throughFx);
+    if (changed) this.retireRacks(SET_CHANGE_FADE_SECONDS);
     if (this.ctx) this.applyRouting();
+  }
+
+  /** Fade every effects rack out over `seconds` and drop it; the next routing builds a fresh one. */
+  private retireRacks(seconds: number): void {
+    const ctx = this.ctx;
+    const racks = Object.values(this.racks).filter((r): r is FxRack => !!r);
+    this.racks = {};
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    for (const rack of racks) {
+      holdAt(rack.output.gain, t);
+      rack.output.gain.linearRampToValueAtTime(0, t + Math.max(0.005, seconds));
+      setTimeout(() => rack.dispose(), (seconds + 0.1) * 1000);
+    }
+  }
+
+  /**
+   * Silence now: every note let go, every effects tail cut, and the mix
+   * dipped for a moment so release tails do not ring on.
+   */
+  kill(): void {
+    if (!this.ctx || !this.masterGain) return;
+    this.allNotesOff();
+    this.scan?.stop();
+    this.retireRacks(KILL_FADE_SECONDS);
+    this.applyRouting();
+    const t = this.ctx.currentTime;
+    const gain = this.masterGain.gain;
+    holdAt(gain, t);
+    gain.linearRampToValueAtTime(0, t + KILL_FADE_SECONDS);
+    gain.setValueAtTime(0, t + KILL_HOLD_SECONDS);
+    gain.linearRampToValueAtTime(this.masterVolume, t + KILL_HOLD_SECONDS + 0.05);
   }
 
   private applyRouting(): void {

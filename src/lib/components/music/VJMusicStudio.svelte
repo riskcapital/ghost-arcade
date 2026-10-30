@@ -11,18 +11,19 @@
   import { ROOT_NAMES, SCALES, STUDIO_SETS, type ScaleId } from '../../music/studioSets';
   import {
     ensureMusicRuntime,
-    panic,
+    killAll,
+    playAll,
+    stopAll,
     recordingElapsed,
     startRecording,
-    startSequencer,
     stopRecording,
-    stopSequencer,
   } from '../../music/musicRuntime';
   import './studioTokens.css';
   import StudioModule from './StudioModule.svelte';
   import PlayModule from './PlayModule.svelte';
   import BeatModule from './BeatModule.svelte';
-  import LoopBrowser from './LoopBrowser.svelte';
+  import SessionGrid from './SessionGrid.svelte';
+  import ClipEditor from './ClipEditor.svelte';
   import LoopRecorderBar from './LoopRecorderBar.svelte';
   import PadsModule from './PadsModule.svelte';
   import BathModules from './BathModules.svelte';
@@ -54,9 +55,11 @@
     musicStudio.close();
   });
 
-  function toggleBeat() {
-    if (s.sequencerPlaying) stopSequencer();
-    else startSequencer();
+  const playing = $derived(s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId);
+
+  function toggleAll() {
+    if (playing) stopAll();
+    else playAll();
   }
 
   function toggleRecord() {
@@ -73,9 +76,9 @@
 </script>
 
 {#snippet loops()}
-  <StudioModule title="LOOPS" class="loops">
+  <StudioModule title="SESSION" class="loops">
     {#snippet head()}<LoopRecorderBar compact />{/snippet}
-    <LoopBrowser compact />
+    <SessionGrid compact />
   </StudioModule>
 {/snippet}
 
@@ -89,8 +92,8 @@
         {/each}
       </div>
       <span class="divider"></span>
-      <button class="transport mini" class:on={s.sequencerPlaying} onclick={toggleBeat} aria-label={s.sequencerPlaying ? 'Stop the beat' : 'Play the beat'} title={s.sequencerPlaying ? 'Stop the beat' : 'Play the beat on the VJ clock'}>
-        {#if s.sequencerPlaying}
+      <button class="transport mini" class:on={playing} onclick={toggleAll} aria-label={playing ? 'Stop everything' : 'Play'} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'}>
+        {#if playing}
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
         {:else}
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>
@@ -126,9 +129,7 @@
         {/each}
       </select>
       <button class="text-btn small" onclick={() => musicStudio.setStudioView(true)} title="Open the full-screen Studio view">STUDIO</button>
-      <button class="icon-btn" onclick={panic} title="Stop every sounding note" aria-label="All notes off">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v8M7 7a7 7 0 1 0 10 0" /></svg>
-      </button>
+      <button class="text-btn small kill" onclick={killAll} title="Silence everything now, echoes and reverb included">KILL</button>
       <button class="icon-btn" onclick={() => (minimized = !minimized)} title={minimized ? 'Expand' : 'Minimize'} aria-label={minimized ? 'Expand music studio' : 'Minimize music studio'}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
           {#if minimized}<path d="M6 15l6-6 6 6" />{:else}<path d="M6 9l6 6 6-6" />{/if}
@@ -148,6 +149,7 @@
           <div class="slot loops">{@render loops()}</div>
         {:else if s.set === 'berlin'}
           <div class="slot wide face"><BeatModule /></div>
+          <div class="slot play face"><PlayModule size={null} patches /></div>
           <div class="slot pads face"><PadsModule /></div>
           <div class="slot acid face"><BerlinModules part="acid" /></div>
           <div class="slot loops">{@render loops()}</div>
@@ -165,6 +167,8 @@
     {/if}
   </div>
 {/if}
+
+{#if shown}<ClipEditor />{/if}
 
 <style>
   .music-tray {
@@ -192,6 +196,7 @@
   .spacer { flex: 1; }
   .divider { width: 1px; height: 18px; background: var(--studio-edge-soft); }
   .rec-time { font-family: var(--ga-font-mono, ui-monospace); color: var(--ga-rec, #ff3b30); }
+  .kill { color: var(--ga-rec, #ff3b30); }
   .vel { width: 72px; }
   .icon-btn { display: inline-flex; align-items: center; justify-content: center; }
   .icon-btn svg { width: 13px; height: 13px; }

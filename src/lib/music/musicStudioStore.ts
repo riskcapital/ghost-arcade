@@ -31,9 +31,21 @@ import {
   normalizeRecordedLoop,
   type QuantizeId,
   type RecordLength,
-  type RecordedBeat,
-  type RecordedLoop,
 } from './loopRecorder';
+import {
+  MAX_SESSION_ROWS,
+  clipFromRecording,
+  defaultSession,
+  firstEmptySlot,
+  normalizeSession,
+  sessionRows,
+  updateClip,
+  withClip,
+  type Session,
+  type SessionClip,
+  type TrackId,
+} from './session';
+import { generateUUID } from '../utils/uuid';
 import { normalizeScene, type MusicScene } from './scenes';
 import type { LoopRole } from './loops';
 import { createMacroFx, normalizeMacroFx, type MacroFxInstance, type MacroFxParam, type MacroFxType } from './macroFx';
@@ -84,9 +96,8 @@ export interface MusicStudioProjectState {
   cables: Record<StudioSet, Cable[]>;
   /** Sound effects on each macro knob, by macro id. */
   macroFx: Record<string, MacroFxInstance[]>;
-  /** Loops recorded or captured from playing, and beats kept from the grid. */
-  myLoops: RecordedLoop[];
-  myBeats: RecordedBeat[];
+  /** The session grid: a track of clip slots per part. */
+  session: Session;
   /** Bars the loop recorder takes (0 = until stopped), and how it snaps notes. */
   recordLength: RecordLength;
   quantize: QuantizeId;
@@ -176,8 +187,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     drumMutes: [],
     cables: defaultCables(),
     macroFx: {},
-    myLoops: [],
-    myBeats: [],
+    session: defaultSession({ root: 2, scale: 'dorian' }, generateUUID),
     recordLength: 2,
     quantize: '1/16',
   };
@@ -243,17 +253,27 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
     cables: input.cables ? normalizeCables(input.cables) : d.cables,
     macroFx: normalizeMacroFx(input.macroFx),
-    myLoops: uniqueById((Array.isArray(input.myLoops) ? input.myLoops : []).map(normalizeRecordedLoop)),
-    myBeats: uniqueById((Array.isArray(input.myBeats) ? input.myBeats : []).map(normalizeRecordedBeat)),
+    session: normalizeSession((input as { session?: unknown }).session) ?? legacySession(input as Record<string, unknown>, normalizeKey(input.key, d.key)),
     recordLength: (RECORD_LENGTHS as readonly number[]).includes(Number(input.recordLength)) ? (Number(input.recordLength) as RecordLength) : d.recordLength,
     quantize: QUANTIZE_GRIDS.some((g) => g.id === input.quantize) ? (input.quantize as QuantizeId) : d.quantize,
   };
 }
 
-function uniqueById<T extends { id: string }>(items: Array<T | null>): T[] {
-  const out: T[] = [];
-  for (const item of items) if (item && !out.some((x) => x.id === item.id)) out.push(item);
-  return out;
+/** A project from before the session: a starter session with its recorded loops and kept beats added. */
+function legacySession(input: Record<string, unknown>, key: MusicKey): Session {
+  let session = defaultSession(key, generateUUID);
+  const add = (track: TrackId, clip: SessionClip) => {
+    session = withClip(session, track, firstEmptySlot(session, track), clip);
+  };
+  for (const raw of Array.isArray(input.myLoops) ? input.myLoops : []) {
+    const loop = normalizeRecordedLoop(raw);
+    if (loop) add(loop.role, clipFromRecording(loop));
+  }
+  for (const raw of Array.isArray(input.myBeats) ? input.myBeats : []) {
+    const beat = normalizeRecordedBeat(raw);
+    if (beat) add('beats', { kind: 'beat', id: beat.id, name: beat.name, pattern: beat.pattern });
+  }
+  return session;
 }
 
 function normalizeKey(raw: unknown, fallback: MusicKey): MusicKey {
@@ -397,16 +417,22 @@ function createMusicStudioStore() {
         playingTakeId: s.playingTakeId === id ? null : s.playingTakeId,
       })),
 
-    addMyLoop: (loop: RecordedLoop) => update((s) => ({ ...s, myLoops: [...s.myLoops, loop] })),
-    addMyBeat: (beat: RecordedBeat) => update((s) => ({ ...s, myBeats: [...s.myBeats, beat] })),
-    renameMine: (id: string, name: string) =>
-      update((s) => ({
-        ...s,
-        myLoops: s.myLoops.map((l) => (l.id === id ? { ...l, name: name.trim() || l.name } : l)),
-        myBeats: s.myBeats.map((b) => (b.id === id ? { ...b, name: name.trim() || b.name } : b)),
-      })),
-    removeMine: (id: string) =>
-      update((s) => ({ ...s, myLoops: s.myLoops.filter((l) => l.id !== id), myBeats: s.myBeats.filter((b) => b.id !== id) })),
+    /** Put a clip in a slot (null empties it). */
+    setSessionClip: (track: TrackId, row: number, clip: SessionClip | null) =>
+      update((s) => ({ ...s, session: withClip(s.session, track, row, clip) })),
+    /** Put a clip in a track's first empty slot; returns the row. */
+    addSessionClip: (track: TrackId, clip: SessionClip): number => {
+      const row = firstEmptySlot(get(store).session, track);
+      update((s) => ({ ...s, session: withClip(s.session, track, row, clip) }));
+      return row;
+    },
+    updateSessionClip: (id: string, patch: (clip: SessionClip) => SessionClip) =>
+      update((s) => ({ ...s, session: updateClip(s.session, id, patch) })),
+    addSessionRow: () =>
+      update((s) => {
+        const rows = sessionRows(s.session);
+        return rows >= MAX_SESSION_ROWS ? s : { ...s, session: withClip(s.session, 'beats', rows, null) };
+      }),
     setRecordLength: (recordLength: RecordLength) => set({ recordLength }),
     setQuantize: (quantize: QuantizeId) => set({ quantize }),
 
@@ -445,8 +471,7 @@ function createMusicStudioStore() {
         drumMutes: [...s.drumMutes],
         cables: Object.fromEntries(Object.entries(s.cables).map(([set, list]) => [set, list.map((c) => ({ ...c }))])) as Record<StudioSet, Cable[]>,
         macroFx: JSON.parse(JSON.stringify(s.macroFx)),
-        myLoops: s.myLoops.map((l) => ({ ...l, notes: l.notes.map((n) => ({ ...n })) })),
-        myBeats: s.myBeats.map((b) => ({ ...b, pattern: normalizePattern(b.pattern) })),
+        session: JSON.parse(JSON.stringify(s.session)),
         recordLength: s.recordLength,
         quantize: s.quantize,
       };

@@ -1,8 +1,8 @@
 /**
- * The studio's music as MIDI: what is playing (the beat and each loop slot),
- * a single loop, or a recorded take, as .mid files a DAW opens; and .mid
- * files read back in as loops (a drum channel becomes a beat in the grid,
- * every other part a recorded loop on the set's instrument for it).
+ * The studio's music as MIDI: what is playing (the beat and each track),
+ * a single clip, or a recorded take, as .mid files a DAW opens; and .mid
+ * files read back in as session clips (a drum channel becomes a beat clip,
+ * every other part a notes clip on the track for it).
  */
 
 import { drumVoiceForNote, type InstrumentId } from './noteEvents';
@@ -17,12 +17,12 @@ import {
   patternLengthFor,
   roleForRecording,
   writeHits,
-  type RecordedBeat,
   type RecordedLoop,
   type RecordedNote,
 } from './loopRecorder';
 import { midiFileName, writeMidiFile, type MidiSong, type MidiTrack } from './midiFile';
 import type { Take } from './recording';
+import { clipLoop, findClip, playableNotes, type Session, type SessionClip, type TrackId } from './session';
 import type { MusicKey, StudioSet } from './studioSets';
 
 export const DRUM_CHANNEL_INDEX = 9;
@@ -49,7 +49,7 @@ export interface PlayingParts {
   /** The beat, when it is playing. */
   pattern: DrumPattern | null;
   playingLoops: Partial<Record<LoopRole, string>>;
-  myLoops: readonly RecordedLoop[];
+  session: Session;
 }
 
 /** What is playing, one track per part, each repeated to the length of the longest. */
@@ -60,7 +60,8 @@ export function playingSong(parts: PlayingParts): MidiSong {
   for (const role of LOOP_ROLES) {
     const id = parts.playingLoops[role];
     if (!id) continue;
-    const loop = parts.myLoops.find((l) => l.id === id) ?? loopById(id);
+    const found = findClip(parts.session, id);
+    const loop = found?.clip.kind === 'notes' ? clipLoop(found.clip, role, parts.set, parts.key) : loopById(id);
     if (!loop || 'rows' in loop) continue;
     loops.push(loop);
     lengths.push(loop.beats);
@@ -120,22 +121,23 @@ export function downloadMidi(song: MidiSong, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export interface ImportedParts {
-  loops: RecordedLoop[];
-  beats: RecordedBeat[];
+/** A clip from a MIDI file and the track it belongs on. */
+export interface ImportedClip {
+  track: TrackId;
+  clip: SessionClip;
 }
 
 /**
- * Turn a MIDI file into loops. Each track is cut to whole bars (up to the
- * longest loop). Drum-channel tracks become beats on the grid (up to four
- * bars, on sixteenths); other tracks become recorded loops, played by the
- * set's instrument for the part they sound like.
+ * Turn a MIDI file into session clips. Each track is cut to whole bars (up
+ * to the longest loop). Drum-channel tracks become beat clips (up to four
+ * bars, on sixteenths); other tracks become notes clips on the track for the
+ * part they sound like, keeping their pitches and playing on that track's
+ * instrument.
  */
-export function importMidi(song: MidiSong, set: StudioSet, fileName: string, existing: { myLoops: readonly RecordedLoop[]; myBeats: readonly RecordedBeat[] }, makeId: () => string): ImportedParts {
-  const loops: RecordedLoop[] = [];
-  const beats: RecordedBeat[] = [];
+export function importMidi(song: MidiSong, fileName: string, existing: ReadonlyArray<{ name: string }>, makeId: () => string): ImportedClip[] {
+  const out: ImportedClip[] = [];
+  const names = () => [...existing, ...out.map((o) => o.clip)];
   const base = fileName.replace(/\.(mid|midi)$/i, '').trim() || 'MIDI';
-  const now = Date.now();
   for (const track of song.tracks) {
     if (!track.notes.length) continue;
     const end = Math.max(...track.notes.map((n) => n.beat + n.dur));
@@ -149,7 +151,7 @@ export function importMidi(song: MidiSong, set: StudioSet, fileName: string, exi
         pattern,
         track.notes.filter((n) => n.beat < gridBeats).map((n) => ({ beat: n.beat, voice: drumVoiceForNote(n.note), velocity: n.velocity })),
       );
-      beats.push({ kind: 'beat', id: makeId(), name: nextRecordedName([...existing.myBeats, ...beats], label), pattern, createdAt: now });
+      out.push({ track: 'beats', clip: { kind: 'beat', id: makeId(), name: nextRecordedName(names(), label), pattern } });
       continue;
     }
     const notes: RecordedNote[] = track.notes
@@ -157,16 +159,13 @@ export function importMidi(song: MidiSong, set: StudioSet, fileName: string, exi
       .map((n) => ({ beat: n.beat, dur: Math.min(n.dur, length - n.beat), note: n.note, velocity: n.velocity }));
     if (!notes.length) continue;
     const role = roleForRecording('synth', notes);
-    loops.push({
-      kind: 'recorded',
-      id: makeId(),
-      name: nextRecordedName([...existing.myLoops, ...loops], label),
-      role,
-      instrument: ROLE_INSTRUMENTS[set][role],
-      beats: length,
-      notes,
-      createdAt: now,
-    });
+    out.push({ track: role, clip: { kind: 'notes', id: makeId(), name: nextRecordedName(names(), label), beats: length, notes, key: null, instrument: null } });
   }
-  return { loops, beats };
+  return out;
+}
+
+/** One clip as a MIDI track: beat clips on the drum channel, notes clips as they play in `key`. */
+export function clipTrack(clip: SessionClip, key: MusicKey): MidiTrack {
+  if (clip.kind === 'beat') return patternTrack(clip.pattern, clip.name);
+  return { name: clip.name, channel: 0, notes: playableNotes(clip, key).map((n) => ({ ...n })) };
 }

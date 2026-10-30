@@ -13,19 +13,20 @@
   import { showToast } from '../../stores/errorToast';
   import { patternHasHits } from '../../music/drumPattern';
   import { LOOP_ROLES, loopById } from '../../music/loops';
+  import { findClip } from '../../music/session';
   import { scanPosition } from '../../music/scanSynth';
   import { musicStudio } from '../../music/musicStudioStore';
   import { ROOT_NAMES, SCALES, STUDIO_SETS, keyLabel, type ScaleId } from '../../music/studioSets';
   import { loadAnalogPatch, loadBerlinJam, loadDubJam } from '../../music/jams';
   import {
     captureCurrentScene,
+    killAll,
     launchScene,
-    panic,
+    playAll,
+    stopAll,
     recordingElapsed,
     startRecording,
-    startSequencer,
     stopRecording,
-    stopSequencer,
   } from '../../music/musicRuntime';
   import './studioTokens.css';
   import StudioModule from './StudioModule.svelte';
@@ -37,7 +38,8 @@
   import VisualRack from './VisualRack.svelte';
   import MacroStrip from './MacroStrip.svelte';
   import OutputStrip from './OutputStrip.svelte';
-  import LoopBrowser from './LoopBrowser.svelte';
+  import SessionGrid from './SessionGrid.svelte';
+  import ClipEditor from './ClipEditor.svelte';
   import LoopRecorderBar from './LoopRecorderBar.svelte';
   import PadsModule from './PadsModule.svelte';
   import PlayModule from './PlayModule.svelte';
@@ -53,7 +55,7 @@
   let elapsed = $state(0);
   let tempo = $state(120);
   let scanX = $state(0);
-  let lowerTab = $state<'scenes' | 'loops' | 'takes'>('loops');
+  let lowerTab = $state<'scenes' | 'session' | 'takes'>('session');
 
   const s = $derived($musicStudio);
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
@@ -67,7 +69,7 @@
         : playingScene
           ? `Playing ${playingScene.name}`
           : 'Beat, loops, take and visuals change together, on the bar'
-      : lowerTab === 'loops'
+      : lowerTab === 'session'
         ? `In ${keyLabel(s.key)}`
         : 'Recorded performances',
   );
@@ -104,9 +106,11 @@
     return () => cancelAnimationFrame(frame);
   });
 
-  function toggleBeat() {
-    if (s.sequencerPlaying) stopSequencer();
-    else startSequencer();
+  const playing = $derived(s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId);
+
+  function toggleAll() {
+    if (playing) stopAll();
+    else playAll();
   }
 
   function toggleRecord() {
@@ -127,7 +131,10 @@
   }
 
   function loopNames(loops: Partial<Record<string, string>>): string {
-    return LOOP_ROLES.map((role) => loops[role] && loopById(loops[role]!)?.name).filter(Boolean).join(', ');
+    return LOOP_ROLES.map((role) => {
+      const id = loops[role];
+      return id ? (findClip(s.session, id)?.clip.name ?? loopById(id)?.name) : null;
+    }).filter(Boolean).join(', ');
   }
 
   function columnLabel(column: number | null): string {
@@ -153,7 +160,7 @@
   <StudioModule title={lowerTab.toUpperCase()} subtitle={lowerSubtitle} class="lower">
     {#snippet lead()}
       <div class="seg small" role="tablist" aria-label="Scenes, loops or takes">
-        <button role="tab" aria-selected={lowerTab === 'loops'} class:on={lowerTab === 'loops'} onclick={() => (lowerTab = 'loops')}>Loops</button>
+        <button role="tab" aria-selected={lowerTab === 'session'} class:on={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
         <button role="tab" aria-selected={lowerTab === 'scenes'} class:on={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>Scenes{s.scenes.length ? ` ${s.scenes.length}` : ''}</button>
         <button role="tab" aria-selected={lowerTab === 'takes'} class:on={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>Takes{s.takes.length ? ` ${s.takes.length}` : ''}</button>
       </div>
@@ -164,12 +171,12 @@
           <button class="text-btn small" onclick={() => void jam()} title="Load the set's ready-made jam: a groove, loops, its visuals and the cables between them">LOAD JAM</button>
         {/if}
         <button class="text-btn small" onclick={captureCurrentScene} title="Save what is playing now as a scene">+ SAVE SCENE</button>
-      {:else if lowerTab === 'loops'}
+      {:else if lowerTab === 'session'}
         <LoopRecorderBar />
       {/if}
     {/snippet}
-    {#if lowerTab === 'loops'}
-      <LoopBrowser />
+    {#if lowerTab === 'session'}
+      <SessionGrid />
     {:else if lowerTab === 'takes'}
       <div class="scroll"><TakeList /></div>
     {:else}
@@ -202,8 +209,8 @@
     <header class="bar">
       <span class="mode">STUDIO</span>
       <span class="sep"></span>
-      <button class="transport" class:on={s.sequencerPlaying} onclick={toggleBeat} title={s.sequencerPlaying ? 'Stop the beat' : 'Play the beat on the VJ clock'} aria-label={s.sequencerPlaying ? 'Stop the beat' : 'Play the beat'}>
-        {#if s.sequencerPlaying}
+      <button class="transport" class:on={playing} onclick={toggleAll} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'} aria-label={playing ? 'Stop everything' : 'Play'}>
+        {#if playing}
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
         {:else}
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>
@@ -239,9 +246,7 @@
         {/each}
       </div>
       <span class="sep"></span>
-      <button class="icon-btn" onclick={panic} title="Stop every sounding note" aria-label="All notes off">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v8M7 7a7 7 0 1 0 10 0" /></svg>
-      </button>
+      <button class="text-btn kill" onclick={killAll} title="Silence everything now, echoes and reverb included">KILL</button>
       <button class="text-btn" onclick={() => musicStudio.setStudioView(false)} title="Back to the music tray; the music keeps playing">TRAY</button>
       <button class="text-btn" onclick={() => musicStudio.close()} title="Close the studio and stop the music">EXIT</button>
     </header>
@@ -274,7 +279,8 @@
         <VisualRack />
         <RackModules />
       </div>
-      <div class="slot b12 face"><BeatModule /></div>
+      <div class="slot b1 face"><PlayModule /></div>
+      <div class="slot b2 face"><BeatModule /></div>
       <div class="slot b3 face"><PadsModule /></div>
     {:else if s.set === 'dub'}
       <div class="rack left face">
@@ -303,6 +309,7 @@
 
     <CableLayer {root} />
     <MacroEditor />
+    <ClipEditor />
   </div>
 {/if}
 
@@ -387,6 +394,8 @@
   .spacer { flex: 1; min-width: 4px; }
   .readouts { display: flex; gap: 12px; font-family: var(--ga-font-mono, ui-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
   .rec-time { color: var(--ga-rec, #ff3b30); }
+  .kill { color: var(--ga-rec, #ff3b30); }
+  .kill:hover { border-color: var(--ga-rec, #ff3b30); }
   .key { display: flex; align-items: center; gap: 6px; }
 
   /* ── Layout ── */
