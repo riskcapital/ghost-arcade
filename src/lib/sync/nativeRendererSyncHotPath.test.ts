@@ -37,6 +37,7 @@ let mod: SyncModule;
 let types: typeof import('../types');
 let edge: typeof import('../drawing/edgeEffects');
 let parseCubeLut: typeof import('../color/cubeLut').parseCubeLut;
+let packUniforms: typeof import('../renderer/nativeEffectPass').packNativeEffectPassUniforms;
 let manifestIds: string[];
 
 beforeAll(async () => {
@@ -68,7 +69,9 @@ beforeAll(async () => {
   types = await import('../types');
   edge = await import('../drawing/edgeEffects');
   ({ parseCubeLut } = await import('../color/cubeLut'));
-  manifestIds = (await import('../renderer/nativeEffectPass')).NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id);
+  const effectPass = await import('../renderer/nativeEffectPass');
+  manifestIds = effectPass.NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id);
+  packUniforms = effectPass.packNativeEffectPassUniforms;
 });
 
 afterEach(() => {
@@ -191,7 +194,7 @@ describe('graph routes and effect passes', () => {
 
     const descriptor = mod.effectToNativeDescriptor(layer.effects[0])!;
     expect(descriptor).toBe(mod.effectToNativeDescriptor({ ...layer.effects[0], params: { brightness: 1.9 } }));
-    expect(sync.lastLayers.get(layer.id).sourceSig).toContain(descriptor);
+    expect(sync.lastLayers.get(layer.id).effectValuesSig).toContain(descriptor);
     expect(mod.nativeEffectPassesForLayer(layer)?.[0].descriptor).toBe(descriptor);
   });
 });
@@ -386,5 +389,133 @@ describe('library video arms', () => {
     expect(pending[pending.length - 1].id).toBe('tray-49');
     expect(pending.every((item) => !('videoElement' in item))).toBe(true);
     expect(pending[0]).toMatchObject({ durationSeconds: 12, videoWidth: 1280, videoHeight: 720 });
+  });
+});
+
+describe('effect and instrument param values', () => {
+  const REBIND = ['bind_media_source', 'bind_isf_shader', 'remove_native_graph_layer', 'set_native_graph_layer'];
+  // Uniform slots that carry an effect's values: code, amount, mix, 16 params.
+  const VALUE_SLOTS = [4, 5, 6, ...Array.from({ length: 16 }, (_, i) => 8 + i)];
+  const lut = (k: number) => parseCubeLut(`LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n${k / 10} 1 1`);
+  const floats = (b64: string) => new Float32Array(Uint8Array.from(Buffer.from(b64, 'base64')).buffer);
+  const sentTypes = () => sent().map((command) => command.type).filter((type) => type !== 'set_render_clock' && type !== 'present');
+  const expectUniformValues = (actual: ArrayLike<number>, pass: any) => {
+    const expected = packUniforms({
+      sourceId: 'input', targetSourceId: 'output', effect: pass.effect, amount: pass.amount, mix: pass.mix,
+      params: { ...pass.params, audioLevel: 0 }, width: 1920, height: 1080,
+    });
+    expect(actual).toHaveLength(expected.length);
+    for (const slot of VALUE_SLOTS) expect(actual[slot]).toBeCloseTo(expected[slot], 5);
+  };
+  const planetLayer = (effects: any[] = []) => {
+    const layer = types.createLayer('planet-1', 'Planet', 'gpu') as any;
+    layer.visible = true;
+    layer.gpuLayerContent = { shaderId: 'planet', params: { cloudSpeed: 1, sunBrightness: 1 } };
+    layer.effects = effects;
+    return layer;
+  };
+  const graphSync = () => {
+    const sync = makeSync();
+    sync.nativeGraphReadyKinds = new Set(['planet']);
+    return sync;
+  };
+
+  it('keeps a media layer bound while an effect param animates; adding an effect rebinds', async () => {
+    const sync = makeSync();
+    let layer = imageLayer(0, twoEffects(0));
+    await sync.flush(1920, 1080, [layer]);
+    await sync.flush(1920, 1080, [layer]);
+
+    for (const value of [1.3, 1.4, 1.5]) {
+      layer = { ...layer, effects: [{ ...layer.effects[0], params: { brightness: value } }, layer.effects[1]] };
+      h.batches.length = 0;
+      await sync.flush(1920, 1080, [layer]);
+      expect(sentTypes().filter((type) => REBIND.includes(type))).toEqual([]);
+      const [graph] = sentOfType('queue_compute_graph');
+      const uniform = graph.buffers.find((buffer: any) => String(buffer.id).endsWith(':pass:0:uniform'));
+      expectUniformValues(uniform.initial_f32, mod.nativeEffectPassesForLayer(layer)![0]);
+    }
+
+    layer = { ...layer, effects: [...layer.effects, { id: 'fx-c', type: 'invert', enabled: true, opacity: 1, params: {} }] };
+    h.batches.length = 0;
+    await sync.flush(1920, 1080, [layer]);
+    expect(sentOfType('bind_media_source')).toHaveLength(1);
+  });
+
+  it('rewrites only the installed uniforms when an effect param on a GPU instrument changes', async () => {
+    const sync = graphSync();
+    const layer = planetLayer(twoEffects(0));
+    await sync.flush(1920, 1080, [layer]);
+    const [install] = sentOfType('set_native_graph_layer');
+    expect(install?.effect_graph?.buffers?.length).toBeGreaterThan(0);
+    const uniformIds = install.effect_graph.buffers.map((buffer: any) => String(buffer.id));
+    await sync.flush(1920, 1080, [layer]);
+
+    // Changed in place: the effect pass cache has to notice.
+    layer.effects[0].params.brightness = 1.9;
+    h.batches.length = 0;
+    await sync.flush(1920, 1080, [layer]);
+
+    expect(new Set(sentTypes())).toEqual(new Set(['update_native_graph_buffer']));
+    const updates = sentOfType('update_native_graph_buffer');
+    expect(updates.map((update) => update.buffer_id).sort()).toEqual([...uniformIds].sort());
+    mod.nativeEffectPassesForLayer(layer)!.forEach((pass, index) => {
+      const update = updates.find((candidate) => candidate.buffer_id.endsWith(`:pass:${index}:uniform`))!;
+      expect(update.layer_id).toBe(layer.id);
+      expectUniformValues(floats(update.initial_b64), pass);
+    });
+
+    // Unchanged values send nothing.
+    h.batches.length = 0;
+    await sync.flush(1920, 1080, [layer]);
+    expect(sentTypes()).toEqual([]);
+  });
+
+  it('re-sends a GPU instrument with new params without rebinding it', async () => {
+    const sync = graphSync();
+    let layer = planetLayer();
+    await sync.flush(1920, 1080, [layer]);
+    const [first] = sentOfType('set_native_graph_layer');
+    await sync.flush(1920, 1080, [layer]);
+
+    layer = { ...layer, gpuLayerContent: { ...layer.gpuLayerContent, params: { cloudSpeed: 2.5, sunBrightness: 1 } } };
+    h.batches.length = 0;
+    await sync.flush(1920, 1080, [layer]);
+
+    expect(sentOfType('bind_media_source')).toHaveLength(0);
+    const installs = sentOfType('set_native_graph_layer');
+    expect(installs).toHaveLength(1);
+    expect(installs[0].params.cloudSpeed).not.toBe(first.params.cloudSpeed);
+  });
+
+  it('re-installs a GPU instrument when an effect is toggled or its LUT changes', async () => {
+    const sync = graphSync();
+    let layer = planetLayer(twoEffects(0));
+    await sync.flush(1920, 1080, [layer]);
+    await sync.flush(1920, 1080, [layer]);
+
+    layer = { ...layer, effects: [layer.effects[0], { ...layer.effects[1], enabled: false }] };
+    h.batches.length = 0;
+    await sync.flush(1920, 1080, [layer]);
+    expect(sentOfType('update_native_graph_buffer')).toHaveLength(0);
+    const [toggled] = sentOfType('set_native_graph_layer');
+    expect(toggled.effect_graph.render_passes).toHaveLength(1);
+
+    const lutEffect = (k: number) => ({ id: 'lut', type: 'cubeLut', enabled: true, opacity: 1, params: { cubeLut: lut(k), lutStrength: 1 } });
+    layer = { ...layer, effects: [lutEffect(1)] };
+    await sync.flush(1920, 1080, [layer]);
+    layer = { ...layer, effects: [lutEffect(2)] };
+    h.batches.length = 0;
+    await sync.flush(1920, 1080, [layer]);
+    expect(sentOfType('update_native_graph_buffer')).toHaveLength(0);
+    const [relut] = sentOfType('set_native_graph_layer');
+    expect(relut.effect_graph.buffers.some((buffer: any) => buffer.immutable_lut)).toBe(true);
+
+    // The LUT's strength is a value: its uniform is rewritten, its table is not.
+    layer = { ...layer, effects: [{ ...layer.effects[0], params: { ...layer.effects[0].params, lutStrength: 0.5 } }] };
+    h.batches.length = 0;
+    await sync.flush(1920, 1080, [layer]);
+    expect(new Set(sentTypes())).toEqual(new Set(['update_native_graph_buffer']));
+    expect(sentOfType('update_native_graph_buffer').map((update) => update.buffer_id).some((id) => id.includes(':lut:'))).toBe(false);
   });
 });
