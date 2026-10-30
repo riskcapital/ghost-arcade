@@ -123,7 +123,7 @@ matter. All eight drone knobs work on every patch.
 
 ### Playing with a band (`bandFx.ts`, `keyFinder.ts`, `components/music/BandPanel.svelte`)
 
-The **Band** tab treats the live input as the band (feed it the desk's aux
+The **Live band** tab treats the live input as the band (feed it the desk's aux
 send) and works it the way a dub engineer works the desk. Only effects come
 back from the studio; the band's dry sound stays on the band's desk.
 
@@ -136,7 +136,7 @@ back from the studio; the band's dry sound stays on the band's desk.
   a texture: short overlapping grains read from random points of that
   moment, an octave down, as played or an octave up, until it is let go.
   An audio worklet (`freezeWorklet.ts`) keeps the last four seconds.
-- **Key**: **Listen** weighs the pitched notes coming in (the live input and
+- **Band's key**: **Listen** weighs the pitched notes coming in (the live input and
   Live's MIDI clips; level hits from Live's audio tracks do not count)
   against the major and minor key profiles, and shows the key it hears and
   how sure it is. **Use key** puts the studio in it, so the bowls, chords,

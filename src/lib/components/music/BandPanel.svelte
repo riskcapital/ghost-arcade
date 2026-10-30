@@ -44,7 +44,7 @@
   const sure = $derived(!b.heard ? '' : b.heard.confidence > 0.5 ? 'sure' : b.heard.confidence > 0.2 ? 'likely' : 'a guess so far');
 </script>
 
-<div class="band" role="group" aria-label="Band">
+<div class="band" role="group" aria-label="Live band">
   <section class="input">
     <span class="ga-eyebrow">Band input</span>
     <button class="power" class:on={s.inputOn} aria-pressed={s.inputOn} onclick={() => (s.inputOn ? stopLiveInput() : void startLiveInput())} title={s.inputOn ? 'Stop listening to the band' : 'Listen to the band (choose the input in Mixer)'}>
@@ -103,7 +103,7 @@
   </section>
 
   <section>
-    <span class="ga-eyebrow">Key</span>
+    <span class="ga-eyebrow">Band's key</span>
     <div class="row">
       <button class="hold" class:on={b.listening} aria-pressed={b.listening} onclick={() => listenForKey(!b.listening)} title={b.listening ? 'Stop listening' : "Listen to the band's notes for its key"}>{b.listening ? 'Listening' : 'Listen'}</button>
       <button class="studio-btn" disabled={!b.heard} onclick={useHeardKey} title="Play the studio in the key heard">Use key</button>
