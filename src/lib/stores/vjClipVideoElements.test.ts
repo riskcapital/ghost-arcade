@@ -60,8 +60,13 @@ vi.stubGlobal('requestAnimationFrame', (callback: (time: number) => void) => set
 vi.stubGlobal('cancelAnimationFrame', (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle));
 
 const { vjClipLauncher } = await import('./vjClipLauncher');
+const { keyframeTimeline } = await import('./keyframeTimeline');
 
-afterAll(() => vi.unstubAllGlobals());
+afterAll(() => {
+  // Triggers start the keyframe transport; stop it before its frames lose rAF.
+  keyframeTimeline.stop();
+  vi.unstubAllGlobals();
+});
 
 describe('VJ clip video elements beside the render core', () => {
   it('never plays resident grid clips or triggered clips, and loads metadata only', async () => {
