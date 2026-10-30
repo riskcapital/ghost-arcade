@@ -1,6 +1,5 @@
 <script lang="ts" module>
-  import { get as getStore } from 'svelte/store';
-  import { project as projectStore } from '../stores/layers';
+  import { releaseBlobUrl } from './blobUrlUsers';
 
   /** Blob URLs this panel made for models, with the file behind each. Keyed
    *  by URL rather than by panel, because one panel edits whichever layer or
@@ -8,13 +7,10 @@
    *  new file frees only the URL the edited layer was using. */
   const modelBlobFiles = new Map<string, File>();
 
-  /** Revoke a model URL this panel made once no layer shows it any more. */
+  /** Revoke a model URL this panel made once nothing uses it any more
+   *  (layers, VJ clips in any block or deck, media, presets, undo steps). */
   function releaseModelBlobUrl(url: string | null | undefined): void {
-    if (!url || !modelBlobFiles.has(url)) return;
-    const layers = getStore(projectStore)?.layers ?? [];
-    if (layers.some((l) => l.model3dContent?.modelData === url)) return;
-    modelBlobFiles.delete(url);
-    URL.revokeObjectURL(url);
+    releaseBlobUrl(modelBlobFiles, url);
   }
 </script>
 
