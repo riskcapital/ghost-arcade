@@ -258,6 +258,21 @@ export const abletonSignalLevels = writable<Record<string, number>>({});
 /** Last time each score pitch fired (performance.now()), for lane flashes. */
 export const abletonScoreHits = writable<Record<number, number>>({});
 
+/**
+ * What the music studio hears from Live while it is in control: the notes
+ * of its chosen MIDI tracks as they play, and the level of its chosen audio
+ * tracks. Set with `abletonBridge.setStudioFeed`.
+ */
+export interface StudioFeed {
+  /** MIDI tracks whose clip notes the studio wants. */
+  noteTracks: number[];
+  /** Audio tracks whose level the studio wants. */
+  levelTracks: number[];
+  /** Notes as they play: velocity 0-127 as Live has it, length in beats. */
+  onNotes: (track: number, notes: { pitch: number; velocity: number; beats: number }[]) => void;
+  onLevel: (track: number, level: number) => void;
+}
+
 type LiveMessage = Record<string, any> & { t: string };
 
 const api = () => (typeof window !== 'undefined' ? (window as any).ghostAbleton : undefined);
@@ -312,6 +327,7 @@ function createAbletonBridge() {
   const ECHO_RANGE = 0.05;
   /** The last watch request sent, to avoid repeating it. */
   let sentWatch = '';
+  let studioFeed: StudioFeed | null = null;
 
   // High-rate values stay out of the store.
   const paramValues = new Map<string, number>();
@@ -503,8 +519,11 @@ function createAbletonBridge() {
     if (s.playing) {
       const columns = get(vjClipLauncher).numColumns;
       const active = new Set<string>();
-      for (const t of scoreTrackIndices(s)) {
+      const scoreTracks = new Set(scoreTrackIndices(s));
+      const studioTracks = new Set(studioFeed?.noteTracks ?? []);
+      for (const t of new Set([...scoreTracks, ...studioTracks])) {
         const track = s.tracks[t];
+        if (!track) continue;
         const clip = track.playing >= 0 ? track.slots[track.playing] : null;
         if (!clip?.notes?.length) continue;
         const key = `${t}:${track.playing}:${track.startedBeat}`;
@@ -517,7 +536,9 @@ function createAbletonBridge() {
         if (elapsed <= from) { scorePlayhead.set(key, from); continue; }
         scorePlayhead.set(key, elapsed);
         const due = notesDue(clip.notes, from, elapsed, clip.length);
-        if (due.length) playNotes(s, t, track, due, columns);
+        if (!due.length) continue;
+        if (scoreTracks.has(t)) playNotes(s, t, track, due, columns);
+        if (studioTracks.has(t)) studioFeed?.onNotes(t, due.map(({ note }) => ({ pitch: note[0], velocity: note[3], beats: note[2] })));
       }
       if (scorePlayhead.size > active.size) {
         for (const key of scorePlayhead.keys()) if (!active.has(key)) scorePlayhead.delete(key);
@@ -761,8 +782,8 @@ function createAbletonBridge() {
     const s = read();
     if (!s.connected) return;
     const params = s.signals.flatMap(l => l.source.kind === 'param' ? [[l.source.track, l.source.device, l.source.param]] : []);
-    const levels = [...new Set(s.signals.flatMap(l => l.source.kind === 'level' ? [l.source.track] : []))];
-    const score = scoreTrackIndices(s);
+    const levels = [...new Set([...s.signals.flatMap(l => l.source.kind === 'level' ? [l.source.track] : []), ...(studioFeed?.levelTracks ?? [])])];
+    const score = [...new Set([...scoreTrackIndices(s), ...(studioFeed?.noteTracks ?? [])])];
     const watch = JSON.stringify({ params, levels, score });
     if (!force && watch === sentWatch) return;
     sentWatch = watch;
@@ -1066,6 +1087,7 @@ function createAbletonBridge() {
         const range = levelRanges.get(track) ?? { lo: level, hi: level };
         levelRanges.set(track, range);
         levelValues.set(track, autoRange(range, level));
+        if (studioFeed?.levelTracks.includes(track)) studioFeed.onLevel(track, levelValues.get(track) ?? 0);
         break;
       }
     }
@@ -1152,6 +1174,11 @@ function createAbletonBridge() {
 
     // ── Live remote ─────────────────────────────────────────────────
 
+    /** What the music studio wants streamed from Live; null stops it. */
+    setStudioFeed(feed: StudioFeed | null) {
+      studioFeed = feed;
+      syncWatch();
+    },
     launchScene(scene: number) {
       send({ t: 'fire_scene', s: scene });
     },

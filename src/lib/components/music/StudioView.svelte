@@ -48,6 +48,9 @@
   import MacroEditor from './MacroEditor.svelte';
   import TakeList from './TakeList.svelte';
   import MixerPanel from './MixerPanel.svelte';
+  import LiveSessionGrid from './LiveSessionGrid.svelte';
+  import { abletonBridge } from '../../ableton/abletonBridge';
+  import { ensureLiveFeed } from '../../music/liveFeed';
 
   let { nativePreview = false }: { nativePreview?: boolean } = $props();
 
@@ -71,7 +74,11 @@
           ? `Playing ${playingScene.name}`
           : 'Beat, loops, take and visuals change together, on the bar'
       : lowerTab === 'session'
-        ? `In ${keyLabel(s.key)}`
+        ? s.liveControl
+          ? $abletonBridge.connected
+            ? 'Launching in Ableton Live'
+            : 'Waiting for Ableton Live'
+          : `In ${keyLabel(s.key)}`
         : lowerTab === 'mixer'
           ? 'Level, EQ and pan for every instrument and the live input'
           : 'Recorded performances',
@@ -109,9 +116,22 @@
     return () => cancelAnimationFrame(frame);
   });
 
-  const playing = $derived(s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId);
+  const playing = $derived(s.liveControl ? $abletonBridge.playing : s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId);
+
+  ensureLiveFeed();
+
+  async function toggleLiveControl() {
+    const on = !s.liveControl;
+    musicStudio.setLiveControl(on);
+    if (on && !get(abletonBridge).enabled) await abletonBridge.enable();
+  }
 
   function toggleAll() {
+    if (s.liveControl) {
+      if ($abletonBridge.playing) abletonBridge.stop();
+      else abletonBridge.play();
+      return;
+    }
     if (playing) stopAll();
     else playAll();
   }
@@ -176,11 +196,12 @@
         {/if}
         <button class="text-btn small" onclick={captureCurrentScene} title="Save what is playing now as a scene">+ SAVE SCENE</button>
       {:else if lowerTab === 'session'}
-        <LoopRecorderBar />
+        {#if !s.liveControl}<LoopRecorderBar />{/if}
+        <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own instruments" : "Control Ableton Live from here: its clips and scenes, its sound. The studio's instruments go quiet."}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>ABLETON LIVE</button>
       {/if}
     {/snippet}
     {#if lowerTab === 'session'}
-      <SessionGrid />
+      {#if s.liveControl}<LiveSessionGrid />{:else}<SessionGrid />{/if}
     {:else if lowerTab === 'mixer'}
       <MixerPanel />
     {:else if lowerTab === 'takes'}
@@ -487,4 +508,7 @@
     text-overflow: ellipsis;
   }
   .cell.playing { border-color: var(--studio-accent); color: var(--studio-ink); }
+  .live-led { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--studio-edge); vertical-align: 1px; }
+  .live-led.on { background: var(--studio-muted); }
+  .live-led.linked { background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent); }
 </style>
