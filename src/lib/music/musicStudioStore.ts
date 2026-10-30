@@ -69,6 +69,9 @@ import {
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
+import { defaultLiveInput, defaultStrip, normalizeLiveInput, normalizeMixer, type ChannelId, type ChannelStrip, type LiveInputSettings, type MixerState } from './mixer';
+import { normalizeLiveRoles, type LiveRoles } from './liveControl';
+import type { VoiceSourceId } from './visualVoices';
 
 export const MUSIC_STUDIO_SCHEMA = 1;
 
@@ -101,6 +104,14 @@ export interface MusicStudioProjectState {
   /** Bars the loop recorder takes (0 = until stopped), and how it snaps notes. */
   recordLength: RecordLength;
   quantize: QuantizeId;
+  /** EQ, pan, mute and solo per channel. */
+  mixer: MixerState;
+  /** The live instrument input's settings (the device is kept per computer). */
+  liveInput: LiveInputSettings;
+  /** Ableton Live is in control: the studio's instruments are off and the session grid fires Live. */
+  liveControl: boolean;
+  /** Live track name -> the sound it feeds the visual voices as. */
+  liveRoles: LiveRoles;
 }
 
 export interface MusicStudioState extends MusicStudioProjectState {
@@ -127,6 +138,11 @@ export interface MusicStudioState extends MusicStudioProjectState {
   queuedLoops: Partial<Record<LoopRole, string | null>>;
   /** The scan synth is reading the picture. */
   scanOn: boolean;
+  /** Audio input id for the live input, '' for the default. Machine wiring, kept per computer. */
+  inputDevice: string;
+  /** The live input is listening, and why it could not if it failed. */
+  inputOn: boolean;
+  inputError: string | null;
 }
 
 /** The saved section of a project file. */
@@ -136,6 +152,7 @@ export interface MusicStudioProjectSection extends MusicStudioProjectState {
 
 const MIDI_INPUT_KEY = 'ghostarcade-music-midi-input';
 const KEYBOARD_SIZE_KEY = 'ghostarcade-music-keyboard-size';
+const INPUT_DEVICE_KEY = 'ghostarcade-music-input-device';
 
 function loadPref(key: string): string {
   try {
@@ -190,6 +207,10 @@ export function defaultProjectState(): MusicStudioProjectState {
     session: defaultSession({ root: 2, scale: 'dorian' }, generateUUID),
     recordLength: 2,
     quantize: '1/16',
+    mixer: {},
+    liveInput: defaultLiveInput(),
+    liveControl: false,
+    liveRoles: {},
   };
 }
 
@@ -256,6 +277,10 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     session: normalizeSession((input as { session?: unknown }).session) ?? legacySession(input as Record<string, unknown>, normalizeKey(input.key, d.key)),
     recordLength: (RECORD_LENGTHS as readonly number[]).includes(Number(input.recordLength)) ? (Number(input.recordLength) as RecordLength) : d.recordLength,
     quantize: QUANTIZE_GRIDS.some((g) => g.id === input.quantize) ? (input.quantize as QuantizeId) : d.quantize,
+    mixer: normalizeMixer(input.mixer),
+    liveInput: normalizeLiveInput(input.liveInput),
+    liveControl: input.liveControl === true,
+    liveRoles: normalizeLiveRoles(input.liveRoles),
   };
 }
 
@@ -292,6 +317,9 @@ function initialState(): MusicStudioState {
     keysArmed: true,
     midiInput: loadPref(MIDI_INPUT_KEY),
     keyboardSize: loadKeyboardSize(),
+    inputDevice: loadPref(INPUT_DEVICE_KEY),
+    inputOn: false,
+    inputError: null,
     sequencerPlaying: false,
     recording: false,
     recordingSince: null,
@@ -374,6 +402,28 @@ function createMusicStudioStore() {
     setVolume: (instrument: InstrumentId, volume: number) =>
       update((s) => ({ ...s, volumes: { ...s.volumes, [instrument]: clamp01(volume, s.volumes[instrument]) } })),
     setMasterVolume: (volume: number) => update((s) => ({ ...s, masterVolume: clamp01(volume, s.masterVolume) })),
+    setStrip: (id: ChannelId, patch: Partial<ChannelStrip>) =>
+      update((s) => ({ ...s, mixer: { ...s.mixer, [id]: { ...(s.mixer[id] ?? defaultStrip()), ...patch } } })),
+    resetStrip: (id: ChannelId) =>
+      update((s) => {
+        const mixer = { ...s.mixer };
+        delete mixer[id];
+        return { ...s, mixer };
+      }),
+    setLiveInput: (patch: Partial<LiveInputSettings>) => update((s) => ({ ...s, liveInput: normalizeLiveInput({ ...s.liveInput, ...patch }) })),
+    setInputDevice: (inputDevice: string) => {
+      savePref(INPUT_DEVICE_KEY, inputDevice);
+      set({ inputDevice });
+    },
+    setInputStatus: (inputOn: boolean, inputError: string | null = null) => set({ inputOn, inputError }),
+    setLiveControl: (liveControl: boolean) => set({ liveControl }),
+    setLiveRole: (track: string, role: VoiceSourceId | null) =>
+      update((s) => {
+        const liveRoles = { ...s.liveRoles };
+        if (role) liveRoles[track] = role;
+        else delete liveRoles[track];
+        return { ...s, liveRoles };
+      }),
 
     setVisual: (instrument: InstrumentId, patch: Partial<NoteVisualSettings>) =>
       update((s) => ({
@@ -474,6 +524,10 @@ function createMusicStudioStore() {
         session: JSON.parse(JSON.stringify(s.session)),
         recordLength: s.recordLength,
         quantize: s.quantize,
+        mixer: JSON.parse(JSON.stringify(s.mixer)),
+        liveInput: { ...s.liveInput },
+        liveControl: s.liveControl,
+        liveRoles: { ...s.liveRoles },
       };
     },
 

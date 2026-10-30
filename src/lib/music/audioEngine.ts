@@ -21,6 +21,7 @@ import { DubBass, Siren, fireShot } from './dubSounds';
 import { AnalogSynth, type AnalogDest, type AnalogSource } from './analogSynth';
 import { ScanSynth } from './scanSynth';
 import { defaultParams, type StudioSet } from './studioSets';
+import { EQ_BANDS, EQ_BAND_IDS, channelAudible, meterLevel, stripFor, type ChannelId, type EqBand, type MixerState } from './mixer';
 
 interface SubtractivePatch {
   osc1: OscillatorType;
@@ -60,6 +61,17 @@ interface MelodicVoice {
   kill: (time: number) => void;
 }
 
+/** One mixer channel: its bus feeds the EQ, pan and mute/solo gate, and a meter reads after the gate. */
+interface Strip {
+  input: GainNode;
+  eq: Record<EqBand, BiquadFilterNode>;
+  pan: StereoPannerNode;
+  gate: GainNode;
+  meter: AnalyserNode;
+}
+
+const MIXER_RAMP_SECONDS = 0.015;
+
 function midiToHz(note: number): number {
   return 440 * Math.pow(2, (note - 69) / 12);
 }
@@ -75,6 +87,14 @@ export class MusicAudioEngine {
   /** End of the chain (after the compressor): what reaches the speakers. */
   private output: DynamicsCompressorNode | null = null;
   private bus: Record<InstrumentId, GainNode> | null = null;
+  private strips = new Map<ChannelId, Strip>();
+  private mixer: MixerState = {};
+  private mixerChannels: readonly ChannelId[] = [];
+  /** Studio instruments go quiet while Live is in control; the input stays. */
+  private instrumentsSilenced = false;
+  private inputMonitor = true;
+  private inputVolume = 0.5;
+  private meterBuffer: Float32Array<ArrayBuffer> | null = null;
   private noise: AudioBuffer | null = null;
   private voices = new Map<string, MelodicVoice>();
   private openHat: { gain: GainNode; time: number } | null = null;
@@ -108,6 +128,11 @@ export class MusicAudioEngine {
   /** The music clock, in seconds. Creates the audio graph on first use. */
   now(): number {
     return this.ensure().currentTime;
+  }
+
+  /** The audio context once the graph exists. */
+  context(): AudioContext | null {
+    return this.ctx;
   }
 
   /** Audio clock if the graph exists yet, without creating it. */
@@ -254,6 +279,86 @@ export class MusicAudioEngine {
     gain.linearRampToValueAtTime(this.masterVolume, t + KILL_HOLD_SECONDS + 0.05);
   }
 
+  /** The mixer's strips, and which channels are in play (for solo). */
+  setMixer(mixer: MixerState, channels: readonly ChannelId[]): void {
+    this.mixer = mixer;
+    this.mixerChannels = channels;
+    this.applyMixer();
+  }
+
+  setInstrumentsSilenced(on: boolean): void {
+    this.instrumentsSilenced = on;
+    this.applyMixer();
+  }
+
+  /** The input channel's fader, 0-1 (up to +6 dB at the top). */
+  setInputVolume(volume: number): void {
+    this.inputVolume = Math.max(0, Math.min(1, volume));
+    const strip = this.strips.get('input');
+    if (strip && this.ctx) strip.input.gain.setTargetAtTime(this.inputVolume * 2, this.ctx.currentTime, 0.02);
+  }
+
+  /** Hear the live input through the mix, or only let it drive the visuals. */
+  setInputMonitor(on: boolean): void {
+    this.inputMonitor = on;
+    this.applyMixer();
+  }
+
+  /** Where the live input connects: the input channel's strip. Creates the graph on first use. */
+  inputChannel(): AudioNode {
+    this.ensure();
+    return this.strips.get('input')!.input;
+  }
+
+  /** Meter levels after each strip, 0-1. */
+  channelLevels(ids: readonly ChannelId[]): Partial<Record<ChannelId, number>> {
+    const out: Partial<Record<ChannelId, number>> = {};
+    for (const id of ids) {
+      const strip = this.strips.get(id);
+      if (!strip) continue;
+      if (!this.meterBuffer || this.meterBuffer.length !== strip.meter.fftSize) this.meterBuffer = new Float32Array(strip.meter.fftSize);
+      strip.meter.getFloatTimeDomainData(this.meterBuffer);
+      out[id] = meterLevel(this.meterBuffer);
+    }
+    return out;
+  }
+
+  private applyMixer(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    for (const [id, strip] of this.strips) {
+      const settings = stripFor(this.mixer, id);
+      for (const band of EQ_BAND_IDS) strip.eq[band].gain.setTargetAtTime(settings[band], t, MIXER_RAMP_SECONDS);
+      strip.pan.pan.setTargetAtTime(settings.pan, t, MIXER_RAMP_SECONDS);
+      let open = channelAudible(this.mixer, id, this.mixerChannels);
+      if (id === 'input') open = open && this.inputMonitor;
+      else if (this.instrumentsSilenced) open = false;
+      strip.gate.gain.setTargetAtTime(open ? 1 : 0, t, MIXER_RAMP_SECONDS);
+    }
+  }
+
+  private makeStrip(ctx: AudioContext, input: GainNode): Strip {
+    const eq = {} as Record<EqBand, BiquadFilterNode>;
+    let last: AudioNode = input;
+    for (const band of EQ_BAND_IDS) {
+      const f = ctx.createBiquadFilter();
+      f.type = EQ_BANDS[band].type;
+      f.frequency.value = EQ_BANDS[band].frequency;
+      f.Q.value = EQ_BANDS[band].q;
+      f.gain.value = 0;
+      last.connect(f);
+      last = f;
+      eq[band] = f;
+    }
+    const pan = ctx.createStereoPanner();
+    const gate = ctx.createGain();
+    const meter = ctx.createAnalyser();
+    meter.fftSize = 512;
+    last.connect(pan).connect(gate);
+    return { input, eq, pan, gate, meter };
+  }
+
   private applyRouting(): void {
     if (!this.ctx || !this.bus || !this.masterGain) return;
     let rack = this.racks[this.activeSet];
@@ -263,10 +368,10 @@ export class MusicAudioEngine {
       rack.output.connect(this.masterGain);
       this.racks[this.activeSet] = rack;
     }
-    for (const id of INSTRUMENTS) {
-      const bus = this.bus[id];
-      try { bus.disconnect(); } catch { /* not connected */ }
-      bus.connect(this.throughFx.has(id) ? rack.input : this.masterGain);
+    for (const [id, strip] of this.strips) {
+      try { strip.gate.disconnect(); } catch { /* not connected */ }
+      strip.gate.connect(id !== 'input' && this.throughFx.has(id) ? rack.input : this.masterGain);
+      strip.gate.connect(strip.meter);
     }
   }
 
@@ -357,6 +462,7 @@ export class MusicAudioEngine {
     this.masterGain = null;
     this.analyserTap = null;
     this.bus = null;
+    this.strips.clear();
     this.ctx = null;
   }
 
@@ -385,12 +491,16 @@ export class MusicAudioEngine {
     this.masterGain = master;
     this.output = compressor;
     const bus = {} as Record<InstrumentId, GainNode>;
+    this.strips.clear();
     for (const id of INSTRUMENTS) {
       const g = ctx.createGain();
       g.gain.value = this.volumes[id];
-      g.connect(master);
       bus[id] = g;
+      this.strips.set(id, this.makeStrip(ctx, g));
     }
+    const inputGain = ctx.createGain();
+    inputGain.gain.value = this.inputVolume * 2;
+    this.strips.set('input', this.makeStrip(ctx, inputGain));
     this.bus = bus;
     this.noise = makeNoise(ctx);
     this.dubBass = new DubBass(ctx, bus.dubbass);
@@ -400,6 +510,7 @@ export class MusicAudioEngine {
     this.analog.setRoutes(this.analogRoutes);
     this.scan = new ScanSynth(ctx, bus.scan);
     this.applyRouting();
+    this.applyMixer();
     this.syncAnalyserTap();
     this.unsubscribeGraph = audioAnalyzer.onGraphChange(() => this.syncAnalyserTap());
     return ctx;
