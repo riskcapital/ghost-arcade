@@ -256,6 +256,11 @@ type LayerSnapshot = {
   sourceSig: string;
   /** Shader / JS param values. A change only sends new uniforms. */
   valuesSig: string;
+  /** Graph instrument params (GPU layer or plugin params). A change re-sends
+   *  the graph layer, which keeps its simulation, but rebinds nothing. */
+  graphParamsSig: string;
+  /** Effect pass param values. A change only rewrites their uniforms. */
+  effectValuesSig: string;
   nativeParamsSig: string;
   effectsSig: string;
   edgeEffectsSig: string;
@@ -3549,6 +3554,32 @@ function memoizedEffectPass(effect: any): EffectPassMemo {
   return next;
 }
 
+/** The part of an effect pass that shapes its graph (passes, buffers,
+ *  bindings): the effect, and for a LUT its table. Everything else only
+ *  feeds the pass's uniforms. */
+export function nativeEffectPassStructureKey(pass: Pick<NativeEffectPassRuntime, 'effect' | 'params'>): string {
+  return pass.effect === 'cube-lut' ? `cube-lut#${pass.params?.lutHandle ?? 0}` : pass.effect;
+}
+
+/** A graph buffer's data as the core holds it (f32 values clamped like its
+ *  JSON reader), base64, sized to the buffer. Null when it carries none. */
+function nativeGraphBufferBase64(buffer: Record<string, any>): string | null {
+  const byteLength = Math.round(Number(buffer?.byte_length));
+  if (!(byteLength > 0)) return null;
+  if (typeof buffer.initial_b64 === 'string') return buffer.initial_b64;
+  if (!Array.isArray(buffer.initial_f32)) return null;
+  const floats = new Float32Array(Math.ceil(byteLength / 4));
+  const count = Math.min(floats.length, buffer.initial_f32.length);
+  for (let index = 0; index < count; index++) {
+    const value = Number(buffer.initial_f32[index]);
+    floats[index] = Number.isFinite(value) ? Math.max(-1e20, Math.min(1e20, value)) : 0;
+  }
+  const bytes = new Uint8Array(floats.buffer, 0, byteLength);
+  let binary = '';
+  for (let index = 0; index < bytes.length; index++) binary += String.fromCharCode(bytes[index]);
+  return btoa(binary);
+}
+
 export function nativeEffectPassesForLayer(layer: Layer): NativeEffectPassRuntime[] | null {
   const enabled = (layer.effects || [])
     .filter((effect: any) => effect && effect.enabled !== false)
@@ -6709,6 +6740,36 @@ export class NativeRendererSync {
     return { possible, active: held ? this.nativeGraphRouteForLayer(layer) : possible };
   }
 
+  /** The effect chain a core-owned graph layer carries in its template, or
+   *  null when the route has no effects. */
+  private coreOwnedEffectGraph(
+    route: NativeGraphLayerRoute,
+    width: number,
+    height: number,
+    clock: NativeRenderClockCommand,
+  ): ReturnType<typeof buildNativeEffectPassChainGraph> | null {
+    const graphSource = nativeGraphRenderSource(route);
+    if (!route.effectPasses?.length || route.source.id === graphSource.id) return null;
+    const frameIndex = typeof clock.frame_index === 'number' ? clock.frame_index : 0;
+    return buildNativeEffectPassChainGraph({
+      sourceId: graphSource.id,
+      targetSourceId: route.source.id,
+      intermediatePrefix: `${route.source.id}:chain`,
+      effects: route.effectPasses.map((effectPass) => ({
+        effect: effectPass.effect,
+        amount: effectPass.amount,
+        mix: effectPass.mix ?? 1,
+        params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
+      })),
+      width,
+      height,
+      time: typeof clock.time === 'number' ? clock.time : 0,
+      frameDelta: typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps,
+      frameIndex,
+      seq: frameIndex * 16 + 8,
+    });
+  }
+
   /** Route pairs looked up at most once per layer object. One per flush. */
   private nativeGraphRouteLookup(): (layer: Layer) => NativeGraphRoutePair {
     const pairs = new Map<Layer, NativeGraphRoutePair>();
@@ -9777,6 +9838,8 @@ export class NativeRendererSync {
       const nativeGraphParamsSig = nativeGraphScaledParams
         ? stableNativeGraphKey(nativeGraphScaledParams)
         : 'none';
+      // The params that decide what a VJ graph binds. Other kinds' params are
+      // values only (graphParamsSig below) and do not rebind the source.
       const nativeGraphSourceParamsSig = nativeGraphRoute?.kind === 'vj-crossfade'
         ? stableNativeGraphKey({
             layerA: nativeGraphScaledParams?.vjxfadeLayerA ?? '',
@@ -9793,8 +9856,11 @@ export class NativeRendererSync {
                 ? nativeGraphScaledParams.vjmixRows
                 : []).map((row: { layerId?: string }) => String(row?.layerId ?? '')).join(','),
             })
-          : nativeGraphParamsSig;
+          : nativeGraphRoute ? 'params' : 'none';
       const nativeGraphEffectSig = nativeGraphRoute?.effectPasses?.map((effectPass) => `${effectPass.descriptor}@${effectPass.mix ?? 1}`).join('>') ?? 'none';
+      // Which effects, in which order, with which LUTs: a change re-installs.
+      // Their param values (nativeGraphEffectSig) only rewrite uniforms.
+      const nativeGraphEffectStructureSig = nativeGraphRoute?.effectPasses?.map(nativeEffectPassStructureKey).join('>') ?? 'none';
       const effectIds = nativeLayerBlocked || nativeGraphRoute?.kind === 'effect-pass' || nativeGraphRoute?.effectPasses?.length
         ? []
         : nativeHeartbeatEffectDescriptors(layer);
@@ -9818,8 +9884,10 @@ export class NativeRendererSync {
         paintMaskSig: nativePaintMask.signature,
         sourceSig: nativeLayerBlocked
           ? nativeBlockSig
-          : `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}:graph=${nativeGraphRoute?.kind ?? 'none'}:${nativeGraphSourceParamsSig}:effects=${nativeGraphEffectSig}`,
+          : `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}:graph=${nativeGraphRoute?.kind ?? 'none'}:${nativeGraphSourceParamsSig}:effects=${nativeGraphEffectStructureSig}`,
         valuesSig: nativeLayerBlocked ? nativeBlockSig : sourceValuesSignature(layer),
+        graphParamsSig: nativeLayerBlocked ? nativeBlockSig : nativeGraphParamsSig,
+        effectValuesSig: nativeLayerBlocked ? nativeBlockSig : nativeGraphEffectSig,
         nativeParamsSig: nativeParamsSignature(layer),
         effectsSig: nativeLayerBlocked
           ? nativeBlockSig
@@ -10030,7 +10098,8 @@ export class NativeRendererSync {
         (
           !prev ||
           prev.sourceSig !== snap.sourceSig ||
-          prev.nativeParamsSig !== snap.nativeParamsSig
+          prev.nativeParamsSig !== snap.nativeParamsSig ||
+          prev.graphParamsSig !== snap.graphParamsSig
         )
       ) {
         commands.push({
@@ -10055,7 +10124,10 @@ export class NativeRendererSync {
           nativeGraphRoute.kind === 'vj-mix' ||
           !prev ||
           prev.sourceSig !== snap.sourceSig ||
-          prev.nativeParamsSig !== snap.nativeParamsSig
+          prev.nativeParamsSig !== snap.nativeParamsSig ||
+          // Instrument params live in the graph layer: re-send it. The core
+          // keeps the simulation state across a params-only re-send.
+          prev.graphParamsSig !== snap.graphParamsSig
         )
       ) {
         const graphSource = nativeGraphRenderSource(nativeGraphRoute);
@@ -10298,24 +10370,8 @@ export class NativeRendererSync {
           routeState.interactiveEffectIds = interactive.effectIds;
         }
         const skipInstall = pluginGraphFailed || interactiveValuesOnly;
-        const effectGraph = !skipInstall && nativeGraphRoute.effectPasses?.length && nativeGraphRoute.source.id !== graphSource.id
-          ? buildNativeEffectPassChainGraph({
-              sourceId: graphSource.id,
-              targetSourceId: nativeGraphRoute.source.id,
-              intermediatePrefix: `${nativeGraphRoute.source.id}:chain`,
-              effects: nativeGraphRoute.effectPasses.map((effectPass) => ({
-                effect: effectPass.effect,
-                amount: effectPass.amount,
-                mix: effectPass.mix ?? 1,
-                params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
-              })),
-              width,
-              height,
-              time: graphTime,
-              frameDelta: graphDelta,
-              frameIndex: graphFrameIndex,
-              seq: graphFrameIndex * 16 + 8,
-            })
+        const effectGraph = !skipInstall
+          ? this.coreOwnedEffectGraph(nativeGraphRoute, width, height, renderClock)
           : null;
         if (!skipInstall && ((nativeGraphRoute.kind !== 'vj-crossfade' && nativeGraphRoute.kind !== 'vj-mix') || installPluginGraph)) {
           const installedGraph = composeNativeGraphs(pluginGraph?.config, effectGraph?.config);
@@ -10333,6 +10389,27 @@ export class NativeRendererSync {
             params: nativeGraphScaledParams ?? {},
           });
           this.noteNativeLutTables(nativeGraphRoute.key, installedGraph);
+        }
+      } else if (
+        nativeGraphRoute &&
+        NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) &&
+        prev &&
+        prev.effectValuesSig !== snap.effectValuesSig
+      ) {
+        // Only effect param values changed, so the installed chain has the
+        // same passes and buffers: rewrite its uniforms in place instead of
+        // re-installing the graph. LUT tables are left as they are.
+        const effectGraph = this.coreOwnedEffectGraph(nativeGraphRoute, width, height, renderClock);
+        for (const buffer of (effectGraph?.config.buffers ?? []) as Array<Record<string, any>>) {
+          if (buffer.immutable_lut === true) continue;
+          const data = nativeGraphBufferBase64(buffer);
+          if (!data) continue;
+          commands.push({
+            type: 'update_native_graph_buffer',
+            layer_id: layer.id,
+            buffer_id: String(buffer.id),
+            initial_b64: data,
+          });
         }
       } else if (!nativeGraphRoute && prev && prev.sourceSig !== snap.sourceSig) {
         commands.push({
