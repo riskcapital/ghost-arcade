@@ -3222,8 +3222,15 @@ fn graph_layer_frame_order(
 ) -> std::cmp::Ordering {
     // The shared VJ mix produces group textures. Mapped slice readers must
     // consume those textures only after the producer has rendered this frame.
+    // A VJ row whose clip is itself a mix (the Music Studio plugin: shader
+    // voices mixed into one picture) is content: it reads only shader layers,
+    // which render before any graph job, and the crossfades and the mix read it.
     let stage = |kind: &NativeGraphLayerKind, id: &str| {
-        if matches!(kind, NativeGraphLayerKind::VjMix) && id != "__vj-mix__" { 3 } else { kind.frame_job_stage() }
+        if matches!(kind, NativeGraphLayerKind::VjMix) {
+            if id.starts_with("vj-layer-") { 0 } else if id == "__vj-mix__" { kind.frame_job_stage() } else { 3 }
+        } else {
+            kind.frame_job_stage()
+        }
     };
     stage(a.0, a.1)
         .cmp(&stage(b.0, b.1))
@@ -35038,12 +35045,14 @@ mod tests {
             (NativeGraphLayerKind::VjCrossfade, "1b-screen"),
             (NativeGraphLayerKind::Flythrough, "vj-layer-0-B"),
             (NativeGraphLayerKind::GhostFx, "vj-layer-1-A"),
+            // A Music Studio row: a mix that is the row's own content.
+            (NativeGraphLayerKind::VjMix, "vj-layer-2-A"),
         ];
         layers.sort_by(|a, b| graph_layer_frame_order((&a.0, a.1), (&b.0, b.1)));
         let ids = layers.iter().map(|(_, id)| *id).collect::<Vec<_>>();
         assert_eq!(
             ids,
-            ["vj-layer-0-B", "vj-layer-1-A", "1b-screen", "vj-xfade-0", "__vj-mix__", "0a-screen"]
+            ["vj-layer-0-B", "vj-layer-1-A", "vj-layer-2-A", "1b-screen", "vj-xfade-0", "__vj-mix__", "0a-screen"]
         );
     }
 

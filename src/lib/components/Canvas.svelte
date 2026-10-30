@@ -126,6 +126,16 @@
   } from '$lib/sync/nativeCoreSupervisor';
   import { openLogFolder } from '$lib/utils/logFolder';
   import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
+  import { expandStudioLayers, noteStudioHosts, studioRenderInputs, studioVisualTick } from '$lib/music/studioPlugin';
+  import { wakeStudioVisuals } from '$lib/music/musicRuntime';
+
+  /** Music Studio clips and layers reach the core as their voices plus a mix (music/studioPlugin.ts). */
+  function withStudioVoices(list: Layer[]): Layer[] {
+    return expandStudioLayers(list, studioRenderInputs, (count) => {
+      noteStudioHosts(count);
+      if (count > 0) wakeStudioVisuals();
+    });
+  }
   import { NATIVE_EFFECT_PASS_LIMIT } from '$lib/renderer/nativeEffectChainPolicy';
   import {
     captureNativeLayerSourceFrame,
@@ -387,6 +397,7 @@
   } as const;
 
   let nativeLayersUnsub: (() => void) | null = null;
+  let nativeStudioTickUnsub: (() => void) | null = null;
   let nativeProjectUnsub: (() => void) | null = null;
   let nativeInteractionRaf: number | null = null;
   const nativeInteractionSignatures = new Map<string, string>();
@@ -1737,7 +1748,7 @@
           return;
         }
         const p = get(project);
-        nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, $layers);
+        nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, withStudioVoices($layers));
       });
 
       // The native compositor's layer list: VJ live sets replace the editor
@@ -2099,7 +2110,7 @@
         }
         const p = get(project);
         const built = nativeEffectiveLayers();
-        const effective = built ? withStageFxOpacity(built) : null;
+        const effective = built ? withStudioVoices(withStageFxOpacity(built)) : null;
         if (!effective) {
           // A trigger updates the launcher and derived VJ layers in adjacent
           // store emissions. Give the derived layer one microtask to settle,
@@ -2164,7 +2175,7 @@
               // Rebuild from current state instead of restoring stale inputs.
               const latest = nativeEffectiveLayers();
               const currentProject = get(project);
-              if (latest) publishNativeScene(currentProject.width || 1920, currentProject.height || 1080, withStageFxOpacity(latest));
+              if (latest) publishNativeScene(currentProject.width || 1920, currentProject.height || 1080, withStudioVoices(withStageFxOpacity(latest)));
             });
           } else {
             callbacks.forEach(callback => callback());
@@ -2235,6 +2246,8 @@
         }
       });
       nativeLayersSyncRef = () => scheduleNativeLayersSync();
+      // Music Studio instances: their voices' signals move every frame.
+      nativeStudioTickUnsub = studioVisualTick.subscribe(() => scheduleNativeLayersSync());
       // ── Stage FX driver (native mode) ──
       // When the native core owns the frame, the WebGL animate() loop
       // never runs — so nothing was ticking the stage-effect engines
@@ -4292,6 +4305,8 @@
       nativeLayersUnsub();
       nativeLayersUnsub = null;
     }
+    nativeStudioTickUnsub?.();
+    nativeStudioTickUnsub = null;
     if (nativeQualityUnsub) {
       nativeQualityUnsub();
       nativeQualityUnsub = null;
@@ -7955,7 +7970,7 @@
           <div class="native-engine-pending__detail">{nativeEnginePendingDetail}</div>
         {:else if $layers.length === 0}
           <div class="native-engine-pending__actions">
-            <button type="button" onclick={openAddLayerMenu}>Add Layer to Get Started</button>
+            <button type="button" onclick={openAddLayerMenu}>Add a layer to get started</button>
           </div>
         {:else}
           <div class="native-engine-pending__title">

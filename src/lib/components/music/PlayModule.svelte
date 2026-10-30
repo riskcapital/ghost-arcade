@@ -6,7 +6,8 @@
   import { PLAYABLE_INSTRUMENTS, noteName, type InstrumentId } from '../../music/noteEvents';
   import { INSTRUMENT_LABELS, KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from '../../music/instruments';
   import { KEYBOARD_SIZES, keyboardRange, octaveBaseNote, type KeyboardSize } from '../../music/keyboardLayout';
-  import { VOICE_SHADERS, addVoiceRow } from '../../music/visualScenes';
+  import { VOICE_SHADERS } from '../../music/visualScenes';
+  import { addStudioVoice } from '../../music/studioTarget';
   import { musicStudio } from '../../music/musicStudioStore';
   import StudioModule from './StudioModule.svelte';
   import PianoKeys from './PianoKeys.svelte';
@@ -31,7 +32,7 @@
   function addVisual(e: Event) {
     const el = e.target as HTMLSelectElement;
     // A visual added from the keys follows what they play.
-    if (el.value) void addVoiceRow(el.value, 'played', s.set);
+    if (el.value) addStudioVoice(el.value, 'played');
     el.value = '';
   }
 </script>

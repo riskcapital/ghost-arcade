@@ -155,7 +155,7 @@ export type MediaType =
   | 'synthvision';
 
 // Integrated effect types (FluidGen, Particles3D, Point Cloud, 3D Models running natively in WebGL)
-export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'vj-mix' | 'performer-world';
+export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'vj-mix' | 'performer-world' | 'music-studio';
 
 // Stem identifiers for the multi-stem routing matrix (Milkdrop plugin).
 // 'full' is the unsplit mix; the rest match standard Demucs output names plus a
@@ -422,6 +422,11 @@ export interface IntegratedEffectSource {
   // ordered bottom→top, post-crossfade, with per-row opacity + blend.
   vjmixRows?: Array<{ layerId?: string; frameId?: string; groupId?: string; opacity: number; blendMode: string }>;
   vjmixSharedFeed?: boolean;
+  // Music Studio plugin (music/studioPlugin.ts): the set its palette comes
+  // from, the scene it was loaded from, and its stack of visual voices.
+  musicSet?: import('./music/studioSets').StudioSet;
+  musicSceneId?: string | null;
+  musicVoices?: import('./music/studioPlugin').StudioVoice[];
 }
 
 // Spout source configuration (for plugin integrations)

@@ -1,6 +1,8 @@
 import type { IntegratedEffectSource } from '$lib/types';
 
-export const NATIVE_PLUGIN_IDS = ['ghostfx', 'handfx'] as const;
+// The Music Studio is offered like the others but needs no graph of its own:
+// it reaches the core as its voices plus a vj-mix (music/studioPlugin.ts).
+export const NATIVE_PLUGIN_IDS = ['ghostfx', 'handfx', 'musicstudio'] as const;
 export const NATIVE_PLUGIN_EFFECT_TYPES = ['ghostfx', 'handfx', 'performer-world', 'vj-crossfade', 'vj-mix'] as const;
 
 export type NativePluginEffectType = typeof NATIVE_PLUGIN_EFFECT_TYPES[number];
