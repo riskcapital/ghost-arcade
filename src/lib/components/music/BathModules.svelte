@@ -188,23 +188,23 @@
     flex: 0 0 auto;
     padding: 0;
     border-radius: 50%;
-    border: 2px solid #6b5a3e;
-    background: radial-gradient(circle at 40% 35%, #3b3326, #15120d 72%);
-    color: #cfc7b2;
+    border: 2px solid var(--studio-edge);
+    background: radial-gradient(circle at 40% 35%, #34406a, #0b1020 72%);
+    color: var(--studio-ink);
     font-family: var(--ga-font-mono, ui-monospace);
     font-size: 11px;
     cursor: pointer;
     touch-action: none;
     transition: box-shadow 0.4s ease-out;
   }
-  .bowl.lit { box-shadow: 0 0 26px rgba(240, 164, 58, 0.55); border-color: var(--studio-accent); }
+  .bowl.lit { box-shadow: 0 0 26px var(--ga-blue-a45, rgba(82, 120, 255, 0.45)); border-color: var(--studio-accent); }
   .xy {
     position: relative;
     flex: 1;
     min-height: 140px;
     border: 1px solid var(--studio-edge);
     background-color: var(--studio-slot);
-    background-image: linear-gradient(#211f1b 1px, transparent 1px), linear-gradient(90deg, #211f1b 1px, transparent 1px);
+    background-image: linear-gradient(var(--studio-edge-soft) 1px, transparent 1px), linear-gradient(90deg, var(--studio-edge-soft) 1px, transparent 1px);
     background-size: 12.5% 12.5%;
     cursor: crosshair;
     touch-action: none;

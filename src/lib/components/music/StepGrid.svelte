@@ -4,6 +4,7 @@
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { hitDrum } from '../../music/musicRuntime';
 
+  /** rowHeight 0 stretches the rows to fill the grid's height. */
   let { cell = 0, rowHeight = 18 }: { cell?: number; rowHeight?: number } = $props();
 
   const pattern = $derived($musicStudio.pattern);
@@ -17,7 +18,7 @@
   }
 </script>
 
-<div class="steps" class:fill={cell === 0} style="grid-template-columns: 64px {columns}; --row: {rowHeight}px">
+<div class="steps" class:fill={cell === 0} class:stretch={rowHeight === 0} style="grid-template-columns: 64px {columns}; --row: {rowHeight ? `${rowHeight}px` : 'auto'}">
   {#each DRUM_VOICES as voice}
     <button class="voice" class:lit={$musicTransport.held.has(`drums:${DRUM_NOTES[voice]}`)} onpointerdown={(e) => audition(e, voice)} title="Play {DRUM_LABELS[voice]}">{DRUM_LABELS[voice]}</button>
     {#each steps as step}
@@ -36,6 +37,8 @@
 <style>
   .steps { display: grid; gap: 2px; width: max-content; }
   .steps.fill { width: 100%; }
+  .steps.stretch { height: 100%; grid-template-rows: repeat(8, minmax(10px, 1fr)); }
+  .steps.stretch .voice, .steps.stretch .step { height: auto; }
   .voice {
     height: var(--row);
     padding: 0 4px;

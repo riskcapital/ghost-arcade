@@ -96,7 +96,11 @@ describe('cables', () => {
 
   it('reads saved cables back, dropping ones that do not fit', () => {
     const saved = { bath: [{ id: 'x', from: 'cv:xy.x', to: 'fx:in' }, { id: 'y', from: 'audio:drone', to: 'fx:in' }], berlin: 'nope' };
-    expect(normalizeCables(saved)).toEqual({ bath: [{ id: 'y', from: 'audio:drone', to: 'fx:in' }], berlin: [] });
+    const back = normalizeCables(saved);
+    expect(back.bath).toEqual([{ id: 'y', from: 'audio:drone', to: 'fx:in' }]);
+    // A set the file does not carry (or carries broken) starts with its default patch.
+    expect(back.berlin).toEqual(defaultCables().berlin);
+    expect(back.dub).toEqual(defaultCables().dub);
     expect(normalizeCables(null)).toEqual(defaultCables());
   });
 });

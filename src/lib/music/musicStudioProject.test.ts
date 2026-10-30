@@ -72,7 +72,7 @@ function playSomething(): void {
   s.setVisualMode('keys', 'build');
   s.toggleStep('crash', 3);
   s.addTake(JSON.parse(JSON.stringify(take)));
-  s.addScene({ id: 'scene-a', name: 'Arrival', pattern: null, beat: true, takeId: 'take-a', vjColumn: 2 });
+  s.addScene({ id: 'scene-a', name: 'Arrival', pattern: null, beat: true, takeId: 'take-a', vjColumn: 2, loops: { bass: 'bass-sub' } });
   s.setSet('berlin');
   s.setParam('drone.tone', 0.9);
   s.connectCable({ id: 'c1', from: 'cv:drum.hatClosed', to: 'dest:layer:1' });
@@ -94,7 +94,7 @@ describe('music studio in the project file', () => {
     expect(s.visuals.keys.mode).toBe('build');
     expect(s.pattern.tracks.crash[3]).toBeGreaterThan(0);
     expect(s.takes).toEqual([take]);
-    expect(s.scenes).toEqual([{ id: 'scene-a', name: 'Arrival', pattern: null, beat: true, takeId: 'take-a', vjColumn: 2 }]);
+    expect(s.scenes).toEqual([{ id: 'scene-a', name: 'Arrival', pattern: null, beat: true, takeId: 'take-a', vjColumn: 2, loops: { bass: 'bass-sub' } }]);
     expect(s.set).toBe('berlin');
     expect(s.params['drone.tone']).toBe(0.9);
     expect(s.cables.berlin).toContainEqual({ id: 'c1', from: 'cv:drum.hatClosed', to: 'dest:layer:1' });

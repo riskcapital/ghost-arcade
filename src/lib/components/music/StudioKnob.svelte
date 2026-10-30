@@ -77,6 +77,11 @@
 </script>
 
 <div class="knob-wrap" style="--size: {size}px">
+  <span class="dial">
+  <svg class="arc" viewBox="0 0 40 40" aria-hidden="true">
+    <circle class="track" cx="20" cy="20" r="18" pathLength="100" stroke-dasharray="75 100" />
+    <circle class="value" cx="20" cy="20" r="18" pathLength="100" stroke-dasharray="{amount * 75} 100" />
+  </svg>
   <button
     class="knob"
     role="slider"
@@ -101,6 +106,7 @@
   >
     <span class="pointer" style="transform: rotate({angle}deg)"></span>
   </button>
+  </span>
   {#if !hideLabel}<span class="knob-label">{label}</span>{/if}
 </div>
 
@@ -109,9 +115,26 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
+    gap: 3px;
     min-width: calc(var(--size) + 12px);
   }
+  /* The value arc rings the knob, so a row of knobs reads at a glance. */
+  .dial {
+    position: relative;
+    width: calc(var(--size) + 10px);
+    height: calc(var(--size) + 10px);
+    display: grid;
+    place-items: center;
+  }
+  .arc {
+    position: absolute;
+    inset: 0;
+    transform: rotate(135deg);
+    pointer-events: none;
+  }
+  .arc circle { fill: none; stroke-width: 2.4; stroke-linecap: round; }
+  .arc .track { stroke: var(--studio-edge-soft); }
+  .arc .value { stroke: var(--studio-accent); }
   .knob {
     position: relative;
     width: var(--size);
@@ -119,9 +142,9 @@
     padding: 0;
     box-sizing: border-box;
     border-radius: 50%;
-    border: 2px solid var(--studio-knob-edge);
+    border: 1px solid var(--studio-knob-edge);
     background: var(--studio-knob-face);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
     cursor: ns-resize;
     touch-action: none;
   }
@@ -133,20 +156,20 @@
     position: absolute;
     left: 50%;
     top: 3px;
-    width: 3px;
-    height: calc(var(--size) * 0.32);
-    margin-left: -1.5px;
-    border-radius: 2px;
+    width: 2px;
+    height: calc(var(--size) * 0.3);
+    margin-left: -1px;
+    border-radius: 1px;
     background: var(--studio-ink);
-    transform-origin: 50% calc(var(--size) / 2 - 5px);
+    transform-origin: 50% calc(var(--size) / 2 - 4px);
     pointer-events: none;
   }
   .knob-label {
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--studio-ink);
+    color: var(--studio-muted);
     white-space: nowrap;
   }
 </style>

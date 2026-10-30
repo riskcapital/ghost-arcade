@@ -12,6 +12,11 @@ export const INSTRUMENT_LABELS: Record<InstrumentId, string> = {
   bowls: 'Bowls',
   acid: 'Acid',
   xy: 'XY tone',
+  dubbass: 'Dub bass',
+  siren: 'Siren',
+  shots: 'Shots',
+  analog: 'Analog',
+  scan: 'Scan synth',
 };
 
 export type SynthPatch = 'pad' | 'pluck' | 'bass' | 'lead';

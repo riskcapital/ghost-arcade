@@ -14,7 +14,7 @@
 
   interface Drawn { id: string; d: string; color: string; ends: [number, number, number, number] }
 
-  const COLORS = ['#f0a43a', '#d9d2bf', '#7f9db3', '#c9503c', '#9fb07a'];
+  const COLORS = ['#5278ff', '#a8bcff', '#7ec8e3', '#ff8577', '#e6ebf7'];
 
   let drawn = $state<Drawn[]>([]);
   let live = $state<{ d: string; color: string } | null>(null);
@@ -58,7 +58,7 @@
     let nextLive: typeof live = null;
     if (drag) {
       const a = centre(drag.from, origin);
-      if (a) nextLive = { d: path(a[0], a[1], drag.x - origin.left, drag.y - origin.top), color: '#f0a43a' };
+      if (a) nextLive = { d: path(a[0], a[1], drag.x - origin.left, drag.y - origin.top), color: '#a8bcff' };
     }
     const sig = next.map((n) => n.d).join('|') + (nextLive?.d ?? '');
     if (sig === signature) return;
@@ -119,5 +119,5 @@
   .cable { fill: none; stroke-width: 5; stroke-linecap: round; }
   .cable.live { stroke-dasharray: 2 8; }
   .shadow { fill: none; stroke: rgba(0, 0, 0, 0.5); stroke-width: 8; transform: translate(2px, 4px); }
-  .plug { fill: #2a2723; stroke-width: 3; }
+  .plug { fill: #0d1224; stroke-width: 3; }
 </style>

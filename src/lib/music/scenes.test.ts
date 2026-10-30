@@ -15,6 +15,7 @@ const playing = (over: Partial<PlayingNow> = {}): PlayingNow => ({
   beat: true,
   takeId: 'loop-a',
   vjColumn: 2,
+  loops: {},
   ...over,
 });
 
@@ -22,7 +23,7 @@ describe('scenes', () => {
   it('captures what is playing, with its own copy of the beat', () => {
     const now = playing();
     const scene = captureScene('s1', 'Arrival', now);
-    expect(scene).toEqual({ id: 's1', name: 'Arrival', pattern: now.pattern, beat: true, takeId: 'loop-a', vjColumn: 2 });
+    expect(scene).toEqual({ id: 's1', name: 'Arrival', pattern: now.pattern, beat: true, takeId: 'loop-a', vjColumn: 2, loops: {} });
     expect(scene.pattern).not.toBe(now.pattern);
   });
 
@@ -54,6 +55,15 @@ describe('scenes', () => {
     expect(sceneLaunchActions(scene, playing({ vjColumn: 7 }), new Set(['loop-a']))).toEqual([]);
   });
 
+  it('starts and stops library loops with the scene', () => {
+    const scene = captureScene('s', 'Drop', playing({ loops: { bass: 'bass-dub-root', lead: 'lead-melodica' } }));
+    expect(sceneLaunchActions(scene, playing(), new Set(['loop-a']))).toEqual([
+      { kind: 'loops', loops: { bass: 'bass-dub-root', lead: 'lead-melodica' } },
+    ]);
+    expect(sceneLaunchActions(scene, playing({ loops: { bass: 'bass-dub-root', lead: 'lead-melodica' } }), new Set(['loop-a']))).toEqual([]);
+    expect(normalizeScene({ id: 'z', loops: { bass: 'bass-sub', nonsense: 'x', lead: 3 } })?.loops).toEqual({ bass: 'bass-sub' });
+  });
+
   it('picks the column most layers are playing', () => {
     expect(dominantColumn([2, 2, 5, null])).toBe(2);
     expect(dominantColumn([4, 1])).toBe(1);
@@ -62,7 +72,7 @@ describe('scenes', () => {
 
   it('names new scenes from a list, then by number', () => {
     expect(nextSceneName([])).toBe('Arrival');
-    const s = (name: string): MusicScene => ({ id: name, name, pattern: null, beat: false, takeId: null, vjColumn: null });
+    const s = (name: string): MusicScene => ({ id: name, name, pattern: null, beat: false, takeId: null, vjColumn: null, loops: {} });
     expect(nextSceneName([s('Arrival')])).toBe('Breath');
     const all = ['Arrival', 'Breath', 'Bloom', 'Drift', 'Release', 'Dawn', 'Pressure', 'Peak', 'Break', 'Return'].map(s);
     expect(nextSceneName(all)).toBe('Scene 11');
@@ -70,7 +80,7 @@ describe('scenes', () => {
 
   it('reads a saved scene back safely', () => {
     expect(normalizeScene({ id: 'x', name: '  ', pattern: { steps: 8 }, beat: 'yes', vjColumn: -1 })).toEqual({
-      id: 'x', name: 'Scene', pattern: createPattern(8), beat: false, takeId: null, vjColumn: null,
+      id: 'x', name: 'Scene', pattern: createPattern(8), beat: false, takeId: null, vjColumn: null, loops: {},
     });
     expect(normalizeScene({ id: 'y', vjColumn: 0, takeId: 't' })).toMatchObject({ vjColumn: 0, takeId: 't' });
     expect(normalizeScene({ name: 'no id' })).toBeNull();

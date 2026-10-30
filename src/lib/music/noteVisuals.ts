@@ -47,6 +47,11 @@ export const DEFAULT_VISUAL_SETTINGS: Record<InstrumentId, NoteVisualSettings> =
   drums: { mode: 'fade', attack: 0.002, decay: 0.2, sustain: 0, release: 0.35, linger: 4, growth: 0.04 },
   drone: { mode: 'build', attack: 1.5, decay: 2, sustain: 0.8, release: 4, linger: 14, growth: 0.08 },
   bowls: { mode: 'fade', attack: 0.01, decay: 3, sustain: 0.2, release: 6, linger: 18, growth: 0.07 },
+  dubbass: { mode: 'fade', attack: 0.01, decay: 0.5, sustain: 0.6, release: 0.6, linger: 8, growth: 0.04 },
+  siren: { mode: 'build', attack: 0.2, decay: 1, sustain: 0.8, release: 3, linger: 12, growth: 0.06 },
+  shots: { mode: 'fade', attack: 0.005, decay: 0.4, sustain: 0.2, release: 2, linger: 10, growth: 0.08 },
+  analog: { mode: 'fade', attack: 0.01, decay: 0.4, sustain: 0.6, release: 0.5, linger: 8, growth: 0.05 },
+  scan: { mode: 'fade', attack: 0.05, decay: 0.5, sustain: 0.5, release: 1, linger: 8, growth: 0.03 },
   xy: { mode: 'fade', attack: 0.05, decay: 0.6, sustain: 0.7, release: 1.4, linger: 10, growth: 0.05 },
   acid: { mode: 'fade', attack: 0.003, decay: 0.15, sustain: 0.4, release: 0.25, linger: 6, growth: 0.03 },
 };

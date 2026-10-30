@@ -1,0 +1,117 @@
+/* The music studio's palette, shared by the Studio view and the music tray:
+   the app's own deep blues for the ground and panels, blue-grey lines and
+   one blue accent. */
+.studio-tokens {
+  --studio-ground: var(--ga-blue-900, #0a0e1f);
+  --studio-panel: color-mix(in srgb, var(--ga-blue-800, #141e40) 55%, #080a12);
+  --studio-edge: var(--ga-blue-mute-600, #404a6b);
+  --studio-edge-soft: var(--ga-blue-mute-800, #1e2336);
+  --studio-slot: #060912;
+  --studio-cell: color-mix(in srgb, var(--ga-blue-800, #141e40) 70%, #070a12);
+  --studio-ink: #e6ebf7;
+  --studio-muted: var(--ga-blue-mute-300, #818ebd);
+  --studio-accent: var(--ga-blue-400, #5278ff);
+  --studio-accent-soft: var(--ga-blue-a16, rgba(82, 120, 255, 0.16));
+  --studio-on-accent: #ffffff;
+  --studio-knob-face: radial-gradient(circle at 35% 30%, #2b3558, #0c1122 70%);
+  --studio-knob-edge: #34406a;
+  --studio-radius: var(--ga-r-hard, 5px);
+  --studio-gap: 10px;
+  --ga-slider-fill: var(--studio-accent);
+
+  /* Shared parts (keys, pads, steps, takes) read the --mk tokens. */
+  --mk-accent: var(--studio-accent);
+  --mk-on-accent: var(--studio-on-accent);
+  --mk-ink: var(--studio-ink);
+  --mk-muted: var(--studio-muted);
+  --mk-line: var(--studio-edge);
+  --mk-line-soft: var(--studio-edge-soft);
+  --mk-slot: var(--studio-slot);
+  --mk-cell: var(--studio-cell);
+  --mk-cell-edge: var(--studio-edge-soft);
+  --mk-radius: var(--studio-radius);
+  --mk-white: #dfe5f3;
+  --mk-black: #0d1122;
+
+  color: var(--studio-ink);
+  font-family: var(--ga-font-ui, system-ui, sans-serif);
+  font-size: var(--ga-type-control, 12px);
+  font-weight: var(--ga-font-ui-weight, 500);
+}
+
+/* Controls the studio's modules share. */
+.studio-tokens select {
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--studio-edge);
+  background: var(--studio-slot);
+  color: var(--studio-ink);
+  border-radius: var(--studio-radius);
+  font: inherit;
+  font-size: 12px;
+}
+.studio-tokens .seg { display: inline-flex; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); overflow: hidden; }
+.studio-tokens .seg button {
+  height: 26px;
+  padding: 0 11px;
+  border: 0;
+  background: transparent;
+  color: var(--studio-muted);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.studio-tokens .seg.small button { height: 22px; padding: 0 8px; font-size: 11px; }
+.studio-tokens .seg button + button { border-left: 1px solid var(--studio-edge); }
+.studio-tokens .seg button.on { background: var(--studio-accent-soft); color: var(--studio-accent); }
+.studio-tokens .text-btn {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--studio-edge);
+  background: var(--studio-panel);
+  color: var(--studio-ink);
+  border-radius: var(--studio-radius);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.studio-tokens .text-btn.small { height: 22px; padding: 0 8px; font-size: 10px; }
+.studio-tokens .stepper { display: inline-flex; align-items: center; gap: 4px; }
+.studio-tokens .stepper span { min-width: 28px; text-align: center; font-family: var(--ga-font-mono, ui-monospace); }
+.studio-tokens .stepper button,
+.studio-tokens .icon-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--studio-edge);
+  background: transparent;
+  color: var(--studio-ink);
+  border-radius: var(--studio-radius);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.studio-tokens .transport {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--studio-edge);
+  background: var(--studio-panel);
+  color: var(--studio-ink);
+  border-radius: var(--studio-radius);
+  cursor: pointer;
+  width: 32px;
+  height: 28px;
+}
+.studio-tokens .transport.mini { width: 26px; height: 22px; }
+.studio-tokens .transport svg { width: 11px; height: 11px; fill: currentColor; }
+.studio-tokens .transport.mini svg { width: 10px; height: 10px; }
+.studio-tokens .transport.on { border-color: var(--studio-accent); background: var(--studio-accent-soft); color: var(--studio-accent); }
+.studio-tokens .transport.rec svg { fill: var(--ga-rec, #ff3b30); }
+.studio-tokens .transport.rec.on { border-color: var(--ga-rec, #ff3b30); background: transparent; }
+.studio-tokens .muted { color: var(--studio-muted); }
+.studio-tokens .check { display: inline-flex; align-items: center; gap: 5px; color: var(--studio-muted); }
+.studio-tokens .check input { accent-color: var(--studio-accent); }

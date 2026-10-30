@@ -1,38 +1,22 @@
 <script lang="ts">
   /**
-   * The Berlin set's own instruments: the drum mixer, the acid line and the
-   * visual layers. Rendered in pieces by `part` for the set's layout.
+   * The Berlin set's own instruments: the drum mixer and the acid line.
+   * Rendered in pieces by `part` for the set's layout.
    */
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
-  import { ACID_PARAMS, ACID_RANGE, sourceLabel } from '../../music/studioSets';
-  import { GLITCH_SHADERS, setLayerVisual } from '../../music/noteShaders';
-  import { loadBerlinJam } from '../../music/jams';
+  import { ACID_PARAMS, ACID_RANGE } from '../../music/studioSets';
   import { DRUM_LABELS, DRUM_NOTES, DRUM_VOICES, noteName } from '../../music/noteEvents';
-  import { vjClipLauncher } from '../../stores/vjClipLauncher';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
   import StudioFader from './StudioFader.svelte';
 
-  let { part }: { part: 'drums' | 'acid' | 'layers' } = $props();
+  let { part }: { part: 'drums' | 'acid' } = $props();
 
   const s = $derived($musicStudio);
   const t = $derived($musicTransport);
-  const layers = $derived($vjClipLauncher.layerStates);
 
   const SHORT: Record<string, string> = { hatClosed: 'Hat', hatOpen: 'O-hat' };
-
-  function drivenBy(layer: number): string {
-    const cable = s.cables[s.set].find((c) => c.to === `dest:layer:${layer}`);
-    return cable ? `${sourceLabel(cable.from)} → pulse` : 'Always on';
-  }
-
-  function pickVisual(layer: number, e: Event) {
-    const el = e.target as HTMLSelectElement;
-    const visual = GLITCH_SHADERS.find((g) => g.file === el.value);
-    if (visual) void setLayerVisual(layer, visual.file, visual.name);
-    el.value = '';
-  }
 
   /** Click height on an acid step sets its pitch; the top of the bar is two octaves up. */
   function setAcidNote(e: PointerEvent, index: number) {
@@ -69,8 +53,8 @@
       {/each}
     </div>
   </StudioModule>
-{:else if part === 'acid'}
-  <StudioModule title="ACID" subtitle="Bass line · click a step for its pitch, right-click to rest">
+{:else}
+  <StudioModule title="ACID" subtitle="Bass line · click a step for its pitch, right-click to rest" grow>
     {#snippet head()}
       <StudioJack id="cv:acid.cutoff" label="Cutoff" title="Acid filter, as a control signal" />
       <StudioJack id="audio:acid" label="Out" title="Acid sound" />
@@ -94,40 +78,8 @@
             {/if}
           </button>
           <span class="step-note">{step.note === null ? '·' : noteName(ACID_ROOT + step.note)}</span>
-          <button class="flag" class:on={step.accent} onclick={() => musicStudio.setAcidStep(i, { accent: !step.accent })} aria-label="Accent step {i + 1}" title="Accent"></button>
-          <button class="flag glide" class:on={step.glide} onclick={() => musicStudio.setAcidStep(i, { glide: !step.glide })} aria-label="Glide into step {i + 1}" title="Glide"></button>
-        </div>
-      {/each}
-    </div>
-    <p class="note">Plays with the beat. Top square: accent. Bottom: glide in from the step before.</p>
-  </StudioModule>
-{:else}
-  <StudioModule title="VISUAL LAYERS" subtitle="Deck A · patch any hit into a layer" grow>
-    {#snippet head()}
-      <button class="jam" onclick={() => void loadBerlinJam()} title="Load a techno beat, the acid line, four glitch layers and their cables, and start it">LOAD JAM</button>
-    {/snippet}
-    <div class="layers">
-      {#each layers as layer, i (i)}
-        <div class="layer" class:muted={layer.mute}>
-          <button class="toggle" class:on={!layer.mute} onclick={() => vjClipLauncher.toggleLayerMute(i, 'A')} aria-pressed={!layer.mute} aria-label="Layer {i + 1} on"></button>
-          <div class="layer-name">
-            <span class="ln">L{i + 1} · {drivenBy(i)}</span>
-            <select class="visual" value="" onchange={(e) => pickVisual(i, e)} aria-label="Visual for layer {i + 1}">
-              <option value="" disabled>{layer.activeClip?.name ?? 'Empty'}</option>
-              {#each GLITCH_SHADERS as g (g.file)}<option value={g.file}>{g.name}</option>{/each}
-            </select>
-          </div>
-          <input
-            class="opacity"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={layer.opacity}
-            oninput={(e) => vjClipLauncher.setLayerOpacity(i, +(e.target as HTMLInputElement).value, 'A')}
-            aria-label="Layer {i + 1} opacity"
-          />
-          <StudioJack id="dest:layer:{i}" title="Pulse layer {i + 1} with a control signal" />
+          <button class="flag" class:on={step.accent} onclick={() => musicStudio.setAcidStep(i, { accent: !step.accent })} aria-label="Accent step {i + 1}" title="Accent: hit this step harder"></button>
+          <button class="flag glide" class:on={step.glide} onclick={() => musicStudio.setAcidStep(i, { glide: !step.glide })} aria-label="Glide into step {i + 1}" title="Glide: slide into this step from the one before"></button>
         </div>
       {/each}
     </div>
@@ -154,11 +106,12 @@
   }
   .mute.on { background: var(--studio-ink); color: var(--studio-slot); border-color: var(--studio-ink); }
   .knob-row { display: flex; justify-content: space-between; }
-  .acid-steps { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; }
-  .acid-step { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+  .acid-steps { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; }
+  .acid-step { min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
   .pitch {
     position: relative;
-    height: 64px;
+    flex: 1;
+    min-height: 56px;
     padding: 0;
     border: 1px solid var(--studio-edge-soft);
     background: var(--studio-slot);
@@ -179,51 +132,4 @@
   }
   .flag.on { background: var(--studio-ink); border-color: var(--studio-ink); }
   .flag.glide.on { background: var(--studio-muted); border-color: var(--studio-muted); }
-  .note { margin: 0; color: var(--studio-muted); font-size: 11px; }
-  .layers { display: flex; flex-direction: column; }
-  .layer {
-    min-height: 46px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    border-bottom: 1px solid var(--studio-edge-soft);
-  }
-  .toggle {
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border: 1px solid var(--studio-edge);
-    background: transparent;
-    border-radius: var(--studio-radius);
-    cursor: pointer;
-  }
-  .toggle.on { background: var(--studio-ink); border-color: var(--studio-ink); }
-  .layer-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .ln { font-size: 10px; font-weight: 800; letter-spacing: 0.1em; color: var(--studio-muted); }
-  .visual {
-    width: 100%;
-    height: 24px;
-    margin-top: 2px;
-    border: 1px solid var(--studio-edge);
-    background: var(--studio-slot);
-    color: var(--studio-ink);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-weight: 700;
-  }
-  .layer.muted .visual { color: var(--studio-muted); }
-  .jam {
-    height: 24px;
-    padding: 0 10px;
-    border: 1px solid var(--studio-accent);
-    background: var(--studio-accent-soft);
-    color: var(--studio-accent);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-  }
-  .opacity { flex: 0 0 110px; width: 110px; }
 </style>

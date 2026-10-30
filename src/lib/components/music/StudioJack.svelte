@@ -59,13 +59,13 @@
     padding: 0;
     box-sizing: border-box;
     border-radius: 50%;
-    border: 3px solid var(--studio-jack-ring, #cfc7b2);
-    background: #050505;
-    box-shadow: inset 0 0 0 2px #1a1816, 0 1px 0 rgba(255, 255, 255, 0.06);
+    border: 3px solid var(--studio-jack-ring, #c9d3ee);
+    background: #03050b;
+    box-shadow: inset 0 0 0 2px #121833, 0 1px 0 rgba(255, 255, 255, 0.06);
     cursor: grab;
     touch-action: none;
   }
-  .jack.control { border-color: var(--studio-jack-cv, #8fa9bd); }
+  .jack.control { border-color: var(--studio-jack-cv, #7ec8e3); }
   .jack.accepts { box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 10px var(--studio-accent); }
   .jack:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
   .jack-label {

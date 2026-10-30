@@ -7,15 +7,21 @@
  * stores them. Nothing listens to an input device directly.
  */
 
-export type InstrumentId = 'synth' | 'keys' | 'drums' | 'drone' | 'bowls' | 'acid' | 'xy';
+export type InstrumentId =
+  | 'synth' | 'keys' | 'drums' | 'drone' | 'bowls' | 'acid' | 'xy'
+  | 'dubbass' | 'siren' | 'shots' | 'analog' | 'scan';
 
-export const INSTRUMENTS: readonly InstrumentId[] = ['synth', 'keys', 'drums', 'drone', 'bowls', 'acid', 'xy'];
+export const INSTRUMENTS: readonly InstrumentId[] = [
+  'synth', 'keys', 'drums', 'drone', 'bowls', 'acid', 'xy', 'dubbass', 'siren', 'shots', 'analog', 'scan',
+];
 
 /** Instruments the keyboards (letter, on-screen, MIDI) can play. */
-export const PLAYABLE_INSTRUMENTS: readonly InstrumentId[] = ['synth', 'keys', 'drums', 'drone', 'bowls', 'acid'];
+export const PLAYABLE_INSTRUMENTS: readonly InstrumentId[] = ['synth', 'keys', 'drums', 'drone', 'bowls', 'acid', 'dubbass', 'analog'];
 
 /** Index sent to shaders as `noteVoiceN`, so a shader can colour by instrument. */
-export const INSTRUMENT_INDEX: Record<InstrumentId, number> = { synth: 0, keys: 1, drums: 2, drone: 3, bowls: 4, acid: 5, xy: 6 };
+export const INSTRUMENT_INDEX: Record<InstrumentId, number> = {
+  synth: 0, keys: 1, drums: 2, drone: 3, bowls: 4, acid: 5, xy: 6, dubbass: 7, siren: 8, shots: 9, analog: 10, scan: 11,
+};
 
 export type DrumVoice = 'kick' | 'snare' | 'clap' | 'hatClosed' | 'hatOpen' | 'tom' | 'rim' | 'crash';
 

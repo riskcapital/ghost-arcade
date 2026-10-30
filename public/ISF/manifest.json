@@ -5065,6 +5065,62 @@
       "featured": false,
       "defaultLoad": true,
       "enabled": true
+    },
+    {
+      "file": "DB-EchoTrails.fs",
+      "tier": "demo",
+      "category": "Dub",
+      "tags": [
+        "notes",
+        "music",
+        "dub"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "DB-Smoke.fs",
+      "tier": "demo",
+      "category": "Dub",
+      "tags": [
+        "notes",
+        "music",
+        "dub"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "DB-Ripples.fs",
+      "tier": "demo",
+      "category": "Dub",
+      "tags": [
+        "notes",
+        "music",
+        "dub"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "DB-Speaker.fs",
+      "tier": "demo",
+      "category": "Dub",
+      "tags": [
+        "notes",
+        "music",
+        "dub"
+      ],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
     }
   ]
 }

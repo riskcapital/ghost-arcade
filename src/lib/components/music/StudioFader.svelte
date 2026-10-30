@@ -91,7 +91,7 @@
     width: 24px;
     height: 12px;
     margin: 0 0 -6px -12px;
-    background: linear-gradient(#efe9da, #c9c1ad);
+    background: linear-gradient(#e6ebf7, #aab6d6);
     border: 1px solid #000;
     border-radius: 2px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6), inset 0 -2px 0 rgba(0, 0, 0, 0.25);

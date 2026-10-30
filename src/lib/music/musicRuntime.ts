@@ -43,12 +43,29 @@ import { DRUM_CHANNEL, MusicMidiInput, type MidiNoteMessage } from './midiNotes'
 import { musicStudio, musicTransport, nextTakeName, type MusicStudioState } from './musicStudioStore';
 import { captureScene, dominantColumn, nextSceneName, sceneLaunchActions, type PlayingNow } from './scenes';
 import { macros } from '../stores/macros';
+import { getNativeRendererFrameSnapshot } from '../api/native-renderer';
+import {
+  LOOP_ROLES,
+  ROLE_INSTRUMENTS,
+  beatPattern,
+  isBeatLoop,
+  loopById,
+  loopNotesBetween,
+  nextBar,
+  type BeatLoop,
+  type LoopRole,
+  type MelodicLoop,
+} from './loops';
+import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
+import type { AnalogDest, AnalogSource } from './analogSynth';
 import {
   ACID_STEPS,
   bowlNotes,
   chordNotes,
   instrumentsThroughFx,
+  scaleNote,
   snapToScale,
+  type StudioSet,
 } from './studioSets';
 
 /** How far ahead the sequencer and replay schedule, in seconds. */
@@ -501,6 +518,7 @@ function playingNow(): PlayingNow {
     beat: s.sequencerPlaying,
     takeId: s.playingTakeId,
     vjColumn: dominantColumn(launcher.layerStates.map((ls) => (ls?.activeClip ? ls.activeColumn : null))),
+    loops: { ...s.playingLoops },
   };
 }
 
@@ -520,7 +538,7 @@ export function launchScene(id: string): void {
   const s = get(musicStudio);
   if (!s.scenes.some((sc) => sc.id === id)) return;
   const now = playingNow();
-  const idle = !now.beat && !now.takeId;
+  const idle = !now.beat && !now.takeId && !loopSlots.size;
   if (sceneTimer) clearTimeout(sceneTimer);
   sceneTimer = null;
   if (idle || s.queuedSceneId === id) {
@@ -547,7 +565,15 @@ function applyScene(id: string): void {
     else if (action.kind === 'take') {
       if (action.takeId) playTake(action.takeId, true);
       else stopTake();
-    } else vjClipLauncher.triggerColumnNow(action.column, 'A');
+    } else if (action.kind === 'visuals') vjClipLauncher.triggerColumnNow(action.column, 'A');
+    else {
+      // The scene lands on the bar already, so its loops start now.
+      for (const role of LOOP_ROLES) {
+        const id = action.loops[role];
+        if (id) launchLoop(id, true);
+        else stopLoop(role);
+      }
+    }
   }
   musicStudio.setTransport({ sceneId: id });
 }
@@ -558,12 +584,275 @@ function cancelQueuedScene(): void {
   musicStudio.setTransport({ queuedSceneId: null, sceneId: null });
 }
 
+// ── Loop library ────────────────────────────────────────────────────────
+
+interface LoopSlot {
+  loop: MelodicLoop;
+  instrument: InstrumentId;
+  startBeat: number;
+  /** Where scheduling has reached, in launch-clock beats. */
+  scheduledBeat: number;
+  /** Set when another loop takes over the slot: play up to here, then end. */
+  stopBeat: number | null;
+  /** Notes started whose ends are still ahead, to cut if the loop stops early. */
+  pending: Array<{ note: number; offBeat: number }>;
+  announced: boolean;
+}
+
+const loopSlots = new Map<LoopRole, LoopSlot>();
+const endingSlots: LoopSlot[] = [];
+let beatLoopTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Launch a library loop. With music playing it starts on the next bar
+ * (taking over its slot from the loop there). With nothing playing, or with
+ * `now` (a scene already on the bar), it joins the current bar at once, so it
+ * still sits on the same bar lines as the beat.
+ */
+export function launchLoop(id: string, now = false): void {
+  ensureMusicRuntime();
+  audio.now();
+  const loop = loopById(id);
+  if (!loop) return;
+  if (isBeatLoop(loop)) {
+    launchBeatLoop(loop, now);
+    return;
+  }
+  const s = get(musicStudio);
+  const { beat } = launchClockPosition();
+  const busy = !!sequencer || !!replay || loopSlots.size > 0;
+  const startBeat = busy && !now ? nextBar(beat) : Math.floor(beat / 4 + 1e-6) * 4;
+  const from = Math.max(startBeat, beat);
+  const old = loopSlots.get(loop.role);
+  if (old) {
+    old.stopBeat = from;
+    endingSlots.push(old);
+  }
+  loopSlots.set(loop.role, {
+    loop,
+    instrument: ROLE_INSTRUMENTS[s.set][loop.role],
+    startBeat,
+    scheduledBeat: from,
+    stopBeat: null,
+    pending: [],
+    announced: false,
+  });
+  musicStudio.setTransport({ queuedLoops: { ...s.queuedLoops, [loop.role]: id } });
+  ensureScheduler();
+  ensureFrameLoop();
+}
+
+function launchBeatLoop(loop: BeatLoop, now: boolean): void {
+  if (beatLoopTimer) clearTimeout(beatLoopTimer);
+  beatLoopTimer = null;
+  const apply = () => {
+    beatLoopTimer = null;
+    musicStudio.setPattern(beatPattern(loop));
+    musicTransport.update((t) => ({ ...t, beatLoop: loop.id, queuedBeat: null }));
+    if (!sequencer) startSequencer();
+  };
+  if (!sequencer || now) {
+    apply();
+    return;
+  }
+  musicTransport.update((t) => ({ ...t, queuedBeat: loop.id }));
+  const wait = Math.max(0, nextLaunchBoundary(4) - performance.now() - 10);
+  beatLoopTimer = setTimeout(apply, wait);
+}
+
+/** Stop the loop in a slot (and one handing over to it); notes they were holding let go now. */
+export function stopLoop(role: LoopRole): void {
+  const beat = launchClockPosition().beat;
+  const slot = loopSlots.get(role);
+  if (slot) endLoopSlot(slot, beat);
+  loopSlots.delete(role);
+  for (let i = endingSlots.length - 1; i >= 0; i--) {
+    if (endingSlots[i].loop.role !== role) continue;
+    endLoopSlot(endingSlots[i], beat);
+    endingSlots.splice(i, 1);
+  }
+  const s = get(musicStudio);
+  const playing = { ...s.playingLoops };
+  const queued = { ...s.queuedLoops };
+  delete playing[role];
+  delete queued[role];
+  musicStudio.setTransport({ playingLoops: playing, queuedLoops: queued });
+}
+
+export function stopAllLoops(): void {
+  for (const role of [...loopSlots.keys()]) stopLoop(role);
+  for (const slot of endingSlots.splice(0)) endLoopSlot(slot, launchClockPosition().beat);
+  if (beatLoopTimer) clearTimeout(beatLoopTimer);
+  beatLoopTimer = null;
+  musicTransport.update((t) => ({ ...t, queuedBeat: null }));
+}
+
+/** A set change hands each playing loop to the new set's instrument for its part. */
+function retargetLoops(set: StudioSet): void {
+  const beat = launchClockPosition().beat;
+  for (const [role, slot] of loopSlots) {
+    const instrument = ROLE_INSTRUMENTS[set][role];
+    if (instrument === slot.instrument) continue;
+    endLoopSlot(slot, beat);
+    slot.instrument = instrument;
+  }
+}
+
+function endLoopSlot(slot: LoopSlot, atBeat: number): void {
+  const time = audio.peekNow() ?? 0;
+  for (const p of slot.pending) {
+    if (p.offBeat > atBeat) send(noteOff(slot.instrument, p.note, 'sequencer', time));
+  }
+  slot.pending = [];
+}
+
+function scheduleLoops(beat: number, horizon: number, timeAt: (b: number) => number): void {
+  const s = get(musicStudio);
+  const announce: Partial<Record<LoopRole, string>> = {};
+  const schedule = (slot: LoopSlot) => {
+    const until = slot.stopBeat === null ? horizon : Math.min(horizon, slot.stopBeat);
+    if (until > slot.scheduledBeat) {
+      for (const n of loopNotesBetween(slot.loop, s.key, slot.startBeat, slot.scheduledBeat, until)) {
+        const offBeat = slot.stopBeat === null ? n.beat + n.dur : Math.min(n.beat + n.dur, slot.stopBeat);
+        send(noteOn(slot.instrument, n.note, n.velocity, 'sequencer', timeAt(n.beat)));
+        send(noteOff(slot.instrument, n.note, 'sequencer', timeAt(offBeat)));
+        slot.pending.push({ note: n.note, offBeat });
+      }
+      slot.scheduledBeat = until;
+    }
+    slot.pending = slot.pending.filter((p) => p.offBeat > beat);
+  };
+  for (const [role, slot] of loopSlots) {
+    schedule(slot);
+    if (!slot.announced && beat >= slot.startBeat - 0.01) {
+      slot.announced = true;
+      announce[role] = slot.loop.id;
+    }
+  }
+  for (let i = endingSlots.length - 1; i >= 0; i--) {
+    const slot = endingSlots[i];
+    schedule(slot);
+    if (slot.stopBeat !== null && beat >= slot.stopBeat) endingSlots.splice(i, 1);
+  }
+  if (Object.keys(announce).length) {
+    const queued = { ...s.queuedLoops };
+    for (const role of Object.keys(announce) as LoopRole[]) delete queued[role];
+    musicStudio.setTransport({ playingLoops: { ...s.playingLoops, ...announce }, queuedLoops: queued });
+  }
+}
+
+function scheduleLoopWindow(): void {
+  if (!loopSlots.size && !endingSlots.length) return;
+  const now = audio.now();
+  const { beat, beatMs } = launchClockPosition();
+  const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
+  scheduleLoops(beat, horizon, (b) => Math.max(now, now + ((b - beat) * beatMs) / 1000));
+}
+
+// ── Dub controls ────────────────────────────────────────────────────────
+
+let throwHeld = false;
+let dropHeld = false;
+
+/** Hold the siren (or latch it); it sounds through whatever its cable reaches. */
+export function setSiren(on: boolean): void {
+  ensureMusicRuntime();
+  if (on) playNote('siren', 72, 0.85, 'screen');
+  else releaseNote('siren', 72, 'screen');
+}
+
+/** Fire one of the eight shots. */
+export function triggerShot(index: number, velocity = 0.85): void {
+  ensureMusicRuntime();
+  playNote('shots', 60 + index, velocity, 'screen');
+  setTimeout(() => releaseNote('shots', 60 + index, 'screen'), 160);
+}
+
+/** A dub throw: while held, everything in the echo chamber floods the tape echo. */
+export function setThrow(on: boolean): void {
+  throwHeld = on;
+  refreshSound();
+}
+
+/** A drop: while held, the drums and bass cut out and the echoes carry the tune. */
+export function setDrop(on: boolean): void {
+  dropHeld = on;
+  refreshSound();
+}
+
+function refreshSound(): void {
+  const s = get(musicStudio);
+  const volumes = morphedVolumes(s);
+  for (const id of INSTRUMENTS) audio.setVolume(id, volumes[id]);
+  audio.setParams(soundParams(s));
+}
+
+// ── Analog patching ─────────────────────────────────────────────────────
+
+const ANALOG_SOURCES = new Set(['cv:analog.lfo', 'cv:analog.env', 'cv:analog.vco2']);
+
+/** Cables between the analog synth's own jacks become audio-rate routes. */
+function syncAnalogRoutes(s: MusicStudioState): void {
+  const routes = s.cables.analog
+    .filter((c) => ANALOG_SOURCES.has(c.from) && c.to.startsWith('dest:analog.'))
+    .map((c) => ({ from: c.from.slice(10) as AnalogSource, to: c.to.slice(12) as AnalogDest }));
+  audio.setAnalogRoutes(s.set === 'analog' ? routes : []);
+}
+
+// ── Scan synth ──────────────────────────────────────────────────────────
+
+let scanTimer: ReturnType<typeof setInterval> | null = null;
+let scanBusy = false;
+let scanLevel = 0;
+const SCAN_INTERVAL_MS = 90;
+
+const midiToHz = (note: number) => 440 * Math.pow(2, (note - 69) / 12);
+
+/** Start or stop the scan synth reading the live output. */
+export function setScan(on: boolean): void {
+  ensureMusicRuntime();
+  musicStudio.setTransport({ scanOn: on });
+  audio.scanRunning(on);
+  if (on && !scanTimer) {
+    scanTimer = setInterval(() => void scanTick(), SCAN_INTERVAL_MS);
+  } else if (!on && scanTimer) {
+    clearInterval(scanTimer);
+    scanTimer = null;
+    scanLevel = 0;
+  }
+}
+
+async function scanTick(): Promise<void> {
+  if (scanBusy) return;
+  scanBusy = true;
+  try {
+    const s = get(musicStudio);
+    const x = scanPosition(launchClockPosition().beat, s.params['scan.speed'] ?? 0.5);
+    const snap = await getNativeRendererFrameSnapshot(true, { max_dim: 48 });
+    if (!snap?.rgba_b64 || !snap.width || !snap.height) return;
+    const raw = atob(snap.rgba_b64);
+    const pixels = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) pixels[i] = raw.charCodeAt(i);
+    const bands = columnBands(pixels, snap.width, snap.height, pixels.length / snap.height, x, SCAN_PARTIALS);
+    // Bands climb the key from the pitch knob's octave; spread widens the steps.
+    const base = 24 + Math.round((s.params['scan.pitch'] ?? 0.4) * 36);
+    const step = 0.5 + (s.params['scan.spread'] ?? 0.5) * 1.5;
+    const freqs = bands.map((_, i) => midiToHz(scaleNote(s.key, Math.round(i * step), base)));
+    audio.scanPlay(freqs, bands, s.params['scan.level'] ?? 0.6);
+    scanLevel = bands.reduce((a, b) => a + b, 0) / bands.length;
+  } catch {
+    // No native frame to read (browser preview): the synth stays quiet.
+  } finally {
+    scanBusy = false;
+  }
+}
+
 // ── Clocks ──────────────────────────────────────────────────────────────
 
 function ensureScheduler(): void {
   if (schedulerHandle !== null) return;
   const tick = () => {
-    if (!sequencer && !replay) {
+    if (!sequencer && !replay && !loopSlots.size && !endingSlots.length) {
       clearInterval(schedulerHandle!);
       schedulerHandle = null;
       return;
@@ -571,6 +860,7 @@ function ensureScheduler(): void {
     try {
       scheduleSequencer();
       scheduleReplay();
+      scheduleLoopWindow();
     } catch (err) {
       console.warn('[Music] scheduler failed:', err);
     }
@@ -598,7 +888,7 @@ function frame(): void {
     publishTransport(now);
   }
   const s = get(musicStudio);
-  if (s.isOpen || sequencer || replay || visualsWereActive) frameHandle = requestAnimationFrame(frame);
+  if (s.isOpen || sequencer || replay || loopSlots.size || visualsWereActive) frameHandle = requestAnimationFrame(frame);
 }
 
 function publishTransport(now: number): void {
@@ -628,6 +918,12 @@ function controlValue(jack: string, params: Record<string, number>): number {
   if (name === 'acid.level') return visuals.instrumentLevel('acid');
   if (name === 'acid.cutoff') return Math.min(1, (params['acid.cutoff'] ?? 0.35) * (0.4 + 0.6 * visuals.instrumentLevel('acid')) * 1.6);
   if (name.startsWith('drum.')) return visuals.drumLevel(name.slice(5) as DrumVoice);
+  if (name === 'analog.lfo') return audio.analogLfo();
+  if (name === 'analog.env' || name === 'analog.vco2' || name === 'analog.level') return visuals.instrumentLevel('analog');
+  if (name === 'dubbass.level') return visuals.instrumentLevel('dubbass');
+  if (name === 'siren.level') return visuals.instrumentLevel('siren');
+  if (name === 'shots.level') return visuals.instrumentLevel('shots');
+  if (name === 'scan.level') return scanLevel;
   return 0;
 }
 
@@ -652,6 +948,8 @@ function routeControlCables(): void {
   const live = new Set<number>();
   for (const cable of cables) {
     if (!cable.from.startsWith('cv:')) continue;
+    // The analog synth's own sources reach its inputs at audio rate instead.
+    if (ANALOG_SOURCES.has(cable.from) && cable.to.startsWith('dest:analog.')) continue;
     const value = controlValue(cable.from, s.params);
     const previous = lastSent.get(cable.to);
     if (previous !== undefined && Math.abs(previous - value) < 0.004) {
@@ -661,6 +959,8 @@ function routeControlCables(): void {
     lastSent.set(cable.to, value);
     if (cable.to.startsWith('dest:macro:')) {
       macros.setMacroValue(cable.to.slice(11), value);
+    } else if (cable.to.startsWith('dest:analog.')) {
+      audio.setAnalogExternal(cable.to.slice(12) as AnalogDest, value);
     } else if (cable.to.startsWith('dest:layer:')) {
       const layer = Number(cable.to.slice(11));
       live.add(layer);
@@ -676,7 +976,9 @@ function routeControlCables(): void {
     vjClipLauncher.setLayerOpacity(layer, base, 'A');
   }
   for (const key of [...lastSent.keys()]) {
-    if (!cables.some((c) => c.to === key)) lastSent.delete(key);
+    if (cables.some((c) => c.to === key)) continue;
+    lastSent.delete(key);
+    if (key.startsWith('dest:analog.')) audio.setAnalogExternal(key.slice(12) as AnalogDest, null);
   }
 }
 
@@ -685,6 +987,13 @@ function routeControlCables(): void {
  * against the bowls (X) and opens the space (Y) on top of the knob settings.
  */
 function soundParams(s: MusicStudioState): Record<string, number> {
+  if (s.set === 'dub' && throwHeld) {
+    return {
+      ...s.params,
+      'fx.echo.mix': 1,
+      'fx.echo.feedback': Math.min(1, (s.params['fx.echo.feedback'] ?? 0.6) + 0.25),
+    };
+  }
   if (s.set !== 'bath') return s.params;
   const y = s.params['xy.y'] ?? 0.5;
   const clamp = (v: number) => Math.max(0, Math.min(1, v));
@@ -697,6 +1006,7 @@ function soundParams(s: MusicStudioState): Record<string, number> {
 }
 
 function morphedVolumes(s: MusicStudioState): Record<InstrumentId, number> {
+  if (s.set === 'dub' && dropHeld) return { ...s.volumes, drums: 0, dubbass: 0 };
   if (s.set !== 'bath') return s.volumes;
   const x = s.params['xy.x'] ?? 0.5;
   return {
@@ -767,6 +1077,10 @@ function writeNoteInputs(): void {
  */
 function stopEverything(): void {
   cancelQueuedScene();
+  stopAllLoops();
+  setScan(false);
+  throwHeld = false;
+  dropHeld = false;
   releaseChords();
   if (recorder.recording) stopRecording();
   if (sequencer) stopSequencer();
@@ -777,6 +1091,7 @@ function stopEverything(): void {
 let wasOpen = false;
 let macroSubscribed = false;
 let lastKey = '';
+let lastSet: StudioSet | null = null;
 
 /** Start listening to the studio's settings. Safe to call repeatedly. */
 export function ensureMusicRuntime(): void {
@@ -795,10 +1110,15 @@ export function ensureMusicRuntime(): void {
       lastKey = keySig;
       if (chords.size) revoiceChords();
     }
+    if (s.set !== lastSet) {
+      lastSet = s.set;
+      retargetLoops(s.set);
+    }
     const volumes = morphedVolumes(s);
     for (const id of INSTRUMENTS) audio.setVolume(id, volumes[id]);
     audio.setParams(soundParams(s));
     audio.setRouting(s.set, instrumentsThroughFx(s.cables[s.set]));
+    syncAnalogRoutes(s);
     syncMacroFx(true);
     audio.setMasterVolume(s.masterVolume);
     visuals.setSettings(s.visuals);
@@ -818,6 +1138,8 @@ export function ensureMusicRuntime(): void {
     // A project load stops the transport in the store; follow it here.
     if (!s.sequencerPlaying && sequencer) stopSequencer();
     if (!s.playingTakeId && replay) stopTake();
+    const loopsInStore = Object.keys(s.playingLoops).length + Object.keys(s.queuedLoops).length;
+    if (!loopsInStore && loopSlots.size) stopAllLoops();
     if (!s.recording && recorder.recording) recorder.cancel();
   });
 }

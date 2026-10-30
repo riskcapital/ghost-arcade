@@ -151,43 +151,79 @@ studio, so a song keeps playing.
 The **Studio** button in the music tray turns VJ mode into one full-screen
 instrument. The live output stays in the middle (the view hands the native
 preview its frame; VJ mode hides behind it) and the set's modules sit around
-it. **Tray view** goes back with the music playing; **Exit** stops it.
+it, in the app's deep blues. **Tray** goes back with the music playing;
+**Exit** stops it.
 
-Two sets, one look (black panels, walnut cheeks, amber):
+Four sets, each with its own instruments (the keys switch to the set's own
+voice where it has one):
 
 - **Sound bath**: Drone (8 knobs, played by chords or keys), Bowls (five
   bowls tuned to the key), XY Space (X morphs drone against bowls, Y opens the
-  reverb and shimmer), Chords (eight scale-locked chords that hold until the
-  next), Play (compact keys and the note-visual mode), FX (shimmer, tape,
-  delay, reverb), Macros, Beat.
+  reverb and shimmer; touching it plays a gliding tone in the key), Chords
+  (eight chords in the key that layer: each holds until tapped again), Play,
+  FX (shimmer, tape, delay, reverb), Macros, Beat.
 - **Berlin**: Drums (a mixer with tune, level, mute and a jack per voice),
   Acid (a resonant bass line with its own 16-step note row, accents and
-  glides, playing with the beat), Visual layers (deck A layers with opacity
-  and a jack each), FX (drive, bitcrush, dub delay, gated reverb), Macros,
-  Beat (up to 64 steps).
+  glides, playing with the beat), Visual layers, FX (drive, bitcrush, dub
+  delay, gated reverb), Macros, Beat (up to 64 steps).
+- **Dub** (`dubSounds.ts`): Dub bass (a round mono bass with glide, played on
+  the wide keyboard under the output), Siren (hold, or latch, with pitch,
+  rate, depth and shape), Shots (laser, zap, riser, boing, crackle, boom,
+  alarm, echo clap), and the Echo chamber: a tempo-locked tape echo with wow
+  and a saturating feedback loop that can run away, a spring, a filter sweep
+  and warmth. **Throw** floods the echo while held; **Drop** cuts the drums
+  and bass so the echoes carry the tune.
+- **Analog** (`analogSynth.ts`): a semi-modular mono synth. Two oscillators,
+  a mixer with sub and noise, two cascaded resonant low-pass stages with
+  drive, an ADSR envelope and an LFO. The envelope is normalled to the
+  filter and the amp, so it plays with no cables. The patch bay's outputs
+  (LFO, envelope, oscillator 2, level) patch into its inputs (cutoff, pitch,
+  amp) at audio rate (oscillator 2 into pitch is FM), or out to a layer or a
+  macro so the same signal moves the picture.
 
-The key and scale (top bar) tune the chords and bowls; **Lock** snaps the
-drone and bowls to the key from the letter keys and MIDI.
+The key and scale (top bar) tune the chords, bowls, loops and scan synth;
+**Lock** keeps what the keys play in the key. The keyboards mark the key's
+notes.
 
 **Cables** (`studioSets.ts`, `CableLayer.svelte`): drag from an output jack to
-an input. Sound jacks send an instrument through the FX rack (unpatched
-instruments play dry). Control jacks carry a 0-1 signal (the XY pad, the drone
-or bowl level, each drum voice's hits, the acid filter) into a macro knob
-(turning it, so its visual effects move) or a VJ layer (pulsing its opacity
-with the hits, so the hats can flash one layer and the kick another). Drag a
-plugged input to move its cable, or drop it on nothing to unplug it. Cables
-pass behind the output frame so they never cover the picture, and every
-knob, the key, the acid row, mutes and cables save with the project.
+an input; cables hang in front of everything, the output included. Sound
+jacks send an instrument through the set's FX rack (unpatched instruments
+play dry). Control jacks carry a 0-1 signal (the XY pad, an instrument's
+level, each drum voice's hits, the acid filter, the analog LFO and envelope,
+the scan line's brightness) into a macro knob (turning it, so its effects
+move) or a VJ layer (pulsing its opacity, so the hats can flash one layer and
+the kick another). Drag a plugged input to move its cable, or drop it on
+nothing to unplug it. Every knob, the key, the acid row, mutes and cables
+save with the project.
 
-Chord pads layer: each holds until tapped again, all built from the key, and a
-key change re-voices the held chords. The keyboards mark the key's notes.
+**Loop library** (`loops.ts`, `LoopBrowser.svelte`): premade beats,
+basslines, leads, chord progressions and textures, launched from a column
+per kind like clips. A loop starts on the next bar and takes over from the
+one in its column; the square stops a column. Melodic loops are written in
+scale degrees, so they play in the studio's key, and each set plays them on
+its own instruments (a bassline is the acid line in Berlin and the dub bass
+in the dub set; switching sets hands playing loops to the new set's
+instruments). Beats load into the beat grid, ready to edit.
 
-**Berlin glitch visuals** (`public/ISF/BG-*.fs`, category Glitch): slit-scan,
-threshold, grain, scanlines, kick strobe and datamosh, black and white, each
-reacting to the drums. Each Visual layers row picks one and shows what drives
-it. **Load jam** sets up a techno beat, the acid line, four layers (threshold
-bed, slit-scan on the acid filter, scanlines on the hats, strobe on the kick)
-and the cables, and starts it.
+**Scan synth** (`scanSynth.ts`, `OutputStrip.svelte`): the picture plays
+music back. A line sweeps across the live output in time with the beat
+(once every 16 bars to once a bar). Down that line the picture is cut into
+24 bands, each a partial tuned to a note of the key, low at the bottom and
+high at the top, and a band's brightness sets how loud it plays: bright,
+busy pictures sing chords, dark ones go quiet, a strobe pulses the sound. It
+reads a small frame from the native renderer about eleven times a second.
+Its sound and its brightness have jacks, so the picture can also turn a
+macro or pulse a layer.
+
+**Visuals per set**: Berlin glitch (`public/ISF/BG-*.fs`: slit-scan,
+threshold, grain, scanlines, kick strobe, datamosh, black and white) and dub
+(`public/ISF/DB-*.fs`: echo trails, smoke, ripples, speaker). Each Visual
+layers row picks one and shows what drives it. **Load jam** sets up a
+groove, four layers and the cables between them, and starts it: in Berlin a
+techno beat and the acid line with the strobe on the kick; in Dub a one drop
+with the bassline and skank, the smoke on the bass, ripples on the shots and
+the speaker on the kick. The analog set's **Load patch** starts with the LFO
+sweeping the filter and two note visuals following the envelope and LFO.
 
 **Macro effects** (`macroFx.ts`, `macroFxAudio.ts`, `MacroEditor.svelte`): the
 FX button on a macro opens its effects. Sound: delay (beat-synced, ping-pong),
@@ -197,11 +233,12 @@ the macro sweeps it. Picture: visual effects from the app's catalog, which the
 macro fades in. Both belong to the macro, apart from composition, layer and
 clip effects, and save with the project.
 
-**XY tone**: touching the XY pad plays a gliding tone in the key (X picks the
-note, Y brightens it) as well as moving the space; it has its own sound jack.
+**Scenes** capture the beat, the playing loops, the looping take and the VJ
+column and launch them together on the next bar.
 
-**Scenes** capture the beat, the looping take and the VJ column and launch
-them together on the next bar.
+**The tray** (`VJMusicStudio.svelte`) is a condensed copy of the current set
+under the VJ deck: the keys, the set's main modules and the loop library, with
+the beat and record buttons in its header. Patching lives in the Studio view.
 
 ## Phases
 
@@ -218,7 +255,7 @@ them together on the next bar.
      per-frame `set_note_state` command and a `NOTES[16]` uniform block), for
      more voices and less per-frame traffic than clip inputs.
    - More drum kits (909, minimal, lo-fi, organic) and pattern chains.
-   - Glitch visual packs for the Berlin set (grain, slit-scan, threshold, datamosh).
-   - Loop slots per instrument and an arrangement timeline.
+   - An arrangement timeline for scenes, and loops recorded from takes.
+   - Scan synth modes: read along a circle or a row, or follow a colour.
 3. **Later**: per-take editing (quantize, trim, overdub), more instruments
    and sample kits, MIDI out to hardware, exporting a take as a MIDI file.

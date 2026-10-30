@@ -1,5 +1,8 @@
 <script lang="ts">
-  /** A rack module: a lit header with its title, controls and jacks, then the panel. */
+  /**
+   * A rack module: a lit header with its title, controls and jacks, then the
+   * panel. `lead` takes the title's place (tabs, say).
+   */
   import type { Snippet } from 'svelte';
 
   let {
@@ -7,6 +10,7 @@
     subtitle = '',
     led = null,
     grow = false,
+    lead,
     head,
     children,
     class: extra = '',
@@ -16,6 +20,7 @@
     /** null: no light; false: dark; true: lit. */
     led?: boolean | null;
     grow?: boolean;
+    lead?: Snippet;
     head?: Snippet;
     children: Snippet;
     class?: string;
@@ -25,7 +30,7 @@
 <section class="module {extra}" class:grow>
   <div class="head">
     {#if led !== null}<span class="led" class:on={led}></span>{/if}
-    <h2>{title}</h2>
+    {#if lead}{@render lead()}{:else}<h2>{title}</h2>{/if}
     {#if subtitle}<span class="subtitle">{subtitle}</span>{/if}
     <span class="spacer"></span>
     {#if head}{@render head()}{/if}
@@ -49,25 +54,25 @@
   .module.grow { flex: 1; }
   .head {
     flex: 0 0 auto;
-    height: 36px;
-    padding: 0 12px;
+    height: 32px;
+    padding: 0 10px;
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 8px;
     border-bottom: 1px solid var(--studio-edge-soft);
     white-space: nowrap;
   }
-  h2 { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: 0.16em; }
-  .subtitle { color: var(--studio-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+  h2 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; }
+  .subtitle { min-width: 0; color: var(--studio-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
   .spacer { flex: 1; }
-  .led { width: 8px; height: 8px; border-radius: 50%; background: var(--studio-edge); flex: 0 0 auto; }
+  .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-edge); flex: 0 0 auto; }
   .led.on { background: var(--studio-accent); box-shadow: 0 0 8px var(--studio-accent); }
   .panel {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 12px;
+    gap: 8px;
+    padding: 8px 10px 10px;
   }
 </style>

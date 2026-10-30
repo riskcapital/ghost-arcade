@@ -9,6 +9,7 @@
  */
 
 import { normalizePattern, type DrumPattern } from './drumPattern';
+import { LOOP_ROLES, type LoopRole } from './loops';
 
 export interface MusicScene {
   id: string;
@@ -21,6 +22,8 @@ export interface MusicScene {
   takeId: string | null;
   /** VJ deck A column launched with the scene, or null to leave the visuals. */
   vjColumn: number | null;
+  /** Library loop in each slot; a slot left out stops. */
+  loops: Partial<Record<LoopRole, string>>;
 }
 
 export const SCENE_NAMES = ['Arrival', 'Breath', 'Bloom', 'Drift', 'Release', 'Dawn', 'Pressure', 'Peak', 'Break', 'Return'];
@@ -41,6 +44,7 @@ export interface PlayingNow {
   takeId: string | null;
   /** The column most of deck A's layers are playing, or null. */
   vjColumn: number | null;
+  loops: Partial<Record<LoopRole, string>>;
 }
 
 export function captureScene(id: string, name: string, now: PlayingNow): MusicScene {
@@ -51,6 +55,7 @@ export function captureScene(id: string, name: string, now: PlayingNow): MusicSc
     beat: now.beat,
     takeId: now.takeId,
     vjColumn: now.vjColumn,
+    loops: { ...now.loops },
   };
 }
 
@@ -73,7 +78,8 @@ export type SceneAction =
   | { kind: 'pattern'; pattern: DrumPattern }
   | { kind: 'beat'; play: boolean }
   | { kind: 'take'; takeId: string | null }
-  | { kind: 'visuals'; column: number };
+  | { kind: 'visuals'; column: number }
+  | { kind: 'loops'; loops: Partial<Record<LoopRole, string>> };
 
 /**
  * What launching `scene` changes, given what is playing. Only differences
@@ -89,6 +95,8 @@ export function sceneLaunchActions(scene: MusicScene, now: PlayingNow, takeIds: 
   const take = scene.takeId && takeIds.has(scene.takeId) ? scene.takeId : null;
   if (take !== now.takeId) actions.push({ kind: 'take', takeId: take });
   if (scene.vjColumn !== null && scene.vjColumn !== now.vjColumn) actions.push({ kind: 'visuals', column: scene.vjColumn });
+  const loopsDiffer = LOOP_ROLES.some((role) => (scene.loops[role] ?? null) !== (now.loops[role] ?? null));
+  if (loopsDiffer) actions.push({ kind: 'loops', loops: { ...scene.loops } });
   return actions;
 }
 
@@ -104,5 +112,11 @@ export function normalizeScene(raw: unknown): MusicScene | null {
     beat: s.beat === true,
     takeId: typeof s.takeId === 'string' && s.takeId ? s.takeId : null,
     vjColumn: s.vjColumn !== null && s.vjColumn !== undefined && Number.isInteger(column) && column >= 0 ? column : null,
+    loops: Object.fromEntries(
+      LOOP_ROLES.flatMap((role) => {
+        const id = (s.loops as Record<string, unknown> | undefined)?.[role];
+        return typeof id === 'string' && id ? [[role, id]] : [];
+      }),
+    ),
   };
 }

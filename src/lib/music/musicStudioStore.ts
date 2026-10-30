@@ -25,6 +25,7 @@ import {
 } from './drumPattern';
 import { normalizeTake, type Take } from './recording';
 import { normalizeScene, type MusicScene } from './scenes';
+import type { LoopRole } from './loops';
 import { createMacroFx, normalizeMacroFx, type MacroFxInstance, type MacroFxParam, type MacroFxType } from './macroFx';
 import {
   SCALES,
@@ -94,6 +95,11 @@ export interface MusicStudioState extends MusicStudioProjectState {
   /** Scene playing, and the one waiting for the next bar. */
   sceneId: string | null;
   queuedSceneId: string | null;
+  /** Loop playing in each slot, and loops waiting for the next bar. */
+  playingLoops: Partial<Record<LoopRole, string>>;
+  queuedLoops: Partial<Record<LoopRole, string | null>>;
+  /** The scan synth is reading the picture. */
+  scanOn: boolean;
 }
 
 /** The saved section of a project file. */
@@ -131,7 +137,7 @@ function perInstrument<T>(make: (id: InstrumentId) => T): Record<InstrumentId, T
   return Object.fromEntries(INSTRUMENTS.map((id) => [id, make(id)])) as Record<InstrumentId, T>;
 }
 
-const DEFAULT_VOLUMES: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75, xy: 0.7 };
+const DEFAULT_VOLUMES: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75, xy: 0.7, dubbass: 0.85, siren: 0.6, shots: 0.7, analog: 0.75, scan: 0.6 };
 
 export function defaultProjectState(): MusicStudioProjectState {
   return {
@@ -244,6 +250,9 @@ function initialState(): MusicStudioState {
     studioView: false,
     sceneId: null,
     queuedSceneId: null,
+    playingLoops: {},
+    queuedLoops: {},
+    scanOn: false,
   };
 }
 
@@ -270,7 +279,9 @@ function createMusicStudioStore() {
     toggleOpen: () => update((s) => ({ ...s, isOpen: !s.isOpen, studioView: false })),
     /** Show the full-screen Studio view, or go back to the tray. The studio stays open either way. */
     setStudioView: (studioView: boolean) => set({ studioView, isOpen: true }),
-    setSet: (studioSet: StudioSet) => set({ set: studioSet }),
+    // The keys switch to the set's own voice: the dub bass in the dub set, the synth in the analog set.
+    setSet: (studioSet: StudioSet) =>
+      update((s) => ({ ...s, set: studioSet, instrument: SET_KEYS_VOICE[studioSet] ?? s.instrument })),
     setParam: (key: string, value: number) =>
       update((s) => (key in s.params ? { ...s, params: { ...s.params, [key]: Math.max(0, Math.min(1, value)) } } : s)),
     setKey: (key: MusicKey) => set({ key }),
@@ -343,7 +354,7 @@ function createMusicStudioStore() {
     clearPattern: () => update((s) => ({ ...s, pattern: clearPattern(s.pattern) })),
     setPattern: (pattern: DrumPattern) => set({ pattern: normalizePattern(pattern) }),
 
-    setTransport: (patch: Partial<Pick<MusicStudioState, 'sequencerPlaying' | 'recording' | 'recordingSince' | 'playingTakeId' | 'loopTake' | 'sceneId' | 'queuedSceneId'>>) =>
+    setTransport: (patch: Partial<Pick<MusicStudioState, 'sequencerPlaying' | 'recording' | 'recordingSince' | 'playingTakeId' | 'loopTake' | 'sceneId' | 'queuedSceneId' | 'playingLoops' | 'queuedLoops' | 'scanOn'>>) =>
       set(patch),
 
     addTake: (take: Take) => update((s) => ({ ...s, takes: [...s.takes, take] })),
@@ -389,7 +400,7 @@ function createMusicStudioStore() {
         scaleLock: s.scaleLock,
         acidSteps: s.acidSteps.map((st) => ({ ...st })),
         drumMutes: [...s.drumMutes],
-        cables: { bath: s.cables.bath.map((c) => ({ ...c })), berlin: s.cables.berlin.map((c) => ({ ...c })) },
+        cables: Object.fromEntries(Object.entries(s.cables).map(([set, list]) => [set, list.map((c) => ({ ...c }))])) as Record<StudioSet, Cable[]>,
         macroFx: JSON.parse(JSON.stringify(s.macroFx)),
       };
     },
@@ -406,10 +417,16 @@ function createMusicStudioStore() {
         playingTakeId: null,
         sceneId: null,
         queuedSceneId: null,
+        playingLoops: {},
+        queuedLoops: {},
+        scanOn: false,
       }));
     },
   };
 }
+
+/** What the keys play when a set comes up, for sets built around their own voice. */
+const SET_KEYS_VOICE: Partial<Record<StudioSet, InstrumentId>> = { dub: 'dubbass', analog: 'analog' };
 
 export const musicStudio = createMusicStudioStore();
 
@@ -422,6 +439,9 @@ export interface MusicTransportState {
   held: Set<string>;
   /** Scale degrees of the chords the drone is holding. */
   chords: number[];
+  /** The beat loop last loaded into the grid, and one waiting for the next bar. */
+  beatLoop: string | null;
+  queuedBeat: string | null;
 }
 
-export const musicTransport = writable<MusicTransportState>({ step: -1, takeProgress: 0, held: new Set(), chords: [] });
+export const musicTransport = writable<MusicTransportState>({ step: -1, takeProgress: 0, held: new Set(), chords: [], beatLoop: null, queuedBeat: null });

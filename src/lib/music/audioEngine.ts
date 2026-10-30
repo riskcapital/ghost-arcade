@@ -17,6 +17,9 @@ import { INSTRUMENTS, type DrumVoice, type InstrumentId, type NoteEvent } from '
 import type { KeysPatch, SynthPatch } from './instruments';
 import { FxRack } from './fxRack';
 import { MacroFxChain, type MacroFxSlot } from './macroFxAudio';
+import { DubBass, Siren, fireShot } from './dubSounds';
+import { AnalogSynth, type AnalogDest, type AnalogSource } from './analogSynth';
+import { ScanSynth } from './scanSynth';
 import { defaultParams, type StudioSet } from './studioSets';
 
 interface SubtractivePatch {
@@ -74,7 +77,7 @@ export class MusicAudioEngine {
 
   private synthPatch: SynthPatch = 'pad';
   private keysPatch: KeysPatch = 'epiano';
-  private volumes: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75, xy: 0.7 };
+  private volumes: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75, xy: 0.7, dubbass: 0.85, siren: 0.6, shots: 0.7, analog: 0.75, scan: 0.6 };
   private masterVolume = 0.85;
   /** Every Studio knob, "module.param" -> 0-1. */
   private params: Record<string, number> = defaultParams();
@@ -85,6 +88,11 @@ export class MusicAudioEngine {
   private droneVoices = new Set<{ filter: BiquadFilterNode; shimmer: GainNode; air: GainNode; note: number }>();
   private acid: { osc: OscillatorNode; filter: BiquadFilterNode; amp: GainNode; note: number } | null = null;
   private xyTone: { oscs: OscillatorNode[]; filter: BiquadFilterNode; amp: GainNode; note: number } | null = null;
+  private dubBass: DubBass | null = null;
+  private siren: Siren | null = null;
+  private analog: AnalogSynth | null = null;
+  private scan: ScanSynth | null = null;
+  private analogRoutes: Array<{ from: AnalogSource; to: AnalogDest }> = [];
   private macroChain: MacroFxChain | null = null;
   private macroSlots: MacroFxSlot[] = [];
   private tempo = 120;
@@ -123,7 +131,9 @@ export class MusicAudioEngine {
   setParams(params: Record<string, number>): void {
     this.params = params;
     if (!this.ctx) return;
-    for (const rack of Object.values(this.racks)) rack?.setParams(params);
+    for (const rack of Object.values(this.racks)) rack?.setParams(params, this.tempo);
+    this.siren?.set(params);
+    this.analog?.setParams(params);
     const t = this.ctx.currentTime;
     if (this.droneLfo) {
       const motion = params['drone.motion'] ?? 0.6;
@@ -142,8 +152,41 @@ export class MusicAudioEngine {
   /** The macros' sound effects and how far each macro is turned. */
   setMacroFx(slots: MacroFxSlot[], tempo: number): void {
     this.macroSlots = slots;
+    const tempoMoved = Math.abs(tempo - this.tempo) > 0.05;
     this.tempo = tempo;
     this.macroChain?.sync(slots, tempo);
+    // Tempo-locked echoes follow the clock.
+    if (tempoMoved) for (const rack of Object.values(this.racks)) rack?.setParams(this.params, tempo);
+  }
+
+  /** Cables between the analog synth's own jacks (audio-rate). */
+  setAnalogRoutes(routes: Array<{ from: AnalogSource; to: AnalogDest }>): void {
+    this.analogRoutes = routes;
+    this.analog?.setRoutes(routes);
+  }
+
+  /** A signal from outside the analog synth into one of its inputs, or null to let go. */
+  setAnalogExternal(dest: AnalogDest, value: number | null): void {
+    this.analog?.setExternal(dest, value);
+  }
+
+  analogLfo(): number {
+    return this.ctx && this.analog ? this.analog.lfoValue(this.ctx.currentTime) : 0;
+  }
+
+  get sirenSounding(): boolean {
+    return this.siren?.sounding ?? false;
+  }
+
+  /** The scan synth's partials: start, stop and feed them. */
+  scanRunning(on: boolean): void {
+    this.ensure();
+    if (on) this.scan?.start();
+    else this.scan?.stop();
+  }
+
+  scanPlay(frequencies: number[], levels: number[], level: number): void {
+    this.scan?.play(frequencies, levels, level);
   }
 
   /** Which set's rack is in use, and which instruments its cables send through it. */
@@ -158,7 +201,7 @@ export class MusicAudioEngine {
     let rack = this.racks[this.activeSet];
     if (!rack) {
       rack = new FxRack(this.ctx, this.activeSet);
-      rack.setParams(this.params);
+      rack.setParams(this.params, this.tempo);
       rack.output.connect(this.masterGain);
       this.racks[this.activeSet] = rack;
     }
@@ -180,6 +223,25 @@ export class MusicAudioEngine {
     if (event.instrument === 'bowls') {
       // A bowl rings out on its own; letting go does not stop it.
       if (event.type === 'on') this.strikeBowl(event.note, event.velocity, time);
+      return;
+    }
+    if (event.instrument === 'dubbass') {
+      if (event.type === 'on') this.dubBass?.on(event.note, event.velocity, time, this.params);
+      else this.dubBass?.off(time, 0.12, event.note);
+      return;
+    }
+    if (event.instrument === 'siren') {
+      if (event.type === 'on') this.siren?.on(event.velocity, time, this.params);
+      else this.siren?.off(time);
+      return;
+    }
+    if (event.instrument === 'shots') {
+      if (event.type === 'on' && this.noise) fireShot(ctx, this.bus!.shots, this.noise, event.note - 60, event.velocity, time, this.params);
+      return;
+    }
+    if (event.instrument === 'analog') {
+      if (event.type === 'on') this.analog?.noteOn(event.note, event.velocity, time);
+      else this.analog?.noteOff(event.note, time);
       return;
     }
     if (event.instrument === 'xy') {
@@ -223,6 +285,9 @@ export class MusicAudioEngine {
     this.voices.clear();
     this.acidOff(t);
     this.xyOff(t);
+    this.dubBass?.off(t);
+    this.siren?.off(t);
+    this.analog?.allOff(t);
   }
 
   dispose(): void {
@@ -270,6 +335,12 @@ export class MusicAudioEngine {
     }
     this.bus = bus;
     this.noise = makeNoise(ctx);
+    this.dubBass = new DubBass(ctx, bus.dubbass);
+    this.siren = new Siren(ctx, bus.siren);
+    this.analog = new AnalogSynth(ctx, bus.analog, this.noise);
+    this.analog.setParams(this.params);
+    this.analog.setRoutes(this.analogRoutes);
+    this.scan = new ScanSynth(ctx, bus.scan);
     this.applyRouting();
     this.syncAnalyserTap();
     this.unsubscribeGraph = audioAnalyzer.onGraphChange(() => this.syncAnalyserTap());

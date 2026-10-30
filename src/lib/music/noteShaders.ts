@@ -6,6 +6,7 @@ import { get } from 'svelte/store';
 import { vjClipLauncher, type VJDeck } from '../stores/vjClipLauncher';
 import { showToast } from '../stores/errorToast';
 import { generateUUID } from '../utils/uuid';
+import type { StudioSet } from './studioSets';
 
 /** Black and white glitch visuals for the Berlin set. */
 export const GLITCH_SHADERS = [
@@ -23,6 +24,27 @@ export const NOTE_SHADERS = [
   { file: 'NR-NoteInk.fs', name: 'Note Ink' },
   { file: 'NR-BeatGrid.fs', name: 'Beat Grid' },
 ] as const;
+
+/** Echo, smoke and speaker visuals for the dub set. */
+export const DUB_SHADERS = [
+  { file: 'DB-EchoTrails.fs', name: 'Echo Trails' },
+  { file: 'DB-Smoke.fs', name: 'Dub Smoke' },
+  { file: 'DB-Ripples.fs', name: 'Ripples' },
+  { file: 'DB-Speaker.fs', name: 'Speaker' },
+] as const;
+
+export interface ShippedShader {
+  file: string;
+  name: string;
+}
+
+/** The visuals each set offers its layers first. */
+export const SET_VISUALS: Record<StudioSet, readonly ShippedShader[]> = {
+  bath: NOTE_SHADERS,
+  berlin: GLITCH_SHADERS,
+  dub: DUB_SHADERS,
+  analog: [...NOTE_SHADERS, ...GLITCH_SHADERS],
+};
 
 async function loadShader(file: string): Promise<string> {
   const response = await fetch(`./ISF/${encodeURIComponent(file)}`);

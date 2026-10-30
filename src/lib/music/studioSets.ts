@@ -1,5 +1,5 @@
 /**
- * The Studio view's two instrument sets, their knobs, keys and scales, and
+ * The Studio view's instrument sets, their knobs, keys and scales, and
  * the patch cables between their jacks.
  *
  * Every knob is a 0-1 value stored under "module.param". Every jack has an
@@ -13,11 +13,13 @@
 
 import { DRUM_VOICES, type DrumVoice, type InstrumentId } from './noteEvents';
 
-export type StudioSet = 'bath' | 'berlin';
+export type StudioSet = 'bath' | 'berlin' | 'dub' | 'analog';
 
 export const STUDIO_SETS: { id: StudioSet; label: string }[] = [
   { id: 'bath', label: 'Sound bath' },
   { id: 'berlin', label: 'Berlin' },
+  { id: 'dub', label: 'Dub' },
+  { id: 'analog', label: 'Analog' },
 ];
 
 export interface ParamDef {
@@ -43,8 +45,36 @@ export const ACID_PARAMS = defs('acid', [
   ['decay', 'Decay', 0.35], ['accent', 'Accent', 0.7], ['drive', 'Drive', 0.4],
 ]);
 
+export const DUBBASS_PARAMS = defs('dubbass', [
+  ['tone', 'Tone', 0.35], ['drive', 'Drive', 0.3], ['decay', 'Decay', 0.6], ['sub', 'Sub', 0.7], ['glide', 'Glide', 0.15],
+]);
+
+export const SIREN_PARAMS = defs('siren', [
+  ['pitch', 'Pitch', 0.55], ['rate', 'Rate', 0.45], ['depth', 'Depth', 0.6], ['shape', 'Shape', 0.2],
+]);
+
+export const SHOT_PARAMS = defs('shots', [['size', 'Size', 0.5], ['tail', 'Tail', 0.5]]);
+
+export const ANALOG_PARAMS = defs('analog', [
+  ['wave1', 'Wave', 0], ['tune1', 'Tune', 0.5], ['wave2', 'Wave', 0.34], ['tune2', 'Tune', 0.5],
+  ['mix2', 'Osc 2', 0.5], ['sub', 'Sub', 0.4], ['noise', 'Noise', 0], ['cutoff', 'Cutoff', 0.45],
+  ['reso', 'Reso', 0.35], ['envamt', 'Env amt', 0.5], ['attack', 'Attack', 0.02], ['decay', 'Decay', 0.3],
+  ['sustain', 'Sustain', 0.6], ['release', 'Release', 0.25], ['lforate', 'Rate', 0.3], ['lfodepth', 'Depth', 0.5],
+  ['glide', 'Glide', 0.08], ['drive', 'Drive', 0.2],
+]);
+
+export const SCAN_PARAMS = defs('scan', [
+  ['speed', 'Sweep', 0.5], ['pitch', 'Pitch', 0.4], ['spread', 'Spread', 0.5], ['level', 'Level', 0.6],
+]);
+
+/** What an effects unit does; several racks share kinds. */
+export type FxKind =
+  | 'shimmer' | 'tape' | 'delay' | 'reverb' | 'drive' | 'crush' | 'dubdelay' | 'gate'
+  | 'echo' | 'spring' | 'sweep' | 'chorus';
+
 export interface FxUnitDef {
   id: string;
+  kind: FxKind;
   name: string;
   params: ParamDef[];
 }
@@ -52,16 +82,28 @@ export interface FxUnitDef {
 /** The effects rack of each set, in signal order. */
 export const FX_RACKS: Record<StudioSet, FxUnitDef[]> = {
   bath: [
-    { id: 'shimmer', name: 'Shimmer', params: defs('fx.shimmer', [['size', 'Size', 0.75], ['tone', 'Tone', 0.6], ['mix', 'Mix', 0.35]]) },
-    { id: 'tape', name: 'Tape', params: defs('fx.tape', [['wow', 'Wow', 0.3], ['age', 'Age', 0.4], ['mix', 'Mix', 0.3]]) },
-    { id: 'delay', name: 'Delay', params: defs('fx.delay', [['time', 'Time', 0.55], ['feedback', 'Feedbk', 0.45], ['mix', 'Mix', 0.25]]) },
-    { id: 'reverb', name: 'Reverb', params: defs('fx.reverb', [['space', 'Space', 0.85], ['decay', 'Decay', 0.75], ['mix', 'Mix', 0.5]]) },
+    { id: 'shimmer', kind: 'shimmer', name: 'Shimmer', params: defs('fx.shimmer', [['size', 'Size', 0.75], ['tone', 'Tone', 0.6], ['mix', 'Mix', 0.35]]) },
+    { id: 'tape', kind: 'tape', name: 'Tape', params: defs('fx.tape', [['wow', 'Wow', 0.3], ['age', 'Age', 0.4], ['mix', 'Mix', 0.3]]) },
+    { id: 'delay', kind: 'delay', name: 'Delay', params: defs('fx.delay', [['time', 'Time', 0.55], ['feedback', 'Feedbk', 0.45], ['mix', 'Mix', 0.25]]) },
+    { id: 'reverb', kind: 'reverb', name: 'Reverb', params: defs('fx.reverb', [['space', 'Space', 0.85], ['decay', 'Decay', 0.75], ['mix', 'Mix', 0.5]]) },
   ],
   berlin: [
-    { id: 'drive', name: 'Drive', params: defs('fx.drive', [['gain', 'Gain', 0.45], ['tone', 'Tone', 0.5], ['mix', 'Mix', 0.5]]) },
-    { id: 'crush', name: 'Bitcrush', params: defs('fx.crush', [['bits', 'Bits', 0.6], ['rate', 'Rate', 0.7], ['mix', 'Mix', 0.0]]) },
-    { id: 'dub', name: 'Dub delay', params: defs('fx.dub', [['time', 'Time', 0.75], ['feedback', 'Feedbk', 0.55], ['mix', 'Mix', 0.3]]) },
-    { id: 'gate', name: 'Gate verb', params: defs('fx.gate', [['space', 'Space', 0.5], ['length', 'Gate', 0.4], ['mix', 'Mix', 0.2]]) },
+    { id: 'drive', kind: 'drive', name: 'Drive', params: defs('fx.drive', [['gain', 'Gain', 0.45], ['tone', 'Tone', 0.5], ['mix', 'Mix', 0.5]]) },
+    { id: 'crush', kind: 'crush', name: 'Bitcrush', params: defs('fx.crush', [['bits', 'Bits', 0.6], ['rate', 'Rate', 0.7], ['mix', 'Mix', 0.0]]) },
+    { id: 'dub', kind: 'dubdelay', name: 'Dub delay', params: defs('fx.dub', [['time', 'Time', 0.75], ['feedback', 'Feedbk', 0.55], ['mix', 'Mix', 0.3]]) },
+    { id: 'gate', kind: 'gate', name: 'Gate verb', params: defs('fx.gate', [['space', 'Space', 0.5], ['length', 'Gate', 0.4], ['mix', 'Mix', 0.2]]) },
+  ],
+  dub: [
+    { id: 'echo', kind: 'echo', name: 'Tape echo', params: defs('fx.echo', [['time', 'Time', 0.5], ['feedback', 'Feedbk', 0.6], ['wow', 'Wow', 0.35], ['tone', 'Tone', 0.45], ['mix', 'Mix', 0.45]]) },
+    { id: 'spring', kind: 'spring', name: 'Spring', params: defs('fx.spring', [['decay', 'Decay', 0.6], ['tone', 'Tone', 0.5], ['mix', 'Mix', 0.35]]) },
+    { id: 'sweep', kind: 'sweep', name: 'Sweep', params: defs('fx.sweep', [['cutoff', 'Cutoff', 1], ['reso', 'Reso', 0.4], ['mix', 'Mix', 1]]) },
+    { id: 'warm', kind: 'drive', name: 'Warmth', params: defs('fx.warm', [['gain', 'Gain', 0.25], ['tone', 'Tone', 0.45], ['mix', 'Mix', 0.5]]) },
+  ],
+  analog: [
+    { id: 'achorus', kind: 'chorus', name: 'Chorus', params: defs('fx.achorus', [['rate', 'Rate', 0.3], ['depth', 'Depth', 0.4], ['mix', 'Mix', 0.3]]) },
+    { id: 'adrive', kind: 'drive', name: 'Drive', params: defs('fx.adrive', [['gain', 'Gain', 0.3], ['tone', 'Tone', 0.55], ['mix', 'Mix', 0.4]]) },
+    { id: 'adelay', kind: 'delay', name: 'Delay', params: defs('fx.adelay', [['time', 'Time', 0.45], ['feedback', 'Feedbk', 0.35], ['mix', 'Mix', 0.2]]) },
+    { id: 'areverb', kind: 'reverb', name: 'Reverb', params: defs('fx.areverb', [['space', 'Space', 0.6], ['decay', 'Decay', 0.5], ['mix', 'Mix', 0.25]]) },
   ],
 };
 
@@ -73,7 +115,8 @@ export const MIXER_PARAMS: ParamDef[] = DRUM_VOICES.flatMap((v) => [
 
 export const ALL_PARAMS: ParamDef[] = [
   ...DRONE_PARAMS, ...BOWL_PARAMS, ...XY_PARAMS, ...ACID_PARAMS,
-  ...FX_RACKS.bath.flatMap((u) => u.params), ...FX_RACKS.berlin.flatMap((u) => u.params),
+  ...DUBBASS_PARAMS, ...SIREN_PARAMS, ...SHOT_PARAMS, ...ANALOG_PARAMS, ...SCAN_PARAMS,
+  ...Object.values(FX_RACKS).flatMap((rack) => rack.flatMap((u) => u.params)),
   ...MIXER_PARAMS,
 ];
 
@@ -208,15 +251,22 @@ export interface Cable {
 
 /** Instruments with a sound output jack in each set. */
 export const AUDIO_SOURCES: Record<StudioSet, InstrumentId[]> = {
-  bath: ['drone', 'bowls', 'xy', 'synth', 'keys'],
-  berlin: ['drums', 'acid', 'synth', 'keys'],
+  bath: ['drone', 'bowls', 'xy', 'synth', 'keys', 'scan'],
+  berlin: ['drums', 'acid', 'synth', 'keys', 'scan'],
+  dub: ['dubbass', 'siren', 'shots', 'drums', 'keys', 'scan'],
+  analog: ['analog', 'synth', 'keys', 'drums', 'scan'],
 };
 
 /** Control outputs each set offers. */
 export function controlSources(set: StudioSet): string[] {
-  return set === 'bath'
-    ? ['cv:xy.x', 'cv:xy.y', 'cv:drone.level', 'cv:bowls.ring']
-    : [...DRUM_VOICES.map((v: DrumVoice) => `cv:drum.${v}`), 'cv:acid.cutoff', 'cv:acid.level'];
+  const drums = DRUM_VOICES.map((v: DrumVoice) => `cv:drum.${v}`);
+  const bySet: Record<StudioSet, string[]> = {
+    bath: ['cv:xy.x', 'cv:xy.y', 'cv:drone.level', 'cv:bowls.ring'],
+    berlin: [...drums, 'cv:acid.cutoff', 'cv:acid.level'],
+    dub: ['cv:dubbass.level', 'cv:siren.level', 'cv:shots.level', ...drums],
+    analog: ['cv:analog.lfo', 'cv:analog.env', 'cv:analog.vco2', 'cv:analog.level'],
+  };
+  return [...bySet[set], 'cv:scan.level'];
 }
 
 const DRUM_NAMES: Record<string, string> = {
@@ -230,6 +280,9 @@ export function sourceLabel(jack: string): string {
   const labels: Record<string, string> = {
     'xy.x': 'XY X', 'xy.y': 'XY Y', 'drone.level': 'Drone', 'bowls.ring': 'Bowls',
     'acid.cutoff': 'Acid cutoff', 'acid.level': 'Acid',
+    'dubbass.level': 'Dub bass', 'siren.level': 'Siren', 'shots.level': 'Shots',
+    'analog.lfo': 'LFO', 'analog.env': 'Envelope', 'analog.vco2': 'Osc 2', 'analog.level': 'Analog',
+    'scan.level': 'Scan',
   };
   return labels[name] ?? name;
 }
@@ -281,14 +334,25 @@ export function defaultCables(): Record<StudioSet, Cable[]> {
       { id: 'bath-bowls-fx', from: 'audio:bowls', to: 'fx:in' },
     ],
     berlin: [{ id: 'berlin-acid-fx', from: 'audio:acid', to: 'fx:in' }],
+    dub: [
+      { id: 'dub-siren-fx', from: 'audio:siren', to: 'fx:in' },
+      { id: 'dub-shots-fx', from: 'audio:shots', to: 'fx:in' },
+    ],
+    analog: [{ id: 'analog-fx', from: 'audio:analog', to: 'fx:in' }],
   };
 }
 
 export function normalizeCables(raw: unknown): Record<StudioSet, Cable[]> {
   if (!raw || typeof raw !== 'object') return defaultCables();
   const input = raw as Partial<Record<StudioSet, unknown>>;
-  const out = { bath: [] as Cable[], berlin: [] as Cable[] };
-  for (const set of ['bath', 'berlin'] as StudioSet[]) {
+  const out: Record<StudioSet, Cable[]> = { bath: [], berlin: [], dub: [], analog: [] };
+  const defaults = defaultCables();
+  for (const set of STUDIO_SETS.map((k) => k.id)) {
+    // A set saved before this build had it starts with its default patch.
+    if (!Array.isArray(input[set])) {
+      out[set] = defaults[set];
+      continue;
+    }
     for (const c of Array.isArray(input[set]) ? (input[set] as unknown[]) : []) {
       if (!c || typeof c !== 'object') continue;
       const { id, from, to } = c as Partial<Cable>;
