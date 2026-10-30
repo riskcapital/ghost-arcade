@@ -8,8 +8,12 @@ export interface Toast {
 
 export const toasts = writable<Toast[]>([]);
 
+// Counter rather than Date.now(): two toasts in the same millisecond would
+// share an id and break the keyed #each in ToastContainer.
+let nextId = 1;
+
 export function showToast(message: string, type: 'error' | 'warning' | 'info' = 'error') {
-  const id = Date.now();
+  const id = nextId++;
   toasts.update(t => [...t, { id, message, type }]);
   setTimeout(() => {
     toasts.update(t => t.filter(toast => toast.id !== id));
