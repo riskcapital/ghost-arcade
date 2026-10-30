@@ -48,6 +48,7 @@
   import MacroEditor from './MacroEditor.svelte';
   import TakeList from './TakeList.svelte';
   import MixerPanel from './MixerPanel.svelte';
+  import BandPanel from './BandPanel.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { ensureLiveFeed } from '../../music/liveFeed';
@@ -59,8 +60,8 @@
   let elapsed = $state(0);
   let tempo = $state(120);
   let scanX = $state(0);
-  let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer'>('session');
-  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer' } as const;
+  let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band'>('session');
+  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Band' } as const;
 
   const s = $derived($musicStudio);
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
@@ -82,7 +83,9 @@
           : `In ${keyLabel(s.key)}`
         : lowerTab === 'mixer'
           ? 'Level, EQ and pan for every instrument and the live input'
-          : 'Recorded performances',
+          : lowerTab === 'band'
+            ? "Throw, wash and freeze the band's sound; play in its key"
+            : 'Recorded performances',
   );
 
   // The live output draws into the frame while the view is up.
@@ -183,11 +186,12 @@
 {#snippet lower()}
   <StudioModule title={LOWER_TITLES[lowerTab]} subtitle={lowerSubtitle} class="lower">
     {#snippet lead()}
-      <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes or mixer">
+      <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes, mixer or band">
         <button role="tab" aria-selected={lowerTab === 'session'} class:active={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
         <button role="tab" aria-selected={lowerTab === 'scenes'} class:active={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>{#if s.scenes.length}Scenes {s.scenes.length}{:else}Scenes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'takes'} class:active={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>{#if s.takes.length}Takes {s.takes.length}{:else}Takes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'mixer'} class:active={lowerTab === 'mixer'} onclick={() => (lowerTab = 'mixer')}>Mixer</button>
+        <button role="tab" aria-selected={lowerTab === 'band'} class:active={lowerTab === 'band'} onclick={() => (lowerTab = 'band')}>Band</button>
       </div>
     {/snippet}
     {#snippet head()}
@@ -205,6 +209,8 @@
       {#if s.liveControl}<LiveSessionGrid />{:else}<SessionGrid />{/if}
     {:else if lowerTab === 'mixer'}
       <MixerPanel />
+    {:else if lowerTab === 'band'}
+      <BandPanel />
     {:else if lowerTab === 'takes'}
       <div class="scroll"><TakeList /></div>
     {:else}
@@ -287,6 +293,7 @@
       <div class="rack left face">
         <BathModules part="drone" />
         <BathModules part="bowls" />
+        <PadsModule title="FX pads" drums={false} />
         <BathModules part="xy" />
       </div>
       <div class="rack right face">

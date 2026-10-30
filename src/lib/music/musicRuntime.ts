@@ -15,7 +15,7 @@
  * clip that declares note inputs.
  */
 
-import { get } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { vjClipLauncher, type VJDeck } from '../stores/vjClipLauncher';
 import { launchClockPosition, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
 import { parseISF } from '../isf/parser';
@@ -86,6 +86,9 @@ import type { AnalogDest, AnalogSource } from './analogSynth';
 import type { ChannelId } from './mixer';
 import { LiveInput } from './liveInput';
 import { setStudioDriver, studioHostsLive, studioVisualTick } from './studioPlugin';
+import { bowlSlotNotes } from './soundSlots';
+import { soundById } from './sounds/library';
+import { KeyFinder, type KeyGuess } from './keyFinder';
 import type { VoiceSourceId } from './visualVoices';
 import {
   ACID_STEPS,
@@ -272,6 +275,7 @@ export function killAll(): void {
   stopAll();
   resumable = null;
   audio.kill();
+  bandState.update((b) => ({ ...b, frozen: false, freezeError: null }));
 }
 
 /** A new set starts clean: what was playing stops and its echoes fade out. */
@@ -435,7 +439,8 @@ function revoiceChords(): void {
 
 /** Strike one of the five bowls, tuned to the key. Holding keeps it lit; it rings on regardless. */
 export function strikeBowl(index: number, velocity = 0.85): number | null {
-  const note = bowlNotes(get(musicStudio).key)[index];
+  const s = get(musicStudio);
+  const note = bowlSlotNotes(bowlNotes(s.key), s.bowlSlots)[index];
   if (note === undefined) return null;
   playNote('bowls', note, velocity, 'screen');
   return note;
@@ -1168,14 +1173,39 @@ function firePad(sound: PadSound, velocity: number, time: number): void {
     send(noteOn('drums', DRUM_NOTES[sound.voice], velocity, 'screen', time));
     return;
   }
-  send(noteOn('shots', 60 + sound.index, velocity, 'screen', time));
-  send(noteOff('shots', 60 + sound.index, 'screen', time + SHOT_LENGTH_SECONDS));
+  fireFxPad(sound.index, velocity, time);
+}
+
+/** The sound on one of the current set's FX pads. */
+export function fxPadSound(index: number) {
+  const s = get(musicStudio);
+  return soundById(s.fxPads[s.set][index]);
+}
+
+/**
+ * Fire an FX pad. An atmosphere starts, or stops if it is playing. A
+ * one-shot plays and its note is held for as long as it sounds, so the
+ * visuals following it build with a riser and fall with a drop.
+ */
+function fireFxPad(index: number, velocity: number, time: number): void {
+  const note = 60 + index;
+  if (fxPadSound(index)?.kind === 'loop') {
+    if (audio.padLoopPlaying(index)) send(noteOff('shots', note, 'screen', time));
+    else send(noteOn('shots', note, velocity, 'screen', time));
+    return;
+  }
+  send(noteOn('shots', note, velocity, 'screen', time));
+  const end = audio.padEnd(index);
+  const off = end !== null && Number.isFinite(end) ? Math.min(end, time + 32) : time + SHOT_LENGTH_SECONDS;
+  send(noteOff('shots', note, 'screen', Math.max(time + SHOT_LENGTH_SECONDS, off)));
 }
 
 /** A pad pressed: it plays now, and with a repeat rate keeps playing on that grid while held. */
 export function padDown(pointerId: number, sound: PadSound, velocity: number, repeatRate = 0): void {
   ensureMusicRuntime();
   firePad(sound, velocity, liveTime());
+  // An atmosphere is switched, not repeated.
+  if (sound.kind === 'shot' && fxPadSound(sound.index)?.kind === 'loop') return;
   if (repeatRate > 0) {
     const { beat } = launchClockPosition();
     repeats.set(pointerId, { sound, velocity, rate: repeatRate, nextBeat: (Math.floor(beat / repeatRate + 1e-6) + 1) * repeatRate });
@@ -1213,11 +1243,10 @@ export function setSiren(on: boolean): void {
   else releaseNote('siren', 72, 'screen');
 }
 
-/** Fire one of the eight shots. */
+/** Fire one of the current set's eight FX pads. */
 export function triggerShot(index: number, velocity = 0.85): void {
   ensureMusicRuntime();
-  playNote('shots', 60 + index, velocity, 'screen');
-  setTimeout(() => releaseNote('shots', 60 + index, 'screen'), 160);
+  fireFxPad(index, velocity, liveTime());
 }
 
 /** A dub throw: while held, everything in the echo chamber floods the tape echo. */
@@ -1584,6 +1613,7 @@ function writeNoteInputs(notes: boolean): void {
 function stopEverything(): void {
   // Also cancels an input still waiting to open (its permission prompt up).
   if (liveInput) stopLiveInput();
+  releaseBand();
   cancelQueuedScene();
   cancelLoopRecord();
   stopAllLoops();
@@ -1619,7 +1649,12 @@ const ONE_SHOT_SOURCES = new Set<VoiceSourceId>(['kick', 'snare', 'hats', 'perc'
  * visual voices. It never plays a studio instrument; the sound comes from
  * the instrument itself or from Live. `delaySeconds` queues it ahead.
  */
-export function pushOutsideNote(type: 'on' | 'off', note: number, velocity: number, role: VoiceSourceId, delaySeconds = 0): void {
+/**
+ * `pitched`: the note is a real pitch (a played note, a MIDI clip), not a
+ * level hit standing in for one; only real pitches tell the band's key.
+ */
+export function pushOutsideNote(type: 'on' | 'off', note: number, velocity: number, role: VoiceSourceId, delaySeconds = 0, pitched = true): void {
+  if (type === 'on' && pitched && listeningForKey && !ONE_SHOT_SOURCES.has(role)) hearNote(note, velocity);
   const time = audio.now() + Math.max(0, delaySeconds);
   const event: NoteEvent = {
     type,
@@ -1631,6 +1666,85 @@ export function pushOutsideNote(type: 'on' | 'off', note: number, velocity: numb
   };
   voices.push(event, role === 'all' ? ['all'] : [role, 'all']);
   ensureFrameLoop();
+}
+
+// ── The band ────────────────────────────────────────────────────────────
+
+export interface BandState {
+  /** A moment of the band (or the studio) is held as a texture. */
+  frozen: boolean;
+  freezeError: string | null;
+  /** Listening to the band for its key. */
+  listening: boolean;
+  /** The key heard so far. */
+  heard: KeyGuess | null;
+}
+
+export const bandState = writable<BandState>({ frozen: false, freezeError: null, listening: false, heard: null });
+
+const keyFinder = new KeyFinder();
+let listeningForKey = false;
+let lastHeardPublish = 0;
+
+function hearNote(note: number, velocity: number): void {
+  keyFinder.add(note, velocity);
+  const now = performance.now();
+  // Four times a second is plenty for a readout.
+  if (now - lastHeardPublish < 250) return;
+  lastHeardPublish = now;
+  bandState.update((b) => ({ ...b, heard: keyFinder.guess() }));
+}
+
+/** Throw the band into its echo while held. */
+export function setBandThrow(on: boolean): void {
+  ensureMusicRuntime();
+  audio.setBandThrow(on);
+}
+
+/** Wash the band into its reverb while held. */
+export function setBandWash(on: boolean): void {
+  ensureMusicRuntime();
+  audio.setBandWash(on);
+}
+
+/** Get ready to freeze (start keeping the last moment). */
+export function prepareBand(): void {
+  ensureMusicRuntime();
+  audio.prepareFreeze();
+}
+
+/** Hold the last moment as a texture, or let it go. */
+export async function toggleFreeze(): Promise<void> {
+  ensureMusicRuntime();
+  const on = !get(bandState).frozen;
+  const ok = await audio.setBandFreeze(on);
+  bandState.update((b) => ({
+    ...b,
+    frozen: on && ok,
+    freezeError: on && !ok ? 'Nothing to freeze yet: play something (or turn on the input) and try again.' : null,
+  }));
+}
+
+/** Start or stop listening to the band for its key. Starting again starts afresh. */
+export function listenForKey(on: boolean): void {
+  listeningForKey = on;
+  if (on) keyFinder.reset();
+  bandState.update((b) => ({ ...b, listening: on, heard: on ? null : b.heard }));
+}
+
+/** Put the studio in the key heard (major or natural minor). */
+export function useHeardKey(): void {
+  const heard = get(bandState).heard;
+  if (!heard) return;
+  musicStudio.setKey({ root: heard.root, scale: heard.mode === 'major' ? 'major' : 'minor' });
+}
+
+function releaseBand(): void {
+  audio.setBandThrow(false);
+  audio.setBandWash(false);
+  if (get(bandState).frozen) void audio.setBandFreeze(false);
+  listeningForKey = false;
+  bandState.update((b) => ({ ...b, frozen: false, listening: false }));
 }
 
 // ── Music Studio plugin ─────────────────────────────────────────────────
@@ -1704,6 +1818,12 @@ export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
   setStudioDriver(drivenForStudio);
+  // Risers land on the next bar line of the launch clock.
+  audio.setBarClock(() => {
+    const { beat, beatMs } = launchClockPosition();
+    const nextBar = (Math.floor(beat / 4 + 1e-6) + 1) * 4;
+    return { toNextBar: ((nextBar - beat) * beatMs) / 1000, barSeconds: (4 * beatMs) / 1000 };
+  });
   musicStudio.subscribe((s) => {
     if (wasOpen && !s.isOpen) {
       wasOpen = false;
@@ -1712,6 +1832,11 @@ export function ensureMusicRuntime(): void {
     wasOpen = s.isOpen;
     audio.setSynthPatch(s.synthPatch);
     audio.setKeysPatch(s.keysPatch);
+    audio.setDronePatch(s.dronePatch);
+    audio.setPadSounds(s.fxPads[s.set]);
+    audio.setBowlSounds(bowlSlotNotes(bowlNotes(s.key), s.bowlSlots), s.bowlSlots.map((slot) => slot.sound));
+    audio.setKeyRoot(48 + s.key.root);
+    audio.setBandFx(s.bandFx);
     const keySig = `${s.key.root}:${s.key.scale}`;
     const keyChanged = keySig !== lastKey;
     if (keyChanged) {

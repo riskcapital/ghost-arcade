@@ -22,6 +22,10 @@ import { AnalogSynth, type AnalogDest, type AnalogSource } from './analogSynth';
 import { ScanSynth } from './scanSynth';
 import { defaultParams, type StudioSet } from './studioSets';
 import { EQ_BANDS, EQ_BAND_IDS, channelAudible, meterLevel, stripFor, type ChannelId, type EqBand, type MixerState } from './mixer';
+import { padPatchById, soundById } from './sounds/library';
+import type { PadVoice, SoundContext, SoundHandle } from './sounds/kit';
+import { DEFAULT_DRONE_PATCH, DEFAULT_FX_PADS, defaultBandFx, type BandFxSettings } from './soundSlots';
+import { BandFx } from './bandFx';
 
 interface SubtractivePatch {
   osc1: OscillatorType;
@@ -125,6 +129,27 @@ export class MusicAudioEngine {
   /** Pitch factor of the drum being played, from its mixer tune knob. */
   private drumRate = 1;
 
+  // ── Library sounds (sounds/library.ts) ──
+  /** The current set's FX pads, by pad index. */
+  private padSounds: string[] = [...DEFAULT_FX_PADS.dub];
+  /** Atmospheres playing on a pad, by pad index. */
+  private padLoops = new Map<number, SoundHandle>();
+  /** When the sound last fired on each pad ends (Infinity while a loop plays). */
+  private padEnds = new Map<number, number>();
+  /** Bowl sound by the note the bowl sounds; anything else plays the first bowl's sound. */
+  private bowlSounds = new Map<number, string>();
+  private bowlFallback = 'singing-bowl';
+  private dronePatch = DEFAULT_DRONE_PATCH;
+  /** Held drone notes on a library patch, for knob moves. */
+  private padVoices = new Set<PadVoice>();
+  /** The key's root as a MIDI note, for sounds tuned to the music. */
+  private keyRoot = 50;
+  /** Seconds to the next bar line now, and the bar's length, from the launch clock. */
+  private barClock: (() => { toNextBar: number; barSeconds: number }) | null = null;
+  /** The band's echo, reverb and freeze (bandFx.ts). */
+  private bandFx: BandFx | null = null;
+  private bandSettings: BandFxSettings = defaultBandFx();
+
   /** The music clock, in seconds. Creates the audio graph on first use. */
   now(): number {
     return this.ensure().currentTime;
@@ -185,6 +210,7 @@ export class MusicAudioEngine {
       this.droneLfo.osc.frequency.setTargetAtTime(0.03 + motion * 0.35, t, 0.2);
       this.droneLfo.depth.gain.setTargetAtTime(motion * 900, t, 0.2);
     }
+    for (const voice of this.padVoices) voice.update?.(params, t);
     for (const v of this.droneVoices) {
       v.filter.frequency.setTargetAtTime(this.droneCutoff(v.note), t, 0.15);
       v.shimmer.gain.setTargetAtTime((params['drone.shimmer'] ?? 0.5) * 0.35, t, 0.2);
@@ -199,6 +225,7 @@ export class MusicAudioEngine {
     this.macroSlots = slots;
     const tempoMoved = Math.abs(tempo - this.tempo) > 0.05;
     this.tempo = tempo;
+    if (tempoMoved) this.bandFx?.setSettings(this.bandSettings, tempo);
     this.macroChain?.sync(slots, tempo);
     // Tempo-locked echoes follow the clock.
     if (tempoMoved) for (const rack of Object.values(this.racks)) rack?.setParams(this.params, tempo);
@@ -269,9 +296,159 @@ export class MusicAudioEngine {
    * Silence now: every note let go, every effects tail cut, and the mix
    * dipped for a moment so release tails do not ring on.
    */
+  /** The sound on each of the current set's FX pads. An atmosphere whose pad changes sound stops. */
+  setPadSounds(ids: readonly string[]): void {
+    const t = this.ctx?.currentTime ?? 0;
+    ids.forEach((id, index) => {
+      if (this.padSounds[index] !== id && this.padLoops.has(index)) this.stopPadLoop(index, t, 1);
+    });
+    this.padSounds = [...ids];
+  }
+
+  /** Each bowl's note and sound (the first is also what other notes play). */
+  setBowlSounds(notes: readonly number[], ids: readonly string[]): void {
+    this.bowlSounds = new Map();
+    notes.forEach((note, i) => { if (!this.bowlSounds.has(note) && ids[i]) this.bowlSounds.set(note, ids[i]); });
+    this.bowlFallback = ids[0] ?? 'singing-bowl';
+  }
+
+  setDronePatch(id: string): void {
+    this.dronePatch = id;
+  }
+
+  setKeyRoot(note: number): void {
+    this.keyRoot = note;
+  }
+
+  /** Where the next bar line is, so a riser lands on it. */
+  setBarClock(clock: (() => { toNextBar: number; barSeconds: number }) | null): void {
+    this.barClock = clock;
+  }
+
+  setBandFx(settings: BandFxSettings): void {
+    if (settings === this.bandSettings) return;
+    this.bandSettings = settings;
+    this.bandFx?.setSettings(settings, this.tempo);
+  }
+
+  /** Throw the band into the echo while held. */
+  setBandThrow(on: boolean): void {
+    this.ensure();
+    this.bandFx?.setThrow(on);
+  }
+
+  /** Wash the band into the reverb while held. */
+  setBandWash(on: boolean): void {
+    this.ensure();
+    this.bandFx?.setWash(on);
+  }
+
+  /** Hold the last moment as a texture, or let it go. False when it could not be captured. */
+  async setBandFreeze(on: boolean): Promise<boolean> {
+    this.ensure();
+    return this.bandFx ? this.bandFx.setFreeze(on) : false;
+  }
+
+  /** Start listening for a freeze, so the first one has a moment to take. */
+  prepareFreeze(): void {
+    this.ensure();
+    this.bandFx?.prepare();
+  }
+
+  get bandFrozen(): boolean {
+    return this.bandFx?.frozen ?? false;
+  }
+
+  /** When the sound last fired on a pad ends, on the music clock (Infinity while an atmosphere plays). */
+  padEnd(index: number): number | null {
+    return this.padEnds.get(index) ?? null;
+  }
+
+  /** An atmosphere is playing on this pad. */
+  padLoopPlaying(index: number): boolean {
+    return this.padLoops.has(index);
+  }
+
+  private soundContext(out: AudioNode, time: number, knobs: { size: number; tail: number; tone: number }): SoundContext {
+    const ctx = this.ctx!;
+    let toNextBar: number | undefined;
+    const clock = this.barClock?.();
+    if (clock && clock.barSeconds > 0) {
+      toNextBar = clock.toNextBar - Math.max(0, time - ctx.currentTime);
+      while (toNextBar <= 0.02) toNextBar += clock.barSeconds;
+    }
+    return { ctx, out, noise: this.noise!, tempo: this.tempo, toNextBar, keyRoot: this.keyRoot, ...knobs };
+  }
+
+  private playPad(index: number, velocity: number, time: number): void {
+    const def = soundById(this.padSounds[index]);
+    if (!def) {
+      // A sound this version does not have: the pad's old shot, if it had one.
+      if (index >= 0 && index < 8 && this.noise) fireShot(this.ctx!, this.bus!.shots, this.noise, index, velocity, time, this.params);
+      this.padEnds.set(index, time + 0.4);
+      return;
+    }
+    const p = this.params;
+    const sc = this.soundContext(this.bus!.shots, time, { size: p['shots.size'] ?? 0.5, tail: p['shots.tail'] ?? 0.5, tone: p['shots.tone'] ?? 0.5 });
+    // Pitched sounds on a pad play the key's root, an octave up.
+    const note = this.keyRoot + 12;
+    if (def.kind === 'loop') {
+      if (this.padLoops.has(index)) return;
+      const handle = def.play(sc, note, velocity, time);
+      this.padLoops.set(index, handle);
+      this.padEnds.set(index, Infinity);
+      return;
+    }
+    const handle = def.play(sc, note, velocity, time);
+    this.padEnds.set(index, time + handle.duration);
+  }
+
+  private stopPadLoop(index: number, time: number, fade?: number): void {
+    const handle = this.padLoops.get(index);
+    if (!handle) return;
+    this.padLoops.delete(index);
+    this.padEnds.set(index, time + (fade ?? 1.5));
+    handle.stop(time, fade);
+  }
+
+  private strikeBowlSound(note: number, velocity: number, time: number): void {
+    const def = soundById(this.bowlSounds.get(note) ?? this.bowlFallback);
+    if (!def) {
+      this.strikeBowl(note, velocity, time);
+      return;
+    }
+    const p = this.params;
+    // The bowl knobs work on every bowl sound: Ring is how long it rings, Tone its brightness, Spread its character.
+    // Ring at its default (0.7) is each sound's natural length (Tail 0.5).
+    const ring = p['bowls.ring'] ?? 0.7;
+    const tail = ring <= 0.7 ? (ring / 0.7) * 0.5 : 0.5 + ((ring - 0.7) / 0.3) * 0.5;
+    def.play(this.soundContext(this.bus!.bowls, time, { size: p['bowls.spread'] ?? 0.5, tail, tone: p['bowls.tone'] ?? 0.5 }), note, velocity, time);
+  }
+
+  /** A drone note on the chosen patch (the built-in warm pad when the library has none). */
+  private droneLibraryVoice(key: string, note: number, velocity: number, time: number): MelodicVoice {
+    const patch = padPatchById(this.dronePatch) ?? padPatchById(DEFAULT_DRONE_PATCH);
+    if (!patch) return this.droneVoice(key, note, velocity, time);
+    const voice = patch.voice({ ctx: this.ctx!, out: this.bus!.drone, noise: this.noise!, params: this.params }, note, velocity, time);
+    this.padVoices.add(voice);
+    return {
+      key,
+      startedAt: time,
+      release: (at) => {
+        this.padVoices.delete(voice);
+        voice.release(at);
+      },
+      kill: (at) => {
+        this.padVoices.delete(voice);
+        voice.kill(at);
+      },
+    };
+  }
+
   kill(): void {
     if (!this.ctx || !this.masterGain) return;
     this.allNotesOff();
+    this.bandFx?.kill();
     this.scan?.stop();
     this.retireRacks(KILL_FADE_SECONDS);
     this.applyRouting();
@@ -391,7 +568,7 @@ export class MusicAudioEngine {
     }
     if (event.instrument === 'bowls') {
       // A bowl rings out on its own; letting go does not stop it.
-      if (event.type === 'on') this.strikeBowl(event.note, event.velocity, time);
+      if (event.type === 'on') this.strikeBowlSound(event.note, event.velocity, time);
       return;
     }
     if (event.instrument === 'dubbass') {
@@ -405,7 +582,10 @@ export class MusicAudioEngine {
       return;
     }
     if (event.instrument === 'shots') {
-      if (event.type === 'on' && this.noise) fireShot(ctx, this.bus!.shots, this.noise, event.note - 60, event.velocity, time, this.params);
+      const index = event.note - 60;
+      // A one-shot rings out; letting go stops an atmosphere.
+      if (event.type === 'on') this.playPad(index, event.velocity, time);
+      else this.stopPadLoop(index, time);
       return;
     }
     if (event.instrument === 'analog') {
@@ -441,7 +621,7 @@ export class MusicAudioEngine {
     const voice = event.instrument === 'synth'
       ? this.synthVoice(key, event.note, event.velocity, time)
       : event.instrument === 'drone'
-        ? this.droneVoice(key, event.note, event.velocity, time)
+        ? this.droneLibraryVoice(key, event.note, event.velocity, time)
         : this.keysVoice(key, event.note, event.velocity, time);
     this.voices.set(key, voice);
   }
@@ -457,10 +637,13 @@ export class MusicAudioEngine {
     this.dubBass?.off(t);
     this.siren?.off(t);
     this.analog?.allOff(t);
+    for (const index of [...this.padLoops.keys()]) this.stopPadLoop(index, t, 0.4);
   }
 
   dispose(): void {
     this.allNotesOff();
+    this.bandFx?.dispose();
+    this.bandFx = null;
     this.unsubscribeGraph?.();
     this.unsubscribeGraph = null;
     try { this.output?.disconnect(); } catch { /* already gone */ }
@@ -515,6 +698,12 @@ export class MusicAudioEngine {
     this.analog.setParams(this.params);
     this.analog.setRoutes(this.analogRoutes);
     this.scan = new ScanSynth(ctx, bus.scan);
+    // The band comes in after its EQ and pan, before the monitor gate: its
+    // effects work whether or not its dry sound is played here.
+    this.bandFx = new BandFx(ctx, master);
+    this.strips.get('input')!.pan.connect(this.bandFx.input);
+    master.connect(this.bandFx.freezeInput);
+    this.bandFx.setSettings(this.bandSettings, this.tempo);
     this.applyRouting();
     this.applyMixer();
     this.syncAnalyserTap();

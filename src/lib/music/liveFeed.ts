@@ -42,7 +42,8 @@ function onLevel(track: number, level: number): void {
     hits.set(track, tracker);
   }
   const hit = tracker.step(level, performance.now() / 1000);
-  if (hit) pushOutsideNote(hit.type, LEVEL_NOTE, hit.velocity, role);
+  // A level hit has no pitch: it moves the visuals but does not tell the key.
+  if (hit) pushOutsideNote(hit.type, LEVEL_NOTE, hit.velocity, role, 0, false);
 }
 
 function sync(): void {
@@ -61,7 +62,7 @@ function sync(): void {
   for (const [track, tracker] of hits) if (!levelTracks.includes(track)) {
     // A track let go mid-hit ends its note, or its voice stays lit.
     const role = previous.get(track);
-    if (tracker.reset() && role) pushOutsideNote('off', LEVEL_NOTE, 0, role);
+    if (tracker.reset() && role) pushOutsideNote('off', LEVEL_NOTE, 0, role, 0, false);
     hits.delete(track);
   }
   abletonBridge.setStudioFeed(mapped.length ? { noteTracks, levelTracks, onNotes, onLevel } : null);

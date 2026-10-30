@@ -140,6 +140,24 @@ describe('music studio in the project file', () => {
     expect(after.liveRoles).toEqual({ Bass: 'bass' });
   });
 
+  it('keeps the bowls, the FX pads, the drone sound and the band effects', () => {
+    const s = studio.musicStudio;
+    s.setSet('bath');
+    s.setBowlSlot(0, { sound: 'gong', octave: -1 });
+    s.setFxPad(2, 'thunder');
+    s.setDronePatch('choir');
+    s.setBandFx({ echoSend: 0.4, echoTime: '1/4', freezePitch: 12 });
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    s.hydrate(null);
+    expect(get(s).dronePatch).toBe('warm');
+    expect(layers.project.importProject(saved)).toBe(true);
+    const after = get(s);
+    expect(after.bowlSlots[0]).toEqual({ sound: 'gong', octave: -1 });
+    expect(after.fxPads.bath[2]).toBe('thunder');
+    expect(after.dronePatch).toBe('choir');
+    expect(after.bandFx).toMatchObject({ echoSend: 0.4, echoTime: '1/4', freezePitch: 12 });
+  });
+
   it('keeps a Music Studio layer and a Music Studio clip, voices and all', async () => {
     const { vjClipLauncher } = await import('../stores/vjClipLauncher');
     const source = {
