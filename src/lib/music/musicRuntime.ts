@@ -83,10 +83,14 @@ import {
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
 import { TRACK_IDS, clipFromRecording, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
 import type { AnalogDest, AnalogSource } from './analogSynth';
+import type { ChannelId } from './mixer';
+import { LiveInput } from './liveInput';
+import type { VoiceSourceId } from './visualVoices';
 import {
   ACID_STEPS,
   bowlNotes,
   chordNotes,
+  AUDIO_SOURCES,
   instrumentsThroughFx,
   scaleNote,
   snapToScale,
@@ -1559,6 +1563,7 @@ function writeNoteInputs(notes: boolean): void {
  * replay and every sounding note stop. Minimizing the panel keeps playing.
  */
 function stopEverything(): void {
+  if (liveInput?.running) stopLiveInput();
   cancelQueuedScene();
   cancelLoopRecord();
   stopAllLoops();
@@ -1572,7 +1577,73 @@ function stopEverything(): void {
   panic();
 }
 
+// ── Mixer, live input and outside notes ─────────────────────────────────
+
+/** The mixer's channels for a set: its instruments, then the live input. */
+export function mixerChannels(set: StudioSet): ChannelId[] {
+  return [...AUDIO_SOURCES[set], 'input'];
+}
+
+/** Meter levels after each channel's strip, 0-1. The input's meter reads the signal before its fader. */
+export function channelLevels(ids: readonly ChannelId[]): Partial<Record<ChannelId, number>> {
+  const levels = audio.peekNow() === null ? {} : audio.channelLevels(ids);
+  if (liveInput?.running && ids.includes('input')) levels.input = Math.max(levels.input ?? 0, liveInput.level);
+  return levels;
+}
+
+/** Drum sounds decay from the hit; the rest hold until their note ends. */
+const ONE_SHOT_SOURCES = new Set<VoiceSourceId>(['kick', 'snare', 'hats', 'perc']);
+
+/**
+ * A note from outside the studio (the live input, a Live track) for the
+ * visual voices. It never plays a studio instrument; the sound comes from
+ * the instrument itself or from Live.
+ */
+export function pushOutsideNote(type: 'on' | 'off', note: number, velocity: number, role: VoiceSourceId, time = audio.now()): void {
+  const event: NoteEvent = {
+    type,
+    instrument: ONE_SHOT_SOURCES.has(role) ? 'drums' : 'synth',
+    note: Math.max(0, Math.min(127, Math.round(note))),
+    velocity: type === 'on' ? Math.max(0, Math.min(1, velocity)) : 0,
+    source: 'midi',
+    time,
+  };
+  voices.push(event, role === 'all' ? ['all'] : [role, 'all']);
+  ensureFrameLoop();
+}
+
+let liveInput: LiveInput | null = null;
+
+/** Start listening to the live input on the device chosen in the studio. */
+export async function startLiveInput(): Promise<void> {
+  const s = get(musicStudio);
+  liveInput ??= new LiveInput(s.liveInput.sensitivity, (events, time) => {
+    const role = get(musicStudio).liveInput.role;
+    for (const e of events) pushOutsideNote(e.type, e.note, e.velocity, role, time);
+  });
+  try {
+    const ctx = audioContextForInput();
+    await liveInput.start(ctx, s.inputDevice, audio.inputChannel());
+    musicStudio.setInputStatus(true);
+  } catch (err) {
+    musicStudio.setInputStatus(false, err instanceof Error ? err.message : 'The audio input could not be opened.');
+  }
+}
+
+export function stopLiveInput(): void {
+  liveInput?.stop();
+  musicStudio.setInputStatus(false);
+}
+
+function audioContextForInput(): AudioContext {
+  audio.now();
+  const ctx = audio.context();
+  if (!ctx) throw new Error('Audio is not available.');
+  return ctx;
+}
+
 let wasOpen = false;
+let wasLiveControl = false;
 let macroSubscribed = false;
 let lastKey = '';
 let lastSet: StudioSet | null = null;
@@ -1614,6 +1685,14 @@ export function ensureMusicRuntime(): void {
     syncAnalogRoutes(s);
     syncMacroFx(true);
     audio.setMasterVolume(s.masterVolume);
+    audio.setMixer(s.mixer, mixerChannels(s.set));
+    audio.setInputVolume(s.liveInput.volume);
+    audio.setInputMonitor(s.liveInput.monitor);
+    liveInput?.setSensitivity(s.liveInput.sensitivity);
+    // With Live in control the studio's instruments step aside.
+    if (s.liveControl && !wasLiveControl) stopAll();
+    wasLiveControl = s.liveControl;
+    audio.setInstrumentsSilenced(s.liveControl);
     visuals.setSettings(s.visuals);
     syncKeyboard(s);
     if (!macroSubscribed) {

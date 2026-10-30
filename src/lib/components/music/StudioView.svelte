@@ -47,6 +47,7 @@
   import CableLayer from './CableLayer.svelte';
   import MacroEditor from './MacroEditor.svelte';
   import TakeList from './TakeList.svelte';
+  import MixerPanel from './MixerPanel.svelte';
 
   let { nativePreview = false }: { nativePreview?: boolean } = $props();
 
@@ -55,7 +56,7 @@
   let elapsed = $state(0);
   let tempo = $state(120);
   let scanX = $state(0);
-  let lowerTab = $state<'scenes' | 'session' | 'takes'>('session');
+  let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer'>('session');
 
   const s = $derived($musicStudio);
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
@@ -71,7 +72,9 @@
           : 'Beat, loops, take and visuals change together, on the bar'
       : lowerTab === 'session'
         ? `In ${keyLabel(s.key)}`
-        : 'Recorded performances',
+        : lowerTab === 'mixer'
+          ? 'Level, EQ and pan for every instrument and the live input'
+          : 'Recorded performances',
   );
 
   // The live output draws into the frame while the view is up.
@@ -159,10 +162,11 @@
 {#snippet lower()}
   <StudioModule title={lowerTab.toUpperCase()} subtitle={lowerSubtitle} class="lower">
     {#snippet lead()}
-      <div class="seg small" role="tablist" aria-label="Scenes, loops or takes">
+      <div class="seg small" role="tablist" aria-label="Session, scenes, takes or mixer">
         <button role="tab" aria-selected={lowerTab === 'session'} class:on={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
         <button role="tab" aria-selected={lowerTab === 'scenes'} class:on={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>Scenes{s.scenes.length ? ` ${s.scenes.length}` : ''}</button>
         <button role="tab" aria-selected={lowerTab === 'takes'} class:on={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>Takes{s.takes.length ? ` ${s.takes.length}` : ''}</button>
+        <button role="tab" aria-selected={lowerTab === 'mixer'} class:on={lowerTab === 'mixer'} onclick={() => (lowerTab = 'mixer')}>Mixer</button>
       </div>
     {/snippet}
     {#snippet head()}
@@ -177,6 +181,8 @@
     {/snippet}
     {#if lowerTab === 'session'}
       <SessionGrid />
+    {:else if lowerTab === 'mixer'}
+      <MixerPanel />
     {:else if lowerTab === 'takes'}
       <div class="scroll"><TakeList /></div>
     {:else}
