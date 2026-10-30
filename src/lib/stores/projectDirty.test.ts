@@ -9,7 +9,7 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './projectDirty';
+import { isProjectDirty, projectSettingsSections, projectSettingsSignature, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot } from './projectDirty';
 
 let layers: typeof import('./layers');
 let types: typeof import('../types');
@@ -165,6 +165,40 @@ describe('projectSettingsSignature', () => {
     expect(surfaces('a', false)).toBe(surfaces('b', true));
   });
 
+  it('reads sections as saved while they are as an automated recall left them', () => {
+    const saved = base() as any;
+    saved.project.surfaces = [{ id: 's', slices: [] }];
+    const savedSections = projectSettingsSections({ exported: saved, stage3d: { schemaVersion: 1, nodes: [] } });
+
+    // The recall-side signatures are the same text the full signature holds.
+    expect(recallSectionSignature('sequencer', saved.layerSequencer)).toBe(savedSections.sequencer);
+    expect(recallSectionSignature('keyframeSettings', saved.keyframeSettings)).toBe(savedSections.keyframeSettings);
+    expect(recallSectionSignature('surfaces', saved.project.surfaces)).toBe(savedSections.surfaces);
+    expect(recallSectionSignature('stage3d', { schemaVersion: 1, nodes: [] })).toBe(savedSections.stage3d);
+
+    // A show cue recalls a preset with its own pattern and keyframe settings.
+    const recalled = base() as any;
+    recalled.project.surfaces = saved.project.surfaces;
+    recalled.layerSequencer.pattern = { steps: [{ layers: { a: true } }] };
+    recalled.keyframeSettings = { duration: 12, isLooping: false };
+    const imprint = {
+      sequencer: recallSectionSignature('sequencer', recalled.layerSequencer),
+      keyframeSettings: recallSectionSignature('keyframeSettings', recalled.keyframeSettings),
+    };
+    const nowSections = projectSettingsSections({ exported: recalled, stage3d: { schemaVersion: 1, nodes: [] } });
+    expect(JSON.stringify(nowSections)).not.toBe(JSON.stringify(savedSections));
+    expect(JSON.stringify(withRecallsAsSaved(nowSections, imprint, savedSections))).toBe(JSON.stringify(savedSections));
+
+    // An edit after the recall counts again.
+    recalled.layerSequencer.pattern = { steps: [{ layers: { a: false } }] };
+    const edited = projectSettingsSections({ exported: recalled, stage3d: { schemaVersion: 1, nodes: [] } });
+    expect(JSON.stringify(withRecallsAsSaved(edited, imprint, savedSections))).not.toBe(JSON.stringify(savedSections));
+    // Other sections are never read as saved.
+    recalled.osc.bindings.push({ address: '/x' });
+    const oscEdit = projectSettingsSections({ exported: recalled, stage3d: { schemaVersion: 1, nodes: [] } });
+    expect(withRecallsAsSaved(oscEdit, imprint, savedSections).osc).not.toBe(savedSections.osc);
+  });
+
   it("counts a Music Studio clip's voices, not other plugins' live settings", () => {
     const withClip = (effectSource: any) => {
       const p = base();
@@ -279,5 +313,26 @@ describe('with the real stores', () => {
     expect(level()).toBe(0.5);
     undo();
     expect(level()).toBe(1);
+  });
+});
+
+describe('automated stage preset recalls', () => {
+  it('are noted as recalls and are not VJ edits', async () => {
+    vi.useFakeTimers();
+    const vj = await import('./vjClipLauncher');
+    const id = layers.project.saveStagePreset('Look A');
+    const before = get(vj.vjEditVersion);
+    const seen: string[][] = [];
+    const stop = layers.automatedRecalls.subscribe(({ count, sections }) => { if (count) seen.push(sections); });
+    layers.project.loadStagePreset(id, { history: false });
+    vi.runAllTimers();
+    stop();
+    expect(get(vj.vjEditVersion)).toBe(before);
+    // A user's recall of the same preset is an edit.
+    layers.project.loadStagePreset(id);
+    expect(get(vj.vjEditVersion)).toBeGreaterThan(before);
+    vi.useRealTimers();
+    // A stage preset carries the 3D scene it was saved with.
+    expect(seen).toEqual([['stage3d']]);
   });
 });

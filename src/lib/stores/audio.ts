@@ -182,6 +182,12 @@ function createAudioStore() {
   };
 
   audioAnalyzer.setCallback(applyAnalysis);
+  // A device that went away mid-show reads as off (with why) until it is back.
+  audioAnalyzer.setInputStatusCallback((status) => {
+    update((s) => status === 'lost'
+      ? { ...s, isActive: false, error: 'The audio input was disconnected. Plug it back in to resume.' }
+      : { ...s, isActive: true, error: null });
+  });
 
   return {
     subscribe,

@@ -28,6 +28,8 @@ export interface ProjectDirtySnapshot {
   settings: string;
   /** Change counters kept elsewhere (Map Sim edits, relinked media). */
   counters: string;
+  /** The signature section by section, as it is (see withRecallsAsSaved). */
+  sections?: Record<string, string>;
 }
 
 export interface ProjectSettingsSections {
@@ -69,10 +71,6 @@ const studioIdentity = (studio: any) => {
   return { ...(omit(studio, ['params', 'octave', 'velocity', 'drumMutes', 'mixer']) as object), mixer };
 };
 
-/**
- * A stable signature of the project settings undo does not cover. Equal
- * signatures mean nothing there was edited.
- */
 /** A Stage 3D scene's fingerprint: embedded models (data URLs of many MB)
  *  are reduced to their length and ends instead of being copied whole. */
 function stage3dIdentity(scene: unknown): string | null {
@@ -93,10 +91,39 @@ const surfacesIdentity = (surfaces: unknown) =>
       })
     : null;
 
-export function projectSettingsSignature({ exported, showTimeline, showControl, stage3d }: ProjectSettingsSections): string {
+/** Sections an automated recall (a show cue, a VJ clip's preset, a MIDI- or
+ *  Live-triggered stage preset) can rewrite. */
+export type RecallSection = 'sequencer' | 'keyframeSettings' | 'surfaces' | 'stage3d';
+
+/**
+ * One recallable section's part of the signature, from the value its store
+ * holds (layerSequencer.serialize(), keyframeTimeline.exportSettings(),
+ * project.surfaces, the Stage 3D scene). The same text the full signature
+ * holds for it, so the two can be compared.
+ */
+export function recallSectionSignature(section: RecallSection, value: unknown): string {
+  switch (section) {
+    case 'sequencer': {
+      const seq = value as { pattern?: unknown; config?: unknown } | null | undefined;
+      return JSON.stringify(seq ? { pattern: seq.pattern, config: seq.config } : null);
+    }
+    case 'keyframeSettings':
+      return JSON.stringify(value ?? null);
+    case 'surfaces':
+      return JSON.stringify(surfacesIdentity(value ?? []));
+    case 'stage3d':
+      return stage3dIdentity(value) ?? 'null';
+  }
+}
+
+/**
+ * The project settings undo does not cover, section by section (each the
+ * JSON of what counts in it). Equal sections mean nothing there was edited.
+ */
+export function projectSettingsSections({ exported, showTimeline, showControl, stage3d }: ProjectSettingsSections): Record<string, string> {
   const project = exported?.project ?? {};
   const vj = exported?.vjClipLauncher;
-  return JSON.stringify({
+  const sections: Record<string, unknown> = {
     output: {
       settings: project.outputSettings ?? null,
       width: project.outputMasterCanvasWidth ?? null,
@@ -121,7 +148,6 @@ export function projectSettingsSignature({ exported, showTimeline, showControl, 
     modulation: Array.isArray(exported?.modulation)
       ? exported.modulation.map((entry: any) => ({ key: entry.key, mod: omit(entry.mod, ['autoPhase', 'clipEffect', 'compositionEffect']) }))
       : [],
-    keyframeSettings: exported?.keyframeSettings ?? null,
     macros: Array.isArray(exported?.macros?.macros)
       ? exported.macros.macros.map((macro: any) => omit(macro, ['value']))
       : [],
@@ -134,11 +160,6 @@ export function projectSettingsSignature({ exported, showTimeline, showControl, 
     snapshots: exported?.snapshots ?? null,
     // The tempo follows MIDI clock, Link and tap while performing.
     audio: omit(exported?.audio ?? null, ['manualBPM']),
-    surfaces: surfacesIdentity(project.surfaces),
-    stage3d: stage3dIdentity(stage3d),
-    sequencer: exported?.layerSequencer
-      ? { pattern: exported.layerSequencer.pattern, config: exported.layerSequencer.config }
-      : null,
     geoDeck: exported?.geoDeck
       ? { sceneSlots: exported.geoDeck.sceneSlots ?? null, modRoutes: exported.geoDeck.modRoutes ?? null }
       : null,
@@ -151,7 +172,39 @@ export function projectSettingsSignature({ exported, showTimeline, showControl, 
         }
       : null,
     showControl: showControl ?? null,
-  });
+  };
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(sections)) out[key] = JSON.stringify(value ?? null);
+  out.keyframeSettings = recallSectionSignature('keyframeSettings', exported?.keyframeSettings);
+  out.surfaces = recallSectionSignature('surfaces', project.surfaces);
+  out.stage3d = recallSectionSignature('stage3d', stage3d);
+  out.sequencer = recallSectionSignature('sequencer', exported?.layerSequencer);
+  return out;
+}
+
+/** The whole signature, one string. Equal signatures mean nothing was edited. */
+export function projectSettingsSignature(input: ProjectSettingsSections): string {
+  return JSON.stringify(projectSettingsSections(input));
+}
+
+/**
+ * Playing a show is not editing it. A section still exactly as an automated
+ * recall left it (`imprint`) reads as it was saved; once anything else
+ * changes it, it counts again.
+ */
+export function withRecallsAsSaved(
+  now: Record<string, string>,
+  imprint: Partial<Record<RecallSection, string>>,
+  saved: Record<string, string> | null | undefined,
+): Record<string, string> {
+  if (!saved) return now;
+  let out = now;
+  for (const [key, value] of Object.entries(imprint)) {
+    if (value === undefined || now[key] !== value || !(key in saved)) continue;
+    if (out === now) out = { ...now };
+    out[key] = saved[key];
+  }
+  return out;
 }
 
 /** True when `now` differs from the snapshot taken at the last save.
