@@ -1,7 +1,8 @@
 import { WORLD_PALETTES } from '../performer/worldPalettes';
 // Performer Store - Visual Synthesizer State Management
-import { writable, get } from 'svelte/store';
+import { writable, get, type Readable } from 'svelte/store';
 import type { Effect } from '../types';
+import type { VJClip, VJClipLauncherState, VJDeck } from './vjClipLauncher';
 import {
   PERFORMER_CLIP_KEYS,
   PERFORMER_CLIP_ROW1,
@@ -749,6 +750,35 @@ function createSynthVisionStore() {
 }
 
 export const synthVisionStore = createSynthVisionStore();
+
+// ─── Performer effect chain → clip ───────────────────────────────
+
+/** Clips Performer itself put on its layer: its own grid cell and the
+ *  transient clips it launches. Any other clip belongs to the deck. */
+export function isPerformerClip(clip: Pick<VJClip, 'type' | '_performerOwned'> | null | undefined): boolean {
+  return !!clip && (clip.type === 'synthvision' || clip._performerOwned === true);
+}
+
+interface PerformerEffectsTarget extends Readable<VJClipLauncherState> {
+  setActiveClipEffects(layerIndex: number, effects: Effect[], deck?: VJDeck): void;
+}
+
+/** Put Performer's chain on the clip active on its layer, but only when that
+ *  clip is Performer's. A grid clip fired on the same row keeps its own saved
+ *  effects; the chain comes back with Performer's next launch. Returns
+ *  whether the chain was written. */
+export function stampPerformerEffects(
+  launcher: PerformerEffectsTarget,
+  layerIndex: number,
+  effects: Effect[],
+  deck: VJDeck,
+): boolean {
+  const state = get(launcher);
+  const layers = deck === 'B' ? state.bankBLayerStates : state.layerStates;
+  if (!isPerformerClip(layers[layerIndex]?.activeClip)) return false;
+  launcher.setActiveClipEffects(layerIndex, effects, deck);
+  return true;
+}
 
 // ─── Session-Level Clip Assignment Cache ─────────────────────────
 // Persists performer clip assignments in memory across SynthVision component

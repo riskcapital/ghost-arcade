@@ -12,6 +12,8 @@
     SV_PARAMS, SV_SPACE_FX, SV_CAM_MODES, SV_CAM_BLENDS,
     SV_SHADER_DEFS, SV_WORLD_DEFS,
     SV_REACTIVITY_MODES,
+    isPerformerClip,
+    stampPerformerEffects,
     type SVState, type SVLayer, type SVParams, type SVParamKey,
     type SVReactivityMode
   } from '../stores/synthVision';
@@ -163,8 +165,7 @@
   /** True while the layer's active clip is Performer's own cell or a clip
    *  Performer launched. Firing any other clip on that row hands the layer
    *  back to the deck. */
-  $: performerOwnsLayer = performerActiveClip?.type === 'synthvision'
-    || !!(performerActiveClip as any)?._performerOwned;
+  $: performerOwnsLayer = isPerformerClip(performerActiveClip);
 
   /** Last clip Performer put on air, replayed when its cell is fired again so
    *  reopening the panel resumes instead of coming back empty. */
@@ -268,8 +269,9 @@
   // live on the VJ layer — that row is shared with grid clips — nor on the
   // active clip, because Performer swaps its transient clip every time a new
   // shader/world/media is launched, which orphaned the chain. Instead the
-  // list is stamped onto whichever clip Performer currently drives, so it
-  // renders through the normal clip.effects path.
+  // list is stamped onto the clip Performer currently drives, so it renders
+  // through the normal clip.effects path. A grid clip fired on the same row
+  // is not Performer's and keeps its own saved effects.
   $: svLayerEffects = $synthVisionStore.performerEffects;
 
   // Last chain and clip stamped. The store is written every frame, so the
@@ -285,13 +287,14 @@
     return clipId ? `${deck}:${layer}:${clipId}` : null;
   }
 
-  /** Push the Performer chain onto the clip it is currently driving. */
+  /** Push the Performer chain onto the clip it is currently driving, when
+   *  that clip is one Performer launched (see stampPerformerEffects). */
   function syncPerformerEffectsToClip() {
     const effects = get(synthVisionStore).performerEffects;
     const launcher = get(vjClipLauncher);
     stampedPerformerEffects = effects;
     stampedPerformerClipKey = performerClipKey(launcher, assignedVJLayer);
-    vjClipLauncher.setActiveClipEffects(assignedVJLayer, effects, performerTargetDeck(launcher));
+    stampPerformerEffects(vjClipLauncher, assignedVJLayer, effects, performerTargetDeck(launcher));
   }
 
   function syncPerformerEffectsIfChanged(effects: Effect[], clipKey: string | null) {
@@ -445,8 +448,9 @@
         camVideo.srcObject = camStream;
         camVideo.play();
       }
-      // Init camera shaders on first camera activation (deferred to save WebGL contexts)
-      if (!camGl) {
+      // The camera effect pass only feeds the local copy; motion detection
+      // (which drives the visuals) runs on the CPU without it.
+      if (!camGl && localRenderActive) {
         initCamShaders();
       }
       synthVisionStore.setCamActive(true);
@@ -468,15 +472,35 @@
     else startCamera();
   }
 
-  // Nothing reads the composite today, so the per-frame copy into
-  // outputCanvas only runs once a caller has asked for it.
-  let outputCanvasRequested = false;
+  // Performer's picture is made by the native engine: the clips it launches
+  // on its layer plus the world overlay. The hidden canvases below are a
+  // local copy nothing reads (getOutputCanvas has no callers and no clip
+  // carries a synthVisionCanvas), so their GL contexts, buffers and per-frame
+  // drawing only start once a caller asks for the canvas.
+  let localRenderActive = false;
   // True while shaderCanvas already holds the cleared frame.
   let shaderCanvasBlank = false;
 
-  // Expose output canvas for VJ layer texture
+  function startLocalRender() {
+    if (localRenderActive || !outputCanvas) return;
+    localRenderActive = true;
+    handleResize();
+    try {
+      initShaders();
+      if (!NATIVE_ENGINE_ONLY) {
+        initThree();
+        buildWorld(0);
+      }
+    } catch (err) {
+      console.error('SynthVision: local render init failed:', err);
+    }
+    compCtx = outputCanvas.getContext('2d', { alpha: false });
+    if (state?.camActive && !camGl) initCamShaders();
+  }
+
+  /** The local composite, drawn from now on. Starts the local pipeline. */
   export function getOutputCanvas(): HTMLCanvasElement | null {
-    outputCanvasRequested = true;
+    startLocalRender();
     return outputCanvas || null;
   }
 
@@ -3557,7 +3581,7 @@ void main() {
 
     // Show splash screen until first interaction (only when UI is visible)
     if (visible && state.showSplash) {
-      if (outputCanvasRequested) renderSplash();
+      if (localRenderActive) renderSplash();
       return;
     }
 
@@ -3634,18 +3658,21 @@ void main() {
       detectMotion();
     }
 
-    // Resolve crossfade mix params
-    const xf = state.xfade;
-    const aL = state.layers.a, bL = state.layers.b;
-    const activeL = xf < .5 ? aL : bL;
-    const mixP: Record<string, number> = {};
-    for (const param of SV_PARAMS) {
-      mixP[param.k] = aL.p[param.k] * (1 - xf) + bL.p[param.k] * xf;
-    }
-
     if (($performerDeckStore.activeDeck as string) === 'geo') {
       renderGeoFrame(dt);
       return;
+    }
+
+    // Everything below draws the hidden local copy. The store updates above
+    // are what the native path uses, so stop here until a reader asks.
+    if (!localRenderActive) return;
+
+    // Resolve crossfade mix params
+    const xf = state.xfade;
+    const aL = state.layers.a, bL = state.layers.b;
+    const mixP: Record<string, number> = {};
+    for (const param of SV_PARAMS) {
+      mixP[param.k] = aL.p[param.k] * (1 - xf) + bL.p[param.k] * xf;
     }
 
     // Update 3D world (skip if worlds disabled)
@@ -3792,7 +3819,6 @@ void main() {
     }
 
     // Composite to output canvas
-    if (!outputCanvasRequested) return;
     if (compCtx && outputCanvas && shaderCanvas && threeCanvas) {
       compCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
       compCtx.globalCompositeOperation = 'source-over';
@@ -4575,6 +4601,8 @@ void main() {
   //  Resize
   // ================================================================
   function handleResize() {
+    // Unread canvases keep their small default size (no project-size buffers).
+    if (!localRenderActive) return;
     if (!outputCanvas || !shaderCanvas || !threeCanvas) {
       console.warn('SynthVision handleResize: canvases not ready', { outputCanvas: !!outputCanvas, shaderCanvas: !!shaderCanvas, threeCanvas: !!threeCanvas });
       return;
@@ -4694,25 +4722,8 @@ void main() {
       hideLoading();
     }, 8000);
 
-    // Wrap sync initialization in try-catch to ensure hideLoading is always called
-    // (prevents frozen full-screen loading overlay if WebGL init fails on re-mount)
-    try {
-      showLoading('Compiling shaders...');
-      handleResize();
-      initShaders();
-      // Defer camera shader init until camera is actually used to save WebGL contexts
-      // initCamShaders(); -- will be called on first camera activation
-
-      showLoading('Building 3D scene...');
-      if (!NATIVE_ENGINE_ONLY) {
-        initThree();
-        buildWorld(0);
-      }
-    } catch (initErr) {
-      console.error('SynthVision: Init failed, clearing loading overlay:', initErr);
-      hideLoading();
-      clearTimeout(safetyTimeout);
-    }
+    // The local GL pipeline (shaders, 3D world, camera pass) is not built
+    // here; it starts only when something reads it (see startLocalRender).
 
     // Start render loop and event listeners immediately
     synthVisionStore.activate();
@@ -4724,8 +4735,6 @@ void main() {
     window.addEventListener('blur', handleKeyboardBlur);
     document.addEventListener('mousemove', xfMouseMove);
     document.addEventListener('mouseup', xfMouseUp);
-
-    compCtx = outputCanvas.getContext('2d', { alpha: false });
 
     // Layer now comes from the clip's host cell (hostLayer prop), so there
     // is nothing to restore here — publishing it keeps the store in step for
