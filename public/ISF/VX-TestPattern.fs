@@ -5,9 +5,10 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A one-bit test pattern in horizontal zones: bit fields, checkerboards, frequency sweeps, sync pulses, multiburst gratings and noise bits. Every hit of the sound it follows steps each zone through its own sequence, so the whole frame changes on the beat and holds between beats. Every so many hits the frame cuts to a full test card for at most one beat.",
+    "DESCRIPTION": "A one-bit test pattern in horizontal zones: bit fields, checkerboards, frequency sweeps, sync pulses, multiburst gratings and noise bits. Every hit of the sound it follows steps each zone through its own sequence, so the frame changes on the beat and holds between beats. The whole frame changes at most three times a second: when hits come faster, only half the zones step on each one. Every so many hits the frame cuts to a full test card until the next allowed change; when that would come too soon, only the middle of the frame cuts.",
     "PASSES": [
         { "TARGET": "cardState", "PERSISTENT": true, "FLOAT": true, "WIDTH": 1, "HEIGHT": 1 },
+        { "TARGET": "fullState", "PERSISTENT": true, "FLOAT": true, "WIDTH": 1, "HEIGHT": 1 },
         {}
     ],
     "INPUTS": [
@@ -32,6 +33,9 @@
 }*/
 
 // cardState: (last count + 1, seconds since the last hit, seconds between hits, recent activity).
+// fullState: (count the slow zones show, seconds since the last full-frame change, card on, last count + 1).
+// The whole frame may change at most three times a second.
+const float FULL_GAP = 0.34;
 const float PI2 = 6.2831853;
 
 float hash11(float x) {
@@ -175,6 +179,35 @@ void main() {
         return;
     }
 
+    float every = cardEvery < 0.5 ? 0.0 : max(2.0, floor(cardEvery + 0.5));
+
+    if (PASSINDEX == 1) {
+        vec4 c = IMG_NORM_PIXEL(cardState, vec2(0.5));
+        vec4 f = IMG_NORM_PIXEL(fullState, vec2(0.5));
+        bool ready = f.w > 0.5 && FRAMEINDEX >= 2;
+        if (!ready) f = vec4(n, 9.0, 0.0, n + 1.0);
+        bool fresh = abs(f.w - (n + 1.0)) > 0.5;
+        float since = min(f.y + dt, 9.0);
+        float nSlow = f.x;
+        float cardOn = f.z;
+        bool allowed = since >= FULL_GAP;
+        if (fresh && allowed) {
+            // A full change: the slow zones step and the card comes or goes.
+            nSlow = n;
+            since = 0.0;
+            cardOn = every > 0.0 && n > 0.5 && mod(n, every) == 0.0 ? 1.0 : 0.0;
+        } else if (cardOn > 0.5 && allowed && c.y > 1.0) {
+            // The sound stopped: drop the card.
+            cardOn = 0.0;
+            since = 0.0;
+        }
+        gl_FragColor = vec4(nSlow, since, cardOn, n + 1.0);
+        return;
+    }
+
+    vec4 full = IMG_NORM_PIXEL(fullState, vec2(0.5));
+    float nSlow = floor(full.x + 0.5);
+    bool fullCard = full.z > 0.5;
     vec4 st = IMG_NORM_PIXEL(cardState, vec2(0.5));
     float age = st.y;
     float interval = st.z;
@@ -220,7 +253,9 @@ void main() {
         float sd = S * 7.13 + z * 3.7;
         float t = floor(hash11(sd + 0.5) * 7.0);
         float L = hash11(sd + 1.9) < 0.5 ? 4.0 : 8.0;
-        float stp = mod(n + floor(hash11(sd + 2.7) * L), L);
+        // Alternate zones step on every hit; the rest only on full changes.
+        float zn = mod(z + S, 2.0) < 0.5 ? n : nSlow;
+        float stp = mod(zn + floor(hash11(sd + 2.7) * L), L);
         float mode = mod(mode0 + (hash11(sd + 4.1) < 0.3 ? 1.0 : 0.0), 3.0);
         // A slow drift on some zones, in whole pixels.
         float dir = hash11(sd + 6.6) < 0.5 ? -1.0 : 1.0;
@@ -247,7 +282,8 @@ void main() {
         if (zb >= 0.0 && gPx >= 3.0) {
             float sd = S * 7.13 + zb * 3.7;
             float L = hash11(sd + 1.9) < 0.5 ? 4.0 : 8.0;
-            float stp = mod(n + floor(hash11(sd + 2.7) * L), L);
+            float zn = mod(zb + S, 2.0) < 0.5 ? n : nSlow;
+            float stp = mod(zn + floor(hash11(sd + 2.7) * L), L);
             float cw = floor(res.x / 64.0);
             float cell = floor(P.x / cw);
             float inner = mod(P.x, cw);
@@ -259,13 +295,13 @@ void main() {
         }
     }
 
-    // The card: on every Nth hit, for at most a beat. If cards would come faster than
-    // three a second, only the middle of the frame cuts.
-    float every = cardEvery < 0.5 ? 0.0 : max(2.0, floor(cardEvery + 0.5));
+    // The card: full frame when a full change is allowed, held until the next one;
+    // otherwise only the middle of the frame cuts, for at most a beat.
     float beatLen = clamp(interval, 0.1, 0.6);
-    if (every > 0.0 && n > 0.5 && mod(n, every) == 0.0 && age < beatLen * 0.9) {
+    bool partCard = !fullCard && every > 0.0 && n > 0.5 && mod(n, every) == 0.0 && age < beatLen * 0.9;
+    if (fullCard || partCard) {
         vec2 c = P - floor(res * 0.5);
-        bool partial = interval * every < 0.34;
+        bool partial = !fullCard;
         vec2 box = partial ? floor(res * vec2(0.22, 0.3)) : floor(res * 0.5);
         if (abs(c.x) < box.x && abs(c.y) < box.y) {
             lit = testCard(partial ? c * (res.y * 0.5 / box.y) : c, res, S, n, fs, fw.x / fw.y);
