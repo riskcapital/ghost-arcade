@@ -75,6 +75,8 @@ export interface NoteEvent {
   velocity: number;
   /** Set for drums. */
   drum?: DrumVoice;
+  /** A tone-library tone to play it on (a clip's own tone), instead of the instrument's sound. */
+  tone?: string;
   source: NoteSource;
   /**
    * When the note sounds, in seconds on the music clock (the audio context's

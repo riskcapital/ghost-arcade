@@ -59,7 +59,18 @@
   /** Two octaves of the key across the pad's width. */
   const XY_STEPS = 14;
 
+  let lastXY = { x: 0.5, y: 0.5 };
+
+  // A note held on the pad moves into a new key with it.
+  let xyKey = '';
+  $effect(() => {
+    const sig = `${s.key.root}:${s.key.scale}`;
+    if (sig !== xyKey && xyKey && xyNote !== null) xyPlay(lastXY.x, lastXY.y);
+    xyKey = sig;
+  });
+
   function xyPlay(x: number, y: number) {
+    lastXY = { x, y };
     const note = scaleNote(s.key, Math.round(x * XY_STEPS), 48);
     if (note === xyNote) return;
     const previous = xyNote;

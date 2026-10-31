@@ -207,6 +207,20 @@ export class MusicAudioEngine {
   setTones(choice: { synth: string | null; keys: string | null; kit: string | null }): void {
     const c = this.toneChoice;
     if (c.synth === choice.synth && c.keys === choice.keys && c.kit === choice.kit) return;
+    // Held notes belong to the sound that started them: when a part changes sound, let them go
+    // there, or their note-offs would go to the new sound and leave the old ones ringing.
+    if (this.ctx) {
+      const t = this.ctx.currentTime;
+      for (const part of ['synth', 'keys'] as const) {
+        if (c[part] === choice[part]) continue;
+        for (const [key, voice] of [...this.voices]) {
+          if (!key.startsWith(`${part}:`)) continue;
+          voice.release(t);
+          this.voices.delete(key);
+        }
+        this.tones?.panic(part);
+      }
+    }
     this.toneChoice = { ...choice };
     this.applyTones();
   }
@@ -665,7 +679,12 @@ export class MusicAudioEngine {
       }
       return;
     }
-    if ((event.instrument === 'synth' || event.instrument === 'keys') && this.toneChoice[event.instrument] && this.tones?.ready) {
+    // A clip's own tone plays on its own engine, into its instrument's channel.
+    if (event.tone && this.tones) {
+      const tone = toneById(event.tone);
+      if (tone && this.tones.clipNote(tone.id, tone.patch, event.instrument, this.bus![event.instrument], event.type === 'on' ? { t: 'on', note: event.note, vel: event.velocity, at: time } : { t: 'off', note: event.note, at: time })) return;
+    }
+    if ((event.instrument === 'synth' || event.instrument === 'keys') && this.toneChoice[event.instrument] && this.tones?.ready && !(event.type === 'off' && this.voices.has(`${event.instrument}:${event.note}`))) {
       if (event.type === 'on') this.tones.noteOn(event.instrument, event.note, event.velocity, time);
       else this.tones.noteOff(event.instrument, event.note, time);
       return;
@@ -1201,7 +1220,7 @@ export class MusicAudioEngine {
     const out = ctx.createGain();
     out.gain.value = velocityGain(velocity) * 0.3;
     out.connect(this.bus!.bowls);
-    const partials: Array<[number, number, number]> = [[1, 1, 1], [2.76, 0.45 + tone * 0.4, 0.7], [5.4, 0.15 + tone * 0.4, 0.45], [8.93, tone * 0.25, 0.3]];
+    const partials: Array<[number, number, number]> = [[1, 1, 1], [3, 0.45 + tone * 0.4, 0.7], [6, 0.15 + tone * 0.4, 0.45], [8, tone * 0.25, 0.3]];
     let longest = 0;
     for (const [ratio, level, decayShare] of partials) {
       const decay = ring * decayShare;

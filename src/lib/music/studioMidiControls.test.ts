@@ -59,6 +59,7 @@ describe('the studio controls a controller can learn', () => {
       ...range(6).flatMap((n) => ['level', 'look-next', 'look-prev', 'mute', 'blend-next', 'blend-prev', 'follow-next'].map((c) => `voice.${n}.${c}`)),
       'visuals.scene-next', 'visuals.scene-prev',
       'tone.synth.next', 'tone.synth.prev', 'tone.keys.next', 'tone.keys.prev', 'tone.drums.next', 'tone.drums.prev',
+      ...['bass', 'lead', 'chords', 'texture'].flatMap((t) => [`tone.track.${t}.next`, `tone.track.${t}.prev`]),
       'studio.kill', 'studio.play',
     ];
     expect(controls.STUDIO_MIDI_CONTROLS.map((c) => c.id)).toEqual(expected);

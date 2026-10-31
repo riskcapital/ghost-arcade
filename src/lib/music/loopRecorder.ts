@@ -36,6 +36,8 @@ export interface RecordedLoop {
   name: string;
   role: LoopRole;
   instrument: InstrumentId;
+  /** A tone from the tone library to play it on, instead of the instrument's own sound. */
+  tone?: string;
   /** Length in beats, whole bars. */
   beats: number;
   notes: RecordedNote[];

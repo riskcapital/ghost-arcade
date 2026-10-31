@@ -111,3 +111,16 @@ describe('the session grid', () => {
     expect(normalizeSession(null)).toBeNull();
   });
 });
+
+describe('a clip on its own tone', () => {
+  it('keeps a known tone, drops an unknown one, and plays on it', async () => {
+    const { normalizeClip, clipLoop } = await import('./session');
+    const base = { kind: 'notes', id: 'c1', name: 'Bass', beats: 4, notes: [{ beat: 0, dur: 1, note: 36, velocity: 0.8 }], key: null, instrument: null };
+    const kept = normalizeClip({ ...base, tone: 'bass.envelope-funk' });
+    expect(kept?.kind === 'notes' && kept.tone).toBe('bass.envelope-funk');
+    const dropped = normalizeClip({ ...base, tone: 'nope' });
+    expect(dropped?.kind === 'notes' && 'tone' in dropped).toBe(false);
+    if (kept?.kind !== 'notes') throw new Error('notes clip expected');
+    expect(clipLoop(kept, 'bass', 'berlin', { root: 0, scale: 'minor' }).tone).toBe('bass.envelope-funk');
+  });
+});

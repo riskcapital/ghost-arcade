@@ -31,7 +31,22 @@ class GhostToneProcessor extends AudioWorkletProcessor {
     const L = out[0];
     const R = out[1] ?? out[0];
     this.engine.process(L, R, L.length, currentTime);
-    // A last soft ceiling, so a stack of resonant voices can never hard-clip the bus.
+    // A last soft ceiling, so a stack of resonant voices can never hard-clip the bus. A value
+    // that is not a number would stick in the bus compressor and silence the whole studio,
+    // so a block that has one is dropped and the engine starts clean.
+    let bad = false;
+    for (let i = 0; i < L.length; i++) {
+      if (!Number.isFinite(L[i]) || !Number.isFinite(R[i])) {
+        bad = true;
+        break;
+      }
+    }
+    if (bad) {
+      L.fill(0);
+      if (R !== L) R.fill(0);
+      this.engine.message({ t: 'panic' }, currentTime);
+      return true;
+    }
     for (let i = 0; i < L.length; i++) {
       if (L[i] > 0.9 || L[i] < -0.9) L[i] = softClip(L[i]);
       if (R !== L && (R[i] > 0.9 || R[i] < -0.9)) R[i] = softClip(R[i]);
