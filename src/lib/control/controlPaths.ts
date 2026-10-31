@@ -39,7 +39,15 @@ export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'show:stop', label: 'Cue list Stop' },
   { path: 'show:reset', label: 'Cue list Reset to the first cue' },
   { path: 'show:cue:0', label: 'Fire cue 1 of the cue list' },
+  { path: 'studio:band.throw', label: "Throw the band into the studio's echo (hold)" },
+  { path: 'studio:band.freeze', label: "Freeze the band's sound" },
+  { path: 'studio:pad.1', label: 'Studio FX pad 1' },
+  { path: 'studio:voice.1.level', label: 'Level of the first look on the instrument feeds' },
+  { path: 'studio:song.next', label: 'Next song in the set list' },
 ];
+
+/** A studio control id (src/lib/music/studioControls.ts), e.g. band.throw or voice.2.level. */
+const STUDIO_CONTROL_ID = /^[a-z][a-z0-9]*(\.[a-z0-9-]+)*$/;
 
 export const SHOW_CONTROL_ACTIONS = ['go', 'back', 'stop', 'reset'] as const;
 
@@ -94,12 +102,18 @@ export function validateControlPath(path: string): ControlPathValidation {
 
   const parts = normalized.split(':');
   const scope = parts[0];
-  if (!['map', 'vj', 'vj-b', 'sv', 'show', 'tray'].includes(scope)) {
+  if (!['map', 'vj', 'vj-b', 'sv', 'show', 'tray', 'studio'].includes(scope)) {
     return {
       valid: false,
       normalized,
-      reason: 'Path must begin with map:, vj:, vj-b:, sv:, show:, or tray:.',
+      reason: 'Path must begin with map:, vj:, vj-b:, sv:, show:, tray:, or studio:.',
     };
+  }
+
+  if (scope === 'studio') {
+    return parts.length === 2 && STUDIO_CONTROL_ID.test(parts[1] ?? '')
+      ? { valid: true, normalized, reason: null }
+      : { valid: false, normalized, reason: 'Studio paths are studio:<control>, e.g. studio:band.throw or studio:voice.1.level.' };
   }
 
   if (scope === 'tray') {
