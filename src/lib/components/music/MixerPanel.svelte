@@ -22,7 +22,7 @@
     type ChannelId,
     type EqBand,
   } from '../../music/mixer';
-  import { VOICE_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
+  import { PART_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
   import { bandInputStatus, channelLevels, mixerChannels, startLiveInput, stopLiveInput } from '../../music/musicRuntime';
   import { listAudioInputs, type AudioInputDevice } from '../../music/liveInput';
   import { channelChoices, channelLabel } from '../../music/bandInputs';
@@ -167,7 +167,7 @@
             <label class="labelled">
               <span>Feeds</span>
               <select aria-label="What the visuals see {label} as" value={input.role} onchange={(e) => musicStudio.setLiveInput(index, { role: e.currentTarget.value as VoiceSourceId })}>
-                {#each VOICE_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
+                {#each PART_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
               </select>
             </label>
             <div class="row">

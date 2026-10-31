@@ -11,7 +11,7 @@
   import { BAND_KEYS_DEFAULT_ROLE } from '../music/bandKeys';
   import { INSTRUMENT_LABELS } from '../music/instruments';
   import { PLAYABLE_INSTRUMENTS } from '../music/noteEvents';
-  import { VOICE_SOURCES } from '../music/visualVoices';
+  import { PART_SOURCES } from '../music/visualVoices';
 
   const devices = $derived($midiStore.devices.filter((d) => d.state === 'connected'));
   const setups = $derived($midiInputSetups);
@@ -55,7 +55,7 @@
             <label title="The sound its notes count as: visual voices following it move with them. Notes on channel 10 count as drums.">
               Counts as
               <select value={setup?.role ?? BAND_KEYS_DEFAULT_ROLE} onchange={(e) => setMidiInputSetup(device.name, { role: (e.target as HTMLSelectElement).value })} aria-label="Sound the notes of {device.name} count as">
-                {#each VOICE_SOURCES as source (source.id)}<option value={source.id}>{source.label}</option>{/each}
+                {#each PART_SOURCES as source (source.id)}<option value={source.id}>{source.label}</option>{/each}
               </select>
             </label>
             <label class="play" title="Its notes also play a studio instrument while the studio is open">

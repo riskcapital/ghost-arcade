@@ -49,7 +49,7 @@ import { BLEND_MODE_ORDER } from '../types';
 import { STUDIO_SETS } from './studioSets';
 import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioVoice, studioTargetNow } from './studioTarget';
 import { VOICE_SHADERS, scenesForSet } from './visualScenes';
-import { VOICE_SOURCES, type VoiceSourceId } from './visualVoices';
+import { voiceSourcesFor, type VoiceSourceId } from './visualVoices';
 import { TONES } from './tone/tones';
 import { LOOP_ROLES, type LoopRole } from './loops';
 import { DRUM_KITS } from './tone/kits';
@@ -134,9 +134,11 @@ export function stepVoiceLook(index: number, step: 1 | -1): boolean {
 }
 
 /** The sound after `source` in the list, going round. */
+/** The next sound to follow in the studio's set (instruments the set lacks are skipped). */
 export function nextVoiceSource(source: string): VoiceSourceId {
-  const i = VOICE_SOURCES.findIndex((s) => s.id === source);
-  return VOICE_SOURCES[(i + 1) % VOICE_SOURCES.length].id;
+  const list = voiceSourcesFor(get(musicStudio).set, source);
+  const i = list.findIndex((s) => s.id === source);
+  return list[(i + 1) % list.length].id as VoiceSourceId;
 }
 
 /** Levels voices had before they were muted, by voice. */

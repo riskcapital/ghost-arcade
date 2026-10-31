@@ -7,7 +7,7 @@
     ],
     "DESCRIPTION": "A one-bit spectrum. Each sounding note stands as a cluster of bars at its pitch across the frame, with its harmonics as thinner bars at the true partial positions above it, so the harmony is drawn as a barcode. Bar height and weight follow each note's level; weak partials break into flickering scan lines. A frequency ruler runs along the base and the root is marked.",
     "INPUTS": [
-        { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play"] },
+        { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
         { "NAME": "harmonics", "LABEL": "Harmonics", "TYPE": "float", "DEFAULT": 8, "MIN": 1, "MAX": 12 },
         { "NAME": "barWidth", "LABEL": "Bar width", "TYPE": "float", "DEFAULT": 0.45, "MIN": 0, "MAX": 1 },

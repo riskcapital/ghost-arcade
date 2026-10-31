@@ -30,8 +30,13 @@
 
 import { type DrumVoice, type InstrumentId, type NoteEvent } from './noteEvents';
 import type { LoopRole } from './loops';
+import type { StudioSet } from './studioSets';
 
-export const VOICE_SOURCES = [
+/**
+ * Which sound a voice follows. New entries go on the end: shaders see the
+ * index. Entries with `sets` are one instrument that only some sets have.
+ */
+export const VOICE_SOURCES: readonly { id: string; label: string; sets?: readonly StudioSet[] }[] = [
   { id: 'all', label: 'Everything' },
   { id: 'kick', label: 'Kick' },
   { id: 'snare', label: 'Snare and clap' },
@@ -43,9 +48,22 @@ export const VOICE_SOURCES = [
   { id: 'pad', label: 'Pads and textures' },
   { id: 'fx', label: 'Shots and siren' },
   { id: 'played', label: 'What you play' },
-] as const;
+  { id: 'bowls', label: 'Bowls', sets: ['bath'] },
+  { id: 'drone', label: 'Drone', sets: ['bath'] },
+  { id: 'xy', label: 'XY tone', sets: ['bath'] },
+  { id: 'analog', label: 'Analog synth', sets: ['analog'] },
+  { id: 'scan', label: 'Scan synth' },
+];
 
-export type VoiceSourceId = (typeof VOICE_SOURCES)[number]['id'];
+export type VoiceSourceId = 'all' | 'kick' | 'snare' | 'hats' | 'perc' | 'bass' | 'lead' | 'chords' | 'pad' | 'fx' | 'played' | 'bowls' | 'drone' | 'xy' | 'analog' | 'scan';
+
+/** The sources a voice can follow in `set`, keeping `current` even when the set lacks it. */
+export function voiceSourcesFor(set: StudioSet, current?: string): typeof VOICE_SOURCES {
+  return VOICE_SOURCES.filter((s) => !s.sets || s.sets.includes(set) || s.id === current);
+}
+
+/** The sources that are parts of the music rather than one instrument (for band inputs' roles). */
+export const PART_SOURCES = VOICE_SOURCES.filter((s) => !['bowls', 'drone', 'xy', 'analog', 'scan'].includes(s.id));
 
 export const VOICE_SOURCE_COUNT = VOICE_SOURCES.length;
 
@@ -99,6 +117,12 @@ const SHAPES: Record<VoiceSourceId, SourceShape> = {
   pad: { attack: 0.35, release: 1.8, oneShot: false },
   fx: { attack: 0.005, release: 0.8, oneShot: false },
   played: { attack: 0.006, release: 0.4, oneShot: false },
+  // A struck bowl flashes on the strike and glows while it rings.
+  bowls: { attack: 0.003, release: 2.2, oneShot: true },
+  drone: { attack: 0.4, release: 2, oneShot: false },
+  xy: { attack: 0.02, release: 0.5, oneShot: false },
+  analog: { attack: 0.006, release: 0.35, oneShot: false },
+  scan: { attack: 0.05, release: 0.6, oneShot: false },
 };
 
 const HIT_SECONDS = 0.08;
@@ -128,12 +152,13 @@ const DRUM_SOURCE: Record<DrumVoice, VoiceSourceId> = {
 const FIXED_SOURCES: Partial<Record<InstrumentId, VoiceSourceId[]>> = {
   dubbass: ['bass'],
   acid: ['bass'],
-  drone: ['pad', 'chords'],
-  bowls: ['pad'],
+  drone: ['pad', 'chords', 'drone'],
+  bowls: ['pad', 'bowls'],
   siren: ['fx'],
   shots: ['fx'],
-  xy: ['lead'],
-  scan: ['pad'],
+  xy: ['lead', 'xy'],
+  scan: ['pad', 'scan'],
+  analog: ['analog'],
 };
 
 const ROLE_SOURCE: Record<LoopRole, VoiceSourceId> = { bass: 'bass', lead: 'lead', chords: 'chords', texture: 'pad' };
@@ -339,7 +364,7 @@ function fract(x: number): number {
 /** The source a `vxSource` input value names. */
 export function voiceSourceAt(value: unknown): VoiceSourceId {
   const i = Math.round(Number(value));
-  return VOICE_SOURCES[Number.isFinite(i) && i >= 0 && i < VOICE_SOURCE_COUNT ? i : 0].id;
+  return VOICE_SOURCES[Number.isFinite(i) && i >= 0 && i < VOICE_SOURCE_COUNT ? i : 0].id as VoiceSourceId;
 }
 
 export function voiceSourceIndex(id: VoiceSourceId): number {
