@@ -58,8 +58,8 @@ const SUBTRACTIVE: Record<SynthPatch, SubtractivePatch> = {
 
 const MAX_VOICES_PER_INSTRUMENT = 24;
 
-/** Changing sets fades the old set's effect tails out over this long. */
-const SET_CHANGE_FADE_SECONDS = 1.5;
+/** Changing sets lets the old set's echo and reverb tails ring out over this long. */
+const SET_CHANGE_FADE_SECONDS = 4;
 /** Kill: how fast everything goes, and how long the mix stays down before it comes back. */
 const KILL_FADE_SECONDS = 0.03;
 const KILL_HOLD_SECONDS = 0.6;
@@ -256,6 +256,11 @@ export class MusicAudioEngine {
 
   holdDubShot(index: number, on: boolean): void {
     this.dubShots?.hold(index, on);
+  }
+
+  /** The XY tone lets go with its normal release (a set without the XY pad). */
+  releaseXy(): void {
+    if (this.ctx) this.xyOff(this.ctx.currentTime);
   }
 
   /** Mod wheel and aftertouch (0-1) and pitch bend (-1..1) from a controller, for the tones. */

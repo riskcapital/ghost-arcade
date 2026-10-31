@@ -301,14 +301,23 @@ export function onKill(listener: () => void): () => void {
 }
 
 /** A new set starts clean: what was playing stops and its echoes fade out. */
-function freshSet(): void {
-  cancelQueuedScene();
-  stopAllLoops();
-  if (sequencer) stopSequencer();
-  releaseChords();
-  setSiren(false);
-  panic();
-  resumable = null;
+/**
+ * Changing sets is changing instruments, not songs: the clock, the beat, the
+ * loops and clips, the looper and the visuals all keep going, and loops pick
+ * up the new set's instruments from their next note. Only sustained sounds
+ * the new set has no place for let go, each with its own release; the old
+ * set's effects tails ring out (audioEngine.setRouting).
+ */
+export function changeSetSounds(from: StudioSet, to: StudioSet): void {
+  if (from === to) return;
+  if (to !== 'bath') {
+    // The drone's chords and the XY tone live in the Sound bath.
+    releaseChords();
+    audio.releaseXy();
+  }
+  // The siren lives in the Dub set.
+  if (to !== 'dub') setSiren(false);
+  syncPlayingClips(get(musicStudio), false, false);
 }
 
 /** With scale lock on, the drone and bowls never play a note outside the key. */
@@ -2059,8 +2068,9 @@ export function ensureMusicRuntime(): void {
     if (keyChanged || sessionChanged || patternChanged) syncPlayingClips(s, sessionChanged, patternChanged);
     if (s.set !== lastSet) {
       const first = lastSet === null;
+      const previousSet = lastSet;
       lastSet = s.set;
-      if (!first) freshSet();
+      if (!first && previousSet) changeSetSounds(previousSet, s.set);
     }
     const volumes = morphedVolumes(s);
     for (const id of INSTRUMENTS) audio.setVolume(id, volumes[id]);
