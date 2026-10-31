@@ -90,6 +90,7 @@ import { BassFollower, droneShift } from './bassFollow';
 import type { TrackerEvent } from './inputTracker';
 import { setStudioDriver, studioHostsLive, studioVisualTick } from './studioPlugin';
 import { bowlSlotNotes } from './soundSlots';
+import { DUB_SHOT_NOTE } from './dubShots';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
@@ -1286,6 +1287,34 @@ export function triggerShot(index: number, velocity = 0.85): void {
   fireFxPad(index, velocity, liveTime());
 }
 
+/**
+ * Fire a dub shot. Its tail rings out on its own; a held pad with Hold on
+ * keeps the echo going until releaseDubShot. The visuals see the hit and
+ * its echoes, as hits that fade with each repeat.
+ */
+export function fireDubShot(index: number, velocity = 0.85): void {
+  ensureMusicRuntime();
+  const shot = get(musicStudio).dubShots[index];
+  if (!shot) return;
+  const repeat = audio.fireDubShot(index, velocity);
+  audio.holdDubShot(index, true);
+  const note = DUB_SHOT_NOTE + index;
+  const t = audio.now();
+  let vel = velocity;
+  const echoes = repeat > 0 ? Math.min(8, Math.max(1, Math.round(1 + shot.feedback * 7))) : 0;
+  for (let k = 0; k <= echoes; k++) {
+    const at = t + k * repeat;
+    send(noteOn('shots', note, Math.max(0.05, vel), 'screen', at));
+    send(noteOff('shots', note, 'screen', at + Math.min(0.08, repeat * 0.5)));
+    vel *= 0.35 + shot.feedback * 0.55;
+  }
+}
+
+/** Let go of a held dub shot: a Hold echo starts to fade. */
+export function releaseDubShot(index: number): void {
+  audio.holdDubShot(index, false);
+}
+
 /** A dub throw: while held, everything in the echo chamber floods the tape echo. */
 export function setThrow(on: boolean): void {
   throwHeld = on;
@@ -2013,6 +2042,7 @@ export function ensureMusicRuntime(): void {
     audio.setTones({ synth: s.synthTone, keys: s.keysTone, kit: s.drumKit });
     audio.setDronePatch(s.dronePatch);
     audio.setPadSounds(s.fxPads[s.set]);
+    audio.setDubShots(s.dubShots);
     audio.setBowlSounds(bowlSlotNotes(bowlNotes(s.key), s.bowlSlots), s.bowlSlots.map((slot) => slot.sound));
     audio.setKeyRoot(48 + s.key.root);
     audio.setBandFx(s.bandFx);

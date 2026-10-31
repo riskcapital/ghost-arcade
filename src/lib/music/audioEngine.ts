@@ -29,6 +29,8 @@ import { DEFAULT_DRONE_PATCH, DEFAULT_FX_PADS, defaultBandFx, type BandFxSetting
 import { BandFx } from './bandFx';
 import { BandLooper } from './bandLooper';
 import { ToneHost } from './tone/toneHost';
+import { DubShotBank } from './dubShotAudio';
+import { DUB_SHOT_NOTE, type DubShot } from './dubShots';
 import { toneById } from './tone/tones';
 import { kitById } from './tone/kits';
 
@@ -118,6 +120,9 @@ export class MusicAudioEngine {
 
   /** The tone engine (tone/), and the tones and kit it plays; null plays the built-in sounds. */
   private tones: ToneHost | null = null;
+  /** The Dub set's echo shots (dubShotAudio.ts). */
+  private dubShots: DubShotBank | null = null;
+  private dubShotSettings: DubShot[] = [];
   private toneChoice: { synth: string | null; keys: string | null; kit: string | null } = { synth: null, keys: null, kit: null };
   private synthPatch: SynthPatch = 'pad';
   private keysPatch: KeysPatch = 'epiano';
@@ -237,6 +242,22 @@ export class MusicAudioEngine {
     if (kit) host.setKit(kit);
   }
 
+  setDubShots(shots: DubShot[]): void {
+    if (shots === this.dubShotSettings) return;
+    this.dubShotSettings = shots;
+    this.dubShots?.setShots(shots);
+  }
+
+  /** Fire a dub shot now; returns its echo's repeat time in seconds (0 if it could not play). */
+  fireDubShot(index: number, velocity: number): number {
+    const ctx = this.ensure();
+    return this.dubShots?.fire(index, velocity, ctx.currentTime, this.keyRoot) ?? 0;
+  }
+
+  holdDubShot(index: number, on: boolean): void {
+    this.dubShots?.hold(index, on);
+  }
+
   /** Mod wheel and aftertouch (0-1) and pitch bend (-1..1) from a controller, for the tones. */
   expression(expr: { wheel?: number; pressure?: number; bend?: number }): void {
     this.tones?.expression(expr);
@@ -281,6 +302,7 @@ export class MusicAudioEngine {
     const tempoMoved = Math.abs(tempo - this.tempo) > 0.05;
     this.tempo = tempo;
     this.tones?.setTempo(tempo);
+    this.dubShots?.setTempo(tempo);
     if (tempoMoved) this.bandFx?.setSettings(this.bandSettings, tempo);
     this.macroChain?.sync(slots, tempo);
     // Tempo-locked echoes follow the clock.
@@ -511,6 +533,7 @@ export class MusicAudioEngine {
     if (!this.ctx || !this.masterGain) return;
     this.allNotesOff();
     this.bandFx?.kill();
+    this.dubShots?.silence();
     this.scan?.stop();
     this.retireRacks(KILL_FADE_SECONDS);
     this.applyRouting();
@@ -705,6 +728,8 @@ export class MusicAudioEngine {
       return;
     }
     if (event.instrument === 'shots') {
+      // Dub shots send their notes for the visuals only; their sound is the shot bank's.
+      if (event.note >= DUB_SHOT_NOTE) return;
       const index = event.note - 60;
       // A one-shot rings out; letting go stops an atmosphere.
       if (event.type === 'on') this.playPad(index, event.velocity, time);
@@ -834,6 +859,9 @@ export class MusicAudioEngine {
     this.analog.setParams(this.params);
     this.analog.setRoutes(this.analogRoutes);
     this.scan = new ScanSynth(ctx, bus.scan);
+    this.dubShots = new DubShotBank(ctx, bus.shots, this.noise);
+    this.dubShots.setTempo(this.tempo);
+    this.dubShots.setShots(this.dubShotSettings);
     this.tones = new ToneHost(ctx, { synth: bus.synth, keys: bus.keys, drums: bus.drums });
     this.tones.setTempo(this.tempo);
     this.applyTones();
