@@ -23,7 +23,9 @@ export type MidiNoteMessage =
   | { kind: 'on'; channel: number; note: number; velocity: number }
   | { kind: 'off'; channel: number; note: number }
   | { kind: 'sustain'; channel: number; down: boolean }
-  | { kind: 'allOff'; channel: number };
+  | { kind: 'allOff'; channel: number }
+  /** Mod wheel and channel pressure 0-1, pitch bend -1..1, for the tones. */
+  | { kind: 'expr'; channel: number; wheel?: number; pressure?: number; bend?: number };
 
 /** Read a raw MIDI message. Anything the studio does not play returns null. */
 export function parseMidiNoteMessage(data: ArrayLike<number>): MidiNoteMessage | null {
@@ -40,7 +42,10 @@ export function parseMidiNoteMessage(data: ArrayLike<number>): MidiNoteMessage |
   if (status === 0xb0) {
     if (d1 === 64) return { kind: 'sustain', channel, down: d2 >= 64 };
     if (d1 === 120 || d1 === 123) return { kind: 'allOff', channel };
+    if (d1 === 1) return { kind: 'expr', channel, wheel: d2 / 127 };
   }
+  if (status === 0xd0) return { kind: 'expr', channel, pressure: d1 / 127 };
+  if (status === 0xe0) return { kind: 'expr', channel, bend: Math.max(-1, ((d2 << 7) | d1) / 8192 - 1) };
   return null;
 }
 

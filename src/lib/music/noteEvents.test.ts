@@ -146,6 +146,12 @@ describe('MIDI note messages', () => {
   it('ignores what the studio does not play', () => {
     expect(parseMidiNoteMessage([0xb0, 7, 100])).toBeNull();
     expect(parseMidiNoteMessage([0xf8])).toBeNull();
-    expect(parseMidiNoteMessage([0xe0, 0, 64])).toBeNull();
+  });
+
+  it('reads the mod wheel, pressure and pitch bend for the tones', () => {
+    expect(parseMidiNoteMessage([0xb0, 1, 127])).toEqual({ kind: 'expr', channel: 0, wheel: 1 });
+    expect(parseMidiNoteMessage([0xd0, 0])).toEqual({ kind: 'expr', channel: 0, pressure: 0 });
+    expect(parseMidiNoteMessage([0xe0, 0, 64])).toEqual({ kind: 'expr', channel: 0, bend: 0 });
+    expect(parseMidiNoteMessage([0xe0, 0, 0])).toEqual({ kind: 'expr', channel: 0, bend: -1 });
   });
 });

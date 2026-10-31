@@ -9,6 +9,7 @@
   import { VOICE_SHADERS } from '../../music/visualScenes';
   import { addStudioVoice } from '../../music/studioTarget';
   import { musicStudio } from '../../music/musicStudioStore';
+  import { TONES, TONE_FAMILY_LABELS, type ToneFamily } from '../../music/tone/tones';
   import StudioModule from './StudioModule.svelte';
   import PianoKeys from './PianoKeys.svelte';
   import DrumPads from './DrumPads.svelte';
@@ -23,9 +24,12 @@
   const visual = $derived(s.visuals[s.instrument]);
   const range = $derived(keyboardRange(size ?? s.keyboardSize, s.octave));
 
+  const FAMILIES: ToneFamily[] = ['bass', 'pad', 'lead'];
+
   function setPatch(e: Event) {
     const value = (e.target as HTMLSelectElement).value;
-    if (s.instrument === 'synth') musicStudio.setSynthPatch(value as SynthPatch);
+    if ((s.instrument === 'synth' || s.instrument === 'keys') && value.startsWith('tone:')) musicStudio.setTone(s.instrument, value.slice(5));
+    else if (s.instrument === 'synth') musicStudio.setSynthPatch(value as SynthPatch);
     else if (s.instrument === 'keys') musicStudio.setKeysPatch(value as KeysPatch);
   }
 
@@ -43,8 +47,16 @@
       {#each PLAYABLE_INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
     </select>
     {#if patches && (s.instrument === 'synth' || s.instrument === 'keys')}
-      <select value={s.instrument === 'synth' ? s.synthPatch : s.keysPatch} onchange={setPatch} aria-label="Sound">
-        {#each s.instrument === 'synth' ? SYNTH_PATCHES : KEYS_PATCHES as patch}<option value={patch.id}>{patch.label}</option>{/each}
+      {@const tone = s.instrument === 'synth' ? s.synthTone : s.keysTone}
+      <select value={tone ? `tone:${tone}` : s.instrument === 'synth' ? s.synthPatch : s.keysPatch} onchange={setPatch} aria-label="Sound" title={TONES.find((t) => t.id === tone)?.blurb ?? ''}>
+        <optgroup label="Simple">
+          {#each s.instrument === 'synth' ? SYNTH_PATCHES : KEYS_PATCHES as patch}<option value={patch.id}>{patch.label}</option>{/each}
+        </optgroup>
+        {#each FAMILIES as fam (fam)}
+          <optgroup label={TONE_FAMILY_LABELS[fam]}>
+            {#each TONES.filter((t) => t.family === fam) as t (t.id)}<option value="tone:{t.id}" title={t.blurb}>{t.name}</option>{/each}
+          </optgroup>
+        {/each}
       </select>
     {/if}
     {#if s.instrument !== 'drums'}

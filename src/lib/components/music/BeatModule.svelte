@@ -3,6 +3,7 @@
   import { PATTERN_LENGTHS, type PatternLength } from '../../music/drumPattern';
   import { musicStudio } from '../../music/musicStudioStore';
   import { startSequencer, stopSequencer } from '../../music/musicRuntime';
+  import { DRUM_KITS } from '../../music/tone/kits';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StepGrid from './StepGrid.svelte';
@@ -28,6 +29,10 @@
     <select value={s.pattern.steps} onchange={(e) => musicStudio.setPatternLength(+(e.target as HTMLSelectElement).value as PatternLength)} aria-label="Steps">
       {#each PATTERN_LENGTHS as n}<option value={n}>{n} steps</option>{/each}
     </select>
+    <select class="kit" value={s.drumKit ?? ''} onchange={(e) => musicStudio.setDrumKit((e.target as HTMLSelectElement).value || null)} aria-label="Drum kit" title={DRUM_KITS.find((k) => k.id === s.drumKit)?.blurb ?? 'The simple built-in kit'}>
+      <option value="">Simple kit</option>
+      {#each DRUM_KITS as kit (kit.id)}<option value={kit.id} title={kit.blurb}>{kit.name}</option>{/each}
+    </select>
     <StudioKnob label="Swing" hideLabel value={s.pattern.swing} max={0.5} size={16} format={(v) => `${Math.round(v * 200)}%`} onchange={(v) => musicStudio.setSwing(v)} />
     <button class="studio-btn" onclick={() => musicStudio.clearPattern()}>Clear</button>
   {/snippet}
@@ -35,5 +40,6 @@
 </StudioModule>
 
 <style>
+  .kit { min-width: 0; max-width: 112px; }
   .grid { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 </style>

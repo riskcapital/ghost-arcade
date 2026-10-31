@@ -68,6 +68,8 @@ import {
 } from './studioSets';
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
+import { toneById } from './tone/tones';
+import { kitById } from './tone/kits';
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
 import {
   INPUT_CHANNELS,
@@ -118,6 +120,10 @@ export interface MusicStudioProjectState {
   instrument: InstrumentId;
   synthPatch: SynthPatch;
   keysPatch: KeysPatch;
+  /** A tone from the tone library on the synth and the keys, and a drum kit; null plays the built-in sound. */
+  synthTone: string | null;
+  keysTone: string | null;
+  drumKit: string | null;
   volumes: Record<InstrumentId, number>;
   masterVolume: number;
   visuals: Record<InstrumentId, NoteVisualSettings>;
@@ -255,6 +261,9 @@ export function defaultProjectState(): MusicStudioProjectState {
     instrument: 'synth',
     synthPatch: 'pad',
     keysPatch: 'epiano',
+    synthTone: null,
+    keysTone: null,
+    drumKit: null,
     volumes: { ...DEFAULT_VOLUMES },
     masterVolume: 0.85,
     visuals: cloneVisuals(DEFAULT_VISUAL_SETTINGS),
@@ -334,6 +343,9 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     instrument: INSTRUMENTS.includes(input.instrument as InstrumentId) ? (input.instrument as InstrumentId) : d.instrument,
     synthPatch: SYNTH_PATCHES.some((p) => p.id === input.synthPatch) ? (input.synthPatch as SynthPatch) : d.synthPatch,
     keysPatch: KEYS_PATCHES.some((p) => p.id === input.keysPatch) ? (input.keysPatch as KeysPatch) : d.keysPatch,
+    synthTone: toneById(input.synthTone as string) ? (input.synthTone as string) : null,
+    keysTone: toneById(input.keysTone as string) ? (input.keysTone as string) : null,
+    drumKit: kitById(input.drumKit as string) ? (input.drumKit as string) : null,
     volumes: perInstrument((id) => clamp01(volumes[id], d.volumes[id])),
     masterVolume: clamp01(input.masterVolume, d.masterVolume),
     visuals: perInstrument((id) => normalizeVisual(visuals[id], d.visuals[id])),
@@ -499,8 +511,11 @@ function createMusicStudioStore() {
       update((s) => ({ ...s, cables: { ...s.cables, [s.set]: disconnect(s.cables[s.set], id) } })),
 
     setInstrument: (instrument: InstrumentId) => set({ instrument }),
-    setSynthPatch: (synthPatch: SynthPatch) => set({ synthPatch }),
-    setKeysPatch: (keysPatch: KeysPatch) => set({ keysPatch }),
+    setSynthPatch: (synthPatch: SynthPatch) => set({ synthPatch, synthTone: null }),
+    setKeysPatch: (keysPatch: KeysPatch) => set({ keysPatch, keysTone: null }),
+    /** A library tone on the synth or keys (null goes back to the built-in patch). */
+    setTone: (instrument: 'synth' | 'keys', tone: string | null) => set(instrument === 'synth' ? { synthTone: tone } : { keysTone: tone }),
+    setDrumKit: (drumKit: string | null) => set({ drumKit }),
     setVolume: (instrument: InstrumentId, volume: number) =>
       update((s) => ({ ...s, volumes: { ...s.volumes, [instrument]: clamp01(volume, s.volumes[instrument]) } })),
     setMasterVolume: (volume: number) => update((s) => ({ ...s, masterVolume: clamp01(volume, s.masterVolume) })),
@@ -718,6 +733,9 @@ function createMusicStudioStore() {
         instrument: s.instrument,
         synthPatch: s.synthPatch,
         keysPatch: s.keysPatch,
+        synthTone: s.synthTone,
+        keysTone: s.keysTone,
+        drumKit: s.drumKit,
         volumes: { ...s.volumes },
         masterVolume: s.masterVolume,
         visuals: cloneVisuals(s.visuals),

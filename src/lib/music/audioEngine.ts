@@ -13,7 +13,7 @@
  */
 
 import { audioAnalyzer } from '../audio/analyzer';
-import { INSTRUMENTS, type DrumVoice, type InstrumentId, type NoteEvent } from './noteEvents';
+import { DRUM_VOICES, INSTRUMENTS, type DrumVoice, type InstrumentId, type NoteEvent } from './noteEvents';
 import type { KeysPatch, SynthPatch } from './instruments';
 import { FxRack } from './fxRack';
 import { MacroFxChain, type MacroFxSlot } from './macroFxAudio';
@@ -28,6 +28,9 @@ import type { PadVoice, SoundContext, SoundHandle } from './sounds/kit';
 import { DEFAULT_DRONE_PATCH, DEFAULT_FX_PADS, defaultBandFx, type BandFxSettings } from './soundSlots';
 import { BandFx } from './bandFx';
 import { BandLooper } from './bandLooper';
+import { ToneHost } from './tone/toneHost';
+import { toneById } from './tone/tones';
+import { kitById } from './tone/kits';
 
 interface SubtractivePatch {
   osc1: OscillatorType;
@@ -113,6 +116,9 @@ export class MusicAudioEngine {
   private analyserTap: AnalyserNode | null = null;
   private unsubscribeGraph: (() => void) | null = null;
 
+  /** The tone engine (tone/), and the tones and kit it plays; null plays the built-in sounds. */
+  private tones: ToneHost | null = null;
+  private toneChoice: { synth: string | null; keys: string | null; kit: string | null } = { synth: null, keys: null, kit: null };
   private synthPatch: SynthPatch = 'pad';
   private keysPatch: KeysPatch = 'epiano';
   private volumes: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75, xy: 0.7, dubbass: 0.85, siren: 0.6, shots: 0.7, analog: 0.75, scan: 0.6 };
@@ -197,6 +203,31 @@ export class MusicAudioEngine {
     this.keysPatch = patch;
   }
 
+  /** Tones for the synth and keys and a drum kit from the tone library; null keeps the built-in sound. */
+  setTones(choice: { synth: string | null; keys: string | null; kit: string | null }): void {
+    const c = this.toneChoice;
+    if (c.synth === choice.synth && c.keys === choice.keys && c.kit === choice.kit) return;
+    this.toneChoice = { ...choice };
+    this.applyTones();
+  }
+
+  private applyTones(): void {
+    const host = this.tones;
+    if (!host) return;
+    const synth = toneById(this.toneChoice.synth);
+    const keys = toneById(this.toneChoice.keys);
+    const kit = kitById(this.toneChoice.kit);
+    if (synth || keys || kit) void host.load();
+    if (synth) host.setPatch('synth', synth.patch);
+    if (keys) host.setPatch('keys', keys.patch);
+    if (kit) host.setKit(kit);
+  }
+
+  /** Mod wheel and aftertouch (0-1) and pitch bend (-1..1) from a controller, for the tones. */
+  expression(expr: { wheel?: number; pressure?: number; bend?: number }): void {
+    this.tones?.expression(expr);
+  }
+
   setVolume(instrument: InstrumentId, volume: number): void {
     this.volumes[instrument] = Math.max(0, Math.min(1, volume));
     if (this.bus && this.ctx) this.bus[instrument].gain.setTargetAtTime(this.volumes[instrument], this.ctx.currentTime, 0.02);
@@ -235,6 +266,7 @@ export class MusicAudioEngine {
     this.macroSlots = slots;
     const tempoMoved = Math.abs(tempo - this.tempo) > 0.05;
     this.tempo = tempo;
+    this.tones?.setTempo(tempo);
     if (tempoMoved) this.bandFx?.setSettings(this.bandSettings, tempo);
     this.macroChain?.sync(slots, tempo);
     // Tempo-locked echoes follow the clock.
@@ -627,7 +659,15 @@ export class MusicAudioEngine {
     const ctx = this.ensure();
     const time = Math.max(ctx.currentTime, Number.isFinite(event.time) ? event.time : 0);
     if (event.instrument === 'drums') {
-      if (event.type === 'on' && event.drum) this.playDrum(event.drum, event.velocity, time);
+      if (event.type === 'on' && event.drum) {
+        if (this.toneChoice.kit && this.tones?.ready) this.hitKit(event.drum, event.velocity, time);
+        else this.playDrum(event.drum, event.velocity, time);
+      }
+      return;
+    }
+    if ((event.instrument === 'synth' || event.instrument === 'keys') && this.toneChoice[event.instrument] && this.tones?.ready) {
+      if (event.type === 'on') this.tones.noteOn(event.instrument, event.note, event.velocity, time);
+      else this.tones.noteOff(event.instrument, event.note, time);
       return;
     }
     if (event.instrument === 'bowls') {
@@ -701,6 +741,7 @@ export class MusicAudioEngine {
     this.dubBass?.off(t);
     this.siren?.off(t);
     this.analog?.allOff(t);
+    this.tones?.panic();
     for (const index of [...this.padLoops.keys()]) this.stopPadLoop(index, t, 0.4);
   }
 
@@ -710,6 +751,8 @@ export class MusicAudioEngine {
     this.bandFx = null;
     this.looper?.dispose();
     this.looper = null;
+    this.tones?.dispose();
+    this.tones = null;
     this.unsubscribeGraph?.();
     this.unsubscribeGraph = null;
     try { this.output?.disconnect(); } catch { /* already gone */ }
@@ -772,6 +815,9 @@ export class MusicAudioEngine {
     this.analog.setParams(this.params);
     this.analog.setRoutes(this.analogRoutes);
     this.scan = new ScanSynth(ctx, bus.scan);
+    this.tones = new ToneHost(ctx, { synth: bus.synth, keys: bus.keys, drums: bus.drums });
+    this.tones.setTempo(this.tempo);
+    this.applyTones();
     // The band comes in after its EQ and pan, before the monitor gate: its
     // effects work whether or not its dry sound is played here.
     this.bandFx = new BandFx(ctx, master);
@@ -941,6 +987,18 @@ export class MusicAudioEngine {
         stopAll(at + 0.02);
       },
     };
+  }
+
+  /** A hit on the tone engine's kit, with the mixer's tune and level and the drum's own decay, tone and drive. */
+  private hitKit(voice: DrumVoice, velocity: number, time: number): void {
+    const p = this.params;
+    this.tones!.hit(DRUM_VOICES.indexOf(voice), velocity, time, {
+      tune: p[`mix.${voice}.tune`] ?? 0.5,
+      level: (p[`mix.${voice}.level`] ?? 0.8) / 0.8,
+      decay: p[`drum.${voice}.decay`] ?? 0.5,
+      tone: p[`drum.${voice}.tone`] ?? 0.5,
+      drive: p[`drum.${voice}.drive`] ?? 0.5,
+    });
   }
 
   private playDrum(voice: DrumVoice, velocity: number, time: number): void {

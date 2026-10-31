@@ -372,6 +372,10 @@ function onMidi(message: MidiNoteMessage): void {
     releaseMidi();
     return;
   }
+  if (message.kind === 'expr') {
+    audio.expression(message);
+    return;
+  }
   // Channel 10 plays the kit, as on any GM device; other channels play the selected instrument.
   const selected = get(musicStudio).instrument;
   const instrument: InstrumentId = message.channel === DRUM_CHANNEL ? 'drums' : selected;
@@ -1993,6 +1997,7 @@ export function ensureMusicRuntime(): void {
     wasOpen = s.isOpen;
     audio.setSynthPatch(s.synthPatch);
     audio.setKeysPatch(s.keysPatch);
+    audio.setTones({ synth: s.synthTone, keys: s.keysTone, kit: s.drumKit });
     audio.setDronePatch(s.dronePatch);
     audio.setPadSounds(s.fxPads[s.set]);
     audio.setBowlSounds(bowlSlotNotes(bowlNotes(s.key), s.bowlSlots), s.bowlSlots.map((slot) => slot.sound));

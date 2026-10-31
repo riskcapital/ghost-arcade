@@ -95,6 +95,7 @@ export class BandKeys {
       this.release(setup.name);
       return;
     }
+    if (message.kind === 'expr') return;
     const key = message.channel * 128 + message.note;
     if (message.kind === 'off') {
       const n = input.notes.get(key);
