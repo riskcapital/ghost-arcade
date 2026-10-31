@@ -8,6 +8,7 @@
    */
   import { get } from 'svelte/store';
   import { nativePreviewHostEl } from '../../stores/nativePreviewHost';
+  import { project } from '../../stores/layers';
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
   import { launchClockPosition, launchClockTempo } from '../../stores/launchClock';
   import { showToast } from '../../stores/errorToast';
@@ -68,6 +69,9 @@
   const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band', looper: 'Looper', songs: 'Songs' } as const;
 
   const s = $derived($musicStudio);
+  /** The output's own shape, so the frame shows exactly what the output gets. */
+  const outW = $derived(Math.max(1, $project.width || 1920));
+  const outH = $derived(Math.max(1, $project.height || 1080));
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
   const queuedScene = $derived(s.scenes.find((sc) => sc.id === s.queuedSceneId) ?? null);
   const playingScene = $derived(s.scenes.find((sc) => sc.id === s.sceneId) ?? null);
@@ -180,14 +184,16 @@
 </script>
 
 {#snippet frame()}
-  <div class="frame" bind:this={hole}>
-    <span class="frame-label ga-eyebrow">Live output</span>
-    {#if s.scanOn}
-      <span class="scan-line" style="left: {scanX * 100}%"></span>
-    {/if}
-    {#if !nativePreview}
-      <span class="frame-note">The live output appears here when the native renderer is running.</span>
-    {/if}
+  <div class="frame-well">
+    <div class="frame" bind:this={hole} style="--out-w: {outW}; --out-h: {outH}" title="{outW} × {outH}">
+      <span class="frame-label ga-eyebrow">Live output</span>
+      {#if s.scanOn}
+        <span class="scan-line" style="left: {scanX * 100}%"></span>
+      {/if}
+      {#if !nativePreview}
+        <span class="frame-note">The live output appears here when the native renderer is running.</span>
+      {/if}
+    </div>
   </div>
 {/snippet}
 
@@ -388,12 +394,23 @@
   .set-analog { grid-template-rows: var(--ga-bar-h, 48px) minmax(0, 1fr) 214px; }
 
   /* The output frame lets the native preview show through; its shadow paints the ground everywhere else. */
-  .frame {
+  /* The well takes the space; the frame inside it keeps the output's aspect, letterboxed. */
+  .frame-well {
     position: relative;
     z-index: 0;
     flex: 1;
     min-width: 0;
     min-height: 0;
+    display: grid;
+    place-items: center;
+    container-type: size;
+  }
+  .frame {
+    position: relative;
+    z-index: 0;
+    box-sizing: border-box;
+    width: min(100cqw, 100cqh * var(--out-w) / var(--out-h));
+    aspect-ratio: var(--out-w) / var(--out-h);
     overflow: hidden;
     border: 1px solid var(--studio-edge);
     border-radius: var(--studio-radius);
