@@ -47,6 +47,7 @@
   import BeatModule from './BeatModule.svelte';
   import CableLayer from './CableLayer.svelte';
   import PatchBay from './PatchBay.svelte';
+  import { CABLE_VIEW_LABELS, cableView, cycleCableView } from '../../music/cableView';
   import MacroEditor from './MacroEditor.svelte';
   import TakeList from './TakeList.svelte';
   import MixerPanel from './MixerPanel.svelte';
@@ -300,6 +301,7 @@
         {/each}
       </div>
       <div class="group">
+        <button class="text-btn" class:on={$cableView !== 'show'} aria-pressed={$cableView !== 'show'} onclick={cycleCableView} title="{$cableView === 'show' ? 'Fade the cables' : $cableView === 'fade' ? 'Hide the cables' : 'Show the cables'} (connections keep working)">{CABLE_VIEW_LABELS[$cableView]}</button>
         <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included" data-midi-path="studio:studio.kill" data-midi-label="Kill all sound" data-midi-mode="toggle">Kill</button>
         <button class="text-btn" onclick={showDeck} title="Go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Studio view or VJ deck" data-midi-mode="toggle">Deck</button>
         <button class="text-btn" onclick={showTray} title="Back to the music tray under the deck; the music keeps playing">Tray</button>
