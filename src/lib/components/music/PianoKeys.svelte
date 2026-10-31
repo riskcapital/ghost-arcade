@@ -19,6 +19,8 @@
   const instrument = $derived($musicStudio.instrument);
   const octave = $derived($musicStudio.octave);
   const key = $derived($musicStudio.key);
+  /** Lock to key: keys outside it only reach for a neighbour, so they step back. */
+  const locked = $derived($musicStudio.keyMode === 'lock' && instrument !== 'drums');
 
   /** Pitch classes of the key, so its notes can be marked. */
   const keyClasses = $derived(new Set(SCALES[key.scale].steps.map((step) => (key.root + step) % 12)));
@@ -74,14 +76,14 @@
 <div class="piano" role="group" aria-label="On-screen keys" style="--black-w: {blackWidth}%"
   onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up}>
   {#each whites as note (note)}
-    <div class="white" class:lit={lit(note)} class:out={!inKey(note)} data-note={note}>
+    <div class="white" class:lit={lit(note)} class:out={!inKey(note)} class:locked={locked && !inKey(note)} data-note={note}>
       {#if inKey(note)}<span class="mark" class:root={isRoot(note)}></span>{/if}
       <kbd>{label(note)}</kbd>
       {#if note % 12 === 0}<span class="c">{noteName(note)}</span>{/if}
     </div>
   {/each}
   {#each blacks as note (note)}
-    <div class="black" class:lit={lit(note)} class:out={!inKey(note)} data-note={note} style="left: calc({blackLeft(note)}% - var(--black-w) / 2)">
+    <div class="black" class:lit={lit(note)} class:out={!inKey(note)} class:locked={locked && !inKey(note)} data-note={note} style="left: calc({blackLeft(note)}% - var(--black-w) / 2)">
       {#if inKey(note)}<span class="mark" class:root={isRoot(note)}></span>{/if}
       <kbd>{label(note)}</kbd>
     </div>
@@ -143,6 +145,8 @@
   .black .mark { margin-bottom: 2px; }
   .white.out { background: color-mix(in srgb, var(--mk-white, #d9dce2) 78%, #000); }
   .black.out { background: color-mix(in srgb, var(--mk-black, #15181e) 70%, #000); }
+  .white.locked { background: color-mix(in srgb, var(--mk-white, #d9dce2) 45%, #000); }
+  .black.locked { background: color-mix(in srgb, var(--mk-black, #15181e) 40%, #000); opacity: 0.6; }
   .black { flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; }
   kbd {
     font-family: inherit;

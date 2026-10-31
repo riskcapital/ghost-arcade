@@ -46,6 +46,8 @@ export interface BandKeysOut {
   visual(type: 'on' | 'off', note: number, velocity: number, role: VoiceSourceId, pitched: boolean): void;
   play(instrument: InstrumentId, note: number, velocity: number): void;
   release(instrument: InstrumentId, note: number): void;
+  /** The note the studio plays for `note` (the keyboard mode can move it into the key). */
+  pitch?(instrument: InstrumentId, note: number): number;
   /** The instrument picked in the studio. */
   picked(): InstrumentId;
   /** Whether the studio can play now (it is open). */
@@ -61,6 +63,8 @@ interface Sounding {
   role: VoiceSourceId;
   /** The studio instrument it plays, if any. */
   instrument: InstrumentId | null;
+  /** The note it plays there (moved into the key, perhaps). */
+  played: number;
   /** The key is still down (the pedal may be holding it otherwise). */
   down: boolean;
 }
@@ -113,13 +117,15 @@ export class BandKeys {
     if (role === 'kick') this.out.kick?.(v);
     else if (role === 'bass') this.out.bass?.(message.note, v);
     let instrument: InstrumentId | null = null;
+    let played = message.note;
     if (setup.play && this.out.canPlay()) {
       instrument = bandKeysInstrument(setup, message.channel, this.out.picked());
-      this.out.play(instrument, message.note, v);
+      played = this.out.pitch ? this.out.pitch(instrument, message.note) : message.note;
+      this.out.play(instrument, played, v);
     }
     // A drum hit decays by itself (the kit too): nothing to let go of.
     if (drum) return;
-    input.notes.set(key, { note: message.note, role, instrument, down: true });
+    input.notes.set(key, { note: message.note, role, instrument, played, down: true });
   }
 
   /** Let go of everything one input holds (it was unplugged or set up again). */
@@ -146,6 +152,6 @@ export class BandKeys {
     if (!n) return;
     input.notes.delete(key);
     this.out.visual('off', n.note, 0, n.role, true);
-    if (n.instrument) this.out.release(n.instrument, n.note);
+    if (n.instrument) this.out.release(n.instrument, n.played);
   }
 }

@@ -26,6 +26,7 @@ import {
   hearBassNote,
   killAll,
   listenForKey,
+  lockToKey,
   playAll,
   playNote,
   prepareBand,
@@ -54,6 +55,7 @@ import { VOICE_SHADERS, scenesForSet } from './visualScenes';
 import { voiceSourcesFor, type VoiceSourceId } from './visualVoices';
 import { TONES } from './tone/tones';
 import { DUB_SHOT_COUNT } from './dubShots';
+import { KEY_MODES } from './keyMode';
 import { LOOP_ROLES, type LoopRole } from './loops';
 import { DRUM_KITS } from './tone/kits';
 
@@ -337,6 +339,22 @@ const DUB_SHOT_CONTROLS: StudioControl[] = range(DUB_SHOT_COUNT).map((i) => ({
   },
 }));
 
+/** The next keyboard mode: Show key, Lock to key, Scale on white keys, round again. */
+function stepKeyMode(step: 1 | -1): void {
+  const s = get(musicStudio);
+  const i = KEY_MODES.findIndex((m) => m.id === s.keyMode);
+  musicStudio.setKeyMode(KEY_MODES[(i + step + KEY_MODES.length) % KEY_MODES.length].id);
+}
+
+const KEY_MODE_CONTROLS: StudioControl[] = [
+  { id: 'keys.mode-next', label: 'Next keyboard mode', group: 'Keys', kind: 'trigger', run: () => stepKeyMode(1) },
+  { id: 'keys.mode-prev', label: 'Previous keyboard mode', group: 'Keys', kind: 'trigger', run: () => stepKeyMode(-1) },
+  {
+    id: 'keys.lock', label: 'Lock to key on or off', group: 'Keys', kind: 'toggle',
+    run: () => musicStudio.setKeyMode(get(musicStudio).keyMode === 'show' ? 'lock' : 'show'),
+  },
+];
+
 const STUDIO: StudioControl[] = [
   {
     id: 'studio.kill', label: 'Kill all sound', group: 'Studio', kind: 'trigger',
@@ -350,7 +368,7 @@ const STUDIO: StudioControl[] = [
 ];
 
 /** Every control this module registers, in the order the learn list shows them. */
-export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...STUDIO];
+export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...STUDIO];
 
 registerStudioControls(STUDIO_MIDI_CONTROLS);
 
@@ -360,6 +378,7 @@ const bandKeys = new BandKeys({
   visual: (type, note, velocity, role, pitched) => pushOutsideNote(type, note, velocity, role, 0, pitched),
   play: (instrument, note, velocity) => playNote(instrument, note, velocity, 'midi'),
   release: (instrument, note) => releaseNote(instrument, note, 'midi'),
+  pitch: (instrument, note) => lockToKey(instrument, note),
   picked: () => get(musicStudio).instrument,
   canPlay: studioOpen,
   // A kick from the band dips the studio under it; a bass note can move the drone.

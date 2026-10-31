@@ -69,6 +69,7 @@ import {
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import { toneById } from './tone/tones';
+import { KEY_MODES, type KeyMode } from './keyMode';
 import { defaultDubShots, normalizeDubShots, type DubShot } from './dubShots';
 import { kitById } from './tone/kits';
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
@@ -140,6 +141,8 @@ export interface MusicStudioProjectState {
   key: MusicKey;
   /** Letter keys and MIDI snap to the key for the drone and bowls. */
   scaleLock: boolean;
+  /** What the keys do with the key: mark it, lock to it, or play the scale on the white keys. */
+  keyMode: KeyMode;
   acidSteps: AcidStep[];
   drumMutes: DrumVoice[];
   cables: Record<StudioSet, Cable[]>;
@@ -279,6 +282,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     params: defaultParams(),
     key: { root: 2, scale: 'dorian' },
     scaleLock: true,
+    keyMode: 'show',
     acidSteps: defaultAcidSteps(),
     drumMutes: [],
     cables: defaultCables(),
@@ -362,6 +366,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     params: input.params ? normalizeParams(input.params) : d.params,
     key: normalizeKey(input.key, d.key),
     scaleLock: input.scaleLock === undefined ? d.scaleLock : input.scaleLock === true,
+    keyMode: KEY_MODES.some((m) => m.id === input.keyMode) ? (input.keyMode as KeyMode) : d.keyMode,
     acidSteps: normalizeAcidSteps(input.acidSteps),
     drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
     cables: input.cables ? normalizeCables(input.cables) : d.cables,
@@ -483,6 +488,7 @@ function createMusicStudioStore() {
       update((s) => (key in s.params ? { ...s, params: { ...s.params, [key]: Math.max(0, Math.min(1, value)) } } : s)),
     setKey: (key: MusicKey) => set({ key }),
     setScaleLock: (scaleLock: boolean) => set({ scaleLock }),
+    setKeyMode: (keyMode: KeyMode) => set({ keyMode }),
     setAcidStep: (index: number, patch: Partial<AcidStep>) =>
       update((s) => ({ ...s, acidSteps: s.acidSteps.map((st, i) => (i === index ? { ...st, ...patch } : st)) })),
     toggleDrumMute: (voice: DrumVoice) =>
@@ -756,6 +762,7 @@ function createMusicStudioStore() {
         params: { ...s.params },
         key: { ...s.key },
         scaleLock: s.scaleLock,
+        keyMode: s.keyMode,
         acidSteps: s.acidSteps.map((st) => ({ ...st })),
         drumMutes: [...s.drumMutes],
         cables: Object.fromEntries(Object.entries(s.cables).map(([set, list]) => [set, list.map((c) => ({ ...c }))])) as Record<StudioSet, Cable[]>,
