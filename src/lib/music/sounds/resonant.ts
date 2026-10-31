@@ -211,11 +211,14 @@ const singingBowl: SoundDef = {
     // 1 at velocity 0.8 (the classic bowl), a little brighter when struck harder.
     const lift = 0.75 + unit(velocity, 0.8) * 0.3125;
     const s = strike(sc, time, velocityGain(velocity) * 0.3);
+    // A real bowl's overtones (2.76, 5.4, 8.93) sit between notes and blur the key; these are
+    // tuned to the octave-and-fifth, two octaves and a fifth, and three octaves, with the
+    // beating kept for the shimmer, so every bowl sounds in the key it is tuned to.
     const partials: Array<[number, number, number]> = [
       [1, 1, 1],
-      [2.76, 0.45 + tone * 0.4, 0.7],
-      [5.4, 0.15 + tone * 0.4, 0.45],
-      [8.93, tone * 0.25, 0.3],
+      [3, 0.45 + tone * 0.4, 0.7],
+      [6, 0.15 + tone * 0.4, 0.45],
+      [8, tone * 0.25, 0.3],
     ];
     partials.forEach(([ratio, level, share], i) => {
       partial(s, f * ratio, level * Math.pow(lift, i), ring * share, { attack: 0.004, beat: spread * ratio });
@@ -358,8 +361,8 @@ const tubularBell: SoundDef = {
   },
 };
 
-/** Chime pitches above the cascade's lowest note: the note's 1, 2, 4 and 5 (safe in major and minor keys) over two octaves. */
-const CHIME_STEPS = [0, 2, 5, 7, 12, 14, 17, 19];
+/** Chime pitches above the cascade's lowest note: its root and fifth over three octaves, in key in every scale. */
+const CHIME_STEPS = [0, 7, 12, 19, 24, 31];
 
 const windChimes: SoundDef = {
   id: 'wind-chimes',

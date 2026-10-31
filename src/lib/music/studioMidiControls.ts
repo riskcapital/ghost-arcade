@@ -51,6 +51,7 @@ import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioVoice, st
 import { VOICE_SHADERS, scenesForSet } from './visualScenes';
 import { VOICE_SOURCES, type VoiceSourceId } from './visualVoices';
 import { TONES } from './tone/tones';
+import { LOOP_ROLES, type LoopRole } from './loops';
 import { DRUM_KITS } from './tone/kits';
 
 const FX_PADS = 8;
@@ -293,13 +294,33 @@ function stepTone(target: 'synth' | 'keys' | 'drums', step: 1 | -1): void {
   else musicStudio.setTone(target, next);
 }
 
-const TONE_CONTROLS: StudioControl[] = (['synth', 'keys', 'drums'] as const).flatMap((target): StudioControl[] => {
-  const what = target === 'drums' ? 'drum kit' : `${target} tone`;
-  return [
-    { id: `tone.${target}.next`, label: `Next ${what}`, group: 'Sounds', kind: 'trigger', run: () => stepTone(target, 1) },
-    { id: `tone.${target}.prev`, label: `Previous ${what}`, group: 'Sounds', kind: 'trigger', run: () => stepTone(target, -1) },
-  ];
-});
+/** The next (or previous) tone on a track's playing clip, or its first clip when none plays. */
+function stepClipTone(track: LoopRole, step: 1 | -1): void {
+  const s = get(musicStudio);
+  const id = s.playingLoops[track] ?? s.session[track].find((c) => c?.kind === 'notes')?.id;
+  if (!id) return;
+  const ids = [undefined, ...TONES.map((t) => t.id)];
+  musicStudio.updateSessionClip(id, (c) => {
+    if (c.kind !== 'notes') return c;
+    const next = ids[(ids.indexOf(c.tone) + step + ids.length) % ids.length];
+    const { tone: _old, ...rest } = c;
+    return next ? { ...rest, tone: next } : rest;
+  });
+}
+
+const TONE_CONTROLS: StudioControl[] = [
+  ...(['synth', 'keys', 'drums'] as const).flatMap((target): StudioControl[] => {
+    const what = target === 'drums' ? 'drum kit' : `${target} tone`;
+    return [
+      { id: `tone.${target}.next`, label: `Next ${what}`, group: 'Sounds', kind: 'trigger', run: () => stepTone(target, 1) },
+      { id: `tone.${target}.prev`, label: `Previous ${what}`, group: 'Sounds', kind: 'trigger', run: () => stepTone(target, -1) },
+    ];
+  }),
+  ...LOOP_ROLES.flatMap((track): StudioControl[] => [
+    { id: `tone.track.${track}.next`, label: `Next tone for the ${track} track`, group: 'Sounds', kind: 'trigger', run: () => stepClipTone(track, 1) },
+    { id: `tone.track.${track}.prev`, label: `Previous tone for the ${track} track`, group: 'Sounds', kind: 'trigger', run: () => stepClipTone(track, -1) },
+  ]),
+];
 
 const STUDIO: StudioControl[] = [
   {

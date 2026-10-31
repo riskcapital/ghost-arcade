@@ -205,13 +205,16 @@ function liveTime(): number {
 }
 
 /** Play a note from a live input. */
-export function playNote(instrument: InstrumentId, note: number, velocity: number, source: NoteSource): void {
+/** Play a note now; `tone` plays it on a tone-library tone instead of the instrument's sound. */
+export function playNote(instrument: InstrumentId, note: number, velocity: number, source: NoteSource, tone?: string): void {
   ensureMusicRuntime();
-  send(noteOn(instrument, note, velocity, source, liveTime()));
+  const event = noteOn(instrument, note, velocity, source, liveTime());
+  send(tone ? { ...event, tone } : event);
 }
 
-export function releaseNote(instrument: InstrumentId, note: number, source: NoteSource): void {
-  send(noteOff(instrument, note, source, liveTime()));
+export function releaseNote(instrument: InstrumentId, note: number, source: NoteSource, tone?: string): void {
+  const event = noteOff(instrument, note, source, liveTime());
+  send(tone ? { ...event, tone } : event);
 }
 
 export function hitDrum(voice: DrumVoice, velocity: number, source: NoteSource = 'screen'): void {
@@ -308,9 +311,11 @@ function freshSet(): void {
 }
 
 /** With scale lock on, the drone and bowls never play a note outside the key. */
+/** Bowls and the XY tone are always in the key; the drone is when Lock is on. */
 function lockToKey(instrument: InstrumentId, note: number): number {
   const s = get(musicStudio);
-  return s.scaleLock && (instrument === 'drone' || instrument === 'bowls') ? snapToScale(note, s.key) : note;
+  if (instrument === 'bowls' || instrument === 'xy') return snapToScale(note, s.key);
+  return s.scaleLock && instrument === 'drone' ? snapToScale(note, s.key) : note;
 }
 
 // ── Letter keys ─────────────────────────────────────────────────────────
@@ -842,7 +847,9 @@ function syncPlayingClips(s: MusicStudioState, sessionChanged: boolean, patternC
     const found = findClip(s.session, slot.loop.id);
     if (!found || found.clip.kind !== 'notes') continue;
     const next = clipLoop(found.clip, role, s.set, s.key);
-    if (next.instrument !== slot.instrument) endLoopSlot(slot, launchClockPosition().beat);
+    const tone = 'tone' in slot.loop ? slot.loop.tone : undefined;
+    // A new instrument or tone takes over from the next note; what is sounding lets go first.
+    if (next.instrument !== slot.instrument || next.tone !== tone) endLoopSlot(slot, launchClockPosition().beat);
     slot.loop = next;
     slot.instrument = next.instrument;
   }
@@ -903,10 +910,16 @@ export function stopAllLoops(): void {
   musicTransport.update((t) => ({ ...t, queuedBeat: null }));
 }
 
+/** A loop's note on the clip's own tone, when it has one. */
+function onTone(slot: LoopSlot, event: NoteEvent): NoteEvent {
+  const tone = 'tone' in slot.loop ? slot.loop.tone : undefined;
+  return tone ? { ...event, tone } : event;
+}
+
 function endLoopSlot(slot: LoopSlot, atBeat: number): void {
   const time = audio.peekNow() ?? 0;
   for (const p of slot.pending) {
-    if (p.offBeat > atBeat) send(noteOff(slot.instrument, p.note, 'sequencer', time));
+    if (p.offBeat > atBeat) send(onTone(slot, noteOff(slot.instrument, p.note, 'sequencer', time)));
   }
   slot.pending = [];
 }
@@ -922,8 +935,8 @@ function scheduleLoops(beat: number, horizon: number, timeAt: (b: number) => num
         : loopNotesBetween(slot.loop, s.key, slot.startBeat, slot.scheduledBeat, until);
       for (const n of notes) {
         const offBeat = slot.stopBeat === null ? n.beat + n.dur : Math.min(n.beat + n.dur, slot.stopBeat);
-        send(noteOn(slot.instrument, n.note, n.velocity, 'sequencer', timeAt(n.beat)));
-        send(noteOff(slot.instrument, n.note, 'sequencer', timeAt(offBeat)));
+        send(onTone(slot, noteOn(slot.instrument, n.note, n.velocity, 'sequencer', timeAt(n.beat))));
+        send(onTone(slot, noteOff(slot.instrument, n.note, 'sequencer', timeAt(offBeat))));
         slot.pending.push({ note: n.note, offBeat });
       }
       slot.scheduledBeat = until;

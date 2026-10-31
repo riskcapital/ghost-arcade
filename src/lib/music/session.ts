@@ -16,6 +16,7 @@ import { INSTRUMENTS, clampNote, clampVelocity, type InstrumentId } from './note
 import { normalizePattern, patternHasHits, type DrumPattern } from './drumPattern';
 import { SCALES, scaleNote, type MusicKey, type ScaleId, type StudioSet } from './studioSets';
 import { BEAT_LOOPS, LOOP_ROLES, MELODIC_LOOPS, ROLE_INSTRUMENTS, beatPattern, loopById, loopNotesBetween, type LoopRole } from './loops';
+import { toneById } from './tone/tones';
 import { BEATS_PER_BAR, MAX_LOOP_BARS, type RecordedLoop, type RecordedNote } from './loopRecorder';
 
 export type TrackId = 'beats' | LoopRole;
@@ -45,6 +46,8 @@ export interface NotesClip {
   key: MusicKey | null;
   /** What it was played on; null plays on the track's instrument for the set. */
   instrument: InstrumentId | null;
+  /** A tone from the tone library it plays on; missing plays the track's own sound. */
+  tone?: string;
   /** The preset it was made from. */
   preset?: string;
 }
@@ -122,6 +125,7 @@ export function clipLoop(clip: NotesClip, track: LoopRole, set: StudioSet, key: 
     name: clip.name,
     role: track,
     instrument: clip.instrument ?? ROLE_INSTRUMENTS[set][track],
+    ...(clip.tone ? { tone: clip.tone } : {}),
     beats: clip.beats,
     notes: playableNotes(clip, key),
     createdAt: 0,
@@ -212,6 +216,7 @@ interface RawClip {
   notes?: unknown;
   key?: { root?: unknown; scale?: unknown } | null;
   instrument?: unknown;
+  tone?: unknown;
 }
 
 /** A clip from saved data, or null. */
@@ -248,7 +253,8 @@ export function normalizeClip(raw: unknown): SessionClip | null {
     ? { root: ((root % 12) + 12) % 12, scale: scale as ScaleId }
     : null;
   const instrument = INSTRUMENTS.includes(input.instrument as InstrumentId) ? (input.instrument as InstrumentId) : null;
-  return { kind: 'notes', id: input.id, name, beats, notes, key, instrument, ...(preset ? { preset } : {}) };
+  const tone = toneById(input.tone as string) ? (input.tone as string) : undefined;
+  return { kind: 'notes', id: input.id, name, beats, notes, key, instrument, ...(tone ? { tone } : {}), ...(preset ? { preset } : {}) };
 }
 
 /** A session from saved data. Beat clips only live on the beat track, notes clips on the others. */

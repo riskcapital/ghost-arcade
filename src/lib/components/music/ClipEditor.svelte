@@ -14,6 +14,8 @@
   import type { RecordedNote } from '../../music/loopRecorder';
   import { ROLE_INSTRUMENTS } from '../../music/loops';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
+  import { TONES, TONE_FAMILY_LABELS, toneById, type ToneFamily } from '../../music/tone/tones';
+  const TONE_FAMILIES: ToneFamily[] = ['bass', 'pad', 'lead'];
   import { SCALES, keyLabel } from '../../music/studioSets';
   import { DRUM_LABELS, DRUM_VOICES, isBlackKey, noteName, type InstrumentId } from '../../music/noteEvents';
   import { PATTERN_LENGTHS, STEPS_PER_BEAT, normalizePattern, resizePattern, type DrumPattern, type PatternLength } from '../../music/drumPattern';
@@ -117,8 +119,19 @@
   const snapDown = (b: number) => (snap > 0 ? Math.floor(b / snap + 1e-6) * snap : b);
 
   function audition(note: number, velocity: number) {
-    playNote(instrument, note, velocity, 'screen');
-    setTimeout(() => releaseNote(instrument, note, 'screen'), 180);
+    const tone = clip?.kind === 'notes' ? clip.tone : undefined;
+    playNote(instrument, note, velocity, 'screen', tone);
+    setTimeout(() => releaseNote(instrument, note, 'screen', tone), 180);
+  }
+
+  /** The clip's own tone from the tone library, or '' for the track's sound. */
+  function setTone(value: string) {
+    if (!clip) return;
+    musicStudio.updateSessionClip(clip.id, (c) => {
+      if (c.kind !== 'notes') return c;
+      const { tone: _old, ...rest } = c;
+      return value ? { ...rest, tone: value } : rest;
+    });
   }
 
   // ── Piano roll pointer work ──
@@ -278,6 +291,16 @@
         <span class="muted where">{found.track === 'beats' ? 'Beat' : `${found.track[0].toUpperCase()}${found.track.slice(1)}`} · row {found.row + 1}{clip.kind === 'notes' ? ` · ${INSTRUMENT_LABELS[instrument]} · ${keyLabel(s.key)}` : ''}</span>
         <span class="spacer"></span>
         {#if clip.kind === 'notes'}
+          <label class="labelled">Tone
+            <select value={clip.tone ?? ''} onchange={(e) => setTone((e.target as HTMLSelectElement).value)} title={toneById(clip.tone)?.blurb ?? `Plays on the ${INSTRUMENT_LABELS[instrument].toLowerCase()}`} data-midi-path="studio:tone.track.{found.track}.next" data-midi-label="Next tone for the {found.track} track" data-midi-mode="toggle">
+              <option value="">{INSTRUMENT_LABELS[instrument]}</option>
+              {#each TONE_FAMILIES as fam (fam)}
+                <optgroup label={TONE_FAMILY_LABELS[fam]}>
+                  {#each TONES.filter((t) => t.family === fam) as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
+                </optgroup>
+              {/each}
+            </select>
+          </label>
           <label class="labelled">Length
             <select value={clip.beats} onchange={(e) => setLength(+(e.target as HTMLSelectElement).value)}>
               {#each LENGTHS.includes(clip.beats) ? LENGTHS : [...LENGTHS, clip.beats].sort((a, b) => a - b) as b}<option value={b}>{b % 4 === 0 ? `${b / 4} bar${b === 4 ? '' : 's'}` : `${b} beats`}</option>{/each}
