@@ -43,6 +43,7 @@
   import ClipEditor from './ClipEditor.svelte';
   import LoopRecorderBar from './LoopRecorderBar.svelte';
   import PadsModule from './PadsModule.svelte';
+  import DubShotsModule from './DubShotsModule.svelte';
   import PlayModule from './PlayModule.svelte';
   import BeatModule from './BeatModule.svelte';
   import CableLayer from './CableLayer.svelte';
@@ -346,6 +347,7 @@
         <DubModules part="bass" />
         <DubModules part="siren" />
         <PadsModule />
+        <DubShotsModule />
       </div>
       <div class="rack right face">
         <VisualRack />

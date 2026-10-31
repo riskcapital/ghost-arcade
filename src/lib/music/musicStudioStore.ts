@@ -69,6 +69,7 @@ import {
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import { toneById } from './tone/tones';
+import { defaultDubShots, normalizeDubShots, type DubShot } from './dubShots';
 import { kitById } from './tone/kits';
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
 import {
@@ -161,6 +162,8 @@ export interface MusicStudioProjectState {
   bowlSlots: BowlSlot[];
   /** The sound on each of a set's eight FX pads. */
   fxPads: FxPads;
+  /** The Dub set's echo shots (dubShots.ts). */
+  dubShots: DubShot[];
   /** The drone's sound (sounds/padPatches.ts). */
   dronePatch: string;
   /** The band's echo, reverb and freeze, and how the studio sits with the band. */
@@ -289,6 +292,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     liveRoles: {},
     bowlSlots: defaultBowlSlots(),
     fxPads: defaultFxPads(),
+    dubShots: defaultDubShots(),
     dronePatch: DEFAULT_DRONE_PATCH,
     bandFx: defaultBandFx(),
     songs: [],
@@ -372,6 +376,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     bowlSlots: normalizeBowlSlots(input.bowlSlots),
     // Chops are this session's audio; a file saved with one on a pad gets the set's default there.
     fxPads: unchoppedFxPads(normalizeFxPads(input.fxPads), false),
+    dubShots: normalizeDubShots(input.dubShots),
     dronePatch: normalizeDronePatch(input.dronePatch),
     bandFx: normalizeBandFx(input.bandFx),
     ...normalizeSongState(input),
@@ -579,6 +584,9 @@ function createMusicStudioStore() {
         const pads = s.fxPads[s.set].map((id, i) => (i === index ? sound : id));
         return { ...s, fxPads: normalizeFxPads({ ...s.fxPads, [s.set]: pads }) };
       }),
+    /** Change one dub shot's settings. */
+    setDubShot: (index: number, patch: Partial<DubShot>) =>
+      update((s) => ({ ...s, dubShots: normalizeDubShots(s.dubShots.map((d, i) => (i === index ? { ...d, ...patch } : d))) })),
     setDronePatch: (dronePatch: string) => set({ dronePatch: normalizeDronePatch(dronePatch) }),
     setBandFx: (patch: Partial<BandFxSettings>) => update((s) => ({ ...s, bandFx: normalizeBandFx({ ...s.bandFx, ...patch }) })),
 
@@ -762,6 +770,7 @@ function createMusicStudioStore() {
         bowlSlots: s.bowlSlots.map((slot) => ({ ...slot })),
         // What the pads held before any chops went on them (chops are not saved).
         fxPads: unchoppedFxPads(s.fxPads),
+        dubShots: s.dubShots.map((d) => ({ ...d })),
         dronePatch: s.dronePatch,
         bandFx: { ...s.bandFx },
         songs: JSON.parse(JSON.stringify(s.songs)),

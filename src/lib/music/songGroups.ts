@@ -23,6 +23,7 @@ export const SONG_SETUP_GROUPS = {
     'drumMutes',
     'bowlSlots',
     'fxPads',
+    'dubShots',
     'dronePatch',
   ],
   band: ['liveInputs', 'bandFx'],
