@@ -199,6 +199,60 @@ describe('music studio in the project file', () => {
     expect(get(s).setlists[0].songIds).toEqual(['song-a']);
   });
 
+  it('keeps the set list on the song up when songs before it go', async () => {
+    const { captureSetup, defaultRecall, emptySongVisuals } = await import('./songs');
+    const s = studio.musicStudio;
+    s.hydrate(null);
+    const setup = captureSetup(get(s));
+    for (const id of ['a', 'b', 'c', 'd']) s.addSong({ id, name: id, bpm: null, sceneId: null, notes: '', setup, visuals: emptySongVisuals(), recall: defaultRecall() });
+    s.addSetlist({ id: 'set', name: 'Set', songIds: ['a', 'b', 'c', 'd'] });
+    s.setCurrentSong('c', 2);
+    s.removeSong('a');
+    // The place no longer holds C: it is found by its id instead.
+    expect(get(s)).toMatchObject({ currentSongId: 'c', setlistCursor: -1 });
+    s.setCurrentSong('c', 1);
+    s.setSetlistSongs('set', ['b', 'c', 'd']);
+    expect(get(s).setlistCursor).toBe(1);
+  });
+
+  it("calls up the band input strips only with a song's band part", async () => {
+    const { captureSetup, recalledSetup } = await import('./songs');
+    const s = studio.musicStudio;
+    s.hydrate(null);
+    s.setStrip('drone', { low: 6 });
+    s.setStrip('input', { pan: 0.5 });
+    const setup = captureSetup(get(s));
+    s.resetStrip('drone');
+    s.resetStrip('input');
+    const song = { setup, recall: { sound: true, band: false, visuals: true } };
+    s.applySetup(recalledSetup(song), song.recall);
+    expect(get(s).mixer.drone).toMatchObject({ low: 6 });
+    expect(get(s).mixer.input).toBeUndefined();
+    const bandOnly = { setup, recall: { sound: false, band: true, visuals: false } };
+    s.resetStrip('drone');
+    s.applySetup(recalledSetup(bandOnly), bandOnly.recall);
+    expect(get(s).mixer.drone).toBeUndefined();
+    expect(get(s).mixer.input).toMatchObject({ pan: 0.5 });
+  });
+
+  it('never saves this session\'s chops on the pads', async () => {
+    const { rememberPadsBefore, forgetPadsBefore } = await import('./sounds/chops');
+    const s = studio.musicStudio;
+    s.hydrate(null);
+    s.setSet('dub');
+    s.setFxPad(0, 'thunder');
+    rememberPadsBefore('dub', get(s).fxPads.dub);
+    s.setFxPad(0, 'chop-1');
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    expect(saved.musicStudio.fxPads.dub[0]).toBe('thunder');
+    expect(get(s).fxPads.dub[0]).toBe('chop-1');
+    forgetPadsBefore();
+    // A file from before the fix opens with the set's default on a chopped pad.
+    saved.musicStudio.fxPads.dub[1] = 'chop-2';
+    expect(layers.project.importProject(saved)).toBe(true);
+    expect(get(s).fxPads.dub[1]).toBe('zap');
+  });
+
   it('opens a project from before there were several inputs with its one input first', () => {
     const older = { version: '1.9.5', project: { id: 'p', name: 'Show', width: 1920, height: 1080, layers: [] }, musicStudio: { schemaVersion: 1, liveInput: { role: 'kick', sensitivity: 0.9 } } };
     expect(layers.project.importProject(older)).toBe(true);

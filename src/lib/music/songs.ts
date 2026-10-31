@@ -17,31 +17,10 @@
 
 import type { MusicStudioProjectState } from './musicStudioStore';
 import { normalizeStudioVoice, MAX_STUDIO_VOICES, type StudioVoice } from './studioPlugin';
+import { unchoppedFxPads } from './sounds/chops';
+import { SONG_SETUP_GROUPS } from './songGroups';
 
-/** The parts of the studio a song keeps, by what calling it up puts back. */
-export const SONG_SETUP_GROUPS = {
-  sound: [
-    'set',
-    'key',
-    'scaleLock',
-    'instrument',
-    'synthPatch',
-    'keysPatch',
-    'volumes',
-    'params',
-    'mixer',
-    'cables',
-    'macroFx',
-    'pattern',
-    'acidSteps',
-    'drumMutes',
-    'bowlSlots',
-    'fxPads',
-    'dronePatch',
-  ],
-  band: ['liveInputs', 'bandFx'],
-  visuals: ['visuals'],
-} as const;
+export { SONG_SETUP_GROUPS };
 
 export type SongRecallGroup = keyof typeof SONG_SETUP_GROUPS;
 export const SONG_RECALL_GROUPS = Object.keys(SONG_SETUP_GROUPS) as SongRecallGroup[];
@@ -104,6 +83,8 @@ export function defaultRecall(): Record<SongRecallGroup, boolean> {
 export function captureSetup(state: SongSetup): SongSetup {
   const setup = {} as Record<SongSetupKey, unknown>;
   for (const key of SONG_SETUP_KEYS) setup[key] = copyJson(state[key]);
+  // A song keeps the pads' own sounds, not this session's chops.
+  if (state.fxPads) setup.fxPads = unchoppedFxPads(state.fxPads);
   return setup as SongSetup;
 }
 
@@ -114,6 +95,9 @@ export function recalledSetup(song: Pick<Song, 'setup' | 'recall'>): Partial<Son
     if (!song.recall[group]) continue;
     for (const key of SONG_SETUP_GROUPS[group]) out[key] = copyJson(song.setup[key]);
   }
+  // The band inputs' strips belong to the band: the mixer comes with either
+  // part, and the store takes from it only the strips of the parts recalled.
+  if (song.recall.band && !out.mixer) out.mixer = copyJson(song.setup.mixer);
   return out as Partial<SongSetup>;
 }
 

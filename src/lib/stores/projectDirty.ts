@@ -16,10 +16,12 @@
  *  - The parts of the project undo does not cover (output settings, media
  *    library, VJ clip grid, modulation, macros, control bindings, snapshots,
  *    sequencer, audio calibration, show timeline and cue list, the music
- *    studio and its clips' voices): a signature
+ *    studio): a signature
  *    of their settings, leaving out what changes while performing (macro
  *    values, active clips, playheads, panel visibility).
  */
+
+import { SONG_SETUP_GROUPS } from '../music/songGroups';
 
 export interface ProjectDirtySnapshot {
   /** history.currentStepId() */
@@ -50,26 +52,53 @@ const omit = (value: unknown, keys: readonly string[]) => {
   return out;
 };
 
-// A clip's identity. A Music Studio clip's scene and voices count too: only
-// editing writes them (other plugins' settings move under live control).
-const clipIdentity = (clip: any) => {
-  if (!clip) return null;
-  const identity: Record<string, unknown> = { id: clip.id, type: clip.type, name: clip.name };
-  if (clip.effectSource?.effectType === 'music-studio') identity.studio = clip.effectSource;
-  return identity;
-};
+// A clip's identity. Edits to a clip's settings (a Music Studio clip's
+// voices among them) are counted where they happen (vjEditVersion), so live
+// control moving them (a controller, a song called up) is not an edit.
+const clipIdentity = (clip: any) => (clip ? { id: clip.id, type: clip.type, name: clip.name } : null);
 const gridIdentity = (grid: unknown) =>
   Array.isArray(grid) ? grid.map((row) => (Array.isArray(row) ? row.map(clipIdentity) : [])) : [];
 
-/** The music studio's section, less what playing it moves (knobs, octave,
- *  velocity, drum mutes, mixer mute and solo). */
+const INPUT_STRIP = /^input\d*$/;
+type StudioGroup = keyof typeof SONG_SETUP_GROUPS;
+const STUDIO_SETUP_KEYS: string[] = Object.values(SONG_SETUP_GROUPS).flat();
+
+/**
+ * The music studio's section, less what playing it moves (knobs, octave,
+ * velocity, drum mutes) and less the setup a song calls up, which is in
+ * three sections of its own (studioSound, studioBand, studioVisuals) so
+ * calling a song up can read as playing (see RecallSection).
+ */
 const studioIdentity = (studio: any) => {
   if (!studio || typeof studio !== 'object') return null;
-  const mixer = studio.mixer && typeof studio.mixer === 'object'
-    ? Object.fromEntries(Object.entries(studio.mixer).map(([id, strip]) => [id, omit(strip, ['mute', 'solo'])]))
-    : null;
   // Moving through the set list is playing the show, not editing it.
-  return { ...(omit(studio, ['params', 'octave', 'velocity', 'drumMutes', 'mixer', 'currentSongId', 'setlistCursor']) as object), mixer };
+  return omit(studio, ['octave', 'velocity', 'currentSongId', 'setlistCursor', ...STUDIO_SETUP_KEYS]);
+};
+
+/** One part of the studio's setup: its sound, its band settings or its note visuals. */
+function studioGroupIdentity(studio: any, group: StudioGroup): unknown {
+  if (!studio || typeof studio !== 'object') return null;
+  const out: Record<string, unknown> = {};
+  for (const key of SONG_SETUP_GROUPS[group] as readonly string[]) {
+    if (key === 'params' || key === 'drumMutes' || key === 'mixer') continue;
+    out[key] = studio[key];
+  }
+  // Mixer strips without mute and solo: the instruments' with the sound, the band inputs' with the band.
+  if (group === 'sound' || group === 'band') {
+    const mixer = studio.mixer && typeof studio.mixer === 'object' ? studio.mixer : {};
+    out.mixer = Object.fromEntries(
+      Object.entries(mixer)
+        .filter(([id]) => INPUT_STRIP.test(id) === (group === 'band'))
+        .map(([id, strip]) => [id, omit(strip, ['mute', 'solo'])]),
+    );
+  }
+  return out;
+}
+
+const STUDIO_SECTIONS: Record<'studioSound' | 'studioBand' | 'studioVisuals', StudioGroup> = {
+  studioSound: 'sound',
+  studioBand: 'band',
+  studioVisuals: 'visuals',
 };
 
 /** A Stage 3D scene's fingerprint: embedded models (data URLs of many MB)
@@ -93,14 +122,15 @@ const surfacesIdentity = (surfaces: unknown) =>
     : null;
 
 /** Sections an automated recall (a show cue, a VJ clip's preset, a MIDI- or
- *  Live-triggered stage preset) can rewrite. */
-export type RecallSection = 'sequencer' | 'keyframeSettings' | 'surfaces' | 'stage3d';
+ *  Live-triggered stage preset, a song called up) can rewrite. */
+export type RecallSection = 'sequencer' | 'keyframeSettings' | 'surfaces' | 'stage3d' | 'studioSound' | 'studioBand' | 'studioVisuals';
 
 /**
  * One recallable section's part of the signature, from the value its store
  * holds (layerSequencer.serialize(), keyframeTimeline.exportSettings(),
- * project.surfaces, the Stage 3D scene). The same text the full signature
- * holds for it, so the two can be compared.
+ * project.surfaces, the Stage 3D scene, musicStudio.serialize() for the
+ * studio's three). The same text the full signature holds for it, so the
+ * two can be compared.
  */
 export function recallSectionSignature(section: RecallSection, value: unknown): string {
   switch (section) {
@@ -114,6 +144,10 @@ export function recallSectionSignature(section: RecallSection, value: unknown): 
       return JSON.stringify(surfacesIdentity(value ?? []));
     case 'stage3d':
       return stage3dIdentity(value) ?? 'null';
+    case 'studioSound':
+    case 'studioBand':
+    case 'studioVisuals':
+      return JSON.stringify(studioGroupIdentity(value, STUDIO_SECTIONS[section]) ?? null);
   }
 }
 
@@ -180,6 +214,9 @@ export function projectSettingsSections({ exported, showTimeline, showControl, s
   out.surfaces = recallSectionSignature('surfaces', project.surfaces);
   out.stage3d = recallSectionSignature('stage3d', stage3d);
   out.sequencer = recallSectionSignature('sequencer', exported?.layerSequencer);
+  for (const section of Object.keys(STUDIO_SECTIONS) as (keyof typeof STUDIO_SECTIONS)[]) {
+    out[section] = recallSectionSignature(section, exported?.musicStudio);
+  }
   return out;
 }
 

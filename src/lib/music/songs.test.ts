@@ -43,7 +43,8 @@ describe('songs', () => {
   it('puts back only the parts it recalls', () => {
     const s = song('a', { recall: { sound: false, band: true, visuals: false } });
     const out = recalledSetup(s);
-    expect(Object.keys(out).sort()).toEqual(['bandFx', 'liveInputs']);
+    // The mixer comes with the band for its band input strips (the store takes only those).
+    expect(Object.keys(out).sort()).toEqual(['bandFx', 'liveInputs', 'mixer']);
     out.bandFx!.echoSend = 1;
     expect(s.setup.bandFx.echoSend).toBe(0);
   });

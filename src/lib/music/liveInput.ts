@@ -362,6 +362,8 @@ export class LiveInputs {
   private publish(now: boolean): void {
     const at = typeof performance !== 'undefined' ? performance.now() : Date.now();
     if (!now && at - this.lastStatusAt < STATUS_MS) return;
+    // Checked again a while from now even when nothing moved (not on every poll).
+    this.lastStatusAt = at;
     const next = this.inputs.map((input): BandInputStatus => ({
       ...idleInputStatus(),
       on: !!input.wiring,
@@ -370,7 +372,6 @@ export class LiveInputs {
       channels: this.devices.get(input.spec.deviceId)?.delivered ?? null,
     }));
     if (sameStatus(next, this.status)) return;
-    this.lastStatusAt = at;
     this.status = next;
     this.hooks.onStatus?.(next);
   }

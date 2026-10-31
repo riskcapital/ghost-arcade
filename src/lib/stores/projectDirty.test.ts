@@ -199,15 +199,40 @@ describe('projectSettingsSignature', () => {
     expect(withRecallsAsSaved(oscEdit, imprint, savedSections).osc).not.toBe(savedSections.osc);
   });
 
-  it("counts a Music Studio clip's voices, not other plugins' live settings", () => {
+  it("leaves a clip's settings to the VJ edit counter, so live control moving them is not an edit", () => {
     const withClip = (effectSource: any) => {
       const p = base();
       p.vjClipLauncher.blocks[0].clipGrid[0][1] = { id: 'c2', type: 'effect', name: 'Plugin', effectSource } as any;
       return sig(p);
     };
     const voices = (level: number) => ({ effectType: 'music-studio', musicSet: 'dub', musicSceneId: null, musicVoices: [{ file: 'VX-Scope.fs', source: 'lead', auto: true, level, params: {} }] });
-    expect(withClip(voices(1))).not.toBe(withClip(voices(0.5)));
+    expect(withClip(voices(1))).toBe(withClip(voices(0.5)));
     expect(withClip({ effectType: 'ghostfx', amount: 0.2 })).toBe(withClip({ effectType: 'ghostfx', amount: 0.9 }));
+  });
+
+  it('reads the studio setup a song put back as saved, and its songs and other edits as edits', () => {
+    const studio = (patch: Record<string, unknown> = {}) => ({
+      set: 'bath', key: { root: 2, scale: 'dorian' }, dronePatch: 'warm', params: { 'drone.tone': 0.3 },
+      mixer: { drone: { low: 0, mid: 0, high: 0, pan: 0, mute: false, solo: false }, input2: { low: 0, mid: 0, high: 0, pan: 0, mute: false, solo: false } },
+      liveInputs: [{ role: 'lead' }], bandFx: { echoSend: 0 }, visuals: {}, songs: [], setlists: [], currentSongId: null, setlistCursor: -1,
+      ...patch,
+    });
+    const sections = (st: Record<string, unknown>) => projectSettingsSections({ exported: { project: {}, musicStudio: st } });
+    const saved = sections(studio());
+    // A song brings back another set and drone, and another role on the band's input.
+    const played = studio({ set: 'dub', dronePatch: 'choir', liveInputs: [{ role: 'bass' }], currentSongId: 's1', setlistCursor: 0 });
+    const now = sections(played);
+    expect(now.studioSound).not.toBe(saved.studioSound);
+    expect(now.musicStudio).toBe(saved.musicStudio);
+    const imprint = { studioSound: recallSectionSignature('studioSound', played), studioBand: recallSectionSignature('studioBand', played) };
+    expect(withRecallsAsSaved(now, imprint, saved)).toEqual(saved);
+    // A knob or a band input's mute is playing; a new song is an edit.
+    expect(sections(studio({ params: { 'drone.tone': 0.9 } }))).toEqual(saved);
+    expect(sections(studio({ songs: [{ id: 's1' }] })).musicStudio).not.toBe(saved.musicStudio);
+    // The band input strips go with the band, the instruments' with the sound.
+    const panned = sections(studio({ mixer: { drone: { low: 0, mid: 0, high: 0, pan: 0, mute: false, solo: false }, input2: { low: 0, mid: 0, high: 0, pan: 0.5, mute: true, solo: false } } }));
+    expect(panned.studioSound).toBe(saved.studioSound);
+    expect(panned.studioBand).not.toBe(saved.studioBand);
   });
 });
 

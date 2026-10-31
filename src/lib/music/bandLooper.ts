@@ -267,6 +267,8 @@ export class BandLooper {
     if (node) {
       node.port.onmessage = null;
       node.onprocessorerror = null;
+      // The processor ends itself on this, so a closed studio leaves nothing running on the audio thread.
+      try { node.port.postMessage({ type: 'dispose' }); } catch { /* closed */ }
       try { node.port.close(); } catch { /* closed */ }
       try { this.band.disconnect(node); } catch { /* not connected */ }
     }

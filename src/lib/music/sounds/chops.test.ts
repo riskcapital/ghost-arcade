@@ -63,3 +63,22 @@ describe('chops', () => {
     expect(soundById(pads.dub[0])).toBeUndefined();
   });
 });
+
+describe('what a save or a song keeps of chopped pads', () => {
+  it('keeps what the pads held before, or the set default when that is not known', async () => {
+    const { rememberPadsBefore, forgetPadsBefore, unchoppedPads, unchoppedFxPads } = await import('./chops');
+    const { DEFAULT_FX_PADS, defaultFxPads } = await import('../soundSlots');
+    const own = ['thunder', 'rain', 'wind', 'night', 'impact', 'braam', 'zap', 'laser'];
+    rememberPadsBefore('bath', own);
+    const chopped = ['chop-1', 'chop-2', 'wind', 'chop-4', 'chop-5', 'chop-6', 'chop-7', 'chop-8'];
+    expect(unchoppedPads('bath', chopped)).toEqual(own);
+    // Chopping again remembers the pads' own sounds, not the chops.
+    rememberPadsBefore('bath', chopped);
+    expect(unchoppedPads('bath', chopped)).toEqual(own);
+    // A file opened from disk never trusts this session's memory.
+    expect(unchoppedPads('bath', chopped, false)).toEqual(DEFAULT_FX_PADS.bath.map((d, i) => (i === 2 ? 'wind' : d)));
+    forgetPadsBefore();
+    const pads = { ...defaultFxPads(), dub: ['chop-3', ...DEFAULT_FX_PADS.dub.slice(1)] };
+    expect(unchoppedFxPads(pads).dub).toEqual(DEFAULT_FX_PADS.dub);
+  });
+});
