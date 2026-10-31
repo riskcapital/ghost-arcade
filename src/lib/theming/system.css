@@ -113,6 +113,21 @@
   box-shadow: inset 0 0 0 1px var(--ga-line-3, var(--ga-line3, rgba(245, 236, 222, 0.24)));
   cursor: default;
 }
+/* In mapping mode, going to VJ is the bar's main action: the VJ half wears
+   the primary-action fill (ghost chrome in Arcade), as Add Files and Save do. */
+/* Specific enough to win over the toolbar's general button ink. */
+html .toolbar .ga-mode-switch > button.mode-vj.mode-vj:not(.active):not(.rec-btn) {
+  min-width: 60px;
+  background: var(--ga-accent-gradient, var(--ga-violet, #e7eef5)) !important;
+  color: var(--ga-blue-800, #0b1020) !important;
+  font-weight: 700;
+  box-shadow: none;
+}
+html .toolbar .ga-mode-switch > button.mode-vj.mode-vj:not(.active):not(.rec-btn):hover {
+  background: var(--ga-accent-gradient, var(--ga-violet, #e7eef5)) !important;
+  color: var(--ga-blue-800, #0b1020) !important;
+  filter: brightness(1.08);
+}
 .ga-mode-switch > button:focus-visible {
   outline: 2px solid var(--ga-focus, #8aa4ff);
   outline-offset: 1px;
