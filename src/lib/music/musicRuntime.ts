@@ -308,6 +308,17 @@ export function onKill(listener: () => void): () => void {
  * the new set has no place for let go, each with its own release; the old
  * set's effects tails ring out (audioEngine.setRouting).
  */
+/** A song that brings up another set starts fresh: what was playing stops and nothing is left held. */
+export function freshStart(): void {
+  cancelQueuedScene();
+  stopAllLoops();
+  if (sequencer) stopSequencer();
+  releaseChords();
+  setSiren(false);
+  panic();
+  resumable = null;
+}
+
 export function changeSetSounds(from: StudioSet, to: StudioSet): void {
   if (from === to) return;
   if (to !== 'bath') {
