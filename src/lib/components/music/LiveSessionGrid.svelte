@@ -10,7 +10,7 @@
   import { musicStudio } from '../../music/musicStudioStore';
   import { guessRole } from '../../music/liveControl';
   import { livePlatform, liveSetupWords } from '../../ableton/liveSetup';
-  import { VOICE_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
+  import { PART_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
 
   const s = $derived($musicStudio);
   const live = $derived($abletonBridge);
@@ -70,7 +70,7 @@
           </div>
           <select aria-label="What {track.name} feeds the visuals as" value={s.liveRoles[track.name] ?? ''} onchange={(e) => setRole(track.name, (e.target as HTMLSelectElement).value)} title={track.midi ? 'Its notes drive the visuals following this sound' : 'Its level drives the visuals following this sound'}>
             <option value="">No visuals</option>
-            {#each VOICE_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
+            {#each PART_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
           </select>
         </div>
       {/each}

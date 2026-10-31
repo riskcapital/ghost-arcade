@@ -9,7 +9,7 @@
   import { onDestroy } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
   import { STUDIO_SETS } from '../../music/studioSets';
-  import { VOICE_SOURCES, isVoiceDrivenInput, type VoiceSourceId } from '../../music/visualVoices';
+  import { voiceSourcesFor, isVoiceDrivenInput, type VoiceSourceId } from '../../music/visualVoices';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
   import { MAX_STUDIO_VOICES, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
@@ -163,7 +163,7 @@
               <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" /></svg>
             </button>
             <select class="follows" value={voice.source} onchange={(e) => setStudioVoice(i, { source: (e.target as HTMLSelectElement).value as VoiceSourceId })} aria-label="Sound voice {i + 1} follows" title="The sound this voice follows" data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
-              {#each VOICE_SOURCES as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
+              {#each voiceSourcesFor($musicStudio.set, voice.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
             </select>
             <button class="auto studio-btn" class:on={voice.auto} onclick={() => setStudioVoice(i, { auto: !voice.auto })} aria-pressed={voice.auto} title={voice.auto ? 'Shows only while its sound plays' : 'Always shows'}>Auto</button>
             <button class="icon" onclick={() => removeStudioVoice(i)} aria-label="Remove voice {i + 1}" title="Remove this voice">
