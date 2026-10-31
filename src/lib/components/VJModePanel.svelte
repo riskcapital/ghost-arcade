@@ -49,7 +49,7 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
-  import { BLEND_MODE_ORDER, generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
+  import { BLEND_MODE_ORDER, blendModeLabel, generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
   import { audioStore, audioBpm, audioManualBpm } from '../stores/audio';
   import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob, pathToFileUrl } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
@@ -1198,13 +1198,7 @@
 
   // Blend modes (shared order; see BLEND_MODE_ORDER in types)
   const blendModes = BLEND_MODE_ORDER;
-  /** Menu text for a blend mode id, as in the mapping layer panel: 'color-dodge' -> 'Color dodge'. */
-  const BLEND_MODE_NAMES: Partial<Record<string, string>> = { hardlight: 'Hard light', softlight: 'Soft light' };
-  function blendModeName(mode: string | undefined): string {
-    if (!mode) return '';
-    const words = BLEND_MODE_NAMES[mode] ?? mode.replace(/-/g, ' ');
-    return words.charAt(0).toUpperCase() + words.slice(1);
-  }
+  const blendModeName = blendModeLabel;
 
 
   // Shader library
