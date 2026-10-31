@@ -391,6 +391,7 @@
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
   import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback, amendLastHistoryStep, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
   import { isProjectDirty, projectSettingsSections, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot, type RecallSection } from './lib/stores/projectDirty';
+  import { musicStudio } from './lib/music/musicStudioStore';
   import { stage3dScene } from './lib/stage3d/store';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
@@ -1367,6 +1368,9 @@
     keyframeSettings: () => keyframeTimeline.exportSettings(),
     surfaces: () => get(project).surfaces || [],
     stage3d: () => get(stage3dScene),
+    studioSound: () => musicStudio.serialize(),
+    studioBand: () => musicStudio.serialize(),
+    studioVisuals: () => musicStudio.serialize(),
   };
   const stopRecallWatch = automatedRecalls.subscribe(({ count, sections }) => {
     if (count === 0) return;

@@ -30,7 +30,8 @@ import { editStudio, placeStudio, studioTargetNow } from './studioTarget';
 import type { StudioVoice } from './studioPlugin';
 import { registerStudioControls } from './studioControls';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
-import { project } from '../stores/layers';
+import { noteAutomatedRecall, project } from '../stores/layers';
+import type { RecallSection } from '../stores/projectDirty';
 import { globalStagePresets } from '../stores/globalPresets';
 import { audioStore } from '../stores/audio';
 import { launchClockFollowsLink, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
@@ -213,7 +214,7 @@ function applySong(song: Song, cursor: number, history: boolean): void {
     // Another set comes up as it does from the set buttons: what was
     // playing stops (the runtime follows the store), nothing is left held.
     const setup = recalledSetup(song);
-    if (Object.keys(setup).length) musicStudio.applySetup(setup);
+    if (Object.keys(setup).length) musicStudio.applySetup(setup, song.recall);
     applyTempo(song.bpm);
     // The block first, so the scene's own VJ column fires on it.
     if (song.recall.visuals) showBlock(song.visuals);
@@ -224,6 +225,12 @@ function applySong(song: Song, cursor: number, history: boolean): void {
   });
   musicStudio.setCurrentSong(song.id, cursor);
   if (history && mapChanged) recordDiscreteAction();
+  // Calling a song up is playing the show: the parts it put back read as saved until edited.
+  const recalled: RecallSection[] = [];
+  if (song.recall.sound) recalled.push('studioSound');
+  if (song.recall.band) recalled.push('studioBand');
+  if (song.recall.visuals) recalled.push('studioVisuals');
+  noteAutomatedRecall(recalled);
 }
 
 function applyTempo(bpm: number | null): void {

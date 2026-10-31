@@ -161,7 +161,7 @@ export interface LiveInputSettings {
   volume: number;
   /** Hear it through the mix; off, it only drives the visuals. */
   monitor: boolean;
-  /** How much of it goes to the band effects (echo, reverb, freeze, looper), 0-1. */
+  /** How much of it goes to the band effects (echo, reverb, freeze), 0-1. The looper records it at its own level. */
   fxSend: number;
 }
 

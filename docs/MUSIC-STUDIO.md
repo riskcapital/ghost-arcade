@@ -84,7 +84,7 @@ Each input has a name, a device (kept per computer), a channel of that device
 inputs as channels 1 and 2), what the visuals see it as (Lead, Bass, Kick...),
 how quietly it can be played and still count (**Sens**), whether it is heard
 (**Monitor**; off, it only drives the visuals), and an **FX** send into the
-band effects and the looper. **Add input** starts the next one on the same
+band effects (the looper records each input at its own level, whatever its send). **Add input** starts the next one on the same
 device and the next channel. Each device is opened once and split into its
 channels; a channel the device does not send says so instead of staying
 silent. Call-audio processing (echo cancelling, noise suppression, auto gain)
@@ -173,9 +173,10 @@ recorded in; Stop is immediate. Loops follow tempo changes of up to 3%; past
 that a loop keeps its own length and says so. **Chop to pads** slices the
 loop into eight and puts the slices on the set's FX pads (they answer the
 pads' Size, Tail and Tone); **Put back pads** restores what was there. Chops
-last until the studio closes and are not saved; a pad left on a chop plays
-the fallback shot when the project is opened again. A recording is capped at
-32 seconds.
+last until the studio closes and are never saved: the project file and a
+song keep what the pads held before they were chopped. The looper records
+each band input at its own level, before its effects send. A recording is
+capped at 32 seconds.
 
 Kill lets the throw, the wash and the freeze go, drops a recording and stops
 the loops; closing the studio also frees the loops and puts chopped pads back.

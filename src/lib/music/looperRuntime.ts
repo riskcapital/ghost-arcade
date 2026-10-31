@@ -16,8 +16,8 @@ import { LOOP_SLOT_IDS, LOOP_SLOT_NAMES, type BandLooper, type LoopSlotId, type 
 import { MAX_RECORD_SECONDS, countInBeats, longestLength, recordProgress, type LoopLength } from './looperMath';
 import { launchClockPosition } from '../stores/launchClock';
 import { musicStudio } from './musicStudioStore';
-import { DEFAULT_FX_PADS, type FxPads } from './soundSlots';
-import { clearChops, isChopId, setChops, stopChops } from './sounds/chops';
+import type { FxPads } from './soundSlots';
+import { clearChops, forgetPadsBefore, isChopId, rememberPadsBefore, setChops, stopChops, unchoppedPads } from './sounds/chops';
 import { registerStudioControls } from './studioControls';
 import type { StudioSet } from './studioSets';
 
@@ -63,8 +63,6 @@ let selected: LoopSlotId = 0;
 const levels = LOOP_SLOT_IDS.map(() => DEFAULT_LEVEL);
 let note: string | null = null;
 let error: string | null = null;
-/** What each set's FX pads held before chops went on them. */
-const savedPads: Partial<Record<StudioSet, string[]>> = {};
 
 export const looperState = writable<LooperView>(view());
 
@@ -255,7 +253,7 @@ export function chopToPads(): boolean {
   const s = get(musicStudio);
   const pads = s.fxPads[s.set];
   // Chopping again keeps what the pads held before the first chop.
-  savedPads[s.set] = padsBefore(s.set, pads);
+  rememberPadsBefore(s.set, pads);
   ids.forEach((chop, i) => {
     if (pads[i] !== chop) musicStudio.setFxPad(i, chop);
   });
@@ -264,20 +262,14 @@ export function chopToPads(): boolean {
   return true;
 }
 
-/** What a set's pads held before they were chopped (its defaults when that is not known). */
-function padsBefore(set: StudioSet, pads: readonly string[]): string[] {
-  const saved = savedPads[set];
-  return pads.map((pad, i) => (isChopId(pad) ? (saved?.[i] ?? DEFAULT_FX_PADS[set][i]) : pad));
-}
-
 /** Put back the sounds the current set's FX pads held before they were chopped. */
 export function putBackPads(): void {
   const s = get(musicStudio);
-  const back = padsBefore(s.set, s.fxPads[s.set]);
+  const back = unchoppedPads(s.set, s.fxPads[s.set]);
   back.forEach((sound, i) => {
     if (s.fxPads[s.set][i] !== sound) musicStudio.setFxPad(i, sound);
   });
-  delete savedPads[s.set];
+  forgetPadsBefore(s.set);
 }
 
 /** Every set's chopped pads back as they were (the chops are going). */
@@ -287,10 +279,10 @@ function putBackAllPads(): void {
   let changed = false;
   for (const set of Object.keys(fxPads) as StudioSet[]) {
     if (!fxPads[set].some(isChopId)) continue;
-    fxPads[set] = padsBefore(set, fxPads[set]);
+    fxPads[set] = unchoppedPads(set, fxPads[set]);
     changed = true;
   }
-  for (const set of Object.keys(savedPads) as StudioSet[]) delete savedPads[set];
+  forgetPadsBefore();
   if (changed) musicStudio.applySetup({ fxPads });
 }
 

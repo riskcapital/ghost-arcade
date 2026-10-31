@@ -1820,6 +1820,8 @@ export const bandInputStatus = writable<BandInputStatus[]>([]);
 let bandListening = false;
 let syncedInputs: unknown = null;
 let syncedDevices: unknown = null;
+/** What the open inputs were opened with: a fader or a send moving does not reopen anything. */
+let syncedSpecs = '';
 const inputRoles = new InputNoteRoles();
 const bandInputs = new LiveInputs({ onEvents: heardFromInput, onStatus: publishInputStatus });
 
@@ -1863,6 +1865,7 @@ export async function startLiveInput(): Promise<void> {
   bandListening = true;
   syncedInputs = s.liveInputs;
   syncedDevices = s.inputDevices;
+  syncedSpecs = JSON.stringify(inputSpecs(s));
   audio.setInputs(s.liveInputs);
   try {
     await bandInputs.start(audioContextForInput(), inputSpecs(s), (i) => audio.inputChannel(i));
@@ -1887,6 +1890,9 @@ function syncBandInputs(s: MusicStudioState): void {
   if (!bandListening || (s.liveInputs === syncedInputs && s.inputDevices === syncedDevices)) return;
   syncedInputs = s.liveInputs;
   syncedDevices = s.inputDevices;
+  const specs = JSON.stringify(inputSpecs(s));
+  if (specs === syncedSpecs) return;
+  syncedSpecs = specs;
   try {
     void bandInputs.sync(audioContextForInput(), inputSpecs(s), (i) => audio.inputChannel(i));
   } catch { /* no audio: the next start says so */ }

@@ -72,6 +72,7 @@ import { DRUM_VOICES, type DrumVoice } from './noteEvents';
 import {
   INPUT_CHANNELS,
   MAX_LIVE_INPUTS,
+  isInputChannel,
   defaultLiveInput,
   defaultStrip,
   normalizeLiveInput,
@@ -99,6 +100,7 @@ import {
   type FxPads,
 } from './soundSlots';
 import type { VoiceSourceId } from './visualVoices';
+import { unchoppedFxPads } from './sounds/chops';
 import {
   MAX_SETLISTS,
   MAX_SONGS,
@@ -356,7 +358,8 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     liveControl: input.liveControl === true,
     liveRoles: normalizeLiveRoles(input.liveRoles),
     bowlSlots: normalizeBowlSlots(input.bowlSlots),
-    fxPads: normalizeFxPads(input.fxPads),
+    // Chops are this session's audio; a file saved with one on a pad gets the set's default there.
+    fxPads: unchoppedFxPads(normalizeFxPads(input.fxPads), false),
     dronePatch: normalizeDronePatch(input.dronePatch),
     bandFx: normalizeBandFx(input.bandFx),
     ...normalizeSongState(input),
@@ -577,9 +580,8 @@ function createMusicStudioStore() {
     removeSong: (id: string) =>
       update((s) => {
         const setlists = s.setlists.map((l) => ({ ...l, songIds: l.songIds.filter((x) => x !== id) }));
-        const active = setlists.find((l) => l.id === s.activeSetlistId);
-        const cursor = active && s.setlistCursor < active.songIds.length ? s.setlistCursor : -1;
-        return { ...s, songs: s.songs.filter((song) => song.id !== id), setlists, currentSongId: s.currentSongId === id ? null : s.currentSongId, setlistCursor: s.currentSongId === id ? -1 : cursor };
+        const currentSongId = s.currentSongId === id ? null : s.currentSongId;
+        return { ...s, songs: s.songs.filter((song) => song.id !== id), setlists, currentSongId, setlistCursor: keptCursor(setlists, s.activeSetlistId, s.setlistCursor, currentSongId) };
       }),
     /** Start a set list; it becomes the one being played. False when there are too many. */
     addSetlist: (setlist: Setlist): boolean => {
@@ -600,8 +602,7 @@ function createMusicStudioStore() {
       update((s) => {
         const known = new Set(s.songs.map((song) => song.id));
         const setlists = s.setlists.map((l) => (l.id === id ? { ...l, songIds: songIds.filter((x) => known.has(x)) } : l));
-        const active = setlists.find((l) => l.id === s.activeSetlistId);
-        return { ...s, setlists, setlistCursor: active && s.setlistCursor < active.songIds.length ? s.setlistCursor : -1 };
+        return { ...s, setlists, setlistCursor: keptCursor(setlists, s.activeSetlistId, s.setlistCursor, s.currentSongId) };
       }),
     setActiveSetlist: (id: string | null) =>
       update((s) => (id === s.activeSetlistId || (id !== null && !s.setlists.some((l) => l.id === id)) ? s : { ...s, activeSetlistId: id, setlistCursor: -1 })),
@@ -612,9 +613,17 @@ function createMusicStudioStore() {
      * wiring of tonight's stage) and takes the song's role, levels and sends;
      * inputs the song does not know stay as they are.
      */
-    applySetup: (setup: Partial<SongSetup>) =>
+    applySetup: (setup: Partial<SongSetup>, parts: { sound: boolean; band: boolean } = { sound: true, band: true }) =>
       update((s) => {
         const next: MusicStudioState = { ...s, ...setup };
+        if (setup.mixer) {
+          // Instrument strips come with the sound, band input strips with the band.
+          const recalled = (id: string) => (isInputChannel(id) ? parts.band : parts.sound);
+          const mixer: MixerState = {};
+          for (const [id, strip] of Object.entries(s.mixer)) if (!recalled(id)) mixer[id as ChannelId] = strip;
+          for (const [id, strip] of Object.entries(setup.mixer)) if (recalled(id)) mixer[id as ChannelId] = strip;
+          next.mixer = mixer;
+        }
         if (setup.liveInputs) {
           const saved = setup.liveInputs;
           next.liveInputs = s.liveInputs.map((current, i) => (saved[i] ? normalizeLiveInput({ ...saved[i], name: current.name, channel: current.channel }) : current));
@@ -733,7 +742,8 @@ function createMusicStudioStore() {
         liveControl: s.liveControl,
         liveRoles: { ...s.liveRoles },
         bowlSlots: s.bowlSlots.map((slot) => ({ ...slot })),
-        fxPads: { bath: [...s.fxPads.bath], berlin: [...s.fxPads.berlin], dub: [...s.fxPads.dub], analog: [...s.fxPads.analog] },
+        // What the pads held before any chops went on them (chops are not saved).
+        fxPads: unchoppedFxPads(s.fxPads),
         dronePatch: s.dronePatch,
         bandFx: { ...s.bandFx },
         songs: JSON.parse(JSON.stringify(s.songs)),
@@ -762,6 +772,16 @@ function createMusicStudioStore() {
       }));
     },
   };
+}
+
+/**
+ * Where in the set list the song now up still is after the list changed:
+ * the same place if that place still holds it, else none (-1), so next and
+ * previous then find the song by its id.
+ */
+function keptCursor(setlists: Setlist[], activeId: string | null, cursor: number, currentSongId: string | null): number {
+  const active = setlists.find((l) => l.id === activeId);
+  return active && cursor >= 0 && currentSongId !== null && active.songIds[cursor] === currentSongId ? cursor : -1;
 }
 
 /** What the keys play when a set comes up, for sets built around their own voice. */

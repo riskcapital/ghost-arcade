@@ -102,6 +102,8 @@ export class MusicAudioEngine {
   private inputs: readonly Pick<LiveInputSettings, 'volume' | 'monitor' | 'fxSend'>[] = [{ volume: 0.5, monitor: true, fxSend: 1 }];
   /** Each band input's send into the band effects. */
   private inputSends = new Map<InputChannelId, GainNode>();
+  /** Every band input after its EQ and pan, before its effects send: what the looper records. */
+  private looperBus: GainNode | null = null;
   /** Dips the drone, bowls, FX pads and synth under the band's kick (ducking.ts). */
   private ducker: Ducker | null = null;
   private meterBuffer: Float32Array<ArrayBuffer> | null = null;
@@ -546,6 +548,7 @@ export class MusicAudioEngine {
         send = ctx.createGain();
         send.gain.value = settings.fxSend;
         strip.pan.connect(send).connect(this.bandFx.input);
+        if (this.looperBus) strip.pan.connect(this.looperBus);
         this.inputSends.set(id, send);
       }
       strip.input.gain.setTargetAtTime(Math.max(0, Math.min(1, settings.volume)) * 2, t, 0.02);
@@ -716,6 +719,7 @@ export class MusicAudioEngine {
     this.bus = null;
     this.strips.clear();
     this.inputSends.clear();
+    this.looperBus = null;
     this.ducker?.dispose();
     this.ducker = null;
     this.ctx = null;
@@ -771,13 +775,15 @@ export class MusicAudioEngine {
     // The band comes in after its EQ and pan, before the monitor gate: its
     // effects work whether or not its dry sound is played here.
     this.bandFx = new BandFx(ctx, master);
-    // Each band input's strip, with its send into the band effects.
+    this.looperBus = ctx.createGain();
+    // Each band input's strip, with its send into the band effects (and into the looper's bus).
     this.syncInputStrips();
     master.connect(this.bandFx.freezeInput);
     this.bandFx.setSettings(this.bandSettings, this.tempo);
-    // The looper records what the band effects hear and plays its loops into the mix.
+    // The looper records every band input at its own level (a send turned down
+    // does not quiet it in a loop) and plays its loops into the mix.
     this.looper?.dispose();
-    this.looper = new BandLooper(ctx, this.bandFx.input, master);
+    this.looper = new BandLooper(ctx, this.looperBus, master);
     this.applyRouting();
     this.applyMixer();
     this.syncAnalyserTap();

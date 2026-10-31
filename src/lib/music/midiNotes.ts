@@ -12,7 +12,7 @@
 
 import { get, writable } from 'svelte/store';
 import { midiStore } from '../midi/midiStore';
-import { mappingHearsDevice, midiInputsInUse, type MidiInputsInUse } from '../midi/midiInputs';
+import { mappingHearsDevice, midiInputSetup, midiInputsInUse, type MidiInputsInUse } from '../midi/midiInputs';
 
 export interface MusicMidiDevice {
   id: string;
@@ -83,8 +83,8 @@ export class MusicMidiInput {
     const input = e.target as MIDIInput | null;
     if (!input || !e.data) return;
     if (this.selected && input.id !== this.selected) return;
-    // The band's keys play with their own settings (bandKeys.ts).
-    if (this.inUse.keys.includes(input.id)) return;
+    // The band's keys play with their own settings (bandKeys.ts); an input set to Off plays nothing.
+    if (this.inUse.keys.includes(input.id) || midiInputSetup(input.name ?? undefined)?.use === 'off') return;
     const message = parseMidiNoteMessage(e.data);
     if (!message || claimedByControlMapping(input, message, this.inUse)) return;
     this.listener(message, input.id);

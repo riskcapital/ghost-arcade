@@ -45,6 +45,8 @@ class LooperCaptureProcessor extends AudioWorkletProcessor {
   private ringEnd = -1;
   private ringFilled = 0;
   private take: Take | null = null;
+  /** Let go by the page: the next process() call ends the processor. */
+  private done = false;
 
   constructor() {
     super();
@@ -55,7 +57,10 @@ class LooperCaptureProcessor extends AudioWorkletProcessor {
 
   private onMessage(data: { type?: string; id?: number; start?: number; end?: number; channels?: Float32Array[]; head?: Float32Array[] } | null): void {
     if (!data) return;
-    if (data.type === 'record') {
+    if (data.type === 'dispose') {
+      this.done = true;
+      this.take = null;
+    } else if (data.type === 'record') {
       const start = Math.round(Number(data.start));
       const end = Math.round(Number(data.end));
       const channels = data.channels;
@@ -134,7 +139,8 @@ class LooperCaptureProcessor extends AudioWorkletProcessor {
       for (let f = from; f < to; f++) this.write(take, f - take.start, left[f - first], right[f - first]);
     }
     this.post(this.ringEnd);
-    return true;
+    // An active processor is never collected while it asks to keep running.
+    return !this.done;
   }
 }
 

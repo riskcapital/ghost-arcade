@@ -133,6 +133,8 @@ export class MidiManager {
   private lightsFrame: number | null = null;
   private lightsSubscriptions: (() => void)[] = [];
   private gridHolds = new Map<string, string>();
+  /** The input whose pads hold those clips (null: not known). */
+  private gridHoldsFrom: string | null = null;
   private lightsRequest = 0;
   private clockSubscription?: () => void;
   private onWindowClose = () => this.destroy();
@@ -309,6 +311,7 @@ export class MidiManager {
     if (value > 0) {
       if (held) midiRouter.dispatchPath(held, 0, { inputId: input });
       this.gridHolds.set(input, path);
+      this.gridHoldsFrom = from?.id ?? null;
     }
     midiRouter.dispatchPath(path, value > 0 ? 1 : 0, { inputId: input });
     return true;
@@ -496,7 +499,8 @@ export class MidiManager {
     if (entry.role === 'control') {
       // Its held pads, clip gates and studio buttons (a throw) let go.
       midiRouter.releaseInputs(`midi:${id}:`);
-      if (this.gridHolds.size) {
+      // The grid's held clips go only with the controller playing the grid.
+      if (this.gridHolds.size && (this.gridHoldsFrom === null || this.gridHoldsFrom === id)) {
         midiRouter.releaseInputs('midi:grid:');
         this.gridHolds.clear();
       }

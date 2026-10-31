@@ -2,15 +2,18 @@
  * Chops: a band loop sliced into eight and put on the FX pads, played as
  * one-shots (stabs, dub-style).
  *
- * The pads hold library sound ids, saved with the project, so each slice is
- * a sound of its own under `chop-1` to `chop-8`, which the library's lookup
- * finds before its own sounds (library.ts: soundById). They are this
- * session's audio and are never saved: closing the studio lets them go. A
- * project opened with a chop id on a pad finds no sound under it and plays
- * the pad's fallback, as for any sound this version does not have.
+ * The pads hold library sound ids, so each slice is a sound of its own
+ * under `chop-1` to `chop-8`, which the library's lookup finds before its
+ * own sounds (library.ts: soundById). They are this session's audio and are
+ * never saved: the project file and a song keep what the pads held before
+ * they were chopped (`unchoppedFxPads`), and closing the studio puts that
+ * back. A file from before that has a chop id on a pad gets the set's
+ * default there when it opens.
  */
 
 import { chopPlayback, sliceBounds } from '../looperMath';
+import { DEFAULT_FX_PADS, type FxPads } from '../soundSlots';
+import type { StudioSet } from '../studioSets';
 import { fadeableHandle, holdAt, velocityGain, type SoundContext, type SoundDef, type SoundHandle } from './kit';
 
 export const CHOP_COUNT = 8;
@@ -115,4 +118,37 @@ function playChop(sc: SoundContext, buffer: AudioBuffer, start: number, end: num
   src.start(time, p.offset, p.length);
   src.stop(ends + 0.02);
   return fadeableHandle(p.heard, amp, time);
+}
+
+// ── What the pads held before ──
+
+/** What each set's FX pads held before chops went on them. */
+const padsBefore = new Map<StudioSet, string[]>();
+
+/** Keep what a set's pads hold now (chops already on them stay as they were before). */
+export function rememberPadsBefore(set: StudioSet, pads: readonly string[]): void {
+  padsBefore.set(set, unchoppedPads(set, pads));
+}
+
+/** Forget what a set's pads held (every set's when none is given): they have been put back. */
+export function forgetPadsBefore(set?: StudioSet): void {
+  if (set) padsBefore.delete(set);
+  else padsBefore.clear();
+}
+
+/**
+ * A set's pads with each chop replaced by what the pad held before it was
+ * chopped, or the set's default when that is not known (`remembered` false:
+ * always the default, for a file opened from disk).
+ */
+export function unchoppedPads(set: StudioSet, pads: readonly string[], remembered = true): string[] {
+  const before = remembered ? padsBefore.get(set) : undefined;
+  return pads.map((pad, i) => (isChopId(pad) ? (before?.[i] ?? DEFAULT_FX_PADS[set][i] ?? pad) : pad));
+}
+
+/** Every set's pads with no chops on them: what a save or a song keeps. */
+export function unchoppedFxPads(fxPads: FxPads, remembered = true): FxPads {
+  const out = {} as FxPads;
+  for (const set of Object.keys(fxPads) as StudioSet[]) out[set] = unchoppedPads(set, fxPads[set], remembered);
+  return out;
 }

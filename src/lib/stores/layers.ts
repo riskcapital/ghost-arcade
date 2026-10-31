@@ -100,7 +100,7 @@ const selectedLayerIdsState = writable<string[]>([]);
  * sections as saved until something else changes them.
  */
 export const automatedRecalls = writable<{ count: number; sections: RecallSection[] }>({ count: 0, sections: [] });
-function noteAutomatedRecall(sections: RecallSection[]) {
+export function noteAutomatedRecall(sections: RecallSection[]) {
   if (sections.length === 0) return;
   // After the recall's deferred writes (sequencer, 3D scene, the surfaces mirror).
   setTimeout(() => automatedRecalls.update((r) => ({ count: r.count + 1, sections })), 0);
