@@ -442,8 +442,17 @@ project. New sessions start with four rows of presets that work together.
 
 **Transport**: the top bar's play button starts the music (what Stop
 stopped, or the beat) and stops everything; **Kill** silences everything at
-once, effect tails included. Changing sets stops what was playing and fades
-the old set's effects out, so each set starts fresh.
+once, effect tails included.
+
+**Changing sets** changes instruments, not songs (`changeSetSounds` in
+`musicRuntime.ts`). The clock, the tempo, the beat and its kit, playing loops
+and session clips, the looper and the visual voices all keep going; loops and
+clips play on the new set's instruments from their next note. Only sustained
+sounds the new set has no place for let go, each with its own release: the
+drone's chords and the XY tone when leaving the Sound bath, the siren when
+leaving Dub. The old set's effects rack keeps its echo and reverb tails
+ringing for four seconds before it goes. Kill and Exit still stop everything.
+`setSwitch.test.ts` checks that the beat and loops survive every switch.
 
 **Scan synth** (`scanSynth.ts`, `OutputStrip.svelte`): the picture plays
 music back. A line sweeps across the live output in time with the beat
