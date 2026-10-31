@@ -50,6 +50,8 @@ import { STUDIO_SETS } from './studioSets';
 import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioVoice, studioTargetNow } from './studioTarget';
 import { VOICE_SHADERS, scenesForSet } from './visualScenes';
 import { VOICE_SOURCES, type VoiceSourceId } from './visualVoices';
+import { TONES } from './tone/tones';
+import { DRUM_KITS } from './tone/kits';
 
 const FX_PADS = 8;
 const BOWLS = 5;
@@ -281,6 +283,24 @@ const SCENES: StudioControl[] = [
   { id: 'visuals.scene-prev', label: 'Previous visual scene', group: 'Visuals', kind: 'trigger', run: () => void stepVisualScene(-1) },
 ];
 
+/** The next (or previous) tone in the library on the synth or keys, or kit on the drums. */
+function stepTone(target: 'synth' | 'keys' | 'drums', step: 1 | -1): void {
+  const s = get(musicStudio);
+  const ids = target === 'drums' ? [null, ...DRUM_KITS.map((k) => k.id)] : [null, ...TONES.map((t) => t.id)];
+  const now = target === 'drums' ? s.drumKit : target === 'synth' ? s.synthTone : s.keysTone;
+  const next = ids[(ids.indexOf(now) + step + ids.length) % ids.length];
+  if (target === 'drums') musicStudio.setDrumKit(next);
+  else musicStudio.setTone(target, next);
+}
+
+const TONE_CONTROLS: StudioControl[] = (['synth', 'keys', 'drums'] as const).flatMap((target): StudioControl[] => {
+  const what = target === 'drums' ? 'drum kit' : `${target} tone`;
+  return [
+    { id: `tone.${target}.next`, label: `Next ${what}`, group: 'Sounds', kind: 'trigger', run: () => stepTone(target, 1) },
+    { id: `tone.${target}.prev`, label: `Previous ${what}`, group: 'Sounds', kind: 'trigger', run: () => stepTone(target, -1) },
+  ];
+});
+
 const STUDIO: StudioControl[] = [
   {
     id: 'studio.kill', label: 'Kill all sound', group: 'Studio', kind: 'trigger',
@@ -294,7 +314,7 @@ const STUDIO: StudioControl[] = [
 ];
 
 /** Every control this module registers, in the order the learn list shows them. */
-export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...STUDIO];
+export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...STUDIO];
 
 registerStudioControls(STUDIO_MIDI_CONTROLS);
 
