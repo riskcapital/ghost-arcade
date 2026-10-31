@@ -21,7 +21,7 @@ import { DubBass, Siren, fireShot } from './dubSounds';
 import { AnalogSynth, type AnalogDest, type AnalogSource } from './analogSynth';
 import { ScanSynth } from './scanSynth';
 import { defaultParams, type StudioSet } from './studioSets';
-import { EQ_BANDS, EQ_BAND_IDS, channelAudible, meterLevel, stripFor, type ChannelId, type EqBand, type MixerState } from './mixer';
+import { EQ_BANDS, EQ_BAND_IDS, channelAudible, isInputChannel, meterLevel, stripFor, type ChannelId, type EqBand, type MixerState } from './mixer';
 import { padPatchById, soundById } from './sounds/library';
 import type { PadVoice, SoundContext, SoundHandle } from './sounds/kit';
 import { DEFAULT_DRONE_PATCH, DEFAULT_FX_PADS, defaultBandFx, type BandFxSettings } from './soundSlots';
@@ -553,7 +553,7 @@ export class MusicAudioEngine {
     }
     for (const [id, strip] of this.strips) {
       try { strip.gate.disconnect(); } catch { /* not connected */ }
-      strip.gate.connect(id !== 'input' && this.throughFx.has(id) ? rack.input : this.masterGain);
+      strip.gate.connect(!isInputChannel(id) && this.throughFx.has(id) ? rack.input : this.masterGain);
       strip.gate.connect(strip.meter);
     }
   }

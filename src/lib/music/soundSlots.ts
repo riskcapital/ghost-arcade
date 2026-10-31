@@ -100,10 +100,31 @@ export interface BandFxSettings {
   freezePitch: -12 | 0 | 12;
   /** Level the band effects come back at, 0-1. */
   returnLevel: number;
+  /** How far the drone, pads and bowls dip under the band's kick, 0 (off) to 1. */
+  duckDepth: number;
+  /** How quickly they come back after the kick, in seconds. */
+  duckRelease: number;
+  /** The drone plays the band's bass note (from the input playing the bass). */
+  followBass: boolean;
 }
 
+export const DUCK_RELEASE_MIN = 0.05;
+export const DUCK_RELEASE_MAX = 1.2;
+
 export function defaultBandFx(): BandFxSettings {
-  return { echoSend: 0, verbSend: 0, echoTime: '3/16', feedback: 0.55, echoTone: 0.45, freezeLevel: 0.7, freezePitch: 0, returnLevel: 0.8 };
+  return {
+    echoSend: 0,
+    verbSend: 0,
+    echoTime: '3/16',
+    feedback: 0.55,
+    echoTone: 0.45,
+    freezeLevel: 0.7,
+    freezePitch: 0,
+    returnLevel: 0.8,
+    duckDepth: 0,
+    duckRelease: 0.25,
+    followBass: false,
+  };
 }
 
 // ── Normalising saved data ──────────────────────────────────────────────
@@ -161,6 +182,9 @@ export function normalizeBandFx(raw: unknown): BandFxSettings {
     freezeLevel: clamp01(input.freezeLevel, d.freezeLevel),
     freezePitch: input.freezePitch === -12 || input.freezePitch === 12 ? input.freezePitch : 0,
     returnLevel: clamp01(input.returnLevel, d.returnLevel),
+    duckDepth: clamp01(input.duckDepth, d.duckDepth),
+    duckRelease: Math.max(DUCK_RELEASE_MIN, Math.min(DUCK_RELEASE_MAX, Number.isFinite(Number(input.duckRelease)) ? Number(input.duckRelease) : d.duckRelease)),
+    followBass: input.followBass === true,
   };
 }
 

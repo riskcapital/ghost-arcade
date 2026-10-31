@@ -49,6 +49,8 @@
   import TakeList from './TakeList.svelte';
   import MixerPanel from './MixerPanel.svelte';
   import BandPanel from './BandPanel.svelte';
+  import SongsPanel from './SongsPanel.svelte';
+  import SongStrip from './SongStrip.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { ensureLiveFeed } from '../../music/liveFeed';
@@ -60,8 +62,8 @@
   let elapsed = $state(0);
   let tempo = $state(120);
   let scanX = $state(0);
-  let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band'>('session');
-  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band' } as const;
+  let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band' | 'songs'>('session');
+  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band', songs: 'Songs' } as const;
 
   const s = $derived($musicStudio);
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
@@ -85,7 +87,9 @@
           ? 'Level, EQ and pan for every instrument and the live input'
           : lowerTab === 'band'
             ? "Throw, wash and freeze the band's sound; play in its key"
-            : 'Recorded performances',
+            : lowerTab === 'songs'
+              ? 'A setup kept for each song, and the set list to play them in'
+              : 'Recorded performances',
   );
 
   // The live output draws into the frame while the view is up.
@@ -186,12 +190,13 @@
 {#snippet lower()}
   <StudioModule title={LOWER_TITLES[lowerTab]} subtitle={lowerSubtitle} class="lower">
     {#snippet lead()}
-      <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes, mixer or band">
+      <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes, mixer, band or songs">
         <button role="tab" aria-selected={lowerTab === 'session'} class:active={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
         <button role="tab" aria-selected={lowerTab === 'scenes'} class:active={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>{#if s.scenes.length}Scenes {s.scenes.length}{:else}Scenes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'takes'} class:active={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>{#if s.takes.length}Takes {s.takes.length}{:else}Takes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'mixer'} class:active={lowerTab === 'mixer'} onclick={() => (lowerTab = 'mixer')}>Mixer</button>
         <button role="tab" aria-selected={lowerTab === 'band'} class:active={lowerTab === 'band'} onclick={() => (lowerTab = 'band')}>Live band</button>
+        <button role="tab" aria-selected={lowerTab === 'songs'} class:active={lowerTab === 'songs'} onclick={() => (lowerTab = 'songs')}>{#if s.songs.length}Songs {s.songs.length}{:else}Songs{/if}</button>
       </div>
     {/snippet}
     {#snippet head()}
@@ -211,6 +216,8 @@
       <MixerPanel />
     {:else if lowerTab === 'band'}
       <BandPanel />
+    {:else if lowerTab === 'songs'}
+      <SongsPanel />
     {:else if lowerTab === 'takes'}
       <div class="scroll"><TakeList /></div>
     {:else}
@@ -269,6 +276,7 @@
           Lock
         </label>
       </div>
+      <SongStrip />
       <MacroStrip />
       <span class="spacer"></span>
       <div class="ga-segmented" role="group" aria-label="Instrument set">
