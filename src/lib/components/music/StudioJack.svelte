@@ -71,6 +71,8 @@
     transition: transform 120ms ease;
   }
   .jack.control { border-color: var(--studio-jack-cv, #7ec8e3); }
+  /* A patched jack shows a lit centre, so what is connected reads even with the cables hidden. */
+  .jack.plugged { background: radial-gradient(circle, var(--studio-accent) 0 3px, #03050b 3.5px); }
   .jack.accepts {
     border-color: var(--studio-accent);
     transform: scale(1.25);

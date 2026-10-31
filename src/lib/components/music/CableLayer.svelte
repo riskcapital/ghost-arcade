@@ -6,6 +6,7 @@
    */
   import { onDestroy } from 'svelte';
   import { cableDrag } from '../../music/cablePatching';
+  import { cableView } from '../../music/cableView';
   import { canConnect } from '../../music/studioSets';
   import { musicStudio } from '../../music/musicStudioStore';
   import { generateUUID } from '../../utils/uuid';
@@ -92,13 +93,15 @@
 <svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => cableDrag.set(null)} />
 
 <svg class="cables" aria-hidden="true">
-  <g>
+  <g class="patched {$cableView}">
   {#each drawn as c (c.id)}
     <path d={c.d} class="shadow" />
     <path d={c.d} stroke={c.color} class="cable" />
     <circle cx={c.ends[0]} cy={c.ends[1]} r="6" class="plug" stroke={c.color} />
     <circle cx={c.ends[2]} cy={c.ends[3]} r="6" class="plug" stroke={c.color} />
   {/each}
+  </g>
+  <g>
   {#if live}
     <path d={live.d} class="shadow" />
     <path d={live.d} stroke={live.color} class="cable live" />
@@ -116,6 +119,9 @@
     z-index: 5;
     overflow: visible;
   }
+  /* Hidden or faded cables still patch; only the drawing steps back. The cable in the hand always shows. */
+  .patched.fade { opacity: 0.22; }
+  .patched.hide { display: none; }
   .cable { fill: none; stroke-width: 5; stroke-linecap: round; }
   .cable.live { stroke-dasharray: 2 8; }
   .shadow { fill: none; stroke: rgba(0, 0, 0, 0.5); stroke-width: 8; transform: translate(2px, 4px); }
