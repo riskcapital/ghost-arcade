@@ -422,6 +422,210 @@ export class DubShotBank {
         }
         break;
       }
+      case 'cowbell': {
+        const f = this.ctx.createBiquadFilter();
+        f.type = 'bandpass';
+        f.frequency.value = 1100 * p;
+        f.Q.value = 3;
+        const e = this.env(t, 0.45 * v, 0.001, 0.22);
+        f.connect(e).connect(out);
+        this.osc('square', 540 * p, t, 0.25, f);
+        this.osc('square', 800 * p, t, 0.25, f);
+        break;
+      }
+      case 'shaker': {
+        const e = this.env(t, 0.35 * v, 0.02, 0.07);
+        e.connect(out);
+        this.noiseHit(t, 'bandpass', 6500 * p, 1.5, 0.1, e);
+        break;
+      }
+      case 'tom': {
+        const e = this.env(t, 0.7 * v, 0.001, 0.35);
+        e.connect(out);
+        const o = this.osc('sine', 180 * p, t, 0.4, e);
+        o.frequency.exponentialRampToValueAtTime(70 * p, t + 0.3);
+        break;
+      }
+      case 'roll': {
+        // Six quick snare hits, getting louder, into the echo.
+        for (let i = 0; i < 6; i++) {
+          const ti = t + i * 0.045;
+          const e = this.env(ti, (0.15 + i * 0.07) * v, 0.001, 0.05);
+          e.connect(out);
+          this.noiseHit(ti, 'highpass', 1800 * p, 0.7, 0.06, e);
+        }
+        break;
+      }
+      case 'woodblock': {
+        const e = this.env(t, 0.55 * v, 0.001, 0.06);
+        e.connect(out);
+        this.osc('sine', 1050 * p, t, 0.08, e);
+        this.osc('triangle', 2400 * p, t, 0.05, e);
+        break;
+      }
+      case 'organ': {
+        // A short organ chord from drawbar-like sines: the bubble.
+        const e = this.env(t, 0.16 * v, 0.004, 0.12);
+        e.connect(out);
+        for (const n of [0, 4, 7]) for (const h of [1, 2, 3]) this.osc('sine', note(n) * h, t, 0.18, e);
+        break;
+      }
+      case 'skank': {
+        const f = this.ctx.createBiquadFilter();
+        f.type = 'bandpass';
+        f.frequency.value = 1800;
+        f.Q.value = 1.2;
+        const e = this.env(t, 0.3 * v, 0.001, 0.07);
+        f.connect(e).connect(out);
+        for (const n of [12, 16, 19, 24]) this.osc('sawtooth', note(n), t, 0.1, f);
+        break;
+      }
+      case 'boom': {
+        const e = this.env(t, 0.9 * v, 0.002, 0.7);
+        e.connect(out);
+        const o = this.osc('sine', note(-12) * 2, t, 0.8, e);
+        o.frequency.exponentialRampToValueAtTime(note(-24), t + 0.25);
+        break;
+      }
+      case 'riser': {
+        const e = this.env(t, 0.3 * v, 0.01, 0.55);
+        e.connect(out);
+        const o = this.osc('triangle', 500 * p, t, 0.6, e);
+        o.frequency.exponentialRampToValueAtTime(1500 * p, t + 0.5);
+        const lfo = this.ctx.createOscillator();
+        lfo.frequency.value = 7;
+        const d = this.ctx.createGain();
+        d.gain.value = 40;
+        lfo.connect(d).connect(o.frequency);
+        lfo.start(t);
+        lfo.stop(t + 0.6);
+        break;
+      }
+      case 'oi': {
+        const e = this.env(t, 0.55 * v, 0.008, 0.16);
+        e.connect(out);
+        for (const [hz, q, g] of [[550, 6, 1], [1700, 9, 0.5]] as const) {
+          const f = this.ctx.createBiquadFilter();
+          f.type = 'bandpass';
+          f.frequency.setValueAtTime(hz * p, t);
+          f.frequency.linearRampToValueAtTime(hz * p * (hz > 1000 ? 1.35 : 0.8), t + 0.15);
+          f.Q.value = q;
+          const fg = this.ctx.createGain();
+          fg.gain.value = g;
+          f.connect(fg).connect(e);
+          const o = this.osc('sawtooth', note(-10), t, 0.2, f);
+          o.frequency.linearRampToValueAtTime(note(-12), t + 0.16);
+        }
+        break;
+      }
+      case 'whistle': {
+        const e = this.env(t, 0.3 * v, 0.01, 0.3);
+        e.connect(out);
+        const o = this.osc('sine', 2100 * p, t, 0.35, e);
+        o.frequency.linearRampToValueAtTime(2600 * p, t + 0.12);
+        o.frequency.linearRampToValueAtTime(2300 * p, t + 0.3);
+        break;
+      }
+      case 'airhorn': {
+        const f = this.ctx.createBiquadFilter();
+        f.type = 'lowpass';
+        f.frequency.value = 2200;
+        const e = this.env(t, 0.22 * v, 0.01, 0.35);
+        f.connect(e).connect(out);
+        for (const hz of [440, 445, 554, 660]) this.osc('sawtooth', hz * p, t, 0.4, f);
+        break;
+      }
+      case 'spinback': {
+        // A record pulled back: a rising whoosh that speeds up and cuts.
+        const f = this.ctx.createBiquadFilter();
+        f.type = 'bandpass';
+        f.Q.value = 3;
+        f.frequency.setValueAtTime(300 * p, t);
+        f.frequency.exponentialRampToValueAtTime(4000 * p, t + 0.4);
+        const e = this.env(t, 0.5 * v, 0.3, 0.06);
+        f.connect(e).connect(out);
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noise;
+        src.connect(f);
+        src.start(t);
+        src.stop(t + 0.45);
+        break;
+      }
+      case 'tapestop': {
+        const e = this.env(t, 0.3 * v, 0.005, 0.5);
+        e.connect(out);
+        for (const n of [0, 7]) {
+          const o = this.osc('sawtooth', note(n), t, 0.55, e);
+          o.frequency.exponentialRampToValueAtTime(note(n) / 8, t + 0.5);
+        }
+        break;
+      }
+      case 'sweep': {
+        const f = this.ctx.createBiquadFilter();
+        f.type = 'bandpass';
+        f.Q.value = 6;
+        f.frequency.setValueAtTime(200 * p, t);
+        f.frequency.exponentialRampToValueAtTime(6000 * p, t + 0.8);
+        const e = this.env(t, 0.6 * v, 0.6, 0.25);
+        f.connect(e).connect(out);
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noise;
+        src.loop = true;
+        src.connect(f);
+        src.start(t);
+        src.stop(t + 0.9);
+        break;
+      }
+      case 'ping': {
+        const e = this.env(t, 0.35 * v, 0.001, 0.6);
+        e.connect(out);
+        for (const [r, g] of [[1, 1], [2.76, 0.5], [5.4, 0.25]] as const) {
+          const gg = this.ctx.createGain();
+          gg.gain.value = g;
+          gg.connect(e);
+          this.osc('sine', 880 * p * r, t, 0.65, gg);
+        }
+        break;
+      }
+      case 'steel': {
+        const e = this.env(t, 0.35 * v, 0.002, 0.5);
+        e.connect(out);
+        for (const [r, g] of [[1, 1], [2, 0.5], [3.01, 0.3], [4.2, 0.12]] as const) {
+          const gg = this.ctx.createGain();
+          gg.gain.value = g;
+          gg.connect(e);
+          this.osc('sine', note(12) * r, t, 0.55, gg);
+        }
+        break;
+      }
+      case 'thunder': {
+        const e = this.env(t, 0.8 * v, 0.05, 1.6);
+        e.connect(out);
+        this.noiseHit(t, 'lowpass', 300 * p, 0.7, 1.7, e);
+        const crack = this.env(t, 0.4 * v, 0.002, 0.2);
+        crack.connect(out);
+        this.noiseHit(t, 'highpass', 1500, 0.5, 0.25, crack);
+        break;
+      }
+      case 'bird': {
+        for (let i = 0; i < 3; i++) {
+          const ti = t + i * 0.09;
+          const e = this.env(ti, 0.25 * v, 0.004, 0.05);
+          e.connect(out);
+          const o = this.osc('sine', 3200 * p, ti, 0.07, e);
+          o.frequency.exponentialRampToValueAtTime(4800 * p, ti + 0.05);
+        }
+        break;
+      }
+      case 'static': {
+        const e = this.env(t, 0.4 * v, 0.002, 0.15);
+        e.connect(out);
+        this.noiseHit(t, 'bandpass', 2400 * p, 0.8, 0.18, e);
+        const tone = this.env(t, 0.12 * v, 0.002, 0.12);
+        tone.connect(out);
+        this.osc('square', 1000 * p, t, 0.14, tone);
+        break;
+      }
     }
   }
 }

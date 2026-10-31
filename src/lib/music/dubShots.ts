@@ -4,7 +4,10 @@
  * saved with the project and songs; dubShotAudio.ts plays them.
  */
 
-export type DubShotSource = 'rim' | 'clap' | 'snare' | 'hat' | 'stab' | 'blip' | 'zap' | 'gun' | 'hey' | 'crash' | 'horn' | 'melodica';
+export type DubShotSource =
+  | 'rim' | 'clap' | 'snare' | 'hat' | 'stab' | 'blip' | 'zap' | 'gun' | 'hey' | 'crash' | 'horn' | 'melodica'
+  | 'cowbell' | 'shaker' | 'tom' | 'roll' | 'woodblock' | 'organ' | 'skank' | 'boom' | 'riser' | 'oi'
+  | 'whistle' | 'airhorn' | 'spinback' | 'tapestop' | 'sweep' | 'ping' | 'steel' | 'thunder' | 'bird' | 'static';
 export type DubEcho = 'tape' | 'digital' | 'pingpong' | 'spring' | 'swell';
 export type DubDivision = '1/16' | '1/8t' | '1/8' | '1/8.' | '1/4' | '1/4.' | '1/2' | '1 bar';
 
@@ -41,6 +44,26 @@ export const DUB_SOURCES: { id: DubShotSource; label: string; pitched?: boolean 
   { id: 'crash', label: 'Spring crash' },
   { id: 'horn', label: 'Horn stab', pitched: true },
   { id: 'melodica', label: 'Melodica', pitched: true },
+  { id: 'cowbell', label: 'Cowbell' },
+  { id: 'shaker', label: 'Shaker' },
+  { id: 'tom', label: 'Tom drop' },
+  { id: 'roll', label: 'Snare roll' },
+  { id: 'woodblock', label: 'Woodblock' },
+  { id: 'organ', label: 'Organ bubble', pitched: true },
+  { id: 'skank', label: 'Guitar skank', pitched: true },
+  { id: 'boom', label: 'Sub boom', pitched: true },
+  { id: 'riser', label: 'Siren rise' },
+  { id: 'oi', label: 'Oi', pitched: true },
+  { id: 'whistle', label: 'Whistle' },
+  { id: 'airhorn', label: 'Air horn' },
+  { id: 'spinback', label: 'Spinback' },
+  { id: 'tapestop', label: 'Tape stop', pitched: true },
+  { id: 'sweep', label: 'Noise sweep' },
+  { id: 'ping', label: 'Metal ping' },
+  { id: 'steel', label: 'Steel drum', pitched: true },
+  { id: 'thunder', label: 'Thunder' },
+  { id: 'bird', label: 'Bird' },
+  { id: 'static', label: 'Radio static' },
 ];
 
 export const DUB_ECHOES: { id: DubEcho; label: string }[] = [
@@ -63,7 +86,7 @@ export const DUB_DIVISIONS: { id: DubDivision; beats: number }[] = [
   { id: '1 bar', beats: 4 },
 ];
 
-export const DUB_SHOT_COUNT = 12;
+export const DUB_SHOT_COUNT = 32;
 /** Notes the shots send for visuals, on the Shots instrument above its FX pads (they make no sound there). */
 export const DUB_SHOT_NOTE = 76;
 
@@ -85,6 +108,29 @@ export function defaultDubShots(): DubShot[] {
     shot('Hey!', 'hey', 'tape', '1/8.', 0.5, 0.55),
     shot('Horn call', 'horn', 'spring', '1/4.', 0.45, 0.6),
     shot('Melodica swell', 'melodica', 'swell', '1/2', 0.6, 0.85, { mix: 0.75 }),
+    // Percussion
+    shot('Cowbell skank', 'cowbell', 'pingpong', '1/8.', 0.4, 0.35),
+    shot('Shaker throw', 'shaker', 'digital', '1/16', 0.55, 0.3, { tone: 0.7 }),
+    shot('Tom drop', 'tom', 'tape', '1/4', 0.55, 0.6, { tone: 0.4 }),
+    shot('Roll away', 'roll', 'tape', '1/8', 0.65, 0.7),
+    shot('Woodblock', 'woodblock', 'pingpong', '1/8t', 0.45, 0.3),
+    shot('Metal ping', 'ping', 'digital', '1/4.', 0.6, 0.65, { tone: 0.7 }),
+    shot('Steel drum', 'steel', 'tape', '1/8.', 0.5, 0.5),
+    shot('Rim roll', 'rim', 'digital', '1/16', 0.75, 0.25, { tone: 0.6 }),
+    // Stabs and voices
+    shot('Organ bubble', 'organ', 'tape', '1/8', 0.5, 0.45),
+    shot('Skank chop', 'skank', 'pingpong', '1/8.', 0.35, 0.35, { tone: 0.6 }),
+    shot('Sub boom', 'boom', 'tape', '1/2', 0.35, 0.6, { tone: 0.25, mix: 0.45 }),
+    shot('Oi!', 'oi', 'tape', '1/4', 0.55, 0.6),
+    shot('Whistle', 'whistle', 'spring', '1/4.', 0.5, 0.6),
+    shot('Air horn', 'airhorn', 'tape', '1/4', 0.5, 0.55, { tone: 0.55 }),
+    shot('Siren rise', 'riser', 'tape', '1/2', 0.7, 0.85, { tone: 0.45 }),
+    shot('Siren fall', 'riser', 'pingpong', '1/4.', 0.6, 0.7, { pitch: -12 }),
+    // Effects
+    shot('Spinback', 'spinback', 'tape', '1/4', 0.55, 0.7),
+    shot('Tape stop', 'tapestop', 'tape', '1/2', 0.45, 0.6, { tone: 0.4 }),
+    shot('Noise sweep', 'sweep', 'swell', '1 bar', 0.6, 0.8, { mix: 0.7 }),
+    shot('Thunder', 'thunder', 'spring', '1/2', 0.4, 0.9, { tone: 0.3 }),
   ];
 }
 

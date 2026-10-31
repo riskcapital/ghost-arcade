@@ -15,6 +15,13 @@ describe('dub shots', () => {
     expect(out[1]).toEqual(defaultDubShots()[1]);
   });
 
+  it('keep a saved grid of the first twelve in place, with the new pads after', () => {
+    const old = defaultDubShots().slice(0, 12).map((d) => ({ ...d, name: `${d.name} (mine)` }));
+    const out = normalizeDubShots(old);
+    expect(out.slice(0, 12).map((d) => d.name)).toEqual(old.map((d) => d.name));
+    expect(out.slice(12)).toEqual(defaultDubShots().slice(12));
+  });
+
   it('time their echoes in beats', () => {
     expect(divisionBeats('1/8.')).toBe(0.75);
     expect(divisionBeats('1 bar')).toBe(4);

@@ -117,8 +117,10 @@
     min-height: 0;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-auto-rows: minmax(30px, 1fr);
+    /* The rows share the space there is, down to a pad you can still hit; past that it scrolls. */
+    grid-auto-rows: minmax(28px, 1fr);
     gap: 5px;
+    overflow-y: auto;
   }
   .pad {
     position: relative;
