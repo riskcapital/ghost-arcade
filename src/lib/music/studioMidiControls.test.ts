@@ -60,7 +60,7 @@ describe('the studio controls a controller can learn', () => {
       'visuals.scene-next', 'visuals.scene-prev',
       'tone.synth.next', 'tone.synth.prev', 'tone.keys.next', 'tone.keys.prev', 'tone.drums.next', 'tone.drums.prev',
       ...['bass', 'lead', 'chords', 'texture'].flatMap((t) => [`tone.track.${t}.next`, `tone.track.${t}.prev`]),
-      ...Array.from({ length: 12 }, (_, i) => `dubshot.${i + 1}`),
+      ...Array.from({ length: 32 }, (_, i) => `dubshot.${i + 1}`),
       'keys.mode-next', 'keys.mode-prev', 'keys.lock',
       'studio.kill', 'studio.play',
     ];
