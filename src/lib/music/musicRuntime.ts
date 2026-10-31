@@ -1780,14 +1780,14 @@ let liveInput: LiveInput | null = null;
 /** Start listening to the live input on the device chosen in the studio. */
 export async function startLiveInput(): Promise<void> {
   const s = get(musicStudio);
-  liveInput ??= new LiveInput(s.liveInput.sensitivity, (events) => {
-    const role = get(musicStudio).liveInput.role;
+  liveInput ??= new LiveInput(s.liveInputs[0].sensitivity, (events) => {
+    const role = get(musicStudio).liveInputs[0].role;
     for (const e of events) pushOutsideNote(e.type, e.note, e.velocity, role);
   }, () => musicStudio.setInputStatus(false, 'The audio input was disconnected.'));
   try {
     const ctx = audioContextForInput();
     // False: stopped, or started again, while it waited. That call owns the status.
-    if (await liveInput.start(ctx, s.inputDevice, audio.inputChannel())) musicStudio.setInputStatus(true);
+    if (await liveInput.start(ctx, s.inputDevices[0] ?? '', audio.inputChannel())) musicStudio.setInputStatus(true);
   } catch (err) {
     musicStudio.setInputStatus(false, err instanceof Error ? err.message : 'The audio input could not be opened.');
   }
@@ -1861,9 +1861,9 @@ export function ensureMusicRuntime(): void {
     syncMacroFx(true);
     audio.setMasterVolume(s.masterVolume);
     audio.setMixer(s.mixer, mixerChannels(s.set));
-    audio.setInputVolume(s.liveInput.volume);
-    audio.setInputMonitor(s.liveInput.monitor);
-    liveInput?.setSensitivity(s.liveInput.sensitivity);
+    audio.setInputVolume(s.liveInputs[0].volume);
+    audio.setInputMonitor(s.liveInputs[0].monitor);
+    liveInput?.setSensitivity(s.liveInputs[0].sensitivity);
     // With Live in control the studio's instruments step aside.
     if (s.liveControl && !wasLiveControl) stopAll();
     wasLiveControl = s.liveControl;

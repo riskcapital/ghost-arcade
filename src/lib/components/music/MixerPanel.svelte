@@ -51,11 +51,11 @@
   }
 
   function volumeOf(id: ChannelId): number {
-    return id === 'input' ? s.liveInput.volume : s.volumes[id as InstrumentId];
+    return id === 'input' ? s.liveInputs[0].volume : s.volumes[id as InstrumentId];
   }
 
   function setVolume(id: ChannelId, v: number) {
-    if (id === 'input') musicStudio.setLiveInput({ volume: v });
+    if (id === 'input') musicStudio.setLiveInput(0, { volume: v });
     else musicStudio.setVolume(id as InstrumentId, v);
   }
 
@@ -69,7 +69,7 @@
   }
 
   async function chooseDevice(id: string) {
-    musicStudio.setInputDevice(id);
+    musicStudio.setInputDevice(0, id);
     if (s.inputOn) await startLiveInput();
   }
 </script>
@@ -89,19 +89,19 @@
             <button class="power" class:on={s.inputOn} aria-pressed={s.inputOn} onclick={toggleInput} title={s.inputOn ? 'Stop listening to the input' : 'Listen to the input'}>
               <span class="led" class:on={s.inputOn}></span>{s.inputOn ? 'On' : 'Off'}
             </button>
-            <select aria-label="Audio input" value={s.inputDevice} onchange={(e) => void chooseDevice((e.target as HTMLSelectElement).value)}>
+            <select aria-label="Audio input" value={s.inputDevices[0] ?? ''} onchange={(e) => void chooseDevice((e.target as HTMLSelectElement).value)}>
               <option value="">Default input</option>
               {#each devices as d (d.id)}<option value={d.id}>{d.label}</option>{/each}
             </select>
             <label class="labelled">
               <span>Feeds</span>
-              <select aria-label="What the visuals see the input as" value={s.liveInput.role} onchange={(e) => musicStudio.setLiveInput({ role: (e.target as HTMLSelectElement).value as VoiceSourceId })}>
+              <select aria-label="What the visuals see the input as" value={s.liveInputs[0].role} onchange={(e) => musicStudio.setLiveInput(0, { role: (e.target as HTMLSelectElement).value as VoiceSourceId })}>
                 {#each VOICE_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
               </select>
             </label>
             <div class="row">
-              <StudioKnob label="Sens" value={s.liveInput.sensitivity} defaultValue={0.5} size={22} title="How quietly you can play and still trigger the visuals" onchange={(v) => musicStudio.setLiveInput({ sensitivity: v })} />
-              <button class="chip" class:on={s.liveInput.monitor} aria-pressed={s.liveInput.monitor} onclick={() => musicStudio.setLiveInput({ monitor: !s.liveInput.monitor })} title="Hear the input through the mix. Off, it only drives the visuals.">Monitor</button>
+              <StudioKnob label="Sens" value={s.liveInputs[0].sensitivity} defaultValue={0.5} size={22} title="How quietly you can play and still trigger the visuals" onchange={(v) => musicStudio.setLiveInput(0, { sensitivity: v })} />
+              <button class="chip" class:on={s.liveInputs[0].monitor} aria-pressed={s.liveInputs[0].monitor} onclick={() => musicStudio.setLiveInput(0, { monitor: !s.liveInputs[0].monitor })} title="Hear the input through the mix. Off, it only drives the visuals.">Monitor</button>
             </div>
             {#if s.inputError}<span class="error" role="alert">{s.inputError}</span>{/if}
           </div>

@@ -14,8 +14,19 @@
 import type { InstrumentId } from './noteEvents';
 import { VOICE_SOURCES, type VoiceSourceId } from './visualVoices';
 
-/** The live input's channel sits beside the instruments. */
-export type ChannelId = InstrumentId | 'input';
+/** Band inputs the studio listens to at once (bass and guitar on an interface's inputs, a vocal mic...). */
+export const MAX_LIVE_INPUTS = 4;
+
+/** Each band input's mixer channel, in order: the first keeps the id it always had. */
+export const INPUT_CHANNELS = ['input', 'input2', 'input3', 'input4'] as const;
+export type InputChannelId = (typeof INPUT_CHANNELS)[number];
+
+/** The band inputs' channels sit beside the instruments. */
+export type ChannelId = InstrumentId | InputChannelId;
+
+export function isInputChannel(id: string): id is InputChannelId {
+  return (INPUT_CHANNELS as readonly string[]).includes(id);
+}
 
 export const CHANNEL_LABELS: Record<ChannelId, string> = {
   synth: 'Synth',
@@ -31,6 +42,9 @@ export const CHANNEL_LABELS: Record<ChannelId, string> = {
   analog: 'Analog',
   scan: 'Scan',
   input: 'Input',
+  input2: 'Input 2',
+  input3: 'Input 3',
+  input4: 'Input 4',
 };
 
 export interface ChannelStrip {
@@ -133,8 +147,12 @@ export function formatPan(pan: number): string {
   return r < 0 ? `L ${-r * 2}` : `R ${r * 2}`;
 }
 
-/** The live input: what it feeds the visuals as, and how it listens. */
+/** A band input: which channel of its device it hears, what it feeds the visuals as, and how it listens. */
 export interface LiveInputSettings {
+  /** What the band calls it ("Bass", "Guitar"); empty shows "Input 2". */
+  name: string;
+  /** Channel of the device it hears, from 0; -1 hears every channel mixed. */
+  channel: number;
   /** The sound the visual voices see it as. */
   role: VoiceSourceId;
   /** 0-1: higher hears quieter playing. */
@@ -143,20 +161,41 @@ export interface LiveInputSettings {
   volume: number;
   /** Hear it through the mix; off, it only drives the visuals. */
   monitor: boolean;
+  /** How much of it goes to the band effects (echo, reverb, freeze, looper), 0-1. */
+  fxSend: number;
 }
 
 export function defaultLiveInput(): LiveInputSettings {
-  return { role: 'lead', sensitivity: 0.5, volume: 0.5, monitor: true };
+  return { name: '', channel: -1, role: 'lead', sensitivity: 0.5, volume: 0.5, monitor: true, fxSend: 1 };
 }
 
 export function normalizeLiveInput(raw: unknown): LiveInputSettings {
   const d = defaultLiveInput();
   if (!raw || typeof raw !== 'object') return d;
   const r = raw as Partial<Record<keyof LiveInputSettings, unknown>>;
+  const channel = Math.round(Number(r.channel));
   return {
+    name: typeof r.name === 'string' ? r.name.trim().slice(0, 24) : d.name,
+    channel: Number.isFinite(channel) && channel >= 0 && channel < 32 ? channel : -1,
     role: VOICE_SOURCES.some((v) => v.id === r.role) ? (r.role as VoiceSourceId) : d.role,
     sensitivity: clampNumber(r.sensitivity, 0, 1, d.sensitivity),
     volume: clampNumber(r.volume, 0, 1, d.volume),
     monitor: r.monitor === undefined ? d.monitor : r.monitor === true,
+    fxSend: clampNumber(r.fxSend, 0, 1, d.fxSend),
   };
+}
+
+/**
+ * The band inputs, one to MAX_LIVE_INPUTS of them. A project from before
+ * there were several has its one input as the first.
+ */
+export function normalizeLiveInputs(raw: unknown, legacy?: unknown): LiveInputSettings[] {
+  const list = Array.isArray(raw) ? raw : legacy && typeof legacy === 'object' ? [legacy] : [];
+  const inputs = list.slice(0, MAX_LIVE_INPUTS).map(normalizeLiveInput);
+  return inputs.length ? inputs : [defaultLiveInput()];
+}
+
+/** "Bass", or "Input 2" for an input the band has not named. */
+export function liveInputLabel(input: Pick<LiveInputSettings, 'name'>, index: number): string {
+  return input.name || `Input ${index + 1}`;
 }

@@ -42,7 +42,7 @@ describe('Live control', () => {
     expect(state.liveControl).toBe(true);
     expect(state.liveRoles).toEqual({ Kick: 'kick' });
     expect(state.mixer.drums?.low).toBe(3);
-    expect(state.liveInput).toEqual({ role: 'bass', sensitivity: 1, volume: 0.5, monitor: true });
+    expect(state.liveInputs).toEqual([{ name: '', channel: -1, role: 'bass', sensitivity: 1, volume: 0.5, monitor: true, fxSend: 1 }]);
     expect(normalizeProjectState({}).liveControl).toBe(false);
   });
 });

@@ -68,7 +68,8 @@ const studioIdentity = (studio: any) => {
   const mixer = studio.mixer && typeof studio.mixer === 'object'
     ? Object.fromEntries(Object.entries(studio.mixer).map(([id, strip]) => [id, omit(strip, ['mute', 'solo'])]))
     : null;
-  return { ...(omit(studio, ['params', 'octave', 'velocity', 'drumMutes', 'mixer']) as object), mixer };
+  // Moving through the set list is playing the show, not editing it.
+  return { ...(omit(studio, ['params', 'octave', 'velocity', 'drumMutes', 'mixer', 'currentSongId', 'setlistCursor']) as object), mixer };
 };
 
 /** A Stage 3D scene's fingerprint: embedded models (data URLs of many MB)

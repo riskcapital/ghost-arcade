@@ -69,7 +69,19 @@ import {
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
-import { defaultLiveInput, defaultStrip, normalizeLiveInput, normalizeMixer, type ChannelId, type ChannelStrip, type LiveInputSettings, type MixerState } from './mixer';
+import {
+  INPUT_CHANNELS,
+  MAX_LIVE_INPUTS,
+  defaultLiveInput,
+  defaultStrip,
+  normalizeLiveInput,
+  normalizeLiveInputs,
+  normalizeMixer,
+  type ChannelId,
+  type ChannelStrip,
+  type LiveInputSettings,
+  type MixerState,
+} from './mixer';
 import { normalizeLiveRoles, type LiveRoles } from './liveControl';
 import {
   BOWL_COUNT,
@@ -87,6 +99,16 @@ import {
   type FxPads,
 } from './soundSlots';
 import type { VoiceSourceId } from './visualVoices';
+import {
+  MAX_SETLISTS,
+  MAX_SONGS,
+  SONG_SETUP_KEYS,
+  normalizeSetlists,
+  normalizeSongs,
+  type Setlist,
+  type Song,
+  type SongSetup,
+} from './songs';
 
 export const MUSIC_STUDIO_SCHEMA = 1;
 
@@ -121,8 +143,8 @@ export interface MusicStudioProjectState {
   quantize: QuantizeId;
   /** EQ, pan, mute and solo per channel. */
   mixer: MixerState;
-  /** The live instrument input's settings (the device is kept per computer). */
-  liveInput: LiveInputSettings;
+  /** The band inputs, one to four (each one's device is kept per computer). */
+  liveInputs: LiveInputSettings[];
   /** Ableton Live is in control: the studio's instruments are off and the session grid fires Live. */
   liveControl: boolean;
   /** Live track name -> the sound it feeds the visual voices as. */
@@ -133,8 +155,17 @@ export interface MusicStudioProjectState {
   fxPads: FxPads;
   /** The drone's sound (sounds/padPatches.ts). */
   dronePatch: string;
-  /** The live input's echo, reverb and freeze. */
+  /** The band's echo, reverb and freeze, and how the studio sits with the band. */
   bandFx: BandFxSettings;
+  /** Setups kept per song. */
+  songs: Song[];
+  /** The songs in playing order, one list per show. */
+  setlists: Setlist[];
+  /** The set list being played. */
+  activeSetlistId: string | null;
+  /** The song called up last, and where in the set list that was (-1: not from the list). */
+  currentSongId: string | null;
+  setlistCursor: number;
 }
 
 export interface MusicStudioState extends MusicStudioProjectState {
@@ -161,8 +192,8 @@ export interface MusicStudioState extends MusicStudioProjectState {
   queuedLoops: Partial<Record<LoopRole, string | null>>;
   /** The scan synth is reading the picture. */
   scanOn: boolean;
-  /** Audio input id for the live input, '' for the default. Machine wiring, kept per computer. */
-  inputDevice: string;
+  /** Audio input id of each band input, '' for the default. Machine wiring, kept per computer. */
+  inputDevices: string[];
   /** The live input is listening, and why it could not if it failed. */
   inputOn: boolean;
   inputError: string | null;
@@ -176,6 +207,7 @@ export interface MusicStudioProjectSection extends MusicStudioProjectState {
 const MIDI_INPUT_KEY = 'ghostarcade-music-midi-input';
 const KEYBOARD_SIZE_KEY = 'ghostarcade-music-keyboard-size';
 const INPUT_DEVICE_KEY = 'ghostarcade-music-input-device';
+const INPUT_DEVICES_KEY = 'ghostarcade-music-input-devices';
 
 function loadPref(key: string): string {
   try {
@@ -189,6 +221,16 @@ function savePref(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
   } catch { /* private mode / no storage: the choice lasts the session */ }
+}
+
+/** Each band input's device. The single input's choice from before carries over as the first. */
+function loadInputDevices(): string[] {
+  try {
+    const saved = JSON.parse(loadPref(INPUT_DEVICES_KEY) || 'null');
+    if (Array.isArray(saved)) return saved.slice(0, MAX_LIVE_INPUTS).map((id) => (typeof id === 'string' ? id : ''));
+  } catch { /* unreadable: start over */ }
+  const first = loadPref(INPUT_DEVICE_KEY);
+  return first ? [first] : [];
 }
 
 function loadKeyboardSize(): KeyboardSize {
@@ -231,13 +273,18 @@ export function defaultProjectState(): MusicStudioProjectState {
     recordLength: 2,
     quantize: '1/16',
     mixer: {},
-    liveInput: defaultLiveInput(),
+    liveInputs: [defaultLiveInput()],
     liveControl: false,
     liveRoles: {},
     bowlSlots: defaultBowlSlots(),
     fxPads: defaultFxPads(),
     dronePatch: DEFAULT_DRONE_PATCH,
     bandFx: defaultBandFx(),
+    songs: [],
+    setlists: [],
+    activeSetlistId: null,
+    currentSongId: null,
+    setlistCursor: -1,
   };
 }
 
@@ -305,14 +352,35 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     recordLength: (RECORD_LENGTHS as readonly number[]).includes(Number(input.recordLength)) ? (Number(input.recordLength) as RecordLength) : d.recordLength,
     quantize: QUANTIZE_GRIDS.some((g) => g.id === input.quantize) ? (input.quantize as QuantizeId) : d.quantize,
     mixer: normalizeMixer(input.mixer),
-    liveInput: normalizeLiveInput(input.liveInput),
+    liveInputs: normalizeLiveInputs(input.liveInputs, (input as { liveInput?: unknown }).liveInput),
     liveControl: input.liveControl === true,
     liveRoles: normalizeLiveRoles(input.liveRoles),
     bowlSlots: normalizeBowlSlots(input.bowlSlots),
     fxPads: normalizeFxPads(input.fxPads),
     dronePatch: normalizeDronePatch(input.dronePatch),
     bandFx: normalizeBandFx(input.bandFx),
+    ...normalizeSongState(input),
   };
+}
+
+/** A song's setup, read the way the studio reads its own state. */
+export function normalizeSongSetup(raw: unknown): SongSetup {
+  return pickSetup(normalizeProjectState(raw && typeof raw === 'object' ? { ...(raw as object), songs: [], setlists: [] } : null));
+}
+
+function pickSetup(state: MusicStudioProjectState): SongSetup {
+  return Object.fromEntries(SONG_SETUP_KEYS.map((key) => [key, state[key]])) as SongSetup;
+}
+
+function normalizeSongState(input: Partial<MusicStudioProjectSection>): Pick<MusicStudioProjectState, 'songs' | 'setlists' | 'activeSetlistId' | 'currentSongId' | 'setlistCursor'> {
+  const songs = normalizeSongs(input.songs, normalizeSongSetup);
+  const setlists = normalizeSetlists(input.setlists, new Set(songs.map((s) => s.id)));
+  const activeSetlistId = setlists.some((l) => l.id === input.activeSetlistId) ? (input.activeSetlistId as string) : (setlists[0]?.id ?? null);
+  const currentSongId = songs.some((s) => s.id === input.currentSongId) ? (input.currentSongId as string) : null;
+  const active = setlists.find((l) => l.id === activeSetlistId);
+  const cursor = Math.round(Number(input.setlistCursor));
+  const setlistCursor = active && Number.isInteger(cursor) && cursor >= 0 && cursor < active.songIds.length ? cursor : -1;
+  return { songs, setlists, activeSetlistId, currentSongId, setlistCursor };
 }
 
 /** A project from before the session: a starter session with its recorded loops and kept beats added. */
@@ -348,7 +416,7 @@ function initialState(): MusicStudioState {
     keysArmed: true,
     midiInput: loadPref(MIDI_INPUT_KEY),
     keyboardSize: loadKeyboardSize(),
-    inputDevice: loadPref(INPUT_DEVICE_KEY),
+    inputDevices: loadInputDevices(),
     inputOn: false,
     inputError: null,
     sequencerPlaying: false,
@@ -441,11 +509,40 @@ function createMusicStudioStore() {
         delete mixer[id];
         return { ...s, mixer };
       }),
-    setLiveInput: (patch: Partial<LiveInputSettings>) => update((s) => ({ ...s, liveInput: normalizeLiveInput({ ...s.liveInput, ...patch }) })),
-    setInputDevice: (inputDevice: string) => {
-      savePref(INPUT_DEVICE_KEY, inputDevice);
-      set({ inputDevice });
+    /** Change one band input's settings. */
+    setLiveInput: (index: number, patch: Partial<LiveInputSettings>) =>
+      update((s) => (index < 0 || index >= s.liveInputs.length ? s : { ...s, liveInputs: s.liveInputs.map((input, i) => (i === index ? normalizeLiveInput({ ...input, ...patch }) : input)) })),
+    /** Add a band input (up to four); returns its index, or -1 when there are four already. */
+    addLiveInput: (settings: Partial<LiveInputSettings> = {}): number => {
+      const count = get(store).liveInputs.length;
+      if (count >= MAX_LIVE_INPUTS) return -1;
+      update((s) => ({ ...s, liveInputs: [...s.liveInputs, normalizeLiveInput({ ...defaultLiveInput(), ...settings })] }));
+      return count;
     },
+    /** Remove a band input (one always stays). Later inputs move up, their mixer strips and devices with them. */
+    removeLiveInput: (index: number) =>
+      update((s) => {
+        if (s.liveInputs.length <= 1 || index < 0 || index >= s.liveInputs.length) return s;
+        const mixer = { ...s.mixer };
+        for (let i = index; i < INPUT_CHANNELS.length; i++) {
+          const next = s.mixer[INPUT_CHANNELS[i + 1] as ChannelId];
+          if (next) mixer[INPUT_CHANNELS[i]] = next;
+          else delete mixer[INPUT_CHANNELS[i]];
+        }
+        const inputDevices = s.inputDevices.filter((_, i) => i !== index);
+        savePref(INPUT_DEVICES_KEY, JSON.stringify(inputDevices));
+        return { ...s, liveInputs: s.liveInputs.filter((_, i) => i !== index), mixer, inputDevices };
+      }),
+    /** The audio device a band input listens to ('' for the default). Kept per computer. */
+    setInputDevice: (index: number, device: string) =>
+      update((s) => {
+        if (index < 0 || index >= MAX_LIVE_INPUTS) return s;
+        const inputDevices = [...s.inputDevices];
+        while (inputDevices.length <= index) inputDevices.push('');
+        inputDevices[index] = device;
+        savePref(INPUT_DEVICES_KEY, JSON.stringify(inputDevices));
+        return { ...s, inputDevices };
+      }),
     setInputStatus: (inputOn: boolean, inputError: string | null = null) => set({ inputOn, inputError }),
     setLiveControl: (liveControl: boolean) => set({ liveControl }),
     /** Put a sound on one bowl (and move it up or down octaves). */
@@ -466,6 +563,64 @@ function createMusicStudioStore() {
       }),
     setDronePatch: (dronePatch: string) => set({ dronePatch: normalizeDronePatch(dronePatch) }),
     setBandFx: (patch: Partial<BandFxSettings>) => update((s) => ({ ...s, bandFx: normalizeBandFx({ ...s.bandFx, ...patch }) })),
+
+    // ── Songs and set lists ──
+    /** Keep a song (its setup captured by the caller). False when there are too many. */
+    addSong: (song: Song): boolean => {
+      if (get(store).songs.length >= MAX_SONGS) return false;
+      update((s) => (s.songs.some((x) => x.id === song.id) ? s : { ...s, songs: [...s.songs, song] }));
+      return true;
+    },
+    updateSong: (id: string, patch: Partial<Omit<Song, 'id'>>) =>
+      update((s) => ({ ...s, songs: s.songs.map((song) => (song.id === id ? { ...song, ...patch, name: (patch.name ?? song.name).trim() || song.name } : song)) })),
+    /** Forget a song, and take it out of every set list. */
+    removeSong: (id: string) =>
+      update((s) => {
+        const setlists = s.setlists.map((l) => ({ ...l, songIds: l.songIds.filter((x) => x !== id) }));
+        const active = setlists.find((l) => l.id === s.activeSetlistId);
+        const cursor = active && s.setlistCursor < active.songIds.length ? s.setlistCursor : -1;
+        return { ...s, songs: s.songs.filter((song) => song.id !== id), setlists, currentSongId: s.currentSongId === id ? null : s.currentSongId, setlistCursor: s.currentSongId === id ? -1 : cursor };
+      }),
+    /** Start a set list; it becomes the one being played. False when there are too many. */
+    addSetlist: (setlist: Setlist): boolean => {
+      if (get(store).setlists.length >= MAX_SETLISTS) return false;
+      update((s) => (s.setlists.some((l) => l.id === setlist.id) ? s : { ...s, setlists: [...s.setlists, setlist], activeSetlistId: setlist.id, setlistCursor: -1 }));
+      return true;
+    },
+    renameSetlist: (id: string, name: string) =>
+      update((s) => ({ ...s, setlists: s.setlists.map((l) => (l.id === id ? { ...l, name: name.trim() || l.name } : l)) })),
+    removeSetlist: (id: string) =>
+      update((s) => {
+        const setlists = s.setlists.filter((l) => l.id !== id);
+        const leaving = s.activeSetlistId === id;
+        return { ...s, setlists, activeSetlistId: leaving ? (setlists[0]?.id ?? null) : s.activeSetlistId, setlistCursor: leaving ? -1 : s.setlistCursor };
+      }),
+    /** Put a set list's songs in a new order (or add and take out songs). */
+    setSetlistSongs: (id: string, songIds: string[]) =>
+      update((s) => {
+        const known = new Set(s.songs.map((song) => song.id));
+        const setlists = s.setlists.map((l) => (l.id === id ? { ...l, songIds: songIds.filter((x) => known.has(x)) } : l));
+        const active = setlists.find((l) => l.id === s.activeSetlistId);
+        return { ...s, setlists, setlistCursor: active && s.setlistCursor < active.songIds.length ? s.setlistCursor : -1 };
+      }),
+    setActiveSetlist: (id: string | null) =>
+      update((s) => (id === s.activeSetlistId || (id !== null && !s.setlists.some((l) => l.id === id)) ? s : { ...s, activeSetlistId: id, setlistCursor: -1 })),
+    /** The song now up, and where in the set list it was called from (-1: not from the list). */
+    setCurrentSong: (currentSongId: string | null, setlistCursor = -1) => set({ currentSongId, setlistCursor }),
+    /**
+     * Put a song's setup back. A band input keeps its name and channel (the
+     * wiring of tonight's stage) and takes the song's role, levels and sends;
+     * inputs the song does not know stay as they are.
+     */
+    applySetup: (setup: Partial<SongSetup>) =>
+      update((s) => {
+        const next: MusicStudioState = { ...s, ...setup };
+        if (setup.liveInputs) {
+          const saved = setup.liveInputs;
+          next.liveInputs = s.liveInputs.map((current, i) => (saved[i] ? normalizeLiveInput({ ...saved[i], name: current.name, channel: current.channel }) : current));
+        }
+        return next;
+      }),
     setLiveRole: (track: string, role: VoiceSourceId | null) =>
       update((s) => {
         const liveRoles = { ...s.liveRoles };
@@ -574,13 +729,18 @@ function createMusicStudioStore() {
         recordLength: s.recordLength,
         quantize: s.quantize,
         mixer: JSON.parse(JSON.stringify(s.mixer)),
-        liveInput: { ...s.liveInput },
+        liveInputs: s.liveInputs.map((input) => ({ ...input })),
         liveControl: s.liveControl,
         liveRoles: { ...s.liveRoles },
         bowlSlots: s.bowlSlots.map((slot) => ({ ...slot })),
         fxPads: { bath: [...s.fxPads.bath], berlin: [...s.fxPads.berlin], dub: [...s.fxPads.dub], analog: [...s.fxPads.analog] },
         dronePatch: s.dronePatch,
         bandFx: { ...s.bandFx },
+        songs: JSON.parse(JSON.stringify(s.songs)),
+        setlists: s.setlists.map((l) => ({ ...l, songIds: [...l.songIds] })),
+        activeSetlistId: s.activeSetlistId,
+        currentSongId: s.currentSongId,
+        setlistCursor: s.setlistCursor,
       };
     },
 

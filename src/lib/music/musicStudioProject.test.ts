@@ -126,7 +126,7 @@ describe('music studio in the project file', () => {
   it('keeps the mixer, the live input and Live control', () => {
     const s = studio.musicStudio;
     s.setStrip('drums', { low: 6, pan: -0.5 });
-    s.setLiveInput({ role: 'bass', sensitivity: 0.8, monitor: false });
+    s.setLiveInput(0, { role: 'bass', sensitivity: 0.8, monitor: false });
     s.setLiveControl(true);
     s.setLiveRole('Bass', 'bass');
     const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
@@ -135,7 +135,7 @@ describe('music studio in the project file', () => {
     expect(layers.project.importProject(saved)).toBe(true);
     const after = get(s);
     expect(after.mixer.drums).toMatchObject({ low: 6, pan: -0.5 });
-    expect(after.liveInput).toMatchObject({ role: 'bass', sensitivity: 0.8, monitor: false });
+    expect(after.liveInputs[0]).toMatchObject({ role: 'bass', sensitivity: 0.8, monitor: false });
     expect(after.liveControl).toBe(true);
     expect(after.liveRoles).toEqual({ Bass: 'bass' });
   });
@@ -156,6 +156,53 @@ describe('music studio in the project file', () => {
     expect(after.fxPads.bath[2]).toBe('thunder');
     expect(after.dronePatch).toBe('choir');
     expect(after.bandFx).toMatchObject({ echoSend: 0.4, echoTime: '1/4', freezePitch: 12 });
+  });
+
+  it('keeps the band inputs, the songs and the set lists', async () => {
+    const { captureSetup, defaultRecall, emptySongVisuals } = await import('./songs');
+    const s = studio.musicStudio;
+    s.hydrate(null);
+    s.setLiveInput(0, { name: 'Bass', channel: 0, role: 'bass' });
+    expect(s.addLiveInput({ name: 'Guitar', channel: 1, role: 'lead', fxSend: 0.4 })).toBe(1);
+    s.setStrip('input2', { pan: 0.5 });
+    s.setBandFx({ duckDepth: 0.6, followBass: true });
+    const setup = captureSetup(get(s));
+    s.addSong({ id: 'song-a', name: 'Opener', bpm: 92, sceneId: null, notes: 'Bass counts in', setup, visuals: { ...emptySongVisuals(), vjColumn: 3 }, recall: defaultRecall() });
+    s.addSong({ id: 'song-b', name: 'Closer', bpm: null, sceneId: null, notes: '', setup, visuals: emptySongVisuals(), recall: defaultRecall() });
+    s.addSetlist({ id: 'set-1', name: 'Friday', songIds: ['song-b', 'song-a', 'song-b'] });
+    s.setCurrentSong('song-a', 1);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    s.hydrate(null);
+    expect(get(s).songs).toHaveLength(0);
+    expect(layers.project.importProject(saved)).toBe(true);
+    const after = get(s);
+    expect(after.liveInputs.map((i) => i.name)).toEqual(['Bass', 'Guitar']);
+    expect(after.liveInputs[1]).toMatchObject({ channel: 1, fxSend: 0.4 });
+    expect(after.mixer.input2).toMatchObject({ pan: 0.5 });
+    expect(after.bandFx).toMatchObject({ duckDepth: 0.6, followBass: true });
+    expect(after.songs.map((x) => x.name)).toEqual(['Opener', 'Closer']);
+    expect(after.songs[0]).toMatchObject({ bpm: 92, notes: 'Bass counts in', visuals: { vjColumn: 3 } });
+    expect(after.songs[0].setup.liveInputs).toHaveLength(2);
+    expect(after.setlists).toEqual([{ id: 'set-1', name: 'Friday', songIds: ['song-b', 'song-a', 'song-b'] }]);
+    expect(after).toMatchObject({ activeSetlistId: 'set-1', currentSongId: 'song-a', setlistCursor: 1 });
+
+    // Taking out an input moves the later ones up, mixer strip and all.
+    s.removeLiveInput(0);
+    expect(get(s).liveInputs.map((i) => i.name)).toEqual(['Guitar']);
+    expect(get(s).mixer.input).toMatchObject({ pan: 0.5 });
+    // A song keeps tonight's wiring and takes its own roles.
+    s.setLiveInput(0, { role: 'pad' });
+    s.applySetup({ liveInputs: [{ ...setup.liveInputs[0] }] });
+    expect(get(s).liveInputs[0]).toMatchObject({ name: 'Guitar', channel: 1, role: 'bass' });
+    // Forgetting a song takes it out of the set list.
+    s.removeSong('song-b');
+    expect(get(s).setlists[0].songIds).toEqual(['song-a']);
+  });
+
+  it('opens a project from before there were several inputs with its one input first', () => {
+    const older = { version: '1.9.5', project: { id: 'p', name: 'Show', width: 1920, height: 1080, layers: [] }, musicStudio: { schemaVersion: 1, liveInput: { role: 'kick', sensitivity: 0.9 } } };
+    expect(layers.project.importProject(older)).toBe(true);
+    expect(get(studio.musicStudio).liveInputs).toEqual([{ name: '', channel: -1, role: 'kick', sensitivity: 0.9, volume: 0.5, monitor: true, fxSend: 1 }]);
   });
 
   it('keeps a Music Studio layer and a Music Studio clip, voices and all', async () => {
