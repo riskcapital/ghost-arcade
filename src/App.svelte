@@ -8,7 +8,7 @@
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import ClipAudioMasterControl from './lib/components/ClipAudioMasterControl.svelte';
-  import AudioMeterPanel from './lib/components/AudioMeterPanel.svelte';
+  import TempoMenu from './lib/components/TempoMenu.svelte';
   // The guided tour and starter templates are offered from the welcome
   // screen and the "?" overlay, never opened by themselves: an earlier tour
   // that popped up on first launch got in the way of experienced users.
@@ -7695,7 +7695,8 @@
              behind the meter. Same strip VJ mode uses, so tuning audio
              reactivity doesn't require switching modes. Always shown, so the
              bar never rearranges when audio starts. -->
-        <AudioMeterPanel alwaysShow />
+        <!-- Tempo (meter, beat lights, Tap, BPM) behind one button that shows the BPM. -->
+        <TempoMenu />
 
         <!-- Screenshot Button -->
         <button class="screenshot-btn" onclick={takeScreenshot} title="Take Screenshot">
@@ -7734,26 +7735,12 @@
           </svg>
         </button>
 
-        <!-- Mode switch: the same control, in the same place, in VJ mode. -->
-        <div class="ga-mode-switch" role="group" aria-label="Mode">
-          <button class="active" aria-pressed="true" title="Mapping">Mapping</button>
-          <button
-            class="mode-vj"
-            aria-pressed="false"
-            onclick={openVJMode}
-            title="Switch to VJ"
-            data-midi-path="vj:mode"
-            data-midi-label="VJ Mode"
-            data-midi-mode="toggle"
-          >VJ</button>
-        </div>
-
         <div class="mobile-btn-wrapper">
           <button
             class="connection-btn"
             class:connected={mobileConnected}
             class:error={!!connectionError}
-            title={mobileConnected ? `Mobile: ${clientCount - 1} connected` : 'Connect Mobile'}
+            title={mobileConnected ? `Mobile: ${clientCount - 1} connected` : 'Connect a phone or tablet'}
             onclick={async () => {
               showMobileInfo = !showMobileInfo;
               confirmingPairingReset = false;
@@ -7768,12 +7755,8 @@
             }}
           >
             <span class="dot"></span>
-            <!-- Both labels take the same room, so the bar does not rescale
-                 when a phone connects. -->
-            <span class="tb-swap">
-              <span class:tb-swap-off={!mobileConnected}>Mobile: {Math.max(0, clientCount - 1)} connected</span>
-              <span class:tb-swap-off={mobileConnected}>Connect Mobile</span>
-            </span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+            <span>Mobile</span>
           </button>
 
           {#if showMobileInfo}
@@ -7865,6 +7848,24 @@
           </div>
           {/if}
         </div>
+      </div>
+
+      <!-- Pinned to the right at full size in both modes (data-tb-fixed: never scaled),
+           so the mode switch sits in the same place whatever else the bar shows. -->
+      <div class="toolbar-mode" data-tb-fixed>
+          <!-- Mode switch: the same control, in the same place, in VJ mode. -->
+          <div class="ga-mode-switch" role="group" aria-label="Mode">
+            <button class="active" aria-pressed="true" title="Mapping">Mapping</button>
+            <button
+              class="mode-vj"
+              aria-pressed="false"
+              onclick={openVJMode}
+              title="Switch to VJ"
+              data-midi-path="vj:mode"
+              data-midi-label="VJ Mode"
+              data-midi-mode="toggle"
+            >VJ</button>
+          </div>
 
         {#if isDesktopApp && !isMac}
           <!-- Frameless window controls: the transparent BrowserWindow needed
@@ -7886,7 +7887,6 @@
             </button>
           </div>
         {/if}
-
       </div>
     </header>
 
@@ -10014,7 +10014,7 @@
     border-color: rgba(255, 68, 56, 0.4);
   }
   /* Every control keeps its full size; the bar as a whole scales (toolbarFit.ts). */
-  .toolbar :is(.toolbar-left, .toolbar-center, .toolbar-right) > * {
+  .toolbar :is(.toolbar-left, .toolbar-center, .toolbar-right, .toolbar-mode) > * {
     flex-shrink: 0;
   }
   .toolbar :is(button, .tb-label, .tb-swap) {
@@ -10287,6 +10287,17 @@
     align-items: center;
     gap: 10px;
     position: relative;
+  }
+
+  /* The mode switch (and the window controls) at the far right, never scaled,
+     at the same place as in the VJ header. */
+  .toolbar-mode {
+    display: flex;
+    align-items: center;
+    /* The VJ header's right-column gap, so the switch lands at the same x. */
+    gap: 6px;
+    flex: 0 0 auto;
+    margin-left: var(--ga-bar-group-gap, 14px);
   }
 
   /* Recording button in header */
