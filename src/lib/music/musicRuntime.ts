@@ -91,6 +91,7 @@ import type { TrackerEvent } from './inputTracker';
 import { setStudioDriver, studioHostsLive, studioVisualTick } from './studioPlugin';
 import { bowlSlotNotes } from './soundSlots';
 import { DUB_SHOT_NOTE } from './dubShots';
+import { keyModeNote } from './keyMode';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
@@ -136,7 +137,10 @@ const keyboardNotes = new Map<string, { instrument: InstrumentId; note: number }
 const screenNotes = new Map<number, { instrument: InstrumentId; note: number }>();
 /** MIDI notes down, and those the sustain pedal is holding. */
 const midiHeld = new Set<string>();
-const midiSustained = new Set<string>();
+/** What each held MIDI key ("channel:note") started, as "instrument:note". */
+const midiStarted = new Map<string, string>();
+/** Notes let go while the sustain pedal is down, one entry per press. */
+const midiSustained: string[] = [];
 let sustainDown = false;
 
 let sequencer: { scheduledBeat: number; usedInTake: boolean } | null = null;
@@ -226,8 +230,9 @@ export function hitDrum(voice: DrumVoice, velocity: number, source: NoteSource =
 export function screenNoteOn(pointerId: number, note: number): void {
   const s = get(musicStudio);
   screenNoteOff(pointerId);
-  screenNotes.set(pointerId, { instrument: s.instrument, note });
-  playNote(s.instrument, note, s.velocity, 'screen');
+  const pitch = lockToKey(s.instrument, note);
+  screenNotes.set(pointerId, { instrument: s.instrument, note: pitch });
+  playNote(s.instrument, pitch, s.velocity, 'screen');
 }
 
 /** On-screen keys: a pointer let go, or slid off its key. */
@@ -333,8 +338,11 @@ export function changeSetSounds(from: StudioSet, to: StudioSet): void {
 
 /** With scale lock on, the drone and bowls never play a note outside the key. */
 /** Bowls and the XY tone are always in the key; the drone is when Lock is on. */
-function lockToKey(instrument: InstrumentId, note: number): number {
+/** The keyboard mode (keyMode.ts) moves every pitched note into the key; drums never move. */
+export function lockToKey(instrument: InstrumentId, note: number): number {
   const s = get(musicStudio);
+  if (instrument === 'drums') return note;
+  if (s.keyMode !== 'show') return keyModeNote(note, s.key, s.keyMode);
   if (instrument === 'bowls' || instrument === 'xy') return snapToScale(note, s.key);
   return s.scaleLock && instrument === 'drone' ? snapToScale(note, s.key) : note;
 }
@@ -385,9 +393,8 @@ function onMidi(message: MidiNoteMessage): void {
   if (message.kind === 'sustain') {
     sustainDown = message.down;
     if (!sustainDown) {
-      for (const key of [...midiSustained]) {
-        midiSustained.delete(key);
-        if (midiHeld.has(key)) continue;
+      // Each sustained press lets go once, so two keys on one snapped note release cleanly.
+      for (const key of midiSustained.splice(0)) {
         const [instrument, note] = key.split(':');
         releaseNote(instrument as InstrumentId, Number(note), 'midi');
       }
@@ -405,31 +412,39 @@ function onMidi(message: MidiNoteMessage): void {
   // Channel 10 plays the kit, as on any GM device; other channels play the selected instrument.
   const selected = get(musicStudio).instrument;
   const instrument: InstrumentId = message.channel === DRUM_CHANNEL ? 'drums' : selected;
+  const raw = `${message.channel}:${message.note}`;
   if (message.kind === 'on') {
+    // A key pressed again before its note-off lets go of what it started first.
+    const previous = midiStarted.get(raw);
+    if (previous) {
+      midiStarted.delete(raw);
+      const [pi, pn] = previous.split(':');
+      if (pi !== 'drums') releaseNote(pi as InstrumentId, Number(pn), 'midi');
+    }
     const note = lockToKey(instrument, message.note);
     const key = heldKey(instrument, note);
+    midiStarted.set(raw, key);
     midiHeld.add(key);
-    midiSustained.delete(key);
     playNote(instrument, note, message.velocity, 'midi');
     return;
   }
-  const key = heldKey(instrument, lockToKey(instrument, message.note));
-  // Note-offs are matched to whichever instrument (and snapped note) started the note.
-  const startedAs = midiHeld.has(key) ? key : [...midiHeld].find((k) => k.endsWith(`:${message.note}`)) ?? key;
-  midiHeld.delete(startedAs);
+  // A note-off lets go of exactly the note its key started (the key, or the mode, may have changed since).
+  const startedAs = midiStarted.get(raw) ?? heldKey(instrument, lockToKey(instrument, message.note));
+  midiStarted.delete(raw);
+  if (![...midiStarted.values()].includes(startedAs)) midiHeld.delete(startedAs);
   const [inst, startedNote] = startedAs.split(':');
   if (inst === 'drums') return;
   if (sustainDown) {
-    midiSustained.add(startedAs);
+    midiSustained.push(startedAs);
     return;
   }
   releaseNote(inst as InstrumentId, Number(startedNote), 'midi');
 }
 
 function releaseMidi(): void {
-  const keys = new Set([...midiHeld, ...midiSustained]);
+  const keys = [...midiStarted.values(), ...midiSustained.splice(0)];
+  midiStarted.clear();
   midiHeld.clear();
-  midiSustained.clear();
   sustainDown = false;
   for (const key of keys) {
     const [instrument, note] = key.split(':');

@@ -47,6 +47,7 @@
   import PlayModule from './PlayModule.svelte';
   import BeatModule from './BeatModule.svelte';
   import CableLayer from './CableLayer.svelte';
+  import { KEY_MODES, type KeyMode } from '../../music/keyMode';
   import PatchBay from './PatchBay.svelte';
   import { CABLE_VIEW_LABELS, cableView, cycleCableView } from '../../music/cableView';
   import MacroEditor from './MacroEditor.svelte';
@@ -288,10 +289,9 @@
         <select value={s.key.scale} onchange={(e) => musicStudio.setKey({ ...s.key, scale: (e.target as HTMLSelectElement).value as ScaleId })} aria-label="Scale">
           {#each Object.entries(SCALES) as [id, scale]}<option value={id}>{scale.label}</option>{/each}
         </select>
-        <label class="check" title="Keep what the keys play in the key">
-          <input type="checkbox" checked={s.scaleLock} onchange={() => musicStudio.setScaleLock(!s.scaleLock)} />
-          Lock
-        </label>
+        <select value={s.keyMode} onchange={(e) => musicStudio.setKeyMode((e.target as HTMLSelectElement).value as KeyMode)} aria-label="Keyboard mode" title={KEY_MODES.find((m) => m.id === s.keyMode)?.title} data-midi-path="studio:keys.mode-next" data-midi-label="Next keyboard mode" data-midi-mode="toggle">
+          {#each KEY_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
+        </select>
       </div>
       <SongStrip />
       <MacroStrip />

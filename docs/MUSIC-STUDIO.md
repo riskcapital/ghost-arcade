@@ -444,6 +444,15 @@ project. New sessions start with four rows of presets that work together.
 stopped, or the beat) and stops everything; **Kill** silences everything at
 once, effect tails included.
 
+**Keyboard mode** (`keyMode.ts`, the menu beside Key): *Show key* marks the
+key's notes and plays every note; *Lock to key* moves every pitched note,
+from MIDI, band keys, letter keys or the on-screen keys, to the nearest note
+in the key (out-of-key keys dim); *Scale on white keys* plays the scale from
+the root at each C, a degree per white key. Drums never move. Each key or MIDI
+note remembers the note it started, so a key change or two keys landing on
+one note never leave a note stuck. MIDI-learnable as Next keyboard mode and
+Lock to key on or off.
+
 **Changing sets** changes instruments, not songs (`changeSetSounds` in
 `musicRuntime.ts`). The clock, the tempo, the beat and its kit, playing loops
 and session clips, the looper and the visual voices all keep going; loops and

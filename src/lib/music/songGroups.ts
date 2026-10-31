@@ -7,6 +7,7 @@ export const SONG_SETUP_GROUPS = {
     'set',
     'key',
     'scaleLock',
+    'keyMode',
     'instrument',
     'synthPatch',
     'keysPatch',
