@@ -452,6 +452,7 @@ sounds the new set has no place for let go, each with its own release: the
 drone's chords and the XY tone when leaving the Sound bath, the siren when
 leaving Dub. The old set's effects rack keeps its echo and reverb tails
 ringing for four seconds before it goes. Kill and Exit still stop everything.
+Calling up a song that brings another set is still a fresh start (`freshStart`).
 `setSwitch.test.ts` checks that the beat and loops survive every switch.
 
 **Scan synth** (`scanSynth.ts`, `OutputStrip.svelte`): the picture plays

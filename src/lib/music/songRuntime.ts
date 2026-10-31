@@ -12,7 +12,7 @@
 
 import { get, writable, type Readable } from 'svelte/store';
 import { musicStudio, type MusicStudioState } from './musicStudioStore';
-import { ensureMusicRuntime, launchScene, onKill } from './musicRuntime';
+import { ensureMusicRuntime, freshStart, launchScene, onKill } from './musicRuntime';
 import {
   MAX_SONG_BPM,
   MIN_SONG_BPM,
@@ -211,9 +211,11 @@ function applySong(song: Song, cursor: number, history: boolean): void {
   notice.set(null);
   let mapChanged = false;
   runAsLiveControl(() => {
-    // Another set comes up as it does from the set buttons: what was
-    // playing stops (the runtime follows the store), nothing is left held.
+    // A song is a new song: when it brings up another set, what was playing
+    // stops and nothing is left held. (The set buttons alone keep the music
+    // going; there a set is just another instrument.)
     const setup = recalledSetup(song);
+    if (setup.set !== undefined && setup.set !== get(musicStudio).set) freshStart();
     if (Object.keys(setup).length) musicStudio.applySetup(setup, song.recall);
     applyTempo(song.bpm);
     // The block first, so the scene's own VJ column fires on it.
