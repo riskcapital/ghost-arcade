@@ -56,7 +56,7 @@ describe('the studio controls a controller can learn', () => {
       ...range(4).flatMap((n) => [`input.${n}.level`, `input.${n}.fx-send`]),
       ...range(8).map((n) => `pad.${n}`),
       ...range(5).map((n) => `bowl.${n}`),
-      ...range(6).flatMap((n) => ['level', 'look-next', 'look-prev', 'mute', 'follow-next'].map((c) => `voice.${n}.${c}`)),
+      ...range(6).flatMap((n) => ['level', 'look-next', 'look-prev', 'mute', 'blend-next', 'blend-prev', 'follow-next'].map((c) => `voice.${n}.${c}`)),
       'visuals.scene-next', 'visuals.scene-prev', 'studio.kill', 'studio.play',
     ];
     expect(controls.STUDIO_MIDI_CONTROLS.map((c) => c.id)).toEqual(expected);

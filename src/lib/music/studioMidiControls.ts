@@ -44,7 +44,8 @@ import { musicStudio, type MusicStudioState } from './musicStudioStore';
 import { DUCK_RELEASE_MAX, DUCK_RELEASE_MIN, type BandFxSettings } from './soundSlots';
 import { MAX_LIVE_INPUTS, type LiveInputSettings } from './mixer';
 import { registerStudioControls, releaseStudioControls, type StudioControl } from './studioControls';
-import { MAX_STUDIO_VOICES } from './studioPlugin';
+import { MAX_STUDIO_VOICES, studioVoiceBlend } from './studioPlugin';
+import { BLEND_MODE_ORDER } from '../types';
 import { STUDIO_SETS } from './studioSets';
 import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioVoice, studioTargetNow } from './studioTarget';
 import { VOICE_SHADERS, scenesForSet } from './visualScenes';
@@ -230,6 +231,12 @@ const BOWL_CONTROLS: StudioControl[] = range(BOWLS).map((i) => ({
   id: `bowl.${i + 1}`, label: `Bowl ${i + 1}`, group: 'Bowls', kind: 'hold', run: (v) => playBowl(i, v),
 }));
 
+/** The blend mode after (or before) `blend` in the app's blend list. */
+export function nextVoiceBlend(blend: string | undefined, step: 1 | -1) {
+  const i = BLEND_MODE_ORDER.indexOf(studioVoiceBlend(blend));
+  return BLEND_MODE_ORDER[(i + step + BLEND_MODE_ORDER.length) % BLEND_MODE_ORDER.length];
+}
+
 const voiceAt = (index: number) => studioTargetNow()?.source.musicVoices[index];
 
 const VOICES: StudioControl[] = range(MAX_STUDIO_VOICES).flatMap((i): StudioControl[] => {
@@ -243,6 +250,20 @@ const VOICES: StudioControl[] = range(MAX_STUDIO_VOICES).flatMap((i): StudioCont
       run: () => {
         const voice = voiceAt(i);
         if (voice) queueVoiceLevel(i, toggledVoiceLevel(i, pendingLevels.get(i) ?? voice.level));
+      },
+    },
+    {
+      id: `voice.${n}.blend-next`, label: `Voice ${n} next blend mode`, group: 'Visuals', kind: 'trigger',
+      run: () => {
+        const voice = voiceAt(i);
+        if (voice) setStudioVoice(i, { blend: nextVoiceBlend(voice.blend, 1) });
+      },
+    },
+    {
+      id: `voice.${n}.blend-prev`, label: `Voice ${n} previous blend mode`, group: 'Visuals', kind: 'trigger',
+      run: () => {
+        const voice = voiceAt(i);
+        if (voice) setStudioVoice(i, { blend: nextVoiceBlend(voice.blend, -1) });
       },
     },
     {

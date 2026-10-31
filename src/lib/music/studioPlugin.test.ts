@@ -88,7 +88,12 @@ describe('Music Studio plugin', () => {
     expect(s.musicVoices).toHaveLength(MAX_STUDIO_VOICES);
     expect(s.musicVoices[0].level).toBe(1);
     const odd = normalizeStudioSource({ musicVoices: [{ file: 'VX-Ok.fs', source: 'nope', params: { a: 'x', b: 2, 'bad name': 1 } }] }).musicVoices[0];
-    expect(odd).toEqual({ file: 'VX-Ok.fs', source: 'all', auto: true, level: 1, params: { b: 2 } });
+    expect(odd).toEqual({ file: 'VX-Ok.fs', source: 'all', auto: true, level: 1, blend: 'screen', params: { b: 2 } });
+  });
+
+  it('keeps each voice its own blend mode, and screen for an unknown one', () => {
+    const s = normalizeStudioSource({ musicVoices: [{ file: 'VX-A.fs', blend: 'multiply' }, { file: 'VX-B.fs', blend: 'nope' }] });
+    expect(s.musicVoices.map((v) => v.blend)).toEqual(['multiply', 'screen']);
   });
 
   it('can hold every built-in scene', () => {

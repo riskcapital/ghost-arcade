@@ -9,13 +9,14 @@
  *
  * At render time an instance becomes its voices plus one mix: every voice is
  * a hidden shader layer (rendered, never composited by itself), and the
- * instance's own layer shows them screen-blended together, through the same
+ * instance's own layer shows them blended together in list order, each with
+ * its own blend mode and opacity, through the same
  * native mix pass the VJ deck uses. The layer keeps everything else it has:
  * its place on the deck or the map, opacity, blend, warp, masks and effects.
  */
 
 import { writable } from 'svelte/store';
-import { createLayer, type Layer } from '../types';
+import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
 import { VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type VoiceSourceId } from './visualVoices';
 import type { StudioSet } from './studioSets';
 
@@ -31,8 +32,10 @@ export interface StudioVoice {
   source: VoiceSourceId;
   /** Shows only while its sound plays. */
   auto: boolean;
-  /** How much of it shows, 0-1. */
+  /** How much of it shows, 0-1: its opacity in the mix. */
   level: number;
+  /** How it blends over the voices above it in the list. Screen when missing. */
+  blend?: BlendMode;
   /** Look inputs, by name. */
   params: Record<string, number>;
 }
@@ -84,8 +87,14 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
     source: VOICE_SOURCES.some((s) => s.id === r.source) ? (r.source as VoiceSourceId) : 'all',
     auto: r.auto === undefined ? true : r.auto === true,
     level: clamp01(r.level, 1),
+    blend: studioVoiceBlend(r.blend),
     params,
   };
+}
+
+/** A saved blend mode, or screen (how voices always mixed before they had a choice). */
+export function studioVoiceBlend(raw: unknown): BlendMode {
+  return BLEND_MODE_ORDER.includes(raw as BlendMode) ? (raw as BlendMode) : 'screen';
 }
 
 /** The plugin's fields, filled in and checked (loading a project, pasting a clip). */
@@ -105,12 +114,13 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
 }
 
 /** A scene's voices as plugin voices. */
-export function studioVoicesFromScene(voices: readonly { file: string; source: VoiceSourceId; params?: Record<string, number>; level?: number }[]): StudioVoice[] {
+export function studioVoicesFromScene(voices: readonly { file: string; source: VoiceSourceId; params?: Record<string, number>; level?: number; blend?: BlendMode }[]): StudioVoice[] {
   return voices.slice(0, MAX_STUDIO_VOICES).map((v) => ({
     file: v.file,
     source: v.source,
     auto: true,
     level: clamp01(v.level, 1),
+    blend: studioVoiceBlend(v.blend),
     params: { ...(v.params ?? {}) },
   }));
 }
@@ -192,7 +202,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           shaderValues: studioVoiceValues(voice, studio.musicSet, inputs.driven(voice.source, voice.auto)),
         },
       } as Layer);
-      rows.push({ layerId: id, opacity: voice.level, blendMode: 'screen' });
+      rows.push({ layerId: id, opacity: voice.level, blendMode: studioVoiceBlend(voice.blend) });
     });
     out.push({
       ...layer,

@@ -142,6 +142,13 @@ export const BLEND_MODE_ORDER: readonly BlendMode[] = [
   'pin-light',
 ];
 
+/** Menu text for a blend mode id, shared by every blend picker: 'color-dodge' -> 'Color dodge'. */
+export function blendModeLabel(mode: string | undefined): string {
+  if (!mode) return '';
+  const words = mode === 'hardlight' ? 'Hard light' : mode === 'softlight' ? 'Soft light' : mode.replace(/-/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export type MediaType =
   | 'image'
   | 'video'

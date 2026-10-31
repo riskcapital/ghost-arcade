@@ -11,7 +11,8 @@
   import { STUDIO_SETS } from '../../music/studioSets';
   import { VOICE_SOURCES, isVoiceDrivenInput, type VoiceSourceId } from '../../music/visualVoices';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
-  import { MAX_STUDIO_VOICES, studioCodeTick, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
+  import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
+  import { MAX_STUDIO_VOICES, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
     loadSceneIntoStudio,
@@ -171,7 +172,10 @@
           </div>
           <div class="controls">
             {#each all.slice(0, MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
-            <StudioKnob label="Level" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
+            <select class="blend" value={studioVoiceBlend(voice.blend)} onchange={(e) => setStudioVoice(i, { blend: (e.target as HTMLSelectElement).value as BlendMode })} aria-label="Blend mode for voice {i + 1}" title="How this voice blends over the ones above it" data-midi-path="studio:voice.{i + 1}.blend-next" data-midi-label="Voice {i + 1} next blend mode" data-midi-mode="toggle">
+              {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
+            </select>
+            <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
             {#if all.length > MAIN_CONTROLS}
               <button class="icon more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for voice {i + 1}" title="All controls">
                 <svg viewBox="0 0 12 12" aria-hidden="true"><path d={open === i ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
@@ -217,6 +221,8 @@
   }
   .pick { flex: 1 1 0; min-width: 0; }
   .follows { flex: 1 1 0; min-width: 0; color: var(--studio-muted); }
+  /* The blend sits with the knobs, as narrow as a knob column. */
+  .blend { flex: 0 0 74px; min-width: 0; height: 20px; padding: 0 4px; align-self: center; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .line .auto { flex: 0 0 auto; padding: 0 7px; font-size: var(--ga-text-meta, 11px); }
   .line .auto:not(.on) { color: var(--studio-muted); }
   .controls { display: flex; align-items: flex-end; justify-content: space-between; gap: 4px; padding: 3px 0 0 15px; }
