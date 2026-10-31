@@ -7,13 +7,15 @@ import { RESONANT_SOUNDS } from './resonant';
 import { ONE_SHOT_SOUNDS } from './oneShots';
 import { ATMOS_SOUNDS } from './atmos';
 import { PAD_PATCHES } from './padPatches';
+import { chopSound } from './chops';
 
 export const SOUND_LIBRARY: readonly SoundDef[] = [...RESONANT_SOUNDS, ...ONE_SHOT_SOUNDS, ...ATMOS_SOUNDS];
 
 const byId = new Map(SOUND_LIBRARY.map((s) => [s.id, s]));
 
+/** A sound by id: this session's chops of a band loop (chops.ts) first, then the library. */
 export function soundById(id: string | null | undefined): SoundDef | undefined {
-  return id ? byId.get(id) : undefined;
+  return id ? (chopSound(id) ?? byId.get(id)) : undefined;
 }
 
 /** The library grouped for a menu, in category order. */

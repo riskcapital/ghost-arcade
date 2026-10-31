@@ -95,6 +95,7 @@
   import { abletonConnected } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   import VJMusicStudio from './music/VJMusicStudio.svelte';
+  import StudioDeckStrip from './music/StudioDeckStrip.svelte';
   import StudioView from './music/StudioView.svelte';
   import { musicStudio } from '../music/musicStudioStore';
   import { isNoteDrivenInput } from '../music/noteVisuals';
@@ -7079,6 +7080,7 @@
 
     <VJLayerSequencer />
     <VJMusicStudio />
+    <StudioDeckStrip />
     <StudioView nativePreview={nativePreviewActive} />
 </div>
 {/if}

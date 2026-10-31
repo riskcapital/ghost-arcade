@@ -79,6 +79,7 @@
   let isCheckingUpdate = false;
   import { midiStore } from '../midi/midiStore';
   import ControllerLightsSettings from './ControllerLightsSettings.svelte';
+  import MidiInputList from './MidiInputList.svelte';
   import { midiManager } from '../midi/midiManager';
   import {
     groupMappingsByControl,
@@ -332,15 +333,9 @@
 
   // MIDI
   $: midiDevices = $midiStore.devices.filter((d: any) => d.state === 'connected');
-  $: midiSelectedId = $midiStore.selectedDeviceId;
   $: midiClockSelectedId = $midiStore.selectedClockInputId;
   $: midiAvailable = $midiStore.available;
   $: midiEditMode = $midiStore.editMode;
-
-  function handleMidiDeviceChange(e: Event) {
-    const id = (e.target as HTMLSelectElement).value;
-    if (id) midiManager.selectDevice(id);
-  }
 
   function handleMidiClockDeviceChange(e: Event) {
     const id = (e.target as HTMLSelectElement).value;
@@ -2080,15 +2075,10 @@
           {#if midiAvailable}
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">MIDI device</span>
-                <span class="label-hint">Select your MIDI controller input</span>
+                <span class="label-text">MIDI inputs</span>
+                <span class="label-hint">Use any number at once: controllers run the app through MIDI Learn, and band keys play a band member's notes into the visuals</span>
+                <MidiInputList />
               </div>
-              <select value={midiSelectedId || ''} onchange={handleMidiDeviceChange}>
-                <option value="">No MIDI device</option>
-                {#each midiDevices as device}
-                  <option value={device.id}>{device.name}</option>
-                {/each}
-              </select>
             </div>
 
             <div class="setting-row">
@@ -2267,7 +2257,7 @@
                   <span class="label-hint">Use a separate virtual MIDI port when clock and controls come from different places</span>
                 </div>
                 <select value={midiClockSelectedId || ''} onchange={handleMidiClockDeviceChange}>
-                  <option value="">Same as MIDI device</option>
+                  <option value="">Same as the first controller</option>
                   {#each midiDevices as device}
                     <option value={device.id}>{device.name}</option>
                   {/each}

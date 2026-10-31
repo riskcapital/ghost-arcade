@@ -27,11 +27,20 @@ export interface TrackerEvent {
 export interface TrackerSettings {
   /** 0-1: higher hears quieter playing. */
   sensitivity: number;
+  /** Listen for a bass's pitches (down to its low E) instead of a guitar's or a voice's. */
+  low?: boolean;
+  /** False for a drum: only its hits count, so no pitch is looked for. */
+  pitched?: boolean;
 }
 
 /** Lowest and highest pitch looked for: below a guitar's low E down a step, to a soprano's top. */
 const MIN_HZ = 70;
 const MAX_HZ = 1400;
+/** A bass: just under its low E, to the top of its neck. */
+export const LOW_MIN_HZ = 38;
+const LOW_MAX_HZ = 420;
+/** A bass's pitch is found on every fourth sample: the same window then holds two periods of its low E. */
+const LOW_DECIMATE = 4;
 /** How periodic a block must be before its pitch counts. */
 const CLARITY = 0.86;
 /** A hit is this many dB over the recent level. */
@@ -63,11 +72,11 @@ export function rmsDb(samples: ArrayLike<number>, from = 0): number {
 let nsdfBuffer = new Float32Array(0);
 
 /** The fundamental of a block in Hz, or null when it is not clearly pitched. */
-export function detectPitch(samples: ArrayLike<number>, sampleRate: number): { hz: number; clarity: number } | null {
+export function detectPitch(samples: ArrayLike<number>, sampleRate: number, minHz = MIN_HZ, maxHz = MAX_HZ): { hz: number; clarity: number } | null {
   const size = Math.min(samples.length, PITCH_WINDOW);
   const start = samples.length - size;
-  const minLag = Math.max(2, Math.floor(sampleRate / MAX_HZ));
-  const maxLag = Math.min(Math.floor(size / 2), Math.ceil(sampleRate / MIN_HZ));
+  const minLag = Math.max(2, Math.floor(sampleRate / maxHz));
+  const maxLag = Math.min(Math.floor(size / 2), Math.ceil(sampleRate / minHz));
   if (maxLag <= minLag + 2) return null;
   if (nsdfBuffer.length < maxLag + 2) nsdfBuffer = new Float32Array(maxLag + 2);
   const nsdf = nsdfBuffer;
@@ -110,6 +119,24 @@ export function detectPitch(samples: ArrayLike<number>, sampleRate: number): { h
   const denom = a - 2 * b + c;
   const shift = denom !== 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / denom)) : 0;
   return { hz: sampleRate / (pick + shift), clarity: b };
+}
+
+let lowBuffer = new Float32Array(0);
+
+/**
+ * A bass's fundamental: the block averaged down to a quarter of its rate
+ * (which also filters off the string's top), then searched down to its low E.
+ */
+export function detectLowPitch(samples: ArrayLike<number>, sampleRate: number): { hz: number; clarity: number } | null {
+  const n = Math.floor(samples.length / LOW_DECIMATE);
+  if (lowBuffer.length !== n) lowBuffer = new Float32Array(n);
+  const offset = samples.length - n * LOW_DECIMATE;
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    for (let j = 0, k = offset + i * LOW_DECIMATE; j < LOW_DECIMATE; j++, k++) sum += samples[k];
+    lowBuffer[i] = sum / LOW_DECIMATE;
+  }
+  return detectPitch(lowBuffer, sampleRate / LOW_DECIMATE, LOW_MIN_HZ, LOW_MAX_HZ);
 }
 
 export function hzToMidi(hz: number): number {
@@ -163,7 +190,8 @@ export class InputTracker {
 
     // Pitch only on a hit or under a held note: the rest of the time it is not used.
     const pitchNote = (): number | null => {
-      const pitch = db > gate ? detectPitch(samples, sampleRate) : null;
+      if (db <= gate || this.settings.pitched === false) return null;
+      const pitch = this.settings.low ? detectLowPitch(samples, sampleRate) : detectPitch(samples, sampleRate);
       return pitch ? hzToMidi(pitch.hz) : null;
     };
 

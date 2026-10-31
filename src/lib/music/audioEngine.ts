@@ -21,11 +21,13 @@ import { DubBass, Siren, fireShot } from './dubSounds';
 import { AnalogSynth, type AnalogDest, type AnalogSource } from './analogSynth';
 import { ScanSynth } from './scanSynth';
 import { defaultParams, type StudioSet } from './studioSets';
-import { EQ_BANDS, EQ_BAND_IDS, channelAudible, isInputChannel, meterLevel, stripFor, type ChannelId, type EqBand, type MixerState } from './mixer';
+import { EQ_BANDS, EQ_BAND_IDS, INPUT_CHANNELS, channelAudible, isInputChannel, meterLevel, stripFor, type ChannelId, type EqBand, type InputChannelId, type LiveInputSettings, type MixerState } from './mixer';
+import { DUCKED_INSTRUMENTS, Ducker } from './ducking';
 import { padPatchById, soundById } from './sounds/library';
 import type { PadVoice, SoundContext, SoundHandle } from './sounds/kit';
 import { DEFAULT_DRONE_PATCH, DEFAULT_FX_PADS, defaultBandFx, type BandFxSettings } from './soundSlots';
 import { BandFx } from './bandFx';
+import { BandLooper } from './bandLooper';
 
 interface SubtractivePatch {
   osc1: OscillatorType;
@@ -96,8 +98,12 @@ export class MusicAudioEngine {
   private mixerChannels: readonly ChannelId[] = [];
   /** Studio instruments go quiet while Live is in control; the input stays. */
   private instrumentsSilenced = false;
-  private inputMonitor = true;
-  private inputVolume = 0.5;
+  /** Each band input's fader, monitor and effects send, by input. */
+  private inputs: readonly Pick<LiveInputSettings, 'volume' | 'monitor' | 'fxSend'>[] = [{ volume: 0.5, monitor: true, fxSend: 1 }];
+  /** Each band input's send into the band effects. */
+  private inputSends = new Map<InputChannelId, GainNode>();
+  /** Dips the drone, bowls, FX pads and synth under the band's kick (ducking.ts). */
+  private ducker: Ducker | null = null;
   private meterBuffer: Float32Array<ArrayBuffer> | null = null;
   private noise: AudioBuffer | null = null;
   private voices = new Map<string, MelodicVoice>();
@@ -148,6 +154,8 @@ export class MusicAudioEngine {
   private barClock: (() => { toNextBar: number; barSeconds: number }) | null = null;
   /** The band's echo, reverb and freeze (bandFx.ts). */
   private bandFx: BandFx | null = null;
+  /** Bars of the band recorded and looped (bandLooper.ts). */
+  private looper: BandLooper | null = null;
   private bandSettings: BandFxSettings = defaultBandFx();
 
   /** The music clock, in seconds. Creates the audio graph on first use. */
@@ -359,6 +367,12 @@ export class MusicAudioEngine {
     return this.bandFx?.frozen ?? false;
   }
 
+  /** The band looper. Creates the audio graph on first use. */
+  bandLooper(): BandLooper {
+    this.ensure();
+    return this.looper!;
+  }
+
   /** When the sound last fired on a pad ends, on the music clock (Infinity while an atmosphere plays). */
   padEnd(index: number): number | null {
     return this.padEnds.get(index) ?? null;
@@ -474,23 +488,70 @@ export class MusicAudioEngine {
     this.applyMixer();
   }
 
-  /** The input channel's fader, 0-1 (up to +6 dB at the top). */
-  setInputVolume(volume: number): void {
-    this.inputVolume = Math.max(0, Math.min(1, volume));
-    const strip = this.strips.get('input');
-    if (strip && this.ctx) strip.input.gain.setTargetAtTime(this.inputVolume * 2, this.ctx.currentTime, 0.02);
+  /**
+   * The band inputs' faders (0-1, up to +6 dB at the top), monitors (off,
+   * an input only drives the visuals) and effects sends. A strip is made for
+   * each input and let go when its input is removed.
+   */
+  setInputs(inputs: readonly Pick<LiveInputSettings, 'volume' | 'monitor' | 'fxSend'>[]): void {
+    // Called on every studio change; the list is replaced, never edited in place.
+    if (inputs === this.inputs) return;
+    this.inputs = inputs;
+    this.syncInputStrips();
   }
 
-  /** Hear the live input through the mix, or only let it drive the visuals. */
-  setInputMonitor(on: boolean): void {
-    this.inputMonitor = on;
-    this.applyMixer();
-  }
-
-  /** Where the live input connects: the input channel's strip. Creates the graph on first use. */
-  inputChannel(): AudioNode {
+  /** Where band input `index` connects: its channel's strip. Creates the graph on first use. */
+  inputChannel(index = 0): AudioNode {
     this.ensure();
-    return this.strips.get('input')!.input;
+    return this.strips.get(INPUT_CHANNELS[index] ?? 'input')?.input ?? this.strips.get('input')!.input;
+  }
+
+  /** Dip the drone, bowls, FX pads and synth under a kick now, by the band effects' duck depth and release. */
+  duckUnderKick(velocity: number): void {
+    if (!this.ctx || !(this.bandSettings.duckDepth > 0)) return;
+    this.ducker?.duck(this.bandSettings.duckDepth, velocity, this.bandSettings.duckRelease, this.ctx.currentTime);
+  }
+
+  /** A strip and an effects send for each band input; strips of removed inputs are let go. */
+  private syncInputStrips(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.masterGain) return;
+    const t = ctx.currentTime;
+    INPUT_CHANNELS.forEach((id, i) => {
+      const settings = this.inputs[i];
+      let strip = this.strips.get(id);
+      if (!settings) {
+        // The first input's strip always stays.
+        if (strip && i > 0) {
+          for (const node of [strip.input, ...Object.values(strip.eq), strip.pan, strip.gate, this.inputSends.get(id)]) {
+            try { node?.disconnect(); } catch { /* gone */ }
+          }
+          this.strips.delete(id);
+          this.inputSends.delete(id);
+        }
+        return;
+      }
+      if (!strip) {
+        const gain = ctx.createGain();
+        gain.gain.value = settings.volume * 2;
+        strip = this.makeStrip(ctx, gain);
+        this.strips.set(id, strip);
+        strip.gate.connect(this.masterGain!);
+        strip.gate.connect(strip.meter);
+      }
+      // The band comes in after its EQ and pan, before the monitor gate: its
+      // effects work whether or not its dry sound is played here.
+      let send = this.inputSends.get(id);
+      if (!send && this.bandFx) {
+        send = ctx.createGain();
+        send.gain.value = settings.fxSend;
+        strip.pan.connect(send).connect(this.bandFx.input);
+        this.inputSends.set(id, send);
+      }
+      strip.input.gain.setTargetAtTime(Math.max(0, Math.min(1, settings.volume)) * 2, t, 0.02);
+      send?.gain.setTargetAtTime(Math.max(0, Math.min(1, settings.fxSend)), t, 0.02);
+    });
+    this.applyMixer();
   }
 
   /** Meter levels after each strip, 0-1. */
@@ -515,7 +576,7 @@ export class MusicAudioEngine {
       for (const band of EQ_BAND_IDS) strip.eq[band].gain.setTargetAtTime(settings[band], t, MIXER_RAMP_SECONDS);
       strip.pan.pan.setTargetAtTime(settings.pan, t, MIXER_RAMP_SECONDS);
       let open = channelAudible(this.mixer, id, this.mixerChannels);
-      if (id === 'input') open = open && this.inputMonitor;
+      if (isInputChannel(id)) open = open && (this.inputs[INPUT_CHANNELS.indexOf(id)]?.monitor ?? true);
       else if (this.instrumentsSilenced) open = false;
       strip.gate.gain.setTargetAtTime(open ? 1 : 0, t, MIXER_RAMP_SECONDS);
     }
@@ -644,6 +705,8 @@ export class MusicAudioEngine {
     this.allNotesOff();
     this.bandFx?.dispose();
     this.bandFx = null;
+    this.looper?.dispose();
+    this.looper = null;
     this.unsubscribeGraph?.();
     this.unsubscribeGraph = null;
     try { this.output?.disconnect(); } catch { /* already gone */ }
@@ -652,6 +715,9 @@ export class MusicAudioEngine {
     this.analyserTap = null;
     this.bus = null;
     this.strips.clear();
+    this.inputSends.clear();
+    this.ducker?.dispose();
+    this.ducker = null;
     this.ctx = null;
   }
 
@@ -681,14 +747,18 @@ export class MusicAudioEngine {
     this.output = compressor;
     const bus = {} as Record<InstrumentId, GainNode>;
     this.strips.clear();
+    this.inputSends.clear();
+    const ducker = new Ducker(ctx);
+    this.ducker = ducker;
     for (const id of INSTRUMENTS) {
       const g = ctx.createGain();
       g.gain.value = this.volumes[id];
       bus[id] = g;
-      this.strips.set(id, this.makeStrip(ctx, g));
+      // The ducked instruments pass a gain that dips under the band's kick, after their fader.
+      this.strips.set(id, this.makeStrip(ctx, DUCKED_INSTRUMENTS.has(id) ? ducker.after(g) : g));
     }
     const inputGain = ctx.createGain();
-    inputGain.gain.value = this.inputVolume * 2;
+    inputGain.gain.value = (this.inputs[0]?.volume ?? 0.5) * 2;
     this.strips.set('input', this.makeStrip(ctx, inputGain));
     this.bus = bus;
     this.noise = makeNoise(ctx);
@@ -701,9 +771,13 @@ export class MusicAudioEngine {
     // The band comes in after its EQ and pan, before the monitor gate: its
     // effects work whether or not its dry sound is played here.
     this.bandFx = new BandFx(ctx, master);
-    this.strips.get('input')!.pan.connect(this.bandFx.input);
+    // Each band input's strip, with its send into the band effects.
+    this.syncInputStrips();
     master.connect(this.bandFx.freezeInput);
     this.bandFx.setSettings(this.bandSettings, this.tempo);
+    // The looper records what the band effects hear and plays its loops into the mix.
+    this.looper?.dispose();
+    this.looper = new BandLooper(ctx, this.bandFx.input, master);
     this.applyRouting();
     this.applyMixer();
     this.syncAnalyserTap();

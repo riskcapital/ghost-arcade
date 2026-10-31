@@ -16,6 +16,7 @@
   import { REPEAT_RATES, padDown, padUp, toggleLoopRecord, type PadSound } from '../../music/musicRuntime';
   import { SHOT_PARAMS } from '../../music/studioSets';
   import { soundById, soundGroups } from '../../music/sounds/library';
+  import { isChopId } from '../../music/sounds/chops';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
 
@@ -117,6 +118,8 @@
         onlostpointercapture={up}
         aria-label={label}
         title={fx?.blurb ?? ''}
+        data-midi-path={pad.sound.kind === 'shot' ? `studio:pad.${pad.sound.index + 1}` : undefined}
+        data-midi-label={pad.sound.kind === 'shot' ? `FX pad ${pad.sound.index + 1}` : undefined}
       >
         <span class="label">{label}</span>
         {#if fx?.kind === 'loop'}
@@ -131,6 +134,10 @@
             onchange={(e) => musicStudio.setFxPad(index, (e.target as HTMLSelectElement).value)}
             aria-label="Sound on pad {i + 1}"
           >
+            {#if isChopId(s.fxPads[s.set][index])}
+              <!-- A slice of the band looper is not in the library: keep it chosen until another sound is. -->
+              <option value={s.fxPads[s.set][index]}>{fx?.name ?? 'Chop'}</option>
+            {/if}
             {#each groups as group (group.category)}
               <optgroup label={group.label}>
                 {#each group.sounds as sound (sound.id)}<option value={sound.id}>{sound.name}</option>{/each}

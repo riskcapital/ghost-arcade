@@ -24,6 +24,13 @@ describe('parseMappingFile', () => {
     expect(parseMappingFile(JSON.stringify([row()]), makeId).mappings).toHaveLength(1);
   });
 
+  it('keeps the input a mapping was learned on, and old rows answer any input', () => {
+    const text = serializeMappingFile([row({ id: 'a', device: 'Launch Control XL' }), row({ id: 'b', path: 'studio:band.throw' })]);
+    const [learned, old] = parseMappingFile(text, makeId).mappings;
+    expect(learned.device).toBe('Launch Control XL');
+    expect(old).not.toHaveProperty('device');
+  });
+
   it('fills missing id / label / mode, drops bad rows, reports why', () => {
     const text = JSON.stringify([
       { channel: 1, type: 'note', number: 36, path: 'vj:tap' },

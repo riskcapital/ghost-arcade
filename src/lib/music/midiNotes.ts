@@ -6,11 +6,13 @@
  * it adds its own listener to each input instead of taking over the input's
  * message handler, so mappings, MIDI learn and clock-in keep working.
  * Devices plugged in or out while the studio is open are picked up straight
- * away.
+ * away. Inputs set up as the band's keys are left to bandKeys.ts, which
+ * plays them with their own settings.
  */
 
 import { get, writable } from 'svelte/store';
 import { midiStore } from '../midi/midiStore';
+import { mappingHearsDevice, midiInputsInUse, type MidiInputsInUse } from '../midi/midiInputs';
 
 export interface MusicMidiDevice {
   id: string;
@@ -58,13 +60,14 @@ type MidiAccessLike = MIDIAccess;
  * (a pad mapped to launch a clip, say) or MIDI learn is listening: then the
  * studio leaves the note alone so one press does not do two things.
  */
-function claimedByControlMapping(inputId: string, message: MidiNoteMessage): boolean {
+function claimedByControlMapping(input: { id: string; name?: string | null }, message: MidiNoteMessage, inUse: MidiInputsInUse): boolean {
   if (message.kind !== 'on' && message.kind !== 'off') return false;
   const midi = get(midiStore);
   if (midi.learn.active || midi.editMode || midi.identifyMode) return true;
-  if (midi.selectedDeviceId && midi.selectedDeviceId !== inputId) return false;
+  if (inUse.control.length && !inUse.control.includes(input.id)) return false;
   return midi.mappings.some(
-    (m) => m.type === 'note' && m.number === message.note && (m.channel === -1 || m.channel === message.channel),
+    (m) => m.type === 'note' && m.number === message.note && (m.channel === -1 || m.channel === message.channel)
+      && mappingHearsDevice(m, input.name ?? undefined, inUse.controlNames),
   );
 }
 
@@ -73,13 +76,17 @@ export class MusicMidiInput {
   private attached = new Map<string, MIDIInput>();
   private selected = '';
   private running = false;
+  private inUse: MidiInputsInUse = get(midiInputsInUse);
+  private unsubscribeInUse: (() => void) | null = null;
   private readonly onMessage = (event: Event) => {
     const e = event as MIDIMessageEvent;
     const input = e.target as MIDIInput | null;
     if (!input || !e.data) return;
     if (this.selected && input.id !== this.selected) return;
+    // The band's keys play with their own settings (bandKeys.ts).
+    if (this.inUse.keys.includes(input.id)) return;
     const message = parseMidiNoteMessage(e.data);
-    if (!message || claimedByControlMapping(input.id, message)) return;
+    if (!message || claimedByControlMapping(input, message, this.inUse)) return;
     this.listener(message, input.id);
   };
   private readonly onStateChange = () => this.refresh();
@@ -94,6 +101,7 @@ export class MusicMidiInput {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    this.unsubscribeInUse ??= midiInputsInUse.subscribe((inUse) => (this.inUse = inUse));
     if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) {
       musicMidiStatus.set('unavailable');
       return;
@@ -116,6 +124,8 @@ export class MusicMidiInput {
 
   stop(): void {
     this.running = false;
+    this.unsubscribeInUse?.();
+    this.unsubscribeInUse = null;
     for (const input of this.attached.values()) input.removeEventListener('midimessage', this.onMessage);
     this.attached.clear();
     this.access?.removeEventListener('statechange', this.onStateChange);

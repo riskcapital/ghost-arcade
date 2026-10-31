@@ -2,6 +2,8 @@
 import { writable, get } from 'svelte/store';
 import type { MidiStoreState, MidiMapping, MidiDevice, MidiMappingMode, MidiMessageType } from './midiTypes';
 import { mergeMappings } from './mappingFile';
+import { mappingHearsDevice, midiInputsInUse } from './midiInputs';
+import { STUDIO_SCOPE, studioControl } from '../music/studioControls';
 
 const STORAGE_KEY = 'ghost-arcade_midi_mappings';
 const DEVICE_KEY = 'ghost-arcade_midi_device';
@@ -192,14 +194,15 @@ function createMidiStore() {
       learn: on ? createDefaultLearn() : s.learn,
     })),
 
-    // Start learning for a specific control
+    // Start learning for a specific control. A studio control is named as
+    // the studio lists it ("Echo send"), not by its knob's caption ("Send").
     startLearn: (path: string, label: string, min: number, max: number, step: number, mode: MidiMappingMode, discreteValues?: string[]) =>
       update(s => ({
         ...s,
         learn: {
           active: true,
           targetPath: path,
-          targetLabel: label,
+          targetLabel: (path.startsWith(STUDIO_SCOPE) && studioControl(path.slice(STUDIO_SCOPE.length))?.label) || label,
           targetMin: min,
           targetMax: max,
           targetStep: step,
@@ -213,8 +216,9 @@ function createMidiStore() {
       learn: createDefaultLearn(),
     })),
 
-    // Complete learn: create mapping from received MIDI message
-    completeLearn: (channel: number, type: MidiMessageType, number: number) => update(s => {
+    // Complete learn: create mapping from received MIDI message. `device`
+    // (the input's name) keeps a pad from firing it from another controller.
+    completeLearn: (channel: number, type: MidiMessageType, number: number, device?: string) => update(s => {
       if (!s.learn.active || !s.learn.targetPath) return s;
 
       const mapping: MidiMapping = {
@@ -229,6 +233,7 @@ function createMidiStore() {
         mode: s.learn.targetMode,
         label: s.learn.targetLabel || s.learn.targetPath,
         discreteValues: s.learn.targetDiscreteValues,
+        ...(device ? { device } : {}),
       };
 
       // Remove any existing mapping for same path (one CC per control)
@@ -276,11 +281,13 @@ function createMidiStore() {
       return get({ subscribe }).mappings.find(m => m.path === path);
     },
 
-    getMappingsForMessage: (channel: number, type: MidiMessageType, number: number): MidiMapping[] => {
+    getMappingsForMessage: (channel: number, type: MidiMessageType, number: number, device?: string): MidiMapping[] => {
+      const { controlNames } = get(midiInputsInUse);
       return get({ subscribe }).mappings.filter(m =>
         m.type === type &&
         m.number === number &&
-        (m.channel === -1 || m.channel === channel)
+        (m.channel === -1 || m.channel === channel) &&
+        mappingHearsDevice(m, device, controlNames)
       );
     },
   };

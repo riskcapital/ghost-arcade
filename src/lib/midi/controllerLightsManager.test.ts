@@ -70,17 +70,20 @@ describe('controller lights through simulated Web MIDI', () => {
     await manager.enableControllerLights(true);
     harness.midi.update((s: any) => ({ ...s, mappings: [{ type: 'note', number: 56, channel: -1, path: 'vj:mode' }] }));
     send(56, 127);
-    expect(midiRouter.routeMessage).toHaveBeenCalledWith(0, 'note', 56, 127);
+    // The input it came from goes along, so mappings learned on another controller stay quiet.
+    expect(midiRouter.routeMessage).toHaveBeenCalledWith(0, 'note', 56, 127, { id: 'input', name: 'APC mini mk2' });
     expect(midiRouter.dispatchPath).not.toHaveBeenCalled();
     harness.midi.update((s: any) => ({ ...s, mappings: [], identifyMode: true }));
     send(56, 127); expect(midiRouter.dispatchPath).not.toHaveBeenCalled();
     harness.midi.update((s: any) => ({ ...s, identifyMode: false, learn: { active: true, targetPath: 'vj:mode' } }));
-    send(56, 127); expect(midiStore.completeLearn).toHaveBeenCalledWith(0, 'note', 56);
+    send(56, 127); expect(midiStore.completeLearn).toHaveBeenCalledWith(0, 'note', 56, 'APC mini mk2');
   });
   it('clears and redraws on hot-plug and releases held controls on disable', async () => {
     await manager.enableControllerLights(true); frame(); send(56, 127);
     input.state = 'disconnected'; output.state = 'disconnected'; access.onstatechange(); frame();
-    expect(midiRouter.releaseInputs).toHaveBeenCalledWith('midi:');
+    // What the unplugged input held lets go (other controllers keep theirs).
+    expect(midiRouter.releaseInputs).toHaveBeenCalledWith('midi:input:');
+    expect(midiRouter.releaseInputs).toHaveBeenCalledWith('midi:grid:');
     input.state = 'connected'; output.state = 'connected'; access.onstatechange(); output.send.mockClear(); frame();
     expect(output.send).toHaveBeenCalledTimes(64);
     await manager.enableControllerLights(false);
