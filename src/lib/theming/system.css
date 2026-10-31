@@ -73,60 +73,54 @@
 }
 
 /* ── Mode switch ────────────────────────────────────────────────────
-   The same two-way control at the right end of the mapping toolbar and the
-   VJ header, so moving between modes always happens in one place. */
+   One two-state toggle at the right end of the mapping toolbar and the VJ
+   header, the same size in both, so it never jumps when the mode changes.
+   The mode you are in wears the silver primary fill; the other is deep blue,
+   and clicking it flips them. Specific enough to win over each bar's general
+   button rules. */
 .ga-mode-switch {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
   align-items: stretch;
+  width: 148px;
   height: var(--ga-bar-control-h);
   padding: 2px;
   gap: 2px;
   box-sizing: border-box;
-  background: var(--ga-slot, #060504);
+  background: var(--ga-blue-900, #0a1020);
   border: 1px solid var(--ga-line-2, var(--ga-line2, rgba(245, 236, 222, 0.13)));
   border-radius: var(--ga-r-soft, 8px);
   flex: 0 0 auto;
 }
-.ga-mode-switch > button {
-  min-width: 52px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: calc(var(--ga-r-soft, 8px) - 2px);
-  background: transparent;
-  color: var(--ga-ink-1, #ada9a2);
+html .ga-mode-switch.ga-mode-switch > button {
+  min-width: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 8px !important;
+  border: 0 !important;
+  border-radius: calc(var(--ga-r-soft, 8px) - 2px) !important;
+  background: var(--ga-blue-800, #101830) !important;
+  color: var(--ga-ink-0, #f2ede4) !important;
+  box-shadow: none !important;
+  filter: none !important;
   font: inherit;
-  font-size: var(--ga-text-body);
-  font-weight: var(--ga-weight-control);
-  letter-spacing: 0;
-  text-transform: none;
+  font-size: var(--ga-text-body) !important;
+  font-weight: var(--ga-weight-control) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.16s, color 0.16s;
 }
-.ga-mode-switch > button:hover:not(.active) {
-  color: var(--ga-ink-0, #f2ede4);
-  background: rgba(255, 255, 255, 0.05);
+html .ga-mode-switch.ga-mode-switch > button:hover:not(.active) {
+  background: var(--ga-selection-bg, #1c2a5c) !important;
 }
-.ga-mode-switch > button.active {
-  background: var(--ga-raise, #26221c);
-  color: var(--ga-ink-0, #f2ede4);
-  box-shadow: inset 0 0 0 1px var(--ga-line-3, var(--ga-line3, rgba(245, 236, 222, 0.24)));
+html .ga-mode-switch.ga-mode-switch > button.active {
+  background: var(--ga-accent-gradient, var(--ga-violet, #e7eef5)) !important;
+  color: var(--ga-blue-800, #0b1020) !important;
+  font-weight: 700 !important;
   cursor: default;
-}
-/* In mapping mode, going to VJ is the bar's main action: the VJ half wears
-   the primary-action fill (ghost chrome in Arcade), as Add Files and Save do. */
-/* Specific enough to win over the toolbar's general button ink. */
-html .toolbar .ga-mode-switch > button.mode-vj.mode-vj:not(.active):not(.rec-btn) {
-  min-width: 60px;
-  background: var(--ga-accent-gradient, var(--ga-violet, #e7eef5)) !important;
-  color: var(--ga-blue-800, #0b1020) !important;
-  font-weight: 700;
-  box-shadow: none;
-}
-html .toolbar .ga-mode-switch > button.mode-vj.mode-vj:not(.active):not(.rec-btn):hover {
-  background: var(--ga-accent-gradient, var(--ga-violet, #e7eef5)) !important;
-  color: var(--ga-blue-800, #0b1020) !important;
-  filter: brightness(1.08);
 }
 .ga-mode-switch > button:focus-visible {
   outline: 2px solid var(--ga-focus, #8aa4ff);
