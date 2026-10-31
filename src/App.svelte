@@ -7741,7 +7741,7 @@
             class="mode-vj"
             aria-pressed="false"
             onclick={openVJMode}
-            title="Open VJ Mixer"
+            title="Switch to VJ"
             data-midi-path="vj:mode"
             data-midi-label="VJ Mode"
             data-midi-mode="toggle"

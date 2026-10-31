@@ -4554,7 +4554,7 @@
         </button>
         <!-- Mode switch: the same control, in the same place, in mapping mode. -->
         <div class="ga-mode-switch" role="group" aria-label="Mode">
-          <button onclick={handleExitVJClick} aria-pressed="false" title="Exit VJ and stop live output">Mapping</button>
+          <button onclick={handleExitVJClick} aria-pressed="false" title="Switch to mapping (stops the live output)">Mapping</button>
           <button class="active" aria-pressed="true" title="VJ">VJ</button>
         </div>
         {#if isDesktopApp && !isMac}
