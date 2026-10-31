@@ -22,6 +22,8 @@ vi.mock('../stores/audio', () => ({ audioStore: { setManualBPM: vi.fn(), subscri
 
 import { ClockTempoTracker, MidiManager } from './midiManager';
 import { midiStore } from './midiStore';
+import { midiRouter } from './midiRouter';
+import { midiInputsInUse, onBandKeys, setMidiInputSetup } from './midiInputs';
 import { audioStore } from '../stores/audio';
 
 /** Deterministic jitter in [-1, 1). */
@@ -178,5 +180,81 @@ describe('MIDI input unplug and replug', () => {
     expect(audioStore.setManualBPM).toHaveBeenCalledTimes(1);
     expect(audioStore.setManualBPM).toHaveBeenCalledWith(126);
     manager.setClockInEnabled(false);
+  });
+});
+
+describe('several MIDI inputs at once', () => {
+  let access: any;
+  let pads: any;
+  let knobs: any;
+  let nord: any;
+  let manager: MidiManager;
+  const port = (id: string, name: string) => ({ id, name, manufacturer: 'Test', state: 'connected', onmidimessage: null as any });
+  const send = (input: any, bytes: number[]) => input.onmidimessage({ data: new Uint8Array(bytes), currentTarget: input });
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    // The single choice saved before several inputs could be used.
+    storage.set('ghost-arcade_midi_device', 'pads');
+    midiStore.selectDevice('pads');
+    pads = port('pads', 'Pads');
+    knobs = port('knobs', 'Knobs');
+    nord = port('nord', 'Nord');
+    access = { inputs: new Map([['pads', pads], ['knobs', knobs], ['nord', nord]]), outputs: new Map(), sysexEnabled: false, onstatechange: null };
+    vi.stubGlobal('navigator', { requestMIDIAccess: vi.fn(async () => access) });
+    manager = new MidiManager();
+    expect(await manager.init()).toBe(true);
+  });
+  afterEach(() => { manager.destroy(); vi.unstubAllGlobals(); });
+
+  it('keeps the old saved input as a controller, now by name', () => {
+    const saved = JSON.parse(storage.get('ghost-arcade_midi_inputs') ?? '[]');
+    expect(saved).toContainEqual({ name: 'Pads', use: 'control' });
+    expect(pads.onmidimessage).toBeTypeOf('function');
+    expect(knobs.onmidimessage).toBe(null);
+  });
+
+  it('listens to every controller, and says which one a message came from', () => {
+    setMidiInputSetup('Knobs', { use: 'control' });
+    expect(get(midiInputsInUse).control).toEqual(['pads', 'knobs']);
+    send(knobs, [0xB0, 74, 100]);
+    expect(midiRouter.routeMessage).toHaveBeenLastCalledWith(0, 'cc', 74, 100, { id: 'knobs', name: 'Knobs' });
+    send(pads, [0x90, 36, 90]);
+    expect(midiRouter.routeMessage).toHaveBeenLastCalledWith(0, 'note', 36, 90, { id: 'pads', name: 'Pads' });
+    expect(get(midiStore).selectedDeviceId).toBe('pads');
+  });
+
+  it('records the input a mapping is learned on', () => {
+    setMidiInputSetup('Knobs', { use: 'control' });
+    midiStore.startLearn('vj:0:opacity', 'Opacity', 0, 1, 0, 'absolute');
+    send(knobs, [0xB0, 21, 64]);
+    expect(get(midiStore).mappings.find((m) => m.path === 'vj:0:opacity')).toMatchObject({ type: 'cc', number: 21, device: 'Knobs' });
+    midiStore.clearAllMappings();
+  });
+
+  it('lets go of only what an unplugged controller held', () => {
+    setMidiInputSetup('Knobs', { use: 'control' });
+    knobs.state = 'disconnected';
+    access.onstatechange();
+    expect(midiRouter.releaseInputs).toHaveBeenCalledWith('midi:knobs:');
+    expect(midiRouter.releaseInputs).not.toHaveBeenCalledWith('midi:pads:');
+    expect(knobs.onmidimessage).toBe(null);
+    expect(pads.onmidimessage).toBeTypeOf('function');
+  });
+
+  it("plays the band's keys into their own listener, never into the mappings", () => {
+    const heard: { bytes: number[]; role?: string }[] = [];
+    const released: string[] = [];
+    const stop = onBandKeys({ message: (data, setup) => heard.push({ bytes: Array.from(data), role: setup.role }), release: (name) => released.push(name) });
+    setMidiInputSetup('Nord', { use: 'keys', role: 'bass' });
+    expect(get(midiInputsInUse).keys).toEqual(['nord']);
+    send(nord, [0x90, 40, 100]);
+    expect(heard).toEqual([{ bytes: [0x90, 40, 100], role: 'bass' }]);
+    expect(midiRouter.routeMessage).not.toHaveBeenCalled();
+    // Off: its notes are let go of, and it is no longer listened to.
+    setMidiInputSetup('Nord', { use: 'off' });
+    expect(released).toEqual(['Nord']);
+    expect(nord.onmidimessage).toBe(null);
+    stop();
   });
 });

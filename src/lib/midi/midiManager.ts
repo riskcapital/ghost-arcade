@@ -2,7 +2,19 @@
 import { midiStore } from './midiStore';
 import { midiRouter } from './midiRouter';
 import { audioStore } from '../stores/audio';
-import type { MidiDevice, MidiMessageType } from './midiTypes';
+import type { MidiDevice, MidiInputSetup, MidiMessageType } from './midiTypes';
+import {
+  emitBandKeys,
+  mappingHearsDevice,
+  midiInputSetups,
+  midiInputsInUse,
+  releaseBandKeys,
+  resolveMidiInputs,
+  sameInputsInUse,
+  setMidiInputSetup,
+  setupFor,
+  type MidiInputsInUse,
+} from './midiInputs';
 import { get } from 'svelte/store';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { ControllerLights, pairedOutput } from './controllerLights';
@@ -105,10 +117,17 @@ export class ClockTempoTracker {
   }
 }
 
+type InputRole = 'control' | 'keys';
+
 export class MidiManager {
   private access: MIDIAccess | null = null;
-  private activeInput: MIDIInput | null = null;
+  /** Inputs listened to now, and what for: controllers and the band's keys. */
+  private inputs = new Map<string, { port: MIDIInput; role: InputRole; name: string }>();
   private activeClockInput: MIDIInput | null = null;
+  private setups: MidiInputSetup[] = get(midiInputSetups);
+  private setupsSubscription?: () => void;
+  private refreshing = false;
+  private inUse: MidiInputsInUse = { control: [], keys: [], standIn: null, controlNames: [] };
   private activeOutput: MIDIOutput | null = null;
   private lights = new ControllerLights(message => controllerLightsStore.status(message));
   private lightsFrame: number | null = null;
@@ -179,6 +198,12 @@ export class MidiManager {
       midiStore.setAvailable(true);
       this.refreshDevices();
       this.access.onstatechange = () => this.refreshDevices();
+      // A use changed in Settings takes effect at once.
+      this.setupsSubscription?.();
+      this.setupsSubscription = midiInputSetups.subscribe((list) => {
+        this.setups = list;
+        if (!this.refreshing) this.refreshDevices();
+      });
 
       // Bridge clock-IN → audio store master BPM. When the user has clock-in
       // enabled and a transport is running, the latest computed BPM flows
@@ -243,7 +268,7 @@ export class MidiManager {
         const access = await navigator.requestMIDIAccess({ sysex: true });
         if (request !== this.lightsRequest) return;
         if (this.access) this.access.onstatechange = null;
-        this.detachInput(); this.detachClockInput();
+        this.detachInputs(); this.detachClockInput();
         this.access = access;
         this.access.onstatechange = () => this.refreshDevices();
         this.refreshDevices();
@@ -256,7 +281,7 @@ export class MidiManager {
     }
   }
 
-  private routeControllerGrid(channel: number, type: MidiMessageType, note: number, value: number): boolean {
+  private routeControllerGrid(channel: number, type: MidiMessageType, note: number, value: number, from?: { id: string | null; name?: string }): boolean {
     if (type !== 'note') return false;
     const input = `midi:grid:${channel}:${note}`;
     const held = this.gridHolds.get(input);
@@ -265,11 +290,16 @@ export class MidiManager {
     }
     const settings = get(controllerLightsStore), midi = get(midiStore), state = get(vjClipLauncher);
     if (!settings.enabled || !settings.gridInput || !state.isOpen || !state.isLive || midi.editMode || midi.identifyMode || midi.learn.active) return false;
-    if (midi.mappings.some(m => m.type === type && m.number === note && (m.channel === -1 || m.channel === channel))) return false;
+    if (midi.mappings.some(m => m.type === type && m.number === note && (m.channel === -1 || m.channel === channel)
+      && mappingHearsDevice(m, from?.name, this.inUse.controlNames))) return false;
     const outputs = [...(this.access?.outputs.values() ?? [])];
     const output = settings.outputId ? outputs.find(o => o.id === settings.outputId)
       : pairedOutput(midi.devices.find(d => d.id === midi.selectedDeviceId), outputs);
     if (!output || output.state !== 'connected') return false;
+    // Only the controller showing the lights plays the grid.
+    const showsLights = (id: string) => pairedOutput(midi.devices.find(d => d.id === id), [output]) === output;
+    const gridInput = settings.outputId ? (this.inUse.control.find(showsLights) ?? midi.selectedDeviceId) : midi.selectedDeviceId;
+    if (from?.id && gridInput && from.id !== gridInput) return false;
     const profile = controllerProfiles[settings.profile === 'auto' ? detectControllerProfile(output.name ?? '') : settings.profile];
     const cell = controllerCell(profile, note);
     if (!cell || channel !== 0) return false;
@@ -326,27 +356,29 @@ export class MidiManager {
     let state = get(midiStore);
     const isConnected = (id: string | null | undefined) => !!id && inputs.some(d => d.id === id && d.state === 'connected');
 
-    // Use the chosen input whenever it is connected. Otherwise borrow the
-    // first connected one for now without saving it, so the chosen input
-    // takes over again when it is plugged back in.
+    // The input picked before several could be is kept by name from now on.
     if (this.chosenInputId === undefined) this.chosenInputId = state.selectedDeviceId;
-    const inputId = isConnected(this.chosenInputId) ? this.chosenInputId!
-      : isConnected(state.selectedDeviceId) ? state.selectedDeviceId
-      : inputs.find(d => d.state === 'connected')?.id ?? state.selectedDeviceId;
+    const chosen = inputs.find(d => d.id === this.chosenInputId && d.state === 'connected');
+    if (chosen && !setupFor(this.setups, chosen.name)) {
+      this.refreshing = true;
+      try {
+        setMidiInputSetup(chosen.name, { use: 'control' });
+      } finally {
+        this.refreshing = false;
+      }
+      this.setups = get(midiInputSetups);
+    }
+
+    // Every controller in use, and the band's keys. While no controller is
+    // plugged in the first input with no use stands in, without being
+    // saved, so the chosen one takes over again when it comes back.
+    const plan = resolveMidiInputs(inputs, this.setups, this.chosenInputId);
+    const inputId = plan.primary ?? (isConnected(this.chosenInputId) ? null : this.chosenInputId ?? state.selectedDeviceId);
     if (inputId !== state.selectedDeviceId) {
       midiStore.selectDevice(inputId, false);
       state = get(midiStore);
     }
-
-    if (state.selectedDeviceId) {
-      if (!isConnected(state.selectedDeviceId)) {
-        this.detachInput();
-      } else if (!this.activeInput || this.activeInput.id !== state.selectedDeviceId) {
-        // Reconnected, or switched to or from a stand-in
-        if (this.activeInput) this.detachInput();
-        this.attachInput(state.selectedDeviceId);
-      }
-    }
+    this.applyInputs(plan);
 
     const clockInputId = state.selectedClockInputId || state.selectedDeviceId;
     if (clockInputId) {
@@ -374,15 +406,24 @@ export class MidiManager {
     }
   }
 
-  /** The user picks an input. It is saved and followed across unplug/replug. */
+  /**
+   * The user picks an input as the first controller (other controllers stay
+   * in use). It is saved and followed across unplug/replug.
+   */
   selectDevice(deviceId: string) {
     this.chosenInputId = deviceId;
-    this.detachInput();
     midiStore.selectDevice(deviceId);
-    this.attachInput(deviceId);
-    if (!get(midiStore).selectedClockInputId) {
-      this.attachClockInput(deviceId);
+    const name = this.access?.inputs.get(deviceId)?.name;
+    if (name && setupFor(this.setups, name)?.use !== 'control') {
+      this.refreshing = true;
+      try {
+        setMidiInputSetup(name, { use: 'control' });
+      } finally {
+        this.refreshing = false;
+      }
+      this.setups = get(midiInputSetups);
     }
+    this.refreshDevices();
   }
 
   selectClockInputDevice(deviceId: string | null) {
@@ -423,25 +464,50 @@ export class MidiManager {
     }
   }
 
-  private attachInput(deviceId: string) {
+  /** Listen to the inputs in use now, each for its use, and let go of the rest. */
+  private applyInputs(plan: MidiInputsInUse) {
     if (!this.access) return;
-    const input = this.access.inputs.get(deviceId);
-    if (input) {
-      input.onmidimessage = this.boundMessageHandler;
-      this.activeInput = input;
-      console.log(`[MIDI] Attached to: ${input.name}`);
+    const wanted = new Map<string, InputRole>();
+    for (const id of plan.control) wanted.set(id, 'control');
+    for (const id of plan.keys) wanted.set(id, 'keys');
+    for (const [id, entry] of [...this.inputs]) {
+      if (wanted.get(id) !== entry.role || this.access.inputs.get(id) !== entry.port) this.detachInput(id);
+    }
+    for (const [id, role] of wanted) {
+      if (this.inputs.has(id)) continue;
+      const port = this.access.inputs.get(id);
+      if (!port) continue;
+      port.onmidimessage = this.boundMessageHandler;
+      this.inputs.set(id, { port, role, name: port.name || 'Unknown Device' });
+      console.log(`[MIDI] Attached to: ${port.name}${role === 'keys' ? ' (band keys)' : ''}`);
+    }
+    const inUse: MidiInputsInUse = { control: plan.control, keys: plan.keys, standIn: plan.standIn, controlNames: plan.controlNames };
+    if (!sameInputsInUse(inUse, this.inUse)) {
+      this.inUse = inUse;
+      midiInputsInUse.set(inUse);
     }
   }
 
-  private detachInput() {
-    midiRouter.releaseInputs('midi:');
-    this.gridHolds.clear();
-    if (this.activeInput) {
-      if (this.activeInput !== this.activeClockInput) {
-        this.activeInput.onmidimessage = null;
+  /** Stop listening to one input. Whatever it holds lets go. */
+  private detachInput(id: string) {
+    const entry = this.inputs.get(id);
+    if (!entry) return;
+    this.inputs.delete(id);
+    if (entry.role === 'control') {
+      // Its held pads, clip gates and studio buttons (a throw) let go.
+      midiRouter.releaseInputs(`midi:${id}:`);
+      if (this.gridHolds.size) {
+        midiRouter.releaseInputs('midi:grid:');
+        this.gridHolds.clear();
       }
-      this.activeInput = null;
+    } else {
+      releaseBandKeys(entry.name);
     }
+    if (entry.port !== this.activeClockInput) entry.port.onmidimessage = null;
+  }
+
+  private detachInputs() {
+    for (const id of [...this.inputs.keys()]) this.detachInput(id);
   }
 
   private attachClockInput(deviceId: string) {
@@ -455,12 +521,10 @@ export class MidiManager {
   }
 
   private detachClockInput() {
-    if (this.activeClockInput) {
-      if (this.activeClockInput !== this.activeInput) {
-        this.activeClockInput.onmidimessage = null;
-      }
-      this.activeClockInput = null;
-    }
+    const port = this.activeClockInput;
+    if (!port) return;
+    this.activeClockInput = null;
+    if (this.inputs.get(port.id)?.port !== port) port.onmidimessage = null;
   }
 
   private handleMessage(event: MIDIMessageEvent) {
@@ -470,7 +534,6 @@ export class MidiManager {
     const status = data[0];
     const inputId = ((event.currentTarget || event.target) as MIDIInput | null)?.id ?? null;
     const state = get(midiStore);
-    const controlInputId = state.selectedDeviceId;
     const clockInputId = state.selectedClockInputId || state.selectedDeviceId;
 
     // ===== System Real-Time messages (no channel, status byte only) =====
@@ -483,7 +546,17 @@ export class MidiManager {
       return;
     }
 
-    if (controlInputId && inputId && inputId !== controlInputId) return;
+    const entry = inputId ? this.inputs.get(inputId) : undefined;
+    // The band's keys play notes into the visuals; they never reach the
+    // mappings or MIDI learn.
+    if (entry?.role === 'keys') {
+      const setup = setupFor(this.setups, entry.name);
+      if (setup) emitBandKeys(data, setup);
+      return;
+    }
+    // An input listened to only for its clock controls nothing.
+    if (inputId && entry?.role !== 'control') return;
+    const from = { id: inputId, name: entry?.name };
 
     if (data.length < 2) return;
     const channel = status & 0x0F;
@@ -526,13 +599,13 @@ export class MidiManager {
     }
 
     // A held pad must release its original deck/page even after navigation.
-    if (this.routeControllerGrid(channel, type, number, value)) return;
+    if (this.routeControllerGrid(channel, type, number, value, from)) return;
 
     // Check if we're in learn mode
     if (state.learn.active && state.learn.targetPath) {
       // For note messages, only learn on Note On (velocity > 0)
       if (type === 'note' && value === 0) return;
-      midiStore.completeLearn(channel, type, number);
+      midiStore.completeLearn(channel, type, number, from.name);
       return;
     }
 
@@ -541,7 +614,7 @@ export class MidiManager {
     // is pressing a control precisely to find out what it is bound to: firing
     // all of it at them would be the opposite of what they asked for.
     if (!state.editMode && !state.identifyMode) {
-      midiRouter.routeMessage(channel, type, number, value);
+      midiRouter.routeMessage(channel, type, number, value, from);
     }
   }
 
@@ -692,13 +765,14 @@ export class MidiManager {
     this.quitSubscription?.(); this.quitSubscription = undefined;
     if (typeof window !== 'undefined') window.removeEventListener('beforeunload', this.onWindowClose);
     this.clockSubscription?.(); this.clockSubscription = undefined;
+    this.setupsSubscription?.(); this.setupsSubscription = undefined;
     this.detachClockInput();
     ++this.lightsRequest;
     this.lightsSubscriptions.splice(0).forEach(unsubscribe => unsubscribe());
     if (this.lightsFrame !== null) cancelAnimationFrame(this.lightsFrame);
     this.lightsFrame = null;
     this.lights.clear();
-    this.detachInput();
+    this.detachInputs();
     this.stopClockOut();
     this.disarmClockStaleTimer();
     if (this.access) {

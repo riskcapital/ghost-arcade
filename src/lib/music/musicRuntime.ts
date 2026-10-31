@@ -83,13 +83,20 @@ import {
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
 import { TRACK_IDS, clipFromRecording, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
 import type { AnalogDest, AnalogSource } from './analogSynth';
-import type { ChannelId } from './mixer';
-import { LiveInput } from './liveInput';
+import { INPUT_CHANNELS, type ChannelId } from './mixer';
+import { LiveInputs, type BandInputSpec } from './liveInput';
+import { InputNoteRoles, overallInputStatus, type BandInputStatus } from './bandInputs';
+import { BassFollower, droneShift } from './bassFollow';
+import type { TrackerEvent } from './inputTracker';
 import { setStudioDriver, studioHostsLive, studioVisualTick } from './studioPlugin';
 import { bowlSlotNotes } from './soundSlots';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
+import { attachLooper, killLooper, stopLooper } from './looperRuntime';
 import type { VoiceSourceId } from './visualVoices';
+import { BandFxVisuals } from './bandFxVisuals';
+// The studio's MIDI controls and the band's keys answer while the Studio view is hidden.
+import './studioMidiControls';
 import {
   ACID_STEPS,
   bowlNotes,
@@ -275,7 +282,18 @@ export function killAll(): void {
   stopAll();
   resumable = null;
   audio.kill();
-  bandState.update((b) => ({ ...b, frozen: false, freezeError: null }));
+  killLooper();
+  bandVisuals.releaseAll();
+  bandState.update((b) => ({ ...b, frozen: false, freezeError: null, throwing: false, washing: false }));
+  for (const listener of killListeners) listener();
+}
+
+const killListeners = new Set<() => void>();
+
+/** Run `listener` on every kill (a song waiting for the bar is dropped too). Returns the unsubscribe. */
+export function onKill(listener: () => void): () => void {
+  killListeners.add(listener);
+  return () => killListeners.delete(listener);
 }
 
 /** A new set starts clean: what was playing stops and its echoes fade out. */
@@ -399,7 +417,9 @@ function publishChords(): void {
 }
 
 function holdChord(degree: number, velocity: number): void {
-  const notes = chordNotes(get(musicStudio).key, degree, 48);
+  const key = get(musicStudio).key;
+  // Following the band's bass, the chord moves along the key to the bass's note.
+  const notes = chordNotes(key, degree + droneShift(key, droneRoot), 48);
   chords.set(degree, { notes, velocity });
   // A note another held chord already plays is counted, not restarted.
   for (const note of notes) playNote('drone', note, velocity, 'screen');
@@ -631,9 +651,9 @@ export function captureCurrentScene(): void {
 /**
  * Launch a scene on the next bar. With nothing playing there is nothing to
  * keep in time with, so it starts at once. Launching the queued scene again
- * starts it at once too.
+ * starts it at once too, as does `atOnce` (a song already on the bar).
  */
-export function launchScene(id: string): void {
+export function launchScene(id: string, atOnce = false): void {
   ensureMusicRuntime();
   const s = get(musicStudio);
   if (!s.scenes.some((sc) => sc.id === id)) return;
@@ -641,7 +661,7 @@ export function launchScene(id: string): void {
   const idle = !now.beat && !now.takeId && !loopSlots.size;
   if (sceneTimer) clearTimeout(sceneTimer);
   sceneTimer = null;
-  if (idle || s.queuedSceneId === id) {
+  if (idle || atOnce || s.queuedSceneId === id) {
     applyScene(id);
     return;
   }
@@ -1612,8 +1632,9 @@ function writeNoteInputs(notes: boolean): void {
  */
 function stopEverything(): void {
   // Also cancels an input still waiting to open (its permission prompt up).
-  if (liveInput) stopLiveInput();
+  stopLiveInput();
   releaseBand();
+  stopLooper();
   cancelQueuedScene();
   cancelLoopRecord();
   stopAllLoops();
@@ -1621,6 +1642,7 @@ function stopEverything(): void {
   throwHeld = false;
   dropHeld = false;
   releaseChords();
+  resetBassFollow();
   if (recorder.recording) stopRecording();
   if (sequencer) stopSequencer();
   stopTake();
@@ -1629,15 +1651,17 @@ function stopEverything(): void {
 
 // ── Mixer, live input and outside notes ─────────────────────────────────
 
-/** The mixer's channels for a set: its instruments, then the live input. */
-export function mixerChannels(set: StudioSet): ChannelId[] {
-  return [...AUDIO_SOURCES[set], 'input'];
+/** The mixer's channels for a set: its instruments, then each band input. */
+export function mixerChannels(set: StudioSet, inputs = get(musicStudio).liveInputs.length): ChannelId[] {
+  return [...AUDIO_SOURCES[set], ...INPUT_CHANNELS.slice(0, Math.max(1, inputs))];
 }
 
-/** Meter levels after each channel's strip, 0-1. The input's meter reads the signal before its fader. */
+/** Meter levels after each channel's strip, 0-1. An input's meter also reads its signal before its fader. */
 export function channelLevels(ids: readonly ChannelId[]): Partial<Record<ChannelId, number>> {
   const levels = audio.peekNow() === null ? {} : audio.channelLevels(ids);
-  if (liveInput?.running && ids.includes('input')) levels.input = Math.max(levels.input ?? 0, liveInput.level);
+  INPUT_CHANNELS.forEach((id, i) => {
+    if (bandInputs.isOn(i) && ids.includes(id)) levels[id] = Math.max(levels[id] ?? 0, bandInputs.level(i));
+  });
   return levels;
 }
 
@@ -1678,9 +1702,16 @@ export interface BandState {
   listening: boolean;
   /** The key heard so far. */
   heard: KeyGuess | null;
+  /** A throw or a wash is held (from the screen or a controller). */
+  throwing: boolean;
+  washing: boolean;
 }
 
-export const bandState = writable<BandState>({ frozen: false, freezeError: null, listening: false, heard: null });
+export const bandState = writable<BandState>({ frozen: false, freezeError: null, listening: false, heard: null, throwing: false, washing: false });
+
+/** The band's throws, washes and freezes, seen in the visual voices (bandFxVisuals.ts). */
+const bandVisuals = new BandFxVisuals((type, note, velocity, role, delay) => pushOutsideNote(type, note, velocity, role, delay, false));
+bandState.subscribe((b) => bandVisuals.freeze(b.frozen));
 
 const keyFinder = new KeyFinder();
 let listeningForKey = false;
@@ -1699,12 +1730,16 @@ function hearNote(note: number, velocity: number): void {
 export function setBandThrow(on: boolean): void {
   ensureMusicRuntime();
   audio.setBandThrow(on);
+  bandVisuals.throw(on);
+  if (get(bandState).throwing !== on) bandState.update((b) => ({ ...b, throwing: on }));
 }
 
 /** Wash the band into its reverb while held. */
 export function setBandWash(on: boolean): void {
   ensureMusicRuntime();
   audio.setBandWash(on);
+  bandVisuals.wash(on);
+  if (get(bandState).washing !== on) bandState.update((b) => ({ ...b, washing: on }));
 }
 
 /** Get ready to freeze (start keeping the last moment). */
@@ -1742,9 +1777,10 @@ export function useHeardKey(): void {
 function releaseBand(): void {
   audio.setBandThrow(false);
   audio.setBandWash(false);
+  bandVisuals.releaseAll();
   if (get(bandState).frozen) void audio.setBandFreeze(false);
   listeningForKey = false;
-  bandState.update((b) => ({ ...b, frozen: false, listening: false }));
+  bandState.update((b) => ({ ...b, frozen: false, listening: false, throwing: false, washing: false }));
 }
 
 // ── Music Studio plugin ─────────────────────────────────────────────────
@@ -1775,27 +1811,144 @@ export function wakeStudioVisuals(): void {
   ensureFrameLoop();
 }
 
-let liveInput: LiveInput | null = null;
+// ── Band inputs ─────────────────────────────────────────────────────────
 
-/** Start listening to the live input on the device chosen in the studio. */
+/** How each band input is doing: coming in, why not, and its level in coarse steps. */
+export const bandInputStatus = writable<BandInputStatus[]>([]);
+
+/** Listening was asked for; it ends by itself when every device has failed or gone. */
+let bandListening = false;
+let syncedInputs: unknown = null;
+let syncedDevices: unknown = null;
+const inputRoles = new InputNoteRoles();
+const bandInputs = new LiveInputs({ onEvents: heardFromInput, onStatus: publishInputStatus });
+
+function inputSpecs(s: MusicStudioState): BandInputSpec[] {
+  return s.liveInputs.map((input, i) => ({
+    deviceId: s.inputDevices[i] ?? '',
+    channel: input.channel,
+    sensitivity: input.sensitivity,
+    low: input.role === 'bass',
+    // A drum's hits count, not its pitch.
+    pitched: !ONE_SHOT_SOURCES.has(input.role),
+  }));
+}
+
+/** Notes heard on a band input go to the visuals as its role; a kick ducks the studio, a bass moves the drone. */
+function heardFromInput(index: number, events: TrackerEvent[]): void {
+  const now = get(musicStudio).liveInputs[index]?.role ?? 'all';
+  for (const e of events) {
+    const role = inputRoles.route(index, e.type, e.note, now);
+    pushOutsideNote(e.type, e.note, e.velocity, role);
+    if (e.type !== 'on') continue;
+    if (role === 'kick') duckUnderKick(e.velocity);
+    else if (role === 'bass') hearBassNote(e.note, e.velocity);
+  }
+}
+
+function publishInputStatus(statuses: BandInputStatus[]): void {
+  bandInputStatus.set(statuses);
+  // Every device failed or went away: listening ends (the errors stay to read).
+  if (bandListening && !bandInputs.open && !bandInputs.pending && statuses.some((st) => st.error)) bandListening = false;
+  const s = get(musicStudio);
+  // On while listening, a device reopening (its device just changed) included.
+  const on = bandListening && (bandInputs.open || bandInputs.pending);
+  const { error } = overallInputStatus(statuses, s.liveInputs);
+  if (on !== s.inputOn || error !== s.inputError) musicStudio.setInputStatus(on, error);
+}
+
+/** Start listening to every band input, each on the device and channel chosen in the studio. */
 export async function startLiveInput(): Promise<void> {
   const s = get(musicStudio);
-  liveInput ??= new LiveInput(s.liveInputs[0].sensitivity, (events) => {
-    const role = get(musicStudio).liveInputs[0].role;
-    for (const e of events) pushOutsideNote(e.type, e.note, e.velocity, role);
-  }, () => musicStudio.setInputStatus(false, 'The audio input was disconnected.'));
+  bandListening = true;
+  syncedInputs = s.liveInputs;
+  syncedDevices = s.inputDevices;
+  audio.setInputs(s.liveInputs);
   try {
-    const ctx = audioContextForInput();
-    // False: stopped, or started again, while it waited. That call owns the status.
-    if (await liveInput.start(ctx, s.inputDevices[0] ?? '', audio.inputChannel())) musicStudio.setInputStatus(true);
+    await bandInputs.start(audioContextForInput(), inputSpecs(s), (i) => audio.inputChannel(i));
   } catch (err) {
+    bandListening = false;
     musicStudio.setInputStatus(false, err instanceof Error ? err.message : 'The audio input could not be opened.');
   }
 }
 
 export function stopLiveInput(): void {
-  liveInput?.stop();
-  musicStudio.setInputStatus(false);
+  bandListening = false;
+  bandInputs.stop();
+  inputRoles.clear();
+  const s = get(musicStudio);
+  if (s.inputOn || s.inputError) musicStudio.setInputStatus(false);
+}
+
+/** Follow the studio's band inputs: their strips, and while listening their devices and channels. */
+function syncBandInputs(s: MusicStudioState): void {
+  audio.setInputs(s.liveInputs);
+  if (!s.bandFx.followBass && (droneRoot !== null || bassTimer)) resetBassFollow();
+  if (!bandListening || (s.liveInputs === syncedInputs && s.inputDevices === syncedDevices)) return;
+  syncedInputs = s.liveInputs;
+  syncedDevices = s.inputDevices;
+  try {
+    void bandInputs.sync(audioContextForInput(), inputSpecs(s), (i) => audio.inputChannel(i));
+  } catch { /* no audio: the next start says so */ }
+}
+
+// ── With the band: under its kick, on its bass ──────────────────────────
+
+/**
+ * Dip the drone, bowls, FX pads and synth under a kick, by the band
+ * effects' duck depth and release. A band input playing the kick calls it;
+ * so can a kick from MIDI.
+ */
+export function duckUnderKick(velocity = 1): void {
+  audio.duckUnderKick(velocity);
+}
+
+const bassFollower = new BassFollower();
+let bassTimer: ReturnType<typeof setTimeout> | null = null;
+/** The band's bass note (a pitch class) the drone's chords are rooted on; null for the key's root. */
+let droneRoot: number | null = null;
+
+/**
+ * A note from the band's bass: a band input playing the bass calls it; so
+ * can a MIDI bass. With Follow bass on, the drone's chords move to it once
+ * it has held for a moment (bassFollow.ts).
+ */
+export function hearBassNote(note: number, velocity = 1): void {
+  if (!(velocity > 0) || !get(musicStudio).bandFx.followBass) return;
+  bassFollower.hear(note, performance.now() / 1000);
+  settleBass();
+}
+
+function settleBass(): void {
+  if (bassTimer) clearTimeout(bassTimer);
+  bassTimer = null;
+  const now = performance.now() / 1000;
+  const root = bassFollower.settle(now);
+  if (root !== null) moveDroneRoot(root);
+  const wait = bassFollower.wait(now);
+  if (wait !== null) bassTimer = setTimeout(settleBass, Math.ceil(wait * 1000) + 1);
+}
+
+/** Root the drone's chords on `root`. New notes start before old ones end, so shared notes ring on and the rest cross-fade. */
+function moveDroneRoot(root: number | null): void {
+  droneRoot = root;
+  const key = get(musicStudio).key;
+  const shift = droneShift(key, root);
+  for (const [degree, chord] of chords) {
+    const notes = chordNotes(key, degree + shift, 48);
+    if (notes.every((n, i) => n === chord.notes[i])) continue;
+    for (const note of notes) playNote('drone', note, chord.velocity, 'screen');
+    for (const note of chord.notes) releaseNote('drone', note, 'screen');
+    chords.set(degree, { notes, velocity: chord.velocity });
+  }
+}
+
+/** Stop following: the drone goes back to the key's root. */
+function resetBassFollow(): void {
+  if (bassTimer) clearTimeout(bassTimer);
+  bassTimer = null;
+  bassFollower.reset();
+  if (droneRoot !== null) moveDroneRoot(null);
 }
 
 function audioContextForInput(): AudioContext {
@@ -1818,6 +1971,8 @@ export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
   setStudioDriver(drivenForStudio);
+  // The band looper's actions and MIDI controls (looperRuntime.ts).
+  attachLooper(audio);
   // Risers land on the next bar line of the launch clock.
   audio.setBarClock(() => {
     const { beat, beatMs } = launchClockPosition();
@@ -1860,10 +2015,8 @@ export function ensureMusicRuntime(): void {
     syncAnalogRoutes(s);
     syncMacroFx(true);
     audio.setMasterVolume(s.masterVolume);
-    audio.setMixer(s.mixer, mixerChannels(s.set));
-    audio.setInputVolume(s.liveInputs[0].volume);
-    audio.setInputMonitor(s.liveInputs[0].monitor);
-    liveInput?.setSensitivity(s.liveInputs[0].sensitivity);
+    audio.setMixer(s.mixer, mixerChannels(s.set, s.liveInputs.length));
+    syncBandInputs(s);
     // With Live in control the studio's instruments step aside.
     if (s.liveControl && !wasLiveControl) stopAll();
     wasLiveControl = s.liveControl;

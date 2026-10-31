@@ -42,6 +42,29 @@ export interface MidiMapping {
   mode: MidiMappingMode;
   label: string;               // Human-readable: "Point Size", "Layer 1 Opacity"
   discreteValues?: string[];   // For dropdowns: ordered list of option values
+  /** The input it was learned on, by name (ids change between sessions).
+   *  It answers only that input while it is plugged in. Absent: any input. */
+  device?: string;
+}
+
+/**
+ * What a MIDI input is used for on this computer:
+ * - control: a controller; its messages go to the mappings and MIDI learn.
+ * - keys: the band's keyboard or pads; its notes play into the visuals.
+ * - off: not used.
+ */
+export type MidiInputUse = 'control' | 'keys' | 'off';
+
+export interface MidiInputSetup {
+  /** The input's name: saved by name because ids change between sessions. */
+  name: string;
+  use: MidiInputUse;
+  /** Band keys: the sound its notes count as for the visuals (a visual voice source). */
+  role?: string;
+  /** Band keys: its notes also play a studio instrument. */
+  play?: boolean;
+  /** Band keys: the instrument they play; empty plays the one picked in the studio. */
+  instrument?: string;
 }
 
 export interface MidiDevice {
@@ -66,7 +89,7 @@ export interface MidiStoreState {
   available: boolean;          // Web MIDI API supported
   devices: MidiDevice[];       // All detected MIDI input devices
   outputDevices: MidiDevice[]; // All detected MIDI output devices (for clock send)
-  selectedDeviceId: string | null;  // Currently selected input device
+  selectedDeviceId: string | null;  // The first controller in use (see midiInputs.ts for the rest)
   selectedClockInputId: string | null; // Optional separate input for MIDI clock; null = selectedDeviceId
   selectedOutputId: string | null;  // Currently selected output device for clock send
   mappings: MidiMapping[];     // All current mappings

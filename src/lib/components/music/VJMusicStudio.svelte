@@ -30,12 +30,14 @@
   import BerlinModules from './BerlinModules.svelte';
   import DubModules from './DubModules.svelte';
   import AnalogModules from './AnalogModules.svelte';
+  import { studioOnDeck } from '../../music/studioDeck';
 
   let minimized = $state(false);
   let elapsed = $state(0);
 
   const s = $derived($musicStudio);
-  const shown = $derived(s.isOpen && !s.studioView);
+  // On the deck the studio is one strip (StudioDeckStrip) instead.
+  const shown = $derived(s.isOpen && !s.studioView && !$studioOnDeck);
 
   $effect(() => {
     if (!s.recording) {

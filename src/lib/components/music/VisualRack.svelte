@@ -22,6 +22,7 @@
     studioTarget,
   } from '../../music/studioTarget';
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
+  import { stepVoiceLook, toggledVoiceLevel } from '../../music/studioMidiControls';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
 
@@ -114,7 +115,7 @@
 
 <StudioModule title="Visuals" subtitle={where} grow>
   {#snippet head()}
-    <select class="scene" value="" onchange={pickScene} aria-label="Load a visual scene" title="Load a stack of voices for this set">
+    <select class="scene" value="" onchange={pickScene} aria-label="Load a visual scene" title="Load a stack of voices for this set" data-midi-path="studio:visuals.scene-next" data-midi-label="Next visual scene" data-midi-mode="toggle">
       <option value="" disabled>Load scene…</option>
       {#each ownScenes as sc (sc.id)}<option value={sc.id}>{sc.name}</option>{/each}
       {#if otherScenes.length}
@@ -135,7 +136,21 @@
         {@const all = looks(voice.file)}
         <div class="voice">
           <div class="line">
-            <span class="led" class:on={voice.level > 0} style="--a: {activity[i] ?? 0}" aria-hidden="true"></span>
+            <button
+              class="led"
+              class:on={voice.level > 0}
+              style="--a: {activity[i] ?? 0}"
+              onclick={() => setStudioVoice(i, { level: toggledVoiceLevel(i, voice.level) })}
+              aria-pressed={voice.level === 0}
+              aria-label="Mute voice {i + 1}"
+              title={voice.level > 0 ? 'Mute this voice' : 'Bring this voice back'}
+              data-midi-path="studio:voice.{i + 1}.mute"
+              data-midi-label="Voice {i + 1} mute"
+              data-midi-mode="toggle"
+            ></button>
+            <button class="icon step" onclick={() => stepVoiceLook(i, -1)} aria-label="Previous look for voice {i + 1}" title="Previous look" data-midi-path="studio:voice.{i + 1}.look-prev" data-midi-label="Voice {i + 1} previous look" data-midi-mode="toggle">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 3 4.5 6l3 3" /></svg>
+            </button>
             <select class="pick" value={voice.file} onchange={(e) => replaceStudioVoice(i, (e.target as HTMLSelectElement).value)} aria-label="Voice {i + 1}" title={voiceShaderByFile(voice.file)?.blurb ?? ''}>
               {#each families as fam (fam.id)}
                 <optgroup label={fam.label}>
@@ -143,7 +158,10 @@
                 </optgroup>
               {/each}
             </select>
-            <select class="follows" value={voice.source} onchange={(e) => setStudioVoice(i, { source: (e.target as HTMLSelectElement).value as VoiceSourceId })} aria-label="Sound voice {i + 1} follows" title="The sound this voice follows">
+            <button class="icon step" onclick={() => stepVoiceLook(i, 1)} aria-label="Next look for voice {i + 1}" title="Next look" data-midi-path="studio:voice.{i + 1}.look-next" data-midi-label="Voice {i + 1} next look" data-midi-mode="toggle">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" /></svg>
+            </button>
+            <select class="follows" value={voice.source} onchange={(e) => setStudioVoice(i, { source: (e.target as HTMLSelectElement).value as VoiceSourceId })} aria-label="Sound voice {i + 1} follows" title="The sound this voice follows" data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
               {#each VOICE_SOURCES as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
             </select>
             <button class="auto studio-btn" class:on={voice.auto} onclick={() => setStudioVoice(i, { auto: !voice.auto })} aria-pressed={voice.auto} title={voice.auto ? 'Shows only while its sound plays' : 'Always shows'}>Auto</button>
@@ -153,7 +171,7 @@
           </div>
           <div class="controls">
             {#each all.slice(0, MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
-            <StudioKnob label="Level" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
+            <StudioKnob label="Level" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
             {#if all.length > MAIN_CONTROLS}
               <button class="icon more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for voice {i + 1}" title="All controls">
                 <svg viewBox="0 0 12 12" aria-hidden="true"><path d={open === i ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
@@ -180,12 +198,18 @@
   .voice:last-of-type { border-bottom: 0; }
   .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .led {
+    position: relative;
     flex: 0 0 auto;
     width: 9px;
     height: 9px;
+    padding: 0;
     border-radius: 50%;
     border: 1px solid var(--studio-edge);
+    background: transparent;
+    cursor: pointer;
   }
+  /* A finger-sized target around the light; it mutes the voice. */
+  .led::after { content: ''; position: absolute; inset: -6px; }
   .led.on {
     border-color: var(--studio-accent);
     background: color-mix(in srgb, var(--studio-accent) calc(25% + var(--a) * 75%), transparent);
@@ -213,6 +237,7 @@
     cursor: pointer;
   }
   .more { align-self: center; }
+  .line .step { width: 16px; }
   .icon svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .icon.on, .icon:hover { color: var(--studio-ink); border-color: var(--studio-edge); }
   .all { display: flex; flex-wrap: wrap; gap: 8px 6px; padding: 8px 0 2px 15px; }

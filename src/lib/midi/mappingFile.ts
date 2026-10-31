@@ -86,6 +86,8 @@ function coerceMapping(raw: unknown, index: number, makeId: () => string, seenId
       mode,
       label: clip(typeof r.label === 'string' && r.label ? r.label : r.path.trim(), MAX_LABEL_LENGTH),
       ...(discrete ? { discreteValues: discrete } : {}),
+      // The input it was learned on. Left out, it answers any input.
+      ...(typeof r.device === 'string' && r.device ? { device: clip(r.device, MAX_CONTROLLER_LENGTH) } : {}),
     },
   };
 }

@@ -50,10 +50,12 @@
   import MixerPanel from './MixerPanel.svelte';
   import BandPanel from './BandPanel.svelte';
   import SongsPanel from './SongsPanel.svelte';
+  import BandLooper from './BandLooper.svelte';
   import SongStrip from './SongStrip.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { ensureLiveFeed } from '../../music/liveFeed';
+  import { STUDIO_VIEW_KEY_LABEL, showDeck, showTray } from '../../music/studioDeck';
 
   let { nativePreview = false }: { nativePreview?: boolean } = $props();
 
@@ -62,8 +64,8 @@
   let elapsed = $state(0);
   let tempo = $state(120);
   let scanX = $state(0);
-  let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band' | 'songs'>('session');
-  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band', songs: 'Songs' } as const;
+  let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band' | 'looper' | 'songs'>('session');
+  const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band', looper: 'Looper', songs: 'Songs' } as const;
 
   const s = $derived($musicStudio);
   const open = $derived(s.isOpen && s.studioView && $vjClipLauncher.isOpen);
@@ -84,12 +86,14 @@
             : 'Waiting for Ableton Live'
           : `In ${keyLabel(s.key)}`
         : lowerTab === 'mixer'
-          ? 'Level, EQ and pan for every instrument and the live input'
+          ? 'Level, EQ and pan for every instrument and band input'
           : lowerTab === 'band'
             ? "Throw, wash and freeze the band's sound; play in its key"
-            : lowerTab === 'songs'
-              ? 'A setup kept for each song, and the set list to play them in'
-              : 'Recorded performances',
+            : lowerTab === 'looper'
+              ? 'Bars of the band, recorded in time, looped and chopped onto the pads'
+              : lowerTab === 'songs'
+                ? 'A setup kept for each song, and the set list to play them in'
+                : 'Recorded performances',
   );
 
   // The live output draws into the frame while the view is up.
@@ -190,12 +194,13 @@
 {#snippet lower()}
   <StudioModule title={LOWER_TITLES[lowerTab]} subtitle={lowerSubtitle} class="lower">
     {#snippet lead()}
-      <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes, mixer, band or songs">
+      <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes, mixer, band, looper or songs">
         <button role="tab" aria-selected={lowerTab === 'session'} class:active={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
         <button role="tab" aria-selected={lowerTab === 'scenes'} class:active={lowerTab === 'scenes'} onclick={() => (lowerTab = 'scenes')}>{#if s.scenes.length}Scenes {s.scenes.length}{:else}Scenes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'takes'} class:active={lowerTab === 'takes'} onclick={() => (lowerTab = 'takes')}>{#if s.takes.length}Takes {s.takes.length}{:else}Takes{/if}</button>
         <button role="tab" aria-selected={lowerTab === 'mixer'} class:active={lowerTab === 'mixer'} onclick={() => (lowerTab = 'mixer')}>Mixer</button>
         <button role="tab" aria-selected={lowerTab === 'band'} class:active={lowerTab === 'band'} onclick={() => (lowerTab = 'band')}>Live band</button>
+        <button role="tab" aria-selected={lowerTab === 'looper'} class:active={lowerTab === 'looper'} onclick={() => (lowerTab = 'looper')}>Looper</button>
         <button role="tab" aria-selected={lowerTab === 'songs'} class:active={lowerTab === 'songs'} onclick={() => (lowerTab = 'songs')}>{#if s.songs.length}Songs {s.songs.length}{:else}Songs{/if}</button>
       </div>
     {/snippet}
@@ -216,6 +221,8 @@
       <MixerPanel />
     {:else if lowerTab === 'band'}
       <BandPanel />
+    {:else if lowerTab === 'looper'}
+      <div class="scroll"><BandLooper /></div>
     {:else if lowerTab === 'songs'}
       <SongsPanel />
     {:else if lowerTab === 'takes'}
@@ -250,7 +257,7 @@
     <header class="bar">
       <span class="bar-title">Studio</span>
       <div class="group">
-        <button class="transport" class:on={playing} onclick={toggleAll} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'} aria-label={playing ? 'Stop everything' : 'Play'}>
+        <button class="transport" class:on={playing} onclick={toggleAll} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'} aria-label={playing ? 'Stop everything' : 'Play'} data-midi-path="studio:studio.play" data-midi-label="Play or stop the studio" data-midi-mode="toggle">
           {#if playing}
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
           {:else}
@@ -285,8 +292,9 @@
         {/each}
       </div>
       <div class="group">
-        <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included">Kill</button>
-        <button class="text-btn" onclick={() => musicStudio.setStudioView(false)} title="Back to the music tray; the music keeps playing">Tray</button>
+        <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included" data-midi-path="studio:studio.kill" data-midi-label="Kill all sound" data-midi-mode="toggle">Kill</button>
+        <button class="text-btn" onclick={showDeck} title="Go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Studio view or VJ deck" data-midi-mode="toggle">Deck</button>
+        <button class="text-btn" onclick={showTray} title="Back to the music tray under the deck; the music keeps playing">Tray</button>
         <button class="text-btn" onclick={() => musicStudio.close()} title="Close the studio and stop the music">Exit</button>
       </div>
     </header>

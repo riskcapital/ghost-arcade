@@ -20,6 +20,8 @@ import { audioStore } from '../stores/audio';
 import { buildNativeAnchor, needsNativeReanchor, predictNativePlayheadSeconds } from '../media/nativeTransport';
 import { createNativeVideoScratchController } from '../renderer/nativeVideoScratch';
 import { runAsLiveControl } from '../stores/historyHooks';
+import { mappingHearsDevice, midiInputsInUse } from './midiInputs';
+import { STUDIO_SCOPE, runStudioControl, studioControl } from '../music/studioControls';
 
 // Controller, OSC, DMX and keyboard writes are performance, not edits: they
 // must not become undo steps (a fader would fill the undo history in a
@@ -89,6 +91,24 @@ midiStore.subscribe(state => {
   }
 });
 
+// The controllers in use, by name: a mapping learned on one of them answers only it.
+let controlNames: readonly string[] = [];
+midiInputsInUse.subscribe(inUse => { controlNames = inUse.controlNames; });
+
+/** The input a message came from. */
+export interface MidiMessageSource {
+  id?: string | null;
+  name?: string;
+}
+
+/** Studio buttons held now, by the input holding them, so an unplugged controller lets go. */
+const studioHeld = new Map<string, string>();
+
+/** A studio control played as a button (not a knob): every press and release matters. */
+function isStudioButton(path: string): boolean {
+  return path.startsWith(STUDIO_SCOPE) && studioControl(path.slice(STUDIO_SCOPE.length))?.kind !== 'value';
+}
+
 // Throttle: track last update time per path to avoid flooding stores
 const lastUpdateTime = new Map<string, number>();
 const THROTTLE_MS = 16; // ~60fps max update rate
@@ -141,24 +161,32 @@ export function registerShowControl(handler: ((action: ShowControlAction) => voi
 }
 
 class MidiRouter {
-  routeMessage(channel: number, type: MidiMessageType, number: number, value: number) {
+  /** `from`: the input it came from, so mappings learned on another controller stay quiet. */
+  routeMessage(channel: number, type: MidiMessageType, number: number, value: number, from?: MidiMessageSource) {
     const key = `${type}:${number}`;
     const mappings = lookupMap.get(key);
     if (!mappings || mappings.length === 0) return;
 
     const now = performance.now();
+    // Holds are released per input, so the input is part of the hold's id.
+    const inputPrefix = from?.id ? `midi:${from.id}:` : 'midi:';
 
     for (const mapping of mappings) {
       // Channel filter
       if (mapping.channel !== -1 && mapping.channel !== channel) continue;
+      if (!mappingHearsDevice(mapping, from?.name, controlNames)) continue;
 
-      const isClipTrigger = /^(vj|vj-b):\d+:trigger:\d+$/.test(normalizeControlPath(mapping.path));
-      const isTempoNudge = /^vj:tempo:(nudge-up|nudge-down|resync)$/.test(normalizeControlPath(mapping.path));
-      const isVideoCue = /^(vj|vj-b):\d+:video:cue(?:-set|-clear)?:[0-7]$/.test(normalizeControlPath(mapping.path));
-      const isLayerFader = /^(vj|vj-b):\d+:opacity$/.test(normalizeControlPath(mapping.path));
+      const path = normalizeControlPath(mapping.path);
+      const isClipTrigger = /^(vj|vj-b):\d+:trigger:\d+$/.test(path);
+      const isTempoNudge = /^vj:tempo:(nudge-up|nudge-down|resync)$/.test(path);
+      const isVideoCue = /^(vj|vj-b):\d+:video:cue(?:-set|-clear)?:[0-7]$/.test(path);
+      const isLayerFader = /^(vj|vj-b):\d+:opacity$/.test(path);
+      // Every press and release of a studio pad or button counts (two fast hits are two hits).
+      const isStudioPress = isStudioButton(path);
+      const inputId = `${inputPrefix}${mapping.id}:${channel}:${number}`;
       // Preserve fader zero crossings, pad releases and final scratch targets.
       // The native scrubber coalesces pending targets without dropping it.
-      if (!isVideoScratchPath(mapping.path) && !isClipTrigger && !isLayerFader && !isVideoCue && !isTempoNudge) {
+      if (!isVideoScratchPath(mapping.path) && !isClipTrigger && !isLayerFader && !isVideoCue && !isTempoNudge && !isStudioPress) {
         const wait = THROTTLE_MS - (now - (lastUpdateTime.get(mapping.path) || 0));
         clearTimeout(trailingUpdates.get(mapping.path));
         trailingUpdates.delete(mapping.path);
@@ -168,7 +196,7 @@ class MidiRouter {
             const at = performance.now();
             lastUpdateTime.set(mapping.path, at);
             if (at < (userInteractingPaths.get(mapping.path) || 0)) return;
-            this.dispatch(mapping.path, this.convertValue(value, mapping, type), mapping, `midi:${mapping.id}:${channel}:${number}`);
+            this.dispatch(mapping.path, this.convertValue(value, mapping, type), mapping, inputId);
           }, wait));
           continue;
         }
@@ -183,7 +211,7 @@ class MidiRouter {
       const targetValue = this.convertValue(value, mapping, type);
 
       // Dispatch to correct store
-      this.dispatch(mapping.path, (isClipTrigger || isVideoCue || isTempoNudge) && type === 'note' && value === 0 ? 0 : targetValue, mapping, `midi:${mapping.id}:${channel}:${number}`);
+      this.dispatch(mapping.path, (isClipTrigger || isVideoCue || isTempoNudge || isStudioPress) && type === 'note' && value === 0 ? 0 : targetValue, mapping, inputId);
     }
   }
 
@@ -234,7 +262,15 @@ class MidiRouter {
    * `discreteValues` lets callers target the discrete-cycle params
    * (e.g. crossfader transition, blend mode) with named values.
    */
-  public releaseInputs(prefix: string) { vjClipLauncher.releaseInputs(prefix); releaseTempoNudgeInputs(prefix); }
+  public releaseInputs(prefix: string) {
+    vjClipLauncher.releaseInputs(prefix);
+    releaseTempoNudgeInputs(prefix);
+    for (const [inputId, id] of [...studioHeld]) {
+      if (!inputId.startsWith(prefix)) continue;
+      studioHeld.delete(inputId);
+      runAsLiveControl(() => runStudioControl(id, 0));
+    }
+  }
 
   /**
    * Drive a control path. `layerId` aims a mapping-mode path (map:…) at that
@@ -299,6 +335,12 @@ class MidiRouter {
         case 'show':
           this.dispatchShow(parts, value);
           break;
+        case 'studio':
+          // studio:<id> — the Music Studio's own controls (throw, freeze,
+          // FX pads, bowls, the looks on each voice), registered by the
+          // studio itself (studioControls.ts). Ids are lowercase.
+          this.dispatchStudio(path.slice(STUDIO_SCOPE.length), value, mapping, inputId);
+          break;
         case 'tray':
           // Media Library navigation + live-source recording. The tray owns
           // its own state (active tab, browse cursor, recorders), so the
@@ -314,6 +356,28 @@ class MidiRouter {
     } catch (err) {
       console.warn(`[MIDI Router] Error dispatching to ${path}:`, err);
     }
+  }
+
+  /**
+   * A button sends its velocity on press and 0 on release (either mode:
+   * 'toggle' sends 1 and 0), and the control acts on the edges: a hold is on
+   * while held, a toggle flips once per press, a trigger fires once per
+   * press. A knob sends its position.
+   */
+  private dispatchStudio(id: string, value: number, mapping: MidiMapping, inputId?: string) {
+    const control = studioControl(id);
+    if (!control || !Number.isFinite(value)) return;
+    // An encoder's steps have no position to give a knob or a button.
+    if (mapping.mode === 'relative') return;
+    if (control.kind !== 'value' && inputId) {
+      if (value > 0) studioHeld.set(inputId, id);
+      else studioHeld.delete(inputId);
+    }
+    // A studio knob takes 0-1 across its own range, whatever range the
+    // learned element had (the duck release knob is in seconds).
+    const span = Number(mapping.max) - Number(mapping.min);
+    const position = control.kind === 'value' && Number.isFinite(span) && span !== 0 ? (value - Number(mapping.min)) / span : value;
+    runStudioControl(id, position);
   }
 
   private dispatchShow(parts: string[], value: number) {

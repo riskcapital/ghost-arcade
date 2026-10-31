@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InputTracker, detectPitch, gateDb, hzToMidi, rmsDb } from './inputTracker';
+import { InputTracker, detectLowPitch, detectPitch, gateDb, hzToMidi, rmsDb } from './inputTracker';
 import { channelAudible, formatDb, formatPan, meterLevel, normalizeMixer, normalizeStrip } from './mixer';
 
 const SR = 48000;
@@ -92,6 +92,44 @@ describe('InputTracker', () => {
     t.step(tone(330, 0.4), SR, frame);
     expect(t.reset()).toEqual([{ type: 'off', note: 64, velocity: 0 }]);
     expect(t.reset()).toEqual([]);
+  });
+
+  it('hears only the hits of a drum', () => {
+    const t = new InputTracker({ sensitivity: 0.5, pitched: false });
+    t.step(silence(), SR, 0);
+    // A pitched tone still counts as a hit, on the middle note, not its pitch.
+    expect(t.step(tone(110, 0.4), SR, frame)).toEqual([{ type: 'on', note: 60, velocity: expect.any(Number) }]);
+    expect(t.step(tone(247, 0.4), SR, 2 * frame)).toEqual([]);
+    expect(t.step(tone(247, 0.4), SR, 3 * frame)).toEqual([]);
+  });
+
+  it('hears a bass down to its low E when set low', () => {
+    const block = (hz: number) => {
+      const out = new Float32Array(4096);
+      for (let i = 0; i < out.length; i++) {
+        const t = i / SR;
+        out[i] = 0.3 * (Math.sin(2 * Math.PI * hz * t) + 0.5 * Math.sin(4 * Math.PI * hz * t) + 0.3 * Math.sin(6 * Math.PI * hz * t));
+      }
+      return out;
+    };
+    // Low E (41.2 Hz) and A (55 Hz): under what a guitar tracker looks for.
+    for (const [hz, note] of [[41.2, 28], [55, 33]]) {
+      const t = new InputTracker({ sensitivity: 0.5, low: true });
+      t.step(new Float32Array(4096), SR, 0);
+      expect(t.step(block(hz), SR, frame)).toEqual([{ type: 'on', note, velocity: expect.any(Number) }]);
+    }
+    // Without it, the low E is not heard as a pitch.
+    expect(detectPitch(block(41.2), SR)?.hz ?? 0).not.toBeCloseTo(41.2, 0);
+  });
+});
+
+describe('detectLowPitch', () => {
+  it.each([41.2, 55, 73.4, 98, 196])('finds %f Hz', (hz) => {
+    const samples = new Float32Array(4096);
+    for (let i = 0; i < samples.length; i++) samples[i] = 0.5 * Math.sin((2 * Math.PI * hz * i) / SR) + 0.2 * Math.sin((4 * Math.PI * hz * i) / SR);
+    const p = detectLowPitch(samples, SR);
+    expect(p).not.toBeNull();
+    expect(Math.abs(12 * Math.log2(p!.hz / hz))).toBeLessThan(0.3);
   });
 });
 

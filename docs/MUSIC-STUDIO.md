@@ -62,7 +62,8 @@ input, so the existing audio-reactive shaders follow the music too.
   pedal, all-notes-off. Channel 10 plays the kit. The studio listens beside the
   app's MIDI mapping rather than taking it over, and leaves alone notes that
   are already mapped (a pad that launches a clip) or that MIDI learn is
-  waiting for.
+  waiting for. Inputs set to **Band keys** are left to the band's keys (see
+  MIDI controllers and the band's keys below), so their notes do not play twice.
 
 ### Mixer (`mixer.ts`, `components/music/MixerPanel.svelte`)
 
@@ -74,14 +75,21 @@ fader is the instrument's volume, so scenes, the bath morph and the dub drop
 still move it. Solo only counts among the set's channels. A meter reads after
 each strip. The strips are saved with the project (`mixer`).
 
-### Live input (`liveInput.ts`, `inputTracker.ts`)
+### Band inputs (`liveInput.ts`, `bandInputs.ts`, `inputTracker.ts`)
 
-An instrument on an audio input (a guitar, a voice) plays through the input
-strip and drives the visual voices. The input strip chooses the device (kept
-per computer), what the visuals see it as (**Feeds**: Lead, Bass, Kick...),
-how quietly it can be played and still count (**Sens**), and whether it is
-heard (**MON**; off, it only drives the visuals). Its call-audio processing
-(echo cancelling, noise suppression, auto gain) is off.
+Up to four instruments on audio inputs (bass and guitar on an interface, a
+vocal mic) play through their own input strips and drive the visual voices.
+Each input has a name, a device (kept per computer), a channel of that device
+(**Mix** hears every channel together; a stereo interface sends its two
+inputs as channels 1 and 2), what the visuals see it as (Lead, Bass, Kick...),
+how quietly it can be played and still count (**Sens**), whether it is heard
+(**Monitor**; off, it only drives the visuals), and an **FX** send into the
+band effects and the looper. **Add input** starts the next one on the same
+device and the next channel. Each device is opened once and split into its
+channels; a channel the device does not send says so instead of staying
+silent. Call-audio processing (echo cancelling, noise suppression, auto gain)
+is off. The inputs are saved with the project (`liveInputs`); a project from
+before has its one input as the first.
 
 The tracker reads the raw signal about 80 times a second, on its own timer:
 a hit is a jump of 6 dB or more over the recent level, above the gate;
@@ -90,7 +98,8 @@ block is clearly periodic (one string or one voice; a strummed chord gives
 hits and level but no pitch); a held note that slides to a new pitch and
 stays there becomes a new note; a note ends 6 dB under the gate. The notes go
 straight to the visual voices (`pushOutsideNote`) and never play a studio
-instrument.
+instrument. An input playing the bass listens down to a bass's low E; an
+input set to a drum sound skips pitch.
 
 ### The sound library (`sounds/`, `soundSlots.ts`)
 
@@ -142,7 +151,100 @@ back from the studio; the band's dry sound stays on the band's desk.
   how sure it is. **Use key** puts the studio in it, so the bowls, chords,
   drone, dub stab and tuned pads play along.
 
-Kill and closing the studio let the throw, the wash and the freeze go.
+**With the band** (in the band inputs group):
+
+- **Duck**: each hit on an input set to Kick dips the drone, the bowls, the
+  FX pads and the synth (in 5 ms, scheduled at the hit) by the depth chosen;
+  they come back over **Release**. A MIDI kick from the band's keys ducks
+  them too.
+- **Follow bass**: chords held on the drone move along the key so their root
+  lands on the note the bass input (or a MIDI bass) is playing. A note must
+  hold for 150 ms before the chords move; a note outside the key goes to the
+  nearest one in it. The studio's key never changes, and turning it off puts
+  the chords back on the key's root.
+
+**Looper** (`bandLooper.ts`, `looperWorklet.ts`, `looperRuntime.ts`,
+`sounds/chops.ts`): **Record** takes 1, 2, 4 or 8 bars of the band from the
+next bar line (it counts in), frame-exact against the launch clock, into loop
+A or B, and the loop plays on in time from the bar it ends on. Pressing
+Record while it counts in cancels; while it records, it ends on the next bar
+line. Play starts a stopped loop on the next bar line in the phase it was
+recorded in; Stop is immediate. Loops follow tempo changes of up to 3%; past
+that a loop keeps its own length and says so. **Chop to pads** slices the
+loop into eight and puts the slices on the set's FX pads (they answer the
+pads' Size, Tail and Tone); **Put back pads** restores what was there. Chops
+last until the studio closes and are not saved; a pad left on a chop plays
+the fallback shot when the project is opened again. A recording is capped at
+32 seconds.
+
+Kill lets the throw, the wash and the freeze go, drops a recording and stops
+the loops; closing the studio also frees the loops and puts chopped pads back.
+
+The visual voices feel the band effects (`bandFxVisuals.ts`): a throw holds
+a note on the shots-and-effects sound and flashes on every echo repeat, fading
+with the echo after it is let go; a wash holds one too; a freeze holds a note
+on the pads-and-textures sound until it is let go.
+
+### MIDI controllers and the band's keys (`midi/midiInputs.ts`, `studioControls.ts`, `studioMidiControls.ts`, `bandKeys.ts`)
+
+Settings > MIDI lists every MIDI input. Each one is a **Controller** (it runs
+the app through MIDI Learn), **Band keys** (a band member's keyboard or pads)
+or off, and any number can be in use at once; the choice is kept per computer
+by input name. A mapping learned on one controller fires only from it, so two
+controllers can use the same notes; mappings from before fire from any. While
+no controller is plugged in, an input with no use stands in, as before.
+
+Band keys play into the visuals as the sound chosen for that input (Chords
+unless set), as pitched notes, so they also tell the band's key. Channel 10
+counts as drums (35/36 kick, 37-40 snare and clap, 42/44/46 hats, the rest
+perc); a kick ducks the studio and a bass input moves Follow bass. **Play the
+studio** also plays them on a studio instrument while the studio is open.
+
+Every studio control a performer reaches for is `studio:<id>` to the router
+and learnable on screen (the Live band tab, the FX pads, the bowls, the
+visual rack, the song strip, Play and Kill). They are registered by the
+studio's runtime, not its panels, so they answer while the Studio view is
+hidden:
+
+| ids | kind |
+| --- | --- |
+| `band.throw`, `band.wash` | hold |
+| `band.freeze`, `band.listen`, `band.inputs`, `band.follow-bass` | toggle |
+| `band.echo-send`, `band.verb-send`, `band.return`, `band.duck`, `band.duck-release`, `input.1-4.level`, `input.1-4.fx-send` | knob |
+| `pad.1`-`pad.8` | trigger |
+| `bowl.1`-`bowl.5` | hold (velocity on press, released on let go) |
+| `voice.1-6.level` | knob |
+| `voice.1-6.look-next`, `.look-prev`, `.follow-next` | trigger |
+| `voice.1-6.mute` | toggle |
+| `visuals.scene-next`, `visuals.scene-prev` | trigger |
+| `looper.record`, `looper.chop` | trigger |
+| `looper.play-a`, `looper.play-b` | toggle |
+| `song.next`, `song.prev`, `song.go` | trigger |
+| `studio.view`, `studio.play` | toggle |
+| `studio.kill` | trigger |
+
+A knob gets 0-1 across its own range whatever range the learned element had.
+Controller moves are live control: they make no undo steps.
+
+### Songs and set lists (`songs.ts`, `songRuntime.ts`, `components/music/SongsPanel.svelte`)
+
+The **Songs** tab keeps a setup per song: **Save as song** keeps the set,
+sounds, key, beat, mixer, the band inputs' roles and levels, the band
+effects, the tempo, the playing studio scene, and the visuals (the looks on
+each instrument feed and their scene, the VJ block, the playing VJ column,
+and the stage preset when Stage mode is on). Each song has a name, notes,
+its tempo (or leave the tempo to the band, Link or tap) and what calling it
+up puts back: **Sound**, **Band** and **Visuals**. A song keeps tonight's
+wiring when called up: a band input keeps its name and channel and takes the
+song's role, levels and send.
+
+A set list is songs in playing order; a song can come more than once. Calling
+a song up, from the list, the set list, the song strip in the Studio header,
+or MIDI, happens on the next bar; pressing again brings it up at once. While
+Ableton Link has peers the tempo is left to Link. Next, previous, Go and MIDI
+make no undo step; a song called up by hand from the list is one step for
+what it changed on the map (a stage preset, the looks on a mapping layer).
+Kill and closing the studio drop a song waiting for the bar.
 
 ### Ableton Live in control (`liveControl.ts`, `liveFeed.ts`, `components/music/LiveSessionGrid.svelte`)
 
@@ -238,6 +340,10 @@ The `musicStudio` section of the project file:
 }
 ```
 
+The band inputs (`liveInputs`), the songs (`songs`), the set lists
+(`setlists`), the set list being played and the song up now are in it too;
+moving through the set list does not count as an unsaved change.
+
 It saves with .gha files, autosave recovery and Export Package (all use the
 project export), and File > New resets it. Reading it back fills in anything
 missing and drops malformed events. The MIDI input choice is per computer and
@@ -250,6 +356,15 @@ The **Studio** button in the music tray turns VJ mode into one full-screen
 instrument. The live output stays in the middle (the view hands the native
 preview its frame; VJ mode hides behind it) and the set's modules sit around
 it. **Tray** goes back with the music playing; **Exit** stops it.
+
+**Deck** (or the backquote key, left of 1; not while typing, when the
+Performer owns the keys, or when a learned key binding uses it) goes to the
+VJ deck for ordinary mixing while the music keeps playing, and back again.
+On the deck a one-row studio strip sits under the clip grid: back to the
+Studio or the tray, the song strip, Throw, Wash and Freeze, and a level knob
+per look on the instrument feeds (`StudioDeckStrip.svelte`, `studioDeck.ts`).
+It is hidden while the studio is closed. `studio:studio.view` does the same
+from MIDI.
 
 The chrome (top bar, output, session, the tray's header) is the app's
 own; the app's eight macro knobs sit in the top bar as they do in VJ mode,

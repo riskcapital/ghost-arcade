@@ -137,6 +137,8 @@
           onpointercancel={bowlUp}
           aria-label="Bowl {noteName(note)}, {soundById(s.bowlSlots[i]?.sound)?.name ?? 'bowl'}"
           title={soundById(s.bowlSlots[i]?.sound)?.blurb ?? ''}
+          data-midi-path="studio:bowl.{i + 1}"
+          data-midi-label="Bowl {i + 1}"
         >{noteName(note)}</button>
       {/each}
     </div>
