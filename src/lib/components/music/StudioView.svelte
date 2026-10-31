@@ -46,6 +46,7 @@
   import PlayModule from './PlayModule.svelte';
   import BeatModule from './BeatModule.svelte';
   import CableLayer from './CableLayer.svelte';
+  import PatchBay from './PatchBay.svelte';
   import MacroEditor from './MacroEditor.svelte';
   import TakeList from './TakeList.svelte';
   import MixerPanel from './MixerPanel.svelte';
@@ -194,6 +195,7 @@
         <span class="frame-note">The live output appears here when the native renderer is running.</span>
       {/if}
     </div>
+    <PatchBay />
   </div>
 {/snippet}
 

@@ -24,7 +24,7 @@
   const cables = $derived($musicStudio.cables[$musicStudio.set]);
 
   function centre(jack: string, origin: DOMRect): [number, number] | null {
-    const el = root?.querySelector<HTMLElement>(`[data-jack="${CSS.escape(jack)}"]`);
+    const el = root?.querySelector<HTMLElement>(`[data-jack="${CSS.escape(jack)}"]:not([data-bay])`);
     if (!el || !el.offsetParent) return null;
     const r = el.getBoundingClientRect();
     return [r.left + r.width / 2 - origin.left, r.top + r.height / 2 - origin.top];
