@@ -38,6 +38,24 @@ export const TONES: Tone[] = [
     },
   },
   {
+    id: 'bass.dub-round', name: 'Dub round', family: 'bass', blurb: 'Deep and round for dub and roots: triangle and sine under a low lid, a soft start and a little warmth',
+    patch: {
+      osc1: { wave: 'tri', level: 0.75 }, osc2: { wave: 'sine', level: 0.6 },
+      filter: { mode: 'ladder', cutoff: 320, res: 0.08, env: 0.4, keyTrack: 0.2 },
+      fenv: env(0.01, 0.3, 0.5, 0.2), aenv: env(0.01, 0.5, 0.92, 0.2),
+      mono: true, glide: 0.03, drift: 0.15, fx: { drive: 0.18 }, gain: 0.62,
+    },
+  },
+  {
+    id: 'bass.rockers-growl', name: 'Rockers growl', family: 'bass', blurb: 'The dub bass with more mid and a bit of growl, for rockers and rub-a-dub',
+    patch: {
+      osc1: { wave: 'saw', level: 0.5 }, osc2: { wave: 'tri', level: 0.55 }, sub: 0.3,
+      filter: { mode: 'ladder', cutoff: 380, res: 0.2, drive: 0.35, env: 1.2, keyTrack: 0.3, vel: 0.4 },
+      fenv: env(0.008, 0.2, 0.3, 0.12), aenv: env(0.008, 0.4, 0.88, 0.14),
+      mono: true, glide: 0.03, drift: 0.2, fx: { drive: 0.25 }, gain: 0.85,
+    },
+  },
+  {
     id: 'bass.squelch', name: 'Squelch', family: 'bass', blurb: 'Acid: one saw, a screaming resonant ladder and slides between held notes',
     patch: {
       osc1: { wave: 'saw', level: 0.8 },
@@ -374,6 +392,60 @@ export const TONES: Tone[] = [
       filter: { mode: 'ladder', cutoff: 700, res: 0.3, env: 3, keyTrack: 0.4, vel: 0.5 },
       fenv: env(0.001, 0.15, 0.1, 0.1), aenv: env(0.001, 0.25, 0.2, 0.12),
       fx: { delay: { mix: 0.28, beats: 0.75, fb: 0.4 }, chorus: { mix: 0.3, mode: 2 } }, gain: 0.6,
+    },
+  },
+  {
+    id: 'keys.skank-piano', name: 'Skank piano', family: 'lead', blurb: 'Bright, percussive and a little honky, with a fast decay for choked offbeats',
+    patch: {
+      osc1: { wave: 'tri', level: 0.6 }, osc2: { wave: 'saw', oct: 1, detune: 7, level: 0.22 },
+      filter: { mode: 'lp', cutoff: 4200, res: 0.1, env: 1.2, keyTrack: 0.5, vel: 0.6 },
+      fenv: env(0.001, 0.12, 0.2, 0.06), aenv: env(0.001, 0.25, 0.1, 0.05),
+      poly: 6, vel: 0.8, fx: { drive: 0.1 }, gain: 0.6,
+    },
+  },
+  {
+    id: 'keys.bubble-organ', name: 'Bubble organ', family: 'lead', blurb: 'Drawbar-style organ for the bubble: a soft key click and a gentle rotary-style chorus',
+    patch: {
+      osc1: { wave: 'sine', level: 0.6 }, osc2: { wave: 'sine', oct: 1, level: 0.35 }, noise: 0.03,
+      filter: { mode: 'lp', cutoff: 3000, res: 0.05, keyTrack: 0.4 },
+      fenv: env(0.001, 0.02, 1, 0.05), aenv: env(0.004, 0.2, 0.85, 0.06),
+      poly: 6, vel: 0.5, fx: { chorus: { mix: 0.4, mode: 2 } }, gain: 0.55,
+    },
+  },
+  {
+    id: 'keys.chop-clav', name: 'Chop clav', family: 'lead', blurb: 'A clavinet-style chop with no wah: tight, stringy and gone almost at once',
+    patch: {
+      osc1: { wave: 'square', pw: 0.12, level: 0.6 }, osc2: { wave: 'square', oct: 1, pw: 0.3, level: 0.3 },
+      filter: { mode: 'bp', cutoff: 1500, res: 0.35, env: 1.6, keyTrack: 0.7, vel: 0.7 },
+      fenv: env(0.001, 0.06, 0.3, 0.03), aenv: env(0.001, 0.12, 0.1, 0.03),
+      poly: 6, vel: 0.8, gain: 0.75,
+    },
+  },
+  {
+    id: 'keys.skank-guitar', name: 'Skank guitar', family: 'lead', blurb: 'A plucky, muted, mid-heavy upstroke, made from a filtered saw and a pick of noise',
+    patch: {
+      osc1: { wave: 'saw', level: 0.5 }, osc2: { wave: 'square', pw: 0.3, detune: 5, level: 0.3 }, noise: 0.05,
+      filter: { mode: 'bp', cutoff: 1100, res: 0.3, env: 1.5, keyTrack: 0.6, vel: 0.5 },
+      fenv: env(0.001, 0.06, 0.2, 0.03), aenv: env(0.001, 0.1, 0.05, 0.03),
+      poly: 6, vel: 0.7, fx: { chorus: { mix: 0.15, mode: 2 } }, gain: 0.8,
+    },
+  },
+  {
+    id: 'keys.dub-skank', name: 'Dub skank', family: 'lead', blurb: 'The skank guitar into a dotted-eighth tape echo, for sparse dub chops',
+    patch: {
+      osc1: { wave: 'saw', level: 0.5 }, osc2: { wave: 'square', pw: 0.3, detune: 5, level: 0.3 }, noise: 0.04,
+      filter: { mode: 'bp', cutoff: 1000, res: 0.3, env: 1.4, keyTrack: 0.6, vel: 0.5 },
+      fenv: env(0.001, 0.06, 0.2, 0.03), aenv: env(0.001, 0.1, 0.05, 0.03),
+      poly: 6, vel: 0.7, fx: { delay: { mix: 0.38, beats: 0.75, fb: 0.5, tone: 0.4 } }, gain: 0.8,
+    },
+  },
+  {
+    id: 'keys.skank-ep', name: 'Skank tine', family: 'lead', blurb: 'An electric piano with a short tine bark, for skanks and vamps',
+    patch: {
+      osc1: { wave: 'sine', level: 0.85 }, fm: { ratio: 1, index: 2.6, decay: 0.2, sustain: 0.05, vel: 0.9 },
+      filter: { mode: 'lp', cutoff: 5000, res: 0, keyTrack: 0.4 },
+      fenv: env(0.001, 1, 1, 0.2), aenv: env(0.001, 0.4, 0.05, 0.08),
+      poly: 8, vel: 0.85, fx: { chorus: { mix: 0.2, mode: 2 } }, gain: 0.42,
     },
   },
 ];

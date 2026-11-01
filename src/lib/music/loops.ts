@@ -45,6 +45,8 @@ export interface MelodicLoop {
   notes: LoopNote[];
   /** The tone-library tone it was written for, if any; a clip made from it starts on that tone. */
   tone?: string;
+  /** A drum groove (a beat loop id) it previews with when nothing else is playing. */
+  groove?: string;
 }
 
 export interface BeatLoop {
