@@ -34,7 +34,7 @@ export interface StudioVoice {
   auto: boolean;
   /** How much of it shows, 0-1: its opacity in the mix. */
   level: number;
-  /** How it blends over the voices above it in the list. Screen when missing. */
+  /** How it blends over the voices below it in the list (the top of the list draws on top). Screen when missing. */
   blend?: BlendMode;
   /** The session clip that brought it in; it goes when that clip stops. */
   clip?: string;
@@ -207,6 +207,8 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
       } as Layer);
       rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1), blendMode: studioVoiceBlend(voice.blend) });
     });
+    // The top of the list draws on top: the mix stacks its rows from the first up.
+    rows.reverse();
     out.push({
       ...layer,
       source: {

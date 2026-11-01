@@ -238,7 +238,7 @@ export function replaceStudioVoice(index: number, file: string): boolean {
   }));
 }
 
-/** Move a voice in the stack (lower in the list draws on top); its settings go with it. */
+/** Move a voice in the stack (the top of the list draws on top); its settings go with it. */
 export function moveStudioVoice(from: number, to: number): boolean {
   return editStudio((s) => {
     if (from === to || from < 0 || from >= s.musicVoices.length) return s;

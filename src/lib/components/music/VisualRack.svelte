@@ -149,7 +149,7 @@
       <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Put it on the deck' : 'Show it on the selected layer'}</button>
     </div>
   {:else}
-    <p class="order">Lower in the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
+    <p class="order">Top of the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
     <div class="voices">
       {#each voices as voice, i (i)}
         {@const all = looks(voice.file)}
@@ -169,7 +169,7 @@
               role="button"
               tabindex="0"
               aria-label="Move voice {i + 1} (Alt+Up or Alt+Down)"
-              title="Drag to reorder: lower in the list draws on top"
+              title="Drag to reorder: the top of the list draws on top"
               ondragstart={(e) => { dragFrom = i; e.dataTransfer?.setData('text/plain', `voice ${i + 1}`); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
               ondragend={() => { dragFrom = null; dropAt = null; }}
               onkeydown={(e) => { if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return; e.preventDefault(); const to = i + (e.key === 'ArrowUp' ? -1 : 1); if (to >= 0 && to < voices.length && moveStudioVoice(i, to)) void nextTick().then(() => document.querySelectorAll<HTMLElement>('.voices .grip')[to]?.focus()); }}
@@ -203,7 +203,7 @@
           </div>
           <div class="controls">
             {#each all.slice(0, MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
-            <select class="blend" value={studioVoiceBlend(voice.blend)} onchange={(e) => setStudioVoice(i, { blend: (e.target as HTMLSelectElement).value as BlendMode })} aria-label="Blend mode for voice {i + 1}" title="How this voice blends over the ones above it" data-midi-path="studio:voice.{i + 1}.blend-next" data-midi-label="Voice {i + 1} next blend mode" data-midi-mode="toggle">
+            <select class="blend" value={studioVoiceBlend(voice.blend)} onchange={(e) => setStudioVoice(i, { blend: (e.target as HTMLSelectElement).value as BlendMode })} aria-label="Blend mode for voice {i + 1}" title="How this voice blends over the ones below it" data-midi-path="studio:voice.{i + 1}.blend-next" data-midi-label="Voice {i + 1} next blend mode" data-midi-mode="toggle">
               {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
             </select>
             <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
