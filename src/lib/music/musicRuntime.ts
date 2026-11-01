@@ -93,6 +93,7 @@ import { setStudioDriver, studioHostsLive, studioVisualTick } from './studioPlug
 import { bowlSlotNotes } from './soundSlots';
 import { DUB_SHOT_NOTE } from './dubShots';
 import { keyModeNote } from './keyMode';
+import { setStudioRecordingSource } from '../audio/clipAudioBus';
 import { buildLanding, buildProgress, rollHits } from './buildDrop';
 import { captureSetup, type SongSetup } from './songs';
 import { editStudio, studioTargetNow } from './studioTarget';
@@ -292,6 +293,12 @@ export function playAll(): void {
 }
 
 /** Silence everything at once, effect tails included. */
+/** The studio's audio engine, for recording its mix and stems (studioRecorder.ts). */
+export function studioAudio(): MusicAudioEngine {
+  ensureMusicRuntime();
+  return audio;
+}
+
 export function killAll(): void {
   cancelBuild();
   stopPreview();
@@ -2289,6 +2296,8 @@ export function ensureMusicRuntime(): void {
     audio.setPadSounds(s.fxPads[s.set]);
     audio.setDubShots(s.dubShots);
     audio.setInserts(s.inserts);
+    // While the studio is open, recordings carry its mix.
+    setStudioRecordingSource(s.isOpen ? () => audio.recordingNode() : null);
     audio.setReturns(s.returns);
     audio.setBowlSounds(bowlSlotNotes(bowlNotes(s.key), s.bowlSlots), s.bowlSlots.map((slot) => slot.sound));
     audio.setKeyRoot(48 + s.key.root);
