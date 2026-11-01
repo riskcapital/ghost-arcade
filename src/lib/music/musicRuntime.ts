@@ -926,11 +926,8 @@ function undressTrack(track: TrackId): void {
 
 /** On the clip's start (`atMs` from now): its effects go in on its channel and its visual fades in. */
 function dressTrack(track: TrackId, clip: SessionClip, atMs: number): void {
-  const hasFx = (get(musicStudio).inserts[clipFxKey(clip.id)] ?? []).length > 0;
-  if (!clip.visual && !hasFx) {
-    if (clipDressing.has(track)) dressingTimers.set(track, setTimeout(() => undressTrack(track), atMs));
-    return;
-  }
+  // Every playing clip is noted on its track, effects or not, so effects
+  // added to it while it plays come in at once.
   const prev = dressingTimers.get(track);
   if (prev) clearTimeout(prev);
   dressingTimers.set(track, setTimeout(() => {
