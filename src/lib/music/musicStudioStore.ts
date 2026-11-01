@@ -272,6 +272,13 @@ function perInstrument<T>(make: (id: InstrumentId) => T): Record<InstrumentId, T
 
 const DEFAULT_VOLUMES: Record<InstrumentId, number> = { synth: 0.8, keys: 0.8, drums: 0.9, drone: 0.75, bowls: 0.8, acid: 0.75, xy: 0.7, dubbass: 0.85, siren: 0.6, shots: 0.7, analog: 0.75, scan: 0.6 };
 
+/** A fader's gain: silent to +10 dB. */
+export const MAX_FADER_GAIN = Math.pow(10, 10 / 20);
+function clampGain(v: unknown, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, Math.min(MAX_FADER_GAIN, n)) : fallback;
+}
+
 export function defaultProjectState(): MusicStudioProjectState {
   return {
     instrument: 'synth',
@@ -371,8 +378,8 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     synthTone: toneById(input.synthTone as string) ? (input.synthTone as string) : null,
     keysTone: toneById(input.keysTone as string) ? (input.keysTone as string) : null,
     drumKit: kitById(input.drumKit as string) ? (input.drumKit as string) : null,
-    volumes: perInstrument((id) => clamp01(volumes[id], d.volumes[id])),
-    masterVolume: clamp01(input.masterVolume, d.masterVolume),
+    volumes: perInstrument((id) => clampGain(volumes[id], d.volumes[id])),
+    masterVolume: clampGain(input.masterVolume, d.masterVolume),
     returns: Object.fromEntries(RETURN_IDS.map((id) => [id, clamp01((input as { returns?: Record<string, unknown> }).returns?.[id], d.returns[id])])) as Record<ReturnId, number>,
     visuals: perInstrument((id) => normalizeVisual(visuals[id], d.visuals[id])),
     octave: clampOctave(Number.isFinite(Number(input.octave)) ? Number(input.octave) : d.octave),
@@ -589,9 +596,9 @@ function createMusicStudioStore() {
     setTone: (instrument: 'synth' | 'keys', tone: string | null) => set(instrument === 'synth' ? { synthTone: tone } : { keysTone: tone }),
     setDrumKit: (drumKit: string | null) => set({ drumKit }),
     setVolume: (instrument: InstrumentId, volume: number) =>
-      update((s) => ({ ...s, volumes: { ...s.volumes, [instrument]: clamp01(volume, s.volumes[instrument]) } })),
+      update((s) => ({ ...s, volumes: { ...s.volumes, [instrument]: clampGain(volume, s.volumes[instrument]) } })),
     setReturn: (id: ReturnId, level: number) => update((s) => ({ ...s, returns: { ...s.returns, [id]: clamp01(level, s.returns[id]) } })),
-    setMasterVolume: (volume: number) => update((s) => ({ ...s, masterVolume: clamp01(volume, s.masterVolume) })),
+    setMasterVolume: (volume: number) => update((s) => ({ ...s, masterVolume: clampGain(volume, s.masterVolume) })),
     setStrip: (id: ChannelId, patch: Partial<ChannelStrip>) =>
       update((s) => ({ ...s, mixer: { ...s.mixer, [id]: { ...(s.mixer[id] ?? defaultStrip()), ...patch } } })),
     resetStrip: (id: ChannelId) =>

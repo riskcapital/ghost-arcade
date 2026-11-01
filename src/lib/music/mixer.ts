@@ -56,6 +56,14 @@ export interface ChannelStrip {
   pan: number;
   mute: boolean;
   solo: boolean;
+  /** Input trim in dB, -12 to +12. */
+  trim?: number;
+  /** The mid band's frequency, Hz. */
+  midFreq?: number;
+  /** The low cut (about 90 Hz) in. */
+  lowCut?: boolean;
+  /** Armed: a stem is recorded for it (when any channel is armed). */
+  arm?: boolean;
   /** How much goes to the shared returns, 0-1 (sendReturns.ts). */
   sends?: { reverb: number; echo: number; spring: number };
 }
@@ -93,6 +101,10 @@ export function normalizeStrip(raw: unknown): ChannelStrip {
     pan: clampNumber(r.pan, -1, 1, d.pan),
     mute: r.mute === true,
     solo: r.solo === true,
+    ...(r.trim !== undefined ? { trim: clampNumber(r.trim, -12, 12, 0) } : {}),
+    ...(r.midFreq !== undefined ? { midFreq: clampNumber(r.midFreq, 200, 5000, 1100) } : {}),
+    ...(r.lowCut === true ? { lowCut: true } : {}),
+    ...(r.arm === true ? { arm: true } : {}),
     ...(r.sends && typeof r.sends === 'object'
       ? { sends: { reverb: clampNumber((r.sends as Record<string, unknown>).reverb, 0, 1, 0), echo: clampNumber((r.sends as Record<string, unknown>).echo, 0, 1, 0), spring: clampNumber((r.sends as Record<string, unknown>).spring, 0, 1, 0) } }
       : {}),

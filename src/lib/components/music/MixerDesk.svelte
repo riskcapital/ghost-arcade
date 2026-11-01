@@ -1,30 +1,36 @@
 <script lang="ts">
   /**
-   * The full mixer: a strip for every sound the studio makes, whatever the
-   * set, then each band input, the shared returns and, pinned at the right,
-   * the master. Top to bottom a strip has its insert effects (click to edit
-   * the chain), its sends to the reverb, echo and spring, pan, the fader's dB
-   * and the peak, the fader beside a meter with a clip light, mute and solo,
-   * and its name. It is the same state as the Mixer tab: one mixer.
+   * The mixing desk: a hardware-style strip for every sound the studio makes,
+   * whatever the set, each band input, the shared returns, and a wider master
+   * pinned at the right. Top to bottom: the channel number, trim, the insert
+   * effects (click to edit the chain), a three-band EQ with a sweepable mid
+   * and a low cut, the sends to the reverb, echo and spring, pan, the fader's
+   * dB and the peak, a long-throw fader beside an LED meter, mute, solo and
+   * record arm (which channels get stems), and the scribble strip. This is the
+   * one place the studio's look goes skeuomorphic, on purpose.
+   *
+   * It is the same state as the Mixer tab: one mixer. One meter tick serves
+   * every strip.
    */
   import { onMount } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
-  import { CHANNEL_LABELS, INPUT_CHANNELS, formatPan, isInputChannel, liveInputLabel, stripFor, type ChannelId } from '../../music/mixer';
+  import { CHANNEL_LABELS, EQ_RANGE_DB, INPUT_CHANNELS, formatPan, isInputChannel, liveInputLabel, stripFor, type ChannelId, type ChannelStrip } from '../../music/mixer';
   import { INSTRUMENTS, type InstrumentId } from '../../music/noteEvents';
-  import { channelLevels } from '../../music/musicRuntime';
+  import { channelLevels, masterLevels } from '../../music/musicRuntime';
   import { macroFxDef } from '../../music/macroFx';
   import { RETURN_IDS, RETURN_LABELS, type ReturnId } from '../../music/sendReturns';
+  import { formatDb, gainToDb } from '../../music/faderScale';
   import { insertEditorChannel } from '../../music/studioUi';
   import StudioKnob from './StudioKnob.svelte';
-  import StudioFader from './StudioFader.svelte';
+  import DeskFader from './DeskFader.svelte';
+  import DeskMeter from './DeskMeter.svelte';
 
   let { onclose }: { onclose: () => void } = $props();
 
   const s = $derived($musicStudio);
-  /** Every instrument, then the band inputs in use. */
   const channels = $derived<ChannelId[]>([...INSTRUMENTS, ...INPUT_CHANNELS.slice(0, Math.max(1, s.liveInputs.length))]);
 
-  /** A family colour from the studio's own tokens: drums, bass, melodic, effects, band. */
+  /** The scribble strip's colour by family, from the studio's own tokens. */
   function family(id: ChannelId): string {
     if (isInputChannel(id)) return 'var(--studio-muted)';
     if (id === 'drums') return 'var(--studio-accent)';
@@ -38,28 +44,28 @@
     return i >= 0 ? liveInputLabel(s.liveInputs[i] ?? { name: '' }, i) : CHANNEL_LABELS[id];
   }
 
-  function volumeOf(id: ChannelId): number {
+  function gainOf(id: ChannelId): number {
     const i = isInputChannel(id) ? INPUT_CHANNELS.indexOf(id) : -1;
     return i >= 0 ? (s.liveInputs[i]?.volume ?? 0.5) : s.volumes[id as InstrumentId];
   }
 
-  function setVolume(id: ChannelId, v: number) {
+  function setGain(id: ChannelId, g: number) {
     const i = isInputChannel(id) ? INPUT_CHANNELS.indexOf(id) : -1;
-    if (i >= 0) musicStudio.setLiveInput(i, { volume: v });
-    else musicStudio.setVolume(id as InstrumentId, v);
+    if (i >= 0) musicStudio.setLiveInput(i, { volume: Math.min(1, g) });
+    else musicStudio.setVolume(id as InstrumentId, g);
   }
 
-  const db = (v: number) => (v <= 0.0005 ? '-∞' : `${(20 * Math.log10(v)).toFixed(1)}`);
+  const set = (id: ChannelId, patch: Partial<ChannelStrip>) => musicStudio.setStrip(id, patch);
+  const setSend = (id: ChannelId, r: ReturnId, v: number) => set(id, { sends: { reverb: 0, echo: 0, spring: 0, ...stripFor(s.mixer, id).sends, [r]: v } });
+  const dbKnob = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
+  const hz = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`);
 
-  function setSend(id: ChannelId, r: ReturnId, v: number) {
-    const st = stripFor(s.mixer, id);
-    musicStudio.setStrip(id, { sends: { reverb: 0, echo: 0, spring: 0, ...st.sends, [r]: v } });
-  }
-
-  // One meter tick for every strip: about thirty times a second, with a falling peak hold and a clip light.
+  // One tick for every meter, about thirty times a second: levels, falling peak holds, clip lights.
   let levels = $state<Partial<Record<ChannelId, number>>>({});
   let peaks = $state<Partial<Record<ChannelId, number>>>({});
-  let clipped = $state<Partial<Record<ChannelId, boolean>>>({});
+  let clips = $state<Partial<Record<string, boolean>>>({});
+  let master = $state<[number, number]>([0, 0]);
+  let masterPeak = $state<[number, number]>([0, 0]);
   onMount(() => {
     let frame = 0;
     let last = 0;
@@ -68,15 +74,19 @@
         last = t;
         const next = channelLevels(channels);
         const p = { ...peaks };
-        const c = { ...clipped };
+        const c = { ...clips };
         for (const id of channels) {
           const v = next[id] ?? 0;
-          p[id] = Math.max(v, (p[id] ?? 0) - 0.012);
-          if (v > 0.98) c[id] = true;
+          p[id] = Math.max(v, (p[id] ?? 0) - 0.01);
+          if (v > 0.985) c[id] = true;
         }
+        const m = masterLevels();
+        masterPeak = [Math.max(m[0], masterPeak[0] - 0.01), Math.max(m[1], masterPeak[1] - 0.01)];
+        if (m[0] > 0.985 || m[1] > 0.985) c.master = true;
+        master = m;
         levels = next;
         peaks = p;
-        clipped = c;
+        clips = c;
       }
       frame = requestAnimationFrame(tick);
     };
@@ -89,75 +99,89 @@
     };
   });
 
-  /** The meter's level (0-1, -60 to 0 dB) as dB. */
-  const meterDb = (v: number) => (v <= 0.001 ? '-∞' : `${Math.round(v * 60 - 60)}`);
+  const peakDb = (v: number) => (v <= 0.001 ? '-∞' : `${Math.round(v * 60 - 60)}`);
 </script>
 
 {#snippet inserts(channel: string)}
   {@const chain = s.inserts[channel] ?? []}
   <button class="inserts" class:open={$insertEditorChannel === channel} onclick={() => insertEditorChannel.set($insertEditorChannel === channel ? null : channel)} title="Insert effects: click to add, reorder, bypass and edit">
-    {#each chain.slice(0, 4) as fx (fx.id)}<span class="slot" class:off={!fx.enabled}>{macroFxDef(fx.type).label}</span>{/each}
-    {#if chain.length > 4}<span class="slot more">+{chain.length - 4}</span>{/if}
-    {#if !chain.length}<span class="slot empty">Add effect</span>{/if}
+    {#each [0, 1, 2, 3] as i (i)}
+      {@const fx = chain[i]}
+      <span class="slot" class:used={!!fx} class:off={fx && !fx.enabled}>{fx ? macroFxDef(fx.type).label : ''}</span>
+    {/each}
+    {#if chain.length > 4}<span class="more">+{chain.length - 4}</span>{/if}
   </button>
 {/snippet}
 
 <div class="desk studio-tokens" role="dialog" aria-label="Mixer">
   <header>
     <h2>Mixer</h2>
-    <span class="note">Every sound, its effects, sends, pan and level. The same mixer as the Mixer tab.</span>
+    <span class="note">Every sound with its trim, effects, EQ, sends, pan and level. Arm channels to choose which stems Record A/V keeps.</span>
     <span class="spacer"></span>
     <button class="close" onclick={onclose} aria-label="Close the mixer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
   </header>
   <div class="body">
     <div class="strips">
-      {#each channels as id (id)}
+      {#each channels as id, n (id)}
         {@const st = stripFor(s.mixer, id)}
-        {@const vol = volumeOf(id)}
+        {@const g = gainOf(id)}
         <div class="strip">
+          <span class="num">{n + 1}</span>
+          <StudioKnob label="Trim" value={st.trim ?? 0} min={-12} max={12} defaultValue={0} size={20} format={dbKnob} onchange={(v) => set(id, { trim: Math.round(v * 2) / 2 })} midiPath="studio:mix.{id}.trim" />
+          <span class="section">Insert</span>
           {@render inserts(id)}
+          <span class="section">EQ</span>
+          <div class="eq">
+            <StudioKnob label="High" value={st.high} min={-EQ_RANGE_DB} max={EQ_RANGE_DB} defaultValue={0} size={18} format={dbKnob} onchange={(v) => set(id, { high: Math.round(v * 2) / 2 })} />
+            <StudioKnob label="Mid" value={st.mid} min={-EQ_RANGE_DB} max={EQ_RANGE_DB} defaultValue={0} size={18} format={dbKnob} onchange={(v) => set(id, { mid: Math.round(v * 2) / 2 })} />
+            <StudioKnob label="Freq" value={st.midFreq ?? 1100} min={200} max={5000} defaultValue={1100} size={18} format={hz} onchange={(v) => set(id, { midFreq: Math.round(v) })} />
+            <StudioKnob label="Low" value={st.low} min={-EQ_RANGE_DB} max={EQ_RANGE_DB} defaultValue={0} size={18} format={dbKnob} onchange={(v) => set(id, { low: Math.round(v * 2) / 2 })} />
+          </div>
+          <button class="lit small" class:on={st.lowCut} aria-pressed={!!st.lowCut} onclick={() => set(id, { lowCut: !st.lowCut })} title="Low cut: roll off below about 90 Hz">Low cut</button>
+          <span class="section">Send</span>
           <div class="sends">
             {#each RETURN_IDS as r (r)}
-              <StudioKnob label={RETURN_LABELS[r]} value={st.sends?.[r] ?? 0} size={20} format={(v) => `${Math.round(v * 100)}%`} onchange={(v) => setSend(id, r, v)} title="{labelOf(id)} to the {RETURN_LABELS[r].toLowerCase()}" midiPath="studio:mix.{id}.send.{r}" />
+              <StudioKnob label={RETURN_LABELS[r].slice(0, 3)} value={st.sends?.[r] ?? 0} size={18} format={(v) => `${Math.round(v * 100)}%`} onchange={(v) => setSend(id, r, v)} title="{labelOf(id)} to the {RETURN_LABELS[r].toLowerCase()}" midiPath="studio:mix.{id}.send.{r}" />
             {/each}
           </div>
-          <div class="out" title="Output: the master">→ Master</div>
-          <StudioKnob label="Pan" value={st.pan} min={-1} max={1} defaultValue={0} size={26} format={formatPan} onchange={(v) => musicStudio.setStrip(id, { pan: Math.abs(v) < 0.02 ? 0 : v })} midiPath="studio:mix.{id}.pan" />
-          <div class="readout"><span title="Fader">{db(vol)}</span><span class="peak" class:clip={clipped[id]} title="Peak, dB (click to clear the clip light)" onclick={() => (clipped = { ...clipped, [id]: false })} role="button" tabindex="-1" onkeydown={() => {}}>{meterDb(peaks[id] ?? 0)}</span></div>
-          <div class="level" data-midi-path="studio:mix.{id}.volume" data-midi-label="{labelOf(id)} level">
-            <StudioFader label="{labelOf(id)} level" value={vol} defaultValue={isInputChannel(id) ? 0.5 : 0.8} onchange={(v) => setVolume(id, v)} />
-            <span class="meter" aria-hidden="true">
-              <span class="fill" class:hot={(levels[id] ?? 0) > 0.95} style="height: {(levels[id] ?? 0) * 100}%"></span>
-              <span class="hold" style="bottom: {(peaks[id] ?? 0) * 100}%"></span>
-              <span class="cliplight" class:on={clipped[id]}></span>
-            </span>
+          <span class="section">Pan</span>
+          <StudioKnob label="Pan" value={st.pan} min={-1} max={1} defaultValue={0} size={24} format={formatPan} onchange={(v) => set(id, { pan: Math.abs(v) < 0.04 ? 0 : v })} midiPath="studio:mix.{id}.pan" />
+          <div class="readout"><span title="Fader, dB">{formatDb(gainToDb(g))}</span><span class="pk" class:hot={clips[id]} title="Peak, dB">{peakDb(peaks[id] ?? 0)}</span></div>
+          <div class="throw">
+            <DeskFader label="{labelOf(id)} level" gain={g} onchange={(v) => setGain(id, v)} midiPath="studio:mix.{id}.volume" />
+            <DeskMeter levels={[levels[id] ?? 0]} peaks={[peaks[id] ?? 0]} clip={!!clips[id]} onclear={() => (clips = { ...clips, [id]: false })} />
           </div>
-          <div class="ms">
-            <button class="chip" class:on={st.mute} aria-pressed={st.mute} onclick={() => musicStudio.setStrip(id, { mute: !st.mute })} data-midi-path="studio:mix.{id}.mute" data-midi-label="{labelOf(id)} mute" data-midi-mode="toggle">M</button>
-            <button class="chip" class:on={st.solo} aria-pressed={st.solo} onclick={() => musicStudio.setStrip(id, { solo: !st.solo })} data-midi-path="studio:mix.{id}.solo" data-midi-label="{labelOf(id)} solo" data-midi-mode="toggle">S</button>
+          <div class="buttons">
+            <button class="lit mute" class:on={st.mute} aria-pressed={st.mute} onclick={() => set(id, { mute: !st.mute })} title="Mute" data-midi-path="studio:mix.{id}.mute" data-midi-label="{labelOf(id)} mute" data-midi-mode="toggle">M</button>
+            <button class="lit solo" class:on={st.solo} aria-pressed={st.solo} onclick={() => set(id, { solo: !st.solo })} title="Solo" data-midi-path="studio:mix.{id}.solo" data-midi-label="{labelOf(id)} solo" data-midi-mode="toggle">S</button>
+            <button class="lit arm" class:on={st.arm} aria-pressed={!!st.arm} onclick={() => set(id, { arm: !st.arm })} title="Record arm: keep a stem of it with Record A/V">R</button>
           </div>
-          <span class="name" style="color: {family(id)}">{labelOf(id)}</span>
+          <span class="scribble" style="--fam: {family(id)}">{labelOf(id)}</span>
         </div>
       {/each}
-      {#each RETURN_IDS as r (r)}
+      {#each RETURN_IDS as r, n (r)}
         <div class="strip return">
-          <div class="inserts static"><span class="slot empty">Shared return</span></div>
-          <div class="out">→ Master</div>
-          <div class="readout"><span>{db(s.returns[r])}</span></div>
-          <div class="level" data-midi-path="studio:mix.return.{r}" data-midi-label="{RETURN_LABELS[r]} return level">
-            <StudioFader label="{RETURN_LABELS[r]} return" value={s.returns[r]} defaultValue={0.7} onchange={(v) => musicStudio.setReturn(r, v)} />
+          <span class="num">R{n + 1}</span>
+          <span class="section">Return</span>
+          <div class="return-note">Shared {RETURN_LABELS[r].toLowerCase()}, fed by every strip's send</div>
+          <div class="readout"><span>{formatDb(gainToDb(s.returns[r]))}</span></div>
+          <div class="throw">
+            <DeskFader label="{RETURN_LABELS[r]} return" gain={s.returns[r]} onchange={(v) => musicStudio.setReturn(r, Math.min(1, v))} midiPath="studio:mix.return.{r}" />
           </div>
-          <span class="name">{RETURN_LABELS[r]} return</span>
+          <span class="scribble" style="--fam: var(--studio-muted)">{RETURN_LABELS[r]}</span>
         </div>
       {/each}
     </div>
     <div class="strip master">
+      <span class="num">Main</span>
+      <span class="section">Insert</span>
       {@render inserts('master')}
-      <div class="readout"><span>{db(s.masterVolume)}</span></div>
-      <div class="level" data-midi-path="studio:mix.master" data-midi-label="Master level">
-        <StudioFader label="Master level" value={s.masterVolume} defaultValue={0.85} onchange={(v) => musicStudio.setMasterVolume(v)} />
+      <div class="readout"><span>{formatDb(gainToDb(s.masterVolume))}</span><span class="pk" class:hot={clips.master}>{peakDb(Math.max(masterPeak[0], masterPeak[1]))}</span></div>
+      <div class="throw">
+        <DeskFader label="Master level" gain={s.masterVolume} onchange={(v) => musicStudio.setMasterVolume(v)} midiPath="studio:mix.master" />
+        <DeskMeter levels={master} peaks={masterPeak} clip={!!clips.master} onclear={() => (clips = { ...clips, master: false })} />
       </div>
-      <span class="name">Master</span>
+      <span class="scribble" style="--fam: var(--studio-ink)">Master</span>
     </div>
   </div>
 </div>
@@ -182,59 +206,102 @@
   }
   header { display: flex; align-items: center; gap: 12px; }
   h2 { margin: 0; font-size: var(--ga-text-title, 14px); font-weight: var(--ga-weight-title, 650); }
-  .note { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
+  .note { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .spacer { flex: 1; }
-  .close { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 1px solid var(--studio-edge); background: transparent; color: var(--studio-muted); border-radius: var(--studio-radius); cursor: pointer; }
+  .close { flex: 0 0 auto; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 1px solid var(--studio-edge); background: transparent; color: var(--studio-muted); border-radius: var(--studio-radius); cursor: pointer; }
   .close svg { width: 14px; height: 14px; }
   .body { flex: 1; min-height: 0; display: flex; gap: 6px; }
-  .strips { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; }
+  .strips { flex: 1; min-width: 0; display: flex; gap: 3px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+  /* A hardware strip: a raised panel with a soft bevel. */
   .strip {
-    flex: 0 0 84px;
+    flex: 0 0 88px;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 6px 4px;
-    background: var(--studio-cell);
+    gap: 4px;
+    padding: 6px 4px 5px;
+    border-radius: 4px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--studio-cell) 88%, #fff 6%), var(--studio-cell));
     border: 1px solid var(--studio-edge-soft);
-    border-radius: var(--studio-radius);
-    min-height: 0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -1px 0 rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.4);
   }
-  .strip.master { flex-basis: 96px; border-color: var(--studio-edge); }
+  .strip.master { flex-basis: 112px; border-color: var(--studio-edge); }
+  .num { font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; color: var(--studio-muted); }
+  .section {
+    align-self: stretch;
+    padding-top: 3px;
+    border-top: 1px solid rgba(0, 0, 0, 0.45);
+    box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.05);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: center;
+    color: var(--studio-muted);
+  }
   .inserts {
     width: 100%;
-    min-height: 62px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
     padding: 2px;
-    border: 1px solid var(--studio-edge-soft);
-    background: var(--studio-slot);
-    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, 0.5);
+    background: var(--studio-slot, #050608);
+    border-radius: 2px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7);
     cursor: pointer;
     font: inherit;
-    text-align: left;
   }
-  .inserts.static { cursor: default; }
-  .inserts.open, .inserts:hover:not(.static) { border-color: var(--studio-accent); }
-  .slot { display: block; padding: 1px 4px; font-size: 10px; color: var(--studio-ink); background: var(--studio-cell); border-radius: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .slot.off { color: var(--studio-muted); text-decoration: line-through; }
-  .slot.empty, .slot.more { background: transparent; color: var(--studio-muted); }
-  .sends { display: flex; flex-direction: column; gap: 2px; align-items: center; }
-  .sends :global(.knob-wrap) { flex-direction: row; gap: 4px; }
-  .out { font-size: 9px; color: var(--studio-muted); }
-  .readout { display: flex; gap: 6px; font-family: var(--ga-font-mono, ui-monospace); font-size: 10px; font-variant-numeric: tabular-nums; }
-  .peak { color: var(--studio-muted); cursor: pointer; }
-  .peak.clip { color: var(--ga-rec, #ff3b30); }
-  .level { flex: 1; min-height: 90px; display: flex; gap: 4px; align-items: stretch; }
-  .meter { position: relative; width: 6px; background: var(--studio-slot); border-radius: 2px; overflow: hidden; }
-  .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--ga-green, #46d18a); }
-  .fill.hot { background: var(--ga-rec, #ff3b30); }
-  .hold { position: absolute; left: 0; right: 0; height: 2px; background: var(--studio-ink); }
-  .cliplight { position: absolute; left: 0; right: 0; top: 0; height: 4px; background: transparent; }
-  .cliplight.on { background: var(--ga-rec, #ff3b30); }
-  .ms { display: flex; gap: 3px; }
-  .chip { width: 24px; height: 20px; padding: 0; border: 1px solid var(--studio-edge); background: transparent; color: var(--studio-muted); border-radius: 3px; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
-  .chip.on { background: var(--studio-accent); border-color: var(--studio-accent); color: var(--studio-on-accent); }
-  .name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; }
+  .inserts.open, .inserts:hover { border-color: var(--studio-accent); }
+  .slot { height: 11px; padding: 0 3px; font-size: 8px; line-height: 11px; text-align: left; border-radius: 1px; background: rgba(255, 255, 255, 0.03); color: var(--studio-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slot.used { background: color-mix(in srgb, var(--studio-accent) 22%, transparent); }
+  .slot.off { color: var(--studio-muted); text-decoration: line-through; background: rgba(255, 255, 255, 0.03); }
+  .more { font-size: 8px; color: var(--studio-muted); }
+  .eq { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 4px; }
+  .sends { display: flex; gap: 2px; }
+  .eq :global(.knob-wrap), .sends :global(.knob-wrap) { min-width: 0; gap: 0; }
+  .eq :global(.knob-label), .sends :global(.knob-label) { font-size: 8px; }
+  .readout { display: flex; gap: 6px; font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; font-variant-numeric: tabular-nums; padding: 1px 4px; border-radius: 2px; background: var(--studio-slot, #050608); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7); }
+  .pk { color: var(--studio-muted); }
+  .pk.hot { color: var(--ga-rec, #ff3b30); }
+  .throw { flex: 1; min-height: 140px; width: 100%; display: flex; gap: 2px; justify-content: center; }
+  .buttons { display: flex; gap: 3px; }
+  /* Lit square buttons. */
+  .lit {
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    border-radius: 2px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--studio-cell) 80%, #fff 8%), var(--studio-cell));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.5);
+    color: var(--studio-muted);
+    font: inherit;
+    font-size: 9px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .lit.small { width: auto; padding: 0 6px; font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .lit.on { color: var(--studio-on-accent); background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+  .lit.mute.on { background: color-mix(in srgb, var(--ga-green, #46d18a) 45%, var(--ga-rec, #ff3b30)); box-shadow: 0 0 6px color-mix(in srgb, var(--ga-green, #46d18a) 45%, var(--ga-rec, #ff3b30)); color: #000; }
+  .lit.arm.on { background: var(--ga-rec, #ff3b30); box-shadow: 0 0 6px var(--ga-rec, #ff3b30); color: #fff; }
+  /* The scribble strip: a lit name plate, coloured by family. */
+  .scribble {
+    align-self: stretch;
+    padding: 3px 4px;
+    border-radius: 2px;
+    background: var(--studio-slot, #050608);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7);
+    color: var(--fam);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-align: center;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .return-note { flex: 0 0 auto; font-size: 8px; line-height: 1.3; text-align: center; color: var(--studio-muted); }
 </style>

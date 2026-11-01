@@ -507,15 +507,19 @@ Auto-Download on the mix is offered in a save dialog too. Recent recordings
 are listed in its menu with Reveal.
 
 **The mixer** (`MixerDesk.svelte`, the Mixer button right of the macros): a
+hardware-style desk, the one deliberately skeuomorphic part of the studio. A
 strip for every instrument whatever the set, each band input, the three
-shared returns and the master pinned on the right. A strip has its insert
-effects (click to edit the chain), sends to the shared reverb, tape echo
-(timed to the tempo) and spring (`sendReturns.ts`), pan, the fader's dB and
-the peak, a fader beside a meter with peak hold and a clip light, mute and
-solo, and its name coloured by family. One meter tick serves every strip.
-It is the same state as the Mixer tab; faders, pans, mutes, solos, sends,
-returns and the master are MIDI- and OSC-learnable, and it all saves with the
-project, scenes and songs.
+shared returns, and a wider master pinned on the right with a stereo meter.
+Each strip, top to bottom: number, trim (+/-12 dB), insert effects (click to
+edit the chain), EQ (high, mid with frequency, low, low cut), sends to the
+shared reverb, tape echo and spring (`sendReturns.ts`), pan, the fader's dB
+and the peak, a long-throw fader (`DeskFader.svelte`, `faderScale.ts`: unity
+at three quarters, +10 dB at the top; shift-drag is fine, the wheel nudges,
+double-click is 0 dB) beside a segmented LED meter with peak hold and a clip
+light (`DeskMeter.svelte`), mute, solo and record arm (armed channels are the
+stems Record A/V keeps), and a scribble strip coloured by family. One meter
+tick serves every strip. It is the same state as the Mixer tab; faders, trims,
+pans, mutes, solos, sends, returns and the master are MIDI- and OSC-learnable.
 
 **Insert effects** (`InsertEditor.svelte`, `inserts` in the store): every
 instrument channel and the master has a chain of as many effects as you
