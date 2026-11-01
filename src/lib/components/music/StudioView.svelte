@@ -291,15 +291,16 @@
         <select value={s.key.scale} onchange={(e) => musicStudio.setKey({ ...s.key, scale: (e.target as HTMLSelectElement).value as ScaleId })} aria-label="Scale">
           {#each Object.entries(SCALES) as [id, scale]}<option value={id}>{scale.label}</option>{/each}
         </select>
-        <select value={s.keyMode} onchange={(e) => musicStudio.setKeyMode((e.target as HTMLSelectElement).value as KeyMode)} aria-label="Keyboard mode" title={KEY_MODES.find((m) => m.id === s.keyMode)?.title} data-midi-path="studio:keys.mode-next" data-midi-label="Next keyboard mode" data-midi-mode="toggle">
+        <select class="keymode" value={s.keyMode} onchange={(e) => musicStudio.setKeyMode((e.target as HTMLSelectElement).value as KeyMode)} aria-label="Keyboard mode" title={KEY_MODES.find((m) => m.id === s.keyMode)?.title} data-midi-path="studio:keys.mode-next" data-midi-label="Next keyboard mode" data-midi-mode="toggle">
           {#each KEY_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
         </select>
       </div>
       <SceneBar />
-      <SongStrip />
-      <MacroStrip />
       <span class="spacer"></span>
-      <div class="ga-segmented" role="group" aria-label="Instrument set">
+      <select class="set-menu" value={s.set} onchange={(e) => musicStudio.setSet((e.target as HTMLSelectElement).value as typeof s.set)} aria-label="Instrument set">
+        {#each STUDIO_SETS as set}<option value={set.id}>{set.label}</option>{/each}
+      </select>
+      <div class="ga-segmented set-tabs" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
           <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)}>{set.label}</button>
         {/each}
@@ -307,11 +308,24 @@
       <div class="group">
         <button class="text-btn" class:on={$cableView !== 'show'} aria-pressed={$cableView !== 'show'} onclick={cycleCableView} title="{$cableView === 'show' ? 'Fade the cables' : $cableView === 'fade' ? 'Hide the cables' : 'Show the cables'} (connections keep working)">{CABLE_VIEW_LABELS[$cableView]}</button>
         <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included" data-midi-path="studio:studio.kill" data-midi-label="Kill all sound" data-midi-mode="toggle">Kill</button>
-        <button class="text-btn" onclick={showDeck} title="Go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Studio view or VJ deck" data-midi-mode="toggle">Deck</button>
-        <button class="text-btn" onclick={showTray} title="Back to the music tray under the deck; the music keeps playing">Tray</button>
-        <button class="text-btn" onclick={() => musicStudio.close()} title="Close the studio and stop the music">Exit</button>
+        <select class="more narrow-only" value="" onchange={(e) => { const v = (e.target as HTMLSelectElement).value; (e.target as HTMLSelectElement).value = ''; if (v === 'deck') showDeck(); else if (v === 'tray') showTray(); else if (v === 'exit') musicStudio.close(); }} aria-label="More" title="Deck, tray or exit">
+          <option value="" disabled>…</option>
+          <option value="deck">Deck ({STUDIO_VIEW_KEY_LABEL})</option>
+          <option value="tray">Tray</option>
+          <option value="exit">Exit the studio</option>
+        </select>
+        <button class="text-btn wide-only" onclick={showDeck} title="Go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Studio view or VJ deck" data-midi-mode="toggle">Deck</button>
+        <button class="text-btn wide-only" onclick={showTray} title="Back to the music tray under the deck; the music keeps playing">Tray</button>
+        <button class="text-btn wide-only" onclick={() => musicStudio.close()} title="Close the studio and stop the music">Exit</button>
       </div>
     </header>
+
+    <!-- The songs and the eight macros, in their own row under the bar so the bar fits. -->
+    <div class="subbar">
+      <SongStrip />
+      <span class="spacer"></span>
+      <MacroStrip />
+    </div>
 
     <div class="centre">
       {@render frame()}
@@ -391,9 +405,10 @@
     z-index: 60;
     display: grid;
     grid-template-columns: 336px minmax(0, 1fr) 356px;
-    grid-template-rows: var(--ga-bar-h, 48px) minmax(0, 1fr) 196px;
+    grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 196px;
     grid-template-areas:
       'bar bar bar'
+      'sub sub sub'
       'left centre right'
       'b1 b2 b3';
     gap: var(--studio-gap);
@@ -401,7 +416,37 @@
     box-sizing: border-box;
     user-select: none;
   }
-  .set-analog { grid-template-rows: var(--ga-bar-h, 48px) minmax(0, 1fr) 214px; }
+  .set-analog { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 214px; }
+  /* Songs on the left, the macros (with their FX and jacks) on the right, under the bar. */
+  .subbar {
+    grid-area: sub;
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--ga-bar-group-gap, 14px);
+    overflow-x: auto;
+    padding: 2px 0;
+  }
+  .narrow-only { display: none; }
+  /* Narrower windows: Deck, Tray and Exit fold into the … menu, the title goes, menus tighten. */
+  @media (max-width: 1599px) {
+    .wide-only { display: none; }
+    .narrow-only { display: inline-block; }
+    .bar select.keymode { max-width: 108px; }
+    .bar select.more { width: 46px; }
+  }
+  .set-menu { display: none; }
+  /* Narrow: the set tabs become one menu. */
+  @media (max-width: 1279px) {
+    .set-tabs { display: none; }
+    .set-menu { display: inline-block; }
+  }
+  @media (max-width: 1439px) {
+    .bar-title { display: none; }
+    .bar { gap: 10px; }
+  }
 
   /* The output frame lets the native preview show through; its shadow paints the ground everywhere else. */
   /* The well takes the space; the frame inside it keeps the output's aspect, letterboxed. */
@@ -488,8 +533,8 @@
   .b1 { grid-area: b1; }
   .b2 { grid-area: b2; }
   .b3 { grid-area: b3; }
-  .b12 { grid-column: 1 / 3; grid-row: 3; }
-  .b123 { grid-column: 1 / -1; grid-row: 3; }
+  .b12 { grid-column: 1 / 3; grid-row: 4; }
+  .b123 { grid-column: 1 / -1; grid-row: 4; }
 
   /* ── Lower panel ── */
   .scroll { min-height: 0; overflow: auto; flex: 1; display: flex; flex-direction: column; }
