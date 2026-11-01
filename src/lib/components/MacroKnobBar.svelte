@@ -154,8 +154,26 @@
     const req = $macroEditRequest;
     macroEditRequest.set(null);
     editPopoverFor = req.id;
-    popoverX = Math.min(req.x, (typeof innerWidth === 'number' ? innerWidth : 1280) - 470);
-    popoverY = Math.min(req.y, (typeof innerHeight === 'number' ? innerHeight : 800) - 420);
+    popoverX = req.x;
+    popoverY = req.y;
+    anchorY = req.y;
+    setTimeout(clampPopover, 0);
+  }
+  let anchorY = 0;
+  /** Keep the popover on screen with a margin, flipping above the click when it does not fit below. */
+  function clampPopover() {
+    if (!popoverEl) return;
+    const m = 8;
+    const r = popoverEl.getBoundingClientRect();
+    popoverX = Math.max(m, Math.min(popoverX, innerWidth - r.width - m));
+    let y = anchorY;
+    if (y + r.height > innerHeight - m) y = Math.max(m, anchorY - r.height - 12);
+    popoverY = Math.max(m, Math.min(y, innerHeight - r.height - m));
+  }
+  /** Out of the Studio's DOM onto the page, so none of its styles or containers reach it. */
+  function toBody(node: HTMLElement, on: boolean) {
+    if (on) document.body.appendChild(node);
+    return { destroy() { if (on) node.remove(); } };
   }
   function closePopover() {
     editPopoverFor = null;
@@ -292,7 +310,7 @@
 {#if editPopoverFor}
   {@const m = $macros.macros.find(x => x.id === editPopoverFor)}
   {#if m}
-    <div data-help-page="macros-snapshots" class="macro-popover" bind:this={popoverEl} style="left:{popoverX}px;top:{popoverY}px">
+    <div data-help-page="macros-snapshots" class="macro-popover" bind:this={popoverEl} use:toBody={popoverOnly} style="left:{popoverX}px;top:{popoverY}px">
       <div class="macro-popover-head">
         <input
           class="macro-popover-name"
