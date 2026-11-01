@@ -33,3 +33,29 @@ loopFavourites.subscribe((ids) => {
     // Private windows keep them for the session only.
   }
 });
+
+/**
+ * The visual picker: open with what is chosen now and what to do with the
+ * choice (a file, or null for None when `none` is offered), or closed.
+ */
+export const visualPicker = writable<{ current: string | null; none: boolean; title?: string; pick: (file: string | null) => void } | null>(null);
+
+const VISUAL_FAVS_KEY = 'ga.studio.visualFavourites';
+function loadVisualFavs(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(VISUAL_FAVS_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Starred visuals, kept on this computer. */
+export const visualFavourites = writable<string[]>(typeof localStorage === 'undefined' ? [] : loadVisualFavs());
+visualFavourites.subscribe((ids) => {
+  try {
+    localStorage.setItem(VISUAL_FAVS_KEY, JSON.stringify(ids));
+  } catch {
+    // Private windows keep them for the session only.
+  }
+});

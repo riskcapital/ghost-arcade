@@ -6,7 +6,7 @@
   import { PLAYABLE_INSTRUMENTS, noteName, type InstrumentId } from '../../music/noteEvents';
   import { INSTRUMENT_LABELS, KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from '../../music/instruments';
   import { KEYBOARD_SIZES, keyboardRange, octaveBaseNote, type KeyboardSize } from '../../music/keyboardLayout';
-  import { VOICE_SHADERS } from '../../music/visualScenes';
+  import VisualPickButton from './VisualPickButton.svelte';
   import { addStudioVoice } from '../../music/studioTarget';
   import { musicStudio } from '../../music/musicStudioStore';
   import { TONES, TONE_FAMILY_LABELS, type ToneFamily } from '../../music/tone/tones';
@@ -56,12 +56,6 @@
     }
   }
 
-  function addVisual(e: Event) {
-    const el = e.target as HTMLSelectElement;
-    // A visual added from the keys follows what they play.
-    if (el.value) addStudioVoice(el.value, 'played');
-    el.value = '';
-  }
 </script>
 
 <StudioModule title="Play" class="play">
@@ -71,10 +65,7 @@
       <button class:on={visual.mode === 'fade'} onclick={() => musicStudio.setVisualMode(s.instrument, 'fade')} title="Visuals linger, then fade away">Fade</button>
       <button class:on={visual.mode === 'build'} onclick={() => musicStudio.setVisualMode(s.instrument, 'build')} title="Visuals keep building while you play">Build</button>
     </div>
-    <select class="add-visual" value="" aria-label="Add a visual that follows what you play" onchange={addVisual}>
-      <option value="" disabled>Add a visual for what you play…</option>
-      {#each VOICE_SHADERS as shader (shader.file)}<option value={shader.file}>{shader.name}</option>{/each}
-    </select>
+    <VisualPickButton file={null} placeholder="Add a visual for what you play…" title="A visual for what you play" onpick={(f) => { if (f) addStudioVoice(f, 'played'); }} />
     </div>
     <select class="instrument" value={current} onchange={choose} aria-label="Instrument the keys play" title={TONES.find((t) => current === `tone:${t.id}`)?.blurb ?? 'What the keys play, whatever the set'}>
       <optgroup label="Synth">

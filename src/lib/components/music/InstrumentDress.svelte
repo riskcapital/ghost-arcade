@@ -12,7 +12,7 @@
   import { syncDressVisual } from '../../music/instrumentDressVisual';
   import type { ClipVisual } from '../../music/session';
   import type { InstrumentId } from '../../music/noteEvents';
-  import { VOICE_SHADERS } from '../../music/visualScenes';
+  import VisualPickButton from './VisualPickButton.svelte';
   import { voiceSourcesFor } from '../../music/visualVoices';
   import { BLEND_MODE_ORDER, blendModeLabel } from '../../types';
 
@@ -64,10 +64,7 @@
   {:else if open === 'visual'}
     <div class="pop" role="dialog" aria-label="Visual">
       <label>Visual
-        <select value={dress.visual?.file ?? ''} onchange={(e) => setVisual({ file: (e.target as HTMLSelectElement).value })}>
-          <option value="">None</option>
-          {#each VOICE_SHADERS as v (v.file)}<option value={v.file}>{v.name}</option>{/each}
-        </select>
+        <VisualPickButton file={dress.visual?.file ?? null} none placeholder="None" onpick={(f) => setVisual({ file: f ?? '' })} />
       </label>
       {#if dress.visual}
         <label>Follows

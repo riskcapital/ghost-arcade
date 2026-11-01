@@ -33,6 +33,7 @@
   import StudioModule from './StudioModule.svelte';
   import StudioJack from './StudioJack.svelte';
   import MacroKnobBar from '../MacroKnobBar.svelte';
+  import VisualPicker from './VisualPicker.svelte';
   import BathModules from './BathModules.svelte';
   import BerlinModules from './BerlinModules.svelte';
   import DubModules from './DubModules.svelte';
@@ -346,6 +347,7 @@
     {#if mixerOpen}<MixerDesk onclose={() => (mixerOpen = false)} />{/if}
     <!-- The macro editor from VJ mode, opened by right-clicking a macro here. -->
     <MacroKnobBar popoverOnly />
+    <VisualPicker />
 
     <div class="centre">
       {@render frame()}
