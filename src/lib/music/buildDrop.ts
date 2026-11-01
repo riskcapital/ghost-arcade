@@ -6,6 +6,7 @@
  */
 
 import type { StudioSet } from './studioSets';
+import { DROP_FX, DROP_FX_RELEASES, type DropFxId, type DropFxRelease } from './dropFx';
 
 export type BuildRoll = 'snare' | 'clap' | 'hats' | 'none';
 export type BuildFilter = 'highpass' | 'lowpass' | 'none';
@@ -31,9 +32,17 @@ export interface BuildSettings {
   /** At the drop, launch this scene and/or switch to this set. */
   dropScene: string | null;
   dropSet: StudioSet | null;
+  /** A look that warps the output with the build and drop (dropFx.ts). */
+  dropFx: DropFxId;
+  /** How hard it hits, 0-1. */
+  dropFxAmount: number;
+  /** How long it takes to let go after the drop, in beats. */
+  dropFxRelease: DropFxRelease;
 }
 
-export const BUILD_STYLES: { id: BuildStyle; label: string; settings: Omit<BuildSettings, 'bars' | 'dropScene' | 'dropSet'> }[] = [
+type StyleFields = Omit<BuildSettings, 'bars' | 'dropScene' | 'dropSet' | 'dropFx' | 'dropFxAmount' | 'dropFxRelease'>;
+
+export const BUILD_STYLES: { id: BuildStyle; label: string; settings: StyleFields }[] = [
   { id: 'edm', label: 'Classic EDM', settings: { style: 'edm', roll: 'snare', filter: 'highpass', riser: 0.9, sends: 0.6, kickOut: true, gap: true, impact: 0.9 } },
   { id: 'dub', label: 'Dub', settings: { style: 'dub', roll: 'clap', filter: 'lowpass', riser: 0.6, sends: 1, kickOut: false, gap: false, impact: 0.6 } },
   { id: 'techno', label: 'Techno', settings: { style: 'techno', roll: 'none', filter: 'lowpass', riser: 0.7, sends: 0.4, kickOut: true, gap: false, impact: 0.7 } },
@@ -41,7 +50,7 @@ export const BUILD_STYLES: { id: BuildStyle; label: string; settings: Omit<Build
 ];
 
 export function defaultBuildSettings(): BuildSettings {
-  return { ...BUILD_STYLES[0].settings, bars: 4, dropScene: null, dropSet: null };
+  return { ...BUILD_STYLES[0].settings, bars: 4, dropScene: null, dropSet: null, dropFx: 'none', dropFxAmount: 0.8, dropFxRelease: 4 };
 }
 
 export const BUILD_ROLLS: { id: BuildRoll; label: string }[] = [
@@ -127,5 +136,8 @@ export function normalizeBuildSettings(raw: unknown, sets: readonly StudioSet[])
     impact: unit(r.impact, d.impact),
     dropScene: typeof r.dropScene === 'string' ? r.dropScene : null,
     dropSet: sets.includes(r.dropSet as StudioSet) ? (r.dropSet as StudioSet) : null,
+    dropFx: DROP_FX.some((x) => x.id === r.dropFx) ? (r.dropFx as DropFxId) : d.dropFx,
+    dropFxAmount: unit(r.dropFxAmount, d.dropFxAmount),
+    dropFxRelease: DROP_FX_RELEASES.includes(r.dropFxRelease as DropFxRelease) ? (r.dropFxRelease as DropFxRelease) : d.dropFxRelease,
   };
 }

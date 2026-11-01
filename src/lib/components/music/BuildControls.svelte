@@ -9,6 +9,7 @@
   import { buildState, cancelBuild, dropNow, toggleBuild } from '../../music/musicRuntime';
   import { BUILD_FILTERS, BUILD_LENGTHS, BUILD_ROLLS, BUILD_STYLES, type BuildFilter, type BuildLength, type BuildRoll, type BuildStyle } from '../../music/buildDrop';
   import { STUDIO_SETS, type StudioSet } from '../../music/studioSets';
+  import { DROP_FX, DROP_FX_RELEASES, STROBE_MAX_HZ, type DropFxId, type DropFxRelease } from '../../music/dropFx';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
 
@@ -58,6 +59,22 @@
         </label>
         <label class="check"><input type="checkbox" checked={b.kickOut} onchange={() => musicStudio.setBuild({ kickOut: !b.kickOut })} /> Beat drops out</label>
         <label class="check"><input type="checkbox" checked={b.gap} onchange={() => musicStudio.setBuild({ gap: !b.gap })} /> Gap before the drop</label>
+      </div>
+      <div class="row">
+        <label>Drop FX
+          <select value={b.dropFx} onchange={(e) => musicStudio.setBuild({ dropFx: (e.target as HTMLSelectElement).value as DropFxId })} title="A look on the whole output: creeps in with the build, hits on the drop, then lets go">
+            {#each DROP_FX as fx (fx.id)}<option value={fx.id}>{fx.label}</option>{/each}
+          </select>
+        </label>
+        {#if b.dropFx !== 'none'}
+          <StudioKnob label="Amount" value={b.dropFxAmount} size={26} format={pct} onchange={(v) => musicStudio.setBuild({ dropFxAmount: v })} title="How hard the look hits on the drop" />
+          <label>Release
+            <select value={b.dropFxRelease} onchange={(e) => musicStudio.setBuild({ dropFxRelease: +(e.target as HTMLSelectElement).value as DropFxRelease })} title="How long it takes to let go after the drop">
+              {#each DROP_FX_RELEASES as r}<option value={r}>{r === 2 ? '1/2 bar' : r === 4 ? '1 bar' : '2 bars'}</option>{/each}
+            </select>
+          </label>
+        {/if}
+        {#if b.dropFx === 'strobe'}<span class="warn">Flashing light. Kept under {STROBE_MAX_HZ} flashes a second.</span>{/if}
       </div>
       <div class="row">
         <StudioKnob label="Riser" value={b.riser} size={26} format={pct} onchange={(v) => musicStudio.setBuild({ riser: v })} title="The riser and noise sweep" />
@@ -126,4 +143,5 @@
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .row label { display: inline-flex; align-items: center; gap: 5px; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); white-space: nowrap; }
   .spacer { flex: 1; }
+  .warn { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); max-width: 220px; white-space: normal; }
 </style>
