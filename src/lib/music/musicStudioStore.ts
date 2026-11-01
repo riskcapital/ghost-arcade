@@ -68,6 +68,7 @@ import {
   type StudioSet,
 } from './studioSets';
 import type { CableShape } from './controlSignals';
+import { normalizeDress, type DressMap, type InstrumentDress } from './instrumentDress';
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import { toneById } from './tone/tones';
@@ -154,6 +155,8 @@ export interface MusicStudioProjectState {
   acidSteps: AcidStep[];
   /** The acid line plays with the beat only when switched on. */
   acidOn: boolean;
+  /** Each instrument's own tone, pad axes and visual (instrumentDress.ts). */
+  dress: DressMap;
   drumMutes: DrumVoice[];
   cables: Record<StudioSet, Cable[]>;
   /** Sound effects on each macro knob, by macro id. */
@@ -307,6 +310,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     keyMode: 'show',
     acidSteps: defaultAcidSteps(),
     acidOn: false,
+    dress: {},
     drumMutes: [],
     cables: defaultCables(),
     macroFx: {},
@@ -399,6 +403,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     keyMode: KEY_MODES.some((m) => m.id === input.keyMode) ? (input.keyMode as KeyMode) : d.keyMode,
     acidSteps: normalizeAcidSteps(input.acidSteps),
     acidOn: input.acidOn === true,
+    dress: normalizeDress(input.dress),
     drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
     cables: input.cables ? normalizeCables(input.cables) : d.cables,
     macroFx: normalizeMacroFx(input.macroFx),
@@ -532,6 +537,13 @@ function createMusicStudioStore() {
     setKeyMode: (keyMode: KeyMode) => set({ keyMode }),
     /** Start or stop the acid line (with the beat, from the next bar). */
     setAcidOn: (acidOn: boolean) => set({ acidOn }),
+    /** Change an instrument's tone, pad axis or visual; an empty patch value takes it off. */
+    setDress: (instrument: InstrumentId, patch: InstrumentDress) =>
+      update((s) => {
+        const next: InstrumentDress = { ...(s.dress[instrument] ?? {}), ...patch };
+        for (const k of Object.keys(next) as (keyof InstrumentDress)[]) if (next[k] === undefined || next[k] === '') delete next[k];
+        return { ...s, dress: normalizeDress({ ...s.dress, [instrument]: next }) };
+      }),
     setAcidStep: (index: number, patch: Partial<AcidStep>) =>
       update((s) => ({ ...s, acidSteps: s.acidSteps.map((st, i) => (i === index ? { ...st, ...patch } : st)) })),
     toggleDrumMute: (voice: DrumVoice) =>
@@ -854,6 +866,7 @@ function createMusicStudioStore() {
         keyMode: s.keyMode,
         acidSteps: s.acidSteps.map((st) => ({ ...st })),
         acidOn: s.acidOn,
+        dress: JSON.parse(JSON.stringify(s.dress)),
         drumMutes: [...s.drumMutes],
         cables: Object.fromEntries(Object.entries(s.cables).map(([set, list]) => [set, list.map((c) => ({ ...c }))])) as Record<StudioSet, Cable[]>,
         macroFx: JSON.parse(JSON.stringify(s.macroFx)),

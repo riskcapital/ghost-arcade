@@ -21,6 +21,7 @@ export const SONG_SETUP_GROUPS = {
     'cables',
     'macroFx',
     'inserts',
+    'dress',
     'pattern',
     'acidSteps',
     'acidOn',

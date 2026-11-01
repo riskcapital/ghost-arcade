@@ -1998,7 +1998,7 @@ function routeControlCables(): void {
 function applyCableMods(s: MusicStudioState): void {
   let mixer = s.mixer;
   const insertMods = new Map<string, number>();
-  for (const [key, v] of cableMods) {
+  for (const [key, v] of [...cableMods, ...performMods]) {
     if (key.startsWith('dest:mix.')) {
       const [ch, what, send] = key.slice(9).split('.') as [ChannelId, string, string?];
       const strip = { ...stripFor(mixer, ch) };
@@ -2011,6 +2011,16 @@ function applyCableMods(s: MusicStudioState): void {
   }
   audio.setMixer(mixer, mixerChannels(s.set, s.liveInputs.length));
   audio.setInsertMods(insertMods);
+}
+
+/** Live mods from playing (a pad's Y on a send or the pan), on top of the cables'. */
+const performMods = new Map<string, number>();
+export function setPerformMod(key: string, value: number | null): void {
+  if (value === null) {
+    if (!performMods.delete(key)) return;
+  } else if (performMods.get(key) === value) return;
+  else performMods.set(key, value);
+  applyCableMods(get(musicStudio));
 }
 
 /** The drop FX amount, from a cable if one is plugged in. */

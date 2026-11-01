@@ -79,7 +79,7 @@ export interface ClipVisual {
 /** The inserts key of a clip's own effect chain. */
 export const clipFxKey = (clipId: string) => `clip:${clipId}`;
 
-function normalizeClipVisual(raw: unknown): ClipVisual | undefined {
+export function normalizeClipVisual(raw: unknown): ClipVisual | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const r = raw as Partial<Record<keyof ClipVisual, unknown>>;
   if (typeof r.file !== 'string' || !/^VX-[A-Za-z0-9_-]+\.fs$/.test(r.file)) return undefined;

@@ -65,6 +65,8 @@ import { CHANNEL_LABELS, stripFor } from './mixer';
 import { INSTRUMENTS } from './noteEvents';
 import { LOOP_ROLES, type LoopRole } from './loops';
 import { DRUM_KITS } from './tone/kits';
+import { Y_AXES } from './instrumentDress';
+import type { InstrumentId } from './noteEvents';
 import { studioDownbeat, studioNudge, studioScaleTempo, tapStudioTempo } from './studioTempo';
 
 const FX_PADS = 8;
@@ -367,6 +369,25 @@ const SEQUENCE_CONTROLS: StudioControl[] = [
   { id: 'acid.toggle', label: 'Acid line on or off', group: 'Berlin', kind: 'toggle', run: () => musicStudio.setAcidOn(!get(musicStudio).acidOn) },
 ];
 
+/** Step an instrument's tone through the library (with its built-in sound first). */
+function stepDressTone(instrument: InstrumentId, dir: 1 | -1): void {
+  const ids = [undefined, ...TONES.map((t) => t.id)];
+  const at = ids.indexOf(get(musicStudio).dress[instrument]?.tone);
+  musicStudio.setDress(instrument, { tone: ids[(at + dir + ids.length) % ids.length] });
+}
+
+const XY_CONTROLS: StudioControl[] = [
+  { id: 'xy.sound-next', label: 'XY: next sound', group: 'XY', kind: 'trigger', run: () => stepDressTone('xy', 1) },
+  { id: 'xy.sound-prev', label: 'XY: previous sound', group: 'XY', kind: 'trigger', run: () => stepDressTone('xy', -1) },
+  {
+    id: 'xy.y-next', label: 'XY: next Y axis', group: 'XY', kind: 'trigger',
+    run: () => {
+      const now = get(musicStudio).dress.xy?.yAxis ?? 'space';
+      musicStudio.setDress('xy', { yAxis: Y_AXES[(Y_AXES.findIndex((a) => a.id === now) + 1) % Y_AXES.length].id });
+    },
+  },
+];
+
 // Syncing with a live band: a drummer's pad or a foot switch can tap.
 const TEMPO_CONTROLS: StudioControl[] = [
   { id: 'tempo.tap', label: 'Tap tempo', group: 'Tempo', kind: 'trigger', run: () => tapStudioTempo() },
@@ -432,7 +453,7 @@ const STUDIO: StudioControl[] = [
 ];
 
 /** Every control this module registers, in the order the learn list shows them. */
-export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...SEQUENCE_CONTROLS, ...TEMPO_CONTROLS, ...BUILD_CONTROLS, ...MIX_CONTROLS, ...STUDIO];
+export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...SEQUENCE_CONTROLS, ...XY_CONTROLS, ...TEMPO_CONTROLS, ...BUILD_CONTROLS, ...MIX_CONTROLS, ...STUDIO];
 
 registerStudioControls(STUDIO_MIDI_CONTROLS);
 
