@@ -349,6 +349,14 @@ export function defaultCables(): Record<StudioSet, Cable[]> {
   };
 }
 
+/** Sources that had a jack in the old Sources bank, to the module jack for the same sound. */
+const MOVED_SOURCES: Record<string, string> = {
+  'cv:inst.drone.level': 'cv:drone.level', 'cv:inst.bowls.level': 'cv:bowls.ring', 'cv:inst.acid.level': 'cv:acid.level',
+  'cv:inst.dubbass.level': 'cv:dubbass.level', 'cv:inst.siren.level': 'cv:siren.level', 'cv:inst.shots.level': 'cv:shots.level',
+  'cv:inst.analog.level': 'cv:analog.level', 'cv:inst.scan.level': 'cv:scan.level',
+  'cv:inst.synth.level': 'cv:keys.level', 'cv:inst.keys.level': 'cv:keys.level',
+};
+
 export function normalizeCables(raw: unknown): Record<StudioSet, Cable[]> {
   if (!raw || typeof raw !== 'object') return defaultCables();
   const input = raw as Partial<Record<StudioSet, unknown>>;
@@ -362,8 +370,9 @@ export function normalizeCables(raw: unknown): Record<StudioSet, Cable[]> {
     }
     for (const c of Array.isArray(input[set]) ? (input[set] as unknown[]) : []) {
       if (!c || typeof c !== 'object') continue;
-      const { id, from, to } = c as Partial<Cable>;
-      if (typeof id !== 'string' || typeof from !== 'string' || typeof to !== 'string') continue;
+      const { id, from: raw, to } = c as Partial<Cable>;
+      if (typeof id !== 'string' || typeof raw !== 'string' || typeof to !== 'string') continue;
+      const from = MOVED_SOURCES[raw] ?? raw;
       out[set] = connect(out[set], { id, from, to, ...normalizeCableShape(c as Record<string, unknown>) });
     }
   }

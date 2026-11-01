@@ -42,4 +42,9 @@ describe('control cables', () => {
     expect(saved.bath.find((c) => c.id === 'b')).toEqual({ id: 'b', from: 'cv:drum.kick', to: 'dest:macro:m1', amount: -0.5, mode: 'trig', release: 0.3 });
     expect(normalizeCableShape({ amount: 9, mode: 'nope' })).toEqual({});
   });
+
+  it('moves cables from the old Sources bank onto the module jacks', () => {
+    const saved = normalizeCables({ bath: [{ id: 'x', from: 'cv:inst.drone.level', to: 'dest:macro:m1', amount: 0.5 }], berlin: [], dub: [], analog: [] });
+    expect(saved.bath).toEqual([{ id: 'x', from: 'cv:drone.level', to: 'dest:macro:m1', amount: 0.5 }]);
+  });
 });

@@ -7,7 +7,8 @@
    */
   import { musicStudio } from '../../music/musicStudioStore';
   import { bandInputStatus, startLiveInput, stopLiveInput } from '../../music/musicRuntime';
-  import { liveInputLabel } from '../../music/mixer';
+  import { INPUT_CHANNELS, liveInputLabel } from '../../music/mixer';
+  import StudioJack from './StudioJack.svelte';
   import { PART_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
   import { DUCK_RELEASE_MAX, DUCK_RELEASE_MIN } from '../../music/soundSlots';
   import StudioKnob from './StudioKnob.svelte';
@@ -54,6 +55,7 @@
           {#each PART_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
         </select>
         <span class="level" aria-hidden="true"><span class="fill" style="width: {(st?.on ? st.level : 0) * 100}%"></span></span>
+        <StudioJack id="cv:chan.{INPUT_CHANNELS[i]}.level" title="{label} out: its level, as a control signal" />
         <StudioKnob label="FX" value={input.fxSend} defaultValue={1} size={22} format={percent} title="How much of {label} goes into the echo, reverb and freeze" midiPath="studio:input.{i + 1}.fx-send" onchange={(v) => musicStudio.setLiveInput(i, { fxSend: v })} />
       </li>
     {/each}
