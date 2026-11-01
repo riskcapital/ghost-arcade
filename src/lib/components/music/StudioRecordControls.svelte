@@ -45,6 +45,7 @@
 <div class="rec" role="group" aria-label="Record A/V">
   <button
     class="go"
+    aria-label="Record A/V"
     class:on={phase === 'recording'}
     class:wait={phase === 'waiting' || phase === 'saving'}
     onclick={toggle}
@@ -52,7 +53,7 @@
     title={phase === 'idle' ? (mode === 'video' ? 'Record the output with the studio sound into one file' : 'Record the studio sound as WAV') : phase === 'waiting' ? 'Starting on the next bar: press to cancel' : 'Stop and keep the recording'}
   >
     <span class="dot" aria-hidden="true"></span>
-    {#if phase === 'recording'}{clock(elapsed)}{:else if phase === 'waiting'}Next bar…{:else if phase === 'saving'}Saving…{:else}Record A/V{/if}
+    {#if phase === 'recording'}{clock(elapsed)}{:else if phase === 'waiting'}Next bar…{:else if phase === 'saving'}Saving…{:else}<span class="lbl">Record A/V</span>{/if}
   </button>
   <button class="more" class:open aria-expanded={open} onclick={() => (open = !open)} aria-label="Recording options and recent recordings" title="Options and recent recordings">▾</button>
   {#if open}
