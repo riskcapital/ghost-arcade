@@ -336,7 +336,7 @@
       <div class="sub-centre"><MacroStrip /></div>
       <div class="sub-right">
         <StudioRecordControls />
-        <button class="text-btn" class:on={mixerOpen} aria-pressed={mixerOpen} onclick={() => (mixerOpen = !mixerOpen)} title="The full mixer: every sound, its effects, sends, pan, level and meters">Mixer</button>
+        <button class="text-btn" class:on={mixerOpen} aria-pressed={mixerOpen} onclick={() => (mixerOpen = !mixerOpen)} title="The full mixer: every sound, its effects, sends, pan, level and meters" aria-label="Mixer"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2v12M8 2v12M12 2v12" /><path d="M2.5 10h3M6.5 5h3M10.5 8h3" /></svg><span class="lbl">Mixer</span></button>
       </div>
     </div>
     {#if mixerOpen}<MixerDesk onclose={() => (mixerOpen = false)} />{/if}
@@ -423,7 +423,7 @@
     grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 196px;
     grid-template-areas:
       'bar bar bar'
-      'sub sub sub'
+      'left sub right'
       'left centre right'
       'b1 b2 b3';
     gap: var(--studio-gap);
@@ -432,21 +432,38 @@
     user-select: none;
   }
   .set-analog { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 214px; }
-  /* Songs on the left, the macros (with their FX and jacks) on the right, under the bar. */
-  /* The same columns as the body, so the macros sit right above the live output. */
+  /* The side racks run from the bar down; this row only spans the output column. */
   .subbar {
     grid-area: sub;
     position: relative;
     z-index: 1;
     min-width: 0;
-    display: grid;
-    grid-template-columns: subgrid;
+    display: flex;
     align-items: center;
+    justify-content: center;
+    gap: 6px;
     padding: 2px 0;
   }
-  .sub-left, .sub-centre, .sub-right { min-width: 0; display: flex; align-items: center; }
-  .sub-centre { justify-content: center; overflow-x: auto; }
+  /* One cluster over the output: songs, the macros, then Record and Mixer. */
+  .sub-left, .sub-centre, .sub-right { min-width: 0; display: flex; align-items: center; flex: 0 0 auto; }
+  .sub-centre { flex: 0 1 max-content; justify-content: safe center; }
   .sub-right { justify-content: flex-end; gap: 6px; }
+  .subbar { container-type: inline-size; }
+  .sub-right .ico { display: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+  /* A narrow output column: Record and Mixer fold to icons (their tooltips stay), the pager and knobs tighten. */
+  @container (max-width: 760px) {
+    .sub-right .ico { display: block; }
+    .sub-right .lbl, .subbar :global(.rec .go .lbl), .subbar :global(.song-strip .up) { display: none; }
+    .subbar :global(.song-strip .now) { min-width: 52px; max-width: 92px; }
+    .subbar :global(.macros) { gap: 2px; }
+    /* Each macro's FX tag and jack go in a row under its knob. */
+    .subbar :global(.macros .macro) { flex-direction: column; gap: 0; }
+    .subbar :global(.macros .macro .side) { flex-direction: row; gap: 1px; }
+    .subbar :global(.macros .macro .knob-wrap) { min-width: 34px; }
+    .subbar :global(.macros .macro .knob-label) { letter-spacing: 0; font-size: 8px; }
+    .subbar :global(.macros .macro .fx) { min-width: 16px; padding: 0 2px; }
+    .subbar :global(.macros .macro .jack-wrap) { margin: -3px -2px; }
+  }
   .narrow-only { display: none; }
   /* Narrower windows: Deck, Tray and Exit fold into the … menu, the title goes, menus tighten. */
   @media (max-width: 1599px) {
