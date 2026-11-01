@@ -1888,6 +1888,7 @@ struct NativeComputePipeline {
 enum CompiledPipeline {
     Compute(NativeComputePipeline),
     Render(NativeGraphRenderPipeline),
+    Shader(NativeShaderPipeline),
 }
 
 struct NativeGraphRenderPipeline {
@@ -16412,6 +16413,8 @@ impl App {
                             rendered_frame_slot = Some(slot);
                             self.last_shader_error = None;
                         }
+                        // A pipeline still building is not an error: the layer comes in when it lands.
+                        Err(err) if err.starts_with("native pipeline is warming") => {}
                         Err(err) => {
                             self.last_shader_error = Some(format!("{shader_id}: {err}"));
                         }
@@ -22785,6 +22788,7 @@ impl RenderState {
                     match pipeline {
                         CompiledPipeline::Compute(p) => { self.native_compute_pipelines.insert(key.clone(), p); }
                         CompiledPipeline::Render(p) => { self.native_graph_render_pipelines.insert(key.clone(), p); }
+                        CompiledPipeline::Shader(p) => { self.native_shader_pipelines.insert(key.clone(), p); }
                     }
                     self.pipeline_used.insert(key, self.frame_epoch);
                 }
@@ -23091,70 +23095,23 @@ impl RenderState {
         fragment_entry: &str,
         format: wgpu::TextureFormat,
     ) -> Result<(), String> {
+        self.poll_pipeline_work();
         self.reserve_pipeline(cache_key)?;
         if self.native_shader_pipelines.contains_key(cache_key) {
             return Ok(());
         }
-        let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let shader_source = match source_kind {
-            NativeShaderSourceKind::Wgsl => wgpu::ShaderSource::Wgsl(source.into()),
-            NativeShaderSourceKind::IsfGlsl | NativeShaderSourceKind::Glsl => {
-                wgpu::ShaderSource::Glsl {
-                    shader: source.into(),
-                    stage: naga::ShaderStage::Fragment,
-                    defines: &[],
-                }
-            }
-        };
-        let shader = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Ghost Render Core Native Shader Fragment"),
-                source: shader_source,
-            });
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Ghost Render Core Native Shader Pipeline Layout"),
-                bind_group_layouts: &[Some(&self.native_shader_bind_group_layout)],
-                immediate_size: 0,
-            });
-        let pipeline = self
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Ghost Render Core Native Shader Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &self.native_shader_vertex_module,
-                    entry_point: Some("vs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fragment_entry),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
-        let error_future = error_scope.pop();
-        let _ = self.device.poll(wgpu::PollType::Poll);
-        if let Some(err) = pollster::block_on(error_future) {
-            return Err(err.to_string());
-        }
-        self.native_shader_pipelines
-            .insert(cache_key.to_string(), NativeShaderPipeline { pipeline });
-        self.pipeline_used.insert(cache_key.to_string(), self.frame_epoch);
-        Ok(())
+        // Built on a worker thread, like graph pipelines: a shader seen for
+        // the first time (a new visual coming in) never stalls the frame.
+        // Until it lands this layer is skipped and everything else renders.
+        let device = self.device.clone();
+        let vertex = self.native_shader_vertex_module.clone();
+        let layout = self.native_shader_bind_group_layout.clone();
+        let source = source.to_string();
+        let entry = fragment_entry.to_string();
+        self.queue_pipeline_work(cache_key, move || {
+            build_native_shader_pipeline(&device, &vertex, &layout, source_kind, &source, &entry, format)
+                .map(CompiledPipeline::Shader)
+        })
     }
 
     fn ensure_native_compute_pipeline(
@@ -36148,6 +36105,67 @@ void main() {
             assert_eq!(read_f32(&init, particle * 12 + 10), -1.0);
         }
     }
+}
+
+/// A native shader layer's render pipeline (fragment from WGSL or ISF/GLSL), built off the frame.
+fn build_native_shader_pipeline(
+    device: &wgpu::Device,
+    vertex_module: &wgpu::ShaderModule,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    source_kind: NativeShaderSourceKind,
+    source: &str,
+    fragment_entry: &str,
+    format: wgpu::TextureFormat,
+) -> Result<NativeShaderPipeline, String> {
+    let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let shader_source = match source_kind {
+        NativeShaderSourceKind::Wgsl => wgpu::ShaderSource::Wgsl(source.into()),
+        NativeShaderSourceKind::IsfGlsl | NativeShaderSourceKind::Glsl => wgpu::ShaderSource::Glsl {
+            shader: source.into(),
+            stage: naga::ShaderStage::Fragment,
+            defines: &[],
+        },
+    };
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Ghost Render Core Native Shader Fragment"),
+        source: shader_source,
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Ghost Render Core Native Shader Pipeline Layout"),
+        bind_group_layouts: &[Some(bind_group_layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Ghost Render Core Native Shader Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: vertex_module,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some(fragment_entry),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    let error_future = error_scope.pop();
+    let _ = device.poll(wgpu::PollType::Poll);
+    if let Some(err) = pollster::block_on(error_future) {
+        return Err(err.to_string());
+    }
+    Ok(NativeShaderPipeline { pipeline })
 }
 
 fn build_compute_pipeline(device: &wgpu::Device, cache_key: &str, source: &str, compute_entry: &str, layout_specs: &[NativeComputeBindingLayoutSpec]) -> Result<NativeComputePipeline, String> {
