@@ -72,6 +72,7 @@ import { toneById } from './tone/tones';
 import { KEY_MODES, type KeyMode } from './keyMode';
 import { defaultDubShots, normalizeDubShots, type DubShot } from './dubShots';
 import { normalizeStudioSource } from './studioPlugin';
+import { RETURN_IDS, type ReturnId } from './sendReturns';
 import { BUILD_STYLES, defaultBuildSettings, normalizeBuildSettings, type BuildSettings } from './buildDrop';
 import { kitById } from './tone/kits';
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
@@ -131,6 +132,8 @@ export interface MusicStudioProjectState {
   drumKit: string | null;
   volumes: Record<InstrumentId, number>;
   masterVolume: number;
+  /** The shared returns' levels into the master (sendReturns.ts). */
+  returns: Record<ReturnId, number>;
   visuals: Record<InstrumentId, NoteVisualSettings>;
   octave: number;
   velocity: number;
@@ -279,6 +282,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     drumKit: null,
     volumes: { ...DEFAULT_VOLUMES },
     masterVolume: 0.85,
+    returns: { reverb: 0.7, echo: 0.7, spring: 0.7 },
     visuals: cloneVisuals(DEFAULT_VISUAL_SETTINGS),
     octave: DEFAULT_OCTAVE,
     velocity: 0.8,
@@ -369,6 +373,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     drumKit: kitById(input.drumKit as string) ? (input.drumKit as string) : null,
     volumes: perInstrument((id) => clamp01(volumes[id], d.volumes[id])),
     masterVolume: clamp01(input.masterVolume, d.masterVolume),
+    returns: Object.fromEntries(RETURN_IDS.map((id) => [id, clamp01((input as { returns?: Record<string, unknown> }).returns?.[id], d.returns[id])])) as Record<ReturnId, number>,
     visuals: perInstrument((id) => normalizeVisual(visuals[id], d.visuals[id])),
     octave: clampOctave(Number.isFinite(Number(input.octave)) ? Number(input.octave) : d.octave),
     velocity: Math.max(0.05, clamp01(input.velocity, d.velocity)),
@@ -585,6 +590,7 @@ function createMusicStudioStore() {
     setDrumKit: (drumKit: string | null) => set({ drumKit }),
     setVolume: (instrument: InstrumentId, volume: number) =>
       update((s) => ({ ...s, volumes: { ...s.volumes, [instrument]: clamp01(volume, s.volumes[instrument]) } })),
+    setReturn: (id: ReturnId, level: number) => update((s) => ({ ...s, returns: { ...s.returns, [id]: clamp01(level, s.returns[id]) } })),
     setMasterVolume: (volume: number) => update((s) => ({ ...s, masterVolume: clamp01(volume, s.masterVolume) })),
     setStrip: (id: ChannelId, patch: Partial<ChannelStrip>) =>
       update((s) => ({ ...s, mixer: { ...s.mixer, [id]: { ...(s.mixer[id] ?? defaultStrip()), ...patch } } })),
@@ -816,6 +822,7 @@ function createMusicStudioStore() {
         drumKit: s.drumKit,
         volumes: { ...s.volumes },
         masterVolume: s.masterVolume,
+        returns: { ...s.returns },
         visuals: cloneVisuals(s.visuals),
         octave: s.octave,
         velocity: s.velocity,

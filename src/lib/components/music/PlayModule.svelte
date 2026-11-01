@@ -66,6 +66,16 @@
 
 <StudioModule title="Play" class="play">
   {#snippet head()}
+    <div class="foot">
+    <div class="seg small" role="group" aria-label="Visual behavior">
+      <button class:on={visual.mode === 'fade'} onclick={() => musicStudio.setVisualMode(s.instrument, 'fade')} title="Visuals linger, then fade away">Fade</button>
+      <button class:on={visual.mode === 'build'} onclick={() => musicStudio.setVisualMode(s.instrument, 'build')} title="Visuals keep building while you play">Build</button>
+    </div>
+    <select class="add-visual" value="" aria-label="Add a visual that follows what you play" onchange={addVisual}>
+      <option value="" disabled>Add a visual for what you play…</option>
+      {#each VOICE_SHADERS as shader (shader.file)}<option value={shader.file}>{shader.name}</option>{/each}
+    </select>
+    </div>
     <select class="instrument" value={current} onchange={choose} aria-label="Instrument the keys play" title={TONES.find((t) => current === `tone:${t.id}`)?.blurb ?? 'What the keys play, whatever the set'}>
       <optgroup label="Synth">
         {#each SYNTH_PATCHES as p (p.id)}<option value="synth:{p.id}">Synth · {p.label}</option>{/each}
@@ -106,22 +116,13 @@
       <PianoKeys low={range.low} high={range.high} />
     {/if}
   </div>
-  <div class="foot">
-    <div class="seg small" role="group" aria-label="Visual behavior">
-      <button class:on={visual.mode === 'fade'} onclick={() => musicStudio.setVisualMode(s.instrument, 'fade')} title="Visuals linger, then fade away">Fade</button>
-      <button class:on={visual.mode === 'build'} onclick={() => musicStudio.setVisualMode(s.instrument, 'build')} title="Visuals keep building while you play">Build</button>
-    </div>
-    <select class="add-visual" value="" aria-label="Add a visual that follows what you play" onchange={addVisual}>
-      <option value="" disabled>Add a visual for what you play…</option>
-      {#each VOICE_SHADERS as shader (shader.file)}<option value={shader.file}>{shader.name}</option>{/each}
-    </select>
-  </div>
 </StudioModule>
 
 <style>
   .surface { flex: 1; min-height: 56px; display: flex; }
-  .foot { display: flex; align-items: center; gap: 8px; }
+  /* Fade / Build and the visual picker sit in the header, beside the module's name. */
+  .foot { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 260px; }
   .stepper button { display: inline-grid; place-items: center; }
   .stepper svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .add-visual { flex: 1; min-width: 0; height: 22px; }
+  .add-visual { flex: 1; min-width: 60px; height: 22px; }
 </style>

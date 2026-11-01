@@ -56,6 +56,8 @@ export interface ChannelStrip {
   pan: number;
   mute: boolean;
   solo: boolean;
+  /** How much goes to the shared returns, 0-1 (sendReturns.ts). */
+  sends?: { reverb: number; echo: number; spring: number };
 }
 
 export type EqBand = 'low' | 'mid' | 'high';
@@ -91,6 +93,9 @@ export function normalizeStrip(raw: unknown): ChannelStrip {
     pan: clampNumber(r.pan, -1, 1, d.pan),
     mute: r.mute === true,
     solo: r.solo === true,
+    ...(r.sends && typeof r.sends === 'object'
+      ? { sends: { reverb: clampNumber((r.sends as Record<string, unknown>).reverb, 0, 1, 0), echo: clampNumber((r.sends as Record<string, unknown>).echo, 0, 1, 0), spring: clampNumber((r.sends as Record<string, unknown>).spring, 0, 1, 0) } }
+      : {}),
   };
 }
 
