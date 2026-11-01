@@ -73,36 +73,6 @@
 
   let root = $state<HTMLElement | null>(null);
   let hole = $state<HTMLElement | null>(null);
-  // The cluster over the output lines its ends up with the output frame's edges.
-  let subbar = $state<HTMLElement | null>(null);
-  let frameInset = $state({ l: 0, r: 0 });
-  $effect(() => {
-    const f = hole;
-    const b = subbar;
-    if (!f || !b) return;
-    const measure = () => {
-      const fr = f.getBoundingClientRect();
-      const br = b.getBoundingClientRect();
-      // Never narrower than what the row holds: a tall, narrow output lets the row run the full column.
-      // The compact row (Record and Mixer as icons, see the container query) needs about this much.
-      const need = 540;
-      const slack = Math.max(0, br.width - need);
-      let l = Math.max(0, fr.left - br.left);
-      let r = Math.max(0, br.right - fr.right);
-      if (l + r > slack) {
-        const k = slack / (l + r);
-        l *= k;
-        r *= k;
-      }
-      const next = { l: Math.round(l), r: Math.round(r) };
-      if (next.l !== frameInset.l || next.r !== frameInset.r) frameInset = next;
-    };
-    const ro = new ResizeObserver(measure);
-    ro.observe(f);
-    ro.observe(b);
-    measure();
-    return () => ro.disconnect();
-  });
   let elapsed = $state(0);
   let tempo = $state(120);
   let scanX = $state(0);
@@ -362,7 +332,7 @@
     </header>
 
     <!-- The songs and the eight macros, in their own row under the bar so the bar fits. -->
-    <div class="subbar" bind:this={subbar} style="padding-left: {frameInset.l}px; padding-right: {frameInset.r}px">
+    <div class="subbar">
       <div class="sub-left"><SongStrip /></div>
       <div class="sub-centre"><MacroStrip /></div>
       <div class="sub-right">
@@ -484,18 +454,20 @@
   .sub-left { justify-content: flex-start; }
   .subbar { container-type: inline-size; }
   .sub-right .ico { display: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-  /* A narrow output column: Record and Mixer fold to icons (their tooltips stay), the pager and knobs tighten. */
-  @container (max-width: 760px) {
+  /* Space runs short: the macros keep their knobs and side tags but tighten, Record and Mixer fold to icons (tooltips stay). */
+  @container (max-width: 880px) {
     .sub-right .ico { display: block; }
     .sub-right .lbl, .subbar :global(.rec .go .lbl), .subbar :global(.song-strip .up) { display: none; }
     .subbar :global(.song-strip .now) { min-width: 52px; max-width: 92px; }
     .subbar :global(.macros) { gap: 2px; }
-    /* Each macro's FX tag and jack go in a row under its knob. */
-    .subbar :global(.macros .macro) { flex-direction: column; gap: 0; }
-    .subbar :global(.macros .macro .side) { flex-direction: row; gap: 1px; }
     .subbar :global(.macros .macro .knob-wrap) { min-width: 34px; }
     .subbar :global(.macros .macro .knob-label) { letter-spacing: 0; font-size: 8px; }
     .subbar :global(.macros .macro .fx) { min-width: 16px; padding: 0 2px; }
+  }
+  /* Only when really narrow: each macro's FX tag and jack go in a row under its knob. */
+  @container (max-width: 660px) {
+    .subbar :global(.macros .macro) { flex-direction: column; gap: 0; }
+    .subbar :global(.macros .macro .side) { flex-direction: row; gap: 1px; }
     .subbar :global(.macros .macro .jack-wrap) { margin: -3px -2px; }
   }
   .narrow-only { display: none; }
