@@ -36,6 +36,8 @@ export interface StudioVoice {
   level: number;
   /** How it blends over the voices above it in the list. Screen when missing. */
   blend?: BlendMode;
+  /** The session clip that brought it in; it goes when that clip stops. */
+  clip?: string;
   /** Look inputs, by name. */
   params: Record<string, number>;
 }
@@ -88,6 +90,7 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
     auto: r.auto === undefined ? true : r.auto === true,
     level: clamp01(r.level, 1),
     blend: studioVoiceBlend(r.blend),
+    ...(typeof r.clip === 'string' && r.clip ? { clip: r.clip } : {}),
     params,
   };
 }

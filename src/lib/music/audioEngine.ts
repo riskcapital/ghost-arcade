@@ -137,6 +137,7 @@ export class MusicAudioEngine {
   /** Insert effects by channel (an instrument, or "master"). */
   private insertChains = new Map<string, MacroFxChain>();
   private insertSettings: Record<string, MacroFxInstance[]> = {};
+  private clipInserts = new Map<string, MacroFxInstance[]>();
   /** The mixer's shared reverb, echo and spring (sendReturns.ts). */
   private returns: SendReturns | null = null;
   private returnLevels: Record<ReturnId, number> = { reverb: 0.7, echo: 0.7, spring: 0.7 };
@@ -269,7 +270,19 @@ export class MusicAudioEngine {
   }
 
   private syncInserts(): void {
-    for (const [channel, chain] of this.insertChains) chain.sync([{ macroValue: 0, effects: this.insertSettings[channel] ?? [] }], this.tempo);
+    for (const [channel, chain] of this.insertChains) {
+      const effects = [...(this.insertSettings[channel] ?? []), ...(this.clipInserts.get(channel) ?? [])];
+      chain.sync([{ macroValue: 0, effects }], this.tempo);
+    }
+  }
+
+  /** A playing clip's own effects on its channel, after the channel's; null takes them away. */
+  setClipInserts(channel: string, effects: MacroFxInstance[] | null): void {
+    const was = this.clipInserts.get(channel) ?? null;
+    if (was === effects || (!was?.length && !effects?.length)) return;
+    if (effects?.length) this.clipInserts.set(channel, effects);
+    else this.clipInserts.delete(channel);
+    this.syncInserts();
   }
 
   /** Run a build-up to its drop; `kickOutFrom` (audio time) thins the beat out until the drop. */

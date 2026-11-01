@@ -51,6 +51,8 @@ export interface NotesClip {
   tone?: string;
   /** The preset it was made from. */
   preset?: string;
+  /** A visual that comes in while it plays. */
+  visual?: ClipVisual;
 }
 
 export interface BeatClip {
@@ -59,6 +61,35 @@ export interface BeatClip {
   name: string;
   pattern: DrumPattern;
   preset?: string;
+  visual?: ClipVisual;
+}
+
+/**
+ * A clip's own visual: a visual voice (a VX shader, the sound it follows,
+ * its blend and opacity) that comes in with the clip and goes when it stops.
+ * The clip's own effects live in the studio's inserts as "clip:<id>".
+ */
+export interface ClipVisual {
+  file: string;
+  source: string;
+  blend: string;
+  level: number;
+}
+
+/** The inserts key of a clip's own effect chain. */
+export const clipFxKey = (clipId: string) => `clip:${clipId}`;
+
+function normalizeClipVisual(raw: unknown): ClipVisual | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Partial<Record<keyof ClipVisual, unknown>>;
+  if (typeof r.file !== 'string' || !/^VX-[A-Za-z0-9_-]+\.fs$/.test(r.file)) return undefined;
+  const level = Number(r.level);
+  return {
+    file: r.file,
+    source: typeof r.source === 'string' ? r.source : 'all',
+    blend: typeof r.blend === 'string' ? r.blend : 'screen',
+    level: Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : 1,
+  };
 }
 
 export type SessionClip = NotesClip | BeatClip;
@@ -223,6 +254,7 @@ interface RawClip {
   key?: { root?: unknown; scale?: unknown } | null;
   instrument?: unknown;
   tone?: unknown;
+  visual?: unknown;
 }
 
 /** A clip from saved data, or null. */
@@ -234,7 +266,8 @@ export function normalizeClip(raw: unknown): SessionClip | null {
   const preset = typeof input.preset === 'string' ? input.preset : undefined;
   if (input.kind === 'beat') {
     if (!input.pattern) return null;
-    return { kind: 'beat', id: input.id, name, pattern: normalizePattern(input.pattern), ...(preset ? { preset } : {}) };
+    const visual = normalizeClipVisual(input.visual);
+    return { kind: 'beat', id: input.id, name, pattern: normalizePattern(input.pattern), ...(preset ? { preset } : {}), ...(visual ? { visual } : {}) };
   }
   if (input.kind !== 'notes') return null;
   // Any length in quarter beats: a three-beat loop drifts against the bar on purpose.
@@ -260,7 +293,8 @@ export function normalizeClip(raw: unknown): SessionClip | null {
     : null;
   const instrument = INSTRUMENTS.includes(input.instrument as InstrumentId) ? (input.instrument as InstrumentId) : null;
   const tone = toneById(input.tone as string) ? (input.tone as string) : undefined;
-  return { kind: 'notes', id: input.id, name, beats, notes, key, instrument, ...(tone ? { tone } : {}), ...(preset ? { preset } : {}) };
+  const visual = normalizeClipVisual(input.visual);
+  return { kind: 'notes', id: input.id, name, beats, notes, key, instrument, ...(tone ? { tone } : {}), ...(preset ? { preset } : {}), ...(visual ? { visual } : {}) };
 }
 
 /** A session from saved data. Beat clips only live on the beat track, notes clips on the others. */

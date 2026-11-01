@@ -82,7 +82,7 @@ import {
   type MelodicLoop,
 } from './loops';
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
-import { TRACK_IDS, clipFromRecording, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
+import { TRACK_IDS, clipFromRecording, clipFxKey, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
 import type { AnalogDest, AnalogSource } from './analogSynth';
 import { INPUT_CHANNELS, type ChannelId } from './mixer';
 import { LiveInputs, type BandInputSpec } from './liveInput';
@@ -97,7 +97,7 @@ import { setStudioRecordingSource } from '../audio/clipAudioBus';
 import { buildLanding, buildProgress, rollHits } from './buildDrop';
 import { captureSetup, type SongSetup } from './songs';
 import { editStudio, studioTargetNow } from './studioTarget';
-import { normalizeStudioSource } from './studioPlugin';
+import { MAX_STUDIO_VOICES, normalizeStudioSource, type StudioVoice } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
@@ -305,6 +305,7 @@ export function studioAudio(): MusicAudioEngine {
 }
 
 export function killAll(): void {
+  for (const track of [...clipDressing.keys()]) undressTrack(track);
   cancelBuild();
   stopPreview();
   stopAll();
@@ -860,6 +861,7 @@ export function launchRow(row: number): void {
 
 /** Stop one track. */
 export function stopTrack(track: TrackId): void {
+  undressTrack(track);
   if (track === 'beats') {
     if (sequencer) stopSequencer();
     musicTransport.update((t) => ({ ...t, queuedBeat: null }));
@@ -868,7 +870,75 @@ export function stopTrack(track: TrackId): void {
   }
 }
 
+// ── A clip's own visual and effects ─────────────────────────────────────
+
+/** Which clip's visual and effects each track has in now. */
+const clipDressing = new Map<TrackId, string>();
+const dressingTimers = new Map<TrackId, ReturnType<typeof setTimeout>>();
+
+function clipChannel(track: TrackId, clip: SessionClip): string {
+  if (track === 'beats' || clip.kind === 'beat') return 'drums';
+  return clip.instrument ?? ROLE_INSTRUMENTS[get(musicStudio).set][track];
+}
+
+/** Ease a clip voice's opacity to `to` over about half a second (a crossfade, not a cut). */
+function fadeClipVoice(clipId: string, to: number, then?: () => void): void {
+  const steps = 6;
+  for (let i = 1; i <= steps; i++) {
+    setTimeout(() => {
+      if (!studioTargetNow()) return;
+      editStudio((src) => ({ ...src, musicVoices: src.musicVoices.map((v) => (v.clip === clipId ? { ...v, level: to * (i / steps) + (1 - i / steps) * (to === 0 ? v.level : 0) } : v)) }));
+      if (i === steps) then?.();
+    }, (i * 480) / steps);
+  }
+}
+
+function undressTrack(track: TrackId): void {
+  const timer = dressingTimers.get(track);
+  if (timer) clearTimeout(timer);
+  dressingTimers.delete(track);
+  const id = clipDressing.get(track);
+  if (!id) return;
+  clipDressing.delete(track);
+  const found = findClip(get(musicStudio).session, id);
+  audio.setClipInserts(found ? clipChannel(track, found.clip) : track === 'beats' ? 'drums' : ROLE_INSTRUMENTS[get(musicStudio).set][track], null);
+  if (studioTargetNow()?.source.musicVoices.some((v) => v.clip === id)) {
+    fadeClipVoice(id, 0, () => editStudio((src) => ({ ...src, musicVoices: src.musicVoices.filter((v) => v.clip !== id) })));
+  }
+}
+
+/** On the clip's start (`atMs` from now): its effects go in on its channel and its visual fades in. */
+function dressTrack(track: TrackId, clip: SessionClip, atMs: number): void {
+  const hasFx = (get(musicStudio).inserts[clipFxKey(clip.id)] ?? []).length > 0;
+  if (!clip.visual && !hasFx) {
+    if (clipDressing.has(track)) dressingTimers.set(track, setTimeout(() => undressTrack(track), atMs));
+    return;
+  }
+  const prev = dressingTimers.get(track);
+  if (prev) clearTimeout(prev);
+  dressingTimers.set(track, setTimeout(() => {
+    dressingTimers.delete(track);
+    if (clipDressing.get(track) !== clip.id) undressTrack(track);
+    clipDressing.set(track, clip.id);
+    audio.setClipInserts(clipChannel(track, clip), get(musicStudio).inserts[clipFxKey(clip.id)] ?? null);
+    const v = clip.visual;
+    const target = studioTargetNow();
+    if (v && target && !target.source.musicVoices.some((x) => x.clip === clip.id) && target.source.musicVoices.length < MAX_STUDIO_VOICES) {
+      editStudio((src) => ({ ...src, musicVoices: [...src.musicVoices, { file: v.file, source: v.source as VoiceSourceId, auto: true, level: 0, blend: v.blend as StudioVoice['blend'], params: {}, clip: clip.id }] }));
+      fadeClipVoice(clip.id, v.level);
+    }
+  }, atMs));
+}
+
+/** Ms until a clip launched now starts: the next bar when music plays, at once otherwise. */
+function msToClipStart(now: boolean): number {
+  const { beat, beatMs } = launchClockPosition();
+  const busy = !!sequencer || !!replay || loopSlots.size > 0;
+  return busy && !now ? Math.max(0, (nextBar(beat) - beat) * beatMs) : 0;
+}
+
 function startClip(track: TrackId, clip: SessionClip, now: boolean): void {
+  dressTrack(track, clip, msToClipStart(now));
   const s = get(musicStudio);
   if (clip.kind === 'beat') launchBeatLoop(clip.pattern, clip.id, now);
   else if (track !== 'beats') {
@@ -2301,6 +2371,11 @@ export function ensureMusicRuntime(): void {
     audio.setPadSounds(s.fxPads[s.set]);
     audio.setDubShots(s.dubShots);
     audio.setInserts(s.inserts);
+    // A playing clip's effects follow edits to them.
+    for (const [track, id] of clipDressing) {
+      const found = findClip(s.session, id);
+      if (found) audio.setClipInserts(clipChannel(track, found.clip), s.inserts[clipFxKey(id)] ?? null);
+    }
     // While the studio is open, recordings carry its mix.
     setStudioRecordingSource(s.isOpen ? () => audio.recordingNode() : null);
     audio.setReturns(s.returns);

@@ -126,3 +126,16 @@ describe('a clip on its own tone', () => {
     expect(clipLoop(kept, 'bass', 'berlin', { root: 0, scale: 'minor' }).tone).toBe('bass.envelope-funk');
   });
 });
+
+describe('a clip with its own visual', () => {
+  it('keeps a good visual, drops a bad one', async () => {
+    const { normalizeClip } = await import('./session');
+    const base = { kind: 'notes', id: 'c9', name: 'Lead', beats: 4, notes: [{ beat: 0, dur: 1, note: 60, velocity: 0.8 }], key: null, instrument: null };
+    const kept = normalizeClip({ ...base, visual: { file: 'VX-Barcode.fs', source: 'lead', blend: 'add', level: 0.6 } });
+    expect(kept && 'visual' in kept && kept.visual).toEqual({ file: 'VX-Barcode.fs', source: 'lead', blend: 'add', level: 0.6 });
+    const bad = normalizeClip({ ...base, visual: { file: '../evil.fs' } });
+    expect(bad && 'visual' in bad).toBe(false);
+    const beat = normalizeClip({ kind: 'beat', id: 'b1', name: 'Beat', pattern: { steps: 16 }, visual: { file: 'VX-Panels.fs', source: 'kick', blend: 'screen', level: 1 } });
+    expect(beat && 'visual' in beat && beat.visual?.file).toBe('VX-Panels.fs');
+  });
+});

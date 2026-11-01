@@ -11,12 +11,14 @@
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { musicStudio } from '../../music/musicStudioStore';
   import { insertEditorChannel } from '../../music/studioUi';
+  import { findClip } from '../../music/session';
   import type { InstrumentId } from '../../music/noteEvents';
   import StudioKnob from './StudioKnob.svelte';
 
   const channel = $derived($insertEditorChannel);
   const chain = $derived(channel ? ($musicStudio.inserts[channel] ?? []) : []);
-  const name = $derived(channel === 'master' ? 'Master' : channel ? (INSTRUMENT_LABELS[channel as InstrumentId] ?? channel) : '');
+  const clipName = $derived(channel?.startsWith('clip:') ? (findClip($musicStudio.session, channel.slice(5))?.clip.name ?? 'Clip') : null);
+  const name = $derived(channel === 'master' ? 'Master' : clipName ? `${clipName} (clip)` : channel ? (INSTRUMENT_LABELS[channel as InstrumentId] ?? channel) : '');
   const tempo = launchClockTempo();
   let dragging = $state<string | null>(null);
 
@@ -34,7 +36,7 @@
 </script>
 
 {#if channel}
-  <aside class="editor" aria-label="{name} effects">
+  <aside class="editor" class:over={!!clipName} aria-label="{name} effects">
     <header>
       <div class="title">
         <span class="ga-eyebrow">Insert effects</span>
@@ -99,6 +101,8 @@
     border-left: 1px solid var(--studio-edge);
     box-shadow: -18px 0 40px rgba(0, 0, 0, 0.55);
   }
+  /* A clip's chain opens over the clip editor. */
+  .editor.over { z-index: 95; }
   header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--studio-edge-soft); }
   .title { flex: 1; }
   h2 { margin: 2px 0 0; font-size: var(--ga-text-heading, 16px); font-weight: var(--ga-weight-title, 650); }
