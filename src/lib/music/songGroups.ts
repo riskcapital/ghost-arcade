@@ -19,6 +19,7 @@ export const SONG_SETUP_GROUPS = {
     'mixer',
     'cables',
     'macroFx',
+    'inserts',
     'pattern',
     'acidSteps',
     'drumMutes',

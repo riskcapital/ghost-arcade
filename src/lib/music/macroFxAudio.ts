@@ -4,7 +4,7 @@
  * removed or switched; turning a knob or a macro just moves parameters.
  */
 
-import { impulse, softClip, wetDry } from './fxRack';
+import { impulse, loopClip, softClip, wetDry } from './fxRack';
 import { division, effectiveValue, type MacroFxInstance, type MacroFxType } from './macroFx';
 
 type Values = Record<string, number>;
@@ -280,7 +280,118 @@ function autopanUnit(ctx: AudioContext): Unit {
   };
 }
 
+function eqUnit(ctx: AudioContext): Unit {
+  const low = ctx.createBiquadFilter();
+  low.type = 'lowshelf';
+  low.frequency.value = 180;
+  const mid = ctx.createBiquadFilter();
+  mid.type = 'peaking';
+  mid.Q.value = 0.9;
+  const high = ctx.createBiquadFilter();
+  high.type = 'highshelf';
+  high.frequency.value = 5000;
+  low.connect(mid).connect(high);
+  const db = (v: number) => (v - 0.5) * 24;
+  return {
+    input: low,
+    output: high,
+    set(v) {
+      glide(low.gain, db(v.low), ctx);
+      glide(mid.gain, db(v.mid), ctx);
+      glide(mid.frequency, expRange(200, 5000, v.midFreq), ctx);
+      glide(high.gain, db(v.high), ctx);
+    },
+    dispose() {},
+  };
+}
+
+function compressorUnit(ctx: AudioContext): Unit {
+  const comp = ctx.createDynamicsCompressor();
+  comp.knee.value = 6;
+  comp.release.value = 0.18;
+  const makeup = ctx.createGain();
+  comp.connect(makeup);
+  const io = wetDry(ctx, comp, makeup);
+  return {
+    input: io.input,
+    output: io.output,
+    set(v) {
+      glide(comp.threshold, -v.threshold * 48, ctx);
+      glide(comp.ratio, 1 + v.ratio * 19, ctx);
+      glide(comp.attack, 0.001 + v.attack * 0.099, ctx);
+      glide(makeup.gain, Math.pow(10, (v.makeup * 18) / 20), ctx);
+      io.mix(v.mix);
+    },
+    dispose() {},
+  };
+}
+
+/** A tape echo: darker each repeat, the tape's speed wandering, saturating instead of running away. */
+function tapeUnit(ctx: AudioContext): Unit {
+  const delay = ctx.createDelay(4);
+  const tone = ctx.createBiquadFilter();
+  tone.type = 'lowpass';
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 120;
+  const sat = ctx.createWaveShaper();
+  sat.curve = loopClip(1.4);
+  const fb = ctx.createGain();
+  const wetOut = ctx.createGain();
+  const wow = lfo(ctx);
+  wow.osc.frequency.value = 0.6;
+  wow.depth.connect(delay.delayTime);
+  delay.connect(tone).connect(hp).connect(sat);
+  sat.connect(fb).connect(delay);
+  sat.connect(wetOut);
+  const io = wetDry(ctx, delay, wetOut);
+  return {
+    input: io.input,
+    output: io.output,
+    set(v, tempo) {
+      glide(delay.delayTime, (division(v.time).beats * 60) / Math.max(30, tempo), ctx, 0.05);
+      glide(fb.gain, Math.min(0.95, v.feedback * 0.95), ctx);
+      glide(tone.frequency, expRange(800, 9000, v.tone), ctx);
+      glide(wow.depth.gain, v.wow * 0.003, ctx);
+      io.mix(v.mix);
+    },
+    dispose() { try { wow.osc.stop(); } catch { /* stopped */ } },
+  };
+}
+
+function springUnit(ctx: AudioContext): Unit {
+  const verb = ctx.createConvolver();
+  // A short, bright, drippy spring.
+  const len = Math.floor(ctx.sampleRate * 1.6);
+  const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      const s = i / ctx.sampleRate;
+      d[i] = (Math.random() * 2 - 1) * Math.exp(-s * 3) * (1 + 0.6 * Math.sin(2 * Math.PI * (430 + ch * 31) * s * (1 + s * 0.4))) * 0.5;
+    }
+  }
+  verb.buffer = buf;
+  const tone = ctx.createBiquadFilter();
+  tone.type = 'lowpass';
+  verb.connect(tone);
+  const io = wetDry(ctx, verb, tone);
+  return {
+    input: io.input,
+    output: io.output,
+    set(v) {
+      glide(tone.frequency, expRange(1200, 12000, v.tone), ctx);
+      io.mix(v.mix);
+    },
+    dispose() {},
+  };
+}
+
 const BUILDERS: Record<MacroFxType, (ctx: AudioContext) => Unit> = {
+  eq: eqUnit,
+  compressor: compressorUnit,
+  tape: tapeUnit,
+  spring: springUnit,
   delay: delayUnit,
   filter: filterUnit,
   reverb: reverbUnit,

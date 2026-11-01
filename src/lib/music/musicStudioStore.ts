@@ -151,6 +151,8 @@ export interface MusicStudioProjectState {
   cables: Record<StudioSet, Cable[]>;
   /** Sound effects on each macro knob, by macro id. */
   macroFx: Record<string, MacroFxInstance[]>;
+  /** Insert effects on each instrument's channel and on the master ("master"), as many as you like, in order. */
+  inserts: Record<string, MacroFxInstance[]>;
   /** The session grid: a track of clip slots per part. */
   session: Session;
   /** Bars the loop recorder takes (0 = until stopped), and how it snaps notes. */
@@ -292,6 +294,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     drumMutes: [],
     cables: defaultCables(),
     macroFx: {},
+    inserts: {},
     session: defaultSession({ root: 2, scale: 'dorian' }, generateUUID),
     recordLength: 2,
     quantize: '1/16',
@@ -381,6 +384,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
     cables: input.cables ? normalizeCables(input.cables) : d.cables,
     macroFx: normalizeMacroFx(input.macroFx),
+    inserts: normalizeMacroFx((input as { inserts?: unknown }).inserts),
     session: normalizeSession((input as { session?: unknown }).session) ?? legacySession(input as Record<string, unknown>, normalizeKey(input.key, d.key)),
     recordLength: (RECORD_LENGTHS as readonly number[]).includes(Number(input.recordLength)) ? (Number(input.recordLength) as RecordLength) : d.recordLength,
     quantize: QUANTIZE_GRIDS.some((g) => g.id === input.quantize) ? (input.quantize as QuantizeId) : d.quantize,
@@ -514,6 +518,39 @@ function createMusicStudioStore() {
       update((s) => ({ ...s, drumMutes: s.drumMutes.includes(voice) ? s.drumMutes.filter((v) => v !== voice) : [...s.drumMutes, voice] })),
     connectCable: (cable: Cable) =>
       update((s) => ({ ...s, cables: { ...s.cables, [s.set]: connect(s.cables[s.set], cable) } })),
+    // ── Insert effects on a channel or the master ──
+    addInsert: (channel: string, id: string, type: MacroFxType) =>
+      update((s) => {
+        const fx = createMacroFx(id, type);
+        // An insert is heard at once: its mix starts up, not at the macro's resting 0.
+        if (fx.params.mix && fx.params.mix.value === 0) fx.params.mix = { ...fx.params.mix, value: 0.5 };
+        if (type === 'autopan' && fx.params.depth) fx.params.depth = { ...fx.params.depth, value: 0.6 };
+        return { ...s, inserts: { ...s.inserts, [channel]: [...(s.inserts[channel] ?? []), fx] } };
+      }),
+    removeInsert: (channel: string, id: string) =>
+      update((s) => ({ ...s, inserts: { ...s.inserts, [channel]: (s.inserts[channel] ?? []).filter((fx) => fx.id !== id) } })),
+    toggleInsert: (channel: string, id: string) =>
+      update((s) => ({ ...s, inserts: { ...s.inserts, [channel]: (s.inserts[channel] ?? []).map((fx) => (fx.id === id ? { ...fx, enabled: !fx.enabled } : fx)) } })),
+    /** Move an effect to position `to` in its chain. */
+    moveInsert: (channel: string, id: string, to: number) =>
+      update((s) => {
+        const list = [...(s.inserts[channel] ?? [])];
+        const from = list.findIndex((fx) => fx.id === id);
+        if (from < 0) return s;
+        const [fx] = list.splice(from, 1);
+        list.splice(Math.max(0, Math.min(list.length, to)), 0, fx);
+        return { ...s, inserts: { ...s.inserts, [channel]: list } };
+      }),
+    setInsertParam: (channel: string, id: string, key: string, value: number) =>
+      update((s) => ({
+        ...s,
+        inserts: {
+          ...s.inserts,
+          [channel]: (s.inserts[channel] ?? []).map((fx) =>
+            fx.id === id && fx.params[key] ? { ...fx, params: { ...fx.params, [key]: { ...fx.params[key], value: Math.max(0, Math.min(1, value)) } } } : fx,
+          ),
+        },
+      })),
     addMacroFx: (macroId: string, id: string, type: MacroFxType) =>
       update((s) => ({ ...s, macroFx: { ...s.macroFx, [macroId]: [...(s.macroFx[macroId] ?? []), createMacroFx(id, type)] } })),
     removeMacroFx: (macroId: string, id: string) =>
@@ -794,6 +831,7 @@ function createMusicStudioStore() {
         drumMutes: [...s.drumMutes],
         cables: Object.fromEntries(Object.entries(s.cables).map(([set, list]) => [set, list.map((c) => ({ ...c }))])) as Record<StudioSet, Cable[]>,
         macroFx: JSON.parse(JSON.stringify(s.macroFx)),
+        inserts: JSON.parse(JSON.stringify(s.inserts)),
         session: JSON.parse(JSON.stringify(s.session)),
         recordLength: s.recordLength,
         quantize: s.quantize,

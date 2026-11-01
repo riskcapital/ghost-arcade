@@ -51,6 +51,7 @@
   import PatchBay from './PatchBay.svelte';
   import { CABLE_VIEW_LABELS, cableView, cycleCableView } from '../../music/cableView';
   import MacroEditor from './MacroEditor.svelte';
+  import InsertEditor from './InsertEditor.svelte';
   import TakeList from './TakeList.svelte';
   import MixerPanel from './MixerPanel.svelte';
   import BandPanel from './BandPanel.svelte';
@@ -372,6 +373,7 @@
 
     <CableLayer {root} />
     <MacroEditor />
+    <InsertEditor />
     <ClipEditor />
   </div>
 {/if}

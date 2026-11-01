@@ -453,6 +453,17 @@ all of it back without stopping the music. **Session** saves the project
 the starter clips in the current key and no scenes. `sceneSave.test.ts`
 covers a scene's save and load.
 
+**Insert effects** (`InsertEditor.svelte`, `inserts` in the store): every
+instrument channel and the master has a chain of as many effects as you
+like, from the studio's full list (delay, tape echo, spring, reverb, filter,
+EQ, compressor, chorus, phaser, bitcrush, drive, stutter, auto-pan), played in
+order. Open a chain from a mixer strip's FX, Master FX, the Play module (what
+the keys play), a session track's FX (that track's instrument) or the echo
+shots. Drag or use the arrows to reorder; the light bypasses an effect, which
+takes it out of the signal so it costs nothing. One chain class serves the
+inserts and the macros (`macroFxAudio.ts`). Chains save with the project,
+scenes and songs (`inserts.test.ts`).
+
 **Build and drop** (`buildDrop.ts`, `buildFx.ts`, `BuildControls.svelte`
 under the live output): **Build** runs a build-up of 1, 2, 4 or 8 bars that
 lands exactly on a bar line (`buildLanding`); press it again, or Kill, to
