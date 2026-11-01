@@ -58,11 +58,18 @@
   async function loadThumbs() {
     if (loading) return;
     loading = true;
+    // Pictures baked through the native core (scripts/build-voice-thumbnails.mjs) come first.
+    const baked = new Set<string>(await fetch('./ISF/voice-thumbs/index.json').then((r) => (r.ok ? r.json() : [])).catch(() => []));
     for (const v of VOICE_SHADERS) {
       if (thumbs[v.file]) continue;
       try {
         const code = await fetch(`./ISF/${v.file}`).then((r) => r.text());
         responds = { ...responds, [v.file]: voiceRespondsTo(code) };
+        const bakedName = v.file.replace(/\.fs$/, '.jpg');
+        if (baked.has(bakedName)) {
+          thumbs = { ...thumbs, [v.file]: `./ISF/voice-thumbs/${bakedName}` };
+          continue;
+        }
         const url = await generateCachedThumbnail(demoVoiceCode(code));
         // Multi-pass voices build up over frames, which only the native renderer draws: no black boxes.
         if (await isBlank(url)) blank = { ...blank, [v.file]: true };

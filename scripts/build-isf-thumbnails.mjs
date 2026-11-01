@@ -12,6 +12,10 @@
  *   node scripts/build-isf-thumbnails.mjs --cdp 9234
  *
  * Run it again after changing library shaders; stale entries are removed.
+ *
+ * The Studio's visual voices are baked through the native core instead (most
+ * need several passes): node scripts/build-voice-thumbnails.mjs, into
+ * public/ISF/voice-thumbs, which the visual browser shows first.
  */
 import fs from 'node:fs';
 import path from 'node:path';
