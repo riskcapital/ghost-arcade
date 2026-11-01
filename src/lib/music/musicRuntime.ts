@@ -580,7 +580,15 @@ function scheduleSequencer(): void {
     if (heardLive.delete(`${step.voice}:${Math.round(step.beat * STEPS_PER_BEAT)}`)) continue;
     send(noteOn('drums', step.note, step.velocity, 'sequencer', timeAt(step.beat)));
   }
-  if (s.set === 'berlin') scheduleAcid(sequencer.scheduledBeat, horizon, timeAt);
+  // The acid line plays only when switched on, and comes in on a bar line.
+  const acidLive = s.set === 'berlin' && s.acidOn;
+  if (acidLive && !acidWasOn) acidFromBeat = nextBar(beat);
+  if (!acidLive && acidHeld !== null) {
+    send(noteOff('acid', acidHeld, 'sequencer', now));
+    acidHeld = null;
+  }
+  acidWasOn = acidLive;
+  if (acidLive && horizon > acidFromBeat) scheduleAcid(Math.max(sequencer.scheduledBeat, acidFromBeat), horizon, timeAt);
   sequencer.scheduledBeat = horizon;
   if (s.recording && patternHasHits(s.pattern)) sequencer.usedInTake = true;
 }
@@ -588,6 +596,8 @@ function scheduleSequencer(): void {
 /** Root of the acid row: C2. */
 const ACID_ROOT = 36;
 let acidHeld: number | null = null;
+let acidWasOn = false;
+let acidFromBeat = 0;
 
 /** The acid row plays sixteenths with the beat; a glide ties into the next note. */
 function scheduleAcid(fromBeat: number, toBeat: number, timeAt: (beat: number) => number): void {

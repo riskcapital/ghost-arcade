@@ -23,6 +23,7 @@ export const SONG_SETUP_GROUPS = {
     'inserts',
     'pattern',
     'acidSteps',
+    'acidOn',
     'drumMutes',
     'bowlSlots',
     'fxPads',
