@@ -71,6 +71,7 @@ import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './
 import { toneById } from './tone/tones';
 import { KEY_MODES, type KeyMode } from './keyMode';
 import { defaultDubShots, normalizeDubShots, type DubShot } from './dubShots';
+import { BUILD_STYLES, defaultBuildSettings, normalizeBuildSettings, type BuildSettings } from './buildDrop';
 import { kitById } from './tone/kits';
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
 import {
@@ -167,6 +168,8 @@ export interface MusicStudioProjectState {
   fxPads: FxPads;
   /** The Dub set's echo shots (dubShots.ts). */
   dubShots: DubShot[];
+  /** The build-up and drop (buildDrop.ts). */
+  build: BuildSettings;
   /** The drone's sound (sounds/padPatches.ts). */
   dronePatch: string;
   /** The band's echo, reverb and freeze, and how the studio sits with the band. */
@@ -297,6 +300,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     bowlSlots: defaultBowlSlots(),
     fxPads: defaultFxPads(),
     dubShots: defaultDubShots(),
+    build: defaultBuildSettings(),
     dronePatch: DEFAULT_DRONE_PATCH,
     bandFx: defaultBandFx(),
     songs: [],
@@ -382,6 +386,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     // Chops are this session's audio; a file saved with one on a pad gets the set's default there.
     fxPads: unchoppedFxPads(normalizeFxPads(input.fxPads), false),
     dubShots: normalizeDubShots(input.dubShots),
+    build: normalizeBuildSettings(input.build, STUDIO_SETS.map((x) => x.id)),
     dronePatch: normalizeDronePatch(input.dronePatch),
     bandFx: normalizeBandFx(input.bandFx),
     ...normalizeSongState(input),
@@ -590,6 +595,12 @@ function createMusicStudioStore() {
         const pads = s.fxPads[s.set].map((id, i) => (i === index ? sound : id));
         return { ...s, fxPads: normalizeFxPads({ ...s.fxPads, [s.set]: pads }) };
       }),
+    /** Change the build-up and drop. A new style brings its own roll, filter and effects. */
+    setBuild: (patch: Partial<BuildSettings>) =>
+      update((s) => {
+        const style = patch.style && patch.style !== s.build.style ? BUILD_STYLES.find((x) => x.id === patch.style)?.settings : undefined;
+        return { ...s, build: normalizeBuildSettings({ ...s.build, ...style, ...patch }, STUDIO_SETS.map((x) => x.id)) };
+      }),
     /** Change one dub shot's settings. */
     setDubShot: (index: number, patch: Partial<DubShot>) =>
       update((s) => ({ ...s, dubShots: normalizeDubShots(s.dubShots.map((d, i) => (i === index ? { ...d, ...patch } : d))) })),
@@ -778,6 +789,7 @@ function createMusicStudioStore() {
         // What the pads held before any chops went on them (chops are not saved).
         fxPads: unchoppedFxPads(s.fxPads),
         dubShots: s.dubShots.map((d) => ({ ...d })),
+        build: { ...s.build },
         dronePatch: s.dronePatch,
         bandFx: { ...s.bandFx },
         songs: JSON.parse(JSON.stringify(s.songs)),

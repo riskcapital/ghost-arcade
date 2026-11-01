@@ -30,6 +30,7 @@ import { BandFx } from './bandFx';
 import { BandLooper } from './bandLooper';
 import { ToneHost } from './tone/toneHost';
 import { DubShotBank } from './dubShotAudio';
+import { BuildFx, type BuildPlanAudio } from './buildFx';
 import { DUB_SHOT_NOTE, type DubShot } from './dubShots';
 import { toneById } from './tone/tones';
 import { kitById } from './tone/kits';
@@ -123,6 +124,9 @@ export class MusicAudioEngine {
   /** The Dub set's echo shots (dubShotAudio.ts). */
   private dubShots: DubShotBank | null = null;
   private dubShotSettings: DubShot[] = [];
+  /** Build-ups and drops on the master (buildFx.ts). */
+  private build: BuildFx | null = null;
+  private kickOutUntil = 0;
   private toneChoice: { synth: string | null; keys: string | null; kit: string | null } = { synth: null, keys: null, kit: null };
   private synthPatch: SynthPatch = 'pad';
   private keysPatch: KeysPatch = 'epiano';
@@ -242,6 +246,32 @@ export class MusicAudioEngine {
     if (kit) host.setKit(kit);
   }
 
+  /** Run a build-up to its drop; `kickOutFrom` (audio time) thins the beat out until the drop. */
+  startBuild(plan: BuildPlanAudio, kickOutFrom: number | null): void {
+    this.ensure();
+    this.build?.start(plan);
+    const drums = this.bus?.drums.gain;
+    if (!drums || !this.ctx) return;
+    drums.cancelScheduledValues(this.ctx.currentTime);
+    drums.setValueAtTime(this.volumes.drums, this.ctx.currentTime);
+    if (kickOutFrom !== null && kickOutFrom < plan.land) {
+      drums.setTargetAtTime(0, kickOutFrom, 0.02);
+      drums.setValueAtTime(this.volumes.drums, plan.land);
+      this.kickOutUntil = plan.land;
+    }
+  }
+
+  /** Stop a build now and put the mix back as it was. */
+  cancelBuild(): void {
+    this.build?.cancel();
+    if (this.ctx && this.bus && this.kickOutUntil > this.ctx.currentTime) {
+      const g = this.bus.drums.gain;
+      g.cancelScheduledValues(this.ctx.currentTime);
+      g.setTargetAtTime(this.volumes.drums, this.ctx.currentTime, 0.02);
+    }
+    this.kickOutUntil = 0;
+  }
+
   setDubShots(shots: DubShot[]): void {
     if (shots === this.dubShotSettings) return;
     this.dubShotSettings = shots;
@@ -270,6 +300,8 @@ export class MusicAudioEngine {
 
   setVolume(instrument: InstrumentId, volume: number): void {
     this.volumes[instrument] = Math.max(0, Math.min(1, volume));
+    // A build's kick drop-out owns the drum fader until its drop.
+    if (instrument === 'drums' && this.ctx && this.kickOutUntil > this.ctx.currentTime) return;
     if (this.bus && this.ctx) this.bus[instrument].gain.setTargetAtTime(this.volumes[instrument], this.ctx.currentTime, 0.02);
   }
 
@@ -539,6 +571,7 @@ export class MusicAudioEngine {
     this.allNotesOff();
     this.bandFx?.kill();
     this.dubShots?.silence();
+    this.cancelBuild();
     this.scan?.stop();
     this.retireRacks(KILL_FADE_SECONDS);
     this.applyRouting();
@@ -835,7 +868,10 @@ export class MusicAudioEngine {
     compressor.release.value = 0.2;
     // The macros' sound effects sit between the mix and the bus compressor.
     this.macroChain = new MacroFxChain(ctx);
-    master.connect(this.macroChain.input);
+    // Build-ups and drops sit on the whole mix, before the macro effects (buildFx.ts).
+    this.build = new BuildFx(ctx, makeNoise(ctx));
+    master.connect(this.build.input);
+    this.build.output.connect(this.macroChain.input);
     this.macroChain.output.connect(compressor);
     this.macroChain.sync(this.macroSlots, this.tempo);
     compressor.connect(ctx.destination);

@@ -12,6 +12,7 @@
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
+  import BuildControls from './BuildControls.svelte';
 
   let { layers = true }: { layers?: boolean } = $props();
 
@@ -38,8 +39,9 @@
   </div>
   <StudioJack id="cv:scan.level" label="Level" title="How bright the scan line is, as a control signal" />
   <StudioJack id="audio:scan" label="Out" title="Scan synth sound" />
+  <span class="spacer"></span>
+  <BuildControls />
   {#if layers}
-    <span class="spacer"></span>
     <span class="ga-eyebrow">Layers</span>
     {#each $vjClipLauncher.layerStates as _, i (i)}
       <StudioJack id="dest:layer:{i}" label="L{i + 1}" title="Pulse layer {i + 1} with a control signal" />
