@@ -9,8 +9,11 @@
    */
   import { onDestroy } from 'svelte';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
-  import { clipEditorId } from '../../music/studioUi';
-  import { findClip, playableNotes, type NotesClip, type TrackId } from '../../music/session';
+  import { clipEditorId, insertEditorChannel } from '../../music/studioUi';
+  import { VOICE_SHADERS } from '../../music/visualScenes';
+  import { voiceSourcesFor } from '../../music/visualVoices';
+  import { BLEND_MODE_ORDER, blendModeLabel } from '../../types';
+  import { clipFxKey, findClip, playableNotes, type ClipVisual, type NotesClip, type TrackId } from '../../music/session';
   import type { RecordedNote } from '../../music/loopRecorder';
   import { ROLE_INSTRUMENTS } from '../../music/loops';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
@@ -122,6 +125,20 @@
     const tone = clip?.kind === 'notes' ? clip.tone : undefined;
     playNote(instrument, note, velocity, 'screen', tone);
     setTimeout(() => releaseNote(instrument, note, 'screen', tone), 180);
+  }
+
+  const clipFxCount = $derived(clip ? ($musicStudio.inserts[clipFxKey(clip.id)]?.length ?? 0) : 0);
+
+  /** The clip's visual: picking None takes it off; the rest edit it. */
+  function setVisual(patch: Partial<ClipVisual>) {
+    if (!clip) return;
+    const track = found?.track ?? 'lead';
+    musicStudio.updateSessionClip(clip.id, (c) => {
+      const { visual: old, ...rest } = c;
+      if (patch.file === '') return rest as typeof c;
+      const base: ClipVisual = old ?? { file: patch.file ?? '', source: track === 'beats' ? 'kick' : track === 'texture' ? 'pad' : track, blend: 'screen', level: 0.9 };
+      return { ...rest, visual: { ...base, ...patch } } as typeof c;
+    });
   }
 
   /** The clip's own tone from the tone library, or '' for the track's sound. */
@@ -290,6 +307,35 @@
         <input class="name" value={clip.name} onchange={(e) => rename((e.target as HTMLInputElement).value)} aria-label="Clip name" />
         <span class="muted where">{found.track === 'beats' ? 'Beat' : `${found.track[0].toUpperCase()}${found.track.slice(1)}`} · row {found.row + 1}{clip.kind === 'notes' ? ` · ${INSTRUMENT_LABELS[instrument]} · ${keyLabel(s.key)}` : ''}</span>
         <span class="spacer"></span>
+      </header>
+      <!-- What comes in with the clip: a visual and its own effects. -->
+      <div class="dressing">
+        <span class="eyebrow">With this clip</span>
+        <label class="labelled">Visual
+          <select value={clip.visual?.file ?? ''} onchange={(e) => setVisual({ file: (e.target as HTMLSelectElement).value })} title="A visual that fades in when this clip plays and out when it stops">
+            <option value="">None</option>
+            {#each VOICE_SHADERS as v (v.file)}<option value={v.file}>{v.name}</option>{/each}
+          </select>
+        </label>
+        {#if clip.visual}
+          <label class="labelled">Follows
+            <select value={clip.visual.source} onchange={(e) => setVisual({ source: (e.target as HTMLSelectElement).value })}>
+              {#each voiceSourcesFor(s.set, clip.visual.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
+            </select>
+          </label>
+          <label class="labelled">Blend
+            <select value={clip.visual.blend} onchange={(e) => setVisual({ blend: (e.target as HTMLSelectElement).value })}>
+              {#each BLEND_MODE_ORDER as m (m)}<option value={m}>{blendModeLabel(m)}</option>{/each}
+            </select>
+          </label>
+          <label class="labelled">Opacity
+            <input type="range" min="0" max="1" step="0.01" value={clip.visual.level} oninput={(e) => setVisual({ level: +(e.target as HTMLInputElement).value })} />
+          </label>
+        {/if}
+        <span class="spacer"></span>
+        <button class="text-btn" class:on={clipFxCount > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === clipFxKey(clip.id) ? null : clipFxKey(clip.id))} title="Effects that come in on this clip's instrument while it plays">Clip FX{clipFxCount ? ` ${clipFxCount}` : ''}</button>
+      </div>
+      <header class="second">
         {#if clip.kind === 'notes'}
           <label class="labelled">Tone
             <select value={clip.tone ?? ''} onchange={(e) => setTone((e.target as HTMLSelectElement).value)} title={toneById(clip.tone)?.blurb ?? `Plays on the ${INSTRUMENT_LABELS[instrument].toLowerCase()}`} data-midi-path="studio:tone.track.{found.track}.next" data-midi-label="Next tone for the {found.track} track" data-midi-mode="toggle">
@@ -436,6 +482,9 @@
     user-select: none;
   }
   header { display: flex; align-items: center; gap: 8px; white-space: nowrap; flex-wrap: wrap; }
+  .dressing { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--studio-edge-soft); border-radius: var(--studio-radius); background: var(--studio-slot); }
+  .dressing .eyebrow { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--studio-muted); }
+  .dressing input[type='range'] { width: 90px; }
   .name {
     width: 180px;
     height: 26px;
