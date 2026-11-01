@@ -207,7 +207,7 @@
     </div>
   </StudioModule>
 {:else if part === 'xy'}
-  <StudioModule title="XY · Space" subtitle="Touch to play" grow>
+  <StudioModule title="" grow>
     {#snippet head()}
       <InstrumentDress instrument="xy" builtIn="XY tone" axes />
       <StudioJack id="audio:xy" label="Out" title="XY tone" />

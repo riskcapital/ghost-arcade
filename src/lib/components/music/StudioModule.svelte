@@ -30,7 +30,7 @@
 <section class="module {extra}" class:grow>
   <div class="head">
     {#if led !== null}<span class="led" class:on={led}></span>{/if}
-    {#if lead}{@render lead()}{:else}<h2>{title}</h2>{/if}
+    {#if lead}{@render lead()}{:else if title}<h2>{title}</h2>{/if}
     {#if subtitle}<span class="subtitle">{subtitle}</span>{/if}
     <span class="spacer"></span>
     {#if head}{@render head()}{/if}
