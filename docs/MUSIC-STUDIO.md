@@ -547,6 +547,25 @@ Techno, Trap; right-click Build to edit. Progress is a control output
 Cancel, next length, next style. `buildDrop.test.ts` and
 `buildRuntime.test.ts` cover the bar alignment and cancel.
 
+**Drop FX** (`dropFx.ts`, in the build editor): a look on the whole output,
+chosen per build: None, Glitch storm, Time stretch / stutter, Warp zoom,
+Strobe flash, Kaleido burst or Melt. It creeps in on the build's progress (to
+40% of its amount), hits its full amount on the drop's downbeat and lets go
+over half a bar, one bar or two. The looks are existing composition effects
+that the native core already runs, put on the VJ composition chain as live
+control (ids `drop-fx:*`, no undo, taken off again when the release ends, on
+cancel and on Kill), with the envelope as their mix. The strobe never flashes
+faster than 3 a second, whatever the tempo, and the editor warns when it is
+picked. `dropFx.test.ts` covers the envelope, the cap and the saved settings.
+
+**A visual and effects per clip** (in the clip editor's "With this clip"
+row): a clip can carry a visual voice (a VX visual, the sound it follows, its
+blend and opacity) and its own insert chain (saved in the inserts as
+`clip:<id>`). When the clip launches, on its bar, its effects go in after its
+channel's own and its visual fades in over about half a second; when its
+track stops or moves to another clip they go again. Both ride with the clip
+into scenes, sessions and songs.
+
 **Keyboard mode** (`keyMode.ts`, the menu beside Key): *Show key* marks the
 key's notes and plays every note; *Lock to key* moves every pitched note,
 from MIDI, band keys, letter keys or the on-screen keys, to the nearest note

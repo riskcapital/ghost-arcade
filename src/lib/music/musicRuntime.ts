@@ -95,6 +95,10 @@ import { DUB_SHOT_NOTE } from './dubShots';
 import { keyModeNote } from './keyMode';
 import { setStudioRecordingSource } from '../audio/clipAudioBus';
 import { buildLanding, buildProgress, rollHits } from './buildDrop';
+import { DROP_FX_PREFIX, dropFxEffects, dropFxEnvelope } from './dropFx';
+import { runAsLiveControl } from '../stores/historyHooks';
+import { getDefaultEffectParams } from '../renderer/effects';
+import type { Effect } from '../types';
 import { captureSetup, type SongSetup } from './songs';
 import { editStudio, studioTargetNow } from './studioTarget';
 import { MAX_STUDIO_VOICES, normalizeStudioSource, type StudioVoice } from './studioPlugin';
@@ -305,6 +309,7 @@ export function studioAudio(): MusicAudioEngine {
 }
 
 export function killAll(): void {
+  stopDropFx();
   for (const track of [...clipDressing.keys()]) undressTrack(track);
   cancelBuild();
   stopPreview();
@@ -1589,6 +1594,7 @@ export function startBuild(land?: number): void {
   const kickOutFrom = settings.kickOut ? timeAt(Math.max(beat, target - Math.min(4, (target - start) / 2))) : null;
   audio.startBuild({ start: now, land: timeAt(target), beatSeconds: beatMs / 1000, hits, settings }, kickOutFrom);
   buildState.set({ phase: 'building', start, land: target, progress: buildProgress(start, target, beat) });
+  runDropFx(null);
   if (buildTimer) clearInterval(buildTimer);
   buildTimer = setInterval(() => {
     const st = get(buildState);
@@ -1611,6 +1617,7 @@ export function cancelBuild(): void {
   endBuildTimers();
   audio.cancelBuild();
   buildState.set({ phase: 'idle', start: 0, land: 0, progress: 0 });
+  stopDropFx();
 }
 
 /** Build, or cancel a build already running. */
@@ -1626,9 +1633,46 @@ function endBuildTimers(): void {
   dropTimer = null;
 }
 
+// ── Drop FX on the output (dropFx.ts) ─────────────────────────────────
+
+let dropFxTimer: ReturnType<typeof setInterval> | null = null;
+let dropFxBeat: number | null = null;
+
+/** Put the drop's effects on the VJ composition chain (live control: not saved, no undo). */
+function setDropFxChain(effects: Effect[]): void {
+  const st = get(vjClipLauncher);
+  const others = st.compositionEffects.filter((e) => !e.id.startsWith(DROP_FX_PREFIX));
+  if (!effects.length && others.length === st.compositionEffects.length) return;
+  runAsLiveControl(() => vjClipLauncher.set({ ...st, compositionEffects: [...others, ...effects] }));
+}
+
+function stopDropFx(): void {
+  if (dropFxTimer) clearInterval(dropFxTimer);
+  dropFxTimer = null;
+  dropFxBeat = null;
+  setDropFxChain([]);
+}
+
+/** Run the drop's look: from the build's start, or from the drop (`dropBeat`) for its release. */
+function runDropFx(dropBeat: number | null): void {
+  const { dropFx } = get(musicStudio).build;
+  if (dropFx === 'none') return stopDropFx();
+  dropFxBeat = dropBeat;
+  if (dropFxTimer) return;
+  dropFxTimer = setInterval(() => {
+    const b = get(musicStudio).build;
+    const { beat, beatMs } = launchClockPosition();
+    const release = dropFxBeat !== null;
+    const e = dropFxEnvelope({ phase: release ? 'release' : 'build', progress: get(buildState).progress, sinceDrop: release ? beat - dropFxBeat! : 0 }, b.dropFxAmount, b.dropFxRelease);
+    if (b.dropFx === 'none' || (release && e <= 0) || (!release && get(buildState).phase !== 'building')) return stopDropFx();
+    setDropFxChain(dropFxEffects(b.dropFx, e, beat, 1000 / beatMs, getDefaultEffectParams));
+  }, 33);
+}
+
 /** The downbeat: the visuals get a big hit, and the drop's scene or set comes in. */
 function landDrop(at: number): void {
   endBuildTimers();
+  runDropFx(launchClockPosition().beat);
   buildState.set({ phase: 'idle', start: 0, land: 0, progress: 0 });
   send(noteOn('shots', DROP_NOTE, 1, 'sequencer', at));
   send(noteOff('shots', DROP_NOTE, 'sequencer', at + 0.25));
