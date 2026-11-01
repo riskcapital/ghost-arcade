@@ -14,7 +14,8 @@
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
 
-  let { compact = false }: { compact?: boolean } = $props();
+  /** `split`: the record controls and the MIDI file controls pushed to either side, with `extra` after the MIDI ones. */
+  let { compact = false, split = false, extra }: { compact?: boolean; split?: boolean; extra?: import('svelte').Snippet } = $props();
 
   const s = $derived($musicStudio);
   const rec = $derived($musicTransport.loopRec);
@@ -66,7 +67,8 @@
   }
 </script>
 
-<div class="bar" class:compact>
+<div class="bar" class:compact class:split>
+  <span class="grp">
   <button
     class="loop-rec"
     class:on={rec.phase === 'rec'}
@@ -89,15 +91,25 @@
     </select>
   {/if}
   <button class="text-btn small" onclick={capture} title="Keep what you just played as a loop, without having recorded it">Capture</button>
-  <span class="divider"></span>
+  </span>
+  <span class="divider" class:grow={split}></span>
+  <span class="grp midi">
   <button class="text-btn small" onclick={exportPlaying} title="Save the beat and the playing loops as a MIDI file">MIDI out</button>
   <button class="text-btn small" onclick={() => fileInput?.click()} title="Add clips to the session from a MIDI file">MIDI in</button>
   <input bind:this={fileInput} type="file" accept=".mid,.midi,audio/midi" hidden onchange={importFile} />
+  {#if extra}{@render extra()}{/if}
+  </span>
 </div>
 
 <style>
   .bar { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
   .divider { width: 1px; height: 16px; margin: 0 2px; background: var(--studio-edge-soft); }
+  .grp { display: inline-flex; align-items: center; gap: 6px; }
+  /* Split: the record group left, the MIDI group right; each wraps only as a whole, the MIDI one keeping to the right. */
+  .bar.split { flex: 1 1 100%; flex-wrap: wrap; row-gap: 4px; }
+  .bar.split .midi { margin-left: auto; }
+  /* Split: the record group on the left, the MIDI group on the right. */
+  .divider.grow { flex: 1; min-width: 12px; height: 1px; background: transparent; }
   /* Wide enough for "Rec 4" and "In 2", so the bar does not shift while recording. */
   .loop-rec { min-width: 60px; }
 </style>
