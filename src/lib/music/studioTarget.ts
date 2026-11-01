@@ -238,6 +238,17 @@ export function replaceStudioVoice(index: number, file: string): boolean {
   }));
 }
 
+/** Move a voice in the stack (lower in the list draws on top); its settings go with it. */
+export function moveStudioVoice(from: number, to: number): boolean {
+  return editStudio((s) => {
+    if (from === to || from < 0 || from >= s.musicVoices.length) return s;
+    const voices = [...s.musicVoices];
+    const [moved] = voices.splice(from, 1);
+    voices.splice(Math.max(0, Math.min(voices.length, to)), 0, moved);
+    return { ...s, musicVoices: voices };
+  });
+}
+
 export function removeStudioVoice(index: number): boolean {
   return editStudio((s) => ({ ...s, musicSceneId: null, musicVoices: s.musicVoices.filter((_, i) => i !== index) }));
 }

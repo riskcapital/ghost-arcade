@@ -6,7 +6,7 @@
    * controls; open it for the rest. Scenes load a whole stack at once. With
    * no instance yet, one is put on the deck (or the selected layer).
    */
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick as nextTick } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
   import { STUDIO_SETS } from '../../music/studioSets';
   import { voiceSourcesFor, isVoiceDrivenInput, type VoiceSourceId } from '../../music/visualVoices';
@@ -18,6 +18,7 @@
   import {
     addStudioVoice,
     loadSceneIntoStudio,
+    moveStudioVoice,
     placeStudio,
     removeStudioVoice,
     replaceStudioVoice,
@@ -88,6 +89,21 @@
     if (scene) loadSceneIntoStudio(scene);
   }
 
+  // Reordering: the voice being dragged, and the gap it would land in (0 = before the first).
+  let dragFrom = $state<number | null>(null);
+  let dropAt = $state<number | null>(null);
+  function dropVoice() {
+    if (dragFrom !== null && dropAt !== null) {
+      const to = dropAt > dragFrom ? dropAt - 1 : dropAt;
+      if (to !== dragFrom) {
+        moveStudioVoice(dragFrom, to);
+        if (open === dragFrom) open = to;
+      }
+    }
+    dragFrom = null;
+    dropAt = null;
+  }
+
   function addVoice() {
     visualPicker.set({ current: null, none: false, title: 'Add a voice', pick: (f) => { if (f && addStudioVoice(f, 'all')) open = voices.length; } });
   }
@@ -133,11 +149,31 @@
       <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Put it on the deck' : 'Show it on the selected layer'}</button>
     </div>
   {:else}
+    <p class="order">Lower in the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
     <div class="voices">
       {#each voices as voice, i (i)}
         {@const all = looks(voice.file)}
-        <div class="voice">
+        <div
+          class="voice"
+          class:dragging={dragFrom === i}
+          class:drop-before={dropAt === i && dragFrom !== null && dragFrom !== i && dragFrom !== i - 1}
+          class:drop-after={dropAt === voices.length && i === voices.length - 1 && dragFrom !== null && dragFrom !== i}
+          role="listitem"
+          ondragover={(e) => { if (dragFrom === null) return; e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); dropAt = e.clientY < r.top + r.height / 2 ? i : i + 1; }}
+          ondrop={(e) => { e.preventDefault(); dropVoice(); }}
+        >
           <div class="line">
+            <span
+              class="grip"
+              draggable="true"
+              role="button"
+              tabindex="0"
+              aria-label="Move voice {i + 1} (Alt+Up or Alt+Down)"
+              title="Drag to reorder: lower in the list draws on top"
+              ondragstart={(e) => { dragFrom = i; e.dataTransfer?.setData('text/plain', `voice ${i + 1}`); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
+              ondragend={() => { dragFrom = null; dropAt = null; }}
+              onkeydown={(e) => { if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return; e.preventDefault(); const to = i + (e.key === 'ArrowUp' ? -1 : 1); if (to >= 0 && to < voices.length && moveStudioVoice(i, to)) void nextTick().then(() => document.querySelectorAll<HTMLElement>('.voices .grip')[to]?.focus()); }}
+            >⋮⋮</span>
             <button
               class="led"
               class:on={voice.level > 0}
@@ -194,6 +230,13 @@
 <style>
   .voices { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
   .voice { padding: 4px 0; border-bottom: 1px solid var(--studio-edge-soft); }
+  .voice.dragging { opacity: 0.4; }
+  /* Where a dragged voice will land: a line in the gap. */
+  .voice.drop-before { box-shadow: inset 0 2px 0 var(--studio-accent); }
+  .voice.drop-after { box-shadow: inset 0 -2px 0 var(--studio-accent); }
+  .grip { flex: 0 0 auto; cursor: grab; color: var(--studio-muted); font-size: 10px; letter-spacing: -2px; padding: 0 2px; user-select: none; }
+  .grip:focus-visible { outline: 1px solid var(--studio-accent); border-radius: 2px; }
+  .order { margin: 0 0 4px; font-size: var(--ga-text-micro, 9px); color: var(--studio-muted); }
   .voice:last-of-type { border-bottom: 0; }
   .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .led {
