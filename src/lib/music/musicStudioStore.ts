@@ -152,6 +152,8 @@ export interface MusicStudioProjectState {
   /** What the keys do with the key: mark it, lock to it, or play the scale on the white keys. */
   keyMode: KeyMode;
   acidSteps: AcidStep[];
+  /** The acid line plays with the beat only when switched on. */
+  acidOn: boolean;
   drumMutes: DrumVoice[];
   cables: Record<StudioSet, Cable[]>;
   /** Sound effects on each macro knob, by macro id. */
@@ -304,6 +306,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     scaleLock: true,
     keyMode: 'show',
     acidSteps: defaultAcidSteps(),
+    acidOn: false,
     drumMutes: [],
     cables: defaultCables(),
     macroFx: {},
@@ -395,6 +398,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     scaleLock: input.scaleLock === undefined ? d.scaleLock : input.scaleLock === true,
     keyMode: KEY_MODES.some((m) => m.id === input.keyMode) ? (input.keyMode as KeyMode) : d.keyMode,
     acidSteps: normalizeAcidSteps(input.acidSteps),
+    acidOn: input.acidOn === true,
     drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
     cables: input.cables ? normalizeCables(input.cables) : d.cables,
     macroFx: normalizeMacroFx(input.macroFx),
@@ -526,6 +530,8 @@ function createMusicStudioStore() {
     setKey: (key: MusicKey) => set({ key }),
     setScaleLock: (scaleLock: boolean) => set({ scaleLock }),
     setKeyMode: (keyMode: KeyMode) => set({ keyMode }),
+    /** Start or stop the acid line (with the beat, from the next bar). */
+    setAcidOn: (acidOn: boolean) => set({ acidOn }),
     setAcidStep: (index: number, patch: Partial<AcidStep>) =>
       update((s) => ({ ...s, acidSteps: s.acidSteps.map((st, i) => (i === index ? { ...st, ...patch } : st)) })),
     toggleDrumMute: (voice: DrumVoice) =>
@@ -847,6 +853,7 @@ function createMusicStudioStore() {
         scaleLock: s.scaleLock,
         keyMode: s.keyMode,
         acidSteps: s.acidSteps.map((st) => ({ ...st })),
+        acidOn: s.acidOn,
         drumMutes: [...s.drumMutes],
         cables: Object.fromEntries(Object.entries(s.cables).map(([set, list]) => [set, list.map((c) => ({ ...c }))])) as Record<StudioSet, Cable[]>,
         macroFx: JSON.parse(JSON.stringify(s.macroFx)),

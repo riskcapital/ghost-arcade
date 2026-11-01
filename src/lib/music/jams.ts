@@ -47,6 +47,8 @@ export async function loadBerlinJam(): Promise<void> {
   stopAllLoops();
   musicStudio.setSet('berlin');
   musicStudio.setPattern(technoPattern());
+  // This jam is the acid line: it comes in with the beat.
+  musicStudio.setAcidOn(true);
   await visualScene('berlin-data');
   const chaos = get(macros).macros[1]?.id;
   const cables: Cable[] = [

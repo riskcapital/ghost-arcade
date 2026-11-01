@@ -56,6 +56,16 @@
 {:else}
   <StudioModule title="Acid" subtitle="Click a step for its note" grow>
     {#snippet head()}
+      <button
+        class="studio-btn"
+        class:on={s.acidOn}
+        onclick={() => musicStudio.setAcidOn(!s.acidOn)}
+        aria-pressed={s.acidOn}
+        title={s.acidOn ? 'Stop the acid line' : 'Play the acid line with the beat, from the next bar'}
+        data-midi-path="studio:acid.toggle"
+        data-midi-label="Acid line on or off"
+        data-midi-mode="toggle"
+      >{s.acidOn ? 'On' : 'Off'}</button>
       <StudioJack id="cv:acid.cutoff" label="Cutoff" title="Acid filter, as a control signal" />
       <StudioJack id="audio:acid" label="Out" title="Acid sound" />
     {/snippet}

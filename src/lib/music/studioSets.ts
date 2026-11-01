@@ -42,8 +42,8 @@ export const BOWL_PARAMS = defs('bowls', [['ring', 'Ring', 0.7], ['tone', 'Tone'
 export const XY_PARAMS = defs('xy', [['x', 'X', 0.5], ['y', 'Y', 0.5]]);
 
 export const ACID_PARAMS = defs('acid', [
-  ['cutoff', 'Cutoff', 0.35], ['reso', 'Reso', 0.75], ['env', 'Env', 0.6],
-  ['decay', 'Decay', 0.35], ['accent', 'Accent', 0.7], ['drive', 'Drive', 0.4],
+  ['cutoff', 'Cutoff', 0.35], ['reso', 'Reso', 0.5], ['env', 'Env', 0.5],
+  ['decay', 'Decay', 0.35], ['accent', 'Accent', 0.6], ['drive', 'Drive', 0.2],
 ]);
 
 export const DUBBASS_PARAMS = defs('dubbass', [
@@ -89,7 +89,7 @@ export const FX_RACKS: Record<StudioSet, FxUnitDef[]> = {
     { id: 'reverb', kind: 'reverb', name: 'Reverb', params: defs('fx.reverb', [['space', 'Space', 0.85], ['decay', 'Decay', 0.75], ['mix', 'Mix', 0.5]]) },
   ],
   berlin: [
-    { id: 'drive', kind: 'drive', name: 'Drive', params: defs('fx.drive', [['gain', 'Gain', 0.45], ['tone', 'Tone', 0.5], ['mix', 'Mix', 0.5]]) },
+    { id: 'drive', kind: 'drive', name: 'Drive', params: defs('fx.drive', [['gain', 'Gain', 0.25], ['tone', 'Tone', 0.45], ['mix', 'Mix', 0.3]]) },
     { id: 'crush', kind: 'crush', name: 'Bitcrush', params: defs('fx.crush', [['bits', 'Bits', 0.6], ['rate', 'Rate', 0.7], ['mix', 'Mix', 0.0]]) },
     { id: 'dub', kind: 'dubdelay', name: 'Dub delay', params: defs('fx.dub', [['time', 'Time', 0.75], ['feedback', 'Feedbk', 0.55], ['mix', 'Mix', 0.3]]) },
     { id: 'gate', kind: 'gate', name: 'Gate verb', params: defs('fx.gate', [['space', 'Space', 0.5], ['length', 'Gate', 0.4], ['mix', 'Mix', 0.2]]) },
