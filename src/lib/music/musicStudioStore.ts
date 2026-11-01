@@ -60,12 +60,14 @@ import {
   normalizeAcidSteps,
   normalizeCables,
   normalizeParams,
+  shapeCable,
   type AcidStep,
   type Cable,
   type MusicKey,
   type ScaleId,
   type StudioSet,
 } from './studioSets';
+import type { CableShape } from './controlSignals';
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import { toneById } from './tone/tones';
@@ -588,6 +590,9 @@ function createMusicStudioStore() {
       update((s) => ({ ...s, cables: { ...s.cables, [studioSet]: cables.reduce(connect, [] as Cable[]) } })),
     disconnectCable: (id: string) =>
       update((s) => ({ ...s, cables: { ...s.cables, [s.set]: disconnect(s.cables[s.set], id) } })),
+    /** A cable's amount, smoothing and mode (envelope or trigger). */
+    shapeCable: (id: string, shape: CableShape) =>
+      update((s) => ({ ...s, cables: { ...s.cables, [s.set]: shapeCable(s.cables[s.set], id, shape) } })),
 
     setInstrument: (instrument: InstrumentId) => set({ instrument }),
     setSynthPatch: (synthPatch: SynthPatch) => set({ synthPatch, synthTone: null }),

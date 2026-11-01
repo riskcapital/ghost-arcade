@@ -80,12 +80,13 @@ describe('cables', () => {
     expect(canConnect('fx:in', 'audio:drone')).toBe(false);
   });
 
-  it('gives a control input one cable, the effects rack any number', () => {
+  it('lets control inputs and the effects rack take several cables', () => {
     let cables = connect([], { id: 'a', from: 'cv:drum.kick', to: 'dest:layer:0' });
     cables = connect(cables, { id: 'b', from: 'cv:drum.hatClosed', to: 'dest:layer:0' });
-    expect(cables.map((c) => c.id)).toEqual(['b']);
+    // Control signals into one input add up.
+    expect(cables.map((c) => c.id)).toEqual(['a', 'b']);
     cables = connect(cables, { id: 'c', from: 'cv:drum.hatClosed', to: 'dest:layer:1' });
-    expect(cables).toHaveLength(2);
+    expect(cables).toHaveLength(3);
     let audio = connect([], { id: 'd', from: 'audio:drone', to: 'fx:in' });
     audio = connect(audio, { id: 'e', from: 'audio:bowls', to: 'fx:in' });
     audio = connect(audio, { id: 'f', from: 'audio:drone', to: 'fx:in' });

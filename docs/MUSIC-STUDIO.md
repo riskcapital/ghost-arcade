@@ -547,6 +547,28 @@ Techno, Trap; right-click Build to edit. Progress is a control output
 Cancel, next length, next style. `buildDrop.test.ts` and
 `buildRuntime.test.ts` cover the bar alignment and cancel.
 
+**Patching** (`controlSignals.ts`, `SourceBank.svelte`, `PatchBay.svelte`,
+`CableLayer.svelte`): every sound is a control source. Besides the jacks on
+the modules, the Sources bank (bottom of the right rack) has one for each
+instrument (`cv:inst.<id>.level`), each loop track (`cv:track.<role>.level`),
+each band input (`cv:chan.<input>.level`), the master and the drop's hit.
+Control inputs: the macros, deck layers, the analog synth, visual voices'
+opacity (`dest:voice.<i>.level`), mixer pans and sends
+(`dest:mix.<channel>.pan`, `.send.<return>`), any insert effect's params
+(`dest:insert:<channel>:<fxId>:<param>`) and the drop FX amount. The panel
+over the output lists them all while a cable is in the hand. A control input
+takes any number of cables, which add up and clip to 0-1. Right-click a cable
+for its amount (-100% to +100%; negative turns it upside down), attack,
+release and mode (envelope, or trigger: a pulse per hit). Each source is
+read once a frame and shared; mixer, insert and voice modulation is applied
+live, never written into the saved project. Cables and their settings save
+with the set, scenes, sessions and songs.
+
+**Macros in the Studio**: right-click a macro (knob or FX tag) for the same
+editor as VJ mode's macro bar (`MacroKnobBar` with `popoverOnly`, opened via
+`macroEditRequest`): its targets, ranges, auto pulse, effect bundle and name,
+on the one macros store, so VJ and the Studio always agree.
+
 **Reggae and dub** (`loopLibrary.ts`, `reggae()`): 15 basslines and 16
 skanks and organ bubbles, each tagged with its rhythm family (one drop,
 rockers, steppers, rub-a-dub, meditation) and the drum groove it locks with

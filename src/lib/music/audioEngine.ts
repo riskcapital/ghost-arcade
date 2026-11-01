@@ -138,6 +138,14 @@ export class MusicAudioEngine {
   private insertChains = new Map<string, MacroFxChain>();
   private insertSettings: Record<string, MacroFxInstance[]> = {};
   private clipInserts = new Map<string, MacroFxInstance[]>();
+  private insertMods = new Map<string, number>();
+
+  /** Insert params a cable is turning, "channel:fxId:param" to 0-1. */
+  setInsertMods(mods: Map<string, number>): void {
+    if (mods.size === 0 && this.insertMods.size === 0) return;
+    this.insertMods = mods;
+    this.syncInserts();
+  }
   /** The mixer's shared reverb, echo and spring (sendReturns.ts). */
   private returns: SendReturns | null = null;
   private returnLevels: Record<ReturnId, number> = { reverb: 0.7, echo: 0.7, spring: 0.7 };
@@ -271,7 +279,18 @@ export class MusicAudioEngine {
 
   private syncInserts(): void {
     for (const [channel, chain] of this.insertChains) {
-      const effects = [...(this.insertSettings[channel] ?? []), ...(this.clipInserts.get(channel) ?? [])];
+      const own = [...(this.insertSettings[channel] ?? []), ...(this.clipInserts.get(channel) ?? [])];
+      // A cable on a param ("channel:fxId:param") sets it, 0-1, over what is saved.
+      const effects = this.insertMods.size
+        ? own.map((fx) => {
+            let params = fx.params;
+            for (const key of Object.keys(fx.params)) {
+              const v = this.insertMods.get(`${channel}:${fx.id}:${key}`);
+              if (v !== undefined) params = { ...params, [key]: { ...params[key], value: v } };
+            }
+            return params === fx.params ? fx : { ...fx, params };
+          })
+        : own;
       chain.sync([{ macroValue: 0, effects }], this.tempo);
     }
   }

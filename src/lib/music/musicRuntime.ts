@@ -84,7 +84,7 @@ import {
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
 import { TRACK_IDS, clipFromRecording, clipFxKey, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
 import type { AnalogDest, AnalogSource } from './analogSynth';
-import { INPUT_CHANNELS, type ChannelId } from './mixer';
+import { INPUT_CHANNELS, stripFor, type ChannelId } from './mixer';
 import { LiveInputs, type BandInputSpec } from './liveInput';
 import { InputNoteRoles, overallInputStatus, type BandInputStatus } from './bandInputs';
 import { BassFollower, droneShift } from './bassFollow';
@@ -96,6 +96,8 @@ import { keyModeNote } from './keyMode';
 import { setStudioRecordingSource } from '../audio/clipAudioBus';
 import { buildLanding, buildProgress, rollHits } from './buildDrop';
 import { DROP_FX_PREFIX, dropFxEffects, dropFxEnvelope } from './dropFx';
+import { contribution, newFollow, stepCable, sumInput, type CableFollow } from './controlSignals';
+import { setStudioVoiceMods } from './studioPlugin';
 import { runAsLiveControl } from '../stores/historyHooks';
 import { getDefaultEffectParams } from '../renderer/effects';
 import type { Effect } from '../types';
@@ -1670,7 +1672,7 @@ function runDropFx(dropBeat: number | null): void {
     const b = get(musicStudio).build;
     const { beat, beatMs } = launchClockPosition();
     const release = dropFxBeat !== null;
-    const e = dropFxEnvelope({ phase: release ? 'release' : 'build', progress: get(buildState).progress, sinceDrop: release ? beat - dropFxBeat! : 0 }, b.dropFxAmount, b.dropFxRelease);
+    const e = dropFxEnvelope({ phase: release ? 'release' : 'build', progress: get(buildState).progress, sinceDrop: release ? beat - dropFxBeat! : 0 }, dropFxAmountNow(b.dropFxAmount), b.dropFxRelease);
     if (b.dropFx === 'none' || (release && e <= 0) || (!release && get(buildState).phase !== 'building')) return stopDropFx();
     setDropFxChain(dropFxEffects(b.dropFx, e, beat, 1000 / beatMs, getDefaultEffectParams));
   }, 33);
@@ -1678,6 +1680,7 @@ function runDropFx(dropBeat: number | null): void {
 
 /** The downbeat: the visuals get a big hit, and the drop's scene or set comes in. */
 function landDrop(at: number): void {
+  dropHitAt = performance.now();
   endBuildTimers();
   runDropFx(launchClockPosition().beat);
   buildState.set({ phase: 'idle', start: 0, land: 0, progress: 0 });
@@ -1868,8 +1871,16 @@ function controlValue(jack: string, params: Record<string, number>): number {
   if (name === 'scan.level') return scanLevel;
   // Whatever the keys play, in any set.
   if (name === 'keys.level') return visuals.instrumentLevel(get(musicStudio).instrument);
+  // Any instrument by id, a loop track by role, a mixer channel (band inputs), the master, the drop.
+  if (name.startsWith('inst.')) return visuals.instrumentLevel(name.slice(5, -6) as InstrumentId);
+  if (name.startsWith('track.')) return visuals.instrumentLevel(ROLE_INSTRUMENTS[get(musicStudio).set][name.slice(6, -6) as LoopRole]);
+  if (name.startsWith('chan.')) return audio.channelLevels([name.slice(5, -6) as ChannelId])[name.slice(5, -6) as ChannelId] ?? 0;
+  if (name === 'master.level') return Math.max(...audio.masterLevels());
+  if (name === 'build.drop') return Math.max(0, 1 - (performance.now() - dropHitAt) / 400);
   return 0;
 }
+
+let dropHitAt = -Infinity;
 
 let macroSyncAt = 0;
 
@@ -1886,33 +1897,64 @@ function syncMacroFx(force = false): void {
   );
 }
 
+// Live modulation from cables, applied without writing the saved project.
+const cableFollow = new Map<string, CableFollow>();
+let cablesAt = 0;
+/** Mixer pans and sends, insert params and the drop FX amount, as the cables have them now. */
+const cableMods = new Map<string, number>();
+let modSig = '';
+
 function routeControlCables(): void {
   const s = get(musicStudio);
   const cables = s.studioView ? s.cables[s.set] : [];
-  const live = new Set<number>();
+  const now = performance.now();
+  const dt = cablesAt ? Math.min(0.1, (now - cablesAt) / 1000) : 1 / 60;
+  cablesAt = now;
+  // Each source read once, shared by every cable from it.
+  const raw = new Map<string, number>();
+  const inputs = new Map<string, number[]>();
+  const seen = new Set<string>();
   for (const cable of cables) {
     if (!cable.from.startsWith('cv:')) continue;
     // The analog synth's own sources reach its inputs at audio rate instead.
     if (ANALOG_SOURCES.has(cable.from) && cable.to.startsWith('dest:analog.')) continue;
-    const value = controlValue(cable.from, s.params);
-    const previous = lastSent.get(cable.to);
-    if (previous !== undefined && Math.abs(previous - value) < 0.004) {
-      if (cable.to.startsWith('dest:layer:')) live.add(Number(cable.to.slice(11)));
-      continue;
+    let r = raw.get(cable.from);
+    if (r === undefined) {
+      r = controlValue(cable.from, s.params);
+      raw.set(cable.from, r);
     }
-    lastSent.set(cable.to, value);
-    if (cable.to.startsWith('dest:macro:')) {
-      macros.setMacroValue(cable.to.slice(11), value);
-    } else if (cable.to.startsWith('dest:analog.')) {
-      audio.setAnalogExternal(cable.to.slice(12) as AnalogDest, value);
-    } else if (cable.to.startsWith('dest:layer:')) {
-      const layer = Number(cable.to.slice(11));
-      live.add(layer);
+    const f = stepCable(cableFollow.get(cable.id) ?? newFollow(), r, dt, cable);
+    cableFollow.set(cable.id, f);
+    seen.add(cable.id);
+    const list = inputs.get(cable.to) ?? [];
+    list.push(contribution(f.value, cable));
+    inputs.set(cable.to, list);
+  }
+  for (const id of [...cableFollow.keys()]) if (!seen.has(id)) cableFollow.delete(id);
+
+  const live = new Set<number>();
+  const mods = new Map<string, number>();
+  const voiceMods = new Map<number, number>();
+  for (const [to, parts] of inputs) {
+    const value = sumInput(parts);
+    if (to.startsWith('dest:voice.')) voiceMods.set(Number(to.slice(11, -6)), value);
+    else if (to.startsWith('dest:mix.') || to.startsWith('dest:insert:') || to === 'dest:dropfx.amount') mods.set(to, value);
+    if (to.startsWith('dest:layer:')) live.add(Number(to.slice(11)));
+    const previous = lastSent.get(to);
+    if (previous !== undefined && Math.abs(previous - value) < 0.004) continue;
+    lastSent.set(to, value);
+    if (to.startsWith('dest:macro:')) {
+      macros.setMacroValue(to.slice(11), value);
+    } else if (to.startsWith('dest:analog.')) {
+      audio.setAnalogExternal(to.slice(12) as AnalogDest, value);
+    } else if (to.startsWith('dest:layer:')) {
+      const layer = Number(to.slice(11));
       if (!pulsedLayers.has(layer)) pulsedLayers.set(layer, get(vjClipLauncher).layerStates[layer]?.opacity ?? 1);
       // A pulse: dim between hits, full on the hit.
       vjClipLauncher.setLayerOpacity(layer, (pulsedLayers.get(layer) ?? 1) * (0.08 + 0.92 * value), 'A');
     }
   }
+  setStudioVoiceMods(voiceMods);
   for (const [layer, base] of pulsedLayers) {
     if (live.has(layer)) continue;
     pulsedLayers.delete(layer);
@@ -1920,10 +1962,42 @@ function routeControlCables(): void {
     vjClipLauncher.setLayerOpacity(layer, base, 'A');
   }
   for (const key of [...lastSent.keys()]) {
-    if (cables.some((c) => c.to === key)) continue;
+    if (inputs.has(key)) continue;
     lastSent.delete(key);
     if (key.startsWith('dest:analog.')) audio.setAnalogExternal(key.slice(12) as AnalogDest, null);
   }
+  // Mixer and insert modulation: pushed when it moves by more than a hair.
+  const sig = [...mods].map(([k, v]) => `${k}=${v.toFixed(3)}`).join('|');
+  if (sig !== modSig) {
+    modSig = sig;
+    cableMods.clear();
+    for (const [k, v] of mods) cableMods.set(k, v);
+    applyCableMods(s);
+  }
+}
+
+/** The mixer with the cables' pans and sends on top, and the inserts' modulated params. */
+function applyCableMods(s: MusicStudioState): void {
+  let mixer = s.mixer;
+  const insertMods = new Map<string, number>();
+  for (const [key, v] of cableMods) {
+    if (key.startsWith('dest:mix.')) {
+      const [ch, what, send] = key.slice(9).split('.') as [ChannelId, string, string?];
+      const strip = { ...stripFor(mixer, ch) };
+      if (what === 'pan') strip.pan = v * 2 - 1;
+      else if (what === 'send' && send) strip.sends = { ...(strip.sends ?? { reverb: 0, echo: 0, spring: 0 }), [send]: v };
+      mixer = { ...mixer, [ch]: strip };
+    } else if (key.startsWith('dest:insert:')) {
+      insertMods.set(key.slice(12), v);
+    }
+  }
+  audio.setMixer(mixer, mixerChannels(s.set, s.liveInputs.length));
+  audio.setInsertMods(insertMods);
+}
+
+/** The drop FX amount, from a cable if one is plugged in. */
+export function dropFxAmountNow(saved: number): number {
+  return cableMods.get('dest:dropfx.amount') ?? saved;
 }
 
 /**
@@ -2457,7 +2531,7 @@ export function ensureMusicRuntime(): void {
     syncAnalogRoutes(s);
     syncMacroFx(true);
     audio.setMasterVolume(s.masterVolume);
-    audio.setMixer(s.mixer, mixerChannels(s.set, s.liveInputs.length));
+    applyCableMods(s);
     syncBandInputs(s);
     // With Live in control the studio's instruments step aside.
     if (s.liveControl && !wasLiveControl) stopAll();
