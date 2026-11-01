@@ -43,7 +43,7 @@
     <option value="" disabled>{s.scenes.length ? 'Scenes' : 'No scenes yet'}</option>
     {#each s.scenes as sc (sc.id)}<option value={sc.id}>{sc.id === s.queuedSceneId ? `${sc.name} (next bar)` : sc.name}</option>{/each}
   </select>
-  <select value="" onchange={session} aria-label="Session" title="Save the session with the project, or start a new one">
+  <select class="session" value="" onchange={session} aria-label="Session" title="Save the session with the project, or start a new one">
     <option value="" disabled>Session</option>
     <option value="save">Save (Ctrl+S)</option>
     <option value="saveas">Save as… (Ctrl+Shift+S)</option>
@@ -54,5 +54,8 @@
 <style>
   .group { display: flex; align-items: center; gap: var(--ga-bar-gap, 6px); flex: 0 0 auto; }
   select { height: var(--ga-bar-control-h, 30px); padding: 0 8px; font-size: var(--ga-text-body, 13px); max-width: 150px; }
+  /* A menu of actions: as wide as its label. */
+  .session { width: 92px; }
+  @media (max-width: 1439px) { select { max-width: 116px; } }
   .text-btn { height: var(--ga-bar-control-h, 30px); padding: 0 12px; font-size: var(--ga-text-body, 13px); }
 </style>
