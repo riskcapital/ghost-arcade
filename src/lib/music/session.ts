@@ -17,6 +17,7 @@ import { normalizePattern, patternHasHits, type DrumPattern } from './drumPatter
 import { SCALES, scaleNote, type MusicKey, type ScaleId, type StudioSet } from './studioSets';
 import { BEAT_LOOPS, LOOP_ROLES, MELODIC_LOOPS, ROLE_INSTRUMENTS, beatPattern, loopById, loopNotesBetween, type LoopRole } from './loops';
 import { toneById } from './tone/tones';
+import { LOOP_STYLE_LABELS, loopStyle } from './loopLibrary';
 import { BEATS_PER_BAR, MAX_LOOP_BARS, type RecordedLoop, type RecordedNote } from './loopRecorder';
 
 export type TrackId = 'beats' | LoopRole;
@@ -81,9 +82,14 @@ export function presetTrack(presetId: string): TrackId | null {
 }
 
 /** The factory presets for a track, in library order. */
-export function presetsFor(track: TrackId): Array<{ id: string; name: string }> {
-  if (track === 'beats') return BEAT_LOOPS.map((l) => ({ id: l.id, name: l.name }));
-  return MELODIC_LOOPS.filter((l) => l.role === track).map((l) => ({ id: l.id, name: l.name }));
+/** A track's presets, each with the style it is grouped under in the menus. */
+export function presetsFor(track: TrackId): Array<{ id: string; name: string; style: string }> {
+  const style = (id: string) => {
+    const s = loopStyle(id);
+    return s ? LOOP_STYLE_LABELS[s] : 'Essentials';
+  };
+  if (track === 'beats') return BEAT_LOOPS.map((l) => ({ id: l.id, name: l.name, style: style(l.id) }));
+  return MELODIC_LOOPS.filter((l) => l.role === track).map((l) => ({ id: l.id, name: l.name, style: style(l.id) }));
 }
 
 /**

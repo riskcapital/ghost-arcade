@@ -51,6 +51,22 @@
     return !!s.playingLoops[track] || !!s.queuedLoops[track];
   }
 
+  /** A track's presets by style, for the menu (computed once per track). */
+  const groups = new Map<TrackId, Array<[string, Array<{ id: string; name: string }>]>>();
+  function groupedPresets(track: TrackId) {
+    let g = groups.get(track);
+    if (!g) {
+      const by = new Map<string, Array<{ id: string; name: string }>>();
+      for (const p of presetsFor(track)) {
+        if (!by.has(p.style)) by.set(p.style, []);
+        by.get(p.style)!.push(p);
+      }
+      g = [...by.entries()];
+      groups.set(track, g);
+    }
+    return g;
+  }
+
   /** Fill an empty slot from a preset menu. */
   function fill(track: TrackId, row: number, e: Event) {
     const el = e.target as HTMLSelectElement;
@@ -136,9 +152,11 @@
         <div class="slot empty" role="gridcell">
           <select value="" onchange={(e) => fill(track.id, row, e)} aria-label="Add a {track.label.toLowerCase()} clip to row {row + 1}" title="Add a clip">
             <option value="" disabled>+</option>
-            <optgroup label="Presets">
-              {#each presetsFor(track.id) as p (p.id)}<option value="preset:{p.id}">{p.name}</option>{/each}
-            </optgroup>
+            {#each groupedPresets(track.id) as [style, list] (style)}
+              <optgroup label={style}>
+                {#each list as p (p.id)}<option value="preset:{p.id}">{p.name}</option>{/each}
+              </optgroup>
+            {/each}
             {#if $userPresets.some((p) => p.track === track.id)}
               <optgroup label="My presets">
                 {#each $userPresets.filter((p) => p.track === track.id) as p (p.id)}<option value="mine:{p.id}">{p.name}</option>{/each}
