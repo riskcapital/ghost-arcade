@@ -44,6 +44,7 @@
   import LoopPicker from './LoopPicker.svelte';
   import MixerDesk from './MixerDesk.svelte';
   import StudioRecordControls from './StudioRecordControls.svelte';
+  import StudioTempoControls from './StudioTempoControls.svelte';
   import { loopBrowser } from '../../music/studioUi';
   import LoopRecorderBar from './LoopRecorderBar.svelte';
   import PadsModule from './PadsModule.svelte';
@@ -320,7 +321,7 @@
         <button class="transport rec" class:on={s.recording} onclick={toggleRecord} title={s.recording ? 'Stop the take and keep it' : 'Rec take: record the notes you play (not audio or video; that is Record A/V)'} aria-label={s.recording ? 'Stop the take' : 'Rec take'}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg>
         </button>
-        <span class="tempo"><span class="tempo-value">{tempo.toFixed(1)}</span> <span class="tempo-unit">BPM</span></span>
+        <StudioTempoControls {tempo} />
         {#if s.recording}<span class="rec-time">{seconds(elapsed)}</span>{/if}
       </div>
       <div class="group">
@@ -583,9 +584,6 @@
   .bar select { height: var(--ga-bar-control-h, 30px); padding: 0 8px; font-size: var(--ga-text-body, 13px); }
   .bar .check { font-size: var(--ga-text-body, 13px); }
   .bar :is(.text-btn, .kill-btn) { height: var(--ga-bar-control-h, 30px); padding: 0 12px; font-size: var(--ga-text-body, 13px); }
-  .tempo { display: inline-flex; align-items: baseline; gap: 4px; margin-left: 4px; }
-  .tempo-value { font-family: var(--ga-font-mono, ui-monospace); font-variant-numeric: tabular-nums; color: var(--studio-ink); }
-  .tempo-unit { font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); color: var(--studio-muted); }
   .rec-time { font-family: var(--ga-font-mono, ui-monospace); font-variant-numeric: tabular-nums; color: var(--ga-rec, #ff3b30); }
 
   /* ── Layout ── */

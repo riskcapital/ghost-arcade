@@ -65,6 +65,7 @@ import { CHANNEL_LABELS, stripFor } from './mixer';
 import { INSTRUMENTS } from './noteEvents';
 import { LOOP_ROLES, type LoopRole } from './loops';
 import { DRUM_KITS } from './tone/kits';
+import { studioDownbeat, studioNudge, studioScaleTempo, tapStudioTempo } from './studioTempo';
 
 const FX_PADS = 8;
 const BOWLS = 5;
@@ -362,6 +363,16 @@ const KEY_MODE_CONTROLS: StudioControl[] = [
   },
 ];
 
+// Syncing with a live band: a drummer's pad or a foot switch can tap.
+const TEMPO_CONTROLS: StudioControl[] = [
+  { id: 'tempo.tap', label: 'Tap tempo', group: 'Tempo', kind: 'trigger', run: () => tapStudioTempo() },
+  { id: 'tempo.downbeat', label: 'Downbeat: this is beat 1', group: 'Tempo', kind: 'trigger', run: () => { studioDownbeat(); } },
+  { id: 'tempo.nudge-down', label: 'Nudge slower (hold)', group: 'Tempo', kind: 'hold', run: (v) => studioNudge(v > 0 ? -1 : 0) },
+  { id: 'tempo.nudge-up', label: 'Nudge faster (hold)', group: 'Tempo', kind: 'hold', run: (v) => studioNudge(v > 0 ? 1 : 0) },
+  { id: 'tempo.half', label: 'Half the tempo', group: 'Tempo', kind: 'trigger', run: () => studioScaleTempo(0.5) },
+  { id: 'tempo.double', label: 'Double the tempo', group: 'Tempo', kind: 'trigger', run: () => studioScaleTempo(2) },
+];
+
 const BUILD_CONTROLS: StudioControl[] = [
   { id: 'build.toggle', label: 'Build up (again to cancel)', group: 'Build and drop', kind: 'trigger', run: () => { if (studioOpen()) toggleBuild(); } },
   { id: 'build.drop', label: 'Drop on the next bar', group: 'Build and drop', kind: 'trigger', run: () => { if (studioOpen()) dropNow(); } },
@@ -417,7 +428,7 @@ const STUDIO: StudioControl[] = [
 ];
 
 /** Every control this module registers, in the order the learn list shows them. */
-export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...BUILD_CONTROLS, ...MIX_CONTROLS, ...STUDIO];
+export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...TEMPO_CONTROLS, ...BUILD_CONTROLS, ...MIX_CONTROLS, ...STUDIO];
 
 registerStudioControls(STUDIO_MIDI_CONTROLS);
 
