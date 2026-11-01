@@ -47,11 +47,12 @@ describe('Music Studio plugin', () => {
     expect(host.blendMode).toBe('add');
     expect(host.source?.id).toBe('vj-layer-2-A-clip');
     expect(host.source?.effectSource?.effectType).toBe('vj-mix');
+    // Stacked from the bottom up: the first voice in the list is the last row, on top.
     expect(host.source?.effectSource?.vjmixRows).toEqual([
-      { layerId: studioVoiceLayerId(host, 0), opacity: 0.8, blendMode: 'screen' },
-      { layerId: studioVoiceLayerId(host, 1), opacity: 0.6, blendMode: 'screen' },
-      { layerId: studioVoiceLayerId(host, 2), opacity: 1, blendMode: 'screen' },
       { layerId: studioVoiceLayerId(host, 3), opacity: 0.8, blendMode: 'screen' },
+      { layerId: studioVoiceLayerId(host, 2), opacity: 1, blendMode: 'screen' },
+      { layerId: studioVoiceLayerId(host, 1), opacity: 0.6, blendMode: 'screen' },
+      { layerId: studioVoiceLayerId(host, 0), opacity: 0.8, blendMode: 'screen' },
     ]);
     // Untouched layers pass straight through.
     expect(out[0]).toBe(other);
