@@ -12,6 +12,7 @@
  */
 
 import { DRUM_VOICES, type DrumVoice, type InstrumentId } from './noteEvents';
+import { normalizeCableShape, type CableShape } from './controlSignals';
 
 export type StudioSet = 'bath' | 'berlin' | 'dub' | 'analog';
 
@@ -243,7 +244,8 @@ export function normalizeAcidSteps(raw: unknown): AcidStep[] {
 
 export type JackKind = 'audio' | 'control';
 
-export interface Cable {
+
+export interface Cable extends CableShape {
   id: string;
   from: string;
   to: string;
@@ -305,17 +307,22 @@ export function canConnect(from: string, to: string): boolean {
 }
 
 /**
- * Add a cable. An input takes one cable (a new one replaces it); an output
- * can feed several inputs. An identical cable is not added twice.
+ * Add a cable. The effects input and every control input take any number of
+ * cables (control signals add up); other audio inputs take one. An output
+ * feeds as many inputs as it likes. An identical cable is not added twice.
  */
 export function connect(cables: Cable[], cable: Cable): Cable[] {
   if (!canConnect(cable.from, cable.to)) return cables;
-  if (cable.to === 'fx:in') {
-    // The rack's input mixes any number of instruments.
+  if (cable.to === 'fx:in' || cable.to.startsWith('dest:')) {
     if (cables.some((c) => c.from === cable.from && c.to === cable.to)) return cables;
     return [...cables, cable];
   }
   return [...cables.filter((c) => c.to !== cable.to), cable];
+}
+
+/** Change one cable's amount, smoothing or mode. */
+export function shapeCable(cables: Cable[], id: string, shape: CableShape): Cable[] {
+  return cables.map((c) => (c.id === id ? { id: c.id, from: c.from, to: c.to, ...normalizeCableShape({ ...c, ...shape }) } : c));
 }
 
 export function disconnect(cables: Cable[], id: string): Cable[] {
@@ -357,7 +364,7 @@ export function normalizeCables(raw: unknown): Record<StudioSet, Cable[]> {
       if (!c || typeof c !== 'object') continue;
       const { id, from, to } = c as Partial<Cable>;
       if (typeof id !== 'string' || typeof from !== 'string' || typeof to !== 'string') continue;
-      out[set] = connect(out[set], { id, from, to });
+      out[set] = connect(out[set], { id, from, to, ...normalizeCableShape(c as Record<string, unknown>) });
     }
   }
   return out;

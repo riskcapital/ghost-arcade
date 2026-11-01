@@ -68,6 +68,26 @@
     live = nextLive;
   }
 
+  // Right-click on a cable: its amount, smoothing and mode. Hit-tested here so
+  // the cables never get in the way of a click on what is under them.
+  let editing = $state<{ id: string; x: number; y: number } | null>(null);
+  let svgEl = $state<SVGSVGElement | null>(null);
+  const editCable = $derived(editing ? cables.find((c) => c.id === editing!.id) ?? null : null);
+
+  function onContext(e: MouseEvent) {
+    if (!svgEl || !root || $cableView === 'hide') return;
+    const origin = root.getBoundingClientRect();
+    const pt = new DOMPoint(e.clientX - origin.left, e.clientY - origin.top);
+    const hit = [...svgEl.querySelectorAll<SVGPathElement>('path.hit')].reverse().find((p) => p.isPointInStroke(pt));
+    if (!hit) return;
+    e.preventDefault();
+    e.stopPropagation();
+    editing = { id: hit.dataset.cable!, x: Math.min(e.clientX, innerWidth - 300), y: Math.min(e.clientY, innerHeight - 240) };
+  }
+
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const jackName = (j: string) => j.replace(/^(cv|dest):/, '').replace(/\.level$/, '').replace(/[.:]/g, ' ');
+
   frame = requestAnimationFrame(measure);
   onDestroy(() => {
     if (frame !== null) cancelAnimationFrame(frame);
@@ -90,11 +110,12 @@
   }
 </script>
 
-<svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => cableDrag.set(null)} />
+<svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => cableDrag.set(null)} oncontextmenucapture={onContext} />
 
-<svg class="cables" aria-hidden="true">
+<svg class="cables" aria-hidden="true" bind:this={svgEl}>
   <g class="patched {$cableView}">
   {#each drawn as c (c.id)}
+    <path d={c.d} class="hit" data-cable={c.id} />
     <path d={c.d} class="shadow" />
     <path d={c.d} stroke={c.color} class="cable" />
     <circle cx={c.ends[0]} cy={c.ends[1]} r="6" class="plug" stroke={c.color} />
@@ -109,7 +130,53 @@
   </g>
 </svg>
 
+{#if editing && editCable}
+  {@const amount = editCable.amount ?? 1}
+  {@const control = editCable.from.startsWith('cv:')}
+  <div class="cable-editor" role="dialog" aria-label="Cable" style="left: {editing.x}px; top: {editing.y}px">
+    <p class="route">{jackName(editCable.from)} <span class="muted">to</span> {jackName(editCable.to)}</p>
+    {#if control}
+      <div class="ga-segmented small" role="group" aria-label="Mode">
+        <button class:active={(editCable.mode ?? 'env') === 'env'} onclick={() => musicStudio.shapeCable(editCable.id, { mode: 'env' })} title="Follows the sound's level">Envelope</button>
+        <button class:active={editCable.mode === 'trig'} onclick={() => musicStudio.shapeCable(editCable.id, { mode: 'trig' })} title="A pulse on every hit or note, falling away over the release">Trigger</button>
+      </div>
+      <label>Amount <input type="range" min="-1" max="1" step="0.01" value={amount} oninput={(e) => musicStudio.shapeCable(editCable.id, { amount: +(e.target as HTMLInputElement).value })} /> <span class="val">{amount > 0 ? '+' : ''}{pct(amount)}</span></label>
+      <label>Attack <input type="range" min="0" max="0.5" step="0.005" value={editCable.attack ?? 0.005} oninput={(e) => musicStudio.shapeCable(editCable.id, { attack: +(e.target as HTMLInputElement).value })} /> <span class="val">{Math.round((editCable.attack ?? 0.005) * 1000)} ms</span></label>
+      <label>Release <input type="range" min="0" max="2" step="0.01" value={editCable.release ?? 0.12} oninput={(e) => musicStudio.shapeCable(editCable.id, { release: +(e.target as HTMLInputElement).value })} /> <span class="val">{Math.round((editCable.release ?? 0.12) * 1000)} ms</span></label>
+    {:else}
+      <p class="muted">A sound cable: it carries the sound as it is.</p>
+    {/if}
+    <div class="row">
+      <button class="text-btn" onclick={() => { musicStudio.disconnectCable(editCable.id); editing = null; }}>Unplug</button>
+      <span class="spacer"></span>
+      <button class="text-btn" onclick={() => (editing = null)}>Done</button>
+    </div>
+  </div>
+{/if}
+
 <style>
+  .hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: none; }
+  .cable-editor {
+    position: fixed;
+    z-index: 96;
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--studio-edge);
+    border-radius: var(--studio-radius);
+    background: var(--studio-panel);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--studio-muted);
+  }
+  .cable-editor .route { margin: 0; color: var(--studio-ink); font-weight: var(--ga-weight-control, 600); }
+  .cable-editor label { display: grid; grid-template-columns: 52px 1fr 52px; align-items: center; gap: 6px; }
+  .cable-editor .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--studio-ink); }
+  .cable-editor .row { display: flex; align-items: center; }
+  .cable-editor .spacer { flex: 1; }
+  .cable-editor p { margin: 0; }
   .cables {
     position: absolute;
     inset: 0;

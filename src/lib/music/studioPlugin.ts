@@ -205,7 +205,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           shaderValues: studioVoiceValues(voice, studio.musicSet, inputs.driven(voice.source, voice.auto)),
         },
       } as Layer);
-      rows.push({ layerId: id, opacity: voice.level, blendMode: studioVoiceBlend(voice.blend) });
+      rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1), blendMode: studioVoiceBlend(voice.blend) });
     });
     out.push({
       ...layer,
@@ -220,6 +220,12 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
 }
 
 // ── Shared runtime hooks ────────────────────────────────────────────────
+
+/** Voice opacity from patch cables (voice index to 0-1), on top of each voice's own level. */
+let voiceMods = new Map<number, number>();
+export function setStudioVoiceMods(mods: Map<number, number>): void {
+  voiceMods = mods;
+}
 
 /** Bumped every frame while an instance is showing, so the renderer picks up the voices' new signals. */
 export const studioVisualTick = writable(0);

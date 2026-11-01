@@ -16,6 +16,10 @@
    * can drive the wet/dry mix directly.
    */
   import { macros, type Macro } from '../stores/macros';
+  import { macroEditRequest } from '../stores/macroEditRequest';
+
+  /** Only the edit popover, opened from macroEditRequest (the Studio uses this). */
+  export let popoverOnly = false;
   import { macroTargetAvailable, type MacroAssignment } from '../stores/macroAssignments';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { project } from '../stores/layers';
@@ -146,6 +150,13 @@
     popoverX = e.clientX;
     popoverY = e.clientY;
   }
+  $: if (popoverOnly && $macroEditRequest) {
+    const req = $macroEditRequest;
+    macroEditRequest.set(null);
+    editPopoverFor = req.id;
+    popoverX = Math.min(req.x, (typeof innerWidth === 'number' ? innerWidth : 1280) - 470);
+    popoverY = Math.min(req.y, (typeof innerHeight === 'number' ? innerHeight : 800) - 420);
+  }
   function closePopover() {
     editPopoverFor = null;
   }
@@ -198,6 +209,7 @@
 
 <svelte:window onclick={onWindowClick} />
 
+{#if !popoverOnly}
 <div data-help-page="macros-snapshots" class="macro-bar">
   {#each $macros.macros as m (m.id)}
     {@const fxCount = m.effects.length}
@@ -274,6 +286,7 @@
 
 {#if chainWarning}
   <div data-help-page="macros-snapshots" class="macro-chain-warning" role="status">Output effects: {chainWarning}</div>
+{/if}
 {/if}
 
 {#if editPopoverFor}

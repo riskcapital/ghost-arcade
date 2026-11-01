@@ -31,6 +31,8 @@
   } from '../../music/musicRuntime';
   import './studioTokens.css';
   import StudioModule from './StudioModule.svelte';
+  import SourceBank from './SourceBank.svelte';
+  import MacroKnobBar from '../MacroKnobBar.svelte';
   import BathModules from './BathModules.svelte';
   import BerlinModules from './BerlinModules.svelte';
   import DubModules from './DubModules.svelte';
@@ -341,6 +343,8 @@
       </div>
     </div>
     {#if mixerOpen}<MixerDesk onclose={() => (mixerOpen = false)} />{/if}
+    <!-- The macro editor from VJ mode, opened by right-clicking a macro here. -->
+    <MacroKnobBar popoverOnly />
 
     <div class="centre">
       {@render frame()}
@@ -358,6 +362,7 @@
       <div class="rack right face">
         <VisualRack />
         <RackModules />
+        <SourceBank />
       </div>
       <div class="slot b1 face"><BathModules part="chords" /></div>
       <div class="slot b2 face"><PlayModule /></div>
@@ -370,6 +375,7 @@
       <div class="rack right face">
         <VisualRack />
         <RackModules />
+        <SourceBank />
       </div>
       <div class="slot b1 face"><PlayModule /></div>
       <div class="slot b2 face"><BeatModule /></div>
@@ -384,6 +390,7 @@
       <div class="rack right face">
         <VisualRack />
         <RackModules />
+        <SourceBank />
       </div>
       <div class="slot b12 face"><PlayModule size="wide" /></div>
       <div class="slot b3 face"><BeatModule /></div>
@@ -395,6 +402,7 @@
       <div class="rack right face">
         <VisualRack />
         <RackModules />
+        <SourceBank />
       </div>
       <div class="slot b12 face"><AnalogModules /></div>
       <div class="slot b3 face"><BeatModule /></div>

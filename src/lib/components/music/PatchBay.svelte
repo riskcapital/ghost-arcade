@@ -10,6 +10,13 @@
   import { musicStudio } from '../../music/musicStudioStore';
   import { macros } from '../../stores/macros';
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
+  import { studioTarget } from '../../music/studioTarget';
+  import { macroFxDef } from '../../music/macroFx';
+  import { INSTRUMENT_LABELS } from '../../music/instruments';
+  import { mixerChannels } from '../../music/musicRuntime';
+  import type { InstrumentId } from '../../music/noteEvents';
+
+  const label = (ch: string) => INSTRUMENT_LABELS[ch as InstrumentId] ?? (ch === 'input' ? 'In 1' : ch.replace('input', 'In '));
 
   interface Target { id: string; label: string; hint: string }
   interface Group { title: string; targets: Target[] }
@@ -20,6 +27,7 @@
 
   const groups = $derived.by((): Group[] => {
     if (!drag) return [];
+    const channels = mixerChannels(set);
     const all: Group[] = [
       { title: 'Effects', targets: [{ id: 'fx:in', label: set === 'dub' ? 'Echo chamber' : 'FX rack', hint: 'Sends this sound through the effects' }] },
       {
@@ -34,6 +42,25 @@
       },
       { title: 'Macros', targets: $macros.macros.map((m) => ({ id: `dest:macro:${m.id}`, label: m.name, hint: `Turns ${m.name} and everything it controls` })) },
       { title: 'Deck layers', targets: $vjClipLauncher.layerStates.map((_, i) => ({ id: `dest:layer:${i}`, label: `Layer ${i + 1}`, hint: `Pulses layer ${i + 1}'s opacity` })) },
+      {
+        title: 'Visual voices',
+        targets: ($studioTarget?.source.musicVoices ?? []).map((v, i) => ({ id: `dest:voice.${i}.level`, label: `${i + 1}. ${v.file.replace(/^VX-|\.fs$/g, '')}`, hint: 'Its opacity, under its own level' })),
+      },
+      { title: 'Mixer pan', targets: channels.map((ch) => ({ id: `dest:mix.${ch}.pan`, label: label(ch), hint: `Pans ${label(ch)} left to right` })) },
+      {
+        title: 'Mixer sends',
+        targets: channels.flatMap((ch) => (['reverb', 'echo', 'spring'] as const).map((r) => ({ id: `dest:mix.${ch}.send.${r}`, label: `${label(ch)} ${r}`, hint: `${label(ch)}'s ${r} send` }))),
+      },
+      {
+        title: 'Insert effects',
+        targets: Object.entries($musicStudio.inserts).flatMap(([ch, chain]) =>
+          chain.flatMap((fx) => {
+            const def = macroFxDef(fx.type);
+            return def.params.map((pd) => ({ id: `dest:insert:${ch}:${fx.id}:${pd.key}`, label: `${ch.startsWith('clip:') ? 'Clip' : label(ch)} ${def.label} ${pd.label}`, hint: `Turns ${def.label}'s ${pd.label}` }));
+          }),
+        ),
+      },
+      { title: 'Drop FX', targets: [{ id: 'dest:dropfx.amount', label: 'Amount', hint: 'How hard the drop FX hit' }] },
     ];
     return all
       .map((g) => ({ ...g, targets: g.targets.filter((t) => canConnect(drag.from, t.id)) }))
@@ -41,7 +68,8 @@
   });
 
   const kind = $derived(drag ? jackKind(drag.from) : null);
-  const taken = (id: string) => cables.some((c) => c.to === id && c.from !== drag?.from);
+  // Control inputs add up every cable in them; only an audio input is replaced.
+  const taken = (id: string) => !id.startsWith('dest:') && cables.some((c) => c.to === id && c.from !== drag?.from);
 </script>
 
 {#if drag}
@@ -75,7 +103,9 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 6;
-    width: min(560px, calc(100% - 24px));
+    width: min(620px, calc(100% - 24px));
+    max-height: min(70vh, 560px);
+    overflow-y: auto;
     box-sizing: border-box;
     padding: 8px 10px 10px;
     display: flex;

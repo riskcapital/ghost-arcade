@@ -6,6 +6,7 @@
   import { macros } from '../../stores/macros';
   import { musicStudio } from '../../music/musicStudioStore';
   import { macroEditorId } from '../../music/studioUi';
+  import { macroEditRequest } from '../../stores/macroEditRequest';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
 
@@ -16,10 +17,10 @@
   {#each $macros.macros as m (m.id)}
     {@const count = m.effects.length + (s.macroFx[m.id]?.length ?? 0)}
     {@const patched = s.cables[s.set].some((c) => c.to === `dest:macro:${m.id}`)}
-    <div class="macro">
+    <div class="macro" oncontextmenu={(e) => { e.preventDefault(); macroEditRequest.set({ id: m.id, x: e.clientX, y: e.clientY }); }} role="group" aria-label={m.name}>
       <StudioKnob label={m.name} value={m.value} size={22} format={(v) => `${Math.round(v * 100)}%`} onchange={(v) => macros.setMacroValue(m.id, v)} midiPath="vj:macro:{m.id.replace('macro-', '')}:value" />
       <div class="side">
-        <button class="fx" class:has={count > 0} class:open={$macroEditorId === m.id} onclick={() => macroEditorId.set($macroEditorId === m.id ? null : m.id)} title="Sound and visual effects on {m.name}{patched ? ' (patched)' : ''}">
+        <button class="fx" class:has={count > 0} class:open={$macroEditorId === m.id} onclick={() => macroEditorId.set($macroEditorId === m.id ? null : m.id)} title="Sound and visual effects on {m.name}{patched ? ' (patched)' : ''}. Right-click for its targets, ranges and name">
           FX{count ? count : ''}
         </button>
         <StudioJack id="dest:macro:{m.id}" title="Turn {m.name} with a control signal" />
