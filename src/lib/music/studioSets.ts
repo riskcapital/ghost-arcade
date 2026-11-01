@@ -266,7 +266,7 @@ export function controlSources(set: StudioSet): string[] {
     dub: ['cv:dubbass.level', 'cv:siren.level', 'cv:shots.level', ...drums],
     analog: ['cv:analog.lfo', 'cv:analog.env', 'cv:analog.vco2', 'cv:analog.level'],
   };
-  return [...bySet[set], 'cv:scan.level', 'cv:build.progress'];
+  return [...bySet[set], 'cv:scan.level', 'cv:build.progress', 'cv:keys.level'];
 }
 
 const DRUM_NAMES: Record<string, string> = {

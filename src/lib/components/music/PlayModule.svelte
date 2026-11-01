@@ -12,6 +12,7 @@
   import { TONES, TONE_FAMILY_LABELS, type ToneFamily } from '../../music/tone/tones';
   import { insertEditorChannel } from '../../music/studioUi';
   import StudioModule from './StudioModule.svelte';
+  import StudioJack from './StudioJack.svelte';
   import PianoKeys from './PianoKeys.svelte';
   import DrumPads from './DrumPads.svelte';
 
@@ -81,6 +82,7 @@
         </optgroup>
       {/each}
     </select>
+    <StudioJack id="cv:keys.level" label="" title="How loud the keys are playing, as a control signal for visuals and macros" />
     <button class="fx-btn studio-btn" class:on={(s.inserts[s.instrument]?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === s.instrument ? null : s.instrument)} title="Effects on what the keys play">FX{s.inserts[s.instrument]?.length ? ` ${s.inserts[s.instrument].length}` : ''}</button>
     {#if s.instrument !== 'drums'}
       {#if size === null}

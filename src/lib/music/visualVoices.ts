@@ -53,9 +53,14 @@ export const VOICE_SOURCES: readonly { id: string; label: string; sets?: readonl
   { id: 'xy', label: 'XY tone', sets: ['bath'] },
   { id: 'analog', label: 'Analog synth', sets: ['analog'] },
   { id: 'scan', label: 'Scan synth' },
+  { id: 'echo', label: 'Echo shots', sets: ['dub'] },
+  { id: 'drop', label: 'Build and drop' },
+  { id: 'siren', label: 'Siren', sets: ['dub'] },
+  { id: 'acid', label: 'Acid line', sets: ['berlin'] },
+  { id: 'dubbass', label: 'Dub bass', sets: ['dub'] },
 ];
 
-export type VoiceSourceId = 'all' | 'kick' | 'snare' | 'hats' | 'perc' | 'bass' | 'lead' | 'chords' | 'pad' | 'fx' | 'played' | 'bowls' | 'drone' | 'xy' | 'analog' | 'scan';
+export type VoiceSourceId = 'all' | 'kick' | 'snare' | 'hats' | 'perc' | 'bass' | 'lead' | 'chords' | 'pad' | 'fx' | 'played' | 'bowls' | 'drone' | 'xy' | 'analog' | 'scan' | 'echo' | 'drop' | 'siren' | 'acid' | 'dubbass';
 
 /** The sources a voice can follow in `set`, keeping `current` even when the set lacks it. */
 export function voiceSourcesFor(set: StudioSet, current?: string): typeof VOICE_SOURCES {
@@ -63,7 +68,7 @@ export function voiceSourcesFor(set: StudioSet, current?: string): typeof VOICE_
 }
 
 /** The sources that are parts of the music rather than one instrument (for band inputs' roles). */
-export const PART_SOURCES = VOICE_SOURCES.filter((s) => !['bowls', 'drone', 'xy', 'analog', 'scan'].includes(s.id));
+export const PART_SOURCES = VOICE_SOURCES.filter((s) => !['bowls', 'drone', 'xy', 'analog', 'scan', 'echo', 'drop', 'siren', 'acid', 'dubbass'].includes(s.id));
 
 export const VOICE_SOURCE_COUNT = VOICE_SOURCES.length;
 
@@ -123,6 +128,12 @@ const SHAPES: Record<VoiceSourceId, SourceShape> = {
   xy: { attack: 0.02, release: 0.5, oneShot: false },
   analog: { attack: 0.006, release: 0.35, oneShot: false },
   scan: { attack: 0.05, release: 0.6, oneShot: false },
+  // Each echo arrives as its own fading hit.
+  echo: { attack: 0.002, release: 0.25, oneShot: true },
+  drop: { attack: 0.002, release: 1.2, oneShot: true },
+  siren: { attack: 0.01, release: 0.5, oneShot: false },
+  acid: { attack: 0.004, release: 0.25, oneShot: false },
+  dubbass: { attack: 0.008, release: 0.35, oneShot: false },
 };
 
 const HIT_SECONDS = 0.08;
@@ -150,16 +161,20 @@ const DRUM_SOURCE: Record<DrumVoice, VoiceSourceId> = {
 
 /** Parts an instrument plays whatever the set. */
 const FIXED_SOURCES: Partial<Record<InstrumentId, VoiceSourceId[]>> = {
-  dubbass: ['bass'],
-  acid: ['bass'],
+  dubbass: ['bass', 'dubbass'],
+  acid: ['bass', 'acid'],
   drone: ['pad', 'chords', 'drone'],
   bowls: ['pad', 'bowls'],
-  siren: ['fx'],
+  siren: ['fx', 'siren'],
   shots: ['fx'],
   xy: ['lead', 'xy'],
   scan: ['pad', 'scan'],
   analog: ['analog'],
 };
+
+/** Notes on the Shots instrument from the echo shots (dubShots.ts) and the drop (musicRuntime.ts). */
+const ECHO_SHOT_NOTE = 76;
+const DROP_VISUAL_NOTE = 120;
 
 const ROLE_SOURCE: Record<LoopRole, VoiceSourceId> = { bass: 'bass', lead: 'lead', chords: 'chords', texture: 'pad' };
 
@@ -176,6 +191,16 @@ export function sourcesForEvent(event: Pick<NoteEvent, 'instrument' | 'note' | '
   const out = new Set<VoiceSourceId>(['all']);
   if (event.instrument === 'drums') {
     if (event.drum) out.add(DRUM_SOURCE[event.drum]);
+    return [...out];
+  }
+  // The echo shots and the drop send their notes on the Shots instrument, above its pads.
+  if (event.instrument === 'shots' && event.note >= DROP_VISUAL_NOTE) {
+    out.add('drop');
+    return [...out];
+  }
+  if (event.instrument === 'shots' && event.note >= ECHO_SHOT_NOTE) {
+    out.add('echo');
+    out.add('fx');
     return [...out];
   }
   for (const s of FIXED_SOURCES[event.instrument] ?? []) out.add(s);

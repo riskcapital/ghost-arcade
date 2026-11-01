@@ -1633,6 +1633,8 @@ function controlValue(jack: string, params: Record<string, number>): number {
   if (name === 'siren.level') return visuals.instrumentLevel('siren');
   if (name === 'shots.level') return visuals.instrumentLevel('shots');
   if (name === 'scan.level') return scanLevel;
+  // Whatever the keys play, in any set.
+  if (name === 'keys.level') return visuals.instrumentLevel(get(musicStudio).instrument);
   return 0;
 }
 

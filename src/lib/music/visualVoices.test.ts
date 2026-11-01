@@ -21,7 +21,7 @@ describe('sourcesForEvent', () => {
   });
 
   it('follows the parts each instrument plays, and what is on the keys', () => {
-    expect(sourcesForEvent({ instrument: 'dubbass', note: 36 }, ctx).sort()).toEqual(['all', 'bass', 'played']);
+    expect(sourcesForEvent({ instrument: 'dubbass', note: 36 }, ctx).sort()).toEqual(['all', 'bass', 'dubbass', 'played']);
     expect(sourcesForEvent({ instrument: 'keys', note: 64 }, ctx).sort()).toEqual(['all', 'chords', 'lead']);
     expect(sourcesForEvent({ instrument: 'keys', note: 40 }, ctx)).toContain('bass');
     expect(sourcesForEvent({ instrument: 'shots', note: 60 }, ctx)).toContain('fx');
@@ -116,5 +116,17 @@ describe('vxSource values', () => {
     expect(voiceSourceAt(99)).toBe('all');
     expect(voiceSourceAt('x')).toBe('all');
     expect(voiceSourceIndex('played')).toBe(10);
+  });
+});
+
+describe('every sound can drive a visual', () => {
+  it('gives the echo shots and the drop sources of their own', async () => {
+    const { sourcesForEvent } = await import('./visualVoices');
+    const ctx = { played: 'synth' as const, roles: {} };
+    expect(sourcesForEvent({ instrument: 'shots', note: 80 }, ctx)).toContain('echo');
+    expect(sourcesForEvent({ instrument: 'shots', note: 120 }, ctx)).toContain('drop');
+    expect(sourcesForEvent({ instrument: 'shots', note: 62 }, ctx)).not.toContain('echo');
+    expect(sourcesForEvent({ instrument: 'siren', note: 72 }, ctx)).toContain('siren');
+    expect(sourcesForEvent({ instrument: 'acid', note: 40 }, ctx)).toContain('acid');
   });
 });

@@ -93,7 +93,8 @@ describe('the studio controls a controller can learn', () => {
     // Sound bath has bowls, a drone and the XY tone; the analog synth is skipped.
     expect(controls.nextVoiceSource('played')).toBe('bowls');
     expect(controls.nextVoiceSource('xy')).toBe('scan');
-    expect(controls.nextVoiceSource('scan')).toBe('all');
+    expect(controls.nextVoiceSource('scan')).toBe('drop');
+    expect(controls.nextVoiceSource('drop')).toBe('all');
   });
 
   it('mute a voice and bring it back at its level', () => {
