@@ -461,15 +461,20 @@ and the dub bass (`VOICE_SOURCES`, new entries always on the end; the menu
 offers the instruments the set has). By cable, every set also has the scan
 level, the build's progress and the keys' level as control outputs.
 
-**The loop library** (`loopLibrary.ts`): over 150 original loops on top of
-the essentials, in scale degrees so they play in the studio's key: basslines
-(one drop, steppers, rockers, rolling and offbeat techno, acid, house, funk,
-livetronica, two-step), chord progressions in pads, skanks, organ bubbles,
-stabs, house offbeats, arps and broken chords, hooks, textures and drum
-grooves, each tagged with a style and tempo range. The session's slot menus
-group them by style. Bass figures and chord rhythms are written once and
-played over several progressions. All melodies are written for the library
-and no loop is named after a real artist (`loopLibrary.test.ts`).
+**The loop library** (`loopLibrary.ts`, `groove.ts`): fewer, better loops,
+each written like a part, in scale degrees so it plays in the studio's key,
+with a default tone. Sixteen basslines (dub and roots with heavy roots or a
+missing one, counter-phrases and approach notes; rolling and offbeat techno;
+acid with slides; house and funk anticipations and octave pops; a two-step;
+a sub) and thirteen chord loops voice-led so each voice moves the least
+(`voiceLead`), with sevenths where the style wants them, in that style's
+rhythm (choked skanks, organ bubbles, house stabs, pads, gates, clav), each
+with a turnaround in its last bar. `applyGroove` adds the feel: swing on the
+off sixteenths (about 55-57% for dub, house and funk, straight for techno),
+accents, ghost notes kept soft and a hair of drift on the unaccented notes.
+`loopLibrary.test.ts` rejects out-of-key notes, flat velocities, root-position
+block chords, seconds below G3, basslines outside about E1-G3 and loops
+without a tone. Old loop ids play as the loop now nearest them.
 
 **Leads** (`leadLibrary.ts`): 33 hooks in techno, acid, house piano,
 trance arps, dub melodica, livetronica, funk, synthwave and minimal styles,

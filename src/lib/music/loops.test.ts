@@ -85,7 +85,8 @@ describe('the library', () => {
     const ids = [...MELODIC_LOOPS, ...BEAT_LOOPS].map((l) => l.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(isBeatLoop(loopById('beat-onedrop')!)).toBe(true);
-    expect(loopById('bass-dub-root')?.name).toBe('Dub root and fifth');
+    // An old loop's id plays as the written loop now nearest it.
+    expect(loopById('bass-dub-root')?.name).toBe('Basement Pressure');
     expect(loopById('nope')).toBeNull();
   });
 

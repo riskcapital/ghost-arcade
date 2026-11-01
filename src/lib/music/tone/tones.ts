@@ -71,7 +71,7 @@ export const TONES: Tone[] = [
       osc1: { wave: 'square', pw: 0.42, level: 0.6 }, osc2: { wave: 'saw', detune: 6, level: 0.35 }, sub: 0.3,
       filter: { mode: 'off', cutoff: 1000, res: 0 },
       fenv: env(0.001, 0.2, 0, 0.1), aenv: env(0.002, 0.35, 0.8, 0.08),
-      mono: true, vel: 0.8, fx: { wah: { amount: 1.2, base: 240, res: 0.8 }, drive: 0.15 }, gain: 0.75,
+      mono: true, vel: 0.8, fx: { wah: { amount: 1.2, base: 240, res: 0.8 }, drive: 0.15 }, gain: 0.6,
     },
   },
   {
@@ -172,7 +172,7 @@ export const TONES: Tone[] = [
       osc1: { wave: 'saw', level: 0.5 }, osc2: { wave: 'saw', detune: 11, level: 0.5 },
       filter: { mode: 'ladder', cutoff: 600, res: 0.45, keyTrack: 0.3 },
       fenv: env(1, 1, 1, 2), aenv: env(0.8, 1, 0.9, 2),
-      lfo1: { rate: 0.06, beats: 16, shape: 'tri', cutoff: 3 }, drift: 0.4, fx: { chorus: { mix: 0.4, mode: 1 } }, gain: 2.01,
+      lfo1: { rate: 0.06, beats: 16, shape: 'tri', cutoff: 3 }, drift: 0.4, fx: { chorus: { mix: 0.4, mode: 1 } }, gain: 0.9,
     },
   },
   {
@@ -210,7 +210,7 @@ export const TONES: Tone[] = [
       osc1: { wave: 'saw', oct: -1, level: 0.6 }, osc2: { wave: 'square', oct: -1, detune: 13, level: 0.4 }, noise: 0.03,
       filter: { mode: 'ladder', cutoff: 320, res: 0.4, drive: 0.4, keyTrack: 0.2 },
       fenv: env(2, 1, 1, 3), aenv: env(1.5, 1, 1, 3),
-      lfo1: { rate: 0.05, shape: 'random', cutoff: 0.8 }, drift: 0.6, fx: { phaser: { mix: 0.3, rate: 0.05, depth: 0.6, fb: 0.5 } }, gain: 1.48,
+      lfo1: { rate: 0.05, shape: 'random', cutoff: 0.8 }, drift: 0.6, fx: { phaser: { mix: 0.3, rate: 0.05, depth: 0.6, fb: 0.5 } }, gain: 0.85,
     },
   },
   {
@@ -354,7 +354,7 @@ export const TONES: Tone[] = [
       osc1: { wave: 'square', pw: 0.12, level: 0.6 }, osc2: { wave: 'square', oct: 1, pw: 0.3, level: 0.3 },
       filter: { mode: 'bp', cutoff: 1300, res: 0.4, env: 1.8, keyTrack: 0.7, vel: 0.7 },
       fenv: env(0.001, 0.08, 0.3, 0.05), aenv: env(0.001, 0.4, 0.3, 0.06),
-      poly: 6, vel: 0.8, fx: { wah: { amount: 0.8, base: 500, res: 0.6 } }, gain: 0.93,
+      poly: 6, vel: 0.8, fx: { wah: { amount: 0.8, base: 500, res: 0.6 } }, gain: 0.72,
     },
   },
   {
@@ -373,7 +373,7 @@ export const TONES: Tone[] = [
       osc1: { wave: 'saw', level: 0.5 }, osc2: { wave: 'saw', detune: 12, level: 0.5 },
       filter: { mode: 'ladder', cutoff: 700, res: 0.3, env: 3, keyTrack: 0.4, vel: 0.5 },
       fenv: env(0.001, 0.15, 0.1, 0.1), aenv: env(0.001, 0.25, 0.2, 0.12),
-      fx: { delay: { mix: 0.28, beats: 0.75, fb: 0.4 }, chorus: { mix: 0.3, mode: 2 } }, gain: 0.79,
+      fx: { delay: { mix: 0.28, beats: 0.75, fb: 0.4 }, chorus: { mix: 0.3, mode: 2 } }, gain: 0.6,
     },
   },
 ];

@@ -12,7 +12,7 @@
 import { DRUM_VOICES, type DrumVoice, type InstrumentId } from './noteEvents';
 import { createPattern, type DrumPattern } from './drumPattern';
 import { scaleNote, type MusicKey, type StudioSet } from './studioSets';
-import { LIBRARY_BEATS, LIBRARY_MELODIC } from './loopLibrary';
+import { LIBRARY_BEATS, LIBRARY_MELODIC, libraryAlias } from './loopLibrary';
 import { LEADS, leadAlias } from './leadLibrary';
 
 export type LoopRole = 'bass' | 'lead' | 'chords' | 'texture';
@@ -66,71 +66,8 @@ const sixteenths = (row: Array<number | null>, dur = 0.22, accents: number[] = [
   row.flatMap((d, i) => (d === null ? [] : [{ beat: i / 4, dur, degrees: [d], velocity: accents.includes(i) ? 1 : 0.75 }]));
 
 export const MELODIC_LOOPS: MelodicLoop[] = [
-  // ── Bass ──
-  { id: 'bass-rolling', name: 'Rolling sixteenths', role: 'bass', beats: 4,
-    notes: sixteenths([0, 0, 7, 0, 0, 0, 7, 0, 0, 0, 7, 0, 0, 4, 7, 0], 0.2, [0, 8]) },
-  { id: 'bass-offbeat', name: 'Offbeat techno', role: 'bass', beats: 4,
-    notes: notes([[0.5, 0.35, 0], [1.5, 0.35, 0], [2.5, 0.35, 0], [3.5, 0.35, 2]]) },
-  { id: 'bass-dub-root', name: 'Dub root and fifth', role: 'bass', beats: 8,
-    notes: notes([[0, 1.4, 0, 1], [1.5, 0.4, 0], [2, 1.5, 4], [4, 1.4, 0, 1], [5.5, 0.4, 2], [6, 1, 4], [7, 0.8, 3]]) },
-  { id: 'bass-steppers', name: 'Steppers', role: 'bass', beats: 4,
-    notes: notes([[0, 0.45, 0, 1], [1, 0.45, 0], [2, 0.45, 0, 1], [2.75, 0.2, 2], [3, 0.45, 4]]) },
-  { id: 'bass-acid', name: 'Acid squelch', role: 'bass', beats: 4,
-    notes: sixteenths([0, null, 7, 0, null, 0, 3, null, 0, 6, 7, 0, 4, null, 9, 0], 0.2, [0, 4, 10, 14]) },
-  { id: 'bass-sub', name: 'Sub pulse', role: 'bass', beats: 8,
-    notes: notes([[0, 3.5, 0, 0.9], [4, 1.8, -3, 0.85], [6, 1.8, -2, 0.85]]) },
-  { id: 'bass-walking', name: 'Walking minor', role: 'bass', beats: 8,
-    notes: notes([[0, 0.9, 0], [1, 0.9, 2], [2, 0.9, 4], [3, 0.9, 5], [4, 0.9, 4], [5, 0.9, 2], [6, 0.9, 1], [7, 0.9, -1]]) },
-  { id: 'bass-reese', name: 'Reese drone', role: 'bass', beats: 8,
-    notes: notes([[0, 3.8, 0, 0.9], [4, 3.8, -2, 0.85]]) },
-  { id: 'bass-pump', name: 'House pump', role: 'bass', beats: 4,
-    notes: notes([[0, 0.25, 0, 1], [0.75, 0.25, 0], [1.5, 0.25, 7], [2, 0.25, 0, 1], [2.75, 0.25, 0], [3.5, 0.25, 4]]) },
-  { id: 'bass-broken', name: 'Broken dub', role: 'bass', beats: 8,
-    notes: notes([[0, 0.9, 0, 1], [1.5, 0.4, 0], [2.5, 0.4, -3], [3, 0.9, -2], [5, 0.4, 0], [6, 1.5, 4]]) },
-  { id: 'bass-arp', name: 'Arp bass', role: 'bass', beats: 4,
-    notes: sixteenths([0, 7, 0, 9, 0, 7, 0, 4, 0, 7, 0, 9, 11, 9, 7, 4], 0.2, [0, 8]) },
-
-  // ── Leads: see leadLibrary.ts ──
+  // Leads (leadLibrary.ts), then the written basslines, chords and textures (loopLibrary.ts).
   ...LEADS,
-
-  // ── Chords ──
-  { id: 'chords-epic', name: 'i · VI · III · VII', role: 'chords', beats: 16,
-    notes: notes([[0, 3.8, [0, 2, 4]], [4, 3.8, [5, 7, 9]], [8, 3.8, [2, 4, 6]], [12, 3.8, [6, 8, 10]]]) },
-  { id: 'chords-two', name: 'i · iv swing', role: 'chords', beats: 8,
-    notes: notes([[0, 3.8, [0, 2, 4, 6]], [4, 3.8, [3, 5, 7, 9]]]) },
-  { id: 'chords-skank', name: 'Dub skank', role: 'chords', beats: 4,
-    notes: notes([[1, 0.25, [0, 2, 4], 0.85], [3, 0.25, [0, 2, 4], 0.85]]) },
-  { id: 'chords-stab', name: 'Minimal stab', role: 'chords', beats: 4,
-    notes: notes([[0.75, 0.2, [0, 2, 4, 6], 0.9], [2.5, 0.2, [0, 2, 4, 6], 0.7]]) },
-  { id: 'chords-float', name: 'Floating sevenths', role: 'chords', beats: 16,
-    notes: notes([[0, 7.8, [0, 2, 4, 6], 0.7], [8, 7.8, [5, 7, 9, 11], 0.7]]) },
-  { id: 'chords-ninths', name: 'Deep house ninths', role: 'chords', beats: 8,
-    notes: notes([[0, 3.8, [0, 2, 4, 6, 8], 0.75], [4, 3.8, [-2, 0, 2, 4, 6], 0.75]]) },
-  { id: 'chords-chop', name: 'Dub chops', role: 'chords', beats: 4,
-    notes: notes([[0.5, 0.15, [0, 2, 4]], [1.5, 0.15, [0, 2, 4]], [2.5, 0.15, [0, 2, 4]], [3.5, 0.15, [-1, 1, 3]]]) },
-  { id: 'chords-sus', name: 'Suspended', role: 'chords', beats: 16,
-    notes: notes([[0, 7.8, [0, 3, 4], 0.65], [8, 7.8, [-2, 1, 4], 0.65]]) },
-  { id: 'chords-detroit', name: 'Detroit stabs', role: 'chords', beats: 4,
-    notes: notes([[0, 0.3, [0, 2, 4, 6], 0.95], [0.75, 0.3, [0, 2, 4, 6], 0.7], [2, 0.3, [1, 3, 5, 7], 0.9], [3.5, 0.3, [0, 2, 4, 6], 0.6]]) },
-
-  // ── Textures ──
-  { id: 'tex-swell', name: 'Slow swells', role: 'texture', beats: 16,
-    notes: notes([[0, 7.5, [0, 4], 0.6], [8, 7.5, [3, 7], 0.6]]) },
-  { id: 'tex-drops', name: 'Shimmer drops', role: 'texture', beats: 8,
-    notes: notes([[0, 0.5, 7, 0.6], [1.5, 0.5, 11, 0.5], [3, 0.5, 9, 0.6], [5.5, 0.5, 14, 0.5], [6.5, 0.5, 11, 0.5]]) },
-  { id: 'tex-ritual', name: 'Bowl ritual', role: 'texture', beats: 16,
-    notes: notes([[0, 1, 0, 0.8], [4, 1, 4, 0.7], [8, 1, 2, 0.7], [12, 1, 6, 0.6]]) },
-  { id: 'tex-pulse', name: 'Distant pulse', role: 'texture', beats: 4,
-    notes: notes([[0, 0.3, 7, 0.5], [2, 0.3, 7, 0.4]]) },
-  { id: 'tex-cloud', name: 'Shimmer cloud', role: 'texture', beats: 8,
-    notes: notes([[0, 3, 14, 0.45], [1, 3, 16, 0.4], [2, 3, 18, 0.4], [3, 3, 21, 0.35]]) },
-  { id: 'tex-ticks', name: 'Ticks', role: 'texture', beats: 4,
-    notes: sixteenths([null, 21, null, null, 23, null, 21, null, null, null, 25, null, 21, null, null, 23], 0.1) },
-  { id: 'tex-rise', name: 'Rising tide', role: 'texture', beats: 16,
-    notes: notes([[0, 4, 0, 0.5], [4, 4, 2, 0.55], [8, 4, 4, 0.6], [12, 4, 7, 0.65]]) },
-  { id: 'tex-rain', name: 'Glass rain', role: 'texture', beats: 8,
-    notes: notes([[0.25, 0.2, 14, 0.5], [1.75, 0.2, 18, 0.45], [2.5, 0.2, 16, 0.5], [4.25, 0.2, 21, 0.45], [5, 0.2, 14, 0.5], [6.75, 0.2, 19, 0.4]]) },
-  // The big library (loopLibrary.ts): basslines, progressions, hooks and textures in many styles.
   ...LIBRARY_MELODIC,
 ];
 
@@ -169,8 +106,9 @@ export const BEAT_LOOPS: BeatLoop[] = [
 ];
 
 export function loopById(id: string): MelodicLoop | BeatLoop | null {
-  // A lead from before the new leads plays as the new one nearest it.
-  const real = leadAlias(id);
+  // A loop the library no longer has plays as the one now nearest it.
+  const lead = leadAlias(id);
+  const real = lead !== id ? lead : (libraryAlias(id) ?? id);
   return MELODIC_LOOPS.find((l) => l.id === real) ?? BEAT_LOOPS.find((l) => l.id === real) ?? null;
 }
 
