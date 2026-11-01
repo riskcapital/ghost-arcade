@@ -1471,6 +1471,8 @@ let preview: {
   scheduled: number;
   instrument: InstrumentId;
   tone?: string;
+  /** The drum groove it locks with, played along when nothing else is. */
+  groove?: BeatLoop;
   pending: Array<{ note: number; offBeat: number; instrument: InstrumentId }>;
 } | null = null;
 let previewTimer: ReturnType<typeof setInterval> | null = null;
@@ -1500,6 +1502,7 @@ export function previewLoop(id: string | null): void {
     scheduled: start,
     instrument: 'rows' in loop ? 'drums' : ROLE_INSTRUMENTS[s.set][loop.role],
     tone: 'rows' in loop ? undefined : loop.tone,
+    groove: !playing && !('rows' in loop) && loop.groove ? (loopById(loop.groove) as BeatLoop | undefined) : undefined,
     pending: [],
   };
   previewingLoop.set(id);
@@ -1535,8 +1538,8 @@ function schedulePreview(): void {
   const timeAt = (b: number) => now + ((b - beat) * beatMs) / 1000;
   const until = Math.min(p.end, beat + 0.5);
   if (until <= p.scheduled) return;
-  if ('rows' in p.loop) {
-    const pattern = beatPattern(p.loop);
+  const drums = (loop: BeatLoop) => {
+    const pattern = beatPattern(loop);
     for (let step = Math.ceil((p.scheduled - p.start) * 4 - 1e-6); step < (until - p.start) * 4 - 1e-6; step++) {
       const b = p.start + step / 4;
       const i = step % pattern.steps;
@@ -1545,6 +1548,10 @@ function schedulePreview(): void {
         if (vel > 0) send(noteOn('drums', DRUM_NOTES[voice], vel, 'sequencer', timeAt(b)));
       }
     }
+  };
+  if (p.groove) drums(p.groove);
+  if ('rows' in p.loop) {
+    drums(p.loop);
   } else {
     const s = get(musicStudio);
     for (const n of loopNotesBetween(p.loop, s.key, p.start, p.scheduled, until)) {

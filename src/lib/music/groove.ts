@@ -14,6 +14,8 @@ export interface GrooveFeel {
   accent: 'downbeats' | 'two-four' | 'offbeats' | 'flat';
   /** How far velocities lean on the accents, 0-1. */
   depth: number;
+  /** Beats every note sits behind the beat (laid back, late not early). */
+  lay?: number;
 }
 
 export const FEELS = {
@@ -23,6 +25,8 @@ export const FEELS = {
   dub: { swing: 0.55, accent: 'downbeats', depth: 0.3 },
   funk: { swing: 0.57, accent: 'two-four', depth: 0.35 },
   float: { swing: 0.5, accent: 'flat', depth: 0.1 },
+  /** Reggae and dub: a light swing, laid back a hair behind the beat. */
+  roots: { swing: 0.53, accent: 'flat', depth: 0, lay: 0.02 },
 } satisfies Record<string, GrooveFeel>;
 
 /** A small fixed jitter from the note's place, -1..1. */
@@ -49,7 +53,7 @@ export function applyGroove(notes: LoopNote[], feel: GrooveFeel): LoopNote[] {
     const velocity = ghost ? n.velocity : Math.max(0.3, Math.min(1, n.velocity * (1 + accent * feel.depth * 0.35)));
     // Unaccented notes drift by a few milliseconds.
     const drift = accent > 0.5 ? 0 : jitter(n.beat, n.degrees[0] ?? 0) * 0.006;
-    return { ...n, beat: Math.max(0, n.beat + swingShift + drift), velocity };
+    return { ...n, beat: Math.max(0, n.beat + swingShift + drift + (feel.lay ?? 0)), velocity };
   });
 }
 

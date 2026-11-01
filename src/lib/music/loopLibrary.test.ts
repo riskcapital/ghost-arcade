@@ -134,3 +134,67 @@ describe('every written loop holds up', () => {
     for (const l of [...LIBRARY_MELODIC, ...LEADS]) expect(toneById(l.tone), l.id).toBeTruthy();
   });
 });
+
+describe('the reggae and dub family', () => {
+  const dDorian = { root: 2, scale: 'dorian' as const };
+  const reggae = LIBRARY_MELODIC.filter((l) => l.family);
+  const bass = reggae.filter((l) => l.role === 'bass');
+  const keys = reggae.filter((l) => l.role === 'chords');
+  // Notes sit a hair late (laid back); undo that before reading where they fall.
+  const at = (b: number) => Math.round(b * 8) / 8;
+
+  it('has enough of each, each locked to a groove the library has', () => {
+    expect(bass.length).toBeGreaterThanOrEqual(12);
+    expect(keys.length).toBeGreaterThanOrEqual(12);
+    for (const fam of ['onedrop', 'rockers', 'steppers', 'rubadub', 'meditation'] as const) expect(bass.some((l) => l.family === fam), fam).toBe(true);
+    for (const l of reggae) expect(LIBRARY_BEATS.some((b) => b.id === l.groove), l.id).toBe(true);
+  });
+
+  it('plays the one drop with kick and rim together on 3', () => {
+    const od = LIBRARY_BEATS.find((b) => b.id === 'lib-beat-onedrop-deep')!;
+    expect(od.rows.kick!.indexOf('x')).toBe(8);
+    expect(od.rows.rim![8]).toBe('x');
+  });
+
+  it('leaves space in the bass: a fifth of every bar silent, no runs of sixteenths', () => {
+    for (const l of bass) {
+      for (let bar = 0; bar < l.beats / 4; bar++) {
+        let sounding = 0;
+        for (let t = bar * 4; t < bar * 4 + 4; t += 0.0625) if (l.notes.some((n) => n.beat <= t && t < n.beat + n.dur)) sounding += 0.0625;
+        expect(sounding, `${l.id} bar ${bar + 1}`).toBeLessThanOrEqual(3.2);
+      }
+      const starts = l.notes.map((n) => at(n.beat)).sort((a, b) => a - b);
+      let run = 1;
+      for (let i = 1; i < starts.length; i++) {
+        run = starts[i] - starts[i - 1] <= 0.25 + 1e-6 ? run + 1 : 1;
+        expect(run, l.id).toBeLessThanOrEqual(4);
+      }
+    }
+  });
+
+  it('keeps the bass between the bottom of the key and C3, and varies the phrase end', () => {
+    for (const l of bass) {
+      for (const n of loopNotesBetween(l, dDorian, 0, 0, l.beats)) {
+        expect(n.note, l.id).toBeGreaterThanOrEqual(24);
+        expect(n.note, l.id).toBeLessThanOrEqual(48);
+      }
+      const bar = (i: number) => l.notes.filter((n) => n.beat >= i * 4 && n.beat < i * 4 + 4).map((n) => `${at(n.beat - i * 4)}:${n.degrees[0]}`).join(' ');
+      expect(bar(l.beats / 4 - 1), l.id).not.toBe(bar(0));
+    }
+  });
+
+  it('voices the keys above C3, chokes the skanks and puts them where the groove wants them', () => {
+    for (const l of keys) {
+      for (const n of loopNotesBetween(l, dDorian, 0, 0, l.beats)) expect(n.note, l.id).toBeGreaterThanOrEqual(48);
+      if (l.kind !== 'skank') continue;
+      for (const n of l.notes) {
+        expect(n.dur, l.id).toBeLessThanOrEqual(0.15);
+        const inBar = at(n.beat) % 4;
+        const inBeat = inBar % 1;
+        if (l.family === 'onedrop' || l.family === 'meditation') expect([1, 1.25, 3, 3.25, 3.75], `${l.id} ${inBar}`).toContain(inBar);
+        else if (l.family === 'rubadub') expect([0.5, 0.75, 1, 1.25, 3, 3.25].includes(inBar) || inBeat === 0.5, `${l.id} ${inBar}`).toBe(true);
+        else expect([0.5, 0.75], `${l.id} ${inBar}`).toContain(inBeat);
+      }
+    }
+  });
+});

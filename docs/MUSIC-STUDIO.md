@@ -547,6 +547,18 @@ Techno, Trap; right-click Build to edit. Progress is a control output
 Cancel, next length, next style. `buildDrop.test.ts` and
 `buildRuntime.test.ts` cover the bar alignment and cancel.
 
+**Reggae and dub** (`loopLibrary.ts`, `reggae()`): 15 basslines and 16
+skanks and organ bubbles, each tagged with its rhythm family (one drop,
+rockers, steppers, rub-a-dub, meditation) and the drum groove it locks with
+(`FAMILY_GROOVE`). A library preview plays that groove along when nothing
+else is playing. They use the `roots` feel: a light swing, laid back a hair
+behind the beat. The basses default to Dub round (or Rockers growl), the keys
+to Skank piano, Bubble organ, Chop clav, Skank guitar, Dub skank (with a
+dotted-eighth echo) or Skank tine. `loopLibrary.test.ts` holds them to the
+craft: a fifth of every bass bar silent, no more than four sixteenths in a
+row, bass at or under C3, a varied last bar, keys above C3, skanks a
+sixteenth or shorter and placed for their groove.
+
 **Drop FX** (`dropFx.ts`, in the build editor): a look on the whole output,
 chosen per build: None, Glitch storm, Time stretch / stutter, Warp zoom,
 Strobe flash, Kaleido burst or Melt. It creeps in on the build's progress (to
