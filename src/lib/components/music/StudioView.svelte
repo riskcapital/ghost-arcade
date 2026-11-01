@@ -210,7 +210,7 @@
 {/snippet}
 
 {#snippet lower()}
-  <StudioModule title={LOWER_TITLES[lowerTab]} subtitle={lowerSubtitle} class="lower">
+  <StudioModule title={LOWER_TITLES[lowerTab]} subtitle={lowerTab === 'session' ? '' : lowerSubtitle} class="lower">
     {#snippet lead()}
       <div class="ga-segmented small" role="tablist" aria-label="Session, scenes, takes, mixer, band, looper or songs">
         <button role="tab" aria-selected={lowerTab === 'session'} class:active={lowerTab === 'session'} onclick={() => (lowerTab = 'session')}>Session</button>
@@ -229,9 +229,13 @@
         {/if}
         <button class="text-btn small" onclick={() => captureCurrentScene()} title="Save what is playing now as a scene">+ Save scene</button>
       {:else if lowerTab === 'session'}
+        <!-- Row one: the key and the loop browser beside the tabs. Row two: record on the left, MIDI on the right. -->
+        <span class="lower-key">{lowerSubtitle}</span>
         {#if !s.liveControl}<button class="text-btn small" onclick={() => loopBrowser.set({ track: null, row: null })} title="Browse every loop: preview, star, and add">Loops</button>{/if}
-        {#if !s.liveControl}<LoopRecorderBar />{/if}
-        <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own instruments" : "Control Ableton Live from here: its clips and scenes, its sound. The studio's instruments go quiet."}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
+        {#snippet liveButton()}
+          <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own instruments" : "Control Ableton Live from here: its clips and scenes, its sound. The studio's instruments go quiet."}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
+        {/snippet}
+        {#if !s.liveControl}<LoopRecorderBar split extra={liveButton} />{:else}<div class="live-row">{@render liveButton()}</div>{/if}
       {/if}
     {/snippet}
     {#if lowerTab === 'session'}
@@ -545,6 +549,8 @@
   /* The lower panel's tabs keep their row; its actions (Loops, Rec, length, snap, capture, MIDI) wrap to a second row when they do not fit. */
   .centre > :global(.lower > .head) { height: auto; min-height: 32px; flex-wrap: wrap; row-gap: 4px; padding-top: 4px; padding-bottom: 4px; white-space: normal; }
   .centre > :global(.lower > .head > *) { white-space: nowrap; }
+  .lower-key { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
+  .live-row { flex: 1 1 100%; display: flex; justify-content: flex-end; }
   .slot { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .slot > :global(.module) { flex: 1; }
   .b1 { grid-area: b1; }
