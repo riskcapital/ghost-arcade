@@ -495,6 +495,17 @@ lead tones came with them: Fat saw lead, Hollow square, Bright pluck, Pulse
 lead, FM bell lead and Acid lead. The old leads' ids play as the new lead
 nearest them (`LEAD_ALIASES`), so saved scenes keep working.
 
+**The mixer** (`MixerDesk.svelte`, the Mixer button right of the macros): a
+strip for every instrument whatever the set, each band input, the three
+shared returns and the master pinned on the right. A strip has its insert
+effects (click to edit the chain), sends to the shared reverb, tape echo
+(timed to the tempo) and spring (`sendReturns.ts`), pan, the fader's dB and
+the peak, a fader beside a meter with peak hold and a clip light, mute and
+solo, and its name coloured by family. One meter tick serves every strip.
+It is the same state as the Mixer tab; faders, pans, mutes, solos, sends,
+returns and the master are MIDI- and OSC-learnable, and it all saves with the
+project, scenes and songs.
+
 **Insert effects** (`InsertEditor.svelte`, `inserts` in the store): every
 instrument channel and the master has a chain of as many effects as you
 like, from the studio's full list (delay, tape echo, spring, reverb, filter,

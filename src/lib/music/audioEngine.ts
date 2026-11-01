@@ -32,6 +32,7 @@ import { BandLooper } from './bandLooper';
 import { ToneHost } from './tone/toneHost';
 import { DubShotBank } from './dubShotAudio';
 import { BuildFx, type BuildPlanAudio } from './buildFx';
+import { RETURN_IDS, SendReturns, type ReturnId } from './sendReturns';
 import { DUB_SHOT_NOTE, type DubShot } from './dubShots';
 import { toneById } from './tone/tones';
 import { kitById } from './tone/kits';
@@ -81,6 +82,8 @@ interface Strip {
   pan: StereoPannerNode;
   gate: GainNode;
   meter: AnalyserNode;
+  /** Sends to the shared returns, after the fader and pan. */
+  sends: Record<ReturnId, GainNode> | null;
 }
 
 const MIXER_RAMP_SECONDS = 0.015;
@@ -130,6 +133,9 @@ export class MusicAudioEngine {
   /** Insert effects by channel (an instrument, or "master"). */
   private insertChains = new Map<string, MacroFxChain>();
   private insertSettings: Record<string, MacroFxInstance[]> = {};
+  /** The mixer's shared reverb, echo and spring (sendReturns.ts). */
+  private returns: SendReturns | null = null;
+  private returnLevels: Record<ReturnId, number> = { reverb: 0.7, echo: 0.7, spring: 0.7 };
   private kickOutUntil = 0;
   private toneChoice: { synth: string | null; keys: string | null; kit: string | null } = { synth: null, keys: null, kit: null };
   private synthPatch: SynthPatch = 'pad';
@@ -357,6 +363,7 @@ export class MusicAudioEngine {
     this.dubShots?.setTempo(tempo);
     if (tempoMoved) this.bandFx?.setSettings(this.bandSettings, tempo);
     if (tempoMoved) this.syncInserts();
+    if (tempoMoved) this.returns?.set(this.returnLevels, tempo);
     this.macroChain?.sync(slots, tempo);
     // Tempo-locked echoes follow the clock.
     if (tempoMoved) for (const rack of Object.values(this.racks)) rack?.setParams(this.params, tempo);
@@ -705,7 +712,15 @@ export class MusicAudioEngine {
       if (isInputChannel(id)) open = open && (this.inputs[INPUT_CHANNELS.indexOf(id)]?.monitor ?? true);
       else if (this.instrumentsSilenced) open = false;
       strip.gate.gain.setTargetAtTime(open ? 1 : 0, t, MIXER_RAMP_SECONDS);
+      if (strip.sends) for (const r of RETURN_IDS) strip.sends[r].gain.setTargetAtTime(settings.sends?.[r] ?? 0, t, MIXER_RAMP_SECONDS);
     }
+  }
+
+  /** The shared returns' levels into the master. */
+  setReturns(levels: Record<ReturnId, number>): void {
+    if (levels === this.returnLevels) return;
+    this.returnLevels = levels;
+    this.returns?.set(levels, this.tempo);
   }
 
   private makeStrip(ctx: AudioContext, input: GainNode): Strip {
@@ -726,7 +741,17 @@ export class MusicAudioEngine {
     const meter = ctx.createAnalyser();
     meter.fftSize = 512;
     last.connect(pan).connect(gate);
-    return { input, eq, pan, gate, meter };
+    let sends: Strip['sends'] = null;
+    if (this.returns) {
+      const r = this.returns;
+      sends = Object.fromEntries(RETURN_IDS.map((id) => {
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        gate.connect(g).connect(r.inputs[id]);
+        return [id, g];
+      })) as Record<ReturnId, GainNode>;
+    }
+    return { input, eq, pan, gate, meter, sends };
   }
 
   private applyRouting(): void {
@@ -900,6 +925,9 @@ export class MusicAudioEngine {
     this.output = compressor;
     const bus = {} as Record<InstrumentId, GainNode>;
     this.strips.clear();
+    // The returns before the strips, so every strip gets its sends.
+    this.returns = new SendReturns(ctx, master);
+    this.returns.set(this.returnLevels, this.tempo);
     this.inputSends.clear();
     const ducker = new Ducker(ctx);
     this.ducker = ducker;

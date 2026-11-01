@@ -42,6 +42,7 @@
   import SessionGrid from './SessionGrid.svelte';
   import ClipEditor from './ClipEditor.svelte';
   import LoopPicker from './LoopPicker.svelte';
+  import MixerDesk from './MixerDesk.svelte';
   import { loopBrowser } from '../../music/studioUi';
   import LoopRecorderBar from './LoopRecorderBar.svelte';
   import PadsModule from './PadsModule.svelte';
@@ -73,6 +74,7 @@
   let elapsed = $state(0);
   let tempo = $state(120);
   let scanX = $state(0);
+  let mixerOpen = $state(false);
   let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band' | 'looper' | 'songs'>('session');
   const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band', looper: 'Looper', songs: 'Songs' } as const;
 
@@ -325,10 +327,13 @@
 
     <!-- The songs and the eight macros, in their own row under the bar so the bar fits. -->
     <div class="subbar">
-      <SongStrip />
-      <span class="spacer"></span>
-      <MacroStrip />
+      <div class="sub-left"><SongStrip /></div>
+      <div class="sub-centre"><MacroStrip /></div>
+      <div class="sub-right">
+        <button class="text-btn" class:on={mixerOpen} aria-pressed={mixerOpen} onclick={() => (mixerOpen = !mixerOpen)} title="The full mixer: every sound, its effects, sends, pan, level and meters">Mixer</button>
+      </div>
     </div>
+    {#if mixerOpen}<MixerDesk onclose={() => (mixerOpen = false)} />{/if}
 
     <div class="centre">
       {@render frame()}
@@ -422,17 +427,20 @@
   }
   .set-analog { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 214px; }
   /* Songs on the left, the macros (with their FX and jacks) on the right, under the bar. */
+  /* The same columns as the body, so the macros sit right above the live output. */
   .subbar {
     grid-area: sub;
     position: relative;
     z-index: 1;
     min-width: 0;
-    display: flex;
+    display: grid;
+    grid-template-columns: subgrid;
     align-items: center;
-    gap: var(--ga-bar-group-gap, 14px);
-    overflow-x: auto;
     padding: 2px 0;
   }
+  .sub-left, .sub-centre, .sub-right { min-width: 0; display: flex; align-items: center; }
+  .sub-centre { justify-content: center; overflow-x: auto; }
+  .sub-right { justify-content: flex-end; gap: 6px; }
   .narrow-only { display: none; }
   /* Narrower windows: Deck, Tray and Exit fold into the … menu, the title goes, menus tighten. */
   @media (max-width: 1599px) {
@@ -532,6 +540,9 @@
   .rack > :global(.module.grow), .rack > :global(.play), .rack > :global(.beat) { flex: 1 1 0; }
   .centre { grid-area: centre; display: flex; flex-direction: column; gap: var(--studio-gap); min-width: 0; min-height: 0; }
   .centre > :global(.lower) { flex: 0 0 auto; height: 36%; min-height: 200px; }
+  /* The lower panel's tabs keep their row; its actions (Loops, Rec, length, snap, capture, MIDI) wrap to a second row when they do not fit. */
+  .centre > :global(.lower > .head) { height: auto; min-height: 32px; flex-wrap: wrap; row-gap: 4px; padding-top: 4px; padding-bottom: 4px; white-space: normal; }
+  .centre > :global(.lower > .head > *) { white-space: nowrap; }
   .slot { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .slot > :global(.module) { flex: 1; }
   .b1 { grid-area: b1; }

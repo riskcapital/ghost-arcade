@@ -60,6 +60,9 @@ import { TONES } from './tone/tones';
 import { DUB_SHOT_COUNT } from './dubShots';
 import { KEY_MODES } from './keyMode';
 import { BUILD_LENGTHS, BUILD_STYLES } from './buildDrop';
+import { RETURN_IDS } from './sendReturns';
+import { CHANNEL_LABELS, stripFor } from './mixer';
+import { INSTRUMENTS } from './noteEvents';
 import { LOOP_ROLES, type LoopRole } from './loops';
 import { DRUM_KITS } from './tone/kits';
 
@@ -380,6 +383,26 @@ const BUILD_CONTROLS: StudioControl[] = [
   },
 ];
 
+// The mixer: every instrument's level, pan, mute, solo and sends, the returns and the master.
+const MIX_CONTROLS: StudioControl[] = [
+  ...INSTRUMENTS.flatMap((id): StudioControl[] => {
+    const name = CHANNEL_LABELS[id];
+    const strip = () => stripFor(get(musicStudio).mixer, id);
+    return [
+      { id: `mix.${id}.volume`, label: `${name} level`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setVolume(id, v) },
+      { id: `mix.${id}.pan`, label: `${name} pan`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setStrip(id, { pan: v * 2 - 1 }) },
+      { id: `mix.${id}.mute`, label: `${name} mute`, group: 'Mixer', kind: 'toggle', run: () => musicStudio.setStrip(id, { mute: !strip().mute }) },
+      { id: `mix.${id}.solo`, label: `${name} solo`, group: 'Mixer', kind: 'toggle', run: () => musicStudio.setStrip(id, { solo: !strip().solo }) },
+      ...RETURN_IDS.map((r): StudioControl => ({
+        id: `mix.${id}.send.${r}`, label: `${name} to the ${r}`, group: 'Mixer', kind: 'value',
+        run: (v) => musicStudio.setStrip(id, { sends: { reverb: 0, echo: 0, spring: 0, ...strip().sends, [r]: v } }),
+      })),
+    ];
+  }),
+  ...RETURN_IDS.map((r): StudioControl => ({ id: `mix.return.${r}`, label: `${r[0].toUpperCase()}${r.slice(1)} return level`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setReturn(r, v) })),
+  { id: 'mix.master', label: 'Master level', group: 'Mixer', kind: 'value', run: (v) => musicStudio.setMasterVolume(v) },
+];
+
 const STUDIO: StudioControl[] = [
   {
     id: 'studio.kill', label: 'Kill all sound', group: 'Studio', kind: 'trigger',
@@ -393,7 +416,7 @@ const STUDIO: StudioControl[] = [
 ];
 
 /** Every control this module registers, in the order the learn list shows them. */
-export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...BUILD_CONTROLS, ...STUDIO];
+export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...BUILD_CONTROLS, ...MIX_CONTROLS, ...STUDIO];
 
 registerStudioControls(STUDIO_MIDI_CONTROLS);
 
