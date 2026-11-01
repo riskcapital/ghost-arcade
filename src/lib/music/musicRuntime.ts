@@ -1899,6 +1899,8 @@ function syncMacroFx(force = false): void {
 
 // Live modulation from cables, applied without writing the saved project.
 const cableFollow = new Map<string, CableFollow>();
+/** Each cabled macro's own value from before its cables, put back when the last one is unplugged. */
+const macroBase = new Map<string, number>();
 let cablesAt = 0;
 /** Mixer pans and sends, insert params and the drop FX amount, as the cables have them now. */
 const cableMods = new Map<string, number>();
@@ -1944,6 +1946,8 @@ function routeControlCables(): void {
     if (previous !== undefined && Math.abs(previous - value) < 0.004) continue;
     lastSent.set(to, value);
     if (to.startsWith('dest:macro:')) {
+      // Where the knob was before a cable took it, to go back to when unplugged.
+      if (!macroBase.has(to)) macroBase.set(to, get(macros).macros.find((m) => m.id === to.slice(11))?.value ?? 0);
       macros.setMacroValue(to.slice(11), value);
     } else if (to.startsWith('dest:analog.')) {
       audio.setAnalogExternal(to.slice(12) as AnalogDest, value);
@@ -1965,6 +1969,10 @@ function routeControlCables(): void {
     if (inputs.has(key)) continue;
     lastSent.delete(key);
     if (key.startsWith('dest:analog.')) audio.setAnalogExternal(key.slice(12) as AnalogDest, null);
+    if (key.startsWith('dest:macro:') && macroBase.has(key)) {
+      macros.setMacroValue(key.slice(11), macroBase.get(key)!);
+      macroBase.delete(key);
+    }
   }
   // Mixer and insert modulation: pushed when it moves by more than a hair.
   const sig = [...mods].map(([k, v]) => `${k}=${v.toFixed(3)}`).join('|');

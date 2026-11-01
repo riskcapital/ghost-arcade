@@ -3,7 +3,7 @@
    * A patch jack. Drag from an output to an input to patch a cable; drag a
    * plugged input to move its cable, or drop it on nothing to unplug it.
    */
-  import { cableDrag } from '../../music/cablePatching';
+  import { cableDrag, lastUnplugged } from '../../music/cablePatching';
   import { canConnect, isOutputJack, jackKind } from '../../music/studioSets';
   import { musicStudio } from '../../music/musicStudioStore';
 
@@ -22,16 +22,23 @@
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    const s = $musicStudio;
+    const mine = s.cables[s.set].filter((c) => c.from === id || c.to === id);
+    // Alt- or Ctrl-click: unplug everything in this jack.
+    if ((e.altKey || e.ctrlKey || e.metaKey) && mine.length) {
+      for (const c of mine) musicStudio.disconnectCable(c.id);
+      lastUnplugged.set({ cables: mine, at: Date.now() });
+      return;
+    }
     if (output) {
       cableDrag.set({ from: id, x: e.clientX, y: e.clientY });
       return;
     }
-    // Pick up the cable already plugged in here and carry it from its source.
-    const s = $musicStudio;
-    const cable = s.cables[s.set].find((c) => c.to === id);
+    // Pick up the last cable plugged in here and carry it from its source.
+    const cable = mine.filter((c) => c.to === id).at(-1);
     if (!cable) return;
     musicStudio.disconnectCable(cable.id);
-    cableDrag.set({ from: cable.from, x: e.clientX, y: e.clientY });
+    cableDrag.set({ from: cable.from, x: e.clientX, y: e.clientY, carry: cable });
   }
 </script>
 
@@ -43,7 +50,7 @@
     class:source
     data-jack={id}
     aria-label={title || label || id}
-    title={title || label}
+    title={plugged ? `${title || label} (drag a cable off to move or unplug it; Alt-click unplugs all; right-click for the list)` : title || label}
     onpointerdown={down}
   ></button>
   {#if label}<span class="jack-label">{label}</span>{/if}
