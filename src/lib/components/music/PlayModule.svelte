@@ -16,7 +16,7 @@
 
   /**
    * `size`: a fixed keyboard span, or null to offer the size switch.
-   * `patches`: offer the synth and keys sounds as well.
+   * `patches`: kept for callers; every sound is in the Instrument menu now.
    */
   let { size = 'compact', patches = false }: { size?: KeyboardSize | null; patches?: boolean } = $props();
 
@@ -26,11 +26,32 @@
 
   const FAMILIES: ToneFamily[] = ['bass', 'pad', 'lead'];
 
-  function setPatch(e: Event) {
-    const value = (e.target as HTMLSelectElement).value;
-    if ((s.instrument === 'synth' || s.instrument === 'keys') && value.startsWith('tone:')) musicStudio.setTone(s.instrument, value.slice(5));
-    else if (s.instrument === 'synth') musicStudio.setSynthPatch(value as SynthPatch);
-    else if (s.instrument === 'keys') musicStudio.setKeysPatch(value as KeysPatch);
+  /** Other instruments than the synth and keys, which list their own sounds. */
+  const OTHERS = PLAYABLE_INSTRUMENTS.filter((id) => id !== 'synth' && id !== 'keys');
+
+  /** What the keys play now, as the Instrument menu shows it. */
+  const current = $derived(
+    s.instrument === 'synth'
+      ? s.synthTone ? `tone:${s.synthTone}` : `synth:${s.synthPatch}`
+      : s.instrument === 'keys'
+        ? s.keysTone ? `tone:${s.keysTone}` : `keys:${s.keysPatch}`
+        : `inst:${s.instrument}`,
+  );
+
+  /** One menu for whatever the keys play: any instrument, any synth or keys sound, any tone. */
+  function choose(e: Event) {
+    const [kind, id] = (e.target as HTMLSelectElement).value.split(/:(.*)/);
+    if (kind === 'inst') musicStudio.setInstrument(id as InstrumentId);
+    else if (kind === 'synth') {
+      musicStudio.setInstrument('synth');
+      musicStudio.setSynthPatch(id as SynthPatch);
+    } else if (kind === 'keys') {
+      musicStudio.setInstrument('keys');
+      musicStudio.setKeysPatch(id as KeysPatch);
+    } else if (kind === 'tone') {
+      musicStudio.setInstrument('synth');
+      musicStudio.setTone('synth', id);
+    }
   }
 
   function addVisual(e: Event) {
@@ -43,22 +64,22 @@
 
 <StudioModule title="Play" class="play">
   {#snippet head()}
-    <select value={s.instrument} onchange={(e) => musicStudio.setInstrument((e.target as HTMLSelectElement).value as InstrumentId)} aria-label="What the keys play">
-      {#each PLAYABLE_INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
-    </select>
-    {#if patches && (s.instrument === 'synth' || s.instrument === 'keys')}
-      {@const tone = s.instrument === 'synth' ? s.synthTone : s.keysTone}
-      <select value={tone ? `tone:${tone}` : s.instrument === 'synth' ? s.synthPatch : s.keysPatch} onchange={setPatch} aria-label="Sound" title={TONES.find((t) => t.id === tone)?.blurb ?? ''}>
-        <optgroup label="Simple">
-          {#each s.instrument === 'synth' ? SYNTH_PATCHES : KEYS_PATCHES as patch}<option value={patch.id}>{patch.label}</option>{/each}
+    <select class="instrument" value={current} onchange={choose} aria-label="Instrument the keys play" title={TONES.find((t) => current === `tone:${t.id}`)?.blurb ?? 'What the keys play, whatever the set'}>
+      <optgroup label="Synth">
+        {#each SYNTH_PATCHES as p (p.id)}<option value="synth:{p.id}">Synth · {p.label}</option>{/each}
+      </optgroup>
+      <optgroup label="Keys">
+        {#each KEYS_PATCHES as p (p.id)}<option value="keys:{p.id}">Keys · {p.label}</option>{/each}
+      </optgroup>
+      <optgroup label="Instruments">
+        {#each OTHERS as id (id)}<option value="inst:{id}">{INSTRUMENT_LABELS[id]}</option>{/each}
+      </optgroup>
+      {#each FAMILIES as fam (fam)}
+        <optgroup label={TONE_FAMILY_LABELS[fam]}>
+          {#each TONES.filter((t) => t.family === fam) as t (t.id)}<option value="tone:{t.id}" title={t.blurb}>{t.name}</option>{/each}
         </optgroup>
-        {#each FAMILIES as fam (fam)}
-          <optgroup label={TONE_FAMILY_LABELS[fam]}>
-            {#each TONES.filter((t) => t.family === fam) as t (t.id)}<option value="tone:{t.id}" title={t.blurb}>{t.name}</option>{/each}
-          </optgroup>
-        {/each}
-      </select>
-    {/if}
+      {/each}
+    </select>
     {#if s.instrument !== 'drums'}
       {#if size === null}
         <div class="seg small" role="group" aria-label="Keyboard size">

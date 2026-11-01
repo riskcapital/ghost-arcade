@@ -1839,8 +1839,10 @@ function stopEverything(): void {
 // ── Mixer, live input and outside notes ─────────────────────────────────
 
 /** The mixer's channels for a set: its instruments, then each band input. */
-export function mixerChannels(set: StudioSet, inputs = get(musicStudio).liveInputs.length): ChannelId[] {
-  return [...AUDIO_SOURCES[set], ...INPUT_CHANNELS.slice(0, Math.max(1, inputs))];
+export function mixerChannels(set: StudioSet, inputs = get(musicStudio).liveInputs.length, keys = get(musicStudio).instrument): ChannelId[] {
+  // The keys can play an instrument from another set: it gets a strip here too.
+  const own = AUDIO_SOURCES[set];
+  return [...own, ...(own.includes(keys) ? [] : [keys]), ...INPUT_CHANNELS.slice(0, Math.max(1, inputs))];
 }
 
 /** Meter levels after each channel's strip, 0-1. An input's meter also reads its signal before its fader. */

@@ -501,7 +501,8 @@ function createMusicStudioStore() {
     setStudioView: (studioView: boolean) => set({ studioView, isOpen: true }),
     // The keys switch to the set's own voice: the dub bass in the dub set, the synth in the analog set.
     setSet: (studioSet: StudioSet) =>
-      update((s) => ({ ...s, set: studioSet, instrument: SET_KEYS_VOICE[studioSet] ?? s.instrument })),
+      // The keys keep what they play: a set changes instruments around them, not under them.
+      update((s) => ({ ...s, set: studioSet })),
     setParam: (key: string, value: number) =>
       update((s) => (key in s.params ? { ...s, params: { ...s.params, [key]: Math.max(0, Math.min(1, value)) } } : s)),
     setKey: (key: MusicKey) => set({ key }),
@@ -846,7 +847,6 @@ function keptCursor(setlists: Setlist[], activeId: string | null, cursor: number
 }
 
 /** What the keys play when a set comes up, for sets built around their own voice. */
-const SET_KEYS_VOICE: Partial<Record<StudioSet, InstrumentId>> = { dub: 'dubbass', analog: 'analog' };
 
 export const musicStudio = createMusicStudioStore();
 
