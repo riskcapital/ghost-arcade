@@ -21,6 +21,9 @@ import { runAsLiveControl } from '../stores/historyHooks';
 import { BandKeys } from './bandKeys';
 import {
   bandState,
+  cancelBuild,
+  dropNow,
+  toggleBuild,
   duckUnderKick,
   fireDubShot,
   hearBassNote,
@@ -56,6 +59,7 @@ import { voiceSourcesFor, type VoiceSourceId } from './visualVoices';
 import { TONES } from './tone/tones';
 import { DUB_SHOT_COUNT } from './dubShots';
 import { KEY_MODES } from './keyMode';
+import { BUILD_LENGTHS, BUILD_STYLES } from './buildDrop';
 import { LOOP_ROLES, type LoopRole } from './loops';
 import { DRUM_KITS } from './tone/kits';
 
@@ -355,6 +359,27 @@ const KEY_MODE_CONTROLS: StudioControl[] = [
   },
 ];
 
+const BUILD_CONTROLS: StudioControl[] = [
+  { id: 'build.toggle', label: 'Build up (again to cancel)', group: 'Build and drop', kind: 'trigger', run: () => { if (studioOpen()) toggleBuild(); } },
+  { id: 'build.drop', label: 'Drop on the next bar', group: 'Build and drop', kind: 'trigger', run: () => { if (studioOpen()) dropNow(); } },
+  { id: 'build.cancel', label: 'Cancel the build', group: 'Build and drop', kind: 'trigger', run: () => cancelBuild() },
+  {
+    id: 'build.length-next', label: 'Next build length', group: 'Build and drop', kind: 'trigger',
+    run: () => {
+      const bars = get(musicStudio).build.bars;
+      musicStudio.setBuild({ bars: BUILD_LENGTHS[(BUILD_LENGTHS.indexOf(bars) + 1) % BUILD_LENGTHS.length] });
+    },
+  },
+  {
+    id: 'build.style-next', label: 'Next build style', group: 'Build and drop', kind: 'trigger',
+    run: () => {
+      const style = get(musicStudio).build.style;
+      const i = BUILD_STYLES.findIndex((x) => x.id === style);
+      musicStudio.setBuild({ style: BUILD_STYLES[(i + 1) % BUILD_STYLES.length].id });
+    },
+  },
+];
+
 const STUDIO: StudioControl[] = [
   {
     id: 'studio.kill', label: 'Kill all sound', group: 'Studio', kind: 'trigger',
@@ -368,7 +393,7 @@ const STUDIO: StudioControl[] = [
 ];
 
 /** Every control this module registers, in the order the learn list shows them. */
-export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...STUDIO];
+export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...BUILD_CONTROLS, ...STUDIO];
 
 registerStudioControls(STUDIO_MIDI_CONTROLS);
 

@@ -92,6 +92,7 @@ import { setStudioDriver, studioHostsLive, studioVisualTick } from './studioPlug
 import { bowlSlotNotes } from './soundSlots';
 import { DUB_SHOT_NOTE } from './dubShots';
 import { keyModeNote } from './keyMode';
+import { buildLanding, buildProgress, rollHits } from './buildDrop';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
@@ -288,6 +289,7 @@ export function playAll(): void {
 
 /** Silence everything at once, effect tails included. */
 export function killAll(): void {
+  cancelBuild();
   stopAll();
   resumable = null;
   audio.kill();
@@ -1350,6 +1352,90 @@ export function releaseDubShot(index: number): void {
   audio.holdDubShot(index, false);
 }
 
+// ── Build-ups and drops (buildDrop.ts, buildFx.ts) ─────────────────────
+
+export interface BuildState {
+  phase: 'idle' | 'building';
+  /** Launch-clock beats. */
+  start: number;
+  land: number;
+  /** 0-1 through the build: a control output (cv:build.progress) for macros and visuals. */
+  progress: number;
+}
+
+export const buildState = writable<BuildState>({ phase: 'idle', start: 0, land: 0, progress: 0 });
+let buildTimer: ReturnType<typeof setInterval> | null = null;
+let dropTimer: ReturnType<typeof setTimeout> | null = null;
+/** A note above the dub shots: silent, for the visuals' drop hit. */
+const DROP_NOTE = 120;
+
+/**
+ * Start a build-up that lands on a bar line `bars` bars after the next one
+ * (or on `land`, a launch-clock beat, for a drop now). Pressing it while a
+ * build runs cancels it.
+ */
+export function startBuild(land?: number): void {
+  ensureMusicRuntime();
+  const s = get(musicStudio);
+  const settings = s.build;
+  const { beat, beatMs } = launchClockPosition();
+  const target = land ?? buildLanding(beat, settings.bars);
+  const now = audio.now();
+  const timeAt = (b: number) => now + ((b - beat) * beatMs) / 1000;
+  const current = get(buildState);
+  const start = current.phase === 'building' && land !== undefined ? current.start : beat;
+  const hits = rollHits(start, target, settings.gap).filter((h) => h.beat >= beat).map((h) => ({ time: timeAt(h.beat), velocity: h.velocity, pitch: h.pitch }));
+  const kickOutFrom = settings.kickOut ? timeAt(Math.max(beat, target - Math.min(4, (target - start) / 2))) : null;
+  audio.startBuild({ start: now, land: timeAt(target), beatSeconds: beatMs / 1000, hits, settings }, kickOutFrom);
+  buildState.set({ phase: 'building', start, land: target, progress: buildProgress(start, target, beat) });
+  if (buildTimer) clearInterval(buildTimer);
+  buildTimer = setInterval(() => {
+    const st = get(buildState);
+    buildState.set({ ...st, progress: buildProgress(st.start, st.land, launchClockPosition().beat) });
+  }, 40);
+  if (dropTimer) clearTimeout(dropTimer);
+  dropTimer = setTimeout(() => landDrop(timeAt(target)), Math.max(0, (target - beat) * beatMs - 15));
+}
+
+/** Drop on the next bar line, whatever length the build was given. */
+export function dropNow(): void {
+  const { beat } = launchClockPosition();
+  const nextBar = Math.ceil(beat / 4 + 1e-6) * 4;
+  // Too close to the bar line to build into it: take the one after.
+  startBuild(nextBar - beat < 0.5 ? nextBar + 4 : nextBar);
+}
+
+/** Stop a build now; the mix goes back as it was. */
+export function cancelBuild(): void {
+  endBuildTimers();
+  audio.cancelBuild();
+  buildState.set({ phase: 'idle', start: 0, land: 0, progress: 0 });
+}
+
+/** Build, or cancel a build already running. */
+export function toggleBuild(): void {
+  if (get(buildState).phase === 'building') cancelBuild();
+  else startBuild();
+}
+
+function endBuildTimers(): void {
+  if (buildTimer) clearInterval(buildTimer);
+  if (dropTimer) clearTimeout(dropTimer);
+  buildTimer = null;
+  dropTimer = null;
+}
+
+/** The downbeat: the visuals get a big hit, and the drop's scene or set comes in. */
+function landDrop(at: number): void {
+  endBuildTimers();
+  buildState.set({ phase: 'idle', start: 0, land: 0, progress: 0 });
+  send(noteOn('shots', DROP_NOTE, 1, 'sequencer', at));
+  send(noteOff('shots', DROP_NOTE, 'sequencer', at + 0.25));
+  const { dropScene, dropSet } = get(musicStudio).build;
+  if (dropSet && dropSet !== get(musicStudio).set) musicStudio.setSet(dropSet);
+  if (dropScene && get(musicStudio).scenes.some((sc) => sc.id === dropScene)) launchScene(dropScene, true);
+}
+
 /** A dub throw: while held, everything in the echo chamber floods the tape echo. */
 export function setThrow(on: boolean): void {
   throwHeld = on;
@@ -1516,6 +1602,7 @@ const lastSent = new Map<string, number>();
 function controlValue(jack: string, params: Record<string, number>): number {
   const name = jack.slice(3);
   if (name === 'xy.x' || name === 'xy.y') return params[name] ?? 0.5;
+  if (name === 'build.progress') return get(buildState).progress;
   if (name === 'drone.level') return visuals.instrumentLevel('drone');
   if (name === 'bowls.ring') return visuals.instrumentLevel('bowls');
   if (name === 'acid.level') return visuals.instrumentLevel('acid');

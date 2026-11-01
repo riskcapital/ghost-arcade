@@ -25,6 +25,7 @@ export const SONG_SETUP_GROUPS = {
     'bowlSlots',
     'fxPads',
     'dubShots',
+    'build',
     'dronePatch',
   ],
   band: ['liveInputs', 'bandFx'],

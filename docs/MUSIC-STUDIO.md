@@ -444,6 +444,21 @@ project. New sessions start with four rows of presets that work together.
 stopped, or the beat) and stops everything; **Kill** silences everything at
 once, effect tails included.
 
+**Build and drop** (`buildDrop.ts`, `buildFx.ts`, `BuildControls.svelte`
+under the live output): **Build** runs a build-up of 1, 2, 4 or 8 bars that
+lands exactly on a bar line (`buildLanding`); press it again, or Kill, to
+cancel and put the mix back. **Drop** lands it on the next bar line. Over the
+build a roll speeds up from quarters to thirty-seconds and climbs
+(`rollHits`), a filter sweeps the whole mix (high-pass up or low-pass down),
+an echo and reverb send opens, a riser and a reverse cymbal swell, and the
+beat can drop out for the last bar with a gap before the downbeat. On the
+downbeat everything snaps back with a sub boom and a crash, the visuals get a
+big hit, and an optional scene or set comes in. Styles: Classic EDM, Dub,
+Techno, Trap; right-click Build to edit. Progress is a control output
+(`cv:build.progress`) for macros and visuals. MIDI-learnable: Build, Drop,
+Cancel, next length, next style. `buildDrop.test.ts` and
+`buildRuntime.test.ts` cover the bar alignment and cancel.
+
 **Keyboard mode** (`keyMode.ts`, the menu beside Key): *Show key* marks the
 key's notes and plays every note; *Lock to key* moves every pitched note,
 from MIDI, band keys, letter keys or the on-screen keys, to the nearest note

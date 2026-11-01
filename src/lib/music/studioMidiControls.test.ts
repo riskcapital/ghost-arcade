@@ -62,6 +62,7 @@ describe('the studio controls a controller can learn', () => {
       ...['bass', 'lead', 'chords', 'texture'].flatMap((t) => [`tone.track.${t}.next`, `tone.track.${t}.prev`]),
       ...Array.from({ length: 32 }, (_, i) => `dubshot.${i + 1}`),
       'keys.mode-next', 'keys.mode-prev', 'keys.lock',
+      'build.toggle', 'build.drop', 'build.cancel', 'build.length-next', 'build.style-next',
       'studio.kill', 'studio.play',
     ];
     expect(controls.STUDIO_MIDI_CONTROLS.map((c) => c.id)).toEqual(expected);
