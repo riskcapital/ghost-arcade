@@ -345,10 +345,8 @@ function convertISFtoGLSL(source: string, metadata: ISFMetadata): string {
   // Build uniform declarations for built-in ISF uniforms (only if not already declared)
   let uniformDeclarations = '';
 
-  // Enable derivatives extension if needed (must be first)
-  if (needsDerivatives) {
-    uniformDeclarations += '#extension GL_OES_standard_derivatives : enable\n';
-  }
+  // The derivatives extension goes above everything, precision included (see the header below).
+  const extensions = needsDerivatives ? '#extension GL_OES_standard_derivatives : enable\n' : '';
 
   // Add built-in uniforms only if not already present (check for various common naming)
   // Also handle lowercase 'renderSize' variant
@@ -483,13 +481,31 @@ float sampleWaveform(float u) {
 `;
   }
 
+  // GLSL ES 1.0 (WebGL1) has no tanh; shaders written for the native path use it.
+  if (/\btanh\s*\(/.test(glsl) && !/\bfloat\s+tanh\s*\(/.test(glsl)) {
+    uniformDeclarations += `
+float tanh(float x) { x = clamp(x, -10.0, 10.0); float e = exp(2.0 * x); return (e - 1.0) / (e + 1.0); }
+vec2 tanh(vec2 x) { return vec2(tanh(x.x), tanh(x.y)); }
+vec3 tanh(vec3 x) { return vec3(tanh(x.x), tanh(x.y), tanh(x.z)); }
+vec4 tanh(vec4 x) { return vec4(tanh(x.x), tanh(x.y), tanh(x.z), tanh(x.w)); }
+`;
+  }
+  if (/\bround\s*\(/.test(glsl) && !/\bfloat\s+round\s*\(/.test(glsl)) {
+    uniformDeclarations += `
+float round(float x) { return floor(x + 0.5); }
+vec2 round(vec2 x) { return floor(x + 0.5); }
+vec3 round(vec3 x) { return floor(x + 0.5); }
+vec4 round(vec4 x) { return floor(x + 0.5); }
+`;
+  }
+
   // Add isf_FragNormCoord helper (convert gl_FragCoord to normalized coords)
   uniformDeclarations += `
 #define isf_FragNormCoord (gl_FragCoord.xy / RENDERSIZE)
 `;
 
   // Prepend precision and uniforms
-  const header = `precision highp float;
+  const header = `${extensions}precision highp float;
 ${uniformDeclarations}
 `;
 
