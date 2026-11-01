@@ -13,6 +13,7 @@ import { DRUM_VOICES, type DrumVoice, type InstrumentId } from './noteEvents';
 import { createPattern, type DrumPattern } from './drumPattern';
 import { scaleNote, type MusicKey, type StudioSet } from './studioSets';
 import { LIBRARY_BEATS, LIBRARY_MELODIC } from './loopLibrary';
+import { LEADS, leadAlias } from './leadLibrary';
 
 export type LoopRole = 'bass' | 'lead' | 'chords' | 'texture';
 export type LoopCategory = 'beats' | LoopRole;
@@ -42,6 +43,8 @@ export interface MelodicLoop {
   /** Length in beats. */
   beats: number;
   notes: LoopNote[];
+  /** The tone-library tone it was written for, if any; a clip made from it starts on that tone. */
+  tone?: string;
 }
 
 export interface BeatLoop {
@@ -87,27 +90,8 @@ export const MELODIC_LOOPS: MelodicLoop[] = [
   { id: 'bass-arp', name: 'Arp bass', role: 'bass', beats: 4,
     notes: sixteenths([0, 7, 0, 9, 0, 7, 0, 4, 0, 7, 0, 9, 11, 9, 7, 4], 0.2, [0, 8]) },
 
-  // ── Leads ──
-  { id: 'lead-arp', name: 'Rising arp', role: 'lead', beats: 4,
-    notes: sixteenths([0, 2, 4, 7, 9, 7, 4, 2, 0, 2, 4, 7, 11, 9, 7, 4], 0.2) },
-  { id: 'lead-call', name: 'Call and answer', role: 'lead', beats: 8,
-    notes: notes([[0, 0.5, 4], [0.5, 0.5, 2], [1, 1, 0], [2.5, 0.5, 2], [3, 1, 4], [4, 0.5, 7], [4.5, 0.5, 6], [5, 1, 4], [6.5, 0.5, 2], [7, 1, 0]]) },
-  { id: 'lead-hypnotic', name: 'Hypnotic three', role: 'lead', beats: 3,
-    notes: notes([[0, 0.5, 7], [1, 0.5, 4], [2, 0.5, 5]]) },
-  { id: 'lead-melodica', name: 'Melodica dub', role: 'lead', beats: 8,
-    notes: notes([[0, 1.5, 4, 0.9], [2, 0.5, 5], [2.5, 1.5, 4], [4.5, 0.5, 2], [5, 2.5, 0, 0.9]]) },
-  { id: 'lead-bells', name: 'Bell motif', role: 'lead', beats: 8,
-    notes: notes([[0, 1, 7], [1, 1, 9], [2, 2, 11], [4, 1, 9], [5, 1, 7], [6, 2, 4]]) },
-  { id: 'lead-run', name: 'Scale run', role: 'lead', beats: 2,
-    notes: sixteenths([0, 1, 2, 3, 4, 5, 6, 7], 0.2) },
-  { id: 'lead-pluck', name: 'Pluck stabs', role: 'lead', beats: 4,
-    notes: notes([[0, 0.25, 7], [0.75, 0.25, 7], [1.5, 0.25, 9], [2.25, 0.25, 7], [3, 0.5, 4]]) },
-  { id: 'lead-detroit', name: 'Detroit line', role: 'lead', beats: 8,
-    notes: notes([[0, 1.5, 9], [1.5, 0.5, 7], [2, 1, 4], [3, 1, 7], [4, 1.5, 11], [5.5, 0.5, 9], [6, 2, 7]]) },
-  { id: 'lead-whistle', name: 'Echo whistle', role: 'lead', beats: 8,
-    notes: notes([[0, 0.5, 14], [1, 0.5, 11], [2.5, 1, 9], [6, 0.5, 14], [6.5, 0.5, 16]]) },
-  { id: 'lead-wander', name: 'Wandering', role: 'lead', beats: 8,
-    notes: notes([[0, 0.5, 0], [0.5, 0.5, 2], [1, 0.5, 4], [2, 1, 7], [3.5, 0.5, 9], [4, 1, 7], [5, 0.5, 4], [5.5, 0.5, 2], [6, 2, 0]]) },
+  // ── Leads: see leadLibrary.ts ──
+  ...LEADS,
 
   // ── Chords ──
   { id: 'chords-epic', name: 'i · VI · III · VII', role: 'chords', beats: 16,
@@ -185,7 +169,9 @@ export const BEAT_LOOPS: BeatLoop[] = [
 ];
 
 export function loopById(id: string): MelodicLoop | BeatLoop | null {
-  return MELODIC_LOOPS.find((l) => l.id === id) ?? BEAT_LOOPS.find((l) => l.id === id) ?? null;
+  // A lead from before the new leads plays as the new one nearest it.
+  const real = leadAlias(id);
+  return MELODIC_LOOPS.find((l) => l.id === real) ?? BEAT_LOOPS.find((l) => l.id === real) ?? null;
 }
 
 export function isBeatLoop(loop: MelodicLoop | BeatLoop): loop is BeatLoop {

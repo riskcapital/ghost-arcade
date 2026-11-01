@@ -5,28 +5,27 @@
  * bass, a rhythm, a motif) over a progression, which keeps them in the
  * styles they come from and lets one figure serve several progressions.
  *
- * The hooks follow what makes a phrase stick: a short motif said twice, the
- * third time changed in one place, an answer that ends on a tension note and
- * resolves on the next downbeat; mostly stepwise, with one leap.
- *
  * Common progressions and genre rhythms are shared by everyone; melodies here
  * are written for this library.
  */
 
 import type { DrumVoice } from './noteEvents';
 import type { BeatLoop, LoopNote, LoopRole, MelodicLoop } from './loops';
+import { LEADS } from './leadLibrary';
 
-export type LoopStyle = 'dub' | 'reggae' | 'techno' | 'house' | 'acid' | 'funk' | 'livetronica' | 'garage' | 'breaks' | 'ambient' | 'pop' | 'jazz';
+export type LoopStyle = 'dub' | 'reggae' | 'techno' | 'house' | 'acid' | 'funk' | 'livetronica' | 'garage' | 'breaks' | 'ambient' | 'pop' | 'jazz' | 'trance' | 'synthwave' | 'minimal';
 
 export const LOOP_STYLE_LABELS: Record<LoopStyle, string> = {
   dub: 'Dub', reggae: 'Roots', techno: 'Techno', house: 'House', acid: 'Acid', funk: 'Funk',
   livetronica: 'Livetronica', garage: 'UK garage', breaks: 'Breaks', ambient: 'Ambient', pop: 'Anthem', jazz: 'Jazz',
+  trance: 'Trance', synthwave: 'Synthwave', minimal: 'Minimal',
 };
 
 /** Typical tempo for each style, in BPM. */
 const STYLE_BPM: Record<LoopStyle, [number, number]> = {
   dub: [66, 80], reggae: [68, 84], techno: [124, 138], house: [118, 128], acid: [125, 140], funk: [95, 115],
   livetronica: [100, 128], garage: [128, 136], breaks: [120, 140], ambient: [60, 100], pop: [100, 128], jazz: [80, 120],
+  trance: [128, 140], synthwave: [90, 118], minimal: [118, 128],
 };
 
 type LibMelodic = MelodicLoop & { style: LoopStyle; bpm: [number, number] };
@@ -171,53 +170,7 @@ function chordLoops(): LibMelodic[] {
   return out;
 }
 
-// ── Leads and hooks ─────────────────────────────────────────────────────
-
-/** A one-bar motif: [beat, duration, degree]. Each is original to this library. */
-const MOTIFS: { id: string; style: LoopStyle; name: string; bar: Hit[] }[] = [
-  { id: 'lantern', style: 'pop', name: 'Lantern', bar: [[0, 0.5, 4], [0.5, 0.5, 5], [1, 1, 4], [2.5, 0.5, 2], [3, 1, 4]] },
-  { id: 'swallow', style: 'pop', name: 'Swallow', bar: [[0, 0.75, 7], [0.75, 0.25, 6], [1, 0.5, 4], [1.5, 1.5, 5], [3.5, 0.5, 4]] },
-  { id: 'kite', style: 'livetronica', name: 'Kite String', bar: [[0, 0.5, 2], [0.5, 0.5, 4], [1, 0.5, 2], [1.5, 0.5, 4], [2, 1.5, 7]] },
-  { id: 'harbour', style: 'dub', name: 'Harbour Bell', bar: [[0, 1.5, 4], [1.5, 0.5, 2], [2, 1, 0], [3.5, 0.5, 2]] },
-  { id: 'melodica', style: 'dub', name: 'Melodica Smoke', bar: [[0, 0.5, 0], [0.5, 1, 2], [1.5, 0.5, 3], [2, 1.5, 4], [3.5, 0.5, 3]] },
-  { id: 'rebel', style: 'reggae', name: 'Rebel Horn', bar: [[0.5, 0.4, 4], [1, 0.4, 4], [1.5, 0.9, 5], [2.5, 0.4, 4], [3, 0.9, 2]] },
-  { id: 'circuit', style: 'techno', name: 'Circuit Call', bar: [[0, 0.2, 7], [0.5, 0.2, 7], [0.75, 0.2, 6], [1.5, 0.2, 4], [2, 0.2, 7], [2.75, 0.2, 9], [3.5, 0.2, 7]] },
-  { id: 'sonar', style: 'techno', name: 'Sonar', bar: [[0, 0.3, 0], [0.75, 0.3, 0], [1.5, 0.3, 4], [2.25, 0.3, 0], [3, 0.3, 6]] },
-  { id: 'firefly', style: 'house', name: 'Firefly', bar: [[0.5, 0.4, 4], [1, 0.4, 5], [1.5, 0.4, 7], [2.5, 0.4, 5], [3, 0.9, 4]] },
-  { id: 'diva', style: 'house', name: 'Diva Whistle', bar: [[0, 1, 7], [1, 0.5, 9], [1.5, 0.5, 7], [2, 1.5, 4], [3.5, 0.5, 5]] },
-  { id: 'rubber', style: 'acid', name: 'Rubber Riff', bar: [[0, 0.2, 0], [0.25, 0.2, 7], [0.75, 0.2, 0], [1, 0.2, 3], [1.5, 0.2, 7], [2.25, 0.2, 6], [2.5, 0.2, 7], [3, 0.4, 10]] },
-  { id: 'strut', style: 'funk', name: 'Strut Hook', bar: [[0, 0.25, 4], [0.5, 0.25, 4], [0.75, 0.5, 6], [1.5, 0.5, 4], [2.5, 0.25, 2], [3, 0.75, 0]] },
-  { id: 'sunrise', style: 'livetronica', name: 'Sunrise Climb', bar: [[0, 0.5, 0], [0.5, 0.5, 2], [1, 0.5, 4], [1.5, 0.5, 5], [2, 1, 7], [3, 1, 6]] },
-  { id: 'glass', style: 'ambient', name: 'Glass Steps', bar: [[0, 1.5, 9], [1.5, 1, 7], [2.5, 1.5, 4]] },
-  { id: 'skip', style: 'garage', name: 'Skip Vocal', bar: [[0, 0.4, 4], [0.75, 0.4, 5], [1.25, 0.6, 4], [2.25, 0.4, 2], [2.75, 0.8, 4]] },
-  { id: 'chime', style: 'pop', name: 'Pocket Chime', bar: [[0, 0.5, 9], [0.5, 0.5, 7], [1, 0.5, 4], [1.5, 0.5, 7], [2, 2, 5]] },
-  { id: 'echo', style: 'dub', name: 'Echo Question', bar: [[0, 0.75, 7], [1, 0.5, 6], [1.5, 0.5, 4], [2, 2, 2]] },
-  { id: 'breaker', style: 'breaks', name: 'Breaker Stab', bar: [[0, 0.25, 4], [0.75, 0.25, 4], [1.5, 0.25, 6], [2, 0.5, 7], [3.25, 0.5, 4]] },
-  { id: 'lullaby', style: 'ambient', name: 'Moon Lullaby', bar: [[0, 1, 2], [1, 1, 4], [2, 1, 5], [3, 1, 4]] },
-  { id: 'jam', style: 'livetronica', name: 'Jam Band Lift', bar: [[0, 0.5, 4], [0.5, 0.5, 7], [1, 0.5, 9], [1.5, 0.5, 7], [2, 0.5, 4], [2.5, 0.5, 5], [3, 1, 4]] },
-];
-
-/**
- * Two ways to grow a motif into a four-bar hook:
- * "said twice": A A A' B, where A' changes its last note by a step and B
- * answers, ending a step above the root (the tension the loop resolves);
- * "call and answer": A B A B', the answer a third lower, the last ending on
- * the fifth.
- */
-function hookLoops(): LibMelodic[] {
-  const out: LibMelodic[] = [];
-  for (const m of MOTIFS) {
-    const shift = (hits: Hit[], by: number, bar: number): LoopNote[] => hits.map(([b, dur, d, v]) => note(bar * 4 + b, dur, (d as number) + by, v ?? 0.85));
-    const lastStep = (hits: Hit[], by: number): Hit[] => hits.map((h, i) => (i === hits.length - 1 ? [h[0], h[1], (h[2] as number) + by, h[3]] : h));
-    const endOn = (hits: Hit[], deg: number): Hit[] => hits.map((h, i) => (i === hits.length - 1 ? [h[0], Math.max(h[1], 1), deg, h[3]] : h));
-    const answer = (by: number) => m.bar.map(([b, dur, d, v]): Hit => [b, dur, (d as number) + by, v]);
-    const twice = [...shift(m.bar, 0, 0), ...shift(m.bar, 0, 1), ...shift(lastStep(m.bar, 1), 0, 2), ...shift(endOn(answer(-2), 1), 0, 3)];
-    const call = [...shift(m.bar, 0, 0), ...shift(answer(-2), 0, 1), ...shift(m.bar, 0, 2), ...shift(endOn(answer(-2), 4), 0, 3)];
-    out.push(melodic(`lib-lead-${m.id}-twice`, m.name, 'lead', m.style, 16, twice));
-    out.push(melodic(`lib-lead-${m.id}-call`, `${m.name} (call and answer)`, 'lead', m.style, 16, call));
-  }
-  return out;
-}
+// ── Leads: see leadLibrary.ts ──
 
 // ── Textures ────────────────────────────────────────────────────────────
 
@@ -263,10 +216,10 @@ export const LIBRARY_BEATS: LibBeat[] = [
   groove('lib-beat-ambient', 'Pulse Only', 'ambient', 0, { kick: 'x.......x.......', hatClosed: '....o.......o...', rim: '..........o.....' }),
 ];
 
-export const LIBRARY_MELODIC: LibMelodic[] = [...bassLoops(), ...chordLoops(), ...hookLoops(), ...TEXTURES];
+export const LIBRARY_MELODIC: LibMelodic[] = [...bassLoops(), ...chordLoops(), ...TEXTURES];
 
 /** The library's style for a loop id, if it is one of its loops. */
-const STYLE_BY_ID = new Map<string, LoopStyle>([...LIBRARY_MELODIC, ...LIBRARY_BEATS].map((l) => [l.id, l.style]));
+const STYLE_BY_ID = new Map<string, LoopStyle>([...LIBRARY_MELODIC, ...LIBRARY_BEATS, ...LEADS].map((l) => [l.id, l.style]));
 export function loopStyle(id: string): LoopStyle | undefined {
   return STYLE_BY_ID.get(id);
 }

@@ -23,7 +23,8 @@ describe('playingSong', () => {
     expect(drums.notes.filter((n) => n.note === 36)).toHaveLength(8);
     const names = parts.map((t) => t.name);
     expect(names).toContain('Dub bass 1 (Dub bass)');
-    expect(names.some((n) => n?.startsWith('Hypnotic three'))).toBe(true);
+    // An old lead's id still plays, as the new lead nearest it.
+    expect(names.some((n) => n?.startsWith('Stamp Press'))).toBe(true);
     // Survives the file format.
     expect(readMidiFile(writeMidiFile(song)).tracks).toHaveLength(3);
   });

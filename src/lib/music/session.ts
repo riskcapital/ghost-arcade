@@ -71,7 +71,7 @@ export function clipFromPreset(presetId: string, key: MusicKey, id: string): Ses
   if (!loop) return null;
   if ('rows' in loop) return { kind: 'beat', id, name: loop.name, pattern: beatPattern(loop), preset: loop.id };
   const notes = loopNotesBetween(loop, key, 0, 0, loop.beats).map((n) => ({ beat: n.beat, dur: n.dur, note: n.note, velocity: n.velocity }));
-  return { kind: 'notes', id, name: loop.name, beats: loop.beats, notes, key: { ...key }, instrument: null, preset: loop.id };
+  return { kind: 'notes', id, name: loop.name, beats: loop.beats, notes, key: { ...key }, instrument: null, ...(loop.tone ? { tone: loop.tone } : {}), preset: loop.id };
 }
 
 /** Which track a factory preset belongs to. */
@@ -140,10 +140,10 @@ export function clipLoop(clip: NotesClip, track: LoopRole, set: StudioSet, key: 
 
 /** The rows a new session starts with: grooves that work together across a row. */
 const STARTER_ROWS: Array<Partial<Record<TrackId, string>>> = [
-  { beats: 'beat-four', bass: 'bass-rolling', lead: 'lead-arp', chords: 'chords-epic', texture: 'tex-swell' },
-  { beats: 'beat-techno', bass: 'bass-offbeat', lead: 'lead-hypnotic', chords: 'chords-stab', texture: 'tex-pulse' },
-  { beats: 'beat-onedrop', bass: 'bass-dub-root', lead: 'lead-melodica', chords: 'chords-skank', texture: 'tex-drops' },
-  { beats: 'beat-pulse', bass: 'bass-sub', lead: 'lead-bells', chords: 'chords-float', texture: 'tex-ritual' },
+  { beats: 'beat-four', bass: 'bass-rolling', lead: 'lead-starboard', chords: 'chords-epic', texture: 'tex-swell' },
+  { beats: 'beat-techno', bass: 'bass-offbeat', lead: 'lead-signal-flare', chords: 'chords-stab', texture: 'tex-pulse' },
+  { beats: 'beat-onedrop', bass: 'bass-dub-root', lead: 'lead-rooftop-melodica', chords: 'chords-skank', texture: 'tex-drops' },
+  { beats: 'beat-pulse', bass: 'bass-sub', lead: 'lead-morse-bell', chords: 'chords-float', texture: 'tex-ritual' },
 ];
 
 export function emptySession(rows = SESSION_ROWS): Session {
