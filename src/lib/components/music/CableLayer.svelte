@@ -5,7 +5,11 @@
    * dropped anywhere else it is gone.
    */
   import { onDestroy } from 'svelte';
-  import { cableDrag } from '../../music/cablePatching';
+  import { cableDrag, lastUnplugged } from '../../music/cablePatching';
+  import type { Cable } from '../../music/studioSets';
+  import { macros } from '../../stores/macros';
+  import { INSTRUMENT_LABELS } from '../../music/instruments';
+  import type { InstrumentId } from '../../music/noteEvents';
   import { cableView } from '../../music/cableView';
   import { canConnect } from '../../music/studioSets';
   import { musicStudio } from '../../music/musicStudioStore';
@@ -75,18 +79,33 @@
   const editCable = $derived(editing ? cables.find((c) => c.id === editing!.id) ?? null : null);
 
   function onContext(e: MouseEvent) {
-    if (!svgEl || !root || $cableView === 'hide') return;
-    const origin = root.getBoundingClientRect();
-    const pt = new DOMPoint(e.clientX - origin.left, e.clientY - origin.top);
-    const hit = [...svgEl.querySelectorAll<SVGPathElement>('path.hit')].reverse().find((p) => p.isPointInStroke(pt));
+    const jack = (e.target as HTMLElement | null)?.closest?.<HTMLElement>('[data-jack]:not([data-bay])')?.dataset.jack;
+    if (jack && root?.contains(e.target as Node) && cables.some((c) => c.from === jack || c.to === jack)) {
+      e.preventDefault();
+      e.stopPropagation();
+      editing = null;
+      jackMenu = { jack, x: Math.min(e.clientX, innerWidth - 300), y: Math.min(e.clientY, innerHeight - 200) };
+      return;
+    }
+    const hit = cableAt(e.clientX, e.clientY);
     if (!hit) return;
     e.preventDefault();
     e.stopPropagation();
-    editing = { id: hit.dataset.cable!, x: Math.min(e.clientX, innerWidth - 300), y: Math.min(e.clientY, innerHeight - 240) };
+    jackMenu = null;
+    editing = { id: hit, x: Math.min(e.clientX, innerWidth - 300), y: Math.min(e.clientY, innerHeight - 260) };
   }
 
   const pct = (v: number) => `${Math.round(v * 100)}%`;
-  const jackName = (j: string) => j.replace(/^(cv|dest):/, '').replace(/\.level$/, '').replace(/[.:]/g, ' ');
+  /** A jack as people say it: "Echo shots", "Energy", "Synth pan". */
+  function jackName(j: string): string {
+    if (j.startsWith('dest:macro:')) return $macros.macros.find((m) => m.id === j.slice(11))?.name ?? 'Macro';
+    const inst = /^cv:(?:inst\.)?([a-z]+)\.(?:level|ring)$/.exec(j);
+    if (inst && inst[1] in INSTRUMENT_LABELS) return INSTRUMENT_LABELS[inst[1] as InstrumentId];
+    if (j === 'fx:in') return 'Effects';
+    const t = j.replace(/^(cv|dest|audio):/, '').replace(/\.level$/, '').replace(/[.:]/g, ' ');
+    const word = t.split(' ')[0];
+    return (word in INSTRUMENT_LABELS ? INSTRUMENT_LABELS[word as InstrumentId] + t.slice(word.length) : t).replace(/^./, (c) => c.toUpperCase());
+  }
 
   frame = requestAnimationFrame(measure);
   onDestroy(() => {
@@ -94,9 +113,22 @@
     cableDrag.set(null);
   });
 
+  // The cable under the pointer lights up, with its plugs, so it is clear which one a grab or right-click takes.
+  let hovered = $state<string | null>(null);
+  function cableAt(x: number, y: number): string | null {
+    if (!svgEl || !root || $cableView === 'hide') return null;
+    const origin = root.getBoundingClientRect();
+    const pt = new DOMPoint(x - origin.left, y - origin.top);
+    return [...svgEl.querySelectorAll<SVGPathElement>('path.hit')].reverse().find((p) => p.isPointInStroke(pt))?.dataset.cable ?? null;
+  }
+
   function onMove(e: PointerEvent) {
     const drag = $cableDrag;
     if (drag) cableDrag.set({ ...drag, x: e.clientX, y: e.clientY });
+    else if (e.buttons === 0) {
+      const next = cableAt(e.clientX, e.clientY);
+      if (next !== hovered) hovered = next;
+    }
   }
 
   function onUp(e: PointerEvent) {
@@ -105,9 +137,38 @@
     cableDrag.set(null);
     const target = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-jack]')?.dataset.jack;
     if (target && canConnect(drag.from, target)) {
-      musicStudio.connectCable({ id: generateUUID(), from: drag.from, to: target });
+      // A carried cable keeps its id and settings wherever it goes.
+      musicStudio.connectCable(drag.carry ? { ...drag.carry, to: target } : { id: generateUUID(), from: drag.from, to: target });
+    } else if (drag.carry) {
+      lastUnplugged.set({ cables: [drag.carry], at: Date.now() });
     }
   }
+
+  function unplug(list: Cable[]) {
+    for (const c of list) musicStudio.disconnectCable(c.id);
+    if (list.length) lastUnplugged.set({ cables: list, at: Date.now() });
+    editing = null;
+    jackMenu = null;
+  }
+
+  function undoUnplug() {
+    const u = $lastUnplugged;
+    if (!u) return;
+    for (const c of u.cables) musicStudio.connectCable(c);
+    lastUnplugged.set(null);
+  }
+
+  // The undo offer stays for a few seconds.
+  $effect(() => {
+    const u = $lastUnplugged;
+    if (!u) return;
+    const t = setTimeout(() => lastUnplugged.update((x) => (x === u ? null : x)), 6000);
+    return () => clearTimeout(t);
+  });
+
+  // Right-click on a plugged jack: its cables, each to unplug, or all of them.
+  let jackMenu = $state<{ jack: string; x: number; y: number } | null>(null);
+  const jackCables = $derived(jackMenu ? cables.filter((c) => c.from === jackMenu!.jack || c.to === jackMenu!.jack) : []);
 </script>
 
 <svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => cableDrag.set(null)} oncontextmenucapture={onContext} />
@@ -117,9 +178,9 @@
   {#each drawn as c (c.id)}
     <path d={c.d} class="hit" data-cable={c.id} />
     <path d={c.d} class="shadow" />
-    <path d={c.d} stroke={c.color} class="cable" />
-    <circle cx={c.ends[0]} cy={c.ends[1]} r="6" class="plug" stroke={c.color} />
-    <circle cx={c.ends[2]} cy={c.ends[3]} r="6" class="plug" stroke={c.color} />
+    <path d={c.d} stroke={c.color} class="cable" class:hover={hovered === c.id} />
+    <circle cx={c.ends[0]} cy={c.ends[1]} r={hovered === c.id ? 9 : 6} class="plug" class:hover={hovered === c.id} stroke={c.color} />
+    <circle cx={c.ends[2]} cy={c.ends[3]} r={hovered === c.id ? 9 : 6} class="plug" class:hover={hovered === c.id} stroke={c.color} />
   {/each}
   </g>
   <g>
@@ -134,7 +195,11 @@
   {@const amount = editCable.amount ?? 1}
   {@const control = editCable.from.startsWith('cv:')}
   <div class="cable-editor" role="dialog" aria-label="Cable" style="left: {editing.x}px; top: {editing.y}px">
-    <p class="route">{jackName(editCable.from)} <span class="muted">to</span> {jackName(editCable.to)}</p>
+    <div class="row">
+      <p class="route">{jackName(editCable.from)} <span class="muted">to</span> {jackName(editCable.to)}</p>
+      <span class="spacer"></span>
+      <button class="text-btn" onclick={() => unplug([editCable])}>Unplug</button>
+    </div>
     {#if control}
       <div class="ga-segmented small" role="group" aria-label="Mode">
         <button class:active={(editCable.mode ?? 'env') === 'env'} onclick={() => musicStudio.shapeCable(editCable.id, { mode: 'env' })} title="Follows the sound's level">Envelope</button>
@@ -147,15 +212,59 @@
       <p class="muted">A sound cable: it carries the sound as it is.</p>
     {/if}
     <div class="row">
-      <button class="text-btn" onclick={() => { musicStudio.disconnectCable(editCable.id); editing = null; }}>Unplug</button>
       <span class="spacer"></span>
       <button class="text-btn" onclick={() => (editing = null)}>Done</button>
     </div>
   </div>
 {/if}
 
+{#if jackMenu && jackCables.length}
+  <div class="cable-editor" role="dialog" aria-label="Cables in this jack" style="left: {jackMenu.x}px; top: {jackMenu.y}px">
+    {#each jackCables as c (c.id)}
+      <div class="row" onpointerenter={() => (hovered = c.id)} onpointerleave={() => (hovered = null)} role="group">
+        <p class="route">{jackName(c.from)} <span class="muted">to</span> {jackName(c.to)}</p>
+        <span class="spacer"></span>
+        <button class="text-btn" onclick={() => { editing = { id: c.id, x: jackMenu!.x, y: jackMenu!.y }; jackMenu = null; }} title="Amount, smoothing and mode">Edit</button>
+        <button class="text-btn" onclick={() => unplug([c])}>Unplug</button>
+      </div>
+    {/each}
+    <div class="row">
+      {#if jackCables.length > 1}<button class="text-btn" onclick={() => unplug(jackCables)}>Unplug all</button>{/if}
+      <span class="spacer"></span>
+      <button class="text-btn" onclick={() => (jackMenu = null)}>Done</button>
+    </div>
+  </div>
+{/if}
+
+{#if $lastUnplugged}
+  <div class="undo" role="status">
+    Unplugged {$lastUnplugged.cables.length === 1 ? `${jackName($lastUnplugged.cables[0].from)} to ${jackName($lastUnplugged.cables[0].to)}` : `${$lastUnplugged.cables.length} cables`}
+    <button class="text-btn" onclick={undoUnplug}>Undo</button>
+  </div>
+{/if}
+
 <style>
   .hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: none; }
+  .cable.hover { stroke-width: 8; }
+  .plug.hover { stroke-width: 4; }
+  .cable-editor .row { gap: 6px; }
+  .undo {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    z-index: 96;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px 6px 12px;
+    border: 1px solid var(--studio-edge);
+    border-radius: var(--studio-radius);
+    background: var(--studio-panel);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--studio-ink);
+  }
   .cable-editor {
     position: fixed;
     z-index: 96;
