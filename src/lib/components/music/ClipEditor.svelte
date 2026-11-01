@@ -300,13 +300,19 @@
 {#if clip && found}
   <div class="backdrop" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && close()}>
     <div class="editor studio-tokens" role="dialog" aria-label="Edit {clip.name}">
-      <header>
+      <header class="top">
+        <div class="lhs">
         <button class="play transport" class:on={playingIt} onclick={togglePlay} aria-label={playingIt ? 'Stop the clip' : 'Play the clip'} title={playingIt ? 'Stop' : 'Play from the next bar'}>
           {#if playingIt}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>{:else}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>{/if}
         </button>
         <input class="name" value={clip.name} onchange={(e) => rename((e.target as HTMLInputElement).value)} aria-label="Clip name" />
         <span class="muted where">{found.track === 'beats' ? 'Beat' : `${found.track[0].toUpperCase()}${found.track.slice(1)}`} · row {found.row + 1}{clip.kind === 'notes' ? ` · ${INSTRUMENT_LABELS[instrument]} · ${keyLabel(s.key)}` : ''}</span>
-        <span class="spacer"></span>
+        </div>
+        <button class="text-btn" onclick={saveMidi} title="Save as a MIDI file">MIDI</button>
+        <div class="rhs">
+          <button class="text-btn" onclick={savePreset} title="Keep this clip in your presets, for every project">Add to my presets</button>
+          <button class="text-btn" onclick={close} title="Close (Esc)">Done</button>
+        </div>
       </header>
       <!-- What comes in with the clip: a visual and its own effects. -->
       <div class="dressing">
@@ -375,10 +381,6 @@
             <input type="range" min="0" max="0.5" step="0.01" value={clip.pattern.swing} oninput={(e) => editPattern((p) => ({ ...p, swing: +(e.target as HTMLInputElement).value }))} />
           </label>
         {/if}
-        <span class="divider"></span>
-        <button class="text-btn" onclick={savePreset} title="Keep this clip in your presets, for every project">Add to my presets</button>
-        <button class="text-btn" onclick={saveMidi} title="Save as a MIDI file">MIDI</button>
-        <button class="text-btn" onclick={close} title="Close (Esc)">Done</button>
       </header>
 
       {#if notesClip}
@@ -482,6 +484,11 @@
     user-select: none;
   }
   header { display: flex; align-items: center; gap: 8px; white-space: nowrap; flex-wrap: wrap; }
+  /* Name on the left, MIDI in the middle, presets and Done (the close) on the right. */
+  header.top { display: grid; grid-template-columns: 1fr auto 1fr; }
+  .lhs, .rhs { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .rhs { justify-content: flex-end; }
+  .lhs .where { overflow: hidden; text-overflow: ellipsis; }
   .dressing { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--studio-edge-soft); border-radius: var(--studio-radius); background: var(--studio-slot); }
   .dressing .eyebrow { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--studio-muted); }
   .dressing input[type='range'] { width: 90px; }
