@@ -453,6 +453,18 @@ all of it back without stopping the music. **Session** saves the project
 the starter clips in the current key and no scenes. `sceneSave.test.ts`
 covers a scene's save and load.
 
+**The loop library** (`loopLibrary.ts`): over 150 original loops on top of
+the essentials, in scale degrees so they play in the studio's key: basslines
+(one drop, steppers, rockers, rolling and offbeat techno, acid, house, funk,
+livetronica, two-step), chord progressions in pads, skanks, organ bubbles,
+stabs, house offbeats, arps and broken chords, hooks, textures and drum
+grooves, each tagged with a style and tempo range. The session's slot menus
+group them by style. Bass figures and chord rhythms are written once and
+played over several progressions; hooks grow a one-bar motif into four bars
+(said twice with one change, or call and answer, ending on a tension note
+that resolves into the next pass). All melodies are written for the library
+and no loop is named after a real artist (`loopLibrary.test.ts`).
+
 **Insert effects** (`InsertEditor.svelte`, `inserts` in the store): every
 instrument channel and the master has a chain of as many effects as you
 like, from the studio's full list (delay, tape echo, spring, reverb, filter,

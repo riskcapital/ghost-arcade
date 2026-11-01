@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MELODIC_LOOPS } from './loops';
 import {
   clipFromPreset,
   clipLoop,
@@ -63,7 +64,8 @@ describe('clips from presets', () => {
 
   it('lists presets per track', () => {
     expect(presetsFor('beats').length).toBeGreaterThan(5);
-    expect(presetsFor('bass').every((p) => p.id.startsWith('bass-'))).toBe(true);
+    expect(presetsFor('bass').every((p) => MELODIC_LOOPS.find((l) => l.id === p.id)?.role === 'bass')).toBe(true);
+    expect(presetsFor('bass').length).toBeGreaterThan(40);
   });
 });
 

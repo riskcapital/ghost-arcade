@@ -12,6 +12,7 @@
 import { DRUM_VOICES, type DrumVoice, type InstrumentId } from './noteEvents';
 import { createPattern, type DrumPattern } from './drumPattern';
 import { scaleNote, type MusicKey, type StudioSet } from './studioSets';
+import { LIBRARY_BEATS, LIBRARY_MELODIC } from './loopLibrary';
 
 export type LoopRole = 'bass' | 'lead' | 'chords' | 'texture';
 export type LoopCategory = 'beats' | LoopRole;
@@ -145,6 +146,8 @@ export const MELODIC_LOOPS: MelodicLoop[] = [
     notes: notes([[0, 4, 0, 0.5], [4, 4, 2, 0.55], [8, 4, 4, 0.6], [12, 4, 7, 0.65]]) },
   { id: 'tex-rain', name: 'Glass rain', role: 'texture', beats: 8,
     notes: notes([[0.25, 0.2, 14, 0.5], [1.75, 0.2, 18, 0.45], [2.5, 0.2, 16, 0.5], [4.25, 0.2, 21, 0.45], [5, 0.2, 14, 0.5], [6.75, 0.2, 19, 0.4]]) },
+  // The big library (loopLibrary.ts): basslines, progressions, hooks and textures in many styles.
+  ...LIBRARY_MELODIC,
 ];
 
 export const BEAT_LOOPS: BeatLoop[] = [
@@ -178,6 +181,7 @@ export const BEAT_LOOPS: BeatLoop[] = [
     kick: 'x......x..x.....', snare: '........x.......', hatClosed: 'x.x.xxx.x.x.xxxx' } },
   { id: 'beat-brushed', name: 'Brushed', steps: 16, swing: 0.2, rows: {
     kick: 'o...........o...', rim: '..o.....o.o.....', hatClosed: 'o..o..o..o..o...' } },
+  ...LIBRARY_BEATS,
 ];
 
 export function loopById(id: string): MelodicLoop | BeatLoop | null {
