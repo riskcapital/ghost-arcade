@@ -24,6 +24,14 @@ export interface MusicScene {
   vjColumn: number | null;
   /** Library loop in each slot; a slot left out stops. */
   loops: Partial<Record<LoopRole, string>>;
+  /**
+   * The whole sound when it was saved (set, key, tones, kit, mixer, FX,
+   * cables, pads, the build): the sound part of a song's setup. Older scenes
+   * have none and leave the sound as it is.
+   */
+  sound?: Record<string, unknown>;
+  /** The visual voices when it was saved; none leaves the visuals as they are. */
+  voices?: unknown[];
 }
 
 export const SCENE_NAMES = ['Arrival', 'Breath', 'Bloom', 'Drift', 'Release', 'Dawn', 'Pressure', 'Peak', 'Break', 'Return'];

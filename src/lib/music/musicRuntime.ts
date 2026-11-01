@@ -66,7 +66,7 @@ import {
 import { drumPadForKey } from './keyboardLayout';
 import { attachMusicKeyboard, musicKeysArmed } from './musicKeyboard';
 import { DRUM_CHANNEL, MusicMidiInput, type MidiNoteMessage } from './midiNotes';
-import { LOOP_REC_OFF, musicStudio, musicTransport, nextTakeName, type MusicStudioState, type MusicTransportState } from './musicStudioStore';
+import { LOOP_REC_OFF, musicStudio, musicTransport, nextTakeName, sceneSound, type MusicStudioState, type MusicTransportState } from './musicStudioStore';
 import { captureScene, dominantColumn, nextSceneName, sceneLaunchActions, type PlayingNow } from './scenes';
 import { macros } from '../stores/macros';
 import { getNativeRendererFrameSnapshot } from '../api/native-renderer';
@@ -93,6 +93,9 @@ import { bowlSlotNotes } from './soundSlots';
 import { DUB_SHOT_NOTE } from './dubShots';
 import { keyModeNote } from './keyMode';
 import { buildLanding, buildProgress, rollHits } from './buildDrop';
+import { captureSetup, type SongSetup } from './songs';
+import { editStudio, studioTargetNow } from './studioTarget';
+import { normalizeStudioSource } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
@@ -690,9 +693,19 @@ function playingNow(): PlayingNow {
 }
 
 /** Save what is playing (beat, loop, visuals) as a new scene. */
-export function captureCurrentScene(): void {
+/**
+ * Save what is playing now as a scene: the beat, loops, take and VJ column,
+ * and the whole sound (set, tones, kit, mixer, FX, cables, pads) and the
+ * visual voices, so launching it brings all of it back. Returns its id.
+ */
+export function captureCurrentScene(name?: string): string {
   const s = get(musicStudio);
-  musicStudio.addScene(captureScene(generateUUID(), nextSceneName(s.scenes), playingNow()));
+  const scene = captureScene(generateUUID(), name?.trim().slice(0, 60) || nextSceneName(s.scenes), playingNow());
+  scene.sound = sceneSound(captureSetup(s));
+  const target = studioTargetNow();
+  if (target) scene.voices = JSON.parse(JSON.stringify(target.source.musicVoices));
+  musicStudio.addScene(scene);
+  return scene.id;
 }
 
 /**
@@ -725,6 +738,12 @@ function applyScene(id: string): void {
   const scene = s.scenes.find((sc) => sc.id === id);
   musicStudio.setTransport({ queuedSceneId: null });
   if (!scene) return;
+  // Its sound first (a set change keeps the music going), then its visuals, then what plays.
+  if (scene.sound) musicStudio.applySetup(scene.sound as Partial<SongSetup>, { sound: true, band: false });
+  if (scene.voices && studioTargetNow()) {
+    const voices = normalizeStudioSource({ musicVoices: scene.voices }).musicVoices;
+    editStudio((src) => ({ ...src, musicVoices: voices }));
+  }
   const takeIds = new Set(s.takes.map((t) => t.id));
   for (const action of sceneLaunchActions(scene, playingNow(), takeIds)) {
     if (action.kind === 'pattern') musicStudio.setPattern(action.pattern);

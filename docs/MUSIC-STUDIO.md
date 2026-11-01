@@ -444,6 +444,15 @@ project. New sessions start with four rows of presets that work together.
 stopped, or the beat) and stops everything; **Kill** silences everything at
 once, effect tails included.
 
+**Scenes and the session** (`SceneBar.svelte`, in the top bar): **Save
+scene** keeps what is playing now (beat, loops, take, VJ column) and the
+whole sound (set, key, tones, kit, mixer, effects, cables, pads, the build)
+and the visual voices; the Scenes menu launches one on the next bar, bringing
+all of it back without stopping the music. **Session** saves the project
+(Ctrl+S, with every scene, song and set list in it) or starts a new session:
+the starter clips in the current key and no scenes. `sceneSave.test.ts`
+covers a scene's save and load.
+
 **Build and drop** (`buildDrop.ts`, `buildFx.ts`, `BuildControls.svelte`
 under the live output): **Build** runs a build-up of 1, 2, 4 or 8 bars that
 lands exactly on a bar line (`buildLanding`); press it again, or Kill, to

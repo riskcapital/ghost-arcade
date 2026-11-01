@@ -71,6 +71,7 @@ import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './
 import { toneById } from './tone/tones';
 import { KEY_MODES, type KeyMode } from './keyMode';
 import { defaultDubShots, normalizeDubShots, type DubShot } from './dubShots';
+import { normalizeStudioSource } from './studioPlugin';
 import { BUILD_STYLES, defaultBuildSettings, normalizeBuildSettings, type BuildSettings } from './buildDrop';
 import { kitById } from './tone/kits';
 import { DRUM_VOICES, type DrumVoice } from './noteEvents';
@@ -109,6 +110,7 @@ import { unchoppedFxPads } from './sounds/chops';
 import {
   MAX_SETLISTS,
   MAX_SONGS,
+  SONG_SETUP_GROUPS,
   SONG_SETUP_KEYS,
   normalizeSetlists,
   normalizeSongs,
@@ -349,7 +351,11 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
   const scenes: MusicScene[] = [];
   for (const raw of Array.isArray(input.scenes) ? input.scenes : []) {
     const scene = normalizeScene(raw);
-    if (scene && !scenes.some((x) => x.id === scene.id)) scenes.push(scene);
+    if (!scene || scenes.some((x) => x.id === scene.id)) continue;
+    const r = raw as { sound?: unknown; voices?: unknown };
+    if (r.sound && typeof r.sound === 'object') scene.sound = sceneSound(normalizeSongSetup(r.sound));
+    if (Array.isArray(r.voices)) scene.voices = normalizeStudioSource({ musicVoices: r.voices }).musicVoices;
+    scenes.push(scene);
   }
   return {
     instrument: INSTRUMENTS.includes(input.instrument as InstrumentId) ? (input.instrument as InstrumentId) : d.instrument,
@@ -396,6 +402,13 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
 /** A song's setup, read the way the studio reads its own state. */
 export function normalizeSongSetup(raw: unknown): SongSetup {
   return pickSetup(normalizeProjectState(raw && typeof raw === 'object' ? { ...(raw as object), songs: [], setlists: [] } : null));
+}
+
+/** The sound part of a setup, as a scene keeps it. */
+export function sceneSound(setup: Partial<SongSetup>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of SONG_SETUP_GROUPS.sound) if (key in setup) out[key] = JSON.parse(JSON.stringify((setup as Record<string, unknown>)[key]));
+  return out;
 }
 
 function pickSetup(state: MusicStudioProjectState): SongSetup {
@@ -739,6 +752,8 @@ function createMusicStudioStore() {
     setRecordLength: (recordLength: RecordLength) => set({ recordLength }),
     setQuantize: (quantize: QuantizeId) => set({ quantize }),
 
+    /** A fresh session: the starter clips in the current key and no scenes. Takes, songs and the sound stay. */
+    newSession: () => update((s) => ({ ...s, session: defaultSession(s.key, generateUUID), scenes: [], sceneId: null, queuedSceneId: null })),
     addScene: (scene: MusicScene) => update((s) => ({ ...s, scenes: [...s.scenes, scene] })),
     updateScene: (id: string, patch: Partial<Omit<MusicScene, 'id'>>) =>
       update((s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.id === id ? { ...sc, ...patch } : sc)) })),
@@ -768,7 +783,7 @@ function createMusicStudioStore() {
         velocity: s.velocity,
         pattern: normalizePattern(s.pattern),
         takes: s.takes.map((t) => ({ ...t, events: t.events.map((e) => ({ ...e })), pattern: t.pattern ? normalizePattern(t.pattern) : null })),
-        scenes: s.scenes.map((sc) => ({ ...sc, pattern: sc.pattern ? normalizePattern(sc.pattern) : null })),
+        scenes: s.scenes.map((sc) => JSON.parse(JSON.stringify({ ...sc, pattern: sc.pattern ? normalizePattern(sc.pattern) : null }))),
         set: s.set,
         params: { ...s.params },
         key: { ...s.key },

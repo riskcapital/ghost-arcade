@@ -57,6 +57,7 @@
   import SongsPanel from './SongsPanel.svelte';
   import BandLooper from './BandLooper.svelte';
   import SongStrip from './SongStrip.svelte';
+  import SceneBar from './SceneBar.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { ensureLiveFeed } from '../../music/liveFeed';
@@ -220,7 +221,7 @@
         {#if jam}
           <button class="text-btn small" onclick={() => void jam()} title="Load the set's ready-made jam: a groove, loops, its visuals and the cables between them">Load jam</button>
         {/if}
-        <button class="text-btn small" onclick={captureCurrentScene} title="Save what is playing now as a scene">+ Save scene</button>
+        <button class="text-btn small" onclick={() => captureCurrentScene()} title="Save what is playing now as a scene">+ Save scene</button>
       {:else if lowerTab === 'session'}
         {#if !s.liveControl}<LoopRecorderBar />{/if}
         <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own instruments" : "Control Ableton Live from here: its clips and scenes, its sound. The studio's instruments go quiet."}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
@@ -293,6 +294,7 @@
           {#each KEY_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
         </select>
       </div>
+      <SceneBar />
       <SongStrip />
       <MacroStrip />
       <span class="spacer"></span>
