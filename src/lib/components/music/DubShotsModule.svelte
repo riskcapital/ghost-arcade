@@ -8,6 +8,7 @@
   import { musicStudio } from '../../music/musicStudioStore';
   import { fireDubShot, releaseDubShot } from '../../music/musicRuntime';
   import { DUB_DIVISIONS, DUB_ECHOES, DUB_SOURCES, defaultDubShots, type DubDivision, type DubEcho, type DubShotSource } from '../../music/dubShots';
+  import { insertEditorChannel } from '../../music/studioUi';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
 
@@ -51,6 +52,9 @@
 </script>
 
 <StudioModule title="Echo shots" subtitle={editing === null ? 'Right-click a pad to edit its echo' : `Editing ${shot?.name ?? ''}`} class="grow">
+  {#snippet head()}
+    <button class="studio-btn" class:on={(s.inserts.shots?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === 'shots' ? null : 'shots')} title="Effects on all the echo shots">FX{s.inserts.shots?.length ? ` ${s.inserts.shots.length}` : ''}</button>
+  {/snippet}
   <div class="shots">
     {#each s.dubShots as d, i (i)}
       <button

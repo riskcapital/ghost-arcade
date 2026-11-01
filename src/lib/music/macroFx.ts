@@ -9,7 +9,7 @@
  * it. Values are 0-1 here; each effect maps them to useful ranges.
  */
 
-export type MacroFxType = 'delay' | 'filter' | 'reverb' | 'chorus' | 'phaser' | 'crush' | 'drive' | 'stutter' | 'autopan';
+export type MacroFxType = 'delay' | 'filter' | 'reverb' | 'chorus' | 'phaser' | 'crush' | 'drive' | 'stutter' | 'autopan' | 'eq' | 'compressor' | 'tape' | 'spring';
 
 export interface MacroFxParamDef {
   key: string;
@@ -51,6 +51,7 @@ const hz = (lo: number, hi: number) => (v: number) => {
 };
 const rate = (lo: number, hi: number) => (v: number) => `${(lo * Math.pow(hi / lo, v)).toFixed(2)} Hz`;
 const div = (v: number) => division(v).label;
+const db = (v: number) => `${v >= 0.5 ? '+' : ''}${Math.round((v - 0.5) * 24)} dB`;
 const p = (key: string, label: string, value: number, depth: number, format: MacroFxParamDef['format'] = pct): MacroFxParamDef =>
   ({ key, label, value, depth, format });
 
@@ -87,6 +88,21 @@ export const MACRO_FX: MacroFxDef[] = [
   ] },
   { type: 'autopan', label: 'Auto-pan', params: [
     p('rate', 'Rate', 0.4, 0.3, rate(0.05, 10)), p('depth', 'Depth', 0, 0.9),
+  ] },
+  { type: 'eq', label: 'EQ', params: [
+    p('low', 'Low', 0.5, 0, db), p('mid', 'Mid', 0.5, 0, db), p('high', 'High', 0.5, 0, db),
+    p('midFreq', 'Mid freq', 0.5, 0, hz(200, 5000)),
+  ] },
+  { type: 'compressor', label: 'Compressor', params: [
+    p('threshold', 'Threshold', 0.5, -0.3, (v) => `${Math.round(-v * 48)} dB`), p('ratio', 'Ratio', 0.4, 0, (v) => `${(1 + v * 19).toFixed(1)}:1`),
+    p('attack', 'Attack', 0.2, 0, (v) => `${Math.round(1 + v * 99)} ms`), p('makeup', 'Make-up', 0.3, 0, (v) => `+${Math.round(v * 18)} dB`), p('mix', 'Mix', 1, 0),
+  ] },
+  { type: 'tape', label: 'Tape echo', params: [
+    p('time', 'Time', 0.55, 0, div), p('feedback', 'Feedback', 0.55, 0.3), p('tone', 'Tone', 0.4, -0.2),
+    p('wow', 'Wow', 0.4, 0), p('mix', 'Mix', 0, 0.6),
+  ] },
+  { type: 'spring', label: 'Spring', params: [
+    p('tone', 'Tone', 0.5, 0), p('mix', 'Mix', 0, 0.6),
   ] },
 ];
 

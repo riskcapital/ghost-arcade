@@ -14,7 +14,7 @@
   import { userPresets } from '../../music/presetLibrary';
   import { launchClip, launchRow, saveBeat, stopTrack } from '../../music/musicRuntime';
   import { clipTrack, downloadMidi } from '../../music/midiExport';
-  import { clipEditorId } from '../../music/studioUi';
+  import { clipEditorId, insertEditorChannel } from '../../music/studioUi';
   import { launchClockTempo } from '../../stores/launchClock';
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
@@ -29,6 +29,11 @@
   function voiceLabel(track: TrackId): string {
     if (track === 'beats') return 'Drums';
     return INSTRUMENT_LABELS[ROLE_INSTRUMENTS[s.set][track]];
+  }
+
+  /** The channel a track plays through: its instrument in this set. */
+  function channelOf(track: TrackId): string {
+    return track === 'beats' ? 'drums' : ROLE_INSTRUMENTS[s.set][track];
   }
 
   function playing(track: TrackId, clip: SessionClip): boolean {
@@ -89,6 +94,10 @@
       {#if !compact}<span class="voice">{voiceLabel(track.id)}</span>{/if}
       {#if track.id === 'beats' && !compact}
         <button class="mini-btn studio-btn" onclick={saveBeat} title="Keep the beat in the grid as a new clip">Save</button>
+      {/if}
+      {#if !compact}
+        {@const ch = channelOf(track.id)}
+        <button class="mini-btn studio-btn" class:on={(s.inserts[ch]?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === ch ? null : ch)} title="Effects on the {track.label.toLowerCase()} track's instrument">FX</button>
       {/if}
       <button class="stop" disabled={!trackActive(track.id)} onclick={() => stopTrack(track.id)} aria-label="Stop {track.label}" title="Stop {track.label.toLowerCase()}">
         <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>

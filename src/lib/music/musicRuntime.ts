@@ -2186,6 +2186,7 @@ export function ensureMusicRuntime(): void {
     audio.setDronePatch(s.dronePatch);
     audio.setPadSounds(s.fxPads[s.set]);
     audio.setDubShots(s.dubShots);
+    audio.setInserts(s.inserts);
     audio.setBowlSounds(bowlSlotNotes(bowlNotes(s.key), s.bowlSlots), s.bowlSlots.map((slot) => slot.sound));
     audio.setKeyRoot(48 + s.key.root);
     audio.setBandFx(s.bandFx);

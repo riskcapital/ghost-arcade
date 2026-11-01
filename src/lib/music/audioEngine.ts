@@ -17,6 +17,7 @@ import { DRUM_VOICES, INSTRUMENTS, type DrumVoice, type InstrumentId, type NoteE
 import type { KeysPatch, SynthPatch } from './instruments';
 import { FxRack } from './fxRack';
 import { MacroFxChain, type MacroFxSlot } from './macroFxAudio';
+import type { MacroFxInstance } from './macroFx';
 import { DubBass, Siren, fireShot } from './dubSounds';
 import { AnalogSynth, type AnalogDest, type AnalogSource } from './analogSynth';
 import { ScanSynth } from './scanSynth';
@@ -126,6 +127,9 @@ export class MusicAudioEngine {
   private dubShotSettings: DubShot[] = [];
   /** Build-ups and drops on the master (buildFx.ts). */
   private build: BuildFx | null = null;
+  /** Insert effects by channel (an instrument, or "master"). */
+  private insertChains = new Map<string, MacroFxChain>();
+  private insertSettings: Record<string, MacroFxInstance[]> = {};
   private kickOutUntil = 0;
   private toneChoice: { synth: string | null; keys: string | null; kit: string | null } = { synth: null, keys: null, kit: null };
   private synthPatch: SynthPatch = 'pad';
@@ -246,6 +250,17 @@ export class MusicAudioEngine {
     if (kit) host.setKit(kit);
   }
 
+  /** The insert effects on every channel and the master. */
+  setInserts(inserts: Record<string, MacroFxInstance[]>): void {
+    if (inserts === this.insertSettings) return;
+    this.insertSettings = inserts;
+    this.syncInserts();
+  }
+
+  private syncInserts(): void {
+    for (const [channel, chain] of this.insertChains) chain.sync([{ macroValue: 0, effects: this.insertSettings[channel] ?? [] }], this.tempo);
+  }
+
   /** Run a build-up to its drop; `kickOutFrom` (audio time) thins the beat out until the drop. */
   startBuild(plan: BuildPlanAudio, kickOutFrom: number | null): void {
     this.ensure();
@@ -341,6 +356,7 @@ export class MusicAudioEngine {
     this.tones?.setTempo(tempo);
     this.dubShots?.setTempo(tempo);
     if (tempoMoved) this.bandFx?.setSettings(this.bandSettings, tempo);
+    if (tempoMoved) this.syncInserts();
     this.macroChain?.sync(slots, tempo);
     // Tempo-locked echoes follow the clock.
     if (tempoMoved) for (const rack of Object.values(this.racks)) rack?.setParams(this.params, tempo);
@@ -871,7 +887,12 @@ export class MusicAudioEngine {
     // Build-ups and drops sit on the whole mix, before the macro effects (buildFx.ts).
     this.build = new BuildFx(ctx, makeNoise(ctx));
     master.connect(this.build.input);
-    this.build.output.connect(this.macroChain.input);
+    // The master's insert effects, after the build and before the macros.
+    this.insertChains.clear();
+    const masterInserts = new MacroFxChain(ctx);
+    this.insertChains.set('master', masterInserts);
+    this.build.output.connect(masterInserts.input);
+    masterInserts.output.connect(this.macroChain.input);
     this.macroChain.output.connect(compressor);
     this.macroChain.sync(this.macroSlots, this.tempo);
     compressor.connect(ctx.destination);
@@ -887,7 +908,11 @@ export class MusicAudioEngine {
       g.gain.value = this.volumes[id];
       bus[id] = g;
       // The ducked instruments pass a gain that dips under the band's kick, after their fader.
-      this.strips.set(id, this.makeStrip(ctx, DUCKED_INSTRUMENTS.has(id) ? ducker.after(g) : g));
+      // Each instrument's insert effects sit after its fader bus, before its strip.
+      const inserts = new MacroFxChain(ctx);
+      g.connect(inserts.input);
+      this.insertChains.set(id, inserts);
+      this.strips.set(id, this.makeStrip(ctx, DUCKED_INSTRUMENTS.has(id) ? ducker.after(inserts.output) : inserts.output));
     }
     const inputGain = ctx.createGain();
     inputGain.gain.value = (this.inputs[0]?.volume ?? 0.5) * 2;
@@ -900,6 +925,7 @@ export class MusicAudioEngine {
     this.analog.setParams(this.params);
     this.analog.setRoutes(this.analogRoutes);
     this.scan = new ScanSynth(ctx, bus.scan);
+    this.syncInserts();
     this.dubShots = new DubShotBank(ctx, bus.shots, this.noise);
     this.dubShots.setTempo(this.tempo);
     this.dubShots.setShots(this.dubShotSettings);

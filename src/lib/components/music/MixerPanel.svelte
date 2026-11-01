@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { insertEditorChannel } from '../../music/studioUi';
   /**
    * The mixer: one strip per instrument of the set, then one per band input.
    * Each strip has a three-band EQ, pan, mute and solo, and its fader with
@@ -205,6 +206,10 @@
         <div class="ms">
           <button class="chip mute" class:on={strip.mute} aria-pressed={strip.mute} onclick={() => musicStudio.setStrip(id, { mute: !strip.mute })} title="Mute {label}">M</button>
           <button class="chip solo" class:on={strip.solo} aria-pressed={strip.solo} onclick={() => musicStudio.setStrip(id, { solo: !strip.solo })} title="Solo {label}">S</button>
+          {#if !input}
+            {@const n = s.inserts[id]?.length ?? 0}
+            <button class="chip" class:on={n > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === id ? null : id)} title="Insert effects on {label}">FX{n ? ` ${n}` : ''}</button>
+          {/if}
         </div>
         <div class="level">
           <StudioFader label="{label} level" value={volumeOf(id)} defaultValue={input ? 0.5 : 0.8} onchange={(v) => setVolume(id, v)} />
@@ -212,6 +217,7 @@
         </div>
       </div>
     {/each}
+    <button class="studio-btn master-fx" class:on={(s.inserts.master?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === 'master' ? null : 'master')} title="Insert effects on the whole mix">Master FX{s.inserts.master?.length ? ` ${s.inserts.master.length}` : ''}</button>
     {#if s.liveInputs.length < MAX_LIVE_INPUTS}
       <button class="studio-btn dashed add-input" onclick={addInput} title="Add a band input with its own strip: another instrument, or another channel of the same interface">Add input</button>
     {/if}

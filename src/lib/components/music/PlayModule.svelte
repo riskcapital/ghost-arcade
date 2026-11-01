@@ -10,6 +10,7 @@
   import { addStudioVoice } from '../../music/studioTarget';
   import { musicStudio } from '../../music/musicStudioStore';
   import { TONES, TONE_FAMILY_LABELS, type ToneFamily } from '../../music/tone/tones';
+  import { insertEditorChannel } from '../../music/studioUi';
   import StudioModule from './StudioModule.svelte';
   import PianoKeys from './PianoKeys.svelte';
   import DrumPads from './DrumPads.svelte';
@@ -80,6 +81,7 @@
         </optgroup>
       {/each}
     </select>
+    <button class="fx-btn studio-btn" class:on={(s.inserts[s.instrument]?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === s.instrument ? null : s.instrument)} title="Effects on what the keys play">FX{s.inserts[s.instrument]?.length ? ` ${s.inserts[s.instrument].length}` : ''}</button>
     {#if s.instrument !== 'drums'}
       {#if size === null}
         <div class="seg small" role="group" aria-label="Keyboard size">
