@@ -43,6 +43,7 @@
   import ClipEditor from './ClipEditor.svelte';
   import LoopPicker from './LoopPicker.svelte';
   import MixerDesk from './MixerDesk.svelte';
+  import StudioRecordControls from './StudioRecordControls.svelte';
   import { loopBrowser } from '../../music/studioUi';
   import LoopRecorderBar from './LoopRecorderBar.svelte';
   import PadsModule from './PadsModule.svelte';
@@ -282,7 +283,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>
           {/if}
         </button>
-        <button class="transport rec" class:on={s.recording} onclick={toggleRecord} title={s.recording ? 'Stop recording and keep the take' : 'Record a take'} aria-label={s.recording ? 'Stop recording' : 'Record'}>
+        <button class="transport rec" class:on={s.recording} onclick={toggleRecord} title={s.recording ? 'Stop the take and keep it' : 'Rec take: record the notes you play (not audio or video; that is Record A/V)'} aria-label={s.recording ? 'Stop the take' : 'Rec take'}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg>
         </button>
         <span class="tempo"><span class="tempo-value">{tempo.toFixed(1)}</span> <span class="tempo-unit">BPM</span></span>
@@ -330,6 +331,7 @@
       <div class="sub-left"><SongStrip /></div>
       <div class="sub-centre"><MacroStrip /></div>
       <div class="sub-right">
+        <StudioRecordControls />
         <button class="text-btn" class:on={mixerOpen} aria-pressed={mixerOpen} onclick={() => (mixerOpen = !mixerOpen)} title="The full mixer: every sound, its effects, sends, pan, level and meters">Mixer</button>
       </div>
     </div>

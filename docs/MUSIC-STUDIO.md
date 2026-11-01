@@ -495,6 +495,17 @@ lead tones came with them: Fat saw lead, Hollow square, Bright pluck, Pulse
 lead, FM bell lead and Acid lead. The old leads' ids play as the new lead
 nearest them (`LEAD_ALIASES`), so saved scenes keep working.
 
+**Record A/V** (`studioRecorder.ts`, `StudioRecordControls.svelte`, left of
+Mixer; separate from Rec take, which records notes): records the program
+output (or the source chosen in its menu) with the studio's mix as its sound,
+through the app's own recorder: while the studio is open its master is the
+recording's audio (`setStudioRecordingSource` in `clipAudioBus.ts`), muxed
+into the native video file. Or the mix alone as a 16-bit WAV. Stems record a
+WAV per mixer channel at the same time (silent ones are left out). A count-in
+starts on the next bar. WAVs are kept in the app's asset folder, and with
+Auto-Download on the mix is offered in a save dialog too. Recent recordings
+are listed in its menu with Reveal.
+
 **The mixer** (`MixerDesk.svelte`, the Mixer button right of the macros): a
 strip for every instrument whatever the set, each band input, the three
 shared returns and the master pinned on the right. A strip has its insert

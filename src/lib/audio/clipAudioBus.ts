@@ -1163,9 +1163,49 @@ function liveInputLabel(): string | null {
  * A silent result is legitimate (nothing is playing) but is never left
  * unreported — it used to mux a dead AAC track and claim success.
  */
+/** The music studio's mix, while the studio is open: recordings carry it (music/musicRuntime.ts registers it). */
+let studioRecordingSource: (() => AudioNode | null) | null = null;
+export function setStudioRecordingSource(source: (() => AudioNode | null) | null): void {
+  studioRecordingSource = source;
+}
+
 export function getRecordingAudioStream(options: RecordingAudioOptions = {}): RecordingAudioStream | null {
   const inputLabel = liveInputLabel();
   const externalAudio = options.externalAudio ?? null;
+
+  // The studio's mix, with the clip bus and the live input alongside when they share its context.
+  const studio = studioRecordingSource?.() ?? null;
+  if (studio) {
+    try {
+      const sctx = studio.context as AudioContext;
+      if (sctx.state === 'suspended') void sctx.resume();
+      const dest = sctx.createMediaStreamDestination();
+      const joined: AudioNode[] = [studio];
+      studio.connect(dest);
+      const sources = ['music studio'];
+      const clipMaster = clipAudioBus.hasActiveOutput() ? clipAudioBus.masterNode() : null;
+      if (clipMaster && clipMaster.context === sctx) {
+        clipMaster.connect(dest);
+        joined.push(clipMaster);
+        sources.push('clip/show audio bus');
+      }
+      const live = audioAnalyzer.getSourceNode();
+      if (live && live.context === sctx) {
+        live.connect(dest);
+        joined.push(live);
+        sources.push(inputLabel ?? 'analyzer input');
+      }
+      return {
+        stream: dest.stream,
+        sources,
+        silent: false,
+        silentReason: null,
+        cleanup: () => { for (const n of joined) { try { n.disconnect(dest); } catch { /* gone */ } } },
+      };
+    } catch (err) {
+      console.warn('[ClipAudioBus] Studio mixdown failed; recording the usual sources:', err);
+    }
+  }
 
   // A suspended context produces nothing at all, recording included.
   clipAudioBus.ensureContextRunning();

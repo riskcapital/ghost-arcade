@@ -716,6 +716,18 @@ export class MusicAudioEngine {
     }
   }
 
+  /** The studio's whole mix, after the master compressor: what recordings carry. */
+  recordingNode(): AudioNode | null {
+    this.ensure();
+    return this.output;
+  }
+
+  /** Each channel's sound after its strip (fader, EQ, pan, mute): one stem each. */
+  stemNodes(): Map<string, AudioNode> {
+    this.ensure();
+    return new Map([...this.strips].map(([id, strip]) => [id, strip.gate as AudioNode]));
+  }
+
   /** The shared returns' levels into the master. */
   setReturns(levels: Record<ReturnId, number>): void {
     if (levels === this.returnLevels) return;
