@@ -78,6 +78,7 @@ import {
   loopNotesBetween,
   nextBar,
   type LoopRole,
+  type BeatLoop,
   type MelodicLoop,
 } from './loops';
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
@@ -293,6 +294,7 @@ export function playAll(): void {
 /** Silence everything at once, effect tails included. */
 export function killAll(): void {
   cancelBuild();
+  stopPreview();
   stopAll();
   resumable = null;
   audio.kill();
@@ -1369,6 +1371,104 @@ export function fireDubShot(index: number, velocity = 0.85): void {
 /** Let go of a held dub shot: a Hold echo starts to fade. */
 export function releaseDubShot(index: number): void {
   audio.holdDubShot(index, false);
+}
+
+// ── Loop previews (the loop browser) ───────────────────────────────────
+
+/** The loop being previewed, or null. */
+export const previewingLoop = writable<string | null>(null);
+let preview: {
+  loop: MelodicLoop | BeatLoop;
+  start: number;
+  end: number;
+  scheduled: number;
+  instrument: InstrumentId;
+  tone?: string;
+  pending: Array<{ note: number; offBeat: number; instrument: InstrumentId }>;
+} | null = null;
+let previewTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Preview a loop twice through, in the studio's key and tempo, on its own
+ * tone: on the next beat when music is playing, so it lands in time, at once
+ * when nothing is. One preview at a time; null (or the same loop) stops it.
+ */
+export function previewLoop(id: string | null): void {
+  const same = id !== null && get(previewingLoop) === id;
+  stopPreview();
+  if (!id || same) return;
+  const loop = loopById(id);
+  if (!loop) return;
+  ensureMusicRuntime();
+  audio.now();
+  const { beat } = launchClockPosition();
+  const playing = !!sequencer || loopSlots.size > 0;
+  const start = playing ? Math.ceil(beat - 1e-6) : beat;
+  const beats = 'rows' in loop ? loop.steps / 4 : loop.beats;
+  const s = get(musicStudio);
+  preview = {
+    loop,
+    start,
+    end: start + beats * 2,
+    scheduled: start,
+    instrument: 'rows' in loop ? 'drums' : ROLE_INSTRUMENTS[s.set][loop.role],
+    tone: 'rows' in loop ? undefined : loop.tone,
+    pending: [],
+  };
+  previewingLoop.set(id);
+  previewTimer = setInterval(schedulePreview, 40);
+  schedulePreview();
+}
+
+export function stopPreview(): void {
+  if (previewTimer) clearInterval(previewTimer);
+  previewTimer = null;
+  if (preview) {
+    const t = audio.peekNow() ?? 0;
+    const beatNow = launchClockPosition().beat;
+    for (const p of preview.pending) if (p.offBeat > beatNow) send(previewEvent(noteOff(p.instrument, p.note, 'sequencer', t)));
+  }
+  preview = null;
+  if (get(previewingLoop) !== null) previewingLoop.set(null);
+}
+
+function previewEvent(event: NoteEvent): NoteEvent {
+  return preview?.tone ? { ...event, tone: preview.tone } : event;
+}
+
+function schedulePreview(): void {
+  const p = preview;
+  if (!p) return;
+  const { beat, beatMs } = launchClockPosition();
+  if (beat >= p.end + 0.5) {
+    stopPreview();
+    return;
+  }
+  const now = audio.now();
+  const timeAt = (b: number) => now + ((b - beat) * beatMs) / 1000;
+  const until = Math.min(p.end, beat + 0.5);
+  if (until <= p.scheduled) return;
+  if ('rows' in p.loop) {
+    const pattern = beatPattern(p.loop);
+    for (let step = Math.ceil((p.scheduled - p.start) * 4 - 1e-6); step < (until - p.start) * 4 - 1e-6; step++) {
+      const b = p.start + step / 4;
+      const i = step % pattern.steps;
+      for (const voice of DRUM_VOICES) {
+        const vel = pattern.tracks[voice][i];
+        if (vel > 0) send(noteOn('drums', DRUM_NOTES[voice], vel, 'sequencer', timeAt(b)));
+      }
+    }
+  } else {
+    const s = get(musicStudio);
+    for (const n of loopNotesBetween(p.loop, s.key, p.start, p.scheduled, until)) {
+      const offBeat = Math.min(n.beat + n.dur, p.end);
+      send(previewEvent(noteOn(p.instrument, n.note, n.velocity, 'sequencer', timeAt(n.beat))));
+      send(previewEvent(noteOff(p.instrument, n.note, 'sequencer', timeAt(offBeat))));
+      p.pending.push({ note: n.note, offBeat, instrument: p.instrument });
+    }
+    p.pending = p.pending.filter((x) => x.offBeat > beat);
+  }
+  p.scheduled = until;
 }
 
 // ── Build-ups and drops (buildDrop.ts, buildFx.ts) ─────────────────────
