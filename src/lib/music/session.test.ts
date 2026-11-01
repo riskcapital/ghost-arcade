@@ -65,7 +65,7 @@ describe('clips from presets', () => {
   it('lists presets per track', () => {
     expect(presetsFor('beats').length).toBeGreaterThan(5);
     expect(presetsFor('bass').every((p) => MELODIC_LOOPS.find((l) => l.id === p.id)?.role === 'bass')).toBe(true);
-    expect(presetsFor('bass').length).toBeGreaterThan(40);
+    expect(presetsFor('bass').length).toBeGreaterThanOrEqual(12);
   });
 });
 

@@ -12,6 +12,7 @@
  */
 
 import type { LoopNote, MelodicLoop } from './loops';
+import { FEELS, applyGroove } from './groove';
 import type { LoopStyle } from './loopLibrary';
 
 export type LeadLoop = MelodicLoop & { style: LoopStyle; tone: string };
@@ -20,9 +21,11 @@ export type LeadLoop = MelodicLoop & { style: LoopStyle; tone: string };
 type H = [number, number, number | number[], number?];
 
 function lead(id: string, name: string, style: LeadLoop['style'], tone: string, beats: number, hits: H[]): LeadLoop {
-  const notes: LoopNote[] = hits
-    .map(([beat, dur, d, v]) => ({ beat, dur, degrees: Array.isArray(d) ? d : [d], velocity: v ?? 0.85 }))
-    .sort((a, b) => a.beat - b.beat);
+  // A note written without a velocity is shaped by its place: the bar's downbeat leads, between the beats is lighter.
+  const shaped = (beat: number) => (beat % 4 === 0 ? 0.95 : beat % 1 === 0 ? 0.84 : beat % 0.5 === 0 ? 0.76 : 0.68);
+  const written: LoopNote[] = hits.map(([beat, dur, d, v]) => ({ beat, dur, degrees: Array.isArray(d) ? d : [d], velocity: v ?? shaped(beat) }));
+  const feel = style === 'house' || style === 'dub' ? FEELS.house : style === 'funk' ? FEELS.funk : style === 'ambient' ? FEELS.float : FEELS.straight;
+  const notes = applyGroove(written, feel).sort((a, b) => a.beat - b.beat);
   return { id, name, role: 'lead', style, tone, beats, notes };
 }
 

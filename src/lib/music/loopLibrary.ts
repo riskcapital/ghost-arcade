@@ -12,6 +12,7 @@
 import type { DrumVoice } from './noteEvents';
 import type { BeatLoop, LoopNote, LoopRole, MelodicLoop } from './loops';
 import { LEADS } from './leadLibrary';
+import { FEELS, applyGroove, voiceLead, type GrooveFeel } from './groove';
 
 export type LoopStyle = 'dub' | 'reggae' | 'techno' | 'house' | 'acid' | 'funk' | 'livetronica' | 'garage' | 'breaks' | 'ambient' | 'pop' | 'jazz' | 'trance' | 'synthwave' | 'minimal';
 
@@ -41,151 +42,185 @@ function melodic(id: string, name: string, role: LoopRole, style: LoopStyle, bea
 }
 
 // ── Bass ────────────────────────────────────────────────────────────────
+// Written lines: accents and ghost notes, slides where notes overlap (a
+// legato tone glides), octave pops and approach notes, and a turnaround in
+// the last bar so the loop comes round with a lift.
 
-/** A bar of bass: hits with degrees relative to the bar's root. */
-interface BassFigure { id: string; style: LoopStyle; hits: Hit[] }
-
-const BASS_FIGURES: BassFigure[] = [
-  { id: 'onedrop', style: 'dub', hits: [[0, 1.3, 0, 1], [1.5, 0.4, 0, 0.7], [2, 1.2, 4], [3.5, 0.4, 2, 0.7]] },
-  { id: 'heavy-one', style: 'dub', hits: [[0, 1.8, 0, 1], [2.5, 0.4, -1, 0.7], [3, 0.9, 0, 0.9]] },
-  { id: 'steppers', style: 'dub', hits: [[0, 0.45, 0, 1], [1, 0.45, 0], [2, 0.45, 0, 1], [2.75, 0.2, 2, 0.7], [3, 0.45, 4]] },
-  { id: 'rockers', style: 'reggae', hits: [[0, 0.4, 0, 1], [0.5, 0.3, 0, 0.6], [1, 0.4, 7, 0.8], [1.75, 0.2, 4, 0.6], [2, 0.4, 0, 0.9], [2.5, 0.3, 2], [3, 0.8, 4]] },
-  { id: 'halfstep', style: 'dub', hits: [[0, 2.8, 0, 1], [3, 0.45, 4, 0.8], [3.5, 0.45, 5, 0.7]] },
-  { id: 'rolling', style: 'techno', hits: [0, 1, 2, 3].flatMap((b): Hit[] => [[b, 0.2, 0, 1], [b + 0.25, 0.2, 0, 0.6], [b + 0.5, 0.2, 4, 0.7], [b + 0.75, 0.2, 0, 0.6]]) },
-  { id: 'offbeat', style: 'techno', hits: [[0.5, 0.35, 0, 1], [1.5, 0.35, 0, 0.9], [2.5, 0.35, 0, 1], [3.5, 0.35, 0, 0.9]] },
-  { id: 'gallop', style: 'techno', hits: [0, 1, 2, 3].flatMap((b): Hit[] => [[b + 0.25, 0.18, 0, 0.8], [b + 0.5, 0.2, 0, 1]]) },
-  { id: 'acid-a', style: 'acid', hits: [[0, 0.2, 0, 1], [0.5, 0.2, 7], [0.75, 0.2, 0], [1.25, 0.2, 2], [1.5, 0.2, 0, 1], [2, 0.2, 9], [2.25, 0.2, 7], [2.75, 0.2, 0], [3, 0.2, 4, 1], [3.5, 0.2, 7], [3.75, 0.2, -1]] },
-  { id: 'acid-b', style: 'acid', hits: [[0, 0.2, 0, 1], [0.25, 0.2, 0, 0.6], [0.75, 0.2, 7, 1], [1, 0.2, 0], [1.5, 0.2, 3], [2, 0.2, 0, 1], [2.25, 0.2, 7], [2.5, 0.2, 6], [3, 0.2, 0, 1], [3.25, 0.2, 2], [3.5, 0.2, 7, 1]] },
-  { id: 'house-octave', style: 'house', hits: [[0.5, 0.3, 0, 1], [1, 0.2, 7, 0.7], [1.5, 0.3, 0, 0.9], [2.5, 0.3, 0, 1], [2.75, 0.2, 7, 0.7], [3.5, 0.3, 2, 0.8]] },
-  { id: 'funk-slap', style: 'funk', hits: [[0, 0.3, 0, 1], [0.75, 0.15, 0, 0.5], [1, 0.2, 7, 0.9], [1.5, 0.15, 6, 0.5], [1.75, 0.3, 4], [2.5, 0.2, 0, 0.9], [3, 0.15, 0, 0.5], [3.25, 0.3, 2], [3.75, 0.2, 3, 0.7]] },
-  { id: 'live-arp', style: 'livetronica', hits: [[0, 0.4, 0, 1], [0.5, 0.4, 4], [1, 0.4, 7], [1.5, 0.4, 4], [2, 0.4, 2, 0.9], [2.5, 0.4, 4], [3, 0.4, 9], [3.5, 0.4, 7]] },
-  { id: 'twostep', style: 'garage', hits: [[0, 0.45, 0, 1], [0.75, 0.25, 0, 0.7], [1.75, 0.4, 4], [2.5, 0.3, 2], [3.25, 0.3, 0, 0.8]] },
-  { id: 'sub-swell', style: 'ambient', hits: [[0, 3.8, 0, 0.85]] },
-];
-
-/** Root movements, as a degree per bar. */
-const BASS_ROOTS: { id: string; roots: number[]; name: string }[] = [
-  { id: 'one', roots: [0], name: 'one chord' },
-  { id: 'i-iv', roots: [0, 0, 3, 3], name: 'one to four' },
-  { id: 'i-vii', roots: [0, 0, -1, -1], name: 'one down a step' },
-  { id: 'i-vi-vii', roots: [0, -2, -1, 0], name: 'climb home' },
-  { id: 'i-v', roots: [0, 4, 0, 4], name: 'one and five' },
-];
-
-/** Names that fit each figure: one for each root movement it is paired with. */
-const BASS_NAMES: Record<string, string[]> = {
-  'onedrop': ['Basement Drop', 'Ghost Town Walk', 'Rain on Zinc'],
-  'heavy-one': ['Heavy Weight', 'Tower of Sound', 'Low Cloud'],
-  'steppers': ['Steppers Parade', 'Marching Through', 'Iron Road'],
-  'rockers': ['Rockers Shuffle', 'Hillside Bounce', 'Corner Shop Skank'],
-  'halfstep': ['Slow Tide', 'Pressure Valve', 'Deep Harbour'],
-  'rolling': ['Rolling Engine', 'Night Freight', 'Turbine Hall'],
-  'offbeat': ['Offbeat Pump', 'Warehouse Pulse', 'Strobe Lungs'],
-  'gallop': ['Gallop Line', 'Machine Horse', 'Tunnel Run'],
-  'acid-a': ['Squelch Garden', 'Rubber Wire', 'Chrome Snake'],
-  'acid-b': ['Acid Rain Line', 'Bent Resistor', 'Silver Worm'],
-  'house-octave': ['Octave Jack', 'Sunday Pump', 'Disco Lungs'],
-  'funk-slap': ['Slap Happy', 'Grease Pocket', 'Strut Line'],
-  'live-arp': ['Glow Stick Arp', 'Festival Climb', 'Late Set Runner'],
-  'twostep': ['Two Step Shuffle', 'Bus Stop Swing', 'Skippy Low End'],
-  'sub-swell': ['Sub Swell', 'Floor Hum', 'Distant Thunder'],
-};
-
-const BASS_PAIRS: Record<string, string[]> = {
-  'onedrop': ['one', 'i-iv', 'i-vii'], 'heavy-one': ['one', 'i-vi-vii', 'i-iv'], 'steppers': ['one', 'i-iv', 'i-v'],
-  'rockers': ['i-iv', 'i-v', 'i-vii'], 'halfstep': ['one', 'i-vii', 'i-vi-vii'], 'rolling': ['one', 'i-vii', 'i-iv'],
-  'offbeat': ['one', 'i-iv', 'i-vi-vii'], 'gallop': ['one', 'i-vii', 'i-v'], 'acid-a': ['one', 'i-iv', 'i-vii'],
-  'acid-b': ['one', 'i-vi-vii', 'i-v'], 'house-octave': ['one', 'i-iv', 'i-vi-vii'], 'funk-slap': ['one', 'i-iv', 'i-v'],
-  'live-arp': ['i-vi-vii', 'i-iv', 'i-v'], 'twostep': ['one', 'i-vii', 'i-iv'], 'sub-swell': ['one', 'i-vi-vii', 'i-iv'],
-};
-
-function bassLoops(): LibMelodic[] {
-  const out: LibMelodic[] = [];
-  for (const fig of BASS_FIGURES) {
-    BASS_PAIRS[fig.id].forEach((rootId, i) => {
-      const roots = BASS_ROOTS.find((r) => r.id === rootId)!.roots;
-      const notes = roots.flatMap((root, bar) => fig.hits.map(([b, dur, d, v]) => note(bar * 4 + b, dur, (d as number) + root, v)));
-      out.push(melodic(`lib-bass-${fig.id}-${rootId}`, BASS_NAMES[fig.id][i], 'bass', fig.style, roots.length * 4, notes));
-    });
-  }
-  return out;
+function written(id: string, name: string, role: LoopRole, style: LoopStyle, tone: string, feel: GrooveFeel, beats: number, hits: Hit[]): LibMelodic {
+  const loop = melodic(id, name, role, style, beats, applyGroove(hits.map(([b, dur, d, v]) => note(b, dur, d, v ?? 0.85)), feel));
+  return { ...loop, tone };
 }
+
+/** A bar-long figure over roots, one bar each: degrees relative to the root. */
+function overRoots(roots: number[], bar: (r: number, last: boolean) => Hit[]): Hit[] {
+  return roots.flatMap((r, i) => bar(r, i === roots.length - 1).map(([b, dur, d, v]): Hit => [i * 4 + b, dur, d, v]));
+}
+
+const BASS: LibMelodic[] = [
+  written('cur-bass-basement', 'Basement Pressure', 'bass', 'dub', 'bass.pedal-sub', FEELS.dub, 16, [
+    [0, 1.2, 0, 1], [1.5, 0.45, 0, 0.4], [2, 0.9, 4, 0.85], [3, 0.4, 2, 0.7], [3.5, 0.45, 3, 0.7],
+    [4, 1.2, 4, 0.95], [5.5, 0.4, 4, 0.4], [6, 0.9, 2, 0.8], [7, 0.9, 0, 0.85],
+    [8, 1.2, 0, 1], [9.5, 0.45, 0, 0.4], [10, 0.9, 4, 0.85], [11, 0.4, 5, 0.75], [11.5, 0.45, 6, 0.75],
+    [12, 0.9, 7, 1], [13, 0.4, 6, 0.6], [13.5, 0.4, 4, 0.7], [14, 0.9, 3, 0.85], [15, 0.45, 2, 0.7], [15.5, 0.45, -1, 0.75],
+  ]),
+  written('cur-bass-missing-one', 'Missing One', 'bass', 'dub', 'bass.fat-mono', FEELS.dub, 16, [
+    [1, 1.4, 0, 0.95], [2.5, 0.4, 4, 0.6], [3, 0.9, 4, 0.85],
+    [5, 1.4, 2, 0.95], [6.5, 0.4, 1, 0.6], [7, 0.9, 0, 0.9],
+    [9, 1.4, 0, 0.95], [10.5, 0.4, 4, 0.6], [11, 0.9, 4, 0.85],
+    [13, 0.9, 5, 0.9], [14, 0.4, 4, 0.7], [14.5, 0.4, 3, 0.65], [15, 0.45, 2, 0.75], [15.5, 0.45, 1, 0.7],
+  ]),
+  written('cur-bass-steppers', 'Steppers Lane', 'bass', 'dub', 'bass.pedal-sub', FEELS.dub, 8, [
+    [0, 0.45, 0, 1], [1, 0.45, 0, 0.85], [2, 0.45, 0, 0.95], [2.75, 0.2, 2, 0.45], [3, 0.45, 4, 0.85], [3.5, 0.4, 3, 0.6],
+    [4, 0.45, 0, 1], [5, 0.45, 0, 0.85], [6, 0.45, 5, 0.95], [6.75, 0.2, 4, 0.45], [7, 0.45, 3, 0.85], [7.5, 0.4, -1, 0.7],
+  ]),
+  written('cur-bass-rockers', 'Rockers Hill', 'bass', 'reggae', 'bass.fat-mono', FEELS.dub, 8, [
+    [0, 0.4, 0, 1], [0.5, 0.3, 0, 0.45], [1, 0.4, 7, 0.8], [1.75, 0.2, 6, 0.45], [2, 0.4, 4, 0.9], [2.5, 0.3, 2, 0.6], [3, 0.8, 3, 0.85],
+    [4, 0.4, 0, 1], [4.5, 0.3, 0, 0.45], [5, 0.4, 7, 0.8], [5.75, 0.2, 6, 0.45], [6, 0.4, 5, 0.9], [6.5, 0.3, 4, 0.6], [7, 0.45, 2, 0.8], [7.5, 0.45, 1, 0.7],
+  ]),
+  written('cur-bass-night-engine', 'Night Engine', 'bass', 'techno', 'bass.reese', FEELS.techno, 8, [
+    ...[0, 1, 2, 3].flatMap((b): Hit[] => [[b + 0.25, 0.18, 0, 0.45], [b + 0.5, 0.2, 0, 1], [b + 0.75, 0.18, 0, 0.45]]),
+    ...[4, 5, 6].flatMap((b): Hit[] => [[b + 0.25, 0.18, 0, 0.45], [b + 0.5, 0.2, b === 5 ? 4 : 0, 1], [b + 0.75, 0.18, 0, 0.45]]),
+    [7.25, 0.18, 7, 0.5], [7.5, 0.2, 6, 0.95], [7.75, 0.18, 4, 0.55],
+  ]),
+  written('cur-bass-warehouse', 'Warehouse Offbeat', 'bass', 'techno', 'bass.fat-mono', FEELS.techno, 8, [
+    [0.5, 0.3, 0, 1], [1.5, 0.3, 0, 0.9], [2.5, 0.3, 0, 1], [3.5, 0.3, 0, 0.9],
+    [4.5, 0.3, 0, 1], [5.5, 0.3, 4, 0.9], [6.5, 0.3, 0, 1], [7.25, 0.2, 6, 0.45], [7.5, 0.3, 7, 0.9],
+  ]),
+  written('cur-bass-tunnel', 'Tunnel Gallop', 'bass', 'techno', 'bass.fat-mono', FEELS.techno, 8, [
+    ...[0, 1, 2, 3, 4, 5, 6].flatMap((b): Hit[] => [[b + 0.25, 0.15, 0, 0.5], [b + 0.5, 0.2, 0, 1]]),
+    [7.25, 0.15, 6, 0.55], [7.5, 0.2, 4, 0.95], [7.75, 0.15, 6, 0.5],
+  ]),
+  written('cur-bass-acid-slide', 'Acid Slide', 'bass', 'acid', 'bass.squelch', FEELS.straight, 8, [
+    [0, 0.3, 0, 1], [0.25, 0.2, 0, 0.45], [0.5, 0.3, 7, 0.9], [0.75, 0.4, 6, 0.55], [1, 0.3, 0, 0.95], [1.5, 0.3, 2, 0.7], [1.75, 0.45, 3, 0.55],
+    [2, 0.3, 0, 1], [2.5, 0.3, 9, 0.85], [2.75, 0.4, 7, 0.55], [3, 0.3, 0, 0.95], [3.5, 0.5, 4, 0.8],
+    [4, 0.3, 0, 1], [4.25, 0.2, 0, 0.45], [4.5, 0.3, 7, 0.9], [4.75, 0.4, 6, 0.55], [5, 0.3, 0, 0.95], [5.5, 0.3, 2, 0.7], [5.75, 0.45, 3, 0.55],
+    [6, 0.3, 0, 1], [6.5, 0.3, 9, 0.85], [6.75, 0.4, 7, 0.55], [7, 0.3, 5, 0.9], [7.25, 0.3, 6, 0.55], [7.5, 0.5, -1, 0.85],
+  ]),
+  written('cur-bass-rubber-hose', 'Rubber Hose', 'bass', 'acid', 'bass.squelch', FEELS.straight, 8, [
+    [0, 0.25, 0, 1], [0.5, 0.25, 0, 0.45], [0.75, 0.4, 3, 0.85], [1.25, 0.25, 0, 0.45], [1.5, 0.5, 7, 0.95], [2.25, 0.25, 0, 0.5], [2.5, 0.25, 6, 0.8], [3, 0.4, 4, 0.9], [3.5, 0.25, 3, 0.5],
+    [4, 0.25, 0, 1], [4.5, 0.25, 0, 0.45], [4.75, 0.4, 3, 0.85], [5.25, 0.25, 0, 0.45], [5.5, 0.5, 7, 0.95], [6.25, 0.25, 9, 0.55], [6.5, 0.4, 7, 0.85], [7, 0.5, 6, 0.9], [7.5, 0.4, 4, 0.7],
+  ]),
+  written('cur-bass-disco-lung', 'Disco Lung', 'bass', 'house', 'bass.rubber', FEELS.house, 8, [
+    [0, 0.3, 0, 1], [0.75, 0.2, 0, 0.45], [1, 0.3, 7, 0.85], [1.75, 0.25, 0, 0.55], [2.5, 0.3, 0, 0.9], [3, 0.2, 7, 0.65], [3.5, 0.3, 6, 0.85],
+    [4, 0.3, 0, 1], [4.75, 0.2, 0, 0.45], [5, 0.3, 7, 0.85], [5.75, 0.25, 3, 0.55], [6.5, 0.3, 3, 0.9], [7, 0.2, 10, 0.65], [7.5, 0.3, 2, 0.85], [7.75, 0.2, -1, 0.55],
+  ]),
+  written('cur-bass-late-club', 'Late Club', 'bass', 'house', 'bass.fat-mono', FEELS.house, 16, overRoots([0, 5, 3, 4], (r, last): Hit[] => [
+    [0.5, 0.3, r, 0.95], [1.25, 0.2, r, 0.45], [1.75, 0.3, r + 7, 0.75], [2.5, 0.3, r, 0.95], [3.25, 0.2, r + 4, 0.55],
+    last ? [3.5, 0.45, r + 2, 0.85] : [3.5, 0.3, r, 0.85],
+  ])),
+  written('cur-bass-grease', 'Grease Pocket', 'bass', 'funk', 'bass.slap-fm', FEELS.funk, 8, [
+    [0, 0.25, 0, 1], [0.5, 0.15, 0, 0.4], [0.75, 0.25, 7, 0.9], [1.25, 0.15, 0, 0.4], [1.5, 0.25, 6, 0.8], [1.75, 0.25, 4, 0.7], [2.5, 0.25, 0, 0.95], [3, 0.15, 0, 0.4], [3.25, 0.25, 2, 0.8], [3.75, 0.25, 3, 0.85],
+    [4, 0.25, 4, 1], [4.5, 0.15, 4, 0.4], [4.75, 0.25, 7, 0.9], [5.5, 0.25, 6, 0.8], [6, 0.25, 4, 0.85], [6.5, 0.25, 2, 0.7], [7, 0.15, 0, 0.4], [7.25, 0.25, -1, 0.8], [7.5, 0.25, 1, 0.75],
+  ]),
+  written('cur-bass-envelope-strut', 'Envelope Strut', 'bass', 'funk', 'bass.envelope-funk', FEELS.funk, 8, [
+    [0, 0.4, 0, 1], [0.75, 0.2, 0, 0.45], [1, 0.3, 2, 0.8], [1.5, 0.4, 3, 0.85], [2.5, 0.2, 4, 0.9], [2.75, 0.2, 4, 0.45], [3, 0.4, 6, 0.85], [3.5, 0.3, 7, 0.8],
+    [4, 0.4, 0, 1], [4.75, 0.2, 0, 0.45], [5, 0.3, 2, 0.8], [5.5, 0.4, 3, 0.85], [6.5, 0.3, 5, 0.9], [7, 0.25, 4, 0.7], [7.5, 0.4, -1, 0.85],
+  ]),
+  written('cur-bass-festival-walk', 'Festival Walk', 'bass', 'livetronica', 'bass.octave-pluck', FEELS.straight, 16, overRoots([0, 5, 3, 4], (r, last): Hit[] => [
+    [0, 0.4, r, 1], [0.5, 0.3, r + 7, 0.55], [1, 0.4, r + 4, 0.85], [1.5, 0.3, r + 7, 0.5], [2, 0.4, r + 2, 0.85], [2.5, 0.3, r + 4, 0.55],
+    [3, 0.4, last ? r + 3 : r + 7, 0.8], [3.5, 0.3, last ? r + 1 : r + 6, 0.6],
+  ])),
+  written('cur-bass-two-step', 'Two Step Rumble', 'bass', 'garage', 'bass.reese', FEELS.house, 8, [
+    [0, 0.45, 0, 1], [0.75, 0.25, 0, 0.45], [1.75, 0.4, 4, 0.85], [2.5, 0.3, 2, 0.7], [3.25, 0.3, 0, 0.8],
+    [4, 0.45, 0, 1], [4.75, 0.25, 0, 0.45], [5.75, 0.4, 5, 0.85], [6.5, 0.3, 4, 0.7], [7.25, 0.3, 2, 0.8], [7.75, 0.2, 1, 0.55],
+  ]),
+  written('cur-bass-sub-ocean', 'Sub Ocean', 'bass', 'ambient', 'bass.click-sub', FEELS.float, 16, [
+    [0, 3.5, 0, 0.9], [4, 1.75, 3, 0.75], [6, 1.75, 4, 0.8], [8, 3.5, 0, 0.9], [12, 1.5, 3, 0.8], [13.5, 0.4, 2, 0.5], [14, 1.9, -1, 0.85],
+  ]),
+];
 
 // ── Chords ──────────────────────────────────────────────────────────────
+// Progressions voice-led (each voice to the nearest note of the next chord),
+// with sevenths where the style wants them, in that style's rhythm, and a
+// change in the last bar so the phrase turns round.
 
-/** A chord on scale degree `d`: three notes stacked in thirds, or four. */
-const chord = (d: number, seventh = false) => (seventh ? [d, d + 2, d + 4, d + 6] : [d, d + 2, d + 4]);
+/** A chord's tones on scale degree `d`. */
+const tonesOf = (d: number, seventh: boolean, ninth = false) => [d, d + 2, d + 4, ...(seventh ? [d + 6] : []), ...(ninth ? [d + 8] : [])];
 
-const PROGRESSIONS: { id: string; degrees: number[]; seventh?: boolean; style: LoopStyle; names: string[] }[] = [
-  { id: 'anthem', degrees: [0, 4, 5, 3], style: 'pop', names: ['Stadium Lights', 'Open Road', 'Golden Hour', 'Hands Up'] },
-  { id: 'heartbreak', degrees: [5, 3, 0, 4], style: 'pop', names: ['Last Train Home', 'Paper Hearts', 'Neon Rain', 'Summer Ends'] },
-  { id: 'aeolian', degrees: [0, 6, 5, 6], style: 'livetronica', names: ['Canyon Echo', 'Night Drive', 'Smoke Signals', 'Dust Devil'] },
-  { id: 'two-five-one', degrees: [1, 4, 0, 0], seventh: true, style: 'jazz', names: ['Velvet Lounge', 'Late Bar', 'Blue Hour', 'Soft Landing'] },
-  { id: 'minor-blues', degrees: [0, 3, 4, 0], style: 'funk', names: ['Back Alley', 'Hot Pavement', 'Dirty Window', 'Smoke Room'] },
-  { id: 'dub-vamp', degrees: [0, 0, 3, 3], style: 'dub', names: ['Echo Chamber', 'Concrete Yard', 'Midnight Studio', 'Tape Room'] },
-  { id: 'dub-drift', degrees: [0, 6, 0, 6], style: 'dub', names: ['Drifting Smoke', 'Lantern Shade', 'Tin Roof Rain', 'Hilltop Fog'] },
-  { id: 'dorian', degrees: [0, 1, 0, 1], seventh: true, style: 'house', names: ['Dorian Glide', 'Mirror Ball', 'After Hours', 'Silk Floor'] },
-  { id: 'mixolydian', degrees: [0, 6, 3, 0], style: 'livetronica', names: ['Sun Bleached', 'Bonfire Jam', 'Porch Swing', 'Desert Bloom'] },
-  { id: 'deep', degrees: [0, 5, 3, 4], seventh: true, style: 'house', names: ['Deep Water', 'Late Shift', 'Glass Tower', 'Low Tide'] },
-  { id: 'tension', degrees: [0, 5, 1, 4], style: 'techno', names: ['Steel Sky', 'Pylon Song', 'Grey Dawn', 'Rail Yard'] },
-];
+type RHit = [number, number, number];
+type ChordRhythm = (bar: number, last: boolean) => RHit[];
 
-/** Rhythms a progression can be played in: hits in a bar, with the chord's shape. */
-const CHORD_RHYTHMS: { id: string; label: string; hits: Array<[number, number, number?]>; arp?: boolean }[] = [
-  { id: 'pad', label: 'pad', hits: [[0, 3.9, 0.7]] },
-  { id: 'skank', label: 'skank', hits: [[1, 0.22, 0.85], [3, 0.22, 0.85]] },
-  { id: 'double', label: 'double skank', hits: [[1, 0.18, 0.85], [1.5, 0.15, 0.6], [3, 0.18, 0.85], [3.5, 0.15, 0.6]] },
-  { id: 'bubble', label: 'organ bubble', hits: [[0.5, 0.2, 0.7], [0.75, 0.2, 0.5], [1.5, 0.2, 0.7], [2.5, 0.2, 0.7], [2.75, 0.2, 0.5], [3.5, 0.2, 0.7]] },
-  { id: 'stab', label: 'stabs', hits: [[0, 0.2, 1], [0.75, 0.2, 0.8], [2.5, 0.2, 0.9]] },
-  { id: 'house', label: 'house offbeats', hits: [[0.5, 0.25, 0.85], [1.5, 0.25, 0.8], [2.5, 0.25, 0.85], [3.5, 0.25, 0.8]] },
-  { id: 'arp', label: 'arp', hits: [], arp: true },
-  { id: 'broken', label: 'broken', hits: [[0, 0.9, 0.8], [1.5, 0.4, 0.6], [2.25, 0.9, 0.7], [3.5, 0.4, 0.5]] },
-];
-
-const RHYTHMS_FOR: Record<string, string[]> = {
-  anthem: ['pad', 'stab', 'arp', 'house'], heartbreak: ['pad', 'broken', 'arp', 'stab'], aeolian: ['pad', 'arp', 'stab', 'broken'],
-  'two-five-one': ['pad', 'broken', 'house', 'stab'], 'minor-blues': ['stab', 'broken', 'skank', 'pad'], 'dub-vamp': ['skank', 'double', 'bubble', 'pad'],
-  'dub-drift': ['skank', 'bubble', 'pad', 'double'], dorian: ['house', 'pad', 'stab', 'arp'], mixolydian: ['pad', 'skank', 'arp', 'broken'],
-  deep: ['house', 'pad', 'broken', 'stab'], tension: ['pad', 'stab', 'arp', 'house'],
+const RHYTHM: Record<string, ChordRhythm> = {
+  // Short choked chops on 2 and 4, a ghost upstroke after each; the last bar pushes into the next.
+  skank: (_b, last) => [[1, 0.18, 0.85], [1.5, 0.1, 0.4], [3, 0.18, 0.85], last ? [3.75, 0.1, 0.5] : [3.5, 0.1, 0.4]],
+  bubble: (_b, last) => [[0.5, 0.2, 0.8], [0.75, 0.15, 0.45], [1.5, 0.2, 0.75], [2.5, 0.2, 0.8], [2.75, 0.15, 0.45], ...(last ? [] : [[3.5, 0.2, 0.75] as RHit])],
+  house: (_b, last) => [[0.5, 0.25, 0.85], [1.5, 0.25, 0.75], [2.5, 0.25, 0.85], [3.5, 0.25, 0.75], ...(last ? [[3.75, 0.2, 0.6] as RHit] : [])],
+  broken: (_b, last) => [[0, 0.9, 0.8], [1.75, 0.4, 0.55], [2.5, last ? 0.6 : 1.2, 0.75], ...(last ? [[3.25, 0.6, 0.6] as RHit] : [])],
+  pad: (_b, last) => [[0, last ? 2.9 : 3.9, 0.62], ...(last ? [[3, 0.9, 0.5] as RHit] : [])],
+  push: (_b, last) => [[0, 1.4, 0.8], [1.5, 0.4, 0.55], [2.5, last ? 0.6 : 1.4, 0.8], ...(last ? [[3.25, 0.6, 0.65] as RHit] : [])],
+  pulse: (_b, last) => [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5].filter((b) => !(last && b === 3.5)).map((b): RHit => [b, 0.4, b % 1 === 0 ? 0.8 : 0.55]),
+  stab: (_b, last) => [[0, 0.2, 0.95], [0.75, 0.2, 0.65], [2.5, 0.2, 0.85], ...(last ? [[3.5, 0.2, 0.7] as RHit] : [])],
+  gate: (_b, last) => [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5].map((b): RHit => [b, last && b >= 3 ? 0.12 : 0.22, b % 1 === 0 ? 0.85 : 0.6]),
+  clav: (_b, last) => [[0, 0.15, 0.9], [0.75, 0.15, 0.55], [1.5, 0.15, 0.8], [2.25, 0.15, 0.55], [2.5, 0.15, 0.85], [3.25, 0.15, 0.55], ...(last ? [[3.75, 0.15, 0.7] as RHit] : [])],
+  swell: () => [[0, 7.8, 0.55], [4, 3.8, 0.4]],
 };
 
-function chordLoops(): LibMelodic[] {
-  const out: LibMelodic[] = [];
-  for (const prog of PROGRESSIONS) {
-    RHYTHMS_FOR[prog.id].forEach((rid, i) => {
-      const rhythm = CHORD_RHYTHMS.find((r) => r.id === rid)!;
-      const notes: LoopNote[] = [];
-      prog.degrees.forEach((d, bar) => {
-        const tones = chord(d, prog.seventh);
-        if (rhythm.arp) {
-          // Up the chord and back, in eighths, the top note an octave up on the third beat.
-          const order = [0, 1, 2, 1, 0, 1, 2, 3].map((k) => (k === 3 ? tones[0] + 7 : tones[Math.min(k, tones.length - 1)]));
-          order.forEach((deg, s) => notes.push(note(bar * 4 + s * 0.5, 0.45, deg, s % 4 === 0 ? 0.9 : 0.7)));
-        } else for (const [b, dur, v] of rhythm.hits) notes.push(note(bar * 4 + b, dur, tones, v ?? 0.8));
-      });
-      const style = rid === 'skank' || rid === 'double' || rid === 'bubble' ? (prog.style === 'dub' ? 'dub' : 'reggae') : prog.style;
-      out.push(melodic(`lib-chords-${prog.id}-${rid}`, `${prog.names[i]} (${rhythm.label})`, 'chords', style, prog.degrees.length * 4, notes));
-    });
-  }
-  return out;
+function chordLoop(id: string, name: string, style: LoopStyle, tone: string, feel: GrooveFeel, roots: number[], rhythm: string, opts: { seventh?: boolean; ninth?: boolean; start?: number[]; every?: number; voicings?: number[][] } = {}): LibMelodic {
+  const voiced = opts.voicings ?? voiceLead(roots.map((r) => tonesOf(r, !!opts.seventh, !!opts.ninth)), opts.start ?? (opts.seventh ? [4, 6, 7, 9] : [4, 7, 9]));
+  const every = opts.every ?? 4;
+  const hits: Hit[] = voiced.flatMap((v, i) => RHYTHM[rhythm](i, i === voiced.length - 1).map(([b, dur, vel]): Hit => [i * every + b, dur, v, vel]));
+  return written(id, name, 'chords', style, tone, feel, roots.length * every, hits);
 }
 
-// ── Leads: see leadLibrary.ts ──
+const CHORDS: LibMelodic[] = [
+  chordLoop('cur-chords-hilltop-skank', 'Hilltop Skank', 'dub', 'keys.funk-clav', FEELS.dub, [0, 0, 3, 3], 'skank'),
+  chordLoop('cur-chords-organ-bubble', 'Organ Bubble', 'dub', 'keys.stab', FEELS.dub, [0, 6, 0, 6], 'bubble'),
+  chordLoop('cur-chords-tin-roof', 'Tin Roof Skank', 'reggae', 'keys.funk-clav', FEELS.dub, [0, 5, 3, 4], 'skank', { voicings: [[2, 4, 7], [2, 5, 7], [5, 7, 10], [6, 8, 11]] }),
+  chordLoop('cur-chords-smoke-room', 'Smoke Room Stabs', 'house', 'keys.stab', FEELS.house, [0, 5, 3, 4], 'house', { seventh: true }),
+  chordLoop('cur-chords-deep-nine', 'Deep Nine', 'house', 'keys.tine', FEELS.house, [1, 4, 0, 0], 'broken', { seventh: true, start: [3, 5, 7, 8] }),
+  chordLoop('cur-chords-dorian-glide', 'Dorian Glide', 'house', 'pad.pwm-strings', FEELS.house, [0, 1, 0, 1], 'push', { seventh: true }),
+  chordLoop('cur-chords-golden-pads', 'Golden Pads', 'pop', 'pad.lush-80s', FEELS.float, [0, 4, 5, 3], 'pad', { seventh: true, voicings: [[2, 4, 6, 7], [3, 4, 6, 8], [4, 5, 7, 9], [3, 5, 7, 9]] }),
+  chordLoop('cur-chords-heartbreak', 'Heartbreak Keys', 'pop', 'keys.tine', FEELS.straight, [5, 3, 0, 4], 'pulse'),
+  chordLoop('cur-chords-canyon', 'Canyon Chords', 'livetronica', 'pad.brass', FEELS.straight, [0, 6, 5, 6], 'push'),
+  chordLoop('cur-chords-steel-sky', 'Steel Sky Stab', 'techno', 'keys.stab', FEELS.techno, [0, 0, 0, 5], 'stab', { seventh: true }),
+  chordLoop('cur-chords-trance-gate', 'Trance Gate', 'trance', 'pad.supersaw', FEELS.techno, [0, 5, 3, 4], 'gate', { voicings: [[4, 7, 9], [5, 7, 9], [5, 7, 10], [6, 8, 11]] }),
+  chordLoop('cur-chords-back-alley', 'Back Alley Clav', 'funk', 'keys.funk-clav', FEELS.funk, [0, 3, 0, 4], 'clav', { seventh: true }),
+  chordLoop('cur-chords-fog-choir', 'Fog Choir', 'ambient', 'pad.aah', FEELS.float, [0, 5, 3, 0], 'swell', { every: 8 }),
+];
 
 // ── Textures ────────────────────────────────────────────────────────────
 
 const TEXTURES: LibMelodic[] = [
-  melodic('lib-tex-fog', 'Harbour Fog', 'texture', 'ambient', 16, [note(0, 7.8, [0, 4, 9], 0.6), note(8, 7.8, [-2, 2, 7], 0.6)]),
-  melodic('lib-tex-halo', 'Halo', 'texture', 'ambient', 8, [note(0, 7.8, [7, 11, 14], 0.5)]),
-  melodic('lib-tex-drips', 'Cave Drips', 'texture', 'dub', 8, [note(0.5, 0.3, 9, 0.5), note(2.75, 0.3, 11, 0.4), note(4.25, 0.3, 7, 0.5), note(6.5, 0.3, 12, 0.4)]),
-  melodic('lib-tex-swell', 'Slow Swell', 'texture', 'ambient', 16, [note(0, 15.8, [0, 2, 4, 6], 0.55)]),
-  melodic('lib-tex-sirens', 'Distant Sirens', 'texture', 'dub', 8, [note(0, 2, 7, 0.5), note(2, 2, 8, 0.45), note(4, 2, 7, 0.5), note(6, 2, 6, 0.45)]),
-  melodic('lib-tex-shimmer', 'Shimmer Bed', 'texture', 'livetronica', 8, [0, 1, 2, 3, 4, 5, 6, 7].map((b) => note(b, 0.9, [7, 9, 11][b % 3], 0.4))),
-  melodic('lib-tex-pulse', 'Tape Pulse', 'texture', 'techno', 4, [0, 1, 2, 3].map((b) => note(b + 0.5, 0.4, [0, 7], 0.45))),
-  melodic('lib-tex-choir', 'Empty Choir', 'texture', 'ambient', 16, [note(0, 7.8, [2, 4, 7], 0.5), note(8, 7.8, [0, 3, 5], 0.5)]),
-  melodic('lib-tex-gamelan', 'Bronze Rain', 'texture', 'livetronica', 8, [0, 0.75, 1.5, 2.5, 3.25, 4, 5.5, 6.75].map((b, i) => note(b, 0.5, [7, 9, 11, 12][i % 4], 0.45))),
-  melodic('lib-tex-wind', 'Rooftop Wind', 'texture', 'dub', 16, [note(0, 3.8, [0, 7], 0.4), note(6, 3.8, [3, 10], 0.4), note(12, 3.8, [-1, 6], 0.4)]),
+  written('cur-tex-harbour-fog', 'Harbour Fog', 'texture', 'ambient', 'pad.dark-drone', FEELS.float, 16, [[0, 7.8, [0, 4, 9], 0.6], [8, 7.8, [-2, 2, 7], 0.55]]),
+  written('cur-tex-halo', 'Halo', 'texture', 'ambient', 'pad.shimmer', FEELS.float, 8, [[0, 7.8, [7, 11, 14], 0.5], [4, 3.8, 16, 0.35]]),
+  written('cur-tex-cave-drips', 'Cave Drips', 'texture', 'dub', 'pad.glass', FEELS.dub, 8, [[0.5, 0.4, 9, 0.85], [2.75, 0.4, 11, 0.65], [4.25, 0.4, 7, 0.8], [6.5, 0.4, 12, 0.62], [7.25, 0.4, 11, 0.5]]),
+  written('cur-tex-slow-swell', 'Slow Swell', 'texture', 'ambient', 'pad.sweep', FEELS.float, 16, [[0, 15.8, [0, 2, 4, 6], 0.55], [8, 7.8, 9, 0.35]]),
+  written('cur-tex-bronze-rain', 'Bronze Rain', 'texture', 'livetronica', 'pad.glass', FEELS.straight, 8, [0, 0.75, 1.5, 2.5, 3.25, 4, 5.5, 6.75].map((b, i): Hit => [b, 0.5, [7, 9, 11, 12][i % 4], i % 3 === 0 ? 0.85 : 0.62])),
+  written('cur-tex-rooftop-wind', 'Rooftop Wind', 'texture', 'dub', 'pad.air', FEELS.float, 16, [[0, 3.8, [0, 7], 0.45], [6, 3.8, [3, 10], 0.38], [12, 3.8, [-1, 6], 0.42]]),
 ];
+
+/** Every written loop the library replaced, by the one now nearest it. */
+export const LIBRARY_ALIASES: Record<string, string> = {
+  'bass-rolling': 'cur-bass-night-engine', 'bass-offbeat': 'cur-bass-warehouse', 'bass-dub-root': 'cur-bass-basement',
+  'bass-steppers': 'cur-bass-steppers', 'bass-acid': 'cur-bass-acid-slide', 'bass-sub': 'cur-bass-sub-ocean',
+  'bass-walking': 'cur-bass-festival-walk', 'bass-reese': 'cur-bass-two-step',
+  'chords-epic': 'cur-chords-golden-pads', 'chords-stab': 'cur-chords-steel-sky', 'chords-skank': 'cur-chords-hilltop-skank',
+  'chords-float': 'cur-chords-fog-choir', 'chords-detroit': 'cur-chords-smoke-room',
+  'tex-swell': 'cur-tex-slow-swell', 'tex-drops': 'cur-tex-cave-drips', 'tex-ritual': 'cur-tex-harbour-fog', 'tex-pulse': 'cur-tex-bronze-rain',
+  'tex-cloud': 'cur-tex-halo', 'tex-ticks': 'cur-tex-bronze-rain', 'tex-rise': 'cur-tex-slow-swell', 'tex-rain': 'cur-tex-cave-drips',
+};
+
+/** A loop id the library no longer has, to the loop now nearest it, by its kind and style. */
+export function libraryAlias(id: string): string | null {
+  if (LIBRARY_ALIASES[id]) return LIBRARY_ALIASES[id];
+  const byStyle: Record<string, string> = {
+    onedrop: 'cur-bass-missing-one', 'heavy-one': 'cur-bass-basement', steppers: 'cur-bass-steppers', rockers: 'cur-bass-rockers',
+    halfstep: 'cur-bass-sub-ocean', rolling: 'cur-bass-night-engine', offbeat: 'cur-bass-warehouse', gallop: 'cur-bass-tunnel',
+    'acid-a': 'cur-bass-acid-slide', 'acid-b': 'cur-bass-rubber-hose', 'house-octave': 'cur-bass-disco-lung', 'funk-slap': 'cur-bass-grease',
+    'live-arp': 'cur-bass-festival-walk', twostep: 'cur-bass-two-step', 'sub-swell': 'cur-bass-sub-ocean',
+  };
+  const bass = /^lib-bass-(.+)-(one|i-iv|i-vii|i-vi-vii|i-v)$/.exec(id);
+  if (bass && byStyle[bass[1]]) return byStyle[bass[1]];
+  if (id.startsWith('lib-bass-')) return 'cur-bass-basement';
+  if (/^lib-chords-.*-(skank|double)$/.test(id)) return 'cur-chords-hilltop-skank';
+  if (/^lib-chords-.*-bubble$/.test(id)) return 'cur-chords-organ-bubble';
+  if (/^lib-chords-.*-house$/.test(id)) return 'cur-chords-smoke-room';
+  if (/^lib-chords-.*-arp$/.test(id)) return 'cur-chords-trance-gate';
+  if (/^lib-chords-.*-stab$/.test(id)) return 'cur-chords-steel-sky';
+  if (id.startsWith('lib-chords-')) return 'cur-chords-golden-pads';
+  if (id.startsWith('lib-tex-')) return 'cur-tex-harbour-fog';
+  return null;
+}
 
 // ── Drum grooves ────────────────────────────────────────────────────────
 
@@ -216,7 +251,7 @@ export const LIBRARY_BEATS: LibBeat[] = [
   groove('lib-beat-ambient', 'Pulse Only', 'ambient', 0, { kick: 'x.......x.......', hatClosed: '....o.......o...', rim: '..........o.....' }),
 ];
 
-export const LIBRARY_MELODIC: LibMelodic[] = [...bassLoops(), ...chordLoops(), ...TEXTURES];
+export const LIBRARY_MELODIC: LibMelodic[] = [...BASS, ...CHORDS, ...TEXTURES];
 
 /** The library's style for a loop id, if it is one of its loops. */
 const STYLE_BY_ID = new Map<string, LoopStyle>([...LIBRARY_MELODIC, ...LIBRARY_BEATS, ...LEADS].map((l) => [l.id, l.style]));
