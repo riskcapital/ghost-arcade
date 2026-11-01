@@ -1874,7 +1874,7 @@ function controlValue(jack: string, params: Record<string, number>): number {
   if (name === 'analog.env' || name === 'analog.vco2' || name === 'analog.level') return visuals.instrumentLevel('analog');
   if (name === 'dubbass.level') return visuals.instrumentLevel('dubbass');
   if (name === 'siren.level') return visuals.instrumentLevel('siren');
-  if (name === 'shots.level') return visuals.instrumentLevel('shots');
+  if (name === 'shots.level' || name === 'pads.level') return visuals.instrumentLevel('shots');
   if (name === 'scan.level') return scanLevel;
   // Whatever the keys play, in any set.
   if (name === 'keys.level') return visuals.instrumentLevel(get(musicStudio).instrument);

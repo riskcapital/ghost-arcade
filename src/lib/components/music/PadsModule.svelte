@@ -19,6 +19,7 @@
   import { isChopId } from '../../music/sounds/chops';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
+  import StudioJack from './StudioJack.svelte';
 
   /** `drums`: the kit's two rows under the FX pads (off: the FX pads alone). */
   let { title = 'Pads', drums = true }: { title?: string; drums?: boolean } = $props();
@@ -102,6 +103,7 @@
     </select>
     {/if}
     <button class="studio-btn" class:on={choosing} aria-pressed={choosing} onclick={() => (choosing = !choosing)} title="Choose the sound on each FX pad">Sounds</button>
+    <StudioJack id="cv:pads.level" title="FX pads out: their level, as a control signal (right-click the cable for a trigger on each hit)" />
   {/snippet}
   <div class="pads" class:short={!drums} title={choosing ? 'Tap an FX pad to choose its sound' : 'Higher on a pad hits harder. Rec writes the pads into the beat.'}>
     {#each PADS as pad, i (pad.held)}
