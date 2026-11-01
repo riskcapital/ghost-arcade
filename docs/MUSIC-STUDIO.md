@@ -549,9 +549,11 @@ Cancel, next length, next style. `buildDrop.test.ts` and
 
 **Patching** (`controlSignals.ts`, `SourceBank.svelte`, `PatchBay.svelte`,
 `CableLayer.svelte`): every sound is a control source. Besides the jacks on
-the modules, the Sources bank (bottom of the right rack) has one for each
-instrument (`cv:inst.<id>.level`), each loop track (`cv:track.<role>.level`),
-each band input (`cv:chan.<input>.level`), the master and the drop's hit.
+each module has an out jack in its header: the instruments' levels, the
+Beat module's whole kit (`cv:inst.drums.level`), the XY and acid levels, each
+loop track in the session grid (`cv:track.<role>.level`), each band input
+(`cv:chan.<input>.level`), the master (next to Record) and the drop's hit
+(next to Build). Cables saved from the old Sources bank move onto these.
 Control inputs: the macros, deck layers, the analog synth, visual voices'
 opacity (`dest:voice.<i>.level`), mixer pans and sends
 (`dest:mix.<channel>.pan`, `.send.<return>`), any insert effect's params

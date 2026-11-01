@@ -31,7 +31,7 @@
   } from '../../music/musicRuntime';
   import './studioTokens.css';
   import StudioModule from './StudioModule.svelte';
-  import SourceBank from './SourceBank.svelte';
+  import StudioJack from './StudioJack.svelte';
   import MacroKnobBar from '../MacroKnobBar.svelte';
   import BathModules from './BathModules.svelte';
   import BerlinModules from './BerlinModules.svelte';
@@ -338,6 +338,7 @@
       <div class="sub-left"><SongStrip /></div>
       <div class="sub-centre"><MacroStrip /></div>
       <div class="sub-right">
+        <StudioJack id="cv:master.level" title="Master out: the whole mix's level, as a control signal" />
         <StudioRecordControls />
         <button class="text-btn" class:on={mixerOpen} aria-pressed={mixerOpen} onclick={() => (mixerOpen = !mixerOpen)} title="The full mixer: every sound, its effects, sends, pan, level and meters" aria-label="Mixer"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2v12M8 2v12M12 2v12" /><path d="M2.5 10h3M6.5 5h3M10.5 8h3" /></svg><span class="lbl">Mixer</span></button>
       </div>
@@ -362,7 +363,6 @@
       <div class="rack right face">
         <VisualRack />
         <RackModules />
-        <SourceBank />
       </div>
       <div class="slot b1 face"><BathModules part="chords" /></div>
       <div class="slot b2 face"><PlayModule /></div>
@@ -375,7 +375,6 @@
       <div class="rack right face">
         <VisualRack />
         <RackModules />
-        <SourceBank />
       </div>
       <div class="slot b1 face"><PlayModule /></div>
       <div class="slot b2 face"><BeatModule /></div>
@@ -390,7 +389,6 @@
       <div class="rack right face">
         <VisualRack />
         <RackModules />
-        <SourceBank />
       </div>
       <div class="slot b12 face"><PlayModule size="wide" /></div>
       <div class="slot b3 face"><BeatModule /></div>
@@ -402,7 +400,6 @@
       <div class="rack right face">
         <VisualRack />
         <RackModules />
-        <SourceBank />
       </div>
       <div class="slot b12 face"><AnalogModules /></div>
       <div class="slot b3 face"><BeatModule /></div>

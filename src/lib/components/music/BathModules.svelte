@@ -187,6 +187,7 @@
   <StudioModule title="XY · Space" subtitle="Touch to play" grow>
     {#snippet head()}
       <StudioJack id="audio:xy" label="Out" title="XY tone" />
+      <StudioJack id="cv:inst.xy.level" label="Level" title="XY level, as a control signal" />
       <StudioJack id="cv:xy.x" label="X" />
       <StudioJack id="cv:xy.y" label="Y" />
     {/snippet}

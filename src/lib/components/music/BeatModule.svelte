@@ -4,6 +4,7 @@
   import { musicStudio } from '../../music/musicStudioStore';
   import { startSequencer, stopSequencer } from '../../music/musicRuntime';
   import { DRUM_KITS } from '../../music/tone/kits';
+  import StudioJack from './StudioJack.svelte';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StepGrid from './StepGrid.svelte';
@@ -35,6 +36,7 @@
     </select>
     <StudioKnob label="Swing" hideLabel value={s.pattern.swing} max={0.5} size={16} format={(v) => `${Math.round(v * 200)}%`} onchange={(v) => musicStudio.setSwing(v)} />
     <button class="studio-btn" onclick={() => musicStudio.clearPattern()}>Clear</button>
+    <StudioJack id="cv:inst.drums.level" title="Beat out: the whole kit's level, as a control signal" />
   {/snippet}
   <div class="grid"><StepGrid rowHeight={0} /></div>
 </StudioModule>

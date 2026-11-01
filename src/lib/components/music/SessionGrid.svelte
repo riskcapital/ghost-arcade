@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StudioJack from './StudioJack.svelte';
   /**
    * The session: a track of clip slots per part, launched like a DAW's
    * session view. Click a clip to start it on the next bar (it takes over its
@@ -141,6 +142,7 @@
         {@const ch = channelOf(track.id)}
         <button class="mini-btn studio-btn" class:on={(s.inserts[ch]?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === ch ? null : ch)} title="Effects on the {track.label.toLowerCase()} track's instrument">FX</button>
       {/if}
+      {#if track.id !== 'beats'}<StudioJack id="cv:track.{track.id}.level" title="{track.label} track out: its level, as a control signal" />{/if}
       <button class="stop" disabled={!trackActive(track.id)} onclick={() => stopTrack(track.id)} aria-label="Stop {track.label}" title="Stop {track.label.toLowerCase()}">
         <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
       </button>

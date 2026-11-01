@@ -66,6 +66,7 @@
         data-midi-label="Acid line on or off"
         data-midi-mode="toggle"
       >{s.acidOn ? 'On' : 'Off'}</button>
+      <StudioJack id="cv:acid.level" label="Level" title="Acid line level, as a control signal" />
       <StudioJack id="cv:acid.cutoff" label="Cutoff" title="Acid filter, as a control signal" />
       <StudioJack id="audio:acid" label="Out" title="Acid sound" />
     {/snippet}

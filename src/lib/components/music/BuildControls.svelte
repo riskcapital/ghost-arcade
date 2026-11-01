@@ -43,6 +43,7 @@
     {#each BUILD_STYLES as st (st.id)}<option value={st.id}>{st.label}</option>{/each}
   </select>
   <StudioJack id="cv:build.progress" label="Build" title="How far the build has got, 0 to 1, as a control signal" />
+  <StudioJack id="cv:build.drop" label="Drop" title="A hit on the drop, as a control signal" />
 
   {#if editing}
     <div class="editor" role="dialog" aria-label="Edit the build">
