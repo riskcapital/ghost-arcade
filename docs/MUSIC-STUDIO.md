@@ -453,6 +453,14 @@ all of it back without stopping the music. **Session** saves the project
 the starter clips in the current key and no scenes. `sceneSave.test.ts`
 covers a scene's save and load.
 
+**Everything that sounds can drive a visual**: a visual voice can follow
+everything, a drum, a part (bass, lead, chords, pads), what the keys play, or
+one instrument: bowls, drone, XY tone, analog synth, scan synth, the echo
+shots (each echo a fading hit), the build and drop, the siren, the acid line
+and the dub bass (`VOICE_SOURCES`, new entries always on the end; the menu
+offers the instruments the set has). By cable, every set also has the scan
+level, the build's progress and the keys' level as control outputs.
+
 **The loop library** (`loopLibrary.ts`): over 150 original loops on top of
 the essentials, in scale degrees so they play in the studio's key: basslines
 (one drop, steppers, rockers, rolling and offbeat techno, acid, house, funk,

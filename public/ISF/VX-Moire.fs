@@ -7,7 +7,7 @@
     ],
     "DESCRIPTION": "Interference gratings. Each sounding note lays a fine grating of light lines, straight or in rings, its line frequency set by the note's pitch, each slowly turning. Where gratings overlap they beat into moire fringes: near-unison notes make slow, wide fringes, wider intervals fine dense ones, and the fringes sweep as the gratings turn. The accent marks the points where every grating meets.",
     "INPUTS": [
-        { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 7, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth"] },
+        { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 7, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
         { "NAME": "gratingType", "LABEL": "Gratings", "TYPE": "long", "DEFAULT": 1, "VALUES": [0, 1], "LABELS": ["Straight", "Rings"] },
         { "NAME": "baseFreq", "LABEL": "Base frequency", "TYPE": "float", "DEFAULT": 44, "MIN": 16, "MAX": 80 },

@@ -7,7 +7,7 @@
     ],
     "DESCRIPTION": "A wobbulator: a raster of thin scan lines carrying a simple picture, its beam deflected by the note's own waveform at the moment the beam passes. Low notes bend the picture across many lines, high notes comb each line; where the beam slows the phosphor burns brighter. Collapse squeezes the raster into one dancing line.",
     "INPUTS": [
-        { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 5, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth"] },
+        { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 5, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
         { "NAME": "lines", "LABEL": "Lines", "TYPE": "float", "DEFAULT": 96, "MIN": 40, "MAX": 160 },
         { "NAME": "hDefl", "LABEL": "Horizontal deflection", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
