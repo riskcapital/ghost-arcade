@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { LIBRARY_BEATS, LIBRARY_MELODIC, LOOP_STYLE_LABELS } from './loopLibrary';
 import { BEAT_LOOPS, MELODIC_LOOPS, loopById } from './loops';
+import { LEADS, LEAD_ALIASES } from './leadLibrary';
+import { toneById } from './tone/tones';
 
 describe('the loop library', () => {
   it('is big: over 150 loops across every part', () => {
-    expect(LIBRARY_MELODIC.length + LIBRARY_BEATS.length).toBeGreaterThanOrEqual(150);
-    for (const role of ['bass', 'lead', 'chords', 'texture'] as const) {
+    expect(LIBRARY_MELODIC.length + LIBRARY_BEATS.length + LEADS.length).toBeGreaterThanOrEqual(150);
+    for (const role of ['bass', 'chords', 'texture'] as const) {
       expect(LIBRARY_MELODIC.filter((l) => l.role === role).length, role).toBeGreaterThanOrEqual(10);
     }
+    expect(LEADS.length).toBeGreaterThanOrEqual(30);
     expect(LIBRARY_BEATS.length).toBeGreaterThanOrEqual(20);
   });
 
@@ -48,5 +51,21 @@ describe('the loop library', () => {
   it('names no real artists or studios', () => {
     const banned = /perry|scratch|tubby|ott\b|black ark|marley|sly|robbie|aphex|daft|disco biscuits|new deal|pressure drop/i;
     for (const l of [...LIBRARY_MELODIC, ...LIBRARY_BEATS]) expect(banned.test(l.name), l.name).toBe(false);
+  });
+});
+
+describe('the leads', () => {
+  it('replace the old ones, each with a tone, in range, and every old id still plays', () => {
+    expect(MELODIC_LOOPS.filter((l) => l.role === 'lead')).toEqual(LEADS);
+    for (const l of LEADS) {
+      expect(toneById(l.tone), l.id).toBeTruthy();
+      expect(l.beats % 4, l.id).toBe(0);
+      const degrees = l.notes.flatMap((n) => n.degrees);
+      // About an octave and a fifth at most.
+      expect(Math.max(...degrees) - Math.min(...degrees), l.id).toBeLessThanOrEqual(13);
+      for (const n of l.notes) expect(n.beat, l.id).toBeLessThan(l.beats);
+    }
+    for (const [old, now] of Object.entries(LEAD_ALIASES)) expect(loopById(old)?.id, old).toBe(now);
+    expect(loopById('lib-lead-melodica-twice')?.id).toBe('lead-rooftop-melodica');
   });
 });

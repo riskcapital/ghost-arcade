@@ -271,6 +271,65 @@ export const TONES: Tone[] = [
 
   // ── Leads and keys ──
   {
+    id: 'lead.fat-saw', name: 'Fat saw lead', family: 'lead', blurb: 'Five detuned saws, mono with a glide between held notes: big, wide and singing',
+    patch: {
+      osc1: { wave: 'saw', level: 0.8 }, unison: { voices: 5, detune: 22, spread: 0.8 }, osc2: { wave: 'saw', oct: -1, level: 0.25 },
+      filter: { mode: 'ladder', cutoff: 2200, res: 0.2, env: 1.2, keyTrack: 0.5, drive: 0.3 },
+      fenv: env(0.01, 0.5, 0.6, 0.3), aenv: env(0.008, 0.4, 0.9, 0.25),
+      mono: true, legato: true, glide: 0.09, lfo1: { rate: 5.4, shape: 'sine', pitch: 14, delay: 0.6 }, wheel: 'vibrato', bend: 2,
+      fx: { drive: 0.12, chorus: { mix: 0.3, mode: 2 }, delay: { mix: 0.22, beats: 0.75, fb: 0.38, tone: 0.6 } }, gain: 0.6,
+    },
+  },
+  {
+    id: 'lead.hollow', name: 'Hollow square', family: 'lead', blurb: 'A hollow square-wave lead; the mod wheel adds vibrato',
+    patch: {
+      osc1: { wave: 'square', pw: 0.5, level: 0.7 }, osc2: { wave: 'square', oct: 1, pw: 0.5, detune: 4, level: 0.15 },
+      filter: { mode: 'lp', cutoff: 3200, res: 0.15, env: 0.6, keyTrack: 0.6 },
+      fenv: env(0.005, 0.3, 0.7, 0.2), aenv: env(0.006, 0.3, 0.9, 0.18),
+      mono: true, glide: 0.04, wheel: 'vibrato', lfo1: { rate: 5.8, shape: 'sine', pitch: 8, delay: 0.8 },
+      fx: { chorus: { mix: 0.2, mode: 1 }, delay: { mix: 0.18, beats: 0.5, fb: 0.3 } }, gain: 0.28,
+    },
+  },
+  {
+    id: 'lead.pluck-delay', name: 'Bright pluck', family: 'lead', blurb: 'A bright, snappy pluck through a dotted-eighth echo: made for arps and riffs',
+    patch: {
+      osc1: { wave: 'saw', level: 0.6 }, osc2: { wave: 'square', oct: 1, pw: 0.3, level: 0.25 },
+      filter: { mode: 'ladder', cutoff: 900, res: 0.3, env: 3.4, keyTrack: 0.6, vel: 0.7 },
+      fenv: env(0.001, 0.16, 0, 0.12), aenv: env(0.001, 0.32, 0, 0.25),
+      poly: 6, fx: { delay: { mix: 0.32, beats: 0.75, fb: 0.42, tone: 0.65 }, chorus: { mix: 0.2, mode: 2 } }, gain: 1.2,
+    },
+  },
+  {
+    id: 'lead.pwm', name: 'Pulse lead', family: 'lead', blurb: 'A pulse-width lead that shimmers as the width moves, warm and retro',
+    patch: {
+      osc1: { wave: 'square', pw: 0.5, level: 0.6 }, osc2: { wave: 'square', pw: 0.35, detune: -7, level: 0.45 },
+      filter: { mode: 'ladder', cutoff: 1900, res: 0.25, env: 1.2, keyTrack: 0.5 },
+      fenv: env(0.01, 0.4, 0.6, 0.3), aenv: env(0.01, 0.3, 0.9, 0.3),
+      mono: true, glide: 0.06, lfo1: { rate: 0.9, shape: 'tri', pw: 0.8 }, lfo2: { rate: 5.2, shape: 'sine', pitch: 10, delay: 0.7 }, wheel: 'vibrato',
+      fx: { chorus: { mix: 0.45, mode: 2 }, delay: { mix: 0.2, beats: 0.75, fb: 0.35 } }, gain: 0.32,
+    },
+  },
+  {
+    id: 'lead.fm-bell', name: 'FM bell lead', family: 'lead', blurb: 'A clear FM bell for melodies, ringing out over a soft body',
+    patch: {
+      osc1: { wave: 'sine', level: 0.85 }, fm: { ratio: 3.5, index: 3.2, decay: 0.6, sustain: 0.15, vel: 0.8 },
+      osc2: { wave: 'sine', oct: 1, level: 0.1 },
+      filter: { mode: 'lp', cutoff: 8000, res: 0 },
+      fenv: env(0.001, 1, 1, 0.6), aenv: env(0.001, 1.2, 0.25, 0.7),
+      poly: 6, fx: { delay: { mix: 0.25, beats: 1.5, fb: 0.4, tone: 0.8 }, chorus: { mix: 0.2, mode: 2 } }, gain: 0.4,
+    },
+  },
+  {
+    id: 'lead.acid', name: 'Acid lead', family: 'lead', blurb: 'A screaming resonant saw for riffs: slides between held notes and opens on accents',
+    patch: {
+      osc1: { wave: 'saw', level: 0.8 }, osc2: { wave: 'square', oct: 1, pw: 0.5, level: 0.15 },
+      filter: { mode: 'ladder', cutoff: 520, res: 0.78, drive: 0.6, env: 3.6, keyTrack: 0.6, vel: 0.9 },
+      fenv: env(0.001, 0.2, 0.05, 0.1), aenv: env(0.001, 0.3, 0.8, 0.06),
+      mono: true, legato: true, glide: 0.06, wheel: 'cutoff',
+      fx: { drive: 0.25, delay: { mix: 0.24, beats: 0.75, fb: 0.4 } }, gain: 0.72,
+    },
+  },
+  {
     id: 'lead.soar', name: 'Soaring lead', family: 'lead', blurb: 'A singing mono lead with a long glide and delayed vibrato',
     patch: {
       osc1: { wave: 'saw', level: 0.55 }, osc2: { wave: 'square', detune: 7, pw: 0.45, level: 0.4 },

@@ -468,10 +468,18 @@ livetronica, two-step), chord progressions in pads, skanks, organ bubbles,
 stabs, house offbeats, arps and broken chords, hooks, textures and drum
 grooves, each tagged with a style and tempo range. The session's slot menus
 group them by style. Bass figures and chord rhythms are written once and
-played over several progressions; hooks grow a one-bar motif into four bars
-(said twice with one change, or call and answer, ending on a tension note
-that resolves into the next pass). All melodies are written for the library
+played over several progressions. All melodies are written for the library
 and no loop is named after a real artist (`loopLibrary.test.ts`).
+
+**Leads** (`leadLibrary.ts`): 33 hooks in techno, acid, house piano,
+trance arps, dub melodica, livetronica, funk, synthwave and minimal styles,
+each written to stick (a short motif said twice with one change, mostly
+stepwise with one leap, space between phrases, call and answer, a tension
+note resolving on the next downbeat, within an octave and a fifth) and each
+with the tone it was written for, which a clip made from it starts on. Six
+lead tones came with them: Fat saw lead, Hollow square, Bright pluck, Pulse
+lead, FM bell lead and Acid lead. The old leads' ids play as the new lead
+nearest them (`LEAD_ALIASES`), so saved scenes keep working.
 
 **Insert effects** (`InsertEditor.svelte`, `inserts` in the store): every
 instrument channel and the master has a chain of as many effects as you
