@@ -72,6 +72,36 @@
 
   let root = $state<HTMLElement | null>(null);
   let hole = $state<HTMLElement | null>(null);
+  // The cluster over the output lines its ends up with the output frame's edges.
+  let subbar = $state<HTMLElement | null>(null);
+  let frameInset = $state({ l: 0, r: 0 });
+  $effect(() => {
+    const f = hole;
+    const b = subbar;
+    if (!f || !b) return;
+    const measure = () => {
+      const fr = f.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      // Never narrower than what the row holds: a tall, narrow output lets the row run the full column.
+      // The compact row (Record and Mixer as icons, see the container query) needs about this much.
+      const need = 540;
+      const slack = Math.max(0, br.width - need);
+      let l = Math.max(0, fr.left - br.left);
+      let r = Math.max(0, br.right - fr.right);
+      if (l + r > slack) {
+        const k = slack / (l + r);
+        l *= k;
+        r *= k;
+      }
+      const next = { l: Math.round(l), r: Math.round(r) };
+      if (next.l !== frameInset.l || next.r !== frameInset.r) frameInset = next;
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(f);
+    ro.observe(b);
+    measure();
+    return () => ro.disconnect();
+  });
   let elapsed = $state(0);
   let tempo = $state(120);
   let scanX = $state(0);
@@ -331,7 +361,7 @@
     </header>
 
     <!-- The songs and the eight macros, in their own row under the bar so the bar fits. -->
-    <div class="subbar">
+    <div class="subbar" bind:this={subbar} style="padding-left: {frameInset.l}px; padding-right: {frameInset.r}px">
       <div class="sub-left"><SongStrip /></div>
       <div class="sub-centre"><MacroStrip /></div>
       <div class="sub-right">
@@ -440,14 +470,17 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     gap: 6px;
     padding: 2px 0;
   }
   /* One cluster over the output: songs, the macros, then Record and Mixer. */
-  .sub-left, .sub-centre, .sub-right { min-width: 0; display: flex; align-items: center; flex: 0 0 auto; }
+  /* Songs flush left and Record and Mixer flush right, at the frame's edges; the macros centred between. */
+  .sub-left, .sub-centre, .sub-right { min-width: 0; display: flex; align-items: center; }
+  .sub-left, .sub-right { flex: 1 1 0; min-width: max-content; }
   .sub-centre { flex: 0 1 max-content; justify-content: safe center; }
   .sub-right { justify-content: flex-end; gap: 6px; }
+  .sub-left { justify-content: flex-start; }
   .subbar { container-type: inline-size; }
   .sub-right .ico { display: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
   /* A narrow output column: Record and Mixer fold to icons (their tooltips stay), the pager and knobs tighten. */
