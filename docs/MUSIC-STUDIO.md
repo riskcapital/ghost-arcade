@@ -476,6 +476,15 @@ accents, ghost notes kept soft and a hair of drift on the unaccented notes.
 block chords, seconds below G3, basslines outside about E1-G3 and loops
 without a tone. Old loop ids play as the loop now nearest them.
 
+**The loop browser** (`LoopPicker.svelte`): a session slot's + (or Loops in
+the Session tab) opens every loop as tiles in a grid, filtered by part, style,
+a search and starred loops. Each tile draws the loop's shape from its notes
+and previews it in the studio's key and tempo on its own tone, on the next
+beat when music plays (`previewLoop`: one at a time, stopped by Kill). Add,
+Enter or a double-click puts it in the slot; tiles drag onto session slots of
+their part. Arrows move, Space previews, Esc closes. Stars stay on this
+computer.
+
 **Leads** (`leadLibrary.ts`): 33 hooks in techno, acid, house piano,
 trance arps, dub melodica, livetronica, funk, synthwave and minimal styles,
 each written to stick (a short motif said twice with one change, mostly

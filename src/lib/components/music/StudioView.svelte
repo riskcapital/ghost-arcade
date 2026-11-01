@@ -41,6 +41,8 @@
   import OutputStrip from './OutputStrip.svelte';
   import SessionGrid from './SessionGrid.svelte';
   import ClipEditor from './ClipEditor.svelte';
+  import LoopPicker from './LoopPicker.svelte';
+  import { loopBrowser } from '../../music/studioUi';
   import LoopRecorderBar from './LoopRecorderBar.svelte';
   import PadsModule from './PadsModule.svelte';
   import DubShotsModule from './DubShotsModule.svelte';
@@ -224,6 +226,7 @@
         {/if}
         <button class="text-btn small" onclick={() => captureCurrentScene()} title="Save what is playing now as a scene">+ Save scene</button>
       {:else if lowerTab === 'session'}
+        {#if !s.liveControl}<button class="text-btn small" onclick={() => loopBrowser.set({ track: null, row: null })} title="Browse every loop: preview, star, and add">Loops</button>{/if}
         {#if !s.liveControl}<LoopRecorderBar />{/if}
         <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own instruments" : "Control Ableton Live from here: its clips and scenes, its sound. The studio's instruments go quiet."}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
       {/if}
@@ -389,6 +392,7 @@
     <MacroEditor />
     <InsertEditor />
     <ClipEditor />
+    <LoopPicker />
   </div>
 {/if}
 

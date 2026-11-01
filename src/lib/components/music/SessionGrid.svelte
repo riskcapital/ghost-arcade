@@ -14,7 +14,8 @@
   import { userPresets } from '../../music/presetLibrary';
   import { launchClip, launchRow, saveBeat, stopTrack } from '../../music/musicRuntime';
   import { clipTrack, downloadMidi } from '../../music/midiExport';
-  import { clipEditorId, insertEditorChannel } from '../../music/studioUi';
+  import { clipEditorId, insertEditorChannel, loopBrowser } from '../../music/studioUi';
+  import { loopById } from '../../music/loops';
   import { launchClockTempo } from '../../stores/launchClock';
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
@@ -65,6 +66,31 @@
       groups.set(track, g);
     }
     return g;
+  }
+
+  /** A loop dragged from the browser: it lands on a slot of its own part. */
+  let dropOver = $state<string | null>(null);
+  function trackOf(id: string): TrackId | null {
+    const loop = loopById(id);
+    return !loop ? null : 'rows' in loop ? 'beats' : loop.role;
+  }
+  function over(e: DragEvent, track: TrackId, row: number) {
+    if (!e.dataTransfer?.types.includes('application/x-ga-loop')) return;
+    e.preventDefault();
+    dropOver = `${track}:${row}`;
+  }
+  function dropLoop(e: DragEvent, track: TrackId, row: number) {
+    dropOver = null;
+    const id = e.dataTransfer?.getData('application/x-ga-loop');
+    if (!id) return;
+    e.preventDefault();
+    const own = trackOf(id);
+    if (own !== track) {
+      showToast(`That loop belongs on the ${own ?? 'other'} track.`, 'info');
+      return;
+    }
+    const clip = clipFromPreset(id, s.key, generateUUID());
+    if (clip) musicStudio.setSessionClip(track, row, clip);
   }
 
   /** Fill an empty slot from a preset menu. */
@@ -131,7 +157,7 @@
       {#if clip}
         {@const on = playing(track.id, clip)}
         {@const next = queued(track.id, clip)}
-        <div class="slot" class:on class:next role="gridcell">
+        <div class="slot" class:on class:next role="gridcell" class:over={dropOver === `${track.id}:${row}`} ondragover={(e) => over(e, track.id, row)} ondragleave={() => (dropOver = null)} ondrop={(e) => dropLoop(e, track.id, row)}>
           <button class="clip" onclick={() => launchClip(track.id, row)} ondblclick={() => clipEditorId.set(clip.id)} aria-pressed={on} title={next ? 'Starts on the next bar' : on ? 'Playing · double-click to edit' : 'Start on the next bar · double-click to edit'}>
             <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2l7 4-7 4z" /></svg>
             <span>{clip.name}</span>
@@ -149,20 +175,14 @@
           </select>
         </div>
       {:else}
-        <div class="slot empty" role="gridcell">
-          <select value="" onchange={(e) => fill(track.id, row, e)} aria-label="Add a {track.label.toLowerCase()} clip to row {row + 1}" title="Add a clip">
-            <option value="" disabled>+</option>
-            {#each groupedPresets(track.id) as [style, list] (style)}
-              <optgroup label={style}>
-                {#each list as p (p.id)}<option value="preset:{p.id}">{p.name}</option>{/each}
-              </optgroup>
-            {/each}
-            {#if $userPresets.some((p) => p.track === track.id)}
-              <optgroup label="My presets">
-                {#each $userPresets.filter((p) => p.track === track.id) as p (p.id)}<option value="mine:{p.id}">{p.name}</option>{/each}
-              </optgroup>
-            {/if}
-          </select>
+        <div class="slot empty" role="gridcell" class:over={dropOver === `${track.id}:${row}`} ondragover={(e) => over(e, track.id, row)} ondragleave={() => (dropOver = null)} ondrop={(e) => dropLoop(e, track.id, row)}>
+          <button class="browse" onclick={() => loopBrowser.set({ track: track.id, row })} aria-label="Add a {track.label.toLowerCase()} loop to row {row + 1}" title="Browse loops for this slot">+</button>
+          {#if $userPresets.some((p) => p.track === track.id)}
+            <select class="mine" value="" onchange={(e) => fill(track.id, row, e)} aria-label="Add one of my presets to row {row + 1}" title="My presets">
+              <option value="" disabled>Mine</option>
+              {#each $userPresets.filter((p) => p.track === track.id) as p (p.id)}<option value="mine:{p.id}">{p.name}</option>{/each}
+            </select>
+          {/if}
         </div>
       {/if}
     {/each}
@@ -264,6 +284,19 @@
     cursor: pointer;
   }
   .slot:hover .edit, .slot:hover .more, .edit:focus-visible, .more:focus-visible { display: inline-grid; }
+  .browse {
+    flex: 1;
+    min-width: 0;
+    border: 1px dashed var(--studio-edge-soft);
+    background: transparent;
+    color: var(--studio-muted);
+    border-radius: var(--studio-radius);
+    font: inherit;
+    cursor: pointer;
+  }
+  .browse:hover { border-color: var(--studio-edge); color: var(--studio-ink); }
+  .empty .mine { flex: 0 0 52px; }
+  .slot.over :is(.clip, .browse) { border-color: var(--studio-accent); border-style: solid; }
   .empty select {
     flex: 1;
     min-width: 0;
