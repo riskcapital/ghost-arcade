@@ -10,7 +10,7 @@
   import { onDestroy } from 'svelte';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { clipEditorId, insertEditorChannel } from '../../music/studioUi';
-  import { VOICE_SHADERS } from '../../music/visualScenes';
+  import VisualPickButton from './VisualPickButton.svelte';
   import { voiceSourcesFor } from '../../music/visualVoices';
   import { BLEND_MODE_ORDER, blendModeLabel } from '../../types';
   import { clipFxKey, findClip, playableNotes, type ClipVisual, type NotesClip, type TrackId } from '../../music/session';
@@ -318,10 +318,7 @@
       <div class="dressing">
         <span class="eyebrow">With this clip</span>
         <label class="labelled">Visual
-          <select value={clip.visual?.file ?? ''} onchange={(e) => setVisual({ file: (e.target as HTMLSelectElement).value })} title="A visual that fades in when this clip plays and out when it stops">
-            <option value="">None</option>
-            {#each VOICE_SHADERS as v (v.file)}<option value={v.file}>{v.name}</option>{/each}
-          </select>
+          <VisualPickButton file={clip.visual?.file ?? null} none placeholder="None" title="A visual for {clip.name}" onpick={(f) => setVisual({ file: f ?? '' })} />
         </label>
         {#if clip.visual}
           <label class="labelled">Follows

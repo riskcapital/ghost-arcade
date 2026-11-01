@@ -50,7 +50,10 @@ async function evaluate(expression) {
 const files = await evaluate(`(async () => {
   const manifest = await fetch('./ISF/manifest.json').then((r) => r.json());
   const entries = manifest.version === 2 ? manifest.shaders : manifest.shaders.map((f) => ({ file: f }));
-  return entries.map((entry) => entry.file);
+  const library = entries.map((entry) => entry.file);
+  // The Studio's visual voices too, pictured as if a phrase were playing (voiceThumbnails.ts).
+  const { VOICE_SHADERS } = await import('/src/lib/music/visualScenes.ts');
+  return [...library, ...VOICE_SHADERS.map((v) => 'voice:' + v.file)];
 })()`);
 console.log(`${files.length} library shaders`);
 
@@ -61,10 +64,14 @@ for (let start = 0; start < files.length; start += BATCH) {
   const batch = files.slice(start, start + BATCH);
   const rendered = await evaluate(`(async () => {
     const thumbs = await import('/src/lib/isf/thumbnail.ts');
+    const { demoVoiceCode } = await import('/src/lib/music/voiceThumbnails.ts');
     const out = [];
-    for (const file of ${JSON.stringify(batch)}) {
+    for (const entry of ${JSON.stringify(batch)}) {
+      const voice = entry.startsWith('voice:');
+      const file = voice ? entry.slice(6) : entry;
       try {
-        const code = await fetch('./ISF/' + file.split('/').map(encodeURIComponent).join('/')).then((r) => r.text());
+        const raw = await fetch('./ISF/' + file.split('/').map(encodeURIComponent).join('/')).then((r) => r.text());
+        const code = voice ? demoVoiceCode(raw) : raw;
         const dataUrl = await thumbs.generateShaderThumbnail(code, 0.5);
         out.push({ file, key: thumbs.shaderThumbnailKey(code), dataUrl });
       } catch (err) {

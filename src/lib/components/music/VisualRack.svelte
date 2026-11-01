@@ -11,6 +11,8 @@
   import { STUDIO_SETS } from '../../music/studioSets';
   import { voiceSourcesFor, isVoiceDrivenInput, type VoiceSourceId } from '../../music/visualVoices';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
+  import { visualPicker } from '../../music/studioUi';
+  import VisualPickButton from './VisualPickButton.svelte';
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
   import { MAX_STUDIO_VOICES, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
@@ -87,8 +89,7 @@
   }
 
   function addVoice() {
-    const first = VOICE_SHADERS.find((v) => v.family === s.set) ?? VOICE_SHADERS[0];
-    if (addStudioVoice(first.file, 'all')) open = voices.length;
+    visualPicker.set({ current: null, none: false, title: 'Add a voice', pick: (f) => { if (f && addStudioVoice(f, 'all')) open = voices.length; } });
   }
 
   const numberOf = (voice: StudioVoice, input: ShaderInput) => Number(voice.params[input.NAME] ?? input.DEFAULT ?? input.MIN ?? 0);
@@ -152,13 +153,7 @@
             <button class="icon step" onclick={() => stepVoiceLook(i, -1)} aria-label="Previous look for voice {i + 1}" title="Previous look" data-midi-path="studio:voice.{i + 1}.look-prev" data-midi-label="Voice {i + 1} previous look" data-midi-mode="toggle">
               <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 3 4.5 6l3 3" /></svg>
             </button>
-            <select class="pick" value={voice.file} onchange={(e) => replaceStudioVoice(i, (e.target as HTMLSelectElement).value)} aria-label="Voice {i + 1}" title={voiceShaderByFile(voice.file)?.blurb ?? ''}>
-              {#each families as fam (fam.id)}
-                <optgroup label={fam.label}>
-                  {#each fam.voices as v (v.file)}<option value={v.file} title={v.blurb}>{v.name}</option>{/each}
-                </optgroup>
-              {/each}
-            </select>
+            <span class="pick"><VisualPickButton file={voice.file} label="Voice {i + 1}" title="Visual for voice {i + 1}" onpick={(f) => { if (f) replaceStudioVoice(i, f); }} /></span>
             <button class="icon step" onclick={() => stepVoiceLook(i, 1)} aria-label="Next look for voice {i + 1}" title="Next look" data-midi-path="studio:voice.{i + 1}.look-next" data-midi-label="Voice {i + 1} next look" data-midi-mode="toggle">
               <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" /></svg>
             </button>

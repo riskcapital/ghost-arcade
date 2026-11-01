@@ -583,6 +583,17 @@ its On button (or the learnable "Acid line on or off") is on, coming in on
 the next bar; switching to Berlin never starts it. Saved with the set,
 scenes and songs. `acidRuntime.test.ts` holds it to that.
 
+**Choosing a visual** (`VisualPicker.svelte`, `VisualPickButton.svelte`,
+`visualPicker` in studioUi.ts): every place a visual voice is chosen (Play's
+"Add a visual", each voice in the Visuals column and + Voice, the clip
+editor, an instrument's Visual) opens one browser of tiles: a picture, the
+name and what it answers to, filtered by the set it was drawn for, a search
+and the starred ones; arrows, Enter and Esc. Pictures come from the app's
+thumbnail cache, rendered once with the sound inputs set as if a phrase were
+playing (`voiceThumbnails.ts`); `scripts/build-isf-thumbnails.mjs` bakes them
+too. Voices built from several passes only draw in the native renderer, so
+their tiles show their description until a native bake exists.
+
 **Macros in the Studio**: right-click a macro (knob or FX tag) for the same
 editor as VJ mode's macro bar (`MacroKnobBar` with `popoverOnly`, opened via
 `macroEditRequest`): its targets, ranges, auto pulse, effect bundle and name,
