@@ -33,6 +33,8 @@ import { ToneHost } from './tone/toneHost';
 import { DubShotBank } from './dubShotAudio';
 import { BuildFx, type BuildPlanAudio } from './buildFx';
 import { RETURN_IDS, SendReturns, type ReturnId } from './sendReturns';
+
+const MAX_FADER_GAIN = Math.pow(10, 10 / 20);
 import { DUB_SHOT_NOTE, type DubShot } from './dubShots';
 import { toneById } from './tone/tones';
 import { kitById } from './tone/kits';
@@ -78,6 +80,8 @@ interface MelodicVoice {
 /** One mixer channel: its bus feeds the EQ, pan and mute/solo gate, and a meter reads after the gate. */
 interface Strip {
   input: GainNode;
+  trim: GainNode;
+  lowCut: BiquadFilterNode;
   eq: Record<EqBand, BiquadFilterNode>;
   pan: StereoPannerNode;
   gate: GainNode;
@@ -136,6 +140,7 @@ export class MusicAudioEngine {
   /** The mixer's shared reverb, echo and spring (sendReturns.ts). */
   private returns: SendReturns | null = null;
   private returnLevels: Record<ReturnId, number> = { reverb: 0.7, echo: 0.7, spring: 0.7 };
+  private masterMeters: [AnalyserNode, AnalyserNode] | null = null;
   private kickOutUntil = 0;
   private toneChoice: { synth: string | null; keys: string | null; kit: string | null } = { synth: null, keys: null, kit: null };
   private synthPatch: SynthPatch = 'pad';
@@ -320,13 +325,14 @@ export class MusicAudioEngine {
   }
 
   setVolume(instrument: InstrumentId, volume: number): void {
-    this.volumes[instrument] = Math.max(0, Math.min(1, volume));
+    this.volumes[instrument] = Math.max(0, Math.min(MAX_FADER_GAIN, volume));
     // A build's kick drop-out owns the drum fader until its drop.
     if (instrument === 'drums' && this.ctx && this.kickOutUntil > this.ctx.currentTime) return;
     if (this.bus && this.ctx) this.bus[instrument].gain.setTargetAtTime(this.volumes[instrument], this.ctx.currentTime, 0.02);
   }
 
   setMasterVolume(volume: number): void {
+    volume = Math.max(0, Math.min(MAX_FADER_GAIN, volume));
     this.masterVolume = Math.max(0, Math.min(1, volume));
     if (this.masterGain && this.ctx) this.masterGain.gain.setTargetAtTime(this.masterVolume, this.ctx.currentTime, 0.02);
   }
@@ -707,6 +713,9 @@ export class MusicAudioEngine {
     for (const [id, strip] of this.strips) {
       const settings = stripFor(this.mixer, id);
       for (const band of EQ_BAND_IDS) strip.eq[band].gain.setTargetAtTime(settings[band], t, MIXER_RAMP_SECONDS);
+      strip.eq.mid.frequency.setTargetAtTime(settings.midFreq ?? 1100, t, MIXER_RAMP_SECONDS);
+      strip.trim.gain.setTargetAtTime(Math.pow(10, (settings.trim ?? 0) / 20), t, MIXER_RAMP_SECONDS);
+      strip.lowCut.frequency.setTargetAtTime(settings.lowCut ? 90 : 10, t, MIXER_RAMP_SECONDS);
       strip.pan.pan.setTargetAtTime(settings.pan, t, MIXER_RAMP_SECONDS);
       let open = channelAudible(this.mixer, id, this.mixerChannels);
       if (isInputChannel(id)) open = open && (this.inputs[INPUT_CHANNELS.indexOf(id)]?.monitor ?? true);
@@ -728,6 +737,28 @@ export class MusicAudioEngine {
     return new Map([...this.strips].map(([id, strip]) => [id, strip.gate as AudioNode]));
   }
 
+  /** The master's left and right peaks, 0-1 on the meters' scale (-60 to 0 dB). */
+  masterLevels(): [number, number] {
+    if (!this.ctx || !this.output) return [0, 0];
+    if (!this.masterMeters) {
+      const split = this.ctx.createChannelSplitter(2);
+      const l = this.ctx.createAnalyser();
+      const r = this.ctx.createAnalyser();
+      l.fftSize = r.fftSize = 512;
+      this.output.connect(split);
+      split.connect(l, 0);
+      split.connect(r, 1);
+      this.masterMeters = [l, r];
+    }
+    const buf = new Float32Array(512);
+    return this.masterMeters.map((a) => {
+      a.getFloatTimeDomainData(buf);
+      let peak = 0;
+      for (const x of buf) peak = Math.max(peak, Math.abs(x));
+      return peak <= 0.001 ? 0 : Math.max(0, Math.min(1, (20 * Math.log10(peak) + 60) / 60));
+    }) as [number, number];
+  }
+
   /** The shared returns' levels into the master. */
   setReturns(levels: Record<ReturnId, number>): void {
     if (levels === this.returnLevels) return;
@@ -737,7 +768,14 @@ export class MusicAudioEngine {
 
   private makeStrip(ctx: AudioContext, input: GainNode): Strip {
     const eq = {} as Record<EqBand, BiquadFilterNode>;
-    let last: AudioNode = input;
+    // Trim, then a low cut that rests well below hearing until it is switched in.
+    const trim = ctx.createGain();
+    const lowCut = ctx.createBiquadFilter();
+    lowCut.type = 'highpass';
+    lowCut.frequency.value = 10;
+    lowCut.Q.value = 0.7;
+    input.connect(trim).connect(lowCut);
+    let last: AudioNode = lowCut;
     for (const band of EQ_BAND_IDS) {
       const f = ctx.createBiquadFilter();
       f.type = EQ_BANDS[band].type;
@@ -763,7 +801,7 @@ export class MusicAudioEngine {
         return [id, g];
       })) as Record<ReturnId, GainNode>;
     }
-    return { input, eq, pan, gate, meter, sends };
+    return { input, trim, lowCut, eq, pan, gate, meter, sends };
   }
 
   private applyRouting(): void {

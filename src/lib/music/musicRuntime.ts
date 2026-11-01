@@ -293,6 +293,11 @@ export function playAll(): void {
 }
 
 /** Silence everything at once, effect tails included. */
+/** The master's left and right meter levels, 0-1. */
+export function masterLevels(): [number, number] {
+  return audio.peekNow() === null ? [0, 0] : audio.masterLevels();
+}
+
 /** The studio's audio engine, for recording its mix and stems (studioRecorder.ts). */
 export function studioAudio(): MusicAudioEngine {
   ensureMusicRuntime();

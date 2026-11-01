@@ -17,6 +17,7 @@ import { invoke, isElectron } from '../bridge';
 import { downloadBlob } from '../recording/offlineRender';
 import { generateUUID } from '../utils/uuid';
 import { studioAudio } from './musicRuntime';
+import { musicStudio } from './musicStudioStore';
 import { CHANNEL_LABELS, type ChannelId } from './mixer';
 import { encodeWav } from './wav';
 
@@ -178,7 +179,9 @@ async function begin(opts: StudioRecOptions): Promise<void> {
       captures.push(await capture(ctx, 'mix', master));
     }
     if (opts.stems && ctx) {
-      for (const [id, node] of engine.stemNodes()) captures.push(await capture(ctx, id, node));
+      const mixer = get(musicStudio).mixer as Record<string, { arm?: boolean } | undefined>;
+      const armed = Object.entries(mixer).filter(([, st]) => st?.arm).map(([id]) => id);
+      for (const [id, node] of engine.stemNodes()) if (!armed.length || armed.includes(id)) captures.push(await capture(ctx, id, node));
     }
     studioRec.set({ phase: 'recording', startedAt: performance.now(), mode: opts.mode });
   } catch (err) {

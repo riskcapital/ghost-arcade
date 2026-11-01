@@ -393,6 +393,7 @@ const MIX_CONTROLS: StudioControl[] = [
       { id: `mix.${id}.pan`, label: `${name} pan`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setStrip(id, { pan: v * 2 - 1 }) },
       { id: `mix.${id}.mute`, label: `${name} mute`, group: 'Mixer', kind: 'toggle', run: () => musicStudio.setStrip(id, { mute: !strip().mute }) },
       { id: `mix.${id}.solo`, label: `${name} solo`, group: 'Mixer', kind: 'toggle', run: () => musicStudio.setStrip(id, { solo: !strip().solo }) },
+      { id: `mix.${id}.trim`, label: `${name} trim`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setStrip(id, { trim: Math.round((v * 24 - 12) * 2) / 2 }) },
       ...RETURN_IDS.map((r): StudioControl => ({
         id: `mix.${id}.send.${r}`, label: `${name} to the ${r}`, group: 'Mixer', kind: 'value',
         run: (v) => musicStudio.setStrip(id, { sends: { reverb: 0, echo: 0, spring: 0, ...strip().sends, [r]: v } }),
