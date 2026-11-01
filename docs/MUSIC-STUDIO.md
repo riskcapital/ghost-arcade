@@ -566,6 +566,23 @@ read once a frame and shared; mixer, insert and voice modulation is applied
 live, never written into the saved project. Cables and their settings save
 with the set, scenes, sessions and songs.
 
+**Sound, FX and Visual per instrument** (`instrumentDress.ts`,
+`InstrumentDress.svelte`, first on the XY pad): Sound plays the instrument
+with a tone-library tone instead of its own (into its own channel, so its
+mixer strip and inserts still apply) and, on a pad, sets what Y does: the
+built-in space, brightness (how hard notes play), the reverb or echo send or
+the pan (applied live through the same modulation as cables, not saved into
+the mixer). X stays pitch, in key. FX opens the instrument's insert chain.
+Visual adds a visual voice tagged `inst:<id>` that follows it. Saved in
+`dress` with the set, scenes, sessions and songs; MIDI-learnable as XY next
+and previous sound and next Y axis. Drop the header into any module to give
+that instrument the same.
+
+**Acid line on and off**: the Berlin acid line plays with the beat only when
+its On button (or the learnable "Acid line on or off") is on, coming in on
+the next bar; switching to Berlin never starts it. Saved with the set,
+scenes and songs. `acidRuntime.test.ts` holds it to that.
+
 **Macros in the Studio**: right-click a macro (knob or FX tag) for the same
 editor as VJ mode's macro bar (`MacroKnobBar` with `popoverOnly`, opened via
 `macroEditRequest`): its targets, ranges, auto pulse, effect bundle and name,

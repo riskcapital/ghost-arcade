@@ -11,6 +11,9 @@
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
+  import InstrumentDress from './InstrumentDress.svelte';
+  import { Y_AXES, yAxisTarget, type YAxis } from '../../music/instrumentDress';
+  import { setPerformMod } from '../../music/musicRuntime';
   import { BOWL_KITS, bowlSlotNotes } from '../../music/soundSlots';
   import { PAD_PATCHES, padPatchById, soundById, soundGroups } from '../../music/sounds/library';
 
@@ -69,15 +72,35 @@
     xyKey = sig;
   });
 
+  // The XY's sound and what Y does (Sound in its header).
+  const xyDress = $derived(s.dress.xy ?? {});
+  const xyAxis = $derived<YAxis>(xyDress.yAxis ?? 'space');
+  let xyTone: string | undefined;
+  // Moving Y off a send or the pan hands it back to the mixer.
+  $effect(() => {
+    const keep = yAxisTarget('xy', xyAxis);
+    for (const a of Y_AXES) {
+      const t = yAxisTarget('xy', a.id);
+      if (t && t !== keep) setPerformMod(t, null);
+    }
+  });
+
   function xyPlay(x: number, y: number) {
     lastXY = { x, y };
+    // Y on a send or the pan moves it live, note or not.
+    const target = yAxisTarget('xy', xyAxis);
+    if (target) setPerformMod(target, y);
     const note = scaleNote(s.key, Math.round(x * XY_STEPS), 48);
     if (note === xyNote) return;
     const previous = xyNote;
+    const previousTone = xyTone;
     xyNote = note;
+    xyTone = xyDress.tone;
+    // Brightness and the built-in space play harder higher up; the rest at an even touch.
+    const velocity = xyAxis === 'space' || xyAxis === 'bright' ? 0.45 + y * 0.55 : 0.8;
     // The new note first, so the voice glides instead of restarting.
-    playNote('xy', note, 0.45 + y * 0.55, 'screen');
-    if (previous !== null) releaseNote('xy', previous, 'screen');
+    playNote('xy', note, velocity, 'screen', xyTone);
+    if (previous !== null) releaseNote('xy', previous, 'screen', previousTone);
   }
 
   function xyAt(e: PointerEvent) {
@@ -104,7 +127,7 @@
 
   function xyUp() {
     dragging = false;
-    if (xyNote !== null) releaseNote('xy', xyNote, 'screen');
+    if (xyNote !== null) releaseNote('xy', xyNote, 'screen', xyTone);
     xyNote = null;
   }
 </script>
@@ -186,6 +209,7 @@
 {:else if part === 'xy'}
   <StudioModule title="XY · Space" subtitle="Touch to play" grow>
     {#snippet head()}
+      <InstrumentDress instrument="xy" builtIn="XY tone" axes />
       <StudioJack id="audio:xy" label="Out" title="XY tone" />
       <StudioJack id="cv:inst.xy.level" label="Level" title="XY level, as a control signal" />
       <StudioJack id="cv:xy.x" label="X" />
@@ -214,8 +238,13 @@
         e.stopPropagation();
       }}
     >
-      <span class="corner bl ga-eyebrow">Drone · near</span>
-      <span class="corner tr ga-eyebrow">Bowls · vast</span>
+      {#if !xyDress.tone && xyAxis === 'space'}
+        <span class="corner bl ga-eyebrow">Drone · near</span>
+        <span class="corner tr ga-eyebrow">Bowls · vast</span>
+      {:else}
+        <span class="corner bl ga-eyebrow">Low</span>
+        <span class="corner tr ga-eyebrow">High · {Y_AXES.find((a) => a.id === xyAxis)?.label.replace(' (as built)', '')}</span>
+      {/if}
       {#each trail as p, i (i)}
         <span class="trail" style="left: {p.x * 100}%; top: {(1 - p.y) * 100}%; opacity: {(i + 1) / (trail.length + 4)}"></span>
       {/each}

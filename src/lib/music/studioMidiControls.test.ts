@@ -63,6 +63,7 @@ describe('the studio controls a controller can learn', () => {
       ...Array.from({ length: 32 }, (_, i) => `dubshot.${i + 1}`),
       'keys.mode-next', 'keys.mode-prev', 'keys.lock',
       'acid.toggle',
+      'xy.sound-next', 'xy.sound-prev', 'xy.y-next',
       'tempo.tap', 'tempo.downbeat', 'tempo.nudge-down', 'tempo.nudge-up', 'tempo.half', 'tempo.double',
       'build.toggle', 'build.drop', 'build.cancel', 'build.length-next', 'build.style-next',
       ...['synth', 'keys', 'drums', 'drone', 'bowls', 'acid', 'xy', 'dubbass', 'siren', 'shots', 'analog', 'scan'].flatMap((id) => ['volume', 'pan', 'mute', 'solo', 'trim', 'send.reverb', 'send.echo', 'send.spring'].map((c) => `mix.${id}.${c}`)),
