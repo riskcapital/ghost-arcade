@@ -521,3 +521,40 @@ export function captureJSAnimationThumbnail(
     }, waitMs);
   });
 }
+
+/**
+ * Run a page for a moment in a hidden frame and report the errors it throws
+ * while it starts and draws its first frames: what a layer playing it would
+ * hit. Used before saving edited code, so code that throws is not saved.
+ */
+export function trialRunJSAnimation(jsAnimation: JSAnimationSource, ms = 1500): Promise<JSAnimationPageError[]> {
+  return new Promise((resolve) => {
+    let page: IframePage;
+    try {
+      page = iframePage(jsAnimation);
+    } catch (err) {
+      resolve([{ message: err instanceof Error ? err.message : String(err), file: null, line: null, count: 1 }]);
+      return;
+    }
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position: fixed; left: -9999px; top: -9999px; width: 320px; height: 180px; border: none; pointer-events: none;';
+    const url = URL.createObjectURL(new Blob([page.html], { type: 'text/html' }));
+    iframe.src = url;
+    document.body.appendChild(iframe);
+    setTimeout(() => {
+      let errors: JSAnimationPageError[] = [];
+      try {
+        const pageWindow = iframe.contentWindow as (Window & { __ghostSketchErrors?: Array<{ message: string; line: number | null; count: number }> }) | null;
+        errors = (pageWindow?.__ghostSketchErrors ?? []).map((e) => {
+          const place = page.place(e.line);
+          return { message: e.message, file: place?.file ?? null, line: place?.line ?? null, count: e.count };
+        });
+      } catch {
+        errors = [];
+      }
+      iframe.remove();
+      URL.revokeObjectURL(url);
+      resolve(errors);
+    }, ms);
+  });
+}
