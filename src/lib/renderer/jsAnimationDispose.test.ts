@@ -9,6 +9,7 @@ function fakeElement(tag: string) {
     width: 0,
     height: 0,
     remove: vi.fn(),
+    addEventListener: vi.fn(),
     getContext: () => ({ fillRect() {}, fillStyle: '' }),
   };
 }
