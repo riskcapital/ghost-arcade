@@ -15,6 +15,7 @@ import type { VisualAudioState } from '../audio/visualAudio';
 import { ghostAudioCommandFieldsFromVisualAudio } from '../audio/ghostAudioUniform';
 import { nativeShaderSourceFromJavascript } from './nativeJsShaderSource';
 import { setJSAnimationParamForwarder } from './js-animation';
+import { singlePlayablePage } from '../p5sketch/wrapSketch';
 
 const JS_SOURCE_TYPES = new Set(['threejs', 'p5js', 'javascript']);
 const LINGER_MS = 20_000;
@@ -129,7 +130,9 @@ export class NativeJsCanvasHosts {
     this.records.set(src.id, next);
     this.call('js_source_open', {
       id: src.id,
-      html: jsAnimation.htmlCode,
+      // A sketch kept as files plays as one document with its files folded
+      // in: the host serves only the page and the bundled libraries.
+      html: singlePlayablePage(jsAnimation),
       width,
       height,
       fps: HOST_FPS,

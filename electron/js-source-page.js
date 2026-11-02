@@ -54,9 +54,11 @@ export function buildHostHtml(html) {
   const wantsP5 = /p5\.(min\.)?js|new\s+p5\s*\(/i.test(source);
   // Pages written to run standalone load p5 from a CDN. Loading the bundled
   // copy as well would start a second global-mode sketch, so remote p5 tags
-  // give way to the local one.
+  // give way to the local one, and a p5.sound tag loads the bundled add-on.
   const page = wantsP5
-    ? source.replace(/<script\b[^>]*\bsrc\s*=\s*["']https?:\/\/[^"']*\/p5(?:\.min)?\.js["'][^>]*>\s*<\/script>/gi, '')
+    ? source
+      .replace(/<script\b[^>]*\bsrc\s*=\s*["']https?:\/\/[^"']*\/p5(?:\.min)?\.js["'][^>]*>\s*<\/script>/gi, '')
+      .replace(/<script\b[^>]*\bsrc\s*=\s*["'][^"']*\bp5\.sound(?:\.min)?\.js["'][^>]*>\s*<\/script>/gi, '<script src="/lib/p5.sound.min.js"></script>')
     : source;
   const transparent = wantsTransparentBackground(source);
   const shims = [
