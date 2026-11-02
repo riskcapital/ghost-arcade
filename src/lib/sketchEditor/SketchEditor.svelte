@@ -26,7 +26,7 @@
   import { recordDiscreteAction } from '../stores/historyHooks';
   import { showToast } from '../stores/errorToast';
   import { openExternalUrl } from '../bridge';
-  import { disposeJSAnimationContext, getJSAnimationContext, restartJSAnimation } from '../renderer/js-animation';
+  import { disposeJSAnimationContext, getJSAnimationContext, restartJSAnimation, trialRunJSAnimation } from '../renderer/js-animation';
   import { generateUUID, type JSAnimationSource, type MediaSource } from '../types';
   import { annotateSketch, type SketchNote } from './sketchAnnotations';
   import { GETTING_STARTED, type SketchLink } from './sketchConcepts';
@@ -286,8 +286,22 @@
     return null;
   }
 
-  /** Save the sketch; returns false (and saves nothing) when the code has an error. */
-  function save(): boolean {
+  /** True while Save is test-running the code. */
+  let checking = $state(false);
+
+  function blockSave(problem: { file: string; line: number | null; message: string }) {
+    saveBlocked = problem;
+    if (problem.file) reveal(problem.file, problem.line);
+    showToast(`Not saved: ${problem.file ? `${problem.file}${problem.line !== null ? `, line ${problem.line}` : ''}: ` : ''}${problem.message}`, 'error');
+  }
+
+  /**
+   * Save the sketch. The code is checked first: it must compile, then it is
+   * run for a moment out of sight, and anything it throws while starting
+   * and drawing stops the save. Returns false (saving nothing) on an error.
+   */
+  async function save(): Promise<boolean> {
+    if (checking) return false;
     if (previewTimer) {
       clearTimeout(previewTimer);
       previewTimer = null;
@@ -299,9 +313,27 @@
     }
     const problem = checkBeforeSave();
     if (problem) {
-      saveBlocked = problem;
-      reveal(problem.file, problem.line);
-      showToast(`Not saved: ${problem.file}${problem.line !== null ? `, line ${problem.line}` : ''}: ${problem.message}`, 'error');
+      blockSave(problem);
+      return false;
+    }
+    const key = textsKey(texts);
+    checking = true;
+    let errors: Awaited<ReturnType<typeof trialRunJSAnimation>> = [];
+    try {
+      errors = await trialRunJSAnimation(sketchWithFiles(base, currentFiles()));
+    } finally {
+      checking = false;
+    }
+    // Typed on while it ran: check what is there now.
+    if (textsKey(texts) !== key) return save();
+    if (errors.length > 0) {
+      const first = errors[0];
+      const plain = explainSketchError(first.message);
+      blockSave({
+        file: first.file ?? '',
+        line: first.line,
+        message: `${cleanErrorMessage(first.message)}${plain ? ` ${plain}` : ''}${first.file ? '' : ' (raised inside p5.js by the code)'}`,
+      });
       return false;
     }
     saveBlocked = null;
@@ -419,9 +451,9 @@
     closeSketchEditor();
   }
 
-  function saveAndClose() {
+  async function saveAndClose() {
     // With an error in the code, stay open on it instead of closing unsaved.
-    if (!save()) {
+    if (!(await save())) {
       confirmClose = false;
       return;
     }
@@ -732,7 +764,7 @@
             <span>Learning mode</span>
           </label>
           <span class="save-state" class:unsaved={dirty} aria-live="polite">{savedFlash ? 'Saved' : dirty ? 'Unsaved changes' : ''}</span>
-          <button class="primary" onclick={save} disabled={!!proposal} title="Save to the layer and the media tray (Ctrl+S)">Save</button>
+          <button class="primary" onclick={() => save()} disabled={!!proposal || checking} title="Save to the layer and the media tray (Ctrl+S). The code is checked and test-run first.">{checking ? 'Checking…' : 'Save'}</button>
           <button class="ghost" onclick={requestClose} title="Close (Esc)">Close</button>
         </div>
       {/if}
@@ -798,7 +830,7 @@
             <div class="problems" role="status">
               {#if saveBlocked}
                 <button class="problem error" onclick={() => saveBlocked && reveal(saveBlocked.file, saveBlocked.line)}>
-                  <span class="problem-line">Not saved · {saveBlocked.file}{saveBlocked.line !== null ? `, line ${saveBlocked.line}` : ''}</span>
+                  <span class="problem-line">Not saved{saveBlocked.file ? ` · ${saveBlocked.file}${saveBlocked.line !== null ? `, line ${saveBlocked.line}` : ''}` : ''}</span>
                   <span class="problem-text">{saveBlocked.message}</span>
                   <span class="problem-plain">Fix this and save again. The layer keeps playing the last version that worked.</span>
                 </button>
