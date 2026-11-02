@@ -31,7 +31,7 @@
   import { annotateSketch, type SketchNote } from './sketchAnnotations';
   import { GETTING_STARTED, type SketchLink } from './sketchConcepts';
   import { canvasSentence, findSketchTips, type SketchRuntime, type SketchTip } from './sketchTips';
-  import { firstSyntaxError, languageOf, lineAt, readSketchFile } from './sketchSource';
+  import { firstSyntaxError, languageOf, lineAt, readSketchFile, saveProblem } from './sketchSource';
   import { cleanErrorMessage, explainSketchError, type SketchError } from './sketchErrors';
   import { readSketchRun, type SketchRunStatus } from './sketchRuntime';
   import { editorFiles, errorInFiles, fileOrder, isTextFile, sketchWithFiles, sketchWrapping, type EditorFile, type SketchWrapping } from './sketchFiles';
@@ -185,6 +185,7 @@
 
   function onCodeChange(path: string, next: string) {
     texts[path] = next;
+    saveBlocked = null;
     if (analyseTimer) clearTimeout(analyseTimer);
     analyseTimer = setTimeout(analyse, ANALYSE_DELAY_MS);
     if (previewTimer) clearTimeout(previewTimer);
@@ -271,7 +272,22 @@
   let savedFlashTimer: ReturnType<typeof setTimeout> | null = null;
   let confirmClose = $state(false);
 
-  function save() {
+  /** Why the sketch cannot be saved yet, from the last Save; cleared as soon as the code changes. */
+  let saveBlocked = $state<{ file: string; line: number | null; message: string } | null>(null);
+
+  /** The first code file that would not run, with the reason. */
+  function checkBeforeSave(): { file: string; line: number | null; message: string } | null {
+    for (const path of tabs) {
+      const language = languageOf(path);
+      if (!language) continue;
+      const problem = saveProblem(texts[path] ?? '', language);
+      if (problem) return { file: path, ...problem };
+    }
+    return null;
+  }
+
+  /** Save the sketch; returns false (and saves nothing) when the code has an error. */
+  function save(): boolean {
     if (previewTimer) {
       clearTimeout(previewTimer);
       previewTimer = null;
@@ -279,8 +295,16 @@
     const base = savedSource;
     if (!base || !dirty) {
       flashSaved();
-      return;
+      return true;
     }
+    const problem = checkBeforeSave();
+    if (problem) {
+      saveBlocked = problem;
+      reveal(problem.file, problem.line);
+      showToast(`Not saved: ${problem.file}${problem.line !== null ? `, line ${problem.line}` : ''}: ${problem.message}`, 'error');
+      return false;
+    }
+    saveBlocked = null;
     // Saving a shipped sketch makes an edited copy in the tray and points
     // every copy at it; later saves update the copy.
     const copy = isShipped ? { itemId: `sketch-${generateUUID()}`, name: `${name} (edited)` } : null;
@@ -351,6 +375,7 @@
     savedSource = jsAnimation;
     savedTexts = { ...texts };
     flashSaved();
+    return true;
   }
 
   /**
@@ -395,7 +420,11 @@
   }
 
   function saveAndClose() {
-    save();
+    // With an error in the code, stay open on it instead of closing unsaved.
+    if (!save()) {
+      confirmClose = false;
+      return;
+    }
     closeSketchEditor();
   }
 
@@ -765,8 +794,15 @@
             {/if}
           </div>
 
-          {#if syntax || pageErrors.length > 0}
+          {#if saveBlocked || syntax || pageErrors.length > 0}
             <div class="problems" role="status">
+              {#if saveBlocked}
+                <button class="problem error" onclick={() => saveBlocked && reveal(saveBlocked.file, saveBlocked.line)}>
+                  <span class="problem-line">Not saved · {saveBlocked.file}{saveBlocked.line !== null ? `, line ${saveBlocked.line}` : ''}</span>
+                  <span class="problem-text">{saveBlocked.message}</span>
+                  <span class="problem-plain">Fix this and save again. The layer keeps playing the last version that worked.</span>
+                </button>
+              {/if}
               {#if syntax}
                 <button class="problem" onclick={() => syntax && reveal(syntax.file, syntax.line)}>
                   <span class="problem-line">{syntax.file}, line {syntax.line}</span>
