@@ -13,6 +13,11 @@ on:
 permissions:
   contents: write
 
+# Releases ship without the Music Studio, which becomes a paid add-on
+# (src/lib/features.ts). Dev builds keep it on.
+env:
+  VITE_MUSIC_STUDIO: 'off'
+
 jobs:
   # Pre-create the empty release on the cross-repo target. softprops/
   # action-gh-release@v2 can auto-create releases ONLY on the same repo
