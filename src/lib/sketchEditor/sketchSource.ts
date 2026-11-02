@@ -262,3 +262,53 @@ export function freeName(taken: Set<string>, base: string): string {
   if (!taken.has(base)) return base;
   for (let i = 2; ; i++) if (!taken.has(`${base}${i}`)) return `${base}${i}`;
 }
+
+/** Why a file cannot be saved: where, and what the JavaScript engine says is wrong. */
+export interface SaveProblem {
+  line: number | null;
+  message: string;
+}
+
+/**
+ * Check a file before it is saved. The parser finds where the code stops
+ * reading; for a script, the JavaScript engine (compiling, never running it)
+ * says what is wrong there. Module-only syntax (import, export, top-level
+ * await) is left to the parser, since a sketch file may legitimately use it.
+ */
+export function saveProblem(text: string, language: SketchLanguage): SaveProblem | null {
+  const at = firstSyntaxError(readSketchFile(text, language));
+  let engine: string | null = null;
+  if (language === 'js') {
+    try {
+      // Compiles the code without running it.
+      new Function(text);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const moduleOnly = /\b(import|export)\b|await is only valid|Cannot use import/i.test(message);
+      if (err instanceof SyntaxError && !moduleOnly) engine = message;
+    }
+  }
+  if (at === null && engine === null) return null;
+  return {
+    line: at !== null ? lineAt(text, at) : engineLine(text, engine!),
+    message: engine ?? 'The code cannot be read here: look for a missing bracket, comma or quote.',
+  };
+}
+
+/**
+ * Where the engine's error is, when the parser did not mark it: compile the
+ * file a line at a time; the first prefix that fails with the same error (not
+ * just "the code ended early") ends on the line at fault.
+ */
+function engineLine(text: string, message: string): number | null {
+  const lines = text.split('\n');
+  for (let n = 1; n <= lines.length; n++) {
+    try {
+      new Function(lines.slice(0, n).join('\n'));
+    } catch (err) {
+      const m = err instanceof Error ? err.message : '';
+      if (m === message && !/Unexpected end of input|missing \) after|Unterminated/i.test(m)) return n;
+    }
+  }
+  return null;
+}
