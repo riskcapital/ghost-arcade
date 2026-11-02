@@ -16,6 +16,7 @@
 
 import type { IntegratedEffectType } from '../types';
 import { STUDIO_PLUGIN_ID, defaultStudioSource } from '../music/studioPlugin';
+import { MUSIC_STUDIO } from '../features';
 
 // ─── Plugin Param Definitions ───────────────────────────────────────────────
 
@@ -715,7 +716,7 @@ registerPlugin({
 // ─── Music Studio — the studio's visual voices as one picture ─────────
 // Its controls are the studio itself (open it from the clip or the layer);
 // the instance holds the voices, their sounds, looks and levels.
-registerPlugin({
+if (MUSIC_STUDIO) registerPlugin({
   id: STUDIO_PLUGIN_ID,
   name: 'Music Studio',
   description: 'Visuals that follow the music: a stack of voices, each following one sound (the kick, the bass, the chords), mixed into one picture. Load a scene and change voices from the studio.',

@@ -94,6 +94,7 @@
   import AbletonCountdown from './ableton/AbletonCountdown.svelte';
   import { abletonConnected } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
+  import { MUSIC_STUDIO } from '../features';
   import VJMusicStudio from './music/VJMusicStudio.svelte';
   import StudioDeckStrip from './music/StudioDeckStrip.svelte';
   import StudioView from './music/StudioView.svelte';
@@ -6026,6 +6027,7 @@
               Sequencer
             </button>
 
+            {#if MUSIC_STUDIO}
             <button
               class="vj-seq-toggle-btn dock-labelled-btn"
               class:active={$musicStudio.isOpen}
@@ -6039,6 +6041,7 @@
               </svg>
               Music
             </button>
+            {/if}
 
             {#if $vjClipLauncher.isLive}
               <button
@@ -7073,9 +7076,11 @@
     </div>
 
     <VJLayerSequencer />
-    <VJMusicStudio />
-    <StudioDeckStrip />
-    <StudioView nativePreview={nativePreviewActive} />
+    {#if MUSIC_STUDIO}
+      <VJMusicStudio />
+      <StudioDeckStrip />
+      <StudioView nativePreview={nativePreviewActive} />
+    {/if}
 </div>
 {/if}
 
