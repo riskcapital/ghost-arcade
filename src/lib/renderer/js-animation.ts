@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import type { JSAnimationSource } from '../types';
 import { singlePlayableDocument, type SketchPlace } from '../p5sketch/wrapSketch';
 import { getVisualAudioSnapshot, type VisualAudioState } from '../audio/visualAudio';
+import { ghostAudioCommandFieldsFromVisualAudio } from '../audio/ghostAudioUniform';
 
 /**
  * Inject runtime shims into user-supplied Three.js / p5.js HTML before
@@ -110,25 +111,14 @@ const SILENT_PAGE_AUDIO: PageAudio = {
   level: 0, bass: 0, mid: 0, treble: 0, high: 0, beat: 0, beatPhase: 0, bpm: 0, centroid: 0, kick: 0, snare: 0, active: false,
 };
 
-function clampFinite(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, Number.isFinite(value) ? value : 0));
-}
-
+/**
+ * The same reading the offscreen page hosts send on desktop
+ * (ghostAudioCommandFieldsFromVisualAudio), so a page hears the same values
+ * wherever it plays.
+ */
 export function pageAudioFrom(audio: VisualAudioState): PageAudio {
-  return {
-    level: clampFinite(audio.level, 0, 1),
-    bass: Math.max(clampFinite(audio.bass, 0, 1), clampFinite(audio.bassFast * 0.9, 0, 1)),
-    mid: clampFinite(audio.mid, 0, 1),
-    treble: clampFinite(audio.treble, 0, 1),
-    high: clampFinite(audio.high, 0, 1),
-    beat: clampFinite(audio.beat, 0, 1),
-    beatPhase: clampFinite(audio.beatPhase, 0, 1),
-    bpm: clampFinite(audio.bpm, 0, 300),
-    centroid: clampFinite(audio.centroid, 0, 1),
-    kick: clampFinite(audio.kick, 0, 1),
-    snare: clampFinite(audio.snare, 0, 1),
-    active: !!audio.isActive,
-  };
+  const { beat_phase, ...fields } = ghostAudioCommandFieldsFromVisualAudio(audio);
+  return { ...fields, beatPhase: beat_phase };
 }
 
 /** Pages hear the show about 30 times a second; every page shares one reading. */
