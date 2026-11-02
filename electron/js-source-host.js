@@ -82,6 +82,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
   // Files a page may load from its own origin; everything else is a 404.
   function resolveAsset(pathname) {
     if (pathname === '/lib/p5.min.js') return path.join(libDir, 'p5.min.js');
+    if (pathname === '/lib/p5.sound.min.js') return path.join(libDir, 'p5.sound.min.js');
     const buildFile = THREE_BUILD_FILES.get(pathname);
     if (buildFile) return path.join(threeDir, 'build', buildFile);
     for (const prefix of THREE_ADDON_PREFIXES) {
