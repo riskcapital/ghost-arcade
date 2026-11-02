@@ -227,7 +227,8 @@
     stroke: currentColor;
     stroke-width: 1.75;
     stroke-linecap: square;
-    color: var(--text-secondary, #9aa0ac);
+    /* The deep royal blue of the toolbar's Stage and sim icons and the layer menu. */
+    color: var(--ga-icon, #5278ff);
     transition: color 0.12s ease;
   }
   .choice-icon .solid {
@@ -267,7 +268,6 @@
   }
 
   /* The row being pointed at is the one place the accent shows. */
-  .choice:is(:hover, :focus-visible) .choice-icon,
   .choice:is(:hover, :focus-visible) .choice-arrow { color: var(--accent-primary, #ff725f); }
   .choice:is(:hover, :focus-visible) .choice-arrow { transform: translateX(4px); }
 
