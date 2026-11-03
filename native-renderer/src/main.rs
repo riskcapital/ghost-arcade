@@ -4816,6 +4816,11 @@ struct App {
     /// these are dropped at the registry cap; graph and stdlib shaders are
     /// sent once and kept.
     isf_shader_last_used: HashMap<String, u64>,
+    /// The frame each bound ISF shader first rendered on. FRAMEINDEX counts
+    /// from it (ISF semantics: frames this shader has rendered), so a shader
+    /// bound mid-session still sees FRAMEINDEX 0 on its first frame and can
+    /// initialise its persistent buffers.
+    isf_shader_first_frame: HashMap<String, u64>,
     isf_shader_use_tick: u64,
     /// Hashed ids of shaders dropped at the cap. A layer bound to one is
     /// reported in `layers_snapshot` so the editor sends the source again.
@@ -5232,6 +5237,7 @@ impl App {
             shader_isf_hosts: HashMap::new(),
             shader_reads_inputs: HashMap::new(),
             isf_shader_last_used: HashMap::new(),
+            isf_shader_first_frame: HashMap::new(),
             isf_shader_use_tick: 0,
             evicted_shader_ids: HashSet::new(),
             isf_shader_generation: 0,
@@ -16115,14 +16121,20 @@ impl App {
             .cloned()
             .collect::<HashSet<_>>();
         self.isf_shader_use_tick += 1;
+        // A shader that stopped rendering starts counting again when it returns.
+        self.isf_shader_first_frame.retain(|id, _| shader_ids.contains(id));
         for shader_id in shader_ids {
+            let first = *self
+                .isf_shader_first_frame
+                .entry(shader_id.clone())
+                .or_insert(frame_index);
             if let Some(used) = self.isf_shader_last_used.get_mut(&shader_id) {
                 *used = self.isf_shader_use_tick;
             }
             if let Some(state) = self.isf_uniforms.get_mut(&shader_id) {
                 state.time = time;
                 state.time_delta = frame_delta;
-                state.frame_index = frame_index;
+                state.frame_index = frame_index.saturating_sub(first);
                 state.audio0 = self.audio0;
                 state.audio1 = self.audio1;
                 state.audio2 = self.audio2;
