@@ -44,7 +44,8 @@
       </div>
       <select value="" onchange={add} aria-label="Add an effect">
         <option value="" disabled>Add effect…</option>
-        {#each MACRO_FX as def (def.type)}<option value={def.type}>{def.label}</option>{/each}
+        <optgroup label="Classic">{#each MACRO_FX.filter((d) => d.group !== 'wild') as def (def.type)}<option value={def.type}>{def.label}</option>{/each}</optgroup>
+            <optgroup label="Wild">{#each MACRO_FX.filter((d) => d.group === 'wild') as def (def.type)}<option value={def.type} title={def.blurb ?? ''}>{def.label}</option>{/each}</optgroup>
       </select>
       <button class="close" onclick={() => insertEditorChannel.set(null)} aria-label="Close effects"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
     </header>
@@ -93,7 +94,8 @@
     top: var(--ga-bar-h, 48px);
     right: 0;
     bottom: 0;
-    width: 440px;
+    /* Covers the right rack exactly: its column plus the view's side padding. */
+    width: calc(var(--studio-right-w, 356px) + 14px);
     z-index: 8;
     display: flex;
     flex-direction: column;

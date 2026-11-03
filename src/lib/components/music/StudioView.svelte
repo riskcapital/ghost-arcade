@@ -427,7 +427,9 @@
     inset: 0;
     z-index: 60;
     display: grid;
-    grid-template-columns: 336px minmax(0, 1fr) 356px;
+    /* The right rack's width; the effects editor opens over it at the same width. */
+    --studio-right-w: 356px;
+    grid-template-columns: 336px minmax(0, 1fr) var(--studio-right-w);
     grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 196px;
     grid-template-areas:
       'bar bar bar'

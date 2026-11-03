@@ -557,6 +557,8 @@ function createMusicStudioStore() {
         // An insert is heard at once: its mix starts up, not at the macro's resting 0.
         if (fx.params.mix && fx.params.mix.value === 0) fx.params.mix = { ...fx.params.mix, value: 0.5 };
         if (type === 'autopan' && fx.params.depth) fx.params.depth = { ...fx.params.depth, value: 0.6 };
+        // A glitch insert glitches at once; on a macro it waits for the knob.
+        if (type === 'glitch' && fx.params.chance) fx.params.chance = { ...fx.params.chance, value: 0.35 };
         return { ...s, inserts: { ...s.inserts, [channel]: [...(s.inserts[channel] ?? []), fx] } };
       }),
     removeInsert: (channel: string, id: string) =>

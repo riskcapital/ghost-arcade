@@ -65,7 +65,8 @@
           <h3 class="ga-eyebrow">Sound</h3>
           <select value="" onchange={addSound} aria-label="Add a sound effect">
             <option value="" disabled>Add sound effect…</option>
-            {#each MACRO_FX as def (def.type)}<option value={def.type}>{def.label}</option>{/each}
+            <optgroup label="Classic">{#each MACRO_FX.filter((d) => d.group !== 'wild') as def (def.type)}<option value={def.type}>{def.label}</option>{/each}</optgroup>
+            <optgroup label="Wild">{#each MACRO_FX.filter((d) => d.group === 'wild') as def (def.type)}<option value={def.type} title={def.blurb ?? ''}>{def.label}</option>{/each}</optgroup>
           </select>
         </div>
         {#each soundFx as fx (fx.id)}

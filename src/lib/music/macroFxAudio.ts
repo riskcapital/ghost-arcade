@@ -6,6 +6,7 @@
 
 import { impulse, loopClip, softClip, wetDry } from './fxRack';
 import { division, effectiveValue, type MacroFxInstance, type MacroFxType } from './macroFx';
+import type { FxDspKind } from './fxDsp';
 
 type Values = Record<string, number>;
 
@@ -135,31 +136,68 @@ function chorusUnit(ctx: AudioContext): Unit {
   };
 }
 
-function phaserUnit(ctx: AudioContext): Unit {
-  const stages = Array.from({ length: 4 }, () => {
-    const f = ctx.createBiquadFilter();
-    f.type = 'allpass';
-    f.frequency.value = 800;
-    f.Q.value = 0.7;
-    return f;
-  });
-  for (let i = 0; i < stages.length - 1; i++) stages[i].connect(stages[i + 1]);
-  const last = stages[stages.length - 1];
-  const fb = ctx.createGain();
-  last.connect(fb).connect(stages[0]);
-  const mod = lfo(ctx);
-  for (const st of stages) mod.depth.connect(st.frequency);
-  const io = wetDry(ctx, stages[0], last);
-  return {
-    input: io.input,
-    output: io.output,
-    set(v) {
-      glide(mod.osc.frequency, expRange(0.05, 8, v.rate), ctx, 0.1);
-      glide(mod.depth.gain, 200 + v.depth * 1800, ctx, 0.1);
-      glide(fb.gain, v.feedback * 0.75, ctx);
-      io.mix(v.mix);
-    },
-    dispose() { try { mod.osc.stop(); } catch { /* stopped */ } },
+/**
+ * Effects that run sample by sample on the audio thread (fxDsp.ts). The
+ * processor module loads once per context; until it has, the unit passes the
+ * sound through untouched, then splices the effect in.
+ */
+const fxModules = new WeakMap<BaseAudioContext, Promise<boolean>>();
+export function loadStudioFx(ctx: BaseAudioContext): Promise<boolean> {
+  let loading = fxModules.get(ctx);
+  if (!loading) {
+    loading = (async () => {
+      try {
+        if (!ctx.audioWorklet) return false;
+        const { default: url } = await import('./fxWorklet.ts?worker&url');
+        await ctx.audioWorklet.addModule(url);
+        return true;
+      } catch (err) {
+        console.warn('[Studio FX] Sample-by-sample effects are not available:', err);
+        return false;
+      }
+    })();
+    fxModules.set(ctx, loading);
+  }
+  return loading;
+}
+
+function workletUnit(kind: FxDspKind): (ctx: AudioContext) => Unit {
+  return (ctx) => {
+    const input = ctx.createGain();
+    const output = ctx.createGain();
+    input.connect(output);
+    let node: AudioWorkletNode | null = null;
+    let disposed = false;
+    let last: { values: Values; tempo: number } | null = null;
+    void loadStudioFx(ctx).then((ok) => {
+      if (!ok || disposed) return;
+      node = new AudioWorkletNode(ctx, 'ga-studio-fx', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        channelCount: 2,
+        channelCountMode: 'explicit',
+        channelInterpretation: 'speakers',
+        processorOptions: { kind },
+      });
+      if (last) node.port.postMessage(last);
+      input.disconnect(output);
+      input.connect(node).connect(output);
+    });
+    return {
+      input,
+      output,
+      set(v, tempo) {
+        last = { values: { ...v }, tempo };
+        node?.port.postMessage(last);
+      },
+      dispose() {
+        disposed = true;
+        try { node?.disconnect(); } catch { /* none */ }
+        node?.port.close();
+        node = null;
+      },
+    };
   };
 }
 
@@ -396,7 +434,18 @@ const BUILDERS: Record<MacroFxType, (ctx: AudioContext) => Unit> = {
   filter: filterUnit,
   reverb: reverbUnit,
   chorus: chorusUnit,
-  phaser: phaserUnit,
+  phaser: workletUnit('phaser'),
+  grains: workletUnit('grains'),
+  shimmer: workletUnit('shimmer'),
+  freqshift: workletUnit('freqshift'),
+  ring: workletUnit('ring'),
+  resonator: workletUnit('resonator'),
+  vowel: workletUnit('vowel'),
+  fold: workletUnit('fold'),
+  reverse: workletUnit('reverse'),
+  glitch: workletUnit('glitch'),
+  tapestop: workletUnit('tapestop'),
+  harmony: workletUnit('harmony'),
   crush: crushUnit,
   drive: driveUnit,
   stutter: stutterUnit,
@@ -415,6 +464,8 @@ export class MacroFxChain {
   private structure = '';
 
   constructor(private ctx: AudioContext) {
+    // Load the sample-by-sample effects now, so adding one later is instant.
+    void loadStudioFx(ctx);
     this.input = ctx.createGain();
     this.output = ctx.createGain();
     this.input.connect(this.output);
