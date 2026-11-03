@@ -6,12 +6,12 @@
    * controls; open it for the rest. Scenes load a whole stack at once. With
    * no instance yet, one is put on the deck (or the selected layer).
    */
-  import { onDestroy, tick as nextTick } from 'svelte';
+  import { onDestroy, tick as nextTick, untrack } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
   import { STUDIO_SETS } from '../../music/studioSets';
   import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, LIVE_DRUMS, type LiveDrum, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
   import { abletonBridge } from '../../ableton/abletonBridge';
-  import { guessRole, isDrumTrack, liveTrackKeys } from '../../music/liveControl';
+  import { guessRole, isDrumTrack, liveMatchFor, liveTrackKeys } from '../../music/liveControl';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
   import { visualPicker } from '../../music/studioUi';
   import VisualPickButton from './VisualPickButton.svelte';
@@ -20,6 +20,7 @@
   import { followedMix, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
+    editStudio,
     loadSceneIntoStudio,
     moveStudioVoice,
     placeStudio,
@@ -73,6 +74,45 @@
   const followValue = (v: StudioVoice) => (liveOn && v.live ? v.live : v.source);
   const following = (src: LiveSourceId) => voices.filter((v) => v.live === src || (v.live?.startsWith(`${src}/`) ?? false)).length;
 
+  /** A Live source's track colour, for the swatch on the visuals following it. */
+  const liveColorOf = (src: LiveSourceId | undefined) => {
+    if (!src) return null;
+    const t = liveTracks.find((x) => src === liveSource(x.name) || src.startsWith(`${liveSource(x.name)}/`));
+    return t ? liveColor(t.color) : null;
+  };
+
+  // When Live connects (or its tracks change), the visuals still following
+  // the studio's own sounds move onto the matching Live tracks: Hats to the
+  // Hats track, Kick to Kick (or a drum track's kick). Once per set of
+  // tracks, so a visual put back on a studio sound by hand stays there.
+  const matchedFor = new Set<string>();
+  $effect(() => {
+    if (!liveOn || !liveTracks.length || !target) return;
+    const key = `${target.kind === 'layer' ? target.layerId : `${target.deck}:${target.layer}:${target.column}`}|${liveTracks.map((t) => t.name).join('\u0001')}`;
+    if (matchedFor.has(key)) return;
+    matchedFor.add(key);
+    const tracks = liveTracks;
+    untrack(() => editStudio((src) => {
+      let changed = false;
+      const musicVoices = src.musicVoices.map((v) => {
+        if (v.live) return v;
+        const live = liveMatchFor(v.source, tracks);
+        if (!live) return v;
+        changed = true;
+        return { ...v, live };
+      });
+      return changed ? { ...src, musicVoices } : src;
+    }));
+  });
+
+  /** Show the visuals on a Live track: scroll to the first and open its controls. */
+  function showVisualsFor(src: LiveSourceId) {
+    const i = voices.findIndex((v) => v.live === src || (v.live?.startsWith(`${src}/`) ?? false));
+    if (i < 0) return;
+    open = i;
+    void nextTick().then(() => document.querySelectorAll<HTMLElement>('.voices .voice')[i]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+  }
+
   function setFollow(i: number, value: string) {
     if (isLiveSource(value)) setStudioVoice(i, { live: value });
     else setStudioVoice(i, { source: value as VoiceSourceId, live: undefined });
@@ -86,7 +126,7 @@
   function addForTrack(track: (typeof liveTracks)[number], drum?: LiveDrum) {
     const live = liveSource(track.name, drum);
     const what = drum ? `${track.name}: ${LIVE_DRUMS.find((d) => d.id === drum)?.label}` : track.name;
-    visualPicker.set({ current: null, none: false, title: `A visual for ${what}`, pick: (f) => { if (f && addStudioVoice(f, fallbackFor(track, drum), live)) open = voices.length; } });
+    visualPicker.set({ current: null, none: false, title: `A visual for ${what}`, pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, fallbackFor(track, drum), live)) { open = at; void nextTick().then(() => document.querySelectorAll<HTMLElement>('.voices .voice')[at]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })); } } });
   }
 
   function addFromMenu(track: (typeof liveTracks)[number], e: Event) {
@@ -158,7 +198,7 @@
   }
 
   function addVoice() {
-    visualPicker.set({ current: null, none: false, title: 'Add a voice', pick: (f) => { if (f && addStudioVoice(f, 'all')) open = voices.length; } });
+    visualPicker.set({ current: null, none: false, title: 'Add a voice', pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, 'all')) open = at; } });
   }
 
   const numberOf = (voice: StudioVoice, input: ShaderInput) => Number(voice.params[input.NAME] ?? input.DEFAULT ?? input.MIN ?? 0);
@@ -210,7 +250,7 @@
               <span class="swatch" style="background: {liveColor(t.color)}"></span>
               <span class="live-name" title={t.name}>{t.name}</span>
               <span class="live-clip" title={t.playing ? `Playing ${t.playing}${t.queued ? `, ${t.queued} next` : ''}` : 'Nothing playing'}>{t.playing ?? '—'}{#if t.queued} → {t.queued}{/if}</span>
-              {#if following(liveSource(t.name))}<span class="live-n" title="Visuals following this track">{following(liveSource(t.name))}</span>{/if}
+              {#if following(liveSource(t.name))}<button class="live-n" onclick={() => showVisualsFor(liveSource(t.name))} title="Show the visuals following this track">{following(liveSource(t.name))}</button>{/if}
               {#if t.drums}
                 <select class="live-add" value="" onchange={(e) => addFromMenu(t, e)} aria-label="Add a visual for {t.name}" title="Add a visual that follows this track, or one of its drums">
                   <option value="" disabled>+ Visual</option>
@@ -286,6 +326,7 @@
             <button class="icon step" onclick={() => stepVoiceLook(i, 1)} aria-label="Next look for voice {i + 1}" title="Next look" data-midi-path="studio:voice.{i + 1}.look-next" data-midi-label="Voice {i + 1} next look" data-midi-mode="toggle">
               <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" /></svg>
             </button>
+            {#if liveOn && liveColorOf(voice.live)}<span class="follow-swatch" style="background: {liveColorOf(voice.live)}" aria-hidden="true"></span>{/if}
             <select class="follows" class:live={liveOn && !!voice.live} value={followValue(voice)} onchange={(e) => setFollow(i, (e.target as HTMLSelectElement).value)} aria-label="Sound voice {i + 1} follows" title={liveOn && voice.live ? 'The Live track this voice follows' : 'The sound this voice follows'} data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
               {#if liveOn}
                 <optgroup label="Ableton Live">
@@ -349,7 +390,8 @@
   .swatch { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; }
   .live-name { flex: 0 1 38%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-ink); }
   .live-clip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-muted); }
-  .live-n { flex: 0 0 auto; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--studio-accent-soft, rgba(255,255,255,0.1)); color: var(--studio-accent); font-size: 9px; line-height: 14px; text-align: center; }
+  .follow-swatch { flex: 0 0 auto; width: 6px; align-self: stretch; margin: 3px -2px 3px 0; border-radius: 2px; }
+  .live-n { cursor: pointer; border: 0; flex: 0 0 auto; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--studio-accent-soft, rgba(255,255,255,0.1)); color: var(--studio-accent); font-size: 9px; line-height: 14px; text-align: center; }
   .live-add { flex: 0 0 auto; height: 20px; padding: 0 6px; font-size: var(--ga-text-meta, 11px); }
   select.live-add { width: 74px; }
   .follows.live { color: var(--studio-accent); }

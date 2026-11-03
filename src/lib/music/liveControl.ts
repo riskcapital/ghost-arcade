@@ -13,7 +13,7 @@
  * moved in the Live set.
  */
 
-import { VOICE_SOURCES, type VoiceSourceId } from './visualVoices';
+import { liveSource, VOICE_SOURCES, type LiveSourceId, type VoiceSourceId } from './visualVoices';
 
 /** Live track name -> the sound it feeds the visuals as. */
 export type LiveRoles = Record<string, VoiceSourceId>;
@@ -119,4 +119,33 @@ export class LevelHits {
     this.lastTime = null;
     return was;
   }
+}
+
+/** The kind of Live track a set's own sounds belong to. */
+const SOUND_ROLE: Partial<Record<VoiceSourceId, VoiceSourceId>> = {
+  acid: 'bass', dubbass: 'bass', analog: 'lead', scan: 'lead', siren: 'fx', echo: 'fx', drop: 'fx', drone: 'pad', bowls: 'chords', xy: 'pad',
+};
+const DRUM_PARTS = new Set<VoiceSourceId>(['kick', 'snare', 'hats', 'perc']);
+
+/**
+ * The Live track (or drum of a drum track) a visual following one of the
+ * studio's own sounds belongs on: Hats goes to the Hats track, Kick to the
+ * Kick track or the kick of a drum track, Chords to Keys. Null when nothing
+ * fits (Everything, What you play).
+ */
+export function liveMatchFor(
+  source: VoiceSourceId,
+  tracks: readonly { name: string; role: VoiceSourceId | null; drums: boolean }[],
+): LiveSourceId | null {
+  const want = SOUND_ROLE[source] ?? source;
+  if (want === 'all' || want === 'played') return null;
+  const roleOf = (t: { name: string; role: VoiceSourceId | null }) => t.role ?? guessRole(t.name);
+  // A track of its own beats a drum track's part (a Kick track over Drums: kick).
+  const own = tracks.find((t) => roleOf(t) === want && !(t.drums && DRUM_PARTS.has(want) && tracks.some((o) => o !== t && !o.drums && roleOf(o) === want)));
+  if (own && !(own.drums && DRUM_PARTS.has(want))) return liveSource(own.name);
+  if (DRUM_PARTS.has(want)) {
+    const kit = tracks.find((t) => t.drums);
+    if (kit) return liveSource(kit.name, want as 'kick' | 'snare' | 'hats' | 'perc');
+  }
+  return own ? liveSource(own.name) : null;
 }
