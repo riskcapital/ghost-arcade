@@ -11,7 +11,7 @@
   import { STUDIO_SETS } from '../../music/studioSets';
   import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, LIVE_DRUMS, type LiveDrum, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
   import { abletonBridge } from '../../ableton/abletonBridge';
-  import { guessRole, isDrumTrack } from '../../music/liveControl';
+  import { guessRole, isDrumTrack, liveTrackKeys } from '../../music/liveControl';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
   import { visualPicker } from '../../music/studioUi';
   import VisualPickButton from './VisualPickButton.svelte';
@@ -53,12 +53,17 @@
   // track) is a sound a voice can follow, and the tracks with what they play
   // now are listed here to put visuals on.
   const liveOn = $derived(s.isOpen && s.liveControl && $abletonBridge.connected);
-  const liveTracks = $derived(liveOn ? $abletonBridge.tracks.map((t) => {
-    const role = s.liveRoles[t.name] ?? null;
-    const playing = t.playing >= 0 ? t.slots[t.playing] : null;
-    const queued = t.fired >= 0 && t.fired !== t.playing ? t.slots[t.fired] : null;
-    return { name: t.name, color: t.color, midi: t.midi, drums: isDrumTrack(t, role), role, playing: playing?.name ?? null, queued: queued?.name ?? null };
-  }) : []);
+  const liveTracks = $derived.by(() => {
+    if (!liveOn) return [];
+    const keys = liveTrackKeys($abletonBridge.tracks);
+    return $abletonBridge.tracks.map((t, i) => {
+      const role = s.liveRoles[t.name] ?? null;
+      const playing = t.playing >= 0 ? t.slots[t.playing] : null;
+      const queued = t.fired >= 0 && t.fired !== t.playing ? t.slots[t.fired] : null;
+      // `name` is the track's unique key (numbered when Live repeats a name).
+      return { name: keys[i], color: t.color, midi: t.midi, drums: isDrumTrack(t, role), role, playing: playing?.name ?? null, queued: queued?.name ?? null };
+    });
+  });
   let liveListOpen = $state(true);
   const liveColor = (c: number) => `#${(c & 0xffffff).toString(16).padStart(6, '0')}`;
   /** A voice's follow value in the menu: its Live source while Live leads, its studio sound otherwise. */
@@ -195,7 +200,7 @@
       </button>
       {#if liveListOpen}
         <div class="live-tracks">
-          {#each liveTracks as t (t.name)}
+          {#each liveTracks as t, ti (ti)}
             <div class="live-track" class:quiet={!t.playing}>
               <span class="swatch" style="background: {liveColor(t.color)}"></span>
               <span class="live-name" title={t.name}>{t.name}</span>
@@ -269,7 +274,7 @@
             <select class="follows" class:live={liveOn && !!voice.live} value={followValue(voice)} onchange={(e) => setFollow(i, (e.target as HTMLSelectElement).value)} aria-label="Sound voice {i + 1} follows" title={liveOn && voice.live ? 'The Live track this voice follows' : 'The sound this voice follows'} data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
               {#if liveOn}
                 <optgroup label="Ableton Live">
-                  {#each liveTracks as t (t.name)}
+                  {#each liveTracks as t, ti (ti)}
                     <option value={liveSource(t.name)}>{t.name}</option>
                     {#if t.drums}{#each LIVE_DRUMS as d (d.id)}<option value={liveSource(t.name, d.id)}>{t.name}: {d.label}</option>{/each}{/if}
                   {/each}

@@ -57,6 +57,21 @@ export function isDrumTrack(track: { name: string; midi: boolean }, role?: Voice
   return /\b(drum|drums|kit|beat|beats|break|breaks|perc|percussion|808|909|707|606|rack)\b/i.test(track.name);
 }
 
+/**
+ * A name per Live track that visuals follow it by: its own name, numbered
+ * when Live has more than one of that name ("Deck B", "Deck B #2"; Live keeps
+ * the name when a track is duplicated), or "Track N" when it has none.
+ */
+export function liveTrackKeys(tracks: readonly { name: string }[]): string[] {
+  const seen = new Map<string, number>();
+  return tracks.map((t, i) => {
+    const base = t.name.trim() || `Track ${i + 1}`;
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n === 1 ? base : `${base} #${n}`;
+  });
+}
+
 export function mappedTracks(tracks: readonly { name: string }[], roles: LiveRoles): { index: number; role: VoiceSourceId }[] {
   const out: { index: number; role: VoiceSourceId }[] = [];
   tracks.forEach((t, index) => {

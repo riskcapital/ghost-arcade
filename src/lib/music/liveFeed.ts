@@ -20,7 +20,7 @@ import { abletonBridge } from '../ableton/abletonBridge';
 import { musicStudio } from './musicStudioStore';
 import { applyLiveScene, noteLiveScene, keepLiveSources, pushLiveNote, pushOutsideNote, setLiveFeedActive, setLiveLevel } from './musicRuntime';
 import { studioSceneForLive } from './scenes';
-import { isDrumTrack, LevelHits, mappedTracks } from './liveControl';
+import { isDrumTrack, LevelHits, liveTrackKeys, mappedTracks } from './liveControl';
 import { gmDrum, liveSource, type AnySourceId, type VoiceSourceId } from './visualVoices';
 
 /** Audio tracks have no pitch; their hits sit mid-range. */
@@ -98,9 +98,10 @@ function sync(): void {
   const roles = new Map((on ? mappedTracks(bridge.tracks, studio.liveRoles) : []).map((m) => [m.index, m.role]));
   const next = new Map<number, FedTrack>();
   if (on) {
+    const keys = liveTrackKeys(bridge.tracks);
     bridge.tracks.forEach((track, index) => {
       const role = roles.get(index) ?? null;
-      next.set(index, { name: track.name, midi: track.midi, drums: isDrumTrack(track, role), role });
+      next.set(index, { name: keys[index], midi: track.midi, drums: isDrumTrack(track, role), role });
     });
   }
   const key = JSON.stringify([hosting, on, [...next.entries()]]);

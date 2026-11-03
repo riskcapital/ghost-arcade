@@ -108,3 +108,11 @@ describe('studio scenes and Live scenes', () => {
     expect(normalizeScene({ id: 'a', name: 'Peak', liveScene: { name: 'Drop', index: -1 } })?.liveScene).toBeUndefined();
   });
 });
+
+import { liveTrackKeys } from './liveControl';
+
+describe('Live track names', () => {
+  it('number repeats, so two tracks of one name are two sources', () => {
+    expect(liveTrackKeys([{ name: 'Deck A' }, { name: 'Deck B' }, { name: 'Deck B' }, { name: '' }])).toEqual(['Deck A', 'Deck B', 'Deck B #2', 'Track 4']);
+  });
+});

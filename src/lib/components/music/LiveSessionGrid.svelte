@@ -53,7 +53,7 @@
   </div>
 {:else}
   <div class="live">
-    <div class="transport">
+    <div class="live-transport">
       <button class="btn" class:on={live.playing} onclick={() => (live.playing ? abletonBridge.stop() : abletonBridge.play())} title={live.playing ? "Stop Live's transport" : "Start Live's transport"}>
         {#if live.playing}
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" /></svg> Stop
@@ -120,7 +120,7 @@
   .waiting .title { color: var(--studio-ink); font-weight: var(--ga-weight-title, 650); font-size: var(--ga-text-body, 13px); }
   .error { color: var(--ga-rec, #e5483a); }
   .live { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
-  .transport { display: flex; align-items: center; gap: 6px; }
+  .live-transport { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
   .spacer { flex: 1; }
   .readout { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); font-variant-numeric: tabular-nums; margin-left: 6px; }
   .btn {
