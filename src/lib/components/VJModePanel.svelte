@@ -8937,6 +8937,11 @@
   .vj-overlay.mac-titlebar-offset {
     top: 30px;
   }
+  /* The full-screen Studio view is fixed to the window, so it needs the
+     same clearance or its top bar sits under the titlebar. */
+  .vj-overlay.mac-titlebar-offset :global(.studio-view) {
+    top: 30px;
+  }
   .vj-overlay.native-underlay .vj-preview-section {
     background: transparent;
   }
