@@ -83,6 +83,13 @@
   let scanX = $state(0);
   let mixerOpen = $state(false);
   let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band' | 'looper' | 'songs'>('session');
+  /** The lower panel can grow down over the bottom row (the keyboard on most sets). */
+  const TALL_KEY = 'ga.studio.lowerTall';
+  let lowerTall = $state((() => { try { return localStorage.getItem(TALL_KEY) === '1'; } catch { return false; } })());
+  function toggleLowerTall() {
+    lowerTall = !lowerTall;
+    try { localStorage.setItem(TALL_KEY, lowerTall ? '1' : '0'); } catch { /* the choice just is not remembered */ }
+  }
   const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band', looper: 'Looper', songs: 'Songs' } as const;
 
   const s = $derived($musicStudio);
@@ -245,6 +252,9 @@
         {/snippet}
         {#if !s.liveControl}<LoopRecorderBar split extra={liveButton} />{:else}<div class="live-row">{@render liveButton()}</div>{/if}
       {/if}
+      <button class="tall-btn" class:on={lowerTall} aria-pressed={lowerTall} onclick={toggleLowerTall} title={lowerTall ? 'Shrink this panel back above the bottom row' : 'Expand this panel down over the bottom row'} aria-label={lowerTall ? 'Shrink panel' : 'Expand panel'}>
+        <svg viewBox="0 0 16 16" aria-hidden="true">{#if lowerTall}<path d="M4 6l4-4 4 4M4 14l4-4 4 4" />{:else}<path d="M4 2l4 4 4-4M4 10l4 4 4-4" />{/if}</svg>
+      </button>
     {/snippet}
     {#if lowerTab === 'session'}
       {#if s.liveControl}<LiveSessionGrid />{:else}<SessionGrid />{/if}
@@ -286,7 +296,7 @@
 {/snippet}
 
 {#if open}
-  <div class="studio-view studio-tokens set-{s.set}" role="region" aria-label="Studio view" bind:this={root}>
+  <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} role="region" aria-label="Studio view" bind:this={root}>
     <header class="bar">
       <span class="bar-title">Studio</span>
       <div class="group">
@@ -595,6 +605,16 @@
   .b3 { grid-area: b3; }
   .b12 { grid-column: 1 / 3; grid-row: 4; }
   .b123 { grid-column: 1 / -1; grid-row: 4; }
+  /* Expanded: the centre column runs to the bottom and whatever sat under it steps aside (kept mounted, so its sound and settings carry on). */
+  .lower-tall .centre { grid-area: auto; grid-column: 2; grid-row: 3 / 5; }
+  .lower-tall .centre > :global(.lower) { height: auto; flex: 1 1 0; min-height: 240px; }
+  .lower-tall .b2 { display: none; }
+  .lower-tall .b12 { grid-column: 1; }
+  /* The analog synth needs the full width, so the panel covers it (the keyboard is in the left rack). */
+  .set-analog.lower-tall .b12 { display: none; }
+  .tall-btn { margin-left: auto; flex: 0 0 auto; width: 24px; height: 22px; padding: 0; display: inline-grid; place-items: center; border-radius: 6px; border: 1px solid var(--studio-line, rgba(255,255,255,.14)); background: transparent; color: var(--studio-muted); cursor: pointer; }
+  .tall-btn:hover, .tall-btn.on { color: var(--studio-text, #fff); border-color: var(--studio-accent, #8af); }
+  .tall-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
   /* ── Lower panel ── */
   .scroll { min-height: 0; overflow: auto; flex: 1; display: flex; flex-direction: column; }
