@@ -110,3 +110,38 @@ describe('Music Studio plugin', () => {
     }
   });
 });
+
+describe('Music Studio auto-mix in the render', () => {
+  it('shows one visual at a time by the bar, at its own level', () => {
+    const voices = studioVoicesFromScene([
+      { file: 'VX-Barcode.fs', source: 'kick', level: 0.8 },
+      { file: 'VX-Panels.fs', source: 'hats' },
+      { file: 'VX-Glyphs.fs', source: 'bass' },
+    ]);
+    const layer = studioLayer('m', voices);
+    (layer.source!.effectSource as any).musicMix = { mode: 'order', bars: 1 };
+    const atBar = (bars: number): StudioRenderInputs => ({ ...inputs, driven: () => ({ vxPresence: 1, vxBars: bars, vxBar: 0.5 }) });
+    const rows = (bars: number) => {
+      const mixLayer = expandStudioLayers([layer], atBar(bars)).find((l) => (l.source?.effectSource as any)?.effectType === 'vj-mix')!;
+      // Rows are stacked bottom-up; turn them back into list order.
+      return [...(mixLayer.source!.effectSource as any).vjmixRows].reverse().map((r: { opacity: number }) => r.opacity);
+    };
+    expect(rows(0)).toEqual([0.8, 0, 0]);
+    expect(rows(1)).toEqual([0, 1, 0]);
+    expect(rows(2)).toEqual([0, 0, 1]);
+  });
+
+  it('lets shuffle change the blends while it is on, and only then', () => {
+    const voices = studioVoicesFromScene(Array.from({ length: 4 }, () => ({ file: 'VX-Barcode.fs', source: 'kick' as const })));
+    const layer = studioLayer('m', voices);
+    const mixRows = (mode: string) => {
+      (layer.source!.effectSource as any).musicMix = { mode, bars: 1 };
+      const out = expandStudioLayers([layer], { ...inputs, driven: () => ({ vxPresence: 1, vxBars: 5, vxBar: 0.5 }) });
+      return (out.find((l) => (l.source?.effectSource as any)?.effectType === 'vj-mix')!.source!.effectSource as any).vjmixRows as { opacity: number; blendMode: string }[];
+    };
+    expect(mixRows('all').every((r) => r.blendMode === 'screen' && r.opacity === 1)).toBe(true);
+    const shuffled = mixRows('shuffle').filter((r) => r.opacity > 0.99);
+    expect(shuffled.length).toBeGreaterThan(0);
+    expect(shuffled.length).toBeLessThanOrEqual(3);
+  });
+});

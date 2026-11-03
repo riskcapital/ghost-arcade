@@ -16,6 +16,7 @@
  */
 
 import { writable } from 'svelte/store';
+import { DEFAULT_MIX, mixAt, normalizeMix, type StudioMix } from './studioMix';
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
 import { isLiveSource, VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type LiveSourceId, type VoiceSourceId } from './visualVoices';
 import type { StudioSet } from './studioSets';
@@ -50,6 +51,8 @@ export interface StudioPluginSource {
   musicSet?: StudioSet;
   musicSceneId?: string | null;
   musicVoices?: StudioVoice[];
+  /** Auto-mix: the visuals taking turns on the bar (studioMix.ts). */
+  musicMix?: StudioMix;
 }
 
 type RGB = [number, number, number];
@@ -116,6 +119,7 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
     musicSet: SETS.includes(r.musicSet as StudioSet) ? (r.musicSet as StudioSet) : 'berlin',
     musicSceneId: typeof r.musicSceneId === 'string' ? r.musicSceneId : null,
     musicVoices: voices,
+    musicMix: normalizeMix(r.musicMix),
   };
 }
 
@@ -143,6 +147,7 @@ export function defaultStudioSource(): Required<StudioPluginSource> {
       { file: 'VX-BitCounter.fs', source: 'bass' },
       { file: 'VX-DataPlot.fs', source: 'lead', level: 0.8 },
     ]),
+    musicMix: { ...DEFAULT_MIX },
   };
 }
 
@@ -190,6 +195,11 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     hosts++;
     const studio = normalizeStudioSource(effectSource);
     const rows: Array<{ layerId: string; opacity: number; blendMode: string }> = [];
+    const driven = studio.musicVoices.map((voice) => inputs.driven(voice.source, voice.auto, voice.live));
+    // Auto-mix works from the bar clock every voice shares.
+    const clock = driven.find((d) => Number.isFinite(d.vxBars));
+    const barPos = clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0;
+    const mixed = mixAt(studio.musicMix, barPos, studio.musicVoices.map((v) => v.level <= 0));
     studio.musicVoices.forEach((voice, index) => {
       const code = inputs.code(voice.file);
       if (!code) return;
@@ -205,10 +215,10 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           name: voice.file,
           src: `ISF/${voice.file}`,
           shaderCode: code,
-          shaderValues: studioVoiceValues(voice, studio.musicSet, inputs.driven(voice.source, voice.auto, voice.live)),
+          shaderValues: studioVoiceValues(voice, studio.musicSet, driven[index]),
         },
       } as Layer);
-      rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1), blendMode: studioVoiceBlend(voice.blend) });
+      rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: mixed[index].blend ?? studioVoiceBlend(voice.blend) });
     });
     // The top of the list draws on top: the mix stacks its rows from the first up.
     rows.reverse();

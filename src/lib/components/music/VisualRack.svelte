@@ -16,6 +16,7 @@
   import { visualPicker } from '../../music/studioUi';
   import VisualPickButton from './VisualPickButton.svelte';
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
+  import { MIX_BARS, MIX_MODES, mixAt, normalizeMix, type MixMode } from '../../music/studioMix';
   import { MAX_STUDIO_VOICES, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
@@ -24,6 +25,7 @@
     placeStudio,
     removeStudioVoice,
     replaceStudioVoice,
+    setStudioMix,
     setStudioVoice,
     studioTarget,
   } from '../../music/studioTarget';
@@ -39,6 +41,7 @@
   const s = $derived($musicStudio);
   const target = $derived($studioTarget);
   const voices = $derived(target?.source.musicVoices ?? []);
+  const mix = $derived(normalizeMix(target?.source.musicMix));
   let open = $state<number | null>(null);
   let activity = $state<number[]>([]);
   let codeTick = $state(0);
@@ -107,10 +110,11 @@
   // How strongly each voice's sound plays now, for its light.
   let frame = 0;
   function tick() {
-    const next = voices.map((v) => {
-      const d = studioRenderInputs.driven(v.source, v.auto, v.live);
-      return Math.min(1, (0.25 + 0.75 * (d.vxEnv ?? 0)) * (d.vxPresence ?? 1));
-    });
+    const driven = voices.map((v) => studioRenderInputs.driven(v.source, v.auto, v.live));
+    // With auto-mix on, a visual sitting out shows a dark light.
+    const clock = driven[0];
+    const mixed = mixAt(mix, clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0, voices.map((v) => v.level <= 0));
+    const next = driven.map((d, i) => Math.min(1, (0.25 + 0.75 * (d.vxEnv ?? 0)) * (d.vxPresence ?? 1) * (mixed[i]?.gain ?? 1)));
     // Only repaint the lights when one has visibly changed.
     if (next.length !== activity.length || next.some((a, i) => Math.abs(a - activity[i]) > 0.01)) activity = next;
     frame = requestAnimationFrame(tick);
@@ -227,6 +231,15 @@
       <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Put it on the deck' : 'Show it on the selected layer'}</button>
     </div>
   {:else}
+    <div class="automix">
+      <span class="ga-eyebrow">Auto-mix</span>
+      <select value={mix.mode} onchange={(e) => setStudioMix({ mode: (e.target as HTMLSelectElement).value as MixMode })} aria-label="Auto-mix" title={MIX_MODES.find((m) => m.id === mix.mode)?.title} data-midi-path="studio:visuals.automix-next" data-midi-label="Next auto-mix mode" data-midi-mode="toggle">
+        {#each MIX_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
+      </select>
+      <select value={String(mix.bars)} onchange={(e) => setStudioMix({ bars: Number((e.target as HTMLSelectElement).value) })} disabled={mix.mode === 'all'} aria-label="Auto-mix changes every" title="How often the mix changes, on the bar">
+        {#each MIX_BARS as b (b)}<option value={String(b)}>{b === 1 ? 'Every bar' : `Every ${b} bars`}</option>{/each}
+      </select>
+    </div>
     <p class="order">Top of the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
     <div class="voices">
       {#each voices as voice, i (i)}
@@ -321,6 +334,9 @@
 </StudioModule>
 
 <style>
+  .automix { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
+  .automix .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
+  .automix select { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .live { flex: 0 0 auto; margin-bottom: 6px; border-bottom: 1px solid var(--studio-edge-soft); padding-bottom: 4px; }
   .live-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 0; border: 0; background: none; color: var(--studio-ink); cursor: pointer; text-align: left; }
   .live-head svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
@@ -375,18 +391,23 @@
   .controls :global(.knob-wrap), .all :global(.knob-wrap) { gap: 1px; min-width: 0; flex: 1 1 0; }
   .all :global(.knob-wrap) { flex: 0 0 52px; }
   /* Shader parameter names run long: two lines, centred, before any cut. */
+  /* Shader parameter names run long: they wrap between words onto a second
+     line, never inside a word ("OPACIT Y"); a single word too long for the
+     column is clipped rather than split (its full name is the knob's tooltip). */
   .controls :global(.knob-label), .all :global(.knob-label) {
     max-width: 100%;
     overflow: hidden;
     white-space: normal;
     text-align: center;
-    letter-spacing: 0.02em;
+    font-size: 8.5px;
+    letter-spacing: 0;
     line-height: 1.1;
     min-height: 2.2em;
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
+    word-break: keep-all;
   }
   .icon {
     flex: 0 0 auto;

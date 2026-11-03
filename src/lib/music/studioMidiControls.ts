@@ -53,7 +53,8 @@ import { registerStudioControls, releaseStudioControls, type StudioControl } fro
 import { MAX_STUDIO_VOICES, studioVoiceBlend } from './studioPlugin';
 import { BLEND_MODE_ORDER } from '../types';
 import { STUDIO_SETS } from './studioSets';
-import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioVoice, studioTargetNow } from './studioTarget';
+import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioMix, setStudioVoice, studioTargetNow } from './studioTarget';
+import { MIX_MODES, normalizeMix } from './studioMix';
 import { VOICE_SHADERS, scenesForSet } from './visualScenes';
 import { voiceSourcesFor, type VoiceSourceId } from './visualVoices';
 import { TONES } from './tone/tones';
@@ -297,6 +298,14 @@ const VOICES: StudioControl[] = range(MAX_STUDIO_VOICES).flatMap((i): StudioCont
 });
 
 const SCENES: StudioControl[] = [
+  {
+    id: 'visuals.automix-next', label: 'Next auto-mix mode', group: 'Visuals', kind: 'trigger',
+    run: () => {
+      const now = normalizeMix(studioTargetNow()?.source.musicMix).mode;
+      const i = MIX_MODES.findIndex((m) => m.id === now);
+      setStudioMix({ mode: MIX_MODES[(i + 1) % MIX_MODES.length].id });
+    },
+  },
   { id: 'visuals.scene-next', label: 'Next visual scene', group: 'Visuals', kind: 'trigger', run: () => void stepVisualScene(1) },
   { id: 'visuals.scene-prev', label: 'Previous visual scene', group: 'Visuals', kind: 'trigger', run: () => void stepVisualScene(-1) },
 ];

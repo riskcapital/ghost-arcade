@@ -238,7 +238,7 @@
   }
   .pad.kit { background: var(--studio-slot); color: var(--studio-ink); border-color: var(--studio-edge); }
   /* The whole name, on two lines when it needs them. */
-  .label { max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.15; overflow-wrap: anywhere; pointer-events: none; }
+  .label { max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.15; overflow-wrap: normal; word-break: keep-all; pointer-events: none; }
   kbd { position: absolute; right: 5px; bottom: 3px; font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; color: var(--studio-muted); pointer-events: none; }
   .pad.lit { background: var(--studio-accent); border-color: var(--studio-accent); color: var(--studio-on-accent); transition: none; }
   .pad.lit kbd { color: var(--studio-on-accent); }

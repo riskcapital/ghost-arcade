@@ -159,7 +159,7 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-height: 1.15;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal; word-break: keep-all;
     pointer-events: none;
   }
   .pad.held { padding-right: 16px; }

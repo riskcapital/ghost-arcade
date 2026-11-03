@@ -27,6 +27,7 @@ import {
 } from './studioPlugin';
 import type { StudioSet } from './studioSets';
 import type { LiveSourceId, VoiceSourceId } from './visualVoices';
+import { normalizeMix, type StudioMix } from './studioMix';
 
 export type StudioTarget =
   | { kind: 'vj'; deck: VJDeck; layer: number; column: number; playing: boolean; source: Required<StudioPluginSource> }
@@ -227,6 +228,11 @@ export function setStudioVoice(index: number, patch: Partial<StudioVoice>, gestu
     ...s,
     musicVoices: s.musicVoices.map((v, i) => (i === index ? { ...v, ...patch, params: { ...v.params, ...(patch.params ?? {}) } } : v)),
   }), gesture);
+}
+
+/** The studio's auto-mix: its visuals taking turns on the bar. */
+export function setStudioMix(patch: Partial<StudioMix>): boolean {
+  return editStudio((s) => ({ ...s, musicMix: normalizeMix({ ...s.musicMix, ...patch }) }));
 }
 
 /** Swap a voice's shader, keeping what it follows and its level; its look starts fresh. */
